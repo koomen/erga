@@ -33,7 +33,8 @@ import { emptyPack, isSha, isTreeMode, parseCommit, parseTree, readPack, subject
 import { fetchPack, lsRefs, receivePack, type Remote } from "./remote.ts";
 import { BrowseError, cleanPath, list, read, search, snapshotOf, view, type Snapshot, type SourceAnswer, type SourceRead } from "./browse.ts";
 import type { GithubLink, PushEvent } from "./github.ts";
-import { BRANCHES, featureOf, LOG, QUARANTINE, REF, SourceError, TAGS, type Branch } from "./refs.ts";
+import { BRANCHES, featureOf, LOG, QUARANTINE, REF, SCRATCH, SourceError, TAGS, type Branch } from "./refs.ts";
+import { sweepScratch } from "./scratch.ts";
 import { Upstream, type UpstreamSource, type UpstreamView } from "./upstream.ts";
 import { Conflicts, type MergeConflict } from "./conflicts.ts";
 import { Releases, type Released, type TagInfo } from "./releases.ts";
@@ -302,6 +303,8 @@ export class SourceRepo {
       }
       return info;
     });
+    // A scratch ref a merge left behind goes (scratch.ts).
+    if ([...refs.keys()].some((r) => r.startsWith(SCRATCH))) this.deps.background(sweepScratch(remote, refs).catch(() => {}));
     return {
       branches,
       features: this.features.list(remote, refs),
@@ -584,6 +587,9 @@ export class SourceRepo {
   }
   deleteFeature(name: string, who: Actor) {
     return this.features.remove(name, who);
+  }
+  checkFeature(name: string) {
+    return this.features.recheck(name);
   }
   githubLink() {
     return this.github.githubLink();

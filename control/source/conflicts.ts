@@ -8,7 +8,6 @@
 
 import {
   commitBytes,
-  emptyPack,
   hashObject,
   isTreeMode,
   parseCommit,
@@ -24,8 +23,9 @@ import {
 } from "./git.ts";
 import { fetchPack, lsRefs, receivePack, type RefUpdate, type Remote } from "./remote.ts";
 import { cleanPath } from "./browse.ts";
+import { withScratch } from "./scratch.ts";
 import { isBinary, mergeTrees, type Conflict, type Labels, type TreeMergeResult } from "./merge.ts";
-import { isMergeBranch, REF, SCRATCH, SourceError } from "./refs.ts";
+import { isMergeBranch, REF, SourceError } from "./refs.ts";
 import type { Actor, SourceRepo } from "./repo.ts";
 import { byLine, SYSTEM } from "../../shared/attribution.ts";
 import { TARGETS } from "../../deploy/targets.ts";
@@ -131,14 +131,9 @@ export class Conflicts {
     base: string | null,
     labels: Labels
   ): Promise<TreeMergeResult & { ourTree: string }> {
-    const scratch = `${SCRATCH}${crypto.randomUUID().slice(0, 8)}`;
-    if (base) await receivePack(remote, [{ ref: scratch, old: ZERO, new: base }], await emptyPack());
-    let objects: Map<string, GitObject>;
-    try {
-      objects = await readPack(await fetchPack(remote, { wants: [ours, theirs, ...(base ? [base] : [])], deepen: 1 }));
-    } finally {
-      if (base) await receivePack(remote, [{ ref: scratch, old: base, new: ZERO }], null).catch(() => {});
-    }
+    const objects = await withScratch(remote, base, async () =>
+      readPack(await fetchPack(remote, { wants: [ours, theirs, ...(base ? [base] : [])], deepen: 1 }))
+    );
     const treeOf = (sha: string) => {
       const x = objects.get(sha);
       if (!x || x.type != "commit") throw new SourceError({ message: `Artifacts didn't send commit ${sha.slice(0, 7)}`, status: 502 });

@@ -153,14 +153,14 @@ export const SOURCE_OPERATIONS: Operation[] = [
   },
   {
     name: "feature_branch",
-    ui: "Ops (/admin/ops), Feature branches: Merge (the branch's work as one commit on staging), and Delete",
-    label: "Merge or delete a feature branch",
+    ui: "Ops (/admin/ops), Feature branches: Merge (the branch's work as one commit on staging), Delete, and Check again",
+    label: "Merge, delete or check a feature branch",
     admin: true,
-    description: "Merges a feature branch into staging as one commit, or deletes it.",
+    description: "Merges a feature branch into staging as one commit, deletes it, or checks again whether it merges cleanly.",
     parameters: Schema.Struct({
-      action: Schema.Literals(["merge", "delete"]).annotate({
+      action: Schema.Literals(["merge", "delete", "check"]).annotate({
         description:
-          "merge: one squash commit on staging (staging deploys it; the branch goes; refused on a conflict or nothing new). delete: the answer has its head, and a push of it brings the branch back",
+          "merge: one squash commit on staging (staging deploys it; the branch goes; refused on a conflict or nothing new). delete: the answer has its head, and a push of it brings the branch back. check: whether it merges cleanly, checked again and waited for (merge: clean, conflicts, merged, or failed: the check couldn't run, which is not a conflict); a push to staging or the branch checks it by itself",
       }),
       branch: str("The feature branch's name (branches: features)"),
       message: Schema.optionalKey(
@@ -169,11 +169,24 @@ export const SOURCE_OPERATIONS: Operation[] = [
     }),
     run: async (a, caller) => {
       const branch = String(a.branch ?? "");
+      if (a.action == "check") {
+        const r = ok(await repo(caller).checkFeature(originOf(caller), branch));
+        const m = r.merge;
+        const said =
+          m.state == "clean"
+            ? "merges cleanly into staging"
+            : m.state == "merged"
+              ? "is on staging already"
+              : m.state == "conflicts"
+                ? `conflicts with staging in ${(m.files ?? []).map((f) => f.path).join(", ")}`
+                : `couldn't be checked (not a conflict): ${m.error}`;
+        return { ...r, done: `${r.branch} (${r.commit.slice(0, 10)}) ${said}` };
+      }
       if (a.action == "delete") {
         const r = ok(await repo(caller).deleteFeature(originOf(caller), branch, await actorOf(caller)));
         return { ...r, done: `${r.branch} is deleted; it was at ${r.commit.slice(0, 10)}` };
       }
-      if (a.action != "merge") throw new OperationError({ message: "action: merge or delete.", status: 400 });
+      if (a.action != "merge") throw new OperationError({ message: "action: merge, delete or check.", status: 400 });
       const message = text(a.message)?.slice(0, 20000);
       const r = ok(await repo(caller).mergeFeature(originOf(caller), await actorOf(caller), branch, message));
       return {

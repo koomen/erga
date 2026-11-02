@@ -111,3 +111,66 @@ test("a feature branch shows above the git log; Merge squashes it onto staging, 
   await expect.poll(() => text(row("throwaway")), { timeout: 10_000 }).toContain("Deleted. It was at");
   expect(git("ls-remote", remote, "refs/heads/throwaway")).toBe("");
 });
+
+test("a merge check that fails says so, not a conflict; Check again checks it again; a push checks it by itself", {
+  timeout: 60_000,
+}, async ({ tab }) => {
+  const server = await own(),
+    { page } = tab;
+  const text = (sel: string) => page.evaluate((s) => document.querySelector(s)?.textContent ?? "", sel);
+  const token = (await newToken(server.root, { label: "Merge checks", scope: "admin" })).token;
+  const repo = join(server.scratch, `merge-checks-${Date.now()}`);
+  mkdirSync(repo);
+  const git = (...args: string[]) => {
+    const r = spawnSync("git", ["-c", "user.name=Ada", "-c", "user.email=ada@example.com", ...args], { cwd: repo, encoding: "utf8" });
+    if (r.status) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  const remote = `${server.root.replace("://", `://x:${token}@`)}/git/erga.git`;
+  git("init", "-q", "-b", "staging");
+  // On staging as the test above left it, or a first commit of its own when it runs alone.
+  if (git("ls-remote", remote, "refs/heads/staging")) {
+    git("fetch", "-q", remote, "staging");
+    git("reset", "-q", "--hard", "FETCH_HEAD");
+  } else {
+    git("commit", "-q", "--allow-empty", "-m", "Base on staging");
+    git("push", "-q", remote, "HEAD:staging");
+  }
+  git("checkout", "-q", "-b", "slow");
+  const step = (file: string, message: string) => {
+    writeFileSync(join(repo, file), `${message}\n`);
+    git("add", file);
+    git("commit", "-q", "-m", message);
+  };
+  // Artifacts is busy for the first check and its 3 tries again.
+  const busy = (n: number) => writeFileSync(join(server.state, "artifacts", "busy"), String(n));
+  busy(4);
+  step("slow.txt", "Work that checks slowly");
+  git("push", "-q", remote, "HEAD:slow-check");
+  await page.goto(`${server.root}/admin/ops`);
+  const row = `#feature-list .feature[data-branch="slow-check"]`;
+  await expect.poll(() => text(row), { timeout: 20_000 }).toContain("The check failed (not a conflict)");
+  expect(await text(row)).toContain("artifacts_git_receive_pack_busy");
+  expect(await page.locator(`${row} button[data-feature-merge]`).isDisabled()).toBe(true);
+
+  // Check again: the row says it runs at once, then the new state.
+  let letGo = () => {};
+  const held = new Promise<void>((ok) => (letGo = ok));
+  await page.route("**/api/tools/feature_branch", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.click(`${row} button[data-feature-check]`);
+  expect(await text(row)).toContain("Checking again…");
+  letGo();
+  await expect.poll(() => text(row), { timeout: 10_000 }).toContain("Merges cleanly");
+  expect(await page.locator(`${row} button[data-feature-merge]`).isDisabled()).toBe(false);
+  await page.unroute("**/api/tools/feature_branch");
+
+  // A push to the branch checks it again by itself: Artifacts busy again shows the new check failed.
+  busy(4);
+  step("slower.txt", "More work");
+  git("push", "-q", remote, "HEAD:slow-check");
+  await expect.poll(() => text(row), { timeout: 20_000 }).toContain("The check failed (not a conflict)");
+  expect(await text(row)).toContain(git("rev-parse", "--short=7", "HEAD"));
+});

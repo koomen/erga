@@ -32,6 +32,7 @@ import {
   type UpdateResult,
   type UpstreamSource,
 } from "./index.ts";
+import type { FeatureInfo } from "./features.ts";
 import { artifactsRemote, forkOf, githubAppOf, githubTokenFor, githubUninstallFor } from "../cloudflare";
 import { controlDirectory } from "../d1";
 import type { HostEnv } from "../env";
@@ -155,6 +156,17 @@ async deleteFeature(
     } catch (e) {
       return SourceHost.failed(e, "Deleting the branch");
   }
+  }
+  /** Whether a feature branch merges cleanly, checked again (check_feature_branch). */
+  async checkFeature(
+    origin: string,
+    name: string
+  ): Promise<{ branch: string; commit: string; merge: FeatureInfo["merge"] } | { error: string; status: number }> {
+    try {
+      return await this.at(origin).checkFeature(name);
+    } catch (e) {
+      return SourceHost.failed(e, "The check");
+    }
   }
 
   /** A release cut, as cut_release asks: the tag, or { error, status }. */

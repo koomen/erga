@@ -153,4 +153,35 @@ describe("feature branches", () => {
     expect(r.err).toContain("the feature branch short-lived is deleted");
     expect(await head("short-lived")).toBe("");
   });
+  test("a check that Artifacts answers busy is tried again; one still busy says it failed, and Check again checks it again", async () => {
+    const busy = (n: number) => writeFileSync(join(f.dir, "artifacts", "busy"), String(n));
+    const scratch = async () => (await must(w, "ls-remote", f.artifacts, "refs/heads/erga-merge/*")).trim();
+    await must(w, "checkout", "-q", "-b", "busy-work", "erga/staging");
+    file("e.txt", "ee\n");
+    await commit("Add e");
+    // Busy once: the check is tried again, and it's clean.
+    busy(1);
+    await must(w, "push", "-q", "erga", "HEAD:busy-work");
+    expect((await features()).find((x) => x.name == "busy-work")?.merge).toEqual({ state: "clean" });
+    // Busy for the check and its 3 tries again: it failed, and says why.
+    file("e.txt", "eee\n");
+    await commit("More e");
+    busy(4);
+    await must(w, "push", "-q", "erga", "HEAD:busy-work");
+    expect((await features()).find((x) => x.name == "busy-work")?.merge).toEqual({
+      state: "failed",
+      error: expect.stringContaining("artifacts_git_receive_pack_busy"),
+    });
+    expect(await f.repo.checkFeature("busy-work")).toMatchObject({ branch: "busy-work", merge: { state: "clean" } });
+    expect((await features()).find((x) => x.name == "busy-work")?.merge).toEqual({ state: "clean" });
+    expect(await scratch()).toBe("");
+  });
+
+  test("a scratch ref a merge left behind is deleted, and never shows as a feature branch", async () => {
+    const tip = await must(w, "rev-parse", "HEAD");
+    await must(w, "push", "-q", f.artifacts, `${tip}:refs/heads/erga-merge/055f09ed`);
+    expect((await features()).map((x) => x.name)).not.toContain("erga-merge/055f09ed");
+    await f.settle();
+    expect(await must(w, "ls-remote", f.artifacts, "refs/heads/erga-merge/*")).toBe("");
+  });
 });

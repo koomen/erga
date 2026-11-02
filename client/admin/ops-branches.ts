@@ -1,6 +1,7 @@
 // The Ops page's feature branches (control/source/page.ts; control/source/features.ts): one row for each branch, with
 // its commits ahead of and behind staging, its last commit, and whether it merges cleanly into staging. Merge opens a
-// dialog with the squash commit's message (feature_branch merge); Delete drops the branch (feature_branch delete).
+// dialog with the squash commit's message (feature_branch merge); Delete drops the branch (feature_branch delete);
+// Check again checks once more whether it merges cleanly (feature_branch check), above all after a check that failed.
 // The Ops page's script (client/inline/ops.ts) calls `render` with branches' `features` and `featureActions` each
 // time it loads, and `heard` with each {type: "feature"} event.
 //
@@ -14,10 +15,10 @@ import { runTool } from "../common/tools";
 
 // branches' answer, typed loosely: this page reads what the server sends and shows it.
 type Json = any;
-/** A Merge or Delete of a branch (control/source/features.ts, FeatureAction). */
+/** A Merge or Delete of a branch (control/source/features.ts, FeatureAction), or this page's Check again. */
 interface Action {
   branch: string;
-  action: "merge" | "delete";
+  action: "merge" | "delete" | "check";
   state: "running" | "done" | "failed";
   commit?: string;
   head?: string;
@@ -58,15 +59,15 @@ export function featureBranches(reload: () => Promise<void>): {
       const files = m.files.map((x: Json) => x.path).join(", ");
       return `<span class="f-state conflicts" title="${esc(files)}">Conflicts in ${plural(m.files.length, "file")}: ${esc(files)}</span>`;
     }
-    return `<span class="f-state conflicts">Couldn't check: ${esc(m.error)}</span>`;
+    return `<span class="f-state conflicts">The check failed (not a conflict): ${esc(m.error)}</span>`;
   };
   /** What an action shows in its row. */
   const said = (a: Action) => {
     const sha = (a.commit ?? "").slice(0, 7);
     if (a.state == "running")
-      return `<span class="f-state busy"><i></i>${a.action == "merge" ? "Merging into staging…" : "Deleting…"}</span>`;
+      return `<span class="f-state busy"><i></i>${{ merge: "Merging into staging…", delete: "Deleting…", check: "Checking again…" }[a.action]}</span>`;
     if (a.state == "failed")
-      return `<span class="f-state conflicts">Couldn't ${a.action == "merge" ? "merge" : "delete"}: ${esc(a.error ?? "")}</span>`;
+      return `<span class="f-state conflicts">Couldn't ${a.action == "check" ? "check again" : a.action}: ${esc(a.error ?? "")}</span>`;
     if (a.action == "merge")
       return `<span class="f-state clean">Merged into staging as <code>${esc(sha)}</code>: staging deploys it.</span>`;
     return `<span class="f-state">Deleted. It was at <code>${esc(sha)}</code>: <code>git push erga ${esc(sha)}:refs/heads/${esc(a.branch)}</code> brings it back.</span>`;
@@ -77,12 +78,13 @@ export function featureBranches(reload: () => Promise<void>): {
     const a = actionOf(f.name);
     // A Merge or Delete that ended took this head: the row says so until the list drops the branch.
     if (a?.state == "done" && (!a.head || a.head == f.commit)) return ended(a);
-    const busy = a?.state == "running";
+    const busy = a?.state == "running",
+      checkable = !busy && f.merge.state != "checking" && f.merge.state != "merged";
     return `<li class="feature" data-branch="${esc(f.name)}">
       <div class="f-top"><code class="f-name">${esc(f.name)}</code><span class="f-count">${plural(f.ahead, "commit")} ahead · ${f.behind} behind staging</span>${busy ? said(a) : state(f)}</div>
       ${f.last ? `<div class="f-last"><span class="f-subject">${esc(f.last.subject)}</span> · ${esc(f.last.author)} · <span class="f-time">${esc(timeAgo(f.last.at))}</span> · <code>${esc(f.commit.slice(0, 7))}</code></div>` : ""}
       ${a?.state == "failed" ? `<div class="f-note">${said(a)}</div>` : ""}
-      <div class="f-actions"><button class="new" type="button" data-feature-merge="${esc(f.name)}"${busy ? " disabled" : f.merge.state == "clean" ? "" : ` disabled title="Only a branch that merges cleanly into staging can be merged"`}>Merge</button><button class="pill" type="button" data-feature-delete="${esc(f.name)}"${busy ? " disabled" : ""}>Delete</button></div>
+      <div class="f-actions">${checkable ? `<button class="pill" type="button" data-feature-check="${esc(f.name)}">Check again</button>` : ""}<button class="new" type="button" data-feature-merge="${esc(f.name)}"${busy ? " disabled" : f.merge.state == "clean" ? "" : ` disabled title="Only a branch that merges cleanly into staging can be merged"`}>Merge</button><button class="pill" type="button" data-feature-delete="${esc(f.name)}"${busy ? " disabled" : ""}>Delete</button></div>
     </li>`;
   };
 
@@ -112,7 +114,11 @@ export function featureBranches(reload: () => Promise<void>): {
     draw();
     try {
       const r = await run();
-      mine.set(branch, { branch, action, state: "done", commit: r.commit, head: f.commit });
+      if (action == "check") {
+        // The row shows the new state at once; the list loaded again keeps it.
+        mine.delete(branch);
+        if (r.commit == f.commit) f.merge = r.merge;
+      } else mine.set(branch, { branch, action, state: "done", commit: r.commit, head: f.commit });
     } catch (err) {
       mine.set(branch, { branch, action, state: "failed", error: (err as Error).message });
     }
@@ -124,8 +130,13 @@ export function featureBranches(reload: () => Promise<void>): {
     const target = e.target as Element;
     const merge = target.closest<HTMLButtonElement>("button[data-feature-merge]");
     const del = target.closest<HTMLButtonElement>("button[data-feature-delete]");
-    const f = shown?.find((x) => x.name == (merge?.dataset.featureMerge ?? del?.dataset.featureDelete));
+    const check = target.closest<HTMLButtonElement>("button[data-feature-check]");
+    const f = shown?.find((x) => x.name == (merge?.dataset.featureMerge ?? del?.dataset.featureDelete ?? check?.dataset.featureCheck));
     if (!f) return;
+    if (check) {
+      act(f, "check", () => runTool("feature_branch", { action: "check", branch: f.name }));
+      return;
+    }
     if (del) {
       act(f, "delete", () => runTool("feature_branch", { action: "delete", branch: f.name }));
       return;
