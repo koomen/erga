@@ -2,9 +2,7 @@
 // the events on the document's socket.
 
 import { Transaction, type ChangeSet } from "@codemirror/state";
-import type { MarkAuthor } from "../../libs/text/ui/editor";
-import type { SocketEvent } from "./collab";
-import type { Author } from "../../document/content";
+import type { SocketEvent } from "../../libs/text/ui/collab";
 import type { DocName, Hello } from "../../document/api";
 import type { LogEvent, ViewRequest } from "../../shared/agent-log";
 import { live } from "../live/client";
@@ -40,17 +38,12 @@ export function mountRoom(shell: Shell) {
     else if (saidOffline) { saidOffline = false; setStatus("Back online; edits synced"); }
   }
 
-  /** Someone else's author entry as the marks show it. */
-  const markAuthor = (a: Author | null): MarkAuthor | null => a ? { name: a.kind == "disk" ? "Edited on disk" : a.name, color: a.color } : null;
-
-  // Edits from anyone else (a collaborator, an agent, a change on disk)
-  // arrive as changes against the current text and are applied in place,
-  // marked in their author's colour. They stay out of the undo history:
-  // ⌘Z only takes back your own edits.
-  function applyRemote(changes: ChangeSet, author: Author | null) {
+  /**
+   * Someone else's edit (a person, an agent, the disk), against the text as it is: into the source view, if it's open,
+   * out of its undo history. The page's editor has a replica of its own, and takes it there.
+   */
+  function applyRemote(changes: ChangeSet) {
     if (shell.sourceView) shell.sourceView.dispatch({ changes, annotations: Transaction.addToHistory.of(false), userEvent: "external" });
-    // The page takes it when it isn't set aside for the source view.
-    shell.page.applyExternal(changes, markAuthor(author));
     shell.people.queuePeers();
   }
 

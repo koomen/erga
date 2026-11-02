@@ -210,7 +210,7 @@ export abstract class EditorRender extends EditorMarks {
    * there, and how far down the window that character's line is. Null where
    * no text is (a picture, a widget).
    */
-  protected topText(start = this.firstShown()): { pos: number; top: number } | null {
+  topText(start = this.firstShown()): { pos: number; top: number } | null {
     const doc = this.doc as
       | (Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null })
       | null;

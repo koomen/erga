@@ -22,7 +22,7 @@ type Kept = {
 export default function viewerEditingHead(scripts: string[], restoreKey: string): void {
   window.ergaConnect = () => {
     // The editor's start (its hello and the document's whole text: shared/room-socket.ts), on the connection this page
-    // came on, and the document's one socket, which needs a connection of its own: both at once. client/shell/collab.ts takes
+    // came on, and the document's one socket, which needs a connection of its own: both at once. libs/text/ui/collab.ts takes
     // them over (the socket with what came on it before then).
     const was = window.ergaSocket;
     if (was && was.readyState < 2) return was;

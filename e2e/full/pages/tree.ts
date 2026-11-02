@@ -105,6 +105,18 @@ export const styled = (page: import("playwright-core").Page) => inFrames<{ h1: s
 /** The tab's address, path and hash. */
 export const where = (page: import("playwright-core").Page) => page.evaluate(() => location.pathname + location.search).catch(() => "");
 /** The editor is ready and listening: open_page and new_page reach only the tabs whose event channel is up (erga-listening). */
-export const ready = (page: import("playwright-core").Page) => page.evaluate(() => ["erga-editor-ready", "erga-editing", "erga-listening"].every((c) => document.body.classList.contains(c))).catch(() => false);
+/** The editor is up: its controls in the tab, and its half in the page, which has joined the room (libs/text/ui/frame.ts). */
+export const ready = async (page: import("playwright-core").Page) =>
+  (await page
+    .evaluate(() => ["erga-editor-ready", "erga-editing", "erga-listening"].every((c) => document.body.classList.contains(c)))
+    .catch(() => false)) &&
+  (
+    await Promise.all(
+      page
+        .frames()
+        .filter((f) => f != page.mainFrame())
+        .map((f) => f.evaluate("!!window.ergaFrame?.page").catch(() => false))
+    )
+  ).some(Boolean);
 /** The page the editor edits (window.ergaPage.pagePath). */
 export const editing = (page: import("playwright-core").Page) => page.evaluate(() => (window as any).ergaPage?.pagePath ?? "").catch(() => "");

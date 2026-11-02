@@ -54,11 +54,11 @@ const make = (files: Made[]) => `
 
 /**
  * The editor takes a drop: it's on the page, which isn't loading again (an edit the editor can't patch in makes the page
- * afresh, a moment after it shows in the text) and has sent its edits. A person can't drop sooner.
+ * afresh, a moment after it shows in the text). A person can't drop sooner.
  */
 const ready = (ed: Editor) =>
   until(
-    () => ed.frame<boolean>(`!!window.ergaFrame?.page && !ergaFrame.reloading && !ergaFrame.page.rendering && ergaFrame.relay.idle`),
+    () => ed.frame<boolean>(`!!window.ergaFrame?.page && !ergaFrame.reloading && !ergaFrame.page.rendering`),
     10_000,
     "the editor takes a drop"
   );

@@ -1,14 +1,14 @@
 // Presence: everyone's carets, the avatars of who's here, and your own avatar's account menu.
 
 import type { Peer } from "../../libs/text/ui/editor";
-import type { Presence } from "./collab";
+import type { Presence } from "../../libs/text/ui/collab";
 import type { Author } from "../../document/content";
 import { $, type Shell } from "./shell";
 import { safeAvatar } from "../../shared/avatars";
 
 export function mountPeople(shell: Shell) {
 
-  // Everyone's caret on the page (or in the source view), with their name;
+  // Everyone's caret in the source view (the page's editor draws them on the page), with their name;
   // an agent's, dashed, while it works. The avatars at the
   // top say who's here and what each agent is doing. A person with several
   // tabs open is shown by the one they used last, and your own other tabs
@@ -48,18 +48,18 @@ export function mountPeople(shell: Shell) {
       });
     }
     if (shell.sourceView && shell.source) shell.sourceView.dispatch({ effects: shell.source.setPeers.of(peers) });
-    else shell.page.setPeers(peers);
   }
-  // This tab's caret, for everyone else. It stays where you left it when
-  // you switch away, as a caret on paper would (but with another of your
-  // tabs in use since, that one's caret is shown instead).
+  // This tab's caret in the source view, for everyone else (on the page, the page's editor shows its own). It stays
+  // where you left it when you switch away, as a caret on paper would (but with another of your tabs in use since, that
+  // one's caret is shown instead).
   let cursorQueued = false;
   function queueCursor() {
     if (cursorQueued) return;
     cursorQueued = true;
     requestAnimationFrame(() => {
       cursorQueued = false;
-      const sel = shell.currentSelection().main;
+      if (!shell.sourceView) return;
+      const sel = shell.sourceView.state.selection.main;
       shell.collab.setCursor(sel.anchor, sel.head);
     });
   }

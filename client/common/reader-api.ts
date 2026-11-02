@@ -17,6 +17,8 @@ declare global {
       changed?(): void;
       /** The editor put the page back where it was. */
       placed?(): void;
+      /** The viewer's last word on editing (erga-mode), which the editor reads as it loads, and hears after. */
+      mode?: unknown;
       /** The page tools are here: they answer each ask, those that waited for them first. */
       tools?(answer: (ask: ToolAsk) => void): void;
     };

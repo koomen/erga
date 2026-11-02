@@ -1,20 +1,16 @@
-// The shell's side of the document room: a replica of the shared Yjs doc,
-// synced with the host over the tab's one WebSocket (/api/room?events=1:
-// y-protocols' sync and awareness messages as binary frames, the person's
-// events as text frames of JSON: document/tabs.ts), and the binding between
-// it and the editor's CodeMirror state.
+// A replica of the document room's shared Yjs doc, synced with the host over one WebSocket (/api/room?events=1:
+// y-protocols' sync and awareness messages as binary frames, the person's events as text frames of JSON:
+// document/tabs.ts), and the binding between it and an editor's CodeMirror state. The page's editor (frame.ts) has
+// one, on its socket from the pages origin with an edit key; the viewer (client/shell/main.ts) has one for the source
+// view, the people in the document and the agent's events.
 //
-// The tab starts before this script has loaded (server/pages/viewer.ts,
-// ergaConnect, as the page parses): one request for the document's details
-// (its hello) and the room's whole state, on the connection the page came
-// on (GET /api/start: shared/room-socket.ts), and the socket at the same
-// time, which needs a connection of its own. This takes both over (the
-// socket with whatever came on it before then). So the editor starts one
-// round trip after the page, and never waits for the socket: an edit made
-// before it's open goes as soon as it is. Once the state is in and the
-// socket open, the tab asks for what changed since (sync step 1), as a tab
-// that reconnects does; that one also names the history it holds (its
-// epoch), and a socket on another history than the start's is refused.
+// The viewer starts before its script has loaded (server/pages/viewer.ts, ergaConnect, as the page parses): one
+// request for the document's details (its hello) and the room's whole state, on the connection the page came on
+// (GET /api/start: shared/room-socket.ts), and the socket at the same time. A Collab takes both over (`start`,
+// `early`: the socket with whatever came on it before then). Without a start, the socket's own sync brings the state.
+// Once the state is in and the socket open, the replica asks for what changed since (sync step 1), as one that
+// reconnects does; that one also names the history it holds (its epoch), and a socket on another history than the
+// start's is refused.
 //
 // Local edits are CodeMirror transactions; each becomes one Yjs transaction
 // on the document's Y.Text. Edits from anyone else arrive as Y.Text events,
@@ -31,7 +27,7 @@ import * as decoding from "lib0/decoding";
 import * as sync from "y-protocols/sync";
 import * as awarenessProtocol from "y-protocols/awareness";
 import type { ChangeSet } from "@codemirror/state";
-import type { Hello } from "../../document/api";
+import type { Hello } from "../../../document/api";
 import {
   applyChanges,
   assets,
@@ -44,12 +40,11 @@ import {
   stamp,
   stateVector,
   type Author,
-} from "../../document/content";
-import { changesBetween } from "../../document/merge";
-import { BASE } from "./shell";
-import { decodeStart, PING, PONG } from "../../shared/room-socket";
-import { base64, fromBase64 } from "../../shared/bytes";
-import { sleep } from "../../shared/time";
+} from "../../../document/content";
+import { changesBetween } from "../../../document/merge";
+import { decodeStart, PING, PONG } from "../../../shared/room-socket";
+import { base64, fromBase64 } from "../../../shared/bytes";
+import { sleep } from "../../../shared/time";
 
 /** Someone in the room, from awareness. */
 export interface Presence {
@@ -83,6 +78,12 @@ export interface CollabOptions {
    * its state, and merging would double the document. Reload.
    */
   onStale: () => void;
+  /** The socket's address, with its query (`q`: the replica's own, as its epoch). */
+  url: (q: URLSearchParams) => string;
+  /** The hello and the room's whole state, asked for already (GET /api/start), if they were. */
+  start?: Promise<ArrayBuffer | null>;
+  /** The socket the page opened as it parsed, if it did (it's taken over, with what came on it before). */
+  early?: EarlySocket;
 }
 
 /** y-protocols' message types, as the room sends them (document/room.ts). */
@@ -91,8 +92,7 @@ const MSG_SYNC = 0, MSG_AWARENESS = 1, MSG_QUERY_AWARENESS = 3;
 const PING_EVERY = 15_000, PONG_WITHIN = 8_000;
 
 /** The socket the page opened as it parsed (server/pages/viewer.ts, ergaConnect), with what came on it before this script did. */
-type EarlySocket = WebSocket & { early?: (string | ArrayBuffer)[] };
-declare global { interface Window { ergaSocket?: EarlySocket; ergaStart?: Promise<ArrayBuffer | null> } }
+export type EarlySocket = WebSocket & { early?: (string | ArrayBuffer)[] };
 
 export class Collab {
   readonly doc = new Y.Doc();
@@ -126,7 +126,7 @@ export class Collab {
   /** Set once the first sync is done; until then everything arriving is the initial state. */
   private live = false;
 
-  constructor(private opts: CollabOptions, private params: Record<string, string>) {
+  constructor(private opts: CollabOptions) {
     this.hello.catch(() => {});
     this.awareness.on("change", ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }) => {
       // This tab's own cursor moving is no news to it.
@@ -147,10 +147,8 @@ export class Collab {
     files(this.doc).observeDeep((events) => this.filesChanged(events));
     assets(this.doc).observe((e) => { if (this.live) opts.onFiles([...e.keysChanged]); });
     // The page's socket, if it opened one (and it's not closed); else one of its own.
-    const early = window.ergaSocket, start = window.ergaStart;
-    window.ergaSocket = window.ergaStart = undefined;
-    this.connect(early);
-    void this.start(start ?? fetch(`${BASE}/api/start${params.user ? `?user=${encodeURIComponent(params.user)}` : ""}`).then((r) => (r.ok ? r.arrayBuffer() : null), () => null));
+    this.connect(opts.early);
+    void this.start(opts.start ?? Promise.resolve(null));
   }
 
   /** The start's answer: the hello, and the room's state, which this tab holds from now on. */
@@ -181,11 +179,19 @@ export class Collab {
   /** Whether the socket is open now. */
   get connected(): boolean { return this.open; }
 
-  /** Who this tab is and which page it edits (once the hello has said): its presence goes to the room from now on. */
-  join(me: Author, path: string): void {
+  /**
+   * Who this replica is and which page it edits (once the hello has said). With `presence` (null: none yet), its
+   * presence goes to the room from now on, with those fields too.
+   */
+  join(me: Author, path: string, presence: Record<string, unknown> | null = {}): void {
     this.me = me;
     this.path = path;
-    this.awareness.setLocalState({ user: me, cursor: null, active: document.hasFocus() ? Date.now() : 0 });
+    if (presence) this.present(presence);
+  }
+
+  /** Its presence goes to the room from now on: who it is, its caret (none yet), and `extra`. */
+  present(extra: Record<string, unknown> = {}): void {
+    this.awareness.setLocalState({ user: this.me, cursor: null, active: document.hasFocus() ? Date.now() : 0, ...extra });
   }
 
   /** Resolves with the document's text once the first sync with the room is done (after `join`). */
@@ -203,8 +209,27 @@ export class Collab {
   // ------------------------------------------------------------ the socket
 
   private url(): string {
-    const q = new URLSearchParams({ events: "1", ...this.params, ...(this.epoch ? { epoch: this.epoch } : {}) });
-    return `${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${BASE}/api/room?${q}`;
+    return this.opts.url(new URLSearchParams(this.epoch ? { epoch: this.epoch } : {}));
+  }
+
+  /** Leaves the room for good: the socket closes, and this replica's presence goes with it. */
+  close(): void {
+    this.stopped = true;
+    clearInterval(this.pinger);
+    awarenessProtocol.removeAwarenessStates(this.awareness, [this.doc.clientID], "left");
+    const ws = this.ws;
+    this.ws = null;
+    this.open = false;
+    try {
+      ws?.close();
+    } catch {
+      /* gone */
+    }
+  }
+
+  /** Takes its presence out of the room; the replica itself stays in it. */
+  leave(): void {
+    this.awareness.setLocalState(null);
   }
 
   private connect(early?: EarlySocket): void {
@@ -251,7 +276,12 @@ export class Collab {
       return;
     }
     if (this.stopped) return;
-    if (!was && !this.greeted && this.tries >= 2) { this.stopped = true; this.noHello(new Error("the host refused the connection")); return; }
+    // (Never in: no such document, or not theirs to open. One that was in keeps trying.)
+    if (!was && !this.greeted && !this.live && this.tries >= 2) {
+      this.stopped = true;
+      this.noHello(new Error("the host refused the connection"));
+      return;
+    }
     setTimeout(() => this.connect(), Math.min(2500, 100 * 2 ** this.tries++));
   }
 

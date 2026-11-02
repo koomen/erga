@@ -183,6 +183,10 @@ Found a new trap? Write it here, in the same change.
   FACTORY_KEY) must be emptied in the copy, and staging's own rows kept: `ownCredentials` in
   control/deploys/account.ts does it for `credentials` and `person_keys`. It runs on the control Worker, so it
   takes effect one deploy late.
+- The page's editor has its own socket and replica of the room (libs/text/ui/frame.ts), apart from the shell's. An
+  edit typed on the page reaches the shell's replica only through the room, a moment later. A test that reads the
+  shell's text waits for it (`ed.source()`); one that reads the editor's selection reads the frame's (`ed.selection()`).
+  The editor starts a round trip after the pencil: a test waits for `window.ergaFrame.page` before it clicks.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 

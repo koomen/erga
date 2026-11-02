@@ -5,7 +5,7 @@
 import type { EditorSelection, EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { RemotePage } from "./remote";
-import type { Collab } from "./collab";
+import type { Collab } from "../../libs/text/ui/collab";
 import type { Author } from "../../document/content";
 import type { DocInfo, DocName } from "../../document/api";
 import type { Settings } from "../pages/settings";

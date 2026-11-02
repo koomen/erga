@@ -41,7 +41,7 @@ test("the header follows the page's background: the agent's edit to a style rule
   ] } }]);
   await follows(ed, "rgb(10, 40, 60)", true, "a script change");
 
-  // Typed in the source view, and undone in the page.
+  // Typed in the source view. (Its undo history is its own: the page's editor has another.)
   await ed.eval(`ergaPage.toggleSource(true)`);
   await until(() => ed.eval<boolean>(`!!document.querySelector("#source .cm-content[contenteditable=true]")`), 5000, "the source view");
   await ed.eval(`(() => {
@@ -53,7 +53,4 @@ test("the header follows the page's background: the agent's edit to a style rule
   await ed.page.keyboard.type("rgb(250, 240, 200)");
   await ed.press("Escape");
   await follows(ed, "rgb(250, 240, 200)", false, "a change typed in the source view");
-  await ed.idle();
-  await ed.press("ControlOrMeta+z");
-  await follows(ed, "rgb(10, 40, 60)", true, "its undo");
 });
