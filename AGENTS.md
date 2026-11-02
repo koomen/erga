@@ -6,9 +6,12 @@ README.md maps the folders. Pete (`koomen`) owns Erga.
 
 ## How to work
 
-Work on a branch of `staging`, or on `staging` itself for a small change.
-`bun run test` (format, lint, typecheck, unit tests, smoke run) must end
-with `all passing` before you push. Run the e2e file or folder of the part
+A small fix that fits in one commit goes straight to `staging`. Larger work
+goes on a feature branch of its own (`git push origin HEAD:<branch>`, any
+name but `staging` and `main`); Pete, or an agent he asks, merges it from the
+Ops page as one commit on staging. `bun run test` (format, lint, typecheck,
+unit tests, smoke run) must end with `all passing` before every push, to a
+feature branch too. Run the e2e file or folder of the part
 you change (`bun run test:e2e e2e/full/page/`); the whole suite
 (`bun run test:full`) only when asked. A new smoke test (`e2e/smoke/`, 90 s limit)
 replaces one.
@@ -41,8 +44,10 @@ result each time.
 docs/operations.md tells how a deployment builds, deploys and rolls back.
 Read it before you push to a deployment's repository. On Erga's own:
 
-1. Push to `staging` only: `git push origin HEAD:staging`. Staging deploys
-   at once.
+1. Push to `staging` (`git push origin HEAD:staging`), or to a feature branch
+   (`git push origin HEAD:<branch>`). Staging deploys at once. A feature
+   branch does not deploy: Merge on the Ops page (`merge_feature_branch`) puts
+   it on staging as one commit, and staging deploys that.
 2. Never push to `main`. Pete moves `main`, and production deploys from it.
 3. A push is not a deploy. `curl -s https://staging.erga.dev/api/deploys/version`
    must show your commit before you say it is on staging.
@@ -129,6 +134,10 @@ Found a new trap? Write it here, in the same change.
   needs `bun deploy/setup.ts --control --yes` (OrbStack running) before
   `main` deploys it. The new builder image rolls out with a lag: if the
   first build still uses the old one, deploy again a few minutes later.
+- The repository lives in the control Worker, which deploys from `main`. Staging's and production's Ops pages call it
+  over the CONTROL binding (cloudflare/platform.ts, controlSource). A new repository method or field
+  (control/source/routes.ts, SourceObject) works on staging only after `main` deploys the control Worker: until then the
+  page must not break on its absence.
 - A document's object runs the old code until it restarts, minutes after a
   deploy if tabs keep it busy. The Worker calls its methods directly
   (`cloudflare/objects/document-stub.ts`). A deploy that adds a method of

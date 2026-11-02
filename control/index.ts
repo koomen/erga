@@ -43,15 +43,39 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   advertise(origin: string) { return this.source.advertise(origin); }
   branches(origin: string) { return this.source.branches(origin); }
   // GitHub: the status, a sync now, the repository connected (the consent's end), disconnected, a push there (the webhook).
-  githubStatus(origin: string) { return this.source.githubStatus(origin); }
-  syncGithub(origin: string, by: string) { return this.source.syncGithub(origin, by); }
-  connectGithub(origin: string, link: GithubLink, by: string) { return this.source.connectGithub(origin, link, by); }
-  disconnectGithub(origin: string) { return this.source.disconnectGithub(origin); }
-  githubPushed(origin: string, event: PushEvent) { return this.source.githubPushed(origin, event); }
-  files(origin: string, commit: string) { return this.source.files(origin, commit); }
-  read(origin: string, q: SourceRead) { return this.source.read(origin, q); }
-  merge(origin: string, who: Actor, commit?: string) { return this.source.merge(origin, who, commit); }
-  release(origin: string, who: Actor, o?: { version?: string; notes?: string; commit?: string }) { return this.source.release(origin, who, o); }
+  githubStatus(origin: string) {
+    return this.source.githubStatus(origin);
+  }
+  syncGithub(origin: string, by: string) {
+    return this.source.syncGithub(origin, by);
+  }
+  connectGithub(origin: string, link: GithubLink, by: string) {
+    return this.source.connectGithub(origin, link, by);
+  }
+  disconnectGithub(origin: string) {
+    return this.source.disconnectGithub(origin);
+  }
+  githubPushed(origin: string, event: PushEvent) {
+    return this.source.githubPushed(origin, event);
+  }
+  files(origin: string, commit: string) {
+    return this.source.files(origin, commit);
+  }
+  read(origin: string, q: SourceRead) {
+    return this.source.read(origin, q);
+  }
+  merge(origin: string, who: Actor, commit?: string) {
+    return this.source.merge(origin, who, commit);
+  }
+  mergeFeature(origin: string, who: Actor, name: string, message?: string) {
+    return this.source.mergeFeature(origin, who, name, message);
+  }
+  deleteFeature(origin: string, name: string) {
+    return this.source.deleteFeature(origin, name);
+  }
+  release(origin: string, who: Actor, o?: { version?: string; notes?: string; commit?: string }) {
+    return this.source.release(origin, who, o);
+  }
   // A downstream's Update from upstream, and the ways out of a merge that conflicted.
   update(origin: string, who: Actor) { return this.source.update(origin, who); }
   resolveUpdate(origin: string, who: Actor, path: string, content: string | null) { return this.source.resolveUpdate(origin, who, path, content); }

@@ -48,7 +48,9 @@ ${owner} is an admin of this Erga server. For the server (the admin pages, /admi
 For staging, production and access (the Ops page, /admin/ops, and /settings):
 
 - list_branches reads staging and main: their heads, latest commits, what main doesn't
-  have yet, GitHub's status, and any merge waiting on conflicts. deploy_production moves
+  have yet, the feature branches, GitHub's status, and any merge waiting on conflicts.
+  merge_feature_branch puts a feature branch's work on staging as one commit (write its
+  message: what the work changes); delete_feature_branch drops a branch. deploy_production moves
   main to staging's head (or to an earlier staging commit): production deploys it, and
   the change log names ${owner}.
 - github_status reads the GitHub connection (the repository connected, the sync, its

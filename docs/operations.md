@@ -17,7 +17,17 @@ deployment has its own names in `deploy/targets.json`.
 
 ## The branches
 
-1. Work on a branch of `staging`, or on `staging` for a small change.
+1. A small fix that fits in one commit goes straight to `staging`. Larger
+   work goes on a feature branch: any name but `staging`, `main` and Erga's
+   own (`erga-*`, `upstream-merge/*`, `github-merge/*`):
+
+       git push origin HEAD:<branch>
+
+   A feature branch does not deploy, and it does not go to GitHub. The Ops
+   page lists it above the git log, with whether it merges cleanly into
+   staging. Merge (`merge_feature_branch`) adds one commit on staging with
+   all of its changes, then deletes the branch. Delete
+   (`delete_feature_branch`, or `git push origin --delete <branch>`) drops it.
 2. Push to `staging`:
 
        git push origin HEAD:staging

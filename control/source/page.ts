@@ -17,7 +17,16 @@
 // (disconnect_deploy_credential) revokes it. No link elsewhere.
 //
 // Git Repository, below: how to clone and push, Merge
-// and Cut release, then the git log:
+// and Cut release, the feature branches, then the git log.
+//
+// Feature branches (client/admin/ops-branches.ts): every branch but staging,
+// main and Erga's own, newest first, each with its commits ahead of and behind
+// staging, its last commit, and whether it merges cleanly into staging. Merge
+// opens a dialog with the squash commit's message (merge_feature_branch:
+// one commit on staging, which deploys, then the branch goes); Delete drops
+// it (delete_feature_branch).
+//
+// The git log:
 //
 // One list: staging's history, newest first (staging is always at or ahead
 // of main, so it holds every commit main has). When staging is far ahead, a
@@ -137,6 +146,12 @@ git push erga HEAD:staging</code></pre>
     <p class="hint" id="update-hint" role="status"></p>
   </div>
   </div>
+  <section class="box features" id="features" aria-labelledby="features-head">
+    <h2 id="features-head">Feature branches</h2>
+    <p class="features-note">Larger work goes on a branch of its own: <code>git push erga HEAD:&lt;name&gt;</code>. A feature branch never deploys. Merge puts all its changes on staging as one commit.</p>
+    <ul class="feature-list" id="feature-list"><li class="feature-none">Loading…</li></ul>
+    <p class="hint" id="feature-hint" role="status"></p>
+  </section>
   <section class="card" aria-label="Commits">
     <div class="legend"><span class="up-only" id="legend-upstream" hidden><i class="dot upstream"></i>on ${upstreamName}, not here yet</span><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span></div>
     <div class="grid" id="grid">
@@ -159,6 +174,12 @@ git push erga HEAD:staging</code></pre>
     <label>Version<input id="release-version" autocomplete="off" spellcheck="false"></label>
     <label>Notes (the tag's message; optional)<textarea id="release-notes" placeholder="What this release brings, in a few lines"></textarea></label>
     <div class="buttons"><span id="release-status" role="status" aria-live="polite"></span><button type="button" id="release-cancel">Cancel</button><button type="button" class="primary" id="release-go">Cut release</button></div>
+  </dialog>
+  <dialog id="feature-dlg" aria-labelledby="feature-title">
+    <h2 id="feature-title">Merge <code id="feature-name"></code> into staging</h2>
+    <p>All of the branch's changes become one commit on staging, and staging deploys it. Then the branch is deleted.</p>
+    <label>Commit message<textarea id="feature-message" spellcheck="true"></textarea></label>
+    <div class="buttons"><span id="feature-status" role="status" aria-live="polite"></span><button type="button" id="feature-cancel">Cancel</button><button type="button" class="primary" id="feature-go">Merge</button></div>
   </dialog>
   <dialog id="deploy-log" aria-labelledby="log-title">
     <div class="top"><h2 id="log-title">Deploy log</h2><span class="meta" id="log-meta"></span><button class="pill rollback" type="button" id="log-rollback" hidden>Roll back</button><button class="pill close" type="button" id="log-close">Close</button></div>

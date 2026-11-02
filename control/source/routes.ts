@@ -8,8 +8,8 @@
 //   GET  /git, /git/tree/<ref>/<path>   Erga's source for anyone, read-only, with no sign-in: how to clone, main and staging,
 //                               their recent commits, and the files (public.ts). A browser at /git/erga.git sees it too.
 //   POST /api/tools/<name>      the Ops page's operations on the repository (control/source/operations.ts): list_branches,
-//                               deploy_production (main moved to staging), cut_release, github_status, sync_github,
-//                               disconnect_github, update_from_upstream, resolve_conflict_file, finish_waiting_merge,
+//                               deploy_production (main moved to staging), merge_feature_branch, delete_feature_branch,
+//                               cut_release, github_status, sync_github, disconnect_github, update_from_upstream, resolve_conflict_file, finish_waiting_merge,
 //                               drop_waiting_merge, and the reads list_source, read_source, search_source, source_log.
 //                               Connect GitHub is a consent in a popup, on the control Worker (control/github-routes.ts, /github/connect)
 //   /admin/ops               the Ops page (admins): the history of staging and main, and their deploys
@@ -27,6 +27,7 @@ import { gitHttp } from "./http.ts";
 import type { Remote } from "./remote.ts";
 import type { GithubLink, PushEvent } from "./github.ts";
 import type { Actor, BranchInfo } from "./repo.ts";
+import type { FeatureInfo } from "./features.ts";
 import type { GithubStatus } from "./github-sync.ts";
 import type { MergeConflict } from "./conflicts.ts";
 import type { Released, TagInfo } from "./releases.ts";
@@ -35,7 +36,15 @@ import type { UpdateResult, UpstreamView } from "./upstream.ts";
 /** The repository's object (one, "erga"): pushes and merges happen there one at a time. Calls name the address the request came to (`origin`). */
 export interface SourceObject {
   advertise(origin: string): Promise<Uint8Array>;
-  branches(origin: string): Promise<{ branches: BranchInfo[]; github: GithubStatus; conflict: MergeConflict | null; tags?: TagInfo[]; release?: string | null; upstream?: UpstreamView }>;
+  branches(origin: string): Promise<{
+    branches: BranchInfo[];
+    features: FeatureInfo[];
+    github: GithubStatus;
+    conflict: MergeConflict | null;
+    tags?: TagInfo[];
+    release?: string | null;
+    upstream?: UpstreamView;
+  }>;
   /** GitHub: the status; a sync now (`by`: who asked); the repository connected (the consent's end: control/github-routes.ts); disconnected; a push there (the webhook). */
   githubStatus(origin: string): Promise<GithubStatus>;
   syncGithub(origin: string, by: string): Promise<GithubStatus>;
@@ -47,6 +56,14 @@ export interface SourceObject {
   read(origin: string, q: SourceRead): Promise<SourceAnswer | { error: string }>;
   /** A merge: { commit } or { error, status }. */
   merge(origin: string, who: Actor, commit?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean } | { error: string; status: number }>;
+  /** A feature branch merged into staging as one commit (a squash), or deleted: the result, or { error, status }. */
+  mergeFeature(
+    origin: string,
+    who: Actor,
+    name: string,
+    message?: string
+  ): Promise<{ commit: string; branch: string; commits: number } | { error: string; status: number }>;
+  deleteFeature(origin: string, name: string): Promise<{ branch: string; commit: string } | { error: string; status: number }>;
   /** A release cut (a tag): the release, or { error, status }. */
   release(origin: string, who: Actor, o?: { version?: string; notes?: string; commit?: string }): Promise<Released | { error: string; status: number }>;
   /** A downstream's Update from upstream, and the ways out of a merge that conflicted: each the result, or { error, status }. */

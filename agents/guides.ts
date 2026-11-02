@@ -181,7 +181,11 @@ with the header: it is then written for that token.
   models.
 - Erga's repository is ${origin}/git/erga.git: anyone may clone it, and a push
   takes an admin token as the password (any username). A push to staging deploys
-  staging. Production (main) moves only when your person asks.
+  staging. A small fix that fits in one commit goes straight to staging; larger
+  work goes on a feature branch of its own (\`git push erga HEAD:<name>\`: any name
+  but staging and main), which never deploys. merge_feature_branch puts a branch's
+  work on staging as one commit, when your person asks; delete_feature_branch drops
+  one. Production (main) moves only when your person asks.
 - No token can make or approve another token, and a secret (an API key) is set
   only on its page, never here: you may clear one.
 

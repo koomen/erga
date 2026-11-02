@@ -24,7 +24,7 @@ import {
 } from "./git.ts";
 import { fetchPack, lsRefs, receivePack, type RefUpdate, type Remote } from "./remote.ts";
 import { cleanPath } from "./browse.ts";
-import { isBinary, mergeTrees, type Conflict } from "./merge.ts";
+import { isBinary, mergeTrees, type Conflict, type Labels, type TreeMergeResult } from "./merge.ts";
 import { isMergeBranch, REF, SCRATCH, SourceError } from "./refs.ts";
 import type { Actor, SourceRepo } from "./repo.ts";
 import { byLine, SYSTEM } from "../../shared/attribution.ts";
@@ -84,21 +84,7 @@ export class Conflicts {
     }
   ): Promise<{ result: "merged"; commit: string } | { result: "conflicts"; conflict: MergeConflict }> {
     const { ours, theirs, base } = o;
-    // The three trees, read whole (a scratch ref for the base, which isn't a branch's head).
-    const scratch = `${SCRATCH}${crypto.randomUUID().slice(0, 8)}`;
-    if (base) await receivePack(remote, [{ ref: scratch, old: ZERO, new: base }], await emptyPack());
-    let objects: Map<string, GitObject>;
-    try {
-      objects = await readPack(await fetchPack(remote, { wants: [ours, theirs, ...(base ? [base] : [])], deepen: 1 }));
-    } finally {
-      if (base) await receivePack(remote, [{ ref: scratch, old: base, new: ZERO }], null).catch(() => {});
-    }
-    const treeOf = (sha: string) => {
-      const x = objects.get(sha);
-      if (!x || x.type != "commit") throw new SourceError({ message: `Artifacts didn't send commit ${sha.slice(0, 7)}`, status: 502 });
-      return parseCommit(x.data).tree;
-    };
-    const merged = await mergeTrees({ get: (sha) => objects.get(sha) }, base ? treeOf(base) : null, treeOf(ours), treeOf(theirs), o.labels);
+    const merged = await this.mergeOf(remote, ours, theirs, base, o.labels);
     const files = merged.conflicts;
     const message = files.length
       ? `${o.message}: ${plural(files.length, "file")} conflict\n\n${files.map((f) => `${f.path} (${f.kind})`).join("\n")}\n`
@@ -134,8 +120,39 @@ export class Conflicts {
     return { result: "conflicts", conflict };
   }
 
+  /**
+   * The three-way merge of the trees of `theirs` into `ours` over `base` (commits; a scratch ref for the base, which
+   * isn't a branch's head, so Artifacts sends it). The trees of all three are read whole.
+   */
+  async mergeOf(
+    remote: Remote,
+    ours: string,
+    theirs: string,
+    base: string | null,
+    labels: Labels
+  ): Promise<TreeMergeResult & { ourTree: string }> {
+    const scratch = `${SCRATCH}${crypto.randomUUID().slice(0, 8)}`;
+    if (base) await receivePack(remote, [{ ref: scratch, old: ZERO, new: base }], await emptyPack());
+    let objects: Map<string, GitObject>;
+    try {
+      objects = await readPack(await fetchPack(remote, { wants: [ours, theirs, ...(base ? [base] : [])], deepen: 1 }));
+    } finally {
+      if (base) await receivePack(remote, [{ ref: scratch, old: base, new: ZERO }], null).catch(() => {});
+    }
+    const treeOf = (sha: string) => {
+      const x = objects.get(sha);
+      if (!x || x.type != "commit") throw new SourceError({ message: `Artifacts didn't send commit ${sha.slice(0, 7)}`, status: 502 });
+      return parseCommit(x.data).tree;
+    };
+    const ourTree = treeOf(ours);
+    return {
+      ...(await mergeTrees({ get: (sha) => objects.get(sha) }, base ? treeOf(base) : null, ourTree, treeOf(theirs), labels)),
+      ourTree,
+    };
+  }
+
   /** A commit object by `who`, now. */
-  private commitObject(o: { tree: string; parents: string[]; who: Actor; message: string }): GitObject {
+  commitObject(o: { tree: string; parents: string[]; who: Actor; message: string }): GitObject {
     const time = Math.floor(this.repo.now() / 1000);
     const person = { name: o.who.name || o.who.login, email: o.who.login == SYSTEM ? `noreply@${TARGETS.production.host}` : `${o.who.login}@users.noreply.github.com`, time, tz: "+0000" };
     return { type: "commit", data: commitBytes({ tree: o.tree, parents: o.parents, author: person, committer: person, message: o.message }) };
