@@ -185,3 +185,20 @@ test("---, *** or ___ on its own line, then Enter, makes a horizontal rule; undo
   await expect.poll(() => ed.count("hr")).toBe(1);
   await expect.poll(async () => (await ed.visible()).endsWith("Below\n\n***|")).toBe(true);
 });
+
+test('after bold text, Enter then "- ", "# " or "[ ] " makes the block and the text typed stays bold, as valid HTML', async ({ tab }) => {
+  for (const [marker, want] of [
+    ["- ", /<ul>\n {2}<li><strong>item<\/strong><\/li>\n<\/ul>/],
+    ["# ", /<h1><strong>item<\/strong><\/h1>/],
+    ["[ ] ", /<li style="list-style: none"><input type="checkbox"> <strong>item<\/strong><\/li>/],
+  ] as const) {
+    const ed = await openEditor(tab, await servers.main(), "empty");
+    await ed.clickEnd("p");
+    await ed.type("Hello more");
+    for (let i = 0; i < 4; i++) await ed.press("Shift+ArrowLeft");
+    await ed.press("ControlOrMeta+b");
+    await ed.press("End");
+    await ed.type(`\n${marker}item`);
+    await expect.poll(() => ed.source()).toMatch(want);
+  }
+});

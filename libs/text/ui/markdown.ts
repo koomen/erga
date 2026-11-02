@@ -25,7 +25,8 @@ export abstract class EditorMarkdown extends EditorFormat {
     const heading = /^h[1-6]$/.test(u.tag);
     if (u.tag != "p" && !(heading && kind == "heading")) return;
     const src = this.src;
-    const rest = src.slice(pos, u.contentTo);
+    const lead = reopened(src, u, pos),
+      rest = lead + src.slice(pos, u.contentTo);
     const indent = M.lineIndent(src, u.from);
     let open: string, close: string;
     if (kind == "heading") {
@@ -41,7 +42,7 @@ export abstract class EditorMarkdown extends EditorFormat {
       close = `</li>\n${indent}</${list}>`;
     }
     const change = { from: u.from, to: u.to, insert: open + rest + close },
-      caret = u.from + open.length;
+      caret = u.from + open.length + lead.length;
     this.dispatch({
       changes: change,
       selection: { anchor: caret },
@@ -84,18 +85,19 @@ export abstract class EditorMarkdown extends EditorFormat {
     const src = this.src;
     if (u.tag == "li" && (todoBox(src, u) || /<input\b/i.test(src.slice(u.contentFrom, pos)))) return false;
     const box = setChecked(TODO_BOX.trimEnd(), m[1] != "" && m[1] != " ") + " ";
-    const rest = src.slice(pos, u.contentTo);
+    const lead = reopened(src, u, pos),
+      rest = lead + src.slice(pos, u.contentTo);
     let change: { from: number; to: number; insert: string }, caret: number;
     if (u.tag == "li") {
       const open = src.slice(u.openFrom, u.openTo);
       const li = attrOf(open, "style") == null ? open.replace(/\s*>$/, `${TODO_ITEM}>`) : open;
       change = { from: u.openFrom, to: u.contentTo, insert: li + box + rest };
-      caret = u.openFrom + li.length + box.length;
+      caret = u.openFrom + li.length + box.length + lead.length;
     } else {
       const indent = M.lineIndent(src, u.from);
       const open = `<ul>\n${indent}  <li${TODO_ITEM}>${box}`;
       change = { from: u.from, to: u.to, insert: open + rest + `</li>\n${indent}</ul>` };
-      caret = u.from + open.length;
+      caret = u.from + open.length + lead.length;
     }
     this.dispatch({
       changes: change,
@@ -245,3 +247,12 @@ function balanced(html: string): boolean {
 
 /** An address a typed link may have: a web or mail address, or one in the document; never a script. */
 const safeHref = (url: string) => /^(https?:|mailto:|tel:|#|\/|\.)/i.test(url) || !/^[a-z][a-z\d+.-]*:/i.test(url);
+
+/**
+ * The inline elements open at `pos`, opened again: a block's Markdown marker (its text before `pos`) goes with their open
+ * tags, and their close tags stay with the text after it (a "- " typed in bold). The caret goes after them, so the
+ * text typed next keeps their style.
+ */
+function reopened(src: string, u: M.Unit, pos: number): string {
+  return M.openTags(M.inlineStackAt(src, u, pos));
+}
