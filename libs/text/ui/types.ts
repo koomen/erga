@@ -85,9 +85,6 @@ export interface PageEditorConfig {
   onReload: (view: { pos: number; top: number } | null) => void;
 }
 
-/** Inline styles the editor can apply to a selection. */
-export type InlineStyle = "strong" | "em" | "code" | "u";
-
 /** The link the link bar shows: its address, its text, whether it opens in this tab, and its rectangle in the frame. */
 export interface LinkInfo {
   href: string;

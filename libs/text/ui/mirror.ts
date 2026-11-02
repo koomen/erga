@@ -9,7 +9,7 @@
 // extension's element, the editor's layers) are not bound, and stay where they are.
 
 import type { ChangeSet } from "@codemirror/state";
-import * as M from "../../shared/manuscript";
+import * as M from "../../../shared/manuscript";
 
 /** Elements a change in which makes the page load again: the browser runs them, an edit in place would not. */
 const RUN = new Set(["script", "style"]);

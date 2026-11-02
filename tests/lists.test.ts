@@ -1,4 +1,4 @@
-// The page editor's lists (client/page-editor/lists.ts, docs/design/lists.md), with no browser: every list key in
+// The page editor's lists (libs/text/api/lists.ts, docs/design/lists.md), with no browser: every list key in
 // every place, the round trips that must give back the source exactly, and a sweep of every key at the start, in the
 // middle and at the end of every item of a set of lists, which checks what must always hold. "|" is the caret, "["
 // and "]" the anchor and head of a selection (helpers/page-keys.ts).

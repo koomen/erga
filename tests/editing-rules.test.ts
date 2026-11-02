@@ -1,11 +1,11 @@
-// The page editor's editing rules (client/page-editor/rules.ts), with no browser and no editor: each key is the pure
+// The page editor's editing rules (libs/text/api/rules.ts), with no browser and no editor: each key is the pure
 // function from the HTML, the selection and the intent to the change, the selection after it and its undo step. "|" is
 // the caret, "[" and "]" the anchor and head of a selection (helpers/page-keys.ts, show and parse).
 import { describe, expect, test } from "bun:test";
 import { ChangeSet, Text } from "@codemirror/state";
 import * as M from "../shared/manuscript";
-import { blockRange, caretNear, joinBlocks, rules, type Intent, type Page, type Step } from "../client/page-editor/rules";
-import type { Change } from "../client/page-editor/lists";
+import { blockRange, caretNear, joinBlocks, rules, type Intent, type Page, type Step } from "../libs/text/api/rules";
+import type { Change } from "../libs/text/api/lists";
 
 function parse(marked: string): { src: string; anchor: number; head: number } {
   const caret = marked.indexOf("|");

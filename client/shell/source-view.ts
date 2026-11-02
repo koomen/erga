@@ -11,7 +11,7 @@ import { defaultKeymap, history, historyField, historyKeymap, indentWithTab } fr
 import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { html } from "@codemirror/lang-html";
 import { tags as t } from "@lezer/highlight";
-import type { Peer } from "../page-editor/editor";
+import type { Peer } from "../../libs/text/ui/editor";
 import type { SourceState } from "./remote";
 
 /** The field the view's undo history is in (the frame's state carries the same, so ⌘Z goes on across a switch). */

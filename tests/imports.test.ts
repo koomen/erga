@@ -1,7 +1,8 @@
 // The shape of the code, as rules its imports keep (README.md, "The layout"). The layers, lowest first: a file
 // imports only its own layer and the layers below it.
 //
-//   1. shared/        nothing of ours (assets/ is data: any layer may import it)
+//   1. shared/        nothing of ours (assets/ is data: any layer may import it). A library's API (libs/<name>/api/) is
+//                     in this layer too: it needs no browser, and the document's object runs it for agents.
 //   2. document/      shared/. It gets the directory and the agents through DocumentDeps.
 //   3. server/'s areas (directory, identity, documents, pages, home, admin, operations) and its other files but app.ts and
 //                     api.ts: platform.ts, http.ts, security.ts, live.ts, health.ts. directory/ never imports identity/;
@@ -10,7 +11,8 @@
 //   5. agents/        both embedded agents (the admin agent's tools work the control plane)
 //   6. server/app.ts and server/api.ts: the route table, and the HTTP API for outside agents
 //   7. cloudflare/    the app Worker. Also deploy/targets.ts.
-//   8. client/        the browser: shared/, and of document/ only content.ts, pages.ts, merge.ts and api.ts's types
+//   8. client/        the browser: shared/, and of document/ only content.ts, pages.ts, merge.ts and api.ts's types.
+//                     A library's UI (libs/<name>/ui/) is in this layer too. A library's API never imports its UI.
 //                     (tests/browser-imports.test.ts follows what the bundles reach)
 //   9. deploy/, dev/, tests/, e2e/, client/build.ts and the scripts at the top: anything. Nothing imports them but
 //      deploy/targets.ts (layers 4 and 7) and dev/mock-cloudflare.ts, the pretend Cloudflare of local development
@@ -72,6 +74,7 @@ function imports(file: string): { spec: string; type: boolean }[] {
 function layer(path: string): number {
   const top = path.split("/")[0];
   if (top == "shared") return 1;
+  if (top == "libs") return path.split("/")[2] == "api" ? 1 : 8;
   if (top == "document") return 2;
   if (top == "server") return path == "server/app" || path == "server/api" ? 6 : 3;
   if (top == "control") return 4;
@@ -90,7 +93,13 @@ function wrong(from: string, to: string, type: boolean): string | null {
     theirs = layer(to);
   if (mine == 9 || to.startsWith("assets/")) return null;
   if (mine == 8) {
-    if (to.startsWith("client/") || to.startsWith("shared/") || BROWSER_DOCUMENT.includes(to) || (type && to == "document/api"))
+    if (
+      to.startsWith("client/") ||
+      to.startsWith("shared/") ||
+      to.startsWith("libs/") ||
+      BROWSER_DOCUMENT.includes(to) ||
+      (type && to == "document/api")
+    )
       return null;
     return "the browser imports only shared/ and a few files of document/";
   }
@@ -98,7 +107,7 @@ function wrong(from: string, to: string, type: boolean): string | null {
     if ((to == "deploy/targets" || to == "dev/mock-cloudflare") && (mine == 4 || mine == 7)) return null;
     return "nothing above the tools imports them";
   }
-  if (theirs == 8) return "only the browser imports client/";
+  if (theirs == 8) return "only the browser imports client/ and a library's UI";
   if (theirs > mine) return `layer ${mine} imports layer ${theirs}`;
   const area = /^server\/([a-z-]+)\/(.+)$/.exec(to);
   if (area && AREAS.includes(area[1]) && area[2] != "index" && !from.startsWith(`server/${area[1]}/`))
@@ -111,7 +120,7 @@ function wrong(from: string, to: string, type: boolean): string | null {
 
 test("every import keeps the layers", () => {
   const found: string[] = [];
-  const code = ["shared", "document", "server", "agents", "control", "cloudflare", "client", "deploy", "dev"];
+  const code = ["shared", "libs", "document", "server", "agents", "control", "cloudflare", "client", "deploy", "dev"];
   for (const f of files(code)) {
     const from = f.replace(/\.ts$/, "");
     if (from == "deploy/locked-settings") continue;
@@ -142,10 +151,17 @@ test("the rules catch what they are for", () => {
     ["control/index", "cloudflare/env"],
     ["server/app", "cloudflare:workers"],
     ["client/shell/main", "document/host"],
+    ["libs/text/api/rules", "libs/text/ui/core"],
+    ["libs/text/api/rules", "client/common/link-target"],
+    ["libs/text/ui/core", "document/host"],
+    ["agents/document/tools", "libs/text/ui/editor"],
   ];
   for (const [from, to] of no) expect([from, to, wrong(from, to, true)]).not.toEqual([from, to, null]);
   const yes = [
     ["client/shell/main", "document/api", true],
+    ["libs/text/ui/edit", "libs/text/api/rules", false],
+    ["agents/document/tools", "libs/text/api/rules", false],
+    ["client/shell/main", "libs/text/ui/editor", false],
     ["agents/admin/sessions", "control/source/index", false],
     ["control/source/page", "server/admin/index", false],
     ["cloudflare/d1", "control/d1", false],

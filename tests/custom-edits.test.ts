@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { EditorState } from "@codemirror/state";
-import { planCustomEdits, applyChanges, type CustomEdit } from "../client/page-editor/custom-edits";
+import { planCustomEdits, applyChanges, type CustomEdit } from "../libs/text/api/custom-edits";
 import { parseHtml, type ElementNode } from "../shared/manuscript";
 
 const page = `<body>

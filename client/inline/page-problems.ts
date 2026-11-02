@@ -1,5 +1,5 @@
 // Catches the page's script errors and files that fail to load, from before its first script, and hands them to the
-// editor once it's there (window.__ergaReport: client/page-editor/render.ts, watchProblems). In a document's page, for
+// editor once it's there (window.__ergaReport: libs/text/ui/render.ts, watchProblems). In a document's page, for
 // whoever may edit (server/pages/reader.ts).
 
 type Problem =

@@ -42,7 +42,7 @@ export default function viewerBand(): void {
     sx = 0,
     sy = 0;
   const px = (n: number) => (Number.isFinite(n) ? n : 0) + "px";
-  // (At the page's scale, when the editor zooms it: client/page-editor/zoom.ts.)
+  // (At the page's scale, when the editor zooms it: libs/text/ui/zoom.ts.)
   function scrolled() {
     const k = canvas ? canvas.zoom : 1,
       at = canvas && !canvas.fixed ? `translate(${px(-sx * k)}, ${px(-sy * k)})` : "";

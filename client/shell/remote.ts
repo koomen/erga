@@ -17,12 +17,12 @@ import {
   type Keys,
   type Snapshot,
   type ToFrame,
-} from "../page-editor/bridge";
-import type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageProblem, Peer } from "../page-editor/editor";
+} from "../../libs/text/ui/bridge";
+import type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageProblem, Peer } from "../../libs/text/ui/editor";
 import { EVAL_MAX_JSON, FRAMES, viewWait, type ViewRequest, type ViewResult } from "../../shared/agent-log";
 import type { LiveRequest, LiveResult } from "../../shared/live-page";
 import { changesBetween } from "../../document/merge";
-import { clampZoom, type ZoomBy } from "../page-editor/zoom";
+import { clampZoom, type ZoomBy } from "../../libs/text/ui/zoom";
 import { sleep } from "../../shared/time";
 
 export interface RemotePageConfig {

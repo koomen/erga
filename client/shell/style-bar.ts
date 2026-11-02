@@ -1,6 +1,6 @@
 // The style bar over a selection (bold, italic, code, link, clear formatting), and the link bar.
 
-import type { InlineStyle } from "../page-editor/editor";
+import type { InlineStyle } from "../../libs/text/ui/editor";
 import { $, type Shell } from "./shell";
 import { linkTarget, type Place } from "../common/link-target";
 

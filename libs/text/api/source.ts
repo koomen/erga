@@ -1,8 +1,10 @@
 // The page's source, as the editor reads and writes it: text in units, attributes in tags, whitespace as it shows.
 
 import type { ChangeSet } from "@codemirror/state";
-import * as M from "../../shared/manuscript";
-import type { InlineStyle } from "./types";
+import * as M from "../../../shared/manuscript";
+
+/** Inline styles the editor can apply to a selection. */
+export type InlineStyle = "strong" | "em" | "code" | "u";
 
 export const STYLE_TAGS: Record<InlineStyle, string[]> = { strong: ["strong", "b"], em: ["em", "i"], code: ["code"], u: ["u"] };
 

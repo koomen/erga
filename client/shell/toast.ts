@@ -1,6 +1,6 @@
 // The toast: a short confirmation, an explanation, or a problem with the page, with a way to have the agent fix it.
 
-import { ms } from "../page-editor/timescale";
+import { ms } from "../../libs/text/ui/timescale";
 import { FIX_REPORTED, pageReport } from "../../shared/page-report";
 import { editorContext } from "./agent-context";
 import { $, type Shell } from "./shell";

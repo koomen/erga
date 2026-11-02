@@ -47,7 +47,7 @@ const DIR = ASSET_PREFIX.slice(1, -1);
 /** The scripts, by name, and their sources. */
 export const ENTRIES: Record<string, string> = {
   "page.js": "client/shell/main.ts",
-  "frame.js": "client/page-editor/frame.ts",
+  "frame.js": "libs/text/ui/frame.ts",
   "settings.js": "client/pages/settings.ts",
   "pages-tree.js": "client/pages/pages-tree.ts",
   "agent.js": "client/agent/person-agent.ts",
@@ -65,13 +65,13 @@ export const HEADERS = `${ASSET_PREFIX}*
 `;
 
 /**
- * The frame's build: @codemirror/view as an inert stand-in (client/page-editor/frame-view.ts). The frame has no CodeMirror view
+ * The frame's build: @codemirror/view as an inert stand-in (libs/text/ui/frame-view.ts). The frame has no CodeMirror view
  * (bridge.ts), but CodeMirror's language, history and Markdown modules import the view's for their view parts.
  */
 export const FRAME_VIEW: import("bun").BunPlugin = {
   name: "erga:frame-view",
   setup(b) {
-    b.onResolve({ filter: /^@codemirror\/view$/ }, () => ({ path: join(ROOT, "client/page-editor/frame-view.ts") }));
+    b.onResolve({ filter: /^@codemirror\/view$/ }, () => ({ path: join(ROOT, "libs/text/ui/frame-view.ts") }));
   },
 };
 

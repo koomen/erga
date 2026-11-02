@@ -1,13 +1,14 @@
 // The page editor's paste, cut and copy: plain text and basic formatting, in and out; pasted files go into the document.
 
-import * as M from "../../shared/manuscript";
-import * as C from "./clipboard-html";
-import { placeOf, publicHref, type Place } from "../common/link-target";
-import { escapeAttr, HEADING } from "./source";
+import * as M from "../../../shared/manuscript";
+import * as C from "../api/clipboard";
+import * as R from "./clipboard-read";
+import { placeOf, publicHref, type Place } from "../../../client/common/link-target";
+import { escapeAttr, HEADING } from "../api/source";
 import { EditorMarkdown } from "./markdown";
-import { editableAt } from "./rules";
+import { editableAt } from "../api/rules";
 import { LOADING_AGAIN, showDropNote } from "./drop";
-import { pageUrl } from "../../document/pages";
+import { pageUrl } from "../../../document/pages";
 
 export abstract class EditorClipboard extends EditorMarkdown {
   /**
@@ -49,7 +50,7 @@ export abstract class EditorClipboard extends EditorMarkdown {
       const href = a.getAttribute("href")?.trim() ?? "";
       return self && href.startsWith(self) ? href.slice(self.length - 1) : href;
     };
-    let blocks = html ? C.fromHtml(html, link) : [];
+    let blocks = html ? R.fromHtml(html, link) : [];
     if (!blocks.length) blocks = C.fromText(text);
     if (!blocks.length) return;
     const one = blocks.length == 1 && blocks[0].tag == "p" ? blocks[0] : null;
@@ -137,9 +138,9 @@ export abstract class EditorClipboard extends EditorMarkdown {
       // A picture's copy (cloned) is the picture on the page with the same src: that one has loaded.
       const image = (img: HTMLImageElement) => {
         const live = [...el.querySelectorAll("img")].find((i) => i.getAttribute("src") == img.getAttribute("src"));
-        return live ? C.imageSrc(live) : null;
+        return live ? R.imageSrc(live) : null;
       };
-      const out = C.inline(r.cloneContents(), { pre, heading: HEADING.test(u.tag), link, image, skip });
+      const out = R.inline(r.cloneContents(), { pre, heading: HEADING.test(u.tag), link, image, skip });
       if (!out.text.trim() && !out.html.includes("<img")) continue;
       // A list item, or the <p> that holds the text of an item with a list in it.
       const item =

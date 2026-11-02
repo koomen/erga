@@ -28,7 +28,7 @@ test("the viewer shows a nested page, its relative stylesheets applying, and its
 test("the pencil opens the page shown in the editor, rendered with its folder's stylesheet; typing edits that file; evaluate_page reads it, read-only, with a time limit", async ({ tab }) => {
   const server = await servers.short();
   const s = await site(server, { pages: true });
-  // (Strict: a page in a folder once asked for its relative files at the document's root first, 404s at every render, client/page-editor/frame.ts.)
+  // (Strict: a page in a folder once asked for its relative files at the document's root first, 404s at every render, libs/text/ui/frame.ts.)
   tab.strict = true;
   const p = tab.page;
   await keepAgentClosed(p);

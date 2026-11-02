@@ -1,4 +1,4 @@
-// The page editor's block rules (client/page-editor/blocks.ts), with no browser: Enter, Backspace at a block's start
+// The page editor's block rules (libs/text/api/blocks.ts), with no browser: Enter, Backspace at a block's start
 // and Tab in each kind of block that isn't a list item. "|" is the caret, "[" and "]" a selection (helpers/page-keys.ts).
 import { expect, test } from "bun:test";
 import { keys } from "./helpers/page-keys";

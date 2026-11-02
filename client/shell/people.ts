@@ -1,6 +1,6 @@
 // Presence: everyone's carets, the avatars of who's here, and your own avatar's account menu.
 
-import type { Peer } from "../page-editor/editor";
+import type { Peer } from "../../libs/text/ui/editor";
 import type { Presence } from "./collab";
 import type { Author } from "../../document/content";
 import { $, type Shell } from "./shell";

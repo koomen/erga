@@ -121,7 +121,7 @@ export interface Tab {
   /** Fail the test at its end if the page had errors (openEditor sets it, unless told the page has some). */
   strict: boolean;
   /**
-   * The page is known not to show its HTML at some point (the page editor's check logs it: client/page-editor/check.ts):
+   * The page is known not to show its HTML at some point (the page editor's check logs it: libs/text/ui/check.ts):
    * what is wrong. The test fails if the check finds nothing, so the fix takes the mark off (as knownBug).
    */
   knownDrift?: string;
@@ -129,7 +129,7 @@ export interface Tab {
   own(opts?: ServerOptions): Promise<Server>;
 }
 
-/** What the page editor's check logs when the page does not show its HTML (client/page-editor/render.ts, report). */
+/** What the page editor's check logs when the page does not show its HTML (libs/text/ui/render.ts, report). */
 const DRIFT = "the page does not show its HTML";
 
 const extended = web.extend<{ tab: Tab }>({

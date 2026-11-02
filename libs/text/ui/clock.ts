@@ -3,7 +3,7 @@
 // a render that waits 50 ms at a time took minutes and the agent's view_page ran out of time. A dedicated worker's
 // timers aren't held back, so the render waits on them, and runs its hidden frame's requestAnimationFrame on them too.
 
-import { sleep } from "../../shared/time";
+import { sleep } from "../../../shared/time";
 
 const WORKER = "onmessage=function(e){setTimeout(function(){postMessage(e.data.id)},e.data.ms)}";
 let worker: Worker | null | undefined;

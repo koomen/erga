@@ -1,4 +1,4 @@
-// Paste in and copy out keep the basic formatting and drop the rest (client/page-editor/clipboard-html.ts): paragraphs, line breaks,
+// Paste in and copy out keep the basic formatting and drop the rest (libs/text/api/clipboard.ts): paragraphs, line breaks,
 // bold, italic, links, lists (nested), headings, quotes and code; never fonts, sizes, colours, classes or styles. A copy writes
 // Markdown as its plain text, its links and pictures as they work elsewhere; the reader's copy (out of the editor) is the same.
 import type { Frame, Page } from "playwright-core";

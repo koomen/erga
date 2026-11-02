@@ -9,7 +9,7 @@ interface ErgaFrames {
   send(m: unknown): void;
   /** The address of the page the frame shows, on its pages origin (the metas erga-pages and erga-page). */
   src(): string;
-  /** How much larger than its own size the frame shows (the editor's zoom: client/page-editor/zoom.ts). */
+  /** How much larger than its own size the frame shows (the editor's zoom: libs/text/ui/zoom.ts). */
   scale(): number;
 }
 

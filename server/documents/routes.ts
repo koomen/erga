@@ -169,7 +169,7 @@ export async function documentRoute(platform: Pick<Platform, "directory">, first
 // them, can't act as the person viewing it. It runs on an origin of its own,
 // <id>-<owner>.erga-pages.dev (or <id>-<owner>.localhost:<port> on this
 // machine), for readers and editors alike, in the viewer's one frame
-// (view.ts), and the page editor reaches into it there (see client/page-editor/bridge.ts).
+// (view.ts), and the page editor reaches into it there (see libs/text/ui/bridge.ts).
 // That origin has no cookies. It serves the document's files under a token,
 // signed here, that opens this one document for a week; the viewer's page
 // hands it out to whoever may open the document.

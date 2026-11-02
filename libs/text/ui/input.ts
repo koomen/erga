@@ -1,15 +1,15 @@
 // The page editor's events: the keys, input, composition, the pointer and the selection, turned into edits; and the
 // keys held while the editor can't take them.
 
-import * as M from "../../shared/manuscript";
+import * as M from "../../../shared/manuscript";
 import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
-import { contentIn, escapeAttr, findDiff, norm, placeholderBr, setChecked } from "./source";
+import { contentIn, escapeAttr, findDiff, norm, placeholderBr, setChecked } from "../api/source";
 import { hasFiles, LOADING_AGAIN, showDropCaret, showDropNote } from "./drop";
 import { isMac, pageOwnBox } from "./core";
-import { TEXT_ATTR } from "../../shared/page-html";
-import { leaveCode } from "./blocks";
-import { blockRange, editableAt, placeholderDrops } from "./rules";
+import { TEXT_ATTR } from "../../../shared/page-html";
+import { leaveCode } from "../api/blocks";
+import { blockRange, editableAt, placeholderDrops } from "../api/rules";
 import { EditorClipboard } from "./clipboard";
 
 /** The selection moves a held arrow, Home or End key makes, if the editor doesn't take the key itself. */

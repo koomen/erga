@@ -1,12 +1,12 @@
 // The page editor's edits: a transaction on the source, and the keys, each made by the editing rules (rules.ts) as one
 // step; and the history.
 
-import * as M from "../../shared/manuscript";
+import * as M from "../../../shared/manuscript";
 import { EditorSelection, Transaction, type TransactionSpec } from "@codemirror/state";
 import { undo, redo, isolateHistory } from "@codemirror/commands";
-import { type ListEdit, tidy } from "./lists";
-import { blockRange, caretNear, editableAt, rules, undoOf, type Intent, type Page, type Step } from "./rules";
-import type * as C from "./clipboard-html";
+import { type ListEdit, tidy } from "../api/lists";
+import { blockRange, caretNear, editableAt, rules, undoOf, type Intent, type Page, type Step } from "../api/rules";
+import type * as C from "../api/clipboard";
 import { noHistory } from "./core";
 import { EditorRender } from "./render";
 

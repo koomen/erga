@@ -147,7 +147,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  // And the page editor's check: where the page does not show its HTML (client/page-editor/check.ts).
+  // And the page editor's check: where the page does not show its HTML (libs/text/ui/check.ts).
   page.on("console", (m) => {
     if (m.type() == "error" && m.text().includes("does not show its HTML")) errors.push(m.text());
   });

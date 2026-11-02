@@ -9,7 +9,7 @@
 // of block are in blocks.ts (paragraphs, headings, quotes, code, summaries) and lists.ts (list items); this module
 // picks the one a key needs.
 
-import * as M from "../../shared/manuscript";
+import * as M from "../../../shared/manuscript";
 import { ChangeSet, EditorSelection, findClusterBreak } from "@codemirror/state";
 import {
   BLOCK_SPLIT,
@@ -26,7 +26,7 @@ import {
 } from "./source";
 import { backspaceBlock, enterBlock, indentBlocks } from "./blocks";
 import { carryLists, dropBlankItem, enterItem, indentItems, itemSplit, type Change, untodo } from "./lists";
-import * as C from "./clipboard-html";
+import * as C from "./clipboard";
 
 /** The page as the rules know it: its HTML, the text blocks in it, and what the page says about them. */
 export interface Page {

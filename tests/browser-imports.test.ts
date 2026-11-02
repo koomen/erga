@@ -1,5 +1,5 @@
 // The browser's bundles (client/build.ts's entries, and the chunks they import later) import a few modules
-// outside client/: shared/ and the document's content, pages, merge and
+// outside client/ and libs/: shared/ and the document's content, pages, merge and
 // API types. Those must stay free of server and Cloudflare code: this test
 // follows every value import from the entries and fails on one that reaches
 // server/, cloudflare/, agents/, agents/document/, deploy/ or dev/, or a file of
@@ -15,7 +15,7 @@ import { ENTRIES as BUILT } from "../client/build.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 const ENTRIES = Object.values(BUILT);
-/** Outside client/ and shared/, the files the browser may have. */
+/** Outside client/, libs/ and shared/, the files the browser may have. */
 const ALLOWED = new Set(["document/content.ts", "document/pages.ts", "document/merge.ts"]);
 
 /** The specifiers of a file's value imports (`import type` and `export type` left out), and of its import()s; with `bare`, the packages' too. */
@@ -58,7 +58,7 @@ function reached(): Map<string, string> {
 test("the browser's bundles import nothing of the server, Cloudflare, the agents, the deploy or the dev server", () => {
   const outside = [...reached()]
     .map(([f, by]) => [relative(ROOT, f), by] as const)
-    .filter(([f]) => !f.startsWith("client/") && !f.startsWith("shared/"));
+    .filter(([f]) => !f.startsWith("client/") && !f.startsWith("shared/") && !f.startsWith("libs/"));
   const wrong = outside.filter(([f]) => !ALLOWED.has(f));
   expect(wrong.map(([f, by]) => `${f} (imported by ${by})`)).toEqual([]);
   // What the browser has of document/: the list above, so a new one is a decision.
@@ -66,8 +66,8 @@ test("the browser's bundles import nothing of the server, Cloudflare, the agents
 });
 
 test("the browser's bundles never import effect", () => {
-  // client/'s files too: the inline scripts (build.ts --inline) aren't entries.
-  const files = new Set([...reached().keys(), ...new Bun.Glob("client/**/*.ts").scanSync({ cwd: ROOT, absolute: true })]);
+  // client/'s and the libraries' files too: the inline scripts (build.ts --inline) aren't entries.
+  const files = new Set([...reached().keys(), ...new Bun.Glob("{client,libs}/**/*.ts").scanSync({ cwd: ROOT, absolute: true })]);
   const wrong = [...files].flatMap((f) =>
     valueImports(readFileSync(f, "utf8"), true)
       .filter((s) => s == "effect" || s.startsWith("effect/") || s.startsWith("@effect/"))

@@ -7,7 +7,7 @@
 // transaction (one undo step), and changes only the items it moves, so another person typing in other items keeps
 // what they type. The author's HTML stays as written: attributes, classes, and how the list is laid out on its lines.
 
-import * as M from "../../shared/manuscript";
+import * as M from "../../../shared/manuscript";
 import { ChangeSet, EditorSelection, type SelectionRange, Text, type Transaction } from "@codemirror/state";
 import { attrOf, CONTENT_TAG, emptyIn, setAttr, textIn, TODO_BOX, TODO_ITEM, todoBox } from "./source";
 

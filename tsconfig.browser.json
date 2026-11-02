@@ -2,7 +2,7 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "types": [] },
-  "include": ["client", "shared"],
+  "include": ["client", "libs", "shared"],
   // The build script runs under Bun: tsconfig.json checks it.
   "exclude": ["client/build.ts"]
 }

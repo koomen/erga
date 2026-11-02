@@ -2,13 +2,13 @@
 // the events on the document's socket.
 
 import { Transaction, type ChangeSet } from "@codemirror/state";
-import type { MarkAuthor } from "../page-editor/editor";
+import type { MarkAuthor } from "../../libs/text/ui/editor";
 import type { SocketEvent } from "./collab";
 import type { Author } from "../../document/content";
 import type { DocName, Hello } from "../../document/api";
 import type { LogEvent, ViewRequest } from "../../shared/agent-log";
 import { live } from "../live/client";
-import { ms } from "../page-editor/timescale";
+import { ms } from "../../libs/text/ui/timescale";
 import { $, type Shell } from "./shell";
 import { esc } from "../../shared/html";
 
