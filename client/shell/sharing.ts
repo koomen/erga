@@ -17,8 +17,9 @@ export function mountSharing(shell: Shell) {
 
   const shareBtn = $("btn-share");
   // Share (#btn-share, the Share card): who may view or edit the document, and anyone signed in with the link. Only its
-  // owner may (the app says where, meta erga-share), so the button shows for them alone; each change is saved as it's made
-  // (the operation share_document, as on My Documents' share dialog).
+  // owner may (the app says where, meta erga-share). The button stays for everyone else too, off, and its tip says why
+  // (dimmed from the first frame: client/styles/editor.css). Each change is saved as it's made (the operation
+  // share_document, as on My Documents' share dialog).
   const sharing = $("sharing");
   const sharingList = $("sharing-list"),
     sharingAdd = $("sharing-add") as HTMLFormElement;
@@ -27,7 +28,11 @@ export function mountSharing(shell: Shell) {
     linkHint = $("sharing-hint"),
     anyoneLabel = document.querySelector<HTMLLabelElement>("label[for=sharing-anyone]")!;
   const shareAt = !!document.querySelector<HTMLMetaElement>('meta[name="erga-share"]');
-  shareBtn.hidden = !shareAt;
+  if (!shareAt) {
+    shareBtn.setAttribute("aria-disabled", "true");
+    shareBtn.dataset.tip = "Only the owner can share";
+    shareBtn.setAttribute("aria-label", "Share: only the document's owner can share it");
+  }
   type Shared = { permissions: { login: string; role: string }[]; notUsers?: string[]; avatars?: Record<string, string>; publicSharing?: boolean };
   const tellSharing = (text: string, error = false) => { sharingStatus.textContent = text; sharingStatus.classList.toggle("error", error); };
   const shareCall = (change?: { login: string; role: string }): Promise<Shared> =>
@@ -112,7 +117,9 @@ export function mountSharing(shell: Shell) {
     (sharingAdd.elements.namedItem("login") as HTMLInputElement).focus();
     shareCall().then((d) => { renderSharing(d); tellSharing(""); }, (e: Error) => tellSharing(e.message, true));
   }
-  shareBtn.addEventListener("click", () => toggleSharing());
+  shareBtn.addEventListener("click", () => {
+    if (shareAt) toggleSharing();
+  });
   sharingAdd.addEventListener("submit", async (e) => {
     e.preventDefault();
     const input = sharingAdd.elements.namedItem("login") as HTMLInputElement;
