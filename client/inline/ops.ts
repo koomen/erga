@@ -36,6 +36,8 @@ export default function ops(): void {
   const GAP_TOP = 11,
     GAP_MAIN = 6;
   let view: Json = null,
+    /** The release store's channels (branches' `releases`), for the marks on the log. */
+    channels: Json = null,
     deploys: Json = null,
     deploysKnown = false,
     busy = false,
@@ -430,7 +432,7 @@ export default function ops(): void {
     updateHint.className = "hint";
     updateHint.textContent = "Updating from " + upstreamName() + "…";
     try {
-      const body = await runTool("update_from_upstream");
+      const body = await runTool("waiting_merge", { action: "update" });
       updateHint.textContent =
         body.result == "up-to-date"
           ? "Nothing to update: staging has everything."
@@ -469,7 +471,7 @@ export default function ops(): void {
     btn.dataset.armed = "";
     btn.textContent = "Drop this merge";
     btn.disabled = true;
-    hint.textContent = await runTool("drop_waiting_merge").then(
+    hint.textContent = await runTool("waiting_merge", { action: "drop" }).then(
       () => "",
       (e: Error) => e.message
     );
@@ -480,7 +482,7 @@ export default function ops(): void {
   // Each environment's domains (its Worker's custom domains), with Add and remove.
   let domains: Json = null;
   async function loadDomains() {
-    const body = await runTool("list_domains").catch(() => null);
+    const body = await runTool("deploys", { view: "domains" }).catch(() => null);
     if (pageView.signal.aborted) return;
     domains = body;
     renderDomains();
@@ -561,7 +563,7 @@ export default function ops(): void {
         return;
       }
       rm.disabled = true;
-      const failed = await runTool("remove_domain", { target: rm.dataset.target, hostname: rm.dataset.remove }).then(
+      const failed = await runTool("set_domain", { action: "remove", target: rm.dataset.target, hostname: rm.dataset.remove }).then(
         () => null,
         (e: Error) => e.message
       );
@@ -588,7 +590,7 @@ export default function ops(): void {
     status.className = "";
     status.textContent = "Adding " + hostname + "…";
     try {
-      await runTool("add_domain", { target: domDlg.dataset.target, hostname });
+      await runTool("set_domain", { action: "add", target: domDlg.dataset.target, hostname });
       status.textContent = "Added. Cloudflare makes its DNS record and certificate in a minute or two.";
       await loadDomains();
       setTimeout(() => domDlg.close(), 1200);
@@ -771,9 +773,11 @@ export default function ops(): void {
 
   async function load() {
     try {
-      const body = await runTool("list_branches");
+      const body = await runTool("branches");
       if (pageView.signal.aborted) return;
       view = body;
+      // The store's channels, for the marks on the log: edge's latest, and stable.
+      channels = body.releases;
       render();
     } catch (e) {
       const l = byId("loading");
@@ -791,7 +795,7 @@ export default function ops(): void {
     asking = (async () => {
       // A call that hangs ends: else it would hold every later status back (they wait for this one).
       const body = await Promise.race([
-        runTool("list_deploys", { history: 100 }).catch(() => null),
+        runTool("deploys", { history: 100 }).catch(() => null),
         new Promise((ok) => setTimeout(() => ok(null), 15000)),
       ]);
       if (pageView.signal.aborted) return;
@@ -845,7 +849,7 @@ export default function ops(): void {
     const name = open.target,
       want = open.pinned ? open.deployId : null;
     let missing = "";
-    const log = await runTool("deploy_log", { target: name, ...(want ? { deploy: want } : {}), lines: 0 }).catch((e: Error) => {
+    const log = await runTool("deploys", { view: "log", target: name, ...(want ? { deploy: want } : {}), lines: 0 }).catch((e: Error) => {
       missing = e.message;
       return null;
     });
@@ -1027,7 +1031,7 @@ export default function ops(): void {
     btn.disabled = true;
     ghSay("Syncing…");
     let failed = "";
-    const body = await runTool("sync_github").catch((e: Error) => {
+    const body = await runTool("github", { action: "sync" }).catch((e: Error) => {
       failed = e.message;
       return null;
     });
@@ -1052,7 +1056,7 @@ export default function ops(): void {
     btn.dataset.armed = "";
     btn.textContent = "Disconnect";
     btn.disabled = true;
-    const failed = await runTool("disconnect_github").then(
+    const failed = await runTool("github", { action: "disconnect" }).then(
       () => null,
       (e: Error) => e.message
     );
@@ -1061,14 +1065,6 @@ export default function ops(): void {
     await load();
   });
 
-  // The store's channels, for the marks on the log: edge's latest, and stable.
-  let channels: Json = null;
-  async function loadReleases() {
-    const body = await runTool("list_releases").catch(() => null);
-    if (pageView.signal.aborted) return;
-    channels = body;
-    render();
-  }
   // Cut release: the next version suggested, the notes as the tag's message.
   const relDlg = byId<HTMLDialogElement>("release-dlg");
   function nextVersion(latest: string | undefined) {
@@ -1104,7 +1100,6 @@ export default function ops(): void {
       status.textContent =
         "Release " + body.tag + " cut at " + body.commit.slice(0, 10) + ". It goes on stable once its build is in the store.";
       await load();
-      loadReleases();
       setTimeout(() => relDlg.close(), 1500);
     } catch (err) {
       status.className = "error";
@@ -1131,7 +1126,6 @@ export default function ops(): void {
       if (opened) {
         load();
         loadDeploys();
-        loadReleases();
         loadDomains();
       }
       opened = true;
@@ -1156,7 +1150,7 @@ export default function ops(): void {
         loadDeploys();
       }
       if (ev.type == "feature") features.heard(ev);
-      if (ev.type == "releases") loadReleases();
+      if (ev.type == "releases") load();
       if (ev.type == "domains") loadDomains();
       if (ev.type == "deploy-log" && open && ev.target == open.target) {
         if (ev.deployId == open.deployId) {
@@ -1172,7 +1166,6 @@ export default function ops(): void {
   }
   load();
   loadDeploys();
-  loadReleases();
   loadDomains();
   listen();
   // Events don't tell everything: the other server's events can fail to come (it doesn't

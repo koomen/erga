@@ -82,8 +82,8 @@ test("a single-page document (/new) works as before: its tree is its one page", 
   expect(blank.status).toBe(302);
   expect(at.endsWith("?edit")).toBe(true);
   const id = ((await (await s.get(`${at.replace(/[?&]edit=?$/, "")}/api/doc`)).json()) as { docName: { id: string } }).docName.id;
-  expect(
-    paths(((await runTool(server.root, "list_pages", { document: id }, { cookie: s.owner.cookie })).result as { entries: [] }).entries)
-  ).toBe("index.html");
+  expect(paths(((await runTool(server.root, "ls", { document: id }, { cookie: s.owner.cookie })).result as { entries: [] }).entries)).toBe(
+    "index.html"
+  );
   expect((await s.get(at.replace(/[?&]edit=?$/, ""))).status).toBe(200);
 });

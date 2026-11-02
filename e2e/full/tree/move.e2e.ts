@@ -7,7 +7,7 @@ await servers.main();
 test("a page's menu says page (never document); Move page to… moves it into a folder", async ({ tab }) => {
   const page = tab.page;
   const doc = await multi(await servers.main());
-  await doc.agentTool("new_page", { path: "notes/ideas" });
+  await doc.agentTool("new", { path: "notes/ideas" });
   await openTreeEditor(tab, doc.base);
   await openCard(page);
   await act(page, "contact.html", "more");

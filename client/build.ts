@@ -13,6 +13,8 @@
 //                        from here (one address for every document, so one copy in the browser's cache)
 //     slides-<h>.js      slides.js: erga/slides (libs/slides/ui/slides.ts), which a deck's page imports itself; it loads
 //                        frame.js when the viewer says edit
+//     canvas-<h>.js      canvas.js: erga/canvas (libs/canvas/ui/canvas.ts), which a canvas presentation's page imports
+//                        itself; it loads frame.js when the viewer says edit
 //     settings-<h>.js    document settings (settings.ts), imported when the gear is reached for
 //     pages-tree-<h>.js  a document's pages (pages-tree.ts), imported when someone opens the tree
 //     agent-<h>.js                each person's agent panel, on every page (client/agent/person-agent.ts)
@@ -53,6 +55,7 @@ export const ENTRIES: Record<string, string> = {
   "page.js": "client/shell/main.ts",
   "frame.js": "libs/text/ui/frame.ts",
   "slides.js": "libs/slides/ui/slides.ts",
+  "canvas.js": "libs/canvas/ui/canvas.ts",
   "tools.js": "client/page-tools/tools.ts",
   "settings.js": "client/pages/settings.ts",
   "pages-tree.js": "client/pages/pages-tree.ts",
@@ -188,7 +191,7 @@ async function build(): Promise<void> {
       if (name) files[name] = url;
     }
   };
-  const PAGE_SCRIPTS = ["frame.js", "slides.js", "tools.js"];
+  const PAGE_SCRIPTS = ["frame.js", "slides.js", "canvas.js", "tools.js"];
   await scripts(PAGE_SCRIPTS, [FRAME_VIEW]);
   await scripts(
     Object.keys(ENTRIES).filter((n) => !PAGE_SCRIPTS.includes(n)),

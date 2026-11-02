@@ -132,9 +132,11 @@ export default function docs(c: DocsConfig): void {
       ? "Signed in or not; people who aren't signed in view it"
       : "Public sharing is off here: only people who sign in can open it";
   }
-  /** Who it's shared with (document_access), or that after a change (share_document). */
+  /** Who it's shared with (ls's access), or that after a change (share_document). */
   const call = (change?: { login: string; role: string }): Promise<ShareAnswer> =>
-    change ? runTool("share_document", { document: doc!.id, ...change }) : runTool("document_access", { document: doc!.id });
+    change
+      ? runTool("share_document", { document: doc!.id, ...change })
+      : runTool<{ access: ShareAnswer }>("ls", { document: doc!.id }).then((r) => r.access);
   async function change(login: string, role: string) {
     tell("Saving…");
     try {
@@ -199,7 +201,7 @@ export default function docs(c: DocsConfig): void {
   const readAhead = (id: string) => {
     const a = ahead.get(id);
     if (a && Date.now() - a.at < 10000) return;
-    const answer = runTool("list_pages", { document: id });
+    const answer = runTool("ls", { document: id });
     answer.catch(() => {});
     ahead.set(id, { at: Date.now(), answer });
   };
@@ -207,7 +209,7 @@ export default function docs(c: DocsConfig): void {
     (id: string) =>
     <T>(name: string, args: Record<string, unknown>): Promise<T> => {
       const a = ahead.get(id);
-      if (a && name == "list_pages") {
+      if (a && name == "ls") {
         ahead.delete(id);
         if (Date.now() - a.at < 10000)
           return a.answer.then(

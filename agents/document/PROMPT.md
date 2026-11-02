@@ -104,59 +104,19 @@ attributes, new elements of other kinds.
    every `data-erga` attribute and `erga-` element and class; never write them
    into a document.
 
-10. **Let the editor pause a page that reacts to input.** If the page's script
-    answers clicks, keys or scrolling on the page itself (slides that advance
-    on click, a game, a canvas that grabs the mouse), people editing its text
-    end up fighting it. Define `window.ergaPause`: the editor's pause button
-    calls it with `true` when someone pauses the page to edit it, and `false`
-    when they resume. While paused, ignore that input and stop anything that
-    changes the page on its own (timers, autoplay); animation may keep
-    running. Outside the editor nothing calls it, so the page works as usual.
-    A page with `ergaPause` opens in the editor with the keys going to the
-    page (a deck's arrows work at once); a click on text starts editing.
-
-    ```js
-    let paused = false;
-    window.ergaPause = (p) => { paused = p; };
-    addEventListener("click", () => { if (!paused) nextSlide(); });
-    ```
-
-    A page without it can't be paused, and the pause button says so. A page
-    that doesn't react to input has nothing to pause and needs no
-    `ergaPause`.
-
-11. **Let a presentation tell Erga its steps.** A page that shows one step at
-    a time (slides, a walkthrough, a story in parts) defines
-    `window.ergaSteps`. Erga then shows back and forward buttons under the
-    page, the step it is at ("3 / 12"), and a list of the steps that people
-    can open beside it, viewing and editing alike. The ← and → keys step too,
-    except while someone types in the page's text. A slide that builds up in
-    parts has a step for each part ("3.2 / 12"). See "Presentations" below.
-
-12. **Give a page its own edits.** A page can have its own API: the edits
+10. **Give a page its own edits.** A page can have its own API: the edits
     it offers beyond typing (add a card, delete a row, move a node of a
     tree), in a module of its own files. In the editor, the page's script
     draws buttons for them, and a click calls one with
     `window.ergaEditor.call`. Agents call the same edits with `call_edit`.
-    Erga runs the module in a sandbox, makes its answer one change, one undo
-    step, and refuses any that would break the page. Offer them when you
-    make such a page, or when someone asks to make one editable. See "A
-    page's own edits" below.
+    Erga runs the module, makes its answer one change, one undo step, and
+    refuses any that would break the page. An edit shows in the same frame
+    as the click or drop, as a typed letter does: the script calls
+    `ergaEditor.call` at once in the event's handler, and never changes the
+    page itself to show the edit. Offer them when you make such a page, or
+    when someone asks to make one editable. See "A page's own edits" below.
 
-13. **Let a page with its own zoom take the editor's.** In the editor, the
-    zoom keys (⌘+, ⌘−, ⌘0) zoom the whole page, 50% to 300%. A page that
-    zooms itself (a canvas with a camera, a map) defines `window.ergaZoom`.
-    Then the editor calls it instead, with the factor to zoom by (1.25 is a
-    step closer, 0.8 a step back), or 0 to go back to the page's own first
-    view, and leaves the page at 100%. Zoom around the middle of the window.
-    If the page also takes ctrl and the wheel (a pinch) itself, call
-    `preventDefault()` on it: the editor leaves that one to the page.
-
-    ```js
-    window.ergaZoom = (k) => { if (k > 0) zoomBy(k); else showStart(); };
-    ```
-
-14. **Keep a page's place in its address.** A page that shows one part at a
+11. **Keep a page's place in its address.** A page that shows one part at a
     time (a slide, a tab, a step) writes the part to its own `location.hash`
     and opens at the part the hash names. Erga keeps the hash in the tab's
     address, so a reload, the editor's own reload of the page, and a link
@@ -171,12 +131,17 @@ attributes, new elements of other kinds.
     A slide that builds up in parts names the part too: `#3.2` is the second
     part of slide 3, and `#3` its first.
 
-## Decks (erga/slides)
+## Presentations (erga/slides, erga/canvas)
 
-For a slide deck, use Erga's slides library: the page imports it, and holds
-one `<section class="slide">` for each slide, as children of `<body>`, with a
-layout (`data-layout="title"`: a heading and a line, centred;
-`data-layout="content"`: a heading and points).
+Erga's libraries give a presentation its steps (Erga's back and forward
+buttons, the arrow keys, a list of the steps) and its zoom: never write
+`ergaSteps`, `ergaZoom` or another hook of Erga's yourself. For a deck, start
+from the `slides` template or import erga/slides; for frames on one large
+canvas, start from the `canvas` template or import erga/canvas.
+
+A deck imports erga/slides and holds one `<section class="slide">` for each
+slide, as children of `<body>`, with a layout (`data-layout="title"`: a
+heading and a line, centred; `data-layout="content"`: a heading and points).
 
 ```html
 <script type="module" src="https://erga.dev/erga/slides/editor.js"></script>
@@ -184,95 +149,22 @@ layout (`data-layout="title"`: a heading and a line, centred;
 <section class="slide" data-layout="content"><h2>Steps</h2><ul><li>Write the notes</li></ul></section>
 ```
 
-The library shows one 16:9 slide at a time, scaled to the window, and gives
-the page its steps (below): write no script for that. The page's own
-`<style>` changes the look. In the editor, people type in the slides and
-add, move or delete slides with the library's bar (⌘⇧Enter adds one).
-`document_api` lists erga/slides' edits (`add_slide`, `delete_slide`,
-`move_slide`, `set_layout`, and erga/text's for the text): use them.
+The library shows one 16:9 slide at a time, scaled to the window, and keeps
+the slide in the address (rule 11). The page's own `<style>` changes the
+look. In the editor, people type in the slides and add, move or delete
+slides with the library's bar (⌘⇧Enter adds one). `document_api` lists
+erga/slides' edits (`add_slide`, `delete_slide`, `move_slide`, `set_layout`,
+and erga/text's for the text): use them.
 
-## Presentations
+A canvas presentation imports erga/canvas
+(`https://erga.dev/erga/canvas/editor.js`) and holds one `<div class="stage">`
+with one `<div class="canvas">` in it, and on the canvas a
+`<section class="frame">` for each step, placed by its `left` and `top`. Its
+heading names the step.
 
-A page is a presentation when `window.ergaSteps` is an object with these
-members. A step is what people see at one moment: a slide, or one part of a
-slide that builds up in parts. Steps are numbered from 0.
-
-| Member | Required | What it does |
-|---|---|---|
-| `count()` | yes | Answers how many steps there are. |
-| `current()` | yes | Answers the step shown now. |
-| `go(i)` | yes | Shows step `i`. |
-| `label(i)` | no | Answers a short name for step `i` (its title, say). Without it, the list says "Step 3". |
-| `slide(i)` | no | Answers the slide that step `i` is on, numbered from 0, for a deck whose slides build up in parts: the steps of one slide answer the same number. Erga then numbers the steps by slide and part ("3.2" is the second part of slide 3), counts the slides ("3.2 / 12"), and draws a line between slides in the list. Without it, each step is a slide of its own ("5 / 12"). |
-| `image(i, {width, height})` | no | Answers a small picture of step `i`, about `width` × `height` pixels: a `canvas`, a `Blob`, or an image's address (a `data:` URL, or one of the document's files). It may answer a Promise of one. Without it, or when it answers nothing, the list shows the step's number and label. |
-
-Whenever the step changes (by the page's own controls, a timer, anything) or
-the steps themselves change, the page tells Erga:
-`dispatchEvent(new Event("ergastep"))`. Erga also checks a few times a
-second, so a missed event only makes it slower to follow.
-
-Rules:
-
-- Erga handles ← and → (without modifier keys): don't handle them yourself,
-  or call `preventDefault()` on the ones you do handle, so a key moves one
-  step and not two.
-- Erga steps with `go`: → and the forward button show the step after,
-  ← and back the step before. Forward is off on the last step, back on the
-  first.
-- A slide that builds up in parts: give each part a step of its own, with
-  its own picture, and say its slide with `slide(i)`. `go(i)` shows the
-  slide with its parts up to step `i`, and `current()` answers the part
-  shown. The hash names the part (`#3.2`, rule 14).
-- Keep `count()`, `current()`, `label()` and `slide()` quick: Erga calls
-  them often.
-- Erga keeps the pictures `image()` draws until the document changes (an edit,
-  a reload, other steps), so draw the step as it is, not from a cache of your
-  own.
-- `go(i)` must work while the page is paused (`ergaPause`, rule 10): people
-  step through the page to edit each step. Pause stops your own input
-  handlers and timers, not `go`.
-
-A minimal presentation: each `section` is a step.
-
-```html
-<section><h1>One</h1></section>
-<section><h1>Two</h1></section>
-<section><h1>Three</h1></section>
-<script>
-  const steps = [...document.querySelectorAll("section")];
-  let at = 0;
-  function show(i) {
-    at = Math.max(0, Math.min(steps.length - 1, i));
-    steps.forEach((s, k) => (s.hidden = k != at));
-    history.replaceState(null, "", "#" + (at + 1)); // the step, in the address (rule 14)
-    dispatchEvent(new Event("ergastep"));
-  }
-  window.ergaSteps = {
-    count: () => steps.length,
-    current: () => at,
-    go: show,
-    label: (i) => steps[i].querySelector("h1").textContent,
-    // Optional: a small picture of each step.
-    image(i, { width, height }) {
-      const c = document.createElement("canvas");
-      c.width = width; c.height = height;
-      const g = c.getContext("2d");
-      g.fillStyle = "#fff"; g.fillRect(0, 0, width, height);
-      g.fillStyle = "#000"; g.font = `${height / 5}px sans-serif`;
-      g.fillText(steps[i].querySelector("h1").textContent, width / 10, height / 2);
-      return c;
-    },
-  };
-  show(location.hash.slice(1) - 1 || 0);
-</script>
-```
-
-To check a step, give `view_page` or `eval_in_page` the step (`step: "3.2"`),
+To check a step, give `view_page` or `eval_in_page` the step (`step: "3"`),
 and `frames: [300, 900]` to see a transition partway. They render a copy, so
 the person's own view stays where it is.
-
-`e2e/fixtures/steps/index.html` is a fuller example, and
-`e2e/fixtures/builds/index.html` a deck whose slides build up in parts.
 
 ## A page's own edits
 
@@ -287,10 +179,13 @@ export default {
   edits: [
     { name: "add_card", description: "Adds a card at the end", input: { type: "object", properties: {} } },
     { name: "delete_card", description: "Deletes a card", input: { type: "object", properties: { n: { type: "integer", description: "1 is the first card" } }, required: ["n"] } },
+    { name: "move_card", description: "Moves card n before card `before`, or to the end when before is 0", input: { type: "object", properties: { n: { type: "integer" }, before: { type: "integer" } }, required: ["n", "before"] } },
   ],
   apply(html, edit, input) {
+    const card = (n) => `.cards > article:nth-child(${n})`;
     if (edit == "add_card") return [{ op: "insert", into: ".cards", html: '<article class="card"><h3>New card</h3></article>' }];
-    if (edit == "delete_card") return [{ op: "remove", el: `.cards > article:nth-child(${input.n})` }];
+    if (edit == "delete_card") return [{ op: "remove", el: card(input.n) }];
+    if (edit == "move_card") return [input.before ? { op: "move", el: card(input.n), before: card(input.before) } : { op: "move", el: card(input.n), into: ".cards" }];
     return { refused: `no edit named ${edit}` };
   },
 };
@@ -310,9 +205,11 @@ exactly one element:
 | `{ op: "replace", el: sel, html }` | Puts new HTML in the place of the element. |
 | `{ op: "attr", el: sel, name, value }` | Sets an attribute; `value: null` removes it. |
 
-The module runs in a sandbox: no DOM, no network, nothing but its
-arguments. It may not import other files. What Erga makes sure of, so the
-page can't break itself:
+For the person's clicks, Erga runs the module in the page and changes the
+page in the same frame; for agents, in a sandbox. So write `apply` as a
+quick, pure function of its arguments: no DOM, no network, no timers, and
+no imports of other files. What Erga makes sure of, so the page can't break
+itself:
 
 - New HTML is well-formed (every tag closed), with no `<script>`, no `on…`
   attribute and no `data-erga` attribute. Erga indents it to match the code
@@ -333,6 +230,14 @@ timer. When Erga refuses, it says why to the person and offers to ask the
 agent to fix the page. Erga selects the new text, so people type over its
 placeholder.
 
+**The rule: an edit shows in the frame of the click or drop, as a typed
+letter does.** The page's script calls `ergaEditor.call` at once in that
+event's handler, with no `await`, timer or animation before it. Just before
+the call, it takes off only what it drew for the gesture (a drag's
+`transform`, a class). It never moves, adds or removes the page's elements
+itself to show the edit, and never waits for the call's answer to show
+anything: Erga changes the page.
+
 How to write the controls:
 
 - Make every control a `<button>`. Erga never puts a caret in a button, and a
@@ -345,17 +250,43 @@ How to write the controls:
 - After an edit the page may render again, so draw the controls in a
   function you can run more than once, and run it on a `MutationObserver` as
   well as at the start. Handle clicks with one listener on `document`.
+- To drag an element to a new place, move it with a `transform` while the
+  pointer moves. On `pointerup`, take the transform off and call the move
+  edit in the same handler (the drag below).
 
 ```html
 <script>
   const draw = () => {
     if (!document.documentElement.hasAttribute("data-erga-editing")) return;
     document.querySelectorAll(".card:not(:has(> .ctl))").forEach((card) =>
-      card.insertAdjacentHTML("beforeend", `<div class="ctl"><button class="del">Delete</button></div>`));
+      card.insertAdjacentHTML("beforeend", `<div class="ctl"><button class="grip">⠿</button><button class="del">Delete</button></div>`));
   };
   document.addEventListener("click", (e) => {
     const card = e.target.closest(".ctl .del")?.closest(".card");
     if (card) ergaEditor.call("delete_card", { n: [...card.parentElement.children].indexOf(card) + 1 });
+  });
+  // Drag a card by its grip; the drop moves it, in the same frame.
+  let drag = null;
+  document.addEventListener("pointerdown", (e) => {
+    const card = e.target.closest(".ctl .grip")?.closest(".card");
+    if (!card) return;
+    e.preventDefault();
+    e.target.setPointerCapture(e.pointerId);
+    const others = [...card.parentElement.children].filter((c) => c != card);
+    drag = { card, others, y0: e.clientY, mids: others.map((c) => { const r = c.getBoundingClientRect(); return r.top + r.height / 2; }) };
+  });
+  document.addEventListener("pointermove", (e) => {
+    if (drag) drag.card.style.transform = `translateY(${e.clientY - drag.y0}px)`;
+  });
+  document.addEventListener("pointerup", (e) => {
+    if (!drag) return;
+    const { card, others, mids } = drag, cards = [...card.parentElement.children];
+    drag = null;
+    card.style.removeProperty("transform");
+    if (!card.getAttribute("style")) card.removeAttribute("style");
+    const next = others[mids.filter((m) => m < e.clientY).length]; // the card it goes before; none: the end
+    if (next != card.nextElementSibling)
+      ergaEditor.call("move_card", { n: cards.indexOf(card) + 1, before: next ? cards.indexOf(next) + 1 : 0 });
   });
   addEventListener("erga-editing", draw);
   draw();

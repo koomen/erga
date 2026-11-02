@@ -64,7 +64,7 @@ test("viewers may list the versions, not restore one; there's no publishing to a
   expect((await owner.get(`/d/${id}/pub/index.html`)).status).toBe(404);
   expect(
     (
-      await fetch(`${server.root}/api/tools/list_versions`, {
+      await fetch(`${server.root}/api/tools/versions`, {
         method: "POST",
         headers: { Authorization: "Bearer erga_forged", "Content-Type": "application/json" },
         body: JSON.stringify({ document: id }),

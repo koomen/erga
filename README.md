@@ -134,14 +134,14 @@ health checks and rollbacks work.
       blobs.ts        the files that are not text, by their sha-256
       merge.ts        an outside edit, as a small change to the open document
       pdf.ts          PDFs for the agents: their pages and their text
-      page-api.ts     a page's own API: its module, run in a sandbox, and its answer checked and made a change
+      page-api.ts     a page's own API: its module, run in a sandbox for the agents (shared/page-ops.ts checks its answer)
       disk.ts         local development: a document's files in a folder on disk, through the dev server
       api.ts          the document API's contract (document/host.ts has its routes)
     server/       the app: web Requests in, Responses out (the unit tests run it under bun)
       app.ts          the one route table, and what every page of the site's own gets
       platform.ts     Platform, what the app needs from where it runs, and Session, who is asking
       http.ts         the routes' HTTP in Effect (effect/http): a route is an Effect, the Platform a service, the answers they share
-      api.ts          the HTTP API: /api/tools (the operations, for the pages and every agent), tokens, /mcp, /llms.txt
+      api.ts          the HTTP API: /api/tools (the operations, for the pages and every agent), tokens, /mcp, and /llms.txt (a pointer to /mcp)
                       (the tools: agents/tools.ts)
       health.ts       the health check, GET /api/health
       security.ts     the security headers on every answer of the app
@@ -166,12 +166,11 @@ health checks and rollbacks work.
                       tokens (documents.ts), the admin pages' settings, keys, sign-in, users and rules (admin.ts).
                       The pages call them over POST /api/tools/<name>; every agent has them as tools
       migrations/     the database's schema, one file for each change (AGENTS.md, rule 3)
-    agents/       each person's agent, the tools, and the guides for outside agents
+    agents/       each person's agent and the tools
       run.ts          the agent loop, on Effect AI: the model, the transcript, the checkpoints
       tools.ts        the one tool set: the server's operations and the document tools for any document, for every
                       agent as its person (a document token never with admin power); actions.ts, the audit of
                       every action and its tool
-      guides.ts       what an outside agent reads first: the server's guide, a document's and the admin pages'
       models.ts       the models (Effect AI's Anthropic provider), the agent's configuration and the scripted test model
       checkpoint.ts   an agent's conversation, kept step by step (chat-store.ts, in a Durable Object's SQLite)
       document/       every agent's hands in a document: session.ts (one session per person per document, where the
@@ -193,6 +192,8 @@ health checks and rollbacks work.
       slides/         erga/slides, a deck's library (slides.js, which the page imports: ui/slides.ts shows one 16:9
                       slide at a time with the page's steps, and in the editor loads erga/text and the slide bar,
                       ui/bar.ts): api/slides.ts has the slide edits (add, delete, move, layout) over erga/text's
+      canvas/         erga/canvas, a canvas presentation's library (canvas.js: ui/canvas.ts moves a camera over the
+                      page's frames, its steps and its zoom, and in the editor loads erga/text). No edits of its own
     client/       the browser side: editor.html, style.css, fonts/, and the scripts build.ts bundles into .build/
       shell/          the editor's shell (page.js): main.ts, its one word to the page's editor (page-frame.ts: edit, with the
                       edit key, or view), its replica of the room (libs/text/ui/collab.ts), the source view, the shell's parts

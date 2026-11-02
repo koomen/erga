@@ -1,7 +1,8 @@
-// The operations on documents as wholes: who you are, the documents list (/docs: list, make, delete), sharing (the
-// Share dialogs of the list and the editor), publishing files into one, and an admin's search of everyone's. What a
-// person does inside one document (its name, pages, files and versions) is editor.ts's; its text is edited over the
-// room's socket, and by the document tools (agents/document/tools.ts), which agents/tools.ts offers for any document.
+// The operations on documents as wholes: who you are (your tokens, keys and Erga's pages too), the documents list
+// (/docs: list, make, delete; an admin's search of everyone's), sharing (the Share dialogs of the list and the editor,
+// and the readers' options), writing files into one, and revoking a token or a key. What a person does inside one
+// document (its name, pages, files and versions) is editor.ts's; its text is edited over the room's socket, and by the
+// document tools (agents/document/tools.ts), which agents/tools.ts offers for any document.
 
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -13,6 +14,7 @@ import type { FileData } from "../../document/document.ts";
 import { cleanRel, isDocKind, type DocKind } from "../../document/pages.ts";
 import { byLine } from "../../shared/attribution.ts";
 import {
+  ANY_DOCUMENT,
   type Caller,
   described,
   DOCUMENT,
@@ -21,33 +23,40 @@ import {
   type Operation,
   OperationError,
   platformOf,
+  runInDocument,
   str,
 } from "./operation.ts";
+import { sitePages } from "./pages.ts";
 import { addressOf } from "../../document/names.ts";
 
 /** Files as a caller gives them: by path, each text or base64. */
 const FILES = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Struct({ base64: Schema.String })])).annotate({
-  description:
-    'Files by path relative to the document\'s folder ("index.html", "css/app.css"): each a string of text, or {"base64": "..."} for any other file (images, fonts).',
+  description: 'Files by path in the document ("index.html", "css/app.css"): each its text, or {"base64": "..."} (images, fonts).',
 });
-const ANY_DOCUMENT = str("The document: its address (/<owner>/<slug>), its URL, its id, or the slug of one of yours.");
+
+/** How to write a page people can keep editing by hand (agents/document/PROMPT.md, short): create_document's and write's. */
+const PAGE_RULES =
+  "People keep editing pages by hand, and the editor locks text that doesn't match its source: write well-formed HTML (close every element, </p> and </li> too); keep text in plain leaf elements (p, h1-h6, li, td), never loose beside blocks; never let a script change text in the source (give it an empty element, or mark the text data-erga-noedit); link the document's files relatively (\"style.css\"), other documents by /<owner>/<slug>; keep the page's place (slide, view) in location.hash; set a background on body; leave data-erga attributes alone. For slides or a canvas, start from the slides or canvas template: its library gives the steps and zoom.";
+
+const bool = (description: string) => Schema.optionalKey(Schema.Boolean.annotate({ description }));
 
 export const DOCUMENT_OPERATIONS: Operation[] = [
   {
     name: "whoami",
     label: "Who you are",
-    ui: "The account menu: who is signed in",
-    description:
-      "Who you act for: their login and name, the server, how you act (in person, or through which agent), whether you have admin power here, and for an agent token its label, scope, document (for the document scope) and expiry.",
+    ui: "The account menu: who is signed in; Settings (/settings): your agent tokens and your API keys; the quick search (⌘K): its pages",
+    description: "Who you act for, your token, your tokens and API keys, and Erga's pages you may open.",
     parameters: Schema.Struct({}),
     run: async (_args, caller) => {
-      const { who, token } = caller;
+      const { who, token, dir } = caller;
+      // A document token reaches one document: not its person's tokens, keys or pages.
+      const wide = who.onlyDoc == null;
       return {
         login: who.login,
         ...(caller.name ? { name: caller.name } : {}),
         ...(caller.origin ? { server: caller.origin } : {}),
         ...(who.via ? { via: who.via } : {}),
-        adminPower: await caller.dir.users.actsAsAdmin(who),
+        adminPower: await dir.users.actsAsAdmin(who),
         ...(token
           ? {
               token: {
@@ -59,6 +68,31 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
               },
             }
           : {}),
+        ...(wide
+          ? {
+              tokens: (await platformOf(caller).tokens.list(who.login)).map((t) => ({
+                id: t.id,
+                label: t.label,
+                kind: t.kind,
+                scope: t.scope,
+                ...(t.docId ? { document: t.docId } : {}),
+                expires: iso(t.expires),
+                created: iso(t.created),
+                lastUsed: iso(t.lastUsed),
+                ...(t.id == token?.id ? { yours: true } : {}),
+              })),
+              // The person's own keys for their agent's models: never a key, only whether it's set. Pasted only in Settings, Agent.
+              apiKeys: (await dir.personKeys.list(who)).map((k) => ({
+                name: k.name,
+                label: k.label,
+                set: k.set,
+                last4: k.last4,
+                updated: iso(k.updated),
+                ...(k.unreadable ? { unreadable: "stored, but this server can't open it: paste it again in Settings, Agent" } : {}),
+              })),
+              pages: await sitePages(caller),
+            }
+          : {}),
       };
     },
   },
@@ -67,24 +101,38 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     label: "List documents",
     activity: "listing the documents",
     wide: true,
-    ui: "Documents (/docs): the list",
-    description:
-      "The person's documents, as the documents list (/docs) shows them, most recently edited first: their own and the ones shared with them. Each one's id, title, address, URL, whose it is, their role in it, when it was last edited, and when it goes if nobody edits it (only for never-edited ones).",
-    parameters: Schema.Struct({}),
-    run: async (_args, caller) =>
-      (await platformOf(caller).docs.list(caller.who.login.toLowerCase())).map((d) => ({
-        id: d.id,
-        title: d.title,
-        address: addressOf(d),
-        ...(caller.origin ? { url: `${caller.origin}/${d.owner}/${d.slug}` } : {}),
-        owner: d.owner,
-        role: d.role,
-        modified: iso(d.modified),
-        ...(d.kind ? { kind: d.kind } : {}),
-        ...(d.expires != null ? { expires: iso(d.expires) } : {}),
-        ...(d.path != null ? { onDisk: d.path } : {}),
-        ...(d.id == caller.here ? { here: true } : {}),
-      })),
+    ui: "Documents (/docs): the list; Settings (/admin): the Homepage Project picker (an admin's search of everyone's)",
+    description: "Your documents and those shared with you, newest edit first; all (admins): the server's.",
+    parameters: Schema.Struct({
+      query: Schema.optionalKey(str("Only those whose title, owner, address or id has this in it")),
+      all: bool("Every document on the server, everyone's (admins only)"),
+      limit: Schema.optionalKey(Schema.Int.annotate({ description: "With all: at most this many (default 20, at most 100)" })),
+    }),
+    run: async (args, caller) => {
+      const { dir, who } = caller;
+      const query = typeof args.query == "string" ? args.query : "";
+      if (args.all === true) {
+        if (!(await dir.users.actsAsAdmin(who)))
+          throw new OperationError({ message: "Only an admin with admin power can list everyone's documents (all).", status: 403 });
+        return await dir.search(who, query, Number(args.limit) || 20);
+      }
+      const q = query.trim().toLowerCase();
+      return (await platformOf(caller).docs.list(who.login.toLowerCase()))
+        .map((d) => ({
+          id: d.id,
+          title: d.title,
+          address: addressOf(d),
+          ...(caller.origin ? { url: `${caller.origin}/${d.owner}/${d.slug}` } : {}),
+          owner: d.owner,
+          role: d.role,
+          modified: iso(d.modified),
+          ...(d.kind ? { kind: d.kind } : {}),
+          ...(d.expires != null ? { expires: iso(d.expires) } : {}),
+          ...(d.path != null ? { onDisk: d.path } : {}),
+          ...(d.id == caller.here ? { here: true } : {}),
+        }))
+        .filter((d) => !q || `${d.title} ${d.address} ${d.id}`.toLowerCase().includes(q));
+    },
   },
   {
     name: "create_document",
@@ -93,29 +141,25 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     wide: true,
     loose: true,
     ui: "Documents (/docs): New, from a template or a copy; the viewer's Clone; publishing a folder of files",
-    description: `Makes a new document for the person and answers its address and URL. With files, it's those files (publishing a site or a page: a folder with index.html, plus its styles, scripts and images), and it stays. Without files it's a blank page (the default), a template (${TEMPLATES.map((t) => `"${t.id}": ${t.description}`).join(" ")} "landing": a copy of the server's homepage), or a copy of a document they may open (from), which goes if nobody edits it in time (the server's delete_docs_after_hours setting; the answer says when). The title follows the page's first heading unless you give one; the address (/<owner>/<slug>) follows the title unless you give a slug.`,
+    description: `Makes a new document from files, a template or a copy, and answers its address. ${PAGE_RULES}`,
     parameters: Schema.Struct({
       files: Schema.optionalKey(FILES),
-      index: Schema.optionalKey(str("The page, if it isn't index.html: an .html file among the files.")),
-      title: Schema.optionalKey(str("Its title (else the page's first heading).")),
-      slug: Schema.optionalKey(
-        str("Its address after /<owner>/ (letters, digits and dashes; else made from the title). Taken already, it gets -2, -3...")
-      ),
+      index: Schema.optionalKey(str("The page among the files, if it isn't index.html")),
+      title: Schema.optionalKey(str("Its title (else the page's first heading)")),
+      slug: Schema.optionalKey(str("Its address after /<owner>/ (else from the title); a taken one gets -2, -3...")),
       template: Schema.optionalKey(
         Schema.String.annotate({
           enum: ["blank", ...TEMPLATES.map((t) => t.id), "landing"],
-          description:
-            "Without files: a blank page (blank or page, the default), another template, or a copy of the server's homepage (landing).",
+          description: `Without files: blank (the default), ${TEMPLATES.map((t) => `${t.id} (${t.description.replace(/\.$/, "")})`).join(", ")}, or landing (a copy of the homepage)`,
         })
       ),
       from: Schema.optionalKey(
-        str("Without files: a document to copy instead (its address, URL or id). It copies the document as it is now.")
+        str("Without files: a document to copy. A copy or a template goes if nobody edits it in time; the answer says when.")
       ),
       kind: Schema.optionalKey(
         Schema.String.annotate({
           enum: ["document", "project"],
-          description:
-            "document: one page and any files beside it; project: a folder of pages, each with its own address. Else the kind of the document copied, or from the files: a project if they have more than one page.",
+          description: "document: one page and files beside it; project: pages, each at its own address (else from the files)",
         })
       ),
     }),
@@ -180,8 +224,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     label: "Delete a document",
     activity: "deleting a document",
     ui: "Documents (/docs): Delete",
-    description:
-      "Deletes one of the person's documents for good, as Delete on the documents list does (only its owner may). A document that's a folder on disk (local development) only comes off the list. Your own agent can't delete the document open on the person's page: they delete that one on the documents list (/docs). Only delete when the person asks, naming the document.",
+    description: "Deletes a document for good (owner only), but not the one open on your person's page.",
     parameters: Schema.Struct({ document: ANY_DOCUMENT }),
     run: async (args, caller) => {
       const doc = await findDocument({ ...caller, here: undefined }, args.document, "delete");
@@ -191,225 +234,122 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
           status: 409,
         });
       const platform = platformOf(caller);
+      // A folder on disk (local development) only comes off the list.
       if (!(await platform.docs.delete(doc))) await platform.directory.remove(doc.id);
       return { deleted: described(doc, caller) };
     },
   },
   {
-    name: "document_access",
-    label: "Who has access",
-    activity: "checking who has access",
-    ui: "Share (the documents list and the editor): who it's shared with",
-    description:
-      "Who a document is shared with: its owner, and everyone given a role (editor or viewer; \"*\" is anyone with the link), each one's picture, who of them can't sign in on this server yet (notUsers), and whether the server lets users share content publicly, whether its readers may use their own agent on it (readerAgent: set_reader_agent), and whether they see Erga's bars over it (readerBars: set_reader_bars). Only its owner may see this.",
-    parameters: Schema.Struct({ document: DOCUMENT }),
-    run: async (args, caller) => shareAnswer(caller, await findDocument(caller, args.document, "share")),
-  },
-  {
     name: "share_document",
     label: "Share the document",
     activity: "sharing the document",
-    ui: "Share (the documents list and the editor): give someone a role, change it, or stop sharing",
-    description:
-      'Shares a document (only its owner may): gives someone the role of editor (may edit and rename it) or viewer (may only look), or takes theirs away with role "none". login "*" means anyone with the link: anyone signed in, and people who aren\'t signed in too (as viewers); the server refuses it, saying why, unless it lets users share content publicly (the Access page). Answers who has access now.',
+    ui: "Share (the documents list and the editor): give someone a role, change it, or stop sharing; Document settings (the editor): Readers",
+    description: "Gives someone editor, viewer or none; sets the readers' agent and bars (owner only).",
     parameters: Schema.Struct({
       document: DOCUMENT,
-      login: str(
-        'Whose role to set: a GitHub login, or "*" for anyone with the link (only while the server lets users share content publicly)'
+      login: Schema.optionalKey(
+        str('A GitHub login, or "*": anyone with the link (only while the server lets users share content publicly)')
       ),
-      role: Schema.Literals(["editor", "viewer", "none"]).annotate({ description: "editor, viewer, or none to stop sharing it with them" }),
+      role: Schema.optionalKey(Schema.Literals(["editor", "viewer", "none"]).annotate({ description: "none stops sharing with them" })),
+      reader_agent: bool('Viewers may ask their own agent about it (read only); never while shared with "*"'),
+      reader_bars: bool("Viewers see Erga's bars over it (on at first); off, the page fills the window"),
     }),
     run: async (args, caller) => {
       const doc = await findDocument(caller, args.document, "share");
-      await caller.dir.share(
-        caller.who,
-        doc.id,
-        String(args.login ?? "")
-          .trim()
-          .replace(/^@/, ""),
-        args.role == "none" || !args.role ? null : (args.role as Grant)
-      );
-      return shareAnswer(caller, doc);
-    },
-  },
-  {
-    name: "set_reader_agent",
-    label: "Let readers use their agent",
-    activity: "changing whether readers may use their agent here",
-    ui: "Document settings (the editor): Readers",
-    description:
-      'Lets the people a document is shared with as viewers use their own agent on it, in the viewer, or stops it (only its owner may). A reader\'s agent can read the document, never change it. Editors always have theirs. Not for a document shared with anyone with the link ("*"): the server refuses, saying why, and while it is shared so, readers have no agent there. Answers who has access now, with readerAgent.',
-    parameters: Schema.Struct({
-      document: DOCUMENT,
-      on: Schema.Boolean.annotate({ description: "true: readers may use their agent here; false: they may not" }),
-    }),
-    run: async (args, caller) => {
-      const doc = await findDocument(caller, args.document, "share");
-      if (args.on && (await caller.dir.permissions(doc.id)).some((p) => p.login == ANYONE))
+      const { dir } = caller;
+      const login = String(args.login ?? "")
+        .trim()
+        .replace(/^@/, "");
+      if (!login && args.reader_agent == null && args.reader_bars == null)
+        throw new OperationError({ message: "Give a login and a role, reader_agent or reader_bars.", status: 400 });
+      if (!login != !args.role)
+        throw new OperationError({ message: "Give a login and its role (editor, viewer or none) together.", status: 400 });
+      if (login) {
+        await dir.share(caller.who, doc.id, login, args.role == "none" ? null : (args.role as Grant));
+      }
+      if (args.reader_agent === true && (await dir.permissions(doc.id)).some((p) => p.login == ANYONE))
         throw new OperationError({
           message:
             "Anyone with the link can open this document, so readers can't use their agent on it. Stop sharing it with anyone first.",
           status: 409,
         });
-      await caller.dir.setReaderOption(doc.id, "agent", args.on === true);
-      return shareAnswer(caller, doc);
+      if (args.reader_agent != null) await dir.setReaderOption(doc.id, "agent", args.reader_agent === true);
+      if (args.reader_bars != null) await dir.setReaderOption(doc.id, "bars", args.reader_bars === true);
+      return { document: described(doc, caller), ...(await accessOf(caller, doc)) };
     },
   },
   {
-    name: "set_reader_bars",
-    label: "Show readers Erga's bars",
-    activity: "changing whether readers see Erga's bars",
-    ui: "Document settings (the editor): Readers",
-    description:
-      "Shows the people who view a document, and can't edit it, Erga's bars over it (the breadcrumbs and the buttons), or hides them, so the page fills the window as a site of its own (only its owner may). On for every document at first. Editors always see the bars. Answers who has access now, with readerBars.",
+    name: "write",
+    label: "Write",
+    activity: "writing",
+    loose: true,
+    ui: "An HTTP client's publish (POST /api/publish); the page tree's upload (PUT /api/files/<path>)",
+    description: `Writes one file, or many (files; replace deletes the rest). ${PAGE_RULES}`,
     parameters: Schema.Struct({
       document: DOCUMENT,
-      on: Schema.Boolean.annotate({ description: "true: readers see Erga's bars; false: they see the page alone" }),
-    }),
-    run: async (args, caller) => {
-      const doc = await findDocument(caller, args.document, "share");
-      await caller.dir.setReaderOption(doc.id, "bars", args.on === true);
-      return shareAnswer(caller, doc);
-    },
-  },
-  {
-    name: "update_files",
-    loose: true,
-    ui: "An HTTP client's publish (POST /api/publish)",
-    description:
-      "Publishes files into an existing document: each replaces the file as it is now, as an edit (open editors show it at once, and anyone's undo history stays). replace: true also deletes every file not given (the page itself stays), for publishing a site again. delete removes the files named.",
-    parameters: Schema.Struct({
-      document: ANY_DOCUMENT,
+      path: Schema.optionalKey(str("One file's path")),
+      content: Schema.optionalKey(str("Its text; for a text file that exists, only the differences apply (prefer edit)")),
+      content_base64: Schema.optionalKey(str("Or its bytes, base64: a file that isn't text (at most 25 MB)")),
       files: Schema.optionalKey(FILES),
-      delete: Schema.optionalKey(Schema.Array(Schema.String).annotate({ description: "Paths of files to delete." })),
-      replace: Schema.optionalKey(Schema.Boolean.annotate({ description: "Delete every file that isn't in files (except the page)." })),
+      replace: bool("With files: delete every other file, but the page (to publish a site again)"),
     }),
     run: async (args, caller) => {
-      const platform = platformOf(caller);
       const doc = await findDocument(caller, args.document, "edit");
+      const one = args.path != null;
+      if (one == (args.files != null))
+        throw new OperationError({ message: "Give one file (path, with content or content_base64), or files.", status: 400 });
+      // One file: in the document's host, as the person's agent (only the differences of a text file, one undo step).
+      if (one) {
+        const { path, content, content_base64 } = args;
+        return runInDocument(caller, doc, "write", { path, content, content_base64 });
+      }
+      // Many: as a publish, each file an edit (open editors show it at once, and anyone's undo history stays).
+      const platform = platformOf(caller);
       const files = decodeFiles(args.files);
-      const remove = new Set(stringList(args.delete, "delete").map((p) => cleanFilePath(p)));
+      const remove = new Set<string>();
       if (args.replace === true) for (const p of await platform.docs.paths(doc)) if (!(p in files)) remove.add(p);
-      if (!Object.keys(files).length && !remove.size)
-        throw new OperationError({ message: "Nothing to do: give files, delete, or replace.", status: 400 });
+      if (!Object.keys(files).length && !remove.size) throw new OperationError({ message: "Nothing to do: files is empty.", status: 400 });
       const r = await platform.docs.publish(doc, files, [...remove], byLine(caller.who.login.toLowerCase(), caller.who.via));
       return { ...described((await platform.directory.get(doc.id)) ?? doc, caller), ...r };
     },
   },
   {
-    name: "search_documents",
-    label: "Find a document or project on the server",
-    activity: "finding a document or project",
-    admin: true,
-    ui: "Settings (/admin): the Homepage Project picker",
-    description:
-      "Admins only. Finds any of the server's documents and projects, everyone's, by a part of its title, its owner, its address (/<owner>/<slug>) or its id, as the Homepage Project setting's picker on /admin does; most recently edited first. Each: its id, title, owner, address and kind (document or project). To make one the homepage, give its address or id to set_setting with the key landing_document.",
+    name: "revoke",
+    label: "Revoke a token or a key",
+    activity: "revoking",
+    wide: true,
+    ui: "Settings (/settings): Revoke a token; Settings, Agent: Remove a key",
+    description: "Turns off one of your tokens, or removes one of your API keys.",
     parameters: Schema.Struct({
-      query: str("A part of the title, owner or address; empty: the most recently edited"),
-      limit: Schema.optionalKey(Schema.Int.annotate({ description: "At most this many (default 20, at most 100)" })),
+      token: Schema.optionalKey(str("A token's id (whoami lists them); revoking your own ends your access")),
+      api_key: Schema.optionalKey(str("Or a provider whose key goes: anthropic, openai, google or openrouter")),
     }),
-    run: async (args, { dir, who }) => ({ found: await dir.search(who, String(args.query ?? ""), Number(args.limit) || 20) }),
-  },
-];
-
-/** The person's tokens, as /settings shows them. */
-export const TOKEN_OPERATIONS: Operation[] = [
-  {
-    name: "list_tokens",
-    label: "List agent tokens",
-    activity: "listing the agent tokens",
-    wide: true,
-    ui: "Settings (/settings): your agent tokens, Share with agent's too",
-    description:
-      "The person's agent tokens (never the tokens themselves): id, label, kind, scope, when made, when they expire and when last used.",
-    parameters: Schema.Struct({}),
-    run: async (_args, caller) =>
-      (await platformOf(caller).tokens.list(caller.who.login)).map((t) => ({
-        id: t.id,
-        label: t.label,
-        kind: t.kind,
-        scope: t.scope,
-        ...(t.docId ? { document: t.docId } : {}),
-        expires: iso(t.expires),
-        created: iso(t.created),
-        lastUsed: iso(t.lastUsed),
-        ...(t.id == caller.token?.id ? { yours: true } : {}),
-      })),
-  },
-  {
-    name: "revoke_token",
-    label: "Revoke an agent token",
-    activity: "revoking an agent token",
-    wide: true,
-    ui: "Settings (/settings): Revoke",
-    description:
-      "Turns one of the person's agent tokens off, by id (list_tokens), as Revoke on /settings does: agents using it lose access at once. Revoking your own ends your access. Only when the person asks, naming the token.",
-    parameters: Schema.Struct({ id: str("The token's id.") }),
     run: async (args, caller) => {
-      if (!(await platformOf(caller).tokens.revoke(caller.who.login, String(args.id ?? ""), caller.who.via)))
-        throw new OperationError({ message: `You have no token "${args.id}".`, status: 404 });
-      return { revoked: args.id };
-    },
-  },
-  {
-    name: "list_my_api_keys",
-    label: "List your API keys",
-    activity: "listing your API keys",
-    wide: true,
-    ui: "Settings, Agent: your own API keys",
-    description:
-      "The person's own API keys for their agent's models, one for each provider (anthropic, openai, google, openrouter): whether each is set, its last four characters, when it was set, and whether this server can't open it. Never a key itself. Only the person's own agent uses them; a key of theirs runs every model of its provider and wins over the server's. The person pastes a key only in Settings, Agent, never in a conversation.",
-    parameters: Schema.Struct({}),
-    run: async (_args, { dir, who }) =>
-      (await dir.personKeys.list(who)).map((k) => ({
-        name: k.name,
-        label: k.label,
-        set: k.set,
-        last4: k.last4,
-        updated: iso(k.updated),
-        ...(k.unreadable ? { unreadable: "stored, but this server can't open it: paste it again in Settings, Agent" } : {}),
-      })),
-  },
-  {
-    name: "clear_my_api_key",
-    label: "Remove one of your API keys",
-    activity: "removing one of your API keys",
-    wide: true,
-    ui: "Settings, Agent: Remove a key",
-    description:
-      "Removes one of the person's own API keys, by provider (list_my_api_keys), as Remove in Settings, Agent does: their agent stops running that provider's models with it (the server's key may still run some). Only when the person asks. Adding or replacing a key is done only in Settings, so a key never goes through a conversation.",
-    parameters: Schema.Struct({ name: str("The provider: anthropic, openai, google or openrouter.") }),
-    run: async (args, { dir, who }) => {
-      const k = await dir.personKeys.clear(who, String(args.name ?? ""));
-      return { removed: k.name, label: k.label };
+      const { dir, who } = caller;
+      if ((args.token == null) == (args.api_key == null))
+        throw new OperationError({ message: "Give a token's id (token) or a provider (api_key): one of them.", status: 400 });
+      if (args.api_key != null) {
+        const k = await dir.personKeys.clear(who, String(args.api_key));
+        return { removed: k.name, label: k.label };
+      }
+      if (!(await platformOf(caller).tokens.revoke(who.login, String(args.token), who.via)))
+        throw new OperationError({ message: `You have no token "${args.token}".`, status: 404 });
+      return { revoked: args.token };
     },
   },
 ];
 
-/** Who a document is shared with, as the Share dialogs show it. */
-/** The readers' options (set_reader_agent, set_reader_bars), as document_access answers them. */
-const readerAnswer = async (dir: Caller["dir"], id: string) => {
-  const o = await dir.readerOptions(id);
-  return { readerAgent: o.agent, readerBars: o.bars };
-};
-
-async function shareAnswer(caller: Caller, doc: DocRow) {
+/** Who a document is shared with, as the Share dialogs show it, and the readers' options: ls's `access`. */
+export async function accessOf(caller: Caller, doc: DocRow) {
   const { dir } = caller;
-  const permissions = await dir.permissions(doc.id);
+  const [permissions, readers] = await Promise.all([dir.permissions(doc.id), dir.readerOptions(doc.id)]);
   const notUsers = (
     await Promise.all(permissions.map(async (p) => (p.login == ANYONE || (await dir.users.allowed(p.login)) ? null : p.login)))
   ).filter((l) => l != null);
   return {
-    document: described(doc, caller),
     permissions: permissions.map((p) => ({
       login: p.login,
       role: p.role,
-      ...(p.login == ANYONE
-        ? {
-            means:
-              "anyone with the link: anyone signed in, and, while the server lets users share content publicly, people who aren't signed in too (as viewers)",
-          }
-        : {}),
       granted: iso(p.granted),
       ...(p.grantedBy ? { grantedBy: p.grantedBy } : {}),
       ...(p.grantedVia ? { grantedVia: p.grantedVia } : {}),
@@ -417,7 +357,8 @@ async function shareAnswer(caller: Caller, doc: DocRow) {
     notUsers,
     avatars: await dir.users.avatars(permissions.map((p) => p.login)),
     publicSharing: await dir.config.get("public_sharing"),
-    ...(await readerAnswer(dir, doc.id)),
+    readerAgent: readers.agent,
+    readerBars: readers.bars,
   };
 }
 
@@ -488,10 +429,4 @@ const optString = (v: unknown, what: string): string | undefined => {
   if (v == null) return undefined;
   if (typeof v != "string") throw new OperationError({ message: `${what} must be a string.`, status: 400 });
   return v;
-};
-const stringList = (v: unknown, what: string): string[] => {
-  if (v == null) return [];
-  if (!Array.isArray(v) || v.some((x) => typeof x != "string"))
-    throw new OperationError({ message: `${what} must be a list of paths.`, status: 400 });
-  return v as string[];
 };

@@ -18,7 +18,7 @@
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
-//   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent, and its guide
+//   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent; /llms.txt points agents to /mcp
 //   /.well-known/oauth-..., /oauth/...
 //                              MCP's sign-in: an agent's app gets a token through its person's browser (server/identity/oauth.ts)
 //   /tokens/...                approving an agent's request for a token; making one and the test token (the Settings dialog)

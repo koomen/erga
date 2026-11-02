@@ -45,30 +45,30 @@ const SIGN_IN = "signing in: the person in their own browser, before any agent a
 
 export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ /admin: settings, change log, users, API keys
-  { route: "GET /admin", domain: "admin", action: "Read the settings (Settings)", tool: "list_settings" },
+  { route: "GET /admin", domain: "admin", action: "Read the settings (Settings)", tool: "settings" },
   { route: "GET /admin/settings", domain: "none", action: "An old address of Settings", exempt: "a redirect" },
   { route: "GET /admin/credentials", domain: "none", action: "An old address of API keys", exempt: "a redirect" },
-  { route: "GET /admin/changes", domain: "admin", action: "Read the change log (Change log)", tool: "list_setting_changes" },
-  { route: "GET /admin/users", domain: "admin", action: "Read the users (Users)", tool: "list_users" },
+  { route: "GET /admin/changes", domain: "admin", action: "Read the change log (Change log)", tool: "settings" },
+  { route: "GET /admin/users", domain: "admin", action: "Read the users (Users)", tool: "people" },
   {
     route: "GET /admin/access",
     domain: "admin",
     action: "Read the group rules, and whether users can share content publicly (Access)",
-    tool: "list_access_rules",
+    tool: "people",
   },
-  { route: "GET /admin/api-keys", domain: "admin", action: "Read the API keys' status (API keys)", tool: "list_api_keys" },
+  { route: "GET /admin/api-keys", domain: "admin", action: "Read the API keys' status (API keys)", tool: "settings" },
   { route: "POST /admin/credentials", domain: "admin", action: "Set or replace an API key (API keys)", exempt: SECRET },
   {
     route: "GET /admin/auth",
     domain: "admin",
     action: "Read how people sign in on this server (Authentication)",
-    tool: "get_sign_in_status",
+    tool: "sign_in",
   },
   {
     route: "GET /admin/auth/status",
     domain: "admin",
     action: "Read the same, as JSON, with live checks (Authentication)",
-    tool: "get_sign_in_status",
+    tool: "sign_in",
   },
   {
     route: "POST /admin/auth do=save",
@@ -97,15 +97,20 @@ export const AGENT_ACTIONS: AgentAction[] = [
 
   // ------------------------------------------------------------ /admin/ops: the Ops page, source and deploys. Its actions are
   // operations (control/operations.ts), at the end with the others; these are the routes that stay routes.
-  { route: "GET /git", domain: "admin", action: "Read Erga's source and its recent commits (the public page, for anyone)", tool: "list_source" },
-  { route: "GET /git/tree/<ref>/<path>", domain: "admin", action: "Read a folder or a file of Erga's source (the public page, for anyone)", tool: "read_source" },
+  { route: "GET /git", domain: "admin", action: "Read Erga's source and its recent commits (the public page, for anyone)", tool: "source" },
+  {
+    route: "GET /git/tree/<ref>/<path>",
+    domain: "admin",
+    action: "Read a folder or a file of Erga's source (the public page, for anyone)",
+    tool: "source",
+  },
   // GitHub (control/source/github.ts; control/github-routes.ts): Erga's GitHub App, connected to one repository. Connect is a consent on
   // GitHub's authorize and install pages, in a popup; the agent reads the state, syncs, disconnects, and offers the button.
   {
     route: "GET /github/connect",
     domain: "none",
     action:
-      "Connect GitHub: GitHub's authorize page, then the App's install page when it has no installation yet, in a popup (Ops, the GitHub card; the button under the agent's github_status)",
+      "Connect GitHub: GitHub's authorize page, then the App's install page when it has no installation yet, in a popup (Ops, the GitHub card; the button under the agent's branches)",
     exempt:
       "a secret: the consent gives Erga's GitHub App access to the person's repositories, only on GitHub's own page in their browser, never in a conversation (the agent offers the button)",
   },
@@ -127,20 +132,25 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /forks/<id>/github/token|uninstall", domain: "none", action: "A downstream's control Worker gets a GitHub installation token for its connected repository, or has the App uninstalled", exempt: "server to server, with the fork's secret" },
   { route: "POST /forks/<id>/hosts", domain: "none", action: "A downstream's control Worker tells upstream its hosts (its domains changed)", exempt: "server to server, with the fork's secret" },
   // The release store (control/routes.ts, control/deploys/releases.ts): the channels edge and stable.
-  { route: "GET /releases", domain: "admin", action: "Read the release store's channels (public; the Ops page marks them on the log)", tool: "list_releases" },
+  {
+    route: "GET /releases",
+    domain: "admin",
+    action: "Read the release store's channels (public; the Ops page marks them on the log)",
+    tool: "branches",
+  },
   // The control Worker's Cloudflare credential (control/routes.ts): a consent in the browser, from the Ops page's
   // Cloudflare card (a popup). The admin agent reads it and offers the button; the consent is the admin's own.
   {
     route: "GET /api/install",
     domain: "admin",
-    action: "Read whether the control Worker's Cloudflare credential is connected (list_deploys says it too)",
-    tool: "deploy_credential",
+    action: "Read whether the control Worker's Cloudflare credential is connected (deploys says it)",
+    tool: "deploys",
   },
   {
     route: "GET|POST /install/start",
     domain: "none",
     action:
-      "Connect Cloudflare: consent on Cloudflare's own page, in a popup (the Ops page's Cloudflare card, or the button under the agent's deploy_credential)",
+      "Connect Cloudflare: consent on Cloudflare's own page, in a popup (the Ops page's Cloudflare card, or the button under the agent's deploys)",
     exempt:
       "a secret: the consent gives Erga a grant, on Cloudflare's consent screen, never in a conversation (the agent offers the button)",
   },
@@ -236,12 +246,6 @@ export const AGENT_ACTIONS: AgentAction[] = [
     tool: "edit",
   },
   {
-    route: "POST /d/<id>/api/page-edit",
-    domain: "document",
-    action: "One of a page's own edits, from its own controls (ergaEditor.call): the change its API gives (editor)",
-    tool: "call_edit",
-  },
-  {
     route: "GET /d/<id>/api/start",
     domain: "document",
     action: "Open the editor: the document's name, pages and text in one answer (editor)",
@@ -251,10 +255,10 @@ export const AGENT_ACTIONS: AgentAction[] = [
     route: "GET /d/<id>/api/doc",
     domain: "none",
     action: "The editor wakes the document as the pointer nears Edit (its name and who you are)",
-    exempt: "the page's own warm-up, not a person's action (the name: get_title)",
+    exempt: "the page's own warm-up, not a person's action (the name: ls)",
   },
   // The document's name, pages, files' list and versions are operations (server/operations/editor.ts: rename_document,
-  // list_pages, new_page, mkdir, mv, rm, make_project, make_document, ls, list_versions, read_version, restore_version).
+  // ls, new, mv, cp, rm, set_kind, versions, restore_version).
   // A route still: its body is the file's bytes (up to the upload limits, streamed to storage), not an operation's JSON.
   {
     route: "PUT /api/files/<path>",
@@ -284,14 +288,18 @@ export const AGENT_ACTIONS: AgentAction[] = [
   {
     route: "POST /d/<id>/api/agent/view",
     domain: "none",
-    action:
-      "The tab answers the agent's view_page and eval_in_page, and its page_console, page_network, page_events, page_inspect, page_click and page_key",
+    action: "The tab answers the agent's view_page and eval_in_page, and its page_log and page_input",
     exempt: PANEL,
   },
   // The live page in the person's tab (shared/live-page.ts): no route of its own, but what the person does there.
-  { route: "UI /d/<id>#page-click", domain: "document", action: "Click on the page as it runs (editor)", tool: "page_click" },
-  { route: "UI /d/<id>#page-key", domain: "document", action: "Press a key on the page as it runs (editor)", tool: "page_key" },
-  { route: "UI /d/<id>#devtools", domain: "document", action: "Read the page's console, requests and state, as the browser's developer tools show them (editor)", tool: "page_console" },
+  { route: "UI /d/<id>#page-click", domain: "document", action: "Click on the page as it runs (editor)", tool: "page_input" },
+  { route: "UI /d/<id>#page-key", domain: "document", action: "Press a key on the page as it runs (editor)", tool: "page_input" },
+  {
+    route: "UI /d/<id>#devtools",
+    domain: "document",
+    action: "Read the page's console, requests and state, as the browser's developer tools show them (editor)",
+    tool: "page_log",
+  },
 
   // Full screen (client/inline/viewer-full.ts): no route, and nothing an agent could do with it.
   {
@@ -301,12 +309,12 @@ export const AGENT_ACTIONS: AgentAction[] = [
     exempt: "the person's own screen: a browser goes full screen only on the person's click, and an agent has no screen to show it on",
   },
 
-  // ------------------------------------------------------------ the guide, MCP, and asking for a token
+  // ------------------------------------------------------------ llms.txt, MCP, and asking for a token
   {
     route: "GET /llms.txt",
     domain: "none",
-    action: "The guide to the API, made from the operations (with a token, for that token)",
-    exempt: "the API's own guide: each operation is below, with its tool",
+    action: "A few lines that point an agent to the MCP server (/mcp) and /api/tools",
+    exempt: "a fixed pointer for agents, not a person's action",
   },
   {
     route: "POST /mcp",

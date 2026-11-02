@@ -54,7 +54,7 @@ export const kindOf = (paths: Iterable<string>): DocKind => {
  */
 export function pageRefusal(kind: DocKind, path: string, index: string): string | null {
   if (kind != "document" || !isPage(path) || path == index) return null;
-  return `This is a document: its one page is ${index}, so ${path} can't be a page of it. To have more pages, make it a project first (Project in the document's settings, or the make_project tool).`;
+  return `This is a document: its one page is ${index}, so ${path} can't be a page of it. To have more pages, make it a project first (Project in the document's settings, or the set_kind tool).`;
 }
 
 /** A tree operation that can't be done, with why, in words for a person or an agent. */

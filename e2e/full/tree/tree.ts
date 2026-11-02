@@ -41,9 +41,7 @@ export async function multi(server: Server) {
     base, address,
     /** Every file and folder the server lists for it (agents see them all), sorted. */
     tree: async () =>
-      ((await runTool(server.root, "list_pages", { document: id })).result as { entries: { path: string }[] }).entries
-        .map((e) => e.path)
-        .sort(),
+      ((await runTool(server.root, "ls", { document: id })).result as { entries: { path: string }[] }).entries.map((e) => e.path).sort(),
     /** One of the agents' tools, over the token API, on this document, as its owner. */
     async agentTool(name: string, args: Record<string, unknown> = {}) {
       if (!token) token = await agentToken(server);

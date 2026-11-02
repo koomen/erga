@@ -1,7 +1,7 @@
 // The Ops page's feature branches (control/source/page.ts; control/source/features.ts): one row for each branch, with
 // its commits ahead of and behind staging, its last commit, and whether it merges cleanly into staging. Merge opens a
-// dialog with the squash commit's message (merge_feature_branch); Delete drops the branch (delete_feature_branch).
-// The Ops page's script (client/inline/ops.ts) calls `render` with list_branches' `features` and `featureActions` each
+// dialog with the squash commit's message (feature_branch merge); Delete drops the branch (feature_branch delete).
+// The Ops page's script (client/inline/ops.ts) calls `render` with branches' `features` and `featureActions` each
 // time it loads, and `heard` with each {type: "feature"} event.
 //
 // A merge takes seconds: the dialog closes at once, and the branch's row says what runs, then how it ended. The row
@@ -12,7 +12,7 @@ import { esc } from "../../shared/html";
 import { plural, timeAgo } from "../../shared/time";
 import { runTool } from "../common/tools";
 
-// list_branches' answer, typed loosely: this page reads what the server sends and shows it.
+// branches' answer, typed loosely: this page reads what the server sends and shows it.
 type Json = any;
 /** A Merge or Delete of a branch (control/source/features.ts, FeatureAction). */
 interface Action {
@@ -24,7 +24,7 @@ interface Action {
   error?: string;
 }
 
-/** Wires the box and the dialog; `reload` asks list_branches again. */
+/** Wires the box and the dialog; `reload` asks branches again. */
 export function featureBranches(reload: () => Promise<void>): {
   render: (features: Json[] | undefined, actions: Action[] | undefined) => void;
   heard: (action: Action) => void;
@@ -127,7 +127,7 @@ export function featureBranches(reload: () => Promise<void>): {
     const f = shown?.find((x) => x.name == (merge?.dataset.featureMerge ?? del?.dataset.featureDelete));
     if (!f) return;
     if (del) {
-      act(f, "delete", () => runTool("delete_feature_branch", { branch: f.name }));
+      act(f, "delete", () => runTool("feature_branch", { action: "delete", branch: f.name }));
       return;
     }
     merging = f;
@@ -149,7 +149,7 @@ export function featureBranches(reload: () => Promise<void>): {
       return;
     }
     dlg.close();
-    act(f, "merge", () => runTool("merge_feature_branch", { branch: f.name, message: text }));
+    act(f, "merge", () => runTool("feature_branch", { action: "merge", branch: f.name, message: text }));
   });
 
   return {

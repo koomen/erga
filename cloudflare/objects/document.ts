@@ -179,7 +179,7 @@ export class DocumentObject extends DurableObject<Env> {
   currentFiles() {
     return run(this.document.hold(this.document.currentFiles()));
   }
-  /** One version, with its files' paths (read_version); null if there's none. */
+  /** One version, with its files' paths (read with version); null if there's none. */
   version(ref: string | number) {
     return run(this.document.hold(this.document.version(ref)));
   }

@@ -46,7 +46,7 @@ Read it before you push to a deployment's repository. On Erga's own:
 
 1. Push to `staging` (`git push origin HEAD:staging`), or to a feature branch
    (`git push origin HEAD:<branch>`). Staging deploys at once. A feature
-   branch does not deploy: Merge on the Ops page (`merge_feature_branch`) puts
+   branch does not deploy: Merge on the Ops page (`feature_branch`) puts
    it on staging as one commit, and staging deploys that.
 2. Never push to `main`. Pete moves `main`, and production deploys from it.
 3. A push is not a deploy. `curl -s https://staging.erga.dev/api/deploys/version`
@@ -78,9 +78,13 @@ Read it before you push to a deployment's repository. On Erga's own:
 7. **No compatibility shims.** A breaking change is fine when it makes the
    code better. Keep no old names, re-exports, optional fields or fallbacks
    "for safety": Pete is the only user.
-8. **Keep the agents' manual current.** A change to an operation or a tool
-   (`server/operations/`, `agents/tools.ts`) updates the guide agents read
-   (`agents/guides.ts`: `/llms.txt`) in the same change.
+8. **The tools are the agents' manual.** An outside agent reads only MCP's
+   short instructions (`server/api.ts`, `instructionsFor`) and the tools.
+   A tool's description is one short line; its details go in the
+   arguments' descriptions. `/llms.txt` only points to `/mcp`: nothing in
+   Erga sends an agent there. Keep the tool list small: merge a new action
+   into a tool that does the same kind of thing, a read with reads. Change the prompts that name a tool
+   (`agents/person/prompt.ts`) with it.
 9. **Source files stay under about 32 KB; 48 KB is the cap**, because read
    tools stop near 50 KB. When you touch a file over the cap, split it along
    a real seam and take it off the list in `tests/file-size.test.ts`.
@@ -188,8 +192,8 @@ Found a new trap? Write it here, in the same change.
   server/pages/agent.ts, outside `#erga-editor`, and stay as they are when the editor opens or closes. The editor
   only places it (client/agent/layout.ts). Its conversation is the person's (`/api/agent`), not the document's: a
   test reads it at `${root}/api/agent/conversation`, never at the document's `/d/<id>/api/agent`. In the viewer, a reader has
-  it only where the owner allows it (`set_reader_agent`), and never on a document shared with "*". A reader sees Erga's bars only where the owner leaves them on
-  (`set_reader_bars`): off, the viewer sets `--band-h` to 0 and hides the bars, so the page has no room at its top. The Ops pages are on
+  it only where the owner allows it (`share_document`, `reader_agent`), and never on a document shared with "*". A reader sees Erga's bars only where the owner leaves them on
+  (`reader_bars`): off, the viewer sets `--band-h` to 0 and hides the bars, so the page has no room at its top. The Ops pages are on
   another origin: there the panel calls the app (`data-app` on `#agent`, credentials included), and `/api/agent` takes
   only the app's own origin and `platform.control`'s, with CORS for the second.
 - Staging's database is a copy of production's. A new table that holds secrets (encrypted under production's
@@ -200,7 +204,7 @@ Found a new trap? Write it here, in the same change.
   edit typed on the page reaches the shell's replica only through the room, a moment later. A test that reads the
   shell's text waits for it (`ed.source()`); one that reads the editor's selection reads the frame's (`ed.selection()`).
   The editor starts a round trip after the pencil: a test waits for `window.ergaFrame.page` before it clicks. The
-  editor's own controls (the style bar, the link bar, pause, its note, the refresh pill) are in a shadow root on the
+  editor's own controls (the style bar, the link bar, its note, the refresh pill) are in a shadow root on the
   page (libs/text/ui/controls.ts): a test reaches them with `ed.controls`, never in the shell's document.
 - GitHub's install page (`/apps/<slug>/installations/new`), for an account that already has the App, shows the
   installation's settings, and Save stays off until something changes: it never comes back to Erga. So Connect GitHub

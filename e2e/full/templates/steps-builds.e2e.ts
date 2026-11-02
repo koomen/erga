@@ -1,7 +1,7 @@
-// A presentation whose slides build up in parts (agents/document/PROMPT.md, "Presentations": each part is a step, and
+// A presentation whose slides build up in parts (client/inline/reader.ts, Steps: each part is a step, and
 // slide(i) groups them): the counter and the list show each part (3.2), → and forward go part by part and on to the
 // next slide, ← and back the other way, forward is off only on the very last part, a click on a part's picture shows
-// it, the address names the part (#3.2, rule 14) and a reload opens there. A deck without parts: steps-view.e2e.ts.
+// it, the address names the part (#3.2, rule 11) and a reload opens there. A deck without parts: steps-view.e2e.ts.
 import type { Page } from "playwright-core";
 import { expect, servers, settle, test } from "../../helpers/fixtures";
 import { bar, clickOn, editorReady, frameAt, inPage, openTab } from "./templates";

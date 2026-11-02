@@ -12,7 +12,7 @@ export interface SettingsConfig {
   chip: string;
 }
 
-/** A document or project the search found (search_documents). */
+/** A document or project the search found (list_documents, with all). */
 interface Found {
   title: string;
   address: string;
@@ -178,9 +178,9 @@ export default function adminSettings(c: SettingsConfig): void {
       const search = async () => {
         const n = ++asked;
         try {
-          const body = await runTool<{ found: Found[] }>("search_documents", { query: find.value });
+          const body = await runTool<Found[]>("list_documents", { all: true, query: find.value });
           if (n != asked) return;
-          found = body.found;
+          found = body;
           show();
         } catch (err) {
           if (n == asked) say(hint, (err as Error).message, true);
@@ -243,7 +243,7 @@ export default function adminSettings(c: SettingsConfig): void {
     reset?.addEventListener("click", async () => {
       say(hint, "Saving…");
       try {
-        await runTool("reset_setting", { key: li.dataset.key! });
+        await runTool("set_setting", { key: li.dataset.key!, reset: true });
         say(hint, "Saved.");
         refresh(li.dataset.live!);
       } catch (err) {

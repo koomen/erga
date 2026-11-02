@@ -7,8 +7,8 @@ await servers.main();
 test("Delete page deletes it at once; Delete folder asks first, in its row; Escape keeps it; the Delete key and the confirm button delete it and what's in it", async ({ tab }) => {
   const page = tab.page;
   const doc = await multi(await servers.main());
-  await doc.agentTool("new_page", { path: "notes/ideas" });
-  await doc.agentTool("new_page", { path: "notes/more" });
+  await doc.agentTool("new", { path: "notes/ideas" });
+  await doc.agentTool("new", { path: "notes/more" });
   await openTreeEditor(tab, doc.base);
   await openCard(page);
   await clickOn(page, row("notes"));

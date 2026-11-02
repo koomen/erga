@@ -22,9 +22,9 @@
 // Feature branches (client/admin/ops-branches.ts): every branch but staging,
 // main and Erga's own, newest first, each with its commits ahead of and behind
 // staging, its last commit, and whether it merges cleanly into staging. Merge
-// opens a dialog with the squash commit's message (merge_feature_branch:
+// opens a dialog with the squash commit's message (feature_branch merge:
 // one commit on staging, which deploys, then the branch goes); Delete drops
-// it (delete_feature_branch).
+// it (feature_branch delete).
 //
 // The git log:
 //
@@ -36,20 +36,20 @@
 // when it leaves at least one commit out (17 or more ahead). Beside it, one dot column,
 // with no header: every commit listed is on staging; a solid green circle is
 // on main too, a hollow orange circle only on staging. Then two deploy
-// columns, staging and production: each target's deploys (list_deploys,
+// columns, staging and production: each target's deploys (deploys,
 // history 100), one beside each commit it deployed: its state
 // as plain text (live, deployed, failed, cancelled, or running) and when.
 // A commit deployed more than once shows one deploy: the running one, else
 // the live one, else the newest (a redeploy cancels the attempt before it).
 // Only the live deploy has a background. Each target's status is in its column's head. Any deploy opens
-// its log, past or live (deploy_log, then
+// its log, past or live (deploys, view log, then
 // { type: "deploy-log" } events). Merge moves main forward to staging's
 // head, or to the commit a row's "Merge to here" names. Above the log, how to clone and
 // push. GitHub's card in Status says which repository is connected and how
 // the sync stands (Connect GitHub, a popup; Sync now; Disconnect). Releases are tags:
 // a tagged commit's row carries its version, "stable" on the newest release
 // tag, and "edge" on the newest commit of main the store has
-// (list_releases). Cut release (beside Merge) cuts the next one: a dialog with
+// (branches: releases). Cut release (beside Merge) cuts the next one: a dialog with
 // the version (the next patch version, which the admin may change) and short
 // notes, the tag's message (cut_release). It follows the
 // system's light or dark.
@@ -60,11 +60,11 @@
 // in the log, as their own kind of row (a hollow blue dot, no deploys), then a
 // line says how many ("erga.dev: 12 commits (v0.15.0) that you do not have ·
 // 3 commits of your own"); its own commits (not on erga.dev) carry "yours".
-// Update from erga.dev (update_from_upstream) merges upstream's channel
+// Update from erga.dev (waiting_merge update) merges upstream's channel
 // into staging; when files conflict, a box lists them and the two ways out
 // (the admin agent, or a merge in a checkout pushed to staging), and Drop.
-// Each environment's card lists its domains (list_domains), with Add and
-// remove (add_domain, remove_domain), through the instance's own Cloudflare grant.
+// Each environment's card lists its domains (deploys, view domains), with Add and
+// remove (set_domain), through the instance's own Cloudflare grant.
 //
 // It updates by itself, with no reload: /api/events (a WebSocket) says what changed (a push
 // or a merge, the sync with GitHub, each step of a deploy, a redeploy, its log lines),

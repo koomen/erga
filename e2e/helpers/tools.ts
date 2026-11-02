@@ -8,25 +8,26 @@ export interface ToolAnswer<T = any> {
   error?: string;
 }
 
-/** Each of the page tree's changes ({ op, ... }, document/pages.ts's TreeOp), as its operation (server/operations/editor.ts). */
-export const TREE_TOOLS: Record<string, string> = {
-  new_page: "new_page",
-  new_folder: "mkdir",
-  move: "mv",
-  delete: "rm",
-  make_project: "make_project",
-  make_document: "make_document",
+/** Each of the page tree's changes ({ op, ... }, document/pages.ts's TreeOp), as its operation's call (server/operations/editor.ts). */
+const TREE_TOOLS: Record<string, (args: Record<string, unknown>) => [string, Record<string, unknown>]> = {
+  new_page: (a) => ["new", a],
+  new_folder: (a) => ["new", { ...a, path: `${a.path}/` }],
+  move: (a) => ["mv", a],
+  delete: (a) => ["rm", a],
+  make_project: (a) => ["set_kind", { ...a, kind: "project" }],
+  make_document: (a) => ["set_kind", { ...a, kind: "document" }],
 };
 
-/** A page tree's change, as the tree makes it: { op: "new_page", path } runs new_page, and so on. */
+/** A page tree's change, as the tree makes it: { op: "new_page", path } runs new, and so on. */
 export function treeOp(
   root: string,
   document: string,
   op: Record<string, unknown>,
   as: { cookie?: string; user?: string; origin?: string | null } = {}
 ) {
-  const { op: name, ...args } = op;
-  return runTool(root, TREE_TOOLS[String(name)] ?? String(name), { document, ...args }, as);
+  const { op: name, ...rest } = op;
+  const [tool, args] = TREE_TOOLS[String(name)]?.(rest) ?? [String(name), rest];
+  return runTool(root, tool, { document, ...args }, as);
 }
 
 /** A document's id, from its address (/<owner>/<slug>, with or without ?edit), as the editor reads it (GET <address>/api/doc). */

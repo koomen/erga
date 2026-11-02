@@ -1,6 +1,6 @@
 // The live page, in the page itself (Erga's page tools run there: tools.ts, on the
-// document's own origin): the logs the agent's page_console, page_network and page_events
-// read, page_inspect's facts, eval_in_page's run in the page as it is (live), and page_click and page_key
+// document's own origin): the logs and frames the agent's page_log
+// reads, eval_in_page's run in the page as it is (live), and page_input
 // (shared/live-page.ts says what each one is).
 //
 // The page's first script (LIVE_WATCH, before the page's own) catches what happens from
@@ -223,7 +223,7 @@ export class LivePage {
     return { isActive: !!ua?.isActive, hasBeenActive: !!ua?.hasBeenActive };
   }
 
-  /** page_click and page_key: the events a person's click or key makes, sent through the page (the editor's listeners on it, then the page's). */
+  /** page_input: the events a person's click or key makes, sent through the page (the editor's listeners on it, then the page's). */
   private async act(req: Extract<LiveRequest, { kind: "click" | "key" }>): Promise<LiveResult> {
     const f = this.frameFor(req.frame);
     if (typeof f == "string") return { error: f };

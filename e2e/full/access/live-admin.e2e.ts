@@ -19,13 +19,13 @@ test("Users, Settings and the Change log follow an agent's changes as they're ma
     page.evaluate<string>(
       `(() => { const li = [...document.querySelectorAll("ol.users > li")].find((li) => li.querySelector(".title").innerText == "${login}"); return li ? li.dataset.live + " " + li.querySelector("select.role").value : ""; })()`
     );
-  const added = await a.call("add_user", { provider: "github", handle: login, role: "read" });
+  const added = await a.call("set_user", { action: "add", provider: "github", handle: login, role: "read" });
   expect(added.status).toBe(200);
   const person = (added.data as { person: { person: number } }).person.person;
   await expect.poll(row).toBe(`person:${person} read`);
-  await a.call("set_user_role", { person, role: "write" });
+  await a.call("set_user", { action: "role", person, role: "write" });
   await expect.poll(row).toBe(`person:${person} write`);
-  await a.call("remove_user", { person });
+  await a.call("set_user", { action: "remove", person });
   await expect.poll(row).toBe("");
   expect(await page.evaluate<string>(`document.querySelector("ol.users").dataset.mark`)).toBe("same");
 
@@ -44,24 +44,26 @@ test("Users, Settings and the Change log follow an agent's changes as they're ma
   await page.goto(`${s.root}/admin/access?user=tester`);
   const org = freshLogin("org");
   const rules = () => page.evaluate<string>(`[...document.querySelectorAll("ol.rules > li .title")].map((t) => t.innerText).join(" | ")`);
-  await a.call("add_access_rule", { kind: "github_org", value: org, access: "read" });
+  await a.call("set_access", { action: "add", kind: "github_org", value: org, access: "read" });
   await expect.poll(rules).toContain(org);
   await resetting(s, "public_sharing", async () => {
     const on = await page.evaluate<boolean>(`document.getElementById("public-sharing").checked`);
-    await a.call("set_public_sharing", { on: !on });
+    await a.call("set_access", { action: "public", on: !on });
     await expect.poll(() => page.evaluate<boolean>(`document.getElementById("public-sharing").checked`)).toBe(!on);
   });
-  const id = ((await a.call("list_access_rules")).data as { rules: { id: number; value: string }[] }).rules.find((r) => r.value == org)!.id;
-  await a.call("remove_access_rule", { id });
+  const id = ((await a.call("people")).data as { rules: { id: number; value: string }[] }).rules.find((r) => r.value == org)!.id;
+  await a.call("set_access", { action: "remove", id });
   await expect.poll(rules).not.toContain(org);
 
   // The change log: each change comes in at the top.
   await page.goto(`${s.root}/admin/changes?user=tester`);
   const top = () => page.evaluate<string>(`document.querySelector("ol.changes > li").innerText`);
   const other = freshLogin("u");
-  await a.call("add_user", { provider: "github", handle: other, role: "read" });
+  await a.call("set_user", { action: "add", provider: "github", handle: other, role: "read" });
   await expect.poll(top).toContain(other);
-  await a.call("remove_user", {
-    person: ((await a.call("list_users")).data as { person?: number; handle?: string }[]).find((x) => x.handle == other)!.person,
+  await a.call("set_user", {
+    action: "remove",
+    person: ((await a.call("people")).data as { users: { person?: number; handle?: string }[] }).users.find((x) => x.handle == other)!
+      .person,
   });
 });

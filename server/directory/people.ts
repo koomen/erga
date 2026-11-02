@@ -146,7 +146,7 @@ export class People {
   async setRole(by: Actor, id: number, role: UserRole): Promise<Person> {
     await this.users.mustAdmin(by);
     const p = await this.get(id);
-    if (!p) throw new NotAllowed({ message: `Nobody waits as ${id}: list_users lists them.` });
+    if (!p) throw new NotAllowed({ message: `Nobody waits as ${id}: people lists them.` });
     await this.sql.batch([
       ["UPDATE people SET role = ?2 WHERE id = ?1", id, role],
       logged(by, Date.now(), `${label(p.provider)} ${p.handle}`, "role", role),
@@ -158,7 +158,7 @@ export class People {
   async remove(by: Actor, id: number): Promise<void> {
     await this.users.mustAdmin(by);
     const p = await this.get(id);
-    if (!p) throw new NotAllowed({ message: `Nobody waits as ${id}: list_users lists them.` });
+    if (!p) throw new NotAllowed({ message: `Nobody waits as ${id}: people lists them.` });
     await this.sql.batch([["DELETE FROM people WHERE id = ?1", id], logged(by, Date.now(), `${label(p.provider)} ${p.handle}`, "removed")]);
     await this.users.pagesChanged([`person:${id}`]);
   }

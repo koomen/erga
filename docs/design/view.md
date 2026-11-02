@@ -86,9 +86,9 @@ Two more decisions come with it:
   the drag code): the browser moves the caret and the selection across blocks, with and without Shift. The arrow
   code that is left: ArrowDown out of a last code block (step 6), and Option+ArrowRight or Left at a block's edge
   (Chromium stops there; a Mac goes on to the next block's word). Changes to the plan:
-  1. `<body>` is editable only while the text has the focus. After Escape (`leaveText`), after a script's `blur()`,
-     or on a page that opens paused, it is not: a page's own key handlers skip editable targets (a deck's arrows,
-     PROMPT.md rule 14), and the whole `<body>` would be one. A click on text makes it editable again.
+  1. `<body>` is editable only while the text has the focus. After Escape (`leaveText`), or after a script's `blur()`,
+     it is not: a page's own key handlers skip editable targets (a deck's arrows,
+     PROMPT.md rule 11), and the whole `<body>` would be one. A click on text makes it editable again.
   2. When the frame's window gets the focus back, the editor focuses `<body>` at once (the `<body>` is the active
      element also when the frame has no focus, and the browser does not move a caret in it then).
   3. A caret that lands outside the text (between blocks, in an `<svg>`) goes into the nearest block before the next
@@ -102,7 +102,7 @@ Two more decisions come with it:
   1. A page's own `contenteditable` element is text like any other: the editor saves what people type in it. In a part
      marked `data-erga-noedit` it stays the page's (`pageOwnBox` in `core.ts`): the islands code keeps its
      `contenteditable`, the editor leaves its keys and input to the browser, and the check skips it. Rule 4 of
-     `agents/document/PROMPT.md` (and so `/llms.txt`) says so, with an example.
+     `agents/document/PROMPT.md` says so, with an example.
   2. Cmd+B, Cmd+I, Cmd+U and Cmd+E with no selection store the style for the text typed next at the caret
      (`storeStyle`, `typeStored` in `format.ts`); the key again ends it (Pete: Cmd+B in bold text ends the bold, and
      the next letters go after the `</strong>`). Cmd+U, new, underlines with `<u>`, on a selection too. On: the typed text goes into a new element of the style, and

@@ -38,7 +38,7 @@ test("landing_document makes another document the homepage, deployed at once, an
   const landing = await fresh(server);
   await deployed(server);
   const { id } = await publish(server, await adminToken(server), files, { title: "Second home" });
-  expect(await home(server, id)).toMatchObject({ isHome: false, canDeploy: false, deploy: { state: "idle" } });
+  expect(await home(server, id)).toEqual({ isHome: false });
   const heard = await events(server, id);
   try {
     expect((await setLanding(server, id)).error).toBeUndefined();
@@ -111,7 +111,7 @@ test("only admins may edit the homepage: not made one while others may edit it, 
   const share = async (doc: string, login: string, role: string) => ({
     error: (await runTool(server.root, "share_document", { document: doc, login, role })).error,
   });
-  expect((await runTool(server.root, "homepage_status", { document: id }, { user: bo })).status).toBe(403);
+  expect((await runTool(server.root, "ls", { document: id }, { user: bo })).status).toBe(403);
   await share(id, bo, "viewer");
   expect(await home(server, id, bo)).toMatchObject({ isHome: true, canDeploy: false });
   expect((await redeploy(server, bo)).status).toBe(403);
@@ -125,7 +125,7 @@ test("only admins may edit the homepage: not made one while others may edit it, 
   expect(refused.error).toMatch(/Only admins may edit the homepage/);
   expect(refused.error).toMatch(new RegExp(`${bo} may edit this document`));
   // An admin may be its editor; made a user again, they only view it.
-  const role = (r: string) => runTool(server.root, "set_user_role", { login: bo, role: r });
+  const role = (r: string) => runTool(server.root, "set_user", { action: "role", login: bo, role: r });
   await role("admin");
   expect((await share(id, bo, "editor")).error).toBeUndefined();
   const canEdit = async () => ((await (await get(server, `/d/${id}/api/doc?user=${bo}`)).json()) as { canEdit?: boolean }).canEdit;
@@ -182,7 +182,7 @@ test("Redeploy now deploys at once; a failed deploy says why and the last good o
 test("a reset landing_document clears it: the next / makes a fresh homepage from assets/landing/ and deploys it", async () => {
   const { server, id } = await secondHome();
   await resetLanding(server);
-  expect(await home(server, id)).toMatchObject({ isHome: false, deploy: { state: "idle" } });
+  expect(await home(server, id)).toEqual({ isHome: false });
   await expect.poll(async () => { const f = (await front(server)).html; return !f.includes("Second home") && (f.includes(`<h1 class="logo"`) || f.includes('<iframe id="frame"')); }).toBe(true);
   await expect.poll(async () => { const f = await front(server); return f.direct && f.html.includes(`<h1 class="logo"`); }).toBe(true);
 });

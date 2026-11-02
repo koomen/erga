@@ -32,7 +32,7 @@ export const newsRoutes = Effect.gen(function* () {
   const { request, url, platform } = yield* ctx;
   const session = yield* call(() => platform.sessionOf(request));
   if (!session) return json({ error: "Sign in first." }, 401);
-  if (session.agent) return json({ error: "Live pages are for a person's open pages: an agent reads with tools (GET /llms.txt)." }, 403);
+  if (session.agent) return json({ error: "Live pages are for a person's open pages: an agent reads with tools (/mcp)." }, 403);
   if (url.pathname == "/api/news") {
     if (request.headers.get("upgrade")?.toLowerCase() != "websocket") return text("A WebSocket only.", 426);
     // Only this site's own pages: a page elsewhere (another subdomain the cookie reaches) may not listen as the person.

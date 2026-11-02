@@ -1,5 +1,5 @@
 // A document's pages, as a small tree: its folders, pages and
-// other files, from the operation list_pages, changed through new_page, mkdir,
+// other files, from the operation ls, changed through new,
 // mv and rm (server/operations/editor.ts, over POST /api/tools/<name>). One component, in two places:
 // the editor (a card under the document's title, top left: main.ts) and
 // Documents (beneath a document's row: server/pages/docs.ts). It's built on its own
@@ -59,7 +59,7 @@ export interface TreeOptions {
   onChange?: (answer: { entries: Entry[]; canEdit: boolean; kind: DocKind }) => void;
   /** The tree as the caller last saw it (Documents keeps each one's last answer): shown at once, then read again. */
   initial?: { entries: Entry[]; canEdit: boolean; kind?: DocKind } | null;
-  /** Runs an operation (Documents answers list_pages from what it read ahead); default runTool. */
+  /** Runs an operation (Documents answers ls from what it read ahead); default runTool. */
   run?: <T>(name: string, args: Record<string, unknown>) => Promise<T>;
   /** The label for the tree, for screen readers. */
   label?: string;
@@ -264,7 +264,7 @@ type Node_ = globalThis.Node;
 const svg = (html: string) => { const t = document.createElement("template"); t.innerHTML = html; return t.content.firstElementChild!; };
 
 /** Each change's operation (server/operations/editor.ts). */
-const TOOLS: Record<string, string> = { new_page: "new_page", new_folder: "mkdir", move: "mv", delete: "rm" };
+const TOOLS: Record<string, string> = { new_page: "new", new_folder: "new", move: "mv", delete: "rm" };
 
 /** Plain words for whatever went wrong talking to the server. */
 const plain = (e: unknown) => {
@@ -355,7 +355,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
 
   async function load() {
     try {
-      const body = await run<TreeAnswer>("list_pages", { document: opts.id });
+      const body = await run<TreeAnswer>("ls", { document: opts.id });
       set(body.entries ?? [], !!body.canEdit, body.kind);
       loadError = null;
     } catch (e) {
@@ -383,6 +383,8 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   /** A change, sent: the tree it answers, or the server's own words for why not (thrown). */
   async function send(op: Record<string, string>): Promise<void> {
     const { op: name, ...args } = op;
+    // A new folder is new's path that ends with "/".
+    if (name == "new_folder") args.path += "/";
     const body = await run<Partial<TreeAnswer>>(TOOLS[name] ?? name, { document: opts.id, ...args });
     let next = body.entries ?? entries ?? [];
     // A moved document keeps its title while the server catches up with its text at the new path.

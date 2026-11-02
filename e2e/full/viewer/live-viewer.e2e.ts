@@ -48,7 +48,7 @@ test("a reader who followed a link to another page sees an agent's change to tha
   const p = await person(await servers.script());
   const id = await p.make();
   const agent = tools(p.base, await p.token("Live viewer agent"));
-  expect((await agent.call("make_project", { document: id })).status).toBe(200);
+  expect((await agent.call("set_kind", { document: id, kind: "project" })).status).toBe(200);
   const second = (extra = "") => `<!doctype html><title>Second</title><h1>Second page</h1><p>The second page.${extra}</p>`;
   expect(
     (

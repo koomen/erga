@@ -1,6 +1,6 @@
 // The quick search: ⌘K (Ctrl+K off a Mac) on every page of the site for someone signed in, the editor's too, and from inside a
 // document's frame (it says so: client/inline/reader.ts, the editor's bridge). A pane to find a document you may open
-// (list_documents) or a page of Erga itself you may use (site_pages: the admin sections only for an admin), by typing
+// (list_documents) or a page of Erga itself you may use (whoami's pages: the admin sections only for an admin), by typing
 // part of its name; ↑ ↓ choose, Enter opens (⌘Enter in a new tab), Esc closes. One pane per page: the first script to
 // install it owns window.ergaQuickSearch, and the editor's shell calls that.
 
@@ -67,7 +67,10 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
   const load = () =>
     (entries ??= Promise.all([
       runTool<{ title: string; address: string }[]>("list_documents").catch(() => []),
-      runTool<{ group: string; label: string; path: string }[]>("site_pages").catch(() => []),
+      runTool<{ pages?: { group: string; label: string; path: string }[] }>("whoami").then(
+        (w) => w.pages ?? [],
+        () => []
+      ),
     ]).then(([docs, pages]) => [
       ...docs.map((d) => ({ group: "Documents", label: d.title || d.address, path: d.address, hint: d.address })),
       ...pages.map((p) => ({ ...p, hint: p.path })),

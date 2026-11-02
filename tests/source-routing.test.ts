@@ -12,7 +12,7 @@ describe("the app's Worker", () => {
   test("serves the Ops page and its events in place where the control Worker is apart (erga.dev, staging)", () => {
     for (const path of ["/admin/ops", "/api/events"]) expect([path, appAnswer(path, apart)]).toEqual([path, "here"]);
     // Its actions are the app's own /api/tools, and the old routes are gone.
-    for (const path of ["/api/tools/list_deploys", "/api/source/branches", "/api/deploys", "/api/domains", "/api/releases"])
+    for (const path of ["/api/tools/deploys", "/api/source/branches", "/api/deploys", "/api/domains", "/api/releases"])
       expect([path, appAnswer(path, apart)]).toEqual([path, null]);
   });
   test("sends the rest to the control Worker: Git, /install, the release store, the public source", () => {

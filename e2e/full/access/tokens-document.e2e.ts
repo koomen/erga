@@ -16,6 +16,6 @@ test("a document token reads its document, and not another; it neither lists nor
   expect((await tool(root, one, "list_documents")).status).toBe(403);
   expect((await tool(root, one, "create_document")).status).toBe(403);
   const get = getter(root), auth = { headers: { Authorization: `Bearer ${one}` } };
-  expect((await tool(root, one, "list_versions", { document: other.id })).status).toBe(403);
+  expect((await tool(root, one, "versions", { document: other.id })).status).toBe(403);
   expect((await get(other.address, auth)).status).toBe(403);
 });

@@ -1,4 +1,4 @@
-// A deck keeps its slide in its own address's hash (agents/document/PROMPT.md, rule 14): the tab's address shows it, so
+// A deck keeps its slide in its own address's hash (agents/document/PROMPT.md, rule 11): the tab's address shows it, so
 // a reload by hand, the editor's own reload of the page (a change it can't patch in), and the link in another tab all open
 // at that slide. A page with no hash logic is as before.
 import { editor, F, openEditor, type Editor } from "../../helpers/editor";
@@ -14,6 +14,8 @@ const THIRD = `
 
 test("at slide 3, a reload of the tab opens the editor at slide 3; the tab's address says #3", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "deck");
+  // Escape: the keys go to the page, and its arrows move between slides.
+  await ed.press("Escape");
   await ed.press("ArrowRight");
   await ed.press("ArrowRight");
   await ed.shows(THIRD);
@@ -27,6 +29,8 @@ test("at slide 3, a reload of the tab opens the editor at slide 3; the tab's add
 
 test("at slide 3, the editor's own reload of the page keeps slide 3, and the caret where it was", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "deck");
+  // Escape: the keys go to the page, and its arrows move between slides.
+  await ed.press("Escape");
   await ed.press("ArrowRight");
   await ed.press("ArrowRight");
   await ed.clickEnd(".current h1");
@@ -50,6 +54,8 @@ test("at slide 3, the editor's own reload of the page keeps slide 3, and the car
 
 test("the tab's address at slide 3, opened in another tab, opens at slide 3: in the editor and for a reader", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "deck");
+  // Escape: the keys go to the page, and its arrows move between slides.
+  await ed.press("Escape");
   await ed.press("ArrowRight");
   await ed.press("ArrowRight");
   await expect.poll(() => ed.eval<string>(`location.hash`)).toBe("#3");
@@ -88,7 +94,7 @@ test("a page with no hash logic: a reload keeps the address as it was, with no h
 type Ev = { value?: string; error?: string; errors: string[] };
 const ev = (ed: Editor, expr: string) => ed.eval<Ev>(`ergaPage.captureView({ evaluate: ${JSON.stringify(expr)} })`);
 
-test("in view_page's render (srcdoc, with a <base>), rule 14's example runs with no error, and a hash moves the deck", async ({ tab }) => {
+test("in view_page's render (srcdoc, with a <base>), rule 11's example runs with no error, and a hash moves the deck", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "deck");
   const at = await ev(
     ed,
@@ -119,6 +125,7 @@ test("in view_page's render (srcdoc, with a <base>), rule 14's example runs with
   expect(moved.errors).toEqual([]);
   expect(JSON.parse(moved.value!)).toEqual(["about:srcdoc#2", "Second slide", "about:srcdoc#3", "about:srcdoc#2", 3, "about:srcdoc#1"]);
   // At slide 3 in the editor, the render opens at slide 3 too: what the person sees.
+  await ed.press("Escape");
   await ed.press("ArrowRight");
   await ed.press("ArrowRight");
   await expect.poll(() => ed.eval<string>(`location.hash`)).toBe("#3");

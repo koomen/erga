@@ -55,11 +55,10 @@ test("no GitHub OAuth app (GITHUB_CLIENT_ID empty): sign-in says so, rather than
 test("an admin's token without the admin scope reaches only the API, MCP and documents' routes on staging (tokenPath)", async () => {
   const { tokenPath } = await import("../server/identity/token-paths");
   for (const p of [
-    "/llms.txt",
     "/mcp",
     "/api/publish",
     "/api/tools",
-    "/api/tools/list_versions",
+    "/api/tools/versions",
     "/api/tools/rename_document",
     "/ada/notes/api/doc",
     "/ada/notes/doc/index.html",

@@ -21,7 +21,7 @@ test("F2 renames a page in place: its readable name, no .html; Enter renames it 
 test("a folder's name the server refuses (a # in it): its words show in place, and nothing changes", async ({ tab }) => {
   const page = tab.page;
   const doc = await multi(await servers.main());
-  await doc.agentTool("new_page", { path: "notes/ideas" });
+  await doc.agentTool("new", { path: "notes/ideas" });
   await openTreeEditor(tab, doc.base);
   // The refusal is a 400, which the browser logs as an error: that one only.
   tab.strict = false;

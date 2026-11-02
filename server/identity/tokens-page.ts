@@ -1,6 +1,6 @@
 // A person's tokens (server/app.ts sends /tokens/... here): approving or denying an agent's request for one, a page;
 // and, for the Settings dialog (client/agent/settings-dialog.ts), making one and the test token, as JSON. The list
-// and Revoke are the operations list_tokens and revoke_token. And a token's expiry as given, which the API reads too.
+// and Revoke are the operations whoami and revoke. And a token's expiry as given, which the API reads too.
 //
 //   GET  /tokens/approve      ?code=: an agent's request for a token, with Approve (if the person may give it) and Deny
 //   POST /tokens/approve      code, answer (approve or deny), scope (documents: an admin request approved as documents only)

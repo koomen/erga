@@ -20,21 +20,31 @@ async function onPost(tab: Tab) {
 
 test("an agent in blog/post.html's editor sees one file system: every page, the shared assets and folders", async ({ tab }) => {
   const { s } = await onPost(tab);
-  const calls = await s.agentTurn("Look around", [
-    { tool: "ls", args: {} }, { tool: "read", args: { path: "index.html" } }, { tool: "read", args: { path: "style.css" } }, { tool: "read", args: { path: "about.html" } },
-    { tool: "grep", args: { pattern: "Who made this" } }, { tool: "find", args: { pattern: "**/*.css" } }, { tool: "list_pages", args: {} }, { text: "Seen." },
-  ], "The user has the page blog/post.html open.");
-  expect(calls.map((c) => c.status)).toEqual(Array(7).fill("done"));
+  const calls = await s.agentTurn(
+    "Look around",
+    [
+      { tool: "ls", args: {} },
+      { tool: "read", args: { path: "index.html" } },
+      { tool: "read", args: { path: "style.css" } },
+      { tool: "read", args: { path: "about.html" } },
+      { tool: "grep", args: { pattern: "Who made this" } },
+      { tool: "ls", args: { glob: "**/*.css" } },
+      { text: "Seen." },
+    ],
+    "The user has the page blog/post.html open."
+  );
+  expect(calls.map((c) => c.status)).toEqual(Array(6).fill("done"));
   // The same tools, as the same person's agent from outside, with their answers.
-  const ls = JSON.parse((await s.tool("ls", {})).text) as { files: { path: string }[]; folders: string[] };
-  for (const f of ["about.html", "blog/post.html", "index.html", "style.css"]) expect(ls.files.map((x) => x.path)).toContain(f);
-  expect(ls.folders).toContain("blog");
+  const ls = JSON.parse((await s.tool("ls", {})).text) as { entries: { path: string; type: string }[] };
+  for (const f of ["about.html", "blog/post.html", "index.html", "style.css"]) expect(ls.entries.map((x) => x.path)).toContain(f);
+  expect(ls.entries.find((e) => e.path == "blog")?.type).toBe("folder");
   expect((await s.tool("read", { path: "index.html" })).text).toContain("<h1>Home</h1>");
   expect((await s.tool("read", { path: "style.css" })).text).toContain("rgb(250, 246, 236)");
   expect((await s.tool("read", { path: "about.html" })).text).toContain("Who made this");
   const g = (await s.tool("grep", { pattern: "stylesheet" })).text.split("\n");
   for (const f of ["index.html:", "about.html:", "blog/post.html:", "blog/index.html:"]) expect(g.some((l) => l.startsWith(f))).toBe(true);
-  expect((await s.tool("find", { pattern: "**/*.css" })).text.split("\n").sort()).toEqual(["blog/blog.css", "style.css"]);
+  const css = JSON.parse((await s.tool("ls", { glob: "**/*.css" })).text) as { entries: { path: string }[] };
+  expect(css.entries.map((e) => e.path).sort()).toEqual(["blog/blog.css", "style.css"]);
 });
 
 test("open_page, from the document agent and from an external one, switches the open editor to another page", async ({ tab }) => {
@@ -48,15 +58,15 @@ test("open_page, from the document agent and from an external one, switches the 
   await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/post?edit true`);
 });
 
-test("new_page then open_page take the editor to the new page; its page deleted, the editor goes home", async ({ tab }) => {
+test("new then open_page take the editor to the new page; its page deleted, the editor goes home", async ({ tab }) => {
   const { s, p } = await onPost(tab);
-  const made = await s.tool("new_page", { path: "blog/second" });
+  const made = await s.tool("new", { path: "blog/second" });
   expect(made.ok).toBe(true);
   expect(JSON.parse(made.text).entries.map((e: { path: string }) => e.path)).toContain("blog/second.html");
   expect((await s.tool("open_page", { path: "blog/second" })).text).toContain("Opened blog/second.html");
   await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/second?edit true`);
   await expect.poll(() => inFrames<string>(p, `document.querySelector("h1")?.textContent ?? null`)).toBe("Untitled");
-  await s.tool("new_page", { path: "blog/third" });
+  await s.tool("new", { path: "blog/third" });
   expect((await s.tool("open_page", { path: "blog/third.html" })).ok).toBe(true);
   await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/third?edit true`);
   await s.tool("rm", { path: "blog/second.html" });

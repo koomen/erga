@@ -16,7 +16,7 @@ test("an empty folder, and every page, are still there after a restart", TWO_SER
   await expect.poll(async () => (await s.get(`/d/${s.id}/api/stored/notes.txt`)).text()).toContain("after the folder");
   first.stop();
   const again = await tab.own({ env: { ERGA_AGENT_MODEL: "script" }, state: first.state });
-  const t = (await runTool(again.root, "list_pages", { document: s.id })).result as { entries: [] };
+  const t = (await runTool(again.root, "ls", { document: s.id })).result as { entries: [] };
   expect(paths(t.entries)).toContain("empty/");
   expect(paths(t.entries)).toContain("blog/post.html");
 });

@@ -155,7 +155,7 @@ export class Pushes {
             if (!c.branch) {
               featured++;
               messages.push(
-                `Erga: the feature branch ${c.ref.slice("refs/heads/".length)} is now ${c.new.slice(0, 7)}. It doesn't deploy: merge it into staging on the Ops page (merge_feature_branch).`
+                `Erga: the feature branch ${c.ref.slice("refs/heads/".length)} is now ${c.new.slice(0, 7)}. It doesn't deploy: merge it into staging on the Ops page (feature_branch).`
               );
               continue;
             }

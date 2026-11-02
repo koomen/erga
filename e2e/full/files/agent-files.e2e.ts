@@ -53,9 +53,9 @@ test("ls says each file's kind and size; grep finds words in PDFs, by page; read
   expect((await put("receipts/2026-11-redcross.pdf", pdf("Thank you for your charitable gift"))).status).toBe(200);
   const ls = await call("ls", { path: "receipts" });
   expect(ls.ok).toBe(true);
-  expect(JSON.parse(ls.text).files.find((f: { path: string }) => f.path == "receipts/2026-03-goodwill.pdf")).toMatchObject({
+  expect(JSON.parse(ls.text).entries.find((f: { path: string }) => f.path == "receipts/2026-03-goodwill.pdf")).toMatchObject({
     kind: "file",
-    type: "application/pdf",
+    mime: "application/pdf",
   });
   const grep = await call("grep", { pattern: "charitable", ignoreCase: true, glob: "receipts/*.pdf" });
   expect(grep.text.split("\n")).toEqual([
@@ -85,9 +85,9 @@ test("write of bytes makes a file kept whole, which ls lists and the document se
     async () => {
       const list = (
         (await runTool(server.root, "ls", { document: id }, { cookie: ada.cookie })).result as {
-          files: { path: string; kind: string; size: number }[];
+          entries: { path: string; kind: string; size: number }[];
         }
-      ).files;
+      ).entries;
     return list.find((f) => f.path == "made/agent.pdf");
   }, 5000, "the files list has the agent's file");
   expect(files).toMatchObject({ kind: "file", size: bytes.length });

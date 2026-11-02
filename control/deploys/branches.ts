@@ -39,7 +39,7 @@
 // toolchain, and answers production's build of it from there
 // (control/builder/cache.ts, which says why that's safe).
 //
-// Status: one entry per target, as list_deploys answers it (the Ops
+// Status: one entry per target, as deploys answers it (the Ops
 // page shows it next to each branch), and an event on each change
 // ({type: "deploys"} on /api/events). History: a record of each deploy (its
 // id, commit, times, state, what started it) and its whole log, the last
@@ -80,7 +80,7 @@ export type DeployState = "idle" | "building" | "deploying" | "deployed" | "fail
 export interface StepStatus { id: StepId | "build" | "rollback"; title: string; status: "pending" | "running" | "done" | "skipped" | "failed" | "cancelled"; detail?: string }
 
 
-/** One target, as list_deploys answers it. */
+/** One target, as deploys answers it. */
 export interface TargetStatus {
   name: DeployName;
   host: string;
@@ -227,7 +227,7 @@ export class BranchDeploys {
     return cloudflareWith(this.deps.credential, this.deps.net);
   }
 
-  /** The credential, as list_deploys and /install show it. */
+  /** The credential, as deploys and /install show it. */
   credential(): Promise<CredentialStatus> { return this.deps.credential.status(); }
 
   /** Why `name` can't be deployed from here, or null if it can. */
@@ -274,7 +274,7 @@ export class BranchDeploys {
     const t = new Date(at).toISOString().slice(11, 19);
     for (const l of text.split("\n")) {
       s.status.log.push(`${t} ${step == "build" ? "build: " : ""}${l}`);
-      // A deploy's own lines go in its full log too (deploy_log).
+      // A deploy's own lines go in its full log too (deploys, view log).
       if (s.run && this.history.log?.name == s.status.name && this.history.log.stored.deployId == s.run.deployId) {
         const line: LogLine = { at, text: l, ...(step ? { step } : {}) };
         this.history.log.stored.lines.push(line);
@@ -284,7 +284,7 @@ export class BranchDeploys {
   }
 
   /**
-   * Every target, as list_deploys answers it. With `history`, each
+   * Every target, as deploys answers it. With `history`, each
    * target's last that many deploys too (`history`, newest first).
    */
   async status(o: { history?: number } = {}): Promise<{ targets: (TargetStatus & { history?: DeployRecord[] })[]; credential: CredentialStatus; upstream?: UpstreamStatus }> {
@@ -924,7 +924,7 @@ const ERGA: Fleet = {
 /** A release tag, as the repository reports it (control/source/source-host.ts, released): the tag, its commit (40 hex), who cut it. */
 export interface ReleaseTag { tag: string; commit: string; by: string; at: number }
 
-/** An install's view of upstream (list_deploys, `upstream`): the channel it follows, its latest, when it last looked, what the last Update did. */
+/** An install's view of upstream (deploys, `upstream`): the channel it follows, its latest, when it last looked, what the last Update did. */
 export interface UpstreamStatus { origin: string; channel: string; latest: string | null; checkedAt: number | null; error: string | null; update?: string }
 
 export function targetOf(spec: TargetSpec, env: DeployEnv, fresh?: Fresh): Target {

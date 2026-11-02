@@ -144,26 +144,22 @@ test("only a secret, or what isn't a person's action, goes without a tool", () =
 test("the known gaps are closed: production's deploy, the Ops page, keys and tokens", () => {
   for (const t of [
     "deploy_production",
-    "github_status",
-    "sync_github",
-    "disconnect_github",
-    "list_branches",
-    "list_deploys",
-    "deploy_log",
+    "github",
+    "branches",
+    "deploys",
     "redeploy",
-    "deploy_homepage",
     "clear_api_key",
-    "list_tokens",
-    "revoke_token",
-    "get_sign_in_status",
-    "clear_sign_in_app",
+    "whoami",
+    "revoke",
+    "sign_in",
+    "set_sign_in",
   ])
     expect(ADMIN).toContain(t);
-  // Share with agent makes agent tokens now (list_tokens, revoke_token): no factory tokens, nor their tools.
+  // Share with agent makes agent tokens now (whoami lists them, revoke turns one off): no factory tokens, nor their tools.
   for (const t of ["list_factory_tokens", "revoke_factory_token"]) expect(ADMIN).not.toContain(t);
   for (const t of ["list_documents", "create_document", "delete_document"]) expect(DOCUMENT).toContain(t);
   // Never a tool that sets a secret.
-  for (const t of [...ADMIN, ...DOCUMENT]) expect(t).not.toMatch(/^(set|add|make|mint|create|save)_(api_key|token|claude|sign_in)/);
+  for (const t of [...ADMIN, ...DOCUMENT]) expect(t).not.toMatch(/^(set|add|make|mint|create|save)_(api_key|token|claude|sign_in_app)/);
   expect(new Set(ADMIN).size).toBe(ADMIN.length);
 });
 

@@ -55,16 +55,11 @@ const TOOL_ACTIVITY: Record<string, string> = {
   document_api: "reading the page's edits",
   call_edit: "editing",
   write: "writing",
-  find: "looking for files",
   grep: "searching",
   view_page: "looking at the page",
   eval_in_page: "running code in the page",
-  page_console: "reading the page's console",
-  page_network: "reading the page's requests",
-  page_events: "reading the page's events",
-  page_inspect: "inspecting the live page",
-  page_click: "clicking on the page",
-  page_key: "pressing a key on the page",
+  page_log: "reading the live page",
+  page_input: "acting on the page",
   diff_versions: "comparing versions",
 };
 

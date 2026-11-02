@@ -298,7 +298,7 @@ async function render(
   const here = pageAddress(d.file) ? `${address}/${pageAddress(d.file).split("/").map(encodeURIComponent).join("/")}` : address;
   const edit = canEdit ? editButton(withEdit(link(here, session)), false) : "";
   const canShare = canEdit && !!session && !session.test && roleMay(d.role, "share");
-  // What a reader gets, as the owner set it (set_reader_agent, set_reader_bars): an editor gets all of it. Their agent
+  // What a reader gets, as the owner set it (share_document: reader_agent, reader_bars): an editor gets all of it. Their agent
   // (signed in, with a role here), and Erga's bars over the page.
   const reader = canEdit ? { agent: true, bars: true } : await dir.readerOptions(d.id);
   const agent = hasAgent(session) && (canEdit || (roleMay(d.role, "open") && reader.agent));

@@ -77,7 +77,7 @@ const kib = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`)
 
 /** A folder's entries ("name/" for a folder, then each file and its size), or every file under it with `recursive`. */
 export function list(s: Snapshot, path: string, recursive = false): string {
-  if (s.files.has(path)) throw new BrowseError({ message: `${path} is a file: read_source reads it.` });
+  if (s.files.has(path)) throw new BrowseError({ message: `${path} is a file: source with action read reads it.` });
   if (!s.dirs.has(path)) throw new BrowseError({ message: `There's no folder ${path}.${hint(s, path)}` });
   const prefix = path ? `${path}/` : "";
   const out: string[] = [];
@@ -101,7 +101,7 @@ export function read(s: Snapshot, path: string, from?: number, to?: number): str
   const f = s.files.get(path);
   if (!f)
     throw new BrowseError({
-      message: s.dirs.has(path) ? `${path} is a folder: list_source lists it.` : `There's no file ${path}.${hint(s, path)}`,
+      message: s.dirs.has(path) ? `${path} is a folder: source with action list lists it.` : `There's no file ${path}.${hint(s, path)}`,
     });
   if (f.mode == "120000") return `${path} is a link to ${text(f.data)}.`;
   if (isBinary(f.data)) return `${path} is a binary file (${kib(f.size)}): it can't be shown as text.`;

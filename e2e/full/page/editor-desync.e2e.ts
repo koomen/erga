@@ -11,6 +11,7 @@ const wrongLength = (errors: string[]) => errors.filter((e) => /wrong length|Ran
 
 test("an edit on disk while the page loads again: no error, and the file ends with it and with what was typed", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "deck");
+  await ed.press("Escape");
   await ed.press("ArrowRight");
   await ed.press("ArrowRight");
   await ed.clickEnd(".current h1");

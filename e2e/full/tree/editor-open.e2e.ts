@@ -29,14 +29,15 @@ test("the title opens the tree: index.html first by its title, marked as the pag
   await expect.poll(() => focused(page)).toBe("index.html");
 });
 
-test("a project's tree shows every file, as the server and an agent (ls, find) do; a file that isn't a page links to itself, in a new tab", async ({
+test("a project's tree shows every file, as the server and an agent (ls, and its glob) do; a file that isn't a page links to itself, in a new tab", async ({
   tab,
 }) => {
   const page = tab.page;
   const doc = await multi(await servers.main());
   const all = await doc.tree();
   for (const f of ["style.css", "assets", "assets/owl.svg", "fonts", "fonts/field.woff2"]) expect(all).toContain(f);
-  const ls = await doc.agentTool("ls"), found = await doc.agentTool("find", { pattern: "**/*" });
+  const ls = await doc.agentTool("ls"),
+    found = await doc.agentTool("ls", { glob: "**/*" });
   for (const f of ['"style.css"', '"assets/owl.svg"', '"fonts"']) expect(ls).toContain(f);
   for (const f of ["assets/owl.svg", "fonts/field.woff2"]) expect(found).toContain(f);
   await openTreeEditor(tab, doc.base);

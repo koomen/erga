@@ -44,7 +44,7 @@ export interface Version {
   description: string | null;
 }
 
-/** What list_versions answers, but canEdit (the operation adds it); `pending`: edits since the current version. */
+/** What versions answers (without from or to), but canEdit (the operation adds it); `pending`: edits since the current version. */
 export interface VersionsState { current: Version; versions: Version[]; total: number; pending: boolean }
 
 /** A restore: the new current version, the version it came from, and the files it brought back. */
@@ -304,8 +304,15 @@ export function unifiedDiff(before: Map<string, Uint8Array>, after: Map<string, 
       if (!was) piece = `new file ${path}\n${piece}`;
       else if (!now) piece = `deleted file ${path}\n${piece}`;
     }
-    if (used > 0 && used + piece.length > max) { parts.push(cut(i)); break; }
-    parts.push(piece.length > max ? `${piece.slice(0, max)}\n[${path}'s diff is cut here: pass path, and a smaller context, or read_version.]` : piece);
+    if (used > 0 && used + piece.length > max) {
+      parts.push(cut(i));
+      break;
+    }
+    parts.push(
+      piece.length > max
+        ? `${piece.slice(0, max)}\n[${path}'s diff is cut here: pass path, and a smaller context, or read with version.]`
+        : piece
+    );
     used += piece.length;
   }
   return { files, diff: parts.join("\n") };

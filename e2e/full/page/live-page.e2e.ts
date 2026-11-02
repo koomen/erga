@@ -57,15 +57,26 @@ test("the agent reads the live page and clicks play: the audio plays, and the co
   await until(() => p.evaluate(() => ["erga-editor-ready", "erga-editing", "erga-listening"].every((c) => document.body.classList.contains(c))).catch(() => false), 15_000, "the editor is ready");
 
   // The console, with the page's 1000 warnings as one line.
-  const consoled = await until(async () => { const r = await tool("page_console", { level: ["warn"], pattern: "AudioContext" }); return r.ok && /×1000/.test(r.text) ? r : null; }, 10_000, "the console's warnings");
+  const consoled = await until(
+    async () => {
+      const r = await tool("page_log", { kind: "console", level: ["warn"], pattern: "AudioContext" });
+      return r.ok && /×1000/.test(r.text) ? r : null;
+    },
+    10_000,
+    "the console's warnings"
+  );
   expect(consoled!.text).toMatch(/\[×1000, [\d:.]+–[\d:.]+\] warn \(page\): The AudioContext was not allowed to start/);
   // The page's media and permissions, without code: its frame may autoplay, and never go full screen.
   type Facts = { frame: string; allow?: string; autoplay?: { allowsFeature: boolean; fullscreen?: boolean }; media?: { element: string; paused: boolean; type: unknown; readyState: string }[]; editorFrame?: { allow: string } }[];
   const facts = await until(async () => {
-    const r = await tool("page_inspect", {});
+      const r = await tool("page_log", { kind: "frames" });
     const f = r.ok ? JSON.parse(r.text.slice(0, r.text.lastIndexOf("\n"))) as Facts : null;
     return f?.find((x) => x.frame == "page")?.media?.[0]?.readyState.startsWith("4") ? f : null;
-  }, 10_000, "the page's audio loads", async () => (await tool("page_inspect", {})).text);
+    },
+    10_000,
+    "the page's audio loads",
+    async () => (await tool("page_log", { kind: "frames" })).text
+  );
   const pageFacts = facts!.find((f) => f.frame == "page")!;
   expect(pageFacts.allow).toBe("autoplay; fullscreen 'none'");
   expect(pageFacts.autoplay).toMatchObject({ allowsFeature: true, fullscreen: false });
@@ -81,7 +92,7 @@ test("the agent reads the live page and clicks play: the audio plays, and the co
   await p.locator("#agent-input").click();
 
   // The agent clicks play, through the editor's handlers: untrusted, so no activation of its own, but the audio plays.
-  const clicked = await tool("page_click", { selector: "#play" });
+  const clicked = await tool("page_input", { selector: "#play" });
   expect(clicked.ok).toBe(true);
   expect(clicked.text).toMatch(/Clicked <button#play> at \(\d+, \d+\): pointerdown, mousedown, pointerup, mouseup, click\./);
   expect(clicked.text).toMatch(/Trusted: false/);
@@ -105,19 +116,19 @@ test("the agent reads the live page and clicks play: the audio plays, and the co
   expect(playing!.error).toBeNull();
 
   // The events: the agent's click, untrusted, and nobody consumed it.
-  const events = await tool("page_events", { since: "1m" });
+  const events = await tool("page_log", { kind: "events", since: "1m" });
   expect(events.text).toMatch(/click on <button#play>, sent by the agent, untrusted: nobody consumed it/);
   // The requests: the audio file, from Erga's server, as audio/wav.
-  const net = await tool("page_network", { pattern: "tone\\.wav" });
+  const net = await tool("page_log", { kind: "network", pattern: "tone\\.wav" });
   expect(net.ok).toBe(true);
   expect(net.text).toMatch(/GET {2}doc\/tone\.wav {2}20[06] {2}audio\/wav/);
   expect(net.text).not.toMatch(/\/t\/ey/); // the token in the files' address stays in the tab
   expect(net.text).toMatch(/via erga/);
 
   // A key Erga takes for itself (⌘S / Ctrl+S, its own save): the events say Erga's page script consumed it, first.
-  const key = await tool("page_key", { key: "s", meta: true, ctrl: true, selector: "p" });
+  const key = await tool("page_input", { key: "s", modifiers: ["meta", "ctrl"], selector: "p" });
   expect(key.text).toMatch(/Pressed a key on <p>: keydown \(default prevented\), keyup\./);
-  expect((await tool("page_events", { since: "10s" })).text).toMatch(
+  expect((await tool("page_log", { kind: "events", since: "10s" })).text).toMatch(
     /keydown on <p>, sent by the agent, untrusted: the editor called preventDefault \(its listener on window, capture phase\)/
   );
 
@@ -126,7 +137,7 @@ test("the agent reads the live page and clicks play: the audio plays, and the co
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: owner.origin },
     body: JSON.stringify({
-      text: `Why is it quiet? @script ${JSON.stringify([{ tool: "page_console", args: { pattern: "playing" } }, { text: "It plays." }])}`,
+      text: `Why is it quiet? @script ${JSON.stringify([{ tool: "page_log", args: { kind: "console", pattern: "playing" } }, { text: "It plays." }])}`,
       doc: doc.id,
     }),
   });
@@ -138,11 +149,11 @@ test("the agent reads the live page and clicks play: the audio plays, and the co
           log: { busy: boolean; items: { kind: string; name?: string; status?: string }[] };
         }
       ).log;
-    return !l.busy && l.items.some((i) => i.kind == "tool" && i.name == "page_console") ? l : null;
+      return !l.busy && l.items.some((i) => i.kind == "tool" && i.name == "page_log") ? l : null;
     },
     10_000,
     "the agent's turn"
   );
-  expect(log!.items.find((i) => i.name == "page_console")?.status).toBe("done");
+  expect(log!.items.find((i) => i.name == "page_log")?.status).toBe("done");
 
 });

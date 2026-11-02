@@ -7,7 +7,7 @@
 // A push or merge that moves a branch, and a release tag cut, go to the
 // deploys' object (control/deploys/pipeline-object.ts), which deploys the
 // branch where it goes, and answers at once: the deploy runs on in the
-// background, its progress on list_deploys and {type: "deploys"} on
+// background, its progress on deploys and {type: "deploys"} on
 // /api/events. Only the control Worker has the deploys (its PIPELINE binding).
 //
 // Calls name the address the request came to (`origin`), which local
@@ -132,7 +132,7 @@ export class SourceHost extends DurableObject<HostEnv> implements SourceObject {
     }
   }
 
-  /** A feature branch merged into staging as one commit, or deleted (merge_feature_branch, delete_feature_branch). */
+  /** A feature branch merged into staging as one commit, or deleted (feature_branch). */
   async mergeFeature(
     origin: string,
     who: Actor,
@@ -165,7 +165,7 @@ async deleteFeature(
     }
   }
 
-  // A downstream's Update from upstream, and the ways out of one that conflicted (update_from_upstream, resolve_conflict_file, finish_waiting_merge, drop_waiting_merge).
+  // A downstream's Update from upstream, and the ways out of one that conflicted (waiting_merge, resolve_conflict_file).
   async update(origin: string, who: Actor): Promise<UpdateResult | { error: string; status: number }> {
     try { return await this.at(origin).update(who); } catch (e) { return SourceHost.failed(e, "The update"); }
   }

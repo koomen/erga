@@ -33,7 +33,7 @@
 // (x-erga-who), and asks the database nothing. The viewer's page asks the host
 // once for everything (view.ts).
 //
-// The server's API for agents (/llms.txt, /api/..., /mcp) and /tokens are
+// The server's API for agents (/api/..., /mcp, /llms.txt) and /tokens are
 // server/api.ts's.
 //
 // Anywhere, "Authorization: Bearer erga_..." (an agent token, server/identity)
@@ -117,12 +117,12 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
     return plainJson(
       {
         ok: false,
-        error: `A document's tools are at POST ${url.origin}/api/tools/<name>, with the document as "document". The guide: ${url.origin}/llms.txt`,
+        error: `A document's tools are at POST ${url.origin}/api/tools/<name>, with the document as "document". Or use the MCP server: ${url.origin}/mcp`,
       },
       404
     );
   // From the document's own page, on its pages origin (which has no cookies), with an edit key (edit-key.ts): its socket,
-  // the files dropped on it (PUT /api/files/<path>), its own edits (POST /api/page-edit), and the browser's preflight. As the person the key
+  // the files dropped on it (PUT /api/files/<path>), and the browser's preflight. As the person the key
   // names, never as a cookie that came with it; the document decides what they may do.
   const key = url.searchParams.get("key");
   if (key != null && keyed(request, rest)) {
@@ -203,11 +203,10 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
 
 
 
-/** What an edit key opens, from the document's page: its socket, a file put into its files, its own edits (and the preflights). */
+/** What an edit key opens, from the document's page: its socket, and a file put into its files (and its preflight). */
 const keyed = (request: Request, rest: string) =>
   (rest == "/api/room" && request.headers.get("upgrade")?.toLowerCase() == "websocket") ||
-  (rest.startsWith("/api/files/") && (request.method == "PUT" || request.method == "OPTIONS")) ||
-  (rest == "/api/page-edit" && (request.method == "POST" || request.method == "OPTIONS"));
+  (rest.startsWith("/api/files/") && (request.method == "PUT" || request.method == "OPTIONS"));
 
 /** The person a request's edit key names (/<owner or d>/<doc>/api/... ?key=, what it opens), if it's good: for the staging guard. */
 export async function keyedPerson(platform: Platform, request: Request, url: URL): Promise<KeyPerson | null> {

@@ -8,7 +8,7 @@ await servers.main();
 test("for a viewer the tree has no add, rename, move or delete, no keys that change it, and its pages open in the viewer", async ({ tab }) => {
   const server = await servers.main();
   const doc = await multi(server);
-  await doc.agentTool("new_page", { path: "owl-calls" });
+  await doc.agentTool("new", { path: "owl-calls" });
   // A document linked from disk starts shared with anyone signed in, to edit: that goes first.
   const owner = await signIn(server, null);
   const share = (login: string, role: string) =>
@@ -16,7 +16,7 @@ test("for a viewer the tree has no add, rename, move or delete, no keys that cha
   expect((await share("*", "none")).ok).toBe(true);
   expect((await share("ada", "viewer")).ok).toBe(true);
   const ada = await signIn(server, "ada");
-  const seen = (await runTool(server.root, "list_pages", { document: doc.id }, { cookie: ada })).result as { canEdit: boolean };
+  const seen = (await runTool(server.root, "ls", { document: doc.id }, { cookie: ada })).result as { canEdit: boolean };
   expect(seen.canEdit).toBe(false);
 
   const page = tab.page;

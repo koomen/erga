@@ -1,5 +1,5 @@
 // The agent's requests to see and use the page, which this tab answers: view_page, and the live page's tools
-// (page_console, page_network, page_events, page_inspect, page_click, page_key).
+// (page_log, page_input).
 
 import type { ViewRequest, ViewResult } from "../../shared/agent-log";
 import { aimEdits, applySpans } from "../../shared/text-edits";
@@ -10,7 +10,7 @@ import { ms } from "../../libs/text/ui/timescale";
 import { $, type Shell } from "./shell";
 import { PageTools } from "./page-tools";
 
-// The editor's own console (this window's), from its first line: page_console gives it with the page's ("editor").
+// The editor's own console (this window's), from its first line: page_log console gives it with the page's ("editor").
 const shellConsole = new ConsoleLog(300);
 liveWatch({ events: false, net: false, types: [] });
 (window as Window & { __ergaLiveTake?: (sink: (kind: string, data: unknown) => void) => void }).__ergaLiveTake?.((kind, data) => {
@@ -35,8 +35,7 @@ export function mountPageRequests(shell: Shell) {
       all = files(shell.collab.doc);
     const asked = req.path == null ? open : (cleanPath(req.path) ?? "");
     const path = all.has(asked) ? asked : (resolvePage((p) => all.has(p), req.path ?? "")?.file ?? null);
-    if (path == null || !isPage(path))
-      return fail(`Nothing was rendered: there's no page ${req.path} in this document (list_pages lists them).`);
+    if (path == null || !isPage(path)) return fail(`Nothing was rendered: there's no page ${req.path} in this document (ls lists them).`);
     const other = path != open;
     const source = other ? all.get(path)!.toString() : shell.collab.current();
     const base = other ? path.slice(0, path.lastIndexOf("/") + 1) : undefined;
@@ -65,9 +64,9 @@ export function mountPageRequests(shell: Shell) {
   }
 
 
-  // The agent's page_console, page_network, page_events, page_inspect, page_click and page_key: the page as it runs
+  // The agent's page_log and page_input: the page as it runs
   // in this tab (live-page.ts, in the frame). Every tab of the person's answers; the host takes the focused one's,
-  // else a visible one's. page_inspect, page_click and page_key show a line here each time, so the person sees what
+  // else a visible one's. page_log frames, eval_in_page live and page_input show a line here each time, so the person sees what
   // the agent does in their page.
   const liveBar = $("agent-live");
   const liveText = $("agent-live-text");

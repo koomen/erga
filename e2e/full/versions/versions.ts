@@ -41,10 +41,12 @@ export async function person(server: Server, as: string) {
       const { id } = ((await (await get(`${at}/api/doc`)).json()) as { docName: { id: string } }).docName;
       return { address: at, id };
     },
-    /** Its versions, as the settings list them (list_versions; `q`: before and limit). */
+    /** Its versions, as the settings list them (versions; `q`: before and limit). */
     versions: async (id: string, q: { before?: string; limit?: number } = {}) =>
-      (await runTool(server.root, "list_versions", { document: id, ...q }, { cookie, origin })).result as State,
-    home: async (id: string) => (await runTool(server.root, "homepage_status", { document: id }, { cookie, origin })).result as HomeState,
+      (await runTool(server.root, "versions", { document: id, ...q }, { cookie, origin })).result as State,
+    /** The homepage's state, as ls answers it; not the homepage: { isHome: false }. */
+    home: async (id: string) =>
+      ((await runTool(server.root, "ls", { document: id }, { cookie, origin })).result?.homepage ?? { isHome: false }) as HomeState,
     /** Brings a version back, as the settings' Edit does (restore_version; `body.path`: one file). */
     restore: async (id: string, version: string, body?: { path?: string }) => {
       const r = await runTool(server.root, "restore_version", { document: id, version, ...body }, { cookie, origin });

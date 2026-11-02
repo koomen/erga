@@ -22,9 +22,6 @@ export const pageOwnBox = (el: Element): boolean =>
   !!el.closest('[contenteditable]:not([contenteditable="false"])') &&
   el.closest('[contenteditable]:not([contenteditable="false"])') != el.ownerDocument.body;
 
-/** A page that lets the editor pause it (agents/document/PROMPT.md, rule 10). */
-type PausableWindow = Window & { ergaPause?: unknown };
-
 export abstract class EditorCore {
   constructor(readonly config: PageEditorConfig) {
     this.state = config.state;
@@ -75,8 +72,6 @@ export abstract class EditorCore {
    * show; the shell decides when to render again (see `stale`).
    */
   protected staleSince: string | null = null;
-  /** Whether the page's own scripts are paused (see setPaused); kept across renders. */
-  protected paused = false;
   /** Escape took the focus off the text (see leaveText): no caret comes back until a unit takes the focus again. */
   protected leftText = false;
   /** Reports a problem with the page as the page's own watcher would (set once it renders). */
@@ -142,44 +137,6 @@ export abstract class EditorCore {
         if (s) return s;
       }
     return "";
-  }
-
-  /**
-   * Whether the page can be paused: it defines `window.ergaPause`, which the
-   * editor calls with true to pause the page's own handling of clicks and
-   * keys (so only the editor answers them) and false to resume it.
-   */
-  get canPause(): boolean {
-    return typeof (this.win as PausableWindow | null)?.ergaPause == "function";
-  }
-
-  get isPaused(): boolean {
-    return this.paused;
-  }
-
-  /** Pauses or resumes the page; false if it can't be paused. A render keeps it paused. */
-  setPaused(on: boolean): boolean {
-    if (on && !this.canPause) return false;
-    if (on == this.paused) return true;
-    this.paused = on;
-    this.tellPause();
-    return true;
-  }
-
-  protected tellPause(): void {
-    const win = this.win as PausableWindow | null;
-    if (typeof win?.ergaPause != "function") return;
-    try {
-      (win.ergaPause as (paused: boolean) => void)(this.paused);
-    } catch (e) {
-      // (A problem with the page, for the viewer to show: client/inline/page-problems.ts.)
-      (this.win as Window & { __ergaReport?: (p: unknown) => void }).__ergaReport?.({
-        kind: "script",
-        message: `window.ergaPause(${this.paused}) threw: ${e instanceof Error ? e.message : String(e)}`,
-        file: "",
-        line: 0,
-      });
-    }
   }
 
   /** A unit's element on the page, through the binding; undefined if the page doesn't show it. */

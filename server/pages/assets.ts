@@ -94,7 +94,7 @@ export const styleTag = () => `<link rel="stylesheet" href="${asset("style.css")
  * build: a page loads the library from there (Erga adds erga/text to a page that names none: pages/reader.ts). By the
  * library's name, its build's script.
  */
-const LIBRARIES: Record<string, string> = { text: "frame.js", slides: "slides.js" };
+const LIBRARIES: Record<string, string> = { text: "frame.js", slides: "slides.js", canvas: "canvas.js" };
 
 /** The library a path names (/erga/<name>/editor.js), if Erga has one by that name. */
 export const libraryOf = (path: string) => {

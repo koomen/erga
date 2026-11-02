@@ -1,7 +1,7 @@
 // Catches the page's script errors and files that fail to load, from before its first script, and tells the viewer
 // each (erga-problem: client/shell/problems.ts says it in words). The viewer asks again for those it may have missed
-// as it goes into the editor (its word, erga-mode). window.__ergaReport reports one more (the editor's: a page's
-// ergaPause that throws). In a document's page, for whoever may edit (server/pages/reader.ts).
+// as it goes into the editor (its word, erga-mode). window.__ergaReport reports one more (the editor's: a
+// notice about the page). In a document's page, for whoever may edit (server/pages/reader.ts).
 
 type Problem =
   | { kind: "resource"; tag: string; url: string }

@@ -70,11 +70,6 @@ export abstract class EditorRender extends EditorMarks {
       if (el) this.markUnit(u, el);
     }
     this.bind();
-    // A page starts live: tell it it's paused again, if it still can be.
-    if (this.paused) {
-      if (this.canPause) this.tellPause();
-      else this.paused = false;
-    }
     this.rendering = false;
     for (const u of this.units) {
       const el = this.elOf(u);

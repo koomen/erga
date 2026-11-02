@@ -12,7 +12,7 @@ test("editors change the tree, viewers only read it, strangers and other sites g
   expect((await s.readTree(ada)).status).toBe(403);
   // (Locally, no cookie is DEV_LOGIN; a token that isn't one signs in nobody.)
   const asToken = (token: string) =>
-    fetch(`${server.root}/api/tools/list_pages`, {
+    fetch(`${server.root}/api/tools/ls`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ document: s.id }),

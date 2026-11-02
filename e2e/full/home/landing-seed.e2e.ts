@@ -68,7 +68,7 @@ test(
     const out = await get(server, "/_home", { headers: signedOut(server) });
     expect({ status: out.status, old: (await out.text()).includes("The old homepage") }).toEqual({ status: 200, old: true });
     // The admin edits it, as the editor does: publishing a file into it.
-    const wrote = await runTool(server.root, "update_files", {
+    const wrote = await runTool(server.root, "write", {
       document: "/_home",
       files: { "index.html": "<!doctype html><title>Erga</title><h1>New</h1>" },
     });

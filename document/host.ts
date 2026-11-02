@@ -62,7 +62,6 @@ import { encodeStart } from "../shared/room-socket";
 import { blobPointer, byteRange, type BlobStore } from "./blobs";
 import { sha256Hex } from "../shared/bytes";
 import { pdfText } from "./pdf";
-import { apiPathOf, applyPageEdit } from "./page-api";
 import * as Y from "yjs";
 
 export interface HostOptions {
@@ -139,7 +138,7 @@ export const mimeOf = (path: string) => MIME[/\.[^./]+$/.exec(path.toLowerCase()
  * A Range request (`range`, one range of bytes, as audio and video ask: Safari
  * plays none without) gets those bytes (206), or 416 if they're past the end.
  * `serverTiming` says which store it came from (Server-Timing's file, which the
- * page's Resource Timing reads, for page_network); the bytes sent and the type
+ * page's Resource Timing reads, for page_log network); the bytes sent and the type
  * are added to it.
  */
 /** A file's type as it's served, from its name. */
@@ -183,7 +182,7 @@ export function makeHost(opts: HostOptions) {
   const kindNow = (): DocKind => opts.kind?.() ?? "project";
   // The tree changed, by anyone (a person, an agent, a publish, disk): every open tab refetches it.
   room.onTree(() => sendAll({ type: "tree" }));
-  /** The latest moves, for a tab that missed one while it was loading (its hello, list_pages). */
+  /** The latest moves, for a tab that missed one while it was loading (its hello, ls). */
   const moves: { from: string; to: string }[] = [];
   /** Does a tree operation, as a person or their agent; open tabs hear what moved or went, to follow a page that did. */
   const tree = async (op: unknown) => {
@@ -257,7 +256,7 @@ export function makeHost(opts: HostOptions) {
     const all = new Set(room.paths());
     const asked = String(raw ?? "").trim().replace(/^\.?\/+/, "").replace(/(\?edit|#edit)$/, "");
     const file = isPage(asked) && all.has(asked) ? asked : resolvePage((p) => all.has(p), asked, doc.path)?.file;
-    if (!file) throw new TreeError(`There's no page "${raw}" in this document. list_pages lists them.`, 404);
+    if (!file) throw new TreeError(`There's no page "${raw}" in this document. ls lists them.`, 404);
     const name = await Effect.runPromise(nameFor(user));
     const rest = pageAddress(file);
     const at = `${name?.address ?? "/<owner>/<slug>"}${rest ? `/${rest}` : ""}`;
@@ -365,26 +364,6 @@ export function makeHost(opts: HostOptions) {
   const docApi = HttpApiBuilder.group(Api, "doc", (h) =>
     h
       .handle("info", () => Person.use((user) => Effect.promise(() => infoFor(user))))
-      .handle("pageEdit", ({ payload: p }) =>
-        Person.use((user) =>
-          Effect.gen(function* () {
-            const refuse = (error: string) => new ToolFailed({ ok: false, error });
-            if (!(opts.canEdit?.(user) ?? true)) return yield* refuse(`${user.name} can only view this document.`);
-            const module = isPage(p.path) ? apiPathOf(p.path, p.html) : null;
-            const code = module && room.text(module);
-            if (code == null)
-              return yield* refuse(
-                `${p.path} names no API module of its own (<meta name="erga-api" content="api.js">) that the document has.`
-              );
-            const r = yield* Effect.tryPromise({
-              try: () => applyPageEdit(agents.sandbox, code, p.html, p.edit, p.input),
-              catch: (e) => refuse((e as Error).message),
-            });
-            if ("refused" in r) return yield* refuse(r.refused);
-            return { ok: true as const, changes: r.changes };
-          })
-        )
-      )
   );
 
   const agentApi = HttpApiBuilder.group(Api, "agent", (h) => h
@@ -600,7 +579,7 @@ export function makeHost(opts: HostOptions) {
   };
 }
 
-/** A document's file tree, as list_pages answers it. */
+/** A document's file tree, as ls answers it. */
 export interface TreeState {
   entries: { path: string; type: string; title?: string }[];
   moved: { from: string; to: string }[];

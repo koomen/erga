@@ -39,7 +39,6 @@ export const resourceMetadata = (origin: string) => ({
   scopes_supported: SCOPES,
   bearer_methods_supported: ["header"],
   resource_name: "Erga",
-  resource_documentation: `${origin}/llms.txt`,
 });
 
 /** The authorization server's metadata (RFC 8414): public clients, the code flow, PKCE with S256 only. */
@@ -54,7 +53,6 @@ export const serverMetadata = (origin: string) => ({
   grant_types_supported: ["authorization_code"],
   token_endpoint_auth_methods_supported: ["none"],
   code_challenge_methods_supported: ["S256"],
-  service_documentation: `${origin}/llms.txt`,
 });
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);

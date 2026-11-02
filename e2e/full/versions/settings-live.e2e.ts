@@ -69,11 +69,11 @@ test("errors show inline, in plain words", async ({ tab }) => {
   await s.clickOn(`#ds-list li[data-n="8"] .ds-edit`);
   await expect.poll(() => s.text("#ds-hist-error")).toMatch(/^Couldn't restore version 8: Couldn't reach the server/);
   expect((await doc.owner.versions(doc.id)).current.n).toBe(12);
-  await down(/\/api\/tools\/list_versions/);
+  await down(/\/api\/tools\/versions/);
   await s.clickOn("#ds-older");
   await expect.poll(() => s.text("#ds-hist-error")).toMatch(/^Couldn't load older versions: Couldn't reach the server/);
   await s.close();
-  await down(/\/api\/tools\/list_versions/);
+  await down(/\/api\/tools\/versions/);
   await s.clickOn("#btn-settings");
   await expect.poll(() => s.text("#ds-hist-error")).toMatch(/^Couldn't (load|refresh) the versions: Couldn't reach the server/);
   await tab.page.unrouteAll();

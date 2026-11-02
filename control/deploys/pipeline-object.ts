@@ -175,7 +175,7 @@ export class Pipeline extends DurableObject<HostEnv> {
   /** Back to the Worker version before the live deploy (rollback). */
   rollback(name: string, trigger?: string) { return this.deploys.rollback(name, trigger); }
   async alarm(): Promise<void> { await this.deploys.alarm(); }
-  // Each environment's domains (list_domains, add_domain, remove_domain).
+  // Each environment's domains (deploys, view domains; set_domain).
   domains() { return this.deploys.domains(); }
   addDomain(name: string, hostname: string, by: string) { return this.deploys.addDomain(name, hostname, by); }
   removeDomain(name: string, hostname: string, by: string) { return this.deploys.removeDomain(name, hostname, by); }

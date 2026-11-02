@@ -20,7 +20,7 @@ export default function adminAccess(): void {
     }
     say(publicHint, "Saving…");
     try {
-      await runTool("set_public_sharing", { on: publicBox.checked });
+      await runTool("set_access", { action: "public", on: publicBox.checked });
       say(publicHint, "Saved.");
     } catch (err) {
       publicBox.checked = !publicBox.checked;
@@ -40,7 +40,8 @@ export default function adminAccess(): void {
     e.preventDefault();
     say(rulesHint, "Adding…");
     try {
-      const rule = await runTool("add_access_rule", {
+      const rule = await runTool("set_access", {
+        action: "add",
         kind: field("kind").value,
         value: field("value").value.trim(),
         access: field("access").value,
@@ -59,7 +60,7 @@ export default function adminAccess(): void {
     select.addEventListener("change", async () => {
       say(rulesHint, "Saving…");
       try {
-        await runTool("change_access_rule", { id: Number(li.dataset.id), access: select.value });
+        await runTool("set_access", { action: "change", id: Number(li.dataset.id), access: select.value });
         was = select.value;
         say(rulesHint, "Saved.");
       } catch (err) {
@@ -70,7 +71,7 @@ export default function adminAccess(): void {
     li.querySelector(".remove-rule")?.addEventListener("click", async () => {
       if (!confirm("Remove this rule? The people only it lets in can't sign in any more.")) return;
       try {
-        await runTool("remove_access_rule", { id: Number(li.dataset.id) });
+        await runTool("set_access", { action: "remove", id: Number(li.dataset.id) });
         refresh(li.dataset.live!);
       } catch (err) {
         say(rulesHint, (err as Error).message, true);

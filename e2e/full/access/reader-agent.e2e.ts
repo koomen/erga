@@ -10,7 +10,7 @@ async function asOwner(root: string, name: string, args: Record<string, unknown>
     headers: { "Content-Type": "application/json", Origin: new URL(root).origin },
     body: JSON.stringify(args),
   });
-  return { status: r.status, body: (await r.json()) as { result?: { readerAgent?: boolean }; error?: string } };
+  return { status: r.status, body: (await r.json()) as { result?: { access?: { readerAgent?: boolean } }; error?: string } };
 }
 
 /** Whether the viewer at `address` shows `who` their agent's circle. */
@@ -37,7 +37,7 @@ test("a reader gets their agent where the owner lets readers use theirs; the own
   await page.locator("#ds-agent-on").waitFor();
   expect(await page.locator("#ds-agent-on").isChecked()).toBe(false);
   await page.locator("#ds-agent-on").click();
-  await expect.poll(async () => (await asOwner(root, "document_access", { document: id })).body.result?.readerAgent).toBe(true);
+  await expect.poll(async () => (await asOwner(root, "ls", { document: id })).body.result?.access?.readerAgent).toBe(true);
   expect(await hasAgent(page, address, reader), "a reader, after").toBe(true);
 });
 
@@ -50,12 +50,12 @@ test("never on a document anyone with the link may open: the switch refuses, and
   const address = at.replace(/[?&]edit=?$/, "");
   const reader = unique("reader");
   expect((await asOwner(root, "share_document", { document: id, login: reader, role: "viewer" })).status).toBe(200);
-  expect((await asOwner(root, "set_reader_agent", { document: id, on: true })).status).toBe(200);
+  expect((await asOwner(root, "share_document", { document: id, reader_agent: true })).status).toBe(200);
   expect(await hasAgent(page, address, reader)).toBe(true);
   // Shared with anyone with the link: the reader's agent goes, and the switch can't be turned on.
   expect((await asOwner(root, "share_document", { document: id, login: "*", role: "viewer" })).status).toBe(200);
   expect(await hasAgent(page, address, reader)).toBe(false);
-  const refused = await asOwner(root, "set_reader_agent", { document: id, on: true });
+  const refused = await asOwner(root, "share_document", { document: id, reader_agent: true });
   expect(refused.status).toBe(409);
   expect(refused.body.error).toContain("Anyone with the link");
   await page.goto(at);

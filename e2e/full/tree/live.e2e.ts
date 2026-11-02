@@ -46,7 +46,7 @@ test("an agent's new page, move and stylesheet show: pages by their titles", asy
   await openTreeEditor(tab, doc.base);
   await openCard(page);
   await clickOn(page, '.et-row[data-path="blog"]');
-  await doc.agentTool("new_page", { path: "blog/owl-calls" });
+  await doc.agentTool("new", { path: "blog/owl-calls" });
   await doc.agentTool("write", { path: "blog/owl-calls.html", content: "<!doctype html><title>Owl calls</title><link rel=stylesheet href=../style.css><h1>Owl calls</h1>" });
   await until(async () => (await rows(page)).some((x) => x[0] == "blog/owl-calls.html" && x[1] == "Owl calls"), 10_000, "an agent's new page shows, by its title");
   await doc.agentTool("mv", { from: "about.html", to: "blog/about.html" });
@@ -59,7 +59,7 @@ test("an agent's new page, move and stylesheet show: pages by their titles", asy
 test("?pages opens the tree at once; the page you're on, moved by an agent: the editor follows it to its new address, and the tree marks it there", async ({ tab }) => {
   const page = tab.page;
   const doc = await multi(await servers.main());
-  await doc.agentTool("new_page", { path: "blog/owl-calls" });
+  await doc.agentTool("new", { path: "blog/owl-calls" });
   await openTreeEditor(tab, `${doc.base}/blog/owl-calls`, { query: "?pages" });
   await until(async () => (await rows(page)).some((x) => x[0] == "blog/owl-calls.html" && x[3]), 10_000, "the tree marks the page you're on, in its folder, which opened");
   await doc.agentTool("mv", { from: "blog/owl-calls.html", to: "owl-calls.html" });

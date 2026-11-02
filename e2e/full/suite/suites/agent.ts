@@ -176,16 +176,16 @@ export const agent: Test[] = [
       const token = await share();
       expect(/^erga_[\w-]{40,}$/.test(token), "the share button gets a token", token);
       expect((await share()) == token, "asking again gives the same one");
-      // As the Share card's prompt says: the guide, then the tools, with the document's address as "document".
+      // As the Share card's prompt says: the tools, with the document's address as "document".
       const origin = new URL(d.base).origin;
       const ext = (path: string, init: RequestInit = {}, t = token) =>
         fetch(origin + path, { ...init, headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" } });
       expect((await ext("/api/tools/whoami", { method: "POST", body: "{}" }, "erga_forged")).status == 401, "the API needs a real token");
-      const guide = await (await ext("/llms.txt")).text();
+      const listed = ((await (await ext("/api/tools")).json()) as { tools: { name: string; description: string }[] }).tools;
       expect(
-        /### edit/.test(guide) && /data-erga-noedit/.test(guide),
-        "the guide explains the tools and the document rules",
-        guide.slice(0, 300)
+        listed.some((t) => t.name == "edit") && /data-erga-noedit/.test(listed.find((t) => t.name == "write")?.description ?? ""),
+        "the tools are listed, and write's description has the page rules",
+        listed.map((t) => t.name)
       );
       const run = async (name: string, args: Record<string, unknown>) => {
         const r = await ext(`/api/tools/${name}`, { method: "POST", body: JSON.stringify({ document: d.base, ...args }) });
@@ -206,7 +206,7 @@ export const agent: Test[] = [
       await until(() => !b.str().includes("EXT"), 3000, "the undo takes it back");
       const fresh = await share(true);
       expect(
-        (await ext("/llms.txt")).status == 401 && (await ext("/llms.txt", {}, fresh)).status == 200,
+        (await ext("/api/tools")).status == 401 && (await ext("/api/tools", {}, fresh)).status == 200,
         "a new token turns the old one off"
       );
     },

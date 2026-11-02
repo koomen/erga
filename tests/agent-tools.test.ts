@@ -48,8 +48,8 @@ test("admin tools are offered to admins only, and refused to anyone else", async
     ...OPERATIONS.filter((o) => !o.admin).map((o) => o.name),
     ...documentTools().map((t) => t.name),
   ]);
-  expect(await names({ login: "root", test: true })).not.toContain("list_users");
-  const e = await failure(run({ dir, who: { login: "bo" } }, "list_settings"));
+  expect(await names({ login: "root", test: true })).not.toContain("people");
+  const e = await failure(run({ dir, who: { login: "bo" } }, "settings"));
   expect(e).toBeInstanceOf(OperationError);
   expect(e.status).toBe(403);
   // A person's own agent gets the same, as its loop runs them.
@@ -57,8 +57,10 @@ test("admin tools are offered to admins only, and refused to anyone else", async
   expect(agentTools(await toolsFor(bo, true), bo).map((t) => t.name)).toEqual(await names({ login: "bo" }));
   const root = { dir, who: { login: "root", admin: true } };
   const forRoot = agentTools(await toolsFor(root, true), root);
-  const out = await forRoot.find((t) => t.name == "list_settings")!.execute("x", {});
-  expect(JSON.parse((out.content[0] as { text: string }).text).map((e: { key: string }) => e.key)).toContain("delete_docs_after_hours");
+  const out = await forRoot.find((t) => t.name == "settings")!.execute("x", {});
+  expect(JSON.parse((out.content[0] as { text: string }).text).settings.map((e: { key: string }) => e.key)).toContain(
+    "delete_docs_after_hours"
+  );
 });
 
 test("settings: set, a number given as a string, bad values explained, reset, locked ones refused", async () => {
@@ -73,15 +75,15 @@ test("settings: set, a number given as a string, bad values explained, reset, lo
   expect([e.status, e.message.includes("delete_docs_after_hours")]).toEqual([400, true]);
   // Never: null, or "null" / "never" as a model may send it.
   for (const value of [null, "null", "never"]) expect((await run(root, "set_setting", { key: "delete_docs_after_hours", value })).value).toBeNull();
-  expect((await run(root, "reset_setting", { key: "delete_docs_after_hours" })).source).toBe("default");
+  expect((await run(root, "set_setting", { key: "delete_docs_after_hours", reset: true })).source).toBe("default");
 
   const locked = fresh({ admins: ["root"], locked: { delete_docs_after_hours: 6 } });
   const lroot = { dir: locked, who: { login: "root", admin: true } };
-  const entry = (await run(lroot, "list_settings")).find((e: { key: string }) => e.key == "delete_docs_after_hours");
+  const entry = (await run(lroot, "settings")).settings.find((e: { key: string }) => e.key == "delete_docs_after_hours");
   expect([entry.value, entry.source, entry.locked]).toEqual([6, "locked", true]);
   e = await failure(run(lroot, "set_setting", { key: "delete_docs_after_hours", value: 10 }));
   expect([e.status, /fixed by the deploy/.test(e.message)]).toEqual([403, true]);
-  e = await failure(run(lroot, "reset_setting", { key: "delete_docs_after_hours" }));
+  e = await failure(run(lroot, "set_setting", { key: "delete_docs_after_hours", reset: true }));
   expect(e.status).toBe(403);
 });
 
@@ -92,7 +94,7 @@ test("users: add by provider account with a role, make admin, demote, remove; bo
   });
   const root = { dir, who: { login: "root", admin: true } };
   // Before their first sign-in: their GitHub account (its id found) or Google email, and one role.
-  const { person } = await run(root, "add_user", { provider: "github", handle: "Cy", role: "read" });
+  const { person } = await run(root, "set_user", { action: "add", provider: "github", handle: "Cy", role: "read" });
   expect(person).toMatchObject({
     waiting: true,
     provider: "github",
@@ -101,50 +103,79 @@ test("users: add by provider account with a role, make admin, demote, remove; bo
     roleLabel: "Can authenticate",
     addedBy: "root",
   });
-  expect((await run(root, "set_user_role", { person: person.person, role: "write" })).roleLabel).toBe("Can create and edit content");
-  expect((await failure(run(root, "add_user", { provider: "github", handle: "no-such-one", role: "read" }))).message).toMatch(
-    /GitHub has no account/
+  expect((await run(root, "set_user", { action: "role", person: person.person, role: "write" })).roleLabel).toBe(
+    "Can create and edit content"
   );
-  expect((await run(root, "add_user", { provider: "github", handle: "root", role: "admin" })).note).toBe("root is already an admin.");
-  expect(await run(root, "remove_user", { person: person.person })).toEqual({ removed: { person: person.person } });
+  expect(
+    (await failure(run(root, "set_user", { action: "add", provider: "github", handle: "no-such-one", role: "read" }))).message
+  ).toMatch(/GitHub has no account/);
+  expect((await run(root, "set_user", { action: "add", provider: "github", handle: "root", role: "admin" })).note).toBe(
+    "root is already an admin."
+  );
+  expect(await run(root, "set_user", { action: "remove", person: person.person })).toEqual({ removed: { person: person.person } });
   await dir.users.add(root.who, "bo", { name: "Bo B" });
-  expect((await run(root, "list_users")).find((u: { login?: string }) => u.login == "bo")).toMatchObject({
+  expect((await run(root, "people")).users.find((u: { login?: string }) => u.login == "bo")).toMatchObject({
     name: "Bo B",
     role: "write",
     roleLabel: "Can create and edit content",
   });
-  expect((await run(root, "set_user_role", { login: "bo", role: "admin" })).role).toBe("admin");
+  expect((await run(root, "set_user", { action: "role", login: "bo", role: "admin" })).role).toBe("admin");
   // Bo, an admin now, has the tools.
-  expect((await toolsFor({ dir, who: { login: "bo", admin: true } })).some((t) => t.name == "list_users")).toBe(true);
+  expect((await toolsFor({ dir, who: { login: "bo", admin: true } })).some((t) => t.name == "people")).toBe(true);
   // Without admin power (a token without the admin scope), an admin has none of them, and each is refused, saying so.
-  expect((await toolsFor({ dir, who: { login: "bo" } })).some((t) => t.name == "list_users")).toBe(false);
-  expect((await failure(run({ dir, who: { login: "bo" } }, "list_users"))).message).toMatch(/no admin power/);
-  expect((await run({ dir, who: { login: "bo", admin: true } }, "list_users")).map((u: { login: string; bootstrap: boolean }) => `${u.login}${u.bootstrap ? "*" : ""}`)).toEqual(["bo", "root*"]);
-  let e = await failure(run(root, "set_user_role", { login: "root", role: "write" }));
+  expect((await toolsFor({ dir, who: { login: "bo" } })).some((t) => t.name == "people")).toBe(false);
+  expect((await failure(run({ dir, who: { login: "bo" } }, "people"))).message).toMatch(/no admin power/);
+  expect(
+    (await run({ dir, who: { login: "bo", admin: true } }, "people")).users.map(
+      (u: { login: string; bootstrap: boolean }) => `${u.login}${u.bootstrap ? "*" : ""}`
+    )
+  ).toEqual(["bo", "root*"]);
+  let e = await failure(run(root, "set_user", { action: "role", login: "root", role: "write" }));
   expect([e.status, /deploy/.test(e.message)]).toEqual([403, true]);
   // Yourself, as on the Users page: the directory decides (a bootstrap admin stays).
-  e = await failure(run(root, "remove_user", { login: "root" }));
+  e = await failure(run(root, "set_user", { action: "remove", login: "root" }));
   expect([e.status, /deploy/.test(e.message)]).toEqual([403, true]);
-  e = await failure(run({ dir, who: { login: "bo", admin: true } }, "remove_user", { login: "root" }));
+  e = await failure(run({ dir, who: { login: "bo", admin: true } }, "set_user", { action: "remove", login: "root" }));
   expect([e.status, /deploy/.test(e.message)]).toEqual([403, true]);
-  e = await failure(run(root, "remove_user", { login: "nobody" }));
+  e = await failure(run(root, "set_user", { action: "remove", login: "nobody" }));
   expect(e.status).toBe(404);
-  e = await failure(run(root, "add_user", { provider: "github", handle: "not a login", role: "read" }));
+  e = await failure(run(root, "set_user", { action: "add", provider: "github", handle: "not a login", role: "read" }));
   expect(e.status).toBe(403);
-  expect(await run(root, "remove_user", { login: "bo" })).toEqual({ removed: "bo" });
+  expect(await run(root, "set_user", { action: "remove", login: "bo" })).toEqual({ removed: "bo" });
   expect(await dir.users.allowed("bo")).toBe(false);
+});
+
+test("access: a group rule added, changed and removed, public sharing switched, in one tool; people reads them", async () => {
+  const dir = fresh({ admins: ["root"] });
+  const root = { dir, who: { login: "root", admin: true } };
+  const rule = await run(root, "set_access", { action: "add", kind: "github_org", value: "acme", access: "read" });
+  expect([rule.who, rule.accessLabel]).toEqual(["GitHub organization: acme", "Can authenticate"]);
+  expect((await run(root, "set_access", { action: "change", id: rule.id, access: "write" })).from).toBe("read (Can authenticate)");
+  expect((await run(root, "set_access", { action: "public", on: false })).publicSharing).toBe(false);
+  const people = await run(root, "people");
+  expect([people.publicSharing, people.rules.find((r: { id: number }) => r.id == rule.id).access]).toEqual([false, "write"]);
+  expect((await run(root, "set_access", { action: "remove", id: rule.id })).removed.id).toBe(rule.id);
+  // An action without what it needs says which argument.
+  expect((await failure(run(root, "set_access", { action: "change", id: 1 }))).message).toBe("change needs access.");
+  expect((await failure(run(root, "set_user", { action: "deploy", login: "root" }))).status).toBe(400);
 });
 
 test("users: the deploy role, granted and revoked by an admin only", async () => {
   const dir = fresh({ admins: ["root"] });
   const root = { dir, who: { login: "root", admin: true } };
   await dir.users.add(root.who, "bo");
-  expect((await run(root, "list_users")).find((u: { login: string }) => u.login == "bo").deploy).toBe(false);
-  expect(await run(root, "set_user_deploy", { login: "bo", deploy: true })).toMatchObject({ login: "bo", role: "write", deploy: true });
+  expect((await run(root, "people")).users.find((u: { login: string }) => u.login == "bo").deploy).toBe(false);
+  expect(await run(root, "set_user", { action: "deploy", login: "bo", deploy: true })).toMatchObject({
+    login: "bo",
+    role: "write",
+    deploy: true,
+  });
   expect(await dir.users.hasDeploy("bo")).toBe(true);
-  expect((await failure(run({ dir, who: { login: "bo", admin: true } }, "set_user_deploy", { login: "bo", deploy: false }))).status).toBe(403);
-  expect((await run(root, "set_user_deploy", { login: "bo", deploy: false })).deploy).toBe(false);
-  expect((await failure(run(root, "set_user_deploy", { login: "nobody", deploy: true }))).status).toBe(404);
+  expect(
+    (await failure(run({ dir, who: { login: "bo", admin: true } }, "set_user", { action: "deploy", login: "bo", deploy: false }))).status
+  ).toBe(403);
+  expect((await run(root, "set_user", { action: "deploy", login: "bo", deploy: false })).deploy).toBe(false);
+  expect((await failure(run(root, "set_user", { action: "deploy", login: "nobody", deploy: true }))).status).toBe(404);
 });
 
 test("sharing: the owner sees and changes who has access; nobody else may; the document agent defaults to its document", async () => {
@@ -158,14 +189,18 @@ test("sharing: the owner sees and changes who has access; nobody else may; the d
   expect(r.permissions.map((p: { login: string; role: string }) => `${p.login}:${p.role}`)).toEqual(["ada:owner", "bo:editor"]);
   r = await run({ ...ada, here: "aaaaaaaa" }, "share_document", { login: "*", role: "viewer" });
   expect(r.document.address).toBe("/ada/plan");
-  expect(r.permissions.find((p: { login: string }) => p.login == "*").means).toMatch(/anyone/);
-  r = await run(ada, "document_access", { document: "plan" });
-  expect(r.permissions.length).toBe(3);
+  // The readers' options, set alone: the answer says who has access too.
+  r = await run(ada, "share_document", { document: "plan", reader_bars: false });
+  expect([r.permissions.length, r.readerBars]).toEqual([3, false]);
+  expect((await failure(run(ada, "share_document", { document: "plan", reader_agent: true }))).status).toBe(409);
   const e = await failure(run({ dir, who: { login: "bo" } }, "share_document", { document: "aaaaaaaa", login: "cy", role: "editor" }));
   expect([e.status, /owner/.test(e.message)]).toEqual([403, true]);
-  expect((await failure(run({ dir, who: { login: "bo" } }, "document_access", { document: "aaaaaaaa" }))).status).toBe(403);
-  expect((await failure(run(ada, "document_access", {}))).status).toBe(400);
-  expect((await failure(run(ada, "document_access", { document: "/ada/none" }))).status).toBe(404);
+  expect((await failure(run({ dir, who: { login: "bo" } }, "share_document", { document: "aaaaaaaa", reader_bars: true }))).status).toBe(
+    403
+  );
+  expect((await failure(run(ada, "share_document", { login: "cy", role: "editor" }))).status).toBe(400);
+  expect((await failure(run(ada, "share_document", { document: "/ada/none", login: "cy", role: "editor" }))).status).toBe(404);
+  expect((await failure(run(ada, "share_document", { document: "plan", login: "cy" }))).status).toBe(400);
   r = await run(ada, "share_document", { document: "aaaaaaaa", login: "bo", role: "none" });
   expect(r.permissions.map((p: { login: string }) => p.login)).toEqual(["ada", "*"]);
 });
@@ -243,10 +278,10 @@ test("API keys: an admin clears one (the change log says who), and is never offe
   const dir = fresh({ admins: ["root"], credentialSecret: "a-secret-for-the-tests-0123456789" });
   const root = { dir, who: { login: "root", admin: true } };
   await dir.credentials.set(root.who, "anthropic", "sk-ant-api03-test-1234567890abcd");
-  expect((await run(root, "list_api_keys")).find((k: { name: string }) => k.name == "anthropic").stored).toBe(true);
+  expect((await run(root, "settings")).apiKeys.find((k: { name: string }) => k.name == "anthropic").stored).toBe(true);
   const r = await run(root, "clear_api_key", { name: "anthropic" });
   expect([r.cleared, r.stored]).toEqual(["anthropic", false]);
-  const log = await run(root, "list_setting_changes");
+  const log = await run(root, "settings", { changes: true });
   expect([log.changes[0].by, log.changes[0].changes[0].key, log.changes[0].changes[0].credential]).toEqual([
     "root",
     "ANTHROPIC_API_KEY",
@@ -273,8 +308,8 @@ test("one set of tools for every agent: a person's own agent has what they may (
     expect(tools).toContain("edit");
   }
   // Someone who isn't an admin: their agent has no admin operation, and one asked of it is refused.
-  expect(await names({ dir, who: { login: "bo", via: VIA.agent } })).not.toContain("list_users");
-  expect((await failure(run({ dir, who: { login: "bo", via: VIA.agent } }, "list_users"))).status).toBe(403);
+  expect(await names({ dir, who: { login: "bo", via: VIA.agent } })).not.toContain("people");
+  expect((await failure(run({ dir, who: { login: "bo", via: VIA.agent } }, "people"))).status).toBe(403);
   // A document token: nothing that reaches beyond its document.
   const one = await names({ dir, who: { login: "root", onlyDoc: "aaaaaaaa", via: VIA.token("one") } });
   for (const op of OPERATIONS.filter((o) => o.wide)) expect(one).not.toContain(op.name);

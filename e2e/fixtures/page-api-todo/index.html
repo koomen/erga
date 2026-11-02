@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="erga-api" content="todo-api.js">
+<title>Todo</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 0; }
+  main { max-width: 40rem; margin: 0 auto; padding: 80px 16px; }
+  ul.todo { list-style: none; padding: 0; position: relative; }
+  ul.todo > li { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
+  ul.todo > li p { margin: 0; }
+  ul.todo > li.done p { text-decoration: line-through; }
+  ul.todo .grip { width: 14px; height: 20px; border: 0; background: #ddd; cursor: grab; touch-action: none; }
+  ul.todo .check { width: 16px; height: 16px; border: 1px solid #999; background: none; }
+  ul.todo li.dragging { position: relative; z-index: 1; background: #fff; }
+  .drop-line { position: absolute; left: 0; right: 0; height: 2px; background: #36f; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Todo</h1>
+  <ul class="todo">
+    <li><p>Milk</p></li>
+    <li><p>Eggs</p></li>
+    <li><p>Bread</p></li>
+    <li><p>Butter</p></li>
+  </ul>
+</main>
+<script>
+  // In the editor: a grip to drag each item to a new place, and a box to check it off.
+  const editor = window.ergaEditor;
+  if (editor) {
+    const items = (ul) => [...ul.children].filter((li) => li.matches("li"));
+    function draw() {
+      if (!editor.editing) return document.querySelectorAll("ul.todo .grip, ul.todo .check").forEach((el) => el.remove());
+      for (const li of document.querySelectorAll("ul.todo > li:not(:has(> .grip))"))
+        li.insertAdjacentHTML("afterbegin", `<button class="grip" aria-label="Drag to reorder"></button><button class="check" aria-label="Check off"></button>`);
+    }
+    document.addEventListener("click", (e) => {
+      const b = e.target.closest("ul.todo .check");
+      if (!b) return;
+      const li = b.closest("li");
+      editor.call("check_item", { n: items(li.parentElement).indexOf(li) + 1, done: !li.classList.contains("done") });
+    });
+    let drag = null;
+    document.addEventListener("pointerdown", (e) => {
+      const grip = e.target.closest("ul.todo .grip");
+      if (!grip) return;
+      e.preventDefault();
+      const li = grip.closest("li"), ul = li.parentElement, list = items(ul), others = list.filter((o) => o != li);
+      const line = document.createElement("div");
+      line.className = "drop-line";
+      line.hidden = true;
+      ul.append(line);
+      grip.setPointerCapture(e.pointerId);
+      li.classList.add("dragging");
+      drag = { li, ul, others, line, from: list.indexOf(li), to: list.indexOf(li), y0: e.clientY,
+        mids: others.map((o) => { const r = o.getBoundingClientRect(); return r.top + r.height / 2; }) };
+    });
+    document.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const { li, ul, others, line, mids } = drag;
+      li.style.transform = `translateY(${e.clientY - drag.y0}px)`;
+      drag.to = mids.filter((m) => m < e.clientY).length;
+      const y = drag.to < others.length ? others[drag.to].getBoundingClientRect().top : others.at(-1).getBoundingClientRect().bottom;
+      line.style.top = y - ul.getBoundingClientRect().top + "px";
+      line.hidden = drag.to == drag.from;
+    });
+    document.addEventListener("pointerup", () => {
+      if (!drag) return;
+      const { li, line, from, to, others } = drag;
+      drag = null;
+      line.remove();
+      li.classList.remove("dragging");
+      li.style.removeProperty("transform");
+      if (!li.getAttribute("style")) li.removeAttribute("style");
+      if (!li.className) li.removeAttribute("class");
+      if (to == from) return;
+      const before = to < others.length ? (to < from ? to + 1 : to + 2) : 0;
+      editor.call("move_item", { n: from + 1, before });
+    });
+    addEventListener("erga-editing", draw);
+    draw();
+    new MutationObserver(draw).observe(document.body, { childList: true, subtree: true });
+  }
+</script>
+</body>
+</html>

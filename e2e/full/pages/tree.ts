@@ -43,9 +43,9 @@ export async function site(server: Server, opts: { pages?: boolean } = {}) {
   const tool = tools(server, token, doc.id);
   const s = {
     ...doc, owner, token, auth, slug, get: owner.get, tool, anyTool,
-    /** The page tree, as `who` reads it (list_pages). */
+    /** The page tree, as `who` reads it (ls). */
     async readTree(who: { cookie: string } = owner) {
-      const r = await runTool(server.root, "list_pages", { document: doc.id }, { cookie: who.cookie });
+      const r = await runTool(server.root, "ls", { document: doc.id }, { cookie: who.cookie });
       return { status: r.status, body: (r.ok ? r.result : { error: r.error }) as { entries?: Entry[]; canEdit?: boolean; error?: string } };
     },
     /** A change to the page tree, as `who` makes it in the tree (from `origin`: the site's own, unless given). */
@@ -53,10 +53,10 @@ export async function site(server: Server, opts: { pages?: boolean } = {}) {
       const r = await treeOp(server.root, doc.id, op, { cookie: who.cookie, ...(origin ? { origin } : {}) });
       return { status: r.status, body: (r.ok ? r.result : { error: r.error }) as { entries?: Entry[]; error?: string } };
     },
-    /** Puts a file into the document, as its person publishes it (update_files): not an agent's run, so no lock. */
+    /** Puts a file into the document, as its person publishes it (write): not an agent's run, so no lock. */
     async write(path: string, content: string) {
-      const w = await anyTool("update_files", { document: doc.id, files: { [path]: content } });
-      if (!w.ok) throw new Error(`update_files ${path}: ${w.text}`);
+      const w = await anyTool("write", { document: doc.id, files: { [path]: content } });
+      if (!w.ok) throw new Error(`write ${path}: ${w.text}`);
     },
     /** The owner's agent's log (its conversation, agents/person/sessions.ts). */
     agentLog: async () =>
@@ -108,7 +108,7 @@ export const styled = (page: import("playwright-core").Page) => inFrames<{ h1: s
 
 /** The tab's address, path and hash. */
 export const where = (page: import("playwright-core").Page) => page.evaluate(() => location.pathname + location.search).catch(() => "");
-/** The editor is ready and listening: open_page and new_page reach only the tabs whose event channel is up (erga-listening). */
+/** The editor is ready and listening: open_page and new reach only the tabs whose event channel is up (erga-listening). */
 /** The editor is up: its controls in the tab, and its half in the page, which has joined the room (libs/text/ui/frame.ts). */
 export const ready = async (page: import("playwright-core").Page) =>
   (await page

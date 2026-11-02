@@ -1,5 +1,5 @@
 // The editor's own controls on the page: the style bar over a selection (bold, italic, code, link, clear formatting),
-// the link bar, the pause button for a page that can pause, and a note that says why something can't be done. They
+// the link bar, and a note that says why something can't be done. They
 // draw inside the page, in a shadow root of their own on its <html> (an erga- element: the editor's, which its walks
 // and its check pass by), with the editor's own look whatever the page's styles are; on a dark page, its dark look.
 // Their events stay theirs: the page's own handlers and the editor's below them never see them.
@@ -21,9 +21,6 @@ export interface ControlsPage {
   setLink(edit: LinkEdit): string | null;
   readonly state: { selection: { main: { anchor: number; head: number } } };
   focus(): void;
-  readonly canPause: boolean;
-  readonly isPaused: boolean;
-  setPaused(on: boolean): boolean;
 }
 
 /** The controls' look, which a library's own controls share (libs/slides/ui/bar.ts). */
@@ -75,8 +72,6 @@ button.tab { width: 100%; height: 28px; display: flex; align-items: center; just
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: translate 160ms var(--ease); }
 .tab[aria-checked="true"] .switch { background: var(--caret); }
 .tab[aria-checked="true"] .switch::after { translate: 12px 0; }
-.pause { right: 16px; bottom: 16px; width: 40px; height: 40px; border-radius: 999px; padding: 0; display: grid; place-items: center; }
-.pause button { width: 40px; height: 40px; border-radius: 999px; }
 .pill { left: 50%; bottom: 20px; transform: translateX(-50%); width: auto; height: auto; padding: 8px 14px; border-radius: 999px;
   font: 13px/1.3 var(--font); color: var(--fg); white-space: nowrap; }
 .pill b { color: var(--caret); font-weight: 600; }
@@ -104,8 +99,6 @@ const ICON = {
   unlink:
     '<path d="M9.5 14.5 8 16a3 3 0 0 1-4.24-4.24L5.5 10"/><path d="M14.5 9.5 16 8a3 3 0 0 1 4.24 4.24L18.5 14"/><path d="M4 4l16 16"/>',
   tab: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 9h16"/>',
-  pause: '<path d="M9 6v12M15 6v12"/>',
-  play: '<path d="M8 5.5v13l10-6.5z"/>',
 };
 const svg = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
 
@@ -141,7 +134,6 @@ const HTML = `
     </div>
   </div>
 </div>
-<div class="card pause" id="pause" hidden><button type="button" id="pause-btn"></button></div>
 <div class="card note" id="note" role="status" hidden></div>
 <button type="button" class="card pill" id="refresh-pill" hidden></button>`;
 
@@ -302,7 +294,6 @@ export function mountControls(win: Window, page: ControlsPage, o: { place: () =>
   }
   function render() {
     unzoom();
-    syncPause();
     if (linking == "selection" || morphing || linkPane.contains(root.activeElement)) return;
     if (pointerDown) {
       hide();
@@ -454,29 +445,6 @@ export function mountControls(win: Window, page: ControlsPage, o: { place: () =>
   linkPane.addEventListener("focusout", (e) => {
     if (linkPane.contains(e.relatedTarget as Node | null) || !linking) return;
     applyFields();
-  });
-
-  // ------------------------------------------------------------ pause
-
-  // A page that reacts to clicks and keys (slides that advance on click, a game) gets in the way of editing its text.
-  // If it defines window.ergaPause (agents/document/PROMPT.md, rule 10), the pause button tells it to stop, and only
-  // the editor answers clicks until it resumes. A page that can't be paused has no button.
-  const pause = $("pause"),
-    pauseBtn = $("pause-btn");
-  function syncPause() {
-    pause.hidden = !page.canPause;
-    const on = page.isPaused;
-    pauseBtn.setAttribute("aria-pressed", String(on));
-    pauseBtn.setAttribute("aria-label", on ? "Resume the page" : "Pause the page");
-    pauseBtn.title = on ? "Paused: only the editor responds (click to resume)" : "Pause the page to edit it";
-    pauseBtn.innerHTML = svg(on ? ICON.play : ICON.pause);
-  }
-  pauseBtn.addEventListener("mousedown", (e) => e.preventDefault());
-  syncPause();
-  pauseBtn.addEventListener("click", () => {
-    page.setPaused(!page.isPaused);
-    syncPause();
-    explain(page.isPaused ? "Paused: the page ignores clicks and keys while you edit" : "Resumed: the page responds again");
   });
 
   // ------------------------------------------------------------ the refresh pill

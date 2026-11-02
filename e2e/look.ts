@@ -9,7 +9,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 import { openEditor } from "./helpers/editor";
 import { ROOT } from "./helpers/env";
-import { descendants, localLibraries, startServer, type Server } from "./helpers/server";
+import { descendants, startServer, type Server } from "./helpers/server";
 
 const HELP = `bun run look [--doc <fixture | file.html | folder>] [--out <file.png>] [--source] [--latency <ms>] [--keep | --stop] [step ...]
 
@@ -130,7 +130,6 @@ const server = {
   async fixture() {
     const dir = join(scratch, "docs", `look-${Date.now()}`);
     cpSync(isDir ? path : dirname(path), dir, { recursive: true });
-    localLibraries(dir, root);
     const r = await fetch(`${root}/__erga/open`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

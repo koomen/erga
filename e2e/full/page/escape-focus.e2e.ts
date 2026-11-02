@@ -1,5 +1,5 @@
 // Escape takes the focus off the text and leaves it in the page, so the page's own keys work (a deck's arrows);
-// a click on text puts the caret back. Escape closes an open card first. A page with ergaPause opens that way.
+// a click on text puts the caret back. Escape closes an open card first.
 import { expect, servers, test } from "../../helpers/fixtures";
 import { F, openEditor } from "../../helpers/editor";
 
@@ -57,34 +57,7 @@ test("Escape with the Share card open closes the card, and the caret stays in th
   `);
 });
 
-test("a page with ergaPause opens with the keys going to the page: the arrows move between slides at once; a click on text edits", async ({
-  tab,
-}) => {
-  const ed = await openEditor(tab, await servers.main(), "deck");
-  const before = await ed.source();
-  // The page's frame has the focus, with no caret in the text.
-  expect(await ed.eval<boolean>(`document.activeElement?.tagName == "IFRAME"`)).toBe(true);
-  expect(await ed.frame<boolean>(`!${F}.activeElement?.closest("[contenteditable]")`)).toBe(true);
-  await ed.press("ArrowRight");
-  await ed.press("ArrowRight");
-  await ed.shows(`
-    # Third slide
-
-    The last one.
-  `);
-  await ed.type("x");
-  expect(await ed.source()).toBe(before);
-  await ed.clickEnd(".current h1");
-  await ed.type("!");
-  await ed.shows(`
-    # Third slide!|
-
-    The last one.
-  `);
-  expect(await ed.source()).toContain("<h1>Third slide!</h1>");
-});
-
-test("a page without ergaPause opens with the caret in its first text: typing at once edits it", async ({ tab }) => {
+test("a page opens with the caret in its first text: typing at once edits it", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "one-line");
   await ed.type("x");
   await expect.poll(() => ed.source()).toContain("<h1>xOne line</h1>");

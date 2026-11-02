@@ -5,12 +5,11 @@
 //
 // Readers always see the document as it is now. It holds, top to bottom:
 //   - Kind: Document (one page, and files beside it) or Project (pages, each
-//     with its own address), a switch (the tree's make_project and
-//     make_document). A project with more than one page says, in place, why
+//     with its own address), a switch (set_kind). A project with more than one page says, in place, why
 //     it can't be a document yet.
-//   - Readers, for its owner only (their state from document_access): whether the people who view it, and can't edit
-//     it, see Erga's bars over it (set_reader_bars; on at first), and whether they may use their own agent on it
-//     (set_reader_agent). The agent is off, and not to be turned on, while anyone with the link may open it.
+//   - Readers, for its owner only (their state from ls's access): whether the people who view it, and can't edit
+//     it, see Erga's bars over it (share_document's reader_bars; on at first), and whether they may use their own agent
+//     on it (reader_agent). The agent is off, and not to be turned on, while anyone with the link may open it.
 //   - Homepage, only on the homepage: a note that says so, how its deploy is
 //     going, and Redeploy now (admins). The homepage is chosen on /admin
 //     (the landing_document setting), never here.
@@ -19,8 +18,8 @@
 //     current one marked; Show older versions loads ten more. Edit, on hover or
 //     focus, makes a copy of a version the current one (restore_version).
 //
-// It runs the operations (server/operations/: list_versions, restore_version, list_pages, make_project,
-// make_document, homepage_status, deploy_homepage, document_access, set_reader_bars, set_reader_agent; over POST /api/tools/<name>), and refreshes on the event channel's
+// It runs the operations (server/operations/: versions, restore_version, ls, set_kind, redeploy (target homepage),
+// share_document; over POST /api/tools/<name>), and refreshes on the event channel's
 // { type: "versions" }, { type: "home" } and { type: "tree" } (main.ts passes them on).
 // Someone who can't edit sees it all read-only.
 
@@ -30,11 +29,19 @@ import { esc } from "../../shared/html";
 import { plural } from "../../shared/time";
 
 export interface Deploy { state: "idle" | "scheduled" | "deploying" | "deployed" | "failed"; at: string | null; scheduledFor: string | null; version: number | null; error: string | null }
-/** homepage_status's answer. */
+/** ls's homepage: on the homepage only. */
 export interface Home { isHome: boolean; canDeploy: boolean; /** An admin acting through a token without the admin scope. */ locked?: boolean; deploy: Deploy }
 export type DocKind = "document" | "project";
-/** list_pages's answer, as far as this panel reads it. */
-interface Tree { entries: { path: string; type: string }[]; canEdit?: boolean; kind?: DocKind }
+/** ls's answer, as far as this panel reads it. */
+interface Tree {
+  entries: { path: string; type: string }[];
+  canEdit?: boolean;
+  kind?: DocKind;
+}
+interface Doc extends Tree {
+  homepage?: Home;
+  access?: { readerAgent: boolean; readerBars: boolean; permissions: { login: string }[] };
+}
 
 export interface SettingsHost {
   /** The document's id (its /d/<id>). */
@@ -222,15 +229,15 @@ function mount(host: SettingsHost): Settings {
   let loaded = new Map<number, Version>();
   let home: Home | null = null;
   let homeBusy = false;
-  let loadSeq = 0, homeSeq = 0, treeSeq = 0;
+  let loadSeq = 0,
+    docSeq = 0;
   /** The tree as last read: its pages (a project with more than one can't be a document yet) and whether you may change it. */
   let tree: Tree | null = null;
   /** The kind being switched to, while the server does it. */
   let kindBusy: DocKind | null = null;
-  /** Readers, for the owner (document_access answers no one else): their bars and their agent, and whether anyone with the link may open it. */
+  /** Readers, for the owner (ls answers no one else): their bars and their agent, and whether anyone with the link may open it. */
   let access: Access | null = null;
-  let accessSeq = 0,
-    agentBusy = false;
+  let agentBusy = false;
 
   const add = (vs: Version[]) => { for (const v of vs) loaded.set(v.n, v); };
   /** The loaded versions, newest first. */
@@ -238,7 +245,7 @@ function mount(host: SettingsHost): Settings {
   async function loadVersions() {
     const seq = ++loadSeq;
     try {
-      const d = await runTool<Versions>("list_versions", { document: host.docId });
+      const d = await runTool<Versions>("versions", { document: host.docId });
       if (seq != loadSeq) return;
       // What was loaded before stays (older versions shown), with the fresh copies over it.
       if (data && d.total < data.total) loaded = new Map();
@@ -261,7 +268,7 @@ function mount(host: SettingsHost): Settings {
     if (!data || !oldest || oldest.n <= 1 || loadingOlder) return;
     loadingOlder = true;
     render();
-    const r = await runTool<Versions>("list_versions", { document: host.docId, before: oldest.id, limit: RECENT }).catch((e: Error) => {
+    const r = await runTool<Versions>("versions", { document: host.docId, before: oldest.id, limit: RECENT }).catch((e: Error) => {
       histError.textContent = `Couldn't load older versions: ${e.message}`;
       return null;
     });
@@ -270,28 +277,23 @@ function mount(host: SettingsHost): Settings {
     render();
   }
   olderBtn.addEventListener("click", () => loadOlder());
-  async function loadHome() {
-    const seq = ++homeSeq;
-    let h: Home | null = null;
-    try {
-      h = await runTool<Home>("homepage_status", { document: host.docId });
-    } catch {
-      h = null;
+  /** The document as ls answers it: its tree and kind, the homepage's state (on the homepage), and its access (for the owner). */
+  async function loadDoc() {
+    const seq = ++docSeq;
+    const d = await runTool<Doc>("ls", { document: host.docId }).catch(() => null);
+    if (seq != docSeq) return;
+    if (d) {
+      tree = d;
+      if (d.kind) host.onKind(d.kind);
     }
-    if (seq != homeSeq) return;
-    home = h;
-    renderHome();
-  }
-
-  async function loadTree() {
-    const seq = ++treeSeq;
-    const t = await runTool<Tree>("list_pages", { document: host.docId }).catch(() => null);
-    if (seq != treeSeq) return;
-    if (t) { tree = t; if (t.kind) host.onKind(t.kind); }
+    home = d?.homepage ?? null;
+    access = d?.access ? accessOf(d.access) : null;
     renderKind();
+    renderHome();
+    renderAgent();
   }
 
-  /** document_access's answer, as far as Readers need it. */
+  /** ls's access, as far as Readers need it. */
   type Answer = { readerAgent: boolean; readerBars: boolean; permissions: { login: string }[] };
   type Access = { readerAgent: boolean; readerBars: boolean; open: boolean };
   const accessOf = (a: Answer): Access => ({
@@ -299,15 +301,6 @@ function mount(host: SettingsHost): Settings {
     readerBars: a.readerBars,
     open: a.permissions.some((p) => p.login == "*"),
   });
-  async function loadAccess() {
-    // (Only its owner may ask: the page says so, meta erga-share, as for Share.)
-    if (!document.querySelector('meta[name="erga-share"]')) return;
-    const seq = ++accessSeq;
-    const a = await runTool<Answer>("document_access", { document: host.docId }).catch(() => null);
-    if (seq != accessSeq) return;
-    access = a && accessOf(a);
-    renderAgent();
-  }
   function renderAgent() {
     agentSec.hidden = !access;
     if (!access) return;
@@ -320,20 +313,20 @@ function mount(host: SettingsHost): Settings {
       : "People you share it with as viewers can ask their own agent about it. Their agent can read it, never change it.";
   }
   /** One of the two switches: the server's answer says what holds now. */
-  async function setReader(tool: "set_reader_agent" | "set_reader_bars", on: boolean) {
+  async function setReader(option: "reader_agent" | "reader_bars", on: boolean) {
     agentBusy = true;
     agentError.textContent = "";
     renderAgent();
     try {
-      access = accessOf(await runTool<Answer>(tool, { document: host.docId, on }));
+      access = accessOf(await runTool<Answer>("share_document", { document: host.docId, [option]: on }));
     } catch (e) {
       agentError.textContent = `Couldn't change it: ${(e as Error).message}`;
     }
     agentBusy = false;
     renderAgent();
   }
-  agentOn.addEventListener("change", () => setReader("set_reader_agent", agentOn.checked));
-  barsOn.addEventListener("change", () => setReader("set_reader_bars", barsOn.checked));
+  agentOn.addEventListener("change", () => setReader("reader_agent", agentOn.checked));
+  barsOn.addEventListener("change", () => setReader("reader_bars", barsOn.checked));
 
   /** Edit on a version: a copy of it becomes the current version (the previous current one stays a version). */
   let restoring: string | null = null;
@@ -443,13 +436,13 @@ function mount(host: SettingsHost): Settings {
     kindError.textContent = "";
     renderKind();
     try {
-      await runTool(want == "project" ? "make_project" : "make_document", { document: host.docId });
+      await runTool("set_kind", { document: host.docId, kind: want });
       tree = { ...tree, kind: want };
       host.onKind(want);
     } catch (e) { kindError.textContent = `Couldn't make it a ${want}: ${(e as Error).message}`; }
     kindBusy = null;
     renderKind();
-    loadTree();
+    loadDoc();
   }
   kindBox.addEventListener("click", (e) => {
     const b = (e.target as Element).closest<HTMLElement>("[data-kind]");
@@ -477,12 +470,12 @@ function mount(host: SettingsHost): Settings {
     if (home) home = { ...home, deploy: { ...home.deploy, state: "deploying", error: null } };
     renderHome();
     try {
-      await runTool("deploy_homepage");
+      await runTool("redeploy", { target: "homepage" });
     } catch (e) {
       homeError.textContent = `Couldn't redeploy: ${(e as Error).message}`;
     }
     homeBusy = false;
-    loadHome();
+    loadDoc();
   });
 
   // ------------------------------------------------------------ the popover
@@ -512,9 +505,7 @@ function mount(host: SettingsHost): Settings {
     renderKind();
     renderAgent();
     loadVersions();
-    loadHome();
-    loadTree();
-    loadAccess();
+    loadDoc();
     // Relative times ("4 min ago", "in 3 minutes") move on while it's open, every 30 seconds.
     ticker = window.setInterval(() => { render(); renderHome(); }, 30_000);
     pop.tabIndex = -1;
@@ -542,8 +533,9 @@ function mount(host: SettingsHost): Settings {
       if (pop.hidden) { if (type == "versions") data = null; return; }
       // A burst (a version cut, then its description) is one refresh.
       if (type != "home" && type != "versions" && type != "tree") return;
-      clearTimeout(pending[type]);
-      pending[type] = window.setTimeout(() => (type == "home" ? loadHome() : type == "tree" ? loadTree() : loadVersions()), 120);
+      const key = type == "versions" ? type : "doc";
+      clearTimeout(pending[key]);
+      pending[key] = window.setTimeout(() => (key == "doc" ? loadDoc() : loadVersions()), 120);
     },
     contains,
   };

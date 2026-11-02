@@ -31,7 +31,7 @@ test("one provider on: /auth/sign-in goes straight to it; both on: a button for 
   expect(one.status).toBe(302);
   expect(one.headers.get("location")).toBe("/auth/github?next=%2Fdocs");
 
-  const turn = (on: boolean) => runTool(root, "switch_sign_in_provider", { provider: "google", on });
+  const turn = (on: boolean) => runTool(root, "set_sign_in", { provider: "google", action: on ? "on" : "off" });
   expect((await turn(true)).status).toBe(200);
   try {
     for (const scheme of ["light", "dark"] as const) {

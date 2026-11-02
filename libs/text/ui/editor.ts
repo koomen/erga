@@ -37,7 +37,6 @@ export class PageEditor extends EditorInput {
   constructor(config: PageEditorConfig) {
     super(config);
     this.held = [...(config.held ?? [])];
-    this.paused = !!config.paused;
     // (They wait for the page to have the focus: the caller hands them over, hold(false).)
     if (this.held.length) this.holding = true;
     if (config.onUpdate) this.listeners.push(config.onUpdate);

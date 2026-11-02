@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Erga plans</title>
+<meta name="erga-api" content="todo-api.js">
+<style>
+  :root { --fg: #1c1c1f; --soft: #6b6b73; --bg: #fff;
+    --draft: #71717a; --draft-bg: #f4f4f5; --prog: #a16207; --prog-bg: #fef9c3;
+    --stag: #1d4ed8; --stag-bg: #dbeafe; --merged: #15803d; --merged-bg: #dcfce7; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, -apple-system, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px 40px; }
+  h1 { font-size: 26px; margin: 0 0 14px; letter-spacing: -0.01em; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; align-items: baseline; gap: 12px; padding: 5px 0; }
+  .plan { flex: 1; min-width: 0; }
+  a { color: inherit; font-weight: 600; text-decoration: none; }
+  .what { display: block; color: var(--soft); font-size: 13.5px; }
+  .status { flex: none; font-size: 12px; font-weight: 600; padding: 1px 9px; border-radius: 999px; }
+  .draft { color: var(--draft); background: var(--draft-bg); }
+  .in-progress { color: var(--prog); background: var(--prog-bg); }
+  .merged { color: var(--merged); background: var(--merged-bg); }
+  h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--soft); margin: 22px 0 6px; }
+  ul.todo li { align-items: flex-start; gap: 10px; padding: 4px 0; }
+  ul.todo li::before, ul.todo .check { flex: none; box-sizing: border-box; width: 15px; height: 15px; margin-top: 2.5px; border: 1.5px solid var(--soft); border-radius: 4px; background: none; padding: 0; }
+  ul.todo li::before { content: ""; }
+  ul.todo p { flex: 1; min-width: 0; margin: 0; }
+  ul.todo li.done p { color: var(--soft); text-decoration: line-through; }
+  html[data-erga-editing] ul.todo li::before { display: none; }
+  ul.todo button { cursor: pointer; font: inherit; }
+  ul.todo .ctl { flex: none; display: flex; gap: 2px; }
+  ul.todo .ctl button { border: 0; background: none; color: var(--soft); font-size: 13px; line-height: 1; padding: 3px 5px; border-radius: 4px; }
+  ul.todo { position: relative; }
+  ul.todo .grip { flex: none; width: 14px; height: 20px; margin: 0 -4px 0 -4px; padding: 0; border: 0; border-radius: 4px; background: none; color: #a1a1aa; cursor: grab; touch-action: none; display: flex; align-items: center; justify-content: center; }
+  ul.todo li.dragging { position: relative; z-index: 1; background: var(--bg); box-shadow: 0 4px 14px rgba(0,0,0,.12); border-radius: 6px; }
+  ul.todo .drop-line { position: absolute; left: 0; right: 0; height: 2px; margin-top: -1px; background: var(--stag); border-radius: 1px; pointer-events: none; }
+  ul.plans .stctl { flex: none; position: relative; margin-left: -8px; }
+  ul.plans .st { border: 0; background: none; color: var(--soft); font: inherit; font-size: 11px; line-height: 1; padding: 3px 4px; border-radius: 4px; cursor: pointer; }
+  ul.plans .stmenu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 2; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 6px; background: var(--bg); border: 1px solid #e4e4e7; border-radius: 8px; }
+  ul.plans .stmenu button { border: 0; font: inherit; font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+  ul.todo li.add { padding-top: 6px; }
+  ul.todo li.add::before { display: none; }
+  ul.todo .new { border: 1px dashed #d4d4d8; background: none; color: var(--soft); font-size: 13px; padding: 3px 10px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Erga plans</h1>
+  <h2>Todo</h2>
+  <ul class="todo">
+    <li><p>Milk</p></li>
+    <li><p>Eggs</p></li>
+    <li><p>Bread</p></li>
+    <li><p>Butter</p></li>
+  </ul>
+  <template id="new-todo"><li><p>New item</p></li></template>
+  <h2>Plans</h2>
+  <ul class="plans">
+    <li><span class="plan"><a target="_top" href="#a">Editor rules</a><span class="what">Rules.</span></span><span class="status draft">Draft</span></li>
+    <li><span class="plan"><a target="_top" href="#b">Short llms.txt</a><span class="what">Fewer tools.</span></span><span class="status in-progress">In progress</span></li>
+    <li><span class="plan"><a target="_top" href="#c">Model keys</a><span class="what">Keys.</span></span><span class="status merged">Merged</span></li>
+  </ul>
+</main>
+<script>
+  // Todo list: in the editor, draw buttons to check off, drag to reorder, delete and add items.
+  const editor = window.ergaEditor;
+  if (editor) {
+    const items = (ul) => [...ul.children].filter((li) => li.matches("li:not(.add)"));
+    // Erga selects the text a custom edit touched, which opens the keyboard on mobile.
+    // For edits that aren't about typing (check, delete, move), drop that selection again.
+    // Erga may select it some time after apply answers (or after the page renders again),
+    // so for two seconds after such an edit, drop any text selection inside the todo list.
+    const clear = () => { getSelection()?.removeAllRanges(); document.activeElement?.blur?.(); };
+    const quietNow = () => Date.now() < +(sessionStorage.getItem("todo-quiet") || 0);
+    const quiet = async (edit, input) => {
+      sessionStorage.setItem("todo-quiet", Date.now() + 2000);
+      await editor.call(edit, input);
+      clear();
+    };
+    document.addEventListener("selectionchange", () => {
+      const s = getSelection();
+      if (!quietNow() || !s.rangeCount) return;
+      const lists = "ul.todo, ul.plans";
+      if (s.getRangeAt(0).commonAncestorContainer.parentElement?.closest(lists) || s.anchorNode?.parentElement?.closest(lists)) clear();
+    });
+    if (quietNow()) { clear(); setTimeout(clear, 300); }
+    const dots = `<svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor"><circle cx="2" cy="2" r="1.3"/><circle cx="6" cy="2" r="1.3"/><circle cx="2" cy="7" r="1.3"/><circle cx="6" cy="7" r="1.3"/><circle cx="2" cy="12" r="1.3"/><circle cx="6" cy="12" r="1.3"/></svg>`;
+    function draw() {
+      // Controls only while editing; in view mode the page shows as readers see it.
+      if (!document.documentElement.hasAttribute("data-erga-editing")) {
+        document.querySelectorAll("ul.todo .grip, ul.todo .check, ul.todo .ctl, ul.todo li.add, ul.plans .stctl").forEach((el) => el.remove());
+        return;
+      }
+      for (const li of document.querySelectorAll("ul.todo > li:not(.add):not(:has(> .check))")) {
+        li.insertAdjacentHTML("afterbegin", `<button class="grip" title="Drag to reorder" aria-label="Drag to reorder">${dots}</button><button class="check" title="Check off" aria-label="Check off"></button>`);
+        li.insertAdjacentHTML("beforeend", `<div class="ctl"><button class="del" title="Delete">✕</button></div>`);
+      }
+      for (const ul of document.querySelectorAll("ul.todo:not(:has(> li.add))"))
+        ul.insertAdjacentHTML("beforeend", `<li class="add"><button class="new">+ Add item</button></li>`);
+      for (const st of document.querySelectorAll("ul.plans > li > .status"))
+        if (!st.nextElementSibling?.matches(".stctl")) st.insertAdjacentHTML("afterend", `<div class="stctl"><button class="st" title="Change status" aria-label="Change status">▾</button></div>`);
+    }
+
+    // Plans: a menu by each status sets it; the edit also moves the plan into its group.
+    const statuses = [["draft", "Draft"], ["in-progress", "In progress"], ["staging", "Staging"], ["merged", "Merged"]];
+    const closeMenus = () => document.querySelectorAll("ul.plans .stmenu").forEach((m) => m.remove());
+    document.addEventListener("click", (e) => {
+      const b = e.target.closest("ul.plans .stctl button");
+      if (!b) return closeMenus();
+      const li = b.closest("li"), ctl = b.closest(".stctl");
+      if (b.matches(".st")) {
+        const open = ctl.querySelector(".stmenu");
+        closeMenus();
+        if (!open) ctl.insertAdjacentHTML("beforeend", `<div class="stmenu">${statuses.map(([s, label]) => `<button class="${s}" data-s="${s}">${label}</button>`).join("")}</div>`);
+        return;
+      }
+      closeMenus();
+      const n = [...li.parentElement.children].indexOf(li) + 1;
+      if (!li.querySelector(".status").classList.contains(b.dataset.s)) quiet("set_status", { n, status: b.dataset.s });
+    });
+    document.addEventListener("click", (e) => {
+      const b = e.target.closest("ul.todo button");
+      if (!b) return;
+      const li = b.closest("li"), n = items(li.parentElement).indexOf(li) + 1;
+      if (b.matches(".new")) editor.call("add_item", {});
+      if (b.matches(".check")) quiet("check_item", { n, done: !li.classList.contains("done") });
+      if (b.matches(".del")) quiet("delete_item", { n });
+    });
+
+    // Drag by the grip: a line shows where the item will go; dropping moves it there.
+    let drag = null;
+    document.addEventListener("pointerdown", (e) => {
+      const grip = e.target.closest("ul.todo .grip");
+      if (!grip || e.button > 0) return;
+      e.preventDefault();
+      const li = grip.closest("li"), ul = li.parentElement, list = items(ul);
+      const others = list.filter((o) => o != li);
+      const line = document.createElement("div");
+      line.className = "drop-line";
+      line.hidden = true;
+      ul.append(line);
+      grip.setPointerCapture(e.pointerId);
+      li.classList.add("dragging");
+      drag = { li, ul, others, line, from: list.indexOf(li), to: list.indexOf(li), y0: e.clientY,
+        mids: others.map((o) => { const r = o.getBoundingClientRect(); return r.top + r.height / 2; }) };
+    });
+    document.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const { li, ul, others, line, mids } = drag;
+      li.style.transform = `translateY(${e.clientY - drag.y0}px)`;
+      drag.to = mids.filter((m) => m < e.clientY).length;
+      const base = ul.getBoundingClientRect().top;
+      const y = drag.to < others.length ? others[drag.to].getBoundingClientRect().top : others.at(-1).getBoundingClientRect().bottom;
+      line.style.top = y - base + "px";
+      line.hidden = drag.to == drag.from || !others.length;
+    });
+    function drop(e, cancel) {
+      if (!drag) return;
+      const { li, others, line, from, to } = drag;
+      drag = null;
+      line.remove();
+      li.classList.remove("dragging");
+      li.style.removeProperty("transform");
+      if (!li.getAttribute("style")) li.removeAttribute("style");
+      if (!li.className) li.removeAttribute("class");
+      if (cancel || to == from || !others.length) return;
+      // `to` counts the other items; turn it into the number (from 1) of the item it goes before, 0 for the end.
+      const before = to < others.length ? (to < from ? to + 1 : to + 2) : 0;
+      quiet("move_item", { n: from + 1, before });
+    }
+    document.addEventListener("pointerup", (e) => drop(e, false));
+    document.addEventListener("pointercancel", (e) => drop(e, true));
+
+    addEventListener("erga-editing", draw);
+    draw();
+    new MutationObserver(draw).observe(document.body, { childList: true, subtree: true });
+  }
+</script>
+</body>
+</html>

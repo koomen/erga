@@ -173,7 +173,7 @@ async function blobAnswer(answer: Response, request: Request, blobs: BlobStore |
   }
   const got = blobs ? await blobs.get(hash, r ?? undefined) : null;
   if (!got) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-  // Where it came from, for page_network and for a person checking: the edge's cache, or the store.
+  // Where it came from, for page_log network and for a person checking: the edge's cache, or the store.
   const from = got.cached ? "blob from the edge's cache" : "blob";
   const timed = (more: string) => headers.set("Server-Timing", `file;desc="${from}${more} type ${type}"`);
   const head = request.method == "HEAD";

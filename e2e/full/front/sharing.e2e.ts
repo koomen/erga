@@ -72,16 +72,16 @@ test("shared with anyone who has the link, anyone signed in may open it, as a vi
   expect((await p.share(id, p.login, "viewer")).status).toBe(403);
 });
 
-test("document_access says who a document is shared with, to its owner only; the list marks it shared, with a share button", async () => {
+test("ls says who a document is shared with, to its owner only; the list marks it shared, with a share button", async () => {
   const p = await person(await servers.script());
   const id = await p.make();
   await p.share(id, "Ada", "viewer");
-  const sharedWith = (
-    await p.tool<{ permissions: { login: string; role: string }[]; notUsers: string[] }>("document_access", { document: id })
-  ).result!;
+  type Access = { permissions: { login: string; role: string }[]; notUsers: string[] };
+  const sharedWith = (await p.tool<{ access: Access }>("ls", { document: id })).result!.access;
   expect(sharedWith.permissions.map((x) => `${x.login}:${x.role}`)).toEqual([`${p.login}:owner`, "ada:viewer"]);
   expect(Array.isArray(sharedWith.notUsers)).toBe(true);
-  expect((await p.tool("document_access", { document: id }, "Ada")).status).toBe(403);
+  const asAda = await p.tool<{ access?: Access }>("ls", { document: id }, "Ada");
+  expect([asAda.status, asAda.result?.access]).toEqual([200, undefined]);
   const row = (await p.docs()).split(/<li[ >]/).find((li) => li.includes(`/${p.login}/untitled"`)) ?? "";
   expect(row).toContain(">Shared<");
   expect(row).toContain(`class="act share"`);
@@ -103,8 +103,8 @@ test("the share dialog on /docs, in a browser, adds people, sets anyone-with-the
   );
   await expect
     .poll(async () =>
-      (await p.tool<{ permissions: { login: string; role: string }[] }>("document_access", { document: id }))
-        .result!.permissions.map((x) => `${x.login}:${x.role}`)
+      (await p.tool<{ access: { permissions: { login: string; role: string }[] } }>("ls", { document: id }))
+        .result!.access.permissions.map((x) => `${x.login}:${x.role}`)
         .join()
     )
     .toBe(`${p.login}:owner,*:editor,bo:viewer`);

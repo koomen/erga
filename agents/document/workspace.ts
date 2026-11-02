@@ -294,23 +294,3 @@ export class YjsWorkspace implements Workspace {
     return this.canEdit() ? Effect.void : fail("readOnly", "Your user can only view this document, so you can't change it.");
   }
 }
-
-// ------------------------------------------------------------ search helpers
-
-/** A glob ("*.css", "**\/*.md", "img/*") as a regular expression over paths. */
-export function globToRegExp(glob: string): RegExp {
-  let re = "";
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
-    if (c == "*") {
-      if (glob[i + 1] == "*") { re += glob[i + 2] == "/" ? "(?:.*/)?" : ".*"; i += glob[i + 2] == "/" ? 2 : 1; }
-      else re += "[^/]*";
-    } else if (c == "?") re += "[^/]";
-    else if (c == "{") { const end = glob.indexOf("}", i); if (end > i) { re += "(?:" + glob.slice(i + 1, end).split(",").map(escapeRe).join("|") + ")"; i = end; } else re += "\\{"; }
-    else re += escapeRe(c);
-  }
-  // A pattern without a slash matches at any depth, like find -name.
-  return new RegExp(glob.includes("/") ? `^${re}$` : `(?:^|/)${re}$`);
-}
-
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
