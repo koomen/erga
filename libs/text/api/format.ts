@@ -81,15 +81,22 @@ export function toggleStyle(page: Page, from: number, to: number, style: InlineS
       const r = byEl.get(el);
       byEl.set(el, r ? { from: Math.min(r.from, g.from), to: Math.max(r.to, g.to) } : { from: g.from, to: g.to });
     }
+    // Only text counts: in <strong><em>a</em></strong>, all of "a" is at the start of the <strong>.
+    const hasText = (a: number, b: number) => /\S/.test(src.slice(a, b).replace(/<[^>]*>/g, ""));
     for (const [el, r] of byEl) {
       const open = src.slice(el.from, el.openTo),
         close = src.slice(el.closeFrom, el.to);
-      const atStart = !/\S/.test(src.slice(el.openTo, r.from)),
-        atEnd = !/\S/.test(src.slice(r.to, el.closeFrom));
+      const atStart = !hasText(el.openTo, r.from),
+        atEnd = !hasText(r.to, el.closeFrom);
+      // Ending or starting the element at a point inside its children (<strong><em>a|b</em></strong>) closes them
+      // before it and opens them again after, so the HTML stays well formed.
+      const end = splitAt(src, el, r.from),
+        start = splitAt(src, el, r.to);
       if (atStart && atEnd) changes.push({ from: el.from, to: el.openTo }, { from: el.closeFrom, to: el.to });
-      else if (atStart) changes.push({ from: el.from, to: el.openTo }, { from: r.to, insert: open });
-      else if (atEnd) changes.push({ from: r.from, insert: close }, { from: el.closeFrom, to: el.to });
-      else changes.push({ from: r.from, insert: close }, { from: r.to, insert: open });
+      else if (atStart) changes.push({ from: el.from, to: el.openTo }, { from: start.at, insert: start.close + open + start.open });
+      else if (atEnd) changes.push({ from: end.at, insert: end.close + close + end.open }, { from: el.closeFrom, to: el.to });
+      else
+        changes.push({ from: end.at, insert: end.close + close + end.open }, { from: start.at, insert: start.close + open + start.open });
     }
     return { changes };
   }
@@ -109,6 +116,25 @@ export function toggleStyle(page: Page, from: number, to: number, style: InlineS
     changes.push({ from: first.from, insert: `<${tag}>` }, { from: last.to, insert: `</${tag}>` });
   else for (const g of lacking) changes.push({ from: g.from, insert: `<${tag}>` }, { from: g.to, insert: `</${tag}>` });
   return { changes };
+}
+
+/**
+ * Where to split `el` at `at`: the point, moved out of a child it is at the edge of, and the tags that close and open
+ * again the children of `el` it is inside.
+ */
+function splitAt(src: string, el: M.ElementNode, at: number): { at: number; close: string; open: string } {
+  let close = "",
+    open = "";
+  for (let n = el; ; ) {
+    const c = n.children.find((c): c is M.ElementNode => c.kind == "element" && !c.selfClosing && c.openTo <= at && at <= c.closeFrom);
+    if (!c) break;
+    if (at == c.openTo) return { at: c.from, close, open };
+    if (at == c.closeFrom) return { at: c.to, close, open };
+    close = src.slice(c.closeFrom, c.to) + close;
+    open += src.slice(c.from, c.openTo);
+    n = c;
+  }
+  return { at, close, open };
 }
 
 /**
