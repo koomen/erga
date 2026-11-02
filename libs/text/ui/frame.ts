@@ -513,9 +513,10 @@ function watchPage() {
     listenAsEditor(
       d,
       "pointerdown",
-      () => {
+      (e) => {
         collab?.activate();
-        controls?.pressed();
+        // A press on the editor's own controls (their shadow root's host) is not one on the page: it keeps the bar.
+        if ((e.target as Element | null)?.localName != "erga-controls") controls?.pressed();
       },
       true
     )
