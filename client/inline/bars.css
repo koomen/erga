@@ -6,7 +6,7 @@
    The glass: the page's colour at 76% (the menus: 90%), a blur of what is under it, a white shine on the top half, a white
    edge inside, and a soft shadow. On a white or near-white page (page-white) the glass is tinted 3.5% and its shadow
    halved, so it still reads as a surface; on a dark page it is dark glass. Not a filter on a wrapper: a filter stops the
-   blur. The agent and the editor's cards take the same glass (client/styles/glass.css). */
+   blur. The agent takes the same glass (client/style.css), and the editor's cards (client/styles/glass.css). */
 :root {
   /* The bars' bottom edge, from the window's top: a sticky header on a page that scrolls under the bars sticks here. */
   --bars-top: max(8px, env(safe-area-inset-top)); --bars-height: 42px; --bars-bottom: calc(var(--bars-top) + var(--bars-height));
