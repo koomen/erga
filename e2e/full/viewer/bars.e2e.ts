@@ -206,3 +206,18 @@ for (const mode of ["doc", "home"] as Mode[])
     // (The homepage was opened signed out: the tab signs back in for the next test.)
     await page.context().clearCookies();
   });
+
+test("every app page has Share with an agent in its bar: on Documents it copies the prompt for Documents", async ({ tab }) => {
+  const page = tab.page;
+  const root = (await servers.main()).root;
+  for (const path of ["/docs", "/tokens", "/admin"]) {
+    await page.goto(`${root}${path}`);
+    await page.locator(".erga-view-buttons :is(.erga-agent-share, #btn-share)").waitFor();
+  }
+  await page.goto(`${root}/docs`);
+  const origin = new URL(root).origin;
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+  await clickOn(page, ".erga-agent-share");
+  await expect.poll(() => page.evaluate(() => document.querySelector<HTMLElement>(".erga-agent-share")!.dataset.tip)).toBe("Copied ✓");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`Add Erga's MCP server, ${origin}/mcp, then open ${origin}/docs.`);
+});

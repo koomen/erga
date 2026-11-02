@@ -78,7 +78,7 @@ export const SIDEBAR_SCRIPT = inlineScript("admin-sidebar");
 export function adminLayout(o: AdminLayout): string {
   // Share with an agent among the quick actions: the editor's icon, the card from admin-share.js (a prompt with an admin token).
   const share = `<button type="button" class="erga-view-button" id="btn-share" aria-label="Share with an agent" data-tip="Share with an agent" aria-expanded="false" aria-controls="share">${AGENT_ICON}</button>`;
-  const bars = pageBars(o.session, [{ label: "Admin", href: "/admin" }, { label: o.title }], { here: "h1", actions: share });
+  const bars = pageBars(o.session, [{ label: "Admin", href: "/admin" }, { label: o.title }], { here: "h1", share });
   const side = adminSidebar(o.here, (path) => link(path, o.session));
   return appPage(o.title, "", `${adminStyleTag()}${EARLY_SCRIPT}
 ${bars}
