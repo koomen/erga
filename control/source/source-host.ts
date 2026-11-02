@@ -87,7 +87,7 @@ export class SourceHost extends DurableObject<HostEnv> implements SourceObject {
             .tagged({ tag: r.tag, commit: r.commit, by: byLine(r.by, r.via), at: Date.now() })
             .catch((e) => console.error(`release hook (${r.tag}):`, e))
         ),
-      changed: () => ctx.waitUntil(publish({ type: "source" }).catch(() => {})),
+      changed: (event) => ctx.waitUntil(publish(event ?? { type: "source" }).catch(() => {})),
       background: (work) => ctx.waitUntil(work),
       // A downstream (an install's control Worker: UPSTREAM names erga.dev's): its upstream's Git endpoint, read for anyone.
       upstream: () => upstreamOf(env),
@@ -145,9 +145,13 @@ export class SourceHost extends DurableObject<HostEnv> implements SourceObject {
       return SourceHost.failed(e, "The merge");
   }
 }
-async deleteFeature(origin: string, name: string): Promise<{ branch: string; commit: string } | { error: string; status: number }> {
+async deleteFeature(
+  origin: string,
+  name: string,
+  who: Actor
+): Promise<{ branch: string; commit: string } | { error: string; status: number }> {
     try {
-      return await this.at(origin).deleteFeature(name);
+      return await this.at(origin).deleteFeature(name, who);
     } catch (e) {
       return SourceHost.failed(e, "Deleting the branch");
   }

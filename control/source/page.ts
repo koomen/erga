@@ -150,7 +150,6 @@ git push erga HEAD:staging</code></pre>
     <h2 id="features-head">Feature branches</h2>
     <p class="features-note">Larger work goes on a branch of its own: <code>git push erga HEAD:&lt;name&gt;</code>. A feature branch never deploys. Merge puts all its changes on staging as one commit.</p>
     <ul class="feature-list" id="feature-list"><li class="feature-none">Loading…</li></ul>
-    <p class="hint" id="feature-hint" role="status"></p>
   </section>
   <section class="card" aria-label="Commits">
     <div class="legend"><span class="up-only" id="legend-upstream" hidden><i class="dot upstream"></i>on ${upstreamName}, not here yet</span><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span></div>

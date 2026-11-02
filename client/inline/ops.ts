@@ -155,10 +155,10 @@ export default function ops(): void {
     String(view?.upstream?.origin || "upstream")
       .replace(/^https?:\/\//, "")
       .replace(/^ops\./, "");
-  const renderFeatures = featureBranches(load);
+  const features = featureBranches(load);
   function render() {
     if (!view) return;
-    renderFeatures(view.features);
+    features.render(view.features, view.featureActions);
     const staging = view.branches.find((b: Json) => b.name == "staging"),
       main = view.branches.find((b: Json) => b.name == "main");
     const up = view.upstream || null;
@@ -1155,6 +1155,7 @@ export default function ops(): void {
         heard = Date.now();
         loadDeploys();
       }
+      if (ev.type == "feature") features.heard(ev);
       if (ev.type == "releases") loadReleases();
       if (ev.type == "domains") loadDomains();
       if (ev.type == "deploy-log" && open && ev.target == open.target) {

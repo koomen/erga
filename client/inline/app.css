@@ -19,6 +19,8 @@ h1 { margin: 0; font-size: 30px; line-height: 1.15; font-weight: 650; letter-spa
 .pill:hover:not(:disabled) { border-color: color-mix(in srgb, var(--chrome) 55%, var(--rule)); }
 .pill:disabled { color: var(--chrome); cursor: default; box-shadow: none; }
 :is(.new, .doc, .act, dialog button, .pill, select):focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; border-radius: 8px; }
+/* A press shows at once: the button sinks a little until the release. */
+:is(.new, .pill, dialog button):active:not(:disabled) { transform: translateY(1px) scale(0.97); }
 ol.rows { list-style: none; margin: 0; padding: 0; }
 ol.rows > li { display: flex; align-items: center; gap: 2px; border-bottom: 1px solid var(--rule); }
 ol.rows > li:first-child { border-top: 1px solid var(--rule); }

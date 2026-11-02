@@ -1,7 +1,7 @@
 // Feature branches (control/source/features.ts): a push makes, moves and deletes one, and it never deploys; the
 // Ops page's list says how far it is from staging and whether it merges cleanly; Merge adds ONE commit on staging
 // with all the branch's changes (a squash) and deletes the branch; a branch that conflicts is refused; Delete drops
-// one. Real git against Erga's endpoint, in front of pretend Artifacts.
+// one. Each Merge and Delete is kept for the Ops page: running, then done or failed. Real git against Erga's endpoint, in front of pretend Artifacts.
 
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -111,6 +111,13 @@ describe("feature branches", () => {
     const staging = await head("staging");
     await expect(f.repo.mergeFeature(ada, "clash")).rejects.toThrow("clash conflicts with staging in 1 file (a.txt)");
     expect(await head("staging")).toBe(staging);
+    // The Ops page shows why in the branch's row.
+    expect((await f.repo.branches()).featureActions.find((a) => a.branch == "clash")).toMatchObject({
+      action: "merge",
+      state: "failed",
+      by: "ada",
+      error: expect.stringContaining("clash conflicts with staging"),
+    });
   });
 
   test("a force push moves a feature branch; Delete drops it; staging and main can't be deleted that way", async () => {
@@ -124,9 +131,18 @@ describe("feature branches", () => {
       behind: 0,
       merge: { state: "clean" },
     });
-    expect(await f.repo.deleteFeature("clash")).toEqual({ branch: "clash", commit: tip });
+    // The Delete shows as running at once, before it has the repository's lock; then as done, with the head it took.
+    const deleting = f.repo.deleteFeature("clash", ada);
+    expect(f.repo.features.recent().find((a) => a.branch == "clash")).toMatchObject({ action: "delete", state: "running" });
+    expect(await deleting).toEqual({ branch: "clash", commit: tip });
+    expect(f.repo.features.recent().find((a) => a.branch == "clash")).toMatchObject({
+      action: "delete",
+      state: "done",
+      commit: tip,
+      head: tip,
+    });
     expect(await head("clash")).toBe("");
-    await expect(f.repo.deleteFeature("staging")).rejects.toThrow("isn't a feature branch");
+    await expect(f.repo.deleteFeature("staging", ada)).rejects.toThrow("isn't a feature branch");
     await expect(f.repo.mergeFeature(ada, "nothing-here")).rejects.toThrow('There\'s no feature branch "nothing-here"');
   });
 

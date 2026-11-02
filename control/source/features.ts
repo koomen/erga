@@ -7,6 +7,10 @@
 //
 // Whether a branch merges cleanly needs the three trees whole, so it's found in the background, once for each pair
 // of staging's head and the branch's head, and kept in memory: until then the branch shows "checking".
+//
+// A merge takes seconds. Each Merge and Delete is kept in memory (`actions`: running, then done or failed, for
+// ACTION_KEPT) and sent as an event ({type: "feature"} on /api/events), so each Ops page open, and one loaded again,
+// shows it in the branch's row.
 
 import { hashObject, writePack, ZERO } from "./git.ts";
 import { lsRefs, receivePack, type Remote } from "./remote.ts";
@@ -29,11 +33,30 @@ export interface FeatureInfo {
   message: string;
 }
 
+/** A Merge or Delete of a feature branch: running, then done or failed (error). */
+export interface FeatureAction {
+  branch: string;
+  action: "merge" | "delete";
+  state: "running" | "done" | "failed";
+  /** Who asked (a login), and when the state began. */
+  by: string;
+  at: number;
+  /** Done: the squash commit on staging (a Merge), or the head deleted (a Delete); and the branch's head it took. */
+  commit?: string;
+  head?: string;
+  error?: string;
+}
+
 type Check = { files: Conflict[] } | { error: string };
+
+/** How long a finished Merge or Delete stays in list_branches' answer. */
+const ACTION_KEPT = 10 * 60_000;
 
 export class Features {
   /** Whether a branch's head merges cleanly into staging's head: by `${staging}:${head}`. */
   private checks = new Map<string, Check | "running">();
+  /** The latest Merge or Delete of each branch. */
+  private actions = new Map<string, FeatureAction>();
 
   constructor(private repo: SourceRepo) {}
 
@@ -121,10 +144,15 @@ export class Features {
    * Merges the feature branch `name` into staging as ONE commit (a squash), by `who`, with `message` (default: the
    * branch's, as listed). Staging deploys it; the branch goes. Refused when it conflicts, or brings nothing.
    */
-  async merge(who: Actor, name: string, message?: string): Promise<{ commit: string; branch: string; commits: number }> {
+  merge(who: Actor, name: string, message?: string): Promise<{ commit: string; branch: string; commits: number }> {
+    return this.track("merge", who.login, name, (saw) => this.squash(who, name, message, saw));
+  }
+
+  private squash(who: Actor, name: string, message: string | undefined, saw: (head: string) => void) {
     return this.repo.locked(async () => {
       const remote = await this.repo.deps.artifacts();
       const { ref, head, refs } = await this.head(remote, name);
+      saw(head);
       const branch = featureOf(ref)!;
       const staging = refs.get(REF("staging"));
       if (!staging) throw new SourceError({ message: "staging has no commits yet.", status: 409 });
@@ -152,15 +180,55 @@ export class Features {
   }
 
   /** Deletes the feature branch `name`. Its head is in the answer: a push of it brings the branch back. */
-  async remove(name: string): Promise<{ branch: string; commit: string }> {
+  remove(name: string, who: Actor): Promise<{ branch: string; commit: string }> {
+    return this.track("delete", who.login, name, (saw) => this.drop(name, saw));
+  }
+
+  private drop(name: string, saw: (head: string) => void) {
     return this.repo.locked(async () => {
       const remote = await this.repo.deps.artifacts();
       const { ref, head } = await this.head(remote, name);
+      saw(head);
       const r = await receivePack(remote, [{ ref, old: head, new: ZERO }], null);
       const said = r.unpack != "ok" ? r.unpack : (r.refs.get(ref) ?? "no answer");
       if (said != "ok") throw new SourceError({ message: `Artifacts refused it: ${said}`, status: 502 });
       this.repo.deps.changed();
       return { branch: featureOf(ref)!, commit: head };
     });
+  }
+
+  /** The Merges and Deletes running, and those that ended in the last ACTION_KEPT. */
+  recent(): FeatureAction[] {
+    const now = this.repo.deps.now?.() ?? Date.now();
+    for (const [k, a] of this.actions) if (a.state != "running" && now - a.at > ACTION_KEPT) this.actions.delete(k);
+    return [...this.actions.values()];
+  }
+
+  /** Runs a Merge or Delete of `name`, kept in `actions` and told to the Ops pages as it starts and as it ends. */
+  private async track<T extends { commit: string }>(
+    action: FeatureAction["action"],
+    by: string,
+    name: string,
+    work: (saw: (head: string) => void) => Promise<T>
+  ): Promise<T> {
+    const branch = String(name ?? "")
+      .trim()
+      .replace(/^refs\/heads\//, "");
+    const now = () => this.repo.deps.now?.() ?? Date.now();
+    const set = (a: Omit<FeatureAction, "branch" | "action" | "by" | "at">) => {
+      const kept: FeatureAction = { branch, action, by, at: now(), ...a };
+      this.actions.set(branch, kept);
+      this.repo.deps.changed({ type: "feature", ...kept });
+    };
+    let head: string | undefined;
+    set({ state: "running" });
+    try {
+      const r = await work((h) => (head = h));
+      set({ state: "done", commit: r.commit, ...(head ? { head } : {}) });
+      return r;
+    } catch (e) {
+      set({ state: "failed", error: (e as Error).message });
+      throw e;
+    }
   }
 }
