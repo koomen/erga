@@ -73,6 +73,9 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   deleteFeature(origin: string, name: string, who: Actor) {
     return this.source.deleteFeature(origin, name, who);
   }
+  checkFeature(origin: string, name: string) {
+    return this.source.checkFeature(origin, name);
+  }
   release(origin: string, who: Actor, o?: { version?: string; notes?: string; commit?: string }) {
     return this.source.release(origin, who, o);
   }

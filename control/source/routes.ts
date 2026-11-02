@@ -66,6 +66,11 @@ export interface SourceObject {
   ): Promise<{ commit: string; branch: string; commits: number } | { error: string; status: number }>;
   /** `who` comes last: an app a release ahead of this Worker calls it so (AGENTS.md: the control Worker deploys from main). */
   deleteFeature(origin: string, name: string, who: Actor): Promise<{ branch: string; commit: string } | { error: string; status: number }>;
+  /** Whether a feature branch merges cleanly into staging, checked again: its state, or { error, status }. */
+  checkFeature(
+    origin: string,
+    name: string
+  ): Promise<{ branch: string; commit: string; merge: FeatureInfo["merge"] } | { error: string; status: number }>;
   /** A release cut (a tag): the release, or { error, status }. */
   release(origin: string, who: Actor, o?: { version?: string; notes?: string; commit?: string }): Promise<Released | { error: string; status: number }>;
   /** A downstream's Update from upstream, and the ways out of a merge that conflicted: each the result, or { error, status }. */

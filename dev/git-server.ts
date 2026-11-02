@@ -13,7 +13,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export interface GitRequest { method: string; path: string; query: string; headers: Record<string, string | undefined>; body: Uint8Array }
@@ -118,6 +118,28 @@ export function tokenOf(authorization: string | undefined): string | null {
   return decoded.slice(decoded.indexOf(":") + 1) || null;
 }
 
+// ---- Artifacts when it's busy -------------------------------------------------------
+
+/** What Artifacts answers to a push when it's busy: a 200 with one ERR line, and no report. */
+const BUSY: GitResponse = {
+  status: 200,
+  headers: { "content-type": "application/x-git-receive-pack-result" },
+  body: new TextEncoder().encode("0028ERR artifacts_git_receive_pack_busy\n"),
+};
+
+/**
+ * Whether this push answers busy. A test writes a number in the file `artifacts/busy` of the state folder: that many
+ * merge checks (each makes a scratch ref, control/source/scratch.ts) answer busy, one less each time.
+ */
+function busy(file: string, body: Uint8Array): boolean {
+  if (!existsSync(file) || !/^.{4}0{40} [0-9a-f]{40} refs\/heads\/erga-merge\//.test(Buffer.from(body).subarray(0, 200).toString("latin1")))
+    return false;
+  const left = Number(readFileSync(file, "utf8")) || 0;
+  if (left <= 0) return false;
+  writeFileSync(file, String(left - 1));
+  return true;
+}
+
 /**
  * The two pretend servers' routes (above), for a request to `path`, or null
  * if it isn't theirs. Repositories live under `stateDir`. `githubToken`: which tokens the pretend GitHub takes (the
@@ -134,6 +156,7 @@ export async function gitServers(stateDir: string, secret: string, req: GitReque
     if (!scope) return deny(401, "Artifacts: a repo token is needed");
     if (pushing && scope != "write") return deny(403, "Artifacts: this token can only read");
     const root = join(stateDir, "artifacts", ns);
+    if (pushing && req.method == "POST" && busy(join(stateDir, "artifacts", "busy"), req.body)) return BUSY;
     ensureBare(join(root, `${repo}.git`));
     return httpBackend(root, { ...req, path: `/${repo}.git${rest}` });
   }

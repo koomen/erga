@@ -44,7 +44,8 @@ For staging, production and access (the Ops page, /admin/ops, and /settings):
 - branches reads staging and main (their heads, latest commits, what main doesn't have
   yet), the feature branches, the release tags and channels, GitHub's status, upstream and
   any merge waiting on conflicts. feature_branch merges a feature branch into staging as
-  one commit (write its message: what the work changes), or deletes it. deploy_production
+  one commit (write its message: what the work changes), deletes it, or checks again
+  whether it merges cleanly (after a check that failed: not a conflict). deploy_production
   moves main to staging's head (or to an earlier staging commit): production deploys it,
   and the change log names ${owner}. cut_release tags a release (vX.Y.Z) on main's head.
 - github syncs with GitHub now, or disconnects it. Connecting is a consent on GitHub's own

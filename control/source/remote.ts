@@ -20,6 +20,12 @@ export class RemoteError extends Schema.TaggedError<RemoteError>()("RemoteError"
   status: Schema.optionalKey(Schema.Number),
 }) {}
 
+/** A failure that a moment can mend: Artifacts busy, a timeout, a 5xx, no connection. */
+export const transient = (e: unknown): boolean => {
+  const status = (e as { status?: number })?.status;
+  return (status != null && status >= 500) || /busy|time[sd]? ?out|HTTP 5\d\d|couldn't reach/i.test((e as Error)?.message ?? "");
+};
+
 async function call(remote: Remote, path: string, init: RequestInit & { headers?: Record<string, string> }): Promise<Uint8Array> {
   const f = remote.fetch ?? globalThis.fetch.bind(globalThis);
   let r: Response;

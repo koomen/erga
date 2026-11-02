@@ -9,10 +9,11 @@
 // into this repository under a tracking branch, erga-upstream/main, so the
 // merge can read them. And erga.dev seeds each install's fork from here (seedFork).
 
-import { emptyPack, isSha, parseCommit, parseTag, readPack, ZERO } from "./git.ts";
+import { isSha, parseCommit, parseTag, readPack, ZERO } from "./git.ts";
 import { fetchPack, lsRefs, receivePack, RemoteError, type Remote } from "./remote.ts";
-import { LOG, MERGE_BRANCH, REF, SCRATCH, SourceError, TAGS, TRACK } from "./refs.ts";
+import { LOG, MERGE_BRANCH, REF, SourceError, TAGS, TRACK } from "./refs.ts";
 import { compareVersions, isReleaseTag } from "./releases.ts";
+import { withScratch } from "./scratch.ts";
 import type { MergeConflict } from "./conflicts.ts";
 import type { Actor, CommitInfo, Row, SourceRepo } from "./repo.ts";
 
@@ -198,14 +199,12 @@ export class Upstream {
         throw new SourceError({ message: "That fork already has branches.", status: 409 });
       // A commit that isn't a branch's head can't be asked for: a scratch ref on it, for the fetch.
       const head = [...refs.values()].includes(commit);
-      const scratch = `${SCRATCH}${crypto.randomUUID().slice(0, 8)}`;
-      if (!head) await receivePack(remote, [{ ref: scratch, old: ZERO, new: commit }], await emptyPack());
-      try {
+      await withScratch(remote, head ? null : commit, async () => {
         const pack = await fetchPack(remote, { wants: [commit] });
         const r = await receivePack(fork, [{ ref: REF("main"), old: ZERO, new: commit }, { ref: REF("staging"), old: ZERO, new: commit }], pack);
         const said = r.unpack != "ok" ? r.unpack : [REF("main"), REF("staging")].map((ref) => r.refs.get(ref) ?? "no answer").find((s) => s != "ok") ?? "ok";
         if (said != "ok") throw new SourceError({ message: `The fork's repository refused the seed: ${said}`, status: 502 });
-      } finally { if (!head) await receivePack(remote, [{ ref: scratch, old: commit, new: ZERO }], null).catch(() => {}); }
+      });
     });
   }
 }

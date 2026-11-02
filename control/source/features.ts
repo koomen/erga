@@ -6,7 +6,10 @@
 // (operations.ts: feature_branch), so agents do them too.
 //
 // Whether a branch merges cleanly needs the three trees whole, so it's found in the background, once for each pair
-// of staging's head and the branch's head, and kept in memory: until then the branch shows "checking".
+// of staging's head and the branch's head, and kept in memory: until then the branch shows "checking". A push to
+// staging or to the branch makes a new pair, so it's checked again by itself. A check that fails for a moment
+// (Artifacts busy, a timeout, a 5xx) is tried again a few times; one that still fails shows "failed", and Check again
+// (feature_branch check) runs it once more.
 //
 // A merge takes seconds. Each Merge and Delete is kept in memory (`actions`: running, then done or failed, for
 // ACTION_KEPT) and sent as an event ({type: "feature"} on /api/events), so each Ops page open, and one loaded again,
@@ -14,6 +17,7 @@
 
 import { hashObject, writePack, ZERO } from "./git.ts";
 import { lsRefs, receivePack, type Remote } from "./remote.ts";
+import { retried } from "./scratch.ts";
 import type { Conflict } from "./merge.ts";
 import { featureOf, REF, SourceError } from "./refs.ts";
 import type { Actor, SourceRepo } from "./repo.ts";
@@ -27,7 +31,7 @@ export interface FeatureInfo {
   behind: number;
   /** The branch's head commit. */
   last: { subject: string; author: string; at: number } | null;
-  /** "merged": staging has all of it. "checking": not known yet (an event says when it is). "failed": the check couldn't run (error). */
+  /** "merged": staging has all of it. "checking": not known yet (an event says when it is). "failed": the check couldn't run (error), which says nothing of conflicts. */
   merge: { state: "clean" | "conflicts" | "checking" | "merged" | "failed"; files?: Conflict[]; error?: string };
   /** The squash commit's message, unless one is given: the newest commit's subject, and the branch's commit subjects. */
   message: string;
@@ -52,9 +56,13 @@ type Check = { files: Conflict[] } | { error: string };
 /** How long a finished Merge or Delete stays in branches' answer. */
 const ACTION_KEPT = 10 * 60_000;
 
+/** A check's answer, as branches shows it. */
+const shown = (c: Check): FeatureInfo["merge"] =>
+  "error" in c ? { state: "failed", error: c.error } : c.files.length ? { state: "conflicts", files: c.files } : { state: "clean" };
+
 export class Features {
   /** Whether a branch's head merges cleanly into staging's head: by `${staging}:${head}`. */
-  private checks = new Map<string, Check | "running">();
+  private checks = new Map<string, Check | Promise<Check>>();
   /** The latest Merge or Delete of each branch. */
   private actions = new Map<string, FeatureAction>();
 
@@ -86,28 +94,44 @@ export class Features {
   }
 
   private state(remote: Remote, staging: string, head: string): FeatureInfo["merge"] {
-    const key = `${staging}:${head}`,
-      known = this.checks.get(key);
-    if (known == "running") return { state: "checking" };
-    if (known)
-      return "error" in known
-        ? { state: "failed", error: known.error }
-        : known.files.length
-          ? { state: "conflicts", files: known.files }
-          : { state: "clean" };
-    this.checks.set(key, "running");
-    this.repo.deps.background(
-      this.conflicts(remote, staging, head)
-        .then(
-          (files): Check => ({ files }),
-          (e: unknown): Check => ({ error: (e as Error).message })
-        )
-        .then((c) => {
-          this.checks.set(key, c);
-          this.repo.deps.changed();
-        })
+    const known = this.checks.get(`${staging}:${head}`);
+    if (!known) this.check(remote, staging, head);
+    return !known || known instanceof Promise ? { state: "checking" } : shown(known);
+  }
+
+  /** Starts the check of `head` against `staging` (it runs in the background), and tells the Ops pages when it ends. */
+  private check(remote: Remote, staging: string, head: string): Promise<Check> {
+    const key = `${staging}:${head}`;
+    // A check that failed for a moment is tried again (scratch.ts RETRY).
+    const running = retried(() => this.conflicts(remote, staging, head)).then(
+      (files): Check => ({ files }),
+      (e: unknown): Check => ({ error: (e as Error).message })
     );
-    return { state: "checking" };
+    this.checks.set(key, running);
+    const done = running.then((c) => {
+      this.checks.set(key, c);
+      this.repo.deps.changed();
+      return c;
+    });
+    this.repo.deps.background(done);
+    return done;
+  }
+
+  /**
+   * Checks again whether the feature branch `name` merges cleanly into staging, and waits for the answer. A check
+   * that runs already is waited for, not started again.
+   */
+  async recheck(name: string): Promise<{ branch: string; commit: string; merge: FeatureInfo["merge"] }> {
+    const remote = await this.repo.deps.artifacts();
+    const { ref, head, refs } = await this.head(remote, name);
+    const branch = featureOf(ref)!;
+    const staging = refs.get(REF("staging"));
+    if (!staging) throw new SourceError({ message: "staging has no commits yet.", status: 409 });
+    await this.repo.sync(remote, [staging, head]);
+    if (this.repo.isAncestor(head, staging)) return { branch, commit: head, merge: { state: "merged" } };
+    const known = this.checks.get(`${staging}:${head}`);
+    const c = known instanceof Promise ? await known : await this.check(remote, staging, head);
+    return { branch, commit: head, merge: shown(c) };
   }
 
   /** The files that conflict when `head` merges into `staging`: none when it merges cleanly. */
