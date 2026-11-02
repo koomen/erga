@@ -90,6 +90,38 @@ export const editorShell = () => manifest?.shell ?? { style: "", body: "" };
 export const styleTag = () => `<link rel="stylesheet" href="${asset("style.css")}">`;
 
 /**
+ * Erga's editing libraries (libs/<name>/ui), each at one address, /erga/<name>/editor.js, which is always its newest
+ * build: a page loads the library from there (Erga adds erga/text to a page that names none: pages/reader.ts). By the
+ * library's name, its build's script.
+ */
+const LIBRARIES: Record<string, string> = { text: "frame.js" };
+
+/** The library a path names (/erga/<name>/editor.js), if Erga has one by that name. */
+export const libraryOf = (path: string) => {
+  const name = /^\/erga\/([a-z]+)\/editor\.js$/.exec(path)?.[1];
+  return name && LIBRARIES[name] ? name : null;
+};
+
+/**
+ * A library's address: one line that imports its newest build (its chunks are named by their content's hash, kept for
+ * a year). Asked for again each time (no-cache): a page always loads the newest. Loadable from any document's origin.
+ */
+export const serveLibrary = (name: string) => {
+  const file = manifest?.files[LIBRARIES[name]] ?? `${ASSET_PREFIX}${LIBRARIES[name]}`;
+  const body = `import ${JSON.stringify(file)};\n`;
+  return HttpServerResponse.text(body, {
+    contentType: "text/javascript; charset=utf-8",
+    headers: {
+      "Cache-Control": "no-cache",
+      ETag: `"${file.replace(/[^\w.-]/g, "")}"`,
+      "Access-Control-Allow-Origin": "*",
+      "Cross-Origin-Resource-Policy": "cross-origin",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+};
+
+/**
  * The editor's half for a document's own page (pages/reader.ts), at the app's origin `shell`: its address, its chunks,
  * Erga's page tools (tools.js) and theirs, and the integrity of every script they may load, which an editor's page gives the browser (an import map), so a script
  * that isn't this build's doesn't run there.
@@ -101,8 +133,12 @@ export function frameScripts(shell: string): NonNullable<ReaderConfig["editor"]>
     const src = m?.files[name] ?? `${ASSET_PREFIX}${name}`;
     return { src: at(src), integrity: m?.integrity[src] ?? "", preload: (m?.deps[name] ?? []).map(at) };
   };
+  // erga/text, at its one address (serveLibrary); its build and chunks, preloaded with it and pinned by the map.
+  const text = script("frame.js");
   return {
-    ...script("frame.js"),
+    src: at("/erga/text/editor.js"),
+    integrity: "",
+    preload: [text.src, ...text.preload],
     map: Object.fromEntries((m?.frame ?? []).filter((u) => m?.integrity[u]).map((u) => [at(u), m!.integrity[u]])),
     tools: script("tools.js"),
   };

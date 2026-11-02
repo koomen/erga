@@ -18,8 +18,9 @@ export interface ReaderConfig {
   /** The document's public address (https://erga.dev/<owner>/<slug>): the viewer says it once the page is up (erga-address). */
   address?: string;
   /**
-   * For whoever may edit: the editor's half (frame.js), its chunks and their integrity, and Erga's page tools (tools.js:
-   * the agent's view_page and the live page's tools).
+   * For whoever may edit: the editor (erga/text at its address, /erga/text/editor.js; "" when the page brings its own),
+   * its build and chunks to preload, the integrity of every script of Erga's the page may load, and Erga's page tools
+   * (tools.js: the agent's view_page and the live page's tools).
    */
   editor?: {
     src: string;

@@ -48,7 +48,9 @@ const docExtensions: Extension[] = [history()];
 type Editing = Extract<EditMode, { mode: "edit" }>;
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-const reader = window.__ergaReader!.config;
+// (Only in a document's page on Erga: its first script is there, and says where the viewer is.)
+if (!window.__ergaReader) throw new Error("erga/text runs in a document's page on Erga");
+const reader = window.__ergaReader.config;
 /** The shell's origin (erga.dev): the only one this frame takes its word from. */
 const SHELL = reader.shell;
 /** The document's files, under this origin (the token in the address opens them). */

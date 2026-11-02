@@ -32,6 +32,7 @@
 //                              for the server's admins only, checked here first (adminGate) and by its own routes.
 //   /_erga/...                 the editor's own files, each named by its content's hash (static assets, client/build.ts:
 //                              on Cloudflare served without the Worker, kept for a year); /logo.png, Erga's logo
+//   /erga/<name>/editor.js     an editing library (erga/text), at its one address: its newest build, which a page imports
 //   /api/news, /api/news/rows  live pages: an open page's socket, and the rows it asks for when they change
 //   GET /api/release           which of them this release has: open pages follow a redeploy with it,
 //                              and every page of the site's own gets live.js
@@ -71,6 +72,8 @@ import {
   accountOf,
   homeGoesToDocs,
   isAssetPath,
+  libraryOf,
+  serveLibrary,
   loadAssets,
   OWN_ACCOUNT,
   serveAsset,
@@ -149,6 +152,9 @@ const route = (url: URL, outside: Outside): Route =>
     if (path == "/auth/dev") return yield* devSignIn;
     // The editor's own files: its code, styles and typeface, and its page, which a document's page adds to itself to go into the editor.
     if (assets) return isAssetPath(path) ? yield* serveAsset : fromWeb(yield* call(() => p.assets(request)));
+    // Erga's editing libraries, each at its one address, its newest build (a document's page imports it).
+    const library = libraryOf(path);
+    if (library && (request.method == "GET" || request.method == "HEAD")) return serveLibrary(library);
     // Erga's own source and deploys (the Git endpoint, the Ops page, their APIs) are the control Worker's: `outside`
     // answers them, with a redirect there when it is apart (Platform.control), or itself in local development.
     if (path == "/git" || path.startsWith("/git/")) return (yield* elsewhere) ?? (yield* documentRoutes);
