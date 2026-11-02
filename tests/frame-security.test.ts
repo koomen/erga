@@ -16,6 +16,7 @@ const frameOf = (editable: boolean, editing = false) => {
     session: null,
     editable,
     agent: false,
+    bars: true,
     editing,
     landing: false,
     clone: "",

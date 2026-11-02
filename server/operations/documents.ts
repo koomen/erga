@@ -201,7 +201,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     activity: "checking who has access",
     ui: "Share (the documents list and the editor): who it's shared with",
     description:
-      "Who a document is shared with: its owner, and everyone given a role (editor or viewer; \"*\" is anyone with the link), each one's picture, who of them can't sign in on this server yet (notUsers), and whether the server lets users share content publicly, and whether its readers may use their own agent on it (readerAgent: set_reader_agent). Only its owner may see this.",
+      "Who a document is shared with: its owner, and everyone given a role (editor or viewer; \"*\" is anyone with the link), each one's picture, who of them can't sign in on this server yet (notUsers), and whether the server lets users share content publicly, whether its readers may use their own agent on it (readerAgent: set_reader_agent), and whether they see Erga's bars over it (readerBars: set_reader_bars). Only its owner may see this.",
     parameters: Schema.Struct({ document: DOCUMENT }),
     run: async (args, caller) => shareAnswer(caller, await findDocument(caller, args.document, "share")),
   },
@@ -236,7 +236,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     name: "set_reader_agent",
     label: "Let readers use their agent",
     activity: "changing whether readers may use their agent here",
-    ui: "Document settings (the editor): Readers' agents",
+    ui: "Document settings (the editor): Readers",
     description:
       'Lets the people a document is shared with as viewers use their own agent on it, in the viewer, or stops it (only its owner may). A reader\'s agent can read the document, never change it. Editors always have theirs. Not for a document shared with anyone with the link ("*"): the server refuses, saying why, and while it is shared so, readers have no agent there. Answers who has access now, with readerAgent.',
     parameters: Schema.Struct({
@@ -251,7 +251,24 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
             "Anyone with the link can open this document, so readers can't use their agent on it. Stop sharing it with anyone first.",
           status: 409,
         });
-      await caller.dir.setReaderAgent(doc.id, args.on === true);
+      await caller.dir.setReaderOption(doc.id, "agent", args.on === true);
+      return shareAnswer(caller, doc);
+    },
+  },
+  {
+    name: "set_reader_bars",
+    label: "Show readers Erga's bars",
+    activity: "changing whether readers see Erga's bars",
+    ui: "Document settings (the editor): Readers",
+    description:
+      "Shows the people who view a document, and can't edit it, Erga's bars over it (the breadcrumbs and the buttons), or hides them, so the page fills the window as a site of its own (only its owner may). On for every document at first. Editors always see the bars. Answers who has access now, with readerBars.",
+    parameters: Schema.Struct({
+      document: DOCUMENT,
+      on: Schema.Boolean.annotate({ description: "true: readers see Erga's bars; false: they see the page alone" }),
+    }),
+    run: async (args, caller) => {
+      const doc = await findDocument(caller, args.document, "share");
+      await caller.dir.setReaderOption(doc.id, "bars", args.on === true);
       return shareAnswer(caller, doc);
     },
   },
@@ -370,6 +387,12 @@ export const TOKEN_OPERATIONS: Operation[] = [
 ];
 
 /** Who a document is shared with, as the Share dialogs show it. */
+/** The readers' options (set_reader_agent, set_reader_bars), as document_access answers them. */
+const readerAnswer = async (dir: Caller["dir"], id: string) => {
+  const o = await dir.readerOptions(id);
+  return { readerAgent: o.agent, readerBars: o.bars };
+};
+
 async function shareAnswer(caller: Caller, doc: DocRow) {
   const { dir } = caller;
   const permissions = await dir.permissions(doc.id);
@@ -394,7 +417,7 @@ async function shareAnswer(caller: Caller, doc: DocRow) {
     notUsers,
     avatars: await dir.users.avatars(permissions.map((p) => p.login)),
     publicSharing: await dir.config.get("public_sharing"),
-    readerAgent: await dir.readerAgent(doc.id),
+    ...(await readerAnswer(dir, doc.id)),
   };
 }
 

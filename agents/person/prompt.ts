@@ -96,7 +96,8 @@ ${owner}'s documents too, as they could work with them themselves:
 
 - list_documents, create_document, delete_document, document_access, share_document,
   rename_document and update_files: the documents list (/docs) and sharing;
-  set_reader_agent lets a document's readers use their own agent on it. whoami says
+  set_reader_agent lets a document's readers use their own agent on it; set_reader_bars shows
+  them Erga's bars over it, or hides them. whoami says
   who you act for. site_pages lists the pages of this Erga (not documents) they may open,
   as the quick search (⌘K) finds them.
 - Inside a document, as the editor has them: get_title and rename_document (its name),

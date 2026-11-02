@@ -109,6 +109,8 @@ export function viewerPage(o: {
   editable: boolean;
   /** The person's agent: an editor's, or a reader's where the document's owner lets readers use theirs (documents/view.ts). */
   agent: boolean;
+  /** Erga's bars over the page: off for a reader where the document's owner hides them (documents/view.ts). */
+  bars: boolean;
   editing: boolean;
   landing: boolean;
   /** Your own copy's address: the New menu's last item. */
@@ -142,7 +144,7 @@ export function viewerPage(o: {
 ${FAVICON_LINK}
 <link rel="preconnect" href="${esc(o.pages)}">
 <meta name="erga-doc" content="${esc(o.docId)}">
-${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(session, true)}${o.agent ? styleTag() : ""}<style>${BAND_STYLE}</style>${opening}
+${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(session, true)}${o.agent ? styleTag() : ""}<style>${BAND_STYLE}${o.bars ? "" : NO_BARS}</style>${opening}
 <body>${o.agent ? `<script>${AGENT_LAYOUT}</script>` : ""}${o.editable ? `<script>${EDITING_BODY}</script>` : ""}
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
   const bars = barsHtml({ session, title: o.landing ? null : o.title, project: !!o.project, full: true, edit: o.edit, corner: o.corner });
@@ -151,6 +153,10 @@ ${bars}${o.agent ? agentPanel(session) : ""}${newDocMenu((path) => link(path, se
 `;
   return { before, after };
 }
+
+/** A reader's page with no bars (the owner's set_reader_bars): no band, so no room at the page's top, and the bars
+ *  hidden, their scripts still there. */
+const NO_BARS = ":root { --band-h: 0px; } :is(.erga-crumbs, .erga-view-buttons, .erga-tree-card) { display: none !important; }";
 
 /** With no colour remembered for the document, its page waits out of sight for the band's own (client/inline/viewer-band-wait.ts). */
 export const BAND_WAIT = inlineCall("viewer-band-wait");
