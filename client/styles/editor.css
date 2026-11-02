@@ -145,6 +145,10 @@ body.erga-editing.erga-editor-ready:not(.erga-closing) .edit-group { grid-templa
 .chrome-top .people { transition: opacity 420ms var(--agent-ease); }
 body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .people, body:not(.erga-editor-ready) .chrome-top .people { opacity: 0; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .edit-group, .chrome-top .people { transition: none; } }
+/* Share, for anyone but the owner (no meta erga-share): there, off, from the first frame; its tip says why (client/shell/sharing.ts). */
+:root:not(:has(meta[name="erga-share"])) #btn-share { cursor: default; }
+:root:not(:has(meta[name="erga-share"])) #btn-share:hover { background: transparent; color: var(--chrome); }
+:root:not(:has(meta[name="erga-share"])) #btn-share svg { opacity: 0.4; }
 
 /* Who's here: you, then everyone else and their agents, in their colours. */
 .people { display: flex; align-items: center; gap: 4px; margin-right: 6px; }
