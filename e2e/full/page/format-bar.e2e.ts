@@ -45,3 +45,26 @@ test("a word dragged across on the page's first line, then the style bar's Bold 
   await expect.poll(() => ed.source()).toContain("<p>Hello <strong>brave</strong> world</p>");
   await ed.shows("Hello [brave] world");
 });
+
+test("⌘B on a bold and italic word takes the bold off and keeps the italic, as valid HTML, on part of a bold and italic stretch and on all of one", async ({
+  tab,
+}) => {
+  const ed = await openEditor(tab, await servers.main(), "empty");
+  await ed.clickEnd("p");
+  await ed.type("Hello brave world");
+  for (let i = 0; i < 11; i++) await ed.press("Shift+ArrowLeft");
+  await ed.press("ControlOrMeta+b");
+  await ed.press("ControlOrMeta+i");
+  await expect.poll(() => ed.source()).toContain("<p>Hello <strong><em>brave world</em></strong></p>");
+  await ed.press("ArrowRight");
+  for (let i = 0; i < 5; i++) await ed.press("Shift+ArrowLeft");
+  await ed.press("ControlOrMeta+b");
+  await expect.poll(() => ed.source()).toContain("<p>Hello <strong><em>brave </em></strong><em>world</em></p>");
+  await ed.shows("Hello brave [world]");
+  await ed.press("ArrowLeft");
+  await ed.press("ArrowLeft");
+  for (let i = 0; i < 5; i++) await ed.press("Shift+ArrowLeft");
+  await ed.press("ControlOrMeta+b");
+  await expect.poll(() => ed.source()).toContain("<p>Hello <em>brave </em><em>world</em></p>");
+  await ed.shows("Hello [brave] world");
+});
