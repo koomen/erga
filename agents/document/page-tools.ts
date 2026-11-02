@@ -1,6 +1,6 @@
-// The page tools: view_page and evaluate_page, which render the page afresh in the person's tab (a hidden frame of
-// the page editor: libs/text/ui/frame.ts, captureView), and the live page's (page_console ... page_key), which
-// read and act on the page as it runs there (shared/live-page.ts).
+// The page tools: view_page and eval_in_page, which render the page afresh in the person's tab (a hidden frame of
+// Erga's page tools: client/page-tools/capture.ts), and the live page's (page_console ... page_key, and eval_in_page
+// with live), which read and act on the page as it runs there (shared/live-page.ts).
 
 import * as Schema from "effect/Schema";
 import type { AgentTool } from "../run";
@@ -29,7 +29,7 @@ import {
   type LiveResult,
 } from "../../shared/live-page";
 
-/** view_page, evaluate_page and the live page's tools, over the person's tabs (`view`). */
+/** view_page, eval_in_page and the live page's tools, over the person's tabs (`view`). */
 export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
   return [
@@ -64,11 +64,15 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): Agen
       },
     },
     {
-      name: "evaluate_page",
-      label: "Inspect the page",
-      description: `Run a JavaScript expression in the page the user has open, rendered as view_page renders it (the latest version, in the user's browser), and get its result as JSON. For what a picture can't measure: computed styles, the fonts in use, element sizes and positions. E.g. getComputedStyle(document.querySelector("h1")).fontFamily, [...document.fonts].filter((f) => f.status == "loaded").map((f) => f.family), or document.querySelector("#chart").getBoundingClientRect(). It may be async (await works); statements need their own return. Read-only: it runs in a throwaway copy, so nothing it changes reaches the document (edit the files for that), and it can reach nothing the page's own scripts can't. It runs once the page loaded (its scripts ran) and its fonts and images loaded, or says what still loaded. ${AT_STEP} ${PREVIEW_WORDS} With frames, the result is a list: [{"at_ms": 300, "value": ...}, ...]. Waits ${EVAL_TIMEOUT.default / 1000}s for the result by default (timeout, at most ${EVAL_TIMEOUT.max / 1000}s); the JSON is cut to ${EVAL_MAX_JSON / 1000}K characters, so return only what you need.`,
+      name: "eval_in_page",
+      label: "Run JavaScript in the page",
+      description: `Run JavaScript in the page the user has open, and get its result as JSON. By default it runs in a fresh hidden copy, rendered as view_page renders it (the latest version, in the user's browser): for what a picture can't measure, such as computed styles, the fonts in use, element sizes and positions. E.g. getComputedStyle(document.querySelector("h1")).fontFamily, [...document.fonts].filter((f) => f.status == "loaded").map((f) => f.family), or document.querySelector("#chart").getBoundingClientRect(). The copy is thrown away: nothing it changes reaches the document (edit the files for that), and it can reach nothing the page's own scripts can't. It runs once the page loaded (its scripts ran) and its fonts and images loaded, or says what still loaded. ${AT_STEP} ${PREVIEW_WORDS} With frames, the result is a list: [{"at_ms": 300, "value": ...}, ...]. With live, it runs in ${LIVE} instead (frame picks a frame inside it): read-only, as it is the person's live page, not a copy; use live only when the user asks you to look into their page in this conversation, and the tab shows them a line each time. The code may be async (await works); statements need their own return. Waits ${EVAL_TIMEOUT.default / 1000}s for the result by default (timeout, at most ${EVAL_TIMEOUT.max / 1000}s); the JSON is cut to ${EVAL_MAX_JSON / 1000}K characters, so return only what you need.`,
       parameters: Schema.Struct({
         expression: Schema.String.annotate({ description: "JavaScript to run in the page, e.g. getComputedStyle(document.body).fontSize" }),
+        live: Schema.optionalKey(
+          Schema.Boolean.annotate({ description: "Run it in the live page as it runs now, not in a fresh copy (default false)." })
+        ),
+        frame: FRAME,
         ...RENDER,
         timeout: Schema.optionalKey(
           Schema.Finite.annotate({
@@ -78,8 +82,22 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): Agen
         ...STEP_FIELDS("expression runs"),
         ...PREVIEW,
       }),
-      execute: async (_id, p: { expression: string; timeout?: number } & RenderArgs & StepArgs & PreviewArgs) => {
+      execute: async (
+        _id,
+        p: { expression: string; live?: boolean; frame?: string; timeout?: number } & RenderArgs & StepArgs & PreviewArgs
+      ) => {
         if (!p.expression?.trim()) throw new Error("Give an expression to run.");
+        if (p.live) {
+          const fresh = ["width", "height", "color_scheme", "step", "at_ms", "frames", "edits", "path"].filter(
+            (k) => (p as Record<string, unknown>)[k] != null
+          );
+          if (fresh.length) throw new Error(`${fresh.join(", ")} apply to a fresh copy only, not with live.`);
+          const r = await askLive(view, { kind: "inspect", expression: p.expression, frame: p.frame, timeout: p.timeout });
+          const i = r.inspect!;
+          if (i.error) throw new Error(`${i.error} ${describeTab(r.tab)}`.trim());
+          return text(`${i.value}${i.note ? `\n\n[${i.note}]` : ""}\n${describeTab(r.tab)}`);
+        }
+        if (p.frame != null) throw new Error("frame applies to the live page only: give live: true with it.");
         const v = await view({ evaluate: p.expression, timeout: p.timeout, ...renderReq(p), ...stepReq(p), ...previewReq(p) });
         const errors = v.errors.length ? `\nThe page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "";
         if (v.error || v.value == null) throw new Error((v.error ?? "The page couldn't be inspected.") + errors);
@@ -93,35 +111,39 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): Agen
   ] as AgentTool[];
 }
 
+const LIVE =
+  "the live page: the page as it runs now in the user's open editor tab (their focused tab, else a visible one), not view_page's fresh render";
+const FRAME = Schema.optionalKey(
+  Schema.String.annotate({
+    description:
+      'Which frame of the live page: "page" (the default), a CSS selector of an iframe inside the page, or a frame\'s name as page_inspect lists them.',
+  })
+);
+
+/** A request to the live page, over view_page's path: its answer, or an error that says why there's none. */
+async function askLive(view: (req: ViewRequest) => Promise<ViewResult>, req: LiveRequest): Promise<LiveResult> {
+  const v = await view({ live: req });
+  if (v.error || v.value == null) throw new Error(v.error ?? "The tab didn't answer.");
+  let r: LiveResult;
+  try {
+    r = JSON.parse(v.value) as LiveResult;
+  } catch {
+    throw new Error("The tab's answer didn't parse.");
+  }
+  if (r.error) throw new Error(`${r.error} ${describeTab(r.tab)}`.trim());
+  return r;
+}
+
 /**
  * page_console, page_network, page_events, page_inspect, page_click and page_key: the live page in the person's
  * open editor tab (shared/live-page.ts), not view_page's throwaway render. Asked over view_page's path.
  */
 function liveTools(view: (req: ViewRequest) => Promise<ViewResult>): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
-  const ask = async (req: LiveRequest): Promise<LiveResult> => {
-    const v = await view({ live: req });
-    if (v.error || v.value == null) throw new Error(v.error ?? "The tab didn't answer.");
-    let r: LiveResult;
-    try {
-      r = JSON.parse(v.value) as LiveResult;
-    } catch {
-      throw new Error("The tab's answer didn't parse.");
-    }
-    if (r.error) throw new Error(`${r.error} ${describeTab(r.tab)}`.trim());
-    return r;
-  };
+  const ask = (req: LiveRequest) => askLive(view, req);
   const since = (raw: string | undefined) => parseSince(raw) ?? undefined;
-  const LIVE =
-    "the live page: the page as it runs now in the user's open editor tab (their focused tab, else a visible one), not view_page's fresh render";
   const SINCE = Schema.optionalKey(
     Schema.String.annotate({ description: 'Only what happened since then: an ISO time, or how long ago ("30s", "5m", "2h").' })
-  );
-  const FRAME = Schema.optionalKey(
-    Schema.String.annotate({
-      description:
-        'Which frame: "page" (the default), a CSS selector of an iframe inside the page, or a frame\'s name as page_inspect lists them.',
-    })
   );
   return [
     {
@@ -185,26 +207,13 @@ function liveTools(view: (req: ViewRequest) => Promise<ViewResult>): AgentTool[]
     {
       name: "page_inspect",
       label: "Inspect the live page",
-      description: `Inspect ${LIVE}. Without an expression: the fixed facts of each frame (the editor's, the page's, and those inside it): its sandbox and allow attributes, its user activation (isActive, hasBeenActive), the autoplay policy (permissions policy, getAutoplayPolicy), and each audio and video element's readyState, networkState, paused, currentTime, duration, error, src and type. With an expression: runs that JavaScript in the page's frame (never in the editor's own origin) and gives its result as JSON; it may be async; statements need their own return. Read-only: it must not change the page (it is the person's live page, not a copy). Use it only when the user asks you to look into their page in this conversation; the tab shows them a line each time.`,
-      parameters: Schema.Struct({
-        expression: Schema.optionalKey(
-          Schema.String.annotate({
-            description: 'JavaScript to run in the live page, e.g. document.querySelector("audio").buffered.length',
-          })
-        ),
-        frame: FRAME,
-        timeout: Schema.optionalKey(
-          Schema.Finite.annotate({
-            description: `How long to wait for the result, in ms (default ${EVAL_TIMEOUT.default}, at most ${EVAL_TIMEOUT.max}).`,
-          })
-        ),
-      }),
-      execute: async (_id, p: { expression?: string; frame?: string; timeout?: number }) => {
-        const r = await ask({ kind: "inspect", expression: p.expression, frame: p.frame, timeout: p.timeout });
+      description: `The fixed facts of each frame of ${LIVE} (the editor's, the page's, and those inside it): its sandbox and allow attributes, its user activation (isActive, hasBeenActive), the autoplay policy (permissions policy, getAutoplayPolicy), and each audio and video element's readyState, networkState, paused, currentTime, duration, error, src and type. To run JavaScript in the live page, use eval_in_page with live.`,
+      parameters: Schema.Struct({ frame: FRAME }),
+      execute: async (_id, p: { frame?: string }) => {
+        const r = await ask({ kind: "inspect", frame: p.frame });
         const i = r.inspect!;
         if (i.error) throw new Error(`${i.error} ${describeTab(r.tab)}`.trim());
-        const body = i.facts !== undefined ? JSON.stringify(i.facts, null, 1) : `${i.value}${i.note ? `\n\n[${i.note}]` : ""}`;
-        return text(`${body}\n${describeTab(r.tab)}`);
+        return text(`${JSON.stringify(i.facts, null, 1)}\n${describeTab(r.tab)}`);
       },
     },
     {
@@ -258,7 +267,7 @@ function liveTools(view: (req: ViewRequest) => Promise<ViewResult>): AgentTool[]
   ] as AgentTool[];
 }
 
-/** The render's size and mode, as view_page and evaluate_page take them. */
+/** The render's size and mode, as view_page and eval_in_page take them. */
 const RENDER = {
   width: Schema.optionalKey(
     Schema.Finite.annotate({ description: "Width to render at, in CSS pixels (default: as wide as the user's page)." })

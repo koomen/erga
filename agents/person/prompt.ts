@@ -135,7 +135,7 @@ ${FILES_PROMPT}
 ${PAGES_PROMPT}
 
 When ${owner} has a document open in the editor, view_page shows the page as they see it,
-and page_click, page_key and page_inspect use it; your edits show in their editor as you
+and eval_in_page, page_click, page_key and page_inspect use it; your edits show in their editor as you
 make them. Follow the rules below whenever you create or change a page, so people can keep
 editing it by hand. When you fix a page that breaks them, keep its text as it is.
 ${

@@ -127,14 +127,6 @@ export abstract class EditorCore {
     return M.analyzeHtml(src, this.decoder);
   }
 
-  /**
-   * The whole page as it renders now, latest edits included, or as `src` would (for view_page's capture, in a frame of
-   * its own): its files where they are (`base`: another page's folder).
-   */
-  renderedHtml(src = this.src, base = this.config.base): string {
-    return insertHead(src, `<base href="${base}">`);
-  }
-
   /** The page's title: its <title>, else its first heading. */
   title(): string {
     const t = this.doc?.title?.trim();

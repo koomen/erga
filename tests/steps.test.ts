@@ -1,4 +1,4 @@
-// A presentation's step, as the agent names it to view_page and evaluate_page (shared/steps.ts).
+// A presentation's step, as the agent names it to view_page and eval_in_page (shared/steps.ts).
 import { expect, test } from "bun:test";
 import { findStep, stepNumber, stepSpec } from "../shared/steps";
 

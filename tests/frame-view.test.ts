@@ -13,11 +13,11 @@ import * as standIn from "../libs/text/ui/frame-view.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 
-test("the frame's bundle has nothing of @codemirror/view but the stand-in", async () => {
+test("the page's bundles (the editor, the page tools) have nothing of @codemirror/view but the stand-in", async () => {
   const outdir = mkdtempSync(join(tmpdir(), "erga-frame-"));
   try {
     const built = await Bun.build({
-      entrypoints: [join(ROOT, "libs/text/ui/frame.ts")],
+      entrypoints: [join(ROOT, "libs/text/ui/frame.ts"), join(ROOT, "client/page-tools/tools.ts")],
       outdir,
       splitting: true,
       target: "browser",
@@ -30,9 +30,10 @@ test("the frame's bundle has nothing of @codemirror/view but the stand-in", asyn
     const all = Object.keys(meta.inputs);
     expect(all.filter((p) => p.includes("@codemirror/view"))).toEqual([]);
     expect(all.some((p) => p.endsWith("libs/text/ui/frame-view.ts"))).toBe(true);
-    // And the agent's screenshots load only when asked for: a chunk of their own, not the frame's script.
-    const entry = Object.values(meta.outputs).find((o) => o.entryPoint)!;
-    expect(Object.keys(entry.inputs).filter((p) => p.includes("modern-screenshot"))).toEqual([]);
+    // The agent's screenshots are Erga's page tools' (tools.js), never the editor's, and load only when asked for: a
+    // chunk of their own.
+    for (const entry of Object.values(meta.outputs).filter((o) => /(frame|tools)\.ts$/.test(o.entryPoint ?? "")))
+      expect(Object.keys(entry.inputs).filter((p) => p.includes("modern-screenshot"))).toEqual([]);
     expect(all.some((p) => p.includes("modern-screenshot"))).toBe(true);
   } finally {
     rmSync(outdir, { recursive: true, force: true });

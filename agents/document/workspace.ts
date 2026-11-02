@@ -36,7 +36,7 @@ export interface Workspace {
   seenAt(path: string): number | null;
 }
 
-/** The edits' form, as the edit tool takes them, and view_page's and evaluate_page's preview. */
+/** The edits' form, as the edit tool takes them, and view_page's and eval_in_page's preview. */
 export const EDITS = Schema.Array(
   Schema.Struct({
     oldText: Schema.optionalKey(Schema.String.annotate({ description: "Exact text to replace; must be unique in the file" })),

@@ -1,9 +1,9 @@
-// The render's clock (view_page, evaluate_page: capture.ts), which a tab in the background doesn't slow down. There
+// The render's clock (view_page, eval_in_page: capture.ts), which a tab in the background doesn't slow down. There
 // Chrome runs a chain of timers at most once a second, and after five minutes once a minute, and draws no frames, so
 // a render that waits 50 ms at a time took minutes and the agent's view_page ran out of time. A dedicated worker's
 // timers aren't held back, so the render waits on them, and runs its hidden frame's requestAnimationFrame on them too.
 
-import { sleep } from "../../../shared/time";
+import { sleep } from "../../shared/time";
 
 const WORKER = "onmessage=function(e){setTimeout(function(){postMessage(e.data.id)},e.data.ms)}";
 let worker: Worker | null | undefined;

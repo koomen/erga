@@ -188,6 +188,9 @@ health checks and rollbacks work.
                       blocks.ts, lists.ts), the source's helpers (source.ts), the clipboard's blocks and the custom edits
     client/       the browser side: editor.html, style.css, fonts/, and the scripts build.ts bundles into .build/
       shell/          the editor's shell (page.js): main.ts, the room (collab.ts), the source view, the shell's parts
+      page-tools/     Erga's page tools in the document's page (tools.js: tools.ts): the agent's view_page and
+                      eval_in_page (a fresh render, capture.ts) and the live page's tools (live-page-tab.ts), apart from
+                      the editing libraries; the page's first script loads them when the viewer first asks
       agent/          the agent panel both the editor and the admin pages use (agent-chat.ts, layout.ts, ...)
       admin/          the admin pages' scripts (admin-agent.ts, admin-nav.ts, admin-share.ts)
       pages/          the other pages' scripts: the settings, the pages tree

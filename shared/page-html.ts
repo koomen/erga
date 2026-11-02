@@ -17,8 +17,17 @@ export interface ReaderConfig {
   src: string;
   /** The document's public address (https://erga.dev/<owner>/<slug>): the viewer says it once the page is up (erga-address). */
   address?: string;
-  /** For whoever may edit: the editor's half (frame.js), its chunks and their integrity. */
-  editor?: { src: string; integrity: string; preload: string[]; map: Record<string, string> };
+  /**
+   * For whoever may edit: the editor's half (frame.js), its chunks and their integrity, and Erga's page tools (tools.js:
+   * the agent's view_page and the live page's tools).
+   */
+  editor?: {
+    src: string;
+    integrity: string;
+    preload: string[];
+    map: Record<string, string>;
+    tools: { src: string; integrity: string; preload: string[] };
+  };
 }
 
 /** A digest of a page's text (cyrb53), which the editor compares with its own text's: the page was made from the same. */

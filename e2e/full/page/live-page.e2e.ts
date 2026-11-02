@@ -93,9 +93,13 @@ test("the agent reads the live page and clicks play: the audio plays, and the co
   await expect.poll(() => p.evaluate(() => document.getElementById("agent-live-text")?.textContent)).toBe("The agent clicked #play");
 
   // The media keeps playing: its time moves on.
-  const playing = await until(async () => {
-    const r = await tool("page_inspect", { expression: `(() => { const a = document.querySelector("#track"); return { paused: a.paused, t: a.currentTime, error: a.error }; })()` });
-    const v = r.ok ? JSON.parse(r.text.slice(0, r.text.indexOf("\n"))) as { paused: boolean; t: number; error: unknown } : null;
+  const playing = await until(
+    async () => {
+      const r = await tool("eval_in_page", {
+        live: true,
+        expression: `(() => { const a = document.querySelector("#track"); return { paused: a.paused, t: a.currentTime, error: a.error }; })()`,
+      });
+      const v = r.ok ? (JSON.parse(r.text.slice(0, r.text.indexOf("\n"))) as { paused: boolean; t: number; error: unknown }) : null;
     return v && !v.paused && v.t > 0.2 ? v : null;
   }, 5_000, "the audio plays");
   expect(playing!.error).toBeNull();

@@ -95,7 +95,7 @@ export interface ViewRequest {
    */
   after?: string;
   /**
-   * evaluate_page: a JavaScript expression to run in the same render,
+   * eval_in_page: a JavaScript expression to run in the same render,
    * instead of taking a picture. Its result comes back as JSON (`value`).
    */
   evaluate?: string;
@@ -176,12 +176,12 @@ export interface StepShown {
   label?: string;
 }
 
-/** The times view_page and evaluate_page wait: after a step by default, at most for one time, and how many frames. */
+/** The times view_page and eval_in_page wait: after a step by default, at most for one time, and how many frames. */
 export const FRAMES = { afterStep: 1_000, afterLoad: 600, max: 10_000, count: 6 };
 /** The longest a request waits in the render: the latest of its times. */
 export const renderWait = (req: ViewRequest) => Math.min(FRAMES.max, Math.max(0, req.atMs ?? 0, ...(req.frames ?? [])));
 
-/** evaluate_page's limits: how long it waits, by default and at most (ms), and how much JSON it sends back. */
+/** eval_in_page's limits: how long it waits, by default and at most (ms), and how much JSON it sends back. */
 export const EVAL_TIMEOUT = { default: 5_000, max: 15_000 };
 export const EVAL_MAX_JSON = 20_000;
 export const evalTimeout = (req: { timeout?: number }) => Math.max(100, Math.min(EVAL_TIMEOUT.max, Number(req.timeout) || EVAL_TIMEOUT.default));

@@ -236,7 +236,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
     route: "POST /d/<id>/api/agent/view",
     domain: "none",
     action:
-      "The tab answers the agent's view_page and evaluate_page, and its page_console, page_network, page_events, page_inspect, page_click and page_key",
+      "The tab answers the agent's view_page and eval_in_page, and its page_console, page_network, page_events, page_inspect, page_click and page_key",
     exempt: PANEL,
   },
   // The live page in the person's tab (shared/live-page.ts): no route of its own, but what the person does there.

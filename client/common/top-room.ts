@@ -3,7 +3,7 @@
 // (data-erga: never in its HTML, and the editor's checks pass it by) that adds the bars' height to the padding its own
 // <html> has: its first line starts below the bars, and scrolls under them. A page that fills the window and doesn't
 // scroll (slides, a canvas) gets none: its frame stays below the bars. Every view of the page does the same: the
-// viewer and the editor (client/inline/reader.ts) and the agent's view_page (libs/text/ui/capture.ts).
+// viewer and the editor (client/inline/reader.ts) and the agent's view_page (client/page-tools/capture.ts).
 
 /** The bars' height, and so the room: the band's (--band-h, client/inline/viewer-band.css) without a notch. */
 export const TOP_ROOM = 56;

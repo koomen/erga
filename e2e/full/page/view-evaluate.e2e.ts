@@ -1,4 +1,4 @@
-// evaluate_page's run, in the tab: an expression in view_page's render, its result as JSON;
+// eval_in_page's run, in the tab: an expression in view_page's render, its result as JSON;
 // read-only, with a time limit and a size cap ("Inspecting the page for the agent").
 import { expect, servers, test } from "../../helpers/fixtures";
 import { F, openEditor, type Editor } from "../../helpers/editor";

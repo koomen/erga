@@ -1,5 +1,5 @@
 // The agent's edits to a file's text, aimed: each edit's place in the text, or why it has none. The edit tool
-// (agents/document/workspace.ts) applies them to the document; view_page's and evaluate_page's preview
+// (agents/document/workspace.ts) applies them to the document; view_page's and eval_in_page's preview
 // (client/shell/page-requests.ts) to a copy, for the render only. Pure: it runs on the server and in the browser.
 
 import { findInSource } from "./source-select";

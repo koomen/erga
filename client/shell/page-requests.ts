@@ -8,6 +8,7 @@ import { files } from "../../document/content";
 import { ConsoleLog, liveWatch, queryConsole, shownInTab, type ConsoleLevel, type LiveRequest, type LiveResult } from "../../shared/live-page";
 import { ms } from "../../libs/text/ui/timescale";
 import { $, type Shell } from "./shell";
+import { PageTools } from "./page-tools";
 
 // The editor's own console (this window's), from its first line: page_console gives it with the page's ("editor").
 const shellConsole = new ConsoleLog(300);
@@ -18,6 +19,10 @@ liveWatch({ events: false, net: false, types: [] });
 });
 
 export function mountPageRequests(shell: Shell) {
+  const tools = new PageTools(
+    shell.frame,
+    new URL(document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]')!.content, location.href).origin
+  );
 
 
   // The agent asks to see the page: the page editor's frame draws it,
@@ -33,15 +38,15 @@ export function mountPageRequests(shell: Shell) {
     if (path == null || !isPage(path))
       return fail(`Nothing was rendered: there's no page ${req.path} in this document (list_pages lists them).`);
     const other = path != open;
-    const source = other ? all.get(path)!.toString() : shell.page.source();
+    const source = other ? all.get(path)!.toString() : shell.collab.current();
     const base = other ? path.slice(0, path.lastIndexOf("/") + 1) : undefined;
-    if (!req.preview) return { ...(await shell.page.capture(req, other ? source : undefined, base)), page: path };
+    if (!req.preview) return { ...(await tools.capture(req, source, base)), page: path };
     // A preview: the edits on a copy of the page's text, for this render only.
     const edits = Array.isArray(req.preview.edits) ? req.preview.edits : [];
     const aimed = aimEdits(source, edits, path);
     if ("reason" in aimed) return fail(`Nothing was rendered: ${aimed.message}`);
     return {
-      ...(await shell.page.capture(req, applySpans(source, aimed.spans), base)),
+      ...(await tools.capture(req, applySpans(source, aimed.spans), base)),
       page: path,
       preview: { path, edits: edits.length },
     };
@@ -81,7 +86,7 @@ export function mountPageRequests(shell: Shell) {
   async function answerLive(id: string, req: LiveRequest) {
     const tab = { page: shell.pagePath, visible: document.visibilityState == "visible", focused: document.hasFocus() };
     if (shownInTab(req)) renderLiveBar(lineFor(req));
-    const result: LiveResult = await shell.page.live(req, (req.kind == "inspect" ? 20_000 : 8_000));
+    const result: LiveResult = await tools.live(req, req.kind == "inspect" ? 20_000 : 8_000);
     if (req.kind == "console" && result.console) {
       // The page's entries and this window's, together.
       const r = queryConsole([...result.console.entries, ...queryConsole(shellConsole.entries(), { ...req, limit: 200 }).entries], req);

@@ -1,10 +1,10 @@
 // Runs the agent's JavaScript expression in a page's window and gives its
-// result as JSON: evaluate_page's in view_page's throwaway render (frame.ts),
-// page_inspect's in the live page (live-page.ts).
+// result as JSON (eval_in_page): in view_page's throwaway render (capture.ts),
+// or with live, in the live page (live-page-tab.ts).
 
-import { EVAL_MAX_JSON } from "../../../shared/agent-log";
+import { EVAL_MAX_JSON } from "../../shared/agent-log";
 
-// evaluate_page: the agent's expression runs in the same throwaway render
+// eval_in_page: the agent's expression runs in the same throwaway render
 // view_page draws, so it sees computed styles, fonts and sizes as the page
 // has them. Nothing goes back to the document: the render is a copy of its
 // text, removed once the result is out, and nothing reads its DOM back.
