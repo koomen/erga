@@ -1,5 +1,5 @@
-// The source view: a page's HTML in CodeMirror, editable, with the page's
-// state and undo history (main.ts goes between it and the page with ⌘⇧P).
+// The source view: a page's HTML in CodeMirror, editable, on the viewer's own replica of the room, with an undo
+// history of its own (views.ts goes between it and the page with ⌘⇧P).
 // Its code (CodeMirror's view, the HTML language with its CSS and
 // JavaScript, the highlighting) is a chunk of its own, which main.ts imports
 // the first time the view opens: the editor takes input long before anyone
@@ -7,15 +7,11 @@
 
 import { StateEffect, StateField, type ChangeSet, type EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap, drawSelection, highlightSpecialChars, Decoration, WidgetType, type DecorationSet } from "@codemirror/view";
-import { defaultKeymap, history, historyField, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { html } from "@codemirror/lang-html";
 import { tags as t } from "@lezer/highlight";
 import type { Peer } from "../../libs/text/ui/editor";
-import type { SourceState } from "./remote";
-
-/** The field the view's undo history is in (the frame's state carries the same, so ⌘Z goes on across a switch). */
-export const sourceHistory = historyField as StateField<unknown>;
 
 /** Other people's carets and selections in the source view (the page draws its own, see PageEditor.setPeers): `view.dispatch({ effects: setPeers.of(peers) })`. */
 export const setPeers = StateEffect.define<Peer[]>();
@@ -87,14 +83,9 @@ export interface SourceHooks {
   moved(): void;
 }
 
-/**
- * The source view's state: the frame hands over its own state (undo history and all) when the view opens, made with
- * these, and takes it back when it closes.
- */
-export function sourceState(hooks: SourceHooks): SourceState {
-  return {
-    history: sourceHistory,
-    extensions: [
+/** What the source view's state is made with. */
+export function sourceExtensions(hooks: SourceHooks): Extension {
+  return [
       peersField,
       history(),
       html(),
@@ -108,8 +99,7 @@ export function sourceState(hooks: SourceHooks): SourceState {
         for (const tr of u.transactions) if (tr.docChanged && !tr.isUserEvent("external")) hooks.edited(tr.changes);
         if (u.docChanged || u.selectionSet) hooks.moved();
       }),
-    ],
-  };
+  ];
 }
 
 /** The view, open in `parent` on `state`. */

@@ -143,7 +143,13 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     /** The tab has drawn what's done, and the editor in the page is up (a page that loads again, made afresh, has come). */
     settle: async () => {
       await settle(page);
-      await until(() => page.evaluate(`!window.ergaPage?.page?.loading`), 10_000, "the page's editor is up");
+      await until(
+        async () =>
+          !(await page.evaluate(`document.body.classList.contains("erga-editing") && !document.body.classList.contains("source")`)) ||
+          (await ed.frame<boolean>("!!window.ergaFrame?.page && !ergaFrame.reloading").catch(() => false)),
+        10_000,
+        "the page's editor is up"
+      );
     },
     /** Whether the page's text has the focus, with the caret (the selection's focus) in an element that matches `sel`. */
     caretIn: (sel: string) =>
@@ -160,7 +166,7 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
       await until(
         () =>
           ed.frame<boolean>(
-            `!!window.ergaFrame?.page && !ergaFrame.page.rendering && (!ergaFrame.relay || ergaFrame.relay.idle) && ${F}.activeElement == ${F}.body && (() => { const n = ${F}.getSelection().focusNode; return !!(n && (n.nodeType == 1 ? n : n.parentElement)?.closest("[data-erga-text]")); })()`
+            `!!window.ergaFrame?.page && !ergaFrame.page.rendering && ${F}.activeElement == ${F}.body && (() => { const n = ${F}.getSelection().focusNode; return !!(n && (n.nodeType == 1 ? n : n.parentElement)?.closest("[data-erga-text]")); })()`
           ),
         5000,
         "the editor to settle"
@@ -169,10 +175,17 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     /** The file on disk. */
     disk: () => readFileSync(doc.file, "utf8"),
     write: (text: string) => writeFileSync(doc.file, text),
-    /** The document's text as the shell has it, once the page editor's frame has no edits on their way to it. */
+    /**
+     * The document's text as the shell's replica of the room has it, once it has the page editor's (the editor's own
+     * replica sends its edits to the room, and the room to the shell).
+     */
     async source(): Promise<string> {
-      await until(() => ed.frame<boolean>("!window.ergaFrame?.relay || ergaFrame.relay.idle").catch(() => true), 2000).catch(() => {});
-      return page.evaluate("ergaPage.state.doc.toString()") as Promise<string>;
+      const shell = () => page.evaluate("ergaPage.collab.current()") as Promise<string>;
+      await until(async () => {
+        const mine = await ed.frame<string | null>("window.ergaFrame?.page ? ergaFrame.page.state.doc.toString() : null").catch(() => null);
+        return mine == null || mine == (await shell());
+      }, 3000).catch(() => {});
+      return shell();
     },
     textOf: (selector: string) => ed.frame<string>(`${F}.querySelector(${JSON.stringify(selector)}).textContent`),
     count: (selector: string) => ed.frame<number>(`${F}.querySelectorAll(${JSON.stringify(selector)}).length`),
@@ -259,7 +272,12 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     /** The toast: its text and whether it shows. */
     toast: () => page.evaluate(() => { const t = document.getElementById("toast")!; return { text: t.textContent ?? "", shown: t.classList.contains("show") }; }),
     /** The editor's selection, and the text it covers. */
-    selection: () => page.evaluate(`(() => { const m = ergaPage.state.selection.main; return { from: m.from, to: m.to, head: m.head, text: ergaPage.state.doc.sliceString(m.from, m.to) }; })()`) as Promise<{ from: number; to: number; head: number; text: string }>,
+    async selection(): Promise<{ from: number; to: number; head: number; text: string }> {
+      const of = (s: string) =>
+        `(() => { const st = ${s}, m = st.selection.main; return { from: m.from, to: m.to, head: m.head, text: st.doc.sliceString(m.from, m.to) }; })()`;
+      if (await page.evaluate(`document.body.classList.contains("source")`)) return page.evaluate(of("ergaPage.state"));
+      return ed.frame(of("ergaFrame.page.state"));
+    },
     /** The page as a person sees it, as text (visible.ts): markers, indents, the caret. */
     visible: () => ed.frame<string>(VISIBLE),
     /**

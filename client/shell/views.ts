@@ -1,14 +1,13 @@
-// Two views of the document: the page itself, and the file's source (its HTML), editable, with the page's state and
-// undo history. ⌘⇧P goes between them.
+// Two views of the document: the page itself, and the file's source (its HTML), editable. ⌘⇧P goes between them.
 
-import type { ChangeSet, EditorState } from "@codemirror/state";
+import { EditorSelection, EditorState, Transaction, type ChangeSet } from "@codemirror/state";
+import { changesBetween } from "../../document/merge";
 import { live } from "../live/client";
 import { $, type Mode, type Shell } from "./shell";
 
 export function mountViews(shell: Shell) {
-  // One CodeMirror state serves both the page editor and the source view, so the undo history is shared and either
-  // view's edits land in the same file. The source view's code (source-view.ts: CodeMirror's view and the HTML
-  // language) loads the first time it opens. Its own edits go to the room.
+  // The source view edits this tab's replica of the room, as the page's editor edits its own: both land in the same
+  // file. Its code (source-view.ts: CodeMirror's view and the HTML language) loads the first time it opens.
   let sourceCode: Promise<typeof import("./source-view")> | null = null;
   const loadSource = () =>
     (sourceCode ??= import("./source-view").then(
@@ -28,36 +27,54 @@ export function mountViews(shell: Shell) {
     moved: () => shell.people.queueCursor(),
   };
 
-  // Opening the source view waits for the page to hand over its state; a switch asked for meanwhile waits its turn.
+  // The page's editor stops while the source view is open (the page shows the file's last state), and starts again from
+  // the room's text after. The source view's state, kept for the next time it opens (its undo history, brought to the
+  // room's text then). A switch asked for meanwhile waits its turn.
+  let kept: EditorState | null = null;
   let switching: Promise<void> = Promise.resolve();
   function setMode(next: Mode) {
     switching = switching.then(() => switchMode(next));
   }
   async function switchMode(next: Mode) {
     if (next == shell.mode) return;
-    // Leave the current view; the source view hands the state back to the page.
-    if (shell.sourceView) {
-      const st = shell.sourceView.state;
-      shell.sourceView.destroy();
-      shell.sourceView = null;
-      shell.page.attach(st, shell.source!.sourceHistory);
-    }
-    let handed: EditorState | null = null;
     if (next != "text") {
       let code: typeof import("./source-view");
-      try { code = await loadSource(); } catch { shell.toast.flash("Couldn't open the source: check your connection and try again.", 4000); return; }
-      handed = (await shell.page.detach(code.sourceState(sourceHooks))).state;
-    }
-    shell.mode = next;
-    if (next == "text") {
-      $("source").hidden = true;
-      document.body.classList.remove("source");
-      shell.page.focus();
-    } else {
-      shell.sourceView = shell.source!.openSource($("source"), handed!);
+      try {
+        code = await loadSource();
+      } catch {
+        shell.toast.flash("Couldn't open the source: check your connection and try again.", 4000);
+        return;
+      }
+      const text = shell.collab.current(),
+        sel = shell.currentSelection().main;
+      const at = (n: number) => Math.min(n, text.length);
+      let state = kept;
+      if (state && state.doc.toString() != text)
+        state = state.update({
+          changes: changesBetween(state.doc.toString(), text),
+          annotations: Transaction.addToHistory.of(false),
+        }).state;
+      state = (state ?? EditorState.create({ doc: text, extensions: code.sourceExtensions(sourceHooks) })).update({
+        selection: EditorSelection.single(at(sel.anchor), at(sel.head)),
+      }).state;
+      shell.page.stop();
+      shell.mode = next;
+      shell.sourceView = code.openSource($("source"), state);
+      // This tab's caret is the source view's while it's open.
+      shell.collab.present();
       $("source").hidden = false;
       document.body.classList.add("source");
       shell.sourceView.focus();
+    } else {
+      kept = shell.sourceView?.state ?? null;
+      shell.sourceView?.destroy();
+      shell.sourceView = null;
+      shell.collab.leave();
+      shell.mode = next;
+      $("source").hidden = true;
+      document.body.classList.remove("source");
+      shell.page.start();
+      shell.page.focus();
     }
     shell.people.queuePeers();
     shell.fmt.queueFmt();

@@ -1,25 +1,27 @@
-// The page editor, in the document's own page (see bridge.ts): the viewer's
-// page holds the page in its frame, on the document's own origin, and the
-// page loads this script into itself when someone goes into the editor
-// (server/pages/reader.ts). It does everything that needs the page's DOM:
-// typing, selections, marks and carets, pausing, and the agent's screenshots,
-// on the page as it is, which the pages origin served with the text's marks
-// (shared/page-html.ts). Everything else is the shell's, which it reaches only by
-// message, and only the shell may command it. Out of the editor, it stops,
-// and the page carries on as it is.
+// The page editor, in the document's own page: the viewer's page holds the page in its frame, on the document's own
+// origin (<id>-<owner>.erga-pages.dev), and the page's first script (client/inline/reader.ts) loads this one into it
+// when the viewer says "edit" (its one message, erga-mode, with the edit key). From then on the editor is the page's:
+// it opens the document's socket itself, from this origin, with the key (documents/edit-key.ts), holds its own
+// replica of the room (collab.ts), sends every edit there and applies everyone else's, shows where the others' carets
+// are and shows its own to them. It does everything that needs the page's DOM: typing, selections, marks and carets,
+// and pausing, on the page as it is, which the pages origin served from the text (shared/page-html.ts). When the
+// viewer says "view", it stops, and the page carries on as it is.
 
-import { ChangeSet, EditorState, Transaction, type Extension } from "@codemirror/state";
+import { EditorState, Transaction, type Extension } from "@codemirror/state";
 import { history, historyField } from "@codemirror/commands";
-import { PageEditor, type LinkInfo } from "./editor";
+import { PageEditor, type HeldInput, type LinkInfo, type MarkAuthor, type Peer } from "./editor";
 import { LOADING_AGAIN } from "./drop";
 import { drawCaret } from "./caret";
 import { watchMoves } from "./moves";
 import { listenAsEditor } from "./text-guard";
-import { Relay, isAppShortcut, stateJSON, type Backdrop, type FromFrame, type Snapshot, type ToFrame } from "./bridge";
+import { isAppShortcut, stateJSON, type Backdrop, type EditMode, type FromFrame, type Snapshot, type ToFrame } from "./bridge";
 import { catchZoomGestures, clampZoom } from "./zoom";
+import { Collab } from "./collab";
 import { changesBetween } from "../../../document/merge";
 import { baseName, encodePath } from "../../../document/pages";
+import type { Author } from "../../../document/content";
 import { sourceDigest } from "../../../shared/page-html";
+import { sleep } from "../../../shared/time";
 import { linkTarget, placeOf } from "../../../client/common/link-target";
 // (window.__ergaReader: the page's first script, which loads this one.)
 import type {} from "../../../client/common/reader-api";
@@ -32,15 +34,14 @@ declare global {
 }
 
 /**
- * What the frame's editor state needs: the history (undo, shared with the
- * source view). No language: the frame has no CodeMirror view to highlight
- * (its build has an inert stand-in for the view's module: libs/text/ui/frame-view.ts),
- * and the page is parsed by the page editor itself. The source view, in the
- * shell, has the HTML language. (Here, not in bridge.ts: the shell's main
- * script imports bridge.ts, and @codemirror/commands would bring the view.)
+ * What the editor's state needs: the history (undo). No language: the frame has no CodeMirror view to highlight (its
+ * build has an inert stand-in for the view's module: libs/text/ui/frame-view.ts), and the page editor parses the page
+ * itself.
  */
 performance.mark("erga:frame-js");
 const docExtensions: Extension[] = [history()];
+
+type Editing = Extract<EditMode, { mode: "edit" }>;
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const reader = window.__ergaReader!.config;
@@ -55,20 +56,17 @@ let shown = reader.src;
 
 const post = (m: FromFrame) => window.parent.postMessage(m, SHELL);
 
+/** The viewer's last word, edit (with the key, and where the room is), or null for view. */
+let mode: Editing | null = null;
+let collab: Collab | null = null;
 let page: PageEditor | null = null;
+/** The editor's state as it stopped (undo history and all), for the way back in. */
+let kept: EditorState | null = null;
 /** Files dropped or pasted on the page that the shell is adding to the document's files: where they go in (mapped through the edits meanwhile). */
 const drops = new Map<number, { at: number; point: { x: number; y: number } }>();
 let dropSeq = 0;
-let relay: Relay | null = null;
-/** In the source view the shell holds the text; edits here would go nowhere. */
-let detached = false;
-/** Out of step with the shell: its text, whole, is on its way (attach); the changes before it don't fit. */
-let resyncing = false;
-let restoreScroll: number | null = null;
 /** What stops what the editor added to the page besides its own (its caret, the watches the shell's controls follow). */
 let unwatch: (() => void)[] = [];
-/** The shell asked for the editor: the page loads this only when it does (or opened in the editor: ?erga-edit). */
-let asked = true;
 
 // The page's zoom, as the shell sets it (zoom.ts): the shell draws the page's frame `zoom` times larger and gives it a
 // viewport that much smaller, as the browser's own zoom would, so the page lays itself out again to fit. Clicks and the
@@ -88,60 +86,18 @@ function setZoom(level: number) {
   queueSnapshot();
 }
 
-/** Tells the shell the editor is here, once it's asked and the page has loaded (its scripts have built what they build on load). */
-function tellReady() {
-  if (!asked || page) return;
-  if (document.readyState != "complete") { addEventListener("load", tellReady, { once: true }); return; }
-  post({ type: "ready" });
-}
-tellReady();
-
 window.addEventListener("message", (e: MessageEvent) => {
   if (e.source != window.parent || e.origin != SHELL) return;
-  const m = e.data as ToFrame | { type: "erga-edit" };
-  // The shell asks for the editor (again: out of the editor and back, or it missed our "ready", sent before it was listening).
-  if (m.type == "erga-edit") { asked = true; tellReady(); return; }
-  if (m.type == "init") return start(m);
-  if (m.type == "stop") return stop(m.id);
-  if (m.type == "reload") { goAgain?.(); return; }
-  if (!page || !relay) return;
+  const m = e.data as ToFrame;
+  if (m.type == "erga-mode") return setMode(m);
+  if (!page) return;
   switch (m.type) {
-    case "external": {
-      if (resyncing) return;
-      // A change that doesn't fit this text: the two sides are out of step. The room's text, whole, puts it right (attach).
-      let mine: ChangeSet | null = null;
-      try {
-        mine = relay.remote(ChangeSet.fromJSON(m.changes));
-      } catch {
-        /* out of step */
-      }
-      if (!mine || mine.length != page.state.doc.length) {
-        console.warn(
-          `page editor: a change for a text of ${m.length} characters doesn't fit this one (${page.state.doc.length}); resyncing`
-        );
-        resyncing = true;
-        post({ type: "resync" });
-        return;
-      }
-      page.applyExternal(mine, m.author);
-      if (relay.idle && page.state.doc.length != m.length) post({ type: "resync" });
-      if (page.stale) post({ type: "stale" });
-      return;
-    }
-    case "ack":
-      relay.accepted();
-      sendSelection();
-      return;
-    case "reject":
-      relay.refused();
-      return;
     case "paused":
       page.setPaused(m.on);
       queueSnapshot();
       return;
     // (The page loads again, made from the text: reload.)
     case "render": page.render(); return;
-    case "zoom": setZoom(m.level); return;
     case "pageZoom": {
       const win = window as Window & { ergaZoom?: unknown };
       if (typeof win.ergaZoom == "function" && Number.isFinite(m.by)) {
@@ -162,19 +118,6 @@ window.addEventListener("message", (e: MessageEvent) => {
       return;
     case "reveal":
       page.reveal(m.pos);
-      return;
-    case "peers":
-      page.setPeers(m.peers);
-      return;
-    case "detach":
-      detach(m.id);
-      return;
-    case "attach":
-      resyncing = false;
-      relay.reset(m.version);
-      detached = false;
-      page.setState(stateFrom(m.state));
-      page.hold(false);
       return;
     case "style": {
       const why = m.op == "toggle" ? page.toggleStyle(m.style) : m.op == "clear" ? page.clearStyles() : page.setLink(m.edit);
@@ -201,74 +144,165 @@ window.addEventListener("message", (e: MessageEvent) => {
   }
 });
 
-const stateFrom = (json: unknown) => EditorState.fromJSON(json, { extensions: docExtensions }, { history: historyField });
-
-function start(m: Extract<ToFrame, { type: "init" }>) {
-  performance.mark("erga:init");
-  if (page) return;
+/** The viewer says edit or view. Edit again: a new key (for the next socket), or another zoom. */
+function setMode(m: EditMode) {
+  if (m.mode == "view") {
+    mode = null;
+    stop();
+    return;
+  }
+  mode = m;
   if (m.timescale) window.__ergaTimescale = m.timescale;
   if (typeof m.zoom == "number") setZoom(m.zoom);
-  // Where the page was scrolled to before a reload for a new release: there once it renders.
-  // (Its images may still be loading, so the page may not be that long yet: tried again for a moment, until it gets
-  // there or someone else scrolls it.)
-  if (typeof m.scroll == "number" && Number.isFinite(m.scroll) && m.scroll > 0 && Math.abs(scrollY - m.scroll) >= 2) {
-    const y = restoreScroll = m.scroll, until = Date.now() + 3000;
-    let last: number | null = null;
-    const again = () => {
-      if (Date.now() > until || !page) return;
-      if (restoreScroll != null) { setTimeout(again, 100); return; }
-      if (Math.abs(scrollY - y) < 2 || (last != null && Math.abs(scrollY - last) >= 2)) return;
-      scrollTo(0, y);
-      last = scrollY;
-      setTimeout(again, 100);
+  if (!collab) void start();
+}
+
+// The word that loaded this script (the page's first script kept it).
+const first = window.__ergaReader?.mode as EditMode | undefined;
+if (first?.type == "erga-mode") queueMicrotask(() => setMode(first));
+
+const stateFrom = (json: unknown) => EditorState.fromJSON(json, { extensions: docExtensions }, { history: historyField });
+
+/** What the editor keeps of itself in this tab, for the page that loads in its place (a reload: its own, or the viewer's). */
+interface Carry {
+  path: string;
+  state: unknown;
+  view: { pos: number; top: number } | null;
+  held?: HeldInput[];
+  focus?: boolean;
+  drops?: { id: number; at: number; point: { x: number; y: number } }[];
+  /** Everything its replica held of the room (Collab.held), merged in case an edit hadn't reached it. */
+  room?: { epoch: string; update: string } | null;
+}
+const CARRY = `erga:carry:${location.pathname}`;
+const carried = (): Carry | null => {
+  try {
+    const c = JSON.parse(sessionStorage.getItem(CARRY) ?? "null") as Carry | null;
+    sessionStorage.removeItem(CARRY);
+    return c && c.path == mode?.path ? c : null;
+  } catch { return null; }
+};
+// The page loaded again with the focus (its editor kept that: Carry.focus): the keys typed before its editor is up
+// (it joins the room first) are held here, and the editor applies them first, in order.
+const early: HeldInput[] = [];
+let holding: (() => void) | null = null;
+try {
+  if ((JSON.parse(sessionStorage.getItem(CARRY) ?? "null") as Carry | null)?.focus) {
+    const key = (e: KeyboardEvent) => {
+      if (e.isComposing || e.metaKey || e.ctrlKey || e.key == "Escape") return;
+      e.preventDefault();
+      early.push({ key: e.key, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey });
     };
-    setTimeout(again, 100);
+    addEventListener("keydown", key, true);
+    holding = () => removeEventListener("keydown", key, true);
   }
-  relay = new Relay(m.version, (version, changes) => post({ type: "push", version, changes: changes.toJSON() }));
+} catch {
+  /* no storage */
+}
+
+const carry = (c: Carry) => {
+  try {
+    sessionStorage.setItem(CARRY, JSON.stringify(c));
+  } catch {
+    /* private mode: the page starts afresh */
+  }
+};
+
+/** Someone else's author entry as the marks show it. */
+const markAuthor = (a: Author | null): MarkAuthor | null =>
+  a ? { name: a.kind == "disk" ? "Edited on disk" : a.name, color: a.color } : null;
+
+/** Into the editor: the page's own socket and replica, then the editor on the page, from the room's text. */
+async function start() {
+  performance.mark("erga:init");
+  const m = mode!;
+  // Once the page has loaded (its scripts have built what they build on load).
+  if (document.readyState != "complete") await new Promise((r) => addEventListener("load", r, { once: true }));
+  if (mode != m || collab) return;
+  const room = m.room.replace(/^http/, "ws");
+  const c = (collab = new Collab({
+    // (Only the room: the person's events, the agent's asks among them, are the viewer's to hear.)
+    url: (q) => `${room}?${new URLSearchParams({ key: mode?.key ?? m.key, ...Object.fromEntries(q) })}`,
+    onEvent: () => {},
+    onRemote: (changes, author) => {
+      if (!page) return;
+      page.applyExternal(changes, markAuthor(author));
+      if (page.stale) post({ type: "stale" });
+      queuePeers();
+    },
+    onFiles: () => {},
+    onPresence: () => queuePeers(),
+    onStatus: () => {},
+    onStale: () => location.reload(),
+  }));
+  c.join(m.me, m.path, { tab: m.tab });
+  let text: string;
+  try {
+    text = await c.ready();
+  } catch {
+    if (collab == c) {
+      c.close();
+      collab = null;
+    }
+    return;
+  }
+  if (collab != c) return;
+  const back = carried();
+  if (back?.room) c.merge(back.room);
+  text = c.current();
   // The state this page's editor had (with its undo history), brought to the room's text: before the page loaded again,
-  // or before the editor stopped (out of the editor and back). Else the one the shell sent.
-  let state = stateFrom(m.state), view = m.view ?? null;
-  if (m.carry) {
-    try {
-      let carried = stateFrom(m.carry);
-      const from = carried.doc.toString(), to = state.doc.toString();
-      // The files dropped before the page loaded again, still on their way into the document: they go in here.
-      const carriedDrops = Array.isArray(m.drops)
-        ? (m.drops as { id: unknown; at: unknown; point: { x: unknown; y: unknown } | null }[])
-        : [];
-      for (const d of carriedDrops)
-        if (
-          Number.isInteger(d?.id) &&
-          Number.isInteger(d.at) &&
-          (d.at as number) <= from.length &&
-          Number.isFinite(d.point?.x) &&
-          Number.isFinite(d.point?.y)
-        )
-          drops.set(d.id as number, { at: d.at as number, point: { x: d.point!.x as number, y: d.point!.y as number } });
-      dropSeq = Math.max(dropSeq, ...drops.keys());
-      if (from != to) {
-        const tr = carried.update({ changes: changesBetween(from, to), annotations: Transaction.addToHistory.of(false) });
-        if (view) view = { pos: tr.changes.mapPos(view.pos, 1), top: view.top };
-        for (const d of drops.values()) d.at = tr.changes.mapPos(d.at, 1);
-        carried = tr.state;
-      }
-      state = carried;
-    } catch { /* the shell's, then */ }
+  // or before the editor stopped (out of the editor and back). Else the room's text, afresh.
+  let state = EditorState.create({ doc: text, extensions: docExtensions }),
+    view = back?.view ?? null;
+  const from = back
+    ? (() => {
+        try {
+          return stateFrom(back.state);
+        } catch {
+          return null;
+        }
+      })()
+    : kept;
+  kept = null;
+  if (from) {
+    const was = from.doc.toString();
+    for (const d of back?.drops ?? [])
+      if (
+        Number.isInteger(d?.id) &&
+        Number.isInteger(d.at) &&
+        d.at <= was.length &&
+        Number.isFinite(d.point?.x) &&
+        Number.isFinite(d.point?.y)
+      )
+        drops.set(d.id, { at: d.at, point: { x: d.point.x, y: d.point.y } });
+    dropSeq = Math.max(dropSeq, ...drops.keys());
+    state = from;
+    if (was != text) {
+      const tr = from.update({ changes: changesBetween(was, text), annotations: Transaction.addToHistory.of(false) });
+      if (view) view = { pos: tr.changes.mapPos(view.pos, 1), top: view.top };
+      for (const d of drops.values()) d.at = tr.changes.mapPos(d.at, 1);
+      state = tr.state;
+    }
   }
-  detached = false;
+  let focus = !!back?.focus;
+  holding?.();
+  holding = null;
   page = new PageEditor({
     win: window,
     source: shown,
     state,
     base: HERE,
-    held: m.held,
+    held: [...(back?.held ?? []), ...early.splice(0)],
     paused: m.paused,
     check: m.check,
     onReload: reload,
     onUpdate(u) {
-      if (u.changes && !u.remote && !detached) relay!.local(u.changes);
+      if (u.changes && !u.remote) collab?.push(u.changes);
       if (u.changes) for (const d of drops.values()) d.at = u.changes.mapPos(d.at, 1);
-      if (u.docChanged || u.selectionSet) sendSelection();
+      if (u.docChanged || u.selectionSet) {
+        queueCursor();
+        post({ type: "selection", anchor: page!.state.selection.main.anchor, head: page!.state.selection.main.head });
+      }
       // A presentation's pictures of its steps are out of date once its text changes.
       if (u.docChanged) { window.__ergaReader?.changed?.(); queueBackdrop(); }
       // (The editor takes the page as it's made: once it's this frame's.)
@@ -278,17 +312,21 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
         watchPage();
         watchBackdrop();
         syncBackdrop(true);
+        queuePeers();
         performance.mark("erga:rendered");
-        if (restoreScroll != null) { scrollTo(0, restoreScroll); restoreScroll = null; }
         // Made afresh: the line the reader was on, where it was (the viewer's script had it near there: ?erga-y).
         if (view) { window.__ergaReader?.placed?.(); page.restoreView(view); view = null; }
         // A live page that reacts to input (it defines ergaPause) opens with its keys its own, as after Escape: a click on
         // text starts editing. Not when it loads again, nor paused: the caret stays where it was.
-        if (!m.carry && !page.isPaused && page.canPause) page.leaveText();
+        if (!back && !page.isPaused && page.canPause) page.leaveText();
         // The page had the focus as it loaded again: it has it again, for the keys held meanwhile.
-        if (m.focus) { m.focus = false; page.focus(); page.hold(false); }
+        if (focus) {
+          focus = false;
+          page.focus();
+          page.hold(false);
+        }
       });
-      queueSnapshot(u.rendered);
+    queueSnapshot(u.rendered);
     },
     onKey: (e) => {
       if (!isAppShortcut(e, isMac)) return false;
@@ -299,7 +337,7 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     onProblem: (p) => post({ type: "problem", key: p.key, message: p.message, fix: p.fix }),
     onPointer: (e) => post({ type: "pointer", kind: "move", x: z(e.clientX), y: z(e.clientY) }),
     onDropFiles(files, at, point) {
-      // (Its state has gone to the shell already: what's dropped now would have nowhere to go in.)
+      // (Its state is on its way to the page that comes: what's dropped now would have nowhere to go in.)
       if (reloading) return page?.dropError(point, LOADING_AGAIN);
       const id = ++dropSeq;
       drops.set(id, { at, point });
@@ -308,9 +346,7 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
   });
   window.ergaFrame = {
     page,
-    get relay() {
-      return relay;
-    },
+    collab: c,
     get zoom() {
       return zoom;
     },
@@ -320,69 +356,104 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
   };
 }
 
+// Leaving the page (the tab reloads for a new release, or closes): what the editor holds goes with the tab, for the
+// page that comes in its place.
+addEventListener("pagehide", () => {
+  if (!page || !collab || reloading || !mode) return;
+  carry({ path: mode.path, state: stateJSON(page.state, historyField), view: scrollY > 0 ? page.topText() : null, room: collab.held() });
+});
+
 /**
  * The page made afresh from the text (a change the editor can't patch in, or a page made from another text): once the
- * shell has this editor's edits, its state (undo history and all) goes to the shell, which hands it to the editor in the
- * page as it loads again, scrolled where it was. The page's scripts run again: on purpose.
+ * room has this editor's edits, its state (undo history and all) is kept in this tab for the editor in the page that
+ * loads in its place, scrolled where it was. The page's scripts run again: on purpose.
  */
-let reloading = false, goAgain: (() => void) | null = null;
+let reloading = false;
 function reload(view: { pos: number; top: number } | null) {
-  if (reloading) return;
+  if (reloading || !mode) return;
   reloading = true;
-  const go = () => {
-    if (relay && !relay.idle) { setTimeout(go, 10); return; }
-    // The shell says when (reload: once the room has the edits), or after a while all the same.
-    goAgain = () => {
-      goAgain = null;
-      // The keys typed since go to the shell, which holds the ones after them too: the page that comes applies them all.
-      const held = page?.takeHeld() ?? [];
-      if (held.length) post({ type: "held", held });
-      const y = Math.round(scrollY);
-      // With the page's place in its own address (#3: agents/document/PROMPT.md, rule 14). (A reload: going to the same
-      // address with a hash only goes to the place.)
-      window.history.replaceState(null, "", location.pathname + "?erga-edit" + (y > 0 ? `&erga-y=${y}` : "") + location.hash);
-      location.reload();
-    };
-    setTimeout(() => goAgain?.(), 4000);
-    if (page && relay)
-      post({
-        type: "reloading",
+  const path = mode.path;
+  // (After the change in hand: the render it asked for comes in the middle of it, before its selection and its push.)
+  setTimeout(async () => {
+    // It loads again once the room has its edits (else it would come made from the text before them, and load again).
+    await Promise.race([collab?.flushed(), sleep(3000)]);
+    const held = page?.takeHeld() ?? [];
+    if (page)
+      carry({
+        path,
         state: stateJSON(page.state, historyField),
-        version: relay.version,
         view,
+        held,
         focus: document.hasFocus(),
         drops: [...drops].map(([id, d]) => ({ id, ...d })),
       });
-    else goAgain();
-  };
-  // (After the change in hand: the render it asked for comes in the middle of it, before its selection and its push.)
-  setTimeout(go);
+    const y = Math.round(scrollY);
+    // With the page's place in its own address (#3: agents/document/PROMPT.md, rule 14). (A reload: going to the same
+    // address with a hash only goes to the place.)
+    window.history.replaceState(null, "", location.pathname + "?erga-edit" + (y > 0 ? `&erga-y=${y}` : "") + location.hash);
+    location.reload();
+  });
 }
 
-/** Out of the editor: once the shell has this editor's edits, its state goes to the shell (for the way back in), and the editor stops; the page stays as it is. */
-function stop(id: number) {
-  asked = false;
-  const go = () => {
-    if (!page || !relay) { post({ type: "stopped", id, state: null, version: 0 }); return; }
-    if (!relay.idle) { setTimeout(go, 10); return; }
-    post({ type: "stopped", id, state: stateJSON(page.state, historyField), version: relay.version });
+/** Out of the editor: the editor stops (its state kept for the way back in), and leaves the room; the page stays as it is. */
+function stop() {
+  if (page) {
+    kept = page.state;
     // What the page shows now: this text, if the editor has shown all of it.
     shown = page.upToDate ? sourceDigest(page.state.doc.toString()) : "";
     page.stop();
-    for (const f of unwatch.splice(0)) f();
-    backdropObserver?.disconnect();
-    page = null;
-    relay = null;
-    window.ergaFrame = undefined;
-  };
-  go();
+  }
+  for (const f of unwatch.splice(0)) f();
+  backdropObserver?.disconnect();
+  page = null;
+  collab?.close();
+  collab = null;
+  window.ergaFrame = undefined;
 }
 
-/** This frame's selection, for the shell to share as your caret: only when it's in the shell's terms (no edits in flight). */
-function sendSelection() {
-  if (!page || !relay?.idle || detached) return;
-  const sel = page.state.selection.main;
-  post({ type: "selection", version: relay.version, anchor: sel.anchor, head: sel.head });
+// This tab's caret, for everyone else, at most once a frame. It stays where you left it when you switch away, as a
+// caret on paper would (but with another of your tabs in use since, that one's caret is shown instead).
+let cursorQueued = false;
+function queueCursor() {
+  if (cursorQueued) return;
+  cursorQueued = true;
+  requestAnimationFrame(() => {
+    cursorQueued = false;
+    if (!page || !collab) return;
+    const sel = page.state.selection.main;
+    collab.setCursor(sel.anchor, sel.head);
+  });
+}
+
+// Everyone else's caret on the page, with their name; an agent's, dashed, while it works. A person with several tabs
+// open is shown by the one they used last, and your own other tabs not at all (Collab.shown).
+let peersQueued = false;
+function queuePeers() {
+  if (peersQueued) return;
+  peersQueued = true;
+  requestAnimationFrame(() => {
+    peersQueued = false;
+    if (!page || !collab) return;
+    const peers: Peer[] = [];
+    for (const p of collab.shown()) {
+      // An agent's caret shows while it works, so its edits read like a person's typing; once it's idle, a caret left
+      // where it last edited would only linger and distract.
+      const agent = p.user.kind == "agent";
+      if (agent && !p.busy) continue;
+      const at = collab.positions(p);
+      if (!at) continue;
+      peers.push({
+        key: p.client,
+        name: p.user.name,
+        color: p.user.color,
+        anchor: at.anchor,
+        head: at.head,
+        agent,
+        activity: agent ? (p.activity ?? null) : null,
+      });
+    }
+    page.setPeers(peers);
+  });
 }
 
 /** What the shell's controls show, at most once a frame. */
@@ -414,14 +485,6 @@ function queueSnapshot(rendered = false) {
   });
 }
 
-/** Leaving for the source view: once our edits are in, the state goes to the shell (undo history and all). */
-function detach(id: number) {
-  if (!page || !relay) return;
-  if (!relay.idle) { setTimeout(() => detach(id), 10); return; }
-  detached = true;
-  page.hold(true);
-  post({ type: "detached", id, state: stateJSON(page.state, historyField), version: relay.version });
-}
 
 /** Tells the shell what happens in the page that its controls follow: pointers, keys, focus, the selection moving. */
 function watchPage() {
@@ -430,11 +493,49 @@ function watchPage() {
     target.addEventListener(type, f, opts);
     unwatch.push(() => target.removeEventListener(type, f, opts));
   };
-  unwatch.push(listenAsEditor(d, "pointerdown", (e) => { const p = e as PointerEvent; post({ type: "pointer", kind: "down", x: z(p.clientX), y: z(p.clientY) }); }, true));
-  unwatch.push(listenAsEditor(d, "mouseup", (e) => { const p = e as MouseEvent; post({ type: "pointer", kind: "up", x: z(p.clientX), y: z(p.clientY) }); }, true));
+  unwatch.push(
+    listenAsEditor(
+      d,
+      "pointerdown",
+      (e) => {
+        const p = e as PointerEvent;
+        collab?.activate();
+        post({ type: "pointer", kind: "down", x: z(p.clientX), y: z(p.clientY) });
+      },
+      true
+    )
+  );
+  unwatch.push(
+    listenAsEditor(
+      d,
+      "mouseup",
+      (e) => {
+        const p = e as MouseEvent;
+        post({ type: "pointer", kind: "up", x: z(p.clientX), y: z(p.clientY) });
+      },
+      true
+    )
+  );
   unwatch.push(catchZoomGestures(win, (by) => post({ type: "zoom", zoom: by })));
-  on(d, "keydown", () => post({ type: "activity", kind: "key" }), true);
-  on(win, "focus", () => post({ type: "activity", kind: "focus" }), true);
+  // (Focusing or using this tab's page makes it the one its person is shown by: Collab.activate.)
+  on(
+    d,
+    "keydown",
+    () => {
+      collab?.activate();
+      post({ type: "activity", kind: "key" });
+    },
+    true
+  );
+  on(
+    win,
+    "focus",
+    () => {
+      collab?.activate();
+      post({ type: "activity", kind: "focus" });
+    },
+    true
+  );
   on(d, "scroll", () => queueSnapshot(), { passive: true });
   // The format bar follows selected text that moves another way: a scroll in an element, a pan of the page's own (moves.ts).
   watchMoves(d, win, () => { if (page && d.getSelection()?.isCollapsed === false) queueSnapshot(); });

@@ -10,9 +10,8 @@
 //
 // This file loads the document and wires the shell's parts (client/shell/), which share one object (shell.ts).
 
-import type { SocketEvent } from "./collab";
-import { Collab } from "./collab";
-import { EditorState } from "@codemirror/state";
+import { Collab, type EarlySocket, type SocketEvent } from "../../libs/text/ui/collab";
+import { EditorSelection, EditorState } from "@codemirror/state";
 import { RemotePage } from "./remote";
 import type { Backdrop, Keys } from "../../libs/text/ui/bridge";
 import { colorFor, files, type Author } from "../../document/content";
@@ -39,13 +38,19 @@ import { addFiles } from "./uploads";
 import { sleep } from "../../shared/time";
 
 declare global {
-  interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean } }
+  interface Window {
+    ergaPage?: unknown;
+    ergaShell?: { ready(): void; loadedEditing?: boolean };
+    /** The document's socket and start, as the page opened them while it parsed (server/pages/viewer.ts, ergaConnect). */
+    ergaSocket?: EarlySocket;
+    ergaStart?: Promise<ArrayBuffer | null>;
+  }
 }
 /** What the editor keeps of itself across a reload for a new release. */
 interface EditorKept {
   /** The page it was on: the rest applies only to the same one. */
   path: string;
-  selection: { anchor: number; head: number };
+  /** Where the page was scrolled to (the page opens there again: server/pages/viewer.ts, ?erga-y). */
   scroll: number;
   mode: "text" | "html";
   pages: boolean;
@@ -53,7 +58,7 @@ interface EditorKept {
   help: boolean;
   /** Files attached to the agent's next message. */
   files: Attachment[];
-  /** Everything the tab held of the room (Collab.held), merged after the reload in case an edit hadn't reached it. */
+  /** Everything the tab held of the room (Collab.held: the source view's edits), merged after the reload in case one hadn't reached it. */
   held?: { epoch: string; update: string };
 }
 /**
@@ -129,9 +134,24 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   let started = false;
   const pending: SocketEvent[] = [];
   const dropped = new Set<string>();
+  const early = window.ergaSocket, start = window.ergaStart;
+  window.ergaSocket = window.ergaStart = undefined;
   const collab: Collab = new Collab({
+    url: (q) =>
+      `${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${BASE}/api/room?${new URLSearchParams({ events: "1", ...(asked ? { user: asked } : {}), ...Object.fromEntries(q) })}`,
+    start:
+      start ??
+      fetch(`${BASE}/api/start${as}`).then(
+        (r) => (r.ok ? r.arrayBuffer() : null),
+        () => null
+      ),
+    early,
     onEvent: (msg) => { if (started) shell.room.socketEvent(msg); else pending.push(msg); },
-    onRemote: (changes, author) => shell.room.applyRemote(changes, author),
+    onRemote: (changes, author) => {
+      shell.room.applyRemote(changes);
+      // This person's own edit, made on the page (its editor has a replica of its own): the controls fade, as for typing.
+      if (started && author?.kind == "person" && author.user == shell.me.user) shell.chrome.hideChrome();
+    },
     // Another page of the document is no part of this one (a page frames another only rarely): its edits leave this one be.
     // Nor do the files this tab adds for a drop or paste (`dropped`): the page doesn't use them until its editor puts them in.
     onFiles: (paths) => {
@@ -150,7 +170,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       w.innerHTML = `<div><p>This page is out of date: the editor's host restarted without its saved history, so edits from this tab can't be merged safely.</p><p><button type="button" id="stale-reload">Reload</button></p></div>`;
       $("stale-reload").addEventListener("click", () => location.reload());
     },
-  }, asked ? { user: asked } : {});
+  });
   try {
     const first = await Promise.race([collab.hello, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the room didn't answer")), 8000))]);
     shell.info = first.info;
@@ -234,8 +254,9 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   /** The host's endpoints, as this person. */
   const api = (path: string) => `${BASE}${path}${as}`;
 
-  // Into the room as who this tab is, and the document's text (on its way already, or here).
-  collab.join(me, info.path);
+  // Into the room as who this tab is, and the document's text (on its way already, or here). Its presence is the page
+  // editor's (frame.ts: its own replica), or the source view's while that's open (views.ts).
+  collab.join(me, info.path, null);
   try {
     await collab.ready();
     performance.mark("erga:synced");
@@ -247,9 +268,18 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   }
   document.title = info.docName?.title ?? info.name;
 
-  /** The caret in the text, and the text: the source view's while it has them, else the page's selection in the room's text. */
-  const currentSelection = () => (shell.sourceView ? shell.sourceView.state.selection : shell.page.selection);
-  const currentState = () => shell.sourceView?.state ?? EditorState.create({ doc: collab.current(), selection: shell.page.selection });
+  /**
+   * The caret in the text, and the text: the source view's while it has them, else the page's: its editor's presence in
+   * the room says where it is (it carries this tab's mark, `tab`).
+   */
+  const tab = Math.random().toString(36).slice(2, 10);
+  const pageSelection = () => {
+    const mine = collab.others().find((p) => (p as { tab?: unknown }).tab == tab);
+    const at = mine && collab.positions(mine);
+    return at ? EditorSelection.single(at.anchor, at.head ?? at.anchor) : EditorSelection.single(0);
+  };
+  const currentSelection = () => (shell.sourceView ? shell.sourceView.state.selection : pageSelection());
+  const currentState = () => shell.sourceView?.state ?? EditorState.create({ doc: collab.current(), selection: currentSelection() });
   Object.assign(shell, {
     collab,
     me,
@@ -284,15 +314,13 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     frame,
     origin: new URL(pagesUrl, location.href).origin,
     files: pagesUrl,
-    room: { text: () => collab.current(), length: () => collab.currentLength() },
-    ...(back && back.path == shell.pagePath ? { selection: back.selection, scroll: back.scroll } : {}),
-    onLocal(changes) {
-      collab.push(changes);
-      shell.chrome.hideChrome();
-      shell.people.queueCursor();
-      shell.people.queuePeers();
+    edit: async () => {
+      const key = await editKey();
+      return key ? { room: `${location.origin}${BASE}/api/room`, key, me, path: shell.pagePath, tab } : null;
     },
-    onSelection() { shell.people.queueCursor(); shell.people.queuePeers(); shell.fmt.queueFmt(); },
+    onSelection() {
+      shell.fmt.queueFmt();
+    },
     onUpdate(rendered) {
       syncZoom();
       if (rendered) {
@@ -336,9 +364,22 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     onStale: () => shell.room.needRefresh(),
     onOpen: (path) => openPage(path),
     onFiles: (files) => addFiles(shell.docId, api, files, (path) => dropped.add(path)),
-    flushed: () => collab.flushed(),
     onZoom: (by) => zoomPage(by),
   });
+  // The page's editor opens its socket with an edit key (server/documents/edit-key.ts), which this tab asks for and
+  // gives it, and again before it ends: a key is checked only as a socket opens (the editor's next, if it reconnects).
+  let key: { key: string; expires: number } | null = null;
+  async function editKey(): Promise<string | null> {
+    if (key && key.expires - Date.now() > 5 * 60_000) return key.key;
+    const r = await fetch(api("/api/key"), { method: "POST" }).catch(() => null);
+    const got = r?.ok ? ((await r.json().catch(() => null)) as { key?: unknown; expires?: unknown } | null) : null;
+    if (typeof got?.key != "string" || typeof got.expires != "number") return key?.key ?? null;
+    key = { key: got.key, expires: got.expires };
+    return key.key;
+  }
+  setInterval(() => {
+    if (key && key.expires - Date.now() <= 5 * 60_000) page.renew();
+  }, 60_000);
   if (editing()) page.start();
   performance.mark("erga:frame-asked");
   // A file dropped on the shell around the page (not the agent's panel, which takes it) never opens in its place.
@@ -522,11 +563,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     );
     l.keep(
       "editor",
-      (): EditorKept => {
-        const sel = currentSelection().main;
-      return {
+      (): EditorKept => ({
         path: shell.pagePath,
-        selection: { anchor: sel.anchor, head: sel.head },
         scroll: shell.mode == "text" ? page.scrollY : 0,
         mode: shell.mode,
         pages: !$("pages").hidden,
@@ -534,8 +572,9 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
         help: !$("help").hidden,
         files: agentPanel()?.files.files ?? [],
         held: collab.held() ?? undefined,
-      };
-    }, { everyReload: true });
+      }),
+      { everyReload: true }
+    );
     l.keep("shell", (): ShellKept | null => {
       if (!editing() || shell.mode != "text") return null;
       const root = document.documentElement;

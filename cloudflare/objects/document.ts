@@ -73,7 +73,7 @@ export class DocumentObject extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    // A tab's "are you there?" is answered without waking the object (client/shell/collab.ts sends it while idle).
+    // A tab's "are you there?" is answered without waking the object (libs/text/ui/collab.ts sends it while idle).
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
   }
 

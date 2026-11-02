@@ -525,7 +525,11 @@ export default function reader(C: ReaderConfig): void {
     const editor = C.editor;
     if (type == "erga-step") step(e.data);
     else if (type == "erga-step-image") stepImage(e.data);
-    else if (type == "erga-edit") load();
+    // The viewer's word on editing (libs/text/ui/bridge.ts, EditMode): kept for the editor, which loads on the first edit.
+    else if (type == "erga-mode") {
+      window.__ergaReader!.mode = e.data;
+      if (e.data.mode == "edit") load();
+    }
     else if ((type == "erga-capture" && typeof e.data.text == "string") || type == "erga-live") {
       if (typeof e.data.id == "number") askTools(e.data as ToolAsk);
     }
