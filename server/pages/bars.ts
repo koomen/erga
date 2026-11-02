@@ -104,10 +104,11 @@ export function pageBars(
 }
 
 /**
- * The app's pages follow the system's light or dark mode (client/style.css): the bars take that tone, as they take a
- * document's (client/inline/viewer-band-head.ts), before they paint.
+ * The app's pages follow the system's light or dark mode (client/style.css): the bars and the agent take that tone, as
+ * they take a document's (client/inline/viewer-band-head.ts), before they paint, and again when the mode changes. Light,
+ * the app's pages are white (--bg): their glass is the editor's on a white document (page-white).
  */
-const PAGE_TONE = `document.documentElement.classList.add(matchMedia("(prefers-color-scheme: dark)").matches ? "page-dark" : "page-light");`;
+const PAGE_TONE = `(()=>{const m=matchMedia("(prefers-color-scheme: dark)"),tone=()=>{const c=document.documentElement.classList;c.toggle("page-dark",m.matches);c.toggle("page-light",!m.matches);c.toggle("page-white",!m.matches)};tone();m.addEventListener("change",tone)})();`;
 
 /** The plain page's HTML: the app's look and bars (erga › its title; who you are, as the Worker adds it), a title and a few lines. */
 const plainPage = (title: string, body: string) =>
