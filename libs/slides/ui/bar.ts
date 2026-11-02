@@ -4,14 +4,21 @@
 // one of erga/slides' edits (libs/slides/api/slides.ts) on the editor's text, and the editor makes it as the person's
 // own edit (PageEditor.make): one undo step, sent to the room as any typing is.
 
-import { addSlide, deleteSlide, LAYOUTS, moveSlide, setLayout, type Layout } from "../api/slides";
+import { addSlide, deleteSlide, LAYOUTS, moveSlide, setLayout, slidesOf, type Layout } from "../api/slides";
 import type { EditResult } from "../../text/api/edits";
 import { STYLE } from "../../text/ui/controls";
 import type { Steps } from "./slides";
 
+type Change = { from: number; to: number; insert: string };
+/** The text after the changes (sorted, apart: an edit's). */
+const applied = (src: string, changes: Change[]) => changes.reduceRight((s, c) => s.slice(0, c.from) + c.insert + s.slice(c.to), src);
+
 /** What the bar needs of the editor (libs/text/ui/frame.ts: window.ergaFrame, while editing). */
 interface Frame {
-  page: { state: { doc: { toString(): string } }; make(changes: { from: number; to: number; insert: string }[], userEvent?: string): void };
+  page: {
+    state: { doc: { toString(): string } };
+    make(changes: Change[], userEvent?: string, caret?: { at: number; select: boolean }): void;
+  };
   controls: { explain(message: string): void } | null;
 }
 const frame = () => (window as Window & { ergaFrame?: Frame }).ergaFrame ?? null;
@@ -51,26 +58,35 @@ export function mountBar(steps: Steps) {
   doc.addEventListener("selectionchange", place);
   addEventListener("erga-editing", place);
 
-  /** Runs an edit on the editor's text; the slide to show after it, if not this one. */
-  function run(edit: (src: string, n: number) => EditResult, then?: (n: number) => number) {
+  /**
+   * Runs an edit on the editor's text; the slide to show after it (from 0), if not this one. The caret goes to the end
+   * of that slide's first text, so typing goes on there; a new slide's text is selected instead, to type over.
+   */
+  function run(edit: (src: string, n: number) => EditResult, then?: (n: number) => number, select = false) {
     const f = frame();
     if (!f) return;
     const n = steps.current() + 1;
-    const r = edit(f.page.state.doc.toString(), n);
+    const src = f.page.state.doc.toString();
+    const r = edit(src, n);
     if ("refused" in r) return f.controls?.explain(r.refused);
-    if (then) steps.showNext(then(n));
-    f.page.make(r.changes, "input.slide");
+    const show = then ? then(n) : n - 1;
+    if (then) steps.showNext(show);
+    const slides = slidesOf(applied(src, r.changes));
+    const at = slides[Math.max(0, Math.min(slides.length - 1, show))]?.from ?? 0;
+    f.page.make(r.changes, "input.slide", { at, select });
   }
   const act = (name: string) => {
     if (name == "add")
       run(
         (src, n) => addSlide(src, n, "content"),
-        (n) => n
+        (n) => n,
+        true
       );
     if (name == "title")
       run(
         (src, n) => addSlide(src, n, "title"),
-        (n) => n
+        (n) => n,
+        true
       );
     if (name == "up")
       run(

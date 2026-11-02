@@ -329,16 +329,18 @@ export abstract class EditorRender extends EditorMarks {
   /**
    * Changes to the source from controls on the page (its own edits, a library's bar: libs/slides/ui/bar.ts), made as
    * the person's own: one undo step, and the caret where the change is, so typing and undo go on from there; new text
-   * selected, to type over it.
+   * selected, to type over it. `caret`: where it goes instead, in the text block at or after `at` (in the new text),
+   * and whether that block's text is selected.
    */
-  make(changes: { from: number; to: number; insert: string }[], userEvent = "input.page"): void {
+  make(changes: { from: number; to: number; insert: string }[], userEvent = "input.page", caret?: { at: number; select: boolean }): void {
     if (!changes.length) return;
     const set = this.state.changes(changes);
     const inserted = changes.find((c) => c.insert.trim());
-    const at = set.mapPos((inserted ?? changes[0]).from, -1);
+    const at = caret?.at ?? set.mapPos((inserted ?? changes[0]).from, -1);
+    const select = caret?.select ?? !!inserted;
     this.dispatch({ changes: set, userEvent });
     const u = this.units.find((x) => x.to > at && x.runs.some((r) => r.editable)) ?? this.units.at(-1);
-    if (u) this.dispatch({ selection: inserted ? { anchor: M.textStart(u), head: M.textEnd(u) } : { anchor: M.textEnd(u) } });
+    if (u) this.dispatch({ selection: select ? { anchor: M.textStart(u), head: M.textEnd(u) } : { anchor: M.textEnd(u) } });
     // (The page's script draws its controls on the new elements: agents/document/PROMPT.md, "A page's own edits".)
     if (this.stale || this.unshown) this.render();
     this.focus();
