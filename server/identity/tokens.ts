@@ -363,13 +363,19 @@ export class Tokens {
   /**
    * Approves a request as `who`: mints their token, as the request asks
    * (check: ScopeError if they can't have it), for the agent to collect.
+   * `documentsOnly` gives a request for admin scope the documents scope instead: the person's choice on the card.
    * For an OAuth request, also its authorization code (good for CODE_MINUTES), to send its person back with.
    * Null if there's no such request waiting.
    */
-  async approve(userCode: string, who: Who): Promise<{ info: AgentToken; oauth: (OAuthBack & { code: string }) | null } | null> {
+  async approve(
+    userCode: string,
+    who: Who,
+    documentsOnly = false
+  ): Promise<{ info: AgentToken; oauth: (OAuthBack & { code: string }) | null } | null> {
     const waiting = await this.pending(userCode);
     if (!waiting) return null;
-    const { info } = await this.mint(who, waiting.label, waiting.grant);
+    const grant = documentsOnly && waiting.grant.scope == "admin" ? { ...waiting.grant, scope: "documents" as const } : waiting.grant;
+    const { info } = await this.mint(who, waiting.label, grant);
     if (!waiting.oauth) {
       await this.sql.run("UPDATE token_requests SET login = ?2, token_id = ?3 WHERE user_code = ?1 AND login IS NULL", normalCode(userCode), info.login, info.id);
       return { info, oauth: null };

@@ -56,7 +56,8 @@ Any MCP app with MCP's standard sign-in (OAuth, with dynamic client
 registration) works the same way.
 
 The sign-in gives your person's own power: an admin's app gets the \`admin\`
-scope (the admin tools below too, while they're an admin), anyone else's the
+scope (the admin tools below too, while they're an admin), unless the admin
+picks "Documents only" when they approve; anyone else's app gets the
 \`documents\` scope (everything they can do with documents, but no admin
 power). It works until your person revokes it in
 Settings (${origin}/docs#settings). Read this guide without a token (\`GET ${origin}/llms.txt\`);
@@ -160,7 +161,7 @@ make_document, list_versions, read_version, restore_version and open_page.
 ## Admin
 
 For the server's admins only, with an admin token: ${session ? (admin ? "yours is one, so the admin tools are listed for you and work while your person is an admin." : locked ? `${session.login} is an admin, but this token's scope is ${session.agent.scope}, so the admin tools aren't listed for it and are refused.` : `${session.login} isn't one, so the admin tools aren't listed for your token and are refused.`) : "they work only with an admin token."}
-An admin's MCP sign-in gives one. Your person can also make one with Share with
+An admin's MCP sign-in gives one, if they keep Admin power when they approve. Your person can also make one with Share with
 agent on any admin page (it lasts 12 hours), or in Settings (${origin}/docs#settings, scope: Admin). It
 works only while they're an admin. With it you do what
 they do on the admin pages (${origin}/admin) and the Ops page, and each change
