@@ -2,7 +2,7 @@
 
 import type { DocName } from "../../document/api";
 import { files } from "../../document/content";
-import { pageUrl, slugify } from "../../document/pages";
+import { pageUrl, slugify, titleOf } from "../../document/pages";
 import { live } from "../live/client";
 import { runTool } from "../common/tools";
 import type { mountTree, TreeHandle } from "../pages/pages-tree";
@@ -171,14 +171,10 @@ export function mountNaming(shell: Shell) {
   titleBtn.addEventListener("pointerenter", ready);
   titleBtn.addEventListener("focus", ready);
   titleBtn.addEventListener("pointerdown", ready);
-  /** A page's title from its text, as the room has it: its first <h1>, else its <title>. */
+  /** A page's title from its text, as the room has it, by the document's title rule (titleOf). */
   function pageTitle(path: string): string | null {
     const text = files(shell.collab.doc).get(path)?.toString();
-    if (!text) return null;
-    const m = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(text) ?? /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(text);
-    if (!m) return null;
-    const t = new DOMParser().parseFromString(m[1].replace(/<[^>]*>/g, ""), "text/html").body.textContent?.replace(/\s+/g, " ").trim();
-    return t ? t.slice(0, 120) : null;
+    return text ? titleOf(text) : null;
   }
   /** Whether a document links to its styles, scripts or images by relative paths (a move may break those): read from the room. */
   function hasRelativeLinks(path: string): boolean | undefined {
