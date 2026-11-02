@@ -41,7 +41,9 @@ async function open(tab: Tab, server: Server, files: Record<string, string> = {}
   return {
     ed,
     files: async () =>
-      ((await runTool(server.root, "ls", { document: id })).result as { files: { path: string }[] }).files.map((f) => f.path),
+      ((await runTool(server.root, "ls", { document: id })).result as { entries: { path: string; type: string }[] }).entries
+        .filter((e) => e.type != "folder")
+        .map((e) => e.path),
   };
 }
 
