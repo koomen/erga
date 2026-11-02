@@ -63,8 +63,9 @@ test("phone: at rest only the avatar; a tap opens the quick actions and the menu
   await ed.page.mouse.click(gear.x + gear.width / 2, gear.y + gear.height / 2);
   await expect.poll(() => ed.eval<boolean>(`!!document.querySelector("#doc-settings:not([hidden])")`)).toBe(true);
   expect(await look(ed)).toMatchObject({ open: true, menu: false });
-  // A tap on the page closes them all.
-  await ed.page.mouse.click(W / 2, H / 2);
+  // A tap on the page, above the settings' sheet, closes them all.
+  const sheet = (await ed.page.locator("#doc-settings").boundingBox())!;
+  await ed.page.mouse.click(W / 2, sheet.y / 2 + 40);
   await expect
     .poll(async () => {
       const l = await look(ed);
