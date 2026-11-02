@@ -54,6 +54,7 @@ import {
   devSignIn,
   finishGoogleSignIn,
   finishSignIn,
+  isGithubConnectCallback,
   isOAuthPath,
   mayDeploy,
   oauthRoutes,
@@ -139,9 +140,8 @@ const route = (url: URL, outside: Outside): Route =>
     if (path == "/auth/github") return yield* startSignIn;
     if (path == "/auth/google") return yield* startGoogleSignIn;
     if (path == "/auth/google/callback") return yield* finishGoogleSignIn;
-    // GitHub's App callback (Connect GitHub coming back: installation_id) is the control Worker's; local development serves it here (`outside`).
-    if (path == "/auth/github/callback" && (url.searchParams.has("installation_id") || url.searchParams.has("setup_action")))
-      return (yield* elsewhere) ?? (yield* finishSignIn);
+    // GitHub's App callback (Connect GitHub coming back) is the control Worker's; local development serves it here (`outside`).
+    if (isGithubConnectCallback(request, url)) return (yield* elsewhere) ?? (yield* finishSignIn);
     if (path == "/auth/github/callback") return yield* finishSignIn;
     if (path == "/auth/logout") return yield* signOut;
     if (path == "/auth/test") return yield* testSignIn;

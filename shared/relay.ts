@@ -1,8 +1,8 @@
 // The relay of an install's consent through erga.dev: the state an install's
 // Worker starts a consent with (its origin and a nonce), and what erga.dev's
 // callback relays back to it, sealed under the nonce. erga.dev's control
-// Worker relays (control/routes.ts); an install's sign-in and Connect GitHub
-// read the answer (server/identity/sign-in.ts, control/routes.ts).
+// Worker relays (control/github-routes.ts); an install's sign-in and Connect GitHub
+// read the answer (server/identity/sign-in.ts, control/github-routes.ts).
 
 import { base64url, fromBase64url, randomBytes, sha256 } from "./bytes";
 

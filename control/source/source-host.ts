@@ -116,7 +116,7 @@ export class SourceHost extends DurableObject<HostEnv> implements SourceObject {
   advertise(origin: string) { return this.at(origin).advertise(); }
   branches(origin: string) { return this.at(origin).branches(); }
   files(origin: string, commit: string) { return this.at(origin).files(commit); }
-  // GitHub (control/source/routes.ts, control/routes.ts): the status, a sync now, connected, disconnected, a push there.
+  // GitHub (control/source/routes.ts, control/github-routes.ts): the status, a sync now, connected, disconnected, a push there.
   async githubStatus(origin: string): Promise<GithubStatus> { return this.at(origin).githubStatus(); }
   syncGithub(origin: string, by: string) { return this.at(origin).syncGithub(by); }
   connectGithub(origin: string, link: GithubLink, by: string) { return this.at(origin).connectGithub(link, by); }

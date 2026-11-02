@@ -186,7 +186,14 @@ ${state.repos.map((r) => `<label><input type="checkbox" name="repo" value="${r.i
       const selection = form.get("selection") == "all" ? "all" : "selected";
       const repoIds = form.getAll("repo").map(Number).filter((id) => state.repos.some((r) => r.id == id && r.owner == account.login));
       const have = state.installations.find((i) => i.account.login == account.login);
-      const installation: MockInstallation = have ? Object.assign(have, { selection, repoIds: [...new Set([...have.repoIds, ...repoIds])] }) : { id: ++nextId, account, selection, repoIds };
+      // As GitHub does: for an account that has the App, the page is its settings, and Save stays off until something changes.
+      if (have && have.selection == selection && repoIds.every((id) => have.repoIds.includes(id)))
+        return html(
+          `<h1>${esc(opts.app.slug)} is installed on ${esc(account.login)}</h1><p>Nothing changed: Save stays off, and nothing goes back to the App.</p>`
+        );
+      const installation: MockInstallation = have
+        ? Object.assign(have, { selection, repoIds: [...new Set([...have.repoIds, ...repoIds])] })
+        : { id: ++nextId, account, selection, repoIds };
       if (!have) state.installations.push(installation);
       const code = `code-${user}-${crypto.randomUUID().slice(0, 8)}`;
       codes.set(code, user);

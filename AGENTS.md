@@ -189,6 +189,10 @@ Found a new trap? Write it here, in the same change.
   The editor starts a round trip after the pencil: a test waits for `window.ergaFrame.page` before it clicks. The
   editor's own controls (the style bar, the link bar, pause, its note, the refresh pill) are in a shadow root on the
   page (libs/text/ui/controls.ts): a test reaches them with `ed.controls`, never in the shell's document.
+- GitHub's install page (`/apps/<slug>/installations/new`), for an account that already has the App, shows the
+  installation's settings, and Save stays off until something changes: it never comes back to Erga. So Connect GitHub
+  authorizes first and uses the installation the person has (control/github-routes.ts); the pretend GitHub does the same.
+  A Connect that sends a person to the install page again leaves Erga not connected, with no error.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 

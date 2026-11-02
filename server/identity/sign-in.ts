@@ -209,6 +209,18 @@ export async function memberships(api: string, token: string): Promise<string[]>
   return Array.isArray(list) ? [...new Set(list.filter((m) => m.state == "active" && m.organization?.login).map((m) => m.organization!.login!.toLowerCase()))] : [];
 }
 
+/** The cookie of a Connect GitHub in flight (control/github-routes.ts). */
+export const GITHUB_CONNECT_COOKIE = "erga_github";
+
+/**
+ * Whether /auth/github/callback is Connect GitHub coming back (the control Worker's), not a sign-in: from the install
+ * page (installation_id), or from the authorize page while Connect's cookie is set (control/github-routes.ts tells them apart
+ * by the state, and finishes a sign-in itself).
+ */
+export const isGithubConnectCallback = (request: Request, url: URL) =>
+  url.pathname == "/auth/github/callback" &&
+  (url.searchParams.has("installation_id") || url.searchParams.has("setup_action") || cookies(request).has(GITHUB_CONNECT_COOKIE));
+
 /** /auth/github/callback: GitHub sends the person back with a code to trade for who they are. */
 /** What GitHub's or Google's token exchange answers. */
 type Token = { access_token?: string; error?: string; error_description?: string };

@@ -26,6 +26,7 @@ import { app } from "../server/app.ts";
 import { call, fromWeb, json, NO_STORE, redirect, respond, webRequest } from "../server/http.ts";
 import type { Platform } from "../server/platform.ts";
 import { adminPage, adminResponse } from "../server/admin/index.ts";
+import { isGithubConnectCallback } from "../server/identity/index.ts";
 import { appAnswer, controlRoutes, isOpsPagePath } from "../control/routes";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
 import { CONTROL } from "../deploy/targets";
@@ -61,9 +62,9 @@ const outside = (env: Env, p: Platform, ctx: ExecutionContext) => (url: URL) =>
     const request = yield* webRequest;
     const path = url.pathname;
     if (isDeploysPath(path)) return yield* deploysRoutes(env);
-    // GitHub's App callback (Connect GitHub coming back: installation_id) is the control Worker's; here only in local
-    // development, where this Worker serves the control routes too. A sign-in's callback stays the app's.
-    const githubApp = path == "/auth/github/callback" && (url.searchParams.has("installation_id") || url.searchParams.has("setup_action"));
+    // GitHub's App callback (Connect GitHub coming back) is the control Worker's; here only in local development, where
+    // this Worker serves the control routes too. A sign-in's callback stays the app's.
+    const githubApp = isGithubConnectCallback(request, url);
     const where = githubApp
       ? env.PIPELINE
         ? "here"

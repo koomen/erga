@@ -11,7 +11,7 @@
 //                               deploy_production (main moved to staging), cut_release, github_status, sync_github,
 //                               disconnect_github, update_from_upstream, resolve_conflict_file, finish_waiting_merge,
 //                               drop_waiting_merge, and the reads list_source, read_source, search_source, source_log.
-//                               Connect GitHub is a consent in a popup, on the control Worker (control/routes.ts, /github/connect)
+//                               Connect GitHub is a consent in a popup, on the control Worker (control/github-routes.ts, /github/connect)
 //   /admin/ops               the Ops page (admins): the history of staging and main, and their deploys
 //
 // Checkouts push to erga.dev's endpoint, not staging's: tokens are production's
@@ -36,7 +36,7 @@ import type { UpdateResult, UpstreamView } from "./upstream.ts";
 export interface SourceObject {
   advertise(origin: string): Promise<Uint8Array>;
   branches(origin: string): Promise<{ branches: BranchInfo[]; github: GithubStatus; conflict: MergeConflict | null; tags?: TagInfo[]; release?: string | null; upstream?: UpstreamView }>;
-  /** GitHub: the status; a sync now (`by`: who asked); the repository connected (the consent's end: control/routes.ts); disconnected; a push there (the webhook). */
+  /** GitHub: the status; a sync now (`by`: who asked); the repository connected (the consent's end: control/github-routes.ts); disconnected; a push there (the webhook). */
   githubStatus(origin: string): Promise<GithubStatus>;
   syncGithub(origin: string, by: string): Promise<GithubStatus>;
   connectGithub(origin: string, link: GithubLink, by: string): Promise<GithubStatus>;
