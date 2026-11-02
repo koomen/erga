@@ -176,6 +176,9 @@ export function joinBlocks(src: string, prev: M.Unit, next: M.Unit, pos: number)
     if (!pre) while (at > prev.contentFrom && /\s/.test(src[at - 1])) at--;
   };
   back();
+  // A code block's text is in its <code>: the join goes in it too.
+  const code = prev.tag == "pre" ? /<\/code>$/i.exec(src.slice(prev.contentFrom, at)) : null;
+  if (code) at -= code[0].length;
   const lastBr = /<br\s*\/?>$/i.exec(src.slice(prev.contentFrom, at));
   if (lastBr && !br) {
     at -= lastBr[0].length;

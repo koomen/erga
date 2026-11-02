@@ -57,3 +57,19 @@ test("Delete at the end of a block joins the next one to it", async ({ tab }) =>
   await ed.press("Delete");
   await expect.poll(() => ed.source()).toContain(`<h2 id="head">A headingkeeps its own type.</h2>`);
 });
+
+test("Backspace at the start of a paragraph after a code block joins its text to the code's last line, inside the <code>", async ({
+  tab,
+}) => {
+  const ed = await openEditor(tab, await servers.main(), "empty");
+  await ed.clickEnd("p");
+  await ed.type("```\nlet a = 1;");
+  await ed.press("ArrowDown");
+  await ed.type("After");
+  await expect.poll(() => ed.source()).toContain("<pre><code>let a = 1;</code></pre>\n<p>After</p>");
+  await ed.press("Home");
+  await ed.press("Backspace");
+  await expect.poll(() => ed.source()).toContain("<pre><code>let a = 1;After</code></pre>");
+  await ed.type("!");
+  await expect.poll(() => ed.source()).toContain("<pre><code>let a = 1;!After</code></pre>");
+});
