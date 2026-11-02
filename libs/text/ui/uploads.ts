@@ -1,35 +1,33 @@
-// Files dropped or pasted on the page in the editor (the page's editor sends them: libs/text/ui/input.ts): each
-// goes into the document's files at its top, an image in images/ and any other file in files/, under its own name or,
-// if a file has that name already, the name with -2, -3, ... before its extension. The page's editor then puts them on
-// the page where they were dropped: an image as an image, another file as a link to it.
+// Files dropped or pasted on the page in the editor (input.ts takes them): each goes into the document's files at its
+// top, an image in images/ and any other file in files/, under its own name or, if a file has that name already, the
+// name with -2, -3, ... before its extension. The editor puts them there itself, from the page's origin, with its edit
+// key (PUT /d/<id>/api/files/<path>?key=: server/documents/routes.ts), then on the page where they were dropped: an
+// image as an image, another file as a link to it.
 
-import { encodePath } from "../../document/pages";
-import { sha256Hex } from "../../shared/bytes";
-import { runTool } from "../common/tools";
+import { encodePath } from "../../../document/pages";
+import { sha256Hex } from "../../../shared/bytes";
 
 /** Files over this size go with their sha-256, so they stream to storage (the server asks for it over 25 MB). */
 const HASH_FROM = 20_000_000;
 
 /** The folder a file goes in. */
-export const folderFor = (file: File) => (file.type.startsWith("image/") ? "images" : "files");
+const folderFor = (file: File) => (file.type.startsWith("image/") ? "images" : "files");
 
 /** A file's name as it can be in the document: no folders, no dot at the start. */
 const cleanName = (name: string) => name.replace(/[/\\]/g, "-").replace(/^\.+/, "").trim() || "file";
 
 /**
- * Adds `files` to the document's files (`api`: a path of the document's API to its address); `sending` hears each path
- * before its file goes. Returns the paths they got, in order, up to the first that couldn't be added, and why it couldn't.
+ * Adds `files` to the document's files: `doc` is the document's address (https://erga.dev/d/<id>), `key` the edit key,
+ * `taken` the paths the document has (any case); `sending` hears each path before its file goes. Returns the paths they
+ * got, in order, up to the first that couldn't be added, and why it couldn't.
  */
 export async function addFiles(
-  docId: string,
-  api: (path: string) => string,
+  doc: string,
+  key: string,
   files: File[],
-  sending: (path: string) => void = () => {}
+  taken: Set<string>,
+  sending: (path: string) => void
 ): Promise<{ paths: string[]; error: string | null }> {
-  const listed = await runTool<{ files: { path: string }[] }>("ls", { document: docId }).catch((e: Error) => e);
-  if (listed instanceof Error)
-    return { paths: [], error: `Couldn't add ${files.length == 1 ? files[0].name : "the files"}: ${listed.message}` };
-  const taken = new Set(listed.files.map((f) => f.path.toLowerCase()));
   const paths: string[] = [];
   for (const file of files) {
     const dir = folderFor(file);
@@ -37,7 +35,11 @@ export async function addFiles(
     const headers: Record<string, string> = {};
     if (file.size > HASH_FROM) headers["x-erga-sha256"] = await sha256Hex(await file.arrayBuffer());
     sending(path);
-    const r = await fetch(api(`/api/files/${encodePath(path)}`), { method: "PUT", body: file, headers }).catch(() => null);
+    const r = await fetch(`${doc}/api/files/${encodePath(path)}?key=${encodeURIComponent(key)}`, {
+      method: "PUT",
+      body: file,
+      headers,
+    }).catch(() => null);
     if (!r?.ok) return { paths, error: await why(r, file.name) };
     taken.add(path.toLowerCase());
     paths.push(path);

@@ -6,7 +6,6 @@ import { EditorState, EditorSelection, type SelectionRange, Transaction, type Ch
 import { insertHead, TEXT_ATTR } from "../../../shared/page-html";
 import type { HeldInput, PageEditorConfig, PageUpdate } from "./types";
 import { HEADING, placeholderBr, same, textIn } from "../api/source";
-import type { PausableWindow, RawProblem } from "./problems";
 import type { Mirror } from "./mirror";
 
 export const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -22,6 +21,9 @@ export const pageOwnBox = (el: Element): boolean =>
   !!el.closest(`[${M.NO_EDIT_ATTR}]`) &&
   !!el.closest('[contenteditable]:not([contenteditable="false"])') &&
   el.closest('[contenteditable]:not([contenteditable="false"])') != el.ownerDocument.body;
+
+/** A page that lets the editor pause it (agents/document/PROMPT.md, rule 10). */
+type PausableWindow = Window & { ergaPause?: unknown };
 
 export abstract class EditorCore {
   constructor(readonly config: PageEditorConfig) {
@@ -78,7 +80,6 @@ export abstract class EditorCore {
   /** Escape took the focus off the text (see leaveText): no caret comes back until a unit takes the focus again. */
   protected leftText = false;
   /** Reports a problem with the page as the page's own watcher would (set once it renders). */
-  protected reportRaw: ((raw: RawProblem) => void) | null = null;
   /** Why each locked unit (see `verify`) can't be edited, for when someone clicks it. */
   protected lockReasons = new WeakMap<Element, { message: string; fix?: string }>();
   /** Keys and input held while the editor couldn't take them, oldest first (see release). */
@@ -171,7 +172,8 @@ export abstract class EditorCore {
     try {
       (win.ergaPause as (paused: boolean) => void)(this.paused);
     } catch (e) {
-      this.reportRaw?.({
+      // (A problem with the page, for the viewer to show: client/inline/page-problems.ts.)
+      (this.win as Window & { __ergaReport?: (p: unknown) => void }).__ergaReport?.({
         kind: "script",
         message: `window.ergaPause(${this.paused}) threw: ${e instanceof Error ? e.message : String(e)}`,
         file: "",

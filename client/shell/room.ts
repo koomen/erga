@@ -47,50 +47,8 @@ export function mountRoom(shell: Shell) {
     shell.people.queuePeers();
   }
 
-  // Changes the editor can't make in place (another file in the folder: a
-  // stylesheet, a script; or a script in the page itself) need the page
-  // rendered again. While the agent is working that waits for the end of its
-  // turn, so a half-built script never runs; a pill says it's pending and
-  // offers to refresh now. Otherwise it happens straight away. Either way the
-  // new page renders out of sight and takes the old one's place scrolled to
-  // the same text. Everything else shows as it's made.
-  let reloadTimer = 0;
-  // Whether any agent in the room (yours or anyone's) is mid-turn: a
-  // structural re-render waits for it, so half-built changes never render.
-  let agentIsBusy = false;
+  /** The problems this page view has shown (client/shell/problems.ts): each once. */
   const shownProblems = new Set<string>();
-  let refreshPending = false;
-  const refreshPill = $("refresh-pill");
-  function refreshPage() {
-    refreshPending = false;
-    refreshPill.hidden = true;
-    clearTimeout(reloadTimer);
-    reloadTimer = window.setTimeout(() => {
-      if (shell.mode != "text") return; // the page renders afresh on the way back
-      shell.page.render();
-    }, 120);
-  }
-  function needRefresh() {
-    if (!agentIsBusy) { refreshPage(); return; }
-    refreshPending = true;
-    renderRefreshPill();
-  }
-  function renderRefreshPill() {
-    refreshPill.hidden = !refreshPending;
-    if (!refreshPending) return;
-    const who = shell.people.busyAgents();
-    const names = who.length ? who.join(" and ") : "the agent";
-    refreshPill.querySelector("span")!.innerHTML =
-      `Page changes will show when ${esc(names)} ${who.length > 1 ? "finish" : "finishes"} · <b>Refresh now</b>`;
-    refreshPill.title = `${names} changed more than text; the page re-renders when ${who.length > 1 ? "they finish" : "it finishes"}.`;
-  }
-  function setAgentBusy(busy: boolean) {
-    if (busy == agentIsBusy) { renderRefreshPill(); return; }
-    agentIsBusy = busy;
-    if (!busy && refreshPending) refreshPage();
-    else renderRefreshPill();
-  }
-  refreshPill.addEventListener("click", refreshPage);
 
   // Your agent's events and its requests to look at the page come to your tabs only, on the document's socket (as
   // text, beside the room's messages: collab.ts). Events sent while it was down are gone: each time it's back (or the
@@ -151,8 +109,13 @@ export function mountRoom(shell: Shell) {
     shell.goTo(shell.addressOf(t.entries.some((e) => e.path == at) ? at : null), true);
   }
   return {
-    connectionChanged, applyRemote, needRefresh, setAgentBusy, socketEvent, shownProblems, get connected() { return connected; },
-    dropRefresh() { refreshPending = false; renderRefreshPill(); },
+    connectionChanged,
+    applyRemote,
+    socketEvent,
+    shownProblems,
+    get connected() {
+      return connected;
+    },
   };
 }
 

@@ -10,6 +10,8 @@ import type { ToolAsk } from "../common/reader-api";
 import { copyOf } from "../../libs/text/ui/clipboard-read";
 import { linkTarget, placeOf } from "../common/link-target";
 import { topRoom } from "../common/top-room";
+import { isAppShortcut } from "../common/app-keys";
+import { catchZoomGestures } from "../common/zoom";
 
 /** The page's canvas, as it goes to the viewer (client/inline/viewer-band.ts draws it). */
 type Canvas = {
@@ -58,13 +60,41 @@ export default function reader(C: ReaderConfig): void {
   function editing() {
     return root.hasAttribute("data-erga-editing");
   }
-  // ⌘K (Ctrl+K off a Mac) here opens the viewer's quick search (client/common/quick-search.ts); the editor's bridge passes it on while editing.
-  addEventListener("keydown", (e) => {
-    const mod = /Mac|iPhone|iPad/.test(navigator.platform) ? e.metaKey : e.ctrlKey;
-    if (!mod || e.shiftKey || e.altKey || e.key.toLowerCase() != "k" || editing()) return;
-    e.preventDefault();
-    tell({ type: "erga-quick-search" });
-  });
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+  // The viewer's own keys, pressed here. Reading, ⌘K (Ctrl+K off a Mac) opens the viewer's quick search
+  // (client/common/quick-search.ts). Editing, each of the viewer's shortcuts goes to it (client/common/app-keys.ts),
+  // which the editor in the page leaves be; Escape stays the editor's too (the focus off the text).
+  addEventListener(
+    "keydown",
+    (e) => {
+      if (e.isComposing) return;
+      if (editing()) {
+        tell({ type: "erga-activity", kind: "key" });
+        if (!isAppShortcut(e, mac)) return;
+        if (e.key != "Escape") e.preventDefault();
+        tell({ type: "erga-key", keys: { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey } });
+        return;
+      }
+      const mod = mac ? e.metaKey : e.ctrlKey;
+      if (!mod || e.shiftKey || e.altKey || e.key.toLowerCase() != "k") return;
+      e.preventDefault();
+      tell({ type: "erga-quick-search" });
+    },
+    true
+  );
+  // Editing: the page's focus, and a zoom gesture on it (a pinch, ctrl with the wheel), for the viewer, which sets the
+  // zoom (libs/text/ui/zoom.ts); whether the page zooms itself (window.ergaZoom: a canvas's camera), as the viewer's
+  // zoom goes to it then.
+  addEventListener("focus", () => editing() && tell({ type: "erga-activity", kind: "focus" }), true);
+  catchZoomGestures(window, (by) => tell({ type: "erga-zoom", zoom: by }), editing);
+  let zoomsSaid: boolean | null = null;
+  const zooms = (again = false) => {
+    const on = typeof (window as Window & { ergaZoom?: unknown }).ergaZoom == "function";
+    if (on === zoomsSaid && !again) return;
+    zoomsSaid = on;
+    tell({ type: "erga-zooms", on });
+  };
+  addEventListener("load", () => zooms());
   window.__ergaReader = {
     config: C,
     changed: () => {
@@ -194,6 +224,8 @@ export default function reader(C: ReaderConfig): void {
   let scrolled: string | null = null,
     pointer: { x: number; y: number } | null = null;
   function report() {
+    // (A page's camera moves as a scroll does: whether it zooms itself may have changed with it.)
+    if (editing()) zooms();
     const at = scrollX + "," + scrollY;
     if (at !== scrolled) {
       scrolled = at;
@@ -201,6 +233,7 @@ export default function reader(C: ReaderConfig): void {
     }
   }
   addEventListener("scroll", report, { passive: true });
+  document.addEventListener("scroll", () => editing() && zooms(), { passive: true });
   document.addEventListener(
     "pointermove",
     (e) => {
@@ -214,20 +247,24 @@ export default function reader(C: ReaderConfig): void {
     },
     { capture: true, passive: true }
   );
-  document.addEventListener(
+  // (On the window, first: the text guard, after this script, keeps a press on the text from the page's handlers.)
+  addEventListener(
     "pointerdown",
     (e) => {
       if (e.pointerType != "mouse") tell({ type: "erga-pointer", x: e.clientX, y: e.clientY, tap: true });
+      // Editing, a press on the page is one anywhere in the viewer: what it has open closes.
+      if (editing()) tell({ type: "erga-press" });
     },
     { capture: true, passive: true }
   );
-  // Links, reading (the editor follows its own: libs/text/ui/frame.ts), read as Erga addresses
-  // (client/common/link-target.ts). To another of the document's pages: in this frame, even when the link names it by
-  // its Erga address or says "_top". Out of the document: a new tab, unless the link names its own target; "_self"
-  // takes the whole tab. A ⌘-, Ctrl- or Shift-click, or the middle button: a new tab, at a page's public address (never
-  // the token's). The viewer opens new tabs and the whole tab, on the reader's click.
+  // Links, read as Erga addresses (client/common/link-target.ts). To another of the document's pages: in this frame,
+  // even when the link names it by its Erga address or says "_top". Out of the document: a new tab, unless the link
+  // names its own target; "_self" takes the whole tab. A ⌘-, Ctrl- or Shift-click, or the middle button: a new tab, at
+  // a page's public address (never the token's). The viewer opens new tabs and the whole tab, on the reader's click.
+  // Editing, a link in the text being edited isn't followed (but with a modifier, into a new tab), nor a place in the
+  // page (#id); another of the document's pages opens in the editor, as the viewer goes there (erga-open).
   function follow(e: MouseEvent) {
-    if (editing() || e.defaultPrevented || e.altKey || e.button != (e.type == "auxclick" ? 1 : 0)) return;
+    if (e.defaultPrevented || e.altKey || e.button != (e.type == "auxclick" ? 1 : 0)) return;
     const target = e.target as Element | null;
     const a = target && target.closest ? target.closest<HTMLAnchorElement>("a[href]") : null;
     const p = placeOf(window, C);
@@ -243,6 +280,16 @@ export default function reader(C: ReaderConfig): void {
     const t = (a.getAttribute("target") || "").toLowerCase(),
       tab = e.type == "auxclick" || e.metaKey || e.ctrlKey || e.shiftKey || t == "_blank",
       here = !t || t == "_self" || t == "_top" || t == "_parent";
+    if (editing()) {
+      if (!tab && (a.isContentEditable || !here || a.getAttribute("href")!.charAt(0) == "#")) return;
+      e.preventDefault();
+      if (to.kind == "page" && !tab) tell({ type: "erga-open", path: to.path || "index.html" });
+      else {
+        const out = to.kind == "page" ? to.public : to.url;
+        if (out) tell({ type: "erga-go", url: out, tab: tab || !t ? "new" : undefined });
+      }
+      return;
+    }
     if (to.kind == "page" && !tab) {
       if (!here || (url.href == to.frame && t != "_top" && t != "_parent")) return;
       e.preventDefault();
@@ -528,7 +575,20 @@ export default function reader(C: ReaderConfig): void {
     // The viewer's word on editing (libs/text/ui/bridge.ts, EditMode): kept for the editor, which loads on the first edit.
     else if (type == "erga-mode") {
       window.__ergaReader!.mode = e.data;
-      if (e.data.mode == "edit") load();
+      if (e.data.mode == "edit") {
+        load();
+        zooms(true);
+      }
+    }
+    // The viewer's zoom, for a page that zooms itself (window.ergaZoom): `by` times closer, or 0 for its own first view.
+    else if (type == "erga-page-zoom" && typeof e.data.by == "number" && isFinite(e.data.by)) {
+      const z = (window as Window & { ergaZoom?: unknown }).ergaZoom;
+      if (typeof z == "function")
+        try {
+          z(e.data.by);
+        } catch (err) {
+          console.error("window.ergaZoom threw:", err);
+        }
     }
     else if ((type == "erga-capture" && typeof e.data.text == "string") || type == "erga-live") {
       if (typeof e.data.id == "number") askTools(e.data as ToolAsk);

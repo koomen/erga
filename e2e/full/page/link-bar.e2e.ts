@@ -7,11 +7,14 @@ import { inPage, openViewer } from "../viewer/viewer";
 
 await servers.main();
 
-const shell = <T>(ed: Editor, expr: string) => ed.eval<T>(expr);
-const linkBar = (ed: Editor) => shell<boolean>(ed, `!document.getElementById("fmt").hidden && !document.getElementById("fmt-link").hidden && !document.querySelector(".fmt.morphing")`);
-const styleBar = (ed: Editor) => shell<boolean>(ed, `!document.getElementById("fmt").hidden && !document.getElementById("fmt-style").hidden && !document.querySelector(".fmt.morphing")`);
-const field = (ed: Editor, id: string) => shell<string>(ed, `document.getElementById(${JSON.stringify(id)}).value`);
-const press = (ed: Editor, sel: string) => shell(ed, `document.querySelector(${JSON.stringify(sel)}).click()`);
+/** In the editor's own controls on the page (C: their shadow root). */
+const shell = <T>(ed: Editor, expr: string) => ed.controls<T>(expr) as Promise<T>;
+const linkBar = (ed: Editor) =>
+  shell<boolean>(ed, `!C.getElementById("fmt").hidden && !C.getElementById("link").hidden && !C.querySelector(".fmt.morphing")`);
+const styleBar = (ed: Editor) =>
+  shell<boolean>(ed, `!C.getElementById("fmt").hidden && !C.getElementById("style").hidden && !C.querySelector(".fmt.morphing")`);
+const field = (ed: Editor, id: string) => shell<string>(ed, `C.getElementById(${JSON.stringify(id)}).value`);
+const press = (ed: Editor, sel: string) => shell(ed, `C.querySelector(${JSON.stringify(sel)}).click()`);
 
 test("a click in a link puts the caret there and shows the link bar, without following the link; letters at its ends join it, a space ends it", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
@@ -19,13 +22,13 @@ test("a click in a link puts the caret there and shows the link bar, without fol
   const at = await ed.charAt("p.lede a", 2);
   await ed.click(at.x, at.y);
   await expect.poll(() => linkBar(ed)).toBe(true);
-  expect(await field(ed, "fmt-link-url")).toBe("https://example.com");
-  expect(await field(ed, "fmt-link-text")).toBe("a link");
+  expect(await field(ed, "link-url")).toBe("https://example.com");
+  expect(await field(ed, "link-text")).toBe("a link");
   expect(tab.page.url()).toBe(url);
   // The focus stayed in the page: typing goes into the link, and the bar follows it.
   await ed.type("X");
   await expect.poll(() => ed.source()).toContain(`<a href="https://example.com">a Xlink</a>`);
-  await expect.poll(() => field(ed, "fmt-link-text")).toBe("a Xlink");
+  await expect.poll(() => field(ed, "link-text")).toBe("a Xlink");
   // At its end.
   for (let i = 0; i < 4; i++) await ed.press("ArrowRight");
   await ed.type("s");
@@ -46,8 +49,8 @@ test("the link button turns the style bar into the link bar; Enter links the sel
   await expect.poll(() => styleBar(ed)).toBe(true);
   await press(ed, "#fmt [data-act=link]");
   await expect.poll(() => linkBar(ed)).toBe(true);
-  expect(await shell<string>(ed, "document.activeElement.id")).toBe("fmt-link-url");
-  expect(await field(ed, "fmt-link-text")).toBe("Launch");
+  expect(await shell<string>(ed, "C.activeElement?.id")).toBe("link-url");
+  expect(await field(ed, "link-text")).toBe("Launch");
   await ed.type("erga.dev/plan");
   await press(ed, "#fmt [data-link=tab]");
   await ed.press("Enter");
@@ -56,8 +59,8 @@ test("the link button turns the style bar into the link bar; Enter links the sel
   // The link bar again, for the link that's there now; × goes back to the style bar and changes nothing.
   await press(ed, "#fmt [data-act=link]");
   await expect.poll(() => linkBar(ed)).toBe(true);
-  expect(await field(ed, "fmt-link-url")).toBe("https://erga.dev/plan");
-  expect(await shell<string>(ed, `document.querySelector("#fmt [data-link=tab]").getAttribute("aria-checked")`)).toBe("false");
+  expect(await field(ed, "link-url")).toBe("https://erga.dev/plan");
+  expect(await shell<string>(ed, `C.querySelector("#fmt [data-link=tab]").getAttribute("aria-checked")`)).toBe("false");
   await press(ed, "#fmt [data-link=close]");
   await expect.poll(() => styleBar(ed)).toBe(true);
   expect(await ed.source()).toContain(`<h1><a href="https://erga.dev/plan" target="_self">Launch</a> notes</h1>`);
@@ -67,7 +70,7 @@ test("the link button turns the style bar into the link bar; Enter links the sel
   await expect.poll(() => linkBar(ed)).toBe(true);
   await tab.page.waitForTimeout(300);
   expect(tab.page.url()).toBe(url);
-  expect(await shell<string>(ed, `document.querySelector("#fmt [data-link=tab] .fmt-label").textContent`)).toBe("Opens in this tab");
+  expect(await shell<string>(ed, `C.querySelector("#fmt [data-link=tab] .label").textContent`)).toBe("Opens in this tab");
 });
 
 test("the link bar changes a link's text; Esc closes it until a click in the link; it removes the link", async ({ tab }) => {
@@ -75,7 +78,7 @@ test("the link bar changes a link's text; Esc closes it until a click in the lin
   const at = await ed.charAt("p.lede a", 2);
   await ed.click(at.x, at.y);
   await expect.poll(() => linkBar(ed)).toBe(true);
-  await shell(ed, `document.getElementById("fmt-link-text").focus()`);
+  await shell(ed, `C.getElementById("link-text").focus()`);
   await ed.press("ControlOrMeta+a");
   await ed.type("the example");
   await ed.press("Enter");
@@ -85,7 +88,7 @@ test("the link bar changes a link's text; Esc closes it until a click in the lin
   await ed.click(again.x, again.y);
   await expect.poll(() => linkBar(ed)).toBe(true);
   await ed.press("Escape");
-  await expect.poll(() => shell<boolean>(ed, `document.getElementById("fmt").hidden`)).toBe(true);
+  await expect.poll(() => shell<boolean>(ed, `C.getElementById("fmt").hidden`)).toBe(true);
   await ed.click(again.x, again.y);
   await expect.poll(() => linkBar(ed)).toBe(true);
   await press(ed, "#fmt [data-link=remove]");
@@ -104,9 +107,13 @@ test("a link near the top of the page (a nav's): its bar opens below it, clear o
   const at = await ed.charAt("#top a", 1);
   await ed.click(at.x, at.y);
   await expect.poll(() => linkBar(ed)).toBe(true);
-  const covered = await shell<string[]>(
+  // The bar is the page's (in its frame), the top bar the tab's: both in the tab's coordinates.
+  const bar = await shell<{ left: number; top: number; right: number; bottom: number }>(
     ed,
-    `(() => { const f = document.getElementById("fmt").getBoundingClientRect(); return [".chrome-nav", ".chrome-top"].filter((s) => { const t = document.querySelector(s).getBoundingClientRect(); return f.top < t.bottom && f.bottom > t.top && f.left < t.right && f.right > t.left; }); })()`
+    `(() => { const r = C.getElementById("fmt").getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; })()`
+  );
+  const covered = await ed.eval<string[]>(
+    `(() => { const p = document.getElementById("frame").getBoundingClientRect(), b = ${JSON.stringify(bar)}; const f = { left: p.left + b.left, top: p.top + b.top, right: p.left + b.right, bottom: p.top + b.bottom }; return [".chrome-nav", ".chrome-top"].filter((s) => { const t = document.querySelector(s).getBoundingClientRect(); return f.top < t.bottom && f.bottom > t.top && f.left < t.right && f.right > t.left; }); })()`
   );
   expect(covered).toEqual([]);
 });

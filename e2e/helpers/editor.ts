@@ -187,6 +187,12 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
       }, 3000).catch(() => {});
       return shell();
     },
+    /**
+     * In the editor's own controls on the page (libs/text/ui/controls.ts: the style bar, the link bar, pause, the note):
+     * `expr` with C, their shadow root; null before the editor has drawn them.
+     */
+    controls: <T = any>(expr: string) =>
+      ed.frame<T | null>(`(() => { const C = ${F}.querySelector("erga-controls")?.shadowRoot; return C ? (${expr}) : null; })()`),
     textOf: (selector: string) => ed.frame<string>(`${F}.querySelector(${JSON.stringify(selector)}).textContent`),
     count: (selector: string) => ed.frame<number>(`${F}.querySelectorAll(${JSON.stringify(selector)}).length`),
     frameAt,

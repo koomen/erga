@@ -26,14 +26,14 @@
 import type { ChangeSet, EditorState } from "@codemirror/state";
 import * as M from "../../../shared/manuscript";
 import { changesBetween } from "../../../document/merge";
-import type { HeldInput, LinkEdit, LinkInfo, MarkAuthor, PageEditorConfig, PageProblem, PageUpdate, Peer } from "./types";
+import type { HeldInput, LinkEdit, LinkInfo, MarkAuthor, PageEditorConfig, PageUpdate, Peer } from "./types";
 import type { InlineStyle } from "../api/source";
 import { touched } from "../api/source";
 import { marksFor } from "./marks";
 import { noHistory } from "./core";
 import { EditorInput } from "./input";
 
-export type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageEditorConfig, PageProblem, PageUpdate, Peer };
+export type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageEditorConfig, PageUpdate, Peer };
 
 export class PageEditor extends EditorInput {
   constructor(config: PageEditorConfig) {

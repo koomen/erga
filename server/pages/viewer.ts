@@ -4,7 +4,7 @@
 // The document's page is in the viewer's frame (#frame), on the document's own pages
 // origin (pages/reader.ts tells this page what it needs from inside it), for readers and
 // editors alike. Going into the editor loads the editor's half into that same page
-// (editBoot, client/shell/main.ts, client/shell/remote.ts): the page loads once. Every script here
+// (editBoot, client/shell/main.ts, client/shell/page-frame.ts): the page loads once. Every script here
 // hears the frame through `ergaFrames` (framesScript).
 
 import { FAVICON_LINK } from "../../assets/logo/logo.ts";

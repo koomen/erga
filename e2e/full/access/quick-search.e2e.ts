@@ -72,9 +72,7 @@ test("in a document, ⌘K opens it from inside the page, viewing and editing; in
   await expect.poll(() => pane(page)).toBeNull();
   await ed.selectChars("h1", 6);
   await ed.press("ControlOrMeta+Shift+k");
-  await expect
-    .poll(() => ed.eval<boolean>(`!document.getElementById("fmt").hidden && !document.getElementById("fmt-link").hidden`))
-    .toBe(true);
+  await expect.poll(() => ed.controls<boolean>(`!C.getElementById("fmt").hidden && !C.getElementById("link").hidden`)).toBe(true);
   expect(await pane(page)).toBeNull();
   // Viewing: the page's own frame passes it on.
   await openViewer(page, ed.address);

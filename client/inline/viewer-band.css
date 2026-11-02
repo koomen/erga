@@ -6,7 +6,7 @@
 :root { --band-h: calc(max(12px, env(safe-area-inset-top)) + 44px); --frame-t: 0px; }
 :root.erga-fills { --frame-t: var(--band-h); }
 html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
-html { background: var(--page-bg, var(--band, #fff)); }
+html { background: var(--band, #fff); }
 #frame { position: fixed; left: 0; top: var(--frame-t); width: 100%; height: calc(100% - var(--frame-t)); border: 0; display: block; background: transparent; }
 html.erga-band-wait #frame { opacity: 0; }
 .erga-canvas { position: fixed; left: 0; top: var(--frame-t); width: 100%; height: calc(100% - var(--frame-t)); pointer-events: none; }

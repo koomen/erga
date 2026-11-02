@@ -24,7 +24,7 @@ test("an edit on disk while the page loads again: no error, and the file ends wi
     await route.continue();
   });
   // The page made afresh, as for a change the editor can't patch in: it loads again.
-  await ed.eval(`window.ergaPage.page.render()`);
+  await ed.frame(`ergaFrame.page.render()`);
   await until(() => ed.frame<boolean>(`!!window.ergaFrame?.reloading`).catch(() => false), 5000, "the page loads again");
   ed.write(ed.disk().replace("The arrows move between slides.", "The arrows move between slides, and the disk edits."));
   await until(() => ed.eval<boolean>(`ergaPage.collab.current().includes("the disk edits")`), DISK_MS, "the shell has the edit on disk");

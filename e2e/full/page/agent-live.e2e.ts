@@ -70,7 +70,7 @@ test("a stylesheet edit reaches the disk and the page; a diagram from the agent 
   await expect.poll(() => ed.frame<string | null>(`(() => { const h = ${F}?.querySelector("h1"); return h && getComputedStyle(h).color; })()`)).toBe("rgb(204, 0, 0)");
   await ask(ed, `Add a small inline SVG bar chart with id "chart" right after the first list. Plain SVG, no script. Then look at it on the page to check it renders.`);
   await expect.poll(() => ed.frame<boolean>(`!!${F}.getElementById("chart")`)).toBe(true);
-  expect(await ed.eval<boolean>(`document.getElementById("refresh-pill").hidden`), "no refresh pill once it finishes").toBe(true);
+  expect(await ed.controls<boolean>(`C.getElementById("refresh-pill").hidden`), "no refresh pill once it finishes").toBe(true);
   expect(await ed.eval<boolean>(`[...document.querySelectorAll(".msg-tool")].some((e) => /Looked at the page/.test(e.textContent) && e.querySelector("img.shot")?.naturalWidth > 0)`),
     await ed.eval<string>(`[...document.querySelectorAll(".msg-tool")].map((e) => e.textContent).join(" | ")`)).toBe(true);
 });

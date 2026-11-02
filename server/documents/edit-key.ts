@@ -2,8 +2,9 @@
 // there are no cookies. The viewer (on the app's origin, signed in) asks for one (POST /<owner>/<slug>/api/key) and gives
 // it to the page in its frame; the page opens /<owner>/<slug>/api/room?key=<key> with it (routes.ts). The key names the
 // person and the one document, and holds for a short time: it is checked only when a socket opens, so the viewer gets a
-// new one before it ends, for the next socket. It carries no admin power, and the document decides what the person may
-// do (read or edit) as it does for any request: a share taken away holds for the next socket.
+// new one before it ends, for the next socket. It carries the person's admin power only if their session has it (an
+// admin edits the homepage project, which is nobody's), and only for this one document. The document decides what the
+// person may do (read or edit) as it does for any request: a share taken away holds for the next socket.
 
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
@@ -19,6 +20,7 @@ export interface KeyPerson {
   name: string;
   avatar?: string;
   testBy?: string;
+  admin?: boolean;
 }
 
 /** A key for `person` to open the socket of the document `id` (its owner `owner`), until `now` and KEY_SECONDS. */
@@ -39,6 +41,7 @@ export async function editKey(
         n: person.name,
         ...(person.avatar ? { a: person.avatar } : {}),
         ...(person.testBy ? { t: person.testBy.toLowerCase() } : {}),
+        ...(person.admin && !person.testBy ? { m: 1 } : {}),
       })
     )
   );
@@ -59,16 +62,18 @@ export async function readEditKey(secret: string, key: string, owner: string, id
       name: c.n,
       ...(typeof c.a == "string" ? { avatar: c.a } : {}),
       ...(typeof c.t == "string" ? { testBy: c.t } : {}),
+      ...(c.m === 1 && typeof c.t != "string" ? { admin: true } : {}),
     };
   } catch {
     return null;
   }
 }
 
-/** Who a key's person is, to the document: this one document, and no admin power. */
+/** Who a key's person is, to the document: this one document, with admin power only if their session had it. */
 export const keyWho = (person: KeyPerson, id: string): Who => ({
   login: person.login,
   test: !!person.testBy,
   ...(person.testBy ? { by: person.testBy } : {}),
+  ...(person.admin ? { admin: true } : {}),
   onlyDoc: id,
 });
