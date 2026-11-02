@@ -63,10 +63,15 @@ export function mountPeople(shell: Shell) {
     });
   }
 
-  const people = $("people"), meSlot = $("me");
+  // The others' stack (client/styles/editor.css, .people): its faces' size and overlap, and how many show at rest.
+  const FACE = 26,
+    OVERLAP = 9,
+    SHOWN = 4;
+  const people = $("people"),
+    meSlot = $("me");
   function renderPeople() {
-    // One avatar per person: everyone else on the left of the controls, you
-    // at the far right. A person's agent, once it has done
+    // One avatar per person: everyone else in a stack left of the buttons' bar, you
+    // at its far right. A person's agent, once it has done
     // something, is a small badge on their avatar that spins while it works.
     const persons = new Map<string, Presence>(), agents = new Map<string, Presence>();
     for (const p of shell.collab.shown()) {
@@ -100,6 +105,7 @@ export function mountPeople(shell: Shell) {
         img.addEventListener("error", () => img.remove()); // the initial shows through
         b.append(img);
       }
+      b.dataset.name = p.user.name;
       b.dataset.tip = p.client == -1 ? `You (${shell.me.name})` : here ? p.user.name : `${p.user.name} (not here)`;
       if (p.client == -1) accountButton(b);
       else if (here) revealOnClick(b, p, " (not in the text yet)");
@@ -118,9 +124,41 @@ export function mountPeople(shell: Shell) {
         badge.setAttribute("aria-label", badge.dataset.tip);
         wrap.append(badge);
       }
+      if (p.client != -1 && people.childElementCount >= SHOWN) wrap.classList.add("extra");
       (p.client == -1 ? meSlot : people).append(wrap);
     }
+    // Past SHOWN faces, the stack ends in "+N"; the spread shows them all, and takes the "+N" away.
+    const others = people.childElementCount,
+      extra = others - SHOWN;
+    if (extra > 0) {
+      const more = document.createElement("span");
+      more.className = "more";
+      more.textContent = `+${extra}`;
+      more.setAttribute("aria-hidden", "true");
+      people.append(more);
+    }
+    // The stack's width at rest, for the breadcrumbs' room (client/common/quick.ts, barEdge).
+    const faces = Math.min(others, SHOWN) + (extra > 0 ? 1 : 0);
+    people.dataset.w = String(faces ? FACE + (faces - 1) * (FACE - OVERLAP) : 0);
   }
+  // A finger has no hover: a tap on the stack spreads it first, and the next tap on a face is that face's click.
+  // A tap anywhere else stacks them again.
+  let spreadByTap = false;
+  people.addEventListener("pointerdown", (e) => {
+    spreadByTap = e.pointerType != "mouse" && !people.classList.contains("spread");
+  });
+  function tapSpreads(e: MouseEvent) {
+    if (!spreadByTap) return;
+    spreadByTap = false;
+    e.stopPropagation();
+    people.classList.add("spread");
+  }
+  people.addEventListener("click", tapSpreads, true);
+  // (A press on the page, in its frame, is main.ts's onPress.)
+  const stackPeople = () => people.classList.remove("spread");
+  document.addEventListener("pointerdown", (e) => {
+    if (!e.composedPath().includes(people)) stackPeople();
+  });
   // Your avatar opens a small menu: who you are, Documents, Settings,
   // Deploy your own if the deploy_page setting lets you, Admin settings if you're an admin, Sign out (the same as every other page's upper
   // right, server/pages/account-menu.ts). The app says which links (meta erga-account).
@@ -177,6 +215,7 @@ export function mountPeople(shell: Shell) {
     queuePeers,
     queueCursor,
     renderPeople,
+    stackPeople,
     toggleAccount,
     pictureOf,
     get accountBtn() {

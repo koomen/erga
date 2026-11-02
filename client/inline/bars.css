@@ -93,8 +93,8 @@ button.erga-view-button { margin: 0; padding: 0; border: 0; background-color: tr
 .me-slot { display: flex; align-items: center; margin-left: 10px; margin-right: 2px; }
 .me-slot:empty { display: none; }
 
-/* Phones (narrower than 760px). The buttons' bar is your avatar alone, and the quick actions (.quick: the buttons, and in
-   the editor who's here) open out of it to its left as its menu opens under it, and close back into it (client/common/quick.ts).
+/* Phones (narrower than 760px). The buttons' bar is your avatar alone, and the quick actions (.quick: the buttons) open
+   out of it to its left as its menu opens under it, and close back into it (client/common/quick.ts).
    Moving or closed, they clip sideways only. The breadcrumbs' bar ends before the buttons' bar (--nav-room) and keeps
    its end in sight: as the quick actions open, its start (erga, Documents) slides out on the left. */
 .quick, .quick-inner { display: contents; }

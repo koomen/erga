@@ -23,6 +23,7 @@ import { BASE, $, editing, isMac, store, type Shell } from "./shell";
 import { mountNaming } from "./naming";
 import { mountRoom } from "./room";
 import { mountPeople } from "./people";
+import { barEdge } from "../common/quick";
 import { mountChrome } from "./chrome";
 import { mountSharing } from "./sharing";
 import { mountToast } from "./toast";
@@ -201,11 +202,13 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   syncGroup();
   // The title in the breadcrumbs takes the room left of the controls (on a phone, little), and ends in an ellipsis.
   const navRoom = () => {
-    const title = $("doc-title"), top = document.querySelector(".chrome-top");
+    const title = $("doc-title"),
+      top = document.querySelector<HTMLElement>(".chrome-top");
     if (!top || title.hidden) return;
-    title.style.setProperty("--room", `${Math.max(0, top.getBoundingClientRect().left - title.getBoundingClientRect().left - 8)}px`);
+    title.style.setProperty("--room", `${Math.max(0, barEdge(top, $("people")) - title.getBoundingClientRect().left - 8)}px`);
   };
   new ResizeObserver(navRoom).observe(document.querySelector(".chrome-top")!);
+  new ResizeObserver(navRoom).observe($("people"));
   new ResizeObserver(navRoom).observe($("nav-docs"));
   addEventListener("resize", navRoom);
   $("nav-docs").addEventListener("transitionend", navRoom);
@@ -308,6 +311,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       if (!$("sharing").hidden) shell.sharing.toggleSharing(false);
       if (shell.docSettings?.isOpen()) shell.docSettings.toggle(false);
       shell.people.toggleAccount(false);
+      shell.people.stackPeople();
       shell.chrome.toggleQuick(false);
     },
     onActivity: (kind) => {
