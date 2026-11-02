@@ -26,3 +26,22 @@ test("styling a code block is refused, saying why", async ({ tab }) => {
   await ed.press("ControlOrMeta+b");
   await expect.poll(() => ed.controls<string>(`C.getElementById("note").textContent`)).toMatch(/code block/);
 });
+
+test("a word dragged across on the page's first line, then the style bar's Bold clicked with the mouse, is bold: the bar clears the bars over the page", async ({
+  tab,
+}) => {
+  const ed = await openEditor(tab, await servers.main(), "empty");
+  await ed.clickEnd("p");
+  await ed.type("Hello brave world");
+  const a = await ed.charAt("p", 6),
+    b = await ed.charAt("p", 10);
+  await ed.drag(a.x, a.y, b.x + 6, b.y);
+  await expect.poll(() => ed.controls<boolean>(`!C.getElementById("fmt").hidden`)).toBe(true);
+  const f = await ed.frameAt();
+  const bold = (await ed.controls<{ x: number; y: number }>(
+    `(() => { const r = C.querySelector("#fmt [data-style=strong]").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`
+  ))!;
+  await ed.click(f.x + bold.x, f.y + bold.y);
+  await expect.poll(() => ed.source()).toContain("<p>Hello <strong>brave</strong> world</p>");
+  await ed.shows("Hello [brave] world");
+});

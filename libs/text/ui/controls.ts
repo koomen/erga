@@ -234,10 +234,11 @@ export function mountControls(win: Window, page: ControlsPage, o: { place: () =>
   }
   function place(rect: { left: number; top: number; width: number; bottom: number }) {
     const z = o.zoom();
-    // On touch, the system's own copy and paste menu takes the space above a selection. Above the text, the link bar
-    // (about 106 px and its gap) must clear the shell's bars, which float over the page's top.
+    // On touch, the system's own copy and paste menu takes the space above a selection. Above the text, the bar (the
+    // style bar about 46 px with its gap, the link bar about 114) must clear the shell's bars, which float over the
+    // page's top: under them, a click on Bold is the shell's.
     const top = rect.top * z;
-    const below = top < TOP_ROOM || (!!linking && top < TOP_ROOM + 114) || coarse.matches;
+    const below = top < TOP_ROOM + (linking ? 114 : 46) || coarse.matches;
     const half = (linking ? 300 : coarse.matches ? 220 : 200) / 2 + 10;
     const width = win.innerWidth * z;
     fmt.style.left = Math.max(half, Math.min(width - half, (rect.left + rect.width / 2) * z)) + "px";
