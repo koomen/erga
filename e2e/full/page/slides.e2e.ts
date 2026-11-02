@@ -52,6 +52,9 @@ test("an agent's add_slide (call_edit) adds a slide to the deck; document_api li
   expect(await fails("call_edit", { path: "index.html", edit: "delete_slide", input: { slide: 9 } })).toMatch(
     /no slide 9: the deck has slides 1 to 3/
   );
+  expect(await fails("call_edit", { path: "index.html", edit: "move_slide", input: { slide: 3, by: -1 } })).toBe(
+    "move_slide's input is wrong: to is required. document_api lists its input's schema."
+  );
 });
 
 /** Clicks a button of the slide bar (data-act: add, title, up, down, layout, delete) with the mouse, as a person does. */

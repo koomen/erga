@@ -30,7 +30,8 @@ rendered page:
 
 A page's text has edits of its own, the ones a person makes in the editor:
 `document_api` lists them (type, replace, split, block kinds, styles, links,
-lists, new blocks), and `call_edit` runs one. Use them first for a change to
+lists, new blocks), and `call_edit` runs one. It checks the input against
+the edit's JSON Schema first, and says what is wrong. Use them first for a change to
 a page's text: they keep the HTML as a person's editing would. Edit the
 source (`edit`, `write`) for what they can't do: layout, styles, scripts,
 attributes, new elements of other kinds.

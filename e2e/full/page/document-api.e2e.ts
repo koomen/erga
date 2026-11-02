@@ -51,5 +51,8 @@ test("a page with its own API: document_api lists its edits first; call_edit run
   );
   expect(await fails("call_edit", { path: "index.html", edit: "delete_view", input: { view: [9] } })).toMatch(
     /delete_view can't be made: .*matches 0 elements/
+  ); // An input its schema doesn't allow: call_edit says what is wrong, and the page's module never sees it.
+  expect(await fails("call_edit", { path: "index.html", edit: "move_view", input: { view: [1, 0], by: 2 } })).toBe(
+    "move_view's input is wrong: view.1: Expected a value greater than or equal to 1; by: Expected -1 | 1. document_api lists its input's schema."
   );
 });
