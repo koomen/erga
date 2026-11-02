@@ -11,14 +11,13 @@ test("a link from one admin page to another shows the new page styled, in place"
   await page.evaluate(() => { (window as unknown as { stayed: boolean }).stayed = true; });
 
   await page.click('.admin-side a[href^="/admin/api-keys"]');
-  await page.waitForSelector("li.credential .head");
+  await page.waitForSelector("li.provider .head");
   const keys = await page.evaluate(() => {
-    const head = getComputedStyle(document.querySelector("li.credential .head")!), key = getComputedStyle(document.querySelector("li.credential .key")!);
-    const row = getComputedStyle(document.querySelector("ol.rows > li.setting")!);
-    return { stayed: (window as unknown as { stayed?: boolean }).stayed, head: head.display, gap: head.columnGap, key: key.fontFamily, row: row.display };
+    const head = getComputedStyle(document.querySelector("li.provider .head")!),
+      row = getComputedStyle(document.querySelector("ol.rows > li.provider")!);
+    return { stayed: (window as unknown as { stayed?: boolean }).stayed, head: head.display, gap: head.columnGap, row: row.display };
   });
   expect(keys).toMatchObject({ stayed: true, head: "flex", gap: "10px", row: "grid" });
-  expect(keys.key).not.toBe(await page.evaluate(() => getComputedStyle(document.body).fontFamily));
 
   await page.click('.admin-side a[href^="/admin/users"]');
   await page.waitForSelector("ol.users .switch .track");

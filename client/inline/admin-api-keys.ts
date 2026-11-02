@@ -1,5 +1,7 @@
-// The API keys page's script (/admin/api-keys, server/admin/api-keys.ts): Save sets or replaces the key typed in, Clear
-// removes it. The answer never holds the key; the page reloads to show what it is now.
+// The API keys page's script (/admin/api-keys, server/admin/api-keys.ts): whose keys the agents use (the list at the top,
+// the agent_keys setting: it saves as it changes, and the providers show only when the server provides keys); for each
+// provider, Save sets or replaces the key typed in, Clear removes it (the answer never holds the key, and the row is
+// drawn again), and its models' boxes save as they change (agent_models_off: every model not ticked, on every row).
 
 import { post, runTool, say } from "../common/admin-post";
 import { liveList, refresh } from "../common/live-rows";
@@ -52,7 +54,37 @@ export default function adminApiKeys(): void {
     });
   }
   const list = document.querySelector<HTMLElement>("ol[data-live-kind=apikey]")!;
-  for (const li of list.querySelectorAll<HTMLElement>(":scope > li.credential")) wire(li);
+  // Whose keys: saved at once; the providers show only when the server provides them.
+  const mode = document.getElementById("agent-keys") as HTMLSelectElement,
+    modeHint = document.getElementById("keys-mode-hint")!;
+  mode.addEventListener("change", async () => {
+    say(modeHint, "Saving…");
+    try {
+      await runTool("set_setting", { key: "agent_keys", value: mode.value });
+      say(modeHint, "");
+      list.hidden = mode.value == "own";
+      document.querySelector<HTMLElement>(".own-note")!.hidden = mode.value != "own";
+    } catch (err) {
+      say(modeHint, (err as Error).message, true);
+      mode.value = mode.value == "own" ? "server" : "own";
+    }
+  });
+  // A model's box: the setting is every model not ticked, on any row.
+  list.addEventListener("change", async (e) => {
+    const box = e.target as HTMLInputElement;
+    if (!box.matches(".models input[type=checkbox]")) return;
+    const hint = box.closest("li")!.querySelector(".hint")!;
+    const off = [...list.querySelectorAll<HTMLInputElement>(".models input[type=checkbox]")].filter((b) => !b.checked).map((b) => b.value);
+    say(hint, "Saving…");
+    try {
+      await runTool("set_setting", { key: "agent_models_off", value: off });
+      say(hint, "Saved.");
+    } catch (err) {
+      box.checked = !box.checked;
+      say(hint, (err as Error).message, true);
+    }
+  });
+  for (const li of list.querySelectorAll<HTMLElement>(":scope > li.provider")) wire(li);
   // Changes made elsewhere (another admin, an agent) show here as they're made (client/common/live-rows.ts).
   liveList(list, { wire: (row) => (wire(row), times()) }, window.ergaView?.signal);
 }

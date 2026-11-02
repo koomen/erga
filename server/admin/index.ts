@@ -20,5 +20,5 @@ export { accessRows } from "./access.ts";
 export { apiKeysRows } from "./api-keys.ts";
 export { authRows } from "./auth.ts";
 export { changesRows } from "./changes.ts";
-export { agentSettingsRows, settingsRows } from "./settings.ts";
+export { settingsRows } from "./settings.ts";
 export { usersRows } from "./users.ts";

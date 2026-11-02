@@ -38,7 +38,7 @@ export interface Setting<T = unknown> {
   /** A value as given (parsed JSON), checked: throws a ConfigError saying what's wrong. */
   parse(value: unknown): T;
   /** What the value names, when it isn't just a number or text: "document" (one of the server's documents, by id), "users" (a list of logins). */
-  kind?: "document" | "users" | "models";
+  kind?: "document" | "users";
   /** The values the admin page offers, as a select (as a switch when they're "off" and "on"). The parser may take others too. */
   choices?: string[];
 }
@@ -129,8 +129,7 @@ export const SETTINGS = {
     choices: ["server", "own"],
   }),
   agent_models_off: setting<string[]>({
-    kind: "models",
-    label: "Models off for server keys",
+    label: "Models a server key doesn't run",
     description: `Models of the agent's list that a server key doesn't run (a person's own key still does): a list of ${Object.keys(MODELS).join(", ")}.`,
     default: [],
     parse: (v) => {
@@ -169,7 +168,7 @@ export interface ConfigEntry {
   /** Fixed by the deploy: nobody can set or reset it here (show it read-only). */
   locked: boolean;
   /** What the value names, if it isn't plain (Setting.kind). */
-  kind?: "document" | "users" | "models";
+  kind?: "document" | "users";
   /** Its name on the admin page, where it isn't the key (Setting.label). */
   label?: string;
   /** The values the admin page offers (Setting.choices). */
