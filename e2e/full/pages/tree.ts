@@ -53,7 +53,11 @@ export async function site(server: Server, opts: { pages?: boolean } = {}) {
       const r = await treeOp(server.root, doc.id, op, { cookie: who.cookie, ...(origin ? { origin } : {}) });
       return { status: r.status, body: (r.ok ? r.result : { error: r.error }) as { entries?: Entry[]; error?: string } };
     },
-    async write(path: string, content: string) { const w = await tool("write", { path, content }); if (!w.ok) throw new Error(`write ${path}: ${w.text}`); },
+    /** Puts a file into the document, as its person publishes it (update_files): not an agent's run, so no lock. */
+    async write(path: string, content: string) {
+      const w = await anyTool("update_files", { document: doc.id, files: { [path]: content } });
+      if (!w.ok) throw new Error(`update_files ${path}: ${w.text}`);
+    },
     /** The owner's agent's log (its conversation, agents/person/sessions.ts). */
     agentLog: async () =>
       (

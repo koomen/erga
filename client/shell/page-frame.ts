@@ -84,6 +84,8 @@ export function mountPageFrame(c: PageFrameConfig) {
     if (m.type == "erga-hello") {
       zoomsItself = false;
       if (active) void say();
+      // (The frame had the focus: the page that came in it has it, for its editor.)
+      if (active && document.activeElement == frame) frame.focus();
       return;
     }
     if (m.type == "erga-scroll" && num(m.y)) scrollY = Math.max(0, m.y);

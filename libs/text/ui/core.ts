@@ -204,7 +204,7 @@ export abstract class EditorCore {
     this.host = body;
     if (!body) return;
     this.keepOwn(body);
-    if (!this.leftText) body.setAttribute("contenteditable", "true");
+    if (!this.leftText && !this.readOnly) body.setAttribute("contenteditable", "true");
     // No spellcheck: these are technical documents, full of names a dictionary flags.
     body.setAttribute("spellcheck", "false");
     this.islands(body);
@@ -216,7 +216,7 @@ export abstract class EditorCore {
    */
   protected editable(on: boolean): void {
     if (!this.host) return;
-    if (on) this.host.setAttribute("contenteditable", "true");
+    if (on && !this.readOnly) this.host.setAttribute("contenteditable", "true");
     else this.host.removeAttribute("contenteditable");
   }
 
@@ -575,6 +575,16 @@ export abstract class EditorCore {
    * Takes the focus off the text, but keeps it in the page: no caret, no selection, and the keys go to the page's own
    * listeners (a deck's arrows). A click on text puts the caret back (input.ts, mousedown).
    */
+  /**
+   * Read-only while someone else edits the page's source (the lock: frame.ts): changes from the room still show, but
+   * nothing here changes the text.
+   */
+  readOnly = false;
+  setReadOnly(on: boolean): void {
+    this.readOnly = on;
+    if (on) this.leaveText();
+  }
+
   leaveText(): void {
     if (!this.doc) return;
     this.leftText = true;

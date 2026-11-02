@@ -529,3 +529,18 @@ export function mountControls(win: Window, page: ControlsPage, o: { place: () =>
 }
 
 export type Controls = ReturnType<typeof mountControls>;
+
+/**
+ * A note that stays on the page until taken off (the lock for source edits: frame.ts), in the controls' look, below the
+ * viewer's bars. Returns what takes it off.
+ */
+export function noteOnPage(win: Window, text: string): () => void {
+  const doc = win.document;
+  const host = doc.createElement("erga-note");
+  const root = host.attachShadow({ mode: "open" });
+  root.innerHTML = `<style>${STYLE}
+.note.lasting { top: ${TOP_ROOM + 8}px; bottom: auto; animation: none; }</style><div class="c"><div class="card note lasting" role="status"></div></div>`;
+  root.querySelector(".note")!.textContent = text;
+  doc.documentElement.append(host);
+  return () => host.remove();
+}

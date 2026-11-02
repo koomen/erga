@@ -11,7 +11,7 @@ import { EditorSelection, EditorState } from "@codemirror/state";
 import { mountPageFrame } from "./page-frame";
 import type { Keys } from "../common/app-keys";
 import { describeProblem } from "./problems";
-import { colorFor, files, type Author } from "../../document/content";
+import { colorFor, files, roomInfo, type Author } from "../../document/content";
 import type { Attachment } from "../../shared/attach";
 import { isPage, pageUrl } from "../../document/pages";
 import { live } from "../live/client";
@@ -225,6 +225,11 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     return;
   }
   document.title = info.docName?.title ?? info.name;
+  // Someone edits the source (the lock: document/room.ts): the source view gives way to the page, which says so and is
+  // read-only meanwhile (libs/text/ui/frame.ts).
+  roomInfo(collab.doc).observe(() => {
+    if (roomInfo(collab.doc).get("lock") && shell.mode != "text") shell.views.setMode("text");
+  });
 
   /**
    * The caret in the text, and the text: the source view's while it has them, else the page's: its editor's presence in

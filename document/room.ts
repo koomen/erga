@@ -151,7 +151,16 @@ export interface Connection {
   /** Handles a message; false if it was malformed (the caller should hang up). */
   receive(message: Uint8Array): boolean;
   close(): void;
+  /** Takes the lock for source edits as `by` (its name, for the others): null when it has it, else whose it is. */
+  lock(by: string): string | null;
+  /** Lets go of the lock, if it has it. */
+  unlock(): void;
+  /** Whose the lock is, if another participant has it. */
+  lockedBy(): string | null;
 }
+
+/** How long the lock for source edits holds with no edit from its holder: a stuck agent can't keep the document. */
+export const LOCK_IDLE_MS = 30_000;
 
 /** Why a file pushed to the room wasn't taken. */
 export type PushResult = { ok: true; etag: string } | { ok: false; etag: string | null; reason: "stale" | "binary" };
@@ -174,6 +183,13 @@ export class Room {
   /** Writes and merges, one at a time. */
   private turn = Semaphore.makeUnsafe(1);
   private conns = new Map<object, { send: (m: Uint8Array) => void; clients: Set<number> }>();
+  /**
+   * The lock for source edits: the participant that holds it (its connection's key) and whose it is. An agent's run of
+   * edits to the source takes it (agents/document/session.ts); meanwhile the room drops everyone else's edits, and asks
+   * for them again when it lets go. It's in the shared doc too (roomInfo's "lock": its name), so every tab sees it
+   * and shows the page read-only (libs/text/ui/frame.ts).
+   */
+  private locked: { key: object; by: string; timer: ReturnType<typeof setTimeout> } | null = null;
   private readonly me: Author = { user: "disk", name: "On disk", color: "#6b7280", kind: "disk" };
   private decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
   /** Who hears that the tree changed (a file or folder added, removed or moved). */
@@ -207,6 +223,8 @@ export class Room {
       // Every change from here on goes to the journal with the next write.
       room.doc.on("update", (update: Uint8Array) => { room.unsaved.push(update); room.pending.openUnsafe(); });
       yield* room.restore(!doc || saved!.reconcile, saved?.unwritten ?? []);
+      // A lock from before the room closed has no holder now.
+      if (roomInfo(room.doc).has("lock")) room.act(() => roomInfo(room.doc).delete("lock"));
       room.doc.on("update", (update: Uint8Array, origin: unknown) => room.broadcast(syncUpdate(update), origin));
       room.doc.on("afterTransaction", (tr: Y.Transaction) => room.noteDirty(tr));
       // The tree changed: files or folders came or went (a file's text changing isn't one).
@@ -239,7 +257,7 @@ export class Room {
    * the first one says who the room is, so its edits are attributed ("On
    * disk"). A room that changes nothing adds nothing to the history.
    */
-  private act(f: () => void, _origin?: unknown): void {
+  act(f: () => void, _origin?: unknown): void {
     this.doc.transact(() => {
       if (!this.introduced) { this.introduced = true; introduce(this.doc, this.me); }
       f();
@@ -341,8 +359,11 @@ export class Room {
           const decoder = decoding.createDecoder(message);
           const type = decoding.readVarUint(decoder);
           if (type == MSG_SYNC) {
-            // Read-only: only its request for what it's missing (step 1); its updates are dropped.
-            if (opts.readOnly && decoding.peekVarUint(decoder) != sync.messageYjsSyncStep1) return true;
+            const update = decoding.peekVarUint(decoder) != sync.messageYjsSyncStep1;
+            // Read-only: only its request for what it's missing (step 1); its updates are dropped. So are everyone's
+            // but the lock's holder's while it's held: asked for again when it's let go (unlock).
+            if (update && (opts.readOnly || (this.locked && this.locked.key !== key))) return true;
+            if (update && this.locked?.key === key) this.holdLock();
             const reply = encoding.createEncoder();
             encoding.writeVarUint(reply, MSG_SYNC);
             sync.readSyncMessage(decoder, reply, this.doc, key);
@@ -363,8 +384,42 @@ export class Room {
         if (!conn) return;
         this.conns.delete(key);
         awarenessProtocol.removeAwarenessStates(this.awareness, [...conn.clients], null);
+        this.unlock(key);
       },
+      lock: (by) => {
+        if (this.locked && this.locked.key !== key) return this.locked.by;
+        if (!this.locked) {
+          this.locked = { key, by, timer: setTimeout(() => this.unlock(key), LOCK_IDLE_MS) };
+          this.act(() => roomInfo(this.doc).set("lock", by));
+        }
+        this.holdLock();
+        return null;
+      },
+      unlock: () => this.unlock(key),
+      lockedBy: () => (this.locked && this.locked.key !== key ? this.locked.by : null),
     };
+  }
+
+  /** The lock's holder edited: it holds for LOCK_IDLE_MS more. */
+  private holdLock(): void {
+    const l = this.locked;
+    if (!l) return;
+    clearTimeout(l.timer);
+    l.timer = setTimeout(() => this.unlock(l.key), LOCK_IDLE_MS);
+  }
+
+  /** Lets go of the lock (if `key` holds it): everyone may edit again, and the edits it dropped meanwhile come again. */
+  private unlock(key: object): void {
+    if (this.locked?.key !== key) return;
+    clearTimeout(this.locked.timer);
+    this.locked = null;
+    this.act(() => roomInfo(this.doc).delete("lock"));
+    // Each participant's step 2 answers with what the room lacks: what it typed while it was locked out.
+    const ask = encoding.createEncoder();
+    encoding.writeVarUint(ask, MSG_SYNC);
+    sync.writeSyncStep1(ask, this.doc);
+    const message = encoding.toUint8Array(ask);
+    for (const conn of this.conns.values()) conn.send(message);
   }
 
   private broadcast(message: Uint8Array, origin: unknown): void {
@@ -796,9 +851,14 @@ export function digest(bytes: Uint8Array): string {
 /**
  * Joins a doc to the room in process, as an ordinary peer: the same sync
  * and awareness messages a tab sends over its WebSocket, delivered on the
- * microtask queue (in order, never re-entrantly). Returns a leave function.
+ * microtask queue (in order, never re-entrantly). Returns how it leaves, and
+ * how it takes and lets go of the lock for source edits.
  */
-export function joinLocal(room: Room, doc: Y.Doc, awareness: awarenessProtocol.Awareness): () => void {
+export function joinLocal(
+  room: Room,
+  doc: Y.Doc,
+  awareness: awarenessProtocol.Awareness
+): { leave: () => void; lock: (by: string) => string | null; unlock: () => void; lockedBy: () => string | null } {
   let open = true;
   const conn = room.connect((message) => queueMicrotask(() => { if (open) receive(message); }))!;
   const toRoom = (message: Uint8Array) => queueMicrotask(() => { if (open) conn.receive(message); });
@@ -826,10 +886,17 @@ export function joinLocal(room: Room, doc: Y.Doc, awareness: awarenessProtocol.A
   sync.writeSyncStep1(hello, doc);
   toRoom(encoding.toUint8Array(hello));
   if (awareness.getLocalState()) toRoom(awarenessMessage(awareness, [doc.clientID]));
-  return () => {
-    awarenessProtocol.removeAwarenessStates(awareness, [doc.clientID], "leave");
-    queueMicrotask(() => { open = false; conn.close(); });
-    doc.off("update", onUpdate);
-    awareness.off("update", onAwareness);
+  return {
+    leave: () => {
+      awarenessProtocol.removeAwarenessStates(awareness, [doc.clientID], "leave");
+      queueMicrotask(() => { open = false; conn.close(); });
+      doc.off("update", onUpdate);
+      awareness.off("update", onAwareness);
+    },
+    // (At once: the edits made after it reach the room in a microtask, as the holder's.)
+    lock: (by) => conn.lock(by),
+    // (After the edits on their way, which are the holder's.)
+    unlock: () => queueMicrotask(() => conn.unlock()),
+    lockedBy: () => conn.lockedBy(),
   };
 }

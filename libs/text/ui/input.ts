@@ -37,10 +37,13 @@ export abstract class EditorInput extends EditorClipboard {
     const on = <K extends keyof DocumentEventMap>(type: K, f: (e: DocumentEventMap[K]) => void, opts?: AddEventListenerOptions) => {
       this.cleanup.push(listenAsEditor(doc, type, f as EventListener, opts));
     };
+    // Read-only (readOnly: someone edits the source), nothing changes the text: no key, no input, no paste, cut or drop.
     on("beforeinput", (e) => {
+      if (this.readOnly) return e.preventDefault();
       if (!this.holdKey(e, { input: e.inputType, data: e.data })) this.beforeinput(e as InputEvent);
     });
     on("keydown", (e) => {
+      if (this.readOnly) return;
       if (!this.holdKey(e, { key: e.key, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey })) this.keydown(e);
     });
     on("compositionstart", (e) => {
@@ -78,10 +81,10 @@ export abstract class EditorInput extends EditorClipboard {
       });
     });
     on("paste", (e) => {
-      if (this.ours(e)) this.paste(e);
+      if (this.ours(e) && !this.readOnly) this.paste(e);
     });
     on("cut", (e) => {
-      if (this.ours(e)) this.cut(e);
+      if (this.ours(e) && !this.readOnly) this.cut(e);
     });
     on("copy", (e) => {
       if (this.ours(e)) this.copy(e);
@@ -104,7 +107,7 @@ export abstract class EditorInput extends EditorClipboard {
       if (hasFiles(e)) {
         e.preventDefault();
         showDropCaret(doc, null);
-        this.dropFiles(e);
+        if (!this.readOnly) this.dropFiles(e);
       } else if (this.ours(e)) e.preventDefault();
     });
     on("mousedown", (e) => this.mousedown(e));

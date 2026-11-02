@@ -55,25 +55,32 @@ test("a file has an ETag, is checked each time, and is a 304 with no body when u
   expect(pageTag).not.toBe(etag!);
   expect((await framed(`${url}index.html`, { "If-None-Match": pageTag })).status).toBe(304);
   expect((await framed(`${url}index.html`, { "If-None-Match": etag! })).status).toBe(200);
-  // The editor's half loads from the app's origin (one address for every document), each script with its integrity.
+  // The editor (erga/text) loads from the app's origin at one address, its newest build; the build and its chunks
+  // preloaded, each with its integrity.
   const html = await page.text();
   const config = JSON.parse(/\((\{"shell":.*?\})\);<\/script>/.exec(html)?.[1] ?? "null") as {
     shell: string;
     prefix: string;
-    editor: { src: string; integrity: string; map: Record<string, string> };
+    editor: { src: string; integrity: string; preload: string[]; map: Record<string, string> };
   };
   expect(config.shell).toBe(p.origin);
   expect(config.prefix).toBe(at.pathname);
-  expect(config.editor.src).toMatch(new RegExp(`^${p.origin}/_erga/frame-[a-z0-9]+\\.js$`));
-  expect(config.editor.integrity).toMatch(/^sha384-/);
+  expect(config.editor.src).toBe(`${p.origin}/erga/text/editor.js`);
   expect(html).toContain('<script type="importmap" data-erga>');
-  expect(config.editor.map[config.editor.src]).toBe(config.editor.integrity);
-  // There: kept a year, and loadable from the document's origin (CORS), as the bytes the integrity names.
-  const script = await fetch(config.editor.src, { headers: { Origin: at.origin } });
+  const build = config.editor.preload[0];
+  expect(build).toMatch(new RegExp(`^${p.origin}/_erga/frame-[a-z0-9]+\\.js$`));
+  expect(config.editor.map[build]).toMatch(/^sha384-/);
+  // The library's address: asked again each time, loadable from the document's origin, and it imports that build.
+  const library = await fetch(config.editor.src, { headers: { Origin: at.origin } });
+  expect(library.headers.get("cache-control")).toBe("no-cache");
+  expect(library.headers.get("access-control-allow-origin")).toBe("*");
+  expect(await library.text()).toBe(`import ${JSON.stringify(new URL(build).pathname)};\n`);
+  // The build: kept a year, and loadable from the document's origin (CORS), as the bytes the integrity names.
+  const script = await fetch(build, { headers: { Origin: at.origin } });
   expect(script.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
   expect(script.headers.get("access-control-allow-origin")).toBe("*");
   const digest = createHash("sha384").update(new Uint8Array(await script.arrayBuffer())).digest("base64");
-  expect(`sha384-${digest}`).toBe(config.editor.integrity);
+  expect(`sha384-${digest}`).toBe(config.editor.map[build]);
   // A file that isn't there is never kept.
   expect((await fetch(`${p.origin}/_erga/frame-none.js`)).headers.get("cache-control")).toBe("no-store");
   // The editor's shell is in the page (no page of its own to fetch); its script and chunks are preloaded, and its start
@@ -116,7 +123,7 @@ test("a reader's viewer holds the page in one frame on its own origin (allow-sam
   const page = await (await framed(src)).text();
   expect(page).toContain("erga-hello");
   expect(page).not.toContain("importmap");
-  expect(page).not.toContain("__ergaProblems");
+  expect(page).not.toContain("__ergaReport");
   // Someone it isn't shared with gets no page.
   expect((await p.as("Zed", address)).status).toBe(403);
   // Edited: the next load shows it (readers see the document as it is now).

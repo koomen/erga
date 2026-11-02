@@ -258,17 +258,36 @@ export const agent: Test[] = [
     },
   },
   {
-    name: "two people's agents editing one file at once both land",
+    name: "two people's agents at once: the one editing the source holds the lock; the other's edit waits for its run to end",
     needs: ["scriptedAgent"],
     async run(ctx) {
       const d = await ctx.doc();
       const c = await Participant.join(d, "Cy");
       ctx.defer(() => c.destroy());
+      // Ada's agent edits the source twice; Bo's tries once in between, while Ada's holds the lock (document/room.ts).
       await Promise.all([
-        runScript(d, "Ada", [edit(d.path, "<h1>Launch notes", "<h1>Launch notes [ada]", { delay: 100 }), edit(d.path, "Where the leads go.", "Where the leads go. [ada2]", { delay: 150 }), { text: "ok" }]),
-        runScript(d, "Bo", [edit(d.path, "Typing never waits.", "Typing never waits. [bo]", { delay: 120 }), edit(d.path, "Faster builds", "Faster builds [bo2]", { delay: 140 }), { text: "ok" }]),
+        runScript(d, "Ada", [
+          edit(d.path, "<h1>Launch notes", "<h1>Launch notes [ada]", { delay: 100 }),
+          edit(d.path, "Where the leads go.", "Where the leads go. [ada2]", { delay: 600 }),
+          { text: "ok" },
+        ]),
+        runScript(d, "Bo", [edit(d.path, "Typing never waits.", "Typing never waits. [bo]", { delay: 350 }), { text: "ok" }]),
       ]);
-      await until(() => ["[ada]", "[ada2]", "[bo]", "[bo2]"].every((t) => c.str().includes(t)), 5000, "all four edits are in", () => c.str().slice(0, 800));
+      await until(
+        () => ["[ada]", "[ada2]"].every((t) => c.str().includes(t)),
+        5000,
+        "Ada's agent's edits are in",
+        () => c.str().slice(0, 800)
+      );
+      expect(!c.str().includes("[bo]"), "Bo's agent's edit, while Ada's held the lock, changed nothing", c.str().slice(0, 800));
+      // Ada's run is over: Bo's agent edits now.
+      await runScript(d, "Bo", [edit(d.path, "Typing never waits.", "Typing never waits. [bo]", { delay: 50 }), { text: "ok" }]);
+      await until(
+        () => c.str().includes("[bo]"),
+        5000,
+        "and Bo's lands once Ada's run is over",
+        () => c.str().slice(0, 800)
+      );
     },
   },
   {

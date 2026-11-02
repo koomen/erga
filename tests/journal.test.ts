@@ -49,7 +49,7 @@ async function open(storage: Storage, opts: { journal?: Journal; writeDelay?: nu
   ));
   const doc = new Y.Doc(), aw = new Awareness(doc);
   aw.setLocalState({ user: ada });
-  const leave = joinLocal(room, doc, aw);
+  const { leave } = joinLocal(room, doc, aw);
   await tick();
   introduce(doc, ada);
   await tick();

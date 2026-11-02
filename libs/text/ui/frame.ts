@@ -17,12 +17,12 @@ import { watchMoves } from "./moves";
 import { listenAsEditor } from "./text-guard";
 import { clampZoom } from "../../../client/common/zoom";
 import { Collab } from "./collab";
-import { mountControls, type Controls } from "./controls";
+import { mountControls, noteOnPage, type Controls } from "./controls";
 import { addFiles } from "./uploads";
 import type { EditMode } from "./mode";
 import { changesBetween } from "../../../document/merge";
 import { baseName, encodePath } from "../../../document/pages";
-import { assets, files, type Author } from "../../../document/content";
+import { assets, files, roomInfo, type Author } from "../../../document/content";
 import { sourceDigest } from "../../../shared/page-html";
 import { sleep } from "../../../shared/time";
 import { isAppShortcut } from "../../../client/common/app-keys";
@@ -205,7 +205,29 @@ async function start() {
   if (collab != c) return;
   const back = carried();
   if (back?.room) c.merge(back.room);
-  text = c.current();
+  // The lock for source edits (document/room.ts): while someone holds it, the page is read-only, and says so; their
+  // edits show as they land, and the page edits again once it's let go (no reload).
+  const locked = () => (roomInfo(c.doc).get("lock") as string | undefined) ?? null;
+  let carried_ = back;
+  const follow = () => {
+    if (collab != c || !mode) return;
+    if (!page) edit(c, mode, carried_);
+    carried_ = null;
+    const by = locked();
+    page?.setReadOnly(!!by);
+    lockNote?.();
+    lockNote = by ? noteOnPage(window, `${by} is editing this page's source: you can read it, and edit it again once they're done.`) : null;
+  };
+  roomInfo(c.doc).observe(follow);
+  follow();
+}
+
+/** What says the page is read-only while someone edits its source (the lock), and takes it off. */
+let lockNote: (() => void) | null = null;
+
+/** The editor on the page, from the room's text (`c`'s replica) and what it kept of itself, if it did. */
+function edit(c: Collab, m: Editing, back: Carry | null) {
+  let text = c.current();
   // The state this page's editor had (with its undo history), brought to the room's text: before the page loaded again,
   // or before the editor stopped (out of the editor and back). Else the room's text, afresh.
   let state = EditorState.create({ doc: text, extensions: docExtensions }),
@@ -276,10 +298,9 @@ async function start() {
           // the focus it has (the viewer gives the frame the focus as it goes into the editor), with the caret in its text.
           if (!back && !page.isPaused && page.canPause) page.leaveText();
           // The page had the focus as it loaded again, or has it now: its text has it, for the keys held meanwhile.
-          else if (focus || document.hasFocus()) {
-            page.focus();
-            page.hold(false);
-          }
+          else if (focus || document.hasFocus()) page.focus();
+          // (The keys held meanwhile go in now, whether or not it has the focus yet.)
+          page.hold(false);
           focus = false;
         });
       controls?.queue();
@@ -414,6 +435,15 @@ function reload(view: { pos: number; top: number } | null) {
 
 /** Out of the editor: the editor stops (its state kept for the way back in), and leaves the room; the page stays as it is. */
 function stop() {
+  stopEditor();
+  lockNote?.();
+  lockNote = null;
+  collab?.close();
+  collab = null;
+}
+
+/** The editor stops, its state kept for the way back in; the page stays as it is. */
+function stopEditor() {
   if (page) {
     kept = page.state;
     // What the page shows now: this text, if the editor has shown all of it.
@@ -423,8 +453,6 @@ function stop() {
   for (const f of unwatch.splice(0)) f();
   darkObserver?.disconnect();
   page = null;
-  collab?.close();
-  collab = null;
   window.ergaFrame = undefined;
 }
 

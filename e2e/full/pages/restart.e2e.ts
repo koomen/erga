@@ -11,8 +11,9 @@ test("an empty folder, and every page, are still there after a restart", TWO_SER
   const s = await site(first, { pages: true });
   await s.treeOp({ op: "new_folder", path: "empty" });
   // Stored first: stopping the dev server loses what the room hasn't written to storage yet (only documents linked to
-  // disk are flushed on the way out, dev/start.ts).
-  await expect.poll(async () => (await s.get(`/d/${s.id}/api/stored/blog/post.html`)).text()).toContain("<h1>A post</h1>");
+  // disk are flushed on the way out, dev/start.ts). A file the room takes after the folder: once it's stored, so is that.
+  await s.tool("write", { path: "notes.txt", content: "after the folder" });
+  await expect.poll(async () => (await s.get(`/d/${s.id}/api/stored/notes.txt`)).text()).toContain("after the folder");
   first.stop();
   const again = await tab.own({ env: { ERGA_AGENT_MODEL: "script" }, state: first.state });
   const t = (await runTool(again.root, "list_pages", { document: s.id })).result as { entries: [] };
