@@ -5,6 +5,7 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, servers, test, until } from "../../helpers/fixtures";
+import { freshLogin, signIn } from "../front/front";
 
 await servers.main();
 const staging = () => servers.of("staging-tokens", { env: { ERGA_DEPLOY_TARGET: "staging" } });
@@ -92,7 +93,8 @@ test("an MCP app signs in through the browser: register, approve on Erga, trade 
     await page.goto(authorize);
     expect(new URL(page.url()).pathname).toBe("/tokens/approve");
     const card = await page.evaluate(() => document.querySelector(".approve")?.textContent ?? "");
-    for (const part of ["Claude Code (erga)", "All my documents", "the app, on this computer"]) expect(card).toContain(part);
+    for (const part of ["Claude Code (erga)", "all your documents, and admin power", "the app, on this computer"])
+      expect(card).toContain(part);
     await page.click("button[value=approve]");
     const back = await until(() => heard[0], 10_000, "the browser back at the app");
     expect(back.get("state")).toBe("xyz");
@@ -164,7 +166,7 @@ test("on staging the app finds and registers without a cookie, and an admin's si
   expect(
     (await trade(as.token_endpoint, { code: "nope", client_id: client, redirect_uri: redirect, code_verifier: "x".repeat(43) })).body.error
   ).toBe("invalid_grant");
-  // The admin (the dev login) approves; the token is a documents token, which staging lets reach /mcp for an admin.
+  // The admin (the dev login) approves; the token is an admin token, which staging lets reach /mcp.
   const { verifier, challenge } = await pkce();
   const approve = (
     await fetch(
@@ -184,4 +186,57 @@ test("on staging the app finds and registers without a cookie, and an admin's si
   const token = (await trade(as.token_endpoint, { code, client_id: client, redirect_uri: redirect, code_verifier: verifier })).body
     .access_token!;
   expect((await mcp(root, token, "tools/list")).status).toBe(200);
+});
+
+/** The whole sign-in, as an MCP app does it, by `cookie`'s person (none: the dev login, an admin): the approval card's text and the token. */
+async function signInOver(root: string, cookie: string | null) {
+  const as = await discover(root);
+  const redirect = "http://127.0.0.1:9/callback";
+  const client = await register(as.registration_endpoint, redirect);
+  const { verifier, challenge } = await pkce();
+  const headers: Record<string, string> = cookie ? { Cookie: cookie } : {};
+  const approve = (
+    await fetch(
+      `${as.authorization_endpoint}?${new URLSearchParams({ response_type: "code", client_id: client, redirect_uri: redirect, code_challenge: challenge, code_challenge_method: "S256" })}`,
+      { redirect: "manual", headers }
+    )
+  ).headers.get("location")!;
+  const card = await (await fetch(new URL(approve, root), { headers })).text();
+  const userCode = new URL(approve, root).searchParams.get("code")!;
+  const sent = await fetch(`${root}/tokens/approve`, {
+    method: "POST",
+    redirect: "manual",
+    headers: { ...headers, Origin: root },
+    body: new URLSearchParams({ code: userCode, answer: "approve" }),
+  });
+  expect(sent.status).toBe(303);
+  const code = new URL(sent.headers.get("location")!).searchParams.get("code")!;
+  const got = await trade(as.token_endpoint, { code, client_id: client, redirect_uri: redirect, code_verifier: verifier });
+  return { card, token: got.body.access_token!, scope: (got.body as { scope?: string }).scope };
+}
+
+const whoami = async (root: string, token: string) =>
+  JSON.parse((await mcp(root, token, "tools/call", { name: "whoami", arguments: {} })).result.content[0].text) as {
+    adminPower: boolean;
+    token: { scope: string; expires: string | null };
+  };
+
+test("the MCP sign-in gives the person's own power: an admin's app gets admin power and the Ops page's deploys; anyone else's, documents", async () => {
+  const root = (await servers.main()).root;
+  // The admin (the dev login): the card says what the app gets, and the token is admin scope, with no expiry.
+  const admin = await signInOver(root, null);
+  expect(admin.card).toContain("all your documents, and admin power");
+  expect(admin.scope).toBe("admin");
+  expect(await whoami(root, admin.token)).toMatchObject({ adminPower: true, token: { scope: "admin", expires: null } });
+  const names = (await mcp(root, admin.token, "tools/list")).result.tools.map((t: { name: string }) => t.name);
+  expect(names).toEqual(expect.arrayContaining(["list_deploys", "deploy_log", "homepage_status", "list_users"]));
+
+  // A person who isn't an admin: documents scope, no admin tools.
+  const { cookie } = await signIn(await servers.main(), freshLogin("mcp"));
+  const plain = await signInOver(root, cookie);
+  expect(plain.card).toContain("all your documents: everything you can do with documents, but no admin power");
+  expect(plain.scope).toBe("documents");
+  expect(await whoami(root, plain.token)).toMatchObject({ adminPower: false, token: { scope: "documents" } });
+  const theirs = (await mcp(root, plain.token, "tools/list")).result.tools.map((t: { name: string }) => t.name);
+  expect(theirs).not.toContain("list_deploys");
 });
