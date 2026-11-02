@@ -8,9 +8,9 @@
 //     with its own address), a switch (the tree's make_project and
 //     make_document). A project with more than one page says, in place, why
 //     it can't be a document yet.
-//   - Readers' agents, for its owner only: whether the people it's shared with as viewers may use their own agent on it
-//     (set_reader_agent; its state from document_access). Off, and not to be turned on, while anyone with the link may
-//     open it.
+//   - Readers, for its owner only (their state from document_access): whether the people who view it, and can't edit
+//     it, see Erga's bars over it (set_reader_bars; on at first), and whether they may use their own agent on it
+//     (set_reader_agent). The agent is off, and not to be turned on, while anyone with the link may open it.
 //   - Homepage, only on the homepage: a note that says so, how its deploy is
 //     going, and Redeploy now (admins). The homepage is chosen on /admin
 //     (the landing_document setting), never here.
@@ -20,7 +20,7 @@
 //     focus, makes a copy of a version the current one (restore_version).
 //
 // It runs the operations (server/operations/: list_versions, restore_version, list_pages, make_project,
-// make_document, homepage_status, deploy_homepage, document_access, set_reader_agent; over POST /api/tools/<name>), and refreshes on the event channel's
+// make_document, homepage_status, deploy_homepage, document_access, set_reader_bars, set_reader_agent; over POST /api/tools/<name>), and refreshes on the event channel's
 // { type: "versions" }, { type: "home" } and { type: "tree" } (main.ts passes them on).
 // Someone who can't edit sees it all read-only.
 
@@ -112,10 +112,11 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-kind button:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 .ds-kind button[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
 .ds-kind button[aria-disabled="true"]:hover { color: var(--soft); }
-/* Readers' agents: one switch, for the owner. */
+/* Readers: two switches, for the owner. */
 .ds-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); cursor: pointer; }
 .ds-check input { margin: 0; width: 15px; height: 15px; accent-color: var(--caret); cursor: inherit; }
 .ds-check:has(input:disabled) { opacity: 0.55; cursor: default; }
+.ds-explain + .ds-check { margin-top: 12px; }
 /* The homepage: a note, only on the homepage. */
 .ds-home-note { display: flex; align-items: center; gap: 8px; margin: 0; font: 600 13.5px/1.3 var(--font-text); color: var(--fg-strong, var(--fg)); }
 .ds-home-note svg { flex: none; width: 16px; height: 16px; fill: none; stroke: var(--caret); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -167,7 +168,9 @@ function mount(host: SettingsHost): Settings {
       <p class="ds-error" id="ds-kind-error" role="alert"></p>
     </section>
     <section class="ds-agent" id="ds-agent" hidden aria-labelledby="ds-agent-title">
-      <h3 id="ds-agent-title">Readers' agents</h3>
+      <h3 id="ds-agent-title">Readers</h3>
+      <label class="ds-check"><input type="checkbox" id="ds-bars-on">Readers see Erga's bars</label>
+      <p class="ds-explain">People who can't edit it see the page alone when this is off, as a site of its own.</p>
       <label class="ds-check"><input type="checkbox" id="ds-agent-on" aria-describedby="ds-agent-explain">Readers can use their agent here</label>
       <p class="ds-explain" id="ds-agent-explain"></p>
       <p class="ds-error" id="ds-agent-error" role="alert"></p>
@@ -206,7 +209,8 @@ function mount(host: SettingsHost): Settings {
   const agentSec = $("ds-agent"),
     agentOn = $<HTMLInputElement>("ds-agent-on"),
     agentExplain = $("ds-agent-explain"),
-    agentError = $("ds-agent-error");
+    agentError = $("ds-agent-error"),
+    barsOn = $<HTMLInputElement>("ds-bars-on");
 
   // ------------------------------------------------------------ the server
 
@@ -223,8 +227,8 @@ function mount(host: SettingsHost): Settings {
   let tree: Tree | null = null;
   /** The kind being switched to, while the server does it. */
   let kindBusy: DocKind | null = null;
-  /** Readers' agents, for the owner (document_access answers no one else): on or off, and whether anyone with the link may open it. */
-  let access: { readerAgent: boolean; open: boolean } | null = null;
+  /** Readers, for the owner (document_access answers no one else): their bars and their agent, and whether anyone with the link may open it. */
+  let access: Access | null = null;
   let accessSeq = 0,
     agentBusy = false;
 
@@ -287,18 +291,19 @@ function mount(host: SettingsHost): Settings {
     renderKind();
   }
 
-  /** document_access's answer, as far as Readers' agents need it. */
-  const accessOf = (a: { readerAgent: boolean; permissions: { login: string }[] }) => ({
+  /** document_access's answer, as far as Readers need it. */
+  type Answer = { readerAgent: boolean; readerBars: boolean; permissions: { login: string }[] };
+  type Access = { readerAgent: boolean; readerBars: boolean; open: boolean };
+  const accessOf = (a: Answer): Access => ({
     readerAgent: a.readerAgent,
+    readerBars: a.readerBars,
     open: a.permissions.some((p) => p.login == "*"),
   });
   async function loadAccess() {
     // (Only its owner may ask: the page says so, meta erga-share, as for Share.)
     if (!document.querySelector('meta[name="erga-share"]')) return;
     const seq = ++accessSeq;
-    const a = await runTool<{ readerAgent: boolean; permissions: { login: string }[] }>("document_access", { document: host.docId }).catch(
-      () => null
-    );
+    const a = await runTool<Answer>("document_access", { document: host.docId }).catch(() => null);
     if (seq != accessSeq) return;
     access = a && accessOf(a);
     renderAgent();
@@ -307,24 +312,28 @@ function mount(host: SettingsHost): Settings {
     agentSec.hidden = !access;
     if (!access) return;
     agentOn.checked = access.readerAgent;
+    barsOn.checked = access.readerBars;
+    barsOn.disabled = agentBusy;
     agentOn.disabled = access.open || agentBusy;
     agentExplain.textContent = access.open
       ? "Anyone with the link can open it, so readers have no agent here. Editors always have theirs."
       : "People you share it with as viewers can ask their own agent about it. Their agent can read it, never change it.";
   }
-  agentOn.addEventListener("change", async () => {
-    const on = agentOn.checked;
+  /** One of the two switches: the server's answer says what holds now. */
+  async function setReader(tool: "set_reader_agent" | "set_reader_bars", on: boolean) {
     agentBusy = true;
     agentError.textContent = "";
     renderAgent();
     try {
-      access = accessOf(await runTool("set_reader_agent", { document: host.docId, on }));
+      access = accessOf(await runTool<Answer>(tool, { document: host.docId, on }));
     } catch (e) {
       agentError.textContent = `Couldn't change it: ${(e as Error).message}`;
     }
     agentBusy = false;
     renderAgent();
-  });
+  }
+  agentOn.addEventListener("change", () => setReader("set_reader_agent", agentOn.checked));
+  barsOn.addEventListener("change", () => setReader("set_reader_bars", barsOn.checked));
 
   /** Edit on a version: a copy of it becomes the current version (the previous current one stays a version). */
   let restoring: string | null = null;
