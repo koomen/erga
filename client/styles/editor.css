@@ -51,7 +51,7 @@ body.source :is(#frame, .erga-canvas) { visibility: hidden; }
 #welcome[hidden] { display: none; }
 #welcome.blocking { z-index: 100; background: color-mix(in srgb, var(--bg) 92%, transparent); color: var(--fg); }
 #welcome button { font: 600 14px var(--font-text); padding: 8px 16px; border-radius: 10px; border: 0; background: var(--fg-strong); color: var(--bg); cursor: pointer; }
-/* The agent's use of the live page: each page_inspect, page_click or page_key, for a moment.
+/* The agent's use of the live page: each page_log frames, eval_in_page live or page_input, for a moment.
    Under the controls, over the page and the agent panel (wherever it's docked), in sight. */
 .agent-live {
   position: fixed; left: 50%; top: var(--top-clear); transform: translateX(-50%); z-index: 22; max-width: min(520px, calc(100vw - 32px));

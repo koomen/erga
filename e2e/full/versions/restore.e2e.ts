@@ -28,7 +28,7 @@ test("restoring a version: a new current version by the person, live in open edi
     expect(body.current).toMatchObject({ n: 4, description: "Restored version 2", authors: [owner.login] });
     const s = await owner.versions(id);
     expect(s.current.id).toBe(body.current.id);
-    const v2 = (await tool("read_version", { version: "v2", path: "index.html" })).text;
+    const v2 = (await tool("read", { version: "v2", path: "index.html" })).text;
     await expect.poll(() => ada.str()).toBe(v2);
     await expect.poll(async () => (await viewer.get(`/d/${id}`, { redirect: "follow" })).text()).toContain("alpha");
     expect(await (await viewer.get(`/d/${id}`, { redirect: "follow" })).text()).not.toContain("beta");

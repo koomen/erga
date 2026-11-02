@@ -27,7 +27,7 @@ test("a landing_document the deploy locks can't be changed on /admin", OWN_SERVE
   const server = await tab.own({ env: { ERGA_SERVER_CONFIG: JSON.stringify({ landing_document: null }) } });
   const made = await publish(server, await adminToken(server), { "index.html": "<h1>Mine</h1>" });
   expect(made.id).toMatch(/^[a-z0-9]{8}$/);
-  expect(await home(server, made.id)).toMatchObject({ isHome: false, canDeploy: false });
+  expect(await home(server, made.id)).toEqual({ isHome: false });
   expect((await setLanding(server, made.id)).error).toBeTruthy();
   expect((await home(server, made.id)).isHome).toBe(false);
 });

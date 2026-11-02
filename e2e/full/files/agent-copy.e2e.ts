@@ -33,7 +33,7 @@ test("Pete's task in three calls: the notes to notes.html, the deck and its imag
   // The presentation, a document with an image; the project, its notes as its page and an old copy of the slides.
   await ok("write", { document: deck.id, path: "index.html", content: DECK });
   await ok("write", { document: deck.id, path: "shots/one.png", content_base64: PNG });
-  await ok("make_project", { document: project.id });
+  await ok("set_kind", { document: project.id, kind: "project" });
   await ok("write", { document: project.id, path: "index.html", content: NOTES });
   await ok("write", { document: project.id, path: "slides.html", content: DECK.replace("First frame", "An old first frame") });
 
@@ -50,16 +50,14 @@ test("Pete's task in three calls: the notes to notes.html, the deck and its imag
   expect((await ok("read", { document: project.id, path: "notes.html" })).text).toBe(NOTES);
   const image = await ok("read", { document: project.id, path: "shots/one.png" });
   expect((image.result as { type: string; data?: string }[]).find((c) => c.type == "image")?.data).toBe(PNG);
-  const pages = JSON.parse((await ok("list_pages", { document: project.id })).text);
+  const pages = JSON.parse((await ok("ls", { document: project.id })).text);
   expect(
     pages.entries
       .filter((e: { type: string }) => e.type == "page")
       .map((e: { path: string }) => e.path)
       .sort()
   ).toEqual(["index.html", "notes.html"]);
-  await expect
-    .poll(async () => JSON.parse((await ok("get_title", { document: project.id })).text).title, { timeout: 10_000 })
-    .toBe("Glide");
+  await expect.poll(async () => JSON.parse((await ok("ls", { document: project.id })).text).title, { timeout: 10_000 }).toBe("Glide");
   // The presentation is as it was: a copy leaves it be.
   expect((await ok("read", { document: deck.id, path: "index.html" })).text).toBe(DECK);
 });

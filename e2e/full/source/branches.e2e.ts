@@ -61,7 +61,7 @@ test("a feature branch shows above the git log; Merge squashes it onto staging, 
   // The merge takes seconds on the real server: the call waits here until the test lets it go.
   let letGo = () => {};
   const held = new Promise<void>((ok) => (letGo = ok));
-  await page.route("**/api/tools/merge_feature_branch", async (route) => {
+  await page.route("**/api/tools/feature_branch", async (route) => {
     await held;
     await route.continue();
   });
@@ -88,7 +88,7 @@ test("a feature branch shows above the git log; Merge squashes it onto staging, 
   // A merge that fails says why in its row, and Merge is there again.
   git("push", "-q", remote, "HEAD:again");
   await expect.poll(() => text(row("again")), { timeout: 10_000 }).toContain("Merges cleanly");
-  await page.route("**/api/tools/merge_feature_branch", (route) =>
+  await page.route("**/api/tools/feature_branch", (route) =>
     route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ ok: false, error: "Staging moved: try again." }) })
   );
   await page.click(`${row("again")} button[data-feature-merge]`);
@@ -96,12 +96,12 @@ test("a feature branch shows above the git log; Merge squashes it onto staging, 
   expect(await page.evaluate(() => (document.getElementById("feature-dlg") as HTMLDialogElement).open)).toBe(false);
   await expect.poll(() => text(row("again"))).toContain("Couldn't merge: Staging moved: try again.");
   expect(await page.locator(`${row("again")} button[data-feature-merge]`).isDisabled()).toBe(false);
-  await page.unroute("**/api/tools/merge_feature_branch");
+  await page.unroute("**/api/tools/feature_branch");
 
   // Delete: the row says so at once, then the branch goes.
   let letDelete = () => {};
   const deleting = new Promise<void>((ok) => (letDelete = ok));
-  await page.route("**/api/tools/delete_feature_branch", async (route) => {
+  await page.route("**/api/tools/feature_branch", async (route) => {
     await deleting;
     await route.continue();
   });

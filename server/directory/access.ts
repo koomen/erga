@@ -156,7 +156,7 @@ export class AccessRules {
   async change(by: Actor, id: number, accessIn: unknown): Promise<AccessRule> {
     await this.users.mustAdmin(by);
     const rule = (await this.all()).find((r) => r.id == id);
-    if (!rule) throw new NotAllowed({ message: `There's no rule ${id}: list_access_rules lists them.` });
+    if (!rule) throw new NotAllowed({ message: `There's no rule ${id}: people lists them.` });
     const access = accessValue(accessIn);
     const at = Date.now();
     await this.sql.batch([
@@ -175,7 +175,7 @@ export class AccessRules {
   async remove(by: Actor, id: number): Promise<void> {
     await this.users.mustAdmin(by);
     const rule = (await this.all()).find((r) => r.id == id);
-    if (!rule) throw new NotAllowed({ message: `There's no rule ${id}: list_access_rules lists them.` });
+    if (!rule) throw new NotAllowed({ message: `There's no rule ${id}: people lists them.` });
     if (rule.kind == "everybody") throw new NotAllowed({ message: "Everybody's rule is always there: set it to none instead." });
     await this.sql.batch([["DELETE FROM access_rules WHERE id = ?1", id], logged(by, Date.now(), { event: "removed", kind: rule.kind, value: rule.value, access: rule.access })]);
     this.remembered = null;

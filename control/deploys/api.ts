@@ -49,7 +49,7 @@ export interface DeploysObject extends OpsDeploys {
   isInstall(origin: string): Promise<boolean>;
   /** The release store (control/deploys/releases.ts): both channels (null: no store). */
   releases(): Promise<ReleasesView | null>;
-  /** Each environment's domains (its Worker's custom domains), and one added or removed (the operations list_domains, add_domain and remove_domain). */
+  /** Each environment's domains (its Worker's custom domains), and one added or removed (the operations deploys, view domains, and set_domain). */
   domains(): Promise<DomainsView | { error: string; status?: number }>;
   addDomain(target: string, hostname: string, by: string): Promise<DomainsView | { error: string; status?: number }>;
   removeDomain(target: string, hostname: string, by: string): Promise<DomainsView | { error: string; status?: number }>;

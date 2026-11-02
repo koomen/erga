@@ -1,4 +1,4 @@
-// The frame's address: the page's place in the tab's address goes with it (#3: agents/document/PROMPT.md, rule 14), so
+// The frame's address: the page's place in the tab's address goes with it (#3: agents/document/PROMPT.md, rule 11), so
 // a reload or a link opens the page there. Opened with ?edit (`editing`), the editor's half starts loading with the page
 // (?erga-edit, server/pages/reader.ts), and reloaded in the editor scrolled down the page, it opens where it was (?erga-y).
 

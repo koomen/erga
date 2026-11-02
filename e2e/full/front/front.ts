@@ -47,7 +47,7 @@ export async function person(s: Server, login = freshLogin()) {
     /** As someone else, by the dev server's ?user= (no cookie needed). */
     as: (who: string, path: string, init?: RequestInit) => get(`${path}${path.includes("?") ? "&" : "?"}user=${who}`, init),
     /** A document's title and address, from its host. */
-    nameOf: async (id: string): Promise<Name> => (await runTool<Name>(base, "get_title", { document: id }, { cookie, origin })).result!,
+    nameOf: async (id: string): Promise<Name> => (await runTool<Name>(base, "ls", { document: id }, { cookie, origin })).result!,
     /** Renames a document, as the editor's title card does (rename_document): its answer, or the error, as a response's. */
     rename: async (id: string, patch: { title?: string; slug?: string }) => {
       const r = await runTool<Name>(base, "rename_document", { document: id, ...patch }, { cookie, origin });
@@ -127,7 +127,6 @@ export function tools(base: string, token: string) {
           })
         ).json()) as any
       ).result.tools.map((t: { name: string }) => t.name) as string[],
-    guide: async () => (await fetch(`${base}/llms.txt`, { headers: auth })).text(),
   };
 }
 
@@ -143,6 +142,6 @@ export async function resetting<T>(s: Server, key: string, f: () => Promise<T>):
   try {
     return await f();
   } finally {
-    await runTool(s.root, "reset_setting", { key });
+    await runTool(s.root, "set_setting", { key, reset: true });
   }
 }

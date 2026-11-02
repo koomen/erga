@@ -158,7 +158,7 @@ test("the whole sign-in: register, authorize, approve, trade the code with its v
   expect(listed.status).toBe(200);
   const names = ((await listed.json()) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
   expect(names).toContain("list_documents");
-  expect(names).not.toContain("list_users");
+  expect(names).not.toContain("people");
 });
 
 test("a wrong verifier uses the code up; Deny sends the person back to the app with access_denied", async () => {

@@ -110,11 +110,12 @@ test("the agent's settings: only that person's own keys, and the admin's choices
 test("the operations: the person's own list and remove; an agent never sees a key", async () => {
   const { dir } = fresh();
   await dir.personKeys.set(bob, "openai", OPENAI);
-  const caller = { dir, who: { login: "bob", via: "agent" }, name: "Bob", origin: "http://x" } as never;
-  const listed = JSON.stringify(await runOperation(op("list_my_api_keys"), {}, caller));
+  const platform = { tokens: { list: async () => [] } };
+  const caller = { dir, who: { login: "bob", via: "agent" }, name: "Bob", origin: "http://x", platform } as never;
+  const listed = JSON.stringify(((await runOperation(op("whoami"), {}, caller)) as { apiKeys: unknown }).apiKeys);
   expect(listed).toContain('"last4":"Ow42"');
   expect(listed).not.toContain("qqqqqqqq");
-  expect(await runOperation(op("clear_my_api_key"), { name: "openai" }, caller)).toMatchObject({ removed: "openai" });
+  expect(await runOperation(op("revoke"), { api_key: "openai" }, caller)).toMatchObject({ removed: "openai" });
   expect(await dir.personKeys.opened("bob")).toEqual({});
 });
 

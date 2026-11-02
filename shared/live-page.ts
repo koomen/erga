@@ -9,9 +9,8 @@
 //   the events     each pointer and key event on the page, and who consumed it (preventDefault,
 //                  stopPropagation): the editor or the page
 //
-// page_console, page_network and page_events read them; page_inspect reads the
-// page itself; page_click and page_key act on it, through the editor's own
-// handlers. The host asks the person's tabs over the same path
+// page_log reads them, and the page's frames; page_input acts on the page,
+// through the editor's own handlers. The host asks the person's tabs over the same path
 // view_page uses (POST /api/agent/view): a ViewRequest with `live`.
 //
 // Pure: the logs and the words for the agent are here, tested in tests/live-page.test.ts;
@@ -31,9 +30,9 @@ export type LiveRequest =
   | { kind: "click"; selector?: string; x?: number; y?: number; frame?: string }
   | { kind: "key"; key: string; selector?: string; frame?: string; shift?: boolean; alt?: boolean; ctrl?: boolean; meta?: boolean };
 
-/** page_click and page_key act; the rest only read. */
+/** page_input acts; the rest only read. */
 export const actsOnPage = (r: LiveRequest) => r.kind == "click" || r.kind == "key";
-/** page_inspect, page_click and page_key show a line in the tab each time (the person sees what the agent does there). */
+/** page_log frames, eval_in_page live and page_input show a line in the tab each time (the person sees what the agent does there). */
 export const shownInTab = (r: LiveRequest) => r.kind == "inspect" || actsOnPage(r);
 
 // ------------------------------------------------------------------ the console
@@ -97,7 +96,7 @@ export function matcher(pattern: string | undefined): (s: string) => boolean {
 }
 
 /**
- * The entries a page_console request asks for: by level, pattern and time
+ * The entries a page_log console request asks for: by level, pattern and time
  * (an entry seen at or after `since`), the last `limit` of them. Entries from
  * several logs (the editor's, the page's) go together, by when last seen.
  */
@@ -223,7 +222,7 @@ export function mergeHooked(entries: NetworkEntry[], hooked: HookedRequest[]): N
   return out;
 }
 
-/** The entries a page_network request asks for: by pattern (on the URL, the type and the error), time, and failures only. */
+/** The entries a page_log network request asks for: by pattern (on the URL, the type and the error), time, and failures only. */
 export function queryNetwork(entries: NetworkEntry[], q: { pattern?: string; since?: number; limit?: number; failed?: boolean }): { entries: NetworkEntry[]; matched: number } {
   const test = matcher(q.pattern);
   const failed = (e: NetworkEntry) => !!e.error || (e.status != null && e.status >= 400);
@@ -252,7 +251,7 @@ export interface EventEntry {
   type: string;
   target: string;
   trusted: boolean;
-  /** Sent by page_click or page_key. */
+  /** Sent by page_input. */
   agent?: boolean;
   defaultPrevented: boolean;
   consumed: Consumer[];
@@ -312,7 +311,7 @@ export interface LiveResult {
   error?: string;
 }
 
-/** What page_click and page_key did. */
+/** What page_input did. */
 export interface ActResult {
   /** What the event reached (the element at the point, or the selector's), and what is on top there if something else is. */
   target: string;

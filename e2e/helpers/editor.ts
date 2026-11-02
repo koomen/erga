@@ -188,7 +188,7 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
       return shell();
     },
     /**
-     * In the editor's own controls on the page (libs/text/ui/controls.ts: the style bar, the link bar, pause, the note):
+     * In the editor's own controls on the page (libs/text/ui/controls.ts: the style bar, the link bar, the note):
      * `expr` with C, their shadow root; null before the editor has drawn them.
      */
     controls: <T = any>(expr: string) =>

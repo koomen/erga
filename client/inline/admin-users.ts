@@ -17,10 +17,10 @@ export default function adminUsers(c: UsersConfig): void {
     addForm = document.querySelector<HTMLFormElement>("form.add-user")!;
   const field = <T extends HTMLElement = HTMLInputElement>(name: string) => addForm.elements.namedItem(name) as unknown as T;
   /** An operation on a user or a waiting person; their row shows it (theirs is `login` or `person` in args, else in the answer). */
-  async function change(op: string, args: Record<string, unknown>, saying: string, undo?: () => void) {
+  async function change(args: Record<string, unknown>, saying: string, undo?: () => void) {
     say(hint, saying);
     try {
-      const answer = await runTool(op, args);
+      const answer = await runTool("set_user", args);
       if (answer.note) {
         say(hint, answer.note);
         undo?.();
@@ -29,7 +29,7 @@ export default function adminUsers(c: UsersConfig): void {
         const login = args.login ?? answer.user?.login,
           person = args.person ?? answer.person?.person;
         refresh(...(login ? [`user:${login}`] : []), ...(person != null ? [`person:${person}`] : []));
-        if (op == "add_user") field("handle").value = "";
+        if (args.action == "add") field("handle").value = "";
       }
     } catch (err) {
       undo?.();
@@ -43,8 +43,7 @@ export default function adminUsers(c: UsersConfig): void {
   addForm.addEventListener("submit", (e) => {
     e.preventDefault();
     change(
-      "add_user",
-      { provider: provider.value, handle: field("handle").value.trim(), role: field<HTMLSelectElement>("role").value },
+      { action: "add", provider: provider.value, handle: field("handle").value.trim(), role: field<HTMLSelectElement>("role").value },
       "Adding…"
     );
   });
@@ -62,10 +61,10 @@ export default function adminUsers(c: UsersConfig): void {
         role.value = was;
       };
       if (login == me && was == "admin" && !confirm("Stop being an admin? You won't see the admin pages any more.")) return undo();
-      change("set_user_role", { ...whom, role: role.value }, "Saving…", undo);
+      change({ action: "role", ...whom, role: role.value }, "Saving…", undo);
     });
     deploy?.addEventListener("change", () =>
-      change("set_user_deploy", { login: login!, deploy: deploy.checked }, "Saving…", () => {
+      change({ action: "deploy", login: login!, deploy: deploy.checked }, "Saving…", () => {
         deploy.checked = !deploy.checked;
       })
     );
@@ -78,7 +77,7 @@ export default function adminUsers(c: UsersConfig): void {
         )
       )
         return;
-      change("remove_user", whom, "Removing…");
+      change({ action: "remove", ...whom }, "Removing…");
     });
   }
   const list = document.querySelector<HTMLElement>("ol.users")!;

@@ -3,7 +3,7 @@
 // git log, each with whether it merges cleanly into staging. Merge adds ONE commit on staging with all the branch's
 // changes (a squash: a three-way merge over the branch's merge base, with staging's head as its only parent), so
 // staging deploys it as after a push; then the branch goes. Delete drops a branch. Both are operations
-// (operations.ts: merge_feature_branch, delete_feature_branch), so agents do them too.
+// (operations.ts: feature_branch), so agents do them too.
 //
 // Whether a branch merges cleanly needs the three trees whole, so it's found in the background, once for each pair
 // of staging's head and the branch's head, and kept in memory: until then the branch shows "checking".
@@ -49,7 +49,7 @@ export interface FeatureAction {
 
 type Check = { files: Conflict[] } | { error: string };
 
-/** How long a finished Merge or Delete stays in list_branches' answer. */
+/** How long a finished Merge or Delete stays in branches' answer. */
 const ACTION_KEPT = 10 * 60_000;
 
 export class Features {

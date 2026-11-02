@@ -36,7 +36,7 @@ export default function viewerNav(): void {
     if (location.pathname != here) history.replaceState(history.state, "", here + location.search + location.hash);
     document.querySelector(".erga-view-buttons a[aria-pressed]")?.setAttribute("href", ergaWithEdit(here, true));
   });
-  // The page's place in its own address (#3: agents/document/PROMPT.md, rule 14): the tab's address keeps it too, so a
+  // The page's place in its own address (#3: agents/document/PROMPT.md, rule 11): the tab's address keeps it too, so a
   // reload, or the link in another tab, opens the page there (viewer-frame-src.ts gives it to the frame).
   addEventListener("message", (e) => {
     if (!ergaFrames.from(e) || e.data?.type != "erga-hash") return;

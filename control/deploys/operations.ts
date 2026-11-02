@@ -1,18 +1,18 @@
 // The Ops page's operations on the deploys (server/operations/operation.ts: one each, for the page over
-// POST /api/tools/<name> and for every agent with admin power as a tool): every target's deploys and their logs,
-// Redeploy (Retry), Roll back, the Cloudflare credential, the release store's channels and each environment's
-// domains. They run on the pipeline's object wherever the page is: on the control Worker its own, on erga.dev and
+// POST /api/tools/<name> and for every agent with admin power as a tool): every target's deploys, their logs, the
+// Cloudflare credential and each environment's domains (one read), Redeploy (Retry; and the homepage's), Roll back,
+// Disconnect, and a domain added or removed. They run on the pipeline's object wherever the page is: on the control Worker its own, on erga.dev and
 // staging over the CONTROL binding (Platform.deploys). Connect Cloudflare stays a consent in a popup (control/routes.ts).
 
 import * as Schema from "effect/Schema";
-import { type Caller, type Operation, OperationError, platformOf } from "../../server/operations/index.ts";
+import { type Caller, type Operation, OperationError, platformOf, redeployHome } from "../../server/operations/index.ts";
 import { byLine } from "../../shared/attribution.ts";
 import type { Offer } from "../../shared/agent-log.ts";
 import type { CredentialStatus } from "./credential.ts";
 import type { OpsDeploys } from "./api.ts";
 
 const str = (description: string) => Schema.String.annotate({ description });
-const TARGET = str("The deploy target: staging or production (list_deploys lists them)");
+const TARGET = str("The deploy target: staging or production");
 const ENVIRONMENT = str("The environment: production, staging or control");
 
 const deploys = (caller: Caller): OpsDeploys => platformOf(caller).deploys;
@@ -47,66 +47,67 @@ function withOffer<T extends { credential?: CredentialStatus }>(o: T, caller: Ca
 
 export const DEPLOY_OPERATIONS: Operation[] = [
   {
-    name: "list_deploys",
-    ui: "Ops (/admin/ops): every target's deploys, and the Cloudflare credential",
+    name: "deploys",
+    ui: "Ops (/admin/ops): every target's deploys, a deploy's log, the Cloudflare credential, and each environment's domains",
     label: "Read the deploys",
     admin: true,
-    description:
-      "Every deploy target (staging, production, control): what it runs, its deploy now (state, commit, steps) and its last deploys, newest first, each with its state, commit, trigger and error (why it failed) (history: how many, default 5, at most 100), and the Cloudflare credential every deploy uses (credential).",
+    description: "Each target's deploys and the Cloudflare credential, one deploy's log, or the domains.",
     parameters: Schema.Struct({
-      history: Schema.optionalKey(Schema.Int.annotate({ description: "How many past deploys of each target (default 5)" })),
+      view: Schema.optionalKey(
+        Schema.Literals(["deploys", "log", "domains"]).annotate({
+          description:
+            "deploys (default): each target (staging, production, control), its deploy now and its last ones (state, commit, trigger, error), and the credential. log: one deploy's log (target, deploy, lines). domains: each environment's own address (primary) and added domains",
+        })
+      ),
+      history: Schema.optionalKey(
+        Schema.Int.annotate({ description: "deploys: how many past deploys of each target (default 5, at most 100)" })
+      ),
+      target: Schema.optionalKey(str("log: the deploy target, staging or production")),
+      deploy: Schema.optionalKey(str("log: the deploy's id (default: the target's latest)")),
+      lines: Schema.optionalKey(Schema.Int.annotate({ description: "log: how many lines, the last (default 200; 0: all of them)" })),
     }),
     run: async (a, caller) => {
+      if (a.view == "domains") return ok(await deploys(caller).domains());
+      if (a.view == "log") {
+        if (typeof a.target != "string" || !a.target)
+          throw new OperationError({ message: "The log needs target: staging or production.", status: 400 });
+        const target = a.target,
+          deploy = typeof a.deploy == "string" && a.deploy ? a.deploy : undefined;
+        const log = (await deploys(caller).logOf(target, deploy)) as { lines?: unknown[] } | null;
+        if (!log)
+          throw new OperationError({
+            message: deploy
+              ? `${target} has no deploy ${deploy} in its history: deploys lists them.`
+              : `There's no deploy target called ${target}.`,
+            status: 404,
+          });
+        const lines = log.lines ?? [],
+          n = a.lines === 0 ? lines.length : Math.max(1, Number(a.lines) || 200);
+        return { ...log, lines: lines.slice(-n), ...(lines.length > n ? { cut: `the last ${n} of ${lines.length} lines` } : {}) };
+      }
       const history = Math.max(0, Math.min(100, a.history == null ? 5 : Number(a.history) || 0));
       return withOffer((await deploys(caller).status(history)) as { credential?: CredentialStatus }, caller);
     },
   },
   {
-    name: "deploy_log",
-    ui: "Ops (/admin/ops): a deploy's log",
-    label: "Read a deploy's log",
-    admin: true,
-    description:
-      "A deploy's log, as the Ops page shows it: the target's latest deploy, or the one named. The last 200 lines unless you ask for more (lines; 0: the whole log).",
-    parameters: Schema.Struct({
-      target: TARGET,
-      deploy: Schema.optionalKey(str("The deploy's id (list_deploys); default: the latest")),
-      lines: Schema.optionalKey(Schema.Int.annotate({ description: "How many lines, the last (default 200; 0: all of them)" })),
-    }),
-    run: async (a, caller) => {
-      const target = String(a.target),
-        deploy = typeof a.deploy == "string" && a.deploy ? a.deploy : undefined;
-      const log = (await deploys(caller).logOf(target, deploy)) as { lines?: unknown[] } | null;
-      if (!log)
-        throw new OperationError({
-          message: deploy
-            ? `${target} has no deploy ${deploy} in its history. list_deploys lists them.`
-            : `There's no deploy target called ${target}.`,
-          status: 404,
-        });
-      const lines = log.lines ?? [],
-        n = a.lines === 0 ? lines.length : Math.max(1, Number(a.lines) || 200);
-      return { ...log, lines: lines.slice(-n), ...(lines.length > n ? { cut: `the last ${n} of ${lines.length} lines` } : {}) };
-    },
-  },
-  {
     name: "redeploy",
-    ui: "Ops (/admin/ops): Retry, a target's branch head deployed again (fresh_data: staging with a fresh copy of production's data)",
-    label: "Redeploy a target",
+    ui: "Ops (/admin/ops): Retry, a target's branch head deployed again (fresh_data: staging with a fresh copy of production's data); the editor's settings: Homepage, Redeploy now",
+    label: "Redeploy",
+    activity: "deploying again",
     admin: true,
-    description:
-      "Deploys a target's branch head again now (staging: staging; production: main), as the Ops page's Retry does. The deploy says who asked for it. Staging's copy of production's data is frozen: a deploy keeps it (new migrations run on it in place); fresh_data: true makes this redeploy of staging copy production's data afresh, the only way to refresh it.",
+    description: "Deploys a target's branch head again now, or the homepage.",
     parameters: Schema.Struct({
-      target: TARGET,
+      target: str("staging (its branch staging), production (main), or homepage (the landing_document setting's document)"),
       fresh_data: Schema.optionalKey(
         Schema.Boolean.annotate({
-          description: "Staging only: copy production's database and documents afresh, in place of staging's frozen copy",
+          description: "staging only: copy production's database and documents afresh (a deploy keeps staging's frozen copy)",
         })
       ),
     }),
     run: async (a, caller) => {
-      const target = String(a.target),
-        trigger = `redeploy by ${byOf(caller)}`,
+      const target = String(a.target);
+      if (target == "homepage") return redeployHome(caller);
+      const trigger = `redeploy by ${byOf(caller)}`,
         fresh = a.fresh_data === true;
       const r = ok(
         fresh ? await deploys(caller).redeployWith(target, trigger, { fresh }) : await deploys(caller).redeploy(target, trigger)
@@ -119,8 +120,7 @@ export const DEPLOY_OPERATIONS: Operation[] = [
     ui: "Ops (/admin/ops), a deploy's log: Roll back to the version before the live deploy",
     label: "Roll a target back",
     admin: true,
-    description:
-      "Puts back the version a target ran before its live deploy, as the Ops page's Roll back does: one deployment of that Worker version, in seconds, with no build. The database keeps its schema (migrations only add). Only when the admin asks in this conversation to roll back; list_deploys shows which deploy is live and what it would go back to (restore).",
+    description: "Puts back the Worker version a target ran before its live deploy, with no build.",
     parameters: Schema.Struct({ target: TARGET }),
     run: async (a, caller) => {
       const target = String(a.target);
@@ -129,22 +129,11 @@ export const DEPLOY_OPERATIONS: Operation[] = [
     },
   },
   {
-    name: "deploy_credential",
-    ui: "Ops (/admin/ops), the Cloudflare card: whether the deploy credential is connected",
-    label: "Read the deploy credential",
-    admin: true,
-    description:
-      "The control Worker's Cloudflare credential, which every deploy uses: connected or not, who connected it, and when it doesn't work, Cloudflare's own words (error: its answer to the last refresh). An expired access token refreshes by itself; only a refused or missing grant stops the deploys, and then the deploys that wait go by themselves once it's connected again. When it isn't connected, a Connect Cloudflare button shows under this call in the admin's panel: Cloudflare's consent, in a popup, on the page they're on. Tell them to click it. You can't consent for them, and there's no token to ask for.",
-    parameters: Schema.Struct({}),
-    run: async (_a, caller) => withOffer({ credential: await deploys(caller).credentialStatus() }, caller),
-  },
-  {
     name: "disconnect_deploy_credential",
     ui: "Ops (/admin/ops), the Cloudflare card: Disconnect, the grant revoked and forgotten",
     label: "Disconnect the deploy credential",
     admin: true,
-    description:
-      "Revokes the control Worker's Cloudflare grant on Cloudflare and forgets it, as Disconnect on the Ops page's Cloudflare card does: nothing deploys until the admin connects Cloudflare again (a consent of their own). Only when the admin asks in this conversation to disconnect or revoke it.",
+    description: "Revokes the Cloudflare grant that every deploy uses.",
     parameters: Schema.Struct({}),
     run: async (_a, caller) => {
       await deploys(caller).disconnectCredential();
@@ -156,57 +145,32 @@ export const DEPLOY_OPERATIONS: Operation[] = [
     },
   },
   {
-    name: "list_releases",
-    ui: "Ops (/admin/ops): the release store's channels, marked on the log",
-    label: "Read the release channels",
+    name: "set_domain",
+    ui: "Ops (/admin/ops): + Add domain to an environment, and × on a domain",
+    label: "Change an environment's domains",
     admin: true,
-    description:
-      "The release store's channels: edge (every commit of main production deployed and found healthy, newest first) and stable (the newest release tag; what other installs of Erga follow). Each entry: its version (the commit's first 12 digits), the tag on stable, when it was built and when it went on the channel. list_branches lists the release tags themselves (tags, release).",
-    parameters: Schema.Struct({}),
-    run: async (_a, caller) => {
-      const r = await deploys(caller).releases();
-      if (!r) throw new OperationError({ message: "This server has no release store.", status: 404 });
-      return r;
-    },
-  },
-  {
-    name: "list_domains",
-    ui: "Ops (/admin/ops): each environment's domains",
-    label: "Read the environments' domains",
-    admin: true,
-    description:
-      "Each environment's domains (production, staging, control): its own address first (primary: the one deploys put it on), then the domains added to it, with the Cloudflare zone each is on.",
-    parameters: Schema.Struct({}),
-    run: async (_a, caller) => ok(await deploys(caller).domains()),
-  },
-  {
-    name: "add_domain",
-    ui: "Ops (/admin/ops): + Add domain to an environment",
-    label: "Add a domain to an environment",
-    admin: true,
-    description:
-      "Attaches a hostname on one of this account's Cloudflare zones to an environment's Worker (a Workers custom domain: Cloudflare makes the DNS record and certificate), as Add domain on the Ops page does. Only when the admin asks in this conversation.",
-    parameters: Schema.Struct({ target: ENVIRONMENT, hostname: str("The hostname, like docs.example.com") }),
+    description: "Attaches a hostname to an environment's Worker, or takes one off.",
+    parameters: Schema.Struct({
+      action: Schema.Literals(["add", "remove"]).annotate({
+        description:
+          "add: a hostname on one of this account's Cloudflare zones (Cloudflare makes its DNS record and certificate); remove: never the environment's own address",
+      }),
+      target: ENVIRONMENT,
+      hostname: str("The hostname, like docs.example.com"),
+    }),
     run: async (a, caller) => {
       const target = String(a.target),
         hostname = String(a.hostname).trim().toLowerCase();
-      const r = ok(await deploys(caller).addDomain(target, hostname, byOf(caller)));
-      return { ...r, done: `${hostname} added to ${target}: Cloudflare makes its DNS record and certificate in a minute or two` };
-    },
-  },
-  {
-    name: "remove_domain",
-    ui: "Ops (/admin/ops): × on a domain, removed from its environment",
-    label: "Remove a domain from an environment",
-    admin: true,
-    description:
-      "Takes a hostname off an environment's Worker (never its own address), as the × on the Ops page does. Only when the admin asks in this conversation.",
-    parameters: Schema.Struct({ target: ENVIRONMENT, hostname: str("The hostname to remove") }),
-    run: async (a, caller) => {
-      const target = String(a.target),
-        hostname = String(a.hostname).trim().toLowerCase();
-      const r = ok(await deploys(caller).removeDomain(target, hostname, byOf(caller)));
-      return { ...r, done: `${hostname} removed from ${target}` };
+      if (a.action == "add") {
+        const r = ok(await deploys(caller).addDomain(target, hostname, byOf(caller)));
+        return { ...r, done: `${hostname} added to ${target}: Cloudflare makes its DNS record and certificate in a minute or two` };
+      }
+      if (a.action == "remove") {
+        const r = ok(await deploys(caller).removeDomain(target, hostname, byOf(caller)));
+        return { ...r, done: `${hostname} removed from ${target}` };
+      }
+      throw new OperationError({ message: "action: add or remove.", status: 400 });
     },
   },
 ];
+

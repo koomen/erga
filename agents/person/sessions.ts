@@ -14,14 +14,14 @@
 //   GET    /api/agent/conversation    { log: { items, busy, undoable } }: the conversation
 //   DELETE /api/agent/conversation    a new conversation (the "New conversation" button)
 //   POST   /api/agent/keys            { name, value }: the person's own API key for a provider (Settings, Agent), in place of
-//                                     the one there was; a secret, so set only here (list_my_api_keys, clear_my_api_key
+//                                     the one there was; a secret, so set only here (whoami, revoke
 //                                     list and remove them). The answer has its last four characters, never the key.
 //   GET    /api/agent/prefs           { open?, side?, width? }: their panel, as they left it
 //   PUT    /api/agent/prefs           { open?, side?, width? }: changes what's given
 //
 // The panel is the person's, in a browser: no token reaches it. An outside agent with a token
 // ("Authorization: Bearer erga_...", server/identity) calls the same tools itself (MCP, POST /api/tools/<name>,
-// server/api.ts), and reads the guide first (/llms.txt).
+// server/api.ts).
 
 import { startAgent, type AgentSession } from "./agent.ts";
 import { panelPrefs, type PanelPrefs } from "./panel.ts";
@@ -352,7 +352,9 @@ const agentRoutes = (origin: string): Route =>
   const { request, url, platform } = yield* ctx;
   if (/^Bearer\s/i.test(request.headers.get("authorization") ?? ""))
     return json(
-      { error: `The agent panel is a person's, in a browser: an outside agent calls the same tools itself (GET ${url.origin}/llms.txt).` },
+      {
+        error: `The agent panel is a person's, in a browser: an outside agent calls the same tools itself, over MCP (${url.origin}/mcp).`,
+      },
       403
     );
   const me = yield* personOf(platform, request);

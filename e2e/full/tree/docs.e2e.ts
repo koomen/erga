@@ -19,7 +19,7 @@ test("a project's tree starts with index.html, then its folders, pages (by their
   const page = tab.page;
   tab.strict = true;
   const doc = await multi(await servers.main());
-  await doc.agentTool("new_page", { path: "owl-calls" });
+  await doc.agentTool("new", { path: "owl-calls" });
   await doc.agentTool("write", { path: "owl-calls.html", content: "<!doctype html><title>Owl calls</title><h1>Owl calls</h1>" });
   await openDocs(page, doc);
   const r = await rows(page, `#pages-${doc.id}`);
@@ -77,7 +77,7 @@ test("live: an agent's new page shows without a reload", async ({ tab }) => {
   tab.strict = true;
   const doc = await multi(await servers.main());
   await openDocs(page, doc);
-  await doc.agentTool("new_page", { path: "colophon" });
+  await doc.agentTool("new", { path: "colophon" });
   await until(async () => (await rows(page, `#pages-${doc.id}`)).some((x) => x[0] == "colophon.html"), 10_000, "an agent's new page shows on Documents, without a reload");
 });
 
@@ -85,7 +85,7 @@ test("live: a page goes without a reload when an agent deletes it", async ({ tab
   const page = tab.page;
   tab.strict = true;
   const doc = await multi(await servers.main());
-  await doc.agentTool("new_page", { path: "colophon" });
+  await doc.agentTool("new", { path: "colophon" });
   await openDocs(page, doc);
   await expect.poll(async () => (await rows(page, `#pages-${doc.id}`)).some((x) => x[0] == "colophon.html")).toBe(true);
   await doc.agentTool("rm", { path: "colophon.html" });

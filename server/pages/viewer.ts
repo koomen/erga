@@ -154,7 +154,7 @@ ${bars}${o.agent ? agentPanel(session) : ""}${newDocMenu((path) => link(path, se
   return { before, after };
 }
 
-/** A reader's page with no bars (the owner's set_reader_bars): no band, so no room at the page's top, and the bars
+/** A reader's page with no bars (the owner's reader_bars, share_document): no band, so no room at the page's top, and the bars
  *  hidden, their scripts still there. */
 const NO_BARS = ":root { --band-h: 0px; } :is(.erga-crumbs, .erga-view-buttons, .erga-tree-card) { display: none !important; }";
 

@@ -21,7 +21,7 @@ describe("feature branches", () => {
     return must(w, "rev-parse", "HEAD");
   };
   const head = async (branch: string) => (await must(w, "ls-remote", f.erga, `refs/heads/${branch}`)).split("\t")[0] ?? "";
-  /** list_branches' feature branches, once each check is done. */
+  /** branches' feature branches, once each check is done. */
   const features = async () => {
     await f.repo.branches();
     await f.settle();

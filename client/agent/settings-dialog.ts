@@ -5,8 +5,8 @@
 //   - Agent: the person's own API keys, one row for each provider: whether it's set (its last four characters), a box
 //     to paste a new one, Save, and Remove. Their key runs every model of its provider in their agent, and wins over
 //     the server's. Save sends it to POST /api/agent/keys, never anywhere else; the list and Remove are the operations
-//     list_my_api_keys and clear_my_api_key. The agent's panel hears "erga:agent-keys" and reads its models again.
-//   - Tokens: the person's agent tokens (list_tokens) with Revoke (revoke_token); New token makes one (POST
+//     whoami (its apiKeys) and revoke. The agent's panel hears "erga:agent-keys" and reads its models again.
+//   - Tokens: the person's agent tokens (whoami's tokens) with Revoke (revoke); New token makes one (POST
 //     /tokens/new), shown once, with the lines to give an agent.
 //   - Test token: a token for running the test suite here, as test people (GET /tokens/test).
 //
@@ -99,7 +99,10 @@ const $ = <T extends Element = HTMLElement>(sel: string) => dialog!.querySelecto
 
 async function keys() {
   const list = $("section.keys ul");
-  const rows = await runTool<Key[]>("list_my_api_keys").catch((e: Error) => e);
+  const rows = await runTool<{ apiKeys: Key[] }>("whoami").then(
+    (w) => w.apiKeys,
+    (e: Error) => e
+  );
   if (rows instanceof Error) {
     list.innerHTML = `<li class="error">${esc(rows.message)}</li>`;
     return;
@@ -139,7 +142,7 @@ async function keys() {
     li.querySelector(".remove")?.addEventListener("click", async () => {
       said("Removing…");
       try {
-        await runTool("clear_my_api_key", { name });
+        await runTool("revoke", { api_key: name });
         changed();
         await keys();
       } catch (err) {
@@ -156,15 +159,15 @@ const changed = () => window.dispatchEvent(new Event("erga:agent-keys"));
 
 async function tokens() {
   const list = $("section.tokens ul.rows");
-  const [rows, docs, me] = await Promise.all([
-    runTool<Token[]>("list_tokens").catch((e: Error) => e),
+  const [me, docs] = await Promise.all([
+    runTool<{ adminPower?: boolean; tokens: Token[] }>("whoami").catch((e: Error) => e),
     runTool<{ id: string; title: string; address: string }[]>("list_documents").catch(() => []),
-    runTool<{ adminPower?: boolean }>("whoami").catch(() => ({ adminPower: false })),
   ]);
   const doc = $<HTMLSelectElement>("select[name=doc]");
   doc.innerHTML = docs.map((d) => `<option value="${esc(d.id)}">${esc(d.title)} (${esc(d.address)})</option>`).join("");
   const scope = $<HTMLSelectElement>("select[name=scope]");
-  if (me.adminPower && !scope.querySelector("option[value=admin]")) scope.append(new Option("Admin", "admin"));
+  if (!(me instanceof Error) && me.adminPower && !scope.querySelector("option[value=admin]")) scope.append(new Option("Admin", "admin"));
+  const rows = me instanceof Error ? me : me.tokens;
   if (rows instanceof Error) {
     list.innerHTML = `<li class="error">${esc(rows.message)}</li>`;
     return;
@@ -183,7 +186,7 @@ async function tokens() {
     li.querySelector(".revoke")!.addEventListener("click", async () => {
       if (!confirm(`Revoke “${li.querySelector("b")!.textContent}”? Agents using it lose access at once.`)) return;
       try {
-        await runTool("revoke_token", { id: li.dataset.id });
+        await runTool("revoke", { token: li.dataset.id });
         li.remove();
       } catch (err) {
         alert((err as Error).message);
@@ -216,10 +219,9 @@ async function makeToken(form: HTMLFormElement) {
     t = body.token;
   const made = $("section.tokens .made");
   made.innerHTML = `<p><b>${esc(body.info.label)}</b>: ${esc(SCOPES[body.info.scope] ?? body.info.scope)}. Copy it now: it isn't shown again.</p>
-<pre class="secret">${esc(t)}</pre><p>Tell your agent:</p>
-<pre>Erga's API is at ${esc(o)}: read ${esc(o)}/llms.txt first. My token is ${esc(t)}
-(send it as "Authorization: Bearer &lt;token&gt;").</pre><p>Or add Erga to Claude Code:</p>
-<pre>claude mcp add --transport http erga ${esc(o)}/mcp --header "Authorization: Bearer ${esc(t)}"</pre>
+<pre class="secret">${esc(t)}</pre><p>Add Erga to Claude Code:</p>
+<pre>claude mcp add --transport http erga ${esc(o)}/mcp --header "Authorization: Bearer ${esc(t)}"</pre><p>Or tell another agent:</p>
+<pre>Erga's MCP server is ${esc(o)}/mcp. Send my token as "Authorization: Bearer ${esc(t)}".</pre>
 <button type="button" class="pill copy">Copy token</button>`;
   made.hidden = false;
   made.querySelector<HTMLElement>(".copy")!.addEventListener("click", (e) => {

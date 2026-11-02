@@ -22,8 +22,8 @@ const ADMINS = (doc: { id: string; address: string }) =>
     ["GET", "/admin/ops"],
     ["POST", "/api/tools/set_setting"],
     ["GET", "/api/agent"],
-    ["POST", "/api/tools/list_deploys"],
-    ["POST", "/api/tools/list_branches"],
+    ["POST", "/api/tools/deploys"],
+    ["POST", "/api/tools/branches"],
     ["GET", "/api/events"],
     ["GET", "/settings"],
     ["GET", "/tokens"],
@@ -31,7 +31,7 @@ const ADMINS = (doc: { id: string; address: string }) =>
     ["GET", "/docs"],
     ["GET", "/new"],
     ["GET", "/deploy"],
-    ["POST", "/api/tools/deploy_homepage"],
+    ["POST", "/api/tools/redeploy"],
     ["GET", doc.address],
     ["GET", "/git/erga.git/info/refs?service=git-upload-pack"],
 ] as const;
@@ -50,7 +50,7 @@ test("on staging an admin's document token reads and edits its document (API, MC
   expect((await mcp(root, token, "write", { document: one.id, path: "notes.md", content: "Over MCP" })).isError).toBe(false);
   const auth = { headers: { Authorization: `Bearer ${token}` } };
   expect(await until(async () => (await (await get(`/d/${one.id}/doc/notes.md`, auth)).text()).includes("Over MCP"), 5000, "the note on the document's route")).toBe(true);
-  expect((await tool(root, token, "list_versions", { document: one.id })).status).toBe(200);
+  expect((await tool(root, token, "versions", { document: one.id })).status).toBe(200);
 
   // Its scope, as on production: not the other document, no list.
   expect((await tool(root, token, "read", { document: two.id, path: "index.html" })).status).toBe(403);
@@ -61,17 +61,14 @@ test("on staging an admin's document token reads and edits its document (API, MC
   const at = (await get(`${one.address}/api/share`, { method: "POST", headers: { Origin: root, "Content-Type": "application/json" }, body: "{}" }));
   const share = ((await at.json()) as { token: string }).token;
   expect(share).toMatch(/^erga_/);
-  // The Share card's prompt, step by step: the guide, then the tools, with the document's address as "document".
-  const guide = await get("/llms.txt", { headers: { Authorization: `Bearer ${share}` } });
-  expect(guide.status).toBe(200);
-  expect(await guide.text()).toContain(`claude mcp add --transport http erga ${root}/mcp`);
+  // The Share card's prompt, step by step: the tools, with the document's address as "document".
   const document = root + one.address;
   expect((await tool(root, share, "read", { document, path: "index.html" })).text).toContain("Edited on staging");
   const edit = { document, path: "index.html", edits: [{ oldText: "Edited on staging", newText: "Edited by the Share prompt" }] };
   expect((await tool(root, share, "edit", edit)).status).toBe(200);
   expect((await tool(root, share, "read", { document, path: "index.html" })).text).toContain("Edited by the Share prompt");
   expect((await tool(root, share, "list_documents")).text).toContain("Staging two");
-  expect((await tool(root, share, "set_user_role", { login: "tester", role: "write" })).status).toBe(403);
+  expect((await tool(root, share, "set_user", { action: "role", login: "tester", role: "write" })).status).toBe(403);
 
   for (const t of [token, share]) {
     for (const [method, path] of ADMINS(one)) {
@@ -88,7 +85,7 @@ test("on staging a token works only while its person is an admin: refused once t
   // Added by their GitHub login, as an admin, before their first sign-in; then that sign-in (the pretend provider, with
   // the id the pretend GitHub gives the login) and the username step make their account, an admin's.
   const login = `bo${crypto.randomUUID().slice(0, 6)}`;
-  expect((await tool(root, admin, "add_user", { provider: "github", handle: login, role: "admin" })).status).toBe(200);
+  expect((await tool(root, admin, "set_user", { action: "add", provider: "github", handle: login, role: "admin" })).status).toBe(200);
   const joining = await get(`/auth/dev?provider=github&subject=${mockGithubId(login)}&handle=${login}&next=/docs`);
   expect(joining.headers.get("location")).toBe("/auth/username");
   const join = joining.headers
@@ -109,7 +106,7 @@ test("on staging a token works only while its person is an admin: refused once t
   const doc = await publish(root, theirs, "Bo on staging");
   expect((await tool(root, theirs, "read", { document: doc.id, path: "index.html" })).text).toContain("Bo on staging");
 
-  expect((await tool(root, admin, "set_user_role", { login, role: "write" })).status).toBe(200);
+  expect((await tool(root, admin, "set_user", { action: "role", login, role: "write" })).status).toBe(200);
   await until(
     async () => (await tool(root, theirs, "read", { document: doc.id, path: "index.html" })).status == 403,
     15_000,

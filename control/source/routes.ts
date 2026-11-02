@@ -7,10 +7,9 @@
 //                               fast-forwards only.
 //   GET  /git, /git/tree/<ref>/<path>   Erga's source for anyone, read-only, with no sign-in: how to clone, main and staging,
 //                               their recent commits, and the files (public.ts). A browser at /git/erga.git sees it too.
-//   POST /api/tools/<name>      the Ops page's operations on the repository (control/source/operations.ts): list_branches,
-//                               deploy_production (main moved to staging), merge_feature_branch, delete_feature_branch,
-//                               cut_release, github_status, sync_github, disconnect_github, update_from_upstream, resolve_conflict_file, finish_waiting_merge,
-//                               drop_waiting_merge, and the reads list_source, read_source, search_source, source_log.
+//   POST /api/tools/<name>      the Ops page's operations on the repository (control/source/operations.ts): branches,
+//                               deploy_production (main moved to staging), feature_branch, cut_release, github, waiting_merge,
+//                               resolve_conflict_file, and the reads of source.
 //                               Connect GitHub is a consent in a popup, on the control Worker (control/github-routes.ts, /github/connect)
 //   /admin/ops               the Ops page (admins): the history of staging and main, and their deploys
 //

@@ -1,4 +1,4 @@
-// The server's one API, as an outside agent uses it: /llms.txt, agent tokens (asked for by an
+// The server's one API, as an outside agent uses it: /llms.txt's pointer, agent tokens (asked for by an
 // agent and approved, made at /tokens, the share button's), publishing a folder as a document, every tool over HTTP
 // and MCP with the person's own permissions, and revoking.
 import { expect, test } from "../../helpers/fixtures";
@@ -22,24 +22,19 @@ async function publish(p: Person, token: string, title = "Published app") {
   return { res, pub: (await res.json()) as { ok: boolean; id: string; address: string; url: string; files: string[] } };
 }
 
-test("/llms.txt explains connecting over MCP, publishing and the tools, to anyone; the tools need a real token", async () => {
+test("/llms.txt only points to /mcp and /api/tools, for anyone, with any token; the tools need a real token", async () => {
   const s = await servers.script();
-  const guide = await (await fetch(`${s.root}/llms.txt`)).text();
+  const pointer = await (await fetch(`${s.root}/llms.txt`)).text();
   const origin = new URL(s.root).origin;
-  for (const want of [
-    `claude mcp add --transport http erga ${origin}/mcp`,
-    `codex mcp add erga --url ${origin}/mcp`,
-    "### create_document",
-  ])
-    expect(guide, want).toContain(want);
-  // One way in: no token to ask for and no curl.
-  for (const gone of ["/api/auth/request", "curl "]) expect(guide, gone).not.toContain(gone);
+  for (const want of [`${origin}/mcp`, `${origin}/api/tools`]) expect(pointer, want).toContain(want);
+  // No guide: no tool, no rule for pages, no token to ask for.
+  for (const gone of ["create_document", "data-erga", "/api/auth/request"]) expect(pointer, gone).not.toContain(gone);
+  expect(await (await fetch(`${s.root}/llms.txt`, { headers: { Authorization: "Bearer erga_forged" } })).text()).toBe(pointer);
   // Without a token, a request from another site is refused (in local development it is the dev person's, from elsewhere).
   expect([401, 403]).toContain((await fetch(`${s.root}/api/tools/whoami`, { method: "POST", body: "{}" })).status);
   expect(
     (await fetch(`${s.root}/api/tools/whoami`, { method: "POST", body: "{}", headers: { Authorization: "Bearer erga_forged" } })).status
   ).toBe(401);
-  expect((await fetch(`${s.root}/llms.txt`, { headers: { Authorization: "Bearer erga_forged" } })).status).toBe(401);
 });
 
 test("an agent asks for a token; its person approves it on this site's own page; the agent collects it, once, and acts as them; Settings lists it", async () => {
@@ -60,8 +55,8 @@ test("an agent asks for a token; its person approves it on this site's own page;
   const me = await tools(p.base, got.token!).call("whoami");
   expect(me.status).toBe(200);
   expect(me.data).toMatchObject({ login: p.login, token: { label } });
-  // Settings lists it (list_tokens, the dialog's list).
-  expect(JSON.stringify((await tools(p.base, got.token!).call("list_tokens")).data)).toContain(label);
+  // Settings lists it (whoami's tokens, the dialog's list).
+  expect(JSON.stringify((await tools(p.base, got.token!).call("whoami")).data.tokens)).toContain(label);
 });
 
 test("POST /api/publish makes a document of a folder at its title's address: images byte for byte, styles as text; it's listed, and doesn't expire", async () => {
@@ -181,17 +176,17 @@ test("the share button's token is a server-wide agent token: the same each time,
   expect((await whoami(shared)).status).toBe(401);
 });
 
-test("a token made at /tokens is shown once, with how to use it; list_tokens lists every token; revoke_token turns one off; revoking on /settings (the same operation) ends the agent's access", async () => {
+test("a token made at /tokens is shown once, with how to use it; whoami lists every token; revoke turns one off; revoking on /settings (the same operation) ends the agent's access", async () => {
   const p = await person(await servers.script());
   const mine = await p.token("The agent's own"), t = tools(p.base, mine);
   await (await p.get(`/d/${await p.make()}/api/share`, { method: "POST", headers: { "Content-Type": "application/json", Origin: p.origin }, body: "{}" })).json();
   const handMade = (await newToken(p.base, { label: "Made by hand" }, p.cookie)).token;
   expect(handMade).toBeTruthy();
-  const listed = (await t.call("list_tokens")).data as { id: string; label: string }[];
+  const listed = (await t.call("whoami")).data.tokens as { id: string; label: string }[];
   expect(listed.map((x) => x.label)).toEqual(expect.arrayContaining(["Made by hand", "Share button", "The agent's own"]));
-  expect((await t.call("revoke_token", { id: listed.find((x) => x.label == "Made by hand")!.id })).status).toBe(200);
+  expect((await t.call("revoke", { token: listed.find((x) => x.label == "Made by hand")!.id })).status).toBe(200);
   expect((await tools(p.base, handMade).call("whoami")).status).toBe(401);
   const ownId = (await t.call("whoami")).data.token.id as string;
-  expect((await p.tool("revoke_token", { id: ownId })).status).toBe(200);
+  expect((await p.tool("revoke", { token: ownId })).status).toBe(200);
   expect((await t.call("whoami")).status).toBe(401);
 });

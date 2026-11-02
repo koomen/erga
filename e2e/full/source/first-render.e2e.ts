@@ -1,6 +1,6 @@
 // The Ops page (/admin/ops) shows the git log and the statuses at once, whatever else is slow: its live updates
 // hold none of the browser's six HTTP/1.1 connections to the host (they come over WebSockets), and a slow request
-// (the releases, the domains) holds nothing else back. Before, with a few admin tabs open, each with two event
+// (the domains) holds nothing else back. Before, with a few admin tabs open, each with two event
 // streams, the page's own requests waited minutes for a free connection, and the columns said "not set up".
 import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -31,13 +31,12 @@ test("the Ops page shows the log and statuses in a second, with five connections
   const other = await page.context().newPage();
   await other.goto(`${server.root}/robots.txt`);
   await other.evaluate(() => Promise.all(Array.from({ length: 5 }, () => new Promise((ok) => { new EventSource("/api/events").onopen = ok; }))));
-  // The events never come, and two of the page's requests are slow: the first render waits on none of them.
+  // The events never come, and the domains are slow: the first render waits on neither.
   await page.routeWebSocket("**/api/events", () => {});
-  for (const slow of ["**/api/tools/list_releases", "**/api/tools/list_domains"])
-    await page.route(slow, async (route) => {
-      await new Promise((ok) => setTimeout(ok, 10_000));
-      await route.continue().catch(() => {});
-    });
+  await page.route("**/api/tools/deploys", async (route) => {
+    if (route.request().postData()?.includes('"domains"')) await new Promise((ok) => setTimeout(ok, 10_000));
+    await route.continue().catch(() => {});
+  });
 
   await page.setViewportSize({ width: 1200, height: 700 });
   const started = Date.now();
@@ -53,7 +52,7 @@ test("the Ops page shows the log and statuses in a second, with five connections
 
   // The open Ops page (and its agent panel) holds no connection: the sixth is still free for the other tab.
   const answer = await other.evaluate(async () => {
-    const r = await fetch("/api/tools/list_deploys", { method: "POST", body: "{}", signal: AbortSignal.timeout(3_000) }).catch(() => null);
+    const r = await fetch("/api/tools/deploys", { method: "POST", body: "{}", signal: AbortSignal.timeout(3_000) }).catch(() => null);
     return r?.status ?? "no answer in 3 s";
   });
   expect(answer).toBe(200);

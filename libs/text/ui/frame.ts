@@ -4,7 +4,7 @@
 // the document's socket itself, from this origin, with the edit key (server/documents/edit-key.ts), holds its own
 // replica of the room (collab.ts), sends every edit there and applies everyone else's, shows where the others' carets
 // are and shows its own to them. It does everything that needs the page's DOM: typing, selections, marks and carets,
-// its own controls (controls.ts: the style bar, the link bar, pause), files dropped on the page (uploads.ts), on the
+// its own controls (controls.ts: the style bar, the link bar), files dropped on the page (uploads.ts), on the
 // page as it is, which the pages origin served from the text (shared/page-html.ts). It sends the viewer nothing. When
 // the viewer says "view", it stops, and the page carries on as it is.
 
@@ -19,6 +19,7 @@ import { clampZoom } from "../../../client/common/zoom";
 import { Collab } from "./collab";
 import { mountControls, noteOnPage, type Controls } from "./controls";
 import { addFiles } from "./uploads";
+import { apiCode, runPageEdit, warm } from "./page-edits";
 import type { EditMode } from "./mode";
 import { changesBetween } from "../../../document/merge";
 import { baseName, encodePath } from "../../../document/pages";
@@ -119,7 +120,6 @@ interface Carry {
   view: { pos: number; top: number } | null;
   held?: HeldInput[];
   focus?: boolean;
-  paused?: boolean;
   /** Everything its replica held of the room (Collab.held), merged in case an edit hadn't reached it. */
   room?: { epoch: string; update: string } | null;
 }
@@ -259,7 +259,6 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
     state,
     base: HERE,
     held: [...(back?.held ?? []), ...early.splice(0)],
-    paused: back?.paused,
     check: m.check,
     onReload: reload,
     onUpdate(u) {
@@ -292,12 +291,9 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
             page.restoreView(view);
             view = null;
           }
-          // A live page that reacts to input (it defines ergaPause) opens with its keys its own, as after Escape: a click
-          // on text starts editing. Not when it loads again, nor paused: the caret stays where it was. Any other takes
-          // the focus it has (the viewer gives the frame the focus as it goes into the editor), with the caret in its text.
-          if (!back && !page.isPaused && page.canPause) page.leaveText();
-          // The page had the focus as it loaded again, or has it now: its text has it, for the keys held meanwhile.
-          else if (focus || document.hasFocus()) page.focus();
+          // The page takes the focus it has (the viewer gives the frame the focus as it goes into the editor), with the
+          // caret in its text: it had the focus as it loaded again, or has it now, for the keys held meanwhile.
+          if (focus || document.hasFocus()) page.focus();
           // (The keys held meanwhile go in now, whether or not it has the focus yet.)
           page.hold(false);
           focus = false;
@@ -326,16 +322,14 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
       if (fix) (window as Window & { __ergaReport?: (p: unknown) => void }).__ergaReport?.({ kind: "notice", message, fix });
       else controls?.explain(message);
     },
-    async pageEdit(html, edit, input) {
-      if (!mode) return { error: "the editor is starting. Try once more." };
-      const r = await fetch(`${mode.doc}/api/page-edit?key=${encodeURIComponent(mode.key)}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ path: mode.path, html, edit, input }),
-      }).catch(() => null);
-      const answer = (await r?.json().catch(() => null)) as { changes?: []; error?: string } | null;
-      if (r?.ok && answer?.changes) return { changes: answer.changes };
-      return { error: answer?.error ?? "the server didn't answer. Check the connection and try again." };
+    // In the page: its change shows at once (page-edits.ts).
+    pageEdit(html, edit, input) {
+      const code = mode && collab && apiCode(mode.path, html, (p) => files(collab!.doc).get(p)?.toString());
+      if (code == null)
+        return Promise.resolve({
+          error: 'the page names no API module of its own (<meta name="erga-api" content="api.js">) that the document has',
+        });
+      return runPageEdit(code, html, edit, input);
     },
     onDropFiles(list, at, point) {
       // (Its state is on its way to the page that comes: what's dropped now would have nowhere to go in.)
@@ -358,6 +352,8 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
       });
     },
   });
+  // The page's own API, imported before the person's first edit asks for it.
+  warm(apiCode(m.path, text, (p) => files(c.doc).get(p)?.toString()));
   window.ergaFrame = {
     page,
     collab: c,
@@ -415,7 +411,6 @@ addEventListener("pagehide", () => {
     path: mode.path,
     state: stateJSON(page.state),
     view: scrollY > 0 ? page.topText() : null,
-    paused: page.isPaused,
     room: collab.held(),
   });
 });
@@ -434,9 +429,9 @@ function reload(view: { pos: number; top: number } | null) {
   setTimeout(async () => {
     // It loads again once the room has its edits (else it would come made from the text before them, and load again).
     await Promise.race([collab?.flushed(), sleep(3000)]);
-    if (page) carry({ path, state: stateJSON(page.state), view, held: page.takeHeld(), focus: document.hasFocus(), paused: page.isPaused });
+    if (page) carry({ path, state: stateJSON(page.state), view, held: page.takeHeld(), focus: document.hasFocus() });
     const y = Math.round(scrollY);
-    // With the page's place in its own address (#3: agents/document/PROMPT.md, rule 14). (A reload: going to the same
+    // With the page's place in its own address (#3: agents/document/PROMPT.md, rule 11). (A reload: going to the same
     // address with a hash only goes to the place.)
     window.history.replaceState(null, "", location.pathname + "?erga-edit" + (y > 0 ? `&erga-y=${y}` : "") + location.hash);
     location.reload();

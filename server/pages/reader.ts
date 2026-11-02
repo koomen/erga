@@ -40,7 +40,7 @@ export const PAGE_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-m
 export const PAGE_ALLOW = "autoplay 'none'; fullscreen 'none'";
 
 /**
- * What an editor's page may do beyond its sandbox: autoplay, for the agent's page_click (it gives no activation of its
+ * What an editor's page may do beyond its sandbox: autoplay, for the agent's page_input (it gives no activation of its
  * own, so the page's media plays on the tab's). Never full screen: the agent can't use it, and a page in full screen
  * could pass for Erga. (The frame is the same one viewing and editing: what it may do is decided as the viewer loads,
  * opened in the editor or not.)
@@ -70,8 +70,16 @@ export function readerPage(html: string, o: { shell: string; prefix: string; src
     (editor
       ? `<script data-erga>${PROBLEM_WATCH}</script><script data-erga>${LIVE_WATCH}</script><script data-erga>${TEXT_GUARD}</script><script data-erga>${EDITING_API}</script>`
       : "");
-  return insertHead(html, head);
+  return insertHead(localLibraries(html, o.shell), head);
 }
+
+/**
+ * A page imports Erga's libraries at erga.dev (https://erga.dev/erga/<name>/editor.js); each server serves its own
+ * (serveLibrary), the build its editor runs. So the page loads them from the viewer's origin, `shell`: staging's page
+ * loads staging's library, and a local server's its own. The text the editor reads stays as written.
+ */
+const localLibraries = (html: string, shell: string) =>
+  html.replace(/(<script\b[^>]*\bsrc\s*=\s*["']?)https:\/\/erga\.dev(\/erga\/[a-z]+\/editor\.js)/gi, `$1${shell}$2`);
 
 /** The version of what the pages origin puts in a page: this script's and the editor's build's (frame.js's address names it). */
 export const readerVersion = () =>

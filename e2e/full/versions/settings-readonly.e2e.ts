@@ -28,11 +28,11 @@ test("a viewer at the editor's address gets the viewer, with the document as it 
   await doc.owner.share(doc.id, "bo", "viewer");
   await viewerShows(tab.page, server, `${doc.address}?user=Bo&edit`, "Draft 5");
   expect(await rect(tab.page, "#btn-settings")).toBeNull();
-  const state = (await runTool(server.root, "list_versions", { document: doc.id }, { user: "Bo" })).result as {
+  const state = (await runTool(server.root, "versions", { document: doc.id }, { user: "Bo" })).result as {
     canEdit: boolean;
     current: { n: number };
   };
   expect(state).toMatchObject({ canEdit: false, current: { n: 5 } });
   expect((await runTool(server.root, "restore_version", { document: doc.id, version: "v3" }, { user: "Bo" })).status).toBe(403);
-  expect((await runTool(server.root, "deploy_homepage", {}, { user: "Bo" })).status).toBe(403);
+  expect((await runTool(server.root, "redeploy", { target: "homepage" }, { user: "Bo" })).status).toBe(403);
 });

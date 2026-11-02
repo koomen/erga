@@ -36,7 +36,9 @@ export function mountSharing(shell: Shell) {
   type Shared = { permissions: { login: string; role: string }[]; notUsers?: string[]; avatars?: Record<string, string>; publicSharing?: boolean };
   const tellSharing = (text: string, error = false) => { sharingStatus.textContent = text; sharingStatus.classList.toggle("error", error); };
   const shareCall = (change?: { login: string; role: string }): Promise<Shared> =>
-    change ? runTool("share_document", { document: shell.docId, ...change }) : runTool("document_access", { document: shell.docId });
+    change
+      ? runTool("share_document", { document: shell.docId, ...change })
+      : runTool<{ access: Shared }>("ls", { document: shell.docId }).then((r) => r.access);
   function renderSharing({ permissions, notUsers, avatars, publicSharing }: Shared) {
     sharingList.textContent = "";
     const pending = new Set(notUsers ?? []);

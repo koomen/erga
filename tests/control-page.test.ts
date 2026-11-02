@@ -51,7 +51,7 @@ test("the Ops page asks for the log and statuses at once, and its live updates h
   expect(OPS).not.toContain("new EventSource");
   expect(OPS).toContain('new WebSocket((location.protocol == "https:" ? "wss://" : "ws://") + location.host + "/api/events")');
   // The first render's requests go out as the script starts, before the socket, and the socket's first open asks again for nothing.
-  expect(OPS).toContain("\n  load();\n  loadDeploys();\n  loadReleases();\n  loadDomains();\n  listen();");
+  expect(OPS).toContain("\n  load();\n  loadDeploys();\n  loadDomains();\n  listen();");
   expect(OPS).toContain("events.onopen = () => {\n      if (opened) {");
   // Until the statuses come, a column says it is loading, not "not set up".
   expect(html.match(/id="target-[a-z]+"[^]*?<span class="st"><i><\/i><span>([^<]*)</)?.[1]).toBe("…");

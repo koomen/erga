@@ -34,11 +34,10 @@
 //                                   /tokens/approve, which is behind this guard, so only an admin's); and POST /mcp with
 //                                   no Authorization header, which answers only the 401 that starts the sign-in. The
 //                                   person's own step, /oauth/authorize, is not exempt: it needs an admin, signed in
-//   GET /llms.txt with no token     the guide, made from the code (no data): MCP's instructions send agents to it without
-//                                   a token
+//   GET /llms.txt                   a few fixed lines that point to /mcp (no data)
 //   the API, MCP and documents' own routes with an admin's token of another scope (document, documents)
 //                                   an admin shares a document with an outside agent (the editor's Share card) and it
-//                                   must work here as on production: /llms.txt, /mcp, /api/publish,
+//                                   must work here as on production: /mcp, /api/publish,
 //                                   /api/tools/..., and /<owner or d>/<doc>/(api|doc)/..., and
 //                                   nothing else. The token's person must be an admin at each request, as
 //                                   for the pages origin; a test person's token never passes. Past this guard the token's
@@ -83,7 +82,7 @@ function exempt(request: Request, base: Platform, url: URL): boolean {
   if (path == "/oauth/register" || path == "/oauth/token") return method == "POST" || method == "OPTIONS";
   const token = request.headers.has("authorization");
   if (path == "/mcp") return !token && method == "POST";
-  if (path == "/llms.txt") return !token && (method == "GET" || method == "HEAD");
+  if (path == "/llms.txt") return method == "GET" || method == "HEAD";
   return false;
 }
 

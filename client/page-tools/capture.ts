@@ -27,7 +27,7 @@ import { topRoom } from "../common/top-room";
 const CATCH_ERRORS = `<script>window.__ergaErrors=[];addEventListener("error",function(e){__ergaErrors.push(String(e.message))});addEventListener("unhandledrejection",function(e){__ergaErrors.push("Unhandled rejection: "+String(e.reason&&e.reason.message||e.reason))});(function(){var ce=console.error;console.error=function(){__ergaErrors.push("console.error: "+[].map.call(arguments,String).join(" "));return ce.apply(console,arguments)}})()</script>`;
 /**
  * The hidden frame is about:srcdoc, its <base> the page's real address: a
- * hash-only address ("#3", rule 14 of the agents' guide) would resolve
+ * hash-only address ("#3", rule 11 of the agents' guide) would resolve
  * against the base, another address, and replaceState would throw. Here a
  * hash-only address is the frame's own, in replaceState, pushState and a
  * link, as it is for the page anywhere else. The frame opens at the page's
@@ -239,7 +239,7 @@ export async function captureView(req: ViewRequest, html: string, hash: string):
 type Steps = { count(): number; current(): number; go(i: number): void; label?(i: number): unknown; slide?(i: number): unknown };
 
 /**
- * Shows the step the agent asked for: by the page's window.ergaSteps (agents/document/PROMPT.md, "Presentations"),
+ * Shows the step the agent asked for: by the page's window.ergaSteps (client/inline/reader.ts, Steps),
  * which a page may define after it loads, so this waits for it until `deadline`. A hash (the frame opened at it) needs
  * none. A page without ergaSteps goes to the step's number as its hash, as a link to it would. Answers the step shown,
  * a note, or why it can't.

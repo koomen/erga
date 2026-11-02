@@ -2,7 +2,8 @@
 // selector; Erga makes them one change to the source, or refuses them, saying why.
 import { describe, expect, test } from "bun:test";
 import { EditorState } from "@codemirror/state";
-import { apiPathOf, applyChanges, applyPageEdit, describePageApi, planPageOps } from "../document/page-api";
+import { applyPageEdit, describePageApi } from "../document/page-api";
+import { apiPathOf, applyChanges, planPageOps } from "../shared/page-ops";
 import { testSandbox } from "./helpers/sandbox";
 
 const page = `<body>

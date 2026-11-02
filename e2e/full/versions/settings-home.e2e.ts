@@ -9,7 +9,7 @@ await servers.short();
 test.afterEach(async () => {
   closeDrafts();
   const s = await servers.short();
-  await runTool(s.root, "reset_setting", { key: "landing_document" });
+  await runTool(s.root, "set_setting", { key: "landing_document", reset: true });
 });
 
 /** What / serves now (to someone signed out: someone signed in goes to /docs): the homepage's deployed page. */

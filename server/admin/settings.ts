@@ -46,7 +46,7 @@ function valueInput(e: Shown, never: boolean): string {
       </div>`;
   }
   if (e.kind == "document") {
-    // Find as you type: any of the server's documents and projects, by title, owner or address (the operation search_documents);
+    // Find as you type: any of the server's documents and projects, by title, owner or address (the operation list_documents, with all);
     // choosing one saves it. The value is its address, kept by id.
     const value = e.doc ? e.doc.address : e.value == null ? "" : String(e.value);
     return `<div class="doc-pick">

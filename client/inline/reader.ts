@@ -29,13 +29,25 @@ type Canvas = {
   w?: number;
   h?: number;
 };
-/** A presentation's steps, as the page says them (agents/document/PROMPT.md, "Presentations"). */
+/**
+ * A presentation's steps, as the page says them: window.ergaSteps, which Erga's libraries define (libs/slides,
+ * libs/canvas; e2e/fixtures/steps and builds are pages that define their own). A step is what people see at one moment:
+ * a slide, or one part of a slide that builds up in parts, numbered from 0. The page tells Erga when the step or the
+ * steps change (dispatchEvent(new Event("ergastep"))); Erga also checks a few times a second. Erga handles ← and →
+ * itself, unless the page calls preventDefault() on them.
+ */
 type Steps = {
+  /** How many steps there are. */
   count(): unknown;
+  /** Shows step n. */
   go(n: number): void;
+  /** The step shown now. */
   current(): unknown;
+  /** A short name for step i (its title). Without it, the list says "Step 3". */
   label?(i: number): unknown;
+  /** A small picture of step i, about that size: a canvas, a Blob or an image's address, or a Promise of one. */
   image?(i: number, size: { width: number; height: number }): unknown;
+  /** The slide step i is on (from 0), for a deck whose slides build up in parts: then "3.2" is slide 3's second part. */
   slide?(i: number): unknown;
 };
 type StepsMessage = {
@@ -437,7 +449,7 @@ export default function reader(C: ReaderConfig): void {
         tell({ type: "erga-band", color: c });
       }
       if (c != null) report();
-      // The page's place in its own address (#3: agents/document/PROMPT.md, rule 14), for the tab's address.
+      // The page's place in its own address (#3: agents/document/PROMPT.md, rule 11), for the tab's address.
       if (location.hash != hash) {
         hash = location.hash;
         tell({ type: "erga-hash", hash });
@@ -450,7 +462,7 @@ export default function reader(C: ReaderConfig): void {
     } catch {}
     requestAnimationFrame(watch);
   })();
-  // A presentation (agents/document/PROMPT.md, "Presentations"): the page says it has steps (window.ergaSteps).
+  // A presentation (Steps, above): the page says it has steps (window.ergaSteps).
   function steps(): Steps | null {
     const p = (window as Window & { ergaSteps?: Steps }).ergaSteps;
     return p && typeof p.count == "function" && typeof p.go == "function" && typeof p.current == "function" ? p : null;

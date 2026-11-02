@@ -103,6 +103,6 @@ export interface DocumentAgents {
   changes: ReadonlySet<string>;
   /** The key the versions' descriptions are written with ("" for none: a plain description). */
   descriptionKey(): Promise<string>;
-  /** Runs a page's own API (page-api.ts): for the agents' call_edit, and for the page's own controls (POST /api/page-edit). */
+  /** Runs a page's own API (page-api.ts), for the agents' call_edit. (The page's own controls run it in the page.) */
   sandbox: Sandbox;
 }

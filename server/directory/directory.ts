@@ -753,7 +753,7 @@ export class Directory {
     return { agent: !!row?.agent && !row.open, bars: !row || !!row.bars };
   }
 
-  /** Turns one of the readers' options on or off (set_reader_agent and set_reader_bars check who may). */
+  /** Turns one of the readers' options on or off (share_document checks who may). */
   async setReaderOption(id: string, option: "agent" | "bars", on: boolean): Promise<void> {
     await this.sql.run(`UPDATE documents SET ${option == "agent" ? "reader_agent" : "reader_bars"} = ?2 WHERE id = ?1`, id, on ? 1 : 0);
   }

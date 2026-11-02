@@ -42,7 +42,7 @@ export default function adminAuth(): void {
       const hint = box.closest("section.provider")!.querySelector(".provider-hint")!;
       say(hint, "Saving…");
       try {
-        await runTool("switch_sign_in_provider", { provider: box.dataset.provider!, on: box.checked });
+        await runTool("set_sign_in", { provider: box.dataset.provider!, action: box.checked ? "on" : "off" });
         say(hint, "");
         refresh("auth:github", "auth:google");
       } catch (err) {
@@ -80,7 +80,7 @@ export default function adminAuth(): void {
     card.querySelector("button.discard")?.addEventListener("click", async () => {
       if (!confirm("Discard the new values? Sign-in keeps the values in use.")) return;
       try {
-        await runTool("clear_sign_in_app", { provider, what: "pending" });
+        await runTool("set_sign_in", { provider, action: "discard" });
         await changed(provider, "Discarded: sign-in keeps the values in use.");
       } catch (err) {
         say(hint, (err as Error).message, true);
@@ -90,7 +90,7 @@ export default function adminAuth(): void {
       if (!confirm("Clear the values set on this page? Sign-in goes back to the deploy's values.")) return;
       say(hint, "Clearing…");
       try {
-        const result = await runTool("clear_sign_in_app", { provider });
+        const result = await runTool("set_sign_in", { provider, action: "clear" });
         await changed(provider, result.message);
       } catch (err) {
         const message = (err as Error).message;
@@ -99,7 +99,7 @@ export default function adminAuth(): void {
           return;
         }
         try {
-          const result = await runTool("clear_sign_in_app", { provider, force: true });
+          const result = await runTool("set_sign_in", { provider, action: "clear", force: true });
           await changed(provider, result.message);
         } catch (err2) {
           say(hint, (err2 as Error).message, true);

@@ -47,7 +47,7 @@ const buttonsBar = (actions: string, corner: string) =>
 /**
  * A document's two bars, in the viewer and on the homepage, as the editor's and in the same places: erga › Documents ›
  * the document (signed out: erga › the document; the homepage: erga), and the buttons with who you are (`corner`).
- * Full screen only where there's a frame to fill the screen (`full`). The editor's own actions (Pause, Share, Document
+ * Full screen only where there's a frame to fill the screen (`full`). The editor's own actions (Share, Document
  * settings) are folded into the pencil here; Clone is the New menu's last item. A project's title opens its pages
  * (the card after the bars: client/inline/viewer-tree.ts). A test person has no Documents; an agent sees no breadcrumbs.
  */

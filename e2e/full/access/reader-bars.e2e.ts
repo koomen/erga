@@ -10,7 +10,7 @@ async function asOwner(root: string, name: string, args: Record<string, unknown>
     headers: { "Content-Type": "application/json", Origin: new URL(root).origin },
     body: JSON.stringify(args),
   });
-  return { status: r.status, body: (await r.json()) as { result?: { readerBars?: boolean } } };
+  return { status: r.status, body: (await r.json()) as { result?: { access?: { readerBars?: boolean } } } };
 }
 
 /** What `who` sees at `address`: whether the buttons' bar shows, and where the page's frame starts. */
@@ -42,10 +42,10 @@ test("the owner hides Erga's bars from readers in Document settings; editors kee
   await page.locator("#ds-bars-on").waitFor();
   expect(await page.locator("#ds-bars-on").isChecked()).toBe(true);
   await page.locator("#ds-bars-on").click();
-  await expect.poll(async () => (await asOwner(root, "document_access", { document: id })).body.result?.readerBars).toBe(false);
+  await expect.poll(async () => (await asOwner(root, "ls", { document: id })).body.result?.access?.readerBars).toBe(false);
   expect(await view(page, address, reader), "a reader, after").toEqual({ bars: false, top: 0 });
   expect((await view(page, address, editor)).bars, "an editor").toBe(true);
   // On again: the reader has the bars back.
-  expect((await asOwner(root, "set_reader_bars", { document: id, on: true })).status).toBe(200);
+  expect((await asOwner(root, "share_document", { document: id, reader_bars: true })).status).toBe(200);
   expect((await view(page, address, reader)).bars, "a reader, on again").toBe(true);
 });

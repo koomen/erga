@@ -104,7 +104,7 @@ test("desktop: the owner's viewer has the editor's bars and buttons in the edito
   ).toEqual([false, "Clone"]);
   await clickOn(page, ".erga-edit-button");
   await until(() => page.evaluate(() => document.body.classList.contains("erga-editor-ready")), 10_000, "the editor is ready");
-  // (Pause, Share and Document settings open out of the pencil: the bar grows to the left.)
+  // (Share and Document settings open out of the pencil: the bar grows to the left.)
   await expect.poll(async () => (await bars(page, "edit")).parts.left?.l).toBe(6);
   const edit = await bars(page, "edit");
   expect(edit.glass).toEqual([GLASS, GLASS]);

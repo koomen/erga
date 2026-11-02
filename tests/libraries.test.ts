@@ -3,6 +3,7 @@
 import { expect, test } from "bun:test";
 import { libraryOf } from "../server/pages/index.ts";
 import { bringsEditor } from "../shared/page-html.ts";
+import { readerPage } from "../server/pages/reader.ts";
 
 test("a library's address names one of Erga's libraries", () => {
   expect(libraryOf("/erga/text/editor.js")).toBe("text");
@@ -17,4 +18,13 @@ test("a page brings its own editor when it imports a library or says so; else Er
   expect(bringsEditor(`<meta content=own name=erga-editor>`)).toBe(true);
   expect(bringsEditor(`<html><head><script src="app.js"></script><meta name="erga-editor" content="text"></head></html>`)).toBe(false);
   expect(bringsEditor(`<p>See https://erga.dev/erga/text/editor.js</p>`)).toBe(false);
+});
+
+test("a page loads Erga's libraries from the server it's on; its other scripts and its text stay as written", () => {
+  const html = `<html><head><script type="module" src="https://erga.dev/erga/canvas/editor.js"></script><script src="https://erga.dev/app.js"></script></head><body><p>https://erga.dev/erga/slides/editor.js</p></body></html>`;
+  const page = readerPage(html, { shell: "https://staging.erga.dev", prefix: "/t/x/", src: "", editor: false });
+  expect(page).toContain(`<script type="module" src="https://staging.erga.dev/erga/canvas/editor.js"></script>`);
+  expect(page).toContain(`<script src="https://erga.dev/app.js"></script>`);
+  expect(page).toContain(`<p>https://erga.dev/erga/slides/editor.js</p>`);
+  expect(libraryOf("/erga/canvas/editor.js")).toBe("canvas");
 });

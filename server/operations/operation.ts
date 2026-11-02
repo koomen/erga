@@ -120,10 +120,10 @@ export async function runOperation(op: Operation, args: Record<string, unknown>,
 export const str = (description: string) => Schema.String.annotate({ description });
 /** A document, by any of its names; the person's own agent may leave it out for the document open on their page. */
 export const DOCUMENT = Schema.optionalKey(
-  str(
-    "The document: its address (/<owner>/<slug>; the homepage project's is /_home), its URL, its id, or the slug of one of yours. Your own agent may leave it out for the document open on the person's page."
-  )
+  str("The document: /<owner>/<slug>, its URL or id, or one of your slugs. Your own agent may leave it out: the open one.")
 );
+/** The same, always given. */
+export const ANY_DOCUMENT = str("The document: /<owner>/<slug>, its URL or id, or one of your slugs.");
 export const LOGIN = str("A GitHub login");
 
 export const iso = (t: number | null | undefined) => (t ? new Date(t).toISOString() : null);
@@ -205,4 +205,21 @@ export async function callDocument(caller: Caller, doc: Route, path: string, ini
   const person = { login: caller.who.login, name: caller.name ?? caller.who.login };
   caller.ranIn?.(doc);
   return platform.docs.fetch(doc, forwardedAs(new Request(url, init), url, path, person, caller.who));
+}
+
+/** A document tool, run in the document's host as the caller's agent (POST /api/tools/<name> there, which only the server reaches). */
+export async function runInDocument(caller: Caller, doc: Route, name: string, args: Record<string, unknown>): Promise<ToolContent[]> {
+  const r = await callDocument(caller, doc, `/api/tools/${encodeURIComponent(name)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  });
+  const body = (await r.json().catch(() => ({ ok: false, error: `The document answered ${r.status}.` }))) as {
+    ok: boolean;
+    content?: ToolContent[];
+    error?: string;
+  };
+  if (!body.ok)
+    throw new OperationError({ message: body.error ?? "The tool failed.", status: r.status >= 400 && r.status < 500 ? r.status : 500 });
+  return body.content ?? [];
 }

@@ -1,6 +1,6 @@
 // The operations inside a document (server/operations/editor.ts), on a real document and directory: the editor's
 // agent calls them from its tool list, defaulting to its own document, as its person may; someone who may only view
-// reads, and is refused a change.
+// reads, and is refused a change. (read with version runs in the document's host: e2e/full/versions/tools.e2e.ts.)
 
 import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";
@@ -55,46 +55,38 @@ test("a person's agent renames the document open on their page, lists, makes, mo
     origin: "https://erga.test",
   };
   const tools = agentTools(await toolsFor(agent, true), agent);
-  for (const t of [
-    "get_title",
-    "rename_document",
-    "list_pages",
-    "ls",
-    "new_page",
-    "mkdir",
-    "mv",
-    "rm",
-    "make_project",
-    "make_document",
-    "list_versions",
-    "read_version",
-    "restore_version",
-  ])
+  for (const t of ["rename_document", "ls", "new", "mv", "rm", "set_kind", "versions", "restore_version"])
     expect(tools.map((x) => x.name)).toContain(t);
   // Its name, from the directory; a rename moves the address.
-  expect(JSON.parse(await ask(tools, "get_title")).address).toBe("/ada/files");
+  expect(JSON.parse(await ask(tools, "ls")).address).toBe("/ada/files");
   const named = JSON.parse(await ask(tools, "rename_document", { title: "Field notes" }));
   expect([named.title, named.address, named.url]).toEqual(["Field notes", "/ada/field-notes", "https://erga.test/ada/field-notes"]);
   expect((await dir.get("doc12345"))!.title).toBe("Field notes");
   // A document has one page: a second is refused, saying how; as a project it takes more.
-  await expect(ask(tools, "new_page", { path: "about" })).rejects.toThrow(/make it a project first/);
-  expect(JSON.parse(await ask(tools, "make_project")).kind).toBe("project");
-  await ask(tools, "new_page", { path: "about" });
-  await ask(tools, "mkdir", { path: "blog" });
+  await expect(ask(tools, "new", { path: "about" })).rejects.toThrow(/make it a project first/);
+  expect(JSON.parse(await ask(tools, "set_kind", { kind: "project" })).kind).toBe("project");
+  await ask(tools, "new", { path: "about" });
+  await ask(tools, "new", { path: "blog/" });
   await ask(tools, "mv", { from: "about.html", to: "blog/about.html" });
-  const pages = JSON.parse(await ask(tools, "list_pages"));
+  const pages = JSON.parse(await ask(tools, "ls"));
   expect(pages.canEdit).toBe(true);
-  expect(pages.entries.find((e: { path: string }) => e.path == "blog/about.html").address).toBe("/ada/field-notes/blog/about");
+  expect(pages.access.permissions.map((p: { login: string }) => p.login)).toContain("bo");
+  expect(pages.entries.find((e: { path: string }) => e.path == "blog/about.html")).toMatchObject({
+    type: "page",
+    address: "/ada/field-notes/blog/about",
+    kind: "text",
+  });
   const files = JSON.parse(await ask(tools, "ls", { path: "blog" }));
-  expect(files.files.map((f: { path: string }) => f.path)).toEqual(["blog/about.html"]);
+  expect(files.entries.map((f: { path: string }) => f.path)).toEqual(["blog/about.html"]);
+  const html = JSON.parse(await ask(tools, "ls", { glob: "*.html" }));
+  expect(html.entries.map((f: { path: string }) => f.path).sort()).toEqual(["blog/about.html", "index.html"]);
   await ask(tools, "rm", { path: "blog" });
   expect(await doc.paths()).toEqual(["index.html"]);
   // Versions: listed, read, and one brought back as the agent's person's.
   await doc.publish({ "index.html": "<h1>Changed</h1>" }, []);
   await new Promise((r) => setTimeout(r, 120));
-  const v = JSON.parse(await ask(tools, "list_versions"));
+  const v = JSON.parse(await ask(tools, "versions"));
   expect(v.total).toBeGreaterThan(1);
-  expect(await ask(tools, "read_version", { version: "v1", path: "index.html" })).toBe("<h1>Files</h1>");
   const r = JSON.parse(await ask(tools, "restore_version", { version: "v1", path: "index.html" }));
   expect(r.files).toEqual(["index.html"]);
   expect(r.current.authors).toEqual(["ada, via their agent"]);
@@ -104,11 +96,13 @@ test("someone who may only view lists the pages and versions, and is refused a c
   const { platform, dir } = await world();
   const bo: Caller = { dir, who: { login: "bo" }, name: "Bo", platform };
   const tool = (name: string) => allTools().find((t) => t.name == name)!;
-  const pages = (await runTool(tool("list_pages"), { document: "doc12345" }, bo)) as { canEdit: boolean };
+  const pages = (await runTool(tool("ls"), { document: "doc12345" }, bo)) as { canEdit: boolean; access?: unknown };
   expect(pages.canEdit).toBe(false);
-  expect(((await runTool(tool("list_versions"), { document: "/ada/files" }, bo)) as { canEdit: boolean }).canEdit).toBe(false);
+  // Who it's shared with is its owner's to see.
+  expect(pages.access).toBeUndefined();
+  expect(((await runTool(tool("versions"), { document: "/ada/files" }, bo)) as { canEdit: boolean }).canEdit).toBe(false);
   for (const [name, args] of [
-    ["new_page", { path: "x" }],
+    ["new", { path: "x" }],
     ["rename_document", { title: "Mine" }],
     ["restore_version", { version: "v1" }],
   ] as const)

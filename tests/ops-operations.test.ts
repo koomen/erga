@@ -131,20 +131,27 @@ async function app() {
 describe("on the app: POST /api/tools/<name>, as the Ops page and an outside agent call them", () => {
   test("the reads: the branches, the deploys (with the Connect Cloudflare offer), a log, the channels and the domains", async () => {
     const { admin, tool } = await app();
-    const branches = await tool(admin, "list_branches");
-    expect(branches).toMatchObject({ status: 200, ok: true, result: { origin: ORIGIN, remote: `${OPS}/git/erga.git` } });
-    const status = await tool(admin, "list_deploys", { history: 100 });
+    const branches = await tool(admin, "branches");
+    expect(branches).toMatchObject({
+      status: 200,
+      ok: true,
+      result: { origin: ORIGIN, remote: `${OPS}/git/erga.git`, releases: RELEASES },
+    });
+    const status = await tool(admin, "deploys", { history: 100 });
     expect(status.result.targets[0].history.length).toBe(100);
     expect(status.result.offer).toEqual({ kind: "connect-cloudflare", label: "Connect Cloudflare", url: `${OPS}/install/start?popup=1` });
     // The page asks for the whole log (lines: 0); an agent gets the last 200 unless it asks.
-    expect((await tool(admin, "deploy_log", { target: "staging", lines: 0 })).result.lines.length).toBe(300);
-    expect((await tool(admin, "deploy_log", { target: "staging" })).result).toMatchObject({ cut: "the last 200 of 300 lines" });
-    expect(await tool(admin, "deploy_log", { target: "staging", deploy: "d9" })).toMatchObject({
+    expect((await tool(admin, "deploys", { view: "log", target: "staging", lines: 0 })).result.lines.length).toBe(300);
+    expect((await tool(admin, "deploys", { view: "log", target: "staging" })).result).toMatchObject({ cut: "the last 200 of 300 lines" });
+    expect(await tool(admin, "deploys", { view: "log", target: "staging", deploy: "d9" })).toMatchObject({
       status: 404,
-      error: "staging has no deploy d9 in its history. list_deploys lists them.",
+      error: "staging has no deploy d9 in its history: deploys lists them.",
     });
-    expect((await tool(admin, "list_releases")).result).toEqual(RELEASES);
-    expect((await tool(admin, "list_domains")).result.targets.staging[0].hostname).toBe("staging.erga.test");
+    expect(await tool(admin, "deploys", { view: "log" })).toMatchObject({
+      status: 400,
+      error: "The log needs target: staging or production.",
+    });
+    expect((await tool(admin, "deploys", { view: "domains" })).result.targets.staging[0].hostname).toBe("staging.erga.test");
   });
 
   test("the changes: each names the admin and their agent, and a refusal comes back with its status", async () => {
@@ -159,13 +166,15 @@ describe("on the app: POST /api/tools/<name>, as the Ops page and an outside age
       status: 409,
       error: "staging has no version to go back to.",
     });
-    expect((await tool(admin, "sync_github")).result).toMatchObject({
+    expect((await tool(admin, "github", { action: "sync" })).result).toMatchObject({
       github: { connected: true },
       done: expect.stringContaining("in sync"),
     });
     await tool(admin, "deploy_production", { commit: "s1" });
-    await tool(admin, "add_domain", { target: "staging", hostname: " Docs.Erga.Test " });
-    expect(await tool(admin, "remove_domain", { target: "staging", hostname: "staging.erga.test" })).toMatchObject({ status: 400 });
+    await tool(admin, "set_domain", { action: "add", target: "staging", hostname: " Docs.Erga.Test " });
+    expect(await tool(admin, "set_domain", { action: "remove", target: "staging", hostname: "staging.erga.test" })).toMatchObject({
+      status: 400,
+    });
     expect((await tool(admin, "disconnect_deploy_credential")).result).toMatchObject({ ok: true, credential: { connected: false } });
     const by = `ada, via ${VIA.token("CI")}`;
     expect(asked).toEqual([
@@ -185,7 +194,7 @@ describe("on the app: POST /api/tools/<name>, as the Ops page and an outside age
       status: 403,
       error: "redeploy is for the server's admins only, and bo isn't one.",
     });
-    expect(await tool(plain, "list_deploys")).toMatchObject({ status: 403, error: expect.stringContaining("needs an admin token") });
+    expect(await tool(plain, "deploys")).toMatchObject({ status: 403, error: expect.stringContaining("needs an admin token") });
     expect(await tool(admin, "redeploy", {})).toMatchObject({ status: 400, error: 'redeploy needs "target".' });
     expect(asked).toEqual([]);
   });
@@ -224,10 +233,13 @@ describe("on the control Worker: the same POST /api/tools/<name>, from its own O
     const r = await post("redeploy", { target: "staging" });
     expect(r.status).toBe(200);
     expect(await r.json()).toMatchObject({ ok: true, result: { ok: true, target: { state: "queued" } } });
-    expect((await (await post("sync_github", {})).json()) as object).toMatchObject({ ok: true, result: { github: { connected: true } } });
+    expect((await (await post("github", { action: "sync" })).json()) as object).toMatchObject({
+      ok: true,
+      result: { github: { connected: true } },
+    });
     expect(asked).toEqual(["redeploy staging: redeploy by ada", `sync from ${OPS}: ada`]);
     // The branches' Git remote is this Worker's own.
-    expect(((await (await post("list_branches", {})).json()) as { result: { remote: string } }).result.remote).toBe(`${OPS}/git/erga.git`);
+    expect(((await (await post("branches", {})).json()) as { result: { remote: string } }).result.remote).toBe(`${OPS}/git/erga.git`);
   });
 
   test("never from another site's page, nor without a sign-in; an unknown name lists the operations", async () => {
@@ -236,9 +248,9 @@ describe("on the control Worker: the same POST /api/tools/<name>, from its own O
     expect((await post("redeploy", { target: "staging" }, null)).status).toBe(403);
     const unknown = await post("nope", {});
     expect(unknown.status).toBe(404);
-    expect(((await unknown.json()) as { error: string }).error).toContain("list_deploys");
+    expect(((await unknown.json()) as { error: string }).error).toContain("deploys");
     who = null;
-    expect((await post("list_deploys", {})).status).toBe(401);
+    expect((await post("deploys", {})).status).toBe(401);
     expect(asked).toEqual([]);
   });
 });

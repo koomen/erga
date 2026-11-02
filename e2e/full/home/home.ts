@@ -54,7 +54,7 @@ export const setLanding = async (server: Server, id: string) => {
 };
 
 /** Unsets landing_document: the next / makes a fresh homepage from assets/landing/. */
-export const resetLanding = (server: Server) => runTool(server.root, "reset_setting", { key: "landing_document" });
+export const resetLanding = (server: Server) => runTool(server.root, "set_setting", { key: "landing_document", reset: true });
 
 /** The homepage project's page (/_home, the viewer on it), as `user` (the dev server's ?user=; none: DEV_LOGIN). */
 export const homeView = async (server: Server, user?: string) => (await get(server, `/_home${user ? `?user=${user}` : ""}`)).text();
@@ -71,12 +71,12 @@ export async function fresh(server: Server) {
 /** Once / is served directly (the first deploy, which the first / started, is done). */
 export const deployed = (server: Server, ms = 5_000) => until(async () => (await front(server)).direct, ms, "/ is served from a deploy");
 
-/** homepage_status, as `user` (the dev server's ?user=; none: its own person). */
+/** The homepage's state, as ls answers it to `user` (the dev server's ?user=; none: its own person); not the homepage: { isHome: false }. */
 export const home = async (server: Server, id: string, user?: string) =>
-  (await runTool(server.root, "homepage_status", { document: id }, user ? { user } : {})).result as HomeState;
-/** deploy_homepage (Redeploy now), as `user`, from `origin` (the site's own, unless given). */
+  ((await runTool(server.root, "ls", { document: id }, user ? { user } : {})).result?.homepage ?? { isHome: false }) as HomeState;
+/** redeploy, target homepage (Redeploy now), as `user`, from `origin` (the site's own, unless given). */
 export const redeploy = (server: Server, user?: string, origin?: string) =>
-  runTool(server.root, "deploy_homepage", {}, { ...(user ? { user } : {}), ...(origin ? { origin } : {}) });
+  runTool(server.root, "redeploy", { target: "homepage" }, { ...(user ? { user } : {}), ...(origin ? { origin } : {}) });
 
 /**
  * An admin-scope agent token of DEV_LOGIN's (only an admin's token with it may edit the homepage: server/directory/,

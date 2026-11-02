@@ -2,7 +2,7 @@
 // shapes, and how it says when.
 
 export interface Version { id: string; n: number; at: string; authors: string[]; description: string | null }
-/** list_versions's answer. `pending`: edits since the current version, not cut into one yet. */
+/** versions's answer. `pending`: edits since the current version, not cut into one yet. */
 export interface Versions { current: Version; versions: Version[]; total: number; canEdit: boolean; pending?: boolean }
 
 /** How many versions the popover shows at first, and loads at a time after. */

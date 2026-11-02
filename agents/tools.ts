@@ -6,7 +6,7 @@
 //
 //   a person's own agent (agents/person/sessions.ts) every operation its person may use (the admin ones, with admin
 //                        power, for an admin: the Ops page's too), and the document tools for any document
-//   an outside agent     (server/api.ts: /api/tools, /mcp, /llms.txt) every operation its token's person may use (the admin
+//   an outside agent     (server/api.ts: /api/tools, /mcp) every operation its token's person may use (the admin
 //                        ones only with an admin token; none that reach beyond one document with a document token),
 //                        and the document tools for any document
 //
@@ -17,31 +17,30 @@
 import { argumentsSchema, type AgentTool, type ToolOutput } from "./run.ts";
 import * as Schema from "effect/Schema";
 import {
-  callDocument,
   type Caller,
   findDocument,
   offered,
   type Operation,
   OperationError,
   OPERATIONS,
+  runInDocument,
   runOperation,
 } from "../server/operations/index.ts";
 import type { ToolContent } from "../document/agent.ts";
-import type { Route } from "../server/directory/index.ts";
 import { CHANGES, documentToolSpecs } from "./document/tools.ts";
 import { CONTROL_OPERATIONS } from "../control/operations.ts";
 
 /**
  * Every operation: the server's (server/operations/), and the Ops page's (control/operations.ts), which work the
  * control Worker's repository and deploys and so live in control/, above server/. Add one to either list and the
- * front end's API, every agent, MCP and the guide have it.
+ * front end's API, every agent and MCP have it.
  */
 export const ALL_OPERATIONS: Operation[] = [...OPERATIONS, ...CONTROL_OPERATIONS];
 
 /** A tool, for any agent: an operation, or a document tool for any document. */
 export type Tool = Omit<Operation, "ui"> & { readonly ui?: string };
 
-const DOCUMENT = "The document: its address (/<owner>/<slug>), its URL, its id, or the slug of one of yours.";
+const DOCUMENT = "Address (/<owner>/<slug>), URL, id, or one of your slugs";
 const ANY_DOCUMENT = Schema.String.annotate({ description: DOCUMENT });
 
 /** The document tools, for any document: a `document` argument, and they run in its host, as the person's agent. */
@@ -56,9 +55,7 @@ export function documentTools(): Tool[] {
  */
 let docToolsHere: Tool[] | null = null;
 export function documentToolsHere(): Tool[] {
-  const optional = Schema.optionalKey(
-    Schema.String.annotate({ description: `${DOCUMENT} Leave it out for the document open on the page.` })
-  );
+  const optional = Schema.optionalKey(Schema.String.annotate({ description: `${DOCUMENT}; leave it out for the one open on the page` }));
   return (docToolsHere ??= documentToolSpecs().map((spec): Tool => docTool(spec, optional)));
 }
 
@@ -66,7 +63,7 @@ function docTool(spec: ReturnType<typeof documentToolSpecs>[number], document: S
   return {
     name: spec.name,
     loose: true,
-    description: `${spec.description} (In any document you may ${CHANGES.has(spec.name) ? "edit" : "open"}: name it with "document"; paths are relative to its folder.)`,
+    description: spec.description,
     parameters: Schema.Struct({ document, ...spec.parameters.fields }),
     // (No `document`: the one open on the person's page, if their agent has one: findDocument.)
     run: async ({ document: ref, ...rest }, caller) =>
@@ -74,24 +71,7 @@ function docTool(spec: ReturnType<typeof documentToolSpecs>[number], document: S
   };
 }
 
-/** A document tool, run in the document's host as the caller's agent (POST /api/tools/<name> there, which only the server reaches). */
-async function runInDocument(caller: Caller, doc: Route, name: string, args: Record<string, unknown>): Promise<ToolContent[]> {
-  const r = await callDocument(caller, doc, `/api/tools/${encodeURIComponent(name)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(args),
-  });
-  const body = (await r.json().catch(() => ({ ok: false, error: `The document answered ${r.status}.` }))) as {
-    ok: boolean;
-    content?: ToolContent[];
-    error?: string;
-  };
-  if (!body.ok)
-    throw new OperationError({ message: body.error ?? "The tool failed.", status: r.status >= 400 && r.status < 500 ? r.status : 500 });
-  return body.content ?? [];
-}
-
-/** A tool's arguments as JSON Schema, as outside agents read them (GET /api/tools, MCP, the guide). */
+/** A tool's arguments as JSON Schema, as outside agents read them (GET /api/tools, MCP). */
 const schemas = new WeakMap<Tool, { required?: string[] }>();
 export const jsonSchemaOf = (t: Tool): { type: "object"; required?: string[] } => {
   let s = schemas.get(t);
