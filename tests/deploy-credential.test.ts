@@ -90,7 +90,7 @@ describe("the Cloudflare credential: an OAuth grant, consented to once, refreshe
     expect(await c.status()).toMatchObject({ connected: true, refreshedAt: clock.now });
   });
 
-  test("an access token Cloudflare's API refuses (401): the next use refreshes first, and a refused refresh ends the grant", async () => {
+  test("an access token Cloudflare's API refuses (401): a refresh at once, and a refused refresh ends the grant", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
     const { c } = grant(mock);
@@ -103,9 +103,36 @@ describe("the Cloudflare credential: an OAuth grant, consented to once, refreshe
     await server.instance.hook("staging", SHA2);
     await server.settle();
     expect(await server.status("staging")).toMatchObject({ state: "failed" });
-    expect(await c.status()).toMatchObject({ connected: true }); // not known yet: only the refresh says
-    await expect(c.token()).rejects.toThrow("stopped working (400 invalid_grant: refresh token revoked or unknown)");
+    // The refused call's refresh says it: the grant is gone.
     expect(await c.status()).toMatchObject({ connected: false, error: "400 invalid_grant: refresh token revoked or unknown" });
+    await expect(c.token()).rejects.toThrow("stopped working (400 invalid_grant: refresh token revoked or unknown)");
+  });
+
+  test("a refresh during a deploy (Cloudflare ends the old access token) doesn't fail it: the step that gets 401 goes on with the new token", async () => {
+    // Staging, 2026-11-02: the account step ran on one token; a refresh in the same second ended it, and the database
+    // step failed with "Authentication error [code 10000]".
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const { c, clock } = grant(mock);
+    const first = await consent(mock, c);
+    const builder = mockBuilder(async () => release);
+    const server = new Server(mock, builder, "erga-control", env(), { credential: c, now: () => clock.now });
+    // Just before the database step lists the databases, another use of the credential refreshes it.
+    const real = mock.fetch;
+    let refreshed: string | null = null;
+    mock.fetch = async (input, init) => {
+      if (!refreshed && String(input).includes("/d1/database?")) {
+        clock.now += 51 * 60_000;
+        refreshed = await c.token();
+      }
+      return real(input, init);
+    };
+    await server.instance.hook("staging", SHA2);
+    await server.settle();
+    expect(refreshed).not.toBe(first);
+    expect(mock.state.rotatedTokens).toEqual([first]);
+    expect(await server.status("staging")).toMatchObject({ state: "deployed", deployed: SHA2, error: null });
+    expect(mock.state.oauthGrants).toBe(2); // the refresh that ended the old token, and no other
   });
 
   test("the branch deploys run on it: a push with no credential waits, deploys once Cloudflare is connected, and a deploy an hour later refreshes first", async () => {

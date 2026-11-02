@@ -53,6 +53,7 @@ import type { Release } from "../control/deploys/release-format";
 import type { Builder } from "../control/deploys/branches";
 import { memoryStore, snapshotRoutes, type DocStore } from "../document/snapshot";
 import { hex, randomBytes } from "../shared/bytes";
+import { mockOAuth } from "./mock-cloudflare-oauth";
 import { sleep } from "../shared/time";
 
 export interface MockState {
@@ -100,6 +101,8 @@ export interface MockState {
   oauthRefreshStatus?: number;
   /** Access tokens the API refuses (401), as a grant revoked on the dashboard: the refresh tells. */
   refusedTokens?: string[];
+  /** Access tokens a refresh replaced: Cloudflare refuses them at once (401, code 10000), as on staging on 2026-11-02. */
+  rotatedTokens?: string[];
   /** What a consent grants when set (fewer scopes than asked: a client that lost one); else MOCK_OAUTH_SCOPES. */
   oauthScopes?: string;
   /** The next call of this step fails once (a 500), as mock-fail-<step> does for every call. */
@@ -158,8 +161,6 @@ const COMPLETE = jwt({ kind: "complete" });
 
 /** Erga's own account in the fleet mock (control/deploys/branches.ts's tests and the dev server's ERGA_DEPLOY_MOCK). */
 export const FLEET_ACCOUNT = ACCOUNT_ID;
-/** What the mock's consent grants (control/deploys/credential.ts CONTROL_OAUTH_SCOPES, as Cloudflare echoes them in the token's `scope`). */
-export const MOCK_OAUTH_SCOPES = "workers-scripts.edit containers.write cloudchamber.write d1.write artifacts.write workers-routes.write dns.write zone.read account-settings.read offline_access";
 export const PROD_DB = "0b0d0b0d-0000-4000-8000-00000000e9a0";
 /** Production's SNAPSHOT_TOKEN in the fleet mock (the tests give staging the same). */
 export const MOCK_SNAPSHOT_TOKEN = "mock-snapshot-token-0123456789abcdef0123456789";
@@ -704,59 +705,21 @@ export function mockCloudflare(opts: {
     return new Response("Not found", { status: 404 });
   }
 
+  const oauth = mockOAuth(state);
   const fetch: Fetch = async (input, init) => {
     const req = new Request(input, init);
     const url = new URL(req.url);
     if (opts.delayMs) await sleep(opts.delayMs);
-    // Cloudflare's OAuth: a code (always mock-code) for a grant, a refresh token for a new access token (the refresh token
-    // rotated, as Cloudflare's are), and revoke. The access tokens it gives are the mock's full-access ones.
-    if (url.origin == "https://dash.cloudflare.com" && url.pathname == "/oauth2/token" && req.method == "POST") {
-      const form = new URLSearchParams(await req.text());
-      const grant = (scope: string) => {
-        const refresh = `mock-refresh-${randomHex(8)}`;
-        state.refreshTokens.push(refresh);
-        state.oauthGrants++;
-        return Response.json({
-          access_token: `mock-oauth-${randomHex(8)}`,
-          token_type: "bearer",
-          expires_in: state.oauthExpiresIn ?? 3600,
-          refresh_token: refresh,
-          scope,
-        });
-      };
-      if (form.get("grant_type") == "refresh_token") {
-        // A test's 429 (Cloudflare's rate limit): once, then the refresh goes as usual.
-        if (state.oauthRefreshStatus) { const status = state.oauthRefreshStatus; state.oauthRefreshStatus = undefined; return Response.json({ error: "rate_limited" }, { status }); }
-        const old = form.get("refresh_token") ?? "";
-        if (!state.refreshTokens.includes(old)) return Response.json({ error: "invalid_grant", error_description: "refresh token revoked or unknown" }, { status: 400 });
-        state.refreshTokens = state.refreshTokens.filter((t) => t != old);
-        return grant(form.get("scope") || MOCK_OAUTH_SCOPES);
-      }
-      // mock-code-dead (the tests'): a grant whose access token has expired and whose refresh token Cloudflare no longer
-      // takes, as one revoked on the dashboard is: its first use refreshes, and the refresh is refused.
-      if (form.get("code") == "mock-code-dead" && form.get("code_verifier"))
-        return Response.json({
-          access_token: `mock-oauth-${randomHex(8)}`,
-          token_type: "bearer",
-          expires_in: 0,
-          refresh_token: `mock-refresh-dead-${randomHex(8)}`,
-          scope: state.oauthScopes || MOCK_OAUTH_SCOPES,
-        });
-      if (form.get("code") != "mock-code" || !form.get("code_verifier")) return Response.json({ error: "invalid_grant" }, { status: 400 });
-      return grant(state.oauthScopes || form.get("scope") || MOCK_OAUTH_SCOPES);
-    }
-    if (url.origin == "https://dash.cloudflare.com" && url.pathname == "/oauth2/revoke" && req.method == "POST") {
-      const form = new URLSearchParams(await req.text());
-      state.refreshTokens = state.refreshTokens.filter((t) => t != form.get("token"));
-      state.revoked++;
-      return new Response(null, { status: 200 });
-    }
+    // Cloudflare's OAuth (dev/mock-cloudflare-oauth.ts).
+    const signIn = await oauth(req, url);
+    if (signIn) return signIn;
     if (url.origin == "https://api.cloudflare.com") {
       const path = url.pathname.replace(/^\/client\/v4/, "") + url.search;
       const token = /^Bearer (\S+)$/.exec(req.headers.get("authorization") ?? "")?.[1] ?? "";
       const upload = path.startsWith("/accounts/") && path.includes("/workers/assets/upload");
       state.calls.push(`${req.method} ${path}`);
       if (!upload && (!token.startsWith("mock-") || state.refusedTokens?.includes(token))) return fail(401, 1000, "Invalid API Token");
+      if (!upload && state.rotatedTokens?.includes(token)) return fail(401, 10000, "Authentication error");
       if (token == "mock-slow") await sleep(150);
       return api(req, path, upload ? subFor ?? "" : token);
     }
