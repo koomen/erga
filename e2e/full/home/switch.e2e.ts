@@ -159,16 +159,26 @@ test("an edit never deploys by itself; a deploy puts the document live, each ste
   } finally { heard.close(); }
 });
 
-test("Deploy deploys at once; a failed deploy says why and the last good one keeps serving; fixed, it deploys again", async () => {
+type Redeployed = {
+  deploy: { state: string; version: number | null; error: string | null };
+  live: { url: string; files: Record<string, string> } | null;
+};
+
+test("redeploy answers when the deploy is done: the new version and the live files' addresses; a failed deploy says why and the last good one keeps serving; fixed, it deploys again", async () => {
   const { server, token, id } = await secondHome();
-  await publish(server, token, { ...files, "index.html": page("Right now") }, { document: id });
-  const forced = (await redeploy(server)).result as { deploy: { state: string } };
-  expect(["deploying", "deployed"]).toContain(forced.deploy.state);
-  await expect.poll(async () => (await front(server)).html).toContain("<h1>Right now</h1>");
+  await publish(server, token, { ...files, "index.html": page("Right now"), "data.json": `{"ok":"new"}` }, { document: id });
+  const current = (await runTool(server.root, "versions", { document: id })).result?.current.n;
+  const done = (await redeploy(server)).result as Redeployed;
+  expect([done.deploy.state, done.deploy.version]).toEqual(["deployed", current]);
+  expect(done.live?.url).toBe(`${server.root}/`);
+  expect(done.live?.files["data.json"]).toMatch(new RegExp(`^${server.root}/_home-files/[a-z0-9]+/data\\.json$`));
+  expect(await (await fetch(done.live!.files["data.json"])).text()).toBe(`{"ok":"new"}`);
+  expect((await front(server)).html).toContain("<h1>Right now</h1>");
   const lastAt = (await home(server, id)).deploy.at;
   await publish(server, token, { ...files, "index.html": page("Broken", "<!-- erga:test-fail-deploy -->") }, { document: id });
-  await redeploy(server);
-  await expect.poll(async () => (await home(server, id)).deploy.state).toBe("failed");
+  const failed = (await redeploy(server)).result as Redeployed;
+  expect(failed.deploy.state).toBe("failed");
+  expect(failed.live?.files["data.json"]).toBe(done.live?.files["data.json"]);
   const s = await home(server, id);
   expect(s.deploy.error).toMatch(/asks for its deploy to fail/);
   expect(s.deploy.at).toBe(lastAt);

@@ -97,7 +97,9 @@ export const DEPLOY_OPERATIONS: Operation[] = [
     admin: true,
     description: "Deploys a target's branch head again now, or the homepage.",
     parameters: Schema.Struct({
-      target: str("staging (its branch staging), production (main), or homepage (the landing_document setting's document)"),
+      target: str(
+        "staging (its branch staging), production (main): the build starts and runs on (deploys shows it). homepage (the landing_document setting's document): waits for the deploy to end, and answers the live version, the live address and each file's address (live.files)"
+      ),
       fresh_data: Schema.optionalKey(
         Schema.Boolean.annotate({
           description: "staging only: copy production's database and documents afresh (a deploy keeps staging's frozen copy)",

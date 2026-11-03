@@ -3,5 +3,5 @@
 // this file.
 
 export { HomeDeploys, type HomeObject } from "./deploys.ts";
-export { homeHeader, IDLE, renderHome } from "./render.ts";
+export { HOME_FILES, homeHeader, IDLE, renderHome } from "./render.ts";
 export { forgetHome, serveHome, serveHomeFile, serveHomeRoot } from "./serve.ts";

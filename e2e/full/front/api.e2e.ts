@@ -100,8 +100,9 @@ test("the document tools work on any of your documents, named by address, URL, s
   }
 });
 
-test("/mcp serves the same tools as a stateless MCP server: initialize, a notification, tools/list, tools/call (a tool's failure is isError); it needs the token too", async () => {
-  const p = await person(await servers.script());
+test("/mcp serves the same tools as a stateless MCP server: initialize, a notification, tools/list, tools/call (a tool's failure is isError, each call one line in the log); it needs the token too", async () => {
+  const server = await servers.script();
+  const p = await person(server);
   const auth = { Authorization: `Bearer ${await p.token()}` };
   const mcp = async (body: unknown) => { const r = await fetch(`${p.base}/mcp`, { method: "POST", headers: { ...auth, "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: JSON.stringify(body) }); return { status: r.status, body: r.status == 202 ? null : (await r.json()) as any }; };
   let m = await mcp({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } } });
@@ -118,6 +119,10 @@ test("/mcp serves the same tools as a stateless MCP server: initialize, a notifi
   expect(await (await p.get(`/d/${made.id}/doc/index.html`)).text()).toContain("Hello.");
   m = await mcp({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "delete_document", arguments: { document: "/nobody/nothing" } } });
   expect(m.body?.result?.isError).toBe(true);
+  // The server's log: the tool, its time and ok or error, and never its arguments.
+  await expect.poll(() => server.output()).toMatch(/mcp create_document \d+ ms ok/);
+  await expect.poll(() => server.output()).toMatch(/mcp delete_document \d+ ms error/);
+  expect(server.output()).not.toContain("/nobody/nothing");
   expect((await fetch(`${p.base}/mcp`, { method: "POST", body: "{}" })).status).toBe(401);
 });
 
