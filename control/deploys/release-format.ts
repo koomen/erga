@@ -36,6 +36,8 @@ export interface ControlConfig {
   artifacts: { name: string; namespace: string }[];
   /** Its R2 buckets (the release store). */
   r2: { name: string; bucketName: string }[];
+  /** Its other bindings, the same on every account (browser, ai, worker_loaders), in Cloudflare's form as deploy/release.ts writes them: sent as they are. */
+  bindings?: Record<string, unknown>[];
   /** The version_metadata binding's name, if any. */
   versionMetadata: string | null;
   vars: Record<string, string>;
@@ -58,6 +60,8 @@ export interface Release {
   migrations: Record<string, string>;
   /** The control Worker (control/), when the release has it: a release from before it doesn't. */
   control?: ControlPart;
+  /** The metadata of each binding the pipeline does not make, as the release's own code writes it (control/deploys/bindings.ts). A release from before 2026-11-03 has none. */
+  bindings?: Record<string, Record<string, unknown>>;
 }
 
 /** The release's table of contents. */
@@ -71,6 +75,7 @@ export interface ReleaseIndex {
   migrations: string[];
   /** The control Worker's modules (under control/), its main module and its config. */
   control?: { config: ControlConfig; mainModule: string; modules: string[] };
+  bindings?: Record<string, Record<string, unknown>>;
 }
 
 /** A release, read file by file (`get` answers a path under release/, or null). */
@@ -92,6 +97,7 @@ export async function loadRelease(get: (path: string) => Promise<Uint8Array | nu
     version: toc.version, built: toc.built, worker: toc.worker, mainModule: toc.mainModule, modules,
     assets: Object.fromEntries(Object.entries(assets).map(([p, b]) => [`/${p}`, b])),
     migrations: Object.fromEntries(Object.entries(migrations).map(([n, b]) => [n, new TextDecoder().decode(b)])),
+    ...(toc.bindings ? { bindings: toc.bindings } : {}),
     ...(toc.control && control ? { control: { config: toc.control.config, mainModule: toc.control.mainModule, modules: control } } : {}),
   };
 }

@@ -58,7 +58,6 @@ export class Pipeline extends DurableObject<HostEnv> {
   private deps: { net: typeof globalThis.fetch };
   private credential: ReturnType<typeof fixedCredential> | OAuthCredential;
   private listeners = new Set<WritableStreamDefaultWriter<Uint8Array>>();
-  private sockets = new Set<WebSocket>();
   private beat: ReturnType<typeof setInterval> | null = null;
   /** The mock's builder over HTTP, for forks' builds in local development (erga.dev's go to the build container). */
   private mockBuilds: ((request: Request) => Promise<Response>) | null = null;
@@ -147,7 +146,12 @@ export class Pipeline extends DurableObject<HostEnv> {
         return { cloneUrl: s.remote, token: s.token.split("?")[0] };
       },
       ...(mock ? { waitMs: 5000, sleep: (ms: number) => Effect.runPromise(Effect.sleep(Math.min(ms, 50))) } : {}),
+      // After the control Worker deployed itself: this object starts again on the new code (control/deploys/self-restart.ts).
+      // Not under the mock: there the app's own Worker hosts this object, and the "control Worker" it deploys is the mock's.
+      ...(mock ? {} : { restart: (why: string) => ctx.abort(why), runs: env.ERGA_VERSION }),
     });
+    // The Ops page's ping, answered with no wake-up: an open page never keeps this object busy (and on old code).
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     // An install looks at upstream's channel now and then (control/deploys/branches.ts alarm): the first look soon after this object wakes.
     if (installed) ctx.blockConcurrencyWhile(async () => { if ((await ctx.storage.getAlarm()) == null) await ctx.storage.setAlarm(Date.now() + 5000); });
     // Forks' builds, where this is erga.dev's control Worker under the mock: the mock builder, over the container's protocol.
@@ -303,45 +307,71 @@ export class Pipeline extends DurableObject<HostEnv> {
   }
 
   // ---- the release store (control/deploys/releases.ts): both channels; a release tag cut (stable follows the newest).
-  async releases(): Promise<ReleasesView | null> { return this.store ? this.store.view() : null; }
-  async tagged(t: ReleaseTag): Promise<void> { await this.deploys.tagged(t); }
+  async releases(): Promise<ReleasesView | null> {
+    return this.store ? this.store.view() : null;
+  }
+  async tagged(t: ReleaseTag): Promise<void> {
+    await this.deploys.channels.tagged(t);
+  }
 
   /** An event to everyone listening on /api/events. */
   publish(event: RelayEvent): void {
     const bytes = new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
     for (const w of this.listeners) w.write(bytes).catch(() => this.listeners.delete(w));
-    for (const ws of this.sockets) this.send(ws, JSON.stringify(event));
+    for (const ws of this.ctx.getWebSockets()) send(ws, JSON.stringify(event));
   }
 
-  private send(ws: WebSocket, text: string): void {
-    try { ws.send(text); } catch { this.sockets.delete(ws); }
+  /** A hibernatable WebSocket closed (the page went away): closed here too. */
+  webSocketClose(ws: WebSocket, code: number): void {
+    try {
+      ws.close(code == 1005 || code == 1006 ? 1000 : code);
+    } catch {
+      /* closed already */
+    }
+  }
+  webSocketError(ws: WebSocket): void {
+    try {
+      ws.close(1011);
+    } catch {
+      /* closed already */
+    }
   }
 
   /**
    * /api/events (the routes have checked it is an admin): a WebSocket (the Ops page: it holds none of the browser's six
-   * connections to the host), else server-sent events (an API client), one message of JSON each.
+   * connections to the host), else server-sent events (an API client), one message of JSON each. The WebSocket is
+   * hibernatable: the runtime holds it, the page pings it (setWebSocketAutoResponse), and this object can be evicted
+   * with pages open, so it doesn't keep old code after a deploy. Its restart closes the socket, and the page connects
+   * again.
    */
   async fetch(request?: Request): Promise<Response> {
+    if (request?.headers.get("Upgrade")?.toLowerCase() == "websocket") {
+      const { 0: client, 1: server } = new WebSocketPair();
+      this.ctx.acceptWebSocket(server);
+      send(server, JSON.stringify({ type: "hello" }));
+      return new Response(null, { status: 101, webSocket: client });
+    }
     // A comment now and then keeps proxies from closing a quiet stream, and finds the ones that went away.
     this.beat ??= setInterval(() => {
       for (const w of this.listeners) w.write(new TextEncoder().encode(": ping\n\n")).catch(() => this.listeners.delete(w));
-      for (const ws of this.sockets) this.send(ws, JSON.stringify({ type: "ping" }));
-      if (!this.listeners.size && !this.sockets.size && this.beat) { clearInterval(this.beat); this.beat = null; }
+      if (!this.listeners.size && this.beat) {
+        clearInterval(this.beat);
+        this.beat = null;
+      }
     }, 20_000);
-    if (request?.headers.get("Upgrade")?.toLowerCase() == "websocket") {
-      const { 0: client, 1: server } = new WebSocketPair();
-      server.accept();
-      this.sockets.add(server);
-      const gone = () => this.sockets.delete(server);
-      server.addEventListener("close", gone);
-      server.addEventListener("error", gone);
-      this.send(server, JSON.stringify({ type: "hello" }));
-      return new Response(null, { status: 101, webSocket: client });
-    }
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const writer = writable.getWriter();
     this.listeners.add(writer);
     writer.write(new TextEncoder().encode(`retry: 3000\ndata: ${JSON.stringify({ type: "hello" })}\n\n`)).catch(() => this.listeners.delete(writer));
     return new Response(readable, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-store", "X-Accel-Buffering": "no" } });
+  }
+}
+
+/** A message to a WebSocket that may have gone. */
+function send(ws: WebSocket, text: string): void {
+  try {
+    ws.send(text);
+  } catch {
+    /* gone: the runtime drops it */
   }
 }

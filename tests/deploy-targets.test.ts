@@ -352,20 +352,6 @@ describe("Erga's source on its own servers", () => {
     expect(meta(targetOfPlan(plan, "s".repeat(32))).find((b) => b.name == "ARTIFACTS")).toBeUndefined();
   });
 
-  test("a release's Worker Loader and browser bindings go to the app Worker as ones", () => {
-    const rel: Release = {
-      ...release,
-      worker: { ...release.worker, env: { ...release.worker.env, LOADER: { type: "worker-loader" }, BROWSER: { type: "browser" } } },
-    };
-    const meta = workerMetadata(rel, targetOf(TARGETS.staging, { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT }), {
-      dbId: "db",
-      assetsJwt: "jwt",
-      pagesHost: null,
-    }).bindings as any[];
-    expect(meta.find((b) => b.name == "LOADER")).toEqual({ type: "worker_loader", name: "LOADER" });
-    expect(meta.find((b) => b.name == "BROWSER")).toEqual({ type: "browser", name: "BROWSER" });
-  });
-
   test("a branch build binds the namespace the commit's own deploy/targets.json names", () => {
     expect(artifactsNamespace(ROOT)).toBe("erga");
     expect(artifactsNamespace("/nonexistent")).toBeNull();

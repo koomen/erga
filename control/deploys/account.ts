@@ -10,6 +10,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { Cloudflare, DeployError, type Fetch } from "./cloudflare-api";
 import type { Release } from "./release-format";
+import { bindingsProblem, passedBinding } from "./bindings";
 import type { RestorePoint, Target } from "./pipeline";
 import { sha256Hex } from "../../shared/bytes";
 
@@ -49,14 +50,12 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     else if (b.type == "artifacts") { if (target.artifacts) bindings.push({ type: "artifacts", name, namespace: target.artifacts }); }
     // A bucket of the target's own (documents' files: FILES), made before the upload if it isn't there (ensureBuckets).
     else if (b.type == "r2") bindings.push({ type: "r2_bucket", name, bucket_name: bucketName(target, name) });
-    // A Worker Loader: the Worker runs code it loads, in a sandbox of its own (a page's own API, for agents' calls).
-    else if (b.type == "worker-loader") bindings.push({ type: "worker_loader", name });
-    // Cloudflare Browser Rendering (Workers Paid): the browser view_page renders pages in (cloudflare/render.ts).
-    else if (b.type == "browser") bindings.push({ type: "browser", name });
-    else
-      throw new DeployError({
-        message: `This release has a binding this page doesn't know how to make (${name}, ${b.type}): it needs a newer deploy page.`,
-      });
+    // Any other kind is the same on every target: the release's own metadata for it, sent as it is (control/deploys/bindings.ts).
+    else {
+      const passed = passedBinding(release, name, b);
+      if (!passed) throw new DeployError({ message: bindingsProblem(release)! });
+      bindings.push(passed);
+    }
   }
   // Settings and secrets the build doesn't declare (the version, the account, the branch deploys' own secrets), and services.
   for (const [name, value] of Object.entries(text)) if (!named.has(name)) { bindings.push({ type: "plain_text", name, text: value }); named.add(name); }

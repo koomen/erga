@@ -90,6 +90,7 @@ export function releaseFiles(release: Release): Record<string, Uint8Array> {
     version: release.version, built: release.built, worker: release.worker, mainModule: release.mainModule,
     modules: Object.keys(release.modules).sort(), assets: Object.keys(release.assets).map((p) => p.replace(/^\//, "")).sort(), migrations: Object.keys(release.migrations).sort(),
     ...(release.control ? { control: { config: release.control.config, mainModule: release.control.mainModule, modules: Object.keys(release.control.modules).sort() } } : {}),
+    ...(release.bindings ? { bindings: release.bindings } : {}),
   };
   files["release.json"] = json(index);
   return files;
