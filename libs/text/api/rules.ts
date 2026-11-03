@@ -247,6 +247,13 @@ export function replace(page: Page, from: number, to: number, text: string, user
   const a = M.unitAt(units, from),
     b = M.unitAt(units, to);
   if (!a || !b || !page.editable(a) || (a != b && !page.editable(b))) return null;
+  // A selection that ends at the start of a block's text (a triple-click, a word selected to a block's end) takes
+  // none of that block: it ends with the block before, and the two stay apart. All of one block's text: its content
+  // goes whole, with the inline tags around it.
+  if (a != b && to <= M.textStart(b)) {
+    const whole = b.id - 1 == a.id && from <= M.textStart(a);
+    return replace(page, whole ? a.contentFrom : from, whole ? a.contentTo : M.textEnd(units[b.id - 1]), text, userEvent);
+  }
   if (!editableAt(a, from)) return null;
   const insert = text ? M.escapeHtmlText(text) : "";
   if (a == b) {
