@@ -1,7 +1,8 @@
 // The controls over the homepage: who sees what. / is the homepage for someone signed out only (someone signed in
 // goes to /docs); the homepage project's own page, /_home, has Edit for admins.
-import { expect, servers, test } from "../../helpers/fixtures";
-import { deployed, fresh, homeView, openHome, resetLanding } from "./home";
+import { expect, servers, test, until } from "../../helpers/fixtures";
+import { runTool } from "../../helpers/tools";
+import { deployed, fresh, front, homeView, openHome, redeploy, resetLanding } from "./home";
 
 await servers.short();
 test.afterEach(async () => {
@@ -37,4 +38,20 @@ test("signed out, / has Clone (the New menu's last item) and Sign in with its me
   // Signed in: the homepage project's page, with Edit for an admin (the dev server's own person), not for Bo.
   expect(await homeView(server)).toContain('class="erga-view-button erga-edit-button"');
   expect(await homeView(server, "Bo")).not.toContain("erga-edit-button");
+});
+
+test("a homepage with its own Inter gets no second one from the controls", async () => {
+  const server = await servers.short();
+  await fresh(server);
+  await deployed(server);
+  expect((await front(server)).html).toContain('<style id="erga-fonts">');
+  const page = `<!doctype html><html><head><style>@font-face { font-family: "Inter"; src: url(inter.woff2) format("woff2"); }</style></head><body><p>Hi</p></body></html>`;
+  expect((await runTool(server.root, "write", { document: "/_home", files: { "index.html": page } })).error).toBeUndefined();
+  await redeploy(server);
+  await until(async () => (await front(server)).html.includes("<p>Hi</p>"), 10_000, "the new page deployed");
+  const html = (await front(server)).html;
+  expect({ own: html.includes('font-family: "Inter"'), controls: html.includes('<style id="erga-fonts">') }).toEqual({
+    own: true,
+    controls: false,
+  });
 });
