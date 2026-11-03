@@ -3,6 +3,8 @@
 import { expect, servers, test } from "../../helpers/fixtures";
 import { openEditor, type Editor } from "../../helpers/editor";
 
+await servers.main();
+
 test.beforeAll(async () => { await servers.main(); });
 
 /**

@@ -402,6 +402,12 @@ function refreshSoon() {
 // Leaving the page (the tab reloads for a new release, or closes): what the editor holds goes with the tab, for the
 // page that comes in its place.
 addEventListener("pagehide", () => {
+  // Loading again: the keys typed since it handed its state over (the new page can take long to come) go with it too.
+  if (reloading && leaving && page) {
+    leaving.held = [...(leaving.held ?? []), ...page.takeHeld()];
+    carry(leaving);
+    return;
+  }
   if (!page || !collab || reloading || !mode) return;
   carry({
     path: mode.path,
@@ -417,6 +423,8 @@ addEventListener("pagehide", () => {
  * loads in its place, scrolled where it was. The page's scripts run again: on purpose.
  */
 let reloading = false;
+/** What this page handed over as it loads again, until it goes. */
+let leaving: Carry | null = null;
 function reload(view: { pos: number; top: number } | null) {
   if (reloading || !mode) return;
   reloading = true;
@@ -425,7 +433,7 @@ function reload(view: { pos: number; top: number } | null) {
   setTimeout(async () => {
     // It loads again once the room has its edits (else it would come made from the text before them, and load again).
     await Promise.race([collab?.flushed(), sleep(3000)]);
-    if (page) carry({ path, state: stateJSON(page.state), view, held: page.takeHeld(), focus: document.hasFocus() });
+    if (page) carry((leaving = { path, state: stateJSON(page.state), view, held: page.takeHeld(), focus: document.hasFocus() }));
     const y = Math.round(scrollY);
     // With the page's place in its own address (#3: agents/document/PROMPT.md, rule 11). (A reload: going to the same
     // address with a hash only goes to the place.)

@@ -5,6 +5,8 @@ import { expect, servers, test, until, type Page } from "../../helpers/fixtures"
 import { clickOn, newDoc, signInState, unique } from "./access";
 import type {} from "../../../client/common/page-llm";
 
+await servers.script();
+
 type Result = { text?: string; code?: string; message?: string };
 
 /** The page in the viewer's frame, once its script has ergaLLM. */

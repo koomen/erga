@@ -3,6 +3,8 @@
 // Ops, API keys showed each key's label and env name run together, and its rows without their look.
 import { expect, servers, test } from "../../helpers/fixtures";
 
+await servers.main();
+
 test("a link from one admin page to another shows the new page styled, in place", async ({ tab }) => {
   const server = await servers.main(), { page } = tab;
   await page.setViewportSize({ width: 1400, height: 900 });

@@ -4,6 +4,8 @@ import type { Frame } from "playwright-core";
 import { expect, servers, test, until } from "../../helpers/fixtures";
 import { focused, multi, openTreeEditor } from "./tree";
 
+await servers.main();
+
 test.beforeAll(async () => { await servers.main(); });
 
 test("the pages card, opened right after the shell gives the page the focus, keeps the focus", async ({ tab }) => {

@@ -129,13 +129,16 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
         catch (e) { if (i > 20 || !/detached|destroyed|Target closed/.test((e as Error).message)) throw e; cached = null; }
       }
     },
-    /** After a (re)load: the shell is up, the editor on the page (its text blocks editable), the agent's status in. */
+    /**
+     * After a (re)load: the shell is up, the editor on the page (its text blocks editable), the agent's status in. Not
+     * the old page that is about to load again (ergaFrame.reloading): it stays editable until the new one comes.
+     */
     loaded: () =>
       until(
         async () =>
           (await page.evaluate(`!!window.ergaPage && !!document.getElementById("agent-model")?.textContent`)) &&
           (await ed.frame<boolean>(
-            `!!window.ergaFrame?.page && !!${F}.querySelector("[data-erga-text]") && ${F}.documentElement.hasAttribute("data-erga-editing")`
+            `!!window.ergaFrame?.page && !ergaFrame.reloading && !!${F}.querySelector("[data-erga-text]") && ${F}.documentElement.hasAttribute("data-erga-editing")`
           )),
         10_000,
         "the editor loads"
