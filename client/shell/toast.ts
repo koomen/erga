@@ -110,10 +110,8 @@ export function mountToast(shell: Shell) {
   // Capture phase, before whatever the click or key does (which may explain something new).
   for (const type of ["pointerdown", "keydown"]) window.addEventListener(type, dismissExplanation, true);
   return {
-    syncFix,
     flash,
     explain,
-    hideExplanation,
     dismissExplanation,
     reportProblem,
     closeProblem,

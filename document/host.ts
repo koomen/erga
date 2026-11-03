@@ -9,7 +9,7 @@
 // it accepts its own way and hands to `room.connect`, `addTab` and `hello`.
 //
 //   PUT  /api/files/<path>   editors: one file, its bytes the body (any kind, any size up to the limits: a text file is
-//                            text, anything else a blob in R2), replacing one at that path (document.ts, upload)
+//                            text, anything else a blob in R2), replacing one at that path (uploads.ts, upload)
 //
 // The document's tree, its files' list and its name are the operations' (server/operations/editor.ts), which reach
 // them through the Durable Object's calls (tree, treeOp, files, rename), not over HTTP.
@@ -600,12 +600,10 @@ export function makeHost(opts: HostOptions) {
     },
     /** What a tab hears first: the document's details as its person sees them, and its tree (`canEdit`: theirs to change). */
     hello: helloFor,
-    /** Tells every open tab, whoever's (a new version, a restore: { type: "versions" }). */
-    broadcast: (msg: unknown) => { for (const t of tabs) t.send(msg); },
+    /** Tells every open tab, whoever's (a new version, a restore, the homepage's deploy status). */
+    broadcast: sendAll,
     /** The document was renamed some other way (its title following an edit): every tab hears of it. */
     renamed,
-    /** A message for every open tab, whoever's (the homepage's deploy status, { type: "home" }: server/home/deploys.ts). */
-    notify: (msg: unknown) => { for (const t of tabs) t.send(msg); },
     calls,
   };
 }

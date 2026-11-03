@@ -11,6 +11,7 @@
 import { PRODUCTION } from "../deploy/targets";
 import type { BlobBody, BlobStore } from "../document/blobs";
 import type { Env } from "./env";
+import { snapshotRefused } from "../document/snapshot";
 
 /** The edge keeps a whole blob up to this size (the Cache API takes up to 512 MB). */
 const CACHE_MAX = 512 * 1024 * 1024;
@@ -98,20 +99,11 @@ export function blobsOf(env: Pick<Env, "FILES" | "SNAPSHOT_IMPORT" | "SNAPSHOT_T
 export async function snapshotBlob(request: Request, env: Pick<Env, "FILES" | "SNAPSHOT_TOKEN">): Promise<Response | null> {
   const m = /^\/api\/snapshot\/blob\/([0-9a-f]{64})$/.exec(new URL(request.url).pathname);
   if (!m) return null;
-  const token = env.SNAPSHOT_TOKEN?.trim();
-  if (!token || token.length < 32 || !env.FILES) return Response.json({ error: "Not found" }, { status: 404 });
-  const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";
-  if (!same(bearer, token)) return Response.json({ error: "Not allowed" }, { status: 403 });
+  if (!env.FILES) return Response.json({ error: "Not found" }, { status: 404 });
+  const refused = snapshotRefused(request, env.SNAPSHOT_TOKEN);
+  if (refused) return refused;
   if (request.method != "GET") return Response.json({ error: "GET only" }, { status: 405 });
   const o = await env.FILES.get(key(m[1]));
   if (!o) return Response.json({ error: "No such blob" }, { status: 404 });
   return new Response(o.body, { headers: { "Content-Length": String(o.size), "Content-Type": "application/octet-stream", "Cache-Control": "no-store" } });
-}
-
-/** Two strings compared in constant time (for their length). */
-function same(a: string, b: string): boolean {
-  if (a.length != b.length) return false;
-  let d = 0;
-  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return d == 0;
 }

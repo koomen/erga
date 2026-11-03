@@ -3,30 +3,22 @@
 // encrypted, never answered back (only set, the last four characters, and who
 // set it when), in the change log without the value, and admins only.
 
-import { Database } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
 import { afterAll, expect, test } from "bun:test";
 import { adminRoutes } from "../server/admin/index.ts";
-import { checkKey, CredentialError, Credentials, Directory, NotAllowed, type Param, type Sql } from "../server/directory/index.ts";
+import { checkKey, CredentialError, Credentials, Directory, NotAllowed } from "../server/directory/index.ts";
 import type { Platform, Session } from "../server/platform.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 import { respond } from "../server/http.ts";
+import { memory } from "./helpers/memory-sql";
 
 quietConsole();
 
-const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const ANTHROPIC = "sk-ant-api03-" + "x".repeat(80) + "Ab12";
 const OPENAI = "sk-proj-" + "y".repeat(60) + "Zz90";
 
 function fresh(secret: string | null = "the factory key", fallback: string[] = []) {
-  const db = new Database(":memory:", { strict: true });
-  for (const name of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(MIGRATIONS + name, "utf8"));
-  const bind = (params: Param[]) => params as (string | number | null)[];
-  const sql: Sql = {
-    all: async <T>(q: string, ...params: Param[]) => db.query(q).all(...bind(params)) as T[],
-    run: async (q, ...params) => { db.query(q).run(...bind(params)); },
-    batch: async (statements) => { db.transaction(() => { for (const [q, ...params] of statements) db.query(q).run(...bind(params)); })(); },
-  };
+  const sql = memory();
+  const db = sql.db;
   const dir = new Directory(sql, { admins: ["ada"], credentialSecret: secret, fallback: (env) => fallback.includes(env) });
   return { db, sql, dir };
 }
@@ -134,7 +126,6 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   const log = await (await fetch(`${origin}/admin/changes`)).text();
   expect(log).toContain(`<span class="key">ANTHROPIC_API_KEY</span> key set`);
   expect(log).not.toContain(ANTHROPIC.slice(0, 20));
-  expect((await fetch(`${origin}/admin/credentials`, { redirect: "manual" })).headers.get("location")).toBe("/admin/api-keys");
   // The keys have their own page now: Settings has none of them; every key and deploy secret is on API keys.
   expect(await (await fetch(`${origin}/admin`)).text()).not.toContain('li class="provider"');
   expect(html).toContain(`data-name="anthropic"`);

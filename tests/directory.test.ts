@@ -2,15 +2,12 @@
 // same migrations D1 gets: slugs, history, following, permissions and who
 // may; the server's users and admins and settings.
 
-import { Database } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import {
   ConfigError,
   deployedSettings,
   Directory,
   NotAllowed,
-  type Param,
   parseDeployed,
   SETTINGS,
   type Sql,
@@ -18,22 +15,10 @@ import {
 import { NameError } from "../document/names.ts";
 import { slugify } from "../document/pages.ts";
 import serverConfig from "../deploy/locked-settings";
+import { memory } from "./helpers/memory-sql";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 
-/** A fresh in-memory database, its tables made by server/migrations/, as D1's are. */
-function memory(): Sql {
-  const db = new Database(":memory:", { strict: true });
-  db.exec("PRAGMA foreign_keys = ON");
-  for (const name of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(MIGRATIONS + name, "utf8"));
-  const bind = (params: Param[]) => params as (string | number | null)[];
-  const sql: Sql = {
-    all: async <T>(q: string, ...params: Param[]) => db.query(q).all(...bind(params)) as T[],
-    run: async (q, ...params) => { db.query(q).run(...bind(params)); },
-    batch: async (statements) => { db.transaction(() => { for (const [q, ...params] of statements) db.query(q).run(...bind(params)); })(); },
-  };
-  return sql;
-}
 /** A directory on a fresh in-memory database. */
 const fresh = (opts: ConstructorParameters<typeof Directory>[1] = {}, sql = memory()) => new Directory(sql, opts);
 const doc = (id: string, title: string, extra = {}) => ({ id, owner: "Ada", title, created: 1, expires: 100, ...extra });

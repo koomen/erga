@@ -44,7 +44,7 @@
 // Worker.
 
 import * as Effect from "effect/Effect";
-import { adminRoutes } from "../admin/index.ts";
+import { adminRoutes, isAdminPath } from "../admin/index.ts";
 import { ID, OWNER, type Route, type Who } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { HOME_OWNER, HOME_SLUG } from "../../document/names.ts";
@@ -65,20 +65,7 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   if (path == "/") return yield* viewLanding;
   if (path == "/new") return yield* newDoc;
   if (path == "/docs") return yield* listDocs;
-  if (
-    path == "/admin" ||
-    path == "/admin/changes" ||
-    path == "/admin/settings" ||
-    path == "/admin/users" ||
-    path == "/admin/api-keys" ||
-    path == "/admin/credentials" ||
-    path == "/admin/share" ||
-    path == "/admin/auth" ||
-    path == "/admin/auth/status" ||
-    path == "/admin/access" ||
-    path == "/admin/documents"
-  )
-    return yield* adminRoutes;
+  if (isAdminPath(path)) return yield* adminRoutes;
 
   // The homepage project's address, /_home[/<page>], is its row's /<HOME_OWNER>/<HOME_SLUG> (document/names.ts).
   const home = /^\/_home(\/.*)?$/.exec(path);

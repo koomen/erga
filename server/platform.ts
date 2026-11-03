@@ -205,7 +205,6 @@ export interface Platform {
     files(doc: Route): Promise<FileList | null>;
     /** Renames it as `person` (title and/or slug; "" or null goes back to following): its open tabs follow. The caller checks they may. */
     rename(doc: Route, person: { id: string; name: string }, patch: { title?: string | null; slug?: string | null }): Promise<NameAnswer>;
-    exists(doc: Route): Promise<boolean>;
     /** Deletes a document (its host takes it out of the directory too); false if it had no host. */
     delete(doc: Route): Promise<boolean>;
     /** `owner`'s documents, most recently changed first; with `ids`, only those of them. */

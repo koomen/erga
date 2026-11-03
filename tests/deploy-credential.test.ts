@@ -4,7 +4,8 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { CONTROL_OAUTH_SCOPES, exchangeCode, OAuthCredential, pkce } from "../control/deploys/credential";
 import { Cloudflare } from "../control/deploys/cloudflare-api";
-import { mockBuilder, mockCloudflare } from "../dev/mock-cloudflare";
+import { mockCloudflare } from "../dev/mock-cloudflare";
+import { mockBuilder } from "../dev/mock-builder";
 import { prepareRelease, release, SHA2, SHA3, env, staging, Server, bootstrap } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 

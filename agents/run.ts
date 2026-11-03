@@ -25,7 +25,6 @@ import {
   Checkpoints,
   STOPPED,
   STOPPED_SHOWN,
-  fromPiChat,
   restoredLog,
   type ChatMessage,
   type ChatStore,
@@ -202,7 +201,7 @@ const encodeMessages = Schema.encodeSync(Prompt.Prompt);
 
 export function startLoop(opts: LoopOptions): AgentLoop {
   const { hooks } = opts;
-  const stored = opts.stored && fromPiChat(opts.stored);
+  const stored = opts.stored;
   let cfg = opts.cfg;
   /** The model the store kept, if it's one of MODELS. */
   const kept = stored && isModelChoice(stored.state.model ?? "") ? (stored.state.model as ModelChoice) : null;

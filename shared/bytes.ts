@@ -59,3 +59,11 @@ export function readableSize(n: number): string {
   while (v >= 1000 && u < units.length - 1) { v /= 1000; u++; }
   return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[u]}`;
 }
+
+/** Whether two strings (MACs, tokens) are the same, in a time that doesn't say where they differ. */
+export function sameText(a: string, b: string): boolean {
+  if (a.length != b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d == 0;
+}

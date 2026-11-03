@@ -9,7 +9,8 @@
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 import type { Who } from "../directory/index.ts";
-import { hmac, sameText } from "./pages-origin.ts";
+import { hmac } from "./pages-origin.ts";
+import { sameText } from "../../shared/bytes.ts";
 
 /** How long a key holds, in seconds. */
 export const KEY_SECONDS = 15 * 60;

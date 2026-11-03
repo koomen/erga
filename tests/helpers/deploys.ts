@@ -14,11 +14,11 @@ import { loadRelease, type Release } from "../../control/deploys/release-format"
 import {
   FLEET_ACCOUNT,
   MOCK_SNAPSHOT_TOKEN,
-  mockBuilder,
   mockCloudflare,
   PROD_DB,
   type MockState,
 } from "../../dev/mock-cloudflare";
+import { mockBuilder } from "../../dev/mock-builder";
 import { TARGETS } from "../../deploy/targets";
 
 export const ROOT = new URL("../..", import.meta.url).pathname;

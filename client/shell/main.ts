@@ -34,7 +34,7 @@ import { editorContext } from "./agent-context";
 declare global {
   interface Window {
     ergaPage?: unknown;
-    ergaShell?: { ready(): void; loadedEditing?: boolean };
+    ergaShell?: { ready(): void };
     /** The document's socket and start, as the page opened them while it parsed (server/pages/viewer.ts, ergaConnect). */
     ergaSocket?: EarlySocket;
     ergaStart?: Promise<ArrayBuffer | null>;
@@ -73,11 +73,15 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // erga:frame-js, erga:init, erga:rendered): DevTools' Performance panel and a script can read where the time went.
   performance.mark("erga:main");
 
-  const KEYS = { settings: "erga:settings:v1" };
-  const settings: { agent: boolean } = { agent: true, ...store.json(KEYS.settings) };
-  const saveSettings = () => store.set(KEYS.settings, JSON.stringify(settings));
   /** The parts of the shell, and what they share: filled in below, as each is ready. */
-  const shell = { settings, saveSettings, mode: "text", sourceView: null, source: null, docSettings: null, docName: null, docKind: "project" } as Partial<Shell> as Shell;
+  const shell = {
+    mode: "text",
+    sourceView: null,
+    source: null,
+    docSettings: null,
+    docName: null,
+    docKind: "project",
+  } as Partial<Shell> as Shell;
 
   // ---------------------------------------------------------------- load
 
@@ -322,13 +326,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     onPress: () => {
       shell.toast.dismissExplanation(null);
       activate();
-      if (!$("help").hidden) shell.chrome.toggleHelp(false);
-      if (!$("naming").hidden) shell.naming.toggleNaming(false);
-      // (Also one that's waiting for what it shows, to open.)
-      shell.naming.togglePages(false);
-      shell.sharing.toggleSharing(false);
-      if (shell.docSettings?.isOpen()) shell.docSettings.toggle(false);
-      shell.people.toggleAccount(false);
+      // (Also a card that's waiting for what it shows, to open.)
+      shell.chrome.closeCards();
       shell.people.stackPeople();
       shell.chrome.toggleQuick(false);
     },
@@ -514,11 +513,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     }
     if (shell.mode != "text") shell.views.setMode("text");
     page.stop();
-    shell.chrome.toggleHelp(false);
-    shell.sharing.toggleSharing(false);
-    shell.naming.toggleNaming(false);
-    shell.naming.togglePages(false);
-    shell.people.toggleAccount(false);
+    shell.chrome.closeCards();
     shell.chrome.toggleQuick(false);
     shell.chrome.showChrome();
   }
@@ -634,7 +629,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     get pagePath() {
       return shell.pagePath;
     },
-    openPage,
     get state() {
       return currentState();
     },

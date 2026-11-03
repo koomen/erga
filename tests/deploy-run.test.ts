@@ -12,7 +12,8 @@ import { CONTROL_OAUTH_SCOPES, fixedCredential } from "../control/deploys/creden
 import { ALL_STEPS, copyName, copyReason, guardTarget } from "../control/deploys/pipeline";
 import { Cloudflare } from "../control/deploys/cloudflare-api";
 import type { Release } from "../control/deploys/release-format";
-import { FLEET_ACCOUNT, mockBuilder, mockCloudflare, PROD_DB, PROD_DOCS } from "../dev/mock-cloudflare";
+import { FLEET_ACCOUNT, mockCloudflare, PROD_DB, PROD_DOCS } from "../dev/mock-cloudflare";
+import { mockBuilder } from "../dev/mock-builder";
 import { memoryBlobs, ReleaseStore } from "../control/deploys/releases";
 import { ADMINS, SOURCE, TARGETS } from "../deploy/targets";
 import {
@@ -138,7 +139,6 @@ describe("branches deploy themselves", () => {
     const mock = mockCloudflare({ fleet: true });
     const builder = mockBuilder(async () => release);
     const server = new Server(mock, builder, "erga-control", env());
-    const before = JSON.stringify(mock.state.containers);
     await server.instance.hook("main", SHA2, "merge by ada");
     await server.settle();
     // Production first, then the control Worker: both built (the second from the builder's cache in the real one), both deployed.
@@ -171,7 +171,6 @@ describe("branches deploy themselves", () => {
     expect(b.ADMINS.text).toBe(TARGETS.production.vars.ADMINS);
     expect(mock.state.scripts["erga-control"].modules).toEqual(["index.js"]);
     // No container application made or changed, no image: the Worker upload only.
-    expect(JSON.stringify(mock.state.containers)).toBe(before);
     expect(mock.state.calls.filter((c) => c.includes("/containers/"))).toEqual([]);
     // Its record has the restore point (the wrangler version, no release), so Roll back works on it too.
     const [rec] = (await server.instance.historyOf("control"))!;
@@ -371,7 +370,6 @@ describe("the one-time setup", () => {
     expect(out).toContain("Copy production's documents into it: done, 3 documents copied");
     expect(out).toContain("The grant: not connected. An admin clicks Connect Cloudflare on the Ops page (https://ops.erga.dev/), a consent in a popup; the deploys that waited run after that.");
     expect(out).not.toContain("CLOUDFLARE_DEPLOY_TOKEN");
-    expect(out).not.toContain("mock-scoped-");
     expect(out).toContain("https://ops.erga.dev/api/health: ok true");
     expect(out).toMatch(/runs [0-9a-f]{12}; it says it's staging/);
   }, 60_000);

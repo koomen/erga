@@ -12,7 +12,7 @@ import type { Session } from "../platform.ts";
 import { asset, assetScripts, editorShell, styleTag } from "./assets.ts";
 import { inlineCall, inlineFunction, inlineScript, inlineStyle } from "./inline.ts";
 import { crumbsFont, link } from "./chrome.ts";
-import { barsHtml } from "./bars.ts";
+import { barsHtml, BARS_STYLE } from "./bars.ts";
 import { agentPanel } from "./agent.ts";
 import { esc } from "../../shared/html.ts";
 import { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX } from "./reader.ts";
@@ -78,9 +78,6 @@ export const editBoot = () =>
 
 /** Full screen: the page's frame, from the button in the viewer and the editor (client/inline/viewer-full.ts). */
 export const FULL_BOOT = inlineCall("viewer-full");
-
-/** The glass bars' look, the viewer's and the editor's (client/inline/bars.css). */
-export const BARS_STYLE = `<style>${inlineStyle("bars")}</style>`;
 
 /** The bars' quick actions on a phone, and Share with an agent (client/inline/viewer-bars.ts). */
 export const BARS_BOOT = inlineCall("viewer-bars");

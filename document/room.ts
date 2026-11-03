@@ -60,12 +60,17 @@ import {
   encodeAwarenessUpdate,
 } from "../shared/yjs-protocol.ts";
 import { rebase } from "./merge";
-import { applyChanges, assets, files, folders, hasSeen, introduce, isTextPath, roomInfo, stamp, type Author } from "./content";
+import { applyChanges, assets, files, folders, introduce, isTextPath, roomInfo, stamp, type Author } from "./content";
 import { TEXT_MAX, type BlobRef } from "./blobs";
 import { parentOf } from "./pages";
 
 /** Storage failed: a file couldn't be listed, read or written. */
 export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", { message: Schema.String }) {}
+
+/** A storage call's failure, as a StoreError. */
+const storeError = (e: unknown) => (e instanceof StoreError ? e : new StoreError({ message: e instanceof Error ? e.message : String(e) }));
+/** A call to the document's storage (or to the directory, the blob store: Promise-based, from outside), its failure a StoreError. */
+export const io = <A>(f: () => Promise<A>) => Effect.tryPromise({ try: f, catch: storeError });
 
 /** Asked of a document that doesn't exist (not made yet, or deleted). */
 export class NoSuchDocument extends Schema.TaggedError<NoSuchDocument>()("NoSuchDocument", { message: Schema.String }) {}
@@ -266,7 +271,7 @@ export class Room {
    * the first one says who the room is, so its edits are attributed ("On
    * disk"). A room that changes nothing adds nothing to the history.
    */
-  act(f: () => void, _origin?: unknown): void {
+  act(f: () => void): void {
     this.doc.transact(() => {
       if (!this.introduced) { this.introduced = true; introduce(this.doc, this.me); }
       f();
@@ -287,7 +292,7 @@ export class Room {
   private restore(reconcile: boolean, unwritten: string[]): Effect.Effect<void, StoreError> {
     const self = this;
     return Effect.gen(function* () {
-      if (!roomInfo(self.doc).get("epoch")) self.act(() => roomInfo(self.doc).set("epoch", crypto.randomUUID()), self);
+      if (!roomInfo(self.doc).get("epoch")) self.act(() => roomInfo(self.doc).set("epoch", crypto.randomUUID()));
       if (!reconcile) {
         const behind = new Set(unwritten);
         for (const [path, t] of files(self.doc)) {
@@ -319,10 +324,17 @@ export class Room {
   private reconcile(path: string, bytes: Uint8Array): void {
     const text = this.asText(path, bytes);
     const t = files(this.doc).get(path);
-    if (text == null) { this.act(() => assets(this.doc).set(path, digest(bytes)), this); return; }
+    if (text == null) {
+      this.act(() => assets(this.doc).set(path, digest(bytes)));
+      return;
+    }
     this.stored.set(path, text);
     if (!t) {
-      this.act(() => { const nt = new Y.Text(); nt.insert(0, text); files(this.doc).set(path, nt); }, this);
+      this.act(() => {
+        const nt = new Y.Text();
+        nt.insert(0, text);
+        files(this.doc).set(path, nt);
+      });
     } else if (t.toString() != text) {
       // Changed in storage while the room was closed (on disk). The room
       // writes its files with its history, so the two agree unless someone
@@ -334,8 +346,8 @@ export class Room {
 
   /** Files deleted while the room was closed. */
   private forgetMissing(paths: Set<string>): void {
-    for (const path of [...files(this.doc).keys()]) if (!paths.has(path)) this.act(() => files(this.doc).delete(path), this);
-    for (const path of [...assets(this.doc).keys()]) if (!paths.has(path)) this.act(() => assets(this.doc).delete(path), this);
+    for (const path of [...files(this.doc).keys()]) if (!paths.has(path)) this.act(() => files(this.doc).delete(path));
+    for (const path of [...assets(this.doc).keys()]) if (!paths.has(path)) this.act(() => assets(this.doc).delete(path));
   }
 
   private asText(path: string, bytes: Uint8Array): string | null {
@@ -435,31 +447,11 @@ export class Room {
     for (const [key, conn] of this.conns) if (key !== origin) conn.send(message);
   }
 
-  /**
-   * Completes once the room has every edit a participant had (its state
-   * vector), and everyone in process has too, or after a timeout.
-   */
-  waitFor(vector: string, timeout = "2 seconds" as const): Effect.Effect<void> {
-    const seen = Effect.callback<void>((resume) => {
-      const check = () => { if (hasSeen(this.doc, vector)) { this.doc.off("update", check); resume(Effect.void); } };
-      this.doc.on("update", check);
-      check();
-      return Effect.sync(() => this.doc.off("update", check));
-    });
-    // Then a macrotask: the in-process peers sync on microtasks, so they've caught up by then.
-    return seen.pipe(Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.void }), Effect.andThen(Effect.sleep(0)));
-  }
-
   // ------------------------------------------------------------ storage
 
   /** The current text of a file, if the room holds it as text. */
   text(path: string): string | null {
     return files(this.doc).get(path)?.toString() ?? null;
-  }
-
-  /** A version tag for what storage holds for a file (for conditional pushes). */
-  etag(path: string): Effect.Effect<string | null, StoreError> {
-    return Semaphore.withPermit(this.turn, Effect.map(this.store.read(path), (b) => b ? digest(b) : null));
   }
 
   private noteDirty(tr: Y.Transaction): void {
@@ -548,7 +540,7 @@ export class Room {
     this.act(() => {
       const { inserted, deleted } = applyChanges(t, changes);
       if (deleted && !inserted) stamp(this.doc, this.me);
-    }, this);
+    });
   }
 
   /**
@@ -592,7 +584,7 @@ export class Room {
    */
   private takeText(path: string, text: string): void {
     // Text in place of a file kept whole (a blob): the file is text from now on.
-    if (assets(this.doc).has(path)) this.act(() => assets(this.doc).delete(path), this);
+    if (assets(this.doc).has(path)) this.act(() => assets(this.doc).delete(path));
     this.take(path, new TextEncoder().encode(text));
     this.stored.delete(path);
     this.removals.delete(path);
@@ -604,20 +596,24 @@ export class Room {
     const t = files(this.doc).get(path);
     if (!bytes) {
       // Deleted (or renamed away). Text the room has unsaved edits to stays.
-      if (t && t.toString() == this.stored.get(path)) this.act(() => files(this.doc).delete(path), this);
-      if (assets(this.doc).has(path)) this.act(() => assets(this.doc).delete(path), this);
+      if (t && t.toString() == this.stored.get(path)) this.act(() => files(this.doc).delete(path));
+      if (assets(this.doc).has(path)) this.act(() => assets(this.doc).delete(path));
       this.stored.delete(path);
       return;
     }
     const text = this.asText(path, bytes);
     if (text == null) {
       const h = digest(bytes);
-      if (assets(this.doc).get(path) != h) this.act(() => assets(this.doc).set(path, h), this);
+      if (assets(this.doc).get(path) != h) this.act(() => assets(this.doc).set(path, h));
       return;
     }
     if (!t) {
       this.stored.set(path, text);
-      this.act(() => { const nt = new Y.Text(); nt.insert(0, text); files(this.doc).set(path, nt); }, this);
+      this.act(() => {
+        const nt = new Y.Text();
+        nt.insert(0, text);
+        files(this.doc).set(path, nt);
+      });
       this.log(`  new file: ${path}`);
       return;
     }
@@ -677,7 +673,7 @@ export class Room {
       self.act(() => {
         for (const d of stored) if (!map.has(d)) map.set(d, true);
         for (const d of [...map.keys()]) if (!stored.has(d)) map.delete(d);
-      }, self);
+      });
     });
   }
 
@@ -692,7 +688,9 @@ export class Room {
       const map = folders(self.doc);
       const all = path.split("/").map((_, i, parts) => parts.slice(0, i + 1).join("/"));
       if (self.store.mkdir) yield* self.store.mkdir(path);
-      self.act(() => { for (const d of all) if (!map.has(d)) map.set(d, true); }, self);
+      self.act(() => {
+        for (const d of all) if (!map.has(d)) map.set(d, true);
+      });
     });
   }
 
@@ -720,8 +718,11 @@ export class Room {
       yield* self.write(true);
       if (self.store.rmdir) yield* self.store.rmdir(path);
       const map = folders(self.doc);
-      self.act(() => { for (const d of [...map.keys()]) if (d == path || d.startsWith(inside)) map.delete(d); }, self);
-    }));
+      self.act(() => {
+        for (const d of [...map.keys()]) if (d == path || d.startsWith(inside)) map.delete(d);
+      });
+    })
+  );
   }
 
   /** Deletes one file (a publish that removes it); nothing if the room has no such file. */
@@ -748,7 +749,7 @@ export class Room {
       if (files(self.doc).has(path)) { self.removeFile(path); yield* self.write(true); }
       yield* self.store.putBlob(path, ref);
       self.removals.delete(path);
-      if (assets(self.doc).get(path) != ref.hash) self.act(() => assets(self.doc).set(path, ref.hash), self);
+      if (assets(self.doc).get(path) != ref.hash) self.act(() => assets(self.doc).set(path, ref.hash));
       yield* self.write(true);
     }));
   }
@@ -759,7 +760,10 @@ export class Room {
     this.dirty.delete(path);
     this.unwritten.delete(path);
     this.removals.add(path);
-    this.act(() => { files(this.doc).delete(path); assets(this.doc).delete(path); }, this);
+    this.act(() => {
+      files(this.doc).delete(path);
+      assets(this.doc).delete(path);
+    });
   }
 
   /**
@@ -787,8 +791,11 @@ export class Room {
       }
       yield* self.write(true);
       if (self.store.rmdir) yield* self.store.rmdir(from);
-      self.act(() => { for (const d of [...map.keys()]) if (d == from || d.startsWith(inside)) map.delete(d); }, self);
-    }));
+      self.act(() => {
+        for (const d of [...map.keys()]) if (d == from || d.startsWith(inside)) map.delete(d);
+      });
+    })
+  );
   }
 
   private copyFile(from: string, to: string): Effect.Effect<void, StoreError> {
@@ -801,7 +808,7 @@ export class Room {
       if (ref && self.store.copy) {
         if (!(yield* self.store.copy(from, to))) return;
         self.removals.delete(to);
-        return self.act(() => assets(self.doc).set(to, assets(self.doc).get(from) ?? ref.hash), self);
+        return self.act(() => assets(self.doc).set(to, assets(self.doc).get(from) ?? ref.hash));
       }
       const bytes = yield* self.store.read(from);
       if (!bytes) return;

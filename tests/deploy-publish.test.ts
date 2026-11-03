@@ -3,7 +3,8 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { Release } from "../control/deploys/release-format";
-import { mockBuilder, mockCloudflare } from "../dev/mock-cloudflare";
+import { mockCloudflare } from "../dev/mock-cloudflare";
+import { mockBuilder } from "../dev/mock-builder";
 import { memoryBlobs, ReleaseStore } from "../control/deploys/releases";
 import { bootstrap, prepareRelease, release, SHA1, SHA2, SHA3, env, Server } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";

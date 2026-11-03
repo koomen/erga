@@ -3,29 +3,17 @@
 // API: who may make each scope, each scope allowed and
 // refused, expiry, and the device flow carrying a scope.
 
-import { Database } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
-import { Directory, type Param, type Sql } from "../server/directory/index.ts";
+import { Directory } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
 import { sessionOf } from "../server/identity/index.ts";
 import { serverApi } from "../server/api";
 import { respond } from "../server/http";
 import { ScopeError, Tokens } from "../server/identity/tokens";
+import { memory } from "./helpers/memory-sql";
 
-const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const ORIGIN = "https://erga.test";
 
-function memory(): Sql {
-  const db = new Database(":memory:", { strict: true });
-  for (const name of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(MIGRATIONS + name, "utf8"));
-  const bind = (params: Param[]) => params as (string | number | null)[];
-  return {
-    all: async <T>(q: string, ...params: Param[]) => db.query(q).all(...bind(params)) as T[],
-    run: async (q, ...params) => { db.query(q).run(...bind(params)); },
-    batch: async (statements) => { db.transaction(() => { for (const [q, ...params] of statements) db.query(q).run(...bind(params)); })(); },
-  };
-}
 
 /** A server: root (a bootstrap admin), ada (an admin), bo (a user); ada's documents one and two, bo's three. */
 async function server() {

@@ -1,24 +1,14 @@
 // The app's health check (server/health.ts): what it checks, and how it says what's wrong.
 
-import { Database } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
-import { Directory, type Param, type Sql } from "../server/directory";
+import { Directory } from "../server/directory";
 import { health } from "../server/health";
 import type { Platform } from "../server/platform";
 import { TARGETS } from "../deploy/targets";
-
-const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
+import { memory } from "./helpers/memory-sql";
 
 function directory(): Directory {
-  const db = new Database(":memory:", { strict: true });
-  for (const name of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(MIGRATIONS + name, "utf8"));
-  const bind = (params: Param[]) => params as (string | number | null)[];
-  const sql: Sql = {
-    all: async <T>(q: string, ...params: Param[]) => db.query(q).all(...bind(params)) as T[],
-    run: async (q, ...params) => { db.query(q).run(...bind(params)); },
-    batch: async (statements) => { db.transaction(() => { for (const [q, ...params] of statements) db.query(q).run(...bind(params)); })(); },
-  };
+  const sql = memory();
   return new Directory(sql, { admins: ["ada"] });
 }
 
@@ -26,7 +16,7 @@ const platform = (dir: Directory, exists: (id: string) => Promise<boolean>): Pla
   ({
     directory: dir,
     deploy: { target: "staging", version: "abcdef123456", targets: TARGETS },
-  docs: { exists: async (doc: { id: string }) => exists(doc.id) },
+    docs: { index: async (doc: { id: string }) => ((await exists(doc.id)) ? "index.html" : null) },
 } as unknown as Platform);
 
 test("healthy: the database answers and the homepage's document opens; with no homepage, nothing to open and still healthy", async () => {

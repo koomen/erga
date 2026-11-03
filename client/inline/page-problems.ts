@@ -3,10 +3,8 @@
 // as it goes into the editor (its word, erga-mode). window.__ergaReport reports one more (the editor's: a
 // notice about the page). In a document's page, for whoever may edit (server/pages/reader.ts).
 
-type Problem =
-  | { kind: "resource"; tag: string; url: string }
-  | { kind: "script"; message: string; file: string; line: number; stack?: string }
-  | { kind: "notice"; message: string; fix: string };
+import type { RawProblem as Problem } from "../shell/problems";
+
 type ProblemWindow = Window & { __ergaReport?: (p: Problem) => void };
 
 export default function pageProblems(): void {

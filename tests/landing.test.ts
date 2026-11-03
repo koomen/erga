@@ -43,7 +43,6 @@ function platformOn(
     templates: { doc: { "index.html": "<h1>Untitled</h1>" } },
     docs: {
       create: async (doc: Route, files: Record<string, string | Uint8Array>) => { if (hosts.has(doc.id)) return false; hosts.set(doc.id, files); await opts.made?.(); return true; },
-      exists: async (doc: Route) => hosts.has(doc.id),
       index: async (doc: Route) => (hosts.has(doc.id) ? "index.html" : null),
       delete: async (doc: Route) => {
         if (!hosts.delete(doc.id)) return false;

@@ -56,9 +56,6 @@ export interface Shell {
   api: (path: string) => string;
   frame: HTMLIFrameElement;
   docId: string;
-  /** `agent`: whether the agent pane is open while editing. It starts open, and stays as the user last left it. */
-  settings: { agent: boolean };
-  saveSettings: () => void;
 
   info: DocInfo;
   /** A document (one page) or a project (pages), as the host last said. */

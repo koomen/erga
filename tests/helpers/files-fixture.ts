@@ -1,27 +1,15 @@
 // A document on MemoryStorage with MemoryBlobs, as the blob and file tool tests use it: the real directory on
 // bun:sqlite, and the Worker's way to serve what the document answers (a blob pointer becomes the blob's bytes).
 
-import { Database } from "bun:sqlite";
 import * as Effect from "effect/Effect";
-import { readdirSync, readFileSync } from "node:fs";
 import { Document, type DocumentDeps } from "../../document/document";
 import { MemoryBlobs, serveBlob } from "../../document/blobs";
 import { MemoryStorage } from "../../document/storage";
-import { Directory, type Param, type Sql } from "../../server/directory/index.ts";
+import { Directory } from "../../server/directory/index.ts";
 import { documentAgents } from "../../agents/document/session";
 import { testSandbox } from "./sandbox";
 import { promised } from "./promised";
-
-const MIGRATIONS = new URL("../../server/migrations/", import.meta.url).pathname;
-function memory(): Sql {
-  const db = new Database(":memory:");
-  for (const f of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(MIGRATIONS + f, "utf8"));
-  return {
-    all: async <T>(sql: string, ...params: Param[]) => db.query(sql).all(...(params as never[])) as T[],
-    run: async (sql: string, ...params: Param[]) => { db.query(sql).run(...(params as never[])); },
-    batch: async (statements) => { db.transaction(() => { for (const [sql, ...params] of statements) db.query(sql).run(...(params as never[])); })(); },
-  };
-}
+import { memory } from "./memory-sql";
 
 /** A document on memory with a blob store, and the Worker's way to serve what it answers. */
 export async function setup(o: { blobs?: boolean; test?: boolean } = {}) {

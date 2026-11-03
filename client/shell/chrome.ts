@@ -64,7 +64,21 @@ export function mountChrome(shell: Shell) {
   function toggleHelp(force?: boolean) {
     const open = typeof force == "boolean" ? force : help.hidden;
     help.hidden = !open;
-    if (open) { showChrome(); shell.sharing.toggleSharing(false); shell.naming.toggleNaming(false); shell.naming.togglePages(false); shell.people.toggleAccount(false); shell.docSettings?.toggle(false); }
+    if (open) cardOpened("help");
+  }
+  /** Closes every card but `keep`. */
+  function closeCards(keep?: Card) {
+    if (keep != "help") toggleHelp(false);
+    if (keep != "sharing") shell.sharing.toggleSharing(false);
+    if (keep != "naming") shell.naming.toggleNaming(false);
+    if (keep != "pages") shell.naming.togglePages(false);
+    if (keep != "account") shell.people.toggleAccount(false);
+    if (keep != "settings") shell.docSettings?.toggle(false);
+  }
+  /** A card opened: the controls show, and the other cards close. */
+  function cardOpened(card: Card) {
+    showChrome();
+    closeCards(card);
   }
 
   // Document settings (document or project, the homepage, versions): the gear opens
@@ -82,16 +96,7 @@ export function mountChrome(shell: Shell) {
             admin: !!shell.people.accountLinks?.admin,
             kind: () => shell.docKind,
             onKind: shell.naming.applyKind,
-            onToggle: (open) => {
-              if (open) {
-                showChrome();
-                toggleHelp(false);
-                shell.sharing.toggleSharing(false);
-                shell.naming.toggleNaming(false);
-                shell.naming.togglePages(false);
-                shell.people.toggleAccount(false);
-              }
-            },
+            onToggle: (open) => open && cardOpened("settings"),
           }) ?? null;
         return shell.docSettings;
       },
@@ -119,6 +124,8 @@ export function mountChrome(shell: Shell) {
     for (const b of document.querySelectorAll<HTMLElement>("[data-tip]")) b.dataset.tip = b.dataset.tip!.replace("⌘⇧", "Ctrl+Shift+").replace("⌘", "Ctrl+");
   }
   return {
+    closeCards,
+    cardOpened,
     hideChrome,
     showChrome,
     pointerMoved,
@@ -132,3 +139,5 @@ export function mountChrome(shell: Shell) {
 }
 
 export type Chrome = ReturnType<typeof mountChrome>;
+/** The shell's cards, of which one is open at a time. */
+type Card = "help" | "sharing" | "naming" | "pages" | "account" | "settings";

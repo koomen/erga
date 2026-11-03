@@ -32,6 +32,63 @@ export default function ops(): void {
     if (s > -30 * 86400) return rtf.format(Math.round(s / 86400), "day");
     return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   };
+  /** A button that acts on its second click: the first shows `ask` for a while (`ms`), then `label` again. True on the second. */
+  const secondClick = (btn: HTMLElement, ask: string, label: string, ms = 8000, mark?: (on: boolean) => void) => {
+    const show = (on: boolean) => {
+      btn.dataset.armed = on ? "1" : "";
+      btn.textContent = on ? ask : label;
+      mark?.(on);
+    };
+    if (btn.dataset.armed == "1") {
+      btn.dataset.armed = "";
+      return true;
+    }
+    show(true);
+    setTimeout(() => btn.dataset.armed == "1" && show(false), ms);
+    return false;
+  };
+  /**
+   * Connect in a popup, on the control Worker's origin (the card's data-connect). The popup posts its outcome back,
+   * a message of `type` (or on the BroadcastChannel of that name); this page never leaves. `say` writes in the card's note.
+   */
+  function popupConnect(o: {
+    card: HTMLElement;
+    note: HTMLElement;
+    button: string;
+    window: [string, string];
+    type: string;
+    who: string;
+    waiting: string;
+    done: (m: Json) => void;
+  }) {
+    const origin = new URL(o.card.dataset.connect!, location.href).origin;
+    const flow = {
+      asked: false,
+      say(text: string, bad?: boolean) {
+        o.note.hidden = !text;
+        o.note.textContent = text || "";
+        o.note.className = "cf-note" + (bad ? " bad" : "");
+      },
+      finish(m: Json) {
+        flow.asked = false;
+        o.done(m);
+      },
+    };
+    byId(o.button).addEventListener("click", () => {
+      if (!window.open(o.card.dataset.connect, o.window[0], "popup," + o.window[1]))
+        return flow.say(`The browser blocked the ${o.who} window. Allow pop-ups for this page, then click Connect ${o.who} again.`, true);
+      flow.asked = true;
+      flow.say(o.waiting);
+    });
+    const heard = (e: MessageEvent) => e.data && e.data.type == o.type && flow.finish(e.data);
+    window.addEventListener("message", (e) => (e.origin == origin || e.origin == location.origin) && heard(e), { signal: pageView.signal });
+    try {
+      const bc = new BroadcastChannel(o.type);
+      bc.onmessage = heard;
+      pageView.onLeave(() => bc.close());
+    } catch {}
+    return flow;
+  }
   const TARGETS = ["staging", "production", "control"];
   /** When staging is far ahead of main: how many of its newest commits show above the break, and how many of main's below it. */
   const GAP_TOP = 11,
@@ -387,7 +444,7 @@ export default function ops(): void {
     byId("github-sync").hidden = !g.connected;
     byId<HTMLButtonElement>("github-sync").disabled = busy;
     byId("github-disconnect").hidden = !g.connected;
-    if (g.connected && githubAsked) githubConnected({ ok: true, repo: link ? link.repo.fullName : "" });
+    if (g.connected && github.asked) github.finish({ ok: true, repo: link ? link.repo.fullName : "" });
   }
   let updating = false;
   const updateHint = byId("update-hint");
@@ -423,18 +480,7 @@ export default function ops(): void {
   byId("conflict-drop").addEventListener("click", async (e) => {
     const btn = e.currentTarget as HTMLButtonElement,
       hint = byId("conflict-hint");
-    if (btn.dataset.armed != "1") {
-      btn.dataset.armed = "1";
-      btn.textContent = "Click again to drop it";
-      setTimeout(() => {
-        if (btn.dataset.armed == "1") {
-          btn.dataset.armed = "";
-          btn.textContent = "Drop this merge";
-        }
-      }, 8000);
-      return;
-    }
-    btn.dataset.armed = "";
+    if (!secondClick(btn, "Click again to drop it", "Drop this merge")) return;
     btn.textContent = "Drop this merge";
     btn.disabled = true;
     hint.textContent = await runTool("waiting_merge", { action: "drop" }).then(
@@ -515,19 +561,7 @@ export default function ops(): void {
       byId("domain-host").focus();
     }
     if (rm) {
-      if (rm.dataset.armed != "1") {
-        rm.dataset.armed = "1";
-        rm.textContent = "remove?";
-        rm.parentElement!.style.borderColor = "var(--bad)";
-        setTimeout(() => {
-          if (rm.dataset.armed == "1") {
-            rm.dataset.armed = "";
-            rm.textContent = "×";
-            rm.parentElement!.style.borderColor = "";
-          }
-        }, 6000);
-        return;
-      }
+      if (!secondClick(rm, "remove?", "×", 6000, (on) => (rm.parentElement!.style.borderColor = on ? "var(--bad)" : ""))) return;
       rm.disabled = true;
       const failed = await runTool("set_domain", { action: "remove", target: rm.dataset.target, hostname: rm.dataset.remove }).then(
         () => null,
@@ -570,65 +604,31 @@ export default function ops(): void {
   // The control Worker's Cloudflare credential, fixed here: Connect Cloudflare opens the consent in a popup, on the
   // control Worker's origin (data-connect). The popup posts its outcome back (and the event stream says the
   // credential changed); this page never leaves.
-  const cf = byId("env-cloudflare"),
-    cfNote = byId("cloudflare-note");
-  const consentOrigin = new URL(cf.dataset.connect!, location.href).origin;
-  let consentAsked = false;
-  const note = (text: string, bad?: boolean) => {
-    cfNote.hidden = !text;
-    cfNote.textContent = text || "";
-    cfNote.className = "cf-note" + (bad ? " bad" : "");
-  };
-  byId("cloudflare-connect").addEventListener("click", () => {
-    const w = window.open(cf.dataset.connect, "erga-cloudflare-consent", "popup,width=600,height=760");
-    if (!w) {
-      note("The browser blocked the Cloudflare window. Allow pop-ups for this page, then click Connect Cloudflare again.", true);
-      return;
-    }
-    consentAsked = true;
-    note("Waiting for Cloudflare: finish the consent in the window that opened.");
-  });
-  function consented(m: Json) {
-    consentAsked = false;
-    if (m.ok)
-      note(
-        ["Connected." + (m.warnings && m.warnings.length ? "" : " A deploy that waited goes now; Retry starts one that failed.")]
-          .concat(m.warnings || [])
-          .join(" "),
-        !!(m.warnings && m.warnings.length)
-      );
-    else note(m.error || "Cloudflare didn't connect.", true);
-    loadDeploys();
-  }
-  window.addEventListener(
-    "message",
-    (e) => {
-      if (!e.data || e.data.type != "erga-deploy-credential" || (e.origin != consentOrigin && e.origin != location.origin)) return;
-      consented(e.data);
+  const cf = byId("env-cloudflare");
+  const consent = popupConnect({
+    card: cf,
+    note: byId("cloudflare-note"),
+    button: "cloudflare-connect",
+    window: ["erga-cloudflare-consent", "width=600,height=760"],
+    type: "erga-deploy-credential",
+    who: "Cloudflare",
+    waiting: "Waiting for Cloudflare: finish the consent in the window that opened.",
+    done(m) {
+      if (m.ok)
+        note(
+          ["Connected." + (m.warnings && m.warnings.length ? "" : " A deploy that waited goes now; Retry starts one that failed.")]
+            .concat(m.warnings || [])
+            .join(" "),
+          !!(m.warnings && m.warnings.length)
+        );
+      else note(m.error || "Cloudflare didn't connect.", true);
+      loadDeploys();
     },
-    { signal: pageView.signal }
-  );
-  try {
-    const bc = new BroadcastChannel("erga-deploy-credential");
-    bc.onmessage = (e) => {
-      if (e.data && e.data.type == "erga-deploy-credential") consented(e.data);
-    };
-    pageView.onLeave(() => bc.close());
-  } catch {}
+  });
+  const note = consent.say;
   byId("cloudflare-disconnect").addEventListener("click", async (e) => {
     const btn = e.currentTarget as HTMLButtonElement;
-    if (btn.dataset.armed != "1") {
-      btn.dataset.armed = "1";
-      btn.textContent = "Click again to disconnect";
-      setTimeout(() => {
-        if (btn.dataset.armed == "1") {
-          btn.dataset.armed = "";
-          btn.textContent = "Disconnect";
-        }
-      }, 8000);
-      return;
-    }
-    btn.dataset.armed = "";
+    if (!secondClick(btn, "Click again to disconnect", "Disconnect")) return;
     btn.textContent = "Disconnect";
     btn.disabled = true;
     const failed = await runTool("disconnect_deploy_credential").then(
@@ -658,7 +658,7 @@ export default function ops(): void {
     connect.textContent = cred && cred.by ? "Connect Cloudflare again" : "Connect Cloudflare";
     byId("cloudflare-disconnect").hidden = !cred || !cred.connected;
     // Connected while the popup was out (the event stream heard it first, or the popup couldn't reach this page).
-    if (cred && cred.connected && consentAsked) consented({ ok: true });
+    if (cred && cred.connected && consent.asked) consent.finish({ ok: true });
   }
 
   function renderTargets() {
@@ -874,17 +874,7 @@ export default function ops(): void {
   }
   byId("log-rollback").addEventListener("click", async (e) => {
     const rb = e.currentTarget as HTMLButtonElement;
-    if (rb.dataset.armed != "1") {
-      rb.dataset.armed = "1";
-      rb.textContent = "Click again to roll back to " + rb.dataset.to;
-      setTimeout(() => {
-        if (rb.dataset.armed == "1") {
-          rb.dataset.armed = "";
-          rb.textContent = "Roll back";
-        }
-      }, 8000);
-      return;
-    }
+    if (!secondClick(rb, "Click again to roll back to " + rb.dataset.to, "Roll back")) return;
     rb.disabled = true;
     rb.textContent = "Rolling back…";
     const meta = byId("log-meta");
@@ -960,46 +950,22 @@ export default function ops(): void {
   });
   // GitHub, fixed here too: Connect GitHub opens the App's install page in a popup, on the control Worker's origin
   // (data-connect); the popup posts its outcome back (and the event stream says the repository changed).
-  const gh = byId("env-github"),
-    ghNote = byId("github-note");
-  const ghOrigin = new URL(gh.dataset.connect!, location.href).origin;
-  let githubAsked = false;
-  const ghSay = (text: string, bad?: boolean) => {
-    ghNote.hidden = !text;
-    ghNote.textContent = text || "";
-    ghNote.className = "cf-note" + (bad ? " bad" : "");
-  };
-  byId("github-connect").addEventListener("click", () => {
-    const w = window.open(gh.dataset.connect, "erga-github-connect", "popup,width=720,height=820");
-    if (!w) {
-      ghSay("The browser blocked the GitHub window. Allow pop-ups for this page, then click Connect GitHub again.", true);
-      return;
-    }
-    githubAsked = true;
-    ghSay("Waiting for GitHub: pick the account and the repository in the window that opened.");
-  });
-  function githubConnected(m: Json) {
-    githubAsked = false;
-    if (m.ok)
-      ghSay("Connected" + (m.repo ? " to " + m.repo : "") + "." + (m.warning ? " " + m.warning : " The first sync runs now."), !!m.warning);
-    else ghSay(m.error || "GitHub didn't connect.", true);
-    load();
-  }
-  window.addEventListener(
-    "message",
-    (e) => {
-      if (!e.data || e.data.type != "erga-github" || (e.origin != ghOrigin && e.origin != location.origin)) return;
-      githubConnected(e.data);
+  const github = popupConnect({
+    card: byId("env-github"),
+    note: byId("github-note"),
+    button: "github-connect",
+    window: ["erga-github-connect", "width=720,height=820"],
+    type: "erga-github",
+    who: "GitHub",
+    waiting: "Waiting for GitHub: pick the account and the repository in the window that opened.",
+    done(m) {
+      if (m.ok)
+        ghSay("Connected" + (m.repo ? " to " + m.repo : "") + "." + (m.warning ? " " + m.warning : " The first sync runs now."), !!m.warning);
+      else ghSay(m.error || "GitHub didn't connect.", true);
+      load();
     },
-    { signal: pageView.signal }
-  );
-  try {
-    const bc = new BroadcastChannel("erga-github");
-    bc.onmessage = (e) => {
-      if (e.data && e.data.type == "erga-github") githubConnected(e.data);
-    };
-    pageView.onLeave(() => bc.close());
-  } catch {}
+  });
+  const ghSay = github.say;
   byId("github-sync").addEventListener("click", async (e) => {
     const btn = e.currentTarget as HTMLButtonElement;
     btn.disabled = true;
@@ -1016,18 +982,7 @@ export default function ops(): void {
   });
   byId("github-disconnect").addEventListener("click", async (e) => {
     const btn = e.currentTarget as HTMLButtonElement;
-    if (btn.dataset.armed != "1") {
-      btn.dataset.armed = "1";
-      btn.textContent = "Click again to disconnect";
-      setTimeout(() => {
-        if (btn.dataset.armed == "1") {
-          btn.dataset.armed = "";
-          btn.textContent = "Disconnect";
-        }
-      }, 8000);
-      return;
-    }
-    btn.dataset.armed = "";
+    if (!secondClick(btn, "Click again to disconnect", "Disconnect")) return;
     btn.textContent = "Disconnect";
     btn.disabled = true;
     const failed = await runTool("github", { action: "disconnect" }).then(

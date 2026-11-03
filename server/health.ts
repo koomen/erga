@@ -25,7 +25,7 @@ export async function health(p: Platform): Promise<HealthReport> {
       if (!id) return "no homepage document: nothing to open";
       const route = await p.directory.route(id);
       if (!route) return `the homepage document ${id} isn't in the directory: nothing to open`;
-      if (!(await p.docs.exists(route))) throw new Error(`the homepage document ${id} has no host`);
+      if ((await p.docs.index(route)) == null) throw new Error(`the homepage document ${id} has no host`);
     }),
   };
   return { ok: Object.values(checks).every((c) => c.ok), version: p.deploy.version, target: p.deploy.target, checks };

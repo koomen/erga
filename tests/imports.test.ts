@@ -15,7 +15,7 @@
 //                     A library's UI (libs/<name>/ui/) is in this layer too. A library's API never imports its UI.
 //                     (tests/browser-imports.test.ts follows what the bundles reach)
 //   9. deploy/, dev/, tests/, e2e/, client/build.ts and the scripts at the top: anything. Nothing imports them but
-//      deploy/targets.ts (layers 4 and 7) and dev/mock-cloudflare.ts, the pretend Cloudflare of local development
+//      deploy/targets.ts (layers 4 and 7) and dev/mock-cloudflare.ts with dev/mock-builder.ts, the pretend Cloudflare of local development
 //      and the tests (layers 4 and 7, when ERGA_DEPLOY_MOCK is set).
 //
 // And:
@@ -104,7 +104,7 @@ function wrong(from: string, to: string, type: boolean): string | null {
     return "the browser imports only shared/ and a few files of document/";
   }
   if (theirs == 9) {
-    if ((to == "deploy/targets" || to == "dev/mock-cloudflare") && (mine == 4 || mine == 7)) return null;
+    if ((to == "deploy/targets" || to == "dev/mock-cloudflare" || to == "dev/mock-builder") && (mine == 4 || mine == 7)) return null;
     return "nothing above the tools imports them";
   }
   if (theirs == 8) return "only the browser imports client/ and a library's UI";

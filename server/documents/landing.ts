@@ -104,7 +104,7 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
       let ref: unknown = null;
       try { ref = stored == null ? null : JSON.parse(stored); } catch { /* not JSON: dangling */ }
       const doc = typeof ref == "string" && ref ? await platform.directory.find(ref) : null;
-      return doc && !doc.test && (await platform.docs.exists(doc)) ? doc : null;
+      return doc && !doc.test && (await platform.docs.index(doc)) != null ? doc : null;
     };
     // The winner's document, still at its id, takes its address. A loser does it too, so the document it answers with
     // has its address already.

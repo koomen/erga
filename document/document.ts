@@ -37,33 +37,28 @@
 // journal is kept here. A single file on its own (`only`) is the only file
 // such a document has.
 
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as Schema from "effect/Schema";
-import * as Scope from "effect/Scope";
-import { HttpServerResponse } from "effect/http";
-import * as Y from "yjs";
-import { nameOf, namingFor, UNTITLED, type NamedRow, type Naming, type NamesDirectory } from "./names.ts";
-import { DocumentAccess, type Asker, type Role } from "./access.ts";
+import { nameOf, UNTITLED, type NamedRow, type NamesDirectory } from "./names.ts";
+import { DocumentAccess, personOf, type Asker, type Person, type Role } from "./access.ts";
 import { DocumentView, type ViewAnswer } from "./view.ts";
 import type { DocumentAgents, RenderJob } from "./agent.ts";
 import type { ViewResult } from "../shared/agent-log.ts";
-import { docFile, makeHost, typeOf, type EditorCalls } from "./host.ts";
-import { blobPointer, isBlobRef, storeBlob, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
-import type { DocName, Hello } from "./api.ts";
-import { FileStore, NoSuchDocument, Room, StateStore, StoreError, type Connection } from "./room.ts";
+import { docFile, typeOf, type EditorCalls } from "./host.ts";
+import { blobPointer, isBlobRef, storeBlob, type BlobRef, type BlobStore } from "./blobs.ts";
+import type { DocName } from "./api.ts";
+import { io, NoSuchDocument, StoreError, type Connection } from "./room.ts";
 
-export { NoSuchDocument };
-import { fileStoreOf, KEYS, kvOf, RefIndex, stateStoreOf, TimeIndex, type Storage } from "./storage.ts";
-import { byLine, VIA } from "../shared/attribution.ts";
-import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "./content.ts";
-import { describeChange, fallbackDescription, publicVersion, versionNumber, Versions, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "./versions.ts";
+import { KEYS, type Storage } from "./storage.ts";
+import { assets, files as texts } from "./content.ts";
+import type { RestoreResult, Version, VersionsState } from "./versions.ts";
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "./snapshot.ts";
-import { cleanRel, kindOf, pageRefusal, parentsOf, titleOf, type DocKind } from "./pages.ts";
+import { cleanRel, kindOf, titleOf, type DocKind } from "./pages.ts";
 import { throttle } from "../shared/time.ts";
-import { later, stop } from "./later.ts";
+import { later } from "./later.ts";
+import { History } from "./history.ts";
+import { openRoom, type Opened } from "./open.ts";
+import { isText, Uploads, type Published } from "./uploads.ts";
 
 /**
  * What a document is: its id, who made it, which file is its page, whether
@@ -84,12 +79,6 @@ export interface DocumentInfo {
 
 /** A document that's a file or folder on disk (local development): where it is, its address there, and whether it's a single file. */
 export interface OnDisk { path: string; slug: string; only?: boolean }
-
-export interface Person {
-  id: string;
-  name: string /** Their picture, as the app said (shared/avatars.ts); absent: none. */;
-  avatar?: string;
-}
 
 /**
  * What a document asks the directory (server/directory/, the Directory
@@ -128,26 +117,6 @@ export interface DocumentDirectory extends NamesDirectory {
 
 /** How often edits may update a document's row (its time, and the title that follows its heading). */
 const DIRECTORY_EVERY_MS = 2000;
-
-
-/** A storage call's failure, as a StoreError. */
-const storeError = (e: unknown) => (e instanceof StoreError ? e : new StoreError({ message: e instanceof Error ? e.message : String(e) }));
-/** A call to the document's storage (or to the directory, the blob store: Promise-based, from outside), its failure a StoreError. */
-const io = <A>(f: () => Promise<A>) => Effect.tryPromise({ try: f, catch: storeError });
-
-/** What a publish did with each file. */
-export interface Published {
-  written: string[];
-  removed: string[];
-  refused: { path: string; why: string }[];
-}
-
-/** A file that PUT /api/files refused: the status, and what to do about it. */
-class UploadRefused extends Schema.TaggedError<UploadRefused>()("UploadRefused", { status: Schema.Number, error: Schema.String }) {}
-
-/** A JSON answer that no cache keeps. */
-const answer = (body: unknown, status: number) =>
-  HttpServerResponse.toWeb(HttpServerResponse.jsonUnsafe(body, { status, headers: { "Cache-Control": "no-store" } }));
 
 /** What the server around a document gives it. */
 export interface DocumentDeps {
@@ -194,22 +163,6 @@ export type FileData = string | Uint8Array | BlobRef;
 
 const { file: FILE, ref: REF, meta: INFO } = KEYS;
 
-
-/** A file over this many bytes, uploaded without its hash, is refused (its bytes would be held in memory to hash them). */
-const BUFFER_MAX = 25 * 1_000_000;
-const MB = 1_000_000, GB = 1_000_000_000;
-const megabytes = (n: number) => (n >= GB ? `${(n / GB).toFixed(2)} GB` : `${(n / MB).toFixed(n < 10 * MB ? 1 : 0)} MB`);
-/** Whether bytes that arrive whole are a text file (D5): a text file's name, at most TEXT_MAX bytes, and UTF-8. */
-const isText = (path: string, bytes: Uint8Array) => {
-  if (!isTextPath(path) || bytes.length > TEXT_MAX) return false;
-  try {
-    new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 const HOUR = 60 * 60 * 1000;
 
 /**
@@ -228,25 +181,12 @@ export class Document {
   private opened: Opened | null = null;
   private sync: (() => void) | null = null;
   private readonly storage: Storage;
-  /** Its versions, in its own storage. */
-  private versions: Versions;
-  /**
-   * Edits not yet in a version: since when, by whom, and the timers that cut
-   * one (see `noteEdit` for the rule).
-   */
-  private pending = {
-    dirty: false,
-    since: 0,
-    authors: new Set<string>(),
-    idle: null as Fiber.Fiber<void> | null,
-    max: null as Fiber.Fiber<void> | null,
-  };
-  /** Cuts, one at a time. */
-  private cutting: Promise<unknown> = Promise.resolve();
+  /** Its versions: the edits no version holds yet, the cuts, and the reads and restores (history.ts). */
+  private history: History;
+  /** Files arriving whole (uploads.ts). */
+  private uploads: Uploads;
   /** Room connections that may edit: when the last one goes, a version is cut. */
   private editing = 0;
-  /** Who the files arriving whole now are by (publish), for the version. */
-  private publisher: string | null = null;
   /** Who may edit, by person id, as the app said last (x-erga-access): their agents may too. */
   private editors = new Map<string, boolean>();
   /** Who may do what: its copy of its permissions, and the directory's rule (access.ts). */
@@ -266,7 +206,22 @@ export class Document {
 
   constructor(private deps: DocumentDeps) {
     this.storage = deps.storage;
-    this.versions = new Versions(kvOf(this.storage), Date.now, deps.blobs);
+    this.history = new History({
+      deps,
+      opened: () => this.opened,
+      room: () => this.room(),
+      info: () => this.readInfo(),
+      saveInfo: (info) => this.saveInfo(info),
+      activity: () => this.activity(),
+      publish: (files, remove, by) => this.uploads.publish(files, remove, by),
+    });
+    this.uploads = new Uploads({
+      deps,
+      room: () => this.room(),
+      info: () => this.readInfo(),
+      hold: (work) => this.hold(work),
+      touch: () => this.touch(),
+    });
     this.access = new DocumentAccess({
       storage: this.storage,
       directory: deps.directory,
@@ -314,7 +269,7 @@ export class Document {
     this.kept = false;
     this.access.forget();
     this.views.forget();
-    this.versions = new Versions(kvOf(this.storage), Date.now, this.deps.blobs);
+    this.history.forget();
   }
 
   /** The document, opened if it isn't (null if there's no such document). */
@@ -365,11 +320,11 @@ export class Document {
    */
   private async closeIfIdle(): Promise<void> {
     const ms = this.deps.timing.closeIdleMs!;
-    await this.cutting;
+    await this.history.cutting;
     const opened = this.opened;
     if (!opened || this.info?.disk || this.idleTimer) return;
     const wait = this.lastActive + ms - Date.now();
-    if (wait > 0 || this.busy > 0 || this.pending.dirty || this.agentWorking()) {
+    if (wait > 0 || this.busy > 0 || this.history.dirty || this.history.agentWorking()) {
       this.idleTimer = later(wait > 0 ? wait : Math.min(ms, 1000), () => {
         this.idleTimer = null;
         void this.closeIfIdle();
@@ -429,7 +384,7 @@ export class Document {
       if (!info.test && opts.expires != null) yield* io(() => self.storage.setAlarm(opts.expires!));
       // Its first version: the files it starts from.
       const first = new Map(Object.entries(files).map(([path, data]) => [path, typeof data == "string" ? encoder.encode(data) : data]));
-      yield* self.versions.cut(first, index, [info.owner], "First version");
+      yield* self.history.versions.cut(first, index, [info.owner], "First version");
       // Who may open it, from the start: its first viewer needn't wait for the directory.
       yield* Effect.promise(() => self.access.readPermissions(id).catch((e) => self.deps.log(`couldn't read ${id}'s permissions: ${e}`)));
       return true;
@@ -458,79 +413,6 @@ export class Document {
   }
 
   /**
-   * Files arriving whole (a publish, from the server's API): each written and
-   * taken into the room as an edit "on disk", so open tabs see it at once.
-   * What the room holds is written first, so a file replaces the text as it
-   * is now (only edits made while it arrives merge with it). Text files go through the room's
-   * push; others (images) are stored and the room told. `remove` deletes
-   * files. Says what it did with each. `by`: who the edits are by, as a
-   * version records it ("ada", "ada, via a shared agent (CI)": byLine).
-   */
-  publish(files: Record<string, FileData>, remove: string[], by?: string): Effect.Effect<Published, StoreError | NoSuchDocument> {
-    const self = this;
-    return this.hold(
-      Effect.gen(function* () {
-        const opened = yield* io(() => self.room());
-        if (!opened) return yield* new NoSuchDocument({ message: "There's no such document." });
-        self.publisher = by ?? null;
-        return yield* io(() => self.publishNow(opened, files, remove)).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              self.publisher = null;
-            })
-          )
-        );
-      })
-    );
-  }
-
-  private async publishNow(opened: Opened, files: Record<string, FileData>, remove: string[]): Promise<Published> {
-    const info = (await this.readInfo())!;
-    const out = { written: [] as string[], removed: [] as string[], refused: [] as { path: string; why: string }[] };
-    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
-    // Edits not yet written land first, so a published file replaces what's there now rather than merging with it.
-    await Effect.runPromise(opened.room.flush);
-    const blobs = info.disk ? null : this.deps.blobs ?? null;
-    for (const [path, data] of Object.entries(files)) {
-      if (info.disk?.only && path != info.index) { out.refused.push({ path, why: `this document is the single file ${info.index}` }); continue; }
-      const notPage = opened.room.exists(path) ? null : pageRefusal(info.kind ?? "project", path, info.index);
-      if (notPage) { out.refused.push({ path, why: notPage }); continue; }
-      // Its kind, decided as it arrives (D5): text if it's a text file's name, UTF-8 and at most TEXT_MAX bytes; else a blob.
-      let text: string | null = null;
-      if (typeof data == "string") text = data;
-      else if (isTextPath(path) && data instanceof Uint8Array && (!blobs || data.length <= TEXT_MAX)) {
-        try { text = decoder.decode(data); } catch { if (!blobs) { out.refused.push({ path, why: "not UTF-8 text" }); continue; } }
-      }
-      if (text != null && isTextPath(path) && (!blobs || text.length <= TEXT_MAX)) {
-        const r = await Effect.runPromise(opened.room.push(path, text));
-        if (r.ok) out.written.push(path); else out.refused.push({ path, why: r.reason ?? "refused" });
-        continue;
-      }
-      if (info.disk) { out.refused.push({ path, why: "a document on disk takes only text files this way" }); continue; }
-      if (path == info.index) { out.refused.push({ path, why: "it's the document's page, which is text" }); continue; }
-      if (blobs) {
-        const bytes = isBlobRef(data) ? undefined : typeof data == "string" ? new TextEncoder().encode(data) : data;
-        const ref = isBlobRef(data) ? data : await Effect.runPromise(storeBlob(blobs, bytes!));
-        await Effect.runPromise(opened.room.putBlob(path, ref));
-        out.written.push(path);
-        continue;
-      }
-      if (isBlobRef(data)) { out.refused.push({ path, why: "this server keeps no blobs" }); continue; }
-      await this.storage.put(FILE + path, typeof data == "string" ? new TextEncoder().encode(data) : data);
-      await Effect.runPromise(opened.room.fileChanged(path));
-      out.written.push(path);
-    }
-    for (const path of remove) {
-      if (path == info.index) { out.refused.push({ path, why: "it's the document's page" }); continue; }
-      if (info.disk) { out.refused.push({ path, why: "files on disk aren't deleted this way" }); continue; }
-      if (await Effect.runPromise(opened.room.removeOne(path))) out.removed.push(path);
-    }
-    // In the history now, with the files (an image's bytes went straight to storage).
-    if (out.written.length || out.removed.length) await Promise.all([Effect.runPromise(opened.room.flush), this.touch()]);
-    return out;
-  }
-
-  /**
    * Changes the document's kind (the switch in the document's settings, or an agent: make_project, make_document):
    * a project may have more pages, a document one. The tree's operation checks a project has one page before it
    * becomes a document. Kept here, where the rule is checked, and in its row, which the documents list reads.
@@ -548,13 +430,7 @@ export class Document {
   paths(): Effect.Effect<string[], StoreError> {
     return Effect.map(
       io(() => this.room()),
-      (opened) => {
-        if (!opened) {
-          this.open = null;
-          return [];
-        }
-        return [...new Set([...texts(opened.room.doc).keys(), ...assets(opened.room.doc).keys()])].sort();
-      }
+      (opened) => (opened ? [...new Set([...texts(opened.room.doc).keys(), ...assets(opened.room.doc).keys()])].sort() : [])
     );
   }
 
@@ -650,7 +526,7 @@ export class Document {
     // One on disk writes what it holds there first, while the dev server is still connected.
     if (info.disk && this.opened) await Effect.runPromise(this.opened.room.flush);
     this.deps.tabs.closeAll(4404, "document deleted");
-    this.clearPending();
+    this.history.clearPending();
     // The room writes what it holds as it closes, so it closes before storage is cleared.
     const opened = await this.open;
     this.open = null;
@@ -695,7 +571,7 @@ export class Document {
 
   /** A message for everyone who has the document open (the homepage's deploy status). Opens nothing. */
   notify(msg: unknown): void {
-    this.opened?.notify(msg);
+    this.opened?.broadcast(msg);
   }
 
   /**
@@ -739,22 +615,6 @@ export class Document {
     return Effect.map(
       io(() => this.readInfo()),
       (info) => info?.disk?.path ?? null
-    );
-  }
-
-  /** Whether it is a document on disk. */
-  onDisk(): Effect.Effect<boolean, StoreError> {
-    return Effect.map(
-      io(() => this.readInfo()),
-      (info) => !!info?.disk
-    );
-  }
-
-  /** Whether the document exists. */
-  exists(): Effect.Effect<boolean, StoreError> {
-    return Effect.map(
-      io(() => this.readInfo()),
-      (info) => info != null
     );
   }
 
@@ -864,7 +724,7 @@ export class Document {
 
   private async serve(request: Request): Promise<Response> {
     if (request.method == "PUT" && new URL(request.url).pathname.startsWith("/api/files/"))
-      return Effect.runPromise(this.hold(io(() => this.upload(request))));
+      return Effect.runPromise(this.hold(io(() => this.uploads.upload(request))));
     // Someone viewing it: its files straight from storage while the room isn't open, without opening it
     // (once a room closing a moment ago has written them).
     await this.closing;
@@ -892,10 +752,7 @@ export class Document {
     return Effect.map(
       io(() => this.room()),
       (opened) => {
-        if (!opened) {
-          this.open = null;
-          return null;
-        }
+        if (!opened) return null;
         if (request.headers.has("x-erga-person"))
           this.editors.set(personOf(request.headers).id, request.headers.get("x-erga-access") == "edit");
         return opened;
@@ -942,7 +799,7 @@ export class Document {
         gone = true;
         conn.close();
         tab?.();
-        if (!o.readOnly && --this.editing == 0) void this.cutSoon("left");
+        if (!o.readOnly && --this.editing == 0) void this.history.cutSoon("left");
       },
     };
   }
@@ -1011,139 +868,6 @@ export class Document {
     });
   }
 
-  // ---------------------------------------------------------------- versions
-
-  /**
-   * An edit reached the room (a file's text, or another file, changed), by
-   * `author`. When to cut a version, so that a burst of edits is one version:
-   *
-   * - edits pause for `idleMs` (30 seconds);
-   * - a burst has gone on for `maxMs` (5 minutes) since its first edit;
-   * - an agent's turn ends (the embedded agent's, or an external agent's
-   *   calls, 8 seconds after its last), so an agent's turn is one version:
-   *   while any agent works, the two rules above wait for it;
-   * - the last person who may edit leaves (their room connection closes);
-   * - when the room opens, if what it holds isn't the latest version (edits
-   *   made while timers couldn't run: the object was evicted).
-   *
-   * A cut that finds nothing changed since the latest version makes none.
-   */
-  private noteEdit(author: string | null): void {
-    const p = this.pending;
-    p.dirty = true;
-    this.activity();
-    if (author) p.authors.add(author);
-    if (!p.since) {
-      p.since = Date.now();
-      // Stored, so a document stopped before it cut the version cuts it as it opens again.
-      void this.markUncut(true);
-      p.max = later(
-        this.maxMs,
-        () => {
-          p.max = null;
-          void this.cutSoon("burst");
-        },
-        () => (this.agentWorking() ? this.idleMs : 0)
-      );
-    }
-    if (p.idle) stop(p.idle);
-    p.idle = later(
-      this.idleMs,
-      () => {
-        p.idle = null;
-        void this.cutSoon("idle");
-      },
-      () => (this.agentWorking() ? this.idleMs : 0)
-    );
-  }
-
-  /** Notes in its record whether it has edits no version holds yet (only when that changes). */
-  private async markUncut(uncut: boolean): Promise<void> {
-    const info = await this.readInfo();
-    if (!info || !!info.uncut == uncut) return;
-    const { uncut: _, ...rest } = info;
-    await this.saveInfo(uncut ? { ...rest, uncut } : rest).catch((e) => this.deps.log(`couldn't note the edits: ${e}`));
-  }
-
-  /** Whether any agent in the room is in the middle of a turn (its busy flag, on awareness). */
-  private agentWorking(): boolean {
-    const room = this.opened?.room;
-    if (!room) return false;
-    for (const state of room.awareness.getStates().values()) {
-      const s = state as { busy?: boolean; user?: Author } | null;
-      if (s?.busy && s.user?.kind == "agent") return true;
-    }
-    return false;
-  }
-
-  private clearPending(): { authors: string[]; dirty: boolean } {
-    const p = this.pending;
-    if (p.idle) stop(p.idle);
-    if (p.max) stop(p.max);
-    const out = { authors: [...p.authors], dirty: p.dirty };
-    this.pending = { dirty: false, since: 0, authors: new Set(), idle: null, max: null };
-    return out;
-  }
-
-  /** Cuts a version of what the document holds now (after any cut under way); the new version, or null if nothing changed. */
-  private cutSoon(reason: string, as?: { authors: string[]; description: string }): Promise<StoredVersion | null> {
-    const run = this.cutting.then(() => this.cutNow(reason, as));
-    this.cutting = run.catch((e) => this.deps.log(`couldn't cut a version (${reason}): ${e instanceof Error ? e.stack : e}`));
-    return run;
-  }
-
-  private cutNow(_reason: string, as?: { authors: string[]; description: string }): Promise<StoredVersion | null> {
-    return Effect.runPromise(this.cutVersion(as));
-  }
-
-  private cutVersion(as?: { authors: string[]; description: string }): Effect.Effect<StoredVersion | null, StoreError> {
-    const self = this;
-    return Effect.gen(function* () {
-      // Edits from in-process peers (agents) sync on microtasks: they've reached the room by the next macrotask.
-      yield* Effect.sleep(0);
-      const opened = self.opened;
-      const info = yield* Effect.promise(() => self.readInfo());
-      if (!opened || !info) return null;
-      const { authors } = self.clearPending();
-      const entries = yield* Effect.promise(() => opened.entries());
-      const first = (yield* self.versions.head) == 0;
-      const description = as?.description ?? (first ? "First version" : null);
-      const r = yield* self.versions.cut(entries, info.index, as?.authors ?? authors, description, opened.room.folderPaths());
-      if (!self.pending.dirty) yield* Effect.promise(() => self.markUncut(false));
-      // At a version, a long log becomes a snapshot: the next open reads less.
-      yield* opened.room.settle;
-      if (!r) return null;
-      opened.broadcast({ type: "versions" });
-      if (r.previous && !as) self.deps.background(Effect.runPromise(self.describe(r.version, r.previous, info)));
-      return r.version;
-    });
-  }
-
-  /** Writes a version's description in the background: the model's five words, or the fallback. Never in the way of editing. */
-  private describe(version: StoredVersion, previous: StoredVersion, info: DocumentInfo): Effect.Effect<void> {
-    const self = this;
-    return Effect.gen(function* () {
-      const changes = yield* self.versions.changes(previous, version);
-      // The agent's key, as it is now (an admin may have stored one since the document opened).
-      const key = info.test ? "" : yield* Effect.promise(() => self.deps.agents.descriptionKey());
-      const text = (key ? yield* describeChange(key, changes) : null) ?? fallbackDescription(changes);
-      yield* self.versions.describe(version.n, text);
-      self.opened?.broadcast({ type: "versions" });
-    }).pipe(
-      Effect.catchCause((cause) => Effect.sync(() => self.deps.log(`couldn't describe version ${version.n}: ${Cause.pretty(cause)}`)))
-    );
-  }
-
-  /** Opens the document and waits for any cut under way (the first, when it opens, makes sure there is a version). */
-  private async ready(): Promise<{ opened: Opened; info: DocumentInfo } | null> {
-    const opened = await this.room();
-    if (!opened) { this.open = null; return null; }
-    await this.cutting;
-    if ((await Effect.runPromise(this.versions.head)) == 0) await this.cutSoon("first");
-    const info = await this.readInfo();
-    return info ? { opened, info } : null;
-  }
-
   /** An operation's call (host.ts) on the document, opened; null if there's none. */
   call<A>(f: (calls: EditorCalls) => A | Promise<A>): Effect.Effect<A | null, StoreError> {
     return io(async () => {
@@ -1152,427 +876,65 @@ export class Document {
     });
   }
 
-  /** Its versions, newest first (`limit`, before version `before`), and the current one. Null if there's no such document. */
+  // ---------------------------------------------------------------- versions (history.ts), and files arriving whole (uploads.ts)
+
+  /** Files arriving whole, from the server's API (Uploads.publish): says what it did with each. */
+  publish(files: Record<string, FileData>, remove: string[], by?: string): Effect.Effect<Published, StoreError | NoSuchDocument> {
+    return this.uploads.publish(files, remove, by);
+  }
+
+  /** Its versions, newest first, and the current one (History.versionsState). Null if there's no such document. */
   versionsState(opts: { before?: string | number | null; limit?: number } = {}): Effect.Effect<VersionsState | null, StoreError> {
-    const self = this;
-    return Effect.gen(function* () {
-      const r = yield* io(() => self.ready());
-      if (!r) return null;
-      const before = opts.before != null ? versionNumber(opts.before) : null;
-      const { versions, total } = yield* self.versions.list({ before, limit: opts.limit });
-      const latest = (yield* self.versions.latest)!;
-      return { current: publicVersion(latest), versions: versions.map(publicVersion), total, pending: self.pending.dirty };
-    });
+    return this.history.versionsState(opts);
   }
 
   /** One version (by id or number), with its files' paths; null if there's none. */
   version(ref: string | number): Effect.Effect<(Version & { files: string[]; index: string }) | null, StoreError> {
-    const self = this;
-    return Effect.gen(function* () {
-      const n = versionNumber(ref);
-      if (!(yield* io(() => self.ready())) || n == null) return null;
-      const v = yield* self.versions.get(n);
-      return v && { ...publicVersion(v), index: v.index, files: Object.keys(v.files) };
-    });
+    return this.history.version(ref);
   }
 
   /** One file of a version; null if there's no such version or file. */
   versionFile(ref: string | number, path: string): Effect.Effect<Uint8Array | null, StoreError> {
-    const self = this;
-    return Effect.gen(function* () {
-      const n = versionNumber(ref);
-      if (!(yield* io(() => self.ready())) || n == null) return null;
-      const v = yield* self.versions.get(n);
-      return v ? yield* self.versions.file(v, path) : null;
-    });
+    return this.history.versionFile(ref, path);
   }
 
-  /**
-   * Brings a version back over the document as it is now (files it didn't have go), as an edit open editors see live:
-   * a new current version by `by`, "Restored version <n>". With `path`, only that file ("Restored <path> from version
-   * <n>"). Edits not yet in a version become one first, so nothing is lost.
-   */
+  /** Brings a version, or one file of it, back over the document as it is now (History.restore). */
   restore(ref: string | number, by: string, path?: string | null): Effect.Effect<RestoreResult, StoreError> {
-    const self = this;
-    return Effect.gen(function* () {
-      const r = yield* io(() => self.ready());
-      if (!r) return { ok: false, status: 404, error: "There's no such document." } as const;
-      const n = versionNumber(ref);
-      const v = n != null ? yield* self.versions.get(n) : null;
-      if (!v)
-        return {
-          ok: false,
-          status: 404,
-          error: `There's no version ${ref} of this document: its versions are v1 to v${yield* self.versions.head}.`,
-        } as const;
-      if (path != null) {
-        path = path.replace(/^\.?\/+/, "");
-        if (!(path in v.files))
-          return {
-            ok: false,
-            status: 404,
-            error: `Version ${v.n} has no file ${path}: its files are ${Object.keys(v.files).sort().join(", ")}.`,
-          } as const;
-      }
-      yield* io(() => self.cutSoon("restore"));
-      const files = yield* self.versions.entries(v);
-      // The document went while it was restored: as if it had never been there.
-      const gone = (put: Record<string, FileData>, remove: string[]): Published => ({
-        written: [],
-        removed: [],
-        refused: [...Object.keys(put), ...remove].map((p) => ({ path: p, why: "there's no such document" })),
-      });
-      const publish = (put: Record<string, FileData>, remove: string[]) =>
-        Effect.catchTag(self.publish(put, remove, by), "NoSuchDocument", () => Effect.succeed(gone(put, remove)));
-      if (path != null) {
-        const out = yield* publish({ [path]: files.get(path)! }, []);
-        if (out.refused.length) return { ok: false, status: 409, error: `Couldn't restore ${path}: ${out.refused[0].why}.` } as const;
-        const made = yield* io(() => self.cutSoon("restored", { authors: [by], description: `Restored ${path} from version ${v.n}` }));
-        return { ok: true, current: publicVersion(made ?? (yield* self.versions.latest)!), from: v.id, files: [path] } as const;
-      }
-      const room = r.opened.room;
-      // Folders it didn't have go (unless something of it is inside); then its files over the current ones; then its folders.
-      const keep = [...files.keys(), ...(v.folders ?? [])];
-      for (const d of room.folderPaths())
-        if (!keep.some((p) => p == d || p.startsWith(`${d}/`)) && room.exists(d) == "folder") yield* Effect.ignore(room.remove(d));
-      const now = new Set((yield* io(() => r.opened.current())).keys());
-      const out = yield* publish(
-        Object.fromEntries(files),
-        [...now].filter((p) => !files.has(p))
-      );
-      for (const d of v.folders ?? []) if (room.exists(d) != "folder") yield* Effect.ignore(room.mkdir(d));
-      if (out.refused.length) self.deps.log(`restoring ${v.id}: ${out.refused.map((x) => `${x.path} (${x.why})`).join(", ")}`);
-      const made = yield* io(() => self.cutSoon("restored", { authors: [by], description: `Restored version ${v.n}` }));
-      return {
-        ok: true,
-        current: publicVersion(made ?? (yield* self.versions.latest)!),
-        from: v.id,
-        files: [...files.keys()].sort(),
-      } as const;
-    });
+    return this.history.restore(ref, by, path);
   }
 
-  /**
-   * The document as it is now (up to the keystroke), with its current
-   * version: what the homepage and the document's site deploy.
-   */
+  /** The document as it is now (up to the keystroke), with its current version: what the homepage and its site deploy. */
   currentFiles(): Effect.Effect<{ version: Version; index: string; files: Map<string, Uint8Array> } | null, StoreError> {
-    const self = this;
-    return Effect.gen(function* () {
-      const r = yield* io(() => self.ready());
-      if (!r) return null;
-      return { version: publicVersion((yield* self.versions.latest)!), index: r.info.index, files: yield* io(() => r.opened.current()) };
-    });
+    return this.history.currentFiles();
   }
 
-  // ---------------------------------------------------------------- files arriving whole, and blobs
-
-  /**
-   * PUT /api/files/<path>: one file from a person or an HTTP client (the
-   * editor's drop of a file), its bytes the body, its size Content-Length. Its
-   * kind is decided now (D5): a text file's name, UTF-8 and at most TEXT_MAX
-   * bytes is text, merged into the room as a publish is; anything else is a
-   * blob, which streams to the blob store (`x-erga-sha256`, the bytes'
-   * sha-256 in hex, lets one of any size stream: without it, one over
-   * BUFFER_MAX is refused). A file at the path is replaced (it stays in the
-   * versions): the answer says so. Refused when the file, or the project
-   * with it, would pass the limits an admin sets (max_file_mb, max_project_gb).
-   */
-  private upload(request: Request): Promise<Response> {
-    const refused = (e: UploadRefused) => {
-      void request.body?.cancel().catch(() => {});
-      return Effect.succeed(answer({ ok: false, error: e.error }, e.status));
-    };
-    return Effect.runPromise(
-      this.uploaded(request).pipe(
-        Effect.map((done) => answer(done, 200)),
-        Effect.catchTag("UploadRefused", refused)
-      )
-    );
-  }
-
-  private uploaded(request: Request): Effect.Effect<Record<string, unknown>, UploadRefused | StoreError> {
-    const self = this;
-    const fail = (status: number, error: string) => Effect.fail(new UploadRefused({ status, error }));
-    return Effect.gen(function* () {
-      if (request.headers.get("x-erga-access") != "edit") return yield* fail(403, "You can only view this document.");
-      const path = cleanRel(new URL(request.url).pathname.slice("/api/files/".length));
-      if (!path)
-        return yield* fail(
-          400,
-          'Name the file in the address, PUT /api/files/<path>: a path inside the document, with no ".." and no part that starts with a dot.'
-        );
-      const opened = yield* Effect.promise(() => self.room());
-      if (!opened) {
-        self.open = null;
-        return yield* fail(404, "There's no such document.");
-      }
-      const length = request.headers.get("content-length");
-      const size = Number(length);
-      if (length == null || !Number.isInteger(size) || size < 0)
-        return yield* fail(411, "Send the file's size in bytes as Content-Length.");
-      const check = yield* Effect.promise(() => self.mayAdd(opened, path, size));
-      if (!check.ok) return yield* fail(check.status, check.error);
-      const info = (yield* Effect.promise(() => self.readInfo()))!;
-      const blobs = info.disk ? null : (self.deps.blobs ?? null);
-      const person = personOf(request.headers);
-      const by = byLine(person.id, request.headers.get("x-erga-agent") ? viaOf(request.headers.get("x-erga-via") ?? undefined) : null);
-      // Small files (and every file, without a blob store) come whole: a text may be one.
-      const given = request.headers.get("x-erga-sha256")?.trim().toLowerCase() ?? "";
-      if (!blobs || size <= TEXT_MAX || !/^[0-9a-f]{64}$/.test(given)) {
-        if (blobs && size > BUFFER_MAX)
-          return yield* fail(
-            400,
-            `${path} is ${megabytes(size)}: send its sha-256 (hex) as x-erga-sha256, so a file over ${BUFFER_MAX / MB} MB can stream.`
-          );
-        const bytes = new Uint8Array(yield* Effect.promise(() => request.arrayBuffer()));
-        if (bytes.length != size) return yield* fail(400, `The body had ${bytes.length} bytes, not the ${size} of its Content-Length.`);
-        const r = yield* Effect.promise(() => self.addBytes(opened, path, bytes, by));
-        if (!r.ok) return yield* fail(r.status, r.error);
-        return { ok: true, path, kind: r.kind, size, ...(r.hash ? { hash: r.hash } : {}), replaced: check.replaced };
-      }
-      if (path == info.index)
-        return yield* fail(409, `${path} is the document's page, which is text: it can't be replaced by a file that isn't.`);
-      // A big blob streams to the store, which checks the bytes against the hash: a wrong one stores nothing.
-      if (yield* Effect.promise(() => blobs.head(given))) void request.body?.cancel().catch(() => {});
-      else {
-        const why = (e: unknown) =>
-          new UploadRefused({
-            status: 400,
-            error: `${path} wasn't stored: ${e instanceof Error ? e.message : String(e)}. Check its x-erga-sha256 and Content-Length.`,
-          });
-        yield* Effect.tryPromise({ try: () => blobs.put(given, request.body ?? new Uint8Array(), size), catch: why });
-      }
-      const ref: BlobRef = { hash: given, size, at: Date.now() };
-      self.publisher = by;
-      yield* opened.room.putBlob(path, ref).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            self.publisher = null;
-          })
-        )
-      );
-      return { ok: true, path, kind: "file", size, hash: ref.hash, replaced: check.replaced };
-    });
-  }
-
-  /**
-   * Whether a file of `size` bytes may be added at `path`: not over a
-   * folder, not inside a file, and within the limits an admin sets (one
-   * file, and the project with it); whether it replaces a file there.
-   */
-  private async mayAdd(opened: Opened, path: string, size: number): Promise<{ ok: true; replaced: boolean } | { ok: false; status: number; error: string }> {
-    const maxMb = (await this.directory.config.get("max_file_mb")) as number;
-    if (size > maxMb * MB) return { ok: false, status: 413, error: `${path} is ${megabytes(size)}: a file can have at most ${maxMb} MB here (an admin sets it: max_file_mb).` };
-    const room = opened.room;
-    const at = room.exists(path);
-    if (at == "folder") return { ok: false, status: 409, error: `There's a folder at ${path}: a file can't take its place.` };
-    const inFile = parentsOf(path).find((d) => room.exists(d) == "file");
-    if (inFile) return { ok: false, status: 409, error: `${inFile} is a file, so nothing can go inside it.` };
-    const notPage = at ? null : pageRefusal((await this.readInfo())?.kind ?? "project", path, (await this.readInfo())?.index ?? "index.html");
-    if (notPage) return { ok: false, status: 409, error: notPage };
-    const maxGb = (await this.directory.config.get("max_project_gb")) as number;
-    const used = (await this.bytesUsed(opened)) - (at == "file" ? await this.sizeOf(opened, path) : 0);
-    if (used + size > maxGb * GB) return { ok: false, status: 413, error: `The files here have ${megabytes(used)} together: with ${path} (${megabytes(size)}) they'd pass the ${maxGb} GB a project can have (an admin sets it: max_project_gb).` };
-    return { ok: true, replaced: at == "file" };
-  }
-
-  /**
-   * A file's bytes, arriving whole (an upload, an agent's write of bytes), as
-   * `by`: its kind decided now (D5), text merged into the room as a publish
-   * is, anything else a blob.
-   */
-  private async addBytes(opened: Opened, path: string, bytes: Uint8Array, by: string): Promise<{ ok: true; kind: "text" | "file"; hash?: string } | { ok: false; status: number; error: string }> {
-    const info = (await this.readInfo())!;
-    const blobs = info.disk ? null : this.deps.blobs ?? null;
-    let text: string | null = null;
-    if (isTextPath(path) && bytes.length <= TEXT_MAX) {
-      try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes); } catch { /* not UTF-8: a blob */ }
-    }
-    if (text != null || !blobs) {
-      const r = await Effect.runPromise(this.publish({ [path]: text ?? bytes }, [], by));
-      if (r.refused.length) return { ok: false, status: 409, error: `Couldn't add ${path}: ${r.refused[0].why}.` };
-      return { ok: true, kind: text != null ? "text" : "file" };
-    }
-    if (path == info.index) return { ok: false, status: 409, error: `${path} is the document's page, which is text: it can't be replaced by a file that isn't.` };
-    const ref = await Effect.runPromise(storeBlob(blobs, bytes));
-    this.publisher = by;
-    try {
-      await Effect.runPromise(opened.room.putBlob(path, ref));
-    } finally {
-      this.publisher = null;
-    }
-    return { ok: true, kind: "file", hash: ref.hash };
-  }
-
-  /** An agent's write of bytes (document/host.ts, putFile): as an upload, within its limits; throws why not. */
-  private async putFile(path: string, bytes: Uint8Array, by: string): Promise<{ kind: "text" | "file"; replaced: boolean }> {
-    return Effect.runPromise(
-      this.hold(
-        io(async () => {
-          const opened = await this.room();
-          if (!opened) {
-            this.open = null;
-            throw new Error("There's no such document.");
-          }
-          const clean = cleanRel(path);
-          if (!clean) throw new Error(`${path} isn't a path a file can have here (no "..", and no part that starts with a dot).`);
-          const check = await this.mayAdd(opened, clean, bytes.length);
-          if (!check.ok) throw new Error(check.error);
-          const r = await this.addBytes(opened, clean, bytes, by);
-          if (!r.ok) throw new Error(r.error);
-          return { kind: r.kind, replaced: check.replaced };
-        })
-      )
-    );
-  }
-
-  /** How many bytes the project's files have together: each text as it is, each blob as its ref says (one of storage's lists). */
-  private async bytesUsed(opened: Opened): Promise<number> {
-    const encoder = new TextEncoder();
-    let n = 0;
-    for (const t of texts(opened.room.doc).values()) n += encoder.encode(t.toString()).length;
-    for (const ref of (await this.storage.list<BlobRef>({ prefix: REF })).values()) if (isBlobRef(ref)) n += ref.size;
-    return n;
-  }
-
-  /** One file's size now (0 if it has none). */
-  private async sizeOf(opened: Opened, path: string): Promise<number> {
-    const text = opened.room.text(path);
-    if (text != null) return new TextEncoder().encode(text).length;
-    const ref = opened.files.ref ? await Effect.runPromise(Effect.orElseSucceed(opened.files.ref(path), () => null)) : null;
-    return ref?.size ?? (await this.storage.get<Uint8Array>(FILE + path))?.length ?? 0;
-  }
-
-  /** Opens the room on this document's storage, for as long as the document lives. */
+  /** Opens the room on this document's storage (open.ts), for as long as the document lives. */
   private async load(): Promise<Opened | null> {
     // Closed for being idle a moment ago: its last writes land first.
     await this.closing;
     const info = await this.readInfo();
     if (!info) return null;
-    // A document on disk has its files there, and the rest of its storage here.
-    const storage = info.disk && this.deps.disk ? this.deps.disk.storage(info.disk.only ? info.index : null) : this.storage;
-    // Its files that aren't text are blobs (none on disk: it keeps its own files there), and which those are, the file
-    // store and the room's writes share.
-    const blobs = info.disk ? undefined : this.deps.blobs;
-    const refs = new RefIndex(storage), times = new TimeIndex(storage);
-    const files = fileStoreOf(storage, { touch: () => this.touch() }, { blobs, refs, times });
-    // Its history, with its files written in the same transaction (and its record, as touch notes the edit).
-    // On disk the files change while it's closed, so it reads them all as it opens.
-    const state = stateStoreOf(storage, { reconcile: !!info.disk, edited: () => this.touch(), blobs, refs, times });
-
-    // The room's scope lasts until the document closes (idle, deleted, replaced): closing it writes what's left.
-    const scope = Effect.runSync(Scope.make());
-    const room = await Effect.runPromise(Room.make({ log: this.deps.log, writeDelay: this.deps.timing.writeDelay, fileDelay: this.deps.timing.fileDelay }).pipe(
-      Effect.provideService(FileStore, files),
-      Effect.provideService(StateStore, state),
-      Scope.provide(scope),
-    )).catch(async (e) => { await Effect.runPromise(Scope.close(scope, Exit.void)); throw e; });
-    const host = makeHost({
-      room,
-      files,
-      docId: info.id,
-      agents: this.deps.agents,
-      // The render's token and pages origin name the owner the directory has: the host's info.owner can be an old one.
-      ...(this.deps.render
-        ? { render: async (job: RenderJob) => this.deps.render!({ ...job, owner: (await this.access.owner()) ?? info.owner, id: info.id }) }
-        : {}),
-      doc: { name: info.index, path: info.index, dir: info.disk?.path ?? info.owner },
-      only: info.disk?.only ? info.index : undefined,
-      personOf: (req) => personOf(new Headers(req.headers as Record<string, string>)),
-      // The app sets x-erga-agent only on a request whose agent token it checked.
-      // With x-erga-via, how the person acts through it: "a shared agent (label)".
-      agentOf: (req) => (req.headers["x-erga-agent"] ? { ...personOf(new Headers(req.headers as Record<string, string>)), via: viaOf(req.headers["x-erga-via"]) } : null),
-      // Their agent edits only if they may (and only while they may).
-      canEdit: (person) => this.editors.get(person.id) ?? false,
-      mayPublish: (req) => req.headers["x-erga-access"] == "edit",
-      avatarOf: this.deps.avatarOf,
-      // Its title and address (the app decided who may rename it: rename_document).
-      naming: () => naming,
-      // An agent's turn is one version, and where its next diff_versions starts from ("last_turn").
-      turnEnded: () => this.cutSoon("agent turn").then(async (v) => (v ?? (await Effect.runPromise(this.versions.latest)))?.id ?? null),
-      versions: {
-        state: (opts) => Effect.runPromise(this.versionsState(opts)).then((s) => s!),
-        version: (ref) => Effect.runPromise(this.version(ref)),
-        files: async (ref) => {
-          const n = versionNumber(ref);
-          const v = n != null && (await this.ready()) ? await Effect.runPromise(this.versions.get(n)) : null;
-          return v ? Effect.runPromise(this.versions.files(v)) : null;
-        },
-        current: async () => (await this.ready())?.opened.current() ?? new Map(),
-      },
-      // A new page in its file tree starts as a new document does.
-      newPage: this.deps.pageTemplate,
-      blobs,
-      // An agent's write of bytes: as an upload is.
-      putFile: (path, bytes, by) => this.putFile(path, bytes, by),
+    const opened = await openRoom({
+      deps: this.deps,
+      info,
+      history: this.history,
+      owner: () => this.access.owner(),
+      canEdit: (id) => this.editors.get(id) ?? false,
+      touch: () => this.touch(),
+      readInfo: () => this.readInfo(),
+      rememberName: (name) => this.rememberName(name),
+      publisher: () => this.uploads.publisher,
+      putFile: (path, bytes, by) => this.uploads.putFile(path, bytes, by),
       kind: () => this.info?.kind ?? "project",
       setKind: (kind) => this.setKind(kind),
+      edited: (author) => {
+        this.views.changed();
+        this.history.noteEdit(author);
+      },
     });
-    // Every edit to the files, and who made it: a version is cut once a burst of them ends (noteEdit).
-    room.doc.on("afterTransaction", (tr: Y.Transaction) => {
-      if (!touchesFiles(room.doc, tr)) return;
-      this.views.changed();
-      const a = authorOf(room.doc, tr);
-      this.noteEdit(a ? (a.kind == "disk" ? (info.disk ? "on disk" : this.publisher ?? "files published") : editorOf(a)) : null);
-    });
-    // Its name from its record once the directory has said it; a rename goes to the directory, and what it answers is kept.
-    const named = namingFor(this.directory, info.id, () => titleOf(room.text(info.index) ?? ""));
-    const remember = (name: DocName) => Effect.promise(() => this.rememberName(name));
-    const naming: Naming = {
-      get: () =>
-        Effect.flatMap(
-          Effect.promise(() => this.readInfo()),
-          (i) => (i?.name ? Effect.succeed(i.name) : Effect.flatMap(named.get(), remember))
-        ),
-      set: (patch) => Effect.flatMap(named.set(patch), remember),
-    };
-
-    const opened: Opened = {
-      broadcast: host.broadcast,
-      // Every file as it is now: text from the room (the latest keystroke), the rest from storage.
-      current: async () => {
-        const out = new Map<string, Uint8Array>();
-        const encoder = new TextEncoder();
-        for (const path of new Set([...texts(room.doc).keys(), ...assets(room.doc).keys()])) {
-          const text = room.text(path);
-          const bytes = text != null ? encoder.encode(text) : await Effect.runPromise(Effect.orElseSucceed(files.read(path), () => null));
-          if (bytes) out.set(path, bytes);
-        }
-        return out;
-      },
-      // The same, with a blob as its ref (no bytes read): what a version, a copy and a restore take.
-      entries: async () => {
-        const out = new Map<string, Uint8Array | BlobRef>();
-        const encoder = new TextEncoder();
-        for (const path of new Set([...texts(room.doc).keys(), ...assets(room.doc).keys()])) {
-          const text = room.text(path);
-          if (text != null) { out.set(path, encoder.encode(text)); continue; }
-          const ref = files.ref ? await Effect.runPromise(Effect.orElseSucceed(files.ref(path), () => null)) : null;
-          const data = ref ?? await Effect.runPromise(Effect.orElseSucceed(files.read(path), () => null));
-          if (data) out.set(path, data);
-        }
-        return out;
-      },
-      files,
-      handler: host.handler,
-      calls: host.calls,
-      renamed: host.renamed,
-      notify: host.notify,
-      addTab: host.addTab,
-      hello: host.hello,
-      room,
-      // Back in touch with disk: every file there, and every one the room holds, is looked at again.
-      catchUp: async () => {
-        const paths = new Set([...await Effect.runPromise(files.list), ...texts(room.doc).keys(), ...assets(room.doc).keys()]);
-        for (const path of paths) await Effect.runPromise(room.fileChanged(path)).catch(() => {});
-        await Effect.runPromise(room.syncFolders).catch(() => {});
-      },
-      close: () => Effect.runPromise(Scope.close(scope, Exit.void)).then(host.dispose),
-    };
     this.opened = opened;
     // A version of what it holds, if it stopped with edits no version has (or there's none yet).
-    if (info.uncut || (await Effect.runPromise(this.versions.head)) == 0) void this.cutSoon("open");
+    if (info.uncut || (await Effect.runPromise(this.history.versions.head)) == 0) void this.history.cutSoon("open");
     // Tabs connected while it was closed join it now.
     this.deps.tabs.attach?.(opened);
     this.activity();
@@ -1580,58 +942,4 @@ export class Document {
     if (info.disk) this.syncDirectory().catch((e) => this.deps.log(`couldn't update ${info.id}'s row: ${e}`));
     return opened;
   }
-}
-
-/** The document once its room is open. */
-export interface Opened {
-  /** Tells every open tab, whoever's. */
-  broadcast: (msg: unknown) => void;
-  /** Every file the document holds as it is now. */
-  current: () => Promise<Map<string, Uint8Array>>;
-  /** The same, with each blob as its ref. */
-  entries: () => Promise<Map<string, Uint8Array | BlobRef>>;
-  /** Its files' store (refs, blobs). */
-  files: FileStore["Service"];
-  handler: (request: Request) => Promise<Response>;
-  /** What the operations call (host.ts). */
-  calls: EditorCalls;
-  /** A tab joins its person's event channel (`watch`: a watcher, hearing only what every tab does); returns the leave function. */
-  addTab: (user: string, send: (msg: unknown) => void, watch?: boolean) => () => void;
-  /** What a tab hears first ({ type: "hello" }): the document's details as the person sees them, and its tree. */
-  hello: (person: Person, canEdit: boolean) => Promise<Hello>;
-  room: Room;
-  catchUp: () => Promise<void>;
-  /** Tells every open tab the document's new title and address. */
-  renamed: (name: DocName) => void;
-  /** A message for every open tab. */
-  notify: (msg: unknown) => void;
-  close: () => Promise<void>;
-}
-
-/** Whether a transaction changed a file: a text's content, or the list of files or other files (images). */
-function touchesFiles(doc: Y.Doc, tr: Y.Transaction): boolean {
-  const fileMap = texts(doc) as Y.AbstractType<any>, assetMap = assets(doc) as Y.AbstractType<any>, folderMap = folders(doc) as Y.AbstractType<any>;
-  for (const type of tr.changed.keys()) {
-    if (type === fileMap || type === assetMap || type === folderMap) return true;
-    if (type._item?.parent === fileMap) return true;
-  }
-  return false;
-}
-
-/** How an outside agent's person acts through it, as the app said (x-erga-via, JSON; shared/attribution.ts). */
-function viaOf(header: string | undefined): string {
-  try { const v = JSON.parse(header ?? ""); if (typeof v == "string" && v) return v; } catch { /* none */ }
-  return VIA.token("");
-}
-
-/** Who a request is from, as the app said (x-erga-person: JSON {id, name, avatar?}). */
-export function personOf(headers: Headers): Person {
-  try {
-    const p = JSON.parse(headers.get("x-erga-person") ?? "") as Person;
-    if (typeof p.id == "string" && typeof p.name == "string")
-      return { id: p.id, name: p.name, ...(typeof p.avatar == "string" ? { avatar: p.avatar } : {}) };
-  } catch {
-    /* none */
-  }
-  return { id: "anon", name: "Someone" };
 }

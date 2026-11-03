@@ -7,13 +7,9 @@ import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";
 import { PDFDocument } from "pdf-lib";
 import { sha256Hex } from "../shared/bytes";
-import { withBlobs, GONE, type ChatSave, type ChatStore, type StoredChat } from "../agents/checkpoint";
-import { MemoryBlobs } from "../document/blobs";
 import { bytesOf, pdf, setup } from "./helpers/files-fixture";
 
 type Content = { type: string; text?: string; data?: string; mimeType?: string };
-/** A tool message as the store keeps it. */
-type Kept = { content: { modelOutput: { data?: string; text?: string }[] }[] };
 
 /** A document, its files, and its tools as an agent token's person calls them. */
 async function withTools() {
@@ -132,39 +128,4 @@ test("someone who may only view has the tools that change nothing: read, find an
   const w = await tool("write", { path: "x.md", content: "x" }, "bob");
   expect(w.ok).toBe(false);
   expect(w.error).toContain("can only view this document");
-});
-
-test("a conversation keeps big pictures and PDFs in the blob store, by hash", async () => {
-  const blobs = new MemoryBlobs();
-  let kept: StoredChat | null = null;
-  const store: ChatStore = { load: async () => kept, save: async (c: ChatSave) => { kept = { messages: c.messages.items, log: [], state: c.state }; }, clear: async () => { kept = null; } };
-  const big = Buffer.from(bytesOf(300_000)).toString("base64");
-  const msg = {
-    role: "tool",
-    content: [
-      {
-        type: "tool-result",
-        id: "t",
-        name: "read",
-        isFailure: false,
-        result: "x",
-        modelOutput: [
-          { type: "text", text: "x" },
-          { type: "file", mediaType: "application/pdf", data: big },
-        ],
-      },
-    ],
-  };
-  const state = { running: false, queued: [], calls: {}, model: null, stable: 0, meta: {}, at: 1 };
-  const wrapped = withBlobs(store, blobs);
-  await wrapped.save({ messages: { from: 0, items: [msg as never] }, log: { from: 0, items: [] }, state });
-  // Stored by hash, not inline.
-  const stored = (kept!.messages[0] as unknown as Kept).content[0].modelOutput[1].data!;
-  expect(stored).toStartWith("erga-blob:");
-  expect(blobs.data.size).toBe(1);
-  // Loaded whole again.
-  expect(((await wrapped.load())!.messages[0] as unknown as Kept).content[0].modelOutput[1].data).toBe(big);
-  // Gone from the store: the model hears so.
-  blobs.data.clear();
-  expect(((await wrapped.load())!.messages[0] as unknown as Kept).content[0].modelOutput[1].text).toBe(GONE);
 });

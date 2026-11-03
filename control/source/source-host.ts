@@ -191,7 +191,9 @@ async deleteFeature(
     try { await this.at(origin).abandonUpdate(); return { ok: true }; } catch (e) { return SourceHost.failed(e, "Dropping the merge"); }
   }
   /** Every branch's head (the deploys' object asks, for a target never deployed from here). */
-  async heads(origin: string): Promise<Record<string, string>> { return (await this.at(origin).stagingLog()).heads; }
+  async heads(origin: string): Promise<Record<string, string>> {
+    return this.at(origin).branchHeads();
+  }
   /** Seeds a fork's repository with this one's history up to `commit` (erga.dev's control Worker, for an install). */
   async seedFork(origin: string, fork: { url: string; headers: Record<string, string> }, commit: string): Promise<{ ok: true } | { error: string; status: number }> {
     try { await this.at(origin).seedFork(fork, commit); return { ok: true }; } catch (e) { return SourceHost.failed(e, "Seeding the fork"); }

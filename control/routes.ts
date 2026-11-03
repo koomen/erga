@@ -70,11 +70,10 @@ import {
 import { mockConsentPage } from "./install/page.ts";
 import { Cloudflare, type Fetch } from "./deploys/cloudflare-api.ts";
 import { releasesRoutes, type ReleaseStore } from "./deploys/releases.ts";
-import { CONTROL, TARGETS } from "../deploy/targets.ts";
 import { DEPLOY_OAUTH_COOKIE } from "./install/install.ts";
 import { deploysEvents, isEventsPath, type DeploysObject } from "./deploys/api.ts";
 import { controlTools } from "./operations.ts";
-import { b64u, cookieOf, githubCallback, githubConnectRoutes, githubWebhook, googleRelay } from "./github-routes.ts";
+import { b64u, cookieOf, githubCallback, githubConnectRoutes, githubWebhook, googleRelay, tellOpener } from "./github-routes.ts";
 import {
   actingAdmin,
   cookies,
@@ -86,7 +85,7 @@ import type { GithubApp } from "./source/index.ts";
 import { relayOrigin, relayState } from "../shared/relay.ts";
 import { adminSidebar, adminStyleTag, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/index.ts";
 import { accountHtml, accountOf, appPage, pageBars, webPage as page } from "../server/pages/index.ts";
-import { esc, jsonInScript } from "../shared/html.ts";
+import { esc } from "../shared/html.ts";
 import { randomToken } from "../shared/bytes.ts";
 import type { Platform } from "../server/platform.ts";
 import { respond } from "../server/http.ts";
@@ -474,17 +473,16 @@ export function consentWarnings(o: Outcome): string[] {
  * postMessage to each of Erga's own origins, and a BroadcastChannel here) and closes. Nothing secret is in it.
  */
 function consentPopupPage(o: Outcome, c: Control, url: URL): Response {
-  const hosts = c.hosts ?? { production: TARGETS.production.host, staging: TARGETS.staging.host, control: CONTROL.host };
-  const origins = [...new Set([url.origin, c.app, ...Object.values(hosts).map((h) => `https://${h}`)])];
   const warnings = consentWarnings(o);
-  const message = jsonInScript({ type: CONSENT_MESSAGE, ok: o.ok, ...(o.ok ? {} : { error: o.error }), warnings });
-  const text = o.ok ? `Cloudflare is connected.${warnings.length ? ` ${warnings.join(" ")}` : ""}` : `Cloudflare isn't connected: ${o.error}`;
-  return page(o.ok ? "Cloudflare connected" : "Cloudflare not connected", `${esc(text)} You can close this window.<script>
-const m = ${message};
-try { new BroadcastChannel(${JSON.stringify(CONSENT_MESSAGE)}).postMessage(m); } catch {}
-if (window.opener) for (const o of ${JSON.stringify(origins)}) try { window.opener.postMessage(m, o); } catch {}
-${o.ok && !warnings.length ? "setTimeout(() => window.close(), 300);" : ""}
-</script>`, o.ok ? 200 : 400);
+  const message = { type: CONSENT_MESSAGE, ok: o.ok, ...(o.ok ? {} : { error: o.error }), warnings };
+  const text = o.ok
+    ? `Cloudflare is connected.${warnings.length ? ` ${warnings.join(" ")}` : ""}`
+    : `Cloudflare isn't connected: ${o.error}`;
+  return page(
+    o.ok ? "Cloudflare connected" : "Cloudflare not connected",
+    `${esc(text)} You can close this window.${tellOpener(c, url, message, o.ok && !warnings.length)}`,
+    o.ok ? 200 : 400
+  );
 }
 
 const when = (ms: number | null) => (ms ? new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC" : "");

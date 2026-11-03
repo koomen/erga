@@ -5,7 +5,6 @@
 
 export {
   appPage,
-  type Crumb,
   crumbsFont,
   fromElsewhere,
   homeGoesToDocs,
@@ -21,10 +20,9 @@ export { readerPage, readerVersion } from "./reader.ts";
 export { startPage } from "./start.ts";
 export { hasAgent } from "./agent.ts";
 export { editButton, RESTORE_KEY, VIEW_STYLE, viewerPage } from "./viewer.ts";
-export { AGENT_ICON, AGENT_SHARE_BUTTON, barsHtml, BARS_STYLE, confirmAction, page, pageBars, webPage } from "./bars.ts";
+export { AGENT_ICON, barsHtml, confirmAction, page, pageBars, webPage } from "./bars.ts";
 export {
   type Account,
-  ACCOUNT_SLOT,
   ACCOUNT_STYLE,
   accountHtml,
   accountMarkup,
@@ -32,7 +30,7 @@ export {
   OWN_ACCOUNT,
   withAccount,
 } from "./account-menu.ts";
-export { NEW_DOC_STYLE, newDocButton, newDocMenu, type Template, templateById, TEMPLATES } from "./templates.ts";
+export { NEW_DOC_STYLE, newDocMenu, type Template, templateById, TEMPLATES } from "./templates.ts";
 export { inlineCall, inlineScript, inlineStyle } from "./inline.ts";
 export {
   asset,

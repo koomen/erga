@@ -53,6 +53,7 @@ import { changesBetween } from "../../../document/merge";
 import { decodeStart, PING, PONG } from "../../../shared/room-socket";
 import { base64, fromBase64 } from "../../../shared/bytes";
 import { sleep } from "../../../shared/time";
+import type { Peer } from "./types";
 
 /** Someone in the room, from awareness. */
 export interface Presence {
@@ -482,6 +483,30 @@ export class Collab {
       if (client != this.doc.clientID && s.user) out.push({ client, ...(s as Omit<Presence, "client">) });
     }
     return out;
+  }
+
+  /**
+   * Everyone else's caret here (as `shown`), with their name, to draw. An agent's shows while it works, so its edits
+   * read like a person's typing; once it's idle, a caret left where it last edited would only linger and distract.
+   */
+  peers(): Peer[] {
+    const peers: Peer[] = [];
+    for (const p of this.shown()) {
+      const agent = p.user.kind == "agent";
+      if (agent && !p.busy) continue;
+      const at = this.positions(p);
+      if (at)
+        peers.push({
+          key: p.client,
+          name: p.user.name,
+          color: p.user.color,
+          anchor: at.anchor,
+          head: at.head,
+          agent,
+          activity: agent ? (p.activity ?? null) : null,
+        });
+    }
+    return peers;
   }
 
   /** A presence's caret and selection as positions in the document, if it's in it. */

@@ -3,10 +3,8 @@
 // and on the control Worker (control/routes.ts), and the admin agent through its tool list. The repository's and the
 // pipeline's objects are stand-ins that record what they were asked.
 
-import { Database } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { Directory, type Param, type Sql } from "../server/directory/index.ts";
+import { Directory } from "../server/directory/index.ts";
 import type { Platform, Session } from "../server/platform";
 import { sessionOf } from "../server/identity/index.ts";
 import { Tokens } from "../server/identity/tokens";
@@ -16,6 +14,7 @@ import { agentTools, toolsFor, opsOf } from "../agents/tools";
 import { CONTROL_OPERATIONS } from "../control/operations";
 import { controlRoutes, type Control } from "../control/routes";
 import { VIA } from "../shared/attribution";
+import { memory } from "./helpers/memory-sql";
 
 const ORIGIN = "https://erga.test";
 const OPS = "https://ops.erga.test";
@@ -79,24 +78,7 @@ const source = {
 
 /** The app's server, with production's directory, its admin ada (and bo, who isn't one), and the control Worker's objects over the binding. */
 async function app() {
-  const db = new Database(":memory:", { strict: true });
-  const migrations = new URL("../server/migrations/", import.meta.url).pathname;
-  for (const name of readdirSync(migrations)
-    .filter((n) => n.endsWith(".sql"))
-    .sort())
-    db.exec(readFileSync(migrations + name, "utf8"));
-  const bind = (params: Param[]) => params as (string | number | null)[];
-  const sql: Sql = {
-    all: async <T>(q: string, ...params: Param[]) => db.query(q).all(...bind(params)) as T[],
-    run: async (q, ...params) => {
-      db.query(q).run(...bind(params));
-    },
-    batch: async (statements) => {
-      db.transaction(() => {
-        for (const [q, ...params] of statements) db.query(q).run(...bind(params));
-      })();
-    },
-  };
+  const sql = memory();
   const dir = new Directory(sql, { admins: ["ada"] });
   await dir.users.add({ login: "ada", admin: true }, "bo");
   const tokens = new Tokens(sql, "secret-".repeat(6), dir);
