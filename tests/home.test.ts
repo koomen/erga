@@ -4,6 +4,7 @@
 
 import { expect, test } from "bun:test";
 import { homeHeader, renderHome } from "../server/home/index.ts";
+import { pageInter } from "../server/home/render.ts";
 
 const files = {
   "index.html": "",
@@ -79,4 +80,10 @@ test("the controls: in a declarative shadow root, Edit only when given", () => {
   expect(h).toContain('href="/ada/home?edit"');
   expect(h).toContain('data-erga-account="out"');
   expect(homeHeader({ clone: "/c", edit: null, account: null, here: "/" })).not.toContain("erga-edit-button");
+});
+
+test("a page that declares Inter itself", () => {
+  expect(pageInter(`<style>@font-face { font-family: "Inter"; src: url(fonts/inter.woff2) }</style>`)).toBe(true);
+  expect(pageInter(`<style>@font-face{font-family:Inter;src:url(a.woff2)}</style>`)).toBe(true);
+  expect(pageInter(`<style>@font-face { font-family: "Inter Display"; } body { font-family: "Inter" }</style>`)).toBe(false);
 });

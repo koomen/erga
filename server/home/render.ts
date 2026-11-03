@@ -177,7 +177,14 @@ export async function renderHome(opts: {
  * the page's CSS could give it. The script then moves the host out of the page's <body> (so nothing the page does to its
  * body moves it) and runs the bars, the account menu and the tooltips.
  */
-export function homeHeader(o: { clone: string; edit: string | null; account: Account | null; here: string; doc?: string }): string {
+export function homeHeader(o: {
+  clone: string;
+  edit: string | null;
+  account: Account | null;
+  here: string;
+  doc?: string;
+  font?: boolean;
+}): string {
   const session = o.account?.session ?? null;
   const bars = barsHtml({
     session,
@@ -187,9 +194,13 @@ export function homeHeader(o: { clone: string; edit: string | null; account: Acc
     edit: o.edit ? editButton(o.edit, false) : "",
     corner: accountMarkup(o.account, o.here),
   });
-  // The font goes outside the shadow root: a font declared inside one isn't used.
-  return `${crumbsFont(session, true)}<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${inlineStyle("home-controls")}</style><div class="band"></div>${bars}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}<style>${SHADOW_BARS}</style></template></erga-controls>${inlineScript("home-controls")}`;
+  // The font goes outside the shadow root: a font declared inside one isn't used. Not when the page has its own Inter
+  // (font: false, pageInter): the bars use the page's, and the browser loads one copy, not two.
+  return `${o.font == false ? "" : crumbsFont(session, true)}<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${inlineStyle("home-controls")}</style><div class="band"></div>${bars}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}<style>${SHADOW_BARS}</style></template></erga-controls>${inlineScript("home-controls")}`;
 }
+
+/** Whether a page declares the typeface Inter itself (an @font-face rule for it), which the bars can then use. */
+export const pageInter = (html: string) => /@font-face\s*\{[^}]*font-family:\s*(["']?)Inter\1\s*[;}]/i.test(html);
 
 /**
  * The bars' look (client/inline/bars.css) inside the controls' shadow root, where the page's <html> and <body> can't be

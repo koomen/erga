@@ -12,7 +12,7 @@ import { roleMay } from "../directory/index.ts";
 import { accountOf, link, OWN_ACCOUNT, withEdit } from "../pages/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import type { LivePage } from "./deploys.ts";
-import { HOME_FILES, homeHeader } from "./render.ts";
+import { HOME_FILES, homeHeader, pageInter } from "./render.ts";
 import { actingAdmin, mayDeploy } from "../identity/index.ts";
 
 /** The snapshot as this isolate last had it, and when it last asked whether it's still current. */
@@ -107,6 +107,7 @@ async function homePage(request: Request, platform: Platform): Promise<Response 
       account: accountOf(session, admin, await mayDeploy(dir, session)),
       here: url.pathname + url.search,
       doc: page.docId,
+      font: !pageInter(page.before),
     });
   })();
   const headers = {
