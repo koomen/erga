@@ -18,11 +18,16 @@
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
+//   GET /api/repo, /api/repo/tree/<ref>/<path>
+//                              Erga's repository, read-only JSON for any page (control/source/public-api.ts): the
+//                              setting public_source says who may read it
 //   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent; /llms.txt points agents to /mcp
 //   /.well-known/oauth-..., /oauth/...
 //                              MCP's sign-in: an agent's app gets a token through its person's browser (server/identity/oauth.ts)
 //   /tokens/...                approving an agent's request for a token; making one and the test token (the Settings dialog)
 //   /_home-files/<gen>/<path>  the homepage's files, as deployed
+//   GET /source, /source/<branch>/<path>
+//                              Erga's source, for people: the homepage's page source.html, which reads the repository API
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP, and /git, /git/tree/... (its public page): the control Worker's (control/routes.ts), as are /admin/ops
 //                              and /api/events; `outside` answers them (a redirect to the control Worker, or itself in local development)
 //   /admin, /admin/changes, /admin/users, /admin/auth, /admin/api-keys   the server's settings, their change log, its
@@ -49,8 +54,9 @@ import { adminGate, isAdminPath } from "./admin/index.ts";
 import { agentApi, isAgentPath } from "../agents/person/sessions.ts";
 import { isPageLlmPath, pageLlmApi } from "../agents/page-llm.ts";
 import { serverApi } from "./api.ts";
+import { isRepoApiPath, repoApi } from "../control/source/index.ts";
 import { adoptLanding, documentRoutes, isPagesSite } from "./documents/index.ts";
-import { serveHome, serveHomeFile, serveHomeRoot } from "./home/index.ts";
+import { homePageOf, serveHome, serveHomeFile, serveHomePage, serveHomeRoot } from "./home/index.ts";
 import {
   adminsOnlyGate,
   chooseSignIn,
@@ -180,6 +186,11 @@ const route = (url: URL, outside: Outside): Route =>
       if (home) return home;
     }
     if (path.startsWith("/_home-files/")) return yield* serveHomeFile;
+    // The homepage's pages with an address of their own (/source, and every path under it: home/serve.ts HOME_PAGES).
+    if (read && homePageOf(path)) {
+      const page = yield* serveHomePage;
+      if (page) return page;
+    }
     // The homepage's own files at the root (its other pages, files its script asks for by a relative URL): a file's name,
     // at the top or one folder down, and not one of the app's addresses (which never have a dot there).
     if (read && isHomeFilePath(path)) {
@@ -194,6 +205,8 @@ const route = (url: URL, outside: Outside): Route =>
     if (path == "/api/release" && read) return yield* releaseApi;
     // Live pages: an open page's socket, and the rows it asks for when they change.
     if (path == "/api/news" || path.startsWith("/api/news/")) return yield* newsRoutes;
+    // Erga's repository, read-only, for any page (the homepage's repository page).
+    if (isRepoApiPath(path)) return yield* repoApi;
     // The server's one API (the pages' and every agent's), its guide, and people's agent tokens.
     if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return yield* serverApi;
     if (path == "/tokens" || path.startsWith("/tokens/")) return yield* tokensRoutes;

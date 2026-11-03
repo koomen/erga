@@ -114,6 +114,30 @@ export const AGENT_ACTIONS: AgentAction[] = [
     action: "Read a folder or a file of Erga's source (the public page, for anyone)",
     tool: "source",
   },
+  {
+    route: "GET /source",
+    domain: "admin",
+    action: "Read Erga's source: its files, README and recent commits (the homepage's source page, for anyone)",
+    tool: "source",
+  },
+  {
+    route: "GET /source/<branch>/<path>",
+    domain: "admin",
+    action: "Read a folder or a file of Erga's source (the homepage's source page, for anyone)",
+    tool: "source",
+  },
+  {
+    route: "GET /api/repo",
+    domain: "admin",
+    action: "Read Erga's repository: its branches, recent commits and tags (the repository API, for any page)",
+    tool: "source",
+  },
+  {
+    route: "GET /api/repo/tree/<ref>/<path>",
+    domain: "admin",
+    action: "Read a folder or a file of Erga's source (the repository API, for any page)",
+    tool: "source",
+  },
   // GitHub (control/source/github.ts; control/github-routes.ts): Erga's GitHub App, connected to one repository. Connect is a consent on
   // GitHub's authorize and install pages, in a popup; the agent reads the state, syncs, disconnects, and offers the button.
   {

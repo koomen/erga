@@ -37,3 +37,4 @@ export {
 export { NOT_SET_UP, sourceGit, type SourceObject, type SourceService } from "./routes.ts";
 export { adminSourcePage } from "./page.ts";
 export { isPublicSourcePath, publicSourcePage } from "./public.ts";
+export { isRepoApiPath, repoApi } from "./public-api.ts";

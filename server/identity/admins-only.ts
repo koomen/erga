@@ -35,6 +35,9 @@
 //                                   no Authorization header, which answers only the 401 that starts the sign-in. The
 //                                   person's own step, /oauth/authorize, is not exempt: it needs an admin, signed in
 //   GET /llms.txt                   a few fixed lines that point to /mcp (no data)
+//   GET /api/repo[/...]             Erga's repository, read-only (control/source/public-api.ts): the same source anyone
+//                                   may clone from production. It checks the setting public_source itself: off, it
+//                                   answers only an admin
 //   the API, MCP and documents' own routes with an admin's token of another scope (document, documents)
 //                                   an admin shares a document with an outside agent (the editor's Share card) and it
 //                                   must work here as on production: /mcp, /api/publish,
@@ -83,6 +86,7 @@ function exempt(request: Request, base: Platform, url: URL): boolean {
   const token = request.headers.has("authorization");
   if (path == "/mcp") return !token && method == "POST";
   if (path == "/llms.txt") return method == "GET" || method == "HEAD";
+  if (path == "/api/repo" || path.startsWith("/api/repo/")) return method == "GET" || method == "HEAD";
   return false;
 }
 
