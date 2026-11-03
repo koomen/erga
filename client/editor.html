@@ -34,6 +34,8 @@
     <div class="people" id="people" aria-label="Who's here"></div>
     <!-- The quick actions: in the bar on a wide window; on a phone they open out of your avatar, to its left (main.ts). -->
     <div class="quick" id="quick"><div class="quick-inner">
+    <!-- The page's zoom, while it isn't 100%: a click goes back to 100%, as ⌘0 does (main.ts, zoom). -->
+    <button type="button" class="icon-btn zoom-btn" id="btn-zoom" hidden></button>
     <!-- New document: the document's page has its picker and opens it. -->
     <button type="button" class="icon-btn erga-new-btn" id="btn-new" aria-label="New document" data-tip="New document" aria-haspopup="menu" aria-expanded="false" aria-controls="erga-new-menu">
       <svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.1538) translate(-12 -12)" stroke-width="1.3867"><path d="M12 5.5v13M5.5 12h13"/></g></svg>

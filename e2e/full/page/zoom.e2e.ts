@@ -78,3 +78,37 @@ test("⌘+, ⌘− and ctrl with the wheel zoom the page only; a click on the zo
   await expect.poll(async () => (await zoomed()).scale).toBeCloseTo(1, 3);
   expect((await zoomed()).height).toBeCloseTo(before.height, 0);
 });
+
+test("zoomed, the bar shows the level; ⌘0 or a click on it goes back to 100%; a zoom never reloads the page", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "page");
+  const page = tab.page;
+  /** The zoom action's text, or null where it is not in sight. */
+  const action = () =>
+    page.evaluate(() => {
+      const b = document.getElementById("btn-zoom");
+      return b?.checkVisibility() ? b.textContent!.trim() : null;
+    });
+  const scale = () => ed.frame<number>("window.ergaFrame?.zoom ?? 1");
+  // A mark in the page's window: a reload of the frame loses it.
+  await ed.frame("(window.__kept = true)");
+  await expect.poll(action).toBe(null);
+
+  // Two steps out, with the caret in the page: the bar shows 80%.
+  await ed.press("ControlOrMeta+Minus");
+  await ed.press("ControlOrMeta+Minus");
+  await expect.poll(scale).toBeCloseTo(0.8, 2);
+  await expect.poll(action).toBe("80%");
+
+  // ⌘0 (Ctrl+0 on Windows and Linux), in the page: back to 100%, and the action goes away.
+  await ed.press("ControlOrMeta+Digit0");
+  await expect.poll(scale).toBe(1);
+  await expect.poll(action).toBe(null);
+
+  // A step in, and a click on the action.
+  await ed.press("ControlOrMeta+Equal");
+  await expect.poll(action).toBe("110%");
+  await page.click("#btn-zoom");
+  await expect.poll(scale).toBe(1);
+  await expect.poll(action).toBe(null);
+  expect(await ed.frame("window.__kept === true"), "the page did not load again").toBe(true);
+});

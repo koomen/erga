@@ -379,10 +379,24 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // the wheel, here in the shell or on the page (the frame sends them: onKey, onZoom). Each document keeps its level
   // on this browser. Viewing, the browser zooms the window as it always does. A page that zooms itself (window.ergaZoom:
   // a canvas's camera, with no limits of ours) gets them instead, and is drawn at 100%.
+  // Zoomed, the bar shows the level (#btn-zoom); a click on it goes back to 100%, as ⌘0 (Ctrl+0) does.
   const ZOOM_KEY = `erga:zoom:v1:${shell.docId}`;
   let zoomLevel = clampZoom(Number(store.get(ZOOM_KEY) ?? 1));
-  const syncZoom = (on = editing()) => page.setZoom(on && !page.zoomsItself ? zoomLevel : 1);
+  const zoomBtn = $("btn-zoom");
+  zoomBtn.dataset.tip = `Back to 100% (${isMac ? "⌘0" : "Ctrl+0"})`;
+  function syncZoom(on = editing()) {
+    const level = on && !page.zoomsItself ? zoomLevel : 1,
+      pct = `${Math.round(level * 100)}%`;
+    page.setZoom(level);
+    zoomBtn.hidden = level == 1;
+    zoomBtn.textContent = pct;
+    zoomBtn.setAttribute("aria-label", `Zoom ${pct}: back to 100%`);
+  }
   syncZoom();
+  zoomBtn.addEventListener("click", () => {
+    setZoomLevel(1);
+    page.focus();
+  });
   function setZoomLevel(level: number) {
     zoomLevel = clampZoom(level);
     syncZoom();
