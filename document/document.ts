@@ -1473,7 +1473,10 @@ export class Document {
       files,
       docId: info.id,
       agents: this.deps.agents,
-      ...(this.deps.render ? { render: (job: RenderJob) => this.deps.render!({ ...job, owner: info.owner, id: info.id }) } : {}),
+      // The render's token and pages origin name the owner the directory has: the host's info.owner can be an old one.
+      ...(this.deps.render
+        ? { render: async (job: RenderJob) => this.deps.render!({ ...job, owner: (await this.access.owner()) ?? info.owner, id: info.id }) }
+        : {}),
       doc: { name: info.index, path: info.index, dir: info.disk?.path ?? info.owner },
       only: info.disk?.only ? info.index : undefined,
       personOf: (req) => personOf(new Headers(req.headers as Record<string, string>)),
