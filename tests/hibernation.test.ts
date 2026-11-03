@@ -10,9 +10,7 @@ import * as Effect from "effect/Effect";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import * as Y from "yjs";
-import * as encoding from "lib0/encoding";
-import * as decoding from "lib0/decoding";
-import * as sync from "y-protocols/sync";
+import { Encoder, Decoder, writeSyncStep1, writeUpdate, readSyncMessage } from "../shared/yjs-protocol";
 import { Document, type DocumentDeps } from "../document/document";
 import { MemoryStorage } from "../document/storage";
 import { Tabs, type Tab, type TabSocket } from "../document/tabs";
@@ -35,7 +33,12 @@ function memory(): Sql {
   };
 }
 
-const syncMessage = (write: (e: encoding.Encoder) => void) => { const e = encoding.createEncoder(); encoding.writeVarUint(e, 0); write(e); return encoding.toUint8Array(e); };
+const syncMessage = (write: (e: Encoder) => void) => {
+  const e = new Encoder();
+  e.writeUint(0);
+  write(e);
+  return e.toBytes();
+};
 
 /** A tab: its own replica of the doc, speaking the room's protocol over a pretend socket. */
 class FakeTab implements TabSocket {
@@ -43,19 +46,28 @@ class FakeTab implements TabSocket {
   closed: number | null = null;
   presence: Uint8Array[] = [];
   events: unknown[] = [];
-  constructor(private world: World, public tab: Tab) {
-    this.doc.on("update", (u: Uint8Array, origin: unknown) => { if (origin !== this) this.world.deliver(this, syncMessage((e) => sync.writeUpdate(e, u))); });
+  constructor(
+    private world: World,
+    public tab: Tab
+  ) {
+    this.doc.on("update", (u: Uint8Array, origin: unknown) => {
+      if (origin !== this)
+        this.world.deliver(
+          this,
+          syncMessage((e) => writeUpdate(e, u))
+        );
+    });
   }
   send(m: string | Uint8Array): void {
     if (typeof m == "string") { this.events.push(JSON.parse(m)); return; }
-    const d = decoding.createDecoder(m);
-    const type = decoding.readVarUint(d);
+    const d = new Decoder(m);
+    const type = d.readUint();
     if (type == 1) { this.presence.push(m); return; }
     if (type != 0) return;
-    const reply = encoding.createEncoder();
-    encoding.writeVarUint(reply, 0);
-    sync.readSyncMessage(d, reply, this.doc, this);
-    if (encoding.length(reply) > 1) this.world.deliver(this, encoding.toUint8Array(reply));
+    const reply = new Encoder();
+    reply.writeUint(0);
+    readSyncMessage(d, reply, this.doc, this);
+    if (reply.length > 1) this.world.deliver(this, reply.toBytes());
   }
   close(code?: number): void { this.closed = code ?? 1000; this.world.sockets.delete(this); }
   text(p = "index.html") { return files(this.doc).get(p)?.toString() ?? null; }
@@ -106,7 +118,10 @@ class World {
     const tab = new FakeTab(this, { id: crypto.randomUUID(), readOnly: false, epoch: null, person: { id: "ada", name: "Ada" }, events });
     this.sockets.add(tab);
     expect(this.tabs.join(tab, opened, tab.tab)).toBe(true);
-    this.deliver(tab, syncMessage((e) => sync.writeSyncStep1(e, tab.doc)));
+    this.deliver(
+      tab,
+      syncMessage((e) => writeSyncStep1(e, tab.doc))
+    );
     await this.settle();
     return tab;
   }
@@ -134,7 +149,12 @@ async function made(settings?: () => Promise<AgentSettings>) {
   return w;
 }
 
-const awareness = (bytes: number[]) => { const e = encoding.createEncoder(); encoding.writeVarUint(e, 1); encoding.writeVarUint8Array(e, new Uint8Array(bytes)); return encoding.toUint8Array(e); };
+const awareness = (bytes: number[]) => {
+  const e = new Encoder();
+  e.writeUint(1);
+  e.writeBytes(new Uint8Array(bytes));
+  return e.toBytes();
+};
 
 test("idle, the document closes and tabs stay; presence passes between them without opening it; an edit wakes it, in a new object too", async () => {
   const w = await made();

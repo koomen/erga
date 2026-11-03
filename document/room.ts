@@ -46,10 +46,19 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Y from "yjs";
-import * as encoding from "lib0/encoding";
-import * as decoding from "lib0/decoding";
-import * as sync from "y-protocols/sync";
-import * as awarenessProtocol from "y-protocols/awareness";
+import {
+  Encoder,
+  Decoder,
+  Awareness,
+  type AwarenessChange,
+  writeSyncStep1,
+  writeUpdate,
+  readSyncMessage,
+  SYNC_STEP1,
+  applyAwarenessUpdate,
+  removeAwarenessStates,
+  encodeAwarenessUpdate,
+} from "../shared/yjs-protocol.ts";
 import { rebase } from "./merge";
 import { applyChanges, assets, files, folders, hasSeen, introduce, isTextPath, roomInfo, stamp, type Author } from "./content";
 import { TEXT_MAX, type BlobRef } from "./blobs";
@@ -166,7 +175,7 @@ export const LOCK_IDLE_MS = 30_000;
 export type PushResult = { ok: true; etag: string } | { ok: false; etag: string | null; reason: "stale" | "binary" };
 
 export class Room {
-  readonly awareness: awarenessProtocol.Awareness;
+  readonly awareness: Awareness;
   /** Each text file as storage last had it: the base for merging edits made there. */
   private stored = new Map<string, string>();
   /** Files edited since the last write. */
@@ -199,7 +208,7 @@ export class Room {
   readonly fileDelay: number;
 
   private constructor(readonly doc: Y.Doc, private store: FileStore["Service"], private state: StateStore["Service"], private log: (line: string) => void, readonly writeDelay: number, fileDelay: number) {
-    this.awareness = new awarenessProtocol.Awareness(doc);
+    this.awareness = new Awareness(doc);
     // The room itself is not a visible participant.
     this.awareness.setLocalState(null);
     this.fileDelay = state.lazyFiles ? fileDelay : 0;
@@ -347,29 +356,29 @@ export class Room {
     if (opts.epoch && opts.epoch != this.epoch) return null;
     const key = {};
     this.conns.set(key, { send, clients: new Set() });
-    const hello = encoding.createEncoder();
-    encoding.writeVarUint(hello, MSG_SYNC);
-    sync.writeSyncStep1(hello, this.doc);
-    send(encoding.toUint8Array(hello));
+    const hello = new Encoder();
+    hello.writeUint(MSG_SYNC);
+    writeSyncStep1(hello, this.doc);
+    send(hello.toBytes());
     const present = [...this.awareness.getStates().keys()];
     if (present.length) send(awarenessMessage(this.awareness, present));
     return {
       receive: (message) => {
         try {
-          const decoder = decoding.createDecoder(message);
-          const type = decoding.readVarUint(decoder);
+          const decoder = new Decoder(message);
+          const type = decoder.readUint();
           if (type == MSG_SYNC) {
-            const update = decoding.peekVarUint(decoder) != sync.messageYjsSyncStep1;
+            const update = decoder.peekUint() != SYNC_STEP1;
             // Read-only: only its request for what it's missing (step 1); its updates are dropped. So are everyone's
             // but the lock's holder's while it's held: asked for again when it's let go (unlock).
             if (update && (opts.readOnly || (this.locked && this.locked.key !== key))) return true;
             if (update && this.locked?.key === key) this.holdLock();
-            const reply = encoding.createEncoder();
-            encoding.writeVarUint(reply, MSG_SYNC);
-            sync.readSyncMessage(decoder, reply, this.doc, key);
-            if (encoding.length(reply) > 1) send(encoding.toUint8Array(reply));
+            const reply = new Encoder();
+            reply.writeUint(MSG_SYNC);
+            readSyncMessage(decoder, reply, this.doc, key);
+            if (reply.length > 1) send(reply.toBytes());
           } else if (type == MSG_AWARENESS) {
-            awarenessProtocol.applyAwarenessUpdate(this.awareness, decoding.readVarUint8Array(decoder), key);
+            applyAwarenessUpdate(this.awareness, decoder.readBytes(), key);
           } else if (type == MSG_QUERY_AWARENESS) {
             send(awarenessMessage(this.awareness, [...this.awareness.getStates().keys()]));
           }
@@ -383,7 +392,7 @@ export class Room {
         const conn = this.conns.get(key);
         if (!conn) return;
         this.conns.delete(key);
-        awarenessProtocol.removeAwarenessStates(this.awareness, [...conn.clients], null);
+        removeAwarenessStates(this.awareness, [...conn.clients], null);
         this.unlock(key);
       },
       lock: (by) => {
@@ -415,10 +424,10 @@ export class Room {
     this.locked = null;
     this.act(() => roomInfo(this.doc).delete("lock"));
     // Each participant's step 2 answers with what the room lacks: what it typed while it was locked out.
-    const ask = encoding.createEncoder();
-    encoding.writeVarUint(ask, MSG_SYNC);
-    sync.writeSyncStep1(ask, this.doc);
-    const message = encoding.toUint8Array(ask);
+    const ask = new Encoder();
+    ask.writeUint(MSG_SYNC);
+    writeSyncStep1(ask, this.doc);
+    const message = ask.toBytes();
     for (const conn of this.conns.values()) conn.send(message);
   }
 
@@ -803,8 +812,6 @@ export class Room {
   }
 }
 
-interface AwarenessChange { added: number[]; updated: number[]; removed: number[] }
-
 /** The doc a saved history makes, or null if it doesn't load whole or has no epoch (a new one starts). */
 function docOf(updates: Uint8Array[], log: (line: string) => void): Y.Doc | null {
   const doc = new Y.Doc();
@@ -830,17 +837,17 @@ function pathOf(type: Y.AbstractType<any>): string | null {
 }
 
 function syncUpdate(update: Uint8Array): Uint8Array {
-  const e = encoding.createEncoder();
-  encoding.writeVarUint(e, MSG_SYNC);
-  sync.writeUpdate(e, update);
-  return encoding.toUint8Array(e);
+  const e = new Encoder();
+  e.writeUint(MSG_SYNC);
+  writeUpdate(e, update);
+  return e.toBytes();
 }
 
-function awarenessMessage(awareness: awarenessProtocol.Awareness, clients: number[]): Uint8Array {
-  const e = encoding.createEncoder();
-  encoding.writeVarUint(e, MSG_AWARENESS);
-  encoding.writeVarUint8Array(e, awarenessProtocol.encodeAwarenessUpdate(awareness, clients));
-  return encoding.toUint8Array(e);
+function awarenessMessage(awareness: Awareness, clients: number[]): Uint8Array {
+  const e = new Encoder();
+  e.writeUint(MSG_AWARENESS);
+  e.writeBytes(encodeAwarenessUpdate(awareness, clients));
+  return e.toBytes();
 }
 
 /** A short content hash: an asset's versioned reference, and a file's etag. */
@@ -857,21 +864,21 @@ export function digest(bytes: Uint8Array): string {
 export function joinLocal(
   room: Room,
   doc: Y.Doc,
-  awareness: awarenessProtocol.Awareness
+  awareness: Awareness
 ): { leave: () => void; lock: (by: string) => string | null; unlock: () => void; lockedBy: () => string | null } {
   let open = true;
   const conn = room.connect((message) => queueMicrotask(() => { if (open) receive(message); }))!;
   const toRoom = (message: Uint8Array) => queueMicrotask(() => { if (open) conn.receive(message); });
   function receive(message: Uint8Array) {
-    const decoder = decoding.createDecoder(message);
-    const type = decoding.readVarUint(decoder);
+    const decoder = new Decoder(message);
+    const type = decoder.readUint();
     if (type == MSG_SYNC) {
-      const reply = encoding.createEncoder();
-      encoding.writeVarUint(reply, MSG_SYNC);
-      sync.readSyncMessage(decoder, reply, doc, conn);
-      if (encoding.length(reply) > 1) toRoom(encoding.toUint8Array(reply));
+      const reply = new Encoder();
+      reply.writeUint(MSG_SYNC);
+      readSyncMessage(decoder, reply, doc, conn);
+      if (reply.length > 1) toRoom(reply.toBytes());
     } else if (type == MSG_AWARENESS) {
-      awarenessProtocol.applyAwarenessUpdate(awareness, decoding.readVarUint8Array(decoder), conn);
+      applyAwarenessUpdate(awareness, decoder.readBytes(), conn);
     }
   }
   const onUpdate = (update: Uint8Array, origin: unknown) => { if (origin !== conn) toRoom(syncUpdate(update)); };
@@ -881,14 +888,14 @@ export function joinLocal(
   };
   doc.on("update", onUpdate);
   awareness.on("update", onAwareness);
-  const hello = encoding.createEncoder();
-  encoding.writeVarUint(hello, MSG_SYNC);
-  sync.writeSyncStep1(hello, doc);
-  toRoom(encoding.toUint8Array(hello));
+  const hello = new Encoder();
+  hello.writeUint(MSG_SYNC);
+  writeSyncStep1(hello, doc);
+  toRoom(hello.toBytes());
   if (awareness.getLocalState()) toRoom(awarenessMessage(awareness, [doc.clientID]));
   return {
     leave: () => {
-      awarenessProtocol.removeAwarenessStates(awareness, [doc.clientID], "leave");
+      removeAwarenessStates(awareness, [doc.clientID], "leave");
       queueMicrotask(() => { open = false; conn.close(); });
       doc.off("update", onUpdate);
       awareness.off("update", onAwareness);

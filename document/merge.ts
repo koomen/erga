@@ -4,7 +4,7 @@
 // works), and merged with edits the editor hasn't saved yet.
 
 import { ChangeSet, type ChangeSpec } from "@codemirror/state";
-import { diffWordsWithSpace } from "diff";
+import { diffWords } from "../shared/diff.ts";
 
 /** The changes that turn `a` into `b`, word by word. */
 export function changesBetween(a: string, b: string): ChangeSet {
@@ -17,9 +17,8 @@ export function changesBetween(a: string, b: string): ChangeSet {
   while (end < max - start && a.charCodeAt(a.length - 1 - end) == b.charCodeAt(b.length - 1 - end)) end++;
   const midA = a.slice(start, a.length - end), midB = b.slice(start, b.length - end);
   // Give up on a diff that would be big (a rewrite) and replace the middle
-  // whole. maxEditLength is the bound that holds on Workers, where Date.now()
-  // stands still during synchronous code and so `timeout` never fires.
-  const parts = midA && midB ? diffWordsWithSpace(midA, midB, { timeout: 100, maxEditLength: 2000 }) : undefined;
+  // whole: past 2000 edits, the diff stops.
+  const parts = midA && midB ? diffWords(midA, midB, 2000) : undefined;
   // Gather the parts into hunks (a stretch of a replaced by a stretch of b).
   const hunks: { from: number; to: number; insert: string }[] = [];
   if (!parts) {

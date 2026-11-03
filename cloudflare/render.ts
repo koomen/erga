@@ -7,14 +7,12 @@
 // Each render logs its time in the browser (Cloudflare bills Browser Rendering by the browser's time): one JSON line,
 // {"render": ...}.
 
-import type { Page } from "@cloudflare/puppeteer";
 import type { RenderJob } from "../document/agent";
 import { encodePath } from "../document/pages";
 import {
   FRAMES,
   VIEW_DEFAULT,
   evalTimeout,
-  type Clip,
   type PageRender,
   type Shot,
   type StepShown,
@@ -24,6 +22,7 @@ import { sourceDigest } from "../shared/page-html";
 import { pagesOrigin, pagesToken } from "../server/documents/index";
 import { inlineCall, readerPage } from "../server/pages/index";
 import { browserBinding, browsers } from "./browser";
+import type { Page } from "./cdp";
 import type { Env } from "./env";
 import { platform } from "./platform";
 
@@ -100,18 +99,20 @@ async function renderIn(page: Page, address: string, html: string, job: Job): Pr
   if (times.length > FRAMES.count || times.some((t) => !Number.isFinite(t) || t < 0 || t > FRAMES.max))
     return { errors: [], error: `Give at most ${FRAMES.count} times, each from 0 to ${FRAMES.max} ms.` };
   const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(String((e as Error).message ?? e)));
-  page.on("console", (m) => {
-    if (m.type() == "error") errors.push(`console.error: ${m.text()}`);
-  });
-  await page.setViewport({ width, height });
-  await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: scheme }]);
+  page.onErrors(
+    (message) => errors.push(message),
+    (level, text) => {
+      if (level == "error") errors.push(`console.error: ${text}`);
+    }
+  );
+  await page.setViewport(width, height);
+  await page.colorScheme(scheme);
   // The page itself comes from the room's text (the agent's latest edits, or a preview): its first request is answered here.
-  const cdp = await page.createCDPSession();
-  await cdp.send("Fetch.enable", { patterns: [{ urlPattern: address, resourceType: "Document", requestStage: "Request" }] });
-  cdp.on("Fetch.requestPaused", (e: { requestId: string; request: { url: string } }) => {
-    if (e.request.url != address) return void cdp.send("Fetch.continueRequest", { requestId: e.requestId }).catch(() => {});
-    void cdp
+  await page.send("Fetch.enable", { patterns: [{ urlPattern: address, resourceType: "Document", requestStage: "Request" }] });
+  page.on((method, e) => {
+    if (method != "Fetch.requestPaused") return;
+    if (e.request.url != address) return void page.send("Fetch.continueRequest", { requestId: e.requestId }).catch(() => {});
+    void page
       .send("Fetch.fulfillRequest", {
         requestId: e.requestId,
         responseCode: 200,
@@ -127,19 +128,14 @@ async function renderIn(page: Page, address: string, html: string, job: Job): Pr
   // A hash step opens the page there; a number goes to its step once the page has loaded.
   const first = steps[0]?.startsWith("#") ? steps[0] : "";
   try {
-    await page.goto(address + first, { waitUntil: "load", timeout: LOAD_MS });
+    await page.goto(address + first, LOAD_MS);
   } catch {
     return { errors, error: `The page took more than ${LOAD_MS / 1000} s to load, so nothing ran in it.` };
   }
   await page.evaluate(inlineCall("page-render"));
   /** One of the page's render tools (window.__ergaRender), with its arguments. */
   const call = <K extends keyof PageRender>(name: K, ...args: Parameters<PageRender[K]>) =>
-    page.evaluate(
-      (n: string, a: unknown[]) =>
-        (globalThis as unknown as { __ergaRender: Record<string, (...x: unknown[]) => unknown> }).__ergaRender[n](...a),
-      name,
-      args
-    ) as Promise<Awaited<ReturnType<PageRender[K]>>>;
+    page.evaluate<Awaited<ReturnType<PageRender[K]>>>(`globalThis.__ergaRender[${JSON.stringify(name)}](...${JSON.stringify(args)})`);
   const pending = await call("settle");
   const notes: string[] = [];
   const base = { errors, viewport: { width, height }, colorScheme: scheme, ...(pending.length ? { pending } : {}) } as const;
@@ -196,7 +192,8 @@ async function renderIn(page: Page, address: string, html: string, job: Job): Pr
       const held = await call("hold", t, place.selector, !!req.fullPage);
       try {
         if (held.error) return { ...base, error: req.frames?.length ? `At ${held.at} ms: ${held.error}` : held.error };
-        const png = await picture(page, held.clip);
+        // The screenful, or a part of the page (in the page's own coordinates, scrolled or not).
+        const png = await page.screenshot(held.clip);
         shots.push({
           png,
           width: held.clip?.width ?? width,
@@ -213,16 +210,6 @@ async function renderIn(page: Page, address: string, html: string, job: Job): Pr
   }
   const fonts = await call("fonts", places[places.length - 1].selector);
   return { ...base, shots, fonts, ...(notes.length ? { note: notes.join("\n") } : {}) };
-}
-
-/** A picture of the screenful, or of a part of the page (in the page's own coordinates, scrolled or not). */
-async function picture(page: Page, clip?: Clip): Promise<string> {
-  const png = await page.screenshot({
-    type: "png",
-    encoding: "base64",
-    ...(clip ? { clip: { ...clip, scale: 1 }, captureBeyondViewport: true } : {}),
-  });
-  return String(png);
 }
 
 const base64 = (text: string) => {

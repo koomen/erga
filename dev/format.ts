@@ -16,7 +16,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { diffArrays } from "diff";
+import { diffLists } from "../shared/diff.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const BIOME = join(ROOT, "node_modules/.bin/biome");
@@ -86,7 +86,7 @@ const shift = (lines: string[], by: number) =>
 
 /** The two texts, line by line, in the parts they share and the parts they don't: a line only indented again is shared. */
 function align(before: string[], after: string[]) {
-  return diffArrays(before, after, { comparator: (a, b) => a.trim() == b.trim() });
+  return diffLists(before, after, { equal: (a, b) => a.trim() == b.trim() })!;
 }
 
 /**

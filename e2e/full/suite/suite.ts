@@ -27,9 +27,6 @@ import { FIXTURES, makeDoc, readFixture, RemoteTarget, type Capability, type Doc
 import { rng, type Ctx, type Test } from "./harness";
 import { runTool } from "../../helpers/tools";
 
-// y-websocket's provider listens for the process's exit, one listener each: a crowd of thirty is no leak.
-process.setMaxListeners(0);
-
 const long = !!process.env.ERGA_SUITE_LONG && process.env.ERGA_SUITE_LONG != "0";
 const seed = Number(process.env.ERGA_SUITE_SEED) || Date.now() % 1_000_000;
 
