@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import type { AgentTool } from "../run";
 import type { TextEdit } from "../../shared/text-edits";
 import { EDITS } from "./workspace";
-import { stepSpec } from "../../shared/steps";
+import { stepSpec } from "../../libs/steps/api/steps";
 import {
   EVAL_TIMEOUT,
   FRAMES,

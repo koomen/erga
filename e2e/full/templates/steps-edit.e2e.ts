@@ -13,9 +13,9 @@ test("editing: forward and → outside the text go to a step; ← in the heading
   await editorReady(page);
   await expect.poll(async () => (await bar(page)).shown && (await inPage<number>(page, "ergaSteps.current()")) == 0).toBe(true);
   // The list open first: a click on its toggle later would take the caret out of the page.
-  await clickOn(page, ".erga-steps-toggle");
+  await clickOn(page, ".toggle");
   await expect.poll(async () => (await bar(page)).open).toBe(true);
-  await clickOn(page, ".erga-steps-next");
+  await clickOn(page, ".next");
   await atStep(page, 1, 4);
   // A click in the page puts the caret in the nearest text: out of it, the page has the keys.
   const f = await frameAt(page);

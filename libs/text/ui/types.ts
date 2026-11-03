@@ -66,7 +66,7 @@ export interface PageEditorConfig {
     html: string,
     edit: string,
     input: unknown
-  ) => Promise<{ changes: { from: number; to: number; insert: string }[] } | { error: string }>;
+  ) => Promise<{ changes: { from: number; to: number; insert: string }[]; caret?: { at: number; select: boolean } } | { error: string }>;
   /** Checks after each change that the page shows its HTML, and logs a difference as an error (the tests: check.ts). */
   check?: boolean;
   /** Keys and input that came while the page loaded again (the shell held them), to apply first, in order. */

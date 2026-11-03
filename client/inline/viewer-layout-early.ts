@@ -2,9 +2,9 @@
 // viewer-editing-body.ts), so the first frame already has the document where it stays: the agent open or not
 // (client/shell/main.ts, settings.agent), its side and width (client/agent/layout.ts: KEY, geometry, and mountLayout's variables;
 // tests/layout.test.ts checks the two agree), and the document's zoom (client/shell/main.ts, ZOOM_KEY), which the frame takes
-// (client/styles/editor.css, html.erga-zoomed). The steps list isn't known yet: it takes no room.
+// (client/styles/editor.css, html.erga-zoomed).
 
-type Panel = "agent" | "doc" | "picker";
+type Item = "agent" | "doc";
 
 export default function viewerLayoutEarly(): void {
   try {
@@ -19,10 +19,10 @@ export default function viewerLayoutEarly(): void {
     };
     const s = get("erga:settings:v1"),
       l = get("erga:layout:v1"),
-      items: Panel[] = ["agent", "doc", "picker"];
+      items: Item[] = ["agent", "doc"];
     const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi),
       px = (n: number) => Math.round(n) + "px";
-    const order: Panel[] = l && Array.isArray(l.order) && l.order.length == 3 && items.every((i) => l.order.includes(i)) ? l.order : items;
+    const order: Item[] = l && Array.isArray(l.order) && l.order.length == 2 && items.every((i) => l.order.includes(i)) ? l.order : items;
     const kept = l && typeof l.agentWidth == "number" && Number.isFinite(l.agentWidth) ? clamp(Math.round(l.agentWidth), 300, 760) : 380;
     const right = order.indexOf("agent") > order.indexOf("doc");
     const probe = document.createElement("div");
@@ -37,43 +37,17 @@ export default function viewerLayoutEarly(): void {
     // (On a phone the agent starts closed: open, it covers the page.)
     const open = !(s && s.agent === false) && !narrow;
     const w = narrow ? Math.max(0, Math.min(kept, W - 32)) : clamp(kept, 300, Math.max(300, Math.min(760, W - sl - sr - 360 - 32)));
-    // Each panel's box: those before the document from the left edge, those after it from the right, each 16px from the next.
-    const box = { agent: 0, picker: 0 },
-      wide = { agent: w, picker: 220 },
-      d = order.indexOf("doc");
-    let x = sl + 16,
-      frameL = sl,
-      frameR = sr;
-    for (const p of order.slice(0, d) as ("agent" | "picker")[]) {
-      box[p] = x;
-      if (p == "agent" && open) {
-        x += w + 16;
-        frameL = x;
-      }
-    }
-    x = W - sr - 16;
-    for (const p of order.slice(d + 1).reverse() as ("agent" | "picker")[]) {
-      box[p] = x - wide[p];
-      if (p == "agent" && open) {
-        x -= w + 16;
-        frameR = W - x;
-      }
-    }
-    // Narrower, the agent covers the page at its side, and the steps float over it: the page keeps the whole width.
-    if (narrow) {
-      frameL = sl;
-      frameR = sr;
-      for (const p of ["agent", "picker"] as const) box[p] = order.indexOf(p) < d ? sl + 16 : W - sr - 16 - wide[p];
-    }
-    const fab = right ? box.agent + w - 44 : box.agent;
+    // The agent's box, 16px from the window's edge on its side; open (and not on a phone), the document beside it.
+    const agentX = right ? W - sr - 16 - w : sl + 16;
+    const frameL = open && !right ? agentX + w + 16 : sl,
+      frameR = open && right ? W - agentX + 16 : sr;
+    const fab = right ? agentX + w - 44 : agentX;
     const vars: Record<string, number> = {
-      "--agent-x": box.agent,
+      "--agent-x": agentX,
       "--agent-w": w,
       "--fab-x": fab,
       "--frame-l": frameL,
       "--frame-r": frameR,
-      "--picker-x": box.picker,
-      "--picker-w": 220,
       "--cb-l": Math.max(frameL + 22, !open && !right ? fab + 44 + 14 : 0),
       "--cb-r": Math.max(frameR + 22, !open && right ? W - fab + 14 : 0),
     };

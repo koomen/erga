@@ -5,13 +5,13 @@
 
 import { evaluateIn } from "./evaluate";
 import type { Clip, PageRender, RenderedFont, StepShown } from "../../shared/agent-log";
-import { findStep, stepNumber } from "../../shared/steps";
+import type {} from "../../libs/steps/ui/steps";
 import { sleep } from "../../shared/time";
 import { topRoom } from "../common/top-room";
 
 const MAX_SHOT = 4000;
 const LOAD_WAIT = 5000;
-/** How long the render waits for a presentation's window.ergaSteps after the page loaded. */
+/** How long the render waits for a presentation's window.ergaSteps after the page loaded (its steps library is there by then). */
 const STEPS_WAIT = 3000;
 
 /** The page's render tools, for the server's browser. */
@@ -19,6 +19,8 @@ export function pageRender(win: Window & typeof globalThis): PageRender {
   const d = win.document;
   // The room a scrolling page keeps at its top for the bars, as the person's view has it (client/common/top-room.ts).
   topRoom(d).update();
+  // The steps library's bar and list are the person's controls, not the page: the pictures leave them out.
+  for (const el of d.querySelectorAll<HTMLElement>("erga-steps")) el.style.display = "none";
   let clock = animationClock(d);
   let running: Animation[] = [];
   let from = 0;
@@ -80,51 +82,19 @@ function measure(d: Document, selector: string | null, fullPage: boolean): { cli
   };
 }
 
-type Steps = { count(): number; current(): number; go(i: number): void; label?(i: number): unknown; slide?(i: number): unknown };
-
 /**
- * Shows the step the agent asked for: by the page's window.ergaSteps (client/inline/reader.ts, Steps),
- * which a page may define after it loads, so this waits for it until `deadline`. A hash (the frame opened at it) needs
- * none. A page without ergaSteps goes to the step's number as its hash, as a link to it would. Answers the step shown,
- * a note, or why it can't.
+ * Shows the step the agent asked for. The page's steps library answers (window.ergaStepTo: libs/steps/ui/steps.ts):
+ * it ran with the page's modules, before the load. The page may define its window.ergaSteps later, so this waits for
+ * it until `deadline`. A hash (the frame opened at it) needs no library. Answers the step shown, a note, or why it can't.
  */
 async function goToStep(win: Window, spec: string, deadline: number): Promise<StepShown | { note: string } | string> {
-  const steps = () => {
-    const s = (win as Window & { ergaSteps?: Steps }).ergaSteps;
-    return s && typeof s.go == "function" && typeof s.count == "function" ? s : null;
-  };
   const asHash = spec.startsWith("#");
-  while (!steps() && !asHash && Date.now() < deadline) await sleep(50);
-  const s = steps();
-  try {
-    if (!s) {
-      if (asHash) return { note: `Opened at ${spec} (the page has no window.ergaSteps).` };
-      win.location.hash = "#" + spec;
-      return {
-        note: `The page has no window.ergaSteps (after ${STEPS_WAIT / 1000} s): its address went to #${spec}, as a link to that part would.`,
-      };
-    }
-    const count = Math.max(0, Math.floor(Number(s.count())) || 0);
-    if (!count) return "The page's ergaSteps.count() answered no steps.";
-    // The slide each step is on, never one before the step before's (as the steps' list reads it: client/inline/reader.ts).
-    let slides: number[] | null = null;
-    if (typeof s.slide == "function") {
-      slides = [];
-      for (let i = 0; i < count; i++) slides.push(Math.max(i ? slides[i - 1] : 0, Math.floor(Number(s.slide(i))) || 0));
-    }
-    const i = asHash ? Math.floor(Number(s.current())) || 0 : findStep(spec, count, slides);
-    if (typeof i == "string") return i;
-    if (!asHash) s.go(i);
-    const label = typeof s.label == "function" ? s.label(i) : undefined;
-    return {
-      index: i,
-      number: stepNumber(i, slides),
-      count,
-      ...(typeof label == "string" && label.trim() ? { label: label.replace(/\s+/g, " ").trim().slice(0, 200) } : {}),
-    };
-  } catch (e) {
-    return `The page's ergaSteps threw: ${(e as Error)?.message ?? String(e)}`;
+  if (win.ergaStepTo) {
+    while (!win.ergaSteps && Date.now() < deadline) await sleep(50);
+    return win.ergaStepTo(spec);
   }
+  if (asHash) return { note: `Opened at ${spec} (the page has no steps).` };
+  return `The page has no steps: it loads no steps library (erga/steps). To show a part of it, give its hash ("#${spec}"), as a link to it would.`;
 }
 
 /**

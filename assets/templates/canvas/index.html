@@ -4,13 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>A canvas presentation</title>
-<script type="module" src="https://erga.dev/erga/canvas/editor.js"></script>
+<script type="module" src="https://erga.dev/erga/steps/editor.js"></script>
+<script type="module" src="canvas.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap">
 <style>
-  /* One large white canvas with frames on it (erga/canvas moves the camera). Each frame is a step: the camera glides to the
-     next frame in one smooth move. Drag to move around the canvas; scroll to move it, pinch (or ctrl and scroll) to zoom.
+  /* One large white canvas with frames on it (canvas.js moves the camera; erga/steps draws back, forward and the list).
+     Each frame is a step: the camera glides to the next frame in one smooth move. Drag to move around the canvas; scroll to move it, pinch (or ctrl and scroll) to zoom.
      To move a frame, change its left and top; to add one, copy a section with class "frame" (its h2 is the step's name). */
   :root {
     --bg: #ffffff; --ink: #18202c; --muted: #566273;

@@ -11,8 +11,6 @@ declare global {
     /** This script, for the editor and the page tools: its config, and what they tell it or take from it. */
     __ergaReader?: {
       config: ReaderConfig;
-      /** The page's steps may have changed (the editor changed its text). */
-      changed?(): void;
       /** The editor put the page back where it was. */
       placed?(): void;
       /** The viewer's last word on editing (erga-mode), which the editor reads as it loads, and hears after. */

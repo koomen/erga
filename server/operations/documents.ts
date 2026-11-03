@@ -40,7 +40,7 @@ const FILES = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.S
  * (server/api.ts), once, not in each tool that writes a page.
  */
 export const PAGE_RULES =
-  "People keep editing pages by hand, and the editor locks text that doesn't match its source: write well-formed HTML (close every element, </p> and </li> too); keep text in plain leaf elements (p, h1-h6, li, td), never loose beside blocks; never let a script change text in the source (give it an empty element, or mark the text data-erga-noedit); link the document's files relatively (\"style.css\"), other documents by /<owner>/<slug>; keep the page's place (slide, view) in location.hash; set a background on body; leave data-erga attributes alone. For slides or a canvas, start from the slides or canvas template: its library gives the steps and zoom.";
+  "People keep editing pages by hand, and the editor locks text that doesn't match its source: write well-formed HTML (close every element, </p> and </li> too); keep text in plain leaf elements (p, h1-h6, li, td), never loose beside blocks; never let a script change text in the source (give it an empty element, or mark the text data-erga-noedit); link the document's files relatively (\"style.css\"), other documents by /<owner>/<slug>; keep the page's place (slide, view) in location.hash; set a background on body; leave data-erga attributes alone. For slides or a canvas, start from the slides or canvas template: a presentation defines window.ergaSteps and imports erga/steps, which gives the steps.";
 
 const bool = (description: string) => Schema.optionalKey(Schema.Boolean.annotate({ description }));
 

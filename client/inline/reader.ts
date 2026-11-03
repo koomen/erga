@@ -1,7 +1,7 @@
 // The script that goes first into a document's page, before the page's own (server/pages/reader.ts, readerPage). It
 // tells the viewer by postMessage what it needs: where the page is scrolled to and where the pointer is (the fade), its
-// background (the band and the canvas around the frame), its steps (a presentation), and which of the document's pages
-// it shows. It follows the viewer's asks (a step, a step's picture, the editor), and sends links that leave the
+// background (the band and the canvas around the frame), and which of the document's pages it shows. It follows the
+// viewer's asks (the editor), and sends links that leave the
 // document to the viewer, which opens them. `C`: the viewer's origin, where the document's files are, and the editor's
 // half for whoever may edit.
 
@@ -30,36 +30,6 @@ type Canvas = {
   w?: number;
   h?: number;
 };
-/**
- * A presentation's steps, as the page says them: window.ergaSteps, which Erga's libraries define (libs/slides,
- * libs/canvas; e2e/fixtures/steps and builds are pages that define their own). A step is what people see at one moment:
- * a slide, or one part of a slide that builds up in parts, numbered from 0. The page tells Erga when the step or the
- * steps change (dispatchEvent(new Event("ergastep"))); Erga also checks a few times a second. Erga handles ← and →
- * itself, unless the page calls preventDefault() on them.
- */
-type Steps = {
-  /** How many steps there are. */
-  count(): unknown;
-  /** Shows step n. */
-  go(n: number): void;
-  /** The step shown now. */
-  current(): unknown;
-  /** A short name for step i (its title). Without it, the list says "Step 3". */
-  label?(i: number): unknown;
-  /** A small picture of step i, about that size: a canvas, a Blob or an image's address, or a Promise of one. */
-  image?(i: number, size: { width: number; height: number }): unknown;
-  /** The slide step i is on (from 0), for a deck whose slides build up in parts: then "3.2" is slide 3's second part. */
-  slide?(i: number): unknown;
-};
-type StepsMessage = {
-  count: number;
-  current: number;
-  labels: string[];
-  images: boolean;
-  slides: number[] | null;
-  rev?: number;
-};
-
 export default function reader(C: ReaderConfig): void {
   // Only as the viewer's document: not opened by itself, nor in a frame inside the page.
   if (parent == window || parent != top) return;
@@ -140,11 +110,6 @@ export default function reader(C: ReaderConfig): void {
   addEventListener("load", () => zooms());
   window.__ergaReader = {
     config: C,
-    changed: () => {
-      rev++;
-      said = "";
-      tellSteps();
-    },
     // (The editor puts the page back where it was: with its room for the bars.)
     placed: () => {
       keepRoom();
@@ -452,14 +417,8 @@ export default function reader(C: ReaderConfig): void {
     c.h = fixed ? innerHeight : r.height;
     return c;
   }
-  const STEP_MAX = 1000;
   let band: string | null = null,
     canvasSaid = "",
-    said = "null",
-    shape = "",
-    rev = 0,
-    polled = 0,
-    listening = false,
     hash: string | null = null;
   (function watch() {
     try {
@@ -485,106 +444,9 @@ export default function reader(C: ReaderConfig): void {
         hash = location.hash;
         tell({ type: "erga-hash", hash });
       }
-      const now = Date.now();
-      if (now - polled > 300) {
-        polled = now;
-        tellSteps();
-      }
     } catch {}
     requestAnimationFrame(watch);
   })();
-  // A presentation (Steps, above): the page says it has steps (window.ergaSteps).
-  function steps(): Steps | null {
-    const p = (window as Window & { ergaSteps?: Steps }).ergaSteps;
-    return p && typeof p.count == "function" && typeof p.go == "function" && typeof p.current == "function" ? p : null;
-  }
-  function whole(x: unknown, max: number) {
-    const n = Math.floor(Number(x));
-    return Number.isFinite(n) ? Math.max(0, Math.min(max, n)) : 0;
-  }
-  function tellSteps() {
-    const p = steps();
-    let m: StepsMessage | null = null;
-    if (p && !listening) {
-      listening = true;
-      addEventListener("ergastep", () => {
-        tellSteps();
-      });
-      addEventListener("keydown", (e: KeyboardEvent) => {
-        const t = e.target as HTMLElement | null;
-        if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || (e.key != "ArrowLeft" && e.key != "ArrowRight")) return;
-        if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ""))) return;
-        setTimeout(() => {
-          if (!e.defaultPrevented) step({ by: e.key == "ArrowLeft" ? -1 : 1 });
-        });
-      });
-    }
-    if (p)
-      try {
-        const count = whole(p.count(), STEP_MAX),
-          labels: string[] = [],
-          slides: number[] | null = typeof p.slide == "function" ? [] : null;
-        for (let i = 0; i < count; i++) {
-          const l = typeof p.label == "function" ? p.label(i) : "";
-          labels.push(typeof l == "string" ? l.replace(/\s+/g, " ").trim().slice(0, 200) : "");
-          // The slide each step is on (the parts of a slide that builds up), never one before the step before's.
-          if (slides) slides.push(Math.max(i ? slides[i - 1] : 0, whole(p.slide!(i), STEP_MAX)));
-        }
-        m = { count, current: whole(p.current(), Math.max(0, count - 1)), labels, images: typeof p.image == "function", slides };
-      } catch {
-        m = null;
-      }
-    const now = m ? m.count + "\n" + m.labels.join("\n") + "\n" + m.slides : "";
-    if (now != shape) {
-      shape = now;
-      rev++;
-    }
-    if (m) m.rev = rev;
-    const text = JSON.stringify(m);
-    if (text != said) {
-      said = text;
-      tell({ type: "erga-steps", steps: m });
-    }
-  }
-  function step(to: { by?: number; to?: unknown }) {
-    const p = steps();
-    if (!p) return;
-    try {
-      const count = whole(p.count(), STEP_MAX),
-        at = whole(p.current(), STEP_MAX);
-      const n = to.by ? at + (to.by > 0 ? 1 : -1) : whole(to.to, STEP_MAX);
-      if (n >= 0 && n < count && n != at) p.go(n);
-    } catch {}
-    tellSteps();
-  }
-  function stepImage(m: { step?: unknown; rev?: unknown; width?: unknown; height?: unknown }) {
-    const p = steps(),
-      at = rev,
-      n = whole(m.step, STEP_MAX);
-    if (!p || typeof p.image != "function" || m.rev !== at) return;
-    const answer = (blob: unknown) => {
-      const b = blob as Blob | null;
-      const ok = b && typeof b.type == "string" && /^image\//.test(b.type) && b.size < 4e6;
-      tell({ type: "erga-step-image", step: n, rev: at, blob: ok ? b : null });
-    };
-    const size = { width: whole(m.width, 1600) || 320, height: whole(m.height, 1600) || 180 };
-    Promise.resolve()
-      .then(() => p.image!(n, size))
-      .then((r: unknown) => {
-        const x = r as { toBlob?: (done: (b: Blob | null) => void, type: string) => void; arrayBuffer?: unknown } | string | null;
-        if (!x) return null;
-        if (typeof x == "string") return fetch(x).then((res) => res.blob());
-        if (typeof x.toBlob == "function")
-          return new Promise((done) => {
-            x.toBlob!(done, "image/png");
-          });
-        if (typeof x.arrayBuffer == "function") return x;
-        return null;
-      })
-      .then(answer, () => {
-        answer(null);
-      });
-  }
   // A file dragged from the computer onto the page never opens in its place (the editor puts it in: its drop). A
   // page that takes the drop itself has already stopped the browser's own.
   function stopFileDrop(e: DragEvent) {
@@ -618,8 +480,7 @@ export default function reader(C: ReaderConfig): void {
       const done = llmWaits.get(e.data.id)!;
       llmWaits.delete(e.data.id);
       done(e.data.answer);
-    } else if (type == "erga-step") step(e.data);
-    else if (type == "erga-step-image") stepImage(e.data);
+    }
     // The viewer's word on editing (libs/text/ui/bridge.ts, EditMode): kept for the editor, which loads on the first edit.
     else if (type == "erga-mode") {
       window.__ergaReader!.mode = e.data;

@@ -189,11 +189,12 @@ health checks and rollbacks work.
                       and uploads, ui/uploads.ts): api/ has the editing rules (rules.ts,
                       blocks.ts, lists.ts), styles and links (format.ts), the source's helpers (source.ts), the clipboard's
                       blocks, and erga/text's API (edits.ts: the named edits agents run with call_edit)
-      slides/         erga/slides, a deck's library (slides.js, which the page imports: ui/slides.ts shows one 16:9
-                      slide at a time with the page's steps, and in the editor loads erga/text and the slide bar,
-                      ui/bar.ts): api/slides.ts has the slide edits (add, delete, move, layout) over erga/text's
-      canvas/         erga/canvas, a canvas presentation's library (canvas.js: ui/canvas.ts moves a camera over the
-                      page's frames, its steps and its zoom, and in the editor loads erga/text). No edits of its own
+      steps/          erga/steps, Erga's one presentation library, in the page: a page with its own window.ergaSteps
+                      imports it (steps.js: ui/library.ts), and it works outside Erga too. ui/steps.ts draws the bar
+                      (back, forward, the step) and the list of steps with their pictures, takes the arrow keys, and
+                      answers the agent's view_page step (window.ergaStepTo). api/steps.ts has the contract (Steps) and
+                      the steps as the agent names them ("3.2"). A deck or a canvas holds its own code, from its
+                      template (assets/templates/slides, assets/templates/canvas)
     client/       the browser side: editor.html, style.css, fonts/, and the scripts build.ts bundles into .build/
       shell/          the editor's shell (page.js): main.ts, its one word to the page's editor (page-frame.ts: edit, with the
                       edit key, or view), its replica of the room (libs/text/ui/collab.ts), the source view, the shell's parts

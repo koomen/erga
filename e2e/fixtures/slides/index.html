@@ -3,7 +3,28 @@
 <head>
 <meta charset="utf-8">
 <title>A deck</title>
-<script type="module" src="https://erga.dev/erga/slides/editor.js"></script>
+<script type="module" src="https://erga.dev/erga/steps/editor.js"></script>
+<script type="module" src="slides.js"></script>
+<meta name="erga-api" content="api.js">
+<style>
+  /* A deck of 16:9 slides (Google Slides' shape), one at a time, as large as the window allows: slides.js shows them
+     and adds slides in the editor (with api.js), and erga/steps draws back, forward and the list of slides. Sizes
+     inside a slide are in cqw (hundredths of the slide's width), so everything scales with it. */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #f1f3f4; }
+  body { display: grid; place-items: center; }
+  .slide { grid-area: 1 / 1; container-type: inline-size; box-sizing: border-box; overflow: hidden;
+    width: min(100vw, calc(100vh * 16 / 9)); height: min(100vh, calc(100vw * 9 / 16));
+    padding: 5.5cqw 6.5cqw; display: flex; flex-direction: column; justify-content: flex-start; gap: 2.5cqw; background: #fff;
+    font-family: Arial, Helvetica, sans-serif; color: #202124; box-shadow: 0 1px 3px rgba(60, 64, 67, .3); }
+  .slide[hidden] { display: none; }
+  .slide h1, .slide h2, .slide p, .slide ul { margin: 0; }
+  .slide h1 { font-size: 7.2cqw; font-weight: 400; line-height: 1.15; }
+  .slide h2 { font-size: 5cqw; font-weight: 400; line-height: 1.2; }
+  .slide p, .slide li { font-size: 2.5cqw; line-height: 1.4; }
+  /* The title slide: its title and subtitle in the middle. */
+  .slide[data-layout="title"] { justify-content: center; align-items: stretch; text-align: center; gap: 2cqw; }
+  .slide[data-layout="title"] p { font-size: 3.3cqw; color: #5f6368; }
+</style>
 </head>
 <body>
   <section class="slide" data-layout="title">

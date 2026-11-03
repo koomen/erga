@@ -27,6 +27,14 @@ test('view_page and eval_in_page at step "3.2" show that part; the person\'s vie
   // As the agent in Pete's trace gave it: 3.3 as a JSON number, then "#3.3" in quotes. Both are slide 3, its third part.
   expect((await tool("eval_in_page", { expression: text, step: 3.3 })).text).toContain("at step 3.3 (index 6 of 7");
   expect((await tool("eval_in_page", { expression: text, step: '"#3.3"' })).text).toMatch(/^"Third slide Red\. Green\. Blue\."/);
+  // The steps library draws its bar in the copy too (it can't tell it from a page outside Erga): the pictures leave it out.
+  expect(
+    (
+      await tool("eval_in_page", {
+        expression: `[!!document.querySelector("erga-steps"), getComputedStyle(document.querySelector("erga-steps")).display]`,
+      })
+    ).text
+  ).toMatch(/^\[\s*true,\s*"none"\s*\]/);
   // The person's own view: still the first slide, the address unchanged.
   expect(await ed.frame<string>(`document.querySelector(".slide.current h1").textContent`)).toBe("First slide");
   expect(await ed.eval<string>(`location.hash`)).not.toContain("3");
@@ -91,4 +99,14 @@ test("eval_in_page sees the deck's window.ergaSteps every time, 10 times in a ro
       (await tool("eval_in_page", { expression: `typeof window.ergaSteps?.go + " " + window.ergaSteps?.count()` })).text.split("\n")[0]
     );
   expect(seen).toEqual(Array(10).fill('"function 7"'));
+});
+
+test("a page with no steps library: a step's number says it has no steps; a hash opens the render there", { timeout: 30_000 }, async ({
+  tab,
+}) => {
+  const { tool, fails } = await deck(tab, "one-line");
+  expect(await fails("view_page", { step: "2" })).toMatch(/The page has no steps: it loads no steps library \(erga\/steps\)/);
+  expect((await tool("eval_in_page", { expression: "location.hash", step: "#2" })).text).toMatch(
+    /^"#2"[\s\S]*Opened at #2 \(the page has no steps\)/
+  );
 });

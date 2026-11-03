@@ -1,10 +1,10 @@
-// A presentation whose slides build up in parts (client/inline/reader.ts, Steps: each part is a step, and
+// A presentation whose slides build up in parts (libs/steps/ui/steps.ts, Steps: each part is a step, and
 // slide(i) groups them): the counter and the list show each part (3.2), → and forward go part by part and on to the
 // next slide, ← and back the other way, forward is off only on the very last part, a click on a part's picture shows
 // it, the address names the part (#3.2, rule 11) and a reload opens there. A deck without parts: steps-view.e2e.ts.
 import type { Page } from "playwright-core";
 import { expect, servers, settle, test } from "../../helpers/fixtures";
-import { bar, clickOn, editorReady, frameAt, inPage, openTab } from "./templates";
+import { bar, clickOn, editorReady, focusOn, frameAt, inPage, openTab, scrollToStep } from "./templates";
 
 await servers.main();
 
@@ -36,15 +36,15 @@ async function walk(page: Page, key: (k: "ArrowLeft" | "ArrowRight") => Promise<
   await at(page, "#1", ONE, "1.1 / 3", [true, false]);
   await key("ArrowRight");
   await at(page, "#1.2", TWO, "1.2 / 3", [false, false]);
-  await clickOn(page, ".erga-steps-next");
+  await clickOn(page, ".next");
   await at(page, "#1.3", THREE, "1.3 / 3", [false, false]);
   await key("ArrowRight");
   await at(page, "#2", SECOND, "2 / 3", [false, false]);
-  await clickOn(page, ".erga-steps-next");
+  await clickOn(page, ".next");
   await at(page, "#3", RED, "3.1 / 3", [false, false]);
   await key("ArrowRight");
   await at(page, "#3.2", GREEN, "3.2 / 3", [false, false]);
-  await clickOn(page, ".erga-steps-next");
+  await clickOn(page, ".next");
   // The very last part: forward is off, and → stays.
   await at(page, "#3.3", BLUE, "3.3 / 3", [false, true]);
   await key("ArrowRight");
@@ -53,23 +53,23 @@ async function walk(page: Page, key: (k: "ArrowLeft" | "ArrowRight") => Promise<
   // ← and back, part by part, to the slide before with all its parts.
   await key("ArrowLeft");
   await at(page, "#3.2", GREEN, "3.2 / 3", [false, false]);
-  await clickOn(page, ".erga-steps-back");
+  await clickOn(page, ".back");
   await at(page, "#3", RED, "3.1 / 3", [false, false]);
   await key("ArrowLeft");
   await at(page, "#2", SECOND, "2 / 3", [false, false]);
-  await clickOn(page, ".erga-steps-back");
+  await clickOn(page, ".back");
   await at(page, "#1.3", THREE, "1.3 / 3", [false, false]);
 }
 
 /** The list: one picture for each part, numbered by slide and part, a new slide's first step marked; then a click on 3.2. */
 async function list(page: Page) {
-  await clickOn(page, ".erga-steps-toggle");
+  await clickOn(page, ".toggle");
   // (The list asks for the pictures in sight: each in turn is scrolled to.)
   await expect
     .poll(async () => {
       const b = await bar(page);
       const k = b.items.findIndex((i) => !i.drawn);
-      if (k >= 0) await page.evaluate((k) => document.querySelectorAll(".erga-step")[k]?.scrollIntoView({ block: "nearest" }), k);
+      if (k >= 0) await scrollToStep(page, k);
       return b.open && b.items.length == 7 && k < 0;
     })
     .toBe(true);
@@ -86,7 +86,7 @@ async function list(page: Page) {
   ]);
   expect(b.items.map((i) => i.first)).toEqual([false, false, false, true, true, false, false]);
   expect(new Set(b.items.map((i) => i.img)).size).toBe(7);
-  await page.evaluate(() => (document.querySelectorAll(".erga-step")[5] as HTMLElement).click());
+  await clickOn(page, ".step", 5);
   await at(page, "#3.2", GREEN, "3.2 / 3", [false, false]);
   expect((await bar(page)).items.map((i) => i.current)).toEqual([false, false, false, false, false, true, false]);
 }
@@ -119,7 +119,7 @@ test("editing: the same, with the keys pressed on the step controls", async ({ t
   await expect.poll(async () => (await bar(page)).shown).toBe(true);
   await walk(page, async (k) => {
     // (The toggle: forward and back can be off, and a button that is off takes no focus.)
-    await page.evaluate(() => document.querySelector<HTMLElement>(".erga-steps-toggle")!.focus());
+    await focusOn(page, ".toggle");
     await page.keyboard.press(k);
   });
   await list(page);

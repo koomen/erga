@@ -99,6 +99,61 @@ describe("a page's operations", () => {
   });
 });
 
+describe("the caret an edit names", () => {
+  // The slides template's own API (assets/templates/slides/api.js), as the deck's bar calls it in the editor.
+  const deck = `<body>
+<section class="slide" data-layout="title">
+  <h1>One</h1>
+</section>
+<section class="slide" data-layout="content">
+  <h2>Two</h2>
+</section>
+<section class="slide" data-layout="content">
+  <h2>Three</h2>
+</section>
+</body>`;
+  type Api = { apply(html: string, edit: string, input: unknown): unknown };
+  const slides = async (): Promise<Api> => (await import("../assets/templates/slides/api.js" as string)).default;
+  /** The new source, and the text from the caret on. */
+  async function edit(name: string, input: unknown) {
+    const plan = planPageOps(deck, (await slides()).apply(deck, name, input));
+    if ("error" in plan) throw new Error(plan.error);
+    const out = applyChanges(deck, plan.changes);
+    return { out, caret: plan.caret && { from: out.slice(plan.caret.at, plan.caret.at + 60), select: plan.caret.select } };
+  }
+
+  test("goes to the element where it is after the edit: moved, or past an element removed before it", async () => {
+    const down = await edit("move_slide", { slide: 1, to: 2 });
+    expect(down.out.indexOf("<h2>Two")).toBeLessThan(down.out.indexOf("<h1>One"));
+    expect(down.caret?.select).toBe(false);
+    expect(down.caret?.from).toStartWith(`<section class="slide" data-layout="title">\n  <h1>One`);
+    const up = await edit("move_slide", { slide: 3, to: 1 });
+    expect(up.caret?.from).toStartWith(`<section class="slide" data-layout="content">\n  <h2>Three`);
+    const gone = await edit("delete_slide", { slide: 3 });
+    expect(gone.out).not.toContain("Three");
+    expect(gone.caret?.from).toStartWith(`<section class="slide" data-layout="content">\n  <h2>Two`);
+    const first = await edit("delete_slide", { slide: 1 });
+    expect(first.caret?.from).toStartWith(`<section class="slide" data-layout="content">\n  <h2>Two`);
+    expect((await edit("set_layout", { slide: 2, layout: "title" })).caret?.from).toStartWith(
+      `<section class="slide" data-layout="title">\n  <h2>Two`
+    );
+  });
+
+  test("an edit without one leaves the caret to the editor; a caret in an element the edit removes is refused", async () => {
+    expect((await edit("add_slide", { after: 1, layout: "content" })).caret).toBeUndefined();
+    const one = planPageOps(deck, [
+      { op: "remove", el: "body > section:nth-of-type(2)" },
+      { op: "caret", el: "body > section:nth-of-type(2)" },
+    ]);
+    expect("error" in one && one.error).toMatch(/goes with the edit/);
+    const two = planPageOps(deck, [
+      { op: "caret", el: "body > section:nth-of-type(1)" },
+      { op: "caret", el: "body > section:nth-of-type(2)" },
+    ]);
+    expect("error" in two && two.error).toMatch(/one caret/);
+  });
+});
+
 describe("a page's API module, in the sandbox", () => {
   const code = `export default {
     name: "notes",

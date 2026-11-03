@@ -1,54 +1,55 @@
 /**
- * The editor's side panels: the agent and the list of a presentation's steps,
- * docked around the document in any order, e.g.
- * agent | document | steps, or document | steps | agent. The user drags a
- * panel by its head to another slot (the slots are magnets, with hysteresis,
- * and a ghost shows where it lands), and drags the agent's inner edge to make
- * it wider or narrower. The arrangement and the agent's width are kept in
- * this browser (localStorage, KEY).
+ * The editor's side panel: the agent, docked left or right of the document.
+ * The user drags it by its head to the other side (the sides are magnets,
+ * with hysteresis, and a ghost shows where it lands), and drags its inner
+ * edge to make it wider or narrower. The side and the width are kept in this
+ * browser (localStorage, KEY). A presentation's list of steps is the page's
+ * own (libs/steps), over the page: it takes no room here.
  *
  * The first half is the layout's state and geometry, pure;
  * mountLayout puts it on the page, as CSS variables client/styles/editor.css's rules read.
-
  */
 
-export type Panel = "agent" | "picker";
+export type Panel = "agent";
 export type Item = Panel | "doc";
 export type Side = "left" | "right";
 export interface Layout { order: Item[]; agentWidth: number }
 /** The window: its width, and the notch's insets on either side. */
 export interface View { width: number; safeL: number; safeR: number }
-/** Which panels take room: the agent when open, the steps when open. */
+/** Whether the agent takes room: open. */
 export type Shown = Record<Panel, boolean>;
 export interface Box { x: number; w: number }
 export interface Geometry {
-  /** Narrower than NARROW: the agent covers the page at its side, and the steps float over the page. */
+  /** Narrower than NARROW: the agent covers the page at its side. */
   narrow: boolean;
   /** The document's frame: its distance from the window's left and right edges. */
   frameL: number; frameR: number;
-  agent: Box; picker: Box;
+  agent: Box;
 }
 
 export const KEY = "erga:layout:v1";
 export const AGENT_DEFAULT = 380, AGENT_MIN = 300, AGENT_MAX = 760;
-export const PICKER_W = 220;
 /** The narrowest the document gets while the agent is resized. */
 export const DOC_MIN = 360;
-/** The gap between the window's edge, the panels and the document. */
+/** The gap between the window's edge, the panel and the document. */
 export const INSET = 16;
 export const NARROW = 760;
 /** How much nearer another slot must be before the dragged panel leaves the one it's in. */
 export const HYSTERESIS = 32;
-export const DEFAULT: Layout = { order: ["agent", "doc", "picker"], agentWidth: AGENT_DEFAULT };
+export const DEFAULT: Layout = { order: ["agent", "doc"], agentWidth: AGENT_DEFAULT };
 
-const ITEMS: Item[] = ["agent", "doc", "picker"];
+const ITEMS: Item[] = ["agent", "doc"];
 const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
 
 /** A layout from anything (what localStorage had): a valid one, else the default's parts. */
 export function normalize(raw: unknown): Layout {
   const r = (raw && typeof raw == "object" ? raw : {}) as Partial<Layout>;
-  const order = Array.isArray(r.order) && r.order.length == 3 && ITEMS.every((i) => r.order!.includes(i)) ? [...r.order] : [...DEFAULT.order];
-  const agentWidth = typeof r.agentWidth == "number" && Number.isFinite(r.agentWidth) ? clamp(Math.round(r.agentWidth), AGENT_MIN, AGENT_MAX) : AGENT_DEFAULT;
+  const order =
+    Array.isArray(r.order) && r.order.length == 2 && ITEMS.every((i) => r.order!.includes(i)) ? [...r.order] : [...DEFAULT.order];
+  const agentWidth =
+    typeof r.agentWidth == "number" && Number.isFinite(r.agentWidth)
+      ? clamp(Math.round(r.agentWidth), AGENT_MIN, AGENT_MAX)
+      : AGENT_DEFAULT;
   return { order, agentWidth };
 }
 
@@ -56,68 +57,45 @@ export function sideOf(order: Item[], panel: Panel): Side {
   return order.indexOf(panel) < order.indexOf("doc") ? "left" : "right";
 }
 
-/** The agent's widest, in this window: the document keeps DOC_MIN, and the steps their room when open. */
-export function agentMax(view: View, pickerShown: boolean): number {
-  const room = view.width - view.safeL - view.safeR - DOC_MIN - 2 * INSET - (pickerShown ? PICKER_W + 2 * INSET : 0);
+/** The agent's widest, in this window: the document keeps DOC_MIN. */
+export function agentMax(view: View): number {
+  const room = view.width - view.safeL - view.safeR - DOC_MIN - 2 * INSET;
   return Math.max(AGENT_MIN, Math.min(AGENT_MAX, room));
 }
 
-export function agentWidth(layout: Layout, view: View, pickerShown: boolean): number {
+export function agentWidth(layout: Layout, view: View): number {
   if (view.width < NARROW) return Math.max(0, Math.min(layout.agentWidth, view.width - 2 * INSET));
-  return clamp(layout.agentWidth, AGENT_MIN, agentMax(view, pickerShown));
+  return clamp(layout.agentWidth, AGENT_MIN, agentMax(view));
 }
 
 /**
- * Where everything goes. Panels before the document stack from the window's
- * left edge, those after it from the right edge, each INSET from the next. A
- * panel that isn't shown takes no room; it still gets a box, where it would
- * open (the agent's button sits at its corner).
+ * Where everything goes: the agent INSET from the window's edge on its side,
+ * and the document beside it. Closed, it takes no room; it still gets a box,
+ * where it would open (the agent's button sits at its corner).
  */
 export function geometry(layout: Layout, view: View, shown: Shown): Geometry {
-  const w: Record<Panel, number> = { agent: agentWidth(layout, view, shown.picker), picker: PICKER_W };
-  const box: Record<Panel, Box> = { agent: { x: 0, w: w.agent }, picker: { x: 0, w: PICKER_W } };
-  const d = layout.order.indexOf("doc");
-  const left = layout.order.slice(0, d) as Panel[], right = (layout.order.slice(d + 1) as Panel[]).reverse();
-  if (view.width < NARROW) {
-    for (const p of left) box[p].x = view.safeL + INSET;
-    for (const p of right) box[p].x = view.width - view.safeR - INSET - w[p];
-    return { narrow: true, frameL: view.safeL, frameR: view.safeR, agent: box.agent, picker: box.picker };
-  }
-  let x = view.safeL + INSET, any = false;
-  for (const p of left) {
-    box[p].x = x;
-    if (shown[p]) { x += w[p] + INSET; any = true; }
-  }
-  const frameL = any ? x : view.safeL;
-  x = view.width - view.safeR - INSET; any = false;
-  for (const p of right) {
-    box[p].x = x - w[p];
-    if (shown[p]) { x -= w[p] + INSET; any = true; }
-  }
-  const frameR = any ? view.width - x : view.safeR;
-  return { narrow: false, frameL, frameR, agent: box.agent, picker: box.picker };
+  const w = agentWidth(layout, view),
+    left = sideOf(layout.order, "agent") == "left";
+  const agent = { x: left ? view.safeL + INSET : view.width - view.safeR - INSET - w, w };
+  if (view.width < NARROW || !shown.agent) return { narrow: view.width < NARROW, frameL: view.safeL, frameR: view.safeR, agent };
+  return {
+    narrow: false,
+    frameL: left ? agent.x + w + INSET : view.safeL,
+    frameR: left ? view.safeR : view.width - agent.x + INSET,
+    agent,
+  };
 }
 
-/** The order with `panel` moved to slot `i` (0, 1 or 2) among the other two. */
+/** The order with `panel` moved to slot `i` (0: left of the document, 1: right of it). */
 export function insertAt(order: Item[], panel: Panel, i: number): Item[] {
-  const rest = order.filter((x) => x != panel);
-  rest.splice(clamp(i, 0, 2), 0, panel);
+  const rest: Item[] = order.filter((x) => x != panel);
+  rest.splice(clamp(i, 0, 1), 0, panel);
   return rest;
 }
 
-/**
- * The slots `panel` can be dropped in, as the x of each one's magnet, from the
- * layout without it: the window's left edge, the edge between the document
- * and the other panel (the window's edge if that panel is closed), and the
- * window's right edge.
- */
-export function magnets(layout: Layout, panel: Panel, view: View, shown: Shown): number[] {
-  const rest = layout.order.filter((x) => x != panel);
-  const other = rest.find((x) => x != "doc") as Panel;
-  const g = geometry(layout, view, { ...shown, [panel]: false });
-  const l = view.safeL, r = view.width - view.safeR, o = g[other];
-  const mid = !shown[other] ? (rest[0] == "doc" ? r : l) : rest[0] == "doc" ? o.x : o.x + o.w;
-  return [l, mid, r];
+/** The slots the agent can be dropped in, as the x of each one's magnet: the window's left edge and its right edge. */
+export function magnets(view: View): number[] {
+  return [view.safeL, view.width - view.safeR];
 }
 
 /**
@@ -139,8 +117,8 @@ export function resizedTo(start: number, dx: number, side: Side, min: number, ma
 }
 
 /** The agent's width after dragging its inner edge by `dx` (the edge that faces the document). */
-export function resized(start: number, dx: number, side: Side, view: View, pickerShown: boolean): number {
-  return resizedTo(start, dx, side, AGENT_MIN, agentMax(view, pickerShown));
+export function resized(start: number, dx: number, side: Side, view: View): number {
+  return resizedTo(start, dx, side, AGENT_MIN, agentMax(view));
 }
 
 export function load(storage: Pick<Storage, "getItem"> | null): Layout {
@@ -308,8 +286,11 @@ export function layoutVars(layout: Layout, view: View, shown: Shown): Record<str
   const fabX = agentSide == "left" ? g.agent.x : g.agent.x + g.agent.w - FAB;
   const fabLeft = !shown.agent && agentSide == "left", fabRight = !shown.agent && agentSide == "right";
   return {
-    "--agent-x": g.agent.x, "--agent-w": g.agent.w, "--fab-x": fabX,
-    "--frame-l": g.frameL, "--frame-r": g.frameR, "--picker-x": g.picker.x, "--picker-w": g.picker.w,
+    "--agent-x": g.agent.x,
+    "--agent-w": g.agent.w,
+    "--fab-x": fabX,
+    "--frame-l": g.frameL,
+    "--frame-r": g.frameR,
     "--cb-l": Math.max(g.frameL + 22, fabLeft ? fabX + FAB + 14 : 0),
     "--cb-r": Math.max(g.frameR + 22, fabRight ? view.width - fabX + 14 : 0),
   };
@@ -317,17 +298,14 @@ export function layoutVars(layout: Layout, view: View, shown: Shown): Record<str
 
 /**
  * Puts the layout on the editor's page: CSS variables on <html> (--agent-x,
- * --agent-w, --fab-x, --frame-l, --frame-r, --picker-x, --picker-w, --cb-l,
- * --cb-r), body.agent-right when the agent is right of the document, and the
- * steps list docked as a column (.erga-docked) while editing. Follows the
- * agent opening and closing, the steps list, the source view and the window.
+ * --agent-w, --fab-x, --frame-l, --frame-r, --cb-l, --cb-r), and
+ * body.agent-right when the agent is right of the document. Follows the
+ * agent opening and closing and the window.
  */
 export function mountLayout(agent: HTMLElement, agentHead: HTMLElement): LayoutHandle {
   const root = document.documentElement, body = document.body;
   const storage = localStore();
   let layout = load(storage);
-  const picker = () => document.querySelector<HTMLElement>(".erga-steps-panel");
-  const editing = () => body.classList.contains("erga-editing");
   const narrow = () => body.classList.contains("layout-narrow");
 
   // The notch's insets, as CSS has them.
@@ -338,18 +316,12 @@ export function mountLayout(agent: HTMLElement, agentHead: HTMLElement): LayoutH
     const s = getComputedStyle(probe);
     return { width: root.clientWidth || innerWidth, safeL: parseFloat(s.paddingLeft) || 0, safeR: parseFloat(s.paddingRight) || 0 };
   };
-  const shown = (): Shown => {
-    const p = picker(), bar = document.querySelector<HTMLElement>(".erga-steps");
-    return {
-      agent: body.classList.contains("agent-open"),
-      picker: editing() && !body.classList.contains("source") && !!p && !p.hidden && !!bar && !bar.hidden,
-    };
-  };
+  const shown = (): Shown => ({ agent: body.classList.contains("agent-open") });
 
   // The inner edge's handle, and the ghost where a dragged panel will land.
   const grip = mountGrip(agent, {
-    start: () => narrow() ? null : { width: agentWidth(layout, view(), shown().picker), side: sideOf(layout.order, "agent") },
-    max: () => agentMax(view(), shown().picker),
+    start: () => (narrow() ? null : { width: agentWidth(layout, view()), side: sideOf(layout.order, "agent") }),
+    max: () => agentMax(view()),
     set: (agentWidth) => { layout = { ...layout, agentWidth }; apply(); },
     done: () => save(storage, layout),
   });
@@ -360,54 +332,40 @@ export function mountLayout(agent: HTMLElement, agentHead: HTMLElement): LayoutH
     for (const [k, n] of Object.entries(layoutVars(l, v, s))) root.style.setProperty(k, px(n));
     body.classList.toggle("agent-right", agentSide == "right");
     body.classList.toggle("layout-narrow", g.narrow);
-    const p = picker();
-    if (p) {
-      p.classList.toggle("erga-docked", editing() && !g.narrow);
-      p.classList.toggle("erga-docked-right", sideOf(l.order, "picker") == "right");
-    }
-    grip.show(agentSide, g.agent.w, agentMax(v, s.picker));
+    grip.show(agentSide, g.agent.w, agentMax(v));
     return g;
   }
 
-  // ---- docking: a panel dragged by its head
-  function startDrag(panel: Panel, el: HTMLElement, handle: HTMLElement, e: PointerEvent) {
+  // ---- docking: the agent dragged by its head
+  agentHead.addEventListener("pointerdown", (e) => {
     if (narrow()) return;
     const from = layout, s = shown();
     dragToDock(e, {
-      el, handle, ghost,
-      marks: magnets(from, panel, view(), s), slot: from.order.indexOf(panel),
-      preview: (slot) => apply({ ...from, order: insertAt(from.order, panel, slot) }, s)[panel],
+      el: agent,
+      handle: agentHead,
+      ghost,
+      marks: magnets(view()),
+      slot: from.order.indexOf("agent"),
+      preview: (slot) => apply({ ...from, order: insertAt(from.order, "agent", slot) }, s).agent,
       drop: (slot) => {
-        layout = slot == null ? from : { ...from, order: insertAt(from.order, panel, slot) };
+        layout = slot == null ? from : { ...from, order: insertAt(from.order, "agent", slot) };
         apply();
         save(storage, layout);
       },
     });
-  }
-  agentHead.addEventListener("pointerdown", (e) => startDrag("agent", agent, agentHead, e));
-  // The steps list's head (server/pages/viewer.ts makes it, before the editor loads).
-  document.addEventListener("pointerdown", (e) => {
-    const head = (e.target as Element).closest?.(".erga-steps-head");
-    const p = picker();
-    if (head && p?.classList.contains("erga-docked")) startDrag("picker", p, head as HTMLElement, e);
   });
 
-  // Follow everything that moves the panels.
+  // Follow everything that moves the panel.
   const refresh = () => { if (!body.classList.contains("layout-dragging")) apply(); };
   new MutationObserver(refresh).observe(body, { attributes: true, attributeFilter: ["class"] });
-  let watched: HTMLElement | null = null;
-  const watch = () => {
-    const p = picker(), bar = document.querySelector<HTMLElement>(".erga-steps");
-    if (!p || p == watched) return;
-    watched = p;
-    const mo = new MutationObserver(refresh);
-    mo.observe(p, { attributes: true, attributeFilter: ["hidden"] });
-    if (bar) mo.observe(bar, { attributes: true, attributeFilter: ["hidden"] });
-  };
-  watch();
   addEventListener("resize", refresh);
   apply();
-  return { refresh: () => { watch(); refresh(); }, get layout() { return layout; } };
+  return {
+    refresh,
+    get layout() {
+      return layout;
+    },
+  };
 }
 
 /** Slides `el` from where it was (`from`) to where it is now. */

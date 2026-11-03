@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<script type="module" src="https://erga.dev/erga/steps/editor.js"></script>
 <title>Builds</title>
 <style>
   body { background: #fff; font: 20px/1.5 sans-serif; margin: 0; }
@@ -18,7 +19,7 @@
   <section class="slide"><h1>Third slide</h1><p class="build">Red.</p><p class="build">Green.</p><p class="build">Blue.</p></section>
   <div id="progress"></div>
   <script>
-    // A deck whose slides build up in parts (client/inline/reader.ts, Steps): each part is a step, and
+    // A deck whose slides build up in parts (libs/steps/ui/steps.ts, Steps): each part is a step, and
     // slide(n) says which slide step n is on. The address names the slide and the part: #3.2 (rule 11).
     const slides = [...document.querySelectorAll(".slide")];
     const steps = slides.flatMap((s, i) => [...s.querySelectorAll(".build")].map((_, k) => [i, k + 1])); // [slide, part]

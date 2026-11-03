@@ -265,9 +265,9 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
       if (u.changes && !u.remote) collab?.push(u.changes);
       if (u.changes) for (const d of drops) d.at = u.changes.mapPos(d.at, 1);
       if (u.docChanged || u.selectionSet) queueCursor();
-      // A presentation's pictures of its steps are out of date once its text changes.
+      // A presentation's pictures of its steps are out of date once its text changes (libs/steps).
       if (u.docChanged) {
-        window.__ergaReader?.changed?.();
+        dispatchEvent(new Event("ergaedit"));
         queueDark();
       }
       // (The editor takes the page as it's made: once it's this frame's.)

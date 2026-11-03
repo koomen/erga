@@ -76,10 +76,16 @@ export const GUARD_UP = ["pointerup", "pointercancel", "mouseup", "touchend", "t
 export const GUARD_END = ["mouseup", "touchend", "touchcancel"];
 
 
-/** The one of Erga's libraries a page imports itself (<script src=".../erga/<name>/editor.js">), or null. */
-export const importedLibrary = (html: string): string | null =>
-  /<script\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]*\/erga\/([a-z]+)\/editor\.js\b/i.exec(html)?.[1].toLowerCase() ?? null;
+/**
+ * A page imports Erga's libraries at erga.dev (https://erga.dev/erga/<name>/editor.js); each server serves its own
+ * (serveLibrary), the build its editor runs. So the page loads them from the viewer's origin, `shell`: staging's page
+ * loads staging's library, and a local server's its own. The page (server/pages/reader.ts) and the agent's copy of it
+ * (client/page-tools/tools.ts) both do. The text the editor reads stays as written.
+ */
+export const localLibraries = (html: string, shell: string) =>
+  html.replace(/(<script\b[^>]*\bsrc\s*=\s*["']?)https:\/\/erga\.dev(\/erga\/[a-z]+\/editor\.js)/gi, `$1${shell}$2`);
 
-/** Whether a page brings its own editor: it imports one of Erga's libraries itself, or says it has its own. */
+/** Whether a page brings its editor: it imports erga/text itself (<script src=".../erga/text/editor.js">), or has its own. */
 export const bringsEditor = (html: string) =>
-  importedLibrary(html) != null || /<meta\b(?=[^>]*\bname\s*=\s*["']?erga-editor\b)(?=[^>]*\bcontent\s*=\s*["']?own\b)[^>]*>/i.test(html);
+  /<script\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]*\/erga\/text\/editor\.js\b/i.test(html) ||
+  /<meta\b(?=[^>]*\bname\s*=\s*["']?erga-editor\b)(?=[^>]*\bcontent\s*=\s*["']?own\b)[^>]*>/i.test(html);
