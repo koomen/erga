@@ -92,11 +92,13 @@ export interface SessionOptions {
 export interface AgentSession {
   /** Takes back the agent's most recent change (one tool call), if any. */
   undo(): boolean;
-  /** How many of its changes Undo can take back. */
-  undoable(): number;
+  /** Puts back the change Undo took back last, if any. A new change by the agent clears what is left to redo. */
+  redo(): boolean;
+  /** How many of its changes Undo can take back (count), and how many Redo can put back. */
+  undoable(): { count: number; redo: number };
   /** The person's agent's turn is done: it's no longer working here, and the document cuts a version of its edits. */
   done(): void;
-  /** Its events for the person's tabs: Undo's count as it changes. */
+  /** Its events for the person's tabs: Undo's and Redo's counts as they change. */
   subscribe(listener: (ev: LogEvent) => void): () => void;
   /** The tools, as the person may use them. */
   tools(): ToolSpec[];

@@ -402,8 +402,8 @@ export function makeHost(opts: HostOptions) {
     .handle("undoable", () =>
       Person.use((user) =>
         session(user).pipe(
-          Effect.map((s) => ({ count: s.undoable() })),
-          Effect.orElseSucceed(() => ({ count: 0 }))
+          Effect.map((s) => s.undoable()),
+          Effect.orElseSucceed(() => ({ count: 0, redo: 0 }))
         )
       )
     )
@@ -411,6 +411,14 @@ export function makeHost(opts: HostOptions) {
       Person.use((user) =>
         session(user).pipe(
           Effect.map((s) => ({ ok: s.undo() })),
+          Effect.orElseSucceed(() => ({ ok: false }))
+        )
+      )
+    )
+    .handle("redo", () =>
+      Person.use((user) =>
+        session(user).pipe(
+          Effect.map((s) => ({ ok: s.redo() })),
           Effect.orElseSucceed(() => ({ ok: false }))
         )
       )

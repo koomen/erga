@@ -39,7 +39,7 @@ export interface AgentAction {
 }
 
 const SECRET = "a secret: pasted or made only on the page, never in a conversation";
-const PANEL = "the agent panel itself (the conversation, its model, stop, undo)";
+const PANEL = "the agent panel itself (the conversation, its model, stop, undo, redo)";
 const STREAM = "the page's live updates (server-sent events)";
 const SIGN_IN = "signing in: the person in their own browser, before any agent acts for them";
 
@@ -287,10 +287,11 @@ export const AGENT_ACTIONS: AgentAction[] = [
   {
     route: "GET /d/<id>/api/agent/undo",
     domain: "none",
-    action: "How many of your agent's changes to the document Undo can take back",
+    action: "How many of your agent's changes to the document Undo can take back, and Redo can put back",
     exempt: PANEL,
   },
   { route: "POST /d/<id>/api/agent/undo", domain: "none", action: "Undo your agent's last change to the document", exempt: PANEL },
+  { route: "POST /d/<id>/api/agent/redo", domain: "none", action: "Redo the change Undo took back last", exempt: PANEL },
   {
     route: "POST /d/<id>/api/agent/done",
     domain: "none",

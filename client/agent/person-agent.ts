@@ -390,34 +390,44 @@ if (back?.files?.length) att.restore(back.files);
 // ---------------------------------------------------------------- the document open
 
 // Undo takes back the agent's last change to the document open (one tool call), whoever has typed since: your own ⌘Z
-// never undoes the agent's edits. The document's host keeps each person's agent's changes (document/host.ts).
-const undoBtn = $("agent-undo") as HTMLButtonElement;
-let undoable = 0;
+// never undoes the agent's edits. Redo puts back what Undo took back, until the agent changes the document again. The
+// document's host keeps each person's agent's changes (document/host.ts).
+const undoBtn = $("agent-undo") as HTMLButtonElement,
+  redoBtn = $("agent-redo") as HTMLButtonElement;
+let undoable = 0,
+  redoable = 0;
 function renderUndo() {
   const why = !undoable ? "Your agent hasn't changed this document since it opened" : null;
   undoBtn.setAttribute("aria-disabled", String(!!why));
   undoBtn.dataset.tip = why ?? `Undo the agent's last change (${undoable} to go)`;
+  const whyNot = !redoable ? "Nothing to redo" : null;
+  redoBtn.setAttribute("aria-disabled", String(!!whyNot));
+  redoBtn.dataset.tip = whyNot ?? `Redo the agent's last undone change (${redoable} to go)`;
 }
 async function readUndo() {
   if (!BASE) return;
   const a = (await fetch(`${BASE}${asUser("/api/agent/undo")}`).then(
     (r) => (r.ok ? r.json() : null),
     () => null
-  )) as { count?: number } | null;
+  )) as { count?: number; redo?: number } | null;
   undoable = a?.count ?? 0;
+  redoable = a?.redo ?? 0;
   renderUndo();
 }
-undoBtn.hidden = !BASE;
+undoBtn.hidden = redoBtn.hidden = !BASE;
 if (BASE) {
-  undoBtn.addEventListener("click", async () => {
-    if (!undoable) {
-      showHint(undoBtn.dataset.tip ?? "");
-      return;
-    }
-    const r = await fetch(`${BASE}${asUser("/api/agent/undo")}`, { method: "POST" }).catch(() => null);
-    if (!r?.ok) showHint("Couldn't undo the agent's change. Try again.");
-    void readUndo();
-  });
+  const wire = (btn: HTMLButtonElement, which: "undo" | "redo", count: () => number) =>
+    btn.addEventListener("click", async () => {
+      if (!count()) {
+        showHint(btn.dataset.tip ?? "");
+        return;
+      }
+      const r = await fetch(`${BASE}${asUser(`/api/agent/${which}`)}`, { method: "POST" }).catch(() => null);
+      if (!r?.ok) showHint(`Couldn't ${which} the agent's change. Try again.`);
+      void readUndo();
+    });
+  wire(undoBtn, "undo", () => undoable);
+  wire(redoBtn, "redo", () => redoable);
   // After each of the agent's tool calls, and as the panel opens.
   window.addEventListener("erga:agent-tool", () => void readUndo());
   window.addEventListener("erga:agent-shown", () => void readUndo());

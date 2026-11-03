@@ -120,10 +120,12 @@ export const Api = HttpApi.make("erga")
       }),
       success: Ok,
     }))
-    /** How many of the person's agent's changes here Undo can take back. */
-    .add(HttpApiEndpoint.get("undoable", "/api/agent/undo", { success: Schema.Struct({ count: Schema.Number }) }))
+    /** How many of the person's agent's changes here Undo can take back (count), and Redo can put back. */
+    .add(HttpApiEndpoint.get("undoable", "/api/agent/undo", { success: Schema.Struct({ count: Schema.Number, redo: Schema.Number }) }))
     /** Undoes the agent's last change; ok is false when there was nothing to undo. */
     .add(HttpApiEndpoint.post("undo", "/api/agent/undo", { success: Schema.Struct({ ok: Schema.Boolean }) }))
+    /** Puts back the change Undo took back last; ok is false when there was nothing to redo. */
+    .add(HttpApiEndpoint.post("redo", "/api/agent/redo", { success: Schema.Struct({ ok: Schema.Boolean }) }))
     .middleware(PersonFromRequest))
   // The server's, only: an agent's document tool (POST /api/tools/<name> with "document", server/api.ts) runs here, as
   // the person's agent (agents/tools.ts, runInDocument). The app refuses this path from outside (server/documents/routes.ts).

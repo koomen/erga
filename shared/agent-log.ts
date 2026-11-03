@@ -39,7 +39,7 @@ export type LogEvent =
   | { t: "error"; text: string }
   | { t: "busy"; busy: boolean }
   /** How many of the agent's changes "Undo the agent's change" can take back. */
-  | { t: "undoable"; count: number }
+  | { t: "undoable"; count: number; redo: number }
   | { t: "reset" };
 
 export interface Log { items: LogItem[]; busy: boolean; undoable: number }
