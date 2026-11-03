@@ -12,7 +12,7 @@ import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import * as Effect from "effect/Effect";
 import * as Y from "yjs";
-import { Awareness } from "y-protocols/awareness";
+import { Awareness } from "../../shared/yjs-protocol";
 import { Document, type DocumentDeps } from "../../document/document";
 import { MemoryStorage } from "../../document/storage";
 import { joinLocal } from "../../document/room";

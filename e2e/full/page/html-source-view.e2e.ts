@@ -34,3 +34,55 @@ test("the source view is the file, editable, as code (smaller monospace, lines n
   await ed.press("Escape");
   await expect.poll(() => ed.eval<boolean>(`document.body.classList.contains("source")`)).toBe(false);
 });
+
+test("the source view types HTML as code: a tag brings its closing tag, Enter indents, and names and comments have their colors", async ({
+  tab,
+}) => {
+  const ed = await openEditor(tab, await servers.main(), "page");
+  await ed.press("ControlOrMeta+Shift+p");
+  await expect
+    .poll(() => ed.eval<string | null>(`document.querySelector("#source .cm-content")?.getAttribute("contenteditable") ?? null`))
+    .toBe("true");
+  await ed.settle();
+  const end = async () => (await ed.source()).slice((await ed.source()).indexOf("</html>\n") + 8);
+  await ed.press("ControlOrMeta+End");
+  await ed.type("<section>");
+  await expect.poll(end).toBe("<section></section>");
+  await ed.press("Enter");
+  await ed.type("<p>hi");
+  await expect.poll(end).toBe("<section>\n  <p>hi</p>\n</section>");
+  await ed.press("End");
+  await ed.press("Enter");
+  await ed.type("<ul>");
+  await ed.press("Enter");
+  await expect.poll(end).toBe("<section>\n  <p>hi</p>\n  <ul>\n    \n  </ul>\n</section>");
+  // "</" closes the innermost open element.
+  await ed.type("<li>x");
+  await ed.press("ArrowRight");
+  await ed.press("ArrowRight");
+  await ed.press("ArrowRight");
+  await ed.press("ArrowRight");
+  await ed.press("ArrowRight");
+  await ed.press("Backspace");
+  await ed.press("Backspace");
+  await ed.press("Backspace");
+  await ed.press("Backspace");
+  await ed.press("Backspace");
+  await ed.type("</");
+  await expect.poll(end).toBe("<section>\n  <p>hi</p>\n  <ul>\n    <li>x</li>\n  </ul>\n</section>");
+  await ed.press("ControlOrMeta+End");
+  await ed.type("\n<!-- a note -->");
+  await expect.poll(end).toBe("<section>\n  <p>hi</p>\n  <ul>\n    <li>x</li>\n  </ul>\n</section>\n<!-- a note -->");
+  // The colors: a tag's brackets and a comment pale, names and values darker than the text, a comment in italics.
+  const look = (text: string) =>
+    ed.eval<string[]>(
+      `(() => { const s = [...document.querySelectorAll("#source .cm-line span")].find((s) => s.textContent == ${JSON.stringify(text)}); const c = s && getComputedStyle(s); return c ? [c.color, c.fontStyle] : []; })()`
+    );
+  const text = await ed.eval<string>(`getComputedStyle(document.querySelector("#source .cm-content")).color`);
+  const [bracket] = await look("<"),
+    [name] = await look("html"),
+    [value] = await look('"en"');
+  expect(new Set([text, bracket, name]).size).toBe(3);
+  expect(value).toBe(name);
+  expect(await look("<!-- a note -->")).toEqual([bracket, "italic"]);
+});

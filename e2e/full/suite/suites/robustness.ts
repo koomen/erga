@@ -3,7 +3,7 @@
 // After each, the room must still be up, unchanged by the garbage, and
 // syncing for everyone else.
 
-import * as encoding from "lib0/encoding";
+import { Encoder } from "../../../../shared/yjs-protocol";
 import { converged, Participant } from "../client";
 import { expect, type Ctx, type Test } from "../harness";
 import { sleep } from "../../../../shared/time";
@@ -34,7 +34,11 @@ async function stillHealthy(ctx: Ctx, d: Doc, expected?: string) {
   await until(() => y.str().includes("ALIVE "), 3000, "edits still flow");
 }
 
-const msg = (...parts: ((e: encoding.Encoder) => void)[]) => { const e = encoding.createEncoder(); for (const p of parts) p(e); return encoding.toUint8Array(e); };
+const msg = (...parts: ((e: Encoder) => void)[]) => {
+  const e = new Encoder();
+  for (const p of parts) p(e);
+  return e.toBytes();
+};
 
 export const robustness: Test[] = [
   {
@@ -59,13 +63,30 @@ export const robustness: Test[] = [
       ctx.defer(() => a.destroy());
       const text = a.str();
       const bad: Uint8Array[] = [
-        msg((e) => encoding.writeVarUint(e, 0)),                                                     // sync, nothing else
-        msg((e) => encoding.writeVarUint(e, 0), (e) => encoding.writeVarUint(e, 2)),                 // update, no payload
-        msg((e) => encoding.writeVarUint(e, 0), (e) => encoding.writeVarUint(e, 2), (e) => encoding.writeVarUint8Array(e, new Uint8Array([1, 1, 200, 3, 0, 9, 9, 9]))), // corrupt update
-        msg((e) => encoding.writeVarUint(e, 0), (e) => encoding.writeVarUint(e, 1), (e) => encoding.writeVarUint8Array(e, new Uint8Array([255, 255, 255, 255, 15]))), // corrupt step 2
-        msg((e) => encoding.writeVarUint(e, 1), (e) => encoding.writeVarUint8Array(e, new Uint8Array([5, 1, 2]))), // corrupt awareness
-        msg((e) => encoding.writeVarUint(e, 99)),                                                    // unknown type
-        msg((e) => encoding.writeVarUint(e, 0), (e) => encoding.writeVarUint(e, 7)),                 // unknown sync step
+        msg((e) => e.writeUint(0)), // sync, nothing else
+        msg(
+          (e) => e.writeUint(0),
+          (e) => e.writeUint(2)
+        ), // update, no payload
+        msg(
+          (e) => e.writeUint(0),
+          (e) => e.writeUint(2),
+          (e) => e.writeBytes(new Uint8Array([1, 1, 200, 3, 0, 9, 9, 9]))
+        ), // corrupt update
+        msg(
+          (e) => e.writeUint(0),
+          (e) => e.writeUint(1),
+          (e) => e.writeBytes(new Uint8Array([255, 255, 255, 255, 15]))
+        ), // corrupt step 2
+        msg(
+          (e) => e.writeUint(1),
+          (e) => e.writeBytes(new Uint8Array([5, 1, 2]))
+        ), // corrupt awareness
+        msg((e) => e.writeUint(99)), // unknown type
+        msg(
+          (e) => e.writeUint(0),
+          (e) => e.writeUint(7)
+        ), // unknown sync step
       ];
       for (const m of bad) await raw(d, [m], { holdMs: 80 });
       await raw(d, ["a text frame, not binary"], { holdMs: 80 });
@@ -80,7 +101,11 @@ export const robustness: Test[] = [
       const a = await Participant.join(d, "Ada");
       ctx.defer(() => a.destroy());
       const n = ctx.long ? 300 : 80;
-      const step1 = msg((e) => encoding.writeVarUint(e, 0), (e) => encoding.writeVarUint(e, 0), (e) => encoding.writeVarUint8Array(e, new Uint8Array([0])));
+      const step1 = msg(
+        (e) => e.writeUint(0),
+        (e) => e.writeUint(0),
+        (e) => e.writeBytes(new Uint8Array([0]))
+      );
       await Promise.all(Array.from({ length: n }, (_, i) => raw(d, i % 2 ? [step1] : [], { holdMs: ctx.rng.int(100) }).catch(() => null)));
       // And participants that join and vanish without a goodbye.
       for (let i = 0; i < 10; i++) { const p = await Participant.join(d, `Ghost${i}`); p.sever(); }

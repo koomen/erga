@@ -1,17 +1,15 @@
 // The source view: a page's HTML in CodeMirror, editable, on the viewer's own replica of the room, with an undo
 // history of its own (views.ts goes between it and the page with ⌘⇧P).
-// Its code (CodeMirror's view, the HTML language with its CSS and
-// JavaScript, the highlighting) is a chunk of its own, which main.ts imports
+// Its code (CodeMirror's view, and html-code.ts: the HTML's colors, closing
+// tags and indents) is a chunk of its own, which main.ts imports
 // the first time the view opens: the editor takes input long before anyone
 // needs it.
 
 import { StateEffect, StateField, type ChangeSet, type EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap, drawSelection, highlightSpecialChars, Decoration, WidgetType, type DecorationSet } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
-import { html } from "@codemirror/lang-html";
-import { tags as t } from "@lezer/highlight";
 import type { Peer } from "../../libs/text/ui/editor";
+import { htmlCode, htmlEnter } from "./html-code";
 
 /** Other people's carets and selections in the source view (the page draws its own, see PageEditor.setPeers): `view.dispatch({ effects: setPeers.of(peers) })`. */
 export const setPeers = StateEffect.define<Peer[]>();
@@ -70,13 +68,6 @@ const htmlLook: Extension = [baseTheme, EditorView.theme({
   ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.6", padding: "max(64px, 9vh) 0 40vh 56px" },
   ".cm-content": { paddingRight: "24px" },
 })];
-const sourceHighlight = HighlightStyle.define([
-  { tag: [t.processingInstruction, t.meta, t.punctuation, t.angleBracket, t.documentMeta], color: "var(--mark)" },
-  { tag: [t.tagName, t.attributeName], color: "var(--soft)" },
-  { tag: [t.string, t.attributeValue, t.url, t.link], color: "var(--soft)" },
-  { tag: t.comment, color: "var(--mark)", fontStyle: "italic" },
-]);
-
 /** What the view tells the editor: its own edits (to go to the room), and that its text or selection changed. */
 export interface SourceHooks {
   edited(changes: ChangeSet): void;
@@ -88,11 +79,10 @@ export function sourceExtensions(hooks: SourceHooks): Extension {
   return [
       peersField,
       history(),
-      html(),
+      htmlCode,
       drawSelection(),
       highlightSpecialChars(),
-      keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
-      syntaxHighlighting(sourceHighlight),
+      keymap.of([htmlEnter, ...defaultKeymap, ...historyKeymap, indentWithTab]),
       htmlLook,
       // The view's own edits go to the room; edits from the room come in marked "external".
       EditorView.updateListener.of((u) => {

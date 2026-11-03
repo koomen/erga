@@ -1,5 +1,5 @@
 // A replica of the document room's shared Yjs doc, synced with the host over one WebSocket (/api/room?events=1:
-// y-protocols' sync and awareness messages as binary frames, the person's events as text frames of JSON:
+// Yjs's sync and awareness messages (shared/yjs-protocol.ts) as binary frames, the person's events as text frames of JSON:
 // document/tabs.ts), and the binding between it and an editor's CodeMirror state. The page's editor (frame.ts) has
 // one, on its socket from the pages origin with an edit key; the viewer (client/shell/main.ts) has one for the source
 // view, the people in the document and the agent's events.
@@ -22,10 +22,18 @@
 // tab was last used, and whether an agent is busy.
 
 import * as Y from "yjs";
-import * as encoding from "lib0/encoding";
-import * as decoding from "lib0/decoding";
-import * as sync from "y-protocols/sync";
-import * as awarenessProtocol from "y-protocols/awareness";
+import {
+  Encoder,
+  Decoder,
+  Awareness,
+  writeSyncStep1,
+  writeUpdate,
+  readSyncMessage,
+  SYNC_STEP2,
+  applyAwarenessUpdate,
+  removeAwarenessStates,
+  encodeAwarenessUpdate,
+} from "../../../shared/yjs-protocol.ts";
 import type { ChangeSet } from "@codemirror/state";
 import type { Hello } from "../../../document/api";
 import {
@@ -86,7 +94,7 @@ export interface CollabOptions {
   early?: EarlySocket;
 }
 
-/** y-protocols' message types, as the room sends them (document/room.ts). */
+/** The message types, as the room sends them (document/room.ts). */
 const MSG_SYNC = 0, MSG_AWARENESS = 1, MSG_QUERY_AWARENESS = 3;
 /** How often an idle socket is checked (a PING, document/tabs.ts), and how long its answer may take before it's given up for dead. */
 const PING_EVERY = 15_000, PONG_WITHIN = 8_000;
@@ -96,7 +104,7 @@ export type EarlySocket = WebSocket & { early?: (string | ArrayBuffer)[] };
 
 export class Collab {
   readonly doc = new Y.Doc();
-  readonly awareness = new awarenessProtocol.Awareness(this.doc);
+  readonly awareness = new Awareness(this.doc);
   private text: Y.Text | null = null;
   /** The origin of this tab's own transactions, which the observer skips. */
   private readonly local = { tab: true };
@@ -135,15 +143,15 @@ export class Collab {
     // What changes here goes to the room: this tab's edits and its presence (not what came from the room).
     this.doc.on("update", (update: Uint8Array, origin: unknown) => {
       if (origin === this) return;
-      const e = encoding.createEncoder();
-      encoding.writeVarUint(e, MSG_SYNC);
-      sync.writeUpdate(e, update);
-      this.send(encoding.toUint8Array(e));
+      const e = new Encoder();
+      e.writeUint(MSG_SYNC);
+      writeUpdate(e, update);
+      this.send(e.toBytes());
     });
     this.awareness.on("update", ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }, origin: unknown) => {
       if (origin !== this) this.sendAwareness([...added, ...updated, ...removed]);
     });
-    addEventListener("pagehide", () => awarenessProtocol.removeAwarenessStates(this.awareness, [this.doc.clientID], "window unload"));
+    addEventListener("pagehide", () => removeAwarenessStates(this.awareness, [this.doc.clientID], "window unload"));
     files(this.doc).observeDeep((events) => this.filesChanged(events));
     assets(this.doc).observe((e) => { if (this.live) opts.onFiles([...e.keysChanged]); });
     // The page's socket, if it opened one (and it's not closed); else one of its own.
@@ -170,10 +178,10 @@ export class Collab {
   /** What the room has that this tab doesn't (and, in the answer to the room's own step 1, the other way): once it has a state, on each socket. */
   private askForChanges(): void {
     if (!this.open || !this.haveState) return;
-    const e = encoding.createEncoder();
-    encoding.writeVarUint(e, MSG_SYNC);
-    sync.writeSyncStep1(e, this.doc);
-    this.send(encoding.toUint8Array(e));
+    const e = new Encoder();
+    e.writeUint(MSG_SYNC);
+    writeSyncStep1(e, this.doc);
+    this.send(e.toBytes());
   }
 
   /** Whether the socket is open now. */
@@ -216,7 +224,7 @@ export class Collab {
   close(): void {
     this.stopped = true;
     clearInterval(this.pinger);
-    awarenessProtocol.removeAwarenessStates(this.awareness, [this.doc.clientID], "left");
+    removeAwarenessStates(this.awareness, [this.doc.clientID], "left");
     const ws = this.ws;
     this.ws = null;
     this.open = false;
@@ -266,7 +274,11 @@ export class Collab {
     const was = this.open;
     this.open = false;
     this.syncedNow = false;
-    awarenessProtocol.removeAwarenessStates(this.awareness, [...this.awareness.getStates().keys()].filter((c) => c != this.doc.clientID), this);
+    removeAwarenessStates(
+      this.awareness,
+      [...this.awareness.getStates().keys()].filter((c) => c != this.doc.clientID),
+      this
+    );
     if (was) this.opts.onStatus(false);
     if (code == 4409) { this.stopped = true; this.opts.onStale(); return; }
     // Its person may no longer open it: the page opens again, and says so. (4408, a role changed: it joins again below, as they may now.)
@@ -305,10 +317,10 @@ export class Collab {
   }
 
   private sendAwareness(clients: number[]): void {
-    const e = encoding.createEncoder();
-    encoding.writeVarUint(e, MSG_AWARENESS);
-    encoding.writeVarUint8Array(e, awarenessProtocol.encodeAwarenessUpdate(this.awareness, clients));
-    this.send(encoding.toUint8Array(e));
+    const e = new Encoder();
+    e.writeUint(MSG_AWARENESS);
+    e.writeBytes(encodeAwarenessUpdate(this.awareness, clients));
+    this.send(e.toBytes());
   }
 
   private receive(data: string | ArrayBuffer): void {
@@ -327,18 +339,21 @@ export class Collab {
       this.opts.onEvent(msg);
       return;
     }
-    const decoder = decoding.createDecoder(new Uint8Array(data));
-    switch (decoding.readVarUint(decoder)) {
+    const decoder = new Decoder(new Uint8Array(data));
+    switch (decoder.readUint()) {
       case MSG_SYNC: {
-        const reply = encoding.createEncoder();
-        encoding.writeVarUint(reply, MSG_SYNC);
-        const kind = sync.readSyncMessage(decoder, reply, this.doc, this);
-        if (encoding.length(reply) > 1) this.send(encoding.toUint8Array(reply));
-        if (kind == sync.messageYjsSyncStep2 && !this.syncedNow) { this.syncedNow = true; this.gotSynced(); }
+        const reply = new Encoder();
+        reply.writeUint(MSG_SYNC);
+        const kind = readSyncMessage(decoder, reply, this.doc, this);
+        if (reply.length > 1) this.send(reply.toBytes());
+        if (kind == SYNC_STEP2 && !this.syncedNow) {
+          this.syncedNow = true;
+          this.gotSynced();
+        }
         return;
       }
       case MSG_AWARENESS:
-        awarenessProtocol.applyAwarenessUpdate(this.awareness, decoding.readVarUint8Array(decoder), this);
+        applyAwarenessUpdate(this.awareness, decoder.readBytes(), this);
         return;
       case MSG_QUERY_AWARENESS:
         this.sendAwareness([this.doc.clientID]);

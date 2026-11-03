@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Y from "yjs";
-import { Awareness } from "y-protocols/awareness";
+import { Awareness } from "../shared/yjs-protocol";
 import { FileStore, Room, StateStore } from "../document/room";
 import { fileStoreOf, Journal, KEYS, MemoryStorage, PART, stateStoreOf, type Storage } from "../document/storage";
 import { files, introduce } from "../document/content";

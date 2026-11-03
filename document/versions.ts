@@ -18,7 +18,7 @@
 // in it, is the caller's: this file stores and reads them, says what changed (`changes`, a compact diff), and writes the
 // fallback description used when no model writes one.
 
-import { createTwoFilesPatch, structuredPatch } from "diff";
+import { hunks, unifiedPatch } from "../shared/diff.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -257,9 +257,13 @@ export class Versions {
         if (used >= maxChars) { parts.push(`(and more)`); break; }
         const now = text(yield* self.file(version, path));
         const was = previous && path in before ? text(yield* self.file(previous, path)) : "";
-        if (now == null || was == null) { parts.push(`${path}: binary file ${path in before ? "changed" : "added"}`); continue; }
-        const patch = structuredPatch(path, path, was, now, undefined, undefined, { context: 1 });
-        const body = patch.hunks.map((h) => h.lines.map((l) => (l.length > 300 ? l.slice(0, 300) + "…" : l)).join("\n")).join("\n…\n");
+        if (now == null || was == null) {
+          parts.push(`${path}: binary file ${path in before ? "changed" : "added"}`);
+          continue;
+        }
+        const body = hunks(was, now, 1)
+          .map((h) => h.lines.map((l) => (l.length > 300 ? l.slice(0, 300) + "…" : l)).join("\n"))
+          .join("\n…\n");
         const piece = `--- ${path}${path in before ? "" : " (new file)"}\n${body}`;
         parts.push(piece.slice(0, Math.max(200, maxChars - used)));
         used += piece.length;
@@ -299,8 +303,7 @@ export function unifiedDiff(before: Map<string, Uint8Array>, after: Map<string, 
     let piece: string;
     if (a == null || b == null) piece = `Binary file ${path} ${!was ? "added" : !now ? "deleted" : "changed"} (${was?.length ?? 0} -> ${now?.length ?? 0} bytes)`;
     else {
-      piece = createTwoFilesPatch(was ? `a/${path}` : "/dev/null", now ? `b/${path}` : "/dev/null", a, b, undefined, undefined, { context: opts.context ?? 3 })
-        .replace(/^=+\n/, "").trimEnd();
+      piece = unifiedPatch(was ? `a/${path}` : "/dev/null", now ? `b/${path}` : "/dev/null", a, b, opts.context ?? 3).trimEnd();
       if (!was) piece = `new file ${path}\n${piece}`;
       else if (!now) piece = `deleted file ${path}\n${piece}`;
     }

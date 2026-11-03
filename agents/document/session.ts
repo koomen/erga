@@ -10,7 +10,7 @@
 // module is the Promise edge: document/host.ts wraps what it exposes in Effect.
 
 import * as Y from "yjs";
-import { Awareness } from "y-protocols/awareness";
+import { Awareness } from "../../shared/yjs-protocol.ts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";

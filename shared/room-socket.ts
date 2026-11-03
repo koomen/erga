@@ -9,22 +9,21 @@
 // Once the state is in, the tab asks the socket for what changed since
 // (sync step 1), and edits made meanwhile go over it as soon as it's open.
 
-import * as encoding from "lib0/encoding";
-import * as decoding from "lib0/decoding";
+import { Encoder, Decoder } from "./yjs-protocol.ts";
 
 /** A text frame a tab sends to see that its idle socket is alive; the host answers PONG (the Durable Object without waking: setWebSocketAutoResponse). */
 export const PING = "ping", PONG = "pong";
 
 /** GET /api/start's answer: the hello (JSON), then the room's state (a Yjs update). */
 export function encodeStart(hello: unknown, state: Uint8Array): Uint8Array {
-  const e = encoding.createEncoder();
-  encoding.writeVarString(e, JSON.stringify(hello));
-  encoding.writeVarUint8Array(e, state);
-  return encoding.toUint8Array(e);
+  const e = new Encoder();
+  e.writeString(JSON.stringify(hello));
+  e.writeBytes(state);
+  return e.toBytes();
 }
 
 export function decodeStart<H>(bytes: Uint8Array): { hello: H; state: Uint8Array } {
-  const d = decoding.createDecoder(bytes);
-  const hello = JSON.parse(decoding.readVarString(d)) as H;
-  return { hello, state: decoding.readVarUint8Array(d) };
+  const d = new Decoder(bytes);
+  const hello = JSON.parse(d.readString()) as H;
+  return { hello, state: d.readBytes() };
 }

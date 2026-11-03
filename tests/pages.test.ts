@@ -7,7 +7,7 @@ import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Y from "yjs";
-import { Awareness } from "y-protocols/awareness";
+import { Awareness } from "../shared/yjs-protocol";
 import { FileStore, Room, StateStore, joinLocal } from "../document/room";
 import { relativeUrl, runTreeOp } from "../document/host";
 import { checkNewName, cleanTreePath, pageAddress, pageUrl, resolvePage, titleOf, TreeError, treeEntries } from "../document/pages";

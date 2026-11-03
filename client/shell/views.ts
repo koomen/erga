@@ -7,7 +7,7 @@ import { $, type Mode, type Shell } from "./shell";
 
 export function mountViews(shell: Shell) {
   // The source view edits this tab's replica of the room, as the page's editor edits its own: both land in the same
-  // file. Its code (source-view.ts: CodeMirror's view and the HTML language) loads the first time it opens.
+  // file. Its code (source-view.ts: CodeMirror's view and html-code.ts) loads the first time it opens.
   let sourceCode: Promise<typeof import("./source-view")> | null = null;
   const loadSource = () =>
     (sourceCode ??= import("./source-view").then(

@@ -4,7 +4,7 @@
 
 import { expect, test } from "bun:test";
 import * as Y from "yjs";
-import { Awareness } from "y-protocols/awareness";
+import { Awareness } from "../shared/yjs-protocol";
 import * as Layer from "effect/Layer";
 import { FileStore, Room, StateStore, joinLocal } from "../document/room";
 import * as Effect from "effect/Effect";
