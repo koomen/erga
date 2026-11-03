@@ -42,6 +42,35 @@ test("a click in a link puts the caret there and shows the link bar, without fol
   await expect.poll(() => ed.source()).toContain(`has <a href="https://example.com">Za Xlinks</a>`);
 });
 
+test("the link bar shows for a caret inside a link, not at its start or its end, by click or by arrows", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "page");
+  // "has <a>a link</a> and": the link's first character, its last two.
+  const [first, n, k] = [await ed.charAt("p.lede a", 0), await ed.charAt("p.lede a", 4), await ed.charAt("p.lede a", 5)];
+  const inside = await ed.charAt("p.lede a", 2);
+  await ed.click(inside.x, inside.y);
+  await expect.poll(() => linkBar(ed)).toBe(true);
+  // A click at its start: the caret after "has ", where the link starts.
+  await ed.click(first.x - 1, first.y);
+  await expect.poll(() => linkBar(ed)).toBe(false);
+  await ed.press("ArrowRight");
+  await expect.poll(() => linkBar(ed)).toBe(true);
+  await ed.press("ArrowLeft");
+  await expect.poll(() => linkBar(ed)).toBe(false);
+  // A click at its end, after "k".
+  await ed.click(inside.x, inside.y);
+  await expect.poll(() => linkBar(ed)).toBe(true);
+  await ed.click(k.x + (k.x - n.x) - 1, k.y);
+  await expect.poll(() => linkBar(ed)).toBe(false);
+  await ed.press("ArrowLeft");
+  await expect.poll(() => linkBar(ed)).toBe(true);
+  await ed.press("ArrowRight");
+  await expect.poll(() => linkBar(ed)).toBe(false);
+  // Typing at the end still joins the link, and the caret stays at its end: no bar.
+  await ed.type("s");
+  await expect.poll(() => ed.source()).toContain(`>a links</a> and`);
+  expect(await linkBar(ed)).toBe(false);
+});
+
 test("the link button turns the style bar into the link bar; Enter links the selection, opening in this tab; × goes back; a click on the new link doesn't follow it", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
   const url = tab.page.url();

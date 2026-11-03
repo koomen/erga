@@ -314,7 +314,7 @@ export function mountControls(win: Window, page: ControlsPage, o: { place: () =>
         b.title = why ?? b.getAttribute("aria-label")!.replace(/ \((.+)\)$/, "  $1");
       }
       showPane(stylePane);
-    } else if (link?.rect && !linkDismissed) {
+    } else if (link?.rect && link.inside && !linkDismissed) {
       linking = "caret";
       linkSel = pageSel();
       fillLink(link.text, link);

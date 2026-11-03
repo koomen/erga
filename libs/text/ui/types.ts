@@ -79,11 +79,15 @@ export interface PageEditorConfig {
   onReload: (view: { pos: number; top: number } | null) => void;
 }
 
-/** The link the link bar shows: its address, its text, whether it opens in this tab, and its rectangle in the frame. */
+/**
+ * The link the link bar shows: its address, its text, whether it opens in this tab, and its rectangle in the frame.
+ * `inside`: a selection, or a caret with link text on both sides (not at the link's start or end).
+ */
 export interface LinkInfo {
   href: string;
   text: string;
   self: boolean;
+  inside: boolean;
   rect: { left: number; top: number; width: number; bottom: number } | null;
 }
 /**
