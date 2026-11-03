@@ -460,7 +460,7 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 .agent-hint { margin: 0 10px 8px; padding: 7px 10px; border-radius: 10px; background: var(--code-bg); color: var(--soft); font-size: 12.5px; line-height: 1.45; }
 .agent-hint.sticky { color: var(--fg); }
 .agent-hint[hidden] { display: none; }
-#agent-undo[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+#agent-undo[aria-disabled="true"], #agent-redo[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
 /* Shown while you've scrolled back and the agent has written more below. */
 .agent-jump {
   align-self: center; margin: -40px 0 8px; position: relative; z-index: 1; border: 1px solid var(--panel-border); border-radius: 999px;

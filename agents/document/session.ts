@@ -80,7 +80,7 @@ async function startSession(opts: SessionOptions, sandbox: Sandbox): Promise<Age
   await Effect.runPromise(Effect.sleep(0)); // the in-process sync is microtasks: done by now
   introduce(doc, me);
 
-  const origin = { agent: owner.id }, undoOrigin = { agentUndo: owner.id };
+  const origin = { agent: owner.id };
   // One undo step per tool call: its steps merge until the call ends (edited, stopCapturing).
   const undo = new Y.UndoManager(files(doc), { trackedOrigins: new Set([origin]), captureTimeout: Infinity });
   // Where each edit ends, as the agent's caret: others' editors play the edit as typing up to it (workspace.ts).
@@ -113,10 +113,30 @@ async function startSession(opts: SessionOptions, sandbox: Sandbox): Promise<Age
     wasBusy = on;
     presence({ busy: on, activity: on ? activity ?? (awareness.getLocalState()?.activity as string | null) ?? "working" : null });
   };
-  // The person's tabs hear Undo's count (document/host.ts sends it on).
+  // The person's tabs hear Undo's and Redo's counts (document/host.ts sends them on).
   const listeners = new Set<(ev: LogEvent) => void>();
   const undoable = () => {
-    for (const l of listeners) l({ t: "undoable", count: undo.undoStack.length });
+    for (const l of listeners) l({ t: "undoable", count: undo.undoStack.length, redo: undo.redoStack.length });
+  };
+  /**
+   * Undo or Redo of one step, in one transaction stamped as the agent's (so it is the agent's even when it only deletes).
+   * The manager files the step on the other stack only if its flag is still on when the transaction ends, after
+   * undo()/redo() turned it off: so it is turned on again until then. Like Undo, Redo changes only the agent's own text:
+   * what anyone typed since stays.
+   */
+  const replay = (which: "undo" | "redo") => {
+    if (!(which == "undo" ? undo.undoStack : undo.redoStack).length) return false;
+    doc.transact(() => {
+      undo[which]();
+      stamp(doc, acting);
+      if (which == "undo") undo.undoing = true;
+      else undo.redoing = true;
+    }, undo);
+    undo.undoing = undo.redoing = false;
+    // A call still under way goes on in a step of its own.
+    undo.stopCapturing();
+    undoable();
+    return true;
   };
 
   /** Done in the room: the replica has it once it has seen everything the room has (a few microtasks). */
@@ -165,16 +185,9 @@ async function startSession(opts: SessionOptions, sandbox: Sandbox): Promise<Age
       room.leave();
       awareness.destroy();
     },
-    undo() {
-      if (!undo.undoStack.length) return false;
-      // Stamped, so the undo is attributed to the agent even when it only deletes.
-      doc.transact(() => { undo.undo(); stamp(doc, acting); }, undoOrigin);
-      // A call still under way goes on in a step of its own.
-      undo.stopCapturing();
-      undoable();
-      return true;
-    },
-    undoable: () => undo.undoStack.length,
+    undo: () => replay("undo"),
+    redo: () => replay("redo"),
+    undoable: () => ({ count: undo.undoStack.length, redo: undo.redoStack.length }),
     done() {
       if (busy.calls) return;
       if (busy.timer) Effect.runFork(Fiber.interrupt(busy.timer));
