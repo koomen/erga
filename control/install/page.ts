@@ -30,6 +30,7 @@ export function deployPage(c: DeployPageConfig): string {
   const perms = c.permissions.map((p) => `<li><b>${esc(label(p.key))}</b> (${p.type == "read" ? "read" : "edit"}): ${esc(p.why)}</li>`).join("");
   const body = `${pageBars(null, [{ label: "Deploy" }])}<main>
   <header><div><h1>Install your own Erga</h1><p class="sub">Erga on your own Cloudflare account, with you (${esc(c.login)}) as its admin: the app, and a small control Worker beside it that keeps it up to date with Erga's releases${c.release ? ` (release <code>${esc(c.release.version)}</code>, ${esc(c.release.from == "stable" ? "the latest on stable" : `from ${c.release.from}`)})` : ""}.</p></div></header>
+  <p class="needs" id="needs">You need a Cloudflare account on the <b>Workers Paid</b> plan ($5 a month): the free plan's limit of 10 ms of CPU time for each request is too small for the editor. No account yet? <a href="https://dash.cloudflare.com/sign-up/workers-and-pages" target="_blank" rel="noopener">Make one ↗</a>, then <a href="https://dash.cloudflare.com/?to=/:account/workers/plans" target="_blank" rel="noopener">choose Workers Paid ↗</a>, and come back. You don't need a domain: Erga starts on a free workers.dev address, and you can add your domain later.</p>
   ${c.release ? "" : `<p class="error">There's no release to install yet: an admin promotes one to stable on the Ops page first.</p>`}
   <p class="error" id="top-error">${esc(c.error)}</p>
   <ol class="steps">
@@ -57,8 +58,8 @@ export function deployPage(c: DeployPageConfig): string {
         <label class="field" id="account-field">Cloudflare account<select id="account"></select></label>
         <div id="sub-new" hidden><label class="field">Your account has no workers.dev subdomain yet: choose one (it's yours for all your Workers)<input class="input mono" id="subdomain" placeholder="your-name" autocomplete="off" spellcheck="false"></label></div>
         <fieldset><legend>The app's address</legend>
-          <label class="choice"><input type="radio" name="app" value="workers.dev" checked><span><b id="app-wd">erga.…workers.dev</b><span class="muted">Free, and works straight away.</span></span></label>
-          <label class="choice" id="app-domain-choice"><input type="radio" name="app" value="domain"><span><b>A domain of yours</b><span class="muted">One of the domains in your Cloudflare account (a custom domain on the Worker).</span>
+          <label class="choice"><input type="radio" name="app" value="workers.dev" checked><span><b id="app-wd">erga.…workers.dev</b><span class="muted">Free, and works straight away. Start here: you can add your own domain later, on its Ops page.</span></span></label>
+          <label class="choice" id="app-domain-choice"><input type="radio" name="app" value="domain"><span><b>A domain of yours</b><span class="muted">One of the domains in your Cloudflare account (a custom domain on the Worker). A domain that isn't on Cloudflare yet: start on workers.dev, then add it on the Ops page, which tells you each step.</span>
             <span class="row"><select id="app-zone" aria-label="Domain for the app"></select><input class="input mono" id="app-host" placeholder="erga.example.com" aria-label="Hostname for the app" autocomplete="off" spellcheck="false"></span></span></label>
         </fieldset>
         <fieldset><legend>Where documents' pages run</legend>

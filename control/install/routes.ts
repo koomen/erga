@@ -117,10 +117,19 @@ export async function deployRoutes(request: Request, host: DeployHost): Promise<
       method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: new URLSearchParams({ grant_type: "authorization_code", code: url.searchParams.get("code") ?? "", redirect_uri: callback, client_id: env.CLOUDFLARE_OAUTH_CLIENT_ID || "mock", code_verifier: verifier }),
     }).catch(() => null);
-    const answer = r ? await r.json().catch(() => null) as { access_token?: string; error?: string } | null : null;
-    if (!answer?.access_token) return back(`Cloudflare didn't give Erga a token${answer?.error ? ` (${answer.error})` : ""}: try again, or use an API token.`, clear);
+    const answer = r
+      ? ((await r.json().catch(() => null)) as { access_token?: string; refresh_token?: string; scope?: string; error?: string } | null)
+      : null;
+    if (!answer?.access_token)
+      return back(
+        `Cloudflare didn't give Erga a token${answer?.error ? ` (${answer.error})` : ""}: try again, or use an API token.`,
+        clear
+      );
     const { id, key, cookie: set } = await newSession(request, env);
-    const connected = await env.DEPLOYS.getByName(id).attach(owner, "oauth", answer.access_token, key, mock);
+    const connected = await env.DEPLOYS.getByName(id).attach(owner, "oauth", answer.access_token, key, mock, {
+      refresh: answer.refresh_token,
+      scopes: answer.scope,
+    });
     if (!connected.ok) return back(connected.error, clear);
     const headers = new Headers({ Location: "/deploy" });
     headers.append("Set-Cookie", clear);
@@ -147,9 +156,20 @@ export async function deployRoutes(request: Request, host: DeployHost): Promise<
       case "/deploy/api/account": return stub.account(owner, current.key, String(body.accountId ?? ""), mock);
       case "/deploy/api/domains/search": return stub.searchDomains(owner, current.key, String(body.accountId ?? ""), String(body.q ?? ""), mock);
       case "/deploy/api/domains/register": return stub.register(owner, current.key, String(body.accountId ?? ""), String(body.name ?? ""), { price: String(body.price ?? ""), currency: String(body.currency ?? "") }, mock);
-      case "/deploy/api/start": return stub.start(owner, current.key, { ...(body.plan as DeployPlan), adminName: session!.name }, mock, url.origin);
-      case "/deploy/api/forget": await stub.forget(owner); return { ok: true as const };
-      default: return null;
+      // No plan: Try again, with the plan of the run that stopped.
+      case "/deploy/api/start":
+        return stub.start(
+          owner,
+          current.key,
+          body.plan ? { ...(body.plan as DeployPlan), adminName: session!.name } : null,
+          mock,
+          url.origin
+        );
+      case "/deploy/api/forget":
+        await stub.forget(owner);
+        return { ok: true as const };
+      default:
+        return null;
     }
   })();
   if (!answer) return Response.json({ ok: false, error: "Not found" }, { status: 404 });
@@ -180,9 +200,12 @@ const back = (error: string, ...setCookies: string[]) => {
   return new Response(null, { status: 302, headers });
 };
 
-/** A new session: its Durable Object's name, the key the token is sealed with, and the cookie that carries both halves. */
+/**
+ * A new connection: its Durable Object's name, the key the token is sealed with, and the cookie that carries both
+ * halves. The browser's session object stays (a reconnect keeps the install that stopped, for Try again); the key is new.
+ */
 async function newSession(request: Request, env: DeployHost["env"]) {
-  const id = randomToken(18),
+  const id = (await sessionOf(request, env))?.id ?? randomToken(18),
     half = randomToken(32);
   return { id, key: await sealKey(env, half), cookie: setCookie(request, COOKIE, `${id}.${half}`, 2 * 60 * 60, "/deploy") };
 }

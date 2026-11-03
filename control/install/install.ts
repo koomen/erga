@@ -41,6 +41,7 @@ import { installControlMetadata } from "../deploys/control-worker";
 import { CONTROL_ENTRYPOINT } from "../../deploy/targets";
 import * as Effect from "effect/Effect";
 import { runWith } from "../clock";
+import type { GrantSeed } from "../deploys/credential";
 
 /** The install's steps, as the page lists them: the pipeline's, with the control Worker's two among them. */
 export const INSTALL_STEPS = [
@@ -48,6 +49,7 @@ export const INSTALL_STEPS = [
   { id: "control", title: "Upload the control Worker, which keeps it up to date" },
   STEPS[3], STEPS[4], STEPS[5], STEPS[6], STEPS[7],
   { id: "control-live", title: "Wait for the control Worker to answer" },
+  { id: "credential", title: "Give the control Worker your consent, so it keeps Erga up to date" },
 ] as const;
 export type InstallStepId = (typeof INSTALL_STEPS)[number]["id"];
 
@@ -124,6 +126,12 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
   /** The install's fork at upstream (made before the install: control/deploys/pipeline-object.ts makeFork), and the secret its control Worker reaches it with. */
   fork: { id: string; secret: string };
   upstream: Upstream;
+  /**
+   * The deploy page's OAuth grant (its refresh token), handed to the control Worker as its credential (CLOUDFLARE_GRANT,
+   * control/deploys/credential.ts): the person consents once. Last, so the install's own token stays good until the end
+   * (the control Worker's first refresh ends it). None with a pasted API token: the person connects on the Ops page.
+   */
+  grant?: GrantSeed;
   report: (step: InstallStepId, status: "running" | "done" | "skipped", detail?: string) => void;
   site?: Fetch; sleep?: (ms: number) => Promise<void>; waitMs?: number;
 }): Promise<Installed> {
@@ -195,5 +203,16 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
       message: `The control Worker is uploaded, but https://${controlHost} hasn't answered yet${h.why ? ` (${h.why})` : ""}. Open it in a little while; if it still doesn't answer, try again.`,
     });
   o.report("control-live", "done", `https://${controlHost}, release ${release.version} (${h.summary})`);
+
+  // The consent, handed over: the control Worker's credential from now on.
+  if (o.grant) {
+    o.report("credential", "running");
+    await cf.call("PUT", `${acc}/workers/scripts/${INSTALL_CONTROL_WORKER}/secrets`, "give the control Worker its Cloudflare grant", {
+      name: "CLOUDFLARE_GRANT",
+      text: JSON.stringify(o.grant),
+      type: "secret_text",
+    });
+    o.report("credential", "done", "the consent you gave here: it deploys updates with it, and you can revoke it on Cloudflare");
+  } else o.report("credential", "skipped", `with an API token: connect Cloudflare on https://${controlHost}/install`);
   return { ...made, control: `https://${controlHost}`, staging: `https://${stagingHostOf(plan)}` };
 }

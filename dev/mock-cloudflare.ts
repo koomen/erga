@@ -21,10 +21,10 @@
 //   mock-nosub          the account has no workers.dev subdomain yet
 //   mock-noperm         the token can't make D1 databases (a permission missing)
 //   mock-fail-<step>    Cloudflare fails at that step (account, database, migrations, assets, worker, address, pages)
+//   mock-once-<step>    Cloudflare fails at that step the first time only (an install that stops, then goes on with Try again)
 //   mock-flaky          the first asset upload fails with a 502 (the deploy tries it again)
 //
-// Registrar: a name with "taken" in it is taken, ".xyz" can't be registered
-// through the API, ".dev" costs 12.18 USD and anything else 10.44.
+// Zones, custom domains and Registrar: dev/mock-cloudflare-zones.ts.
 //
 // With `fleet`, the account is Erga's own, as the branch deploys
 // see it: the zones erga.dev and erga-pages.dev, the
@@ -47,19 +47,24 @@ import type { Fetch } from "../control/deploys/cloudflare-api";
 import { memoryStore, snapshotRoutes, type DocStore } from "../document/snapshot";
 import { hex, randomBytes } from "../shared/bytes";
 import { mockOAuth } from "./mock-cloudflare-oauth";
+import { accountZones, waitsForCertificate, zones } from "./mock-cloudflare-zones";
+import { seedFleet } from "./mock-cloudflare-fleet";
+import { applySql, D1Error, d1Query, dumpOf } from "./mock-cloudflare-d1";
 import { sleep } from "../shared/time";
 
 export interface MockState {
   account: { id: string; name: string };
   subdomain: string | null;
-  zones: { id: string; name: string; status: string }[];
+  /** A pending zone has the name servers Cloudflare gave it, and the ones its registrar has now. */
+  zones: { id: string; name: string; status: string; name_servers?: string[]; original_name_servers?: string[] }[];
   databases: { uuid: string; name: string; statements: string[]; migrations: string[]; tables: string[]; rows?: string[] }[];
   scripts: Record<string, { metadata: Record<string, any>; modules: string[]; workersDev: boolean; tags: string[]; namespaces: string[] }>;
   assets: { manifest: Record<string, { hash: string; size: number }>; uploaded: string[] };
   /** Each asset's bytes, by hash (base64), and each Worker's files as its last upload had them (path -> hash): what mockSite serves. */
   blobs: Record<string, string>;
   served: Record<string, Record<string, string>>;
-  domains: { hostname: string; service: string; zone_id: string }[];
+  /** Workers' custom domains; one answers once its certificate is there (readyAt). */
+  domains: { hostname: string; service: string; zone_id: string; readyAt?: number }[];
   /** The Artifacts repos in the namespace erga (the fleet mock): Erga's own, and the installs' forks. */
   repos: string[];
   routes: Record<string, { pattern: string; script: string }[]>;
@@ -108,8 +113,6 @@ export const scriptTag = (name: string) => createHash("md5").update(`script:${na
 export const namespaceId = (script: string, className: string) => createHash("md5").update(`ns:${script}:${className}`).digest("hex");
 
 export const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
-/** A custom domain's id: fixed by its hostname, here. */
-const domainId = (hostname: string) => createHash("md5").update(`domain:${hostname}`).digest("hex");
 
 /**
  * What a hostname on the mock's custom domains would answer for `path`: the
@@ -152,6 +155,8 @@ export function mockCloudflare(
     onUpload?: (script: string, metadata: Record<string, any>) => void;
     /** A Worker's own answer, before the mock's (the tests route /api/deploys/... to the servers they run). */
     sites?: (req: Request, script: string) => Promise<Response | null> | Response | null;
+    /** How long a new custom domain waits for its certificate before it answers (0: at once). */
+    certMs?: number;
   } = {}
 ): { fetch: Fetch; state: MockState } {
   const state: MockState = {
@@ -197,21 +202,36 @@ export function mockCloudflare(
   /** D1 exports ready to download, and imports uploaded, by URL. */
   const exportsAt = new Map<string, string>(), uploads = new Map<string, string>();
   const importing = new Map<string, string>();
-  let subFor: string | null = null, flaked = false;
+  let subFor: string | null = null,
+    flaked = false,
+    onceAt: string | null = null;
   const ok = (result: unknown, status = 200) => Response.json({ success: true, errors: [], messages: [], result }, { status });
   // The assets' upload answers as Cloudflare does: "errors" and "messages" null when there are none (not [] as elsewhere).
   const okAssets = (result: unknown, status = 200) => Response.json({ result, success: true, errors: null, messages: null }, { status });
   const fail = (status: number, code: number, message: string) => Response.json({ success: false, errors: [{ code, message }], messages: [], result: null }, { status });
   const randomHex = (n: number) => hex(randomBytes(n));
+  const answers = { ok, fail, randomHex, certMs: opts.certMs ?? 0 };
   async function api(req: Request, path: string, token: string): Promise<Response> {
     const m = req.method;
     // The account's workers.dev subdomain is set per token the first time it's seen (mock-nosub has none until it makes one).
-    if (subFor != token) { subFor = token; if (token == "mock-nosub") state.subdomain = null; }
+    if (subFor != token) {
+      subFor = token;
+      if (token == "mock-nosub") state.subdomain = null;
+      onceAt = /^mock-once-(\w+)$/.exec(token)?.[1] ?? null;
+    }
     const failAt = /^mock-fail-(\w+)$/.exec(token)?.[1];
     const step = stepOf(m, path);
     if (failAt == "registration" && step == "registration") return fail(400, 10500, "Your account has no default payment method");
     if (failAt && failAt == step) return fail(500, 10013, "An unknown error has occurred");
-    if (state.failNext && state.failNext == step) { state.failNext = null; return fail(500, 10013, "An unknown error has occurred"); }
+    // A refusal (400), which the client doesn't try again: the install stops there.
+    if (onceAt && onceAt == step) {
+      onceAt = null;
+      return fail(400, 10021, "The mock refuses this step once");
+    }
+    if (state.failNext && state.failNext == step) {
+      state.failNext = null;
+      return fail(500, 10013, "An unknown error has occurred");
+    }
     let r: RegExpExecArray | null;
     if (m == "GET" && /^\/accounts(\?|$)/.test(path)) return ok([state.account]);
     if ((r = /^\/accounts\/([^/]+)(\/.*)?$/.exec(path))) {
@@ -441,121 +461,12 @@ export function mockCloudflare(
           expires_at: new Date(Date.now() + (b.ttl ?? 3600) * 1000).toISOString(),
         });
       }
-      if (m == "GET" && rest.startsWith("/workers/domains")) {
-        const q = new URLSearchParams(rest.split("?")[1] ?? ""), hostname = q.get("hostname"), service = q.get("service");
-        return ok(state.domains.filter((d) => (!hostname || d.hostname == hostname) && (!service || d.service == service)).map((d) => ({ id: domainId(d.hostname), zone_name: state.zones.find((z) => z.id == d.zone_id)?.name, ...d })));
-      }
-      if (m == "DELETE" && (r = /^\/workers\/domains\/([0-9a-f]+)$/.exec(rest))) {
-        const d = state.domains.find((x) => domainId(x.hostname) == r![1]);
-        if (!d) return fail(404, 100114, "Domain not found");
-        state.domains = state.domains.filter((x) => x != d);
-        return ok(null);
-      }
-      if (m == "PUT" && rest == "/workers/domains") {
-        const d = await body();
-        if (!d.hostname || !d.service) return fail(400, 100101, "hostname and service are required");
-        if (!state.scripts[d.service]) return fail(400, 100103, `Worker ${d.service} not found`);
-        if (!state.zones.some((z) => z.id == d.zone_id && (d.hostname == z.name || d.hostname.endsWith(`.${z.name}`)))) return fail(400, 100117, "Hostname is not in the zone");
-        if (state.domains.some((x) => x.hostname == d.hostname && x.service != d.service)) return fail(409, 100116, "Hostname is already in use by another Worker");
-        state.domains = state.domains.filter((x) => x.hostname != d.hostname);
-        if ((state.dns[d.zone_id] ?? []).some((x) => x.name == d.hostname)) return fail(409, 100117, "Hostname already has externally managed DNS records (A, CNAME, etc). Either delete them, try a different hostname, or use the option 'override_existing_dns_record' to override.");
-        state.domains.push({ hostname: d.hostname, service: d.service, zone_id: d.zone_id });
-        return ok({ id: domainId(d.hostname), ...d });
-      }
-      if (m == "GET" && rest.startsWith("/registrar/domain-search?")) {
-        const q = (new URLSearchParams(rest.split("?")[1]).get("q") ?? "").replace(/\..*$/, "");
-        return ok({ domains: [".com", ".dev", ".app", ".xyz"].map((tld) => ({ name: `${q}${tld}` })) });
-      }
-      if (m == "POST" && rest == "/registrar/domain-check") {
-        const { domains } = await body() as { domains: string[] };
-        return ok({ domains: domains.map(check) });
-      }
-      if (m == "POST" && rest == "/registrar/registrations") {
-        const { domain_name } = await body();
-        const c = check(domain_name);
-        if (!c.registrable) return fail(400, 10500, `${domain_name} is not available`);
-        state.registrations.push({ domain: domain_name, price: c.pricing?.registration_cost });
-        state.zones.push({ id: `zone${randomHex(14)}`, name: domain_name, status: "active" });
-        return ok({ domain_name, state: "succeeded", completed: true, context: { registration: { status: "active" } } }, 201);
-      }
-      if (m == "GET" && (r = /^\/registrar\/registrations\/([^/]+)\/registration-status$/.exec(rest))) {
-        const done = state.registrations.some((x) => x.domain == decodeURIComponent(r![1]));
-        return done ? ok({ domain_name: r[1], state: "succeeded", completed: true }) : fail(404, 10404, "no such registration");
-      }
+      const zoned = await accountZones(state, answers, m, rest, req);
+      if (zoned) return zoned;
     }
-    if (m == "GET" && path.startsWith("/zones?")) {
-      const name = new URLSearchParams(path.split("?")[1]).get("name");
-      return ok(
-        state.zones
-          .filter((z) => !name || z.name == name)
-          .map((z) => ({ ...z, account: { id: state.account.id, name: state.account.name } }))
-      );
-    }
-    if ((r = /^\/zones\/([^/?]+)(\/[^?]*)(?:\?(.*))?$/.exec(path))) {
-      const [, zone, rest, query] = r;
-      if (!state.zones.some((z) => z.id == zone)) return fail(404, 1001, "Invalid zone identifier");
-      const body = async () => await req.json() as any;
-      if (rest == "/dns_records") {
-        const list = state.dns[zone] ??= [];
-        if (m == "GET") { const p = new URLSearchParams(query); return ok(list.filter((x) => (!p.get("type") || x.type == p.get("type")) && (!p.get("name") || x.name == p.get("name")))); }
-        if (m == "POST") { const d = await body(); list.push({ type: d.type, name: d.name, content: d.content, proxied: d.proxied }); return ok(d); }
-      }
-      if (rest == "/workers/routes") {
-        const list = state.routes[zone] ??= [];
-        if (m == "GET") return ok(list);
-        if (m == "POST") {
-          const d = await body();
-          list.push({ pattern: d.pattern, script: d.script });
-          return ok({ id: randomHex(16), ...d });
-        }
-      }
-    }
+    const zoned = await zones(state, answers, m, path, req);
+    if (zoned) return zoned;
     return fail(404, 7003, `No route for that URI (${m} ${path})`);
-  }
-
-  function check(name: string) {
-    if (name.includes("taken")) return { name, registrable: false, reason: "domain_unavailable" };
-    if (name.endsWith(".xyz")) return { name, registrable: false, reason: "extension_not_supported_via_api" };
-    const cost = name.endsWith(".dev") ? "12.18" : "10.44";
-    return { name, registrable: true, tier: "standard", pricing: { currency: "USD", registration_cost: cost, renewal_cost: cost } };
-  }
-
-  /** The few statements the deploy runs, understood well enough to answer them. */
-  function d1Query(db: MockState["databases"][number], { sql, params }: { sql: string; params?: unknown[] }): Record<string, unknown>[] {
-    db.statements.push(sql.slice(0, 200));
-    if (/FROM sqlite_master/i.test(sql)) return db.tables.map((name) => ({ name }));
-    if (/^SELECT id FROM documents/i.test(sql.trim())) {
-      if (!db.tables.includes("documents")) throw new D1Error("no such table: documents: SQLITE_ERROR");
-      return (db.rows ?? []).map((r) => /^INSERT INTO documents \(id[^)]*\) VALUES \('([^']+)'/.exec(r)?.[1]).filter(Boolean).map((id) => ({ id }));
-    }
-    if (/^SELECT name FROM d1_migrations/i.test(sql.trim())) {
-      if (!db.tables.includes("d1_migrations")) throw new D1Error("no such table: d1_migrations: SQLITE_ERROR");
-      return db.migrations.map((name) => ({ name }));
-    }
-    // The API keys, as the deploy keeps a server's own on a new copy.
-    const CRED = /^INSERT INTO credentials \(([^)]+)\) VALUES \((.*)\);?$/;
-    if (/^SELECT \* FROM credentials/i.test(sql.trim())) {
-      if (!db.tables.includes("credentials")) throw new D1Error("no such table: credentials: SQLITE_ERROR");
-      return (db.rows ?? []).map((r) => CRED.exec(r)).filter((m) => m != null).map((m) => {
-        const values = [...m[2].matchAll(/'((?:[^']|'')*)'|(-?\d+)|NULL/g)].map((v) => (v[1] != null ? v[1].replace(/''/g, "'") : v[2] != null ? Number(v[2]) : null));
-        return Object.fromEntries(m[1].split(",").map((c, i) => [c.trim(), values[i]]));
-      });
-    }
-    if (/^DELETE FROM credentials$/i.test(sql.trim())) { db.rows = (db.rows ?? []).filter((r) => !CRED.test(r)); return []; }
-    const put = /^INSERT INTO credentials \(([^)]+)\) VALUES \(\?/.exec(sql);
-    if (put) {
-      const lit = (v: unknown) => (v == null ? "NULL" : typeof v == "number" ? String(v) : `'${String(v).replace(/'/g, "''")}'`);
-      (db.rows ??= []).push(`INSERT INTO credentials (${put[1]}) VALUES (${(params ?? []).map(lit).join(", ")});`);
-      return [];
-    }
-    // A statement batch is all or nothing: a CREATE TABLE of one that's there fails the lot, as SQLite would.
-    const made = [...sql.matchAll(/CREATE TABLE (IF NOT EXISTS )?(\w+)/gi)];
-    const dropped = [...sql.matchAll(/DROP TABLE IF EXISTS (\w+)/gi)].map((m) => m[1]);
-    const have = db.tables.filter((t) => !dropped.includes(t));
-    for (const m of made) if (!m[1] && have.includes(m[2])) throw new D1Error(`table ${m[2]} already exists: SQLITE_ERROR`);
-    db.tables = [...new Set([...have, ...made.map((m) => m[2])])];
-    for (const m of sql.matchAll(/INSERT INTO d1_migrations \(name\) VALUES \('([^']+)'\)/g)) db.migrations.push(m[1]);
-    return [];
   }
 
   /** A deployed server: it answers, as the real one would where the pipeline needs it. */
@@ -570,6 +481,8 @@ export function mockCloudflare(
     const script = Object.entries(state.scripts).find(([name, s]) =>
       (s.workersDev && state.subdomain && host == `${name}.${state.subdomain}.workers.dev`) || state.domains.some((d) => d.hostname == host && d.service == name));
     if (!script || script[0].endsWith("-pages")) return null;
+    // Before its certificate: no TLS, so no answer at all.
+    if (waitsForCertificate(state, host)) throw new TypeError(`fetch failed: ${host} has no certificate yet`);
     const [name, s] = script;
     const own = await opts.sites?.(req, name);
     if (own) return own;
@@ -614,10 +527,8 @@ export function mockCloudflare(
   return { fetch, state };
 }
 
-class D1Error extends Error {}
-
 /** A Worker's upload as a version of it, and a deployment of that version: `kept` and `deployments` in the state. */
-function deployVersion(state: MockState, name: string, script: MockState["scripts"][string]): string {
+export function deployVersion(state: MockState, name: string, script: MockState["scripts"][string]): string {
   const id = uuid();
   (state.kept[name] ??= []).push({ id, script: structuredClone(script) });
   (state.deployments[name] ??= []).unshift({ id: uuid(), created_on: new Date().toISOString(), strategy: "percentage", versions: [{ version_id: id, percentage: 100 }] });
@@ -646,85 +557,4 @@ function stepOf(method: string, path: string): string {
 /** The Worker's metadata as the mock keeps it: secrets' values left out. */
 function redact(meta: Record<string, any>) {
   return { ...meta, bindings: (meta.bindings ?? []).map((b: any) => (b.type == "secret_text" ? { ...b, text: `(${String(b.text).length} characters)` } : b)) };
-}
-
-/** A database as D1's export writes it: its tables, its migrations, its rows. */
-function dumpOf(db: MockState["databases"][number]): string {
-  const lines = ["PRAGMA defer_foreign_keys=TRUE;"];
-  for (const t of db.tables) lines.push(t == "d1_migrations" ? "CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL);" : `CREATE TABLE ${t} (mock);`);
-  for (const name of db.migrations) lines.push(`INSERT INTO d1_migrations (name) VALUES ('${name}');`);
-  lines.push(...(db.rows ?? []));
-  return lines.join("\n") + "\n";
-}
-
-/** SQL loaded into a database (D1's import): its tables, migrations and rows, as dumpOf writes them. */
-function applySql(db: MockState["databases"][number], sql: string) {
-  for (const line of sql.split("\n").map((l) => l.trim()).filter(Boolean)) {
-    const made = /^CREATE TABLE (?:IF NOT EXISTS )?(\w+)/i.exec(line);
-    if (made) { if (db.tables.includes(made[1])) throw new D1Error(`table ${made[1]} already exists`); db.tables.push(made[1]); continue; }
-    const mig = /^INSERT INTO d1_migrations \(name\) VALUES \('([^']+)'\)/.exec(line);
-    if (mig) { db.migrations.push(mig[1]); continue; }
-    if (/^INSERT INTO/i.test(line)) (db.rows ??= []).push(line);
-  }
-  db.statements.push(`(import of ${sql.length} bytes)`);
-}
-
-/** Erga's own account: production as cf deploy left it, the builder, the source (the fleet option). */
-function seedFleet(state: MockState) {
-  state.account = { id: ACCOUNT_ID, name: "Erga" };
-  state.subdomain = "erga";
-  state.zones = [{ id: "zone00000000000000000000000e7ga1", name: "erga.dev", status: "active" }, { id: "zone00000000000000000000000e7ga2", name: "erga-pages.dev", status: "active" }, { id: "zone00000000000000000000000e7ga3", name: "erga-pages-staging.dev", status: "active" }];
-  const tables = ["d1_migrations", "users", "server_config", "documents", "permissions", "slug_history", "agent_tokens", "token_requests", "admin_keys", "admin_challenges", "admin_log"];
-  state.databases.push({
-    uuid: PROD_DB, name: "erga", statements: [], tables,
-    migrations: ["0001_erga.sql", "0002_delete_docs_after_hours.sql", "0100_tokens.sql", "0110_admin_keys.sql"],
-    rows: [
-      "INSERT INTO users (login, name) VALUES ('ada', 'Ada');",
-      ...PROD_DOCS.map((id, i) => `INSERT INTO documents (id, owner, slug, title) VALUES ('${id}', 'ada', 'doc-${i + 1}', 'Document ${i + 1}');`),
-      "INSERT INTO server_config (key, value) VALUES ('deploy_page', '\"admins\"');",
-    ],
-  });
-  const prodBindings = [
-    { type: "durable_object_namespace", name: "DOCUMENTS", class_name: "DocumentObject" },
-    { type: "d1", name: "DB", database_id: PROD_DB, id: PROD_DB },
-    { type: "plain_text", name: "DEPLOY_TARGET", text: "production" },
-    { type: "plain_text", name: "ERGA_VERSION", text: "prod00000000" },
-  ];
-  state.scripts.erga = {
-    metadata: { main_module: "index.js", bindings: prodBindings },
-    modules: ["index.js"],
-    workersDev: false,
-    tags: [],
-    namespaces: ["DocumentObject", "DocHost", "Deployer", "DocList"],
-  };
-  state.secrets.erga = {
-    SESSION_SECRET: "production-session-secret",
-    GITHUB_CLIENT_SECRET: "production-github-secret",
-    SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN,
-  };
-  // The control Worker (control/): the repository, the pipeline, the build container; deployed by deploy/setup.ts.
-  // As wrangler deployed it (control/wrangler.jsonc): no ERGA_VERSION until it deploys itself.
-  state.scripts["erga-control"] = { metadata: { main_module: "index.js", compatibility_date: "2026-09-30", bindings: [
-    { type: "durable_object_namespace", name: "BUILDS", class_name: "Builder" }, { type: "durable_object_namespace", name: "PIPELINE", class_name: "Pipeline" }, { type: "durable_object_namespace", name: "SOURCE", class_name: "SourceHost" }, { type: "durable_object_namespace", name: "DEPLOYS", class_name: "Deployer" },
-    { type: "d1", name: "DB", database_id: PROD_DB, id: PROD_DB }, { type: "artifacts", name: "ARTIFACTS", namespace: "erga" }, { type: "version_metadata", name: "CF_VERSION_METADATA" },
-    { type: "plain_text", name: "CLOUDFLARE_ACCOUNT_ID", text: FLEET_ACCOUNT }, { type: "plain_text", name: "APP_URL", text: "https://erga.dev" },
-  ] }, modules: ["index.js"], workersDev: false, tags: [], namespaces: ["Builder", "Pipeline", "SourceHost", "Deployer"] };
-  state.versions = { erga: 1, "erga-control": 1 };
-  deployVersion(state, "erga", state.scripts.erga);
-  deployVersion(state, "erga-control", state.scripts["erga-control"]);
-  state.domains.push({ hostname: "erga.dev", service: "erga", zone_id: state.zones[0].id });
-  state.domains.push({ hostname: "ops.erga.dev", service: "erga-control", zone_id: state.zones[0].id });
-  state.routes[state.zones[1].id] = [{ pattern: "*.erga-pages.dev/*", script: "erga" }];
-  state.dns[state.zones[1].id] = [{ type: "AAAA", name: "*.erga-pages.dev", content: "100::", proxied: true }];
-  const docs = memoryStore();
-  PROD_DOCS.forEach((id, i) => docs.docs.set(id, {
-    entries: new Map<string, unknown>([
-      ["meta", { id, owner: "ada", index: "index.html", created: 1_700_000_000_000 + i, modified: 1_700_000_100_000 + i }],
-      ["file:index.html", new TextEncoder().encode(`<h1>Document ${i + 1}</h1><p>production's words</p>`)],
-      ["state", new Uint8Array([1, 2, 3, i])],
-      ...(i == 2 ? [["dir:drafts", true] as [string, unknown]] : []),
-    ]),
-    alarm: i == 1 ? 1_900_000_000_000 : null,
-  }));
-  state.docs.erga = docs;
 }

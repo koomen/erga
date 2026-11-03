@@ -16,12 +16,25 @@ beforeAll(prepareRelease, 120_000);
 describe("the Cloudflare credential: an OAuth grant, consented to once, refreshed by itself", () => {
   const SEAL = "k".repeat(43);
   /** A grant over storage of its own, with a clock the test moves. */
-  function grant(mock: ReturnType<typeof mockCloudflare>, storage = new Map<string, unknown>()) {
+  function grant(mock: ReturnType<typeof mockCloudflare>, storage = new Map<string, unknown>(), seed?: string) {
     const clock = { now: 1_800_000_000_000 };
     const log: string[] = [];
     const c = new OAuthCredential({
-      storage: { get: async (k) => structuredClone(storage.get(k)) as any, put: async (k, v) => { storage.set(k, structuredClone(v)); }, delete: async (k) => { storage.delete(k); } },
-      net: mock.fetch, client: { id: "erga-client" }, sealKey: SEAL, now: () => clock.now, log: (l) => log.push(l),
+      storage: {
+        get: async (k) => structuredClone(storage.get(k)) as any,
+        put: async (k, v) => {
+          storage.set(k, structuredClone(v));
+        },
+        delete: async (k) => {
+          storage.delete(k);
+        },
+      },
+      net: mock.fetch,
+      client: { id: "erga-client" },
+      sealKey: SEAL,
+      now: () => clock.now,
+      log: (l) => log.push(l),
+      seed,
     });
     return { c, clock, log, storage };
   }
@@ -38,6 +51,32 @@ describe("the Cloudflare credential: an OAuth grant, consented to once, refreshe
     await expect(c.token()).rejects.toThrow("an admin connects Cloudflare (a consent in a popup)");
     expect(await c.status()).toMatchObject({ connected: false, by: null, problem: expect.stringContaining("connects Cloudflare") });
     expect((await c.status()).problem).not.toContain("/install");
+  });
+
+  test("an install's grant (CLOUDFLARE_GRANT): connected at once, refreshed on first use, and never planted again after a disconnect", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    // The deploy page's consent: its refresh token, as the install hands it over.
+    const { verifier } = await pkce();
+    const answer = await exchangeCode(mock.fetch, {
+      code: "mock-code",
+      redirect: "https://ops.erga.dev/install/callback",
+      verifier,
+      client: { id: "erga-client" },
+    });
+    const seed = JSON.stringify({ refresh_token: answer.refresh_token, scope: answer.scope, by: "ada" });
+    const { c, storage } = grant(mock, new Map(), seed);
+    expect(await c.status()).toMatchObject({ connected: true, by: "ada", problem: null });
+    const token = await c.token();
+    expect(token).toMatch(/^mock-oauth-/);
+    expect(token).not.toBe(answer.access_token);
+    expect(mock.state.oauthGrants).toBe(2);
+    // Sealed at rest, as a consent's grant is.
+    expect(JSON.stringify([...storage.values()])).not.toContain(answer.refresh_token!);
+    await c.disconnect();
+    expect(await c.status()).toMatchObject({ connected: false, problem: expect.stringContaining("connects Cloudflare") });
+    // A seed that isn't a grant: nothing planted, and the status says what to do.
+    const bad = grant(mock, new Map(), "not json");
+    expect(await bad.c.status()).toMatchObject({ connected: false });
   });
 
   test("the consent gives a grant; the token is the same until ten minutes before it expires, then a refresh rotates both tokens", async () => {

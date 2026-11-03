@@ -25,7 +25,6 @@ export default function install(C: InstallConfig): void {
     sub: null,
     createSub: false,
     zones: [],
-    plan: null,
     step: "connect",
     polling: false,
   };
@@ -361,7 +360,6 @@ export default function install(C: InstallConfig): void {
       anthropicKey: $("anthropic").value.trim() || undefined,
       ...(new URLSearchParams(location.search).get("version") ? { version: new URLSearchParams(location.search).get("version") } : {}),
     };
-    S.plan = plan;
     busy($("go"), true, "Starting…");
     try {
       const r = await api("start", { plan });
@@ -375,11 +373,17 @@ export default function install(C: InstallConfig): void {
     say("run-error");
     $("run-actions").hidden = true;
     try {
-      const r = await api("start", { plan: S.plan });
+      // No plan: the server runs the one that stopped again (after a reload too); every step finds what the last try made.
+      const r = await api("start", {});
       showRun(r.run);
     } catch (e: any) {
       say("run-error", e.message);
       $("run-actions").hidden = false;
+      // The connection ran out: connect again here; the install that stopped waits, and Try again comes back with it.
+      if (/^Connect your Cloudflare account/.test(e.message)) {
+        S.info = { ...S.info, connected: false };
+        go("connect");
+      }
     }
   });
   $("restart").addEventListener("click", () => {
@@ -419,6 +423,8 @@ export default function install(C: InstallConfig): void {
     $("sum-deploy").textContent = run.status == "running" ? "Installing…" : run.status == "done" ? "Installed" : "Stopped";
     if (run.status == "done") {
       const tokenWay = S.info.via != "oauth";
+      const handed = run.steps.some((s: any) => s.id == "credential" && s.status == "done");
+      const ops = run.result.url + "/admin/ops";
       try {
         sessionStorage.removeItem("erga-install-where");
       } catch {}
@@ -432,15 +438,24 @@ export default function install(C: InstallConfig): void {
         "<p>Sign in there with GitHub as <b>" +
         esc(C.login) +
         "</b>: you're its admin, and add everyone else on its Admin page. Its homepage is made the first time it's opened, yours to edit.</p>" +
-        "<p><b>One more step, so it keeps itself up to date:</b> open <a href='" +
-        esc(run.result.control + "/install") +
-        "' target='_blank' rel='noopener'>" +
-        esc(run.result.control.replace("https://", "")) +
-        "/install ↗</a>, sign in with GitHub, and connect Cloudflare there (a consent, like the one here). Its control Worker then upgrades it from Erga's releases by itself, and rolls back by itself when an upgrade fails its health check.</p>" +
+        (handed
+          ? "<p id='kept-up'>It keeps itself up to date: its control Worker installs Erga's new releases with the consent you gave here, and rolls back by itself when one fails its health check.</p>"
+          : "<p id='kept-up'><b>One more step, so it keeps itself up to date:</b> open <a href='" +
+            esc(run.result.control + "/install") +
+            "' target='_blank' rel='noopener'>" +
+            esc(run.result.control.replace("https://", "")) +
+            "/install ↗</a>, sign in with GitHub, and connect Cloudflare there. Its control Worker then installs Erga's new releases by itself, and rolls back by itself when one fails its health check.</p>") +
+        (run.summary.app.endsWith(".workers.dev")
+          ? "<p id='own-domain'><b>Your own domain, when you want it:</b> on its <a href='" +
+            esc(ops) +
+            "' target='_blank' rel='noopener'>Ops page ↗</a>, click <b>+ Add domain</b> under production. Erga checks the domain and tells you each step.</p>"
+          : "") +
         "<p class='muted'>" +
         (tokenWay
           ? "Erga has forgotten your Cloudflare token. You can delete it now: <a href='https://dash.cloudflare.com/profile/api-tokens' target='_blank' rel='noopener'>API Tokens on Cloudflare ↗</a> (it's called “Erga deploy”)."
-          : "Erga has forgotten its access to your account and given it back to Cloudflare. <a href='https://dash.cloudflare.com/?to=/profile/access-management/authorization' target='_blank' rel='noopener'>Your OAuth authorizations ↗</a>.") +
+          : handed
+            ? "This page has forgotten its access to your account: only the control Worker has it. To take it back, revoke Erga at <a href='https://dash.cloudflare.com/?to=/profile/access-management/authorization' target='_blank' rel='noopener'>your OAuth authorizations ↗</a>."
+            : "Erga has forgotten its access to your account and given it back to Cloudflare. <a href='https://dash.cloudflare.com/?to=/profile/access-management/authorization' target='_blank' rel='noopener'>Your OAuth authorizations ↗</a>.") +
         "</p>";
     }
     if (run.status == "running" && !S.polling) poll();

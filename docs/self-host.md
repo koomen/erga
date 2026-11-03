@@ -1,13 +1,54 @@
 # Deploy your own Erga
 
-This guide is for a fork of Erga that runs on its own Cloudflare account and
-its own domains. You change one config file, `deploy/targets.json`. You do not
-change code.
+## The quick way: erga.dev/deploy
+
+Open **https://erga.dev/deploy** and sign in with GitHub. The page is the
+manual: each step checks itself and tells you what to do.
+
+1. **Connect Cloudflare.** Click *Authorize with Cloudflare* and choose your
+   account. You need the Workers Paid plan ($5 a month). No account yet: the
+   page links to Cloudflare's sign-up and plan pages.
+2. **Where it goes.** Keep the free `workers.dev` address. You do not need a
+   domain.
+3. **Sign-in and the agent.** Nothing to make: people sign in with GitHub
+   through Erga's GitHub App. The Anthropic key is optional.
+4. **Install.** The page shows each step. If a step fails, it says why;
+   fix it and click *Try again*. Try again continues where it stopped, also
+   after a reload.
+
+Your Erga keeps itself up to date: its control Worker installs Erga's new
+releases with the consent you gave in step 1, and rolls back by itself
+when a release fails its health check. You consent only one time.
+
+### Your own domain, later
+
+On your Erga's Ops page (`/admin/ops`), click **+ Add domain** under
+production and type the name, for example `docs.example.com`. Erga checks
+the name and shows the next step in the dialog:
+
+| What Erga finds | What the dialog tells you |
+| --- | --- |
+| The domain is not on Cloudflare | Add it on Cloudflare (a link), or buy one on Cloudflare Registrar. Then *Check again*. |
+| The domain is on Cloudflare, but its name servers did not move | The two name servers to set at your registrar, with *Copy*. Erga checks again each minute. |
+| The name already has a DNS record | The record. *Replace it* only if you agree. |
+| Another Worker has the name | Its name, and where to remove it. |
+| Nothing is in the way | Erga adds it, waits for the certificate, and says when the name answers. |
+
+The `workers.dev` address keeps working. Cloudflare needs the whole domain
+(its name servers): a CNAME-only setup needs Cloudflare's Business plan, so
+Erga does not offer it.
+
+## A fork that you change (advanced)
+
+The rest of this guide is for a fork of Erga with its own code, its own
+GitHub App and its own Cloudflare OAuth client. It takes about an hour and
+several apps made by hand. Use it only if the quick way is not enough. You
+change one config file, `deploy/targets.json`. You do not change code.
 
 Erga's own values (erga.dev) are in that file. They are the example: replace
 each one with yours.
 
-## What you need
+### What you need
 
 - A Cloudflare account on the Workers Paid plan (Durable Objects, D1, R2,
   Containers, Artifacts and Browser Rendering, which the agents' `view_page`
@@ -26,7 +67,7 @@ each one with yours.
   Worker. Wrangler builds its container image.
 - Bun, and a checkout of your fork with `bun install` done.
 
-## 1. Change `deploy/targets.json`
+### 1. Change `deploy/targets.json`
 
 ```json
 {
@@ -85,7 +126,7 @@ key names as they are. The worker and database names can stay `erga` and
 `deploy/targets.ts` (`controlWrangler`) fills in the names from
 `deploy/targets.json`. You do not change `control/wrangler.jsonc`.
 
-## 2. Make the apps
+### 2. Make the apps
 
 These are made by hand. None of them has an API.
 
@@ -111,7 +152,7 @@ These are made by hand. None of them has an API.
 Commit the changed `deploy/targets.json` before the next steps:
 `deploy/run.ts` builds a commit, not the working tree.
 
-## 3. Deploy
+### 3. Deploy
 
 1. Log in to Cloudflare on your machine: `bunx cf auth login`. Or set
    `CLOUDFLARE_API_TOKEN`.
@@ -150,9 +191,9 @@ health and rolls back if the check fails.
 
 ## What stays Erga's
 
-- **Installs from the deploy page.** People who install Erga from the deploy
-  page on erga.dev get an Erga that follows erga.dev as its upstream. That
-  path is separate from this guide. A self-hosted fork has no upstream.
+- **Installs from the deploy page** follow erga.dev as their upstream: their
+  repository is a fork kept at erga.dev, and erga.dev builds their commits.
+  A self-hosted fork has no upstream.
 - **Sign-in with Google for installs** goes through Erga's own Google client.
   A self-hosted fork sets its own Google client on its Authentication page.
 - **The landing document** (`assets/landing/index.html`) links to erga.dev.

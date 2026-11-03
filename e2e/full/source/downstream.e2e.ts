@@ -129,14 +129,15 @@ test("the position against upstream, Update with a merge, a conflict and its way
   await page.click('#domains-staging button[data-add="staging"]');
   await page.fill("#domain-host", "docs.erga.dev");
   await page.click("#domain-go");
-  await expect.poll(() => text("#domain-status"), { timeout: 10_000 }).toContain("Added");
+  await expect.poll(() => text("#domain-status"), { timeout: 10_000 }).toContain("answers");
   await expect.poll(() => text("#domains-staging"), { timeout: 10_000 }).toContain("docs.erga.dev");
   expect(await count("#domains-staging .dom")).toBe(2);
-  // A hostname on no zone of the account: refused, with the zones named.
+  await page.click("#domain-cancel");
+  // A hostname on no zone of the account: the step that adds its domain to Cloudflare.
   await page.click('#domains-staging button[data-add="staging"]');
   await page.fill("#domain-host", "docs.elsewhere.org");
   await page.click("#domain-go");
-  await expect.poll(() => text("#domain-status"), { timeout: 10_000 }).toContain("isn't on one of this account's zones");
+  await expect.poll(() => text("#domain-step"), { timeout: 10_000 }).toContain("elsewhere.org isn't in your Cloudflare account yet");
   await page.click("#domain-cancel");
   // Remove: two clicks.
   await page.click('#domains-staging button[data-remove="docs.erga.dev"]');

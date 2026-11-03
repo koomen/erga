@@ -50,6 +50,13 @@
 #source-pane #domain-dlg .buttons { display: flex; align-items: center; gap: 8px; }
 #source-pane #domain-dlg .buttons span { flex: 1; font-size: 13px; color: var(--soft); }
 #source-pane #domain-dlg .buttons .error { color: var(--bad); }
+#source-pane #domain-dlg #domain-step { margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; font-size: 13px; line-height: 1.5; }
+#source-pane #domain-dlg #domain-step p, #source-pane #domain-dlg #domain-step ol { margin: 0 0 6px; }
+#source-pane #domain-dlg #domain-step ol { padding-left: 20px; }
+#source-pane #domain-dlg #domain-step .muted { color: var(--soft); }
+#source-pane #domain-dlg #domain-step .ns { font: 13px var(--font-mono); }
+#source-pane #domain-dlg #domain-step .copy { margin-left: 8px; height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: transparent; color: var(--soft); font: 500 11.5px var(--font-text); cursor: pointer; }
+#source-pane .env-domains .dom.waits { border-style: dashed; color: var(--soft); }
 #source-pane .env-commit { font: 11.5px var(--font-mono); color: var(--chrome); }
 #source-pane .env-log { margin-left: auto; height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg-strong); font: 550 12px var(--font-text); white-space: nowrap; cursor: pointer; }
 #source-pane .env-log:hover { background: color-mix(in srgb, var(--chrome) 10%, transparent); }

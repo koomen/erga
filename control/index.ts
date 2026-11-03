@@ -96,9 +96,15 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   credentialStatus() { return this.deploys.credentialStatus(); }
   disconnectCredential() { return this.deploys.disconnectCredential(); }
   // Each environment's domains.
-  domains() { return this.deploys.domains(); }
-  addDomain(name: string, hostname: string, by: string) { return this.deploys.addDomain(name, hostname, by); }
-  removeDomain(name: string, hostname: string, by: string) { return this.deploys.removeDomain(name, hostname, by); }
+  domains() {
+    return this.deploys.domains();
+  }
+  addDomain(name: string, hostname: string, by: string, o?: { replace?: boolean }) {
+    return this.deploys.addDomain(name, hostname, by, o);
+  }
+  removeDomain(name: string, hostname: string, by: string) {
+    return this.deploys.removeDomain(name, hostname, by);
+  }
   // The release store (control/deploys/releases.ts).
   releases() { return this.deploys.releases(); }
   /** GET /api/events, the deploys' event stream: the app's Ops page (erga.dev/admin/ops) listens to it through the app. */
