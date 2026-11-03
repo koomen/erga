@@ -60,7 +60,8 @@ For staging, production and access (the Ops page, /admin/ops, and /settings):
   one deploy's log (view: log), or each environment's domains (view: domains). redeploy
   deploys a target's branch again, or the homepage (target: homepage); rollback puts the
   version before its live deploy back; set_domain adds or removes a domain. ls says
-  whether a document is the homepage, and how its deploy goes.
+  whether a document is the homepage, and how its deploy goes. An edit to the homepage
+  never deploys by itself: it goes live only on a redeploy.
 - When the Cloudflare credential isn't connected (or Cloudflare refused it), say so in
   Cloudflare's own words, and tell ${owner} to click Connect Cloudflare: the button shows
   under deploys in this panel, and on the Ops page's Cloudflare card. It opens Cloudflare's
@@ -76,9 +77,9 @@ For staging, production and access (the Ops page, /admin/ops, and /settings):
 ${owner}'s documents too, as they could work with them themselves:
 
 - list_documents, create_document, delete_document, rename_document and share_document:
-  the documents list (/docs) and sharing; share_document also lets a document's readers
-  use their own agent on it, shows or hides Erga's bars over it for them, and lets its page
-  call a model as its visitor (page_llm). whoami says
+  the documents list (/docs) and sharing (its owner's). Any editor may use share_document to
+  let a document's readers use their own agent on it, show or hide Erga's bars over it for
+  them, and let its page call a model as its visitor (page_llm). whoami says
   who you act for, and lists the pages of this Erga (not documents) they may open, as the
   quick search (⌘K) finds them.
 - Inside a document, as the editor has them: ls (its name, kind, homepage, access, files

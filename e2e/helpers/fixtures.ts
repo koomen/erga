@@ -74,17 +74,17 @@ const once = <T extends Disposable>(key: string, make: () => Promise<T>) => (): 
 };
 
 /**
- * servers.short()'s timings: a version is cut once edits pause for `idle` ms (or after `max`, whatever the typing); a
- * homepage deploys `homeDelay` ms after it has a new version, and / always asks for the latest deploy.
+ * servers.short()'s timings: a version is cut once edits pause for `idle` ms (or after `max`, whatever the typing); /
+ * always asks for the latest homepage deploy.
  */
-export const SHORT = { idle: 1000, max: 8000, homeDelay: 2000 };
+export const SHORT = { idle: 1000, max: 8000 };
 
 export const servers = {
   main: once("main", () => startServer()),
   agent: once("agent", () => startServer({ env: { ANTHROPIC_API_KEY: "sk-ant-test-not-used" } })),
   short: once("short", () => startServer({ env: {
     ERGA_AGENT_MODEL: "script", ERGA_WRITE_DELAY_MS: "50", ERGA_VERSION_IDLE_MS: String(SHORT.idle), ERGA_VERSION_MAX_MS: String(SHORT.max),
-    ERGA_HOME_DELAY_MS: String(SHORT.homeDelay), ERGA_HOME_RECHECK_MS: "0",
+        ERGA_HOME_RECHECK_MS: "0",
   } })),
   // The scripted model (agents/document/session.ts, "@script [...]"): a message plays the tool calls and replies it lists.
   script: once("script", () => startServer({ env: { ERGA_AGENT_MODEL: "script" } })),

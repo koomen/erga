@@ -91,7 +91,7 @@ export function mountSharing(shell: Shell) {
   async function changeSharing(login: string, role: string): Promise<boolean> {
     tellSharing("Saving…");
     try {
-      renderSharing(await shareCall({ login, role }));
+      renderSharing((last = await shareCall({ login, role })));
       tellSharing("");
       return true;
     } catch (e) {
@@ -99,11 +99,35 @@ export function mountSharing(shell: Shell) {
       return false;
     }
   }
+  // Who it's shared with: read once the editor is idle, again behind as the pointer or focus comes to Share, and after
+  // each change. A click opens the card at once with the last answer; while it's open, a fresher one redraws it.
+  let last: Shared | null = null,
+    readAt = 0;
+  function reread() {
+    if (!shareAt || Date.now() - readAt < 2000) return;
+    readAt = Date.now();
+    shareCall().then(
+      (d) => {
+        last = d;
+        if (!sharing.hidden) renderSharing(d);
+      },
+      (e: Error) => {
+        readAt = 0;
+        if (!sharing.hidden && !last) tellSharing(e.message, true);
+      }
+    );
+  }
+  (window.requestIdleCallback ?? setTimeout)(reread);
+  shareBtn.addEventListener("pointerenter", reread);
+  shareBtn.addEventListener("focus", reread);
   // Where focus was when the card opened (the page, mostly: the Share button doesn't take it), to go back to after a copy.
   let focusBefore: Element | null = null;
   function toggleSharing(force?: boolean) {
-    const open = typeof force == "boolean" ? force : sharing.hidden;
+    const open = typeof force == "boolean" ? force : !!sharing.hidden;
     if (open && sharing.hidden) focusBefore = document.activeElement;
+    show(open);
+  }
+  function show(open = true) {
     sharing.hidden = !open;
     shareBtn.setAttribute("aria-expanded", String(open));
     if (!open) return;
@@ -115,9 +139,12 @@ export function mountSharing(shell: Shell) {
     shell.docSettings?.toggle(false);
     if (!shareAt) return;
     sharingAdd.reset();
-    tellSharing("Loading…");
+    if (last) {
+      renderSharing(last);
+      tellSharing("");
+    } else tellSharing("Loading…");
     (sharingAdd.elements.namedItem("login") as HTMLInputElement).focus();
-    shareCall().then((d) => { renderSharing(d); tellSharing(""); }, (e: Error) => tellSharing(e.message, true));
+    reread();
   }
   shareBtn.addEventListener("click", () => {
     if (shareAt) toggleSharing();

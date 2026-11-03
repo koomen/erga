@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { expect, servers, SHORT, test } from "../../helpers/fixtures";
 import { ROOT } from "../../helpers/env";
 import { editor, F } from "../../helpers/editor";
-import { deployed, docOf, fresh, front, get, homeView, openHome, resetLanding } from "./home";
+import { deployed, docOf, fresh, front, get, homeView, openHome, redeploy, resetLanding } from "./home";
 import { runTool } from "../../helpers/tools";
 
 await servers.short();
@@ -28,8 +28,8 @@ test("in a browser, once its first deploy is done, / is the landing document its
   expect(shown).toBe(true);
 });
 
-// The edit is cut into a version once edits pause (SHORT.idle), and deployed SHORT.homeDelay after.
-test("its owner edits it in the editor, and / shows the edit", { timeout: 30_000 }, async ({ tab }) => {
+// The edit is cut into a version once edits pause (SHORT.idle); / shows it only after a deploy.
+test("its owner edits it in the editor, and / shows the edit once they deploy", { timeout: 30_000 }, async ({ tab }) => {
   const server = await servers.short();
   const { id, address } = await fresh(server);
   await tab.page.addInitScript(() => {
@@ -50,7 +50,13 @@ test("its owner edits it in the editor, and / shows the edit", { timeout: 30_000
   await ed.frame(`(() => { const p = ${F}.querySelector("p.lede"); ${F}.getSelection().collapse(p, p.childNodes.length); return true; })()`);
   await ed.type(" At home.");
   await expect.poll(async () => (await get(server, `/d/${id}/doc/index.html`)).text()).toContain("for them. At home.</p>");
-  await expect.poll(async () => (await front(server)).html, { timeout: SHORT.idle + SHORT.homeDelay + 5_000 }).toContain("for them. At home.</p>"); // a version, then a deploy
+  await expect
+    .poll(async () => (await runTool(server.root, "versions", { document: id })).result?.pending, { timeout: SHORT.idle * 5 })
+    .toBe(false); // a version
+  await deployed(server);
+  expect((await front(server)).html).not.toContain("for them. At home.</p>");
+  await redeploy(server);
+  await expect.poll(async () => (await front(server)).html).toContain("for them. At home.</p>");
   expect(docOf((await front(server)).html)).toBe(id);
 });
 

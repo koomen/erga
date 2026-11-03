@@ -64,7 +64,7 @@ const deps = (): DocumentDeps => ({
   storage, directory: dir,
   tabs: { count: () => 0, closeAll: () => {} },
   agents: documentAgents({ settings: async () => ({ missing: "none" }), sandbox: testSandbox }),
-  home: { forget: async () => {}, changed: async () => {} },
+  home: { forget: async () => {} },
   timing: { idleMs: 3_600_000, maxMs: 3_600_000 },
   background: () => {}, log: () => {},
 });

@@ -245,7 +245,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     label: "Share the document",
     activity: "sharing the document",
     ui: "Share (the documents list and the editor): give someone a role, change it, or stop sharing; Document settings (the editor): Readers",
-    description: "Gives someone editor, viewer or none; sets the readers' agent and bars, and the page's model (owner only).",
+    description: "Gives someone editor, viewer or none (owner only); sets the readers' agent and bars, and the page's model (editors).",
     parameters: Schema.Struct({
       document: DOCUMENT,
       login: Schema.optionalKey(
@@ -262,11 +262,12 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       ),
     }),
     run: async (args, caller) => {
-      const doc = await findDocument(caller, args.document, "share");
       const { dir } = caller;
       const login = String(args.login ?? "")
         .trim()
         .replace(/^@/, "");
+      // Roles are the owner's; the readers' options, anyone's who may edit it.
+      const doc = await findDocument(caller, args.document, login ? "share" : "edit");
       if (!login && args.reader_agent == null && args.reader_bars == null && args.page_llm == null && args.page_llm_model == null)
         throw new OperationError({
           message: "Give a login and a role, reader_agent, reader_bars, page_llm or page_llm_model.",
@@ -290,7 +291,8 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         const model = args.page_llm_model ?? (had.model && isPageLlmModel(had.model) ? had.model : DEFAULT_PAGE_LLM_MODEL);
         await dir.pageLlm.set(doc.id, args.page_llm == null ? had.on : args.page_llm === true, String(model));
       }
-      return { document: described(doc, caller), ...(await accessOf(caller, doc)) };
+      const owner = !!login || (await dir.may(caller.who, "share", doc));
+      return { document: described(doc, caller), ...(owner ? await accessOf(caller, doc) : await readersOf(caller, doc)) };
     },
   },
   {
@@ -354,10 +356,22 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
   },
 ];
 
-/** Who a document is shared with, as the Share dialogs show it, and the readers' options: ls's `access`. */
-export async function accessOf(caller: Caller, doc: DocRow) {
+/** The readers' options, which anyone who may edit the document may see and change, and whether anyone with the link may open it. */
+export async function readersOf(caller: Caller, doc: DocRow) {
   const { dir } = caller;
   const [permissions, readers, llm] = await Promise.all([dir.permissions(doc.id), dir.readerOptions(doc.id), dir.pageLlm.setting(doc.id)]);
+  return {
+    readerAgent: readers.agent,
+    readerBars: readers.bars,
+    pageLlm: { on: llm.on, model: llm.model ?? DEFAULT_PAGE_LLM_MODEL },
+    anyoneWithLink: permissions.some((p) => p.login == ANYONE),
+  };
+}
+
+/** Who a document is shared with, as the Share dialogs show it (its owner only), and the readers' options: ls's `access`. */
+export async function accessOf(caller: Caller, doc: DocRow) {
+  const { dir } = caller;
+  const [permissions, readers] = await Promise.all([dir.permissions(doc.id), readersOf(caller, doc)]);
   const notUsers = (
     await Promise.all(permissions.map(async (p) => (p.login == ANYONE || (await dir.users.allowed(p.login)) ? null : p.login)))
   ).filter((l) => l != null);
@@ -372,9 +386,7 @@ export async function accessOf(caller: Caller, doc: DocRow) {
     notUsers,
     avatars: await dir.users.avatars(permissions.map((p) => p.login)),
     publicSharing: await dir.config.get("public_sharing"),
-    readerAgent: readers.agent,
-    readerBars: readers.bars,
-    pageLlm: { on: llm.on, model: llm.model ?? DEFAULT_PAGE_LLM_MODEL },
+    ...readers,
   };
 }
 

@@ -37,7 +37,11 @@ function setup(dir = new Directory(memory(), { admins: ["ada"] })) {
     directory: dir,
     tabs: { count: () => 0, closeAll: () => {} },
     agents: documentAgents({ settings: async () => ({ missing: "no key in the tests" }), sandbox: testSandbox }),
-    home: { forget: async (id) => { forgotten.push(id); }, changed: async () => {} },
+    home: {
+      forget: async (id) => {
+        forgotten.push(id);
+      },
+    },
     timing: { idleMs: 40, maxMs: 400, writeDelay: 10 },
     background: () => {},
     log: (line) => log.push(line),

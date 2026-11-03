@@ -142,8 +142,6 @@ export interface Env {
   SIGN_IN_RELAY?: string;
   /** Local development only: the dev server's address, where the stand-ins for Artifacts and GitHub are. */
   ERGA_DEV_ORIGIN?: string;
-  /** Local development only: how long after the homepage changes its next deploy runs (5 minutes by default; tests shorten it). */
-  ERGA_HOME_DELAY_MS?: string;
   /** Local development only: how often the Worker checks for a newer homepage deploy (5 seconds by default; tests shorten it). */
   ERGA_HOME_RECHECK_MS?: string;
   /** Local development only: how long after an edit the room writes it (tests shorten it). */

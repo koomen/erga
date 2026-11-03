@@ -33,7 +33,7 @@ export async function setup(o: { blobs?: boolean; test?: boolean } = {}) {
     storage, directory: dir,
     tabs: { count: () => 0, closeAll: () => {} },
     agents: documentAgents({ settings: async () => ({ missing: "no key in the tests" }), sandbox: testSandbox }),
-    home: { forget: async () => {}, changed: async () => {} },
+    home: { forget: async () => {} },
     timing: { idleMs: 40, maxMs: 400, writeDelay: 10 },
     background: (w) => { void w.catch(() => {}); },
     log: (line) => log.push(line),

@@ -73,9 +73,12 @@ test("errors show inline, in plain words", async ({ tab }) => {
   await s.clickOn("#ds-older");
   await expect.poll(() => s.text("#ds-hist-error")).toMatch(/^Couldn't load older versions: Couldn't reach the server/);
   await s.close();
+  // A new version while it's closed: it reads the versions again, and can't; it says so when it opens.
   await down(/\/api\/tools\/versions/);
+  doc.draft(13);
+  await expect.poll(async () => (await doc.owner.versions(doc.id)).total).toBe(13);
   await s.clickOn("#btn-settings");
-  await expect.poll(() => s.text("#ds-hist-error")).toMatch(/^Couldn't (load|refresh) the versions: Couldn't reach the server/);
+  await expect.poll(() => s.text("#ds-hist-error")).toMatch(/^Couldn't refresh the versions: Couldn't reach the server/);
   await tab.page.unrouteAll();
   const other = tab.errors.filter((e) => !/ERR_INTERNET_DISCONNECTED|Failed to fetch|Failed to load resource/.test(e));
   expect(other).toEqual([]);

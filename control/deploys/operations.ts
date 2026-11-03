@@ -91,7 +91,7 @@ export const DEPLOY_OPERATIONS: Operation[] = [
   },
   {
     name: "redeploy",
-    ui: "Ops (/admin/ops): Retry, a target's branch head deployed again (fresh_data: staging with a fresh copy of production's data); the editor's settings: Homepage, Redeploy now",
+    ui: "Ops (/admin/ops): Retry, a target's branch head deployed again (fresh_data: staging with a fresh copy of production's data); the editor's settings: Homepage, Deploy",
     label: "Redeploy",
     activity: "deploying again",
     admin: true,

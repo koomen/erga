@@ -1,5 +1,5 @@
 // Making another document the homepage: its deploys, its files, isolation from the controls, and who may.
-import { expect, servers, SHORT, test } from "../../helpers/fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { events, someone } from "../versions/versions";
 import { adminToken, deployed, fresh, front, get, home, openHome, publish, redeploy, resetLanding, setLanding } from "./home";
 import { runTool } from "../../helpers/tools";
@@ -44,7 +44,7 @@ test("landing_document makes another document the homepage, deployed at once, an
     expect((await setLanding(server, id)).error).toBeUndefined();
     const set = await home(server, id);
     expect(set).toMatchObject({ isHome: true, canDeploy: true });
-    expect(["scheduled", "deploying", "deployed"]).toContain(set.deploy.state);
+    expect(["deploying", "deployed"]).toContain(set.deploy.state);
     expect((await home(server, landing.id)).isHome).toBe(false);
     await expect.poll(async () => { const f = await front(server); return f.direct && f.html.includes("<h1>Second home</h1>"); }).toBe(true);
     await expect.poll(() => heard.of("home").length).toBeGreaterThanOrEqual(2);
@@ -135,35 +135,36 @@ test("only admins may edit the homepage: not made one while others may edit it, 
   expect(await (await get(server, `/d/${id}?user=${bo}`, { redirect: "follow" })).text()).not.toContain("erga-edit-button");
 });
 
-// A deploy SHORT.homeDelay after the last edit, pushed back once.
-test("edits deploy the delay after the last of them, each step told to the document's tabs", { timeout: 25_000 }, async () => {
+// An edit doesn't deploy: / stays as it was until someone deploys.
+test("an edit never deploys by itself; a deploy puts the document live, each step told to the document's tabs", {
+  timeout: 25_000,
+}, async () => {
   const { server, token, id } = await secondHome();
   const heard = await events(server, id);
   try {
     const gen = (html: string) => /\/_home-files\/([a-z0-9]+)\//.exec(html)?.[1];
     const firstGen = gen((await front(server)).html);
+    const live = (await home(server, id)).deploy.version;
     await publish(server, token, { ...files, "index.html": page("Edited once") }, { document: id });
-    await expect.poll(async () => (await home(server, id)).deploy.state).toBe("scheduled");
-    const firstFor = Date.parse((await home(server, id)).deploy.scheduledFor!);
-    expect(firstFor - Date.now()).toBeLessThanOrEqual(SHORT.homeDelay);
-    expect(firstFor - Date.now()).toBeGreaterThan(0);
+    await expect.poll(async () => (await runTool(server.root, "versions", { document: id })).result?.current.n).toBeGreaterThan(live ?? 0);
+    const after = await home(server, id);
+    expect([after.deploy.state, after.deploy.version]).toEqual(["deployed", live]);
     expect((await front(server)).html).toContain("<h1>Second home</h1>");
-    await publish(server, token, { ...files, "index.html": page("Edited twice") }, { document: id });
-    await expect.poll(async () => Date.parse((await home(server, id)).deploy.scheduledFor ?? "0")).toBeGreaterThan(firstFor);
-    await expect.poll(async () => (await home(server, id)).deploy.state, { timeout: SHORT.homeDelay * 3 }).toBe("deployed"); // after the delay
-    const now = (await front(server)).html;
-    expect(now).toContain("<h1>Edited twice</h1>");
-    expect(gen(now)).not.toBe(firstGen);
-    expect(heard.of("home").length).toBeGreaterThanOrEqual(3);
+    await redeploy(server);
+    await expect
+      .poll(async () => (await home(server, id)).deploy.state == "deployed" && (await front(server)).html.includes("<h1>Edited once</h1>"))
+      .toBe(true);
+    expect(gen((await front(server)).html)).not.toBe(firstGen);
+    expect(heard.of("home").length).toBeGreaterThanOrEqual(2);
   } finally { heard.close(); }
 });
 
-test("Redeploy now deploys at once; a failed deploy says why and the last good one keeps serving; fixed, it deploys again", async () => {
+test("Deploy deploys at once; a failed deploy says why and the last good one keeps serving; fixed, it deploys again", async () => {
   const { server, token, id } = await secondHome();
   await publish(server, token, { ...files, "index.html": page("Right now") }, { document: id });
   const forced = (await redeploy(server)).result as { deploy: { state: string } };
   expect(["deploying", "deployed"]).toContain(forced.deploy.state);
-  await expect.poll(async () => (await front(server)).html, { timeout: SHORT.homeDelay - 200 }).toContain("<h1>Right now</h1>"); // before the delay would have
+  await expect.poll(async () => (await front(server)).html).toContain("<h1>Right now</h1>");
   const lastAt = (await home(server, id)).deploy.at;
   await publish(server, token, { ...files, "index.html": page("Broken", "<!-- erga:test-fail-deploy -->") }, { document: id });
   await redeploy(server);

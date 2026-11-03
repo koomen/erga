@@ -14,9 +14,27 @@ import { runTool, textOf } from "../../helpers/tools";
 
 export { Participant };
 
-export interface V { id: string; n: number; at: string; authors: string[]; description: string | null }
-export interface State { current: V; versions: V[]; total: number; canEdit: boolean; pending: boolean }
-export interface HomeState { isHome: boolean; canDeploy: boolean; locked?: boolean; deploy: { state: string; version: number | null; at: string | null; scheduledFor?: string | null; error?: string | null }; error?: string }
+export interface V {
+  id: string;
+  n: number;
+  at: string;
+  authors: string[];
+  description: string | null;
+}
+export interface State {
+  current: V;
+  versions: V[];
+  total: number;
+  canEdit: boolean;
+  pending: boolean;
+}
+export interface HomeState {
+  isHome: boolean;
+  canDeploy: boolean;
+  locked?: boolean;
+  deploy: { state: string; version: number | null; at: string | null; error?: string | null };
+  error?: string;
+}
 
 /** A login of this test's own, so nothing it makes is anyone else's. */
 export const someone = (prefix: string) => `${prefix}${crypto.randomUUID().replace(/-/g, "").slice(0, 10)}`;

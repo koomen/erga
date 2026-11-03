@@ -14,7 +14,7 @@ import type { DocName } from "../../document/api.ts";
 import { nameOf } from "../../document/names.ts";
 import { pageAddress, type TreeOp } from "../../document/pages.ts";
 import { globToRegExp } from "../../shared/glob.ts";
-import { accessOf, cleanFilePath } from "./documents.ts";
+import { accessOf, cleanFilePath, readersOf } from "./documents.ts";
 import { homepageOf } from "./home.ts";
 import { byLine } from "../../shared/attribution.ts";
 import {
@@ -122,7 +122,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
     label: "Look at the document",
     activity: "looking around",
     ui: "The editor: the title and address; a project's tree (the documents list, the crumbs); the editor's settings: Document/Project, Homepage, Readers; Share: who has access",
-    description: "Shows a document's title, address, kind, homepage, access (owner only), files and pages.",
+    description: "Shows a document's title, address, kind, homepage, access (who: owner only; readers' options: editors), files and pages.",
     parameters: Schema.Struct({
       document: DOCUMENT,
       path: Schema.optionalKey(PATH("Only what is in this folder")),
@@ -137,6 +137,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
         homepageOf(caller, doc),
         caller.dir.may(caller.who, "share", doc),
       ]);
+      const canEdit = !tree?.single && (await mayEdit(caller, doc));
       if (!tree || !list) throw new OperationError({ message: "There's no such document.", status: 404 });
       const raw = typeof args.path == "string" ? args.path.replace(/^[./]+$/, "").replace(/^\.?\/+|\/+$/g, "") : "";
       const dir = raw ? `${cleanFilePath(raw)}/` : "";
@@ -160,9 +161,9 @@ export const EDITOR_OPERATIONS: Operation[] = [
         ...named(nameOf(doc), caller),
         kind: tree.kind,
         index: list.index,
-        canEdit: !tree.single && (await mayEdit(caller, doc)),
+        canEdit,
         ...(homepage ? { homepage } : {}),
-        ...(owner ? { access: await accessOf(caller, doc) } : {}),
+        ...(owner ? { access: await accessOf(caller, doc) } : canEdit ? { access: await readersOf(caller, doc) } : {}),
         entries,
         moved: tree.moved,
       };

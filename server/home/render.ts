@@ -34,20 +34,18 @@ export const HOME_FILES = "/_home-files/";
 
 /** The deploy's state, as GET /api/docs/<id>/home gives it (homeApi). A document that isn't the homepage is "idle". */
 export interface DeployStatus {
-  state: "idle" | "scheduled" | "deploying" | "deployed" | "failed";
+  state: "idle" | "deploying" | "deployed" | "failed";
   /** The last successful deploy (ISO time), or null. */
   at: string | null;
-  /** When the next deploy runs, while one is scheduled. */
-  scheduledFor: string | null;
   /** The version that's live (its number), or null. */
   version: number | null;
   /** Why the last deploy failed, while it's failed. */
   error: string | null;
-  /** Who asked for the latest deploy: "ada", "ada, via their admin agent", or "the system" (one after a new version, or a new homepage). */
+  /** Who asked for the latest deploy: "ada", "ada, via their admin agent", or "the system" (a new homepage's first deploy). */
   by?: string | null;
 }
 
-export const IDLE: DeployStatus = { state: "idle", at: null, scheduledFor: null, version: null, error: null };
+export const IDLE: DeployStatus = { state: "idle", at: null, version: null, error: null };
 
 /** The page as deployed, split where the controls go (they differ for each person). */
 export interface RenderedHome { before: string; after: string }
