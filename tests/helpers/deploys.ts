@@ -24,10 +24,11 @@ import { TARGETS } from "../../deploy/targets";
 export const ROOT = new URL("../..", import.meta.url).pathname;
 export let release: Release;
 
-/** The release the tests deploy: built here if missing, or from before the release carried the control Worker (deploy/release.ts). */
+/** The release the tests deploy: built here if missing, or from before the release carried the control Worker or its bindings (deploy/release.ts). */
 export async function prepareRelease() {
   const dir = join(ROOT, ".build/release");
-  if (!existsSync(join(dir, "release.json")) || !JSON.parse(readFileSync(join(dir, "release.json"), "utf8")).control) {
+  const index = existsSync(join(dir, "release.json")) ? JSON.parse(readFileSync(join(dir, "release.json"), "utf8")) : null;
+  if (!index?.control || !index.bindings) {
     if (!existsSync(join(ROOT, ".build/manifest.json"))) expect(Bun.spawnSync(["bun", join(ROOT, "client/build.ts")], { cwd: ROOT }).exitCode).toBe(0);
     expect(Bun.spawnSync(["bun", join(ROOT, "deploy/release.ts")], { cwd: ROOT }).exitCode).toBe(0);
   }
