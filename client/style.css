@@ -532,6 +532,8 @@ body.agent-open .agent-card { opacity: 1; visibility: visible; transition: opaci
   color: var(--chrome-hover); transition: opacity 120ms ease 440ms;
 }
 .agent-fab svg { width: 22px; height: 22px; }
+.agent-fab:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; border-radius: 50%; }
+.agent-fab.by-pointer { outline: none; }
 .agent-fab.busy::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--caret); animation: agent-spin 0.9s linear infinite; }
 @keyframes agent-spin { to { transform: rotate(360deg); } }
 body.agent-open .agent-fab { opacity: 0; pointer-events: none; transition: opacity 120ms ease; }

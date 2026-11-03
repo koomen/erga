@@ -44,7 +44,13 @@ export default function agentToggle(): void {
   body.classList.add("no-motion");
   set(!narrow.matches && settings().agent !== false);
   requestAnimationFrame(() => requestAnimationFrame(() => body.classList.remove("no-motion")));
-  document.getElementById("agent-close")!.addEventListener("click", () => show(false));
+  // Collapsed with the mouse, focus goes back to the circle with no ring (Chrome would draw one, as focus comes from the
+  // box); with the keyboard (Esc, ⌘J, Enter on the button), the ring shows. Tabbing away and back shows it again.
+  document.getElementById("agent-close")!.addEventListener("click", (e) => {
+    fab.classList.toggle("by-pointer", e.detail > 0);
+    show(false);
+  });
+  fab.addEventListener("blur", () => fab.classList.remove("by-pointer"));
   fab.addEventListener("click", () => show(true));
   document.getElementById("agent")!.addEventListener("keydown", (e) => {
     if (e.key == "Escape" && !e.defaultPrevented && body.classList.contains("agent-open")) {
