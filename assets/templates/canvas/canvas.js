@@ -1,61 +1,55 @@
-// erga/canvas, in a canvas presentation's page (canvas.js, at /erga/canvas/editor.js: the page imports it itself). The
-// page holds one <div class="stage"> with one <div class="canvas"> in it, and on the canvas a <section class="frame">
-// for each step, placed by its left and top; its styles are its own. For everyone, the library moves a camera over the
-// canvas: each frame is a step (window.ergaSteps: Erga's arrows, its step list with each frame drawn small), and the
-// camera glides to the next frame in one smooth move. Drag or scroll moves the canvas, a pinch (or ctrl and the wheel)
-// zooms it, and the viewer's zoom keys zoom the camera (window.ergaZoom). A click on another frame goes to it. In the
-// editor (the viewer's word, edit, which the page's first script keeps: client/inline/reader.ts), it loads erga/text's
-// editor for the frames' text, and a press on a frame is the text's: no click goes to a frame, and a drag moves the
-// canvas only from the space between the frames.
-
-import type {} from "../../../client/common/reader-api";
-
-declare global {
-  interface Window {
-    ergaSteps?: unknown;
-    ergaZoom?: (k: number) => void;
-  }
-}
-
-/** A camera: the canvas point at the middle of the window (x, y), and its zoom (s). */
-type Camera = { x: number; y: number; s: number };
-type Box = { x: number; y: number; w: number; h: number };
+// The canvas presentation: one <div class="stage"> with one <div class="canvas"> in it, and on the canvas a
+// <section class="frame"> for each step, placed by its left and top (index.html's style). A camera moves over the
+// canvas: each frame is a step (window.ergaSteps: erga/steps draws back, forward and the list of frames, each drawn
+// small), and the camera glides to the next frame in one smooth move. Drag or scroll moves the canvas, a pinch (or ctrl
+// and the wheel) zooms it, and Erga's zoom keys zoom the camera (window.ergaZoom). A click on another frame goes to it.
+// In the editor a press on a frame is the text's: no click goes to a frame, and a drag moves the canvas only from the
+// space between the frames.
 
 /** How far the camera pulls back on a long move: 0 not at all. */
 const RHO = 1.1;
 /** The camera's zoom: the whole canvas a few centimetres wide, a word filling the window. */
 const LEAST = 0.02,
   MOST = 20;
-
-const stage = document.querySelector<HTMLElement>(".stage")!;
-const canvas = document.querySelector<HTMLElement>(".canvas")!;
-const frames = () => [...canvas.querySelectorAll<HTMLElement>(".frame")];
+const stage = document.querySelector(".stage");
+const canvas = document.querySelector(".canvas");
+const frames = () => [...canvas.querySelectorAll(".frame")];
 let at = 0,
-  cam: Camera = { x: 0, y: 0, s: 1 },
+  cam = {
+    x: 0,
+    y: 0,
+    s: 1,
+  },
   placed = false,
   run = 0,
   free = false;
-
-/** Whether the editor is on: the viewer's last word (erga-mode). */
-const editing = () => (window.__ergaReader?.mode as { mode?: string } | undefined)?.mode == "edit";
-
-const box = (el: HTMLElement): Box => ({ x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight });
-function fit(b: Box, room: number): Camera {
+/** Whether the editor is on (Erga's word on the page's <html>). */
+const editing = () => document.documentElement.hasAttribute("data-erga-editing");
+const box = (el) => ({
+  x: el.offsetLeft,
+  y: el.offsetTop,
+  w: el.offsetWidth,
+  h: el.offsetHeight,
+});
+function fit(b, room) {
   const s = Math.min(innerWidth / b.w, innerHeight / b.h) * room;
-  return { x: b.x + b.w / 2, y: b.y + b.h / 2, s };
+  return {
+    x: b.x + b.w / 2,
+    y: b.y + b.h / 2,
+    s,
+  };
 }
-const onFrame = (i: number) => fit(box(frames()[i]), 0.9);
-function place(c: Camera) {
+const onFrame = (i) => fit(box(frames()[i]), 0.9);
+function place(c) {
   cam = c;
   placed = true;
   canvas.style.transform = `translate(${innerWidth / 2 - c.x * c.s}px, ${innerHeight / 2 - c.y * c.s}px) scale(${c.s})`;
 }
-
 /**
  * The path from camera a to camera b: van Wijk and Nuij's smooth zoom and pan, which pulls back a little on a long move
  * so that the pan stays slow on the screen. w is the window's width on the canvas. S is the path's length.
  */
-function glide(a: Camera, b: Camera): { S: number; at: (t: number) => Camera } {
+function glide(a, b) {
   const w0 = innerWidth / a.s,
     w1 = innerWidth / b.s,
     dx = b.x - a.x,
@@ -64,7 +58,14 @@ function glide(a: Camera, b: Camera): { S: number; at: (t: number) => Camera } {
     r2 = RHO * RHO;
   if (d < 1) {
     const S = Math.abs(Math.log(w1 / w0)) / RHO;
-    return { S, at: (t) => ({ x: a.x + dx * t, y: a.y + dy * t, s: a.s * (b.s / a.s) ** t }) };
+    return {
+      S,
+      at: (t) => ({
+        x: a.x + dx * t,
+        y: a.y + dy * t,
+        s: a.s * (b.s / a.s) ** t,
+      }),
+    };
   }
   const b0 = (w1 * w1 - w0 * w0 + r2 * r2 * d * d) / (2 * w0 * r2 * d),
     b1 = (w1 * w1 - w0 * w0 - r2 * r2 * d * d) / (2 * w1 * r2 * d);
@@ -76,19 +77,22 @@ function glide(a: Camera, b: Camera): { S: number; at: (t: number) => Camera } {
     at: (t) => {
       const r = RHO * t * S + r0,
         u = (w0 / (r2 * d)) * (Math.cosh(r0) * Math.tanh(r) - Math.sinh(r0));
-      return { x: a.x + u * dx, y: a.y + u * dy, s: (innerWidth * Math.cosh(r)) / (w0 * Math.cosh(r0)) };
+      return {
+        x: a.x + u * dx,
+        y: a.y + u * dy,
+        s: (innerWidth * Math.cosh(r)) / (w0 * Math.cosh(r0)),
+      };
     },
   };
 }
-
 /** From a to b along the glide, eased at both ends; a longer path takes a little longer. False if another move took over. */
-function fly(a: Camera, b: Camera, id: number): Promise<boolean> {
+function fly(a, b, id) {
   const { S, at: point } = glide(a, b),
     ms = Math.min(1600, 700 + 320 * S);
   return new Promise((done) => {
     const t0 = performance.now();
-    const ease = (t: number) => (1 - Math.cos(Math.PI * t)) / 2;
-    const tick = (now: number) => {
+    const ease = (t) => (1 - Math.cos(Math.PI * t)) / 2;
+    const tick = (now) => {
       if (id != run) return done(false);
       const t = Math.min(1, (now - t0) / ms);
       place(t < 1 ? point(ease(t)) : b);
@@ -98,8 +102,7 @@ function fly(a: Camera, b: Camera, id: number): Promise<boolean> {
     requestAnimationFrame(tick);
   });
 }
-
-async function show(i: number, animate = true) {
+async function show(i, animate = true) {
   const n = frames().length;
   at = Math.max(0, Math.min(n - 1, i | 0));
   frames().forEach((f, k) => f.classList.toggle("current", k == at));
@@ -109,22 +112,24 @@ async function show(i: number, animate = true) {
   if (!animate || !placed || matchMedia("(prefers-reduced-motion: reduce)").matches) return place(onFrame(at));
   canvas.style.willChange = "transform";
   if (!(await fly(cam, onFrame(at), id))) return;
-  canvas.style.willChange = ""; // sharp text again once the camera stops
+  canvas.style.willChange = "";
 }
-
 /** Moves the camera by hand. Zoom keeps the canvas point under (px, py) in place. */
-function zoomAt(px: number, py: number, k: number) {
+function zoomAt(px, py, k) {
   const s = Math.min(MOST, Math.max(LEAST, cam.s * k)),
     dx = px - innerWidth / 2,
     dy = py - innerHeight / 2;
-  place({ x: cam.x + dx / cam.s - dx / s, y: cam.y + dy / cam.s - dy / s, s });
+  place({
+    x: cam.x + dx / cam.s - dx / s,
+    y: cam.y + dy / cam.s - dy / s,
+    s,
+  });
 }
 function handMove() {
   run++;
   free = true;
   canvas.style.willChange = "";
 }
-
 // Scroll moves the canvas; a pinch (or ctrl and scroll) zooms.
 stage.addEventListener(
   "wheel",
@@ -133,39 +138,48 @@ stage.addEventListener(
     handMove();
     const unit = e.deltaMode == 1 ? 16 : e.deltaMode == 2 ? innerHeight : 1;
     if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, Math.exp(-Math.max(-40, Math.min(40, e.deltaY * unit)) * 0.006));
-    else place({ ...cam, x: cam.x + (e.deltaX * unit) / cam.s, y: cam.y + (e.deltaY * unit) / cam.s });
+    else
+      place({
+        ...cam,
+        x: cam.x + (e.deltaX * unit) / cam.s,
+        y: cam.y + (e.deltaY * unit) / cam.s,
+      });
   },
   { passive: false }
 );
 // Safari's pinch on a trackpad.
-type Gesture = Event & { scale: number; clientX: number; clientY: number };
 let pinched = 1;
 stage.addEventListener("gesturestart", (e) => {
   e.preventDefault();
   pinched = 1;
 });
 stage.addEventListener("gesturechange", (e) => {
-  const g = e as Gesture;
+  const g = e;
   g.preventDefault();
   handMove();
   zoomAt(g.clientX, g.clientY, g.scale / pinched);
   pinched = g.scale;
 });
 stage.addEventListener("gestureend", (e) => e.preventDefault());
-
 // A drag moves the canvas: from anywhere when viewing, from the space between the frames in the editor (a press on the
 // text places the caret: the page doesn't see it). Two fingers pinch to zoom.
-const pointers = new Map<number, { x: number; y: number }>();
+const pointers = new Map();
 let dragged = false;
 stage.addEventListener("pointerdown", (e) => {
-  if (e.button != 0 || (editing() && (e.target as Element).closest(".frame"))) return;
-  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (e.button != 0 || (editing() && e.target.closest(".frame"))) return;
+  pointers.set(e.pointerId, {
+    x: e.clientX,
+    y: e.clientY,
+  });
   dragged = false;
 });
 addEventListener("pointermove", (e) => {
   const was = pointers.get(e.pointerId);
   if (!was) return;
-  const now = { x: e.clientX, y: e.clientY };
+  const now = {
+    x: e.clientX,
+    y: e.clientY,
+  };
   if (!dragged && Math.hypot(now.x - was.x, now.y - was.y) < 4) return;
   if (!dragged) {
     dragged = true;
@@ -175,32 +189,42 @@ addEventListener("pointermove", (e) => {
   handMove();
   const other = [...pointers].find(([id]) => id != e.pointerId)?.[1];
   if (pointers.size == 2 && other) {
-    const mid = (a: { x: number; y: number }) => ({ x: (a.x + other.x) / 2, y: (a.y + other.y) / 2 }),
+    const mid = (a) => ({
+        x: (a.x + other.x) / 2,
+        y: (a.y + other.y) / 2,
+      }),
       m0 = mid(was),
       m1 = mid(now);
     zoomAt(m0.x, m0.y, Math.hypot(now.x - other.x, now.y - other.y) / Math.max(1, Math.hypot(was.x - other.x, was.y - other.y)));
-    place({ ...cam, x: cam.x - (m1.x - m0.x) / cam.s, y: cam.y - (m1.y - m0.y) / cam.s });
-  } else place({ ...cam, x: cam.x - (now.x - was.x) / cam.s, y: cam.y - (now.y - was.y) / cam.s });
+    place({
+      ...cam,
+      x: cam.x - (m1.x - m0.x) / cam.s,
+      y: cam.y - (m1.y - m0.y) / cam.s,
+    });
+  } else
+    place({
+      ...cam,
+      x: cam.x - (now.x - was.x) / cam.s,
+      y: cam.y - (now.y - was.y) / cam.s,
+    });
   pointers.set(e.pointerId, now);
 });
-const lift = (e: PointerEvent) => {
+const lift = (e) => {
   pointers.delete(e.pointerId);
   if (!pointers.size) stage.classList.remove("dragging");
 };
 addEventListener("pointerup", lift);
 addEventListener("pointercancel", lift);
-
-// The viewer's zoom (its keys): k times closer around the middle of the window; 0 goes back to the current frame.
-window.ergaZoom = (k: number) => {
+// Erga's zoom (its keys): k times closer around the middle of the window; 0 goes back to the current frame.
+window.ergaZoom = (k) => {
   if (!(k > 0)) return void show(at);
   handMove();
   zoomAt(innerWidth / 2, innerHeight / 2, k);
 };
-
 // A click on another frame goes to it (not in the editor, where it's the text's). A drag is not a click.
 canvas.addEventListener("click", (e) => {
   if (dragged) return void (dragged = false);
-  const f = (e.target as Element).closest<HTMLElement>(".frame");
+  const f = e.target.closest(".frame");
   if (!editing() && f && !f.classList.contains("current")) void show(frames().indexOf(f));
 });
 addEventListener("resize", () => {
@@ -212,9 +236,8 @@ addEventListener("resize", () => {
 stage.addEventListener("scroll", () => {
   stage.scrollTop = stage.scrollLeft = 0;
 });
-
 /** A small picture of frame i, drawn from the page: the canvas's colour, and each heading and paragraph at its place and size. */
-function image(i: number, { width, height }: { width: number; height: number }): HTMLCanvasElement | null {
+function image(i, { width, height }) {
   const f = frames()[i];
   if (!f) return null;
   const fb = box(f);
@@ -229,7 +252,7 @@ function image(i: number, { width, height }: { width: number; height: number }):
   g.fillStyle = getComputedStyle(document.body).backgroundColor;
   g.fillRect(0, 0, width, height);
   const fr = f.getBoundingClientRect(),
-    z = fr.width / fb.w; // the camera's zoom, to take it out of the text's place
+    z = fr.width / fb.w;
   for (const el of f.querySelectorAll("h1, h2, h3, p, li")) {
     const r = el.getBoundingClientRect(),
       es = getComputedStyle(el),
@@ -254,24 +277,11 @@ function image(i: number, { width, height }: { width: number; height: number }):
   }
   return c;
 }
-
 window.ergaSteps = {
   count: () => frames().length,
   current: () => at,
-  go: (i: number) => void show(i),
-  label: (i: number) => frames()[i]?.querySelector("h1, h2, h3")?.textContent?.trim() || `Frame ${i + 1}`,
+  go: (i) => void show(i),
+  label: (i) => frames()[i]?.querySelector("h1, h2, h3")?.textContent?.trim() || `Frame ${i + 1}`,
   image,
 };
 void show(0, false);
-
-// The editor, once the viewer says edit: erga/text's, for the frames' text.
-let loaded = false;
-function edit() {
-  if (loaded || !editing()) return;
-  loaded = true;
-  void import("../../text/ui/frame");
-}
-addEventListener("message", (e) => {
-  if (e.data?.type == "erga-mode") queueMicrotask(edit);
-});
-edit();

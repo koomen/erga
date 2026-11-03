@@ -13,7 +13,7 @@
 // coming from the page). It sends nothing secret, and to the viewer's origin only. The page's origin holds nothing but
 // this one document: that's the boundary (PAGE_SANDBOX).
 
-import { bringsEditor, insertHead, type ReaderConfig } from "../../shared/page-html.ts";
+import { bringsEditor, insertHead, localLibraries, type ReaderConfig } from "../../shared/page-html.ts";
 import { asset, frameScripts } from "./assets.ts";
 import { inlineCall } from "./inline.ts";
 import { jsonInScript } from "../../shared/html.ts";
@@ -60,7 +60,7 @@ const LIVE_WATCH = inlineCall("page-live-watch");
  * from the page's first moment (its problems and its live log, the text guard, ergaEditor).
  */
 export function readerPage(html: string, o: { shell: string; prefix: string; src: string; editor: boolean }): string {
-  // erga/text, unless the page brings its own editor: a library it imports itself (/erga/<name>/editor.js), or its own
+  // erga/text, unless the page brings its editor: it imports erga/text itself (/erga/text/editor.js), or has its own
   // (<meta name="erga-editor" content="own">). Then the page's editor hears the viewer's word (erga-mode) itself.
   const scripts = o.editor ? frameScripts(o.shell) : undefined;
   const editor = scripts && bringsEditor(html) ? { ...scripts, src: "", preload: [] } : scripts;
@@ -72,14 +72,6 @@ export function readerPage(html: string, o: { shell: string; prefix: string; src
       : "");
   return insertHead(localLibraries(html, o.shell), head);
 }
-
-/**
- * A page imports Erga's libraries at erga.dev (https://erga.dev/erga/<name>/editor.js); each server serves its own
- * (serveLibrary), the build its editor runs. So the page loads them from the viewer's origin, `shell`: staging's page
- * loads staging's library, and a local server's its own. The text the editor reads stays as written.
- */
-const localLibraries = (html: string, shell: string) =>
-  html.replace(/(<script\b[^>]*\bsrc\s*=\s*["']?)https:\/\/erga\.dev(\/erga\/[a-z]+\/editor\.js)/gi, `$1${shell}$2`);
 
 /** The version of what the pages origin puts in a page: this script's and the editor's build's (frame.js's address names it). */
 export const readerVersion = () =>

@@ -33,7 +33,7 @@ async function flies(page: Page, from: number) {
     };
     requestAnimationFrame(tick);
   })`);
-  await clickOn(page, ".erga-steps-next");
+  await clickOn(page, ".next");
   const { least, end } = await sampled;
   expect((await bar(page)).at).toBe(`${from + 2} / 4`);
   expect(least).toBeGreaterThan(start.s * 0.5);
@@ -53,10 +53,10 @@ test("viewing: 1 / 4 on frame 1, centred; the list has four labelled steps, each
   await openTab(tab, made.address, { width: 1100, height: 720 });
   await expect.poll(async () => { const b = await bar(page); return b.shown && b.at; }).toBe("1 / 4");
   await expect.poll(async () => { const c = await camera(page); return !!c && c.at == 0 && Math.abs(c.dx) <= 2 && Math.abs(c.dy) <= 2; }).toBe(true);
-  await clickOn(page, ".erga-steps-toggle");
+  await clickOn(page, ".toggle");
   await expect.poll(async () => { const b = await bar(page); return b.items.length == 4 && b.items.every((i) => i.img.startsWith("blob:")); }).toBe(true);
   expect((await bar(page)).items.map((i) => i.label)).toEqual(LABELS);
-  await clickOn(page, ".erga-steps-toggle");
+  await clickOn(page, ".toggle");
   await flies(page, 0);
   await flies(page, 1);
 });

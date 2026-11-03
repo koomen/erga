@@ -310,12 +310,12 @@ export abstract class EditorRender extends EditorMarks {
     const r = await this.config.pageEdit(src, edit, input);
     if ("error" in r) return refuse(r.error);
     if (win != this.win || this.src != src) return refuse("the page changed while its edit was made. Try once more.");
-    this.make(r.changes);
+    this.make(r.changes, "input.page", r.caret);
     return { ok: true };
   }
 
   /**
-   * Changes to the source from controls on the page (its own edits, a library's bar: libs/slides/ui/bar.ts), made as
+   * Changes to the source from controls on the page (its own edits: ergaEditor.call), made as
    * the person's own: one undo step, and the caret where the change is, so typing and undo go on from there; new text
    * selected, to type over it. `caret`: where it goes instead, in the text block at or after `at` (in the new text),
    * and whether that block's text is selected.

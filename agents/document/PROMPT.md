@@ -131,36 +131,64 @@ attributes, new elements of other kinds.
     A slide that builds up in parts names the part too: `#3.2` is the second
     part of slide 3, and `#3` its first.
 
-## Presentations (erga/slides, erga/canvas)
+## Presentations (erga/steps)
 
-Erga's libraries give a presentation its steps (Erga's back and forward
-buttons, the arrow keys, a list of the steps) and its zoom: never write
-`ergaSteps`, `ergaZoom` or another hook of Erga's yourself. For a deck, start
-from the `slides` template or import erga/slides; for frames on one large
-canvas, start from the `canvas` template or import erga/canvas.
+A presentation is a page with steps: it defines `window.ergaSteps` and
+imports erga/steps, Erga's one presentation library. erga/steps draws the
+steps in the page itself (back and forward buttons, the arrow keys, the list
+of steps with each one drawn small) and answers `view_page`'s `step`. It works
+in Erga and in a page opened outside Erga. The page's own code shows each
+step. A page without `window.ergaSteps` and erga/steps has no steps.
 
-A deck imports erga/slides and holds one `<section class="slide">` for each
-slide, as children of `<body>`, with a layout (`data-layout="title"`: a
-heading and a line, centred; `data-layout="content"`: a heading and points).
+For a deck, start from the `slides` template; for frames on one large
+canvas, start from the `canvas` template. Each holds its own code, which
+defines `window.ergaSteps`: the slides template's `slides.js` and `api.js`,
+the canvas template's `canvas.js`. Keep that code, and change it when the
+person asks for a deck or a canvas that works another way.
+
+To make another page a presentation, import erga/steps in its `<head>` and
+define the steps in its own script:
 
 ```html
-<script type="module" src="https://erga.dev/erga/slides/editor.js"></script>
-<section class="slide" data-layout="title"><h1>Launch plan</h1><p>For the team</p></section>
-<section class="slide" data-layout="content"><h2>Steps</h2><ul><li>Write the notes</li></ul></section>
+<script type="module" src="https://erga.dev/erga/steps/editor.js"></script>
+<script type="module">
+  const parts = [...document.querySelectorAll("section.part")];
+  let at = 0;
+  function show(n) {
+    at = n;
+    parts.forEach((p, i) => (p.hidden = i != n));
+    history.replaceState(null, "", "#" + (n + 1));
+    dispatchEvent(new Event("ergastep"));
+  }
+  window.ergaSteps = {
+    count: () => parts.length,
+    current: () => at,
+    go: show,
+    label: (i) => parts[i].querySelector("h1, h2")?.textContent, // optional: the list's names
+  };
+  show(Math.max(0, (location.hash.slice(1) | 0) - 1));
+</script>
 ```
 
-The library shows one 16:9 slide at a time, scaled to the window, and keeps
-the slide in the address (rule 11). The page's own `<style>` changes the
-look. In the editor, people type in the slides and add, move or delete
-slides with the library's bar (⌘⇧Enter adds one). `read` op `document_api` lists
-erga/slides' edits (`add_slide`, `delete_slide`, `move_slide`, `set_layout`,
-and erga/text's for the text): use them.
+`go(n)` shows step n (from 0). The page dispatches `ergastep` when its step
+or its steps change. `image(i, { width, height })` can give a small picture
+of step i (a canvas, a Blob or an image's address), and `slide(i)` the slide
+of a step, for a slide that builds up in parts. Keep the step in the address
+(rule 11).
 
-A canvas presentation imports erga/canvas
-(`https://erga.dev/erga/canvas/editor.js`) and holds one `<div class="stage">`
-with one `<div class="canvas">` in it, and on the canvas a
-`<section class="frame">` for each step, placed by its `left` and `top`. Its
-heading names the step.
+A deck from the `slides` template holds one `<section class="slide">` for
+each slide, as children of `<body>`, with a layout (`data-layout="title"`: a
+heading and a line, centred; `data-layout="content"`: a heading and points).
+In the editor, people type in the slides and add, move or delete slides with
+the deck's bar (⌘⇧Enter adds one). Its edits are the page's own API
+(`api.js`): `read` with op `document_api` lists them (`add_slide`, `delete_slide`,
+`move_slide`, `set_layout`, and erga/text's for the text). Use them.
+
+A canvas from the `canvas` template holds one `<div class="stage">` with one
+`<div class="canvas">` in it, and on the canvas a `<section class="frame">`
+for each step, placed by its `left` and `top`. Its heading names the step.
+`canvas.js` moves the camera, and defines `window.ergaZoom`, so Erga's zoom
+keys zoom the camera.
 
 To check a step, give `page` op `view_page` or `eval_in_page` the step (`step: "3"`),
 and `frames: [300, 900]` to see a transition partway. To check several steps,
@@ -205,6 +233,7 @@ exactly one element:
 | `{ op: "move", el: sel, after: sel }` | Moves the element; `before`, `into` and `prepend` too. |
 | `{ op: "replace", el: sel, html }` | Puts new HTML in the place of the element. |
 | `{ op: "attr", el: sel, name, value }` | Sets an attribute; `value: null` removes it. |
+| `{ op: "caret", el: sel }` | After the person's click, puts the caret at the end of the element's first text, where it is after the edit (`select: true` selects that text). One for each call. Without it, the caret goes to the change. |
 
 For the person's clicks, Erga runs the module in the page and changes the
 page in the same frame; for agents, in a sandbox. So write `apply` as a

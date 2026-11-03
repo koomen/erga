@@ -12,7 +12,7 @@ body.erga-editing:not(.erga-editor-ready) .erga-view-button[aria-pressed] svg { 
 @media (prefers-reduced-motion: reduce) { body.erga-editing:not(.erga-editor-ready) .erga-view-button[aria-pressed] svg { animation: none; opacity: 0.6; } }
 /* Full screen (viewer-full.ts), viewing and editing: only where the page's frame can go full screen (not an iPhone). */
 html:not(.erga-can-full) .erga-full-button { display: none !important; }
-/* In full screen the page's frame fills it, over everything else of Erga's (but a presentation's controls: viewer-steps.css),
+/* In full screen the page's frame fills it, over everything else of Erga's (a presentation draws its own controls: libs/steps),
    at the page's own size: not the editor's place or zoom for it (client/styles/editor.css). */
 html.erga-full #frame { position: fixed !important; inset: 0 !important; z-index: 2147483646 !important; width: 100% !important; height: 100% !important;
   max-width: none !important; max-height: none !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important;

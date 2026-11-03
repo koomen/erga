@@ -89,7 +89,11 @@ function still(r: Awaited<ReturnType<typeof open>>, want: Spot, what: string) {
 const CASES: [string, Record<string, unknown>, Spot][] = [
   // The agent open at the left, 380px wide, 16px from the window's edge and from the document.
   ["the agent open", { "erga:settings:v1": { agent: true } }, { l: 16 + 380 + 16, r: WIDTH }],
-  ["the agent wide at the right", { "erga:settings:v1": { agent: true }, "erga:layout:v1": { order: ["doc", "picker", "agent"], agentWidth: 520 } }, { l: 0, r: WIDTH - 16 - 520 - 16 }],
+  [
+    "the agent wide at the right",
+    { "erga:settings:v1": { agent: true }, "erga:layout:v1": { order: ["doc", "agent"], agentWidth: 520 } },
+    { l: 0, r: WIDTH - 16 - 520 - 16 },
+  ],
 ];
 
 for (const [what, kept, want] of CASES) {

@@ -1,5 +1,5 @@
 // Full screen, from the button upper right (client/inline/viewer-full.ts): the page's frame fills the screen, with only a
-// presentation's controls over it, which fade while the pointer is still. The arrows step the page. Escape, or the way
+// presentation's controls over it (the page's own: libs/steps), which fade while the pointer is still. The arrows step the page. Escape, or the way
 // out on the controls, leaves at the same step. In the editor, full screen shows the page: the keys are the page's.
 //
 // Escape in full screen is the browser's own: a key that DevTools sends never reaches it, so `escape` does what the
@@ -7,7 +7,7 @@
 import type { Page } from "playwright-core";
 import { F, openEditor } from "../../helpers/editor";
 import { expect, servers, test } from "../../helpers/fixtures";
-import { atStep, bar, editorReady, openTab } from "./templates";
+import { atStep, bar, controlAt, controlShown, editorReady, fullBar, openTab } from "./templates";
 
 await servers.main();
 
@@ -30,16 +30,13 @@ const fills = (page: Page) =>
       r.height == innerHeight
     );
   });
-/** The step controls: on top where they are (over the page's frame), and faded while the pointer is still. */
-const controls = (page: Page) =>
-  page.evaluate(() => {
-    const b = document.querySelector(".erga-steps")!,
-      r = b.querySelector(".erga-steps-at")!.getBoundingClientRect();
-    return {
-      over: !!document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest(".erga-steps"),
-      still: b.classList.contains("erga-steps-still"),
-    };
-  });
+/** The step controls (the page's own): on top where they are (over the page's frame, which fills the screen), and faded while the pointer is still. */
+const controls = fullBar;
+/** Clicks the bar's way out of full screen, with the mouse. */
+async function exit(page: Page) {
+  const at = await controlAt(page, ".exit");
+  await page.mouse.click(at.x, at.y);
+}
 
 test("viewing: the button makes the page full screen; the arrows step it; the controls show, fade, and come back; Escape leaves at the same step", async ({
   tab,
@@ -79,12 +76,12 @@ test("viewing: the way out on the controls leaves full screen; the button goes i
   await openTab(tab, address);
   await expect.poll(async () => (await bar(page)).shown).toBe(true);
   // Outside full screen, no way out on the controls.
-  expect(await page.locator(".erga-steps-exit").isVisible()).toBe(false);
+  expect(await controlShown(page, ".exit")).toBe(false);
   await page.locator(".erga-view-buttons .erga-full-button").click();
   await expect.poll(() => full(page)).toBe("page");
   await page.keyboard.press("ArrowRight");
   await atStep(page, 1, 4);
-  await page.locator(".erga-steps-exit").click();
+  await exit(page);
   await expect.poll(() => full(page)).toBe("");
   await atStep(page, 1, 4);
   await page.locator(".erga-view-buttons .erga-full-button").click();
@@ -146,7 +143,7 @@ test("editing a page with steps: in full screen the controls show over it; the a
   await page.keyboard.press("ArrowRight");
   await atStep(page, 1, 4);
   expect(await controls(page)).toEqual({ over: true, still: false });
-  await page.locator(".erga-steps-exit").click();
+  await exit(page);
   await expect.poll(() => full(page)).toBe("");
   await atStep(page, 1, 4);
   expect(await bar(page)).toMatchObject({ shown: true, open: false });

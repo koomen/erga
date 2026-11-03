@@ -99,7 +99,7 @@ export interface ViewRequest {
   /** How long evaluate waits for its result, in ms (EVAL_TIMEOUT). */
   timeout?: number;
   /**
-   * A presentation's steps to show (shared/steps.ts, stepSpec): each its number ("3.2"), or a hash ("#3.2") the
+   * A presentation's steps to show (libs/steps/api/steps.ts, stepSpec): each its number ("3.2"), or a hash ("#3.2") the
    * render opens at. One picture each, in order, from one render; eval_in_page takes one.
    */
   steps?: string[];

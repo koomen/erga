@@ -23,7 +23,7 @@ async function fits(page: Page) {
 
 /** The list open, both slides drawn small in it, with their titles. */
 async function listShown(page: Page) {
-  if (!(await bar(page)).open) await clickOn(page, ".erga-steps-toggle");
+  if (!(await bar(page)).open) await clickOn(page, ".toggle");
   await expect.poll(async () => { const b = await bar(page); return b.open && b.items.length == 2 && b.items.every((i) => i.img.startsWith("blob:") && i.drawn > 0); }).toBe(true);
   const b = await bar(page);
   expect(b.items.map((i) => i.label)).toEqual(LABELS);
@@ -39,14 +39,14 @@ test("/new?template=slides makes a document; viewing at 1200 × 800, one slide f
   await expect.poll(async () => (await bar(page)).shown).toBe(true);
   await atStep(page, 0, 2);
   await expect.poll(() => fits(page)).toBe(true);
-  await clickOn(page, ".erga-steps-next");
+  await clickOn(page, ".next");
   await atStep(page, 1, 2);
   await page.keyboard.press("ArrowLeft");
   await atStep(page, 0, 2);
   await page.keyboard.press("ArrowRight");
   await atStep(page, 1, 2);
   await listShown(page);
-  await page.evaluate(() => (document.querySelectorAll(".erga-step")[0] as HTMLElement).click());
+  await clickOn(page, ".step", 0);
   await atStep(page, 0, 2);
 });
 
@@ -64,9 +64,9 @@ test("editing: one slide fits; forward, back and → outside the text step; an e
   await editorReady(page);
   await expect.poll(async () => (await bar(page)).shown && (await inPage<number>(page, "ergaSteps.current()")) == 0).toBe(true);
   await expect.poll(() => fits(page)).toBe(true);
-  await clickOn(page, ".erga-steps-next");
+  await clickOn(page, ".next");
   await atStep(page, 1, 2);
-  await clickOn(page, ".erga-steps-back");
+  await clickOn(page, ".back");
   await atStep(page, 0, 2);
   await inPage(page, "document.activeElement.blur(), getSelection().removeAllRanges(), true");
   await rawKey(page, "ArrowRight");

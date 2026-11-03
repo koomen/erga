@@ -1,18 +1,18 @@
-// The editor's side panels on a presentation: where they start, the agent's inner
+// The editor's side panel on a presentation: where it starts, the agent's inner
 // edge, and Escape while dragging. Docking: layout-dock.e2e.ts.
-import { AGENT_DEFAULT, AGENT_MAX, DOC_MIN, INSET, PICKER_W } from "../../../client/agent/layout";
+import { AGENT_DEFAULT, AGENT_MAX, DOC_MIN, INSET } from "../../../client/agent/layout";
 import { center, drag } from "../../helpers/drag";
 import { expect, servers, test } from "../../helpers/fixtures";
+import { bar } from "../templates/templates";
 import { H, open, settled, W, where } from "./layout";
 
 await servers.agent();
 
-test("agent | document | steps to start with, the document between them, the steps list docked", async ({ tab }) => {
+test("agent | document to start with; the list of steps open floats over the page, which keeps the rest of the window", async ({ tab }) => {
   await open(tab);
   const w = await where(tab.page);
-  expect(w.docked).toBe(true);
-  expect([w.agent.x, w.agent.w, w.frame.x], JSON.stringify(w)).toEqual([INSET, AGENT_DEFAULT, INSET + AGENT_DEFAULT + INSET]);
-  expect([w.picker.w, w.picker.r, w.frame.r], JSON.stringify(w)).toEqual([PICKER_W, W - INSET, w.picker.x - INSET]);
+  expect([w.agent.x, w.agent.w, w.frame.x, w.frame.r], JSON.stringify(w)).toEqual([INSET, AGENT_DEFAULT, INSET + AGENT_DEFAULT + INSET, W]);
+  expect((await bar(tab.page)).open).toBe(true);
 });
 
 test("dragging the agent's inner edge makes it wider and keeps the width; as far as it goes, the document keeps its minimum; a double-click puts the default back", async ({ tab }) => {
@@ -42,5 +42,5 @@ test("Escape while the agent is dragged puts it back", async ({ tab }) => {
   await settled(page);
   const w = await where(page);
   // (Kept as it was, or not kept at all: the default.)
-  expect([w.agent.x, w.ghost, w.order || "agent doc picker"], JSON.stringify(w)).toEqual([INSET, null, "agent doc picker"]);
+  expect([w.agent.x, w.ghost, w.order || "agent doc"], JSON.stringify(w)).toEqual([INSET, null, "agent doc"]);
 });

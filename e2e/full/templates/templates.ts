@@ -1,6 +1,6 @@
 // Helpers for the presentation tests: documents made from a
-// template, opened in the viewer or the editor, and the step controls under
-// them (server/pages/viewer.ts, STEPS_BOOT; client/inline/reader.ts, Steps).
+// template, opened in the viewer or the editor, and the step controls over
+// them, which the page draws itself (libs/steps/ui/steps.ts: <erga-steps>'s shadow root).
 //
 // The document's page runs in a frame: in the viewer the viewer's frame itself
 // (inline, an opaque origin), in the editor the host page's visible frame on the
@@ -60,17 +60,55 @@ export type Bar = {
   items: { n: string; label: string; current: boolean; img: string; drawn: number; first: boolean }[];
 };
 
-/** The step controls: shown, the step they say, back and forward disabled, the list open, and its steps. */
-export const bar = (page: Page) => page.evaluate(`(() => {
-  const b = document.querySelector(".erga-steps"), panel = document.querySelector(".erga-steps-panel");
-  return { shown: !!b && !b.hidden && getComputedStyle(b).visibility != "hidden", at: b?.querySelector(".erga-steps-at").textContent ?? "",
-    back: !!b?.querySelector(".erga-steps-back")?.disabled, next: !!b?.querySelector(".erga-steps-next")?.disabled, open: !!panel && !panel.hidden,
-    items: [...(panel?.querySelectorAll(".erga-step") ?? [])].map((el) => { const img = el.querySelector("img"); return { n: el.querySelector(".erga-step-name b").textContent, label: el.querySelector(".erga-step-name span").textContent, first: el.parentElement.classList.contains("erga-step-slide"),
-      current: el.getAttribute("aria-current") == "step", img: img?.src ?? "", drawn: img?.complete ? img.naturalWidth : 0 }; }) };
-})()`) as Promise<Bar>;
+/** The step controls in the page (<erga-steps>'s shadow root), as an expression in the page. */
+const CONTROLS = `document.querySelector("erga-steps")?.shadowRoot`;
 
-/** Clicks an element of the shell (the step controls) by selector. */
-export const clickOn = (page: Page, selector: string) => page.evaluate((s) => (document.querySelector(s) as HTMLElement).click(), selector);
+/** The step controls: shown, the step they say, back and forward disabled, the list open, and its steps. */
+export const bar = async (page: Page): Promise<Bar> =>
+  (await inPage<Bar>(
+    page,
+    `(() => {
+  const c = ${CONTROLS}, b = c?.querySelector(".bar"), panel = c?.querySelector(".panel");
+  return { shown: !!b && !b.hidden && getComputedStyle(b).visibility != "hidden" && b.getClientRects().length > 0, at: b?.querySelector(".at").textContent ?? "",
+    back: !!b?.querySelector(".back")?.disabled, next: !!b?.querySelector(".next")?.disabled, open: !!panel && !panel.hidden,
+    items: [...(panel?.querySelectorAll(".step") ?? [])].map((el) => { const img = el.querySelector("img"); return { n: el.querySelector(".name b").textContent, label: el.querySelector(".name span").textContent, first: el.parentElement.classList.contains("first"),
+      current: el.getAttribute("aria-current") == "step", img: img?.src ?? "", drawn: img?.complete ? img.naturalWidth : 0 }; }) };
+})()`
+  )) ?? { shown: false, at: "", back: false, next: false, open: false, items: [] };
+
+/** Clicks one of the step controls (".next", ".back", ".toggle", ".exit"; ".step" with `n`: the list's step n) by script. */
+export const clickOn = (page: Page, selector: string, n = 0) =>
+  inPage(page, `(${CONTROLS}.querySelectorAll(${JSON.stringify(selector)})[${n}].click(), true)`);
+
+/** Whether one of the step controls shows (takes room on the page). */
+export const controlShown = (page: Page, selector: string) =>
+  inPage<boolean>(page, `${CONTROLS}.querySelector(${JSON.stringify(selector)}).getClientRects().length > 0`);
+
+/** The bar in full screen: on top where it is (its counter's middle hits it), and faded while the pointer is still. */
+export const fullBar = (page: Page) =>
+  inPage<{ over: boolean; still: boolean }>(
+    page,
+    `(() => { const c = ${CONTROLS}, b = c.querySelector(".bar"), r = c.querySelector(".at").getBoundingClientRect();
+    return { over: !!c.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest(".bar"), still: b.classList.contains("still") }; })()`
+  );
+
+/** Gives one of the step controls the focus, as a click on it would. */
+export const focusOn = (page: Page, selector: string) =>
+  inPage(page, `(${CONTROLS}.querySelector(${JSON.stringify(selector)}).focus(), true)`);
+
+/** Scrolls the list to its step n. */
+export const scrollToStep = (page: Page, n: number) =>
+  inPage(page, `(${CONTROLS}.querySelectorAll(".step")[${n}]?.scrollIntoView({ block: "nearest" }), true)`);
+
+/** Where one of the step controls is in the tab (the middle of it), for the mouse. */
+export async function controlAt(page: Page, selector: string) {
+  const f = await frameAt(page);
+  const r = await inPage<{ x: number; y: number }>(
+    page,
+    `(() => { const r = ${CONTROLS}.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`
+  );
+  return { x: f.x + r.x, y: f.y + r.y };
+}
 
 /** Waits until the controls say step n + 1 of `of`, and the page says step n. */
 export const atStep = (page: Page, n: number, of: number, what = `step ${n + 1} of ${of}`) =>

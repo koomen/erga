@@ -13,7 +13,7 @@ test("read by selector gives the element; edit by selector and by cssRule replac
   const { ed, tool } = await deck(tab);
   const read = await tool("read", { path: "index.html", selector: "section:nth-of-type(2)" });
   expect(read.text).toBe(
-    `[index.html, line 17: the element "section:nth-of-type(2)"]\n<section class="slide"><h1>Second slide</h1><p class="build">No parts here.</p></section>`
+    `[index.html, line 18: the element "section:nth-of-type(2)"]\n<section class="slide"><h1>Second slide</h1><p class="build">No parts here.</p></section>`
   );
   expect((await tool("read", { path: "index.html", css_rule: "#progress" })).text).toMatch(
     /^\[index\.html, line 1\d: the CSS rule "#progress"\]\n#progress \{ position: fixed;.*\}$/
@@ -50,7 +50,7 @@ test("a selector that matches no element, or two, changes nothing and says how m
   const before = ed.disk();
   expect(await fails("read", { path: "index.html", selector: "article" })).toMatch(/^"article" matches 0 elements in index\.html/);
   expect(await fails("edit", { path: "index.html", edits: [{ selector: "section h1", newText: "<h1>x</h1>" }] })).toMatch(
-    /^selector: "section h1" matches 3 elements in index\.html \(at line 16, line 17, line 18\)/
+    /^selector: "section h1" matches 3 elements in index\.html \(at line 17, line 18, line 19\)/
   );
   expect(
     await fails("edit", {

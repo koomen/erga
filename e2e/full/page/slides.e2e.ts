@@ -1,5 +1,6 @@
-// erga/slides (libs/slides/): a deck imports it, and it shows one 16:9 slide at a time, with the page's steps. In the
-// editor, its text is erga/text's, and its slide bar (or ⌘⇧Enter) adds a slide; an agent adds one with call_edit.
+// A deck, as the slides template makes it (e2e/fixtures/slides holds the template's slides.js and api.js): its own code
+// shows one 16:9 slide at a time and gives erga/steps its steps. In the editor, its text is erga/text's, and its slide
+// bar (or ⌘⇧Enter) adds a slide with the deck's own edits (api.js); an agent adds one with call_edit.
 import { expect, servers, test } from "../../helpers/fixtures";
 import { DISK_MS, F, openEditor, type Editor } from "../../helpers/editor";
 import { deck } from "./view-page";
@@ -18,9 +19,10 @@ test("a deck: type in a slide; ⌘⇧Enter adds a slide after it, shown, its tit
   await ed.type(" now");
   await expect.poll(() => ed.source()).toContain("<h1>Launch plan now</h1>");
 
+  // Typed at once after the key: the new slide is there for it (the deck makes its edit in the key's own event).
   await ed.press("ControlOrMeta+Shift+Enter");
-  await expect.poll(() => ed.frame<boolean[]>(shown)).toEqual([false, true, false]);
   await ed.type("Why");
+  await expect.poll(() => ed.frame<boolean[]>(shown)).toEqual([false, true, false]);
   await expect
     .poll(() => ed.source())
     .toContain(
@@ -34,18 +36,19 @@ test("a deck: type in a slide; ⌘⇧Enter adds a slide after it, shown, its tit
   await expect.poll(() => ed.frame<number>(`${F}.querySelectorAll("section.slide").length`)).toBe(2);
 });
 
-test("an agent's add_slide (call_edit) adds a slide to the deck; document_api lists erga/slides' edits", async ({ tab }) => {
+test("an agent's add_slide (call_edit) adds a slide to the deck; document_api lists the deck's own edits and erga/text's", async ({
+  tab,
+}) => {
   const { ed, tool, fails } = await deck(tab, "slides");
   const { apis } = JSON.parse((await tool("document_api", { path: "index.html" })).text) as {
     apis: { api: string; edits: { name: string }[] }[];
   };
-  expect(apis.map((a) => a.api)).toEqual(["erga/slides"]);
-  expect(apis[0].edits.map((e) => e.name)).toEqual(
-    expect.arrayContaining(["add_slide", "delete_slide", "move_slide", "set_layout", "replace_text"])
-  );
+  expect(apis.map((a) => a.api)).toEqual(["slides", "erga/text"]);
+  expect(apis[0].edits.map((e) => e.name)).toEqual(["add_slide", "delete_slide", "move_slide", "set_layout"]);
+  expect(apis[1].edits.map((e) => e.name)).toContain("replace_text");
   expect(
     (await tool("call_edit", { path: "index.html", edit: "add_slide", input: { after: 2, layout: "title", title: "Thanks" } })).text
-  ).toMatch(/^Added slide 3\. Edited index\.html/);
+  ).toMatch(/^Made slides's add_slide\. Edited index\.html/);
   await expect.poll(() => ed.disk(), { timeout: DISK_MS }).toContain(`<section class="slide" data-layout="title">\n    <h1>Thanks</h1>`);
   await expect.poll(() => ed.frame<number>(`${F}.querySelectorAll("section.slide").length`)).toBe(3);
   expect(await ed.frame<boolean[]>(shown)).toEqual([true, false, false]);
@@ -60,7 +63,7 @@ test("an agent's add_slide (call_edit) adds a slide to the deck; document_api li
 /** Clicks a button of the slide bar (data-act: add, title, up, down, layout, delete) with the mouse, as a person does. */
 async function clickBar(ed: Editor, act: string) {
   const r = await ed.frame<{ x: number; y: number } | null>(
-    `(() => { const b = ${F}.querySelector("erga-slide-bar")?.shadowRoot?.querySelector('[data-act="${act}"]'); if (!b || b.closest("[hidden]")) return null; const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`
+    `(() => { const b = ${F}.querySelector("slide-bar")?.shadowRoot?.querySelector('[data-act="${act}"]'); if (!b || b.closest("[hidden]")) return null; const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`
   );
   expect(r, `the slide bar shows its ${act} button`).not.toBeNull();
   const f = await ed.frameAt();

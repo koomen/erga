@@ -13,16 +13,16 @@ test("the list shows four steps with their labels and the page's pictures; a cli
   await expect.poll(async () => (await bar(page)).shown).toBe(true);
   await inPage(page, "ergaSteps.go(3), true");
   await atStep(page, 3, 4);
-  await clickOn(page, ".erga-steps-toggle");
+  await clickOn(page, ".toggle");
   await expect.poll(async () => { const b = await bar(page); return b.open && b.items.length == 4 && b.items.every((i) => i.img.startsWith("blob:")); }).toBe(true);
   const b = await bar(page);
   expect(b.items.map((i) => i.label)).toEqual(["Owls at night", "Where they live", "What they eat", "How to see one"]);
   expect(b.items[3].current).toBe(true);
   const first = b.items.map((i) => i.img);
-  await page.evaluate(() => (document.querySelectorAll(".erga-step")[0] as HTMLElement).click());
+  await clickOn(page, ".step", 0);
   await atStep(page, 0, 4);
-  await clickOn(page, ".erga-steps-toggle");
-  await clickOn(page, ".erga-steps-toggle");
+  await clickOn(page, ".toggle");
+  await clickOn(page, ".toggle");
   await expect.poll(async () => (await bar(page)).open).toBe(true);
   // Drawn afresh, a picture gets a new blob: URL; kept, the same one. Not changing is checked after the list has had its chance to.
   await expect.poll(async () => (await bar(page)).items.every((i) => i.img.startsWith("blob:"))).toBe(true);

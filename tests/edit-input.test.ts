@@ -1,10 +1,12 @@
 // call_edit checks an edit's input against the edit's JSON Schema before the edit runs (agents/document/edit-input.ts).
 import { expect, test } from "bun:test";
 import { inputProblem } from "../agents/document/edit-input";
-import { slidesApi } from "../libs/slides/api/slides";
 import { textApi } from "../libs/text/api/edits";
 
-const schemaOf = (api: typeof slidesApi, name: string) => api.edits.find((e) => e.name == name)!.input;
+type Api = { edits: { name: string; input: Record<string, unknown> }[] };
+/** The slides template's own API (a page's API module, plain JavaScript). */
+const slidesApi: Api = (await import("../assets/templates/slides/api.js" as string)).default;
+const schemaOf = (api: Api, name: string) => api.edits.find((e) => e.name == name)!.input;
 
 test("an input that fits the edit's schema passes; one that doesn't says what is wrong, each problem by its key", () => {
   const move = schemaOf(slidesApi, "move_slide");

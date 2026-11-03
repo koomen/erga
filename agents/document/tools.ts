@@ -22,8 +22,7 @@ import { pageTools } from "./page-tools";
 import { readLines, type TextEdit } from "../../shared/text-edits";
 import { findInSource } from "../../shared/source-select";
 import { textApi, type DocumentApi } from "../../libs/text/api/edits";
-import { slidesApi } from "../../libs/slides/api/slides";
-import { bringsEditor, importedLibrary } from "../../shared/page-html";
+import { bringsEditor } from "../../shared/page-html";
 import { inputProblem } from "./edit-input";
 import { applyPageEdit, describePageApi, type PageEdits, type Sandbox } from "../../document/page-api";
 import { apiPathOf } from "../../shared/page-ops";
@@ -73,8 +72,8 @@ export function makeTools(
   /** Runs a workspace operation; its failure becomes the tool's error, which the model reads. */
   const run = <T>(op: Effect.Effect<T, WorkspaceError>): T => Effect.runSync(Effect.mapError(op, (e) => new Error(e.message)));
   /**
-   * A page's APIs: its own (its module, <meta name="erga-api">, described in the sandbox) and its library's: the one it
-   * imports (erga/slides; erga/canvas uses erga/text's), else erga/text, unless it has an editor of its own. Throws when it has neither.
+   * A page's APIs: its own (its module, <meta name="erga-api">, described in the sandbox) and erga/text's, unless it has an
+   * editor of its own. Throws when it has neither.
    */
   const apisOf = async (
     path: string
@@ -86,9 +85,7 @@ export function makeTools(
     if (module && code == null)
       throw new Error(`${path} names ${module} as its API (<meta name="erga-api">), but the document has no such file.`);
     const own = code == null ? null : await describePageApi(opts.sandbox, code);
-    // erga/canvas edits its frames' text with erga/text, so its edits are erga/text's.
-    const imported = importedLibrary(html);
-    const library = imported == "slides" ? slidesApi : imported == "canvas" ? textApi : bringsEditor(html) ? null : textApi;
+    const library = bringsEditor(html) ? null : textApi;
     if (!own && !library)
       throw new Error(`${path} has its own editor and names no API of its own (<meta name="erga-api">): edit its source (edit, write).`);
     return { html, own, code, library };

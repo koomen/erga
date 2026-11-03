@@ -3,7 +3,7 @@
 // (shared/page-ops.ts, the same checks the server makes on the sandbox's answer). No round trip: the change shows in the
 // frame the person dropped or clicked in, as a typed letter does, and goes to the room as their own edit.
 
-import { apiPathOf, changesOf, type Change } from "../../../shared/page-ops";
+import { apiPathOf, changesOf, type Planned } from "../../../shared/page-ops";
 
 type Api = { apply?: (html: string, edit: string, input: unknown) => unknown };
 
@@ -33,12 +33,7 @@ export function warm(code: string | null): void {
 }
 
 /** One edit of the page's own, on its text `html`: the change, or why not. Waits only for promises already settled. */
-export async function runPageEdit(
-  code: string,
-  html: string,
-  edit: string,
-  input: unknown
-): Promise<{ changes: Change[] } | { error: string }> {
+export async function runPageEdit(code: string, html: string, edit: string, input: unknown): Promise<Planned | { error: string }> {
   let api: Api | undefined;
   try {
     api = (await load(code)).default;

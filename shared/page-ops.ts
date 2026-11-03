@@ -1,7 +1,8 @@
 // A page's own edits, as operations (document/page-api.ts has the module and its sandbox): the page names a module of its
 // own files (<meta name="erga-api" content="api.js">) whose `apply(html, edit, input)` answers a list of operations on
 // the page's elements, named by CSS selector as the source has them: insert HTML before, after or into one, remove one,
-// move one, replace one, set or remove an attribute. Or { refused: why }. This turns them into one change to the
+// move one, replace one, set or remove an attribute, and where the person's caret goes after it. Or { refused: why }.
+// This turns them into one change to the
 // source, or refuses them whole, saying why (planPageOps). The server runs it on the sandbox's answer (an agent's
 // call_edit), and the page's editor on the module's answer in the page (ergaEditor.call: libs/text/ui/page-edits.ts).
 // What it checks, so a page can't break itself:
@@ -28,9 +29,14 @@ export type PageOp<R = string> =
   | ({ op: "move"; el: R } & Where<R>)
   | { op: "remove"; el: R }
   | { op: "replace"; el: R; html: string }
-  | { op: "attr"; el: R; name: string; value: string | null };
+  | { op: "attr"; el: R; name: string; value: string | null }
+  | { op: "caret"; el: R; select?: boolean };
 
 export type Change = { from: number; to: number; insert: string };
+/** Where the person's caret goes after the change (in the text after it): in the first text block at or after `at`. */
+export type Caret = { at: number; select: boolean };
+/** A page's edit, planned: its change to the source, and the caret's place if the edit names one. */
+export type Planned = { changes: Change[]; caret?: Caret };
 
 const VOID = new Set([
   "area",
@@ -218,7 +224,7 @@ export function apiModuleOf(html: string): string | null {
  * Turns a page's operations into one change to the source: all of them, in the order given, or none (an error that
  * says why). Each element is named by a CSS selector of the source, which must match one.
  */
-export function planPageOps(src: string, ops: unknown): { changes: Change[] } | { error: string } {
+export function planPageOps(src: string, ops: unknown): Planned | { error: string } {
   try {
     if (!Array.isArray(ops) || !ops.length) refuse('an edit answers a list of operations, e.g. [{ op: "remove", el: "#old" }]');
     const root = M.parseHtml(src);
@@ -251,9 +257,13 @@ export function planPageOps(src: string, ops: unknown): { changes: Change[] } | 
 }
 
 /** The operations, with their elements found, as one change to the source. */
-function plan(src: string, root: M.ElementNode, ops: PageOp<M.ElementNode | null>[]): { changes: Change[] } | { error: string } {
+function plan(src: string, root: M.ElementNode, ops: PageOp<M.ElementNode | null>[]): Planned | { error: string } {
   try {
     const changes: Change[] = [];
+    /** Each moved element's new place (the change that puts it there), and the caret the edit asks for. */
+    const moved = new Map<M.ElementNode, Change>();
+    // (Set in the loop's callback: an object, so the type stays what it is after the loop.)
+    const asked: { caret?: { el: M.ElementNode; select: boolean; n: string } } = {};
     /** Ranges that go (removed, replaced, moved away): nothing else may happen inside them. */
     const gone: { from: number; to: number; el: M.ElementNode }[] = [];
     const where = (op: { before?: unknown; after?: unknown; into?: unknown; prepend?: unknown }, i: number): Where<M.ElementNode> => {
@@ -283,7 +293,13 @@ function plan(src: string, root: M.ElementNode, ops: PageOp<M.ElementNode | null
         const from = ownLine(src, el) ? spanFrom(src, el) : el.from;
         changes.push({ from, to: el.to, insert: "" });
         gone.push({ from, to: el.to, el });
-        changes.push(place(src, w, reindent(src.slice(el.from, el.to), M.lineIndent(src, el.from), "")));
+        const put = place(src, w, reindent(src.slice(el.from, el.to), M.lineIndent(src, el.from), ""));
+        changes.push(put);
+        moved.set(el, put);
+      } else if (op?.op == "caret") {
+        if (asked.caret) refuse(`${n}: an edit has one caret`);
+        if (op.select != null && typeof op.select != "boolean") refuse(`${n}: select is true or false`);
+        asked.caret = { el: checkRef(src, op.el, `the element ${n} puts the caret in`), select: op.select === true, n };
       } else if (op?.op == "replace") {
         const el = checkRef(src, op.el, `the element ${n} replaces`);
         changes.push({ from: el.from, to: el.to, insert: reindent(checkHtml(op.html), "", M.lineIndent(src, el.from)) });
@@ -297,7 +313,7 @@ function plan(src: string, root: M.ElementNode, ops: PageOp<M.ElementNode | null
           refuse(`${n}: can't set ${name}: the editor owns data-erga attributes`);
         if (op.value != null && typeof op.value != "string") refuse(`${n}: an attribute's value is a string, or null to remove it`);
         changes.push(setAttr(src, el, name, op.value));
-      } else refuse(`edit ${i + 1}: unknown op “${(op as { op?: string })?.op}” (insert, remove, move, replace or attr)`);
+      } else refuse(`edit ${i + 1}: unknown op “${(op as { op?: string })?.op}” (insert, remove, move, replace, attr or caret)`);
     });
     // Each edit refers to the source before the call: none may land inside what another takes away, or overlap another.
     for (const c of changes) {
@@ -312,11 +328,35 @@ function plan(src: string, root: M.ElementNode, ops: PageOp<M.ElementNode | null
     for (let k = 1; k < sorted.length; k++) if (sorted[k].from < sorted[k - 1].to) refuse("two edits change the same part of the source");
     const next = applyChanges(src, changes);
     if (unclosed(next, M.parseHtml(next)) > unclosed(src, root)) refuse("the edits would leave an element unclosed");
-    return { changes: changes.filter((c) => c.from != c.to || c.insert) };
+    const out: Planned = { changes: changes.filter((c) => c.from != c.to || c.insert) };
+    if (asked.caret) out.caret = { at: caretAt(src, changes, moved, asked.caret), select: asked.caret.select };
+    return out;
   } catch (e) {
     if (e instanceof Refused) return { error: e.message };
     throw e;
   }
+}
+
+/**
+ * Where the caret's element starts in the source after the changes: at its new place if the edit moves it. Refuses
+ * an element the edit removes or replaces.
+ */
+function caretAt(src: string, changes: Change[], moved: Map<M.ElementNode, Change>, c: { el: M.ElementNode; n: string }): number {
+  const order = changes.map((ch, i) => ({ ch, i })).sort((x, y) => x.ch.from - y.ch.from || x.i - y.i);
+  /** Where offset `pos` of the source is after the changes: past every change that ends at or before it (in order, up to `upTo`). */
+  const map = (pos: number, upTo?: Change) => {
+    let d = 0;
+    for (const { ch } of order) {
+      if (ch == upTo || ch.from > pos) break;
+      if (ch.to <= pos) d += ch.insert.length - (ch.to - ch.from);
+    }
+    return pos + d;
+  };
+  const put = moved.get(c.el);
+  if (put) return map(put.from, put) + Math.max(0, put.insert.indexOf("<"));
+  if (changes.some((ch) => ch.to > ch.from && ch.from <= c.el.from && ch.to >= c.el.to))
+    refuse(`${c.n}: the caret's element goes with the edit`);
+  return map(c.el.from);
 }
 
 /** Applies changes (in the original source's offsets; insertions at one place in the order given). */
@@ -344,7 +384,7 @@ export function apiPathOf(page: string, html: string): string | null {
 }
 
 /** A module's answer to one edit (operations, or { refused }) on the page's HTML: the change to the source, or why not. */
-export function changesOf(html: string, edit: string, answer: unknown): { changes: Change[] } | { refused: string } {
+export function changesOf(html: string, edit: string, answer: unknown): Planned | { refused: string } {
   if (answer && typeof answer == "object" && !Array.isArray(answer) && "refused" in answer)
     return { refused: String((answer as { refused: unknown }).refused) };
   const plan = planPageOps(html, answer);
