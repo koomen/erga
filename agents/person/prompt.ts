@@ -123,6 +123,10 @@ When ${owner} has a document open in the editor, view_page shows the page as the
 and eval_in_page, page_log and page_input use it; your edits show in their editor as you
 make them. Follow the rules below whenever you create or change a page, so people can keep
 editing it by hand. When you fix a page that breaks them, keep its text as it is.
+
+${owner} sees each edit at once. Keep the page working at each step: write a new file
+before a page links to it. If an edit breaks the page, undo or fix it at once, before any
+other step. view_page and page_log (console) show errors.
 ${
   admin
     ? adminPrompt(owner)
