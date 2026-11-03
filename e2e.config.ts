@@ -11,7 +11,7 @@
 // never a pause.
 //
 // This file is imported by the runner and again by every worker. The first import makes the environment hermetic
-// and builds the editor's files once for every dev server (ERGA_BUILT); the workers inherit it.
+// and builds the editor's files and the release once for every dev server (ERGA_BUILT); the workers inherit it.
 
 import { spawnSync } from "node:child_process";
 import type { E2EConfig } from "e2e";
@@ -25,6 +25,14 @@ process.env.ERGA_TEST_MS ||= "15000";
 if (hermetic() && !process.env.ERGA_BUILT) {
   const r = spawnSync("bun", ["client/build.ts"], { cwd: ROOT, env: cleanEnv(), stdio: ["ignore", "ignore", "inherit"], timeout: 180_000 });
   if (r.status != 0) throw new Error(`client/build.ts failed (${r.error?.message ?? `exit ${r.status}`})`);
+  // The release of this checkout (.build/release): the mock builder deploys it for every commit (ERGA_DEPLOY_MOCK).
+  const rel = spawnSync("bun", ["deploy/release.ts"], {
+    cwd: ROOT,
+    env: cleanEnv(),
+    stdio: ["ignore", "ignore", "inherit"],
+    timeout: 60_000,
+  });
+  if (rel.status != 0) throw new Error(`deploy/release.ts failed (${rel.error?.message ?? `exit ${rel.status}`})`);
   process.env.ERGA_BUILT = "1";
 }
 
