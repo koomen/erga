@@ -64,6 +64,8 @@ export function controlMetadata(release: Release, target: Pick<Target, "accountI
   for (const a of cfg.artifacts) bindings.push({ type: "artifacts", name: a.name, namespace: a.namespace });
   for (const b of cfg.r2 ?? []) bindings.push({ type: "r2_bucket", name: b.name, bucket_name: b.bucketName });
   if (cfg.versionMetadata) bindings.push({ type: "version_metadata", name: cfg.versionMetadata });
+  // The release's own metadata for the rest: a new kind needs no newer pipeline.
+  bindings.push(...(cfg.bindings ?? []));
   const text: Record<string, string> = { ...cfg.vars, ERGA_VERSION: release.version, CLOUDFLARE_ACCOUNT_ID: target.accountId };
   for (const [name, value] of Object.entries(text)) bindings.push({ type: "plain_text", name, text: value });
   for (const [name, value] of Object.entries(target.secrets)) bindings.push({ type: "secret_text", name, text: value });
@@ -230,6 +232,7 @@ export function installControlMetadata(release: Release, o: { accountId: string;
   for (const d of classes) bindings.push({ type: "durable_object_namespace", name: d.name, class_name: d.className });
   for (const d of cfg.d1) bindings.push({ type: "d1", name: d.name, database_id: o.dbId, id: o.dbId });
   if (cfg.versionMetadata) bindings.push({ type: "version_metadata", name: cfg.versionMetadata });
+  bindings.push(...(cfg.bindings ?? []));
   for (const [name, value] of Object.entries({ ERGA_VERSION: release.version, ...o.vars })) bindings.push({ type: "plain_text", name, text: value });
   for (const [name, value] of Object.entries(o.secrets)) bindings.push({ type: "secret_text", name, text: value });
   return {

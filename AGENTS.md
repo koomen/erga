@@ -132,8 +132,9 @@ Found a new trap? Write it here, in the same change.
   real flow on staging, end to end, before you say a fix works. If you need
   an admin credential you don't have, say so.
 - The control Worker (erga-control) deploys itself with the pipeline that
-  runs now, which is the previous release. A new binding in
-  `controlMetadata` takes effect one deploy later. A new Durable Object
+  runs now, which is the previous release. A new kind of binding that
+  `controlMetadata` must make (not one of `browser`, `ai`, `worker_loaders`:
+  deploy/release.ts passes those) takes effect one deploy later. A new Durable Object
   class in `control/wrangler.jsonc`, or a change under `control/builder/`,
   needs `bun deploy/setup.ts --control --yes` (OrbStack running) before
   `main` deploys it. The new builder image rolls out with a lag: if the
@@ -158,9 +159,10 @@ Found a new trap? Write it here, in the same change.
   connection belongs to the Durable Object that opened it: another object in the
   same isolate gets "Cannot perform I/O on behalf of a different Durable Object".
   Keep it in the object (`browsers`), never in a module variable.
-- The deploy pipeline (control/deploys/account.ts) refuses a binding type it doesn't
-  know, and it runs on the control Worker, from `main`. A new kind of binding
-  reaches `main` (and the control Worker) before the release that declares it.
+- The release carries the metadata of each app binding that the pipeline does not make for each
+  target (control/deploys/bindings.ts), so a new kind like BROWSER needs no newer pipeline. A new kind
+  that the pipeline must make (a namespace, a bucket: `TARGET_KINDS`) reaches `main`, and the control
+  Worker, before the release that declares it; until then that release's deploys stop before any step.
 - A live list (`data-live-kind`, server/news/) gets new rows after the page loaded,
   and a changed row is a new element. Attach a row's listeners in its
   `wire(row)` (client/common/live-rows.ts), never in a loop over the rows at

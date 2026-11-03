@@ -69,11 +69,14 @@ import { controlTarget } from "./control-worker";
 import { cloudflareWith, type Credential, type CredentialStatus } from "./credential";
 import type { ChannelFile, ReleaseStore } from "./releases";
 import type { Fleet } from "./fleet";
-import { compareVersions, type UpdateResult } from "../source/index.ts";
+import type { UpdateResult } from "../source/index.ts";
 import { plural } from "../../shared/time";
 import { runWith } from "../clock";
 import { DeployHistory, HISTORY_KEEP, type DeployRecord, type LogLine } from "./history";
 import { Domains } from "./domains";
+import { ReleaseChannels } from "./release-channels";
+import { SelfRestart } from "./self-restart";
+import { rollback, undo } from "./rollback";
 
 /** "rolled-back": a deploy that was live until a rollback put the version before it back. */
 export type DeployState = "idle" | "building" | "deploying" | "deployed" | "failed" | "cancelled" | "rolled-back";
@@ -102,6 +105,10 @@ export interface TargetStatus {
   pending: string | null;
   /** The running or last deploy's steps. */
   steps: StepStatus[];
+  /** The release a healthy production deploy publishes to the store now, after the deploy (null: none). */
+  publishing?: string | null;
+  /** What a waiting deploy (`pending`) waits for, when it isn't a problem (`error`): another deploy, or the restart. */
+  waits?: string | null;
 }
 
 /** Builds a commit into a release (control/builder/client.ts in production; dev/mock-cloudflare.ts's in tests); an install's fetches a release from upstream's store instead (control/deploys/releases.ts storeBuilder: no source). */
@@ -145,6 +152,10 @@ export interface Deps {
   upstream?: { channel(): Promise<ChannelFile>; update?(): Promise<UpdateResult | { error: string }>; heads?(): Promise<Record<string, string>>; /** Its hosts told to upstream (after a domain changed): where its consents may come back to. */ hosts?(hosts: string[]): Promise<void> };
   /** Something about the store's channels changed ({type: "releases"} on /api/events). */
   releasesChanged?(): void;
+  /** Restarts this object into the code that runs now (ctx.abort), after the control Worker deployed itself: self-restart.ts. */
+  restart?(why: string): void;
+  /** The release this object's code is (its ERGA_VERSION). */
+  runs?: string;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   waitMs?: number;
@@ -204,12 +215,16 @@ export const UPSTREAM_CHECK_MS = 10 * 60 * 1000;
 
 export class BranchDeploys {
   fleet: Fleet;
-  private running: DeployName | null = null;
+  running: DeployName | null = null;
   /** The deploy running here, which a newer one for its target cancels. */
   private current: { name: DeployName; deployId: string; commit: string; abort: AbortController; s: Stored } | null = null;
   now: () => number;
   readonly history = new DeployHistory(this);
   readonly customDomains = new Domains(this);
+  readonly channels = new ReleaseChannels(this);
+  readonly restart = new SelfRestart(this);
+  /** Wakes the alarm that waits for a publish's end (wake). */
+  private wakeUp: (() => void) | null = null;
 
   constructor(readonly deps: Deps) {
     this.now = deps.now ?? Date.now;
@@ -218,7 +233,7 @@ export class BranchDeploys {
   specOf(name: DeployName) {
     return this.fleet.specOf(name);
   }
-  private targetFor(name: DeployName, fresh?: Fresh): Target {
+  targetFor(name: DeployName, fresh?: Fresh): Target {
     return this.fleet.targetFor(name, this.deps.env, fresh);
   }
 
@@ -249,7 +264,22 @@ export class BranchDeploys {
       run: null, oldDocs: [],
     };
     out.status.pending = (await this.queue(name)).pending;
+    out.status.publishing = this.channels.publishing(name);
+    out.status.waits = out.status.pending ? await this.waitsFor(name) : null;
     return out;
+  }
+
+  /** What `name`'s waiting deploy waits for, if not a problem: the restart into the control Worker's new code, or another deploy. */
+  private async waitsFor(name: DeployName): Promise<string | null> {
+    const v = await this.restart.due();
+    if (v)
+      return `the deploys restart into the control Worker's new code (release ${v}) first${this.channels.busy ? ", once production's release is published" : ""}`;
+    return this.running && this.running != name ? `${this.running}'s deploy runs first` : null;
+  }
+
+  /** Something may start now (a deploy came, a publish ended): the alarm that waits goes on. */
+  wake(): void {
+    this.wakeUp?.();
   }
 
   private async queue(name: DeployName): Promise<Queue> {
@@ -260,7 +290,7 @@ export class BranchDeploys {
     await this.deps.storage.put(queueKey(name), { ...(await this.queue(name)), ...change });
   }
 
-  private async save(s: Stored): Promise<void> {
+  async save(s: Stored): Promise<void> {
     s.status.pending = (await this.queue(s.status.name)).pending;
     if (s.status.log.length > LOG_LINES) s.status.log = s.status.log.slice(-LOG_LINES);
     await this.deps.storage.put(key(s.status.name), s);
@@ -269,7 +299,7 @@ export class BranchDeploys {
     this.deps.changed();
   }
 
-  private line(s: Stored, text: string, step?: LogLine["step"]) {
+  line(s: Stored, text: string, step?: LogLine["step"]) {
     const at = this.now();
     const t = new Date(at).toISOString().slice(11, 19);
     for (const l of text.split("\n")) {
@@ -297,33 +327,6 @@ export class BranchDeploys {
     }
     const upstream = this.fleet.upstream ? (await this.deps.storage.get<UpstreamStatus>("upstream")) ?? { origin: this.fleet.upstream.origin, channel: this.fleet.upstream.channel, latest: null, checkedAt: null, error: null } : undefined;
     return { targets, credential: await this.deps.credential.status(), ...(upstream ? { upstream } : {}) };
-  }
-
-  /**
-   * A release was cut (a tag vX.Y.Z on a commit of main: control/source/repo.ts). stable is the newest tag whose build is
-   * in the store: put there now, or when production's deploy of that commit publishes it (`published`).
-   */
-  async tagged(t: ReleaseTag): Promise<void> {
-    const tags = ((await this.deps.storage.get<ReleaseTag[]>("tags")) ?? []).filter((x) => x.tag != t.tag);
-    tags.push(t);
-    await this.deps.storage.put("tags", tags);
-    await this.refreshStable();
-  }
-
-  /** stable: the highest release tag whose release is in the store. */
-  private async refreshStable(): Promise<void> {
-    const store = this.deps.releases;
-    if (!store) return;
-    const tags = ((await this.deps.storage.get<ReleaseTag[]>("tags")) ?? []).sort((a, b) => compareVersions(b.tag, a.tag));
-    for (const t of tags) {
-      const version = t.commit.slice(0, 12);
-      if (!(await store.manifest(version))) continue;
-      const stable = await store.channel("stable");
-      if (stable.latest == version && stable.releases[0]?.tag == t.tag) return;
-      await store.addTo("stable", version, t.by, t.tag);
-      this.deps.releasesChanged?.();
-      return;
-    }
   }
 
   /**
@@ -410,84 +413,9 @@ export class BranchDeploys {
     return { ok: true, status: (await this.load(name)).status };
   }
 
-  /**
-   * Rolls a target back to the Worker version it ran before its live deploy
-   * (rollback): one deployment of that version, in
-   * seconds, with no build. The database stays as it is (migrations only add).
-   * Recorded as a deploy of its own, live, whose restore point is the version
-   * it rolled back from (so a second rollback rolls forward again). The record
-   * is written before the call, complete; then the target is asked until it
-   * answers the older release, healthy.
-   */
-  async rollback(name: string, trigger = "rollback"): Promise<{ ok: true; status: TargetStatus } | { ok: false; error: string; status?: number }> {
-    if (!this.fleet.has(name)) return { ok: false, error: `There's no deploy target called ${name}.`, status: 404 };
-    const wrong = await this.notReady(name);
-    if (wrong) return { ok: false, error: wrong, status: 409 };
-    const s = await this.load(name);
-    if (s.run || this.running == name) return { ok: false, error: `A deploy of ${name} is running: wait for it to end (or push again to replace it), then roll back.`, status: 409 };
-    const list = await this.history.records(name);
-    const live = list.find((r) => r.id == s.status.liveDeploy) ?? null;
-    const restore = live?.restore;
-    if (!live || !restore?.versionId) return { ok: false, error: live ? `The live deploy (${live.commit.slice(0, 12)}) has no restore point: it was made before restore points were recorded, or its Worker was new. Deploy an earlier commit instead.` : `${name} has no live deploy to roll back from.`, status: 409 };
-    const cf = await this.cf();
-    const target = this.targetFor(name);
-    // What serves now, so the rollback can itself be undone.
-    const from = await liveVersion(cf, target.accountId, target.workerName).catch(() => null);
-    const deployId = `${this.now().toString(36)}-rollback`;
-    const rec: DeployRecord = {
-      id: deployId, target: name, commit: restore.commit ?? live.commit, state: "deployed", started: this.now(), ended: null,
-      trigger: `${trigger}: back to ${restore.version ?? `version ${restore.versionId.slice(0, 8)}`}, undoing deploy ${live.id} (${live.commit.slice(0, 12)})`, error: null,
-      rollbackOf: live.id, restore: { versionId: from, version: s.status.deployed ? s.status.deployed.slice(0, 12) : null, bookmark: null, at: this.now(), commit: live.commit },
-    };
-    live.state = "rolled-back";
-    live.rolledBackBy = deployId;
-    live.ended ??= this.now();
-    list.unshift(rec);
-    await this.history.putRecords(name, list);
-    const steps: StepStatus[] = [{ id: "rollback", title: `Roll back to ${restore.version ? `release ${restore.version}` : `version ${restore.versionId.slice(0, 8)}`}`, status: "running" }];
-    s.status = { ...s.status, state: "deploying", commit: rec.commit, deployId, at: this.now(), error: null, steps };
-    s.run = { deployId, commit: rec.commit, started: this.now(), cursor: null, carry: {} };
-    await this.history.openLog(name, s.run, true);
-    this.line(s, `rolling ${this.specOf(name).host} back to ${restore.version ? `release ${restore.version}` : `version ${restore.versionId.slice(0, 8)}`} (${rec.trigger})`, "rollback");
-    this.line(s, `the version before deploy ${live.id} (${live.commit.slice(0, 12)}) serves again; the database keeps its schema${restore.bookmark ? ` (its bookmark from before that deploy: ${restore.bookmark})` : ""}`, "rollback");
-    // Complete before the call.
-    steps[0].status = "done";
-    s.status = { ...s.status, state: "deployed", at: this.now(), deployed: rec.commit, liveDeploy: deployId };
-    this.line(s, `rolled back: https://${this.specOf(name).host} serves ${rec.commit.slice(0, 12)}`, "rollback");
-    s.run = null;
-    await this.save(s);
-    try {
-      await rollbackTo(cf, target, restore.versionId, `Erga rollback: ${rec.trigger}`);
-    } catch (e) {
-      const message = e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`;
-      live.state = "deployed"; delete live.rolledBackBy;
-      rec.state = "failed"; rec.error = message; rec.ended = this.now();
-      await this.history.putRecords(name, list);
-      steps[0].status = "failed";
-      s.status = { ...s.status, state: "failed", at: this.now(), error: `Stopped at “${steps[0].title}”. ${message}`, deployed: live.commit, liveDeploy: live.id };
-      s.run = { deployId, commit: rec.commit, started: rec.started, cursor: null, carry: {} };
-      this.line(s, `failed: ${message}`, "rollback");
-      s.run = null;
-      await this.save(s);
-      return { ok: false, error: message, status: 502 };
-    }
-    // Then wait for it to answer, so the log says it did.
-    // Asked every two seconds, at most 30 times.
-    const h = await runWith(
-      this.deps.sleep,
-      checkHealth(this.deps.net, targetHost(target), restore.version).pipe(
-        Effect.repeat({ schedule: Schedule.spaced("2 seconds"), times: 29, until: (h) => h.ok })
-      )
-    );
-    this.line(
-      s,
-      h.ok
-        ? `https://${this.specOf(name).host} answers ${restore.version ?? "the older version"}, healthy (${h.summary})`
-        : `https://${this.specOf(name).host} hasn't answered the older version yet: check it`,
-      "rollback"
-    );
-    await this.save(s);
-    return { ok: true, status: (await this.load(name)).status };
+  /** Back to the Worker version before the live deploy (rollback.ts). */
+  rollback(name: string, trigger = "rollback") {
+    return rollback(this, name, trigger);
   }
 
   private async enqueue(name: DeployName, commit: string, why: string, trigger: string, o: { fresh?: boolean } = {}): Promise<void> {
@@ -515,6 +443,7 @@ export class BranchDeploys {
     }
     await this.save(s);
     await this.deps.schedule(0);
+    this.wake();
   }
 
   /** The reason deploys waited may be gone (Cloudflare connected again): the waiting ones deploy now. */
@@ -536,12 +465,23 @@ export class BranchDeploys {
    */
   async alarm(): Promise<void> {
     if (this.running) { await this.deps.schedule(RESUME_MS); return; }
-    for (const name of this.fleet.names) {
-      const s = await this.load(name);
-      if (s.run) await this.resume(s);
-      const next = await this.load(name);
-      if (next.status.pending && !(await this.notReady(name))) await this.deploy(next, next.status.pending);
+    await this.channels.lost();
+    for (;;) {
+      for (const name of this.fleet.names) {
+        const s = await this.load(name);
+        if (s.run) await this.resume(s);
+        const next = await this.load(name);
+        // After the control Worker's own deploy, nothing new starts on the old code (self-restart.ts).
+        if (next.status.pending && !(await this.notReady(name)) && !(await this.restart.due()))
+          await this.deploy(next, next.status.pending);
+      }
+      // Production's release publishes on its own (ReleaseChannels): a deploy that comes meanwhile starts at once (wake).
+      const publishing = this.channels.busy;
+      if (!publishing) break;
+      await Promise.race([publishing, new Promise<void>((r) => (this.wakeUp = r))]);
+      this.wakeUp = null;
     }
+    if (await this.restart.now()) return;
     // An install: what the install put up is noted, staging gets its first deploy; then a look at upstream's channel now
     // and then (its Update deploys through the hook), and the alarm kept going for the next look.
     if (this.fleet.upstream) {
@@ -726,27 +666,27 @@ export class BranchDeploys {
     s.run = null;
     s.oldDocs = [];
     await this.save(s);
-    // Production, healthy: its release goes to the store, on edge (each commit of main). After the deploy is over and
-    // recorded: nothing here fails it, and a restart here loses only the publication (Redeploy publishes again).
+    if (this.specOf(s.status.name).control) await this.restart.deployed(run.carry.version ?? run.commit.slice(0, 12));
+    // Production, healthy: its release goes to the store, on edge (each commit of main), on its own (ReleaseChannels).
     if (s.status.name == "production" && this.deps.releases) {
-      let note: string;
-      if (!release) note = "not published to the release store: the build is gone (the server restarted part way). Redeploy publishes it.";
-      else {
-        try {
-          const m = await this.deps.releases.publish(release, run.commit);
-          await this.deps.releases.addTo("edge", release.version);
-          note = `published release ${release.version} to the store (${Object.keys(m.files).length} files), on edge`;
-          this.deps.logged?.({ type: "releases" });
-          // A release tag waiting for this build: stable follows.
-          await this.refreshStable().catch((e) => console.log(`stable wasn't refreshed: ${(e as Error).message}`));
-        } catch (e) {
-          note = `not published to the release store: ${(e as Error).message}`;
-        }
-      }
-      await this.history.appendTo(s.status.name, run.deployId, note);
-      s.status.log = [...s.status.log, `${new Date(this.now()).toISOString().slice(11, 19)} ${note}`].slice(-LOG_LINES);
-      await this.save(s);
+      if (release) {
+        this.channels.start({ name: s.status.name, deployId: run.deployId, commit: run.commit, release });
+        await this.save(s);
+      } else
+        await this.publishNote(
+          s.status.name,
+          run.deployId,
+          "not published to the release store: the build is gone (the server restarted part way). Redeploy publishes it."
+        );
     }
+  }
+
+  /** A note at the end of a deploy's log, after the deploy (its release published, or not). */
+  async publishNote(name: DeployName, deployId: string, note: string): Promise<void> {
+    const s = this.current?.name == name ? this.current.s : await this.load(name);
+    await this.history.appendTo(name, deployId, note);
+    s.status.log = [...s.status.log, `${new Date(this.now()).toISOString().slice(11, 19)} ${note}`].slice(-LOG_LINES);
+    await this.save(s);
   }
 
   /**
@@ -778,70 +718,9 @@ export class BranchDeploys {
     await this.save(s);
   }
 
-  /**
-   * An unhealthy release rolled back by itself: one deployment of the Worker version the deploy's restore point names.
-   * The deploy stays failed, its record says it was undone, and the target's live deploy is the one before, as it was.
-   * On this server's own target the deployment restarts this object into the older version: the record is written first.
-   */
-  private async undo(s: Stored, run: Run): Promise<void> {
-    const name = s.status.name;
-    const restore = run.carry.restore;
-    const to = restore?.version ? `release ${restore.version}` : restore?.versionId ? `version ${restore.versionId.slice(0, 8)}` : null;
-    console.log(`deploy ${run.deployId} of ${name} is unhealthy: ${restore?.versionId ? `rolling back to ${to}` : "no restore point to roll back to"}`);
-    if (!restore?.versionId || !to) {
-      this.line(s, "not rolled back by itself: this deploy has no restore point (a new Worker, or one whose deployments couldn't be read)", "rollback");
-      s.run = null;
-      await this.save(s);
-      return;
-    }
-    const note = `Rolled back to ${to} by itself.`;
-    s.status = { ...s.status, error: `${s.status.error ?? ""} ${note}`.trim(), steps: [...s.status.steps, { id: "rollback", title: `Roll back to ${to}`, status: "done" }] };
-    this.line(s, `unhealthy: rolling ${this.specOf(name).host} back to ${to} (what it ran before this deploy)`, "rollback");
-    // Written whole before the call: the record (its error says it was undone), the log, no run left to resume.
-    s.run = null;
-    await this.save(s);
-    const list = await this.history.records(name);
-    const rec = list.find((r) => r.id == run.deployId);
-    if (rec) {
-      rec.error = s.status.error;
-      await this.history.putRecords(name, list);
-    }
-    try {
-      // Cloudflare's side can fail for a moment (a 500 from its token endpoint refreshing the credential, 2026-10-14): three
-      // tries, five seconds apart, unless Cloudflare refused it (a 4xx).
-      const versionId = restore.versionId;
-      const again = (e: unknown) => !(e instanceof DeployError && e.status >= 400 && e.status < 500);
-      let tries = 0;
-      const roll = Effect.tryPromise({
-        try: async () =>
-          rollbackTo(
-            await this.cf(),
-            this.targetFor(name),
-            versionId,
-            `Erga: ${run.commit.slice(0, 12)} failed its health check; back to ${to}`
-          ),
-        catch: (e) => e,
-      }).pipe(
-        Effect.tapError((e) =>
-          Effect.sync(() => {
-            if (++tries < 3 && again(e)) this.line(s, `the rollback didn't go through (${(e as Error).message}): trying again`, "rollback");
-          })
-        )
-      );
-      await runWith(this.deps.sleep, roll.pipe(Effect.retry({ schedule: Schedule.spaced("5 seconds"), times: 2, while: again })));
-    } catch (e) {
-      const message = e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`;
-      console.log(`the rollback of ${name} failed: ${message}`);
-      const undone = `${note} That failed too: ${message} Roll back by hand (Cloudflare's dashboard, or deployments create).`;
-      if (rec) {
-        rec.error = rec.error!.replace(note, undone);
-        await this.history.putRecords(name, list);
-      }
-      s.status = { ...s.status, error: s.status.error!.replace(note, undone) };
-      for (const x of s.status.steps) if (x.id == "rollback") x.status = "failed";
-      await this.history.appendTo(name, run.deployId, `the rollback failed: ${message}`);
-      await this.save(s);
-    }
+  /** An unhealthy release rolled back by itself (rollback.ts). */
+  private undo(s: Stored, run: Run) {
+    return undo(this, s, run);
   }
 
   /** A deploy a newer one took the place of: stopped before its next step, its record says by what. */

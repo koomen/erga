@@ -7,6 +7,7 @@
 import { esc as escText } from "../../shared/html";
 import { runTool } from "../common/tools";
 import { featureBranches } from "../admin/ops-branches";
+import { conflictCount, renderConflict } from "../admin/ops-conflict";
 
 // The answers of the API are typed loosely (any): this page reads what the server sends and shows it.
 type Json = any;
@@ -58,6 +59,9 @@ export default function ops(): void {
     const ms = (r.ended ?? Date.now()) - r.started;
     return ms < 60000 ? Math.round(ms / 1000) + "s" : Math.floor(ms / 60000) + "m " + Math.round((ms % 60000) / 1000) + "s";
   };
+  /** After a target's state: its release that publishes (production), and a deploy that waits with no problem (`waits`). */
+  const after = (t: Json) =>
+    (t?.publishing ? " · publishing" : "") + (t?.waits && !running(t.state) ? " · waiting to deploy " + t.pending.slice(0, 7) : "");
   const targetOf = (name: string): Json => deploys?.targets?.find((t: Json) => t.name == name) ?? null;
   /** A target's deploys by commit, newest first. */
   function byCommit(name: string) {
@@ -317,9 +321,8 @@ export default function ops(): void {
       : "Nothing to release: main has no commits yet.";
     byId("release-state").textContent = up ? "" : view.release ? "Stable release: " + view.release : "No release yet";
     renderGithub(view.github);
-    renderConflict(view.conflict);
+    renderConflict(view.conflict, upstreamName());
   }
-  const conflictCount = (n: number) => (n == 1 ? "1 file conflicts" : n + " files conflict");
   /** "erga.dev: 12 commits (v0.15.0) that you do not have · 3 commits of your own". */
   function positionText(up: Json) {
     const n = (k: number, w: string) => k + " commit" + (k == 1 ? "" : "s") + w;
@@ -349,43 +352,6 @@ export default function ops(): void {
           (up.version || "newest") +
           " into staging: a fast-forward, or a merge commit. Production follows through Merge."
         : "Nothing to update: staging has everything " + upstreamName() + "'s " + up.channel + " channel has.";
-  }
-  /** The merge waiting on conflicts (from upstream, or from GitHub): the files, and the two ways out. */
-  function renderConflict(c: Json) {
-    const box = byId("conflict-box");
-    box.hidden = !c;
-    if (!c) return;
-    const gh = c.kind == "github";
-    byId("conflict-title").textContent = gh ? "The sync from GitHub stopped" : "Update from " + upstreamName() + " stopped";
-    byId("conflict-count").textContent = conflictCount(c.files.length);
-    byId("conflict-intro").innerHTML = gh
-      ? "GitHub's staging (<b>" +
-        esc(c.target.slice(0, 7)) +
-        "</b>) and staging here have each moved, and the merge conflicts in these files."
-      : "The merge of <b>" + esc(c.version) + "</b> into staging conflicts in these files.";
-    byId("conflict-branch").textContent = c.branch;
-    byId("conflict-ask").textContent = gh ? "resolve the merge from GitHub" : "resolve the update from " + upstreamName();
-    byId("conflict-how").textContent = gh
-      ? "In a checkout of the GitHub repository, merge Erga's staging, resolve, and push to GitHub's staging (the sync brings it here):"
-      : "In a checkout, merge " + upstreamName() + "'s commit, resolve, and push to staging:";
-    byId("conflict-files").innerHTML = c.files
-      .map((f: Json) => "<li><code>" + esc(f.path) + "</code> <span class='soft'>(" + esc(f.kind) + ")</span></li>")
-      .join("");
-    byId("conflict-git").textContent = (
-      gh
-        ? [
-            "git fetch erga staging   # erga: this Erga's Git address, above",
-            "git checkout staging      # GitHub's",
-            "git merge FETCH_HEAD      # resolve the conflicts, then commit",
-            "git push origin staging",
-          ]
-        : [
-            "git fetch erga erga-upstream/main",
-            "git checkout -B update erga/staging",
-            "git merge FETCH_HEAD   # resolve the conflicts, then commit",
-            "git push erga HEAD:staging",
-          ]
-    ).join("\n");
   }
   /** GitHub's card: the repository connected, the sync's state and its last error; Connect (a popup), Sync now, Disconnect. */
   function renderGithub(g: Json) {
@@ -720,8 +686,8 @@ export default function ops(): void {
                 cancelled: "cancelled",
               } as Record<string, string>
             )[t.state] || t.state;
-      e.querySelector(".st span")!.textContent = what + (t?.at ? " · " + ago(t.at) : "");
-      e.querySelector<HTMLElement>(".st")!.title = t?.error || "";
+      e.querySelector(".st span")!.textContent = what + (waits ? "" : after(t)) + (t?.at ? " · " + ago(t.at) : "");
+      e.querySelector<HTMLElement>(".st")!.title = t?.error || (t?.waits ? "It waits: " + t.waits : "");
       e.querySelector(".env-commit")!.textContent = t?.deployed ? t.deployed.slice(0, 7) : "";
       e.querySelector<HTMLElement>(".env-log")!.hidden = !t;
       // Retry: a failed deploy, or one that waits while nothing stops it now.
@@ -766,7 +732,8 @@ export default function ops(): void {
               cancelled: "cancelled",
             } as Record<string, string>
           )[t.state] || t.state;
-      b.querySelector(".st span")!.textContent = what + (t?.at ? " · " + ago(t.at) : "");
+      b.querySelector(".st span")!.textContent = what + after(t) + (t?.at ? " · " + ago(t.at) : "");
+      b.querySelector<HTMLElement>(".st")!.title = t?.error || (t?.waits ? "It waits: " + t.waits : "");
     }
     render();
   }
@@ -1124,6 +1091,8 @@ export default function ops(): void {
     if (pageView.signal.aborted) return;
     const events = new WebSocket((location.protocol == "https:" ? "wss://" : "ws://") + location.host + "/api/events");
     let closed = false;
+    // A ping the server's runtime answers without waking the deploys' object (control/deploys/pipeline-object.ts).
+    const ping = setInterval(() => events.readyState == WebSocket.OPEN && events.send("ping"), 20_000);
     pageView.onLeave(() => {
       closed = true;
       events.close();
@@ -1138,6 +1107,7 @@ export default function ops(): void {
       opened = true;
     };
     events.onclose = () => {
+      clearInterval(ping);
       if (!closed) setTimeout(listen, 3000);
     };
     events.onmessage = (e) => {

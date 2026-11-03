@@ -24,6 +24,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statS
 import { join, relative, resolve } from "node:path";
 import type { ControlConfig, ReleaseIndex } from "../control/deploys/release-format.ts";
 import { controlWrangler } from "./targets.ts";
+import { releaseBindings } from "../control/deploys/bindings.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SITE = join(ROOT, ".build"), OUT = join(SITE, "release");
@@ -65,8 +66,21 @@ export async function makeRelease(): Promise<ReleaseIndex> {
 
   const control = await bundleControl(join(staging, "control"));
 
-  const sha = process.env.WORKERS_CI_COMMIT_SHA || Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: ROOT }).stdout.toString().trim() || "dev";
-  const index: ReleaseIndex = { version: sha.slice(0, 12), built: new Date().toISOString(), worker, mainModule: worker.manifest?.mainModule ?? "index.js", modules, assets, migrations, control };
+  const sha =
+    process.env.WORKERS_CI_COMMIT_SHA ||
+    Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: ROOT }).stdout.toString().trim() ||
+    "dev";
+  const index: ReleaseIndex = {
+    version: sha.slice(0, 12),
+    built: new Date().toISOString(),
+    worker,
+    mainModule: worker.manifest?.mainModule ?? "index.js",
+    modules,
+    assets,
+    migrations,
+    control,
+    bindings: releaseBindings(worker.env),
+  };
   writeFileSync(join(staging, "release.json"), JSON.stringify(index, null, 2));
   rmSync(OUT, { recursive: true, force: true });
   cpSync(staging, OUT, { recursive: true });
@@ -94,14 +108,46 @@ export function controlWranglerConfig(databaseId?: string): Record<string, unkno
   return controlWrangler(JSON.parse(stripComments(readFileSync(join(ROOT, "control/wrangler.jsonc"), "utf8"))), databaseId);
 }
 
+/** The keys of control/wrangler.jsonc that controlConfig knows: a key it doesn't know stops the build, so no binding is left out without a word. */
+const CONTROL_KEYS = new Set([
+  "main",
+  "name",
+  "routes",
+  "compatibility_date",
+  "compatibility_flags",
+  "workers_dev",
+  "preview_urls",
+  "observability",
+  "vars",
+  "migrations",
+  "containers",
+  "durable_objects",
+  "d1_databases",
+  "artifacts",
+  "r2_buckets",
+  "version_metadata",
+  "browser",
+  "ai",
+  "worker_loaders",
+]);
+
 /** The control Worker's wrangler config (controlWranglerConfig) as the pipeline's ControlConfig. */
 export function controlConfig(config: Record<string, unknown>): ControlConfig {
+  const unknown = Object.keys(config).filter((k) => !CONTROL_KEYS.has(k));
+  if (unknown.length)
+    throw new Error(
+      `control/wrangler.jsonc has ${unknown.join(", ")}, which deploy/release.ts (controlConfig) doesn't know: add it there.`
+    );
   const w = config as {
     name: string; compatibility_date: string; compatibility_flags?: string[];
     containers?: { class_name: string; name?: string }[]; durable_objects?: { bindings?: { name: string; class_name: string }[] };
     d1_databases?: { binding: string; database_name: string }[]; artifacts?: { binding: string; namespace: string }[];
     r2_buckets?: { binding: string; bucket_name: string }[];
-    version_metadata?: { binding: string }; vars?: Record<string, string>;
+    version_metadata?: { binding: string };
+    vars?: Record<string, string>;
+    browser?: { binding: string };
+    ai?: { binding: string };
+    worker_loaders?: { binding: string }[];
     observability?: { enabled?: boolean; logs?: { enabled?: boolean; invocation_logs?: boolean } };
   };
   return {
@@ -113,6 +159,12 @@ export function controlConfig(config: Record<string, unknown>): ControlConfig {
     artifacts: (w.artifacts ?? []).map((a) => ({ name: a.binding, namespace: a.namespace })),
     r2: (w.r2_buckets ?? []).map((b) => ({ name: b.binding, bucketName: b.bucket_name })),
     versionMetadata: w.version_metadata?.binding ?? null,
+    // The same on every account: their metadata goes as it is (control/deploys/control-worker.ts), so a new one needs no newer pipeline.
+    bindings: [
+      ...(w.browser ? [{ type: "browser", name: w.browser.binding }] : []),
+      ...(w.ai ? [{ type: "ai", name: w.ai.binding }] : []),
+      ...(w.worker_loaders ?? []).map((l) => ({ type: "worker_loader", name: l.binding })),
+    ],
     vars: Object.fromEntries(Object.entries(w.vars ?? {}).map(([k, v]) => [k, String(v)])),
     observability: { enabled: !!w.observability?.enabled, logs: { enabled: !!w.observability?.logs?.enabled, invocationLogs: !!w.observability?.logs?.invocation_logs } },
   };

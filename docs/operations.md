@@ -73,6 +73,31 @@ After production deploys, the control Worker deploys itself from the same
 commit (`control/deploys/control-worker.ts`). So a change under `control/` reaches the
 control Worker when it reaches `main`.
 
+After its own deploy, the deploys' object restarts into the new code
+(`control/deploys/self-restart.ts`), once no deploy runs and no release
+publishes. A deploy that comes in between waits for the restart, and the Ops
+page says what it waits for. So every deploy after the control Worker's own
+deploy runs the new pipeline. Cloudflare alone would restart the object only
+minutes later, because open Ops pages kept it busy.
+
+Production's deploy publishes its release to the release store after the
+deploy is over, on its own: no other deploy waits for it. The Ops page shows
+"publishing" while it runs. A restart in the middle loses the publication,
+and the deploy's log says so: Redeploy publishes it again.
+
+## New kinds of bindings
+
+The release describes each binding of the app Worker that is the same on
+every target (`browser`, `worker_loader`, `ai` and any new kind) in
+Cloudflare's own form, and the pipeline sends it as it is
+(`control/deploys/bindings.ts`). So a release with a new kind of binding
+deploys with the control Worker that runs now.
+
+A kind that the pipeline must make for each target (a database, a bucket,
+the target's settings: `TARGET_KINDS`) needs the pipeline's change on
+`main` first, and the control Worker deployed. Until then, a deploy of a
+release that uses it stops before it changes anything, and says why.
+
 Two changes still need wrangler from a machine
 (`bun deploy/setup.ts --control`):
 

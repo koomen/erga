@@ -36,6 +36,7 @@ import { runControlPipeline } from "./control-worker";
 import { copyDocuments } from "./copy-documents";
 import { Cloudflare, DeployError, Unhealthy, type Fetch } from "./cloudflare-api";
 import type { Release } from "./release-format";
+import { bindingsProblem } from "./bindings";
 import { DB_NAME, type DeployPlan } from "./plan";
 import {
   PAGES_PROXY,
@@ -340,6 +341,9 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
   const pagesHost = target.pages.kind == "shared" ? targetSharedPagesHost(target) : null;
   const wrong = guardTarget(target);
   if (wrong) throw new DeployError({ message: wrong });
+  // A binding this pipeline can't make stops the deploy here, before any step changes the target.
+  const unknown = release && bindingsProblem(release);
+  if (unknown) throw new DeployError({ message: unknown });
   const steps = stepsFor(target).map((s) => s.id);
   const start = opts.from ? steps.indexOf(opts.from) : 0;
   if (start < 0) throw new DeployError({ message: `This deploy has no step "${opts.from}".` });
