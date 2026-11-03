@@ -3,6 +3,8 @@
 import { expect, servers, test, until, type Page } from "../../helpers/fixtures";
 import { clickOn, newDoc, unique } from "./access";
 
+await servers.main();
+
 /** Calls a tool as the owner (the dev server's own person), as their page does. */
 async function asOwner(root: string, name: string, args: Record<string, unknown>) {
   const r = await fetch(`${root}/api/tools/${name}`, {

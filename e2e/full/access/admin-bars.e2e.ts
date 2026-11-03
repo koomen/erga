@@ -5,6 +5,8 @@
 import { expect, servers, settle, test, type Page } from "../../helpers/fixtures";
 import { openEditor } from "../../helpers/editor";
 
+await servers.main();
+
 /** Each bar's and the agent's glass, and their boxes, by the selectors in the page (the editor's, or an app page's). */
 const looks = (page: Page, sel: { left: string; right: string }) =>
   page.evaluate((sel) => {

@@ -3,6 +3,8 @@
 // server's). The values are the pretend GitHub's app (dev/vite-plugin.ts), which its live check accepts.
 import { expect, servers, test } from "../../helpers/fixtures";
 
+await servers.main();
+
 const CARD = 'section.server[data-provider="github"]';
 
 test("Save and Clear on /admin/auth show the GitHub card's new state in place, with the message under it", async ({ tab }) => {
@@ -33,8 +35,8 @@ test("Save and Clear on /admin/auth show the GitHub card's new state in place, w
   await page.fill(`${CARD} input[name=clientId]`, "Iv1.mockgithubapp0");
   await page.fill(`${CARD} input[name=secret]`, "mock-github-client-secret");
   await page.click(`${CARD} button.save`);
-  await expect.poll(async () => (await card()).id).toBe("Iv1.mockgithubapp0");
-  expect(await card()).toEqual({
+  // (The new card can come before the message under it: the news socket may bring it first, with "Checking the values…".)
+  await expect.poll(card).toEqual({
     state: "working",
     id: "Iv1.mockgithubapp0",
     hint: "GitHub accepts the values, and sign-in uses them now. Sign in with them to check the callback URL.",
@@ -47,6 +49,5 @@ test("Save and Clear on /admin/auth show the GitHub card's new state in place, w
     window.confirm = () => true;
   });
   await page.click(`${CARD} button.clear`);
-  await expect.poll(async () => (await card()).hint).toBe("Cleared: sign-in uses the deploy's values.");
-  expect(await card()).toEqual({ ...before, hint: "Cleared: sign-in uses the deploy's values.", stayed: true });
+  await expect.poll(card).toEqual({ ...before, hint: "Cleared: sign-in uses the deploy's values.", stayed: true });
 });

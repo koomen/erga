@@ -195,13 +195,19 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // clip sideways while they move, and not once they're open and still (settled), so their tooltips reach past the group.
   const editGroup = $("edit-group"), body = document.body;
   const groupOpen = () => body.classList.contains("erga-editing") && body.classList.contains("erga-editor-ready") && !body.classList.contains("erga-closing");
+  // (getAnimations makes the transition the class change starts, if one does.)
+  const moving = () => editGroup.getAnimations().some((a) => a instanceof CSSTransition && a.transitionProperty == "grid-template-columns");
   const syncGroup = () => {
     const open = groupOpen();
     editGroup.inert = !open;
-    // (Open from the first frame, reloaded in the editor (server/pages/viewer.ts, erga-restored): settled at once.)
-    if (!open || !editGroup.classList.contains("settled")) editGroup.classList.toggle("settled", open && (matchMedia("(prefers-reduced-motion: reduce)").matches || body.classList.contains("erga-restored")));
+    // Open with no transition (from the first frame, with reduced motion, reloaded in the editor: erga-restored): settled at once.
+    if (!open || !editGroup.classList.contains("settled")) editGroup.classList.toggle("settled", open && !moving());
   };
-  editGroup.addEventListener("transitionend", (e) => { if (e.target == editGroup && e.propertyName == "grid-template-columns" && groupOpen()) editGroup.classList.add("settled"); });
+  // (Or stopped on the way, open: a style change took the transition away.)
+  for (const type of ["transitionend", "transitioncancel"] as const)
+    editGroup.addEventListener(type, (e) => {
+      if (e.target == editGroup && e.propertyName == "grid-template-columns" && groupOpen()) editGroup.classList.add("settled");
+    });
   new MutationObserver(syncGroup).observe(body, { attributes: true, attributeFilter: ["class"] });
   syncGroup();
   // The title in the breadcrumbs takes the room left of the controls (on a phone, little), and ends in an ellipsis.
