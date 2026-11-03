@@ -179,6 +179,9 @@ Found a new trap? Write it here, in the same change.
   Build a document's address with `addressOf`, never `/${owner}/${slug}`: its address is `/_home`.
   A document's host keeps the owner it was made with, and nothing tells it of a new one. An access rule
   takes the owner from the permissions (`Directory.decide`), never from the host's own copy.
+- A style that changes the page's layout for a moment (off, measure, on) moves a scrolled page: Chrome's scroll
+  anchoring follows the first change and not the second. The room for the bars (client/common/top-room.ts) does
+  this on each change of `<html>`'s class, and puts the window back after it. Do the same, or measure without it.
 - The viewer, the editor and the homepage draw the same glass bars from one stylesheet,
   `client/inline/bars.css`. The homepage's copy is in a shadow root, where `html` and `body` match
   nothing: `SHADOW_BARS` (server/home/render.ts) rewrites them to `:host`, and stops the server

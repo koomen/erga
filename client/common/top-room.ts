@@ -31,13 +31,18 @@ export function topRoom(d: Document): { update(): boolean; room: number } {
   const out = {
     room: TOP_ROOM,
     update() {
-      // The page's own padding and the rest, without the rule.
+      // The page's own padding and the rest, without the rule. While it's off, the page moves up by the room, and the
+      // browser's scroll anchoring scrolls up with it (a tall block across the window's top is enough), but not back
+      // down when the rule is on again: the page would jump by the room. So the window goes back to where it was.
+      const w = d.defaultView!,
+        y = w.scrollY;
       style.disabled = true;
-      const cs = d.defaultView!.getComputedStyle(d.documentElement),
+      const cs = w.getComputedStyle(d.documentElement),
         fills = fillsWindow(d),
         pad = parseFloat(cs.paddingTop) || 0,
         scroll = parseFloat(cs.scrollPaddingTop) || 0;
       style.disabled = false;
+      if (w.scrollY != y) w.scrollTo(w.scrollX, y);
       const text = fills
         ? ""
         : `html { padding-top: ${pad + out.room}px !important; scroll-padding-top: ${scroll + out.room}px !important; }`;
