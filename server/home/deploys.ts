@@ -4,10 +4,10 @@
 // the state machine; the Durable Object (cloudflare/objects/home.ts) gives
 // it storage and an alarm, and forwards the calls.
 //
-// When the homepage document has a new version, the next deploy runs about
-// five minutes later (`delay`), each change pushing it back (debounced), on
-// the alarm; "Redeploy now" (POST /api/docs/<id>/home/deploy) runs it at
-// once. A deploy that fails leaves the last good snapshot serving. Choosing
+// A new version of the homepage document doesn't deploy: the snapshot stays
+// as it is until someone deploys again (Deploy in the document's settings, or
+// the redeploy operation), and the deploy runs at once, on the alarm. A deploy
+// that fails leaves the last good snapshot serving. Choosing
 // another homepage (the landing_document setting, however it's set) drops
 // the snapshot and deploys the new one at once; until it's done, / is the
 // viewer on it, as it is when there's no snapshot at all (a fresh server,
@@ -39,9 +39,7 @@ export interface LivePage {
 export interface HomeObject {
   /** The deploy's state, as the API gives it. */
   status(): Promise<DeployStatus>;
-  /** A document has a new version: if it's the homepage, its deploy is (re)scheduled. */
-  changed(docId: string): Promise<DeployStatus>;
-  /** Deploys now (Redeploy now), whatever was scheduled; `by`: who asks (byLine). */
+  /** Deploys the homepage as it is now (Deploy); `by`: who asks (byLine). */
   deploy(by?: string): Promise<DeployStatus>;
   /** The landing_document setting changed: another homepage, or none. */
   homeChanged(): Promise<DeployStatus>;
@@ -73,8 +71,6 @@ export interface HomeDeps {
   current(docId: string): Promise<HomeFiles | null>;
   /** Tells everyone with the document open that its homepage state changed. */
   notify(docId: string): Promise<void>;
-  /** How long after a change the next deploy runs. */
-  delay(): number;
   /** A file's media type, by its path. */
   mimeOf(path: string): string | null;
   /** Local development only: a page that asks for it fails its deploy (the tests check what that leaves). */
@@ -85,7 +81,6 @@ export interface HomeDeps {
 interface State {
   state: DeployStatus["state"];
   at: number | null;
-  scheduledFor: number | null;
   version: number | null;
   error: string | null;
   /** The homepage's document, as last seen. */
@@ -99,7 +94,7 @@ interface State {
 const STATE = "state", LIVE = "live", FILE = "f:";
 
 export class HomeDeploys implements HomeObject {
-  private s: State = { ...IDLE, at: null, scheduledFor: null, docId: null };
+  private s: State = { ...IDLE, at: null, docId: null };
   private live: LivePage | null = null;
   /** Bumped whenever the homepage changes to another document: a deploy for the one before is thrown away. */
   private epoch = 0;
@@ -116,7 +111,13 @@ export class HomeDeploys implements HomeObject {
 
   async status(): Promise<DeployStatus> {
     const iso = (t: number | null) => (t == null ? null : new Date(t).toISOString());
-    return { state: this.s.state, at: iso(this.s.at), scheduledFor: iso(this.s.scheduledFor), version: this.s.version, error: this.s.state == "failed" ? this.s.error : null, by: this.s.by ?? byLine(SYSTEM) };
+    return {
+      state: this.s.state,
+      at: iso(this.s.at),
+      version: this.s.version,
+      error: this.s.state == "failed" ? this.s.error : null,
+      by: this.s.by ?? byLine(SYSTEM),
+    };
   }
 
   /** The homepage's document as the database has it now (not as an isolate remembers it). */
@@ -139,23 +140,7 @@ export class HomeDeploys implements HomeObject {
       this.deps.notify(id).catch((e: unknown) => this.deps.log(`couldn't tell ${id} about the homepage: ${e}`))));
   }
 
-  async changed(docId: string): Promise<DeployStatus> {
-    const home = await this.homeDoc();
-    if (home?.id != docId) return this.status();
-    this.s.docId = docId;
-    this.s.scheduledFor = Date.now() + this.deps.delay();
-    this.s.by = null;
-    if (this.s.state != "deploying") {
-      this.s.state = "scheduled";
-      await this.deps.alarm.set(this.s.scheduledFor);
-    }
-    await this.save();
-    await this.tell(docId);
-    return this.status();
-  }
-
   async deploy(by?: string): Promise<DeployStatus> {
-    this.s.scheduledFor = null;
     this.s.by = by ?? null;
     if (this.s.state == "deploying") this.s.again = true;
     else {
@@ -178,7 +163,14 @@ export class HomeDeploys implements HomeObject {
     if (doc && doc.id == this.live?.docId && doc.id == before) return this.status();
     this.epoch++;
     await this.drop();
-    this.s = { state: doc ? "deploying" : "idle", at: null, scheduledFor: null, version: null, error: null, docId: doc?.id ?? null, again: this.running && !!doc };
+    this.s = {
+      state: doc ? "deploying" : "idle",
+      at: null,
+      version: null,
+      error: null,
+      docId: doc?.id ?? null,
+      again: this.running && !!doc,
+    };
     if (doc && !this.running) await this.deps.alarm.set(Date.now());
     await this.save();
     await this.tell(before, doc?.id);
@@ -186,7 +178,7 @@ export class HomeDeploys implements HomeObject {
   }
 
   async ensure(): Promise<void> {
-    if (this.live || this.s.state == "deploying" || this.s.state == "scheduled") return;
+    if (this.live || this.s.state == "deploying") return;
     const doc = await this.homeDoc();
     if (!doc) return;
     if (doc.id != this.s.docId) return void (await this.homeChanged());
@@ -200,7 +192,7 @@ export class HomeDeploys implements HomeObject {
     if (this.live?.docId != docId && this.s.docId != docId) return;
     this.epoch++;
     await this.drop();
-    this.s = { ...IDLE, at: null, scheduledFor: null, docId: null };
+    this.s = { ...IDLE, at: null, docId: null };
     await this.deps.alarm.delete();
     await this.save();
   }
@@ -235,7 +227,6 @@ export class HomeDeploys implements HomeObject {
       do {
         this.s.again = false;
         this.s.state = "deploying";
-        this.s.scheduledFor = null;
         await this.save();
         await this.tell(this.s.docId);
         const epoch = this.epoch;
@@ -251,11 +242,6 @@ export class HomeDeploys implements HomeObject {
           Object.assign(this.s, { state: "failed", error: message });
         }
       } while (this.s.again);
-      // Changes that came while it ran: the next deploy is scheduled for the delay after the last of them.
-      if (this.s.scheduledFor != null) {
-        this.s.state = "scheduled";
-        await this.deps.alarm.set(this.s.scheduledFor);
-      }
       await this.save();
       await this.tell(this.s.docId);
     } finally {

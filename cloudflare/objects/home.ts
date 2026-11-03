@@ -9,8 +9,6 @@ import { directoryOf } from "../d1";
 import type { Env } from "../env";
 import { documentOf } from "./document-stub";
 
-const FIVE_MINUTES = 5 * 60 * 1000;
-
 /** A document's files as they are now: its page, its files and its current version's number; null if there's no such document. */
 async function currentFiles(
   env: Env,
@@ -32,7 +30,6 @@ export class Home extends DurableObject<Env> implements HomeObject {
     directory: directoryOf(this.env),
     current: (docId) => currentFiles(this.env, docId),
     notify: (docId) => documentOf(this.env, docId).notify({ type: "home" }),
-    delay: () => { const ms = Number(this.env.ERGA_HOME_DELAY_MS); return ms > 0 ? ms : FIVE_MINUTES; },
     mimeOf,
     testFailures: !!this.env.ERGA_LINK_SECRET,
     log: (line) => console.log(line),
@@ -44,7 +41,6 @@ export class Home extends DurableObject<Env> implements HomeObject {
   }
 
   status() { return this.deploys.status(); }
-  changed(docId: string) { return this.deploys.changed(docId); }
   deploy(by?: string) { return this.deploys.deploy(by); }
   homeChanged() { return this.deploys.homeChanged(); }
   ensure() { return this.deploys.ensure(); }

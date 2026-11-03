@@ -162,7 +162,7 @@ export interface DocumentDeps {
   /** Each person's agent here (agents/document/session.ts `documentAgents`): its settings, their conversation's store, and the server tools they may use. */
   agents: DocumentAgents;
   /** The homepage forgets a deleted document; and its next deploy is scheduled when the homepage has a new version. */
-  home: { forget: (docId: string) => Promise<void>; changed: (docId: string) => Promise<void> };
+  home: { forget: (docId: string) => Promise<void> };
   /** Local development: this document's storage with its files on disk (document/disk.ts), for a document that is one. */
   disk?: { storage: (only: string | null) => Storage };
   /**
@@ -1111,7 +1111,6 @@ export class Document {
       yield* opened.room.settle;
       if (!r) return null;
       opened.broadcast({ type: "versions" });
-      self.versionCut(info.id);
       if (r.previous && !as) self.deps.background(Effect.runPromise(self.describe(r.version, r.previous, info)));
       return r.version;
     });
@@ -1130,13 +1129,6 @@ export class Document {
     }).pipe(
       Effect.catchCause((cause) => Effect.sync(() => self.deps.log(`couldn't describe version ${version.n}: ${Cause.pretty(cause)}`)))
     );
-  }
-
-  /** A new version: the homepage, which shows the document as it is, deploys again soon. */
-  private versionCut(docId: string): void {
-    // If it's the homepage, its next deploy is scheduled.
-    this.deps.background(this.directory.homeId().then((home) => home == docId ? this.deps.home.changed(docId) : undefined)
-      .catch((e) => this.deps.log(`couldn't schedule the homepage's deploy: ${e}`)));
   }
 
   /** Opens the document and waits for any cut under way (the first, when it opens, makes sure there is a version). */

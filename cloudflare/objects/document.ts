@@ -97,10 +97,6 @@ export class DocumentObject extends DurableObject<Env> {
       agents: documentAgents({ settings: () => platform(env).agentSettings(), sandbox: sandboxOf(env.LOADER) }),
       home: {
         forget: (docId) => env.HOME.getByName("home").forget(docId),
-        // A new version: if it is the homepage, its next deploy is scheduled.
-        changed: async (docId) => {
-          await env.HOME.getByName("home").changed(docId);
-        },
       },
       disk: { storage: (only) => this.disk.storage(this.ctx.storage, only) },
       timing: {

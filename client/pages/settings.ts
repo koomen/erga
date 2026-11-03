@@ -1,18 +1,20 @@
 // Document settings: the popover under the gear in the editor's top row
-// (client/editor.html, #btn-settings). Built on its own and
-// loaded only when the gear is reached for, so it
-// costs viewing and opening the editor nothing.
+// (client/editor.html, #btn-settings). Built on its own, so it
+// costs viewing the page nothing: the editor mounts it once it's idle. It reads what it shows
+// as it mounts, keeps it fresh from the event channel (and again behind as the pointer comes
+// to the gear), so a click opens it whole on the next frame, and nothing pops in after.
 //
 // Readers always see the document as it is now. It holds, top to bottom:
 //   - Kind: Document (one page, and files beside it) or Project (pages, each
 //     with its own address), a switch (set_kind). A project with more than one page says, in place, why
 //     it can't be a document yet.
-//   - Readers, for its owner only (their state from ls's access): whether the people who view it, and can't edit
+//   - Readers, for anyone who may edit it (their state from ls's access): whether the people who view it, and can't edit
 //     it, see Erga's bars over it (share_document's reader_bars; on at first), and whether they may use their own agent
 //     on it (reader_agent). The agent is off, and not to be turned on, while anyone with the link may open it. And
 //     whether its page may call a model as its visitor, and which (page_llm, page_llm_model: window.ergaLLM).
 //   - Homepage, only on the homepage: a note that says so, how its deploy is
-//     going, and Redeploy now (admins). The homepage is chosen on /admin
+//     going, a line when the document is newer than the live page, and Deploy
+//     (admins). Nothing deploys by itself. The homepage is chosen on /admin
 //     (the landing_document setting), never here.
 //   - Versions: the latest ten, each with its number, the model's five-word
 //     description (a quiet placeholder until it arrives), when and who; the
@@ -21,16 +23,20 @@
 //
 // It runs the operations (server/operations/: versions, restore_version, ls, set_kind, redeploy (target homepage),
 // share_document; over POST /api/tools/<name>), and refreshes on the event channel's
-// { type: "versions" }, { type: "home" } and { type: "tree" } (main.ts passes them on).
+// { type: "versions" }, { type: "home" } and { type: "tree" } (main.ts passes them on), open or not.
 // Someone who can't edit sees it all read-only.
 
 import { ago, clock, RECENT, type Version, type Versions } from "./versions";
 import { runTool } from "../common/tools";
 import { esc } from "../../shared/html";
-import { plural } from "../../shared/time";
 import { MODELS, PAGE_LLM_MODELS } from "../../shared/models";
 
-export interface Deploy { state: "idle" | "scheduled" | "deploying" | "deployed" | "failed"; at: string | null; scheduledFor: string | null; version: number | null; error: string | null }
+export interface Deploy {
+  state: "idle" | "deploying" | "deployed" | "failed";
+  at: string | null;
+  version: number | null;
+  error: string | null;
+}
 /** ls's homepage: on the homepage only. */
 export interface Home { isHome: boolean; canDeploy: boolean; /** An admin acting through a token without the admin scope. */ locked?: boolean; deploy: Deploy }
 export type DocKind = "document" | "project";
@@ -40,9 +46,11 @@ interface Tree {
   canEdit?: boolean;
   kind?: DocKind;
 }
+/** ls's access, as far as Readers need it (the readers' options, for anyone who may edit it). */
+type Access = { readerAgent: boolean; readerBars: boolean; pageLlm: { on: boolean; model: string }; anyoneWithLink: boolean };
 interface Doc extends Tree {
   homepage?: Home;
-  access?: { readerAgent: boolean; readerBars: boolean; pageLlm: { on: boolean; model: string }; permissions: { login: string }[] };
+  access?: Access;
 }
 
 export interface SettingsHost {
@@ -137,7 +145,6 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--chrome); }
 .ds-dot.deployed { background: #22a06b; }
 .ds-dot.failed { background: #d0453a; }
-.ds-dot.scheduled { background: transparent; box-shadow: inset 0 0 0 1.5px var(--chrome); }
 .ds-dot.deploying { width: 10px; height: 10px; background: transparent; border: 1.6px solid color-mix(in srgb, var(--caret) 25%, transparent); border-top-color: var(--caret); box-sizing: border-box; animation: agent-spin 0.8s linear infinite; }
 .ds-btn { flex: none; font: 600 12.5px var(--font-text); border-radius: 7px; padding: 6px 11px; cursor: pointer; border: 1px solid var(--panel-border); background: var(--bg); color: var(--fg); white-space: nowrap; }
 .ds-btn:hover { border-color: color-mix(in srgb, var(--chrome) 45%, var(--panel-border)); }
@@ -190,11 +197,12 @@ function mount(host: SettingsHost): Settings {
     </section>
     <section class="ds-home" id="ds-home" hidden aria-labelledby="ds-home-note">
       <p class="ds-home-note" id="ds-home-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 11 12 4l8.5 7"/><path d="M6 9.5V20h12V9.5"/></svg>This is the homepage</p>
-      <p class="ds-explain" id="ds-home-explain"></p>
+      <p class="ds-explain">The site's homepage shows this document as it was at its last deploy.</p>
       <div class="ds-deploy" id="ds-deploy">
         <div class="ds-status" id="ds-status" role="status" aria-live="polite"></div>
-        <button type="button" class="ds-btn" id="ds-redeploy">Redeploy now</button>
+        <button type="button" class="ds-btn" id="ds-redeploy">Deploy</button>
       </div>
+      <p class="ds-explain" id="ds-home-newer"></p>
       <p class="ds-error" id="ds-home-error" role="alert"></p>
     </section>
     <section class="ds-history" aria-labelledby="ds-history-title">
@@ -212,7 +220,7 @@ function mount(host: SettingsHost): Settings {
     olderBtn = $("ds-older"),
     histError = $("ds-hist-error");
   const homeSec = $("ds-home"),
-    homeExplain = $("ds-home-explain");
+    homeNewer = $("ds-home-newer");
   const statusEl = $("ds-status"),
     redeploy = $("ds-redeploy"),
     homeError = $("ds-home-error");
@@ -243,7 +251,7 @@ function mount(host: SettingsHost): Settings {
   let tree: Tree | null = null;
   /** The kind being switched to, while the server does it. */
   let kindBusy: DocKind | null = null;
-  /** Readers, for the owner (ls answers no one else): their bars and their agent, and whether anyone with the link may open it. */
+  /** Readers, for anyone who may edit it (ls answers no one else): their bars and their agent, and whether anyone with the link may open it. */
   let access: Access | null = null;
   let agentBusy = false;
 
@@ -261,6 +269,7 @@ function mount(host: SettingsHost): Settings {
       data = d;
       loadError = null;
       render();
+      renderHome();
     } catch (e) {
       if (seq != loadSeq) return;
       loadError = (e as Error).message;
@@ -295,22 +304,12 @@ function mount(host: SettingsHost): Settings {
       if (d.kind) host.onKind(d.kind);
     }
     home = d?.homepage ?? null;
-    access = d?.access ? accessOf(d.access) : null;
+    access = d?.access ?? null;
     renderKind();
     renderHome();
     renderAgent();
   }
 
-  /** ls's access, as far as Readers need it. */
-  type PageLlm = { on: boolean; model: string };
-  type Answer = { readerAgent: boolean; readerBars: boolean; pageLlm: PageLlm; permissions: { login: string }[] };
-  type Access = { readerAgent: boolean; readerBars: boolean; pageLlm: PageLlm; open: boolean };
-  const accessOf = (a: Answer): Access => ({
-    readerAgent: a.readerAgent,
-    readerBars: a.readerBars,
-    pageLlm: a.pageLlm,
-    open: a.permissions.some((p) => p.login == "*"),
-  });
   function renderAgent() {
     agentSec.hidden = !access;
     if (!access) return;
@@ -320,8 +319,8 @@ function mount(host: SettingsHost): Settings {
     llmOn.checked = access.pageLlm.on;
     llmModel.value = access.pageLlm.model;
     llmOn.disabled = llmModel.disabled = agentBusy;
-    agentOn.disabled = access.open || agentBusy;
-    agentExplain.textContent = access.open
+    agentOn.disabled = access.anyoneWithLink || agentBusy;
+    agentExplain.textContent = access.anyoneWithLink
       ? "Anyone with the link can open it, so readers have no agent here. Editors always have theirs."
       : "People you share it with as viewers can ask their own agent about it. Their agent can read it, never change it.";
   }
@@ -331,7 +330,7 @@ function mount(host: SettingsHost): Settings {
     agentError.textContent = "";
     renderAgent();
     try {
-      access = accessOf(await runTool<Answer>("share_document", { document: host.docId, ...options }));
+      access = await runTool<Access>("share_document", { document: host.docId, ...options });
     } catch (e) {
       agentError.textContent = `Couldn't change it: ${(e as Error).message}`;
     }
@@ -406,16 +405,14 @@ function mount(host: SettingsHost): Settings {
     if (loadingOlder) olderBtn.setAttribute("aria-disabled", "true"); else olderBtn.removeAttribute("aria-disabled");
   }
 
-  /** Only on the homepage: a note that says so, and its deploy (Redeploy for admins). Nothing elsewhere. */
+  /** Only on the homepage: a note that says so, and its deploy (Deploy for admins). Nothing elsewhere. */
   function renderHome() {
     homeSec.hidden = !home?.isHome;
     if (!home || !home.isHome) return;
     const d = home.deploy;
-    homeExplain.textContent = "The site's homepage shows this document. Each new version goes live a few minutes later.";
     const live = d.version != null ? ` · version ${d.version}` : "";
     const last = d.at ? `Last deployed ${esc(clock(d.at))}${live}.` : "Not deployed yet.";
     const line = d.state == "deploying" ? `<b>Deploying…</b>`
-      : d.state == "scheduled" && d.scheduledFor ? `<span><b>Scheduled for ${esc(clock(d.scheduledFor))}</b> (${esc(until(d.scheduledFor))}). ${last}</span>`
       : d.state == "failed" ? `<span><b>Failed:</b> ${esc(d.error || "the deploy didn't finish.")} ${d.at ? last : ""}</span>`
       : d.at ? `<span><b>Deployed</b> at ${esc(clock(d.at))}${live}</span>` : `<span>Not deployed yet</span>`;
     statusEl.innerHTML = `<span class="ds-dot ${d.state}" aria-hidden="true"></span>${line}`;
@@ -424,7 +421,13 @@ function mount(host: SettingsHost): Settings {
     const can = home.canDeploy && d.state != "deploying" && !homeBusy;
     if (can) { redeploy.removeAttribute("aria-disabled"); redeploy.title = "Deploy the document as it is now"; }
     else { redeploy.setAttribute("aria-disabled", "true"); redeploy.title = home.locked ? "This token has no admin power." : "A deploy is running."; }
-    redeploy.textContent = d.state == "deploying" ? "Deploying…" : "Redeploy now";
+    redeploy.textContent = d.state == "deploying" ? "Deploying…" : "Deploy";
+    // The document has versions the live page hasn't: one plain line.
+    const now = data?.current.n;
+    homeNewer.textContent =
+      d.state != "deploying" && now != null && d.version != null && now > d.version
+        ? `The document is at version ${now}: the live page is older.`
+        : "";
   }
 
   /** Document or Project: the kind now, whether you may switch, and why a project can't be a document yet. */
@@ -473,12 +476,6 @@ function mount(host: SettingsHost): Settings {
     other.focus();
     switchKind(other.dataset.kind as DocKind);
   });
-  function until(iso: string): string {
-    const ms = Date.parse(iso) - Date.now();
-    const m = Math.round(ms / 60000);
-    return m <= 0 ? "any moment" : `in ${plural(m, "minute")}`;
-  }
-
   redeploy.addEventListener("click", async () => {
     if (redeploy.getAttribute("aria-disabled") == "true") return;
     homeBusy = true;
@@ -488,13 +485,27 @@ function mount(host: SettingsHost): Settings {
     try {
       await runTool("redeploy", { target: "homepage" });
     } catch (e) {
-      homeError.textContent = `Couldn't redeploy: ${(e as Error).message}`;
+      homeError.textContent = `Couldn't deploy: ${(e as Error).message}`;
     }
     homeBusy = false;
     loadDoc();
   });
 
   // ------------------------------------------------------------ the popover
+
+  // What it shows, read as it mounts (the editor's idle time, chrome.ts), kept fresh by the event channel and read
+  // again behind as the pointer or focus comes to the gear: a click opens it whole, on the next frame.
+  loadVersions();
+  loadDoc();
+  let readAt = 0;
+  const again = () => {
+    if (!pop.hidden || Date.now() - readAt < 2000) return;
+    readAt = Date.now();
+    loadVersions();
+    loadDoc();
+  };
+  host.anchor.addEventListener("pointerenter", again);
+  host.anchor.addEventListener("focus", again);
 
   let ticker = 0;
   function position() {
@@ -513,16 +524,16 @@ function mount(host: SettingsHost): Settings {
     }
     position();
     homeError.textContent = "";
-    histError.textContent = "";
+    // (A refresh that failed while it was closed says so.)
+    histError.textContent = loadError && data ? `Couldn't refresh the versions: ${loadError}` : "";
     kindError.textContent = "";
     agentError.textContent = "";
     render();
     renderHome();
     renderKind();
     renderAgent();
-    loadVersions();
-    loadDoc();
-    // Relative times ("4 min ago", "in 3 minutes") move on while it's open, every 30 seconds.
+    if (!data) loadVersions();
+    // Relative times ("4 min ago") move on while it's open, every 30 seconds.
     ticker = window.setInterval(() => { render(); renderHome(); }, 30_000);
     pop.tabIndex = -1;
     pop.focus();
@@ -546,8 +557,7 @@ function mount(host: SettingsHost): Settings {
       return true;
     },
     event(type) {
-      if (pop.hidden) { if (type == "versions") data = null; return; }
-      // A burst (a version cut, then its description) is one refresh.
+      // Open or not, so that it opens with what holds now. A burst (a version cut, then its description) is one refresh.
       if (type != "home" && type != "versions" && type != "tree") return;
       const key = type == "versions" ? type : "doc";
       clearTimeout(pending[key]);

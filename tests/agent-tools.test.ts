@@ -178,7 +178,7 @@ test("users: the deploy role, granted and revoked by an admin only", async () =>
   expect((await failure(run(root, "set_user", { action: "deploy", login: "nobody", deploy: true }))).status).toBe(404);
 });
 
-test("sharing: the owner sees and changes who has access; nobody else may; the document agent defaults to its document", async () => {
+test("sharing: the owner sees and changes who has access; editors change the readers' options; the document agent defaults to its document", async () => {
   // Users can share content publicly here (anyone with the link): the Access page's switch.
   const dir = fresh({ defaults: { public_sharing: true }, admins: ["root"] });
   // Bo and Cy may sign in here (a share goes only to someone who may).
@@ -195,7 +195,10 @@ test("sharing: the owner sees and changes who has access; nobody else may; the d
   expect((await failure(run(ada, "share_document", { document: "plan", reader_agent: true }))).status).toBe(409);
   const e = await failure(run({ dir, who: { login: "bo" } }, "share_document", { document: "aaaaaaaa", login: "cy", role: "editor" }));
   expect([e.status, /owner/.test(e.message)]).toEqual([403, true]);
-  expect((await failure(run({ dir, who: { login: "bo" } }, "share_document", { document: "aaaaaaaa", reader_bars: true }))).status).toBe(
+  // Bo, an editor, changes the readers' options, and doesn't see who has access; Cy, not shared with, may not.
+  r = await run({ dir, who: { login: "bo" } }, "share_document", { document: "aaaaaaaa", reader_bars: true });
+  expect([r.readerBars, r.anyoneWithLink, r.permissions]).toEqual([true, true, undefined]);
+  expect((await failure(run({ dir, who: { login: "cy" } }, "share_document", { document: "aaaaaaaa", reader_bars: true }))).status).toBe(
     403
   );
   expect((await failure(run(ada, "share_document", { login: "cy", role: "editor" }))).status).toBe(400);

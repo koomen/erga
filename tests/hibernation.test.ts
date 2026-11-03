@@ -86,7 +86,7 @@ class World {
         detach: () => this.tabs.detachAll(),
       },
       agents: documentAgents({ settings: this.settings, sandbox: testSandbox }),
-      home: { forget: async () => {}, changed: async () => {} },
+      home: { forget: async () => {} },
       timing: { idleMs: 20, maxMs: 2000, writeDelay: 5, fileDelay: 30, closeIdleMs: 60 },
       background: () => {}, log: () => {},
     };

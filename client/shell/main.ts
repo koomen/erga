@@ -324,8 +324,9 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       activate();
       if (!$("help").hidden) shell.chrome.toggleHelp(false);
       if (!$("naming").hidden) shell.naming.toggleNaming(false);
-      if (!$("pages").hidden) shell.naming.togglePages(false);
-      if (!$("sharing").hidden) shell.sharing.toggleSharing(false);
+      // (Also one that's waiting for what it shows, to open.)
+      shell.naming.togglePages(false);
+      shell.sharing.toggleSharing(false);
       if (shell.docSettings?.isOpen()) shell.docSettings.toggle(false);
       shell.people.toggleAccount(false);
       shell.people.stackPeople();

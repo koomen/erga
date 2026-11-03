@@ -168,9 +168,22 @@ export function mountNaming(shell: Shell) {
         onRenameRoot: () => toggleNaming(true),
         navigate: (url, o) => { if (o.replace || !o.path || !shell.swapPage(o.path)) shell.goTo(url, o.replace); },
       }));
-    }, (e: Error) => { treeReady = null; throw e; }));
+      },
+      (e: Error) => {
+        treeReady = null;
+        throw e;
+      }
+    ));
   }
-  const ready = () => { prepareTree().catch(() => {}); };
+  // Made once the editor is idle; read again behind as the pointer or focus comes to the title.
+  let readAt = Date.now();
+  const ready = () => {
+    if (tree && Date.now() - readAt > 2000 && pagesCard.hidden) {
+      readAt = Date.now();
+      tree.refresh({ quiet: true });
+    }
+    prepareTree().catch(() => {});
+  };
   if (editing()) (window.requestIdleCallback ?? setTimeout)(ready);
   titleBtn.addEventListener("pointerenter", ready);
   titleBtn.addEventListener("focus", ready);
@@ -201,6 +214,7 @@ export function mountNaming(shell: Shell) {
     shell.people.toggleAccount(false);
     toggleNaming(false);
     shell.docSettings?.toggle(false);
+    // The tree was made, and read, once the editor was idle (ready): it shows at once, and is read again behind.
     if (tree) { tree.refresh(); tree.focus(); return; }
     // Its script isn't in yet (the tab wasn't idle, or it failed before): a quiet line until it is.
     slot.replaceChildren(Object.assign(document.createElement("p"), { className: "naming-status", textContent: "Loading pages…" }));

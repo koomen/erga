@@ -68,8 +68,7 @@ export function mountChrome(shell: Shell) {
   }
 
   // Document settings (document or project, the homepage, versions): the gear opens
-  // them, a popover under it. Their code
-  // loads only when the gear is reached for: hovered, focused or clicked.
+  // them, a popover under it. Their code loads once the editor is idle, or sooner if the gear is reached for.
   const settingsBtn = $("btn-settings");
   let settingsLoading: Promise<Settings | null> | null = null;
   function loadSettings(): Promise<Settings | null> {
@@ -103,6 +102,8 @@ export function mountChrome(shell: Shell) {
       }
     ));
   }
+  // Once the editor is idle, so that its first click opens them whole (they read what they show as they mount).
+  (window.requestIdleCallback ?? setTimeout)(() => void loadSettings());
   for (const type of ["pointerenter", "focus"]) settingsBtn.addEventListener(type, () => void loadSettings(), { once: true });
   settingsBtn.addEventListener("click", async () => {
     const s = await loadSettings();

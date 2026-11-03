@@ -164,7 +164,6 @@ export function settings(p: Page) {
       new MutationObserver(note).observe(el, { childList: true, subtree: true, characterData: true });
     }),
     seen: () => p.evaluate(() => (window as any).__seen as string[] ?? []),
-    /** Whether Redeploy now was off limits each time the status said Deploying (and it did say it). */
     lockedWhileDeploying: () => p.evaluate(() => { const w = window as any; return w.__seen.some((t: string) => t.startsWith("Deploying")) && w.__seen.every((t: string, i: number) => !t.startsWith("Deploying") || w.__locked[i]); }),
   };
   return s;

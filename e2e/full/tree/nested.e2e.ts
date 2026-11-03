@@ -34,7 +34,7 @@ test("on the document's origin, at its own address there, as the server serves i
   await until(async () => whole(look = await page.evaluate(rendered("document")) as Look), 5000, `the nested document has its stylesheet, image and font (${JSON.stringify(look)})`);
 });
 
-test("at its own address in the viewer, which never loads pages-tree.js", async ({ tab }) => {
+test("at its own address in the viewer, with its pages' tree closed", async ({ tab }) => {
   const page = tab.page;
   tab.strict = true;
   const doc = await multi(await servers.main());
@@ -43,7 +43,8 @@ test("at its own address in the viewer, which never loads pages-tree.js", async 
   await page.goto(at);
   await until(async () => (await inFrames(page, rendered("document"))).some(whole), 5000, "rendered whole in the viewer at its address");
   await until(() => page.evaluate(`document.readyState == "complete"`), 5000, "the viewer has loaded");
-  expect(await js(page, `!!window.ergaTree || performance.getEntriesByType("resource").some((e) => e.name.includes("/_erga/pages-tree-"))`)).toBe(false);
+  // (Its script and its pages are read once the page is idle, so the crumb opens it at once; it stays closed.)
+  expect(await js(page, `document.getElementById("erga-tree").hidden`)).toBe(true);
 });
 
 test("in the editor at its address, which resolves its links from its folder", async ({ tab }) => {

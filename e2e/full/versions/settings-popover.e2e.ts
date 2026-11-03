@@ -1,19 +1,19 @@
-// The settings popover: loaded lazily, hanging from the gear, opened and closed by mouse and keyboard.
+// The settings popover: loaded once the editor is idle, hanging from the gear, opened and closed by mouse and keyboard.
 import { expect, servers, test } from "../../helpers/fixtures";
 import { closeDrafts, draftDoc, openDocEditor } from "./settings";
 
 await servers.short();
 test.afterEach(closeDrafts);
 
-test("the settings' code loads only when the gear is reached for", async ({ tab }) => {
+test("the settings' code and what they show load once the editor is idle, before the gear is reached for", async ({ tab }) => {
   const server = await servers.short();
   const doc = await draftDoc(server, "Lazy notes", 2);
   tab.strict = true;
   const s = await openDocEditor(tab.page, server, doc.address);
-  expect(await s.eval<boolean>(`!!window.ergaSettings || performance.getEntriesByType("resource").some((e) => e.name.includes("/_erga/settings-"))`)).toBe(false);
-  const gear = (await s.steadyRect("#btn-settings"))!;
-  await tab.page.mouse.move(gear.x, gear.y);
+  // No pointer on the gear: it's ready, its versions read.
   await expect.poll(() => s.eval<boolean>("!!window.ergaSettings")).toBe(true);
+  await expect.poll(() => s.eval<number>(`document.querySelectorAll("#ds-list li[data-n]").length`)).toBe(2);
+  expect(await s.isOpen()).toBe(false);
 });
 
 test("the popover hangs from the gear with the latest ten versions, and Show older versions; Escape, a click outside and the keyboard open and close it", async ({ tab }) => {
