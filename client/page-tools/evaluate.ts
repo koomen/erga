@@ -5,7 +5,7 @@
 import { EVAL_MAX_JSON } from "../../shared/agent-log";
 
 // eval_in_page: the agent's expression runs in the same throwaway render
-// view_page draws, so it sees computed styles, fonts and sizes as the page
+// view_page draws (in the server's browser), so it sees computed styles, fonts and sizes as the page
 // has them. Nothing goes back to the document: the render is a copy of its
 // text, removed once the result is out, and nothing reads its DOM back.
 // The expression gets what the page's own scripts have, no more: this
@@ -13,7 +13,7 @@ import { EVAL_MAX_JSON } from "../../shared/agent-log";
 // read as null in it, so it doesn't reach into the editor by mistake.
 // Only the result's JSON comes back, cut to EVAL_MAX_JSON characters.
 // The time limit can't stop an expression that never yields (while (true)):
-// it stalls this tab, and the host gives up after viewWait.
+// it stalls the page, and the server's render (cloudflare/render.ts) or, for the live page, the host gives up.
 export async function evaluateIn(win: Window, expr: string, timeoutMs: number, o: { live?: boolean } = {}): Promise<{ value?: string; note?: string; error?: string }> {
   const W = win as Window & typeof globalThis;
   // (A throwaway render loses them for good; the live page keeps its own, and the expression sees them as null only.)

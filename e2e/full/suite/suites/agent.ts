@@ -248,13 +248,13 @@ export const agent: Test[] = [
     },
   },
   {
-    name: "view_page with none of the owner's tabs open says so",
+    name: "view_page with none of the owner's tabs open renders the page in the server's browser",
     needs: ["scriptedAgent"],
     async run(ctx) {
       const d = await ctx.doc();
       const log = await runScript(d, "Ada", [{ tool: "view_page", args: {} }, { text: "ok" }]);
       const v = log.items.find((i) => i.kind == "tool" && i.name == "view_page");
-      expect(v?.status == "error" && /no editor tab open/.test(v.detail ?? ""), "the tool explains there's no browser", v);
+      expect(!!v && v.status != "error" && !!v.image, "the tool answers a picture", v);
     },
   },
   {

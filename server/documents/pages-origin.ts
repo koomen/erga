@@ -75,8 +75,16 @@ export const hmac = async (secret: string, value: string) => {
  * `edit`: for someone who may edit it, whose pages come with what the editor needs in them (readerPage).
  * Its expiry is rounded up to the next whole day, so the token, and with it the address of every file of the page, stays the
  * same all day: the browser's cache can answer for them (they're checked by ETag, pagesRoutes and document/host.ts's docFile).
+ * `ttl`: good for that many seconds only, not rounded (the server's own browser: cloudflare/render.ts).
  */
-export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now(), opts: { by?: string; edit?: boolean } = {}): Promise<string> {
+export async function pagesToken(
+  secret: string,
+  owner: string,
+  id: string,
+  shell: string,
+  now = Date.now(),
+  opts: { by?: string; edit?: boolean; ttl?: number } = {}
+): Promise<string> {
   // by: whom it was made for, only on a server for admins alone (staging, Platform.adminsOnly): its pages origin lets the
   // token in only while they're still an admin. Elsewhere a token names nobody (a page's own
   // scripts can read its address).
@@ -84,7 +92,7 @@ export async function pagesToken(secret: string, owner: string, id: string, shel
     new TextEncoder().encode(
       JSON.stringify({
         d: `${owner.toLowerCase()}/${id}`,
-        e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY,
+        e: opts.ttl ? Math.ceil(now / 1000 + opts.ttl) : Math.ceil((now / 1000 + WEEK) / DAY) * DAY,
         s: shell,
         ...(opts.by ? { a: opts.by.toLowerCase() } : {}),
         ...(opts.edit ? { w: 1 } : {}),

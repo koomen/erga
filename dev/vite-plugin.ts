@@ -41,6 +41,7 @@ import type { FromDisk, ToDisk } from "../document/disk.ts";
 import { liveReload, type LiveReload } from "./reload.ts";
 import { delayRooms, latencyOf } from "./latency.ts";
 import { sleep } from "../shared/time.ts";
+import { localBrowser, stopLocalBrowser } from "./browser.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 /** The largest file a document on disk takes: the room reads each whole when it opens, over a WebSocket. */
@@ -126,11 +127,19 @@ export function ergaDev(opts: DevOptions): Plugin {
         origin: devOrigin, callback: `${devOrigin}/auth/github/callback`, webhook: `${devOrigin}/github/webhook`,
         user: process.env.ERGA_GITHUB_USER || "ada", repos: (process.env.ERGA_GITHUB_REPOS || "").split(",").filter(Boolean),
       });
+      server.httpServer?.on("close", () => void stopLocalBrowser());
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? "/", "http://localhost");
         if (req.method == "POST" && url.pathname == "/__erga/open") return void open(req, res, url).catch(next);
         if (url.pathname.startsWith("/__github/") && !/^\/__github\/[^/]+\/[^/]+\.git(\/|$)/.test(url.pathname)) return void pretendGithub(req, res, url).catch(next);
         if (url.pathname.startsWith("/__artifacts/") || url.pathname.startsWith("/__github/")) return void git(req, res, url).catch(next);
+        // The server's browser, for view_page (dev/browser.ts): the Worker asks for it with the link secret.
+        if (req.method == "POST" && url.pathname == "/__erga/browser" && url.searchParams.get("link") == opts.secret) {
+          return void localBrowser().then(
+            (ws) => res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ws })),
+            (e: Error) => res.writeHead(500, { "Content-Type": "text/plain" }).end(e.message)
+          );
+        }
         if (req.method == "POST" && url.pathname == "/__erga/flush" && url.searchParams.get("link") == opts.secret) {
           return void Promise.all([...mirrors.values()].map((m) => m.flush())).then(() => res.end("ok"), next);
         }

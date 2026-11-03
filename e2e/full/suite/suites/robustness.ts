@@ -125,7 +125,12 @@ export const robustness: Test[] = [
     name: "bad requests to the agent's endpoints get errors, not crashes",
     async run(ctx) {
       const d = await ctx.doc();
-      for (const [path, body] of [["/api/agent?user=Ada", "not json"], ["/api/agent?user=Ada", "{}"], ["/api/agent?user=Ada", JSON.stringify({ text: 5 })], ["/api/agent/view?user=Ada", "{\"id\": 1}"]] as const) {
+      for (const [path, body] of [
+        ["/api/agent?user=Ada", "not json"],
+        ["/api/agent?user=Ada", "{}"],
+        ["/api/agent?user=Ada", JSON.stringify({ text: 5 })],
+        ["/api/agent/live?user=Ada", '{"id": 1}'],
+      ] as const) {
         const r = await d.fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body });
         expect(r.status >= 400 && r.status < 500, `POST ${path} ${body} is refused (${r.status})`);
       }

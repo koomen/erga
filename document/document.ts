@@ -48,7 +48,8 @@ import * as Y from "yjs";
 import { nameOf, namingFor, UNTITLED, type NamedRow, type Naming, type NamesDirectory } from "./names.ts";
 import { DocumentAccess, type Asker, type Role } from "./access.ts";
 import { DocumentView, type ViewAnswer } from "./view.ts";
-import type { DocumentAgents } from "./agent.ts";
+import type { DocumentAgents, RenderJob } from "./agent.ts";
+import type { ViewResult } from "../shared/agent-log.ts";
 import { docFile, makeHost, typeOf, type EditorCalls } from "./host.ts";
 import { blobPointer, isBlobRef, storeBlob, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
 import type { DocName, Hello } from "./api.ts";
@@ -184,6 +185,8 @@ export interface DocumentDeps {
   viewChanged?: (docId: string) => void;
   /** Where its files that aren't text are kept (R2 on Cloudflare: document/blobs.ts); without it (the tests), every file is in its storage. */
   blobs?: BlobStore;
+  /** Renders one of its pages in the server's browser (view_page: cloudflare/render.ts); without it, those tools say there's none. */
+  render?: (job: RenderJob & { owner: string; id: string }) => Promise<ViewResult>;
 }
 
 /** A file as it arrives whole or is copied: text, bytes, or a blob already in the blob store (its ref). */
@@ -1470,6 +1473,7 @@ export class Document {
       files,
       docId: info.id,
       agents: this.deps.agents,
+      ...(this.deps.render ? { render: (job: RenderJob) => this.deps.render!({ ...job, owner: info.owner, id: info.id }) } : {}),
       doc: { name: info.index, path: info.index, dir: info.disk?.path ?? info.owner },
       only: info.disk?.only ? info.index : undefined,
       personOf: (req) => personOf(new Headers(req.headers as Record<string, string>)),

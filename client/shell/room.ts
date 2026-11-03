@@ -4,7 +4,8 @@
 import { Transaction, type ChangeSet } from "@codemirror/state";
 import type { SocketEvent } from "../../libs/text/ui/collab";
 import type { DocName, Hello } from "../../document/api";
-import type { LogEvent, ViewRequest } from "../../shared/agent-log";
+import type { LogEvent } from "../../shared/agent-log";
+import type { LiveRequest } from "../../shared/live-page";
 import { live } from "../live/client";
 import { ms } from "../../libs/text/ui/timescale";
 import { $, type Shell } from "./shell";
@@ -60,7 +61,7 @@ export function mountRoom(shell: Shell) {
       type: string;
       ev?: LogEvent;
       id?: string;
-      req?: ViewRequest;
+      req?: LiveRequest;
       name?: DocName;
       moved?: { from: string; to: string };
       deleted?: string;
@@ -79,8 +80,7 @@ export function mountRoom(shell: Shell) {
     }
     // Your agent's changes to this document (its tools run here, as your agent): Undo's count in its panel.
     else if (msg.type == "agent" && msg.ev?.t == "undoable") window.dispatchEvent(new Event("erga:agent-tool"));
-    else if (msg.type == "view" && msg.id && msg.req?.live) shell.requests.answerLive(msg.id, msg.req.live);
-    else if (msg.type == "view" && msg.id) shell.requests.answerView(msg.id, msg.req ?? {});
+    else if (msg.type == "live" && msg.id && msg.req) shell.requests.answerLive(msg.id, msg.req);
     else if (msg.type == "name" && msg.name) shell.naming.showName(msg.name);
     else if (msg.type == "versions" || msg.type == "home") shell.docSettings?.event(msg.type);
     else if (msg.type == "access") shell.sharing?.accessChanged();

@@ -7,7 +7,6 @@
 // tabs all show it, collaborators never see it.
 
 import type { FileRef } from "./attach";
-import type { LiveRequest } from "./live-page";
 import type { TextEdit } from "./text-edits";
 
 export type LogItem =
@@ -77,23 +76,21 @@ export function reduce(log: Log, ev: LogEvent): number {
 
 // ------------------------------------------------------------------ view_page
 
-/** The agent asks to see the page; an open editor tab renders and captures it. */
+/**
+ * The agent asks to see the page: the server's browser opens it (cloudflare/render.ts) and answers a picture of each
+ * place asked for, or an expression's result.
+ */
 export interface ViewRequest {
-  /** CSS selector of one element to capture. */
-  selector?: string;
+  /** CSS selectors of elements to capture: one picture each, from one render. */
+  selectors?: string[];
   /** The whole page rather than one screenful. */
   fullPage?: boolean;
-  /** Width to render at, in CSS pixels (default: as wide as the user's page). */
+  /** Width to render at, in CSS pixels (VIEW_DEFAULT). */
   width?: number;
-  /** Height of one screenful, in CSS pixels (default: as tall as the user's page). */
+  /** Height of one screenful, in CSS pixels (VIEW_DEFAULT). */
   height?: number;
-  /** Light or dark mode, for the page's prefers-color-scheme (default: the user's). */
+  /** Light or dark mode, for the page's prefers-color-scheme (default: light). */
   colorScheme?: ColorScheme;
-  /**
-   * The agent's Yjs state vector when it asked: the tab
-   * renders once it has seen every edit the agent had made by then.
-   */
-  after?: string;
   /**
    * eval_in_page: a JavaScript expression to run in the same render,
    * instead of taking a picture. Its result comes back as JSON (`value`).
@@ -102,29 +99,27 @@ export interface ViewRequest {
   /** How long evaluate waits for its result, in ms (EVAL_TIMEOUT). */
   timeout?: number;
   /**
-   * A presentation's step to show first (shared/steps.ts, stepSpec): its number ("3.2"), or a hash ("#3.2") the
-   * render opens at.
+   * A presentation's steps to show (shared/steps.ts, stepSpec): each its number ("3.2"), or a hash ("#3.2") the
+   * render opens at. One picture each, in order, from one render; eval_in_page takes one.
    */
-  step?: string;
+  steps?: string[];
   /** How long after the step (or the load) the picture is taken, or the expression runs, in ms (FRAMES). */
   atMs?: number;
   /** Several pictures (or runs of the expression), at these times after the step, in ms, in one render (FRAMES). */
   frames?: number[];
-  /** The page to render, by its path in the document: the page open in the tab by default. */
+  /** The page to render, by its path in the document: the document's own page by default. */
   path?: string;
   /**
    * A preview: these edits (as the edit tool takes them) applied to a copy of the page's text (`path`'s), for this
    * render only, never to the document.
    */
   preview?: { edits: TextEdit[] };
-  /**
-   * The live page instead (shared/live-page.ts): every one of the person's tabs answers, its result as JSON in
-   * `value`, and the host takes the focused tab's (else a visible one's) answer.
-   */
-  live?: LiveRequest;
 }
 
 export type ColorScheme = "light" | "dark";
+
+/** The window a render has when the agent names none. */
+export const VIEW_DEFAULT = { width: 1280, height: 800 };
 
 /** A font the page's text rendered in, and where. */
 export interface RenderedFont {
@@ -137,15 +132,28 @@ export interface RenderedFont {
   tags: string[];
 }
 
-/** What the tab sends back: a PNG (base64), evaluate's result, or why it couldn't. */
-export interface ViewResult {
-  png?: string;
+/** One picture: a PNG (base64), its size, and where and when it was taken. */
+export interface Shot {
+  png: string;
   width: number;
   height: number;
+  /** ms after the step (or the load). */
+  at: number;
+  /** The element it shows, if one. */
+  selector?: string;
+  /** The step it shows, if one. */
+  step?: StepShown;
+  note?: string;
+}
+
+/** What the render answers: pictures, evaluate's result, or why it couldn't. */
+export interface ViewResult {
+  /** The pictures, in the order asked for: each place, at each time. */
+  shots?: Shot[];
   /** The screenful the page rendered at, in CSS pixels. */
   viewport?: { width: number; height: number };
   colorScheme?: ColorScheme;
-  /** The fonts the page's text rendered in, most used first. */
+  /** The fonts the page's text rendered in (in the last place), most used first. */
   fonts?: RenderedFont[];
   /** Fonts and images still loading when the capture stopped waiting for them. */
   pending?: string[];
@@ -155,18 +163,12 @@ export interface ViewResult {
   error?: string;
   /** evaluate's result as JSON text, cut to EVAL_MAX_JSON characters ("undefined" when there is none). */
   value?: string;
-  /** The page the tab rendered (its file). */
+  /** The page rendered (its file). */
   page?: string;
-  /** The step shown (`step`): its index, its number as the steps' list shows it, how many there are, and its label. */
+  /** eval_in_page's step: its index, its number as the steps' list shows it, how many there are, and its label. */
   step?: StepShown;
   /** `preview`: the page the edits went to, in the copy, and how many there were. */
   preview?: { path: string; edits: number };
-  /** `frames`: a picture at each time (ms after the step); `png` is the first. */
-  shots?: { at: number; png: string }[];
-  /** A live request: this tab couldn't (no editor yet), so another tab's answer comes first. */
-  declined?: boolean;
-  /** A live request: 2 from the focused tab, 1 a visible one, 0 one in the background. */
-  rank?: number;
 }
 
 export interface StepShown {
@@ -176,21 +178,32 @@ export interface StepShown {
   label?: string;
 }
 
-/** The times view_page and eval_in_page wait: after a step by default, at most for one time, and how many frames. */
+/** A part of the page in the page's CSS pixels, from its top left corner (not the window's). */
+export type Clip = { x: number; y: number; width: number; height: number };
+
+/**
+ * The render's tools in the page (window.__ergaRender: client/page-tools/capture.ts), which the server's browser calls
+ * one at a time, between its own pictures (cloudflare/render.ts).
+ */
+export interface PageRender {
+  /** Waits for the fonts and images (a few seconds at most), and answers what still hadn't loaded. */
+  settle(): Promise<string[]>;
+  /** Shows a step (a number, or a hash), and starts the clock again from it. */
+  step(spec: string): Promise<StepShown | { note: string } | string>;
+  /** Waits until `t` ms on the clock, holds the animations at `t`, and answers the part to take: the screenful (no clip), the page, or an element. */
+  hold(t: number, selector: string | null, fullPage: boolean): Promise<{ at: number; clip?: Clip; note?: string; error?: string }>;
+  /** Lets the animations run again after a picture; the time it took is left out of the clock. */
+  release(): void;
+  /** Runs the expression at `t` ms on the clock. */
+  evaluate(expr: string, timeoutMs: number, t: number): Promise<{ at: number; value?: string; note?: string; error?: string }>;
+  /** The fonts the text under the element (or the whole page) rendered in. */
+  fonts(selector: string | null): RenderedFont[];
+}
+
+/** The times view_page and eval_in_page wait: after a step by default, at most for one time, and how many pictures in one call. */
 export const FRAMES = { afterStep: 1_000, afterLoad: 600, max: 10_000, count: 6 };
-/** The longest a request waits in the render: the latest of its times. */
-export const renderWait = (req: ViewRequest) => Math.min(FRAMES.max, Math.max(0, req.atMs ?? 0, ...(req.frames ?? [])));
 
 /** eval_in_page's limits: how long it waits, by default and at most (ms), and how much JSON it sends back. */
 export const EVAL_TIMEOUT = { default: 5_000, max: 15_000 };
 export const EVAL_MAX_JSON = 20_000;
 export const evalTimeout = (req: { timeout?: number }) => Math.max(100, Math.min(EVAL_TIMEOUT.max, Number(req.timeout) || EVAL_TIMEOUT.default));
-/** How long a tab may take to answer a view request: the render, plus evaluate's own wait. */
-export const viewWait = (req: ViewRequest) =>
-  req.live
-    ? 10_000 + (req.live.kind == "inspect" ? evalTimeout(req.live) : 0)
-    : 20_000 +
-      (req.step != null ? 5_000 : 0) +
-      renderWait(req) +
-      (req.evaluate != null ? evalTimeout(req) : 0) * Math.max(1, req.frames?.length ?? 0) +
-      3_000 * Math.max(0, (req.frames?.length ?? 0) - 1);

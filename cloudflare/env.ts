@@ -1,3 +1,4 @@
+import type { BrowserWorker } from "@cloudflare/puppeteer";
 import type { ArtifactsBinding } from "../control/cloudflare";
 import type { Deployer } from "../control/install/session";
 import type { DocumentObject } from "./objects/document";
@@ -26,6 +27,8 @@ export interface Env {
    * secrets admins store. Without it, a hosted server can't store them.
    */
   FACTORY_KEY?: string;
+  /** Cloudflare Browser Rendering: the browser view_page renders pages in (cloudflare/render.ts). Local development uses the dev server's Chrome. */
+  BROWSER?: BrowserWorker;
   /** Starts the sandbox Workers a page's own API runs in (cloudflare/sandbox.ts). */
   LOADER?: WorkerLoader;
   /** The server's database: users, settings and the directory of documents. */

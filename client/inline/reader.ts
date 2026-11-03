@@ -637,8 +637,7 @@ export default function reader(C: ReaderConfig): void {
         } catch (err) {
           console.error("window.ergaZoom threw:", err);
         }
-    }
-    else if ((type == "erga-capture" && typeof e.data.text == "string") || type == "erga-live") {
+    } else if (type == "erga-live") {
       if (typeof e.data.id == "number") askTools(e.data as ToolAsk);
     }
     else if (type == "erga-room" && typeof e.data.px == "number" && e.data.px >= 0 && e.data.px <= 400) {

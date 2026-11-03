@@ -1,14 +1,15 @@
 // Helpers for view_page's tests (view-page.e2e.ts, view-page-modes.e2e.ts): a page whose web font comes from another
 // site (as Google Fonts' does) and loads slowly, one font from the document itself, one that fails, and a dark mode in
-// its CSS and in its script, opened in the editor; captures of it, and their pixels; and the builds deck, with the
-// tools an agent calls (view-steps.e2e.ts, view-preview.e2e.ts, edit-selector.e2e.ts).
+// its CSS and in its script, opened in the editor; the tools an agent calls on it (the server's browser renders), and
+// the pictures' pixels; and the builds deck, with the same tools (view-steps.e2e.ts, view-preview.e2e.ts,
+// edit-selector.e2e.ts).
 import { mkdirSync, copyFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ViewResult } from "../../../shared/agent-log";
 import { ROOT } from "../../helpers/env";
 import { expect, servers, type Tab } from "../../helpers/fixtures";
+import type { Server } from "../../helpers/server";
 import { editor, openEditor, type Editor } from "../../helpers/editor";
 import { idOf, runTool, textOf } from "../../helpers/tools";
 import { person } from "../versions/versions";
@@ -55,8 +56,8 @@ const page = (fontPort: number) => `<!doctype html>
 </body></html>
 `;
 
-/** The fonts page as a document of its own, open in the editor at 1100×800, the user in light or dark mode. */
-export async function openFonts(tab: Tab, dark = false): Promise<Editor> {
+/** The fonts page as a document of its own, open in the editor at 1100×800, the user in light or dark mode; and the agent's tools on it. */
+export async function openFonts(tab: Tab, dark = false): Promise<{ ed: Editor } & AgentTools> {
   const s = await servers.script(), { port } = await fontSite();
   const dir = join(s.scratch, "docs", `view-${crypto.randomUUID().slice(0, 8)}`);
   mkdirSync(dir, { recursive: true });
@@ -75,9 +76,26 @@ export async function openFonts(tab: Tab, dark = false): Promise<Editor> {
   await tab.page.goto(`${address}?edit`);
   const ed = editor(tab.page, { address, dir, file: join(dir, "index.html") });
   await ed.loaded();
-  return ed;
+  return { ed, ...(await agentTools(s, address)) };
 }
-export const capture = (ed: Editor, req: object) => ed.eval<ViewResult>(`ergaPage.captureView(${JSON.stringify(req)})`);
+
+/** An agent of the dev login's person (DEV_LOGIN), with their token, on one document: an outside agent's calls, as MCP makes them. */
+export async function agentTools(s: Server, address: string) {
+  const document = await idOf(address);
+  const token = await (await person(s, "tester")).token("view tests");
+  const tool = async (name: string, args: object) => {
+    const r = await runTool<Content[]>(s.root, name, { document, ...args }, { token });
+    expect(r.ok, `${name}: ${r.error}`).toBe(true);
+    return { text: textOf(r.result), images: r.result!.filter((c) => c.type == "image").map((c) => c.data!) };
+  };
+  const fails = async (name: string, args: object) => {
+    const r = await runTool(s.root, name, { document, ...args }, { token });
+    expect(r.ok).toBe(false);
+    return r.error ?? "";
+  };
+  return { tool, fails };
+}
+export type AgentTools = Awaited<ReturnType<typeof agentTools>>;
 /** The colour of one pixel of a capture, and how many pixels two captures differ in (decoded in the tab). */
 const DECODE = `const decode = (b64) => new Promise((ok) => { const i = new Image(); i.onload = () => { const c = document.createElement("canvas"); c.width = i.width; c.height = i.height; const x = c.getContext("2d"); x.drawImage(i, 0, 0); ok(x.getImageData(0, 0, i.width, i.height)); }; i.src = "data:image/png;base64," + b64; });`;
 export const pixel = (ed: Editor, png: string, x: number, y: number) => ed.eval<number[]>(`(async () => { ${DECODE} const d = await decode(${JSON.stringify(png)}); const k = (${y} * d.width + ${x}) * 4; return [d.data[k], d.data[k + 1], d.data[k + 2]]; })()`);
@@ -87,8 +105,8 @@ export async function expectColour(ed: Editor, png: string, x: number, y: number
   const c = await pixel(ed, png, x, y);
   expect(c.every((v, i) => Math.abs(v - want[i]) <= 3), `pixel (${x}, ${y}) is ${c}, not ${want}`).toBe(true);
 }
-// A capture takes about 3 s: it loads the page afresh, waits for the slow font (which its picture fetches again), and
-// gives the page's scripts 600 ms to draw. A test that takes two or more needs more than the usual 15 s.
+// A render takes about 2 s: it loads the page afresh, waits for the slow font, and gives the page's scripts 600 ms to
+// draw. A test that takes two or more needs more than the usual 15 s.
 export const CAPTURES = { timeout: 30_000 };
 export const WHITE = [255, 255, 255], DARK = [10, 20, 30], SCRIPT_LIGHT = [200, 0, 0], SCRIPT_DARK = [0, 200, 0];
 
@@ -101,18 +119,5 @@ export type Content = { type: "text" | "image"; text?: string; data?: string };
 export async function deck(tab: Parameters<typeof openEditor>[0], fixture = "builds") {
   const s = await servers.main();
   const ed = await openEditor(tab, s, fixture);
-  const document = await idOf(ed.address);
-  // An agent of the tab's person (DEV_LOGIN), with their token: an outside agent's call, as MCP makes it.
-  const token = await (await person(s, "tester")).token("view tests");
-  const tool = async (name: string, args: object) => {
-    const r = await runTool<Content[]>(s.root, name, { document, ...args }, { token });
-    expect(r.ok, `${name}: ${r.error}`).toBe(true);
-    return { text: textOf(r.result), images: r.result!.filter((c) => c.type == "image").map((c) => c.data!) };
-  };
-  const fails = async (name: string, args: object) => {
-    const r = await runTool(s.root, name, { document, ...args }, { token });
-    expect(r.ok).toBe(false);
-    return r.error ?? "";
-  };
-  return { ed, tool, fails };
+  return { ed, ...(await agentTools(s, ed.address)) };
 }

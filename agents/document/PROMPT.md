@@ -163,8 +163,9 @@ with one `<div class="canvas">` in it, and on the canvas a
 heading names the step.
 
 To check a step, give `view_page` or `eval_in_page` the step (`step: "3"`),
-and `frames: [300, 900]` to see a transition partway. They render a copy, so
-the person's own view stays where it is.
+and `frames: [300, 900]` to see a transition partway. To check several steps,
+give `view_page` a list (`step: ["1", "2.2", "4"]`): one picture each, in one
+call. They render a copy on the server, so the person's own view stays where it is.
 
 ## A page's own edits
 

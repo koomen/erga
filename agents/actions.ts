@@ -298,9 +298,9 @@ export const AGENT_ACTIONS: AgentAction[] = [
     exempt: "the server's own call, refused from outside (server/documents/routes.ts)",
   },
   {
-    route: "POST /d/<id>/api/agent/view",
+    route: "POST /d/<id>/api/agent/live",
     domain: "none",
-    action: "The tab answers the agent's view_page and eval_in_page, and its page_log and page_input",
+    action: "The tab answers the agent's page_log, page_input and eval_in_page with live",
     exempt: PANEL,
   },
   // The live page in the person's tab (shared/live-page.ts): no route of its own, but what the person does there.

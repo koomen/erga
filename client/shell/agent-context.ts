@@ -8,7 +8,7 @@ export function editorContext(shell: Shell): string {
   const at = shell.addressOf(shell.info!.path).replace(/[?#].*$/, "");
   return `The user has the page ${shell.info!.path} open (${at}).\n${viewContext(shell)}\n${caretContext(shell)}`;
 }
-/** How the user sees the page: view_page renders at this size and in this mode unless asked otherwise. */
+/** How the user sees the page: the size and mode to give view_page to see it as they do. */
 function viewContext(shell: Shell): string {
   const scheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   const w = shell.frame.clientWidth, h = shell.frame.clientHeight;

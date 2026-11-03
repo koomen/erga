@@ -125,7 +125,13 @@ async function startSession(opts: SessionOptions, sandbox: Sandbox): Promise<Age
     for (let i = 0; i < 200 && !hasSeen(doc, want); i++) await Effect.runPromise(Effect.sleep(0));
   };
   const tools = makeTools(ws, {
-    view: (req) => opts.view({ ...req, after: stateVector(doc) }),
+    view: async (req) => {
+      // The render reads the room: it waits for the agent's edits to reach it (a few microtasks).
+      const want = stateVector(doc);
+      for (let i = 0; i < 200 && !hasSeen(opts.room.doc, want); i++) await Effect.runPromise(Effect.sleep(0));
+      return opts.view(req);
+    },
+    live: opts.live,
     readAsset: opts.readAsset,
     versions: opts.versions,
     lastTurn: () => lastTurn,

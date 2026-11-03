@@ -5,6 +5,7 @@
 import { expect, servers, test } from "../../helpers/fixtures";
 import { F, openEditor } from "../../helpers/editor";
 import { editorReady, inPage, newDoc, openTab } from "../templates/templates";
+import { agentTools } from "./view-page";
 
 await servers.main();
 
@@ -54,11 +55,14 @@ test("the viewer, the editor and view_page show a scrolling page's first line at
   await openTab(tab, `${address}?edit`);
   await editorReady(page);
   await expect.poll(async () => Math.abs((await inTab()) - viewing)).toBeLessThan(0.5);
-  // view_page's render (eval_in_page runs in it) at the same size.
-  const render = await page.evaluate<{ value?: string }>(
-    `ergaPage.captureView({ evaluate: 'document.querySelector("h1").getBoundingClientRect().top' })`
-  );
-  expect(Number(render.value)).toBeCloseTo(viewing, 0);
+  // view_page's render (eval_in_page runs in it, in the server's browser) at the frame's size.
+  const size = await page.evaluate(() => ({
+    width: document.getElementById("frame")!.clientWidth,
+    height: document.getElementById("frame")!.clientHeight,
+  }));
+  const { tool } = await agentTools(s, address);
+  const render = await tool("eval_in_page", { expression: `document.querySelector("h1").getBoundingClientRect().top`, ...size });
+  expect(Number(render.text.split("\n")[0])).toBeCloseTo(viewing, 0);
 });
 
 test("a slides page fills the window: its frame stays below the bars, with no room added", async ({ tab }) => {

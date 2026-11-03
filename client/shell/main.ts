@@ -615,7 +615,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     page,
     collab,
     toggleSource: shell.views.toggleSource,
-    captureView: shell.requests.captureView,
     agentContext: () => editorContext(shell),
     setEditing,
     get pagePath() {

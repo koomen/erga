@@ -57,7 +57,10 @@ import {
   type TreeOp,
 } from "./pages";
 import { isTextPath as isTextFile } from "./content";
-import { viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
+import type { ViewRequest, ViewResult } from "../shared/agent-log";
+import { liveWait, type LiveAnswer, type LiveRequest } from "../shared/live-page";
+import { aimEdits, applySpans } from "../shared/text-edits";
+import type { RenderJob } from "./agent";
 import { encodeStart } from "../shared/room-socket";
 import { blobPointer, byteRange, type BlobStore } from "./blobs";
 import { sha256Hex } from "../shared/bytes";
@@ -97,6 +100,8 @@ export interface HostOptions {
   readonly kind?: () => DocKind;
   /** Changes the document's kind (make_project, make_document): kept and told to the directory. */
   readonly setKind?: (kind: DocKind) => Effect.Effect<void, StoreError>;
+  /** Renders a page in the server's browser (view_page, eval_in_page); none: those tools say so. */
+  readonly render?: (job: RenderJob) => Promise<ViewResult>;
   /** The document's title and address in the directory, read and changed as a person. */
   readonly naming?: (person: { id: string; name: string }) => Naming;
   /** An agent's run of calls ended: a version is cut; answers the version the document is at then. */
@@ -111,7 +116,7 @@ export interface HostOptions {
   readonly putFile?: (path: string, bytes: Uint8Array, by: string) => Promise<{ kind: "text" | "file"; replaced: boolean }>;
 }
 
-/** One of a person's open tabs: their agent's events and its view_page requests go only to them. */
+/** One of a person's open tabs: their agent's events and its live page requests go only to them. */
 interface Tab { user: string; send: (msg: unknown) => void; watch?: boolean }
 
 export const MIME: Record<string, string> = {
@@ -212,42 +217,62 @@ export function makeHost(opts: HostOptions) {
     return n ? Effect.orElseSucceed(n.get(), () => undefined) : Effect.succeed(undefined);
   };
 
-  // view_page: ask the owner's tabs. With none of their tabs open there's
-  // nothing to look with (no server-side browser yet; Cloudflare Browser
-  // Rendering could stand in), and the tool says so. Every tab answers (each
-  // renders the page it has open), and the focused one's answer wins at once;
-  // else, once all have answered, a visible one's, then any. A tab that
-  // couldn't (an error; agent control off there, for the live page) loses to
-  // one that could.
-  const views = new Map<string, (r: ViewResult) => void>();
-  const view = (user: string) => (req: ViewRequest): Promise<ViewResult> => {
-    const mine = own(user).length;
-    if (!mine) return Promise.resolve({ width: 0, height: 0, errors: [], error: "Your user has no editor tab open, so there's no browser to look at the page with." });
-    const id = crypto.randomUUID();
-    const answers: ViewResult[] = [];
-    const best = () => [...answers].sort((a, b) => Number(!!a.declined) - Number(!!b.declined) || (b.rank ?? 0) - (a.rank ?? 0))[0];
-    const late: ViewResult = {
-      width: 0,
-      height: 0,
-      errors: [],
-      error: `The editor didn't send ${req.live ? "an answer" : req.evaluate != null ? "the result" : "a picture"} back in time.`,
+  // view_page and eval_in_page: the server's browser renders the page (opts.render), from the room's text, as it is
+  // with the agent's latest edits. It opens the page on the app's own address: the origin a tool's request came to.
+  let origin: string | null = null;
+  const render =
+    (user: string) =>
+    async (req: ViewRequest): Promise<ViewResult> => {
+      const fail = (error: string): ViewResult => ({ errors: [], error });
+      if (!opts.render) return fail("This server has no browser to render the page with: it needs Cloudflare's browser binding (BROWSER).");
+      if (!origin) return fail("The page couldn't be rendered: the server doesn't know its own address yet.");
+      const all = new Set(room.paths());
+      const asked = String(req.path ?? doc.path)
+        .trim()
+        .replace(/^\.?\/+/, "");
+      const path = isPage(asked) && all.has(asked) ? asked : resolvePage((p) => all.has(p), asked, doc.path)?.file;
+      const source = path == null ? null : room.text(path);
+      if (path == null || source == null || !isPage(path))
+        return fail(`Nothing was rendered: there's no page ${req.path} in this document (ls lists them).`);
+      if (!req.preview) return { ...(await opts.render({ path, html: source, by: user, origin, req })), page: path };
+      // A preview: the edits on a copy of the page's text, for this render only.
+      const edits = Array.isArray(req.preview.edits) ? req.preview.edits : [];
+      const aimed = aimEdits(source, edits, path);
+      if ("reason" in aimed) return fail(`Nothing was rendered: ${aimed.message}`);
+      const html = applySpans(source, aimed.spans);
+      return { ...(await opts.render({ path, html, by: user, origin, req })), page: path, preview: { path, edits: edits.length } };
     };
-    const waited = Effect.gen(function* () {
-      const answered = yield* Deferred.make<ViewResult>();
-      views.set(id, (r) => {
-        answers.push(r);
-        if ((!r.declined && r.rank == 2) || answers.length >= mine) Deferred.doneUnsafe(answered, Effect.succeed(best()));
+
+  // The live page (page_log, page_input, eval_in_page with live): ask the person's tabs. With none open there's no live
+  // page, and the tool says so. Every tab answers, and the focused one's answer wins at once; else, once all have
+  // answered, a visible one's, then any. A tab that couldn't (agent control off there) loses to one that could.
+  const lives = new Map<string, (r: LiveAnswer) => void>();
+  const live =
+    (user: string) =>
+    (req: LiveRequest): Promise<LiveAnswer> => {
+      const mine = own(user).length;
+      if (!mine)
+        return Promise.resolve({
+          value: JSON.stringify({ error: "Your user has no editor tab open on this document, so there's no live page." }),
+        });
+      const id = crypto.randomUUID();
+      const answers: LiveAnswer[] = [];
+      const best = () => [...answers].sort((a, b) => Number(!!a.declined) - Number(!!b.declined) || (b.rank ?? 0) - (a.rank ?? 0))[0];
+      const late: LiveAnswer = { value: JSON.stringify({ error: "The editor didn't send an answer back in time." }) };
+      const waited = Effect.gen(function* () {
+        const answered = yield* Deferred.make<LiveAnswer>();
+        lives.set(id, (r) => {
+          answers.push(r);
+          if ((!r.declined && r.rank == 2) || answers.length >= mine) Deferred.doneUnsafe(answered, Effect.succeed(best()));
+        });
+        sendTo(user, { type: "live", id, req });
+        return yield* Deferred.await(answered).pipe(
+          Effect.timeoutOrElse({ duration: liveWait(req), orElse: () => Effect.succeed(answers.length ? best() : late) }),
+          Effect.ensuring(Effect.sync(() => lives.delete(id)))
+        );
       });
-      sendTo(user, { type: "view", id, req });
-      const r = yield* Deferred.await(answered).pipe(
-        Effect.timeoutOrElse({ duration: viewWait(req) + 2_000, orElse: () => Effect.succeed(answers.length ? best() : late) }),
-        Effect.ensuring(Effect.sync(() => views.delete(id)))
-      );
-      const { declined: _d, rank: _r, ...rest } = r;
-      return rest;
-    });
-    return Effect.runPromise(waited);
-  };
+      return Effect.runPromise(waited);
+    };
 
   // open_page: the person's open tabs on this document go to another of its
   // pages (main.ts, { type: "open" }). With none open, nothing can: the tool
@@ -307,7 +332,8 @@ export function makeHost(opts: HostOptions) {
         only: opts.only,
         kind: opts.kind,
         canEdit: () => opts.canEdit?.(user) ?? true,
-        view: view(user.id),
+        view: render(user.id),
+        live: live(user.id),
         readAsset: (rel) => Effect.runPromise(Effect.orElseSucceed(files.read(rel), () => null)),
         turnEnded: opts.turnEnded,
         versions: opts.versions,
@@ -367,16 +393,10 @@ export function makeHost(opts: HostOptions) {
   );
 
   const agentApi = HttpApiBuilder.group(Api, "agent", (h) => h
-    .handle("view", ({ payload: { id, errors, fonts, pending, shots, ...result } }) =>
+      .handle("live", ({ payload: { id, ...answer } }) =>
       Effect.sync(() => {
-        views.get(id)?.({
-          ...result,
-          errors: [...errors],
-          ...(fonts ? { fonts: fonts.map((f) => ({ ...f, tags: [...f.tags] })) } : {}),
-          ...(pending ? { pending: [...pending] } : {}),
-          ...(shots ? { shots: [...shots] } : {}),
-        });
-      return { ok: true as const };
+        lives.get(id)?.(answer);
+        return { ok: true as const };
       })
     )
     .handle("undoable", () =>
@@ -401,6 +421,9 @@ export function makeHost(opts: HostOptions) {
     h.handle("run", ({ params: { name }, payload }) =>
       Effect.gen(function* () {
       const user = yield* Person;
+      // The app's own address, as the server sent the tool's request: where the render opens the page.
+      const at = new URL((yield* HttpServerRequest.HttpServerRequest).originalUrl, "http://doc").origin;
+      if (at != "http://doc" && !at.endsWith(".invalid")) origin = at;
       const s = yield* extSession;
       if (!s.tools().some((t) => t.name == name)) {
         // One that changes the document, for someone who may only view it: it's there, but not theirs.

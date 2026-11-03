@@ -2,8 +2,8 @@
 // conversation that follows them from page to page, on the loop every agent shares (agents/run.ts). Its tools are its
 // person's (agents/tools.ts, toolsFor): every operation they may use (the admin ones, with admin power, only for an
 // admin: the settings, users, keys, sign-in, Erga's source, the Ops page), and the document tools for any document
-// they may open or edit, run in that document's host as their agent (so view_page and page_input use their open
-// editor). Its prompt: agents/person/prompt.ts. One session per person, in their PersonAgent object
+// they may open or edit, run in that document's host as their agent (view_page renders in the server's browser;
+// page_log and page_input use their open editor). Its prompt: agents/person/prompt.ts. One session per person, in their PersonAgent object
 // (agents/person/sessions.ts, cloudflare/objects/person-agent.ts), so it keeps working when the tab closes.
 //
 // The rule: the agent can do everything its person can do in Erga, when they ask. agents/actions.ts lists each action

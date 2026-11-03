@@ -3,10 +3,8 @@
 
 import type { ReaderConfig } from "../../shared/page-html";
 
-/** An ask for Erga's page tools (client/page-tools/tools.ts) from the viewer: a fresh render, or the live page. */
-export type ToolAsk =
-  | { type: "erga-capture"; id: number; req: unknown; text: string; dir?: string }
-  | { type: "erga-live"; id: number; req: unknown; frame?: { sandbox: string | null; allow: string | null } };
+/** An ask for Erga's page tools (client/page-tools/tools.ts) from the viewer: the live page's. */
+export type ToolAsk = { type: "erga-live"; id: number; req: unknown; frame?: { sandbox: string | null; allow: string | null } };
 
 declare global {
   interface Window {

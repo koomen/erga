@@ -11,6 +11,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { AgentTool } from "../run";
 import type { ViewRequest, ViewResult } from "../../shared/agent-log";
+import type { LiveAnswer, LiveRequest } from "../../shared/live-page";
 import { readableSize } from "../../shared/bytes";
 import { globToRegExp } from "../../shared/glob";
 import { unifiedDiff } from "../../document/versions";
@@ -49,6 +50,7 @@ export function makeTools(
   ws: Workspace,
   opts: {
     view: (req: ViewRequest) => Promise<ViewResult>;
+    live: (req: LiveRequest) => Promise<LiveAnswer>;
     readAsset: (path: string) => Promise<Uint8Array | null>;
     edited: (path: string, at: number) => void;
     versions?: VersionsAccess;
@@ -338,7 +340,7 @@ export function makeTools(
         return text(out.length ? out.join("\n") + (out.length == 100 ? "\n[First 100 matches.]" : "") : "No matches.");
       },
     },
-    ...pageTools(opts.view),
+    ...pageTools(opts.view, opts.live),
     ...(opts.open ? [openPage(opts.open)] : []),
     ...(opts.versions ? [diffVersions(opts.versions, opts.lastTurn ?? (async () => null))] : []),
   ] as AgentTool[];
@@ -417,6 +419,7 @@ export function documentToolSpecs(): { name: string; description: string; parame
   const versions = { state: none, version: none, files: none, current: none } as unknown as VersionsAccess;
   return makeTools(null as unknown as Workspace, {
     view: none,
+    live: none,
     readAsset: none,
     edited: none,
     versions,

@@ -7,8 +7,8 @@
 //                      year and never asks again (_headers): the scripts (ES modules, split in chunks that
 //                      load when they're needed), the stylesheet, the editor's page and the typeface
 //     main-<h>.js        page.js: the page editor's shell (main.ts), which the viewer adds when you edit
-//     tools-<h>.js       tools.js: Erga's page tools (client/page-tools/tools.ts: the agent's view_page and the live
-//                        page's tools), on each document's own origin too, built with frame.js
+//     tools-<h>.js       tools.js: Erga's page tools (client/page-tools/tools.ts: the live page's tools: page_log,
+//                        page_input), on each document's own origin too, built with frame.js
 //     frame-<h>.js       frame.js: the editor itself (frame.ts), which runs on each document's own origin, loaded
 //                        from here (one address for every document, so one copy in the browser's cache)
 //     slides-<h>.js      slides.js: erga/slides (libs/slides/ui/slides.ts), which a deck's page imports itself; it loads
