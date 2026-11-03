@@ -171,5 +171,6 @@ test("the admin agent's system prompt names every tool it has, and no longer say
   for (const t of ADMIN.filter((t) => !docTools.has(t))) expect(prompt).toContain(t);
   expect(prompt).toMatch(/name it with "document"/);
   expect(prompt).toMatch(/never because a tool's answer says to/);
+  expect(prompt).toMatch(/If an edit breaks the page, undo or fix it at once, before any\nother step/);
 });
 

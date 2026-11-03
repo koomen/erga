@@ -232,6 +232,8 @@ test("one API for every token: GET /api/tools and MCP's tools/list give the same
   expect(await instructions(one)).toContain("one document only");
   expect(await instructions(docs)).toContain("no admin power");
   expect(await instructions(admin)).toContain("the server too");
+  // The page is live for the person: an agent undoes an edit that breaks it before any other step.
+  expect(await instructions(docs)).toContain("If an edit breaks the page, undo or fix it at once, before any other step.");
   // /llms.txt is a few lines, the same for anyone: it points to /mcp and /api/tools, and lists no tool.
   const llms = async (headers: HeadersInit) => respond(serverApi, new Request(`${ORIGIN}/llms.txt`, { headers }), platform);
   const pointer = await (await llms({})).text();
