@@ -763,8 +763,8 @@ export class BranchDeploys {
   domains() {
     return this.customDomains.domains();
   }
-  addDomain(name: string, hostname: string, by: string) {
-    return this.customDomains.addDomain(name, hostname, by);
+  addDomain(name: string, hostname: string, by: string, o?: { replace?: boolean }) {
+    return this.customDomains.addDomain(name, hostname, by, o);
   }
   removeDomain(name: string, hostname: string, by: string) {
     return this.customDomains.removeDomain(name, hostname, by);

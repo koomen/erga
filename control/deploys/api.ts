@@ -10,7 +10,7 @@
 
 import type { CredentialStatus, TokenAnswer } from "./credential.ts";
 import type { ReleasesView } from "./releases.ts";
-import type { DomainsView } from "./domains.ts";
+import type { DomainNeed, DomainsView } from "./domains.ts";
 
 /** This server's branch deploys, as the Ops page's operations ask them (control/deploys/operations.ts) (the pipeline's object answers, by RPC). */
 export interface OpsDeploys {
@@ -24,7 +24,7 @@ export interface OpsDeploys {
   releases(): Promise<object | null>;
   /** Each environment's domains, and one added or removed (control/deploys/branches.ts). */
   domains(): Promise<object>;
-  addDomain(target: string, hostname: string, by: string): Promise<object>;
+  addDomain(target: string, hostname: string, by: string, o?: { replace?: boolean }): Promise<object>;
   removeDomain(target: string, hostname: string, by: string): Promise<object>;
   /** The control Worker's Cloudflare credential (control/deploys/credential.ts): its status, and revoked (the Ops page's card). */
   credentialStatus(): Promise<CredentialStatus>;
@@ -51,7 +51,12 @@ export interface DeploysObject extends OpsDeploys {
   releases(): Promise<ReleasesView | null>;
   /** Each environment's domains (its Worker's custom domains), and one added or removed (the operations deploys, view domains, and set_domain). */
   domains(): Promise<DomainsView | { error: string; status?: number }>;
-  addDomain(target: string, hostname: string, by: string): Promise<DomainsView | { error: string; status?: number }>;
+  addDomain(
+    target: string,
+    hostname: string,
+    by: string,
+    o?: { replace?: boolean }
+  ): Promise<DomainsView | { need: DomainNeed } | { error: string; status?: number }>;
   removeDomain(target: string, hostname: string, by: string): Promise<DomainsView | { error: string; status?: number }>;
   /** GET /api/events: the stream. */
   fetch(request: Request): Promise<Response>;

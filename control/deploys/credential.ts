@@ -142,6 +142,15 @@ const refusal = (status: number) => status == 400 || status == 401;
 /** Refresh when the access token has less than this left (a deploy's upload must not outlive it). */
 const REFRESH_BEFORE_MS = 10 * 60 * 1000;
 const KEY = "credential";
+/** Set once a seed (GrantSeed) was planted: a grant disconnected later never comes back from it. */
+const SEEDED = "credential-seeded";
+
+/**
+ * A grant given at the start (an install's control Worker: the deploy page's consent, handed over by the install): its
+ * refresh token, scopes and who consented. The first use refreshes it into an access token.
+ */
+export const GrantSeed = Schema.Struct({ refresh_token: Schema.String, scope: Schema.String, by: Schema.String });
+export type GrantSeed = typeof GrantSeed.Type;
 
 /** How a credential's messages name it, and say what to do: the control Worker's (the default), or a person's. */
 export interface CredentialWords {
@@ -184,12 +193,37 @@ export class OAuthCredential implements Credential {
     now?: () => number;
     log?: (line: string) => void;
     words?: CredentialWords;
+    /** A grant to start with (GrantSeed as JSON), planted once, while none was ever kept. */
+    seed?: string;
   }) {}
 
   private get words() { return this.deps.words ?? CONTROL_WORDS; }
 
   private now() { return (this.deps.now ?? Date.now)(); }
-  private stored() { return this.deps.storage.get<StoredGrant>(KEY); }
+  private async stored(): Promise<StoredGrant | undefined> {
+    const g = await this.deps.storage.get<StoredGrant>(KEY);
+    if (g || !this.deps.seed?.trim() || (await this.deps.storage.get<boolean>(SEEDED))) return g;
+    await this.deps.storage.put(SEEDED, true);
+    const seed = Option.getOrNull(Schema.decodeUnknownOption(Schema.fromJsonString(GrantSeed))(this.deps.seed));
+    if (!seed) {
+      this.deps.log?.("CLOUDFLARE_GRANT isn't a grant: an admin connects Cloudflare");
+      return undefined;
+    }
+    // No access token yet: expired at once, so the first use refreshes.
+    const planted: StoredGrant = {
+      access: await seal("", await this.deps.sealKey),
+      refresh: await seal(seed.refresh_token, await this.deps.sealKey),
+      expiresAt: 0,
+      scopes: seed.scope.split(/\s+/).filter(Boolean),
+      by: seed.by,
+      at: this.now(),
+      refreshedAt: null,
+      error: null,
+    };
+    await this.deps.storage.put(KEY, planted);
+    this.deps.log?.(`Cloudflare credential from the install, consented by ${seed.by}`);
+    return planted;
+  }
 
   /** The grant after a consent: Cloudflare's answer to the code exchange, kept; the access token, for a first check. */
   async connect(answer: TokenAnswer, by: string): Promise<string> {

@@ -14,7 +14,7 @@ import { controlHostOf, INSTALL_STEPS, runInstall, stagingHostOf } from "../cont
 import { installControlMetadata } from "../control/deploys/control-worker";
 import { builderEndpoint, forkBuilder, forkHosts, forkRemote, hashSecret } from "../control/install/forks";
 import { BranchDeploys } from "../control/deploys/branches";
-import { fixedCredential } from "../control/deploys/credential";
+import { fixedCredential, type GrantSeed } from "../control/deploys/credential";
 import { installFleet } from "../control/deploys/fleet";
 import { memoryBlobs, ReleaseStore } from "../control/deploys/releases";
 import { mockCloudflare } from "../dev/mock-cloudflare";
@@ -45,9 +45,10 @@ const plan = (over: Partial<DeployPlan> = {}): DeployPlan => ({
 const UPSTREAM = { origin: "https://ops.erga.test", clientId: "erga-client", github: { clientId: "Iv1.mockgithubapp0", slug: "erga-editor" } };
 const FORK = { id: "fork0123456789ab", secret: "fork-secret-0123456789abcdef0123456789abcdef" };
 
-async function install(p: DeployPlan, mock = mockCloudflare()) {
+async function install(p: DeployPlan, mock = mockCloudflare(), grant?: GrantSeed) {
   const steps: string[] = [];
   const result = await runInstall(new Cloudflare("mock-token", mock.fetch), release, p, {
+    ...(grant ? { grant } : {}),
     sessionSecret: "app-session-secret-0123456789abcdef", controlSecret: "control-session-secret-0123456789abc", snapshotToken: "snapshot-token-0123456789abcdef0123456789", fork: FORK, upstream: UPSTREAM,
     site: mock.fetch, sleep: async () => {}, waitMs: 1000, report: (id, status, detail) => steps.push(`${id}:${status}${detail ? ` ${detail}` : ""}`),
   });
@@ -79,9 +80,27 @@ describe("the control Worker's address", () => {
 });
 
 describe("an install", () => {
+  test("with the deploy page's grant: the control Worker gets it as a secret, last", async () => {
+    const { steps, mock } = await install(plan(), mockCloudflare(), {
+      refresh_token: "mock-refresh-0123",
+      scope: "workers-scripts.edit offline_access",
+      by: "ada",
+    });
+    expect(steps.at(-1)).toMatch(/^credential:done /);
+    expect(mock.state.calls.at(-1)).toBe(`PUT /accounts/${ACC}/workers/scripts/erga-control/secrets`);
+    expect(JSON.parse(mock.state.secrets["erga-control"].CLOUDFLARE_GRANT)).toEqual({
+      refresh_token: "mock-refresh-0123",
+      scope: "workers-scripts.edit offline_access",
+      by: "ada",
+    });
+  });
   test("to workers.dev: every step in order, the control Worker before the app's Worker, both told what they need", async () => {
     const { result, steps, state } = await install(plan());
-    expect(steps.filter((s) => s.endsWith(":running")).map((s) => s.split(":")[0])).toEqual(INSTALL_STEPS.map((s) => s.id));
+    // With no grant (a pasted API token), the control Worker's consent is left to its Ops page.
+    expect(steps.filter((s) => s.endsWith(":running")).map((s) => s.split(":")[0])).toEqual(
+      INSTALL_STEPS.map((s) => s.id).filter((id) => id != "credential")
+    );
+    expect(steps.at(-1)).toMatch(/^credential:skipped /);
     expect(result).toEqual({ url: "https://erga.ada-mock.workers.dev", pages: "erga-pages.ada-mock.workers.dev", database: state.databases[0].uuid, worker: "erga", control: "https://erga-control.ada-mock.workers.dev", staging: "https://erga-staging.ada-mock.workers.dev" });
     // The control Worker: the release's control bundle, its objects declared, no container, no Artifacts, no bucket.
     const control = state.scripts["erga-control"];

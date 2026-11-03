@@ -164,9 +164,10 @@ git push erga HEAD:staging</code></pre>
   </section>
   <dialog id="domain-dlg" aria-labelledby="domain-title">
     <h2 id="domain-title">Add a domain</h2>
-    <p>A hostname on one of this account's Cloudflare zones, for <b id="domain-env"></b>. Cloudflare routes it to the environment's Worker and makes its DNS record and certificate (a minute or two).</p>
+    <p>A name you own, for <b id="domain-env"></b>: example.com, or docs.example.com. Erga checks it and tells you each step. Cloudflare makes its DNS record and certificate.</p>
     <label>Hostname<input id="domain-host" autocomplete="off" spellcheck="false" placeholder="docs.example.com"></label>
-    <div class="buttons"><span id="domain-status" role="status" aria-live="polite"></span><button type="button" id="domain-cancel">Cancel</button><button type="button" class="primary" id="domain-go">Add</button></div>
+    <div id="domain-step" hidden></div>
+    <div class="buttons"><span id="domain-status" role="status" aria-live="polite"></span><button type="button" id="domain-cancel">Close</button><button type="button" class="primary" id="domain-go">Add</button></div>
   </dialog>
   <dialog id="release-dlg" aria-labelledby="release-title">
     <h2 id="release-title">Cut a release</h2>

@@ -84,7 +84,7 @@ export class Pipeline extends DurableObject<HostEnv> {
       const view = await env.SOURCE.getByName("erga").branches(env.ERGA_DEV_ORIGIN ?? "").catch(() => null);
       return !!view?.branches.some((b: { commits: { sha: string; subject: string }[] }) => b.commits.some((c) => c.sha == commit && c.subject.includes("[mock-fail]")));
     };
-    const fleet = mock ? (fleetMock ??= mockCloudflare({ fleet: true, stagingSecrets: true, delayMs: 25 })) : null;
+    const fleet = mock ? (fleetMock ??= mockCloudflare({ fleet: true, stagingSecrets: true, delayMs: 25, certMs: 1500 })) : null;
     const net = fleet ? fleet.fetch : globalThis.fetch.bind(globalThis);
     this.deps = { net };
     // The Cloudflare credential: the OAuth grant an admin connected at /install (kept in this object's storage, sealed).
@@ -92,8 +92,14 @@ export class Pipeline extends DurableObject<HostEnv> {
     const clientId = env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "";
     this.credential = mock && !clientId ? fixedCredential("mock-dev-deploys", "the mock") : new OAuthCredential({
       storage: { get: (k) => ctx.storage.get(k), put: (k, v) => ctx.storage.put(k, v), delete: (k) => ctx.storage.delete(k) },
-      net, client: { id: clientId || "mock", ...(env.CLOUDFLARE_OAUTH_CLIENT_SECRET ? { secret: env.CLOUDFLARE_OAUTH_CLIENT_SECRET } : {}) },
-      sealKey: sealKeyFrom(env.SESSION_SECRET ?? ""), log: (l) => console.log(l),
+      net,
+      client: {
+        id: clientId || "mock",
+        ...(env.CLOUDFLARE_OAUTH_CLIENT_SECRET ? { secret: env.CLOUDFLARE_OAUTH_CLIENT_SECRET } : {}),
+      },
+      sealKey: sealKeyFrom(env.SESSION_SECRET ?? ""),
+      log: (l) => console.log(l),
+      seed: env.CLOUDFLARE_GRANT,
     });
     const schedule = async (ms: number) => {
       const at = Date.now() + ms;
@@ -181,9 +187,15 @@ export class Pipeline extends DurableObject<HostEnv> {
   rollback(name: string, trigger?: string) { return this.deploys.rollback(name, trigger); }
   async alarm(): Promise<void> { await this.deploys.alarm(); }
   // Each environment's domains (deploys, view domains; set_domain).
-  domains() { return this.deploys.domains(); }
-  addDomain(name: string, hostname: string, by: string) { return this.deploys.addDomain(name, hostname, by); }
-  removeDomain(name: string, hostname: string, by: string) { return this.deploys.removeDomain(name, hostname, by); }
+  domains() {
+    return this.deploys.domains();
+  }
+  addDomain(name: string, hostname: string, by: string, o?: { replace?: boolean }) {
+    return this.deploys.addDomain(name, hostname, by, o);
+  }
+  removeDomain(name: string, hostname: string, by: string) {
+    return this.deploys.removeDomain(name, hostname, by);
+  }
 
   // ---- the installs made from here (/deploy, control/install/install.ts): remembered, so their control Workers may consent
   // through this Worker's OAuth callback (control/routes.ts, the relay), and the Ops page can list them.

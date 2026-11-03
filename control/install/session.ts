@@ -25,15 +25,27 @@ import { hashSecret } from "./forks";
 import { githubAppOf, releaseStoreOf } from "../cloudflare";
 import { mockCloudflare, type MockState } from "../../dev/mock-cloudflare";
 import { open, seal, type Sealed } from "../deploys/seal";
+import { sealKeyFrom } from "../deploys/credential";
 import type { HostEnv } from "../env";
 import { randomString, randomToken } from "../../shared/bytes";
 
-const SESSION = "session", RUN = "run";
+const SESSION = "session",
+  RUN = "run",
+  FORK = "fork";
 /** A fork's id: 16 lowercase letters and digits (control/install/forks.ts isForkId). */
 const forkId = () => randomString(16, "abcdefghijklmnopqrstuvwxyz0123456789");
 const LIFETIME_MS = 2 * 60 * 60 * 1000;
 
-interface Session { owner: string; via: "oauth" | "token"; created: number; sealed: Sealed | null; accounts: { id: string; name: string }[] }
+interface Session {
+  owner: string;
+  via: "oauth" | "token";
+  created: number;
+  sealed: Sealed | null;
+  accounts: { id: string; name: string }[];
+  /** OAuth only: the grant's refresh token (sealed, as the token is) and scopes, which the install hands to its control Worker. */
+  refresh?: Sealed | null;
+  scopes?: string;
+}
 
 export type StepState = { id: string; title: string; status: "pending" | "running" | "done" | "skipped" | "failed"; detail?: string };
 export interface RunState {
@@ -43,6 +55,8 @@ export interface RunState {
   steps: StepState[];
   error?: string;
   result?: Installed;
+  /** The plan it runs (Try again runs it again, after a reload too). */
+  plan?: DeployPlan;
   /** What was asked for, as the page shows it again. */
   summary: { app: string; pages: string; worker: string; account: string; control: string; staging: string; release: string };
 }
@@ -74,7 +88,14 @@ export class Deployer extends DurableObject<HostEnv> {
   }
 
   /** Takes a token (pasted, or from Cloudflare's OAuth), checks it, and keeps it sealed: the accounts it can reach. */
-  async attach(owner: string, via: "oauth" | "token", token: string, key: string, mock: boolean): Promise<Answer<{ accounts: { id: string; name: string }[] }>> {
+  async attach(
+    owner: string,
+    via: "oauth" | "token",
+    token: string,
+    key: string,
+    mock: boolean,
+    grant?: { refresh?: string | null; scopes?: string | null }
+  ): Promise<Answer<{ accounts: { id: string; name: string }[] }>> {
     token = token.trim();
     if (!/^[\w.-]{20,2000}$/.test(token) && !(mock && token.startsWith("mock-"))) return { ok: false, error: "That doesn't look like a Cloudflare API token: copy the whole token from the page Cloudflare showed after you made it." };
     try {
@@ -82,7 +103,15 @@ export class Deployer extends DurableObject<HostEnv> {
       const accounts = ((await cf.call<{ id: string; name: string }[]>("GET", "/accounts?per_page=50", "list your accounts")) ?? []).map((a) => ({ id: a.id, name: a.name }));
       if (!accounts.length) return { ok: false, error: "The token can't reach any account. Make it with the link on this page, which gives it access to your account." };
       await this.forgetAll();
-      await this.ctx.storage.put(SESSION, { owner: owner.toLowerCase(), via, created: Date.now(), sealed: await seal(token, key), accounts } satisfies Session);
+      // A run that failed stays, with its plan and fork, so Try again picks it up with the new connection.
+      await this.ctx.storage.put(SESSION, {
+        owner: owner.toLowerCase(),
+        via,
+        created: Date.now(),
+        sealed: await seal(token, key),
+        accounts,
+        ...(grant?.refresh ? { refresh: await seal(grant.refresh, key), scopes: grant.scopes ?? "" } : {}),
+      } satisfies Session);
       await this.ctx.storage.setAlarm(Date.now() + LIFETIME_MS);
       return { ok: true, accounts };
     } catch (e) { return { ok: false, error: message(e) }; }
@@ -182,12 +211,17 @@ export class Deployer extends DurableObject<HostEnv> {
   }
 
   /** Starts the install (it carries on here; the page follows it with `info`). `origin`: this control Worker's address, the install's upstream. */
-  async start(owner: string, key: string, plan: DeployPlan, mock: boolean, origin: string): Promise<Answer<{ run: RunState }>> {
+  async start(owner: string, key: string, asked: DeployPlan | null, mock: boolean, origin: string): Promise<Answer<{ run: RunState }>> {
     if (this.running) return { ok: false, error: "An install is already running in this session." };
     const t = await this.token(owner, key);
     if ("error" in t) return { ok: false, error: t.error };
-    if (!t.session.accounts.some((a) => a.id == plan.accountId)) return { ok: false, error: "Choose one of your accounts." };
-    plan = { ...plan, admin: owner };
+    // Try again: the plan of the run that stopped, and its fork (made once: control/install/forks.ts).
+    const before = await this.ctx.storage.get<RunState & { owner?: string }>(RUN);
+    const again = before && before.owner == owner.toLowerCase() && before.status == "failed" ? before : null;
+    const chosen = asked ?? again?.plan;
+    if (!chosen) return { ok: false, error: "There's no install to try again: choose where it goes first." };
+    if (!t.session.accounts.some((a) => a.id == chosen.accountId)) return { ok: false, error: "Choose one of your accounts." };
+    const plan: DeployPlan = { ...chosen, admin: owner };
     // Sign-in and Connect GitHub on the new server: Erga's GitHub App, through this control Worker (the relay).
     const github = githubAppOf(this.env);
     if (!github) return { ok: false, error: "This server has no GitHub App set up (GITHUB_APP_CLIENT_ID): an install can't sign people in." };
@@ -198,9 +232,20 @@ export class Deployer extends DurableObject<HostEnv> {
     if ("error" in got) return { ok: false, error: got.error };
     const { release } = got;
     const run: RunState & { owner: string } = {
-      owner: owner.toLowerCase(), status: "running", started: Date.now(),
+      owner: owner.toLowerCase(),
+      status: "running",
+      started: Date.now(),
       steps: INSTALL_STEPS.map((s) => ({ id: s.id, title: s.title, status: "pending" })),
-      summary: { app: `https://${appHost(plan)}`, pages: pagesShown(plan), worker: plan.workerName, account: t.session.accounts.find((a) => a.id == plan.accountId)?.name ?? plan.accountId, control: `https://${controlHostOf(plan)}`, staging: `https://${stagingHostOf(plan)}`, release: release.version },
+      plan,
+      summary: {
+        app: `https://${appHost(plan)}`,
+        pages: pagesShown(plan),
+        worker: plan.workerName,
+        account: t.session.accounts.find((a) => a.id == plan.accountId)?.name ?? plan.accountId,
+        control: `https://${controlHostOf(plan)}`,
+        staging: `https://${stagingHostOf(plan)}`,
+        release: release.version,
+      },
     };
     const save = () => this.ctx.storage.put(RUN, run);
     await save();
@@ -210,15 +255,15 @@ export class Deployer extends DurableObject<HostEnv> {
       try {
         // The install's fork first (control/install/forks.ts): its repository here, seeded at the release's commit, which its
         // control Worker reaches with a secret only it and the hash here know.
-        const fork = { id: forkId(), secret: randomToken() };
-        const made = await this.env.PIPELINE?.getByName("deploys").makeFork(fork.id, await hashSecret(fork.secret), (await this.commitOf(release)) ?? null, owner.toLowerCase());
-        if (!made) throw new DeployError({ message: "This server has no deploys' object to keep the install's fork." });
-        if (!made.ok) throw new DeployError({ message: `The install's repository (a fork of Erga's) couldn't be made: ${made.error}` });
+        const fork = await this.fork(owner, release);
+        // The deploy page's consent goes on to the control Worker (OAuth only), so nobody consents a second time.
+        const refresh = t.session.refresh ? await open(t.session.refresh, key).catch(() => null) : null;
         run.result = await runInstall(new Cloudflare(t.token, net), release, plan, {
           sessionSecret: randomToken(),
           controlSecret: randomToken(),
           snapshotToken: randomToken(),
           fork,
+          ...(refresh ? { grant: { refresh_token: refresh, scope: t.session.scopes ?? "", by: owner.toLowerCase() } } : {}),
           upstream: {
             origin,
             clientId: this.env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() || (mock ? "mock" : ""),
@@ -234,9 +279,15 @@ export class Deployer extends DurableObject<HostEnv> {
           },
         });
         run.status = "done";
-        // Done with the token: forget it, and give back what Cloudflare's OAuth gave.
-        if (t.session.via == "oauth") await net(OAUTH.revoke, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: t.token, client_id: this.env.CLOUDFLARE_OAUTH_CLIENT_ID || "mock" }) }).catch(() => {});
-        await this.ctx.storage.put(SESSION, { ...t.session, sealed: null });
+        // Done with the token: forget it. A grant the control Worker didn't take is given back to Cloudflare.
+        if (t.session.via == "oauth" && !refresh)
+          await net(OAUTH.revoke, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({ token: t.token, client_id: this.env.CLOUDFLARE_OAUTH_CLIENT_ID || "mock" }),
+          }).catch(() => {});
+        await this.ctx.storage.put(SESSION, { ...t.session, sealed: null, refresh: null });
+        await this.ctx.storage.delete(FORK);
         // Upstream remembers the install: its control Worker may consent through the relay (control/routes.ts), and the Ops page lists it.
         await this.env.PIPELINE?.getByName("deploys").registerInstall({ control: run.result.control, app: run.result.url, staging: run.result.staging, accountId: plan.accountId, by: owner.toLowerCase(), at: Date.now(), version: release.version, fork: fork.id }).catch((e) => console.log(`the install wasn't registered: ${message(e)}`));
       } catch (e) {
@@ -255,6 +306,23 @@ export class Deployer extends DurableObject<HostEnv> {
     return { ok: true, run };
   }
 
+  /**
+   * The install's fork: the one an earlier try made, else a new one. Its secret is sealed with this Worker's key alone
+   * (not the browser's half), so a new connection (a new cookie half) still opens it.
+   */
+  private async fork(owner: string, release: Release): Promise<{ id: string; secret: string }> {
+    const key = await sealKeyFrom(this.env.SESSION_SECRET ?? "");
+    const kept = await this.ctx.storage.get<{ id: string; secret: Sealed }>(FORK);
+    const secret = kept && (await open(kept.secret, key).catch(() => null));
+    if (kept && secret) return { id: kept.id, secret };
+    const fork = { id: forkId(), secret: randomToken() };
+    const made = await this.env.PIPELINE?.getByName("deploys").makeFork(fork.id, await hashSecret(fork.secret), (await this.commitOf(release)) ?? null, owner.toLowerCase());
+    if (!made) throw new DeployError({ message: "This server has no deploys' object to keep the install's fork." });
+    if (!made.ok) throw new DeployError({ message: `The install's repository (a fork of Erga's) couldn't be made: ${made.error}` });
+    await this.ctx.storage.put(FORK, { id: fork.id, secret: await seal(fork.secret, key) });
+    return fork;
+  }
+
   /** The commit a release of the store was built from (its manifest says), for the fork's seed; null for this server's own release (the repository's main, then). */
   private async commitOf(release: Release): Promise<string | null> {
     const store = releaseStoreOf(this.env);
@@ -265,7 +333,7 @@ export class Deployer extends DurableObject<HostEnv> {
   /** Forgets the token now (the run's record stays, for the page). */
   async forget(owner: string): Promise<void> {
     const s = await this.session(owner);
-    if (s) await this.ctx.storage.put(SESSION, { ...s, sealed: null });
+    if (s) await this.ctx.storage.put(SESSION, { ...s, sealed: null, refresh: null });
   }
 
   /** Local development: what the pretend Cloudflare was asked to do. */

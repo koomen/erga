@@ -184,6 +184,9 @@ export const OAUTH = {
  * The scopes an install's consent asks for (/deploy, control/install/routes.ts): Cloudflare's OAuth scope ids, one for
  * each permission the install needs, all among those Erga's OAuth client allows (CONTROL_OAUTH_SCOPES in
  * control/deploys/credential.ts: a scope the client doesn't allow fails the consent). Buying a domain (Registrar) isn't among them:
- * that takes an API token with the Registrar permission. CLOUDFLARE_OAUTH_SCOPES overrides them.
+ * that takes an API token with the Registrar permission. offline_access gives a refresh token: the install hands the
+ * grant to the new control Worker (control/install/install.ts), so the person consents once. CLOUDFLARE_OAUTH_SCOPES
+ * overrides them.
  */
-export const DEFAULT_OAUTH_SCOPES = "account-settings.read workers-scripts.edit d1.write workers-routes.write zone.read dns.write";
+export const DEFAULT_OAUTH_SCOPES =
+  "account-settings.read workers-scripts.edit d1.write workers-routes.write zone.read dns.write offline_access";

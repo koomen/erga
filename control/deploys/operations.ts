@@ -4,6 +4,7 @@
 // Disconnect, and a domain added or removed. They run on the pipeline's object wherever the page is: on the control Worker its own, on erga.dev and
 // staging over the CONTROL binding (Platform.deploys). Connect Cloudflare stays a consent in a popup (control/routes.ts).
 
+import type { DomainNeed } from "./domains.ts";
 import * as Schema from "effect/Schema";
 import { type Caller, type Operation, OperationError, platformOf, redeployHome } from "../../server/operations/index.ts";
 import { byLine } from "../../shared/attribution.ts";
@@ -159,13 +160,20 @@ export const DEPLOY_OPERATIONS: Operation[] = [
       }),
       target: ENVIRONMENT,
       hostname: str("The hostname, like docs.example.com"),
+      replace: Schema.optionalKey(Schema.Boolean).annotate({
+        description: "add: replace the name's own DNS records (only after the person said yes to an answer with need.kind replace)",
+      }),
     }),
     run: async (a, caller) => {
       const target = String(a.target),
         hostname = String(a.hostname).trim().toLowerCase();
       if (a.action == "add") {
-        const r = ok(await deploys(caller).addDomain(target, hostname, byOf(caller)));
-        return { ...r, done: `${hostname} added to ${target}: Cloudflare makes its DNS record and certificate in a minute or two` };
+        const r = ok(await deploys(caller).addDomain(target, hostname, byOf(caller), { replace: a.replace === true }));
+        if ("need" in r) return { ...r, done: needWords((r as { need: DomainNeed }).need) };
+        return {
+          ...r,
+          done: `${hostname} added to ${target}: it answers once Cloudflare has made its certificate, in a minute or two (live in the view)`,
+        };
       }
       if (a.action == "remove") {
         const r = ok(await deploys(caller).removeDomain(target, hostname, byOf(caller)));
@@ -176,3 +184,11 @@ export const DEPLOY_OPERATIONS: Operation[] = [
   },
 ];
 
+/** What a domain still needs, in words for an agent to tell its person (the Ops page shows the same as steps). */
+function needWords(n: DomainNeed): string {
+  if (n.kind == "zone")
+    return `Not added: ${n.domain} isn't in this Cloudflare account. The person adds it at https://dash.cloudflare.com/${n.accountId}/add-site (the free plan is enough), moves its name servers as Cloudflare says, then adds ${n.hostname} again. No domain yet: Cloudflare Registrar sells one, and it is in the account at once`;
+  if (n.kind == "nameservers")
+    return `Not added yet: ${n.domain} is in the account, but its registrar still names other name servers${n.current.length ? ` (${n.current.join(", ")})` : ""}. The person sets ${n.nameservers.join(" and ") || "Cloudflare's name servers"} at the registrar, then adds ${n.hostname} again (Cloudflare sees the change in minutes, at most a day)`;
+  return `Not added: ${n.hostname} already has DNS records (${n.records.map((r) => `${r.type} ${r.content}`).join(", ")}). Add it again with replace: true only if the person says yes: the old target stops answering at that name`;
+}

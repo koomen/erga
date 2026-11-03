@@ -8,6 +8,8 @@ import { esc as escText } from "../../shared/html";
 import { runTool } from "../common/tools";
 import { featureBranches } from "../admin/ops-branches";
 import { conflictCount, renderConflict } from "../admin/ops-conflict";
+import { opsDomains } from "../admin/ops-domains";
+import { secondClick } from "../common/second-click";
 
 // The answers of the API are typed loosely (any): this page reads what the server sends and shows it.
 type Json = any;
@@ -31,21 +33,6 @@ export default function ops(): void {
     if (s > -86400) return rtf.format(Math.round(s / 3600), "hour");
     if (s > -30 * 86400) return rtf.format(Math.round(s / 86400), "day");
     return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  };
-  /** A button that acts on its second click: the first shows `ask` for a while (`ms`), then `label` again. True on the second. */
-  const secondClick = (btn: HTMLElement, ask: string, label: string, ms = 8000, mark?: (on: boolean) => void) => {
-    const show = (on: boolean) => {
-      btn.dataset.armed = on ? "1" : "";
-      btn.textContent = on ? ask : label;
-      mark?.(on);
-    };
-    if (btn.dataset.armed == "1") {
-      btn.dataset.armed = "";
-      return true;
-    }
-    show(true);
-    setTimeout(() => btn.dataset.armed == "1" && show(false), ms);
-    return false;
   };
   /**
    * Connect in a popup, on the control Worker's origin (the card's data-connect). The popup posts its outcome back,
@@ -491,56 +478,11 @@ export default function ops(): void {
     await load();
   });
 
-  // Each environment's domains (its Worker's custom domains), with Add and remove.
-  let domains: Json = null;
-  async function loadDomains() {
-    const body = await runTool("deploys", { view: "domains" }).catch(() => null);
-    if (pageView.signal.aborted) return;
-    domains = body;
-    renderDomains();
-  }
-  function renderDomains() {
-    for (const n of TARGETS) {
-      const el = byId("domains-" + n);
-      const list: Json[] | undefined = domains && domains.targets && domains.targets[n];
-      el.hidden = !list;
-      if (!list) continue;
-      el.innerHTML =
-        list
-          .map(
-            (d) =>
-              '<span class="dom' +
-              (d.primary ? " primary" : "") +
-              '" title="' +
-              esc(d.hostname + (d.zone ? " · zone " + d.zone : "") + (d.primary ? " · the environment's own address" : "")) +
-              '"><span>' +
-              esc(d.hostname) +
-              "</span>" +
-              (d.primary
-                ? ""
-                : '<button type="button" data-remove="' +
-                  esc(d.hostname) +
-                  '" data-target="' +
-                  n +
-                  '" title="Remove this domain from ' +
-                  n +
-                  '" aria-label="Remove ' +
-                  esc(d.hostname) +
-                  '">×</button>') +
-              "</span>"
-          )
-          .join("") +
-        '<button class="add" type="button" data-add="' +
-        n +
-        '">+ Add domain</button>';
-    }
-  }
-  const domDlg = byId<HTMLDialogElement>("domain-dlg");
+  // Each environment's domains, and the guide that adds one (client/admin/ops-domains.ts).
+  const loadDomains = opsDomains(setInterval, pageView.signal).load;
   byId("status").addEventListener("click", async (e) => {
     const at = e.target as Element;
-    const add = at.closest<HTMLButtonElement>("button[data-add]"),
-      rm = at.closest<HTMLButtonElement>("button[data-remove]"),
-      retry = at.closest<HTMLButtonElement>("button[data-retry]");
+    const retry = at.closest<HTMLButtonElement>("button[data-retry]");
     if (retry) {
       retry.disabled = true;
       await runTool("redeploy", { target: retry.dataset.retry }).catch((e: Error) => {
@@ -549,55 +491,6 @@ export default function ops(): void {
         retry.textContent = "Retry (failed)";
       });
       await loadDeploys();
-    }
-    if (add) {
-      domDlg.dataset.target = add.dataset.add;
-      byId("domain-env").textContent = add.dataset.add!;
-      byId<HTMLInputElement>("domain-host").value = "";
-      byId("domain-status").textContent = "";
-      byId("domain-status").className = "";
-      byId<HTMLButtonElement>("domain-go").disabled = false;
-      if (!domDlg.open) domDlg.showModal();
-      byId("domain-host").focus();
-    }
-    if (rm) {
-      if (!secondClick(rm, "remove?", "×", 6000, (on) => (rm.parentElement!.style.borderColor = on ? "var(--bad)" : ""))) return;
-      rm.disabled = true;
-      const failed = await runTool("set_domain", { action: "remove", target: rm.dataset.target, hostname: rm.dataset.remove }).then(
-        () => null,
-        (e: Error) => e.message
-      );
-      if (failed) {
-        rm.disabled = false;
-        rm.title = failed;
-        rm.textContent = "!";
-        return;
-      }
-      await loadDomains();
-    }
-  });
-  byId("domain-cancel").addEventListener("click", () => domDlg.close());
-  byId("domain-go").addEventListener("click", async (e) => {
-    const go = e.currentTarget as HTMLButtonElement;
-    const status = byId("domain-status"),
-      hostname = byId<HTMLInputElement>("domain-host").value.trim().toLowerCase();
-    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(hostname)) {
-      status.className = "error";
-      status.textContent = "A hostname looks like docs.example.com.";
-      return;
-    }
-    go.disabled = true;
-    status.className = "";
-    status.textContent = "Adding " + hostname + "…";
-    try {
-      await runTool("set_domain", { action: "add", target: domDlg.dataset.target, hostname });
-      status.textContent = "Added. Cloudflare makes its DNS record and certificate in a minute or two.";
-      await loadDomains();
-      setTimeout(() => domDlg.close(), 1200);
-    } catch (err) {
-      status.className = "error";
-      status.textContent = (err as Error).message;
-      go.disabled = false;
     }
   });
 

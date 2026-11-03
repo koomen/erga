@@ -1,6 +1,11 @@
 // Domains: each environment's custom domains on its Worker (the Ops page,
 // deploys and set_domain), and domains through Cloudflare Registrar (the install page):
 // search, check, register, and a registration's progress.
+//
+// Adding a domain is a guide (addDomain): a domain not on Cloudflare yet, name servers not moved yet, a name with a
+// DNS record of its own, a name another Worker has; then the wait for its certificate (`live` in the view). A
+// partial (CNAME) setup isn't offered: it needs Cloudflare's Business plan. A domain moves its name servers to
+// Cloudflare (free), or comes from Cloudflare Registrar.
 
 import { Cloudflare, DeployError } from "./cloudflare-api";
 import type { BranchDeploys } from "./branches";
@@ -78,7 +83,38 @@ export async function registrationStatus(cf: Cloudflare, accountId: string, name
 // ---- each environment's domains: its Worker's custom domains, through the credential (the operations deploys and set_domain).
 
 /** One of an environment's domains: its own address (`primary`, the fleet's), or one added on the Ops page; the zone it's on, when known. */
-export interface DomainEntry { hostname: string; primary: boolean; zone: string | null }
+export interface DomainEntry {
+  hostname: string;
+  primary: boolean;
+  zone: string | null /** One added here: it answers (its certificate is there). */;
+  live?: boolean;
+}
+
+/** What a domain needs before it can go on a Worker (the Ops page shows each as a step, with what to do). */
+export type DomainNeed =
+  /** Its domain isn't in the account: add it on Cloudflare (Add a site), or buy one there. */
+  | { kind: "zone"; hostname: string; domain: string; accountId: string }
+  /** Its domain is in the account, but the registrar still names other name servers: set these. */
+  | { kind: "nameservers"; hostname: string; domain: string; nameservers: string[]; current: string[] }
+  /** The name has DNS records of its own: Erga replaces them only when asked. */
+  | { kind: "replace"; hostname: string; domain: string; records: { type: string; content: string }[] };
+interface Zone {
+  id: string;
+  name: string;
+  status: string;
+  name_servers?: string[];
+  original_name_servers?: string[];
+}
+
+/**
+ * The domain a person registered, from a hostname: its last two labels, or three under a two-letter country's
+ * second level (co.uk, com.au). A guess for the words on the page only: Cloudflare says which zone it is.
+ */
+export function domainOf(host: string): string {
+  const labels = host.split(".");
+  const n = labels.length > 2 && labels.at(-1)!.length == 2 && /^(co|com|net|org|ac|gov|edu|ne|or)$/.test(labels.at(-2)!) ? 3 : 2;
+  return labels.slice(-n).join(".");
+}
 /** deploys, view domains: each environment's domains. */
 export interface DomainsView { targets: Partial<Record<DeployName, DomainEntry[]>> }
 
@@ -97,7 +133,18 @@ export class Domains {
       for (const name of this.deploys.fleet.names) {
         const spec = this.deploys.specOf(name);
         const own: DomainEntry = { hostname: spec.host, primary: true, zone: all.find((d) => d.hostname == spec.host)?.zone_name ?? null };
-        const more = all.filter((d) => d.service == spec.worker && d.hostname != spec.host).map((d): DomainEntry => ({ hostname: d.hostname, primary: false, zone: d.zone_name ?? null }));
+        const more = await Promise.all(
+          all
+            .filter((d) => d.service == spec.worker && d.hostname != spec.host)
+            .map(
+              async (d): Promise<DomainEntry> => ({
+                hostname: d.hostname,
+                primary: false,
+                zone: d.zone_name ?? null,
+                live: await this.answers(d.hostname),
+              })
+            )
+        );
         targets[name] = [own, ...more.sort((a, b) => (a.hostname < b.hostname ? -1 : 1))];
       }
       return { targets };
@@ -106,11 +153,28 @@ export class Domains {
     }
   }
 
-  /** A domain added to an environment: a hostname on one of the account's zones (the zone found by the hostname's end), put on its Worker. */
-  async addDomain(name: string, hostname: string, by: string): Promise<DomainsView | { error: string; status?: number }> {
+  /**
+   * A domain added to an environment, as a guide: each answer is the next step, said in place. The hostname's domain
+   * isn't in the account (`need: zone`: add it on Cloudflare), its name servers haven't moved (`need: nameservers`:
+   * the ones to set at the registrar), or the name has a DNS record of its own (`need: replace`: only with `replace`).
+   * Else it goes on the Worker, and the view says when it answers (its certificate takes a minute or more).
+   */
+  async addDomain(
+    name: string,
+    hostname: string,
+    by: string,
+    o: { replace?: boolean } = {}
+  ): Promise<DomainsView | { need: DomainNeed } | { error: string; status?: number }> {
     if (!this.deploys.fleet.has(name)) return { error: `There's no environment called ${name}.`, status: 404 };
-    const host = hostname.trim().toLowerCase();
-    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host)) return { error: "A hostname looks like docs.example.com.", status: 400 };
+    const host = hostname
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/\/.*$/, "");
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host))
+      return { error: "A hostname looks like docs.example.com.", status: 400 };
+    if (host.endsWith(".workers.dev"))
+      return { error: "A workers.dev address comes with the Worker: add a domain of your own.", status: 400 };
     const spec = this.deploys.specOf(name);
     for (const other of this.deploys.fleet.names)
       if (this.deploys.specOf(other).host == host) return { error: `${host} is ${other}'s own address.`, status: 409 };
@@ -119,10 +183,59 @@ export class Domains {
     try {
       const cf = await this.deploys.cf();
       const acc = this.deploys.deps.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
-      const zones = (await cf.call<{ id: string; name: string }[]>("GET", `/zones?account.id=${acc}&per_page=50`, "list the account's zones")) ?? [];
+      const zones = (await cf.call<Zone[]>("GET", `/zones?account.id=${acc}&per_page=50`, "list the account's zones")) ?? [];
       const zone = zones.filter((z) => host == z.name || host.endsWith(`.${z.name}`)).sort((a, b) => b.name.length - a.name.length)[0];
-      if (!zone) return { error: `${host} isn't on one of this account's zones (${zones.map((z) => z.name).join(", ") || "none"}): add the domain to Cloudflare first.`, status: 400 };
-      await cf.call("PUT", `/accounts/${acc}/workers/domains`, `put ${spec.worker} on ${host}`, { hostname: host, service: spec.worker, zone_id: zone.id, environment: "production" });
+      if (!zone) return { need: { kind: "zone", hostname: host, domain: domainOf(host), accountId: acc } };
+      if (zone.status != "active") {
+        const z = await cf.call<Zone>("GET", `/zones/${zone.id}`, `read ${zone.name}`).catch(() => zone);
+        return {
+          need: {
+            kind: "nameservers",
+            hostname: host,
+            domain: zone.name,
+            nameservers: z?.name_servers ?? [],
+            current: z?.original_name_servers ?? [],
+          },
+        };
+      }
+      const there =
+        (await cf.call<{ hostname: string; service: string }[]>(
+          "GET",
+          `/accounts/${acc}/workers/domains?hostname=${encodeURIComponent(host)}`,
+          `read ${host}'s custom domain`
+        )) ?? [];
+      const taken = there.find((d) => d.hostname == host && d.service != spec.worker);
+      if (taken)
+        return {
+          error: `${host} is already the address of your Worker ${taken.service}. Remove it there (Workers › ${taken.service} › Domains), or choose another name.`,
+          status: 409,
+        };
+      if (!o.replace) {
+        const records =
+          (await cf
+            .call<{ type: string; name: string; content: string }[]>(
+              "GET",
+              `/zones/${zone.id}/dns_records?name=${encodeURIComponent(host)}`,
+              `read ${host}'s DNS records`
+            )
+            .catch(() => [])) ?? [];
+        if (records.length)
+          return {
+            need: {
+              kind: "replace",
+              hostname: host,
+              domain: zone.name,
+              records: records.map((r) => ({ type: r.type, content: r.content })),
+            },
+          };
+      }
+      await cf.call("PUT", `/accounts/${acc}/workers/domains`, `put ${spec.worker} on ${host}`, {
+        hostname: host,
+        service: spec.worker,
+        zone_id: zone.id,
+        environment: "production",
+        ...(o.replace ? { override_existing_dns_record: true } : {}),
+      });
       console.log(`domain ${host} added to ${name} (${spec.worker}) by ${by}`);
       this.deploys.deps.logged?.({ type: "domains" });
       const view = await this.domains();
@@ -131,6 +244,12 @@ export class Domains {
     } catch (e) {
       return { error: e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`, status: 502 };
     }
+  }
+
+  /** Whether a domain added here answers yet: any answer from https://<host>/ (before its certificate, none). */
+  private async answers(host: string): Promise<boolean> {
+    const r = await this.deploys.deps.net(`https://${host}/api/health`, { signal: AbortSignal.timeout(4000) }).catch(() => null);
+    return !!r;
   }
 
   /** An install: every host its environments answer at, told to upstream (the GitHub consent relay sends people back only to one of them). */
