@@ -147,6 +147,7 @@ export abstract class EditorFormat extends EditorEdit {
     const at = this.currentLink();
     if (!at) return null;
     const { u, el } = at;
+    const sel = this.state.selection.main;
     const open = this.state.doc.sliceString(el.from, el.openTo);
     let rect: DOMRect | null = null;
     const a = this.domAtPos(el.openTo, 1),
@@ -165,6 +166,7 @@ export abstract class EditorFormat extends EditorEdit {
       href: attrOf(open, "href") ?? "",
       text: textIn([u], el.openTo, el.closeFrom),
       self: (attrOf(open, "target") ?? "").toLowerCase() == "_self",
+      inside: !sel.empty || (textIn([u], el.openTo, sel.head) != "" && textIn([u], sel.head, el.closeFrom) != ""),
       rect: rect && (rect.width || rect.height) ? { left: rect.left, top: rect.top, width: rect.width, bottom: rect.bottom } : null,
     };
   }
