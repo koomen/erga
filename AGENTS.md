@@ -153,10 +153,14 @@ Found a new trap? Write it here, in the same change.
   a deleted class; local development uses `cloudflare/dev-entry.ts`.
 - `bun run bench` before and after: one round each. A round is already the
   median of 5 runs.
-- The person's tab may be in the background. Chrome runs a hidden tab's chained
-  timers once a second, after 5 minutes once a minute, and draws no frames. Code
-  that answers the agent from the tab (view_page's render) waits with
-  `client/page-tools/clock.ts`, never with `sleep` or requestAnimationFrame.
+- view_page renders in the server's browser (cloudflare/render.ts): Cloudflare's
+  BROWSER binding, or locally the dev server's Chrome (dev/browser.ts). A browser
+  connection belongs to the Durable Object that opened it: another object in the
+  same isolate gets "Cannot perform I/O on behalf of a different Durable Object".
+  Keep it in the object (`browsers`), never in a module variable.
+- The deploy pipeline (control/deploys/account.ts) refuses a binding type it doesn't
+  know, and it runs on the control Worker, from `main`. A new kind of binding
+  reaches `main` (and the control Worker) before the release that declares it.
 - A live list (`data-live-kind`, server/news/) gets new rows after the page loaded,
   and a changed row is a new element. Attach a row's listeners in its
   `wire(row)` (client/common/live-rows.ts), never in a loop over the rows at

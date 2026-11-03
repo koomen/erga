@@ -197,9 +197,10 @@ health checks and rollbacks work.
     client/       the browser side: editor.html, style.css, fonts/, and the scripts build.ts bundles into .build/
       shell/          the editor's shell (page.js): main.ts, its one word to the page's editor (page-frame.ts: edit, with the
                       edit key, or view), its replica of the room (libs/text/ui/collab.ts), the source view, the shell's parts
-      page-tools/     Erga's page tools in the document's page (tools.js: tools.ts): the agent's view_page and
-                      eval_in_page (a fresh render, capture.ts) and the live page's tools (live-page-tab.ts), apart from
-                      the editing libraries; the page's first script loads them when the viewer first asks
+      page-tools/     Erga's page tools in the document's page: the live page's tools (tools.js: tools.ts,
+                      live-page-tab.ts), apart from the editing libraries, which the page's first script loads when the
+                      viewer first asks; and view_page's and eval_in_page's part in the server's browser (capture.ts,
+                      which client/inline/page-render.ts puts in the page)
       agent/          the agent panel both the editor and the admin pages use (agent-chat.ts, layout.ts, ...)
       admin/          the admin pages' scripts (admin-agent.ts, admin-nav.ts, admin-share.ts)
       pages/          the other pages' scripts: the settings, the pages tree
@@ -209,7 +210,8 @@ health checks and rollbacks work.
       common/         what the inline scripts and the bundles share: fast-click.ts, new-doc.ts, bars.ts, quick.ts, ...
       styles/         admin.css and ops.css, which the build writes as the admin pages' one stylesheet
     cloudflare/   only what runs on Cloudflare: the Worker's entry (index.ts), the Platform from its bindings
-                  (platform.ts; env.ts types them), D1 (d1.ts), R2 (blobs.ts), the sandbox for pages' own APIs (sandbox.ts), the app's Durable Objects (objects/:
+                  (platform.ts; env.ts types them), D1 (d1.ts), R2 (blobs.ts), the sandbox for pages' own APIs (sandbox.ts),
+                  view_page's render in Browser Rendering (render.ts, browser.ts), the app's Durable Objects (objects/:
                   each gives its logic in server/, agents/ or document/ storage, alarms and sockets, and decides
                   nothing), what the deploy pipeline asks of the app (deploy-routes.ts), the dev server's routes
                   (dev.ts, dev-entry.ts)
@@ -229,7 +231,8 @@ health checks and rollbacks work.
     deploy/       what a person runs on a machine: a deploy (run.ts), the release build (release.ts), the setup
                   runbook (setup.ts), the first push of Erga's history (import-source.ts), the targets (targets.json,
                   targets.ts), the settings a deploy locks (locked-settings.ts)
-    dev/          local development: start.ts (`bun start`), the Vite plugin, live reload, the formatter on changed
+    dev/          local development: start.ts (`bun start`), the Vite plugin, live reload, the server's own headless
+                  Chrome for view_page (browser.ts), the formatter on changed
                   lines (format.ts, `bun run format`), a Git server, a mock GitHub, Google and Cloudflare
                   (mock-cloudflare.ts) for tests, and the folders on disk that documents link to (the plugin)
     assets/       files the server ships: logo/, landing/ (the first homepage) and templates/ (new documents)

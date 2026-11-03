@@ -30,11 +30,6 @@ test("the page's bundles (the editor, the page tools) have nothing of @codemirro
     const all = Object.keys(meta.inputs);
     expect(all.filter((p) => p.includes("@codemirror/view"))).toEqual([]);
     expect(all.some((p) => p.endsWith("libs/text/ui/frame-view.ts"))).toBe(true);
-    // The agent's screenshots are Erga's page tools' (tools.js), never the editor's, and load only when asked for: a
-    // chunk of their own.
-    for (const entry of Object.values(meta.outputs).filter((o) => /(frame|tools)\.ts$/.test(o.entryPoint ?? "")))
-      expect(Object.keys(entry.inputs).filter((p) => p.includes("modern-screenshot"))).toEqual([]);
-    expect(all.some((p) => p.includes("modern-screenshot"))).toBe(true);
   } finally {
     rmSync(outdir, { recursive: true, force: true });
   }

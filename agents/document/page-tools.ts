@@ -1,6 +1,6 @@
-// The page tools: view_page and eval_in_page, which render the page afresh in the person's tab (a hidden frame of
-// Erga's page tools: client/page-tools/capture.ts), and the live page's (page_log, page_input, and eval_in_page
-// with live), which read and act on the page as it runs there (shared/live-page.ts).
+// The page tools: view_page and eval_in_page, which render the page afresh in the server's browser
+// (cloudflare/render.ts), and the live page's (page_log, page_input, and eval_in_page with live), which read and act
+// on the page as it runs in the person's open tab (shared/live-page.ts).
 
 import * as Schema from "effect/Schema";
 import type { AgentTool } from "../run";
@@ -11,7 +11,9 @@ import {
   EVAL_MAX_JSON,
   EVAL_TIMEOUT,
   FRAMES,
+  VIEW_DEFAULT,
   type ColorScheme,
+  type Shot,
   type StepShown,
   type ViewRequest,
   type ViewResult,
@@ -25,21 +27,26 @@ import {
   describeTab,
   parseSince,
   type ConsoleLevel,
+  type LiveAnswer,
   type LiveRequest,
   type LiveResult,
 } from "../../shared/live-page";
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
 
-/** view_page, eval_in_page and the live page's tools, over the person's tabs (`view`). */
-export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): AgentTool[] {
+/** view_page and eval_in_page, over the server's browser (`view`), and the live page's tools, over the person's tabs (`live`). */
+export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>, live: (req: LiveRequest) => Promise<LiveAnswer>): AgentTool[] {
   return [
     {
       name: "view_page",
       label: "Look at the page",
-      description: "A picture of the page as the person sees it, with its script errors and fonts.",
+      description: "Pictures of the page, one for each place asked for, with its script errors and fonts.",
       parameters: Schema.Struct({
-        selector: Schema.optionalKey(Schema.String.annotate({ description: "CSS selector of one element to capture." })),
+        selector: Schema.optionalKey(
+          Schema.Union([Schema.String, Schema.Array(Schema.String)]).annotate({
+            description: 'CSS selector of an element to capture, or a list of them: one picture each, e.g. ["header", "#chart"].',
+          })
+        ),
         full_page: Schema.optionalKey(
           Schema.Boolean.annotate({
             description:
@@ -47,21 +54,45 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): Agen
           })
         ),
         ...RENDER,
-        ...STEP_FIELDS,
+        step: Schema.optionalKey(
+          Schema.Union([Schema.String, Schema.Finite, Schema.Array(Schema.Union([Schema.String, Schema.Finite]))]).annotate({
+            description: `${STEP_WORDS} A list gives one picture each, e.g. ["1", "2.3", "4"].`,
+          })
+        ),
+        ...TIME_FIELDS,
         ...PREVIEW,
       }),
-      execute: async (_id, p: { selector?: string; full_page?: boolean } & RenderArgs & StepArgs & PreviewArgs) => {
-        const v = await view({ selector: p.selector, fullPage: p.full_page, ...renderReq(p), ...stepReq(p), ...previewReq(p) });
-        if (v.error || !v.png) throw new Error(v.error ?? "The page couldn't be captured.");
-        const words = { type: "text" as const, text: describeView(v, p.selector, p.full_page) };
-        if (!v.shots?.length) return { content: [{ type: "image" as const, data: v.png, mimeType: "image/png" }, words], details: {} };
+      execute: async (
+        _id,
+        p: { selector?: string | readonly string[]; full_page?: boolean; step?: StepArg | readonly StepArg[] } & RenderArgs &
+          TimeArgs &
+          PreviewArgs
+      ) => {
+        const selectors = p.selector == null ? [] : typeof p.selector == "string" ? [p.selector] : [...p.selector];
+        const steps = p.step == null ? [] : Array.isArray(p.step) ? p.step.map(stepSpec) : [stepSpec(p.step as StepArg)];
+        if (selectors.length > 1 && steps.length > 1) throw new Error("Give a list of selectors or a list of steps, not both.");
+        const times = timeReq(p);
+        const pictures = Math.max(1, selectors.length, steps.length) * Math.max(1, times.frames?.length ?? 1);
+        if (pictures > FRAMES.count)
+          throw new Error(`That is ${pictures} pictures: one call takes at most ${FRAMES.count} (places × frames).`);
+        const v = await view({
+          ...(selectors.length ? { selectors } : {}),
+          ...(steps.length ? { steps } : {}),
+          fullPage: p.full_page,
+          ...renderReq(p),
+          ...times,
+          ...previewReq(p),
+        });
+        if (v.error || !v.shots?.length) throw new Error(v.error ?? "The page couldn't be captured.");
+        const many = v.shots.length > 1,
+          names = shotNames(v.shots);
         return {
           content: [
-            ...v.shots.flatMap((s) => [
-              { type: "text" as const, text: `At ${s.at} ms:` },
+            ...v.shots.flatMap((s, i) => [
+              ...(many ? [{ type: "text" as const, text: `${names[i]}:` }] : []),
               { type: "image" as const, data: s.png, mimeType: "image/png" },
             ]),
-            words,
+            { type: "text" as const, text: describeView(v, p.full_page) },
           ],
           details: {},
         };
@@ -85,12 +116,13 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): Agen
         timeout: Schema.optionalKey(
           Schema.Finite.annotate({ description: `ms to wait (default ${EVAL_TIMEOUT.default}, max ${EVAL_TIMEOUT.max}).` })
         ),
-        ...STEP_FIELDS,
+        step: Schema.optionalKey(Schema.Union([Schema.String, Schema.Finite]).annotate({ description: STEP_WORDS })),
+        ...TIME_FIELDS,
         ...PREVIEW,
       }),
       execute: async (
         _id,
-        p: { expression: string; live?: boolean; frame?: string; timeout?: number } & RenderArgs & StepArgs & PreviewArgs
+        p: { expression: string; live?: boolean; frame?: string; timeout?: number; step?: StepArg } & RenderArgs & TimeArgs & PreviewArgs
       ) => {
         if (!p.expression?.trim()) throw new Error("Give an expression to run.");
         if (p.live) {
@@ -98,13 +130,20 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): Agen
             (k) => (p as Record<string, unknown>)[k] != null
           );
           if (fresh.length) throw new Error(`${fresh.join(", ")} apply to a fresh copy only, not with live.`);
-          const r = await askLive(view, { kind: "inspect", expression: p.expression, frame: p.frame, timeout: p.timeout });
+          const r = await askLive(live, { kind: "inspect", expression: p.expression, frame: p.frame, timeout: p.timeout });
           const i = r.inspect!;
           if (i.error) throw new Error(`${i.error} ${describeTab(r.tab)}`.trim());
           return text(`${i.value}${i.note ? `\n\n[${i.note}]` : ""}\n${describeTab(r.tab)}`);
         }
         if (p.frame != null) throw new Error("frame applies to the live page only: give live: true with it.");
-        const v = await view({ evaluate: p.expression, timeout: p.timeout, ...renderReq(p), ...stepReq(p), ...previewReq(p) });
+        const v = await view({
+          evaluate: p.expression,
+          timeout: p.timeout,
+          ...renderReq(p),
+          ...(p.step != null ? { steps: [stepSpec(p.step)] } : {}),
+          ...timeReq(p),
+          ...previewReq(p),
+        });
         const errors = v.errors.length ? `\nThe page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "";
         if (v.error || v.value == null) throw new Error((v.error ?? "The page couldn't be inspected.") + errors);
         const where = [v.page ? `Rendered ${v.page}` : "", v.step ? `at ${describeStep(v.step)}` : ""].filter(Boolean).join(" ");
@@ -113,7 +152,7 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): Agen
         );
       },
     },
-    ...liveTools(view),
+    ...liveTools(live),
   ] as AgentTool[];
 }
 
@@ -123,10 +162,10 @@ const FRAME = Schema.optionalKey(
   })
 );
 
-/** A request to the live page, over view_page's path: its answer, or an error that says why there's none. */
-async function askLive(view: (req: ViewRequest) => Promise<ViewResult>, req: LiveRequest): Promise<LiveResult> {
-  const v = await view({ live: req });
-  if (v.error || v.value == null) throw new Error(v.error ?? "The tab didn't answer.");
+/** A request to the live page, in the person's tabs: its answer, or an error that says why there's none. */
+async function askLive(live: (req: LiveRequest) => Promise<LiveAnswer>, req: LiveRequest): Promise<LiveResult> {
+  const v = await live(req);
+  if (v.value == null) throw new Error("The tab didn't answer.");
   let r: LiveResult;
   try {
     r = JSON.parse(v.value) as LiveResult;
@@ -153,8 +192,8 @@ type LogArgs = {
  * page_log and page_input: the live page in the person's open editor tab (shared/live-page.ts), not view_page's
  * throwaway render. Asked over view_page's path.
  */
-function liveTools(view: (req: ViewRequest) => Promise<ViewResult>): AgentTool[] {
-  const ask = (req: LiveRequest) => askLive(view, req);
+function liveTools(live: (req: LiveRequest) => Promise<LiveAnswer>): AgentTool[] {
+  const ask = (req: LiveRequest) => askLive(live, req);
   return [
     {
       name: "page_log",
@@ -249,20 +288,17 @@ function liveTools(view: (req: ViewRequest) => Promise<ViewResult>): AgentTool[]
 
 /** The render's size and mode, as view_page and eval_in_page take them. */
 const RENDER = {
-  width: Schema.optionalKey(Schema.Finite.annotate({ description: "Width in CSS px (default: the person's)." })),
-  height: Schema.optionalKey(Schema.Finite.annotate({ description: "Screen height in CSS px (default: the person's)." })),
-  color_scheme: Schema.optionalKey(Schema.Literals(["light", "dark"]).annotate({ description: "Default: the person's." })),
+  width: Schema.optionalKey(Schema.Finite.annotate({ description: `Width in CSS px (default ${VIEW_DEFAULT.width}).` })),
+  height: Schema.optionalKey(Schema.Finite.annotate({ description: `Screen height in CSS px (default ${VIEW_DEFAULT.height}).` })),
+  color_scheme: Schema.optionalKey(Schema.Literals(["light", "dark"]).annotate({ description: "Default: light." })),
 };
 type RenderArgs = { width?: number; height?: number; color_scheme?: ColorScheme };
 const renderReq = (p: RenderArgs) => ({ width: p.width, height: p.height, colorScheme: p.color_scheme });
 
-/** step, at_ms and frames: a presentation's step, and when. */
-const STEP_FIELDS = {
-  step: Schema.optionalKey(
-    Schema.Union([Schema.String, Schema.Finite]).annotate({
-      description: 'A step of a presentation (window.ergaSteps) to show first: "3", "3.2" (slide 3, part 2) or "#3.2".',
-    })
-  ),
+type StepArg = string | number;
+const STEP_WORDS = 'A step of a presentation (window.ergaSteps) to show first: "3", "3.2" (slide 3, part 2) or "#3.2".';
+/** at_ms and frames: when, after the step or the load. */
+const TIME_FIELDS = {
   at_ms: Schema.optionalKey(
     Schema.Finite.annotate({
       description: `ms after the step or load (default ${FRAMES.afterStep} after a step, ${FRAMES.afterLoad} after load; max ${FRAMES.max}).`,
@@ -274,17 +310,17 @@ const STEP_FIELDS = {
     })
   ),
 };
-type StepArgs = { step?: string | number; at_ms?: number; frames?: readonly number[] };
-function stepReq(p: StepArgs): { step?: string; atMs?: number; frames?: number[] } {
+type TimeArgs = { at_ms?: number; frames?: readonly number[] };
+function timeReq(p: TimeArgs): { atMs?: number; frames?: number[] } {
   if (p.at_ms != null && p.frames?.length) throw new Error("Give at_ms or frames, not both.");
-  return { step: p.step == null ? undefined : stepSpec(p.step), atMs: p.at_ms, ...(p.frames?.length ? { frames: [...p.frames] } : {}) };
+  return { atMs: p.at_ms, ...(p.frames?.length ? { frames: [...p.frames] } : {}) };
 }
 const PREVIEW = {
   edits: Schema.optionalKey(
     EDITS.annotate({ description: "A preview: edits as the edit tool takes them, on a copy, for this render only." })
   ),
   path: Schema.optionalKey(
-    Schema.String.annotate({ description: 'Another page of the document to render, e.g. "notes.html" (default: the open one).' })
+    Schema.String.annotate({ description: 'The page of the document to render, e.g. "notes.html" (default: its own page).' })
   ),
 };
 type PreviewArgs = { edits?: readonly TextEdit[]; path?: string };
@@ -298,10 +334,31 @@ const describePreview = (p: { path: string; edits: number }) =>
   `A preview: ${p.edits} edit${p.edits == 1 ? "" : "s"} applied to a copy of ${p.path}, for this render only. The document is unchanged: apply them with edit.`;
 const describeStep = (s: StepShown) => `step ${s.number} (index ${s.index} of ${s.count}${s.label ? `: ${s.label}` : ""})`;
 
-/** view_page's words beside its picture: what it shows, how it rendered (size, mode, fonts), and the page's errors. */
-export function describeView(v: ViewResult, selector?: string, fullPage?: boolean): string {
+/** Each picture's name, as the words before it say it: what differs between the pictures (the element, the step) and when. */
+function shotNames(shots: readonly Shot[]): string[] {
+  const vary = (f: (s: Shot) => unknown) => new Set(shots.map(f)).size > 1;
+  const bySelector = vary((s) => s.selector),
+    byStep = vary((s) => s.step?.index);
+  return shots.map((s) =>
+    [bySelector ? s.selector : "", byStep && s.step ? describeStep(s.step) : "", `at ${s.at} ms`]
+      .filter(Boolean)
+      .join(", ")
+      .replace(/^at/, "At")
+  );
+}
+
+/** view_page's words beside its pictures: what they show, how the page rendered (size, mode, fonts), and its errors. */
+export function describeView(v: ViewResult, fullPage?: boolean): string {
+  const shots = v.shots ?? [];
+  const one = shots.length == 1 ? shots[0] : null;
   const lines = [
-    `Screenshot${v.shots ? `s (${v.shots.length})` : ""}: ${v.width}×${v.height}px${selector ? ` of ${selector}` : fullPage ? ", whole page" : ", top of the page"}${v.page ? `, of ${v.page}` : ""}${v.step ? `, at ${describeStep(v.step)}` : ""}.`,
+    one
+      ? `Screenshot: ${one.width}×${one.height}px${one.selector ? ` of ${one.selector}` : fullPage ? ", whole page" : ", top of the page"}${v.page ? `, of ${v.page}` : ""}${one.step ? `, at ${describeStep(one.step)}` : ""}.`
+      : `Screenshots (${shots.length})${v.page ? ` of ${v.page}` : ""}${shots[0]?.selector && !shots.some((s) => s.selector != shots[0].selector) ? `, of ${shots[0].selector}` : ""}${shots[0]?.step && !shots.some((s) => s.step?.index != shots[0].step?.index) ? `, at ${describeStep(shots[0].step)}` : ""}: ${shotNames(
+          shots
+        )
+          .map((n, i) => `${n.replace(/^At/, "at")}, ${shots[i].width}×${shots[i].height}px`)
+          .join("; ")}.`,
   ];
   if (v.viewport || v.colorScheme)
     lines.push(
@@ -315,6 +372,7 @@ export function describeView(v: ViewResult, selector?: string, fullPage?: boolea
       );
   }
   if (v.pending?.length) lines.push(`Still loading when the picture was taken: ${v.pending.join(", ")}.`);
+  for (const s of shots) if (s.note) lines.push(s.note);
   if (v.note) lines.push(v.note);
   if (v.preview) lines.push(describePreview(v.preview));
   lines.push(v.errors.length ? `The page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "No script errors.");

@@ -1,5 +1,5 @@
-// The multiplayer suite in real tabs: the agent panel is per person, view_page goes
-// through its owner's tab, others see its edits as they happen, a message that can't be sent says so.
+// The multiplayer suite in real tabs: the agent panel is per person, view_page answers
+// a picture in its owner's panel, others see its edits as they happen, a message that can't be sent says so.
 import { expect } from "./harness";
 import { until } from "../../helpers/fixtures";
 import { browserTest, marksNow, noErrors, openAs, peerNames, seenMarks, watchMarks } from "./suite";
@@ -13,8 +13,18 @@ browserTest(FILE, "the agent panel is per person, and the agent sees the page th
   const script = JSON.stringify([{ tool: "edit", args: { path: d.path, edits: [{ oldText: "<h1>Launch notes", newText: "<h1>Launch notes by agent" }] } }, { tool: "view_page", args: { selector: "h1" } }, { text: "Looked." }]);
   await a.eval(`(() => { const i = document.getElementById("agent-input"); i.value = ${JSON.stringify("Check it @script " + script)}; i.dispatchEvent(new Event("input")); })()`);
   await a.press("Enter");
-  await until(async () => a.eval<boolean>(`[...document.querySelectorAll(".msg-assistant")].some((e) => e.textContent == "Looked.")`), 10_000, "Ada's panel shows the reply");
-  expect(await a.eval<boolean>(`[...document.querySelectorAll(".msg-tool")].some((e) => /Looked at the page/.test(e.textContent) && e.querySelector("img.shot")?.naturalWidth > 0)`), "view_page captured the page in Ada's tab", await a.eval(`[...document.querySelectorAll(".msg-tool")].map((e) => e.textContent).join(" | ")`));
+  await until(
+    async () => a.eval<boolean>(`[...document.querySelectorAll(".msg-assistant")].some((e) => e.textContent == "Looked.")`),
+    10_000,
+    "Ada's panel shows the reply"
+  );
+  expect(
+    await a.eval<boolean>(
+      `[...document.querySelectorAll(".msg-tool")].some((e) => /Looked at the page/.test(e.textContent) && e.querySelector("img.shot")?.naturalWidth > 0)`
+    ),
+    "view_page answered a picture of the page",
+    await a.eval(`[...document.querySelectorAll(".msg-tool")].map((e) => e.textContent).join(" | ")`)
+  );
   await until(async () => (await b.textOf("h1")).includes("by agent"), 5000, "Bo's page shows the agent's edit");
   expect(!(await b.eval<boolean>(`[...document.querySelectorAll(".msg-user, .msg-assistant")].length > 0`)), "Bo's panel shows none of it");
   await until(async () => b.eval<boolean>(`[...document.querySelectorAll(":is(#people, #me) .agent-badge")].some((e) => /Ada, via their agent/.test(e.dataset.tip))`), 5000, "the agent's badge shows on Bo's page");

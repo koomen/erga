@@ -1,16 +1,20 @@
-// view_page's words beside its picture: the size and
+// view_page's words beside its pictures: the size and
 // mode the page rendered in, the fonts its text rendered in (a fallback says
-// what the page asked for), what was still loading, and its script errors.
-// The capture itself, in a browser: e2e/page/view-*.e2e.ts.
+// what the page asked for), what was still loading, its script errors, and
+// where and when each picture was taken. The render itself: e2e/full/page/view-*.e2e.ts.
 
 import { describe, expect, test } from "bun:test";
 import { describeView } from "../agents/document/page-tools";
 
+const shot = (o: object) => ({ png: "x", width: 1100, height: 800, at: 600, ...o });
+
 describe("describeView", () => {
   test("says the size, the mode and the fonts", () => {
     const text = describeView({
-      png: "x", width: 1100, height: 800, errors: [],
-      viewport: { width: 1100, height: 800 }, colorScheme: "dark",
+      shots: [shot({})],
+      errors: [],
+      viewport: { width: 1100, height: 800 },
+      colorScheme: "dark",
       fonts: [
         { family: "Literata", elements: 12, tags: ["p", "li"] },
         { family: "Helvetica Neue", wanted: "Instrument Sans", elements: 1, tags: ["h1"] },
@@ -24,10 +28,23 @@ describe("describeView", () => {
   });
 
   test("says what was still loading, and the page's errors", () => {
-    const text = describeView({ png: "x", width: 300, height: 40, errors: ["boom"], pending: ["font Literata 400 normal"] }, "h1");
+    const text = describeView({
+      shots: [shot({ width: 300, height: 40, selector: "h1" })],
+      errors: ["boom"],
+      pending: ["font Literata 400 normal"],
+    });
     expect(text).toContain("Screenshot: 300×40px of h1.");
     expect(text).toContain("Still loading when the picture was taken: font Literata 400 normal.");
     expect(text).toContain("The page threw 1 error(s):\nboom");
     expect(text).not.toContain("Rendered");
+  });
+
+  test("names each picture's place and time, when there are several", () => {
+    const text = describeView({
+      shots: [shot({ width: 300, height: 40, selector: "h1" }), shot({ width: 500, height: 90, selector: "#chart" })],
+      errors: [],
+      page: "index.html",
+    });
+    expect(text).toContain("Screenshots (2) of index.html: h1, at 600 ms, 300×40px; #chart, at 600 ms, 500×90px.");
   });
 });

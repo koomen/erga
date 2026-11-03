@@ -5,6 +5,19 @@
 // models and their tools are in agents/: the document only holds this side of it.
 
 import type { LogEvent, ViewRequest, ViewResult } from "../shared/agent-log.ts";
+import type { LiveAnswer, LiveRequest } from "../shared/live-page.ts";
+
+/** A render of one of the document's pages in the server's browser (view_page, eval_in_page: cloudflare/render.ts). */
+export interface RenderJob {
+  /** The page's file, and the text to render: the room's now, or a preview's. */
+  path: string;
+  html: string;
+  /** The person whose agent asked (their id): the render reads the document as them. */
+  by: string;
+  /** The app's origin, where the document's pages origin and its token are made. */
+  origin: string;
+  req: ViewRequest;
+}
 import type { DocKind } from "./pages.ts";
 import type { Sandbox } from "./page-api.ts";
 import type { Room } from "./room.ts";
@@ -61,8 +74,10 @@ export interface SessionOptions {
   kind?: () => DocKind;
   /** Whether the owner may edit (an agent acts with its user's permissions). */
   canEdit: () => boolean;
-  /** Asks one of the owner's open tabs to render and capture the page. */
+  /** Renders the page in the server's browser (view_page, eval_in_page). */
   view: (req: ViewRequest) => Promise<ViewResult>;
+  /** Asks the owner's open tabs about the live page (page_log, page_input, eval_in_page with live): the best answer. */
+  live: (req: LiveRequest) => Promise<LiveAnswer>;
   readAsset: (path: string) => Promise<Uint8Array | null>;
   /** Switches the owner's open editor tabs to a page (open_page). */
   open?: (path: string) => Promise<OpenResult>;

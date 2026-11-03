@@ -10,7 +10,8 @@ each one with yours.
 ## What you need
 
 - A Cloudflare account on the Workers Paid plan (Durable Objects, D1, R2,
-  Containers and Artifacts).
+  Containers, Artifacts and Browser Rendering, which the agents' `view_page`
+  renders pages in: it needs no setup of its own).
 - Three zones in that account:
   - the app's zone, for example `example.com`. Production, staging and the
     control Worker use hostnames in it.

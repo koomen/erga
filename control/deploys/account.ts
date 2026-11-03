@@ -51,6 +51,8 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     else if (b.type == "r2") bindings.push({ type: "r2_bucket", name, bucket_name: bucketName(target, name) });
     // A Worker Loader: the Worker runs code it loads, in a sandbox of its own (a page's own API, for agents' calls).
     else if (b.type == "worker-loader") bindings.push({ type: "worker_loader", name });
+    // Cloudflare Browser Rendering (Workers Paid): the browser view_page renders pages in (cloudflare/render.ts).
+    else if (b.type == "browser") bindings.push({ type: "browser", name });
     else
       throw new DeployError({
         message: `This release has a binding this page doesn't know how to make (${name}, ${b.type}): it needs a newer deploy page.`,

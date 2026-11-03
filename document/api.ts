@@ -109,27 +109,12 @@ export const Api = HttpApi.make("erga")
     .add(HttpApiEndpoint.get("info", "/api/doc", { success: DocInfo }))
     .middleware(PersonFromRequest))
   .add(HttpApiGroup.make("agent")
-    /** A tab's answer to the agent's view_page request. */
-    .add(HttpApiEndpoint.post("view", "/api/agent/view", {
+    /** A tab's answer to the agent's live page request (shared/live-page.ts, LiveAnswer). */
+    .add(
+      HttpApiEndpoint.post("live", "/api/agent/live", {
       payload: Schema.Struct({
         id: Schema.String,
-        png: Schema.optional(Schema.String),
-        width: Schema.Number,
-        height: Schema.Number,
-        errors: Schema.Array(Schema.String),
-        viewport: Schema.optional(Schema.Struct({ width: Schema.Number, height: Schema.Number })),
-        colorScheme: Schema.optional(Schema.Literals(["light", "dark"])),
-        fonts: Schema.optional(Schema.Array(Schema.Struct({ family: Schema.String, wanted: Schema.optional(Schema.String), elements: Schema.Number, tags: Schema.Array(Schema.String) }))),
-        pending: Schema.optional(Schema.Array(Schema.String)),
-        note: Schema.optional(Schema.String),
-        error: Schema.optional(Schema.String),
         value: Schema.optional(Schema.String),
-        page: Schema.optional(Schema.String),
-        preview: Schema.optional(Schema.Struct({ path: Schema.String, edits: Schema.Number })),
-        step: Schema.optional(
-          Schema.Struct({ index: Schema.Number, number: Schema.String, count: Schema.Number, label: Schema.optional(Schema.String) })
-        ),
-        shots: Schema.optional(Schema.Array(Schema.Struct({ at: Schema.Number, png: Schema.String }))),
         declined: Schema.optional(Schema.Boolean),
         rank: Schema.optional(Schema.Number),
       }),

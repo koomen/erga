@@ -1,10 +1,6 @@
-// The agent's requests to see and use the page, which this tab answers: view_page, and the live page's tools
-// (page_log, page_input).
+// The agent's requests to use the live page, which this tab answers: page_log, page_input and eval_in_page with live.
+// (view_page renders on the server: cloudflare/render.ts.)
 
-import type { ViewRequest, ViewResult } from "../../shared/agent-log";
-import { aimEdits, applySpans } from "../../shared/text-edits";
-import { cleanPath, isPage, resolvePage } from "../../document/pages";
-import { files } from "../../document/content";
 import { ConsoleLog, liveWatch, queryConsole, shownInTab, type ConsoleLevel, type LiveRequest, type LiveResult } from "../../shared/live-page";
 import { ms } from "../../libs/text/ui/timescale";
 import { $, type Shell } from "./shell";
@@ -23,45 +19,6 @@ export function mountPageRequests(shell: Shell) {
     shell.frame,
     new URL(document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]')!.content, location.href).origin
   );
-
-
-  // The agent asks to see the page: the page editor's frame draws it,
-  // with the latest edits, and the picture goes back to the agent.
-  // No server-side browser: whoever has the editor open is the agent's eyes.
-  const captureView = async (req: ViewRequest): Promise<ViewResult> => {
-    const fail = (error: string): ViewResult => ({ width: 0, height: 0, errors: [], error });
-    // The page asked for (path), else the open one: another is rendered from the room's text, at its own address.
-    const open = shell.pagePath,
-      all = files(shell.collab.doc);
-    const asked = req.path == null ? open : (cleanPath(req.path) ?? "");
-    const path = all.has(asked) ? asked : (resolvePage((p) => all.has(p), req.path ?? "")?.file ?? null);
-    if (path == null || !isPage(path)) return fail(`Nothing was rendered: there's no page ${req.path} in this document (ls lists them).`);
-    const other = path != open;
-    const source = other ? all.get(path)!.toString() : shell.collab.current();
-    const base = other ? path.slice(0, path.lastIndexOf("/") + 1) : undefined;
-    if (!req.preview) return { ...(await tools.capture(req, source, base)), page: path };
-    // A preview: the edits on a copy of the page's text, for this render only.
-    const edits = Array.isArray(req.preview.edits) ? req.preview.edits : [];
-    const aimed = aimEdits(source, edits, path);
-    if ("reason" in aimed) return fail(`Nothing was rendered: ${aimed.message}`);
-    return {
-      ...(await tools.capture(req, applySpans(source, aimed.spans), base)),
-      page: path,
-      preview: { path, edits: edits.length },
-    };
-  };
-  async function answerView(id: string, req: ViewRequest) {
-    // Render only once this tab has every edit the agent had made when it asked.
-    if (req.after) await shell.collab.waitFor(req.after);
-    const result = await captureView(req);
-    // With several of the person's tabs open, the host takes the focused one's answer (else a visible one's): the page they look at.
-    const rank = document.hasFocus() ? 2 : document.visibilityState == "visible" ? 1 : 0;
-    await fetch(shell.api("/api/agent/view"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, ...result, page: result.page ?? shell.pagePath, rank, declined: result.error != null }),
-    }).catch(() => {});
-  }
 
 
   // The agent's page_log and page_input: the page as it runs
@@ -97,9 +54,13 @@ export function mountPageRequests(shell: Shell) {
     }
     const declined = result.error != null;
     const rank = tab.focused ? 2 : tab.visible ? 1 : 0;
-    await fetch(shell.api("/api/agent/view"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, width: 0, height: 0, errors: [], value: JSON.stringify({ ...result, tab }), declined, rank }) }).catch(() => {});
+    await fetch(shell.api("/api/agent/live"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, value: JSON.stringify({ ...result, tab }), declined, rank }),
+    }).catch(() => {});
   }
-  return { captureView, answerView, answerLive };
+  return { answerLive };
 }
 
 export type PageRequests = ReturnType<typeof mountPageRequests>;

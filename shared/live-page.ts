@@ -10,13 +10,14 @@
 //                  stopPropagation): the editor or the page
 //
 // page_log reads them, and the page's frames; page_input acts on the page,
-// through the editor's own handlers. The host asks the person's tabs over the same path
-// view_page uses (POST /api/agent/view): a ViewRequest with `live`.
+// through the editor's own handlers. The host sends the request to the person's tabs ({ type: "live" }), and each
+// answers on POST /api/agent/live: the LiveResult as JSON.
 //
 // Pure: the logs and the words for the agent are here, tested in tests/live-page.test.ts;
 // the tab's side is client/page-tools/live-page-tab.ts.
 
 import { plural } from "./time";
+import { evalTimeout } from "./agent-log";
 
 export type ConsoleLevel = "error" | "warn" | "info" | "log" | "debug";
 export const CONSOLE_LEVELS: ConsoleLevel[] = ["error", "warn", "info", "log", "debug"];
@@ -29,6 +30,16 @@ export type LiveRequest =
   | { kind: "inspect"; expression?: string; frame?: string; timeout?: number }
   | { kind: "click"; selector?: string; x?: number; y?: number; frame?: string }
   | { kind: "key"; key: string; selector?: string; frame?: string; shift?: boolean; alt?: boolean; ctrl?: boolean; meta?: boolean };
+
+/** How long the host waits for the tabs' answers, in ms. */
+export const liveWait = (r: LiveRequest) => 12_000 + (r.kind == "inspect" ? evalTimeout(r) : 0);
+
+/** A tab's answer: the LiveResult as JSON (`value`); declined, when the tab couldn't; rank 2 from the focused tab, 1 a visible one. */
+export interface LiveAnswer {
+  value?: string;
+  declined?: boolean;
+  rank?: number;
+}
 
 /** page_input acts; the rest only read. */
 export const actsOnPage = (r: LiveRequest) => r.kind == "click" || r.kind == "key";

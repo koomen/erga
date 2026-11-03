@@ -43,14 +43,18 @@ test("the pencil opens the page shown in the editor, rendered with its folder's 
   const rendered = () => ed.frame<{ h1: string; color: string } | null>(`(() => { const h = ${F}?.querySelector("h1"); return h ? { h1: h.textContent, color: getComputedStyle(h).color } : null; })()`);
   await expect.poll(async () => (await rendered())?.h1).toBe("Blog");
   expect((await rendered())!.color).toBe("rgb(180, 40, 30)");
-  // eval_in_page: the agent's expression runs in that page as the editor renders it, and changes nothing.
+  // eval_in_page: the agent's expression runs in that page (path: the agent's context names the page open), and changes nothing.
   const evaluated = await s.tool("eval_in_page", {
+    path: "blog/index.html",
     expression: `({ color: getComputedStyle(document.querySelector("h1")).color, h1: document.querySelector("h1").getBoundingClientRect().height > 0 })`,
   });
   expect(evaluated.ok).toBe(true);
   expect(evaluated.text.startsWith('{"color":"rgb(180, 40, 30)","h1":true}')).toBe(true);
   const before = await (await s.get(`/d/${s.id}/doc/blog/index.html`)).text();
-  const meddled = await s.tool("eval_in_page", { expression: `document.querySelector("h1").textContent = "Meddled"` });
+  const meddled = await s.tool("eval_in_page", {
+    path: "blog/index.html",
+    expression: `document.querySelector("h1").textContent = "Meddled"`,
+  });
   expect(meddled.ok).toBe(true);
   expect(meddled.text.startsWith('"Meddled"')).toBe(true);
   await ed.settle();

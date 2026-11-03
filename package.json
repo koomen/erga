@@ -23,6 +23,7 @@
     "look": "bun e2e/look.ts"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "1.4.0",
     "@codemirror/commands": "6.11.1",
     "@codemirror/lang-html": "6.4.12",
     "@codemirror/language": "6.12.4",
@@ -34,7 +35,6 @@
     "diff": "8.0.2",
     "effect": "4.1.0",
     "lib0": "0.2.119",
-    "modern-screenshot": "4.7.0",
     "pdf-lib": "1.17.1",
     "unpdf": "1.4.0",
     "y-protocols": "1.0.7",

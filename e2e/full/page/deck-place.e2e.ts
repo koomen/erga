@@ -1,7 +1,8 @@
 // A deck keeps its slide in its own address's hash (agents/document/PROMPT.md, rule 11): the tab's address shows it, so
 // a reload by hand, the editor's own reload of the page (a change it can't patch in), and the link in another tab all open
 // at that slide. A page with no hash logic is as before.
-import { editor, F, openEditor, type Editor } from "../../helpers/editor";
+import { editor, F, openEditor } from "../../helpers/editor";
+import { agentTools } from "./view-page";
 import { expect, servers, test } from "../../helpers/fixtures";
 
 await servers.main();
@@ -89,47 +90,31 @@ test("a page with no hash logic: a reload keeps the address as it was, with no h
   expect(await again.eval<string>(`location.search`)).toBe("?edit");
 });
 
-// view_page and eval_in_page render the page in a frame of their own: about:srcdoc, with a <base> at the page's real
-// address. Rule 14's example, as written, must run there too: a hash-only address is the page's own, not the base's.
-type Ev = { value?: string; error?: string; errors: string[] };
-const ev = (ed: Editor, expr: string) => ed.eval<Ev>(`ergaPage.captureView({ evaluate: ${JSON.stringify(expr)} })`);
-
-test("in view_page's render (srcdoc, with a <base>), rule 11's example runs with no error, and a hash moves the deck", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "deck");
-  const at = await ev(
-    ed,
-    `({ href: location.href, base: document.baseURI, slide: document.querySelector(".slide.current h1").textContent })`
-  );
-  expect(at.error).toBeUndefined();
-  expect(at.errors).toEqual([]);
-  const v = JSON.parse(at.value!);
-  expect(v.href).toBe("about:srcdoc#1");
-  expect(v.base).not.toBe(v.href);
-  expect(v.slide).toBe("First slide");
+// view_page and eval_in_page render the page in the server's browser, at its own address on the document's pages
+// origin. Rule 14's example, as written, runs there too, and the page's own moves change its hash.
+test("in view_page's render, rule 11's example runs with no error, and a hash moves the deck", async ({ tab }) => {
+  const s = await servers.main();
+  const ed = await openEditor(tab, s, "deck");
+  const { tool } = await agentTools(s, ed.address);
+  const at = await tool("eval_in_page", {
+    expression: `({ hash: location.hash, slide: document.querySelector(".slide.current h1").textContent })`,
+  });
+  expect(at.text).not.toContain("error(s)");
+  expect(JSON.parse(at.text.split("\n\n")[0])).toEqual({ hash: "#1", slide: "First slide" });
   // The page's own moves, in the same render: a key, location.hash, a link to a hash, and pushState.
-  const moved = await ev(
-    ed,
-    `const out = [], h1 = () => document.querySelector(".slide.current h1").textContent;
+  const moved = await tool("eval_in_page", {
+    expression: `const out = [], h1 = () => document.querySelector(".slide.current h1").textContent;
      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
-     out.push(location.href, h1());
+     out.push(location.hash, h1());
      location.hash = "3";
-     out.push(location.href);
+     out.push(location.hash);
      const a = document.createElement("a"); a.href = "#2"; a.textContent = "two"; document.body.append(a); a.click();
      await new Promise((r) => setTimeout(r, 50));
-     out.push(location.href, document.querySelectorAll(".slide").length);
+     out.push(location.hash, document.querySelectorAll(".slide").length);
      history.pushState(null, "", "#1");
-     out.push(location.href);
-     return out;`
-  );
-  expect(moved.error).toBeUndefined();
-  expect(moved.errors).toEqual([]);
-  expect(JSON.parse(moved.value!)).toEqual(["about:srcdoc#2", "Second slide", "about:srcdoc#3", "about:srcdoc#2", 3, "about:srcdoc#1"]);
-  // At slide 3 in the editor, the render opens at slide 3 too: what the person sees.
-  await ed.press("Escape");
-  await ed.press("ArrowRight");
-  await ed.press("ArrowRight");
-  await expect.poll(() => ed.eval<string>(`location.hash`)).toBe("#3");
-  const third = await ev(ed, `[location.href, document.querySelector(".slide.current h1").textContent]`);
-  expect(third.errors).toEqual([]);
-  expect(JSON.parse(third.value!)).toEqual(["about:srcdoc#3", "Third slide"]);
+     out.push(location.hash);
+     return out;`,
+  });
+  expect(moved.text).not.toContain("error(s)");
+  expect(JSON.parse(moved.text.split("\n\n")[0])).toEqual(["#2", "Second slide", "#3", "#2", 3, "#1"]);
 });

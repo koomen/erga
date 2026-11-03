@@ -38,7 +38,8 @@ test("frames [100, 600] catch the bar partway through its transition; eval_in_pa
   const { ed, tool, fails } = await deck(tab);
   const v = await tool("view_page", { step: "3.2", frames: [100, 600] });
   expect(v.images).toHaveLength(2);
-  expect(v.text).toMatch(/At \d+ ms:[\s\S]*At \d+ ms:/);
+  expect(v.text).toMatch(/^At \d+ ms:\n?At \d+ ms:/m);
+  expect(v.text).toContain("Screenshots (2) of index.html, at step 3.2 (index 5 of 7: Third slide): at");
   expect(await differ(ed, v.images[0], v.images[1]), "the bar grew between 100 and 600 ms").toBeGreaterThan(100);
   // From 1/7 of the width to 6/7 in 1.5 s, linear: at 300 ms it is a fifth of the way, at 900 ms three fifths.
   const e = await tool("eval_in_page", {
@@ -54,6 +55,32 @@ test("frames [100, 600] catch the bar partway through its transition; eval_in_pa
   for (const r of runs)
     expect(Math.abs(r.value - want(r.at_ms)), `width at ${r.at_ms} ms: ${r.value}, not ${want(r.at_ms)}`).toBeLessThan(0.06);
   expect(await fails("view_page", { step: "3.2", frames: [100], at_ms: 100 })).toMatch(/at_ms or frames, not both/);
+});
+
+test("the glide deck at step 2.2: its camera glides there by requestAnimationFrame, and both tools see it there", {
+  timeout: 30_000,
+}, async ({ tab }) => {
+  const { tool } = await deck(tab, "glide");
+  const at = await tool("eval_in_page", {
+    step: "2.2",
+    expression: `[document.querySelector(".current h2").textContent, document.querySelector(".current").classList.contains("arrived"), getComputedStyle(document.querySelector(".canvas")).transform, getComputedStyle(document.querySelector(".current .build")).visibility]`,
+  });
+  expect(JSON.parse(at.text.split("\n\n")[0])).toEqual(["Second frame", true, "matrix(1, 0, 0, 1, -1000, 0)", "visible"]);
+  const seen = await tool("view_page", { step: "2.2" });
+  expect(seen.images).toHaveLength(1);
+  expect(seen.text).toContain("at step 2.2 (index 2 of 4: Second frame)");
+});
+
+test("a list of steps gives one picture each, in order, from one render", { timeout: 30_000 }, async ({ tab }) => {
+  const { ed, tool, fails } = await deck(tab);
+  const v = await tool("view_page", { step: ["1", "3.2", "3.3"] });
+  expect(v.images).toHaveLength(3);
+  expect(v.text).toMatch(/^step 1\.1 \(index 0 of 7: First slide\), at \d+ ms:$/m);
+  expect(v.text).toMatch(/step 3\.2 \(index 5 of 7: Third slide\), at \d+ ms, 1280×800px/);
+  expect(await differ(ed, v.images[1], v.images[2]), "3.3 shows Blue, 3.2 doesn't").toBeGreaterThan(50);
+  expect(await fails("view_page", { step: ["1", "2"], selector: ["h1", "h2"] })).toMatch(
+    /a list of selectors or a list of steps, not both/
+  );
 });
 
 test("eval_in_page sees the deck's window.ergaSteps every time, 10 times in a row", { timeout: 60_000 }, async ({ tab }) => {

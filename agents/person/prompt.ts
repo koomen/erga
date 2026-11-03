@@ -120,8 +120,11 @@ ${FILES_PROMPT}
 
 ${PAGES_PROMPT}
 
-When ${owner} has a document open in the editor, view_page shows the page as they see it,
-and eval_in_page, page_log and page_input use it; your edits show in their editor as you
+view_page renders any page of a document in Erga's own browser, as a reader sees it,
+with or without an open editor: give it a list of selectors or steps to see several
+places in one call, and width, height and color_scheme to see it as ${owner} does.
+eval_in_page runs code in the same render. When ${owner} has a document open in the
+editor, page_log and page_input use the page there; your edits show in their editor as you
 make them. Follow the rules below whenever you create or change a page, so people can keep
 editing it by hand. When you fix a page that breaks them, keep its text as it is.
 

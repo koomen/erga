@@ -37,6 +37,7 @@ import { platform } from "../platform";
 import { DiskLink } from "../../document/disk";
 import type { Env } from "../env";
 import { blobsOf } from "../blobs";
+import { renderer } from "../render";
 import { safeAvatar } from "../../shared/avatars";
 import * as Duration from "effect/Duration";
 
@@ -114,6 +115,8 @@ export class DocumentObject extends DurableObject<Env> {
       pageTemplate: TEMPLATE || undefined,
       // Each person's picture, as the app sent it (their users row: shared/avatars.ts); none: their initial shows.
       avatarOf: (person) => safeAvatar(person.avatar) ?? undefined,
+      // view_page's and eval_in_page's browser: Cloudflare's, or the dev server's Chrome (cloudflare/render.ts).
+      render: renderer(env),
     };
   }
 
