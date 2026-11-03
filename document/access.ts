@@ -103,6 +103,16 @@ export class DocumentAccess {
     return this.o.directory.decide(who, { id: info.id, owner: info.owner, test: !!info.test }, await this.permissions(info.id));
   }
 
+  /**
+   * The document's owner as its permissions say (Directory.decide does the same): the host's own copy is the one it was
+   * made with, and the homepage project's adoption (adoptHome) changes the owner only in the directory.
+   */
+  async owner(): Promise<string | null> {
+    const info = await this.o.info();
+    if (!info) return null;
+    return (await this.permissions(info.id)).find((p) => p.role == "owner")?.login ?? info.owner;
+  }
+
   /** The directory says who may do what with this document now (every change is pushed here). */
   async setPermissions(list: readonly PersonRole[], at = Date.now()): Promise<void> {
     if (this.perms === undefined) this.perms = (await this.o.storage.get<{ list: PersonRole[]; at: number }>(PERMS)) ?? null;
