@@ -67,9 +67,8 @@ test("a push, its deploy and a merge show on the open Ops page without a reload"
   expect(merged.status, await merged.clone().text()).toBe(200);
   await expect.poll(() => classOf(`${row} .dot`), { timeout: 10_000 }).toContain("on-main");
   await expect.poll(() => classOf(`${row} .deps[data-target="production"] .dep`), { timeout: 15_000 }).toContain("dep");
-  // Nothing left to merge: the Merge row stays, disabled, and says so.
+  // Nothing left to merge: Merge stays, disabled, and the state line says so.
   await expect.poll(() => text("#ahead")).toBe("staging and production are the same");
-  expect(await page.evaluate(() => (document.getElementById("merge-row") as HTMLElement).hidden)).toBe(false);
   expect(await page.evaluate(() => (document.getElementById("merge") as HTMLButtonElement).disabled)).toBe(true);
 
   // A release cut on main's head: its badge on the row shows whole, at desktop and phone width (the subject shortens instead).

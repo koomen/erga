@@ -298,24 +298,24 @@ export default function ops(): void {
     renderUpstream(up);
     drawn = true;
     const mergeBtn = byId<HTMLButtonElement>("merge");
-    // The Merge row is always there (it is how production deploys): disabled, and saying so, when main is at staging.
-    // While a merge runs the button stays, disabled.
-    byId("merge-row").hidden = !staging?.commit;
+    // A button with nothing to do is off, and its tip says why. While a merge runs, Merge stays off.
     byId("ahead").textContent = !staging?.commit
-      ? ""
+      ? "staging has no commits yet"
       : ahead
-        ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge"
+        ? "staging is " + ahead + " commit" + (ahead == 1 ? "" : "s") + " ahead of production"
         : "staging and production are the same";
     if (!busy) mergeBtn.disabled = !ahead;
     mergeBtn.title = ahead
       ? "Moves main to staging's head: production deploys it."
       : "Nothing to merge: main is at staging's head. Push to staging first.";
-    // Cut release: when main has a commit; a downstream's releases are upstream's.
-    const rp = byId("release-pill");
-    if (rp) {
-      rp.hidden = !main?.commit || !!up;
-      rp.textContent = view.release ? "Cut release (" + view.release + " is stable)" : "Cut release";
-    }
+    // A downstream's releases are upstream's.
+    const rp = byId<HTMLButtonElement>("release-pill");
+    rp.hidden = !!up;
+    rp.disabled = !main?.commit;
+    rp.title = main?.commit
+      ? "A version tag on main's head. The newest one is stable: other installs follow it."
+      : "Nothing to release: main has no commits yet.";
+    byId("release-state").textContent = up ? "" : view.release ? "Stable release: " + view.release : "No release yet";
     renderGithub(view.github);
     renderConflict(view.conflict);
   }
@@ -980,6 +980,13 @@ export default function ops(): void {
     await load();
   }
   mergeBtn.addEventListener("click", () => merge(null));
+  const copy = byId("clone-copy");
+  copy.addEventListener("click", () =>
+    navigator.clipboard.writeText(copy.dataset.copy!).then(
+      () => (copy.textContent = "Copied"),
+      () => (copy.textContent = "Copy failed")
+    )
+  );
   grid.addEventListener("click", (e) => {
     const b = (e.target as Element).closest<HTMLElement>("button[data-merge]");
     if (b) return merge(b.dataset.merge);
@@ -1071,7 +1078,7 @@ export default function ops(): void {
     const m = latest && /^v(\d+)\.(\d+)\.(\d+)$/.exec(latest);
     return m ? "v" + m[1] + "." + m[2] + "." + (Number(m[3]) + 1) : "v0.1.0";
   }
-  byId("release-pill")?.addEventListener("click", () => {
+  byId("release-pill").addEventListener("click", () => {
     const main = view?.branches.find((b: Json) => b.name == "main");
     byId("release-head").textContent = main?.commit ? main.commit.slice(0, 10) + " · " + (main.commits[0]?.subject ?? "") : "";
     byId<HTMLInputElement>("release-version").value = nextVersion(view?.release);

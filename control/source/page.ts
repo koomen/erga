@@ -133,14 +133,15 @@ function sourceMarkup(c: SourcePageConfig): string {
   </div>
   <div class="repo-tools">
   <div class="box clone" id="clone">
-    <h2>Clone and push</h2>
+    <h2>Clone and push<button class="pill" type="button" id="clone-copy" data-copy="${esc(`git remote add erga ${remote}\ngit fetch erga\ngit push erga HEAD:staging`)}" title="Copies the three commands">Copy</button></h2>
     <pre><code>git remote add erga ${esc(remote)}
 git fetch erga
 git push erga HEAD:staging</code></pre>
-    <p>Password: an agent token from <a href="/settings">Settings</a> (admins only), any username. main only follows staging: merge here.</p>
+    <ul class="facts"><li>Password: an agent token from <a href="/settings">Settings</a> (admins only). Any username.</li><li>main only follows staging. Merge it here.</li></ul>
   </div>
   <div class="box actions"><h2>Branches and releases</h2>
-    <div class="head-actions"><button class="pill" id="release-pill" type="button" hidden title="Cut a release: a version tag on main's head. The newest release tag is stable, what other installs follow.">Cut release</button><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div></div>
+    <p class="state"><span id="ahead">…</span><span id="release-state"></span></p>
+    <div class="repo-buttons"><button class="new" id="merge" type="button" disabled>Merge staging into main</button><button class="pill" id="release-pill" type="button" disabled title="A version tag on main's head. The newest one is stable: other installs follow it.">Cut release</button></div>
     <p class="hint" id="merge-hint" role="status"></p>
     <div class="update-row" id="update-row" hidden><span class="count" id="upstream-count"></span><button class="new" id="update" disabled title="Brings ${upstreamName}'s newest release into staging: a fast-forward, or a merge commit. Production follows through Merge.">Update from ${upstreamName}</button></div>
     <p class="hint" id="update-hint" role="status"></p>
