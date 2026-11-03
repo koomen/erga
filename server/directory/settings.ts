@@ -116,6 +116,13 @@ export const SETTINGS = {
     default: false,
     parse: boolean,
   }),
+  public_source: setting<boolean>({
+    label: "Public source",
+    description:
+      "Anyone can read Erga's source through the repository API (/api/repo), which the page /source shows. Off: only admins can; anyone else gets a 404. Git clones and the /git page on the control Worker stay as they are.",
+    default: true,
+    parse: boolean,
+  }),
   agent_keys: setting<"server" | "own">({
     label: "Agents' keys",
     description:

@@ -179,9 +179,42 @@ async function homeRoot(request: Request, platform: Platform): Promise<Response 
   const url = new URL(request.url);
   let rel: string;
   try { rel = decodeURIComponent(url.pathname.slice(1)); } catch { return null; }
+  return homeFileAt(request, platform, url, rel);
+}
+
+/** The current deploy's file `rel`, as it is; null if the deploy has none. `own`: a page with nothing of the site's in it. */
+async function homeFileAt(request: Request, platform: Platform, url: URL, rel: string, own = false): Promise<Response | null> {
   const live = await livePage(platform, url);
   if (!live || !live.page.files.includes(rel)) return null;
   const file = await platform.home.file(live.page.gen, rel);
   if (!file) return null;
-  return new Response(request.method == "HEAD" ? null : (file.bytes as BodyInit), { headers: { "Content-Type": file.type, "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff", ...AUTHORS_POLICY } });
+  const headers: Record<string, string> = {
+    "Content-Type": file.type,
+    "Cache-Control": "no-cache",
+    "X-Content-Type-Options": "nosniff",
+    ...AUTHORS_POLICY,
+  };
+  if (own) headers[OWN_ACCOUNT] = "1";
+  return new Response(request.method == "HEAD" ? null : (file.bytes as BodyInit), { headers });
 }
+
+/**
+ * The homepage's pages with an address of their own, for people to read and share: /source is source.html, and so is
+ * every path under it (/source/main/server/app.ts), which the page reads to know what to show. Each name is in RESERVED
+ * (server/directory/model.ts), so no account or document can take its address.
+ */
+export const HOME_PAGES: readonly string[] = ["source"];
+
+/** The homepage's page that answers `path`, as its file's name; null for a path that isn't one's. */
+export const homePageOf = (path: string): string | null => {
+  const name = /^\/([^/]+)(?:\/|$)/.exec(path)?.[1];
+  return name && HOME_PAGES.includes(name) ? `${name}.html` : null;
+};
+
+/** One of HOME_PAGES at its address, from the current deploy; null if the deploy doesn't have it. */
+export const serveHomePage = Effect.flatMap(ctx, ({ request, platform, url }) =>
+  Effect.map(
+    call(() => homeFileAt(request, platform, url, homePageOf(url.pathname) ?? "", true)),
+    (r) => r && fromWeb(r)
+  )
+);
