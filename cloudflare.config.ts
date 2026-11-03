@@ -98,9 +98,9 @@ export default defineConfig(({ mode }) => ({
       // `bun run db:local` applies the migrations to.
       DB: bindings.d1({ name: PROD.database, ...(mode == "development" ? { id: LOCAL_DB } : {}) }),
       ASSETS: bindings.assets(),
-      // Cloudflare Browser Rendering (Workers Paid): the browser view_page and eval_in_page render pages in
-      // (cloudflare/render.ts). Local development has none: the dev server's own headless Chrome stands in (dev/browser.ts).
-      ...(mode == "development" ? {} : { BROWSER: bindings.browser() }),
+      // TEMPORARY: no BROWSER binding on deployed servers until main's control Worker knows how to make one
+      // (control/deploys/account.ts). Until then view_page there answers "This server has no browser". The branch
+      // browser-binding adds it back. Local development uses the dev server's own headless Chrome (dev/browser.ts).
       // Starts the sandbox Workers a page's own API runs in, one for each module's code (cloudflare/sandbox.ts).
       LOADER: bindings.workerLoader(),
       // Documents' blobs: their files that aren't text, by sha-256 (cloudflare/blobs.ts). Each target has a bucket of its
