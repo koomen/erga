@@ -61,7 +61,8 @@ For staging, production and access (the Ops page, /admin/ops, and /settings):
   deploys a target's branch again, or the homepage (target: homepage); rollback puts the
   version before its live deploy back; set_domain adds or removes a domain. ls says
   whether a document is the homepage, and how its deploy goes. An edit to the homepage
-  never deploys by itself: it goes live only on a redeploy.
+  never deploys by itself: it goes live only on a redeploy, which answers once it is live,
+  with each file's live address.
 - When the Cloudflare credential isn't connected (or Cloudflare refused it), say so in
   Cloudflare's own words, and tell ${owner} to click Connect Cloudflare: the button shows
   under deploys in this panel, and on the Ops page's Cloudflare card. It opens Cloudflare's

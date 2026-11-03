@@ -298,9 +298,18 @@ const rpc = Effect.fnUntraced(function* (raw: unknown, ctx: ToolContext) {
       return ok({ tools: (yield* listed(ctx)).map((t) => ({ name: t.name, description: t.description, inputSchema: jsonSchemaOf(t) })) });
     case "tools/call": {
       const name = String(m.params?.name ?? "");
+      // One line in the server's log (wrangler tail, the Ops page) for each call: the tool, its time, ok or error.
+      // Never its arguments: they can hold secrets.
+      const started = Date.now();
+      const logged = (outcome: "ok" | "error") =>
+        Effect.sync(() => console.log(`mcp ${name.replace(/[^\w-]/g, "?").slice(0, 64)} ${Date.now() - started} ms ${outcome}`));
       return yield* runNamed(name, m.params?.arguments ?? {}, ctx).pipe(
         Effect.map((result) => ok({ content: contentOf(name, result) })),
-        Effect.catchTag("OperationError", (e) => Effect.succeed(ok({ content: [{ type: "text", text: e.message }], isError: true })))
+        Effect.tap(() => logged("ok")),
+        Effect.catchTag("OperationError", (e) =>
+          logged("error").pipe(Effect.as(ok({ content: [{ type: "text", text: e.message }], isError: true })))
+        ),
+        Effect.tapCause(() => logged("error"))
       );
     }
     default:

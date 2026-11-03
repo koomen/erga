@@ -4,7 +4,7 @@
 // /admin (the landing_document setting), never from the document.
 
 import type { DocRow } from "../directory/index.ts";
-import { forgetHome } from "../home/index.ts";
+import { forgetHome, HOME_FILES } from "../home/index.ts";
 import { byLine } from "../../shared/attribution.ts";
 import { type Caller, OperationError, platformOf } from "./operation.ts";
 
@@ -19,7 +19,13 @@ export async function homepageOf(caller: Caller, doc: DocRow) {
   return { isHome: true, canDeploy: unlocked, locked: admin && !unlocked, deploy: await platformOf(caller).home.status() };
 }
 
-/** Deploys the homepage again now, as `caller` (an admin: the redeploy operation checks), as Redeploy in its settings does. */
+/** How long redeploy waits for the homepage's deploy to end (it usually takes well under a second). */
+const DEPLOY_WAIT_MS = 30_000;
+
+/**
+ * Deploys the homepage again now, as `caller` (an admin: the redeploy operation checks), as Redeploy in its settings
+ * does, and waits for the deploy to end: the answer has the version now live, the live address and each file's.
+ */
 export async function redeployHome(caller: Caller) {
   const { dir, who } = caller;
   if (!(await dir.homeId()))
@@ -28,8 +34,21 @@ export async function redeployHome(caller: Caller) {
       status: 409,
     });
   const platform = platformOf(caller);
-  const deploy = await platform.home.deploy(byLine(who.login, who.via));
+  let deploy = await platform.home.deploy(byLine(who.login, who.via));
+  for (const end = Date.now() + DEPLOY_WAIT_MS; deploy.state == "deploying" && Date.now() < end; ) {
+    await new Promise((done) => setTimeout(done, 100));
+    deploy = await platform.home.status();
+  }
   // This isolate forgets the snapshot it serves; the others ask the home object again.
   if (caller.origin) await forgetHome(platform, new URL(caller.origin)).catch(() => {});
-  return { isHome: true, canDeploy: true, locked: false, deploy };
+  const snapshot = await platform.home.page(null);
+  const at = caller.origin ?? "";
+  const live =
+    snapshot && !snapshot.same
+      ? {
+          url: `${at}/`,
+          files: Object.fromEntries(snapshot.page.files.map((path) => [path, `${at}${HOME_FILES}${snapshot.page.gen}/${encodeURI(path)}`])),
+        }
+      : null;
+  return { isHome: true, canDeploy: true, locked: false, deploy, live };
 }
