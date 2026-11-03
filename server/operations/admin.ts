@@ -43,8 +43,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
     parameters: Schema.Struct({
       changes: Schema.optionalKey(
         Schema.Boolean.annotate({
-          description:
-            "true: the change log instead, newest first (each change's number, when, who, each setting before and after; never a key). Default: the settings (key, value, default, source, locked) and the API keys (stored, last4, who set it; never the key)",
+          description: "true: the change log, newest first, instead of the settings and API keys (never a key)",
         })
       ),
       limit: Schema.optionalKey(Schema.Int.annotate({ description: "The change log: how many (default 20, at most 100)" })),
@@ -166,7 +165,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
       provider: PROVIDER,
       action: Schema.Literals(["on", "off", "clear", "discard"]).annotate({
         description:
-          "on or off: people may sign in with it or not (on only while its app works; off only while the other works and you sign in with it). clear: back to the deploy's app values. discard: only the new values that wait for a test sign-in",
+          "on, off (only while its app works, or the other one does). clear: back to the deploy's app values. discard: the new values that wait for a test sign-in",
       }),
       force: Schema.optionalKey(
         Schema.Boolean.annotate({

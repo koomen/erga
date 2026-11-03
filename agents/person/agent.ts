@@ -49,7 +49,7 @@ export interface AgentSession {
 /** What a tool call is about, for the panel: a setting's key, a login, a path. */
 function about(name: string, args: unknown): string | null {
   const a = (args ?? {}) as Record<string, unknown>;
-  if (name == "source") {
+  if (name == "source" || name == "erga_code") {
     const at = typeof a.ref == "string" && a.ref && a.ref != "staging" ? ` (${a.ref})` : "";
     if (a.action == "search") return `${JSON.stringify(String(a.query ?? "")).slice(0, 80)}${at}`;
     if (a.action == "log") return `the log of ${typeof a.ref == "string" && a.ref ? a.ref : "staging"}`;

@@ -132,8 +132,21 @@ export const agent: Test[] = [
       const b = await Participant.join(d, "Bo");
       ctx.defer(() => b.destroy());
       const rewritten = d.fixture[d.path].replace("Launch notes", "Field notes");
-      await runScript(d, "Ada", [{ tool: "read", args: { path: d.path } }, { tool: "write", args: { path: d.path, content: rewritten }, delay: 1500 }, { text: "ok" }], { wait: false });
-      await until(async () => (await agentLog(d, "Ada")).items.some((i) => i.kind == "tool" && i.name == "read" && i.status == "done"), 5000, "the agent has read the file");
+      await runScript(
+        d,
+        "Ada",
+        [
+          { tool: "read", args: { path: d.path } },
+          { tool: "edit", args: { op: "write", path: d.path, content: rewritten }, delay: 1500 },
+          { text: "ok" },
+        ],
+        { wait: false }
+      );
+      await until(
+        async () => (await agentLog(d, "Ada")).items.some((i) => i.kind == "tool" && i.name == "read" && i.status == "done"),
+        5000,
+        "the agent has read the file"
+      );
       b.insertAfter("Where the leads go.", " BO-WAS-HERE");
       await until(async () => !(await agentLog(d, "Ada")).busy, 10_000, "the agent finishes");
       await until(() => b.str().includes("Field notes"), 3000, "the write landed");
@@ -181,12 +194,20 @@ export const agent: Test[] = [
       const ext = (path: string, init: RequestInit = {}, t = token) =>
         fetch(origin + path, { ...init, headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" } });
       expect((await ext("/api/tools/whoami", { method: "POST", body: "{}" }, "erga_forged")).status == 401, "the API needs a real token");
-      const listed = ((await (await ext("/api/tools")).json()) as { tools: { name: string; description: string }[] }).tools;
+      type Listed = { name: string; parameters: { properties: { op: { description: string } } } };
+      const listed = ((await (await ext("/api/tools")).json()) as { tools: Listed[] }).tools;
       expect(
-        listed.some((t) => t.name == "edit") && /data-erga-noedit/.test(listed.find((t) => t.name == "write")?.description ?? ""),
-        "the tools are listed, and write's description has the page rules",
+        /^write\(/m.test(listed.find((t) => t.name == "edit")?.parameters.properties.op.description ?? ""),
+        "the tools are listed, and edit has write",
         listed.map((t) => t.name)
       );
+      // The page rules are in MCP's instructions, once.
+      const init = await ext("/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } }),
+      });
+      const instructions = ((await init.json()) as { result: { instructions: string } }).result.instructions;
+      expect(/data-erga-noedit/.test(instructions), "MCP's instructions have the page rules", instructions);
       const run = async (name: string, args: Record<string, unknown>) => {
         const r = await ext(`/api/tools/${name}`, { method: "POST", body: JSON.stringify({ document: d.base, ...args }) });
         return { status: r.status, body: (await r.json()) as { ok: boolean; result?: { type: string; text?: string }[]; error?: string } };
@@ -252,7 +273,7 @@ export const agent: Test[] = [
     needs: ["scriptedAgent"],
     async run(ctx) {
       const d = await ctx.doc();
-      const log = await runScript(d, "Ada", [{ tool: "view_page", args: {} }, { text: "ok" }]);
+      const log = await runScript(d, "Ada", [{ tool: "page", args: { op: "view_page" } }, { text: "ok" }]);
       const v = log.items.find((i) => i.kind == "tool" && i.name == "view_page");
       expect(!!v && v.status != "error" && !!v.image, "the tool answers a picture", v);
     },

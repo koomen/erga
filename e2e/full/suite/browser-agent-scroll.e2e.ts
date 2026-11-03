@@ -22,7 +22,7 @@ browserTest("e2e/full/suite/browser-agent-scroll.e2e.ts", "the agent pane follow
   const long = Array.from({ length: 60 }, (_, i) => `Line ${i + 1} of a long answer.`).join("\n");
   // A long run: tool calls trickling in, a screenshot (which loads after its event), a long reply.
   const reads = Array.from({ length: 6 }, () => ({ tool: "read", args: { path: d.path }, delay: 120 }));
-  await send([...reads, { tool: "view_page", args: {} }, { text: long, delay: 200 }]);
+  await send([...reads, { tool: "page", args: { op: "view_page" } }, { text: long, delay: 200 }]);
   await until(async () => !(await busy()) && await a.eval<boolean>(`!!document.querySelector(".msg-assistant")`), 20_000, "the run finishes");
   await settle(p);
   const s0 = await pane();

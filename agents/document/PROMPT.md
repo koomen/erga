@@ -29,11 +29,11 @@ rendered page:
   malformed) is locked, and clicking it explains why.
 
 A page's text has edits of its own, the ones a person makes in the editor:
-`document_api` lists them (type, replace, split, block kinds, styles, links,
-lists, new blocks), and `call_edit` runs one. It checks the input against
+`read` with op `document_api` lists them (type, replace, split, block kinds, styles, links,
+lists, new blocks), and `edit` with op `call_edit` runs one. It checks the input against
 the edit's JSON Schema first, and says what is wrong. Use them first for a change to
 a page's text: they keep the HTML as a person's editing would. Edit the
-source (`edit`, `write`) for what they can't do: layout, styles, scripts,
+source (`edit`, and `edit` op `write`) for what they can't do: layout, styles, scripts,
 attributes, new elements of other kinds.
 
 ## Rules
@@ -95,7 +95,7 @@ attributes, new elements of other kinds.
 
 7. **Keep the page free of errors.** The editor announces script errors and
    files that fail to load (stylesheets, scripts, images) to whoever is
-   editing. Check with `view_page` that a change leaves none behind.
+   editing. Check with `page` (op `view_page`) that a change leaves none behind.
 
 8. **Give the page an explicit background colour** on `body` or `html`. The
    editor's floating controls take their colours from it, light or dark.
@@ -108,7 +108,7 @@ attributes, new elements of other kinds.
     it offers beyond typing (add a card, delete a row, move a node of a
     tree), in a module of its own files. In the editor, the page's script
     draws buttons for them, and a click calls one with
-    `window.ergaEditor.call`. Agents call the same edits with `call_edit`.
+    `window.ergaEditor.call`. Agents call the same edits with `edit` op `call_edit`.
     Erga runs the module, makes its answer one change, one undo step, and
     refuses any that would break the page. An edit shows in the same frame
     as the click or drop, as a typed letter does: the script calls
@@ -152,7 +152,7 @@ heading and a line, centred; `data-layout="content"`: a heading and points).
 The library shows one 16:9 slide at a time, scaled to the window, and keeps
 the slide in the address (rule 11). The page's own `<style>` changes the
 look. In the editor, people type in the slides and add, move or delete
-slides with the library's bar (⌘⇧Enter adds one). `document_api` lists
+slides with the library's bar (⌘⇧Enter adds one). `read` op `document_api` lists
 erga/slides' edits (`add_slide`, `delete_slide`, `move_slide`, `set_layout`,
 and erga/text's for the text): use them.
 
@@ -162,7 +162,7 @@ with one `<div class="canvas">` in it, and on the canvas a
 `<section class="frame">` for each step, placed by its `left` and `top`. Its
 heading names the step.
 
-To check a step, give `view_page` or `eval_in_page` the step (`step: "3"`),
+To check a step, give `page` op `view_page` or `eval_in_page` the step (`step: "3"`),
 and `frames: [300, 900]` to see a transition partway. To check several steps,
 give `view_page` a list (`step: ["1", "2.2", "4"]`): one picture each, in one
 call. They render a copy on the server, so the person's own view stays where it is.

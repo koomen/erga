@@ -10,8 +10,14 @@ browserTest(FILE, "the agent panel is per person, and the agent sees the page th
   const d = await ctx.doc();
   const a = await openAs(tab, ctx, d, "Ada"), b = await openAs(tab, ctx, d, "Bo");
   await a.openAgent();
-  const script = JSON.stringify([{ tool: "edit", args: { path: d.path, edits: [{ oldText: "<h1>Launch notes", newText: "<h1>Launch notes by agent" }] } }, { tool: "view_page", args: { selector: "h1" } }, { text: "Looked." }]);
-  await a.eval(`(() => { const i = document.getElementById("agent-input"); i.value = ${JSON.stringify("Check it @script " + script)}; i.dispatchEvent(new Event("input")); })()`);
+  const script = JSON.stringify([
+    { tool: "edit", args: { path: d.path, edits: [{ oldText: "<h1>Launch notes", newText: "<h1>Launch notes by agent" }] } },
+    { tool: "page", args: { op: "view_page", selector: "h1" } },
+    { text: "Looked." },
+  ]);
+  await a.eval(
+    `(() => { const i = document.getElementById("agent-input"); i.value = ${JSON.stringify("Check it @script " + script)}; i.dispatchEvent(new Event("input")); })()`
+  );
   await a.press("Enter");
   await until(
     async () => a.eval<boolean>(`[...document.querySelectorAll(".msg-assistant")].some((e) => e.textContent == "Looked.")`),

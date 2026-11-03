@@ -7,7 +7,7 @@ import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Sql, type Who } from "../server/directory/index.ts";
-import { agentTools, allTools, documentTools, documentToolsHere, runTool, toolsFor } from "../agents/tools";
+import { agentTools, allTools, documentTools, documentToolsHere, KINDS, opsOf, runTool, toolsFor } from "../agents/tools";
 import { type Caller, OPERATIONS, OperationError } from "../server/operations/index.ts";
 import { VIA } from "../shared/attribution";
 import type { Platform } from "../server/platform";
@@ -43,11 +43,13 @@ test("admin tools are offered to admins only, and refused to anyone else", async
   const dir = fresh({ admins: ["root"] });
   await dir.users.add({ login: "root", admin: true }, "bo");
   const names = async (who: Who) => (await toolsFor({ dir, who, here: "aaaaaaaa" })).map((t) => t.name);
-  expect(await names({ login: "root", admin: true })).toContain("set_setting");
-  expect(await names({ login: "bo" })).toEqual([
-    ...OPERATIONS.filter((o) => !o.admin).map((o) => o.name),
-    ...documentTools().map((t) => t.name),
-  ]);
+  const ops = async (who: Who) => (await toolsFor({ dir, who, here: "aaaaaaaa" })).flatMap(opsOf);
+  expect(await names({ login: "root", admin: true })).toEqual(KINDS.map((k) => k.name));
+  expect(await ops({ login: "root", admin: true })).toContain("set_setting");
+  expect(await names({ login: "bo" })).toEqual(["documents", "read", "edit", "page"]);
+  expect((await ops({ login: "bo" })).sort()).toEqual(
+    [...OPERATIONS.filter((o) => !o.admin).map((o) => o.name), ...documentTools().map((t) => t.name)].sort()
+  );
   expect(await names({ login: "root", test: true })).not.toContain("people");
   const e = await failure(run({ dir, who: { login: "bo" } }, "settings"));
   expect(e).toBeInstanceOf(OperationError);
@@ -274,7 +276,7 @@ test("the documents list: the document agent lists, makes (blank, a template, a 
   expect((await failure(run(ada, "delete_document", {}))).status).toBe(400);
   // A test person makes no documents.
   expect((await failure(run({ ...ada, who: { login: "test-ada", test: true } }, "create_document"))).status).toBe(403);
-  expect((await toolsFor(ada, true)).map((t) => t.name)).toContain("delete_document");
+  expect((await toolsFor(ada, true)).flatMap(opsOf)).toContain("delete_document");
 });
 
 test("API keys: an admin clears one (the change log says who), and is never offered a tool to set one", async () => {
@@ -302,12 +304,12 @@ test("API keys: an admin clears one (the change log says who), and is never offe
 test("one set of tools for every agent: a person's own agent has what they may (an admin's, every operation); an admin token all; a document token none that reach beyond it", async () => {
   const dir = fresh({ admins: ["root"] });
   await dir.users.add({ login: "root", admin: true }, "bo");
-  const names = async (c: Caller) => (await toolsFor(c)).map((t) => t.name);
+  const names = async (c: Caller) => (await toolsFor(c)).flatMap(opsOf);
   const all = OPERATIONS.map((o) => o.name);
   // A person's own agent: an admin's has admin power (agents/person/sessions.ts), and every operation; the document tools for any document.
   for (const via of [VIA.agent, VIA.token("CI")]) {
     const tools = await names({ dir, who: { login: "root", admin: true, via } });
-    expect(tools.slice(0, all.length)).toEqual(all);
+    for (const op of all) expect(tools).toContain(op);
     expect(tools).toContain("edit");
   }
   // Someone who isn't an admin: their agent has no admin operation, and one asked of it is refused.

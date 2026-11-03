@@ -117,19 +117,19 @@ test("an MCP app signs in through the browser: register, approve on Erga, trade 
     expect(instructions).toContain('Name a document with "document"');
     expect(instructions).not.toContain("llms.txt");
     const names = (await mcp(root, token, "tools/list")).result.tools.map((t: { name: string }) => t.name);
-    expect(names).toEqual(expect.arrayContaining(["list_documents", "read", "edit", "create_document"]));
+    expect(names).toEqual(expect.arrayContaining(["documents", "read", "edit", "page"]));
     const made = JSON.parse(
       (
         await mcp(root, token, "tools/call", {
-          name: "create_document",
-          arguments: { title: "Over MCP", files: { "index.html": "<h1>Signed in over MCP</h1>" } },
+          name: "documents",
+          arguments: { op: "create_document", title: "Over MCP", files: { "index.html": "<h1>Signed in over MCP</h1>" } },
         })
       ).result.content[0].text
     ) as { url: string };
     const read = await mcp(root, token, "tools/call", { name: "read", arguments: { document: made.url, path: "index.html" } });
     expect(read.result.content[0].text).toContain("Signed in over MCP");
     // Settings lists it, to revoke (whoami's tokens, the dialog's list).
-    expect(JSON.stringify((await mcp(root, token, "tools/call", { name: "whoami", arguments: {} })).result)).toContain(
+    expect(JSON.stringify((await mcp(root, token, "tools/call", { name: "documents", arguments: { op: "whoami" } })).result)).toContain(
       "Claude Code (erga)"
     );
   } finally {
@@ -229,7 +229,7 @@ test("the MCP sign-in gives the person's own power: an admin's app gets admin po
   expect(admin.scope).toBe("admin");
   expect(await whoami(root, admin.token)).toMatchObject({ adminPower: true, token: { scope: "admin", expires: null } });
   const names = (await mcp(root, admin.token, "tools/list")).result.tools.map((t: { name: string }) => t.name);
-  expect(names).toEqual(expect.arrayContaining(["deploys", "branches", "redeploy", "people"]));
+  expect(names).toEqual(expect.arrayContaining(["deploys", "erga_code", "settings", "people"]));
 
   // A person who isn't an admin: documents scope, no admin tools.
   const { cookie } = await signIn(await servers.main(), freshLogin("mcp"));

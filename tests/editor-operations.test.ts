@@ -4,7 +4,7 @@
 
 import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";
-import { agentTools, allTools, runTool, toolsFor } from "../agents/tools";
+import { agentTools, allTools, runTool, toolsFor, toolOf } from "../agents/tools";
 import type { Caller } from "../server/operations/index.ts";
 import type { Platform } from "../server/platform";
 import { VIA } from "../shared/attribution";
@@ -37,10 +37,11 @@ async function world() {
 }
 
 /** An agent's tool call, as its loop makes it: the text it reads back. */
+/** Runs the op `name` as the agent calls it: the tool that has it, with op. */
 const ask = async (tools: ReturnType<typeof agentTools>, name: string, args: Record<string, unknown> = {}) => {
-  const tool = tools.find((t) => t.name == name);
-  if (!tool) throw new Error(`no tool ${name}`);
-  const out = await tool.execute("call", args);
+  const tool = tools.find((t) => t.name == toolOf(name));
+  if (!tool) throw new Error(`no tool has ${name}`);
+  const out = await tool.execute("call", { op: name, ...args });
   return (out.content[0] as { text: string }).text;
 };
 
@@ -56,7 +57,7 @@ test("a person's agent renames the document open on their page, lists, makes, mo
   };
   const tools = agentTools(await toolsFor(agent, true), agent);
   for (const t of ["rename_document", "ls", "new", "mv", "rm", "set_kind", "versions", "restore_version"])
-    expect(tools.map((x) => x.name)).toContain(t);
+    expect(tools.map((x) => x.name)).toContain(toolOf(t)!);
   // Its name, from the directory; a rename moves the address.
   expect(JSON.parse(await ask(tools, "ls")).address).toBe("/ada/files");
   const named = JSON.parse(await ask(tools, "rename_document", { title: "Field notes" }));

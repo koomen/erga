@@ -32,11 +32,14 @@ import { DEFAULT_PAGE_LLM_MODEL, isPageLlmModel, PAGE_LLM_MODELS } from "../../s
 
 /** Files as a caller gives them: by path, each text or base64. */
 const FILES = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Struct({ base64: Schema.String })])).annotate({
-  description: 'Files by path in the document ("index.html", "css/app.css"): each its text, or {"base64": "..."} (images, fonts).',
+  description: 'Each path\'s text, or {"base64": "..."} for bytes.',
 });
 
-/** How to write a page people can keep editing by hand (agents/document/PROMPT.md, short): create_document's and write's. */
-const PAGE_RULES =
+/**
+ * How to write a page people can keep editing by hand (agents/document/PROMPT.md, short): in MCP's instructions
+ * (server/api.ts), once, not in each tool that writes a page.
+ */
+export const PAGE_RULES =
   "People keep editing pages by hand, and the editor locks text that doesn't match its source: write well-formed HTML (close every element, </p> and </li> too); keep text in plain leaf elements (p, h1-h6, li, td), never loose beside blocks; never let a script change text in the source (give it an empty element, or mark the text data-erga-noedit); link the document's files relatively (\"style.css\"), other documents by /<owner>/<slug>; keep the page's place (slide, view) in location.hash; set a background on body; leave data-erga attributes alone. For slides or a canvas, start from the slides or canvas template: its library gives the steps and zoom.";
 
 const bool = (description: string) => Schema.optionalKey(Schema.Boolean.annotate({ description }));
@@ -46,7 +49,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     name: "whoami",
     label: "Who you are",
     ui: "The account menu: who is signed in; Settings (/settings): your agent tokens and your API keys; the quick search (⌘K): its pages",
-    description: "Who you act for, your token, your tokens and API keys, and Erga's pages you may open.",
+    description: "Who you act for: your tokens, API keys and Erga's pages.",
     parameters: Schema.Struct({}),
     run: async (_args, caller) => {
       const { who, token, dir } = caller;
@@ -103,11 +106,11 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     activity: "listing the documents",
     wide: true,
     ui: "Documents (/docs): the list; Settings (/admin): the Homepage Project picker (an admin's search of everyone's)",
-    description: "Your documents and those shared with you, newest edit first; all (admins): the server's.",
+    description: "Your documents and those shared with you, newest first.",
     parameters: Schema.Struct({
-      query: Schema.optionalKey(str("Only those whose title, owner, address or id has this in it")),
-      all: bool("Every document on the server, everyone's (admins only)"),
-      limit: Schema.optionalKey(Schema.Int.annotate({ description: "With all: at most this many (default 20, at most 100)" })),
+      query: Schema.optionalKey(Schema.String),
+      all: bool("Everyone's (admins)."),
+      limit: Schema.optionalKey(Schema.Int),
     }),
     run: async (args, caller) => {
       const { dir, who } = caller;
@@ -142,25 +145,23 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     wide: true,
     loose: true,
     ui: "Documents (/docs): New, from a template or a copy; the viewer's Clone; publishing a folder of files",
-    description: `Makes a new document from files, a template or a copy, and answers its address. ${PAGE_RULES}`,
+    description: "Makes a document from files, a template or a copy.",
     parameters: Schema.Struct({
       files: Schema.optionalKey(FILES),
-      index: Schema.optionalKey(str("The page among the files, if it isn't index.html")),
-      title: Schema.optionalKey(str("Its title (else the page's first heading)")),
-      slug: Schema.optionalKey(str("Its address after /<owner>/ (else from the title); a taken one gets -2, -3...")),
+      index: Schema.optionalKey(str("The page, if not index.html.")),
+      title: Schema.optionalKey(str("Default: the first heading.")),
+      slug: Schema.optionalKey(str("Default: from the title.")),
       template: Schema.optionalKey(
         Schema.String.annotate({
           enum: ["blank", ...TEMPLATES.map((t) => t.id), "landing"],
-          description: `Without files: blank (the default), ${TEMPLATES.map((t) => `${t.id} (${t.description.replace(/\.$/, "")})`).join(", ")}, or landing (a copy of the homepage)`,
+          description: `Without files: ${["blank", ...TEMPLATES.map((t) => t.id), "landing"].join(", ")}.`,
         })
       ),
-      from: Schema.optionalKey(
-        str("Without files: a document to copy. A copy or a template goes if nobody edits it in time; the answer says when.")
-      ),
+      from: Schema.optionalKey(str("Without files: a document to copy.")),
       kind: Schema.optionalKey(
         Schema.String.annotate({
           enum: ["document", "project"],
-          description: "document: one page and files beside it; project: pages, each at its own address (else from the files)",
+          description: "document (one page) or project (pages).",
         })
       ),
     }),
@@ -225,7 +226,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     label: "Delete a document",
     activity: "deleting a document",
     ui: "Documents (/docs): Delete",
-    description: "Deletes a document for good (owner only), but not the one open on your person's page.",
+    description: "Deletes a document for good (owner only).",
     parameters: Schema.Struct({ document: ANY_DOCUMENT }),
     run: async (args, caller) => {
       const doc = await findDocument({ ...caller, here: undefined }, args.document, "delete");
@@ -245,21 +246,15 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     label: "Share the document",
     activity: "sharing the document",
     ui: "Share (the documents list and the editor): give someone a role, change it, or stop sharing; Document settings (the editor): Readers",
-    description: "Gives someone editor, viewer or none (owner only); sets the readers' agent and bars, and the page's model (editors).",
+    description: "Shares a document (owner), or sets its readers' options (editors).",
     parameters: Schema.Struct({
       document: DOCUMENT,
-      login: Schema.optionalKey(
-        str('A GitHub login, or "*": anyone with the link (only while the server lets users share content publicly)')
-      ),
-      role: Schema.optionalKey(Schema.Literals(["editor", "viewer", "none"]).annotate({ description: "none stops sharing with them" })),
-      reader_agent: bool('Viewers may ask their own agent about it (read only); never while shared with "*"'),
-      reader_bars: bool("Viewers see Erga's bars over it (on at first); off, the page fills the window"),
-      page_llm: bool(
-        "Its page's script may call a model as its signed-in visitor (window.ergaLLM), on the server's keys, within each visitor's and the server's hourly limits"
-      ),
-      page_llm_model: Schema.optionalKey(
-        Schema.Literals(PAGE_LLM_MODELS).annotate({ description: `The page's model (${DEFAULT_PAGE_LLM_MODEL} at first)` })
-      ),
+      login: Schema.optionalKey(str('A GitHub login, or "*" for anyone with the link.')),
+      role: Schema.optionalKey(Schema.Literals(["editor", "viewer", "none"]).annotate({ description: "none stops sharing." })),
+      reader_agent: bool("Readers may ask their agent."),
+      reader_bars: bool("Readers see Erga's bars over it."),
+      page_llm: bool("Its script may call a model (window.ergaLLM)."),
+      page_llm_model: Schema.optionalKey(Schema.Literals(PAGE_LLM_MODELS)),
     }),
     run: async (args, caller) => {
       const { dir } = caller;
@@ -301,14 +296,14 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     activity: "writing",
     loose: true,
     ui: "An HTTP client's publish (POST /api/publish); the page tree's upload (PUT /api/files/<path>)",
-    description: `Writes one file, or many (files; replace deletes the rest). ${PAGE_RULES}`,
+    description: "Writes one file (path), or many (files).",
     parameters: Schema.Struct({
       document: DOCUMENT,
-      path: Schema.optionalKey(str("One file's path")),
-      content: Schema.optionalKey(str("Its text; for a text file that exists, only the differences apply (prefer edit)")),
-      content_base64: Schema.optionalKey(str("Or its bytes, base64: a file that isn't text (at most 25 MB)")),
+      path: Schema.optionalKey(str("The file.")),
+      content: Schema.optionalKey(str("Its text (prefer edit for a change).")),
+      content_base64: Schema.optionalKey(Schema.String),
       files: Schema.optionalKey(FILES),
-      replace: bool("With files: delete every other file, but the page (to publish a site again)"),
+      replace: bool("With files: delete the other files."),
     }),
     run: async (args, caller) => {
       const doc = await findDocument(caller, args.document, "edit");
@@ -336,10 +331,10 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     activity: "revoking",
     wide: true,
     ui: "Settings (/settings): Revoke a token; Settings, Agent: Remove a key",
-    description: "Turns off one of your tokens, or removes one of your API keys.",
+    description: "Turns off a token, or removes an API key.",
     parameters: Schema.Struct({
-      token: Schema.optionalKey(str("A token's id (whoami lists them); revoking your own ends your access")),
-      api_key: Schema.optionalKey(str("Or a provider whose key goes: anthropic, openai, google or openrouter")),
+      token: Schema.optionalKey(Schema.String),
+      api_key: Schema.optionalKey(str("anthropic, openai, google or openrouter.")),
     }),
     run: async (args, caller) => {
       const { dir, who } = caller;

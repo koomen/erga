@@ -160,7 +160,7 @@ export const SOURCE_OPERATIONS: Operation[] = [
     parameters: Schema.Struct({
       action: Schema.Literals(["merge", "delete", "check"]).annotate({
         description:
-          "merge: one squash commit on staging (staging deploys it; the branch goes; refused on a conflict or nothing new). delete: the answer has its head, and a push of it brings the branch back. check: whether it merges cleanly, checked again and waited for (merge: clean, conflicts, merged, or failed: the check couldn't run, which is not a conflict); a push to staging or the branch checks it by itself",
+          "merge: one squash commit on staging, which deploys it; the branch goes. delete: the answer has its head, to push it back. check: whether it merges cleanly again (failed: the check couldn't run, not a conflict)",
       }),
       branch: str("The feature branch's name (branches: features)"),
       message: Schema.optionalKey(
@@ -203,8 +203,7 @@ export const SOURCE_OPERATIONS: Operation[] = [
     description: "Syncs with GitHub now, or disconnects it (connecting is the person's own button).",
     parameters: Schema.Struct({
       action: Schema.Literals(["sync", "disconnect"]).annotate({
-        description:
-          "sync: GitHub's staging and main come in, what they lack goes out (a problem is in github.error). disconnect: the App is uninstalled; the repository on GitHub stays",
+        description: "sync: staging and main both ways (a problem: github.error). disconnect: uninstalls the App; the repository stays",
       }),
     }),
     run: async (a, caller) => {
@@ -241,7 +240,7 @@ export const SOURCE_OPERATIONS: Operation[] = [
     parameters: Schema.Struct({
       action: Schema.Literals(["update", "finish", "drop"]).annotate({
         description:
-          "update: upstream's newest release (its channel) into staging; on conflicts the merge waits on upstream-merge/<version>. finish: once every file is resolved, one merge commit moves staging. drop: the merge and its branch go",
+          "update: upstream's newest release into staging (on conflicts, it waits on upstream-merge/<version>). finish: after every file is resolved. drop: the merge and its branch go",
       }),
     }),
     run: async (a, caller) => {
@@ -306,7 +305,7 @@ export const SOURCE_OPERATIONS: Operation[] = [
     description: "Erga's own source: lists a folder, reads a file, searches, or reads a branch's log.",
     parameters: Schema.Struct({
       action: Schema.Literals(["list", "read", "search", "log"]).annotate({
-        description: `list: a folder's entries and sizes. read: a file with line numbers, at most ${MAX_LINES} lines at a time. search: matching lines, as path:line: text (grep). log: commits, newest first`,
+        description: `list: a folder. read: a file, ${MAX_LINES} lines at most. search: lines, as grep. log: commits, newest first`,
       }),
       ref: Schema.optionalKey(str("A branch (staging, main, a feature branch) or a commit sha (7+ digits). Default: staging")),
       path: Schema.optionalKey(

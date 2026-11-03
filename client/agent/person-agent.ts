@@ -57,6 +57,8 @@ const VERBS: Record<string, [string, string]> = {
   ls: ["Listing", "Listed"],
   grep: ["Searching", "Searched"],
   view_page: ["Looking at the page", "Looked at the page"],
+  page: ["Looking at the page", "Looked at the page"],
+  documents: ["Listing the documents", "Listed the documents"],
   eval_in_page: ["Running code in the page", "Ran code in the page"],
   page_log: ["Reading the live page", "Read the live page"],
   page_input: ["Acting on the page", "Acted on the page"],
@@ -70,7 +72,8 @@ const VERBS: Record<string, [string, string]> = {
   branches: ["Reading the branches", "Read the branches"],
   deploys: ["Reading the deploys", "Read the deploys"],
   redeploy: ["Redeploying", "Redeployed"],
-  source: ["Reading the source:", "Read the source:"],
+  source: ["Reading Erga's code:", "Read Erga's code:"],
+  erga_code: ["Reading Erga's code:", "Read Erga's code:"],
 };
 
 /** The document the page has open, if any: the document tools' own when the agent names none. */

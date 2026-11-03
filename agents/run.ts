@@ -146,11 +146,37 @@ export const resultText = (out: ToolOutput) =>
 /**
  * A tool's arguments as JSON Schema, as every list of tools gives them (the model's, GET /api/tools, MCP's
  * tools/list): always an object's schema, as Anthropic and MCP require. Effect writes an empty Struct (a tool with
- * no arguments) as {"not": {"type": "null"}}: that one is an object with none.
+ * no arguments) as {"not": {"type": "null"}}: that one is an object with none. What says nothing goes, as each list
+ * carries it to the model: an integer's bounds of a safe integer, additionalProperties: true (the default), and the
+ * descriptions inside an anyOf that has its own (and an anyOf in one, flattened; a member twice, once).
  */
 export function argumentsSchema(parameters: Schema.Top): { type: "object"; properties?: Record<string, unknown>; required?: string[] } {
-  const schema = Tool.getJsonSchemaFromSchema(parameters) as { type?: string; properties?: Record<string, unknown>; required?: string[] };
+  const schema = tidy(Tool.getJsonSchemaFromSchema(parameters)) as {
+    type?: string;
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
   return schema.type == "object" ? (schema as { type: "object" }) : { type: "object", properties: {} };
+}
+
+type Json = { [k: string]: unknown };
+function tidy(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(tidy);
+  if (!v || typeof v != "object") return v;
+  const out: Json = {};
+  for (const [k, x] of Object.entries(v as Json)) {
+    if ((k == "minimum" || k == "maximum") && Math.abs(x as number) == Number.MAX_SAFE_INTEGER) continue;
+    if (k == "additionalProperties" && x === true) continue;
+    out[k] = tidy(x);
+  }
+  if (Array.isArray(out.anyOf) && out.description) {
+    const members = (out.anyOf as Json[]).flatMap(function bare(m): Json[] {
+      const { description: _, ...rest } = m;
+      return Array.isArray(rest.anyOf) && Object.keys(rest).length == 1 ? (rest.anyOf as Json[]).flatMap(bare) : [rest];
+    });
+    out.anyOf = [...new Map(members.map((m) => [JSON.stringify(m), m])).values()];
+  }
+  return out;
 }
 
 /** The tools as the model gets them: each one's JSON Schema; the loop runs them, never the model's toolkit. */
@@ -193,12 +219,12 @@ export function startLoop(opts: LoopOptions): AgentLoop {
 
   const log = stored ? restoredLog(stored) : emptyLog();
   const listeners = new Set<(ev: LogEvent) => void>();
-  // A tool's end carries no args; keep each call's path from its start.
-  const paths = new Map<string, string | null>();
+  // A tool's end carries no args; keep each call's path and name from its start.
+  const paths = new Map<string, { path: string | null; name: string }>();
   const emit = (ev: LogEvent) => {
     if (ev.t == "tool") {
-      if (ev.status == "running") paths.set(ev.id, ev.path);
-      else ev = { ...ev, path: paths.get(ev.id) ?? null };
+      if (ev.status == "running") paths.set(ev.id, { path: ev.path, name: ev.name });
+      else ev = { ...ev, path: paths.get(ev.id)?.path ?? null, name: paths.get(ev.id)?.name ?? ev.name };
     }
     checkpoints.logged(reduce(log, ev));
     for (const l of listeners) l(ev);
@@ -213,7 +239,10 @@ export function startLoop(opts: LoopOptions): AgentLoop {
     model: () => choice,
   });
 
-  const toolStarted = (id: string, name: string, args: unknown) => {
+  /** A call begins: the panel names the operation that a tool of several runs (its `op`). */
+  const toolStarted = (id: string, tool: string, args: unknown) => {
+    const op = (args as { op?: unknown } | null)?.op;
+    const name = typeof op == "string" ? op : tool;
     const path = hooks.about(name, args);
     hooks.toolStarted?.(name, path);
     emit({ t: "tool", id, name, path, status: "running" });

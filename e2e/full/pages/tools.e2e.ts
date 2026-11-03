@@ -67,8 +67,9 @@ test("ls: every page with its title and address, the folders and the other files
 test("the token API and MCP list the file tools, and no old names", async () => {
   const server = await servers.short();
   const s = await site(server);
-  const listed = ((await (await fetch(`${server.root}/api/tools`, { headers: s.auth })).json()) as { tools: { name: string }[] }).tools.map(
-    (t) => t.name
+  type Listed = { name: string; parameters: { properties: { op: { description: string } } } };
+  const listed = ((await (await fetch(`${server.root}/api/tools`, { headers: s.auth })).json()) as { tools: Listed[] }).tools.flatMap((t) =>
+    t.parameters.properties.op.description.split("\n").map((l: string) => l.split("(")[0])
   );
   const mcp = (
     (await (
@@ -77,8 +78,8 @@ test("the token API and MCP list the file tools, and no old names", async () => 
         headers: { ...s.auth, "Content-Type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
       })
-    ).json()) as { result: { tools: { name: string }[] } }
-  ).result.tools.map((t) => t.name);
+    ).json()) as { result: { tools: { name: string; inputSchema: Listed["parameters"] }[] } }
+  ).result.tools.flatMap((t) => t.inputSchema.properties.op.description.split("\n").map((l: string) => l.split("(")[0]));
   for (const n of ["new", "mv", "rm", "ls", "read", "write", "versions", "open_page"]) {
     expect(listed).toContain(n);
     expect(mcp).toContain(n);
@@ -89,11 +90,11 @@ test("the token API and MCP list the file tools, and no old names", async () => 
 test("the document agent makes, moves, lists and deletes on the same tree", async () => {
   const s = await site(await servers.short());
   const calls = await s.agentTurn("Tidy up", [
-    { tool: "new", args: { path: "drafts/" } },
-    { tool: "new", args: { path: "drafts/idea.html" } },
-    { tool: "mv", args: { from: "drafts/idea.html", to: "drafts/plan.html" } },
-    { tool: "ls", args: { path: "drafts" } },
-    { tool: "rm", args: { path: "drafts" } },
+    { tool: "edit", args: { op: "new", path: "drafts/" } },
+    { tool: "edit", args: { op: "new", path: "drafts/idea.html" } },
+    { tool: "edit", args: { op: "mv", from: "drafts/idea.html", to: "drafts/plan.html" } },
+    { tool: "read", args: { op: "ls", path: "drafts" } },
+    { tool: "edit", args: { op: "rm", path: "drafts" } },
     { text: "Done." },
   ]);
   expect(calls.map((c) => c.status)).toEqual(["done", "done", "done", "done", "done"]);

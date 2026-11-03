@@ -162,27 +162,21 @@ export function makeTools(
     {
       name: "read",
       label: "Read",
-      description: "Reads a file (text, an image, a PDF), one element or CSS rule of it, or an old version.",
+      description: "Reads a file: text, an image or a PDF.",
       parameters: Schema.Struct({
         path: Schema.String.annotate({
-          description: `The file. Text comes cut to ${MAX_LINES} lines or ${MAX_BYTES / 1024}KB; an image as a picture; a PDF as pages you see`,
+          description: `The file (text: ${MAX_LINES} lines at most).`,
         }),
-        offset: Schema.optionalKey(Schema.Finite.annotate({ description: "The line to start at (1 is the first)" })),
-        limit: Schema.optionalKey(Schema.Finite.annotate({ description: "At most this many lines" })),
-        pages: Schema.optionalKey(
-          Schema.String.annotate({ description: `A PDF's pages: "3" or "21-40", at most ${PAGES_PER_READ} (default: the first ones)` })
-        ),
+        offset: Schema.optionalKey(Schema.Finite),
+        limit: Schema.optionalKey(Schema.Finite),
+        pages: Schema.optionalKey(Schema.String.annotate({ description: `A PDF's pages, e.g. "21-40".` })),
         selector: Schema.optionalKey(
           Schema.String.annotate({
-            description: 'Only the one element it matches, as the source has it (e.g. "svg g#logo"): edit takes it too',
+            description: 'Only this element, e.g. "svg g#logo".',
           })
         ),
-        css_rule: Schema.optionalKey(
-          Schema.String.annotate({ description: 'Only the one CSS rule with this selector (e.g. ".legible h2"): edit takes it as cssRule' })
-        ),
-        version: Schema.optionalKey(
-          Schema.String.annotate({ description: 'The file as it was in this version ("v3"; versions lists them)' })
-        ),
+        css_rule: Schema.optionalKey(Schema.String.annotate({ description: 'Only this CSS rule, e.g. ".legible h2".' })),
+        version: Schema.optionalKey(Schema.String.annotate({ description: "As in this version." })),
       }),
       execute: async (
         _id,
@@ -220,12 +214,11 @@ export function makeTools(
     {
       name: "edit",
       label: "Edit",
-      description: "Replaces exact text, one element or one CSS rule in a file's source; one undo step.",
+      description: "Replaces text, an element or a CSS rule in a file.",
       parameters: Schema.Struct({
         path: Schema.String.annotate({ description: "The file" }),
         edits: EDITS.annotate({
-          description:
-            "Replacements against the file as it is now, each unique and apart (merge two in one block). oldText not found: the file changed, read it again. A page's text: call_edit first",
+          description: "Replacements, each unique; for a page's text, call_edit first.",
         }),
       }),
       execute: async (_id, p: { path: string; edits: readonly TextEdit[] }) => {
@@ -239,11 +232,10 @@ export function makeTools(
     {
       name: "document_api",
       label: "Read the page's edits",
-      description: "Lists a page's edits (its own API's and its library's), with their inputs: use them first for its text.",
+      description: "Lists a page's own edits: use them first for its text.",
       parameters: Schema.Struct({
         path: Schema.String.annotate({
-          description:
-            'The page, e.g. "index.html": its own API (<meta name="erga-api">), and erga/slides\' or erga/text\'s. They keep the HTML as a person\'s editing would; edit the source only for layout, styles and scripts',
+          description: 'The page, e.g. "index.html"',
         }),
       }),
       execute: async (_id, p: { path: string }) => {
@@ -258,12 +250,12 @@ export function makeTools(
     {
       name: "call_edit",
       label: "Edit the page",
-      description: "Runs one of a page's edits (document_api lists them); if it refuses, edit the source.",
+      description: "Runs one of a page's edits (document_api).",
       parameters: Schema.Struct({
         path: Schema.String.annotate({ description: 'The page, e.g. "index.html"' }),
-        edit: Schema.String.annotate({ description: 'The edit\'s name, e.g. "replace_text": it lands at once, one undo step' }),
+        edit: Schema.String.annotate({ description: 'The edit\'s name, e.g. "replace_text".' }),
         input: Schema.Record(Schema.String, Schema.Unknown).annotate({
-          description: 'The edit\'s input, as its schema says, e.g. {"selector": "h1", "find": "Draft", "text": "Final"}',
+          description: "Its input, as its schema says.",
         }),
       }),
       execute: async (_id, p: { path: string; edit: string; input: Record<string, unknown> }) => {
@@ -310,12 +302,12 @@ export function makeTools(
     {
       name: "grep",
       label: "Search",
-      description: "Searches the document's text files, and its PDFs' text, for a regular expression.",
+      description: "Searches the text files and PDFs for a regex.",
       parameters: Schema.Struct({
         pattern: Schema.String.annotate({
-          description: "A regular expression, or literal text with literal: true. The answer: path:line: text (a PDF's page for its line)",
+          description: "A regex, or text with literal.",
         }),
-        glob: Schema.optionalKey(Schema.String.annotate({ description: 'Only the files that match, e.g. "**/*.css"' })),
+        glob: Schema.optionalKey(Schema.String.annotate({ description: 'Only matching paths, e.g. "**/*.css".' })),
         ignoreCase: Schema.optionalKey(Schema.Boolean),
         literal: Schema.optionalKey(Schema.Boolean),
       }),
@@ -394,7 +386,7 @@ function openPage(open: (path: string) => Promise<OpenResult>): AgentTool {
   return {
     name: "open_page",
     label: "Open a page",
-    description: "Switches your person's open editor tabs on this document to another of its pages.",
+    description: "Opens another page in your person's editor tabs.",
     parameters: Schema.Struct({
       path: Schema.String.annotate({
         description:
