@@ -209,7 +209,6 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       treeOp: (doc, op) => counted("doc", () => host(doc).treeOp(op)),
       files: (doc) => counted("doc", () => host(doc).fileList()),
       rename: (doc, person, patch) => counted("doc", () => host(doc).rename(person, patch)),
-      exists: (doc) => counted("doc", () => host(doc).exists()),
       delete: (doc) => counted("doc", () => host(doc).delete()),
       list: async (owner, ids) => {
         return Promise.all(

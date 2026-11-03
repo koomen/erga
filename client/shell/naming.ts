@@ -62,12 +62,7 @@ export function mountNaming(shell: Shell) {
     naming.hidden = !open;
     titleBtn.setAttribute("aria-expanded", String(open || !pagesCard.hidden));
     if (!open) return;
-    togglePages(false);
-    shell.chrome.showChrome();
-    shell.chrome.toggleHelp(false);
-    shell.sharing.toggleSharing(false);
-    shell.people.toggleAccount(false);
-    shell.docSettings?.toggle(false);
+    shell.chrome.cardOpened("naming");
     slugTouched = false;
     // The address as the server gives it, its slug in the field; the homepage project's (/_home) has no slug to change.
     const n = shell.docName!,
@@ -208,12 +203,7 @@ export function mountNaming(shell: Shell) {
     pagesCard.hidden = !open;
     titleBtn.setAttribute("aria-expanded", String(open || !naming.hidden));
     if (!open) return;
-    shell.chrome.showChrome();
-    shell.chrome.toggleHelp(false);
-    shell.sharing.toggleSharing(false);
-    shell.people.toggleAccount(false);
-    toggleNaming(false);
-    shell.docSettings?.toggle(false);
+    shell.chrome.cardOpened("pages");
     // The tree was made, and read, once the editor was idle (ready): it shows at once, and is read again behind.
     if (tree) { tree.refresh(); tree.focus(); return; }
     // Its script isn't in yet (the tab wasn't idle, or it failed before): a quiet line until it is.

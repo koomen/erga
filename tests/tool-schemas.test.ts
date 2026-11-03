@@ -3,11 +3,9 @@
 // Anthropic API for the model's tools. The lists: MCP's tools/list and GET /api/tools
 // (server/api.ts), the admin agent's, and the request to the model.
 
-import { Database } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import * as Schema from "effect/Schema";
-import { Directory, type Param, type Sql } from "../server/directory/index.ts";
+import { Directory } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
 import { sessionOf } from "../server/identity/index.ts";
 import { serverApi } from "../server/api";
@@ -15,6 +13,7 @@ import { respond } from "../server/http";
 import { Tokens } from "../server/identity/tokens";
 import { agentTools, allTools, KINDS, jsonSchemaOf } from "../agents/tools";
 import { argumentsSchema } from "../agents/run";
+import { memory } from "./helpers/memory-sql";
 
 const ORIGIN = "https://erga.test";
 type Listed = { name: string; schema: { type?: string } };
@@ -24,24 +23,7 @@ const notObjects = (tools: Listed[]) =>
   tools.filter((t) => t.schema?.type != "object").map((t) => `${t.name}: ${JSON.stringify(t.schema)}`);
 
 async function server() {
-  const db = new Database(":memory:", { strict: true });
-  const dir_ = new URL("../server/migrations/", import.meta.url).pathname;
-  for (const name of readdirSync(dir_)
-    .filter((n) => n.endsWith(".sql"))
-    .sort())
-    db.exec(readFileSync(dir_ + name, "utf8"));
-  const bind = (params: Param[]) => params as (string | number | null)[];
-  const sql: Sql = {
-    all: async <T>(q: string, ...params: Param[]) => db.query(q).all(...bind(params)) as T[],
-    run: async (q, ...params) => {
-      db.query(q).run(...bind(params));
-    },
-    batch: async (statements) => {
-      db.transaction(() => {
-        for (const [q, ...params] of statements) db.query(q).run(...bind(params));
-      })();
-    },
-  };
+  const sql = memory();
   const dir = new Directory(sql, { admins: ["ada"] });
   const tokens = new Tokens(sql, "secret-".repeat(6), dir);
   const platform = {

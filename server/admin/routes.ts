@@ -2,14 +2,14 @@
 // admins, for admins only. Everyone else gets "not found": they
 // can't see the page, nor that there is one.
 //
-//   /admin                     the Settings page (GET /admin/settings redirects here)
+//   /admin                     the Settings page
 //   /admin/changes             the Change log: the settings' versions, factory tasks added and merged, and production deploys, newest first; ?before=n for older ones
 //   /admin/users               the Users page: the specific people, each a GitHub or Google account with one role (Admin, Can
 //                              create and edit content, Can authenticate), the deploy role as a switch, when they joined and last came;
 //                              add one (before their first sign-in too), remove one
 //   /admin/access              the Access page: the group rules (everybody, a Google Workspace, a GitHub organization: No
 //                              access, Can authenticate or Can create and edit content), and whether users can share content publicly
-//   /admin/api-keys            the API keys page: every key Erga needs from the services it calls (GET /admin/credentials redirects here)
+//   /admin/api-keys            the API keys page: every key Erga needs from the services it calls
 //   /admin/auth                the Authentication page: how people sign in on this server (GitHub, Google)
 //   GET /admin/auth/status     the same as JSON {here, google, providers} (server/identity/apps.ts, AuthStatus: never a secret), with live checks
 //   POST /admin/auth           provider (github or google), and do=save (clientId, secret): an app's values, a secret, set only here
@@ -43,7 +43,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { ConfigError, CredentialError, NotAllowed, roleValue, type UserRole } from "../directory/index.ts";
-import { link, page } from "../pages/index.ts";
+import { page } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { authOps, AuthError, ScopeError, type Provider } from "../identity/index.ts";
 import type { Who } from "../directory/index.ts";
@@ -66,8 +66,6 @@ export const adminRoutes = Effect.gen(function* () {
   const admin = !!who && !session?.agent && (yield* call(() => platform.directory.users.actsAsAdmin(who)));
   if (read) {
     if (!admin || url.pathname == "/admin/share") return notFound();
-    if (url.pathname == "/admin/settings") return redirect(link("/admin", session!));
-    if (url.pathname == "/admin/credentials") return redirect(link("/admin/api-keys", session!));
 
     if (url.pathname == "/admin/changes") {
       const before = Number(url.searchParams.get("before"));
@@ -79,7 +77,9 @@ export const adminRoutes = Effect.gen(function* () {
       return url.pathname == "/admin/auth" ? authPage(session!, status) : json(status);
     }
     if (url.pathname == "/admin/access") return yield* call(() => accessPage(platform, session!));
-    return yield* call(() => (url.pathname == "/admin/users" ? usersPage(platform, session!) : settingsPage(platform, session!)));
+    if (url.pathname == "/admin/users") return yield* call(() => usersPage(platform, session!));
+    if (url.pathname == "/admin") return yield* call(() => settingsPage(platform, session!));
+    return notFound();
   }
   if (request.method != "POST") return notFound();
   if (!admin) return plainJson({ error: "Only an admin can do that." }, session ? 403 : 401);

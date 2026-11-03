@@ -22,7 +22,6 @@ type Call =
   | "delete"
   | "notify"
   | "diskPath"
-  | "exists"
   | "exportStorage"
   | "importStorage"
   | "wipeStorage"

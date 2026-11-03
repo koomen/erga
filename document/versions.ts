@@ -14,7 +14,7 @@
 // blob store is never read. A file that is a blob already
 // (an upload: its BlobRef) goes into a version by its hash, with no bytes read.
 //
-// When a version is cut (document.ts decides, in `noteEdit`), and what's
+// When a version is cut (history.ts decides, in `noteEdit`), and what's
 // in it, is the caller's: this file stores and reads them, says what changed (`changes`, a compact diff), and writes the
 // fallback description used when no model writes one.
 

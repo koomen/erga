@@ -17,14 +17,14 @@
 
 import * as Effect from "effect/Effect";
 import { DurableObject } from "cloudflare:workers";
-import { Document, personOf, type DocumentDeps, type FileData, type OnDisk } from "../../document/document";
+import { Document, type DocumentDeps, type FileData, type OnDisk } from "../../document/document";
 import type { ViewAnswer } from "../../document/view";
 import type { DocKind, TreeOp } from "../../document/pages";
 import type { FileList, NameAnswer, TreeAnswer, TreeState } from "../../document/host";
 import { Tabs, type Tab } from "../../document/tabs";
 import { PING, PONG } from "../../shared/room-socket";
 import type { Who } from "../../server/directory/index.ts";
-import { askerFrom, type Role } from "../../document/access";
+import { askerFrom, personOf, type Role } from "../../document/access";
 import type { NamedRow } from "../../document/names";
 import { documentAgents } from "../../agents/document/session";
 import { sandboxOf } from "../sandbox";
@@ -157,9 +157,6 @@ export class DocumentObject extends DurableObject<Env> {
   diskPath(): Promise<string | null> {
     return run(this.document.diskPath());
   }
-  exists(): Promise<boolean> {
-    return run(this.document.exists());
-  }
   exportStorage(id: string, page: Page): Promise<DocSnapshot | null> {
     return run(this.document.exportStorage(id, page));
   }
@@ -280,7 +277,7 @@ export class DocumentObject extends DurableObject<Env> {
   private async mirror(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (
-      !(await run(this.document.onDisk())) ||
+      (await run(this.document.diskPath())) == null ||
       !this.env.ERGA_LINK_SECRET ||
       url.searchParams.get("link") != this.env.ERGA_LINK_SECRET ||
       request.headers.get("upgrade")?.toLowerCase() != "websocket"

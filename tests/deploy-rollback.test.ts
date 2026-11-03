@@ -4,7 +4,8 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { Release } from "../control/deploys/release-format";
-import { FLEET_ACCOUNT, mockBuilder, mockCloudflare } from "../dev/mock-cloudflare";
+import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
+import { mockBuilder } from "../dev/mock-builder";
 import { prepareRelease, release, SHA1, SHA2, SHA3, env, staging, bindingsOf, Server, bootstrap } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 

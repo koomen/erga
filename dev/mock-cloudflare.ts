@@ -21,12 +21,7 @@
 //   mock-nosub          the account has no workers.dev subdomain yet
 //   mock-noperm         the token can't make D1 databases (a permission missing)
 //   mock-fail-<step>    Cloudflare fails at that step (account, database, migrations, assets, worker, address, pages)
-//   mock-slow           each call takes a little while (to watch the steps go by)
 //   mock-flaky          the first asset upload fails with a 502 (the deploy tries it again)
-//   mock-scoped-…       an account API token made through the mock's POST /accounts/{id}/tokens:
-//                      it may do only what its policies say (Editor on the
-//                       Workers it names, D1, read on the zones it names), and is refused the rest
-//                       with a 403, as Cloudflare would
 //
 // Registrar: a name with "taken" in it is taken, ".xyz" can't be registered
 // through the API, ".dev" costs 12.18 USD and anything else 10.44.
@@ -49,8 +44,6 @@ import * as Base64 from "effect/encoding/Base64";
 import * as Result from "effect/Result";
 import { createHash } from "node:crypto";
 import type { Fetch } from "../control/deploys/cloudflare-api";
-import type { Release } from "../control/deploys/release-format";
-import type { Builder } from "../control/deploys/branches";
 import { memoryStore, snapshotRoutes, type DocStore } from "../document/snapshot";
 import { hex, randomBytes } from "../shared/bytes";
 import { mockOAuth } from "./mock-cloudflare-oauth";
@@ -107,27 +100,9 @@ export interface MockState {
   oauthScopes?: string;
   /** The next call of this step fails once (a 500), as mock-fail-<step> does for every call. */
   failNext: string | null;
-  /** Account API tokens made through the API (their values aren't here: only the tests read them, from `tokenValues`). */
-  tokens: { id: string; name: string; policies: TokenPolicy[] }[];
-  /** Containers (the build containers, control/builder/): images prepared, and applications by id (= their namespace's id). */
-  containers: { prepared: string[]; apps: Record<string, { name: string; scheduling_policy: string; durable_objects: { namespace_id: string }; configuration?: { instance_type?: string } }> };
 }
 
-interface TokenPolicy { effect: string; permission_groups: { id: string; name?: string }[]; resources: Record<string, string | Record<string, string>> }
-/** A policy's resource keys, a Worker's nested under its account. */
-const keysOf = (p: TokenPolicy) => Object.entries(p.resources ?? {}).flatMap(([k, v]) => (typeof v == "string" ? [k] : Object.keys(v)));
-
-/** The permission groups the mock knows, by id (Cloudflare's ids). */
-const GROUPS: Record<string, string> = {
-  "7e79ec33834341f28dd431ab73884400": "Individual Workers Editor",
-  "bdbcd690c763475a985e8641dddc09f7": "Workers Containers Write",
-  "09b2857d1c31407795e75e3fed8617a1": "D1 Write",
-  "c8fed203ed3043cba015a93ad1616f1f": "Zone Read",
-  "2072033d694d415a936eaeb94e6405b8": "Workers Routes Read",
-  "82e64a83756745bbbb1c9c2701bf816b": "DNS Read",
-};
-
-/** A Worker's tag (its id in GET /workers/scripts, and in a token's resources): fixed by its name, here. */
+/** A Worker's tag (its id in GET /workers/scripts): fixed by its name, here. */
 export const scriptTag = (name: string) => createHash("md5").update(`script:${name}`).digest("hex");
 /** A Durable Object namespace's id: fixed by its Worker and class, here. */
 export const namespaceId = (script: string, className: string) => createHash("md5").update(`ns:${script}:${className}`).digest("hex");
@@ -167,29 +142,48 @@ export const MOCK_SNAPSHOT_TOKEN = "mock-snapshot-token-0123456789abcdef01234567
 /** Production's documents in the fleet mock: their ids, and what each holds. */
 export const PROD_DOCS = ["abcd2345", "efgh6789", "jkmn2345"];
 
-export function mockCloudflare(opts: {
-  delayMs?: number; singleAssetUploads?: boolean; fleet?: boolean;
-  /** With fleet: staging's secrets already given (as deploy/setup.ts gives them to its first deploy), for the dev server's mock. */
-  stagingSecrets?: boolean;
-  onUpload?: (script: string, metadata: Record<string, any>) => void;
-  /** A Worker's own answer, before the mock's (the tests route /api/deploys/... to the servers they run). */
-  sites?: (req: Request, script: string) => Promise<Response | null> | Response | null;
-  /**
-   * Whether a token made through the API (mock-scoped-…) without Workers Containers Write may upload a version
-   * that names a container's class. Cloudflare's answer isn't known yet: "refuse" (the default) plays the cautious
-   * one. (Erga deploys with an OAuth grant now, control/deploys/credential.ts; the mock's tokens stay for the API's shape.)
-   */
-  scopedContainers?: "refuse" | "accept";
-} = {}): { fetch: Fetch; state: MockState; tokenValues: Map<string, string> } {
+export function mockCloudflare(
+  opts: {
+    delayMs?: number;
+    singleAssetUploads?: boolean;
+    fleet?: boolean;
+    /** With fleet: staging's secrets already given (as deploy/setup.ts gives them to its first deploy), for the dev server's mock. */
+    stagingSecrets?: boolean;
+    onUpload?: (script: string, metadata: Record<string, any>) => void;
+    /** A Worker's own answer, before the mock's (the tests route /api/deploys/... to the servers they run). */
+    sites?: (req: Request, script: string) => Promise<Response | null> | Response | null;
+  } = {}
+): { fetch: Fetch; state: MockState } {
   const state: MockState = {
     account: { id: ACCOUNT_ID, name: "Ada's account" },
     subdomain: "ada-mock",
-    zones: [{ id: "zone0000000000000000000000000001", name: "ada-example.com", status: "active" }, { id: "zone0000000000000000000000000002", name: "ada-pages.net", status: "active" }],
-    databases: [], scripts: {}, assets: { manifest: {}, uploaded: [] }, blobs: {}, served: {}, domains: [], repos: opts.fleet ? ["erga"] : [], buckets: opts.fleet ? ["erga-releases"] : [], routes: {}, dns: {}, registrations: [], calls: [], revoked: 0,
-    secrets: {}, docs: {}, versions: {}, kept: {}, deployments: {}, deletedDatabases: [], failNext: null, tokens: [], containers: { prepared: [], apps: {} }, refreshTokens: [], oauthGrants: 0,
+    zones: [
+      { id: "zone0000000000000000000000000001", name: "ada-example.com", status: "active" },
+      { id: "zone0000000000000000000000000002", name: "ada-pages.net", status: "active" },
+    ],
+    databases: [],
+    scripts: {},
+    assets: { manifest: {}, uploaded: [] },
+    blobs: {},
+    served: {},
+    domains: [],
+    repos: opts.fleet ? ["erga"] : [],
+    buckets: opts.fleet ? ["erga-releases"] : [],
+    routes: {},
+    dns: {},
+    registrations: [],
+    calls: [],
+    revoked: 0,
+    secrets: {},
+    docs: {},
+    versions: {},
+    kept: {},
+    deployments: {},
+    deletedDatabases: [],
+    failNext: null,
+    refreshTokens: [],
+    oauthGrants: 0,
   };
-  /** Tokens' values, by token id (never in `state`). */
-  const tokenValues = new Map<string, string>();
   // Secrets' values never go out with the state (/deploy/api/mock shows it): only the tests read them, in this process.
   Object.defineProperty(state, "secrets", { value: {}, enumerable: false, writable: true });
   if (opts.fleet) seedFleet(state);
@@ -209,44 +203,6 @@ export function mockCloudflare(opts: {
   const okAssets = (result: unknown, status = 200) => Response.json({ result, success: true, errors: null, messages: null }, { status });
   const fail = (status: number, code: number, message: string) => Response.json({ success: false, errors: [{ code, message }], messages: [], result: null }, { status });
   const randomHex = (n: number) => hex(randomBytes(n));
-  const tokenOf = (value: string) => state.tokens.find((t) => tokenValues.get(t.id) == value);
-
-  /** What a token made through the API may do (its policies), as Cloudflare checks it: a refusal, or null to go on. */
-  /** Whether a token made through the API has Workers Containers Write on the account (a version naming a container's class). */
-  function grantsContainers(value: string): boolean {
-    const t = tokenOf(value);
-    return !!t && t.policies.some((p) => p.permission_groups.some((g) => GROUPS[g.id] == "Workers Containers Write") && keysOf(p).includes(`com.cloudflare.api.account.${ACCOUNT_ID}`));
-  }
-
-  function scoped(m: string, path: string, value: string): Response | null {
-    const t = tokenOf(value);
-    if (!t) return fail(401, 1000, "Invalid API Token");
-    const no = () => fail(403, 10000, "Authentication error");
-    const grants = (group: string) => t.policies.filter((p) => p.permission_groups.some((g) => GROUPS[g.id] == group)).flatMap(keysOf);
-    const workers = grants("Individual Workers Editor").map((k) => k.split(".").pop()!);
-    const d1 = grants("D1 Write").includes(`com.cloudflare.api.account.${ACCOUNT_ID}`);
-    const zoneIds = (group: string) => grants(group).map((k) => /zone\.(\w+)$/.exec(k)?.[1]).filter(Boolean) as string[];
-    const zones = zoneIds("Zone Read");
-    const acc = /^\/accounts\/[^/]+(\/[^?]*)?/.exec(path);
-    if (acc) {
-      const rest = acc[1] ?? "";
-      if (rest == "/tokens/verify") return null;
-      const script = /^\/workers\/scripts\/([^/]+)/.exec(rest);
-      if (script) return workers.includes(scriptTag(script[1])) && state.scripts[script[1]] ? null : no();
-      if (rest == "/d1/database" || rest.startsWith("/d1/")) return d1 ? null : no();
-      // The account's custom domains: no per-zone read reaches them (as on Cloudflare: a 403 for a scoped token).
-      return no();
-    }
-    if (path.startsWith("/zones?")) return zones.length ? null : no();
-    const zone = /^\/zones\/([^/?]+)(\/[^?]*)/.exec(path);
-    if (zone) {
-      if (m != "GET") return no();
-      const need = zone[2].startsWith("/dns_records") ? "DNS Read" : zone[2].startsWith("/workers/routes") ? "Workers Routes Read" : "Zone Read";
-      return zoneIds(need).includes(zone[1]) ? null : no();
-    }
-    return no();
-  }
-
   async function api(req: Request, path: string, token: string): Promise<Response> {
     const m = req.method;
     // The account's workers.dev subdomain is set per token the first time it's seen (mock-nosub has none until it makes one).
@@ -257,9 +213,7 @@ export function mockCloudflare(opts: {
     if (failAt && failAt == step) return fail(500, 10013, "An unknown error has occurred");
     if (state.failNext && state.failNext == step) { state.failNext = null; return fail(500, 10013, "An unknown error has occurred"); }
     let r: RegExpExecArray | null;
-    if (token.startsWith("mock-scoped-")) { const no = scoped(m, path, token); if (no) return no; }
     if (m == "GET" && /^\/accounts(\?|$)/.test(path)) return ok([state.account]);
-    if (m == "GET" && path == "/user/tokens/verify") return ok({ status: "active" });
     if ((r = /^\/accounts\/([^/]+)(\/.*)?$/.exec(path))) {
       if (r[1] != ACCOUNT_ID) return fail(403, 9109, "Unauthorized to access requested resource");
       const rest = r[2] ?? "";
@@ -270,37 +224,6 @@ export function mockCloudflare(opts: {
         if (m == "PUT") { state.subdomain = (await body()).subdomain; return ok({ subdomain: state.subdomain }); }
       }
       if (m == "GET" && rest == "/workers/scripts") return ok(Object.entries(state.scripts).map(([id, s]) => ({ id, tag: scriptTag(id), tags: s.tags, named_handlers: s.namespaces.map((name) => ({ name, handlers: ["class"] })) })));
-      if (rest.startsWith("/tokens")) {
-        if (m == "GET" && rest == "/tokens/permission_groups") return ok(Object.entries(GROUPS).map(([id, name]) => ({ id, name, scopes: [] })));
-        if (m == "GET" && rest == "/tokens/verify") return token.startsWith("mock-scoped-") ? ok({ id: tokenOf(token)?.id, status: "active" }) : fail(400, 1000, "not an account token");
-        if (token.startsWith("mock-scoped-")) return fail(403, 9109, "Unauthorized to access requested resource");
-        if (m == "GET" && rest.startsWith("/tokens?")) return ok(state.tokens.map(({ id, name }) => ({ id, name, status: "active" })));
-        if (m == "POST" && rest == "/tokens") {
-          const b = await body();
-          if (!b?.name || !Array.isArray(b.policies) || !b.policies.length) return fail(400, 400, "name and policies are required");
-          for (const pol of b.policies as TokenPolicy[]) {
-            for (const g of pol.permission_groups ?? []) if (!GROUPS[g.id]) return fail(400, 400, `unknown permission group ${g.id}`);
-            // A Worker's key on its own is refused, as Cloudflare does (code 1004): it must sit under its account's.
-            if (Object.keys(pol.resources ?? {}).some((k) => k.startsWith("com.cloudflare.edge.worker.script."))) return fail(500, 1004, "server error when creating the token");
-            for (const key of keysOf(pol)) {
-              const w = /^com\.cloudflare\.edge\.worker\.script\.([0-9a-f]{32})$/.exec(key), z = /^com\.cloudflare\.api\.account\.zone\.(\w+)$/.exec(key), a = /^com\.cloudflare\.api\.account\.(\w+)$/.exec(key);
-              if (w && !Object.keys(state.scripts).some((n) => scriptTag(n) == w[1])) return fail(400, 400, `no Worker with the tag ${w[1]}`);
-              if (z && !state.zones.some((x) => x.id == z[1])) return fail(400, 400, `no zone ${z[1]}`);
-              if (!w && !z && !(a && a[1] == ACCOUNT_ID)) return fail(400, 400, `unknown resource ${key}`);
-            }
-          }
-          const id = randomHex(16),
-            value = `mock-scoped-${randomHex(16)}`;
-          state.tokens.push({ id, name: b.name, policies: b.policies });
-          tokenValues.set(id, value);
-          return ok({ id, name: b.name, status: "active", policies: b.policies, value });
-        }
-        const one = /^\/tokens\/([0-9a-f]+)$/.exec(rest);
-        const t = one && state.tokens.find((x) => x.id == one[1]);
-        if (one && !t) return fail(404, 1003, "token not found");
-        if (m == "GET" && t) return ok({ id: t.id, name: t.name, status: "active", policies: t.policies });
-        if (m == "DELETE" && t) { state.tokens = state.tokens.filter((x) => x != t); tokenValues.delete(t.id); return ok({ id: t.id }); }
-      }
       if (rest.startsWith("/r2/buckets")) {
         state.buckets ??= [];
         if (m == "GET") { const q = new URLSearchParams(rest.split("?")[1] ?? "").get("name_contains") ?? ""; return ok({ buckets: state.buckets.filter((b) => b.includes(q)).map((name) => ({ name })) }); }
@@ -423,12 +346,6 @@ export function mockCloudflare(opts: {
         const modules = [...form.keys()].filter((k) => k != "metadata");
         if (!modules.includes(meta.main_module)) return fail(400, 10021, `No such module "${meta.main_module}"`);
         if (meta.migrations && meta.exports) return fail(400, 10021, "migrations and Durable Object exports can't be used together");
-        // A version naming container images (the factory's): each prepared first, its class one of the version's Durable Objects.
-        for (const c of meta.containers ?? []) {
-          if (token.startsWith("mock-scoped-") && (opts.scopedContainers ?? "refuse") == "refuse" && !grantsContainers(token)) return fail(403, 10000, "Authentication error: containers");
-          if (!c.class_name || !(meta.exports?.[c.class_name] || state.scripts[r[1]]?.namespaces.includes(c.class_name))) return fail(400, 10021, `container ${c.name ?? c.class_name}: no Durable Object class ${c.class_name}`);
-          for (const ref of Object.values(c.images ?? {}) as string[]) if (!state.containers.prepared.includes(ref)) return fail(400, 10021, `container ${c.name}: image ${ref} isn't prepared`);
-        }
         const prev = state.scripts[r[1]];
         // Durable Objects: a namespace per class in exports, made the first time, matched after.
         const namespaces = [...new Set([...(prev?.namespaces ?? []), ...Object.entries(meta.exports ?? {}).filter(([, e]: [string, any]) => e.type == "durable-object" && e.storage == "sqlite").map(([n]) => n)])];
@@ -501,33 +418,6 @@ export function mockCloudflare(opts: {
           return ok({ name: b.name, type: "secret_text" });
         }
       }
-      // Containers: images prepared (any in this account's registry), and the factory's application.
-      if (m == "POST" && rest == "/containers/image-preparations") {
-        const b = await body();
-        if (typeof b?.image != "string" || !b.image.startsWith(`registry.cloudflare.com/${ACCOUNT_ID}/`) || !/@sha256:[0-9a-f]{64}$/.test(b.image)) return fail(400, 1000, "image must be digest-pinned and hosted in a supported managed registry");
-        if (!state.containers.prepared.includes(b.image)) state.containers.prepared.push(b.image);
-        return ok({ status: "ready" });
-      }
-      if (m == "GET" && rest == "/containers/applications") return ok(Object.entries(state.containers.apps).map(([id, a]) => ({ id, ...a })));
-      if (m == "GET" && (r = /^\/containers\/applications\/([0-9a-f]+)$/.exec(rest))) {
-        const app = state.containers.apps[r[1]];
-        return app ? ok({ id: r[1], ...app }) : fail(404, 1404, "application not found");
-      }
-      if (m == "PATCH" && (r = /^\/containers\/applications\/([0-9a-f]+)$/.exec(rest))) {
-        const app = state.containers.apps[r[1]];
-        if (!app) return fail(404, 1404, "application not found");
-        const b = await body();
-        if (b?.configuration) app.configuration = { ...app.configuration, ...b.configuration };
-        return ok({ id: r[1], ...app });
-      }
-      if (m == "POST" && rest == "/containers/applications") {
-        const b = await body();
-        const ns = b?.durable_objects?.namespace_id;
-        if (b?.scheduling_policy != "durable_object" || !ns || !b.name) return fail(400, 10021, "name, scheduling_policy durable_object and durable_objects.namespace_id are required");
-        if (state.containers.apps[ns]) return fail(409, 10409, "an application for that namespace exists");
-        state.containers.apps[ns] = { name: b.name, scheduling_policy: b.scheduling_policy, durable_objects: { namespace_id: ns } };
-        return ok({ id: ns, ...state.containers.apps[ns] });
-      }
       if (m == "GET" && (r = /^\/artifacts\/namespaces\/([^/]+)\/repos\/([^/]+)$/.exec(rest))) {
         if (!opts.fleet || r[1] != "erga" || !state.repos.includes(r[2])) return fail(404, 10404, "repo not found");
         return ok({ name: r[2], namespace: r[1], remote: `https://artifacts.mock/git/erga/${r[2]}.git`, default_branch: "main" });
@@ -595,9 +485,11 @@ export function mockCloudflare(opts: {
     }
     if (m == "GET" && path.startsWith("/zones?")) {
       const name = new URLSearchParams(path.split("?")[1]).get("name");
-      const t = token.startsWith("mock-scoped-") ? tokenOf(token) : null;
-      const readable = (id: string) => !t || t.policies.some((p) => p.permission_groups.some((g) => GROUPS[g.id] == "Zone Read") && keysOf(p).includes(`com.cloudflare.api.account.zone.${id}`));
-      return ok(state.zones.filter((z) => (!name || z.name == name) && readable(z.id)).map((z) => ({ ...z, account: { id: state.account.id, name: state.account.name } })));
+      return ok(
+        state.zones
+          .filter((z) => !name || z.name == name)
+          .map((z) => ({ ...z, account: { id: state.account.id, name: state.account.name } }))
+      );
     }
     if ((r = /^\/zones\/([^/?]+)(\/[^?]*)(?:\?(.*))?$/.exec(path))) {
       const [, zone, rest, query] = r;
@@ -616,11 +508,6 @@ export function mockCloudflare(opts: {
           list.push({ pattern: d.pattern, script: d.script });
           return ok({ id: randomHex(16), ...d });
         }
-      }
-      // Every zone's free Universal SSL certificate: the zone and one level down.
-      if (rest == "/ssl/certificate_packs" && m == "GET") {
-        const name = state.zones.find((z) => z.id == zone)!.name;
-        return ok([{ type: "universal", hosts: [name, `*.${name}`], status: "active" }]);
       }
     }
     return fail(404, 7003, `No route for that URI (${m} ${path})`);
@@ -720,12 +607,11 @@ export function mockCloudflare(opts: {
       state.calls.push(`${req.method} ${path}`);
       if (!upload && (!token.startsWith("mock-") || state.refusedTokens?.includes(token))) return fail(401, 1000, "Invalid API Token");
       if (!upload && state.rotatedTokens?.includes(token)) return fail(401, 10000, "Authentication error");
-      if (token == "mock-slow") await sleep(150);
       return api(req, path, upload ? subFor ?? "" : token);
     }
     return (await site(req, url)) ?? new Response("This mock doesn't know that address", { status: 502 });
   };
-  return { fetch, state, tokenValues };
+  return { fetch, state };
 }
 
 class D1Error extends Error {}
@@ -751,8 +637,6 @@ function stepOf(method: string, path: string): string {
   if (/\/d1\/database(\?|$)/.test(path) || (method == "DELETE" && /\/d1\/database\/[^/]+$/.test(path))) return "database";
   if (/\/d1\/database\/[^/]+\/query/.test(path)) return "migrations";
   if (/assets/.test(path)) return "assets";
-  if (/\/containers\/image-preparations$/.test(path)) return "image";
-  if (/\/containers\/applications/.test(path)) return "vms";
   if (/\/workers\/scripts\/[^/]+$/.test(path) && !/-pages$/.test(path) && method == "PUT") return "worker";
   if (/\/workers\/domains|\/workers\/scripts\/[^/]+\/subdomain/.test(path) && !/-pages\/subdomain/.test(path)) return "address";
   if (/\/dns_records|\/workers\/routes|-pages/.test(path)) return "pages";
@@ -843,34 +727,4 @@ function seedFleet(state: MockState) {
     alarm: i == 1 ? 1_900_000_000_000 : null,
   }));
   state.docs.erga = docs;
-}
-
-/**
- * A pretend builder (control/builder/ is the real one): it "builds" a commit
- * by handing back `release` stamped with the commit, saying what the real
- * one would run. `failNext` fails the next build once, and so does any commit
- * starting 0bad, or that `fails` says should; `built` lists what it built.
- */
-export function mockBuilder(release: () => Promise<Release>, o: { delayMs?: number; fails?: (commit: string) => Promise<boolean> } = {}): Builder & { built: string[]; stopped: string[]; failNext: string | null } {
-  const b = {
-    built: [] as string[],
-    failNext: null as string | null,
-    /** Builds stopped by their signal (the deploy was cancelled), by commit. */
-    stopped: [] as string[],
-    async build({ commit, branch, source }: { commit: string; branch: string; source: { cloneUrl: string; token?: string } }, log: (line: string) => void, signal?: AbortSignal): Promise<Release> {
-      if (!source.token) throw new Error("no read token for the source");
-      log(`fetching ${commit.slice(0, 12)} (${branch}) from ${source.cloneUrl}`);
-      for (const step of ["bun install --frozen-lockfile", "bun run build", "bun run release"]) {
-        if (o.delayMs) await sleep(o.delayMs);
-        if (signal?.aborted) { b.stopped.push(commit); log("the build was stopped"); throw signal.reason; }
-        log(`$ ${step}`);
-      }
-      if (b.failNext) { const why = b.failNext; b.failNext = null; throw new Error(why); }
-      // A commit starting 0bad fails to build (the dev server's mock, where failNext can't be reached).
-      if (commit.startsWith("0bad") || await o.fails?.(commit)) throw new Error("bun install --frozen-lockfile failed (exit 1): lockfile had changes, but lockfile is frozen");
-      b.built.push(commit);
-      return { ...(await release()), version: commit.slice(0, 12) };
-    },
-  };
-  return b;
 }

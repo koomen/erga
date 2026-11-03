@@ -10,7 +10,7 @@
 
 import { EditorState, Transaction, type Extension } from "@codemirror/state";
 import { history, historyField } from "@codemirror/commands";
-import { PageEditor, type HeldInput, type TypingAgent, type Peer } from "./editor";
+import { PageEditor, type HeldInput, type TypingAgent } from "./editor";
 import { LOADING_AGAIN } from "./drop";
 import { drawCaret } from "./caret";
 import { watchMoves } from "./moves";
@@ -356,10 +356,6 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
   warm(apiCode(m.path, text, (p) => files(c.doc).get(p)?.toString()));
   window.ergaFrame = {
     page,
-    collab: c,
-    get controls() {
-      return controls;
-    },
     get zoom() {
       return zoom;
     },
@@ -483,26 +479,7 @@ function queuePeers() {
   peersQueued = true;
   requestAnimationFrame(() => {
     peersQueued = false;
-    if (!page || !collab) return;
-    const peers: Peer[] = [];
-    for (const p of collab.shown()) {
-      // An agent's caret shows while it works, so its edits read like a person's typing; once it's idle, a caret left
-      // where it last edited would only linger and distract.
-      const agent = p.user.kind == "agent";
-      if (agent && !p.busy) continue;
-      const at = collab.positions(p);
-      if (!at) continue;
-      peers.push({
-        key: p.client,
-        name: p.user.name,
-        color: p.user.color,
-        anchor: at.anchor,
-        head: at.head,
-        agent,
-        activity: agent ? (p.activity ?? null) : null,
-      });
-    }
-    page.setPeers(peers);
+    if (page && collab) page.setPeers(collab.peers());
   });
 }
 

@@ -1,8 +1,6 @@
 // Presence: everyone's carets, the avatars of who's here, and your own avatar's account menu.
 
-import type { Peer } from "../../libs/text/ui/editor";
 import type { Presence } from "../../libs/text/ui/collab";
-import type { Author } from "../../document/content";
 import { $, type Shell } from "./shell";
 import { safeAvatar } from "../../shared/avatars";
 
@@ -13,9 +11,6 @@ export function mountPeople(shell: Shell) {
   // top say who's here and what each agent is doing. A person with several
   // tabs open is shown by the one they used last, and your own other tabs
   // not at all (Collab.shown).
-  function busyAgents(): string[] {
-    return shell.collab.others().filter((p) => p.user.kind == "agent" && p.busy).map((p) => p.user.name);
-  }
   function presenceChanged() {
     renderPeople();
     queuePeers();
@@ -27,26 +22,7 @@ export function mountPeople(shell: Shell) {
     requestAnimationFrame(() => { peersQueued = false; paintPeers(); });
   }
   function paintPeers() {
-    const peers: Peer[] = [];
-    for (const p of shell.collab.shown()) {
-      // An agent's caret shows while it works, so its edits read like a
-      // person's typing; once it's idle, a caret left where it last edited
-      // would only linger and distract.
-      const agent = p.user.kind == "agent";
-      if (agent && !p.busy) continue;
-      const at = shell.collab.positions(p);
-      if (!at) continue;
-      peers.push({
-        key: p.client,
-        name: p.user.name,
-        color: p.user.color,
-        anchor: at.anchor,
-        head: at.head,
-        agent,
-        activity: agent ? (p.activity ?? null) : null,
-      });
-    }
-    if (shell.sourceView && shell.source) shell.sourceView.dispatch({ effects: shell.source.setPeers.of(peers) });
+    if (shell.sourceView && shell.source) shell.sourceView.dispatch({ effects: shell.source.setPeers.of(shell.collab.peers()) });
   }
   // This tab's caret in the source view, for everyone else (on the page, the page's editor shows its own). It stays
   // where you left it when you switch away, as a caret on paper would (but with another of your tabs in use since, that
@@ -99,7 +75,8 @@ export function mountPeople(shell: Shell) {
       b.className = "avatar" + (p.client == -1 ? " me" : "") + (here ? "" : " away");
       b.style.setProperty("--c", p.user.color);
       b.textContent = (p.user.name.trim()[0] ?? "?").toUpperCase();
-      const picture = pictureOf(p.user);
+      // Only GitHub's and Google's pictures (shared/avatars.ts): anyone in the room can put anything in their presence.
+      const picture = safeAvatar(p.user.avatar);
       if (picture) {
         const img = document.createElement("img");
         img.src = picture;
@@ -185,7 +162,7 @@ export function mountPeople(shell: Shell) {
     account.hidden = !open;
     accountBtn?.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    shell.chrome.showChrome(); shell.chrome.toggleHelp(false); shell.sharing.toggleSharing(false); shell.naming.toggleNaming(false); shell.naming.togglePages(false); shell.docSettings?.toggle(false);
+    shell.chrome.cardOpened("account");
     $("account-name").textContent = shell.me.name;
     $("account-login").textContent = shell.me.name.toLowerCase() == shell.me.user ? "" : shell.me.user;
     const set = (id: string, href: string | undefined) => { const a = $(id) as HTMLAnchorElement; a.hidden = !href; if (href) a.href = href; };
@@ -194,13 +171,6 @@ export function mountPeople(shell: Shell) {
     set("account-deploy", accountLinks!.deploy);
     set("account-admin", accountLinks!.admin);
     set("account-out", accountLinks!.signOut);
-  }
-  /**
-   * A participant's picture: only GitHub's (by id) and Google's (shared/avatars.ts), since anyone in the room
-   * can put anything in their presence and we'd rather not fetch it.
-   */
-  function pictureOf(user: Author): string | null {
-    return safeAvatar(user.avatar);
   }
   /** Clicking a participant scrolls the source view to their caret (the page's editor shows theirs where it is). */
   function revealOnClick(b: HTMLElement, p: Presence, none: string) {
@@ -214,14 +184,11 @@ export function mountPeople(shell: Shell) {
   }
   return {
     accountLinks,
-    busyAgents,
     presenceChanged,
     queuePeers,
     queueCursor,
-    renderPeople,
     stackPeople,
     toggleAccount,
-    pictureOf,
     get accountBtn() {
       return accountBtn;
     },

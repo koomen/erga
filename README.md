@@ -131,6 +131,9 @@ health checks and rollbacks work.
       pages.ts        a document's files as pages, and their addresses
       room.ts         the document room: the shared doc and who is in it
       versions.ts     a document's versions: snapshots to look back at and restore
+      history.ts      a document's versions as it is edited: when one is cut, its description, reads and restores
+      uploads.ts      files that arrive whole (a publish, a PUT, an agent's bytes): text into the room, the rest as blobs
+      open.ts         opening the room: the room and the host on the document's storage, and Opened, the open document
       blobs.ts        the files that are not text, by their sha-256
       merge.ts        an outside edit, as a small change to the open document
       pdf.ts          PDFs for the agents: their pages and their text

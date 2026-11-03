@@ -3,28 +3,18 @@
 // locks seen but not changed, users managed as an admin can, sharing by a document's owner, and the editor's agent
 // working in another document.
 
-import { Database } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
-import { Directory, type Param, type Sql, type Who } from "../server/directory/index.ts";
+import { Directory, type Who } from "../server/directory/index.ts";
 import { agentTools, allTools, documentTools, documentToolsHere, KINDS, opsOf, runTool, toolsFor } from "../agents/tools";
 import { type Caller, OPERATIONS, OperationError } from "../server/operations/index.ts";
 import { VIA } from "../shared/attribution";
 import type { Platform } from "../server/platform";
 import { newDocMenu, templateById } from "../server/pages/templates.ts";
-
-const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
+import { memory } from "./helpers/memory-sql";
 
 function fresh(opts: ConstructorParameters<typeof Directory>[1] = {}): Directory {
-  const db = new Database(":memory:", { strict: true });
-  db.exec("PRAGMA foreign_keys = ON");
-  for (const name of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(MIGRATIONS + name, "utf8"));
-  const bind = (params: Param[]) => params as (string | number | null)[];
-  const sql: Sql = {
-    all: async <T>(q: string, ...params: Param[]) => db.query(q).all(...bind(params)) as T[],
-    run: async (q, ...params) => { db.query(q).run(...bind(params)); },
-    batch: async (statements) => { db.transaction(() => { for (const [q, ...params] of statements) db.query(q).run(...bind(params)); })(); },
-  };
+  const sql = memory();
   return new Directory(sql, opts);
 }
 

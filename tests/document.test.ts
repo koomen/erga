@@ -2,30 +2,18 @@
 // directory on bun:sqlite: made, read while its room is closed, edited by a
 // publish (a version cut once edits pause), restored, deleted when unedited.
 
-import { Database } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Document, type DocumentDeps } from "../document/document";
 import { KEYS, MemoryStorage } from "../document/storage";
-import { Directory, type Param, type Sql } from "../server/directory/index.ts";
+import { Directory } from "../server/directory/index.ts";
 import { documentAgents } from "../agents/document/session";
 import { testSandbox } from "./helpers/sandbox";
 import { sleep } from "../shared/time";
 import { promised, type Promised } from "./helpers/promised";
+import { memory } from "./helpers/memory-sql";
 
 /** A Document as the tests await it. */
 type Doc = Promised<Document>;
-
-const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
-function memory(): Sql {
-  const db = new Database(":memory:");
-  for (const f of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(MIGRATIONS + f, "utf8"));
-  return {
-    all: async <T>(sql: string, ...params: Param[]) => db.query(sql).all(...(params as never[])) as T[],
-    run: async (sql: string, ...params: Param[]) => { db.query(sql).run(...(params as never[])); },
-    batch: async (statements) => { db.transaction(() => { for (const [sql, ...params] of statements) db.query(sql).run(...(params as never[])); })(); },
-  };
-}
 
 /** A document's deps on memory: the real directory, no sockets, no agent, short version timers. */
 function setup(dir = new Directory(memory(), { admins: ["ada"] })) {
@@ -65,7 +53,7 @@ test("a document is made from files, read from storage while closed, edited by a
   const { dir, make, storage } = setup();
   await dir.add({ id: "doc12345", owner: "ada", title: "Notes", created: Date.now(), expires: Date.now() + 60_000 });
   const doc = make();
-  expect(await doc.exists()).toBe(false);
+  expect(await doc.index()).toBeNull();
   expect(await doc.create("ada", "doc12345", { "index.html": "<h1>One</h1>", "logo.png": new Uint8Array([1, 2]) }, "index.html", { expires: Date.now() + 60_000 })).toBe(true);
   expect(await doc.create("ada", "doc12345", {}, "index.html", { expires: null })).toBe(false);
   expect([...storage().data.keys()].sort()).toEqual(["files/index.html", "files/logo.png", "info", "perms", "versions/00000001", "versions/head"].sort().filter((k) => !k.startsWith("blobs/")).concat([...storage().data.keys()].filter((k) => k.startsWith("blobs/"))).sort());
@@ -107,7 +95,7 @@ test("a document is made from files, read from storage while closed, edited by a
   expect(await doc.delete()).toBe(true);
   expect(storage().data.size).toBe(0);
   expect(await dir.get("doc12345")).toBeNull();
-  expect(await doc.exists()).toBe(false);
+  expect(await doc.index()).toBeNull();
   expect((await get(doc, "/doc/index.html")).status).toBe(404);
 });
 
@@ -117,7 +105,7 @@ test("an unedited document goes when its alarm comes; an edited one stays", asyn
   const gone = make();
   await gone.create("ada", "gone12345", { "index.html": "<h1>Gone</h1>" }, "index.html", { expires: Date.now() + 30 });
   await sleep(120);
-  expect(await gone.exists()).toBe(false);
+  expect(await gone.index()).toBeNull();
   expect(await dir.get("gone12345")).toBeNull();
   expect(forgotten).toEqual(["gone12345"]);
 
@@ -126,7 +114,7 @@ test("an unedited document goes when its alarm comes; an edited one stays", asyn
   await kept.create("ada", "kept12345", { "index.html": "<h1>Kept</h1>" }, "index.html", { expires: Date.now() + 30 });
   await kept.publish({ "index.html": "<h1>Kept, edited</h1>" }, [], "ada");
   await sleep(120);
-  expect(await kept.exists()).toBe(true);
+  expect(await kept.index()).not.toBeNull();
   expect(await dir.get("kept12345")).not.toBeNull();
 });
 

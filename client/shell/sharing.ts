@@ -1,6 +1,7 @@
 // Share: the document with people (its owner only), and with an external agent (a prompt to copy).
 
-import { colorFor, type Author } from "../../document/content";
+import { colorFor } from "../../document/content";
+import { safeAvatar } from "../../shared/avatars";
 import { copyAgentPrompt } from "../common/agent-prompt";
 import { showCopied } from "../common/copied";
 import { runTool } from "../common/tools";
@@ -50,7 +51,7 @@ export function mountSharing(shell: Shell) {
       face.setAttribute("aria-hidden", "true");
       face.style.setProperty("--c", colorFor(p.login));
       // Their picture, as the header's avatars show it; the initial stays under it, and shows if it doesn't load.
-      const picture = avatars?.[p.login] && shell.people.pictureOf({ avatar: avatars[p.login] } as Author);
+      const picture = avatars?.[p.login] && safeAvatar(avatars[p.login]);
       if (picture) {
         const img = Object.assign(document.createElement("img"), {
           src: picture,
@@ -131,12 +132,7 @@ export function mountSharing(shell: Shell) {
     sharing.hidden = !open;
     shareBtn.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    shell.chrome.showChrome();
-    shell.chrome.toggleHelp(false);
-    shell.naming.toggleNaming(false);
-    shell.naming.togglePages(false);
-    shell.people.toggleAccount(false);
-    shell.docSettings?.toggle(false);
+    shell.chrome.cardOpened("sharing");
     if (!shareAt) return;
     sharingAdd.reset();
     if (last) {

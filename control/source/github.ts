@@ -25,7 +25,7 @@ import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import { Base64, Base64Url, Hex } from "effect/encoding";
 import * as Option from "effect/Option";
-import { sha256 } from "../../shared/bytes";
+import { sameText, sha256 } from "../../shared/bytes";
 
 export interface GithubApp {
   /** The App's id (the JWT's issuer), slug (its install page: github.com/apps/<slug>) and client id (sign-in). */
@@ -147,10 +147,7 @@ export async function signWebhook(secret: string, body: Uint8Array | string): Pr
 export async function verifyWebhook(secret: string, body: Uint8Array | string, signature: string | null): Promise<boolean> {
   if (!secret || !signature) return false;
   const want = await signWebhook(secret, body);
-  if (want.length != signature.length) return false;
-  let diff = 0;
-  for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ signature.charCodeAt(i);
-  return diff == 0;
+  return sameText(want, signature);
 }
 
 /** A push event's payload, the fields Erga reads. */

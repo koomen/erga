@@ -7,6 +7,7 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { Storage } from "./storage.ts";
+import { VIA } from "../shared/attribution.ts";
 
 /** A person's role in a document: whoever made it owns it; others are given editor or viewer. */
 export type Role = "owner" | "editor" | "viewer";
@@ -26,6 +27,30 @@ const askerOf = Schema.decodeUnknownOption(AskerHeader);
 
 /** Who a request is from, as the app said (x-erga-who); null if it said no one. */
 export const askerFrom = (headers: Headers): Asker | null => Option.getOrNull(askerOf(headers.get("x-erga-who") ?? "null")) as Asker | null;
+
+export interface Person {
+  id: string;
+  name: string /** Their picture, as the app said (shared/avatars.ts); absent: none. */;
+  avatar?: string;
+}
+
+/** Who a request is from, as the app said (x-erga-person: JSON {id, name, avatar?}). */
+export function personOf(headers: Headers): Person {
+  try {
+    const p = JSON.parse(headers.get("x-erga-person") ?? "") as Person;
+    if (typeof p.id == "string" && typeof p.name == "string")
+      return { id: p.id, name: p.name, ...(typeof p.avatar == "string" ? { avatar: p.avatar } : {}) };
+  } catch {
+    /* none */
+  }
+  return { id: "anon", name: "Someone" };
+}
+
+/** How an outside agent's person acts through it, as the app said (x-erga-via, JSON; shared/attribution.ts). */
+export function viaOf(header: string | undefined): string {
+  try { const v = JSON.parse(header ?? ""); if (typeof v == "string" && v) return v; } catch { /* none */ }
+  return VIA.token("");
+}
 
 /** One person's role, as the document keeps it. */
 export interface PersonRole {

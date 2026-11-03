@@ -5,9 +5,7 @@
 // its journal, even in a new object that remembers nothing, with every tab
 // joined to it.
 
-import { Database } from "bun:sqlite";
 import * as Effect from "effect/Effect";
-import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import * as Y from "yjs";
 import { Encoder, Decoder, writeSyncStep1, writeUpdate, readSyncMessage } from "../shared/yjs-protocol";
@@ -16,22 +14,12 @@ import { MemoryStorage } from "../document/storage";
 import { Tabs, type Tab, type TabSocket } from "../document/tabs";
 import { files } from "../document/content";
 import { decodeStart } from "../shared/room-socket";
-import { Directory, type Param, type Sql } from "../server/directory/index.ts";
+import { Directory } from "../server/directory/index.ts";
 import { documentAgents } from "../agents/document/session";
 import { testSandbox } from "./helpers/sandbox";
 import { sleep } from "../shared/time";
 import type { AgentSettings } from "../agents/models";
-
-const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
-function memory(): Sql {
-  const db = new Database(":memory:");
-  for (const f of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(MIGRATIONS + f, "utf8"));
-  return {
-    all: async <T>(sql: string, ...params: Param[]) => db.query(sql).all(...(params as never[])) as T[],
-    run: async (sql: string, ...params: Param[]) => { db.query(sql).run(...(params as never[])); },
-    batch: async (statements) => { db.transaction(() => { for (const [sql, ...params] of statements) db.query(sql).run(...(params as never[])); })(); },
-  };
-}
+import { memory } from "./helpers/memory-sql";
 
 const syncMessage = (write: (e: Encoder) => void) => {
   const e = new Encoder();

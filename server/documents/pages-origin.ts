@@ -15,6 +15,7 @@ import type { Platform } from "../platform.ts";
 import { forwarded } from "./routes.ts";
 import { sourceDigest } from "../../shared/page-html.ts";
 import { readerPage, readerVersion } from "../pages/index.ts";
+import { sameText } from "../../shared/bytes.ts";
 
 const PAGES_LABEL = /^([a-z0-9]{8})-([a-z0-9-]{1,39})$/;
 
@@ -50,14 +51,6 @@ export function pagesHost(url: URL, platform: Platform): { owner: string; id: st
 }
 
 /** The signing key, imported once per secret (per isolate): every file of a document's page checks its token. */
-/** Whether two strings (MACs) are the same, in a time that doesn't say where they differ. */
-export const sameText = (a: string, b: string) => {
-  if (a.length != b.length) return false;
-  let d = 0;
-  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return d == 0;
-};
-
 const hmacKeys = new Map<string, Promise<CryptoKey>>();
 
 export const hmac = async (secret: string, value: string) => {

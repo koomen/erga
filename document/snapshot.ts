@@ -36,6 +36,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Base64 } from "effect/encoding";
+import { sameText } from "../shared/bytes.ts";
 
 /** One value of a document's storage, as JSON: its bytes as base64 (`b`), or the value itself (`j`). */
 const Encoded = Schema.Union([Schema.Struct({ b: Schema.String }), Schema.Struct({ j: Schema.Unknown })]);
@@ -108,12 +109,12 @@ export async function exportPage(id: string, page: Page, alarm: number | null, l
   }
 }
 
-/** The same strings, compared in time that doesn't depend on where they differ. */
-function same(a: string, b: string): boolean {
-  if (a.length != b.length) return false;
-  let d = 0;
-  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return d == 0;
+/** The snapshot endpoints' guard: 404 with no SNAPSHOT_TOKEN (or a short one), 403 without it as the bearer, else null. */
+export function snapshotRefused(request: Request, token: string | undefined): Response | null {
+  const want = token?.trim();
+  if (!want || want.length < 32) return Response.json({ error: "Not found" }, { status: 404 });
+  const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";
+  return sameText(bearer, want) ? null : Response.json({ error: "Not allowed" }, { status: 403 });
 }
 
 /**
@@ -127,15 +128,12 @@ export async function snapshotRoutes(
 ): Promise<Response | null> {
   const path = new URL(request.url).pathname.replace(/\/+$/, "");
   if (path != "/api/snapshot/docs" && path != "/api/snapshot/docs/import") return null;
-  const notFound = () => Response.json({ error: "Not found" }, { status: 404 });
-  const token = o.token?.trim();
-  if (!token || token.length < 32) return notFound();
-  const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";
-  if (!same(bearer, token)) return Response.json({ error: "Not allowed" }, { status: 403 });
+  const refused = snapshotRefused(request, o.token);
+  if (refused) return refused;
   if (request.method != "POST") return Response.json({ error: "POST only" }, { status: 405 });
   const body: unknown = await request.json().catch(() => null);
   if (path == "/api/snapshot/docs") return Effect.runPromise(exportDocs(body, o.store, o.budget ?? SNAPSHOT_BUDGET));
-  if (!o.importAllowed) return notFound();
+  if (!o.importAllowed) return Response.json({ error: "Not found" }, { status: 404 });
   return Effect.runPromise(importDocs(body, o.store));
 }
 

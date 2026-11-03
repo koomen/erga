@@ -91,8 +91,6 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
     sync();
     if (edit) load();
   }
-  // Whether the page was opened in the editor (with ?edit), rather than switched into it: client/shell/main.ts restores
-  // the agent as it was left only then, and otherwise opens it the way it does on any later switch.
   window.ergaShell = {
     ready() {
       ready = true;
@@ -100,7 +98,6 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
       // Its controls run now; what moves moves again from the next frame.
       requestAnimationFrame(() => requestAnimationFrame(() => body.classList.remove("erga-restored", "no-motion")));
     },
-    loadedEditing: editing(),
   };
   document.addEventListener("click", (e) => {
     const a = (e.target as Element | null)?.closest?.(".erga-edit-button, #btn-edit");

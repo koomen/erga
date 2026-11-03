@@ -49,6 +49,22 @@ export const cookieOf = <A>(schema: Schema.Codec<A>, value: string | undefined):
   });
 
 const GITHUB_COOKIE = GITHUB_CONNECT_COOKIE;
+
+/**
+ * A popup's last script: it tells the Ops page that opened it (a postMessage to each of Erga's own origins, and a
+ * BroadcastChannel named by the message's type on this origin), and closes when `close`. Nothing secret is in it.
+ */
+export function tellOpener(c: Control, url: URL, message: { type: string }, close: boolean): string {
+  const hosts = c.hosts ?? { production: TARGETS.production.host, staging: TARGETS.staging.host, control: CONTROL.host };
+  const origins = [...new Set([url.origin, c.app, ...Object.values(hosts).map((h) => `https://${h}`)])];
+  return `<script>
+const m = ${jsonInScript(message)};
+try { new BroadcastChannel(${JSON.stringify(message.type)}).postMessage(m); } catch {}
+if (window.opener) for (const o of ${JSON.stringify(origins)}) try { window.opener.postMessage(m, o); } catch {}
+${close ? "setTimeout(() => window.close(), 300);" : ""}
+</script>`;
+}
+
 /** What the connect popup posts to the page that opened it (the Ops page, here or on the app), and on its BroadcastChannel. */
 export const GITHUB_MESSAGE = "erga-github";
 /** The consent in flight, in its cookie: the state, whether it runs in a popup; and, while the person picks a repository, the installation and their token (sealed). */
@@ -160,22 +176,15 @@ function githubDone(
   url: URL,
   ...setCookies: string[]
 ): Response {
-  const hosts = c.hosts ?? { production: TARGETS.production.host, staging: TARGETS.staging.host, control: CONTROL.host };
-  const origins = [...new Set([url.origin, c.app, ...Object.values(hosts).map((h) => `https://${h}`)])];
-  const message = jsonInScript({
+  const message = {
     type: GITHUB_MESSAGE,
     ok: o.ok,
     ...(o.ok ? { repo: o.repo, ...(o.warning ? { warning: o.warning } : {}) } : { error: o.error }),
-  });
+  };
   const text = o.ok ? `GitHub is connected: ${o.repo}.${o.warning ? ` ${o.warning}` : ""}` : `GitHub isn't connected: ${o.error}`;
   const r = page(
     o.ok ? "GitHub connected" : "GitHub not connected",
-    `${esc(text)} ${o.ok ? "You can close this window." : `<a href="/github/connect?popup=1">Try again</a>, or close this window.`}<script>
-const m = ${message};
-try { new BroadcastChannel(${JSON.stringify(GITHUB_MESSAGE)}).postMessage(m); } catch {}
-if (window.opener) for (const o of ${JSON.stringify(origins)}) try { window.opener.postMessage(m, o); } catch {}
-${o.ok && !o.warning ? "setTimeout(() => window.close(), 300);" : ""}
-</script>`,
+    `${esc(text)} ${o.ok ? "You can close this window." : `<a href="/github/connect?popup=1">Try again</a>, or close this window.`}${tellOpener(c, url, message, o.ok && !o.warning)}`,
     o.ok ? 200 : 400
   );
   r.headers.set("Cache-Control", "no-store");

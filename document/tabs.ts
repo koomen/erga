@@ -24,7 +24,9 @@
 
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
-import type { Document, Opened, Person } from "./document.ts";
+import type { Person } from "./access.ts";
+import type { Document } from "./document.ts";
+import type { Opened } from "./open.ts";
 import type { StoreError } from "./room.ts";
 import { isAwareness } from "./room.ts";
 import { PING, PONG } from "../shared/room-socket.ts";

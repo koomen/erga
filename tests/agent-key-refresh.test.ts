@@ -3,8 +3,6 @@
 // the settings at each turn: agents/models.ts). No real API call: a
 // fake fetch answers for Anthropic and records the key each request sent.
 
-import { Database } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -12,25 +10,19 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Redacted from "effect/Redacted";
 import { startAgent } from "../agents/person/agent.ts";
-import { Directory, type Param, type Sql } from "../server/directory/index.ts";
+import { Directory, type Param } from "../server/directory/index.ts";
 import { makeHost } from "../document/host.ts";
 import { FileStore, Room, StateStore } from "../document/room.ts";
 import { documentAgents } from "../agents/document/session";
 import { agentSettingsFrom, UNREADABLE_KEY, type AgentSettings } from "../agents/models";
+import { memory } from "./helpers/memory-sql";
 
-const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const KEY1 = "sk-ant-api03-" + "a".repeat(80) + "One1", KEY2 = "sk-ant-api03-" + "b".repeat(80) + "Two2";
 const ada = { login: "ada", admin: true };
 
 function directory(secret: string) {
-  const db = new Database(":memory:", { strict: true });
-  for (const name of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(MIGRATIONS + name, "utf8"));
-  const bind = (params: Param[]) => params as (string | number | null)[];
-  const sql: Sql = {
-    all: async <T>(q: string, ...params: Param[]) => db.query(q).all(...bind(params)) as T[],
-    run: async (q, ...params) => { db.query(q).run(...bind(params)); },
-    batch: async (statements) => { db.transaction(() => { for (const [q, ...params] of statements) db.query(q).run(...bind(params)); })(); },
-  };
+  const sql = memory();
+  const db = sql.db;
   return { db, dir: new Directory(sql, { admins: ["ada"], credentialSecret: secret }) };
 }
 

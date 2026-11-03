@@ -17,7 +17,7 @@ const mcp = async (root: string, token: string, name: string, args: unknown) => 
 const ADMINS = (doc: { id: string; address: string }) =>
   [
     ["GET", "/admin"],
-    ["GET", "/admin/credentials"],
+    ["GET", "/admin/api-keys"],
     ["GET", "/admin/users"],
     ["GET", "/admin/ops"],
     ["POST", "/api/tools/set_setting"],
