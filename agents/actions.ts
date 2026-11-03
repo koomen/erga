@@ -32,7 +32,7 @@ export interface AgentAction {
   readonly domain: Domain;
   /** What the person does, on which page. */
   readonly action: string;
-  /** The agent's tool that does it. */
+  /** The operation or document tool that does it: an `op` of one of the agents' tools (agents/tools.ts, KINDS). */
   readonly tool?: string;
   /** Why there's no tool: a secret, or not a person's action. */
   readonly exempt?: string;

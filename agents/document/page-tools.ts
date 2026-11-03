@@ -8,7 +8,6 @@ import type { TextEdit } from "../../shared/text-edits";
 import { EDITS } from "./workspace";
 import { stepSpec } from "../../shared/steps";
 import {
-  EVAL_MAX_JSON,
   EVAL_TIMEOUT,
   FRAMES,
   VIEW_DEFAULT,
@@ -40,23 +39,22 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>, live:
     {
       name: "view_page",
       label: "Look at the page",
-      description: "Pictures of the page, one for each place asked for, with its script errors and fonts.",
+      description: "Pictures of the page, with its script errors.",
       parameters: Schema.Struct({
         selector: Schema.optionalKey(
           Schema.Union([Schema.String, Schema.Array(Schema.String)]).annotate({
-            description: 'CSS selector of an element to capture, or a list of them: one picture each, e.g. ["header", "#chart"].',
+            description: "Elements to picture: one picture each.",
           })
         ),
         full_page: Schema.optionalKey(
           Schema.Boolean.annotate({
-            description:
-              "The whole page, up to 4000px tall (default: the top screenful). Erga adds 56px of top padding to a page that scrolls.",
+            description: "Not only the top screenful.",
           })
         ),
         ...RENDER,
         step: Schema.optionalKey(
           Schema.Union([Schema.String, Schema.Finite, Schema.Array(Schema.Union([Schema.String, Schema.Finite]))]).annotate({
-            description: `${STEP_WORDS} A list gives one picture each, e.g. ["1", "2.3", "4"].`,
+            description: `${STEP_WORDS} A list: one picture each.`,
           })
         ),
         ...TIME_FIELDS,
@@ -101,21 +99,19 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>, live:
     {
       name: "eval_in_page",
       label: "Run JavaScript in the page",
-      description: "Runs JavaScript in a hidden copy of the page and returns the result as JSON.",
+      description: "Runs JavaScript in a copy of the page.",
       parameters: Schema.Struct({
         expression: Schema.String.annotate({
-          description: `JavaScript; await works, statements need a return. It runs after load; its changes are thrown away. The JSON is cut at ${EVAL_MAX_JSON / 1000}K characters.`,
+          description: "JavaScript; await works, statements need a return.",
         }),
         live: Schema.optionalKey(
           Schema.Boolean.annotate({
-            description: "Run it in the person's open page instead, read-only, only when they ask (the tab shows them a line).",
+            description: "In the person's open page instead, only when they ask.",
           })
         ),
         frame: FRAME,
         ...RENDER,
-        timeout: Schema.optionalKey(
-          Schema.Finite.annotate({ description: `ms to wait (default ${EVAL_TIMEOUT.default}, max ${EVAL_TIMEOUT.max}).` })
-        ),
+        timeout: Schema.optionalKey(Schema.Finite),
         step: Schema.optionalKey(Schema.Union([Schema.String, Schema.Finite]).annotate({ description: STEP_WORDS })),
         ...TIME_FIELDS,
         ...PREVIEW,
@@ -158,7 +154,7 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>, live:
 
 const FRAME = Schema.optionalKey(
   Schema.String.annotate({
-    description: 'Live page only: "page" (default), an iframe\'s CSS selector, or a frame name from page_log frames.',
+    description: "Live page: an iframe's selector or name.",
   })
 );
 
@@ -198,25 +194,20 @@ function liveTools(live: (req: LiveRequest) => Promise<LiveAnswer>): AgentTool[]
     {
       name: "page_log",
       label: "Read the live page",
-      description: "The person's open page: its console, requests, events or frames (kind).",
+      description: "The person's open page: its console, requests, events, frames.",
       parameters: Schema.Struct({
         kind: Schema.Literals(["console", "network", "events", "frames"]).annotate({
-          description:
-            "console: logs and errors, repeats as one line; network: requests and how each was served; events: pointer and key events and who consumed them; frames: each frame's sandbox, activation, autoplay and media.",
+          description: "events: pointer and key events; frames: each frame's sandbox.",
         }),
-        level: Schema.optionalKey(
-          Schema.Array(Schema.Literals(CONSOLE_LEVELS)).annotate({ description: 'console: only these levels, e.g. ["error", "warn"].' })
-        ),
+        level: Schema.optionalKey(Schema.Array(Schema.Literals(CONSOLE_LEVELS))),
         pattern: Schema.optionalKey(
           Schema.String.annotate({
-            description: "console, network: only entries that match this regex or text (the URL, type or error for network).",
+            description: "Only what matches.",
           })
         ),
-        failed: Schema.optionalKey(
-          Schema.Boolean.annotate({ description: "network: only failed requests (an error, or status 400 or more)." })
-        ),
-        since: Schema.optionalKey(Schema.String.annotate({ description: 'Only since then: an ISO time, or "30s", "5m", "2h" ago.' })),
-        limit: Schema.optionalKey(Schema.Finite.annotate({ description: "How many, the most recent (default 50; events 40)." })),
+        failed: Schema.optionalKey(Schema.Boolean),
+        since: Schema.optionalKey(Schema.String.annotate({ description: 'Since then: a time, or "5m" ago.' })),
+        limit: Schema.optionalKey(Schema.Finite),
         frame: FRAME,
       }),
       execute: async (_id, p: LogArgs) => {
@@ -243,19 +234,17 @@ function liveTools(live: (req: LiveRequest) => Promise<LiveAnswer>): AgentTool[]
     {
       name: "page_input",
       label: "Act on the live page",
-      description: "Clicks, or presses a key, in the person's open page, only when they ask.",
+      description: "Clicks or presses a key in the person's open page, when they ask.",
       parameters: Schema.Struct({
         selector: Schema.optionalKey(
           Schema.String.annotate({
             description: "CSS selector: the element to click at its center, or to send the key to (default: the focus).",
           })
         ),
-        x: Schema.optionalKey(Schema.Finite.annotate({ description: "Or click at this point: CSS px in the page's window." })),
+        x: Schema.optionalKey(Schema.Finite.annotate({ description: "Or click at x, y (CSS px)." })),
         y: Schema.optionalKey(Schema.Finite),
-        key: Schema.optionalKey(
-          Schema.String.annotate({ description: 'Press this key instead of a click, as KeyboardEvent.key: "Enter", " ", "k".' })
-        ),
-        modifiers: Schema.optionalKey(Schema.Array(Schema.Literals(MODIFIERS)).annotate({ description: "Keys held with key." })),
+        key: Schema.optionalKey(Schema.String.annotate({ description: 'A key instead, e.g. "Enter".' })),
+        modifiers: Schema.optionalKey(Schema.Array(Schema.Literals(MODIFIERS))),
         frame: FRAME,
       }),
       execute: async (
@@ -288,25 +277,25 @@ function liveTools(live: (req: LiveRequest) => Promise<LiveAnswer>): AgentTool[]
 
 /** The render's size and mode, as view_page and eval_in_page take them. */
 const RENDER = {
-  width: Schema.optionalKey(Schema.Finite.annotate({ description: `Width in CSS px (default ${VIEW_DEFAULT.width}).` })),
-  height: Schema.optionalKey(Schema.Finite.annotate({ description: `Screen height in CSS px (default ${VIEW_DEFAULT.height}).` })),
-  color_scheme: Schema.optionalKey(Schema.Literals(["light", "dark"]).annotate({ description: "Default: light." })),
+  width: Schema.optionalKey(Schema.Finite),
+  height: Schema.optionalKey(Schema.Finite),
+  color_scheme: Schema.optionalKey(Schema.Literals(["light", "dark"])),
 };
 type RenderArgs = { width?: number; height?: number; color_scheme?: ColorScheme };
 const renderReq = (p: RenderArgs) => ({ width: p.width, height: p.height, colorScheme: p.color_scheme });
 
 type StepArg = string | number;
-const STEP_WORDS = 'A step of a presentation (window.ergaSteps) to show first: "3", "3.2" (slide 3, part 2) or "#3.2".';
+const STEP_WORDS = 'A presentation step to show first, e.g. "3.2".';
 /** at_ms and frames: when, after the step or the load. */
 const TIME_FIELDS = {
   at_ms: Schema.optionalKey(
     Schema.Finite.annotate({
-      description: `ms after the step or load (default ${FRAMES.afterStep} after a step, ${FRAMES.afterLoad} after load; max ${FRAMES.max}).`,
+      description: `ms after the step or load.`,
     })
   ),
   frames: Schema.optionalKey(
     Schema.Array(Schema.Finite).annotate({
-      description: `Several at_ms times in one call (at most ${FRAMES.count}), e.g. for a transition.`,
+      description: `Several at_ms times, for a transition.`,
     })
   ),
 };
@@ -319,9 +308,7 @@ const PREVIEW = {
   edits: Schema.optionalKey(
     EDITS.annotate({ description: "A preview: edits as the edit tool takes them, on a copy, for this render only." })
   ),
-  path: Schema.optionalKey(
-    Schema.String.annotate({ description: 'The page of the document to render, e.g. "notes.html" (default: its own page).' })
-  ),
+  path: Schema.optionalKey(Schema.String.annotate({ description: 'Another page, e.g. "notes.html".' })),
 };
 type PreviewArgs = { edits?: readonly TextEdit[]; path?: string };
 function previewReq(p: PreviewArgs): { path?: string; preview?: { edits: TextEdit[] } } {

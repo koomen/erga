@@ -65,9 +65,10 @@ test("versions lists them, and read with version reads an old file; there's no p
     t = await tool("publish_version", { mode: "manual", version: "v3" });
     expect(t.status).not.toBe(200);
     const listed = (await (await fetch(`${server.root}/api/tools`, { headers: { Authorization: `Bearer ${token}` } })).json()) as {
-      tools: { name: string }[];
+      tools: { name: string; parameters: { properties: { op: { description: string } } } }[];
     };
-    expect(listed.tools.map((x) => x.name)).toContain("restore_version");
-    expect(listed.tools.map((x) => x.name)).not.toContain("publish_version");
+    const ops = listed.tools.flatMap((x) => x.parameters.properties.op.description.split("\n").map((l: string) => l.split("(")[0]));
+    expect(ops).toContain("restore_version");
+    expect(ops).not.toContain("publish_version");
   } finally { ada.disconnect(); }
 });

@@ -110,8 +110,16 @@ test("/mcp serves the same tools as a stateless MCP server: initialize, a notifi
   expect(m.body.result.capabilities.tools).toBeTruthy();
   expect((await mcp({ jsonrpc: "2.0", method: "notifications/initialized" })).status).toBe(202);
   m = await mcp({ jsonrpc: "2.0", id: 2, method: "tools/list" });
-  const listed = (m.body?.result?.tools ?? []) as { name: string; inputSchema: { required?: string[] } }[];
-  expect(listed.map((x) => x.name)).toContain("create_document");
+  const listed = (m.body?.result?.tools ?? []) as {
+    name: string;
+    inputSchema: { required?: string[]; properties: { op: { description: string } } };
+  }[];
+  expect(
+    listed
+      .find((x) => x.name == "documents")
+      ?.inputSchema.properties.op.description.split("\n")
+      .map((l: string) => l.split("(")[0])
+  ).toContain("create_document");
   expect(listed.find((x) => x.name == "edit")?.inputSchema.required).toContain("document");
   m = await mcp({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "create_document", arguments: { title: "Made over MCP", files: { "index.html": "<h1>Made over MCP</h1>\n<p>Hello.</p>" } } } });
   const made = JSON.parse(m.body?.result?.content?.[0]?.text ?? "{}") as { id: string; address: string };

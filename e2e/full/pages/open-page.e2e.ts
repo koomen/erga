@@ -23,12 +23,12 @@ test("an agent in blog/post.html's editor sees one file system: every page, the 
   const calls = await s.agentTurn(
     "Look around",
     [
-      { tool: "ls", args: {} },
+      { tool: "read", args: { op: "ls" } },
       { tool: "read", args: { path: "index.html" } },
       { tool: "read", args: { path: "style.css" } },
       { tool: "read", args: { path: "about.html" } },
-      { tool: "grep", args: { pattern: "Who made this" } },
-      { tool: "ls", args: { glob: "**/*.css" } },
+      { tool: "read", args: { op: "grep", pattern: "Who made this" } },
+      { tool: "read", args: { op: "ls", glob: "**/*.css" } },
       { text: "Seen." },
     ],
     "The user has the page blog/post.html open."
@@ -49,7 +49,10 @@ test("an agent in blog/post.html's editor sees one file system: every page, the 
 
 test("open_page, from the document agent and from an external one, switches the open editor to another page", async ({ tab }) => {
   const { s, p } = await onPost(tab);
-  const calls = await s.agentTurn("Take me to About", [{ tool: "open_page", args: { path: "about.html" } }, { text: "There." }]);
+  const calls = await s.agentTurn("Take me to About", [
+    { tool: "page", args: { op: "open_page", path: "about.html" } },
+    { text: "There." },
+  ]);
   expect(calls.map((c) => `${c.name} ${c.status}`)).toEqual(["open_page done"]);
   await expect.poll(async () => `${await where(p)} ${await ready(p)} ${await editing(p)}`).toBe(`${s.address}/about?edit true about.html`);
   const back = await s.tool("open_page", { path: "blog/post" });

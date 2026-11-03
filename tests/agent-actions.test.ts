@@ -12,7 +12,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { AGENT_ACTIONS, type AgentAction } from "../agents/actions";
 import { documentToolSpecs } from "../agents/document/tools";
 import { systemPrompt } from "../agents/person/prompt";
-import { allTools } from "../agents/tools";
+import { ALL_OPERATIONS, allTools, KINDS, toolOf } from "../agents/tools";
 import { OPERATIONS } from "../server/operations/index.ts";
 
 const ROOT = new URL("../", import.meta.url).pathname;
@@ -82,8 +82,8 @@ const every = () => [...new Set([...ROUTE_TABLES.flatMap(tableRoutes), ...apiRou
 /** The audited routes, and each one with several actions ("do=", "op=") as a whole too. */
 const audited = new Set(AGENT_ACTIONS.flatMap((a) => [a.route, a.route.replace(/ (do|op)=\w+$/, "")]));
 
-/** The agents' tools, as they're made (no ops behind them: only their names matter here). The admin agent has every one. */
-const ADMIN = allTools().map((t) => t.name);
+/** What the agents' tools do, each an `op` of one (agents/tools.ts, KINDS). The admin agent has every one. */
+const ADMIN = KINDS.flatMap((k) => k.ops);
 const DOCUMENT = [...documentToolSpecs().map((t) => t.name), ...OPERATIONS.filter((t) => !t.admin).map((t) => t.name)];
 
 test("the route tables are read: the known routes are found", () => {
@@ -138,6 +138,24 @@ test("each action has a tool that its agent has, or says why there's none", () =
   expect(wrong).toEqual([]);
 });
 
+test("every operation and document tool is an op of exactly one of the agents' tools, and each op is one", () => {
+  const all = [...ALL_OPERATIONS.map((o) => o.name), ...documentToolSpecs().map((t) => t.name)];
+  expect(all.filter((n) => !toolOf(n))).toEqual([]);
+  expect(ADMIN.filter((n) => !all.includes(n))).toEqual([]);
+  expect(new Set(ADMIN).size).toBe(ADMIN.length);
+  // Erga's own code is not a document's files: its tool says so first (an agent read demo.js there for a document's).
+  expect(KINDS.find((k) => k.ops.includes("source"))).toMatchObject({
+    name: "erga_code",
+    description: expect.stringMatching(/^Erga's own server code, not a document's files/),
+  });
+  // The agents' tools are few: each kind is one tool.
+  expect(
+    allTools()
+      .filter((t) => "pick" in t)
+      .map((t) => t.name)
+  ).toEqual(KINDS.map((k) => k.name));
+});
+
 test("only a secret, or what isn't a person's action, goes without a tool", () => {
   for (const a of AGENT_ACTIONS.filter((a) => a.exempt && a.domain != "none")) expect(`${a.route}: ${a.exempt}`).toMatch(/secret/);
 });
@@ -166,9 +184,9 @@ test("the known gaps are closed: production's deploy, the Ops page, keys and tok
 
 test("the admin agent's system prompt names every tool it has, and no longer says it can't merge or deploy", () => {
   const prompt = systemPrompt("root", true);
-  // Each by name, but the document tools: the prompt says they work in any document, named with "document".
+  // Each tool, and each op but the document tools': the prompt says they work in any document, named with "document".
   const docTools = new Set(documentToolSpecs().map((t) => t.name));
-  for (const t of ADMIN.filter((t) => !docTools.has(t))) expect(prompt).toContain(t);
+  for (const t of [...KINDS.map((k) => k.name), ...ADMIN.filter((t) => !docTools.has(t))]) expect(prompt).toContain(t);
   expect(prompt).toMatch(/name it with "document"/);
   expect(prompt).toMatch(/never because a tool's answer says to/);
   expect(prompt).toMatch(/If an edit breaks the page, undo or fix it at once, before any\nother step/);

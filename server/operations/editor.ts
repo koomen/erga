@@ -60,11 +60,9 @@ async function treeOp(caller: Caller, ref: unknown, op: TreeOp) {
 }
 
 const PATH = (what: string) => str(what);
-const TO = PATH('Its new path, or a folder to put it in ("images/", or "." for the top)');
-const TO_DOCUMENT = Schema.optionalKey(
-  str("Another document to put it in (images too, no bytes through you); a file there is replaced, the old one kept in its versions")
-);
-const VERSION = str('The version\'s id ("v3") or number');
+const TO = PATH("Its new path or folder.");
+const TO_DOCUMENT = Schema.optionalKey(str("Another document."));
+const VERSION = str('A version, e.g. "v3".');
 
 /**
  * cp, and mv into another document: `from` (a file; a folder with everything in it; "." for the whole document) to
@@ -122,11 +120,11 @@ export const EDITOR_OPERATIONS: Operation[] = [
     label: "Look at the document",
     activity: "looking around",
     ui: "The editor: the title and address; a project's tree (the documents list, the crumbs); the editor's settings: Document/Project, Homepage, Readers; Share: who has access",
-    description: "Shows a document's title, address, kind, homepage, access (who: owner only; readers' options: editors), files and pages.",
+    description: "A document's name, kind, access, files and pages.",
     parameters: Schema.Struct({
       document: DOCUMENT,
       path: Schema.optionalKey(PATH("Only what is in this folder")),
-      glob: Schema.optionalKey(str('Only the paths that match, e.g. "**/*.css"; a pattern without "/" matches at any depth')),
+      glob: Schema.optionalKey(str('Only matching paths, e.g. "**/*.css".')),
     }),
     run: async (args, caller) => {
       const doc = await findDocument(caller, args.document, "open");
@@ -174,13 +172,11 @@ export const EDITOR_OPERATIONS: Operation[] = [
     label: "Rename the document",
     activity: "renaming the document",
     ui: "The editor: the title, and the address under it (its pencil)",
-    description: "Sets a document's title, its slug, or both; it doesn't change the page's text.",
+    description: "Sets a document's title, slug or both.",
     parameters: Schema.Struct({
       document: DOCUMENT,
-      title: Schema.optionalKey(str('The new title; "" follows the page\'s first heading')),
-      slug: Schema.optionalKey(
-        str('The new address after /<owner>/ ("Q3 plan" becomes q3-plan); "" follows the title. Old addresses redirect.')
-      ),
+      title: Schema.optionalKey(str('"": the first heading.')),
+      slug: Schema.optionalKey(str('"": from the title.')),
     }),
     run: async (args, caller) => {
       if (args.title === undefined && args.slug === undefined)
@@ -201,10 +197,10 @@ export const EDITOR_OPERATIONS: Operation[] = [
     label: "New page or folder",
     activity: "making a page",
     ui: "The page tree: New page, New folder",
-    description: "Makes a page from the template, or a folder (a path that ends in /).",
+    description: "Makes a page, or a folder (a path ending in /).",
     parameters: Schema.Struct({
       document: DOCUMENT,
-      path: PATH('e.g. "about.html", "blog/index.html" (at /<owner>/<slug>/blog) or "blog/drafts/"; only a project has more pages'),
+      path: PATH('e.g. "about.html" or "blog/".'),
     }),
     run: (args, caller) => {
       const path = String(args.path ?? "").trim();
@@ -220,11 +216,11 @@ export const EDITOR_OPERATIONS: Operation[] = [
     label: "Move",
     activity: "moving",
     ui: "The page tree: Rename, and a drag to another folder",
-    description: "Moves or renames a file or a folder, in the document or into another (to_document).",
+    description: "Moves or renames a file or folder.",
     parameters: Schema.Struct({
       document: DOCUMENT,
-      from: PATH("The file or folder (not the document's own page)"),
-      to: PATH('Its new path, or a folder ("images/", "." for the top); a page\'s address changes: fix links to it'),
+      from: PATH("The file or folder."),
+      to: PATH("Its new path or folder."),
       to_document: TO_DOCUMENT,
     }),
     run: (args, caller) =>
@@ -237,10 +233,10 @@ export const EDITOR_OPERATIONS: Operation[] = [
     label: "Copy",
     activity: "copying",
     ui: "None yet",
-    description: 'Copies a file, a folder or a whole document ("."), in it or into another (to_document).',
+    description: "Copies a file or folder.",
     parameters: Schema.Struct({
       document: DOCUMENT,
-      from: PATH('The file or folder, or "." for every file'),
+      from: PATH('The file or folder ("." for all).'),
       to: TO,
       to_document: TO_DOCUMENT,
     }),
@@ -251,7 +247,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
     label: "Delete",
     activity: "deleting",
     ui: "The page tree: Delete",
-    description: "Deletes a file, or a folder with everything in it (not the document's own page).",
+    description: "Deletes a file or folder.",
     parameters: Schema.Struct({ document: DOCUMENT, path: PATH("The file or folder") }),
     run: (args, caller) => treeOp(caller, args.document, { op: "delete", path: String(args.path ?? "") }),
   },
@@ -260,11 +256,11 @@ export const EDITOR_OPERATIONS: Operation[] = [
     label: "Change the kind",
     activity: "changing the kind",
     ui: "The editor's settings: Document/Project",
-    description: "Makes a document a project, or a one-page project a document.",
+    description: "Makes a document a project, or back.",
     parameters: Schema.Struct({
       document: DOCUMENT,
       kind: Schema.Literals(["project", "document"]).annotate({
-        description: "project: pages, each at its own address; document: one page (index.html) and files beside it",
+        description: "project: pages; document: one page.",
       }),
     }),
     run: (args, caller) => {
@@ -278,15 +274,15 @@ export const EDITOR_OPERATIONS: Operation[] = [
     label: "Versions",
     activity: "looking at versions",
     ui: "The editor's settings: Versions, and Show older versions",
-    description: "Lists a document's versions, newest first; with from or to, what changed between two.",
+    description: "Lists versions; with from or to, a diff.",
     parameters: Schema.Struct({
       document: DOCUMENT,
-      before: Schema.optionalKey(str('Only versions older than this one ("v12"), to page back')),
-      limit: Schema.optionalKey(Schema.Finite.annotate({ description: "How many (default 10, at most 100)" })),
-      from: Schema.optionalKey(str('A diff from a version, "last_turn" (where your last turn ended: the default) or "current"')),
-      to: Schema.optionalKey(str('A diff to a version, or "current" (the default: now, up to the keystroke)')),
-      path: Schema.optionalKey(str("The diff of only this file or folder")),
-      context: Schema.optionalKey(Schema.Finite.annotate({ description: "The diff's lines around each change (default 3)" })),
+      before: Schema.optionalKey(str("Only older ones.")),
+      limit: Schema.optionalKey(Schema.Finite.annotate({ description: "How many (default 10)." })),
+      from: Schema.optionalKey(str('A version, or "last_turn" (the default).')),
+      to: Schema.optionalKey(str('A version, or "current" (the default).')),
+      path: Schema.optionalKey(str("Only this file or folder.")),
+      context: Schema.optionalKey(Schema.Finite),
     }),
     run: async (args, caller) => {
       const doc = await findDocument(caller, args.document, "open");
@@ -308,11 +304,11 @@ export const EDITOR_OPERATIONS: Operation[] = [
     label: "Restore a version",
     activity: "restoring a version",
     ui: "The editor's settings: Versions, a version's Edit",
-    description: "Brings back an old version, or one file of it, as a new version; nothing is lost.",
+    description: "Brings back a version, or one file of it.",
     parameters: Schema.Struct({
       document: DOCUMENT,
       version: VERSION,
-      path: Schema.optionalKey(str("Only this file (the others stay as they are)")),
+      path: Schema.optionalKey(str("Only this file.")),
     }),
     run: async (args, caller) => {
       const doc = await findDocument(caller, args.document, "edit");

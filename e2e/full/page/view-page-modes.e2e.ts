@@ -28,7 +28,10 @@ test("the view_page tool, end to end (the scripted model, through the host), tak
 }) => {
   const { ed } = await open(tab);
   await ed.openAgent();
-  const steps = JSON.stringify([{ tool: "view_page", args: { width: 640, height: 480, color_scheme: "dark" } }, { text: "Looked." }]);
+  const steps = JSON.stringify([
+    { tool: "page", args: { op: "view_page", width: 640, height: 480, color_scheme: "dark" } },
+    { text: "Looked." },
+  ]);
   await ed.eval(
     `(() => { const i = document.getElementById("agent-input"); i.value = ${JSON.stringify("Look @script " + steps)}; i.dispatchEvent(new Event("input")); i.focus(); })()`
   );

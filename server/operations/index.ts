@@ -21,7 +21,7 @@ export {
   runInDocument,
   runOperation,
 } from "./operation.ts";
-export { addFile, cleanFilePath } from "./documents.ts";
+export { addFile, cleanFilePath, PAGE_RULES } from "./documents.ts";
 export { redeployHome } from "./home.ts";
 
 /** Every operation. Add one here and the front end's API, every agent, REST and MCP have it. */

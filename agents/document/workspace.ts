@@ -43,19 +43,10 @@ export interface Workspace {
 /** The edits' form, as the edit tool takes them, and view_page's and eval_in_page's preview. */
 export const EDITS = Schema.Array(
   Schema.Struct({
-    oldText: Schema.optionalKey(Schema.String.annotate({ description: "Exact text to replace; must be unique in the file" })),
-    selector: Schema.optionalKey(
-      Schema.String.annotate({
-        description: 'Or: a CSS selector of the one element to replace, open tag to close tag, as the source has it (e.g. "svg g#logo")',
-      })
-    ),
-    cssRule: Schema.optionalKey(
-      Schema.String.annotate({
-        description:
-          'Or: the selector of the one CSS rule to replace, prelude to closing brace, in a stylesheet or the page\'s <style> (e.g. ".legible h2")',
-      })
-    ),
-    newText: Schema.String.annotate({ description: "Replacement text" }),
+    oldText: Schema.optionalKey(Schema.String.annotate({ description: "Exact, unique text; or give selector or cssRule" })),
+    selector: Schema.optionalKey(Schema.String),
+    cssRule: Schema.optionalKey(Schema.String),
+    newText: Schema.String,
   })
 );
 

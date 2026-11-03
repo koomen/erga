@@ -12,7 +12,7 @@ import { sessionOf } from "../server/identity/index.ts";
 import { Tokens } from "../server/identity/tokens";
 import { serverApi } from "../server/api";
 import { respond } from "../server/http";
-import { agentTools, toolsFor } from "../agents/tools";
+import { agentTools, toolsFor, opsOf } from "../agents/tools";
 import { CONTROL_OPERATIONS } from "../control/operations";
 import { controlRoutes, type Control } from "../control/routes";
 import { VIA } from "../shared/attribution";
@@ -259,12 +259,12 @@ test("the admin agent has each of them in its tool list, and runs them as its ad
   const { platform, dir } = await app();
   const caller = { dir, who: { login: "ada", admin: true, via: VIA.agent }, name: "Ada", origin: ORIGIN, platform };
   const tools = await toolsFor(caller);
-  for (const op of CONTROL_OPERATIONS) expect(tools.map((t) => t.name)).toContain(op.name);
-  const redeploy = agentTools(tools, caller).find((t) => t.name == "redeploy")!;
-  const out = await redeploy.execute("x", { target: "staging" } as never);
+  for (const op of CONTROL_OPERATIONS) expect(tools.flatMap(opsOf)).toContain(op.name);
+  const deploys = agentTools(tools, caller).find((t) => t.name == "deploys")!;
+  const out = await deploys.execute("x", { op: "redeploy", target: "staging" } as never);
   expect((out.content[0] as { text: string }).text).toContain("staging redeploys now");
   expect(asked).toEqual([`redeploy staging: redeploy by ada, via ${VIA.agent}`]);
   // An agent with no admin power has none of them.
   const editor = await toolsFor({ ...caller, who: { login: "ada", via: "their agent" } });
-  for (const op of CONTROL_OPERATIONS) expect(editor.map((t) => t.name)).not.toContain(op.name);
+  for (const op of CONTROL_OPERATIONS) expect(editor.flatMap(opsOf)).not.toContain(op.name);
 });

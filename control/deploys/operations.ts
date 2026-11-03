@@ -56,7 +56,7 @@ export const DEPLOY_OPERATIONS: Operation[] = [
       view: Schema.optionalKey(
         Schema.Literals(["deploys", "log", "domains"]).annotate({
           description:
-            "deploys (default): each target (staging, production, control), its deploy now and its last ones (state, commit, trigger, error), and the credential. log: one deploy's log (target, deploy, lines). domains: each environment's own address (primary) and added domains",
+            "deploys (default): each target's deploy now and its last ones, and the credential. log: one deploy's log (target, deploy, lines). domains: each environment's addresses",
         })
       ),
       history: Schema.optionalKey(
@@ -98,7 +98,7 @@ export const DEPLOY_OPERATIONS: Operation[] = [
     description: "Deploys a target's branch head again now, or the homepage.",
     parameters: Schema.Struct({
       target: str(
-        "staging (its branch staging), production (main): the build starts and runs on (deploys shows it). homepage (the landing_document setting's document): waits for the deploy to end, and answers the live version, the live address and each file's address (live.files)"
+        "staging, production (main): the build starts and runs on (deploys shows it). homepage (landing_document): answers when it is live, with each file's live address (live.files)"
       ),
       fresh_data: Schema.optionalKey(
         Schema.Boolean.annotate({

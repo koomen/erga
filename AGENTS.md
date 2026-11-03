@@ -82,8 +82,9 @@ Read it before you push to a deployment's repository. On Erga's own:
    short instructions (`server/api.ts`, `instructionsFor`) and the tools.
    A tool's description is one short line; its details go in the
    arguments' descriptions. `/llms.txt` only points to `/mcp`: nothing in
-   Erga sends an agent there. Keep the tool list small: merge a new action
-   into a tool that does the same kind of thing, a read with reads. Change the prompts that name a tool
+   Erga sends an agent there. Keep the tool list small: a new operation is
+   an `op` of the tool that does the same kind of thing, a read with reads
+   (`KINDS` in `agents/tools.ts`; `tests/agent-actions.test.ts`). Change the prompts that name a tool
    (`agents/person/prompt.ts`) with it.
 9. **Source files stay under about 32 KB; 48 KB is the cap**, because read
    tools stop near 50 KB. When you touch a file over the cap, split it along

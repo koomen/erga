@@ -13,7 +13,7 @@ import { sessionOf } from "../server/identity/index.ts";
 import { serverApi } from "../server/api";
 import { respond } from "../server/http";
 import { Tokens } from "../server/identity/tokens";
-import { agentTools, allTools, jsonSchemaOf } from "../agents/tools";
+import { agentTools, allTools, KINDS, jsonSchemaOf } from "../agents/tools";
 import { argumentsSchema } from "../agents/run";
 
 const ORIGIN = "https://erga.test";
@@ -63,20 +63,27 @@ async function server() {
   return { call };
 }
 
-test("GET /api/tools and MCP's tools/list: every tool's inputSchema is an object's", async () => {
+test("GET /api/tools and MCP's tools/list: the few agents' tools, each loaded at once, each inputSchema an object's", async () => {
   const { call } = await server();
   const rest = (await (await call("/api/tools")).json()) as { tools: { name: string; parameters: { type?: string } }[] };
-  expect(rest.tools.length).toBeGreaterThan(20);
+  expect(rest.tools.map((t) => t.name)).toEqual(KINDS.map((k) => k.name));
   expect(notObjects(rest.tools.map((t) => ({ name: t.name, schema: t.parameters })))).toEqual([]);
   const mcp = (await (
     await call("/mcp", { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) })
   ).json()) as {
-    result: { tools: { name: string; inputSchema: { type?: string } }[] };
+    result: { tools: { name: string; inputSchema: { type?: string }; _meta?: Record<string, unknown> }[] };
   };
-  expect(mcp.result.tools.map((t) => t.name)).toContain("whoami");
+  expect(mcp.result.tools.map((t) => t.name)).toEqual(KINDS.map((k) => k.name));
   expect(notObjects(mcp.result.tools.map((t) => ({ name: t.name, schema: t.inputSchema })))).toEqual([]);
+  // Claude Code loads the tools every agent uses at once, not behind its tool search; the admins' wait for a search.
+  expect(mcp.result.tools.filter((t) => t._meta?.["anthropic/alwaysLoad"] === true).map((t) => t.name)).toEqual([
+    "documents",
+    "read",
+    "edit",
+    "page",
+  ]);
   // A tool with no arguments: an object with none.
-  expect(mcp.result.tools.find((t) => t.name == "whoami")!.inputSchema as unknown).toEqual({ type: "object", properties: {} });
+  expect(jsonSchemaOf(allTools().find((t) => t.name == "whoami")!) as unknown).toEqual({ type: "object", properties: {} });
 });
 
 test("every tool of the registry, the admin agent's own and the model's: an object's schema", () => {

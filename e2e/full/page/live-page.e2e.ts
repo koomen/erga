@@ -137,7 +137,7 @@ test("the agent reads the live page and clicks play: the audio plays, and the co
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: owner.origin },
     body: JSON.stringify({
-      text: `Why is it quiet? @script ${JSON.stringify([{ tool: "page_log", args: { kind: "console", pattern: "playing" } }, { text: "It plays." }])}`,
+      text: `Why is it quiet? @script ${JSON.stringify([{ tool: "page", args: { op: "page_log", kind: "console", pattern: "playing" } }, { text: "It plays." }])}`,
       doc: doc.id,
     }),
   });

@@ -207,10 +207,12 @@ test("one API for every token: GET /api/tools and MCP's tools/list give the same
   const one = (await tokens.mint(ada, "One", { scope: "document", docId: "oneoneon" })).token;
   const docs = (await tokens.mint(ada, "Docs", { scope: "documents" })).token;
   const admin = (await tokens.mint(ada, "Admin", { scope: "admin" })).token;
+  /** What a token's tools do: each tool's ops (its op argument's values). */
   const names = async (token: string) => {
-    const rest = ((await send(token, "/api/tools")).tools as { name: string }[]).map((t) => t.name);
-    expect(((await rpc(token, "tools/list")).result.tools as { name: string }[]).map((t) => t.name)).toEqual(rest);
-    return rest;
+    type Listed = { name: string; parameters: { properties: { op: { description: string } } } };
+    const listed = (await send(token, "/api/tools")).tools as Listed[];
+    expect(((await rpc(token, "tools/list")).result.tools as { name: string }[]).map((t) => t.name)).toEqual(listed.map((t) => t.name));
+    return listed.flatMap((t) => t.parameters.properties.op.description.split("\n").map((l: string) => l.split("(")[0]));
   };
   const [o, d, a] = [await names(one), await names(docs), await names(admin)];
   // The document tools for each; list_documents not for a document token; the admin tools only for an admin token.
@@ -221,6 +223,7 @@ test("one API for every token: GET /api/tools and MCP's tools/list give the same
   const call = async (token: string, name: string, args: object = {}) => (await rpc(token, "tools/call", { name, arguments: args })).result;
   const refused = (why: RegExp) => ({ isError: true, content: [{ text: expect.stringMatching(why) }] });
   expect(await call(one, "list_documents")).toMatchObject(refused(/one document only/));
+  expect(await call(one, "documents", { op: "list_documents" })).toMatchObject(refused(/one document only/));
   expect(await call(one, "read", { document: "twotwotw", path: "index.html" })).toMatchObject(refused(/one document only/));
   expect(await call(docs, "people")).toMatchObject(refused(/admin token/));
   expect(JSON.parse((await call(admin, "people")).content[0].text).users.map((u: { login: string }) => u.login)).toContain("bo");
@@ -234,6 +237,8 @@ test("one API for every token: GET /api/tools and MCP's tools/list give the same
   expect(await instructions(admin)).toContain("the server too");
   // The page is live for the person: an agent undoes an edit that breaks it before any other step.
   expect(await instructions(docs)).toContain("If an edit breaks the page, undo or fix it at once, before any other step.");
+  // How to write a page people keep editing by hand: once, here, not in each tool that writes one.
+  expect(await instructions(docs)).toContain("data-erga-noedit");
   // /llms.txt is a few lines, the same for anyone: it points to /mcp and /api/tools, and lists no tool.
   const llms = async (headers: HeadersInit) => respond(serverApi, new Request(`${ORIGIN}/llms.txt`, { headers }), platform);
   const pointer = await (await llms({})).text();
