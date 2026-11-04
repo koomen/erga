@@ -11,6 +11,7 @@
     "format": "bun dev/format.ts --write",
     "lint": "biome lint .",
     "typecheck": "node --no-experimental-webstorage -e \"import('vite').then((v) => v.resolveConfig({}, 'serve'))\" && tsc -p . && tsc -p tsconfig.workers.json && tsc -p tsconfig.browser.json",
+    "own": "bun deploy/own/cli.ts",
     "deploy": "bun deploy/run.ts production",
     "deploy:staging": "bun deploy/run.ts staging",
     "setup:staging": "bun deploy/setup.ts",

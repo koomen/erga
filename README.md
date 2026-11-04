@@ -97,6 +97,10 @@ flowchart LR
 
 ## Self-host on Cloudflare
 
+The quick way: give your coding agent the prompt at the top of DEPLOY.md. It
+deploys your own Erga with `bun own`, and a checklist page on your machine
+shows each step. The rest of this part is the way Erga's own deployment runs.
+
 Erga needs a Cloudflare account on the Workers Paid plan: Workers, Durable
 Objects, D1 and R2, and for the control Worker, Containers (for builds) and
 Artifacts (for the repository). You need a zone for the app, and a

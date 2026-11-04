@@ -49,6 +49,11 @@ export interface Env {
    * locked, so admins see them but can't change them.
    */
   SERVER_CONFIG?: string;
+  /**
+   * Defaults for the server settings, a JSON object by key (an instance's preset: deploy/own/plan.ts PRESETS):
+   * the admins can still change them, unlike SERVER_CONFIG's.
+   */
+  SERVER_DEFAULTS?: string;
   /** Sign-in's GitHub OAuth app: the deploy's values; an admin's on /admin/auth win while set. */
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;

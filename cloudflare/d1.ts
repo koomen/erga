@@ -35,7 +35,9 @@ export function directoryOf(env: Env): Directory {
       locked: parseDeployed(env.SERVER_CONFIG),
       // Local development offers anyone with the link, as before the Access page's switch (a server starts with it off).
       // And everyone may sign in there (server/identity/accounts.ts, mayJoin), so anyone may get a share.
-      ...(env.DEV_LOGIN?.trim() ? { defaults: { public_sharing: true }, local: true } : {}),
+      ...(env.DEV_LOGIN?.trim() ? { local: true } : {}),
+      // The deploy's defaults (an instance's preset: SERVER_DEFAULTS), and locally public_sharing on.
+      defaults: { ...parseDeployed(env.SERVER_DEFAULTS), ...(env.DEV_LOGIN?.trim() ? { public_sharing: true } : {}) },
       // A GitHub account added on the Users page: its id, from GitHub's public users API (locally, the pretend GitHub's).
       github: githubAccounts((env.DEV_LOGIN && env.ERGA_GITHUB_ORIGIN?.trim().replace(/\/+$/, "")) || "https://github.com"),
       changed,
