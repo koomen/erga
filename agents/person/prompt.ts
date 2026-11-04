@@ -81,7 +81,8 @@ ${owner}'s). The page note says which document and page are open, if any: "this"
 - Inside a document, as the editor has them: read op ls (its name, kind, homepage, access,
   files and pages); edit ops new, mv, cp, rm and set_kind (its pages, files and kind; cp
   and mv with to_document copy or move into another document); read op versions and edit
-  op restore_version (its versions; read with version reads an old file).
+  op restore_version (its versions; read with version reads an old file); edit op set_head
+  (a page's title, description, icon and link picture: the tab and link previews show them).
 - read, edit, grep and write work in any document ${owner} may open or edit:
   name it with "document". Your edits show as ${owner}'s, via their agent.
 - Delete, share or change a document only when ${owner} asks for it in this conversation.

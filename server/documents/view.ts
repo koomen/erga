@@ -26,6 +26,7 @@ import { HttpServerResponse } from "effect/http";
 import { call, ctx, html, redirect } from "../http.ts";
 import { pageAddress } from "../../document/pages.ts";
 import type { ViewAnswer } from "../../document/view.ts";
+import type { PageHead } from "../../shared/page-head.ts";
 import { ID, OWNER, roleMay } from "../directory/index.ts";
 import type { Role } from "../../document/access.ts";
 import type { DocKind } from "../../document/pages.ts";
@@ -66,6 +67,8 @@ interface Decision {
   canonical: string;
   /** A project (pages: its crumb opens its tree), or not; null if its row doesn't say. */
   kind?: DocKind | null;
+  /** The page's head's details (shared/page-head.ts): the tab's title and icon, and a link's preview. */
+  head?: PageHead;
 }
 
 /** Decisions in this isolate: key -> when, and what. */
@@ -180,6 +183,7 @@ async function address(
       file: answer.file,
       canonical: answer.canonical ?? "",
       kind: row?.kind ?? null,
+      head: answer.head,
     };
     if (answer.quiet) keepDecision(platform, key, d);
   }
@@ -211,7 +215,17 @@ async function publicView(
   if (!row || (row.owner != HOME_OWNER && !(await platform.directory.isPublic(row.id)))) return null;
   const answer = await platform.docs.view(row.id, null, { page: wanted, anyone: true });
   if (!answer || answer.file == null || answer.ver == null) return null;
-  const d: Decision = { id: row.id, owner: row.owner, slug: row.slug, title: row.title, role: "viewer", ver: answer.ver, file: answer.file, canonical: answer.canonical ?? "" };
+  const d: Decision = {
+    id: row.id,
+    owner: row.owner,
+    slug: row.slug,
+    title: row.title,
+    role: "viewer",
+    ver: answer.ver,
+    file: answer.file,
+    canonical: answer.canonical ?? "",
+    head: answer.head,
+  };
   const canonical = `${addressOf(d)}${suffix(d.canonical)}`;
   if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`))
     return redirect(canonical + url.search, 302, { "Cache-Control": "no-store" });
@@ -247,7 +261,17 @@ async function landingView(platform: Platform, request: Request, session: Sessio
       row = answer?.file != null ? made.doc : null;
     }
     if (!row || !answer || answer.file == null || answer.ver == null) return nothing();
-    d = { id: row.id, owner: row.owner, slug: row.slug, title: row.title, role: answer.role, ver: answer.ver, file: answer.file, canonical: "" };
+    d = {
+      id: row.id,
+      owner: row.owner,
+      slug: row.slug,
+      title: row.title,
+      role: answer.role,
+      ver: answer.ver,
+      file: answer.file,
+      canonical: "",
+      head: answer.head,
+    };
     if (answer.quiet && key && row.id == home) keepDecision(platform, key, d);
   }
   return render(platform, request, session, d, true);
@@ -305,6 +329,9 @@ async function render(
     : "");
   const shell = viewerPage({
     title: d.title,
+    head: d.head ?? {},
+    file: d.file,
+    files,
     docId: d.id,
     pages: origin,
     meta,

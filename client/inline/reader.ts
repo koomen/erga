@@ -140,6 +140,23 @@ export default function reader(C: ReaderConfig): void {
     page = decodeURIComponent(page);
   } catch {}
   if (!page || /\.html$/i.test(page)) tell({ type: "erga-nav", path: page || "" });
+  // The page's head (shared/page-head.ts): its title and icon, for the viewer's tab, once it's parsed and each time it
+  // changes (an edit, or the page's script).
+  let headSaid = "";
+  const sayHead = () => {
+    const icon = document.querySelector<HTMLLinkElement>('head link[rel~="icon" i]');
+    const head = { title: document.title.trim(), icon: icon ? icon.href : "" };
+    const said = JSON.stringify(head);
+    if (said == headSaid) return;
+    headSaid = said;
+    tell({ type: "erga-head", ...head });
+  };
+  const watchHead = () => {
+    sayHead();
+    new MutationObserver(sayHead).observe(document.head || root, { subtree: true, childList: true, characterData: true, attributes: true });
+  };
+  if (document.readyState == "loading") document.addEventListener("DOMContentLoaded", watchHead, { once: true });
+  else watchHead();
   // The page stops dead at its top and bottom.
   const still = document.createElement("style");
   still.setAttribute("data-erga", "");

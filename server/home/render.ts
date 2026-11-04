@@ -29,6 +29,7 @@ import {
 } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { TOKEN_SLOT } from "./llm-token.ts";
+import { headOf, tabTitle } from "../../shared/page-head.ts";
 
 /** Where a deploy's files are served: /_home-files/<gen>/<path> (/_home is the homepage project's address), each address never reused, so browsers keep them for good. */
 export const HOME_FILES = "/_home-files/";
@@ -129,18 +130,39 @@ export async function renderHome(opts: {
       if (t != null && t != v) e.setAttribute(name, t);
     },
   });
-  // Its own head: a title for the tab as the viewer gives it (the document's title), unless it names none at all.
+  // Its own head: the tab's title as the viewer gives it (the page's own <title>, else the document's title).
   const head = /<head[\s>]/i.test(source);
   const headPart = source.slice(0, Math.max(0, source.search(/<body[\s>]/i)) || source.length);
   const titled = /<title[\s>]/i.test(headPart);
+  const title = tabTitle(headOf(source), opts.title);
   // And first, window.ergaLLM, the page's model, before any script of its own (client/inline/home-llm.ts), with the slot
   // for its page token, which serve.ts fills for each visitor (withToken).
-  const extra = `${VIEWPORT}<script>${inlineCall("home-llm", opts.doc, TOKEN_SLOT)}</script>${STILL}${titled ? "" : `<title>${esc(opts.title)}</title>`}`;
+  const extra = `${VIEWPORT}<script>${inlineCall("home-llm", opts.doc, TOKEN_SLOT)}</script>${STILL}${titled ? "" : `<title>${esc(title)}</title>`}`;
   let css = "", titleDone = false;
   const rewriter = new HTMLRewriter()
-    .on("base[href]", { element(e) { try { base = new URL(e.getAttribute("href")!, base); } catch { /* not a URL */ } } })
-    .on('meta[name="viewport" i]', { element(e) { e.remove(); } })
-    .on("head > title", { element(e) { if (!titleDone) { titleDone = true; e.setInnerContent(opts.title); } } })
+    .on("base[href]", {
+      element(e) {
+        try {
+          base = new URL(e.getAttribute("href")!, base);
+        } catch {
+          /* not a URL */
+        }
+      },
+    })
+    .on('meta[name="viewport" i]', {
+      element(e) {
+        e.remove();
+      },
+    })
+    .on("head > title", {
+      element(e) {
+        if (!titleDone) {
+          titleDone = true;
+          e.setInnerContent(title);
+        }
+      },
+    })
+    .on('meta[property="og:image" i][content], meta[name="twitter:image" i][content]', attr("content"))
     .on("img[src], script[src], iframe[src], embed[src], source[src], track[src], audio[src], video[src], input[src]", attr("src"))
     .on("img[srcset], source[srcset]", attr("srcset"))
     .on("video[poster]", attr("poster"))

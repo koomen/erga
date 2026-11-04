@@ -8,6 +8,7 @@
 // hears the frame through `ergaFrames` (framesScript).
 
 import { FAVICON_LINK } from "../../assets/logo/logo.ts";
+import { headUrl, tabTitle, type PageHead } from "../../shared/page-head.ts";
 import type { Session } from "../platform.ts";
 import { asset, assetScripts, editorShell, styleTag } from "./assets.ts";
 import { inlineCall, inlineFunction, inlineScript, inlineStyle } from "./inline.ts";
@@ -96,6 +97,12 @@ export const VIEW_STYLE = `<style>${inlineStyle("viewer")}</style>`;
  */
 export function viewerPage(o: {
   title: string;
+  /** The page's head's details, from its own <head> (shared/page-head.ts). */
+  head: PageHead;
+  /** The page's file, which the head's relative addresses are relative to. */
+  file: string;
+  /** Where the document's files are, for the head's addresses (ends in "/"). */
+  files: string;
   docId: string;
   pages: string;
   meta: string;
@@ -134,8 +141,7 @@ export function viewerPage(o: {
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<title>${esc(o.title)}</title>
-${FAVICON_LINK}
+${headTags(o.head, o.title, o.file, o.files)}
 <link rel="preconnect" href="${esc(o.pages)}">
 <meta name="erga-doc" content="${esc(o.docId)}">
 ${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(session, true)}${o.agent ? styleTag() : ""}<style>${BAND_STYLE}${o.bars ? "" : NO_BARS}</style>${opening}
@@ -146,6 +152,31 @@ ${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(sessio
 ${bars}${o.agent ? agentPanel(session) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<script>${inlineCall("viewer-live", `/d/${o.docId}`, o.live)}</script>` : ""}${o.project && session && !o.landing ? `<script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, o.title, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
 `;
   return { before, after };
+}
+
+/**
+ * The viewer's own head, from the page's: the tab's title (the page's <title>, else the document's), its icon (Erga's,
+ * unless the page names one), and what a link's preview reads (description, og:*). The page is in a frame, so a browser
+ * and a link's preview see only these. `erga-title` is the document's title, for the tab when the page has none
+ * (client/inline/viewer-nav.ts follows the page's head as it changes).
+ */
+function headTags(head: PageHead, docTitle: string, file: string, files: string): string {
+  const title = tabTitle(head, docTitle);
+  const icon = head.icon ? headUrl(head.icon, file, files) : null;
+  const image = head.image ? headUrl(head.image, file, files) : null;
+  return [
+    `<title>${esc(title)}</title>`,
+    `<meta name="erga-title" content="${esc(docTitle)}">`,
+    icon ? `<link rel="icon" href="${esc(icon)}">` : FAVICON_LINK,
+    `<meta property="og:title" content="${esc(title)}">`,
+    ...(head.description
+      ? [
+          `<meta name="description" content="${esc(head.description)}">`,
+          `<meta property="og:description" content="${esc(head.description)}">`,
+        ]
+      : []),
+    ...(image ? [`<meta property="og:image" content="${esc(image)}">`, `<meta name="twitter:card" content="summary_large_image">`] : []),
+  ].join("\n");
 }
 
 /** A reader's page with no bars (the owner's reader_bars, share_document): no band, so no room at the page's top, and the bars

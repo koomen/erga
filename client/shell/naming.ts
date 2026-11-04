@@ -31,7 +31,9 @@ export function mountNaming(shell: Shell) {
     titleBtn.hidden = false;
     titleBtn.setAttribute("aria-label", shell.docKind == "project" ? `${n.title}: its pages` : `${n.title}: rename`);
     titleBtn.title = `${location.host}${n.address}`;
-    document.title = n.title;
+    // The tab's title is the page's own, if it has one (client/inline/viewer-nav.ts); else the document's.
+    document.querySelector<HTMLMetaElement>('meta[name="erga-title"]')?.setAttribute("content", n.title);
+    document.title = document.documentElement.dataset.pageTitle || n.title;
     tree?.setRootTitle(n.title);
     if (n.address) tree?.setBase(n.address);
     // The editor's own address is the page's, with ?edit (without, it's the viewer, which the pencil, blue while editing, goes back to).

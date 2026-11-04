@@ -36,6 +36,23 @@ export default function viewerNav(): void {
     if (location.pathname != here) history.replaceState(history.state, "", here + location.search + location.hash);
     document.querySelector(".erga-view-buttons a[aria-pressed]")?.setAttribute("href", ergaWithEdit(here, true));
   });
+  // The page's head (reader.ts): the tab's title is the page's own <title>, else the document's (erga-title); its icon is
+  // the page's, else Erga's (the one the page came with).
+  const erga = document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.cloneNode() as HTMLLinkElement | undefined;
+  addEventListener("message", (e) => {
+    if (!ergaFrames.from(e) || e.data?.type != "erga-head") return;
+    const title = String(e.data.title ?? "").slice(0, 300),
+      icon = String(e.data.icon ?? "");
+    document.documentElement.dataset.pageTitle = title.toLowerCase() == "untitled" ? "" : title;
+    document.title = document.documentElement.dataset.pageTitle || meta("erga-title")?.content || document.title;
+    const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (icon && /^(https?:|data:image\/)/i.test(icon) && icon.length < 100_000) {
+      if (link) {
+        link.removeAttribute("type");
+        link.href = icon;
+      }
+    } else if (link && erga) link.replaceWith(erga.cloneNode());
+  });
   // The page's place in its own address (#3: agents/document/PROMPT.md, rule 11): the tab's address keeps it too, so a
   // reload, or the link in another tab, opens the page there (viewer-frame-src.ts gives it to the frame).
   addEventListener("message", (e) => {

@@ -29,7 +29,9 @@ test(
   const list = await (await get(server, "/docs")).text();
   expect(list.match(/href="\/_home\?edit"/g)).toEqual(['href="/_home?edit"']);
   expect(list).toContain("Erga Homepage");
-  expect(front).toContain("<title>Erga Homepage</title>");
+  // The tab shows the page's own <title>; the project's name is for the list.
+  expect(front).toContain("<title>Editing Rendered Documents</title>");
+  expect(front).toContain('<meta name="erga-title" content="Erga Homepage">');
   expect(front).toContain('href="/new?from=landing"');
   expect(await (await get(server, `/d/${id}/doc/index.html`)).text()).toBe(readFileSync(join(ROOT, "assets/landing/index.html"), "utf8"));
   // Its fonts and images too, byte for byte (assets/landing/ isn't only text).

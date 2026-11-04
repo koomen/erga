@@ -14,6 +14,7 @@
 // The document's tree, its files' list and its name are the operations' (server/operations/editor.ts), which reach
 // them through the Durable Object's calls (tree, treeOp, files, rename), not over HTTP.
 
+import { headOf } from "../shared/page-head.ts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -472,11 +473,13 @@ export function makeHost(opts: HostOptions) {
   // ---------------------------------------------------------- storage and files
 
   const badPath = HttpServerResponse.text("Bad path", { status: 400 });
-  /** The tree, each page with its title (its first heading, else its <title>) when it has one. */
+  /** The tree, each page with its title (its first heading, else its <title>) and its head's details when it has them. */
   const entries = () => treeEntries(room.paths(), room.folderPaths()).map((e) => {
     const text = e.type == "page" ? room.text(e.path) : null;
-    const title = text != null ? titleOf(text) : null;
-    return title ? { ...e, title } : e;
+    if (text == null) return e;
+    const title = titleOf(text),
+      head = headOf(text);
+    return { ...e, ...(title ? { title } : {}), ...(Object.keys(head).length ? { head } : {}) };
   });
   /** What a tab hears first: the document's details as its person sees them, its tree (`canEdit`: theirs to change), and the room's epoch. */
   const helloFor = async (user: { id: string; name: string }, canEdit: boolean): Promise<Hello> => ({

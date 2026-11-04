@@ -8,6 +8,8 @@
 //   - Kind: Document (one page, and files beside it) or Project (pages, each
 //     with its own address), a switch (set_kind). A project with more than one page says, in place, why
 //     it can't be a document yet.
+//   - Page: the page shown now, with its tab's title, and Details, which opens its details (client/pages/page-head.ts:
+//     its title, description, icon and link picture, in its <head>).
 //   - Readers, for anyone who may edit it (their state from ls's access): whether the people who view it, and can't edit
 //     it, see Erga's bars over it (share_document's reader_bars; on at first), and whether they may use their own agent
 //     on it (reader_agent). The agent is off, and not to be turned on, while anyone with the link may open it. And
@@ -30,6 +32,8 @@ import { ago, clock, RECENT, type Version, type Versions } from "./versions";
 import { runTool } from "../common/tools";
 import { esc } from "../../shared/html";
 import { MODELS, PAGE_LLM_MODELS } from "../../shared/models";
+import { openPageHead } from "./page-head";
+import { tabTitle, type PageHead } from "../../shared/page-head";
 
 export interface Deploy {
   state: "idle" | "deploying" | "deployed" | "failed";
@@ -42,9 +46,12 @@ export interface Home { isHome: boolean; canDeploy: boolean; /** An admin acting
 export type DocKind = "document" | "project";
 /** ls's answer, as far as this panel reads it. */
 interface Tree {
-  entries: { path: string; type: string }[];
+  entries: { path: string; type: string; head?: PageHead }[];
   canEdit?: boolean;
   kind?: DocKind;
+  /** The document's own page; and its title. */
+  index?: string;
+  title?: string;
 }
 /** ls's access, as far as Readers need it (the readers' options, for anyone who may edit it). */
 type Access = { readerAgent: boolean; readerBars: boolean; pageLlm: { on: boolean; model: string }; anyoneWithLink: boolean };
@@ -129,6 +136,10 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-kind button:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 .ds-kind button[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
 .ds-kind button[aria-disabled="true"]:hover { color: var(--soft); }
+/* Page: the tab as it shows, and Details. */
+.ds-page-row { display: flex; align-items: center; gap: 10px; }
+.ds-page-row h3 { margin: 0; }
+.ds-page-tab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--fg-strong, var(--fg)); }
 /* Readers: two switches, for the owner. */
 .ds-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); cursor: pointer; }
 .ds-check input { margin: 0; width: 15px; height: 15px; accent-color: var(--caret); cursor: inherit; }
@@ -183,6 +194,9 @@ function mount(host: SettingsHost): Settings {
       </div>
       <p class="ds-explain" id="ds-kind-explain"></p>
       <p class="ds-error" id="ds-kind-error" role="alert"></p>
+    </section>
+    <section class="ds-page" id="ds-page" hidden aria-labelledby="ds-page-title">
+      <div class="ds-page-row"><h3 id="ds-page-title">Page</h3><span class="ds-page-tab" id="ds-page-tab"></span><button type="button" class="ds-btn" id="ds-page-edit" title="Its title, description, icon and link picture">Details…</button></div>
     </section>
     <section class="ds-agent" id="ds-agent" hidden aria-labelledby="ds-agent-title">
       <h3 id="ds-agent-title">Readers</h3>
@@ -308,7 +322,40 @@ function mount(host: SettingsHost): Settings {
     renderKind();
     renderHome();
     renderAgent();
+    renderPage();
   }
+
+  /** The page shown now: its file, the tab's title, and Details. */
+  const pageSec = $("ds-page");
+  const meta = (name: string) => document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`)?.content ?? "";
+  const shownPage = () => tree?.entries.find((e) => e.type == "page" && e.path == (meta("erga-page") || tree?.index));
+  function renderPage() {
+    const p = shownPage();
+    pageSec.hidden = !p;
+    if (!p) return;
+    const tab = $("ds-page-tab");
+    tab.textContent = tabTitle(p.head ?? {}, tree?.title ?? "");
+    tab.title = `${p.path}: the tab's title`;
+  }
+  $("ds-page-edit").addEventListener("click", () => {
+    const p = shownPage();
+    if (!p || !tree) return;
+    toggle(false);
+    openPageHead({
+      docId: host.docId,
+      page: p.path,
+      head: p.head ?? {},
+      docTitle: tree.title ?? "",
+      images: tree.entries.filter((e) => e.type == "file" && /\.(png|jpe?g|gif|webp|svg|ico|avif)$/i.test(e.path)).map((e) => e.path),
+      canEdit: !!tree.canEdit,
+      files: meta("erga-pages"),
+      onSaved: (head) => {
+        p.head = head;
+        renderPage();
+        loadDoc();
+      },
+    });
+  });
 
   function renderAgent() {
     agentSec.hidden = !access;
@@ -532,6 +579,7 @@ function mount(host: SettingsHost): Settings {
     renderHome();
     renderKind();
     renderAgent();
+    renderPage();
     if (!data) loadVersions();
     // Relative times ("4 min ago") move on while it's open, every 30 seconds.
     ticker = window.setInterval(() => { render(); renderHome(); }, 30_000);
