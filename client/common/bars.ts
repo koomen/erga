@@ -1,8 +1,8 @@
 // The glass bars' buttons (server/pages/bars.ts), on a document's page (client/inline/viewer-bars.ts), on the homepage
 // (client/inline/home-controls.ts) and on the app's own pages (client/inline/page-bars.ts): the quick actions on a phone, as the editor's (quick.ts), and Share
-// with an agent (agent-prompt.ts). `root`: the page, or the homepage's shadow root; `on`: what carries quick-open.
+// with an agent (agent-menu.ts). `root`: the page, or the homepage's shadow root; `on`: what carries quick-open.
 
-import { copyAgentPrompt } from "./agent-prompt";
+import { mountAgentMenu } from "./agent-menu";
 import { mountQuick } from "./quick";
 
 export function mountBars(root: Document | ShadowRoot, on: HTMLElement) {
@@ -18,21 +18,17 @@ export function mountBars(root: Document | ShadowRoot, on: HTMLElement) {
       const menu = me.querySelector<HTMLElement>(".erga-account-menu");
       return menu ? !menu.hidden : undefined;
     },
-    keep: ".erga-bar-r, .erga-new-menu",
+    keep: ".erga-bar-r, .erga-new-menu, .erga-agent-menu",
     on,
   });
   // (Every page has it.)
   const share = bar.querySelector<HTMLElement>(".erga-agent-share");
-  share?.addEventListener("click", async () => {
-    const address = document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? location.pathname;
-    if (!(await copyAgentPrompt(share, address))) return;
-    // No clipboard: the button says so, where the person looks.
-    share.dataset.tip = "Couldn't reach the clipboard";
-    share.classList.add("copy-failed");
-    setTimeout(() => {
-      share.dataset.tip = "Share with an agent";
-      share.classList.remove("copy-failed");
-    }, 2400);
-  });
+  if (share)
+    mountAgentMenu({
+      button: share,
+      root,
+      address: () => document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? location.pathname,
+      tokens: root.querySelector<HTMLElement>(".erga-account")?.dataset.ergaAccount == "in",
+    });
   return toggle;
 }

@@ -1,6 +1,6 @@
 // The layout every admin page shares (/admin, /admin/changes, /admin/users, /admin/access,
 // /admin/api-keys, /admin/auth): the bars of every page (server/pages/bars.ts: Erga › Admin › the page upper
-// left; upper right the quick actions, with Share with an agent, whose card is admin-share.js, built from
+// left; upper right the quick actions, with Share with an agent, whose menu is admin-share.js, built from
 // client/admin/admin-share.ts), the person's agent in the lower left (server/pages/agent.ts, as on every page),
 // and, on the left, a sidebar that links to Settings, API keys, Authentication, Access, Change log and Users.
 //
@@ -69,8 +69,8 @@ const SIDEBAR_SCRIPT = inlineScript("admin-sidebar");
 
 /** An admin page, whole: the header, the sidebar and the page's own body. */
 export function adminLayout(o: AdminLayout): string {
-  // Share with an agent among the quick actions: the editor's icon, the card from admin-share.js (a prompt with an admin token).
-  const share = `<button type="button" class="erga-view-button" id="btn-share" aria-label="Share with an agent" data-tip="Share with an agent" aria-expanded="false" aria-controls="share">${AGENT_ICON}</button>`;
+  // Share with an agent among the quick actions: the editor's icon, its menu from admin-share.js (client/common/agent-menu.ts, with Admin picked).
+  const share = `<button type="button" class="erga-view-button" id="btn-share" aria-label="Share with an agent" data-tip="Share with an agent">${AGENT_ICON}</button>`;
   const bars = pageBars(o.session, [{ label: "Admin", href: "/admin" }, { label: o.title }], { here: "h1", share });
   const side = adminSidebar(o.here, (path) => link(path, o.session));
   return appPage(o.title, "", `${adminStyleTag()}${EARLY_SCRIPT}

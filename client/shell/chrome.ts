@@ -57,7 +57,7 @@ export function mountChrome(shell: Shell) {
     stack: $("people"),
     // (After the avatar's own click, which opened or closed its menu: people.ts.)
     menuOpen: () => (shell.people.accountLinks ? !$("account").hidden : undefined),
-    keep: ".erga-bar-r, .help, .ds-menu, .erga-new-menu",
+    keep: ".erga-bar-r, .help, .ds-menu, .erga-new-menu, .erga-agent-menu",
   });
 
   const help = $("help");
@@ -70,6 +70,7 @@ export function mountChrome(shell: Shell) {
   function closeCards(keep?: Card) {
     if (keep != "help") toggleHelp(false);
     if (keep != "sharing") shell.sharing.toggleSharing(false);
+    if (keep != "agent") shell.sharing.toggleAgentMenu(false);
     if (keep != "naming") shell.naming.toggleNaming(false);
     if (keep != "pages") shell.naming.togglePages(false);
     if (keep != "account") shell.people.toggleAccount(false);
@@ -140,4 +141,4 @@ export function mountChrome(shell: Shell) {
 
 export type Chrome = ReturnType<typeof mountChrome>;
 /** The shell's cards, of which one is open at a time. */
-type Card = "help" | "sharing" | "naming" | "pages" | "account" | "settings";
+type Card = "help" | "sharing" | "agent" | "naming" | "pages" | "account" | "settings";

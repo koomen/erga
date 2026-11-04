@@ -146,7 +146,7 @@ test("desktop: a reader and someone signed out have the bars too, with the butto
   }
 });
 
-test("Share with an agent in the viewer copies the one-line prompt, as the editor's", async ({ tab }) => {
+test("Share with an agent in the viewer: Install Erga's MCP copies the one-line prompt, as the editor's", async ({ tab }) => {
   const page = tab.page;
   const address = (await (await servers.main()).fixture("top/light")).address;
   await openViewer(page, address, { width: 1200, height: 760 });
@@ -154,8 +154,39 @@ test("Share with an agent in the viewer copies the one-line prompt, as the edito
   const origin = new URL(address).origin;
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   await clickOn(page, ".erga-agent-share");
+  await clickOn(page, "#erga-agent-menu .am-mcp");
   await expect.poll(() => page.evaluate(() => document.querySelector<HTMLElement>(".erga-agent-share")!.dataset.tip)).toBe("Copied ✓");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`Add Erga's MCP server, ${origin}/mcp, then open ${address}.`);
+});
+
+test("Share with an agent in the viewer: a prompt with a token, for the time and scope picked, and the token works", async ({ tab }) => {
+  const page = tab.page;
+  const address = (await (await servers.main()).fixture("top/light")).address;
+  await openViewer(page, address, { width: 1200, height: 760 });
+  await docShows(page, "A ");
+  const origin = new URL(address).origin;
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+  await clickOn(page, ".erga-agent-share");
+  // The dev server's person is an admin: Admin comes as a choice.
+  await expect.poll(() => page.locator("#erga-agent-menu select[name=scope] option").allTextContents()).toEqual(["My documents", "Admin"]);
+  await page.selectOption("#erga-agent-menu select[name=hours]", "24");
+  await clickOn(page, "#erga-agent-menu .am-copy");
+  await expect.poll(() => page.evaluate(() => document.querySelector<HTMLElement>("#erga-agent-menu")!.hidden)).toBe(true);
+  const prompt = await page.evaluate(() => navigator.clipboard.readText());
+  expect(prompt).toContain(`claude mcp add --transport http erga ${origin}/mcp --header "Authorization: Bearer erga_`);
+  expect(prompt).toContain(`Then open ${address}.`);
+  const token = prompt.match(/Token: (erga_\S+)/)![1];
+  const me = await (
+    await fetch(`${origin}/api/tools/whoami`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: "{}",
+    })
+  ).json();
+  const mine = me.result.token as { label: string; scope: string; expires: string };
+  expect([mine.label, mine.scope]).toEqual(["Share with an agent", "documents"]);
+  const left = Date.parse(mine.expires) - Date.now();
+  expect(left > 23.9 * 3600_000 && left <= 24 * 3600_000).toBe(true);
 });
 
 test("phone: at rest the buttons' bar is the avatar alone; a tap opens the quick actions and the menu; a tap on the page closes them; the editor's bar is the same", async ({
@@ -218,6 +249,11 @@ test("every app page has Share with an agent in its bar: on Documents it copies 
   const origin = new URL(root).origin;
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   await clickOn(page, ".erga-agent-share");
+  await clickOn(page, "#erga-agent-menu .am-mcp");
   await expect.poll(() => page.evaluate(() => document.querySelector<HTMLElement>(".erga-agent-share")!.dataset.tip)).toBe("Copied ✓");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`Add Erga's MCP server, ${origin}/mcp, then open ${origin}/docs.`);
+  // On an admin page, Admin is picked for the token.
+  await page.goto(`${root}/admin`);
+  await clickOn(page, "#btn-share");
+  expect(await page.inputValue("#btn-share-menu select[name=scope]")).toBe("admin");
 });

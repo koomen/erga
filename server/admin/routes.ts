@@ -14,8 +14,6 @@
 //   GET /admin/auth/status     the same as JSON {here, google, providers} (server/identity/apps.ts, AuthStatus: never a secret), with live checks
 //   POST /admin/auth           provider (github or google), and do=save (clientId, secret): an app's values, a secret, set only here
 //   POST /admin/credentials    name (anthropic), and value to set or replace its key: a secret, set only here
-//   POST /admin/share          rotate=1 (optional): Share with agent's admin token, for an outside
-//                              agent: { token, id, label, expires }; the same one until it's near its end (12 hours), or rotated
 //
 // The API keys page shows whether each key is set, its
 // last four characters, and who set it when; and, read-only, the secrets only the
@@ -65,7 +63,7 @@ export const adminRoutes = Effect.gen(function* () {
   // Only the person themselves, in a browser (which comes with admin power): an agent with their token isn't an admin here.
   const admin = !!who && !session?.agent && (yield* call(() => platform.directory.users.actsAsAdmin(who)));
   if (read) {
-    if (!admin || url.pathname == "/admin/share") return notFound();
+    if (!admin) return notFound();
 
     if (url.pathname == "/admin/changes") {
       const before = Number(url.searchParams.get("before"));
@@ -119,7 +117,6 @@ const AdminForm = Schema.Struct({
   role: Field,
   handle: Field,
   deploy: Field,
-  rotate: Field,
 });
 type AdminFields = typeof AdminForm.Type;
 
@@ -138,12 +135,6 @@ function refusal(e: unknown): NotAllowed | ScopeError | ConfigError | Credential
 
 /** A POST, done: its answer. */
 async function act(platform: Platform, session: Session, who: Who, url: URL, f: AdminFields) {
-  // Share with agent: a person in a browser only (an agent never makes a token, whatever its scope; checked above too).
-  if (url.pathname == "/admin/share") {
-    if (session.agent || session.test) return plainJson({ error: "An agent can't make tokens." }, 403);
-    const { token, info } = await platform.tokens.shareAdmin({ login: session.login, name: session.name }, f.rotate == "1");
-    return json({ token, id: info.id, label: info.label, expires: info.expires });
-  }
   if (url.pathname == "/admin/credentials") {
     // The answer says what the page shows: never the key.
     return plainJson({ credential: await platform.directory.credentials.set(who, f.name, f.value) });

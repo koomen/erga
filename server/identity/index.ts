@@ -22,7 +22,7 @@ export { isOAuthPath, oauthRoutes, resourceMetadataUrl } from "./oauth.ts";
 export { expiryOf, tokensRoutes } from "./tokens-page.ts";
 export { cookies, setCookie } from "./cookies.ts";
 
-export { REQUEST_MINUTES, SCOPES, ScopeError, SHARE_ADMIN_HOURS, Tokens, type AgentToken, type Scope } from "./tokens.ts";
+export { REQUEST_MINUTES, SCOPES, ScopeError, Tokens, type AgentToken, type Scope } from "./tokens.ts";
 export {
   AuthError,
   googleEndpoints,

@@ -2,18 +2,20 @@
 
 import { colorFor } from "../../document/content";
 import { safeAvatar } from "../../shared/avatars";
-import { copyAgentPrompt } from "../common/agent-prompt";
+import { mountAgentMenu } from "../common/agent-menu";
 import { showCopied } from "../common/copied";
 import { runTool } from "../common/tools";
 import { BASE, $, type Shell } from "./shell";
 
 export function mountSharing(shell: Shell) {
 
-  // Share with an agent (#btn-agent-share): a one-line prompt, no token in it (client/common/agent-prompt.ts).
-  const agentShare = $("btn-agent-share");
-  agentShare.addEventListener("click", async () => {
-    const failed = await copyAgentPrompt(agentShare, shell.docName?.address ?? location.pathname);
-    if (failed) shell.toast.explain(`Couldn't reach the clipboard. Paste this into your agent: ${failed}`);
+  // Share with an agent (#btn-agent-share): its menu, the MCP prompt or a prompt with a token (client/common/agent-menu.ts).
+  const agentMenu = mountAgentMenu({
+    button: $("btn-agent-share"),
+    root: document,
+    address: () => shell.docName?.address ?? location.pathname,
+    tokens: true,
+    onOpen: () => shell.chrome.cardOpened("agent"),
   });
 
   const shareBtn = $("btn-share");
@@ -171,7 +173,7 @@ export function mountSharing(shell: Shell) {
     if (sharing.hidden || !shareAt) return;
     shareCall().then(renderSharing, () => {});
   }
-  return { toggleSharing, accessChanged };
+  return { toggleSharing, accessChanged, toggleAgentMenu: agentMenu.toggle };
 }
 
 export type Sharing = ReturnType<typeof mountSharing>;

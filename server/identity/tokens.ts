@@ -13,9 +13,8 @@
 // revokes them, and an agent on the command line can ask for one (a device
 // flow: it gets a link for the person to approve, and polls), or an agent's app
 // asks through the browser (MCP's OAuth sign-in, oauth.ts: the same request,
-// approved on the same page, handed back with a code). Share with
-// agent on the admin pages makes an admin token that ends within 12 hours
-// (shareAdmin). Only a person signed in in a browser makes a token: an agent
+// approved on the same page, handed back with a code). Share with an
+// agent's menu makes one through /tokens, as Settings does. Only a person signed in in a browser makes a token: an agent
 // never can, whatever its scope. The app
 // treats "Authorization: Bearer erga_..." as signing
 // the person in, within the token's scope, for the server's API
@@ -45,8 +44,8 @@ export interface AgentToken {
   /** What it's for, as whoever made it put it ("Claude Code", "Share button"). */
   label: string;
   /**
-   * "share": a share button's, one per person and scope, shown again until rotated: the editor's (a documents
-   * token), or Share with agent's on the admin pages (an admin token that always ends: shareAdmin); "agent": any other.
+   * "share": a share button's, one per person and scope, shown again until rotated: a documents
+   * token; "agent": any other.
    */
   kind: "agent" | "share";
   /** A test person's token: who minted their test token. */
@@ -90,11 +89,6 @@ export interface Who { login: string; name: string; testBy?: string | null }
 
 export const TOKEN_PREFIX = "erga_";
 export const LABEL_MAX = 80;
-/** Share with agent on the admin pages (shareAdmin): its token's label, and how long it lasts at most (and by default). */
-export const SHARE_ADMIN_LABEL = "Share with agent";
-export const SHARE_ADMIN_HOURS = 12;
-/** A shared admin token with less than this left isn't shown again: the card gets a new one. */
-export const SHARE_ADMIN_RENEW_MS = 60 * 60 * 1000;
 /** How long a request for a token waits to be approved. */
 export const REQUEST_MINUTES = 15;
 /** last_used is written at most this often, so using a token isn't a write every time. */
@@ -218,27 +212,6 @@ export class Tokens {
     if (row) await this.drop(who.login.toLowerCase(), "kind = 'share' AND scope != 'admin'");
     return this.mint(who, "Share button", { scope: "documents" }, "share");
 
-  }
-
-  /**
-   * Share with agent, on the admin pages: an admin's one shared admin token
-   * (kind 'share', scope 'admin'), which always ends, `hours` (1 to
-   * SHARE_ADMIN_HOURS) after it's made. The one they have is shown again
-   * while it has more than SHARE_ADMIN_RENEW_MS left; after that, or with
-   * `rotate`, a new one. Rotating turns the old one off at once; one renewed
-   * because it's nearly over ends by itself. Only an admin can have one (check).
-   */
-  async shareAdmin(who: Who, rotate: boolean, hours = SHARE_ADMIN_HOURS): Promise<{ token: string; info: AgentToken }> {
-    const login = who.login.toLowerCase(), now = Date.now();
-    const [row] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE login = ?1 AND kind = 'share' AND scope = 'admin' ORDER BY created DESC LIMIT 1`, login);
-    if (row && !rotate && !who.testBy && row.expires != null && Number(row.expires) - now > SHARE_ADMIN_RENEW_MS && (await this.dir.users.isAdmin(login))) {
-      const own = await this.ownToken(row.id);
-      if (own) return { token: own, info: fromRow(row) };
-    }
-    if (rotate) await this.drop(login, "kind = 'share' AND scope = 'admin'");
-    else await this.drop(login, "kind = 'share' AND scope = 'admin' AND expires <= ?2", now);
-    const ms = Math.round(Math.max(1, Math.min(SHARE_ADMIN_HOURS, Number(hours) || SHARE_ADMIN_HOURS)) * 3600_000);
-    return this.mint(who, SHARE_ADMIN_LABEL, { scope: "admin", expires: now + ms }, "share");
   }
 
   /** Whose a token is, if it's one of ours, hasn't been revoked and hasn't expired. */
