@@ -38,8 +38,8 @@ staging.erga.dev (staging). Another deployment has its own names in
 3. Check the deploy: `GET /api/deploys/version` on staging shows the commit
    when it is live. The run's log on GitHub (the Actions tab) shows each
    step.
-4. Production deploys when `main` moves. Only a maintainer moves `main`.
-   Agents never push to `main`.
+4. Production deploys when `main` moves (`git push origin staging:main`). Pete
+   moves `main`, or an agent when he asks.
 
 Only one deploy of a branch runs at a time (the job's `concurrency`). A
 newer push waits for it. If two pushes wait, only the newest deploys.

@@ -49,7 +49,8 @@ Read it before you push to a deployment's repository. On Erga's own:
    (`koomen/erga`). GitHub Actions deploys staging after the tests pass.
    A feature branch does not deploy: Pete merges it into staging as one
    commit, and staging deploys that.
-2. Never push to `main`. Pete moves `main`, and production deploys from it.
+2. Push to `main` only when Pete asks: `git push origin staging:main`, after
+   staging is good. Production deploys from `main`.
 3. A push is not a deploy. `curl -s https://staging.erga.dev/api/deploys/version`
    must show your commit before you say it is on staging.
 
