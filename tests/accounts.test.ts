@@ -41,6 +41,8 @@ test("an account with no identity (from before, or added by an admin) is claimed
   expect(await resolve(dir, github(20, "bo"), { join: false })).toEqual({ kind: "in", claimed: true, login: "bo" });
   expect(await resolve(dir, github(1, "koomen"), { join: false })).toEqual({ kind: "in", claimed: true, login: "koomen" });
   expect((await dir.users.get("koomen"))?.created).toBeGreaterThan(0);
+  // Its picture from the first sign-in on, though the bootstrap admin had no row before it.
+  expect((await dir.users.get("koomen"))?.avatar).toBe("https://avatars.githubusercontent.com/u/1?s=64");
   // Claimed once: another GitHub account with that login later is a stranger.
   expect(await resolve(dir, github(21, "bo"), { join: false })).toEqual({ kind: "refused", taken: "bo" });
 });

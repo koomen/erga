@@ -80,10 +80,12 @@ export async function resolve(dir: Directory, v: Vouched, o: { join: boolean; cr
     const row = await users.get(v.handle);
     if (row && (await identities.unclaimed(row.login))) {
       if (o.onlyAdmins && !(await users.isAdmin(row.login))) return { kind: "refused" };
+      // Its row first: a bootstrap admin has none yet, and the link writes the picture into it.
+      const user = await users.signedIn(row.login, v.name, { create: o.create });
+      if (!user) return { kind: "refused", login: row.login };
       await identities.link(row.login, v);
       users.forget(row.login);
-      const user = await users.signedIn(row.login, v.name, { create: o.create });
-      return user ? { kind: "in", login: user.login, claimed: true } : { kind: "refused", login: row.login };
+      return { kind: "in", login: user.login, claimed: true };
     }
     if (row) taken = row.login;
   }
