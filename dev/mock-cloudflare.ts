@@ -1,9 +1,7 @@
-// A pretend Cloudflare, for testing the deploy page without a real account:
-// the API calls the deploy makes, Cloudflare's OAuth
-// token endpoint, Registrar, and the new server itself once it's "deployed"
+// A pretend Cloudflare, for testing the deploy pipeline without a real account:
+// the API calls the deploy makes, Registrar, and the new server itself once it's "deployed"
 // (it answers, nothing more). It keeps what it was
-// asked to do in `state`, which the tests read (and the page shows, at
-// /deploy/api/mock, in local development with ERGA_DEPLOY_MOCK=1).
+// asked to do in `state`, which the tests read.
 //
 // Its requests and answers follow Cloudflare's OpenAPI schema
 // and workers-sdk's deploy: the Worker's
@@ -13,7 +11,7 @@
 // /query, custom domains, Registrar's workflows. A request the real API
 // would refuse, it refuses.
 //
-// Only the tests use it (and local development with ERGA_DEPLOY_MOCK=1).
+// Only the tests use it (and deploy/run.ts with ERGA_DEPLOY_MOCK=1).
 //
 // Tokens: any that starts with "mock-" is good; anything else is refused as
 // Cloudflare would. Some do more:
@@ -26,27 +24,25 @@
 //
 // Zones, custom domains and Registrar: dev/mock-cloudflare-zones.ts.
 //
-// With `fleet`, the account is Erga's own, as the branch deploys
+// With `fleet`, the account is Erga's own, as its deploys
 // see it: the zones erga.dev and erga-pages.dev, the
 // production Worker "erga" already there (deployed by cf deploy, on erga.dev
 // and *.erga-pages.dev) with its database "erga" (tables, rows and
-// migrations) and three documents in its Durable Objects, the control
-// Worker, and the source repo in Artifacts. D1's export and import work on
+// migrations) and three documents in its Durable Objects. D1's export and import work on
 // it (the SQL as text), secrets are kept per Worker (keep_bindings, the
 // secrets API), and each Worker answers as the real one would where the
 // pipeline needs it: /logo.png, /api/deploys/version (its ERGA_VERSION) and
 // the snapshot endpoints (document/snapshot.ts, the real handler, over an
 // in-memory store of its documents). `failNext` makes the next call of a
 // step fail once (state.failNext = "worker"); `onUpload` hears of each
-// Worker uploaded (the tests restart the server that deployed itself).
+// Worker uploaded.
 
 import * as Base64 from "effect/encoding/Base64";
 import * as Result from "effect/Result";
 import { createHash } from "node:crypto";
-import type { Fetch } from "../control/deploys/cloudflare-api";
+import type { Fetch } from "../deploy/pipeline/cloudflare-api";
 import { memoryStore, snapshotRoutes, type DocStore } from "../document/snapshot";
 import { hex, randomBytes } from "../shared/bytes";
-import { mockOAuth } from "./mock-cloudflare-oauth";
 import { accountZones, waitsForCertificate, zones } from "./mock-cloudflare-zones";
 import { seedFleet } from "./mock-cloudflare-fleet";
 import { applySql, D1Error, d1Query, dumpOf } from "./mock-cloudflare-d1";
@@ -65,8 +61,6 @@ export interface MockState {
   served: Record<string, Record<string, string>>;
   /** Workers' custom domains; one answers once its certificate is there (readyAt). */
   domains: { hostname: string; service: string; zone_id: string; readyAt?: number }[];
-  /** The Artifacts repos in the namespace erga (the fleet mock): Erga's own, and the installs' forks. */
-  repos: string[];
   routes: Record<string, { pattern: string; script: string }[]>;
   dns: Record<string, { type: string; name: string; content: string; proxied: boolean }[]>;
   registrations: { domain: string; price?: string }[];
@@ -87,22 +81,10 @@ export interface MockState {
   deployments: Record<string, { id: string; created_on: string; strategy: string; versions: { version_id: string; percentage: number }[] }[]>;
   /** Deleted D1 databases, by name. */
   deletedDatabases: string[];
-  /** R2 buckets, by name (the release store's). */
+  /** R2 buckets, by name (documents' files). */
   buckets?: string[];
   /** Releases (ERGA_VERSION values) whose /api/health answers ok false: a test's broken deploy. */
   unhealthy?: string[];
-  /** OAuth: the refresh tokens still good (each refresh rotates), how many grants were given, and how long an access token lasts. */
-  refreshTokens: string[];
-  oauthGrants: number;
-  oauthExpiresIn?: number;
-  /** The next refresh answers this status (a 429, a 503) and nothing else, once. */
-  oauthRefreshStatus?: number;
-  /** Access tokens the API refuses (401), as a grant revoked on the dashboard: the refresh tells. */
-  refusedTokens?: string[];
-  /** Access tokens a refresh replaced: Cloudflare refuses them at once (401, code 10000), as on staging on 2026-11-02. */
-  rotatedTokens?: string[];
-  /** What a consent grants when set (fewer scopes than asked: a client that lost one); else MOCK_OAUTH_SCOPES. */
-  oauthScopes?: string;
   /** The next call of this step fails once (a 500), as mock-fail-<step> does for every call. */
   failNext: string | null;
 }
@@ -137,7 +119,7 @@ const jwt = (claims: Record<string, unknown>) => `${btoa(JSON.stringify({ alg: "
 const UPLOAD = (single: boolean) => jwt({ kind: "upload", ...(single ? { wrangler_single_asset_uploads: true } : {}) });
 const COMPLETE = jwt({ kind: "complete" });
 
-/** Erga's own account in the fleet mock (control/deploys/branches.ts's tests and the dev server's ERGA_DEPLOY_MOCK). */
+/** Erga's own account in the fleet mock (the deploy tests, and deploy/run.ts with ERGA_DEPLOY_MOCK). */
 export const FLEET_ACCOUNT = ACCOUNT_ID;
 export const PROD_DB = "0b0d0b0d-0000-4000-8000-00000000e9a0";
 /** Production's SNAPSHOT_TOKEN in the fleet mock (the tests give staging the same). */
@@ -150,7 +132,7 @@ export function mockCloudflare(
     delayMs?: number;
     singleAssetUploads?: boolean;
     fleet?: boolean;
-    /** With fleet: staging's secrets already given (as deploy/setup.ts gives them to its first deploy), for the dev server's mock. */
+    /** With fleet: staging's secrets already given (as its first deploy gives them). */
     stagingSecrets?: boolean;
     onUpload?: (script: string, metadata: Record<string, any>) => void;
     /** A Worker's own answer, before the mock's (the tests route /api/deploys/... to the servers they run). */
@@ -172,8 +154,7 @@ export function mockCloudflare(
     blobs: {},
     served: {},
     domains: [],
-    repos: opts.fleet ? ["erga"] : [],
-    buckets: opts.fleet ? ["erga-releases"] : [],
+    buckets: [],
     routes: {},
     dns: {},
     registrations: [],
@@ -186,10 +167,8 @@ export function mockCloudflare(
     deployments: {},
     deletedDatabases: [],
     failNext: null,
-    refreshTokens: [],
-    oauthGrants: 0,
   };
-  // Secrets' values never go out with the state (/deploy/api/mock shows it): only the tests read them, in this process.
+  // Secrets' values never go out with the state: only the tests read them, in this process.
   Object.defineProperty(state, "secrets", { value: {}, enumerable: false, writable: true });
   if (opts.fleet) seedFleet(state);
   if (opts.fleet && opts.stagingSecrets)
@@ -197,7 +176,6 @@ export function mockCloudflare(
       SESSION_SECRET: "mock-staging-session-secret",
       GITHUB_CLIENT_SECRET: "mock-staging-github-secret",
       SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN,
-      CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token",
     };
   /** D1 exports ready to download, and imports uploaded, by URL. */
   const exportsAt = new Map<string, string>(), uploads = new Map<string, string>();
@@ -374,7 +352,6 @@ export function mockCloudflare(
           if (b.type == "d1" && !state.databases.some((d) => d.uuid == b.database_id)) return fail(400, 10021, `binding ${b.name}: no D1 database ${b.database_id ?? "(database_id missing)"}`);
           if ((b.type == "plain_text" || b.type == "secret_text") && typeof b.text != "string") return fail(400, 10021, `binding ${b.name} needs text`);
           if (b.type == "service" && !state.scripts[b.service]) return fail(400, 10143, `service binding ${b.name}: no Worker ${b.service}`);
-          if (b.type == "artifacts" && (!opts.fleet || b.namespace != "erga")) return fail(400, 10021, `binding ${b.name}: no Artifacts namespace ${b.namespace}`);
           if (b.type == "r2_bucket" && !(state.buckets ?? []).includes(b.bucket_name)) return fail(400, 10085, `binding ${b.name}: no R2 bucket ${b.bucket_name}`);
         }
         // Secrets: those in this upload, and the last version's when keep_bindings says so (as the real API does).
@@ -438,29 +415,6 @@ export function mockCloudflare(
           return ok({ name: b.name, type: "secret_text" });
         }
       }
-      if (m == "GET" && (r = /^\/artifacts\/namespaces\/([^/]+)\/repos\/([^/]+)$/.exec(rest))) {
-        if (!opts.fleet || r[1] != "erga" || !state.repos.includes(r[2])) return fail(404, 10404, "repo not found");
-        return ok({ name: r[2], namespace: r[1], remote: `https://artifacts.mock/git/erga/${r[2]}.git`, default_branch: "main" });
-      }
-      // A repo made (an install's fork: control/install/forks.ts).
-      if (m == "POST" && (r = /^\/artifacts\/namespaces\/([^/]+)\/repos$/.exec(rest))) {
-        const b = await body();
-        if (!opts.fleet || r[1] != "erga") return fail(404, 10404, "namespace not found");
-        if (!/^[a-z0-9][\w.-]*$/.test(b?.name ?? "")) return fail(400, 10400, "a repo name is needed");
-        if (state.repos.includes(b.name)) return fail(409, 10409, "a repo of that name exists");
-        state.repos.push(b.name);
-        return ok({ name: b.name, namespace: r[1], remote: `https://artifacts.mock/git/erga/${b.name}.git`, default_branch: b.default_branch ?? "main" });
-      }
-      if (m == "POST" && (r = /^\/artifacts\/namespaces\/([^/]+)\/tokens$/.exec(rest))) {
-        const b = await body();
-        if (!opts.fleet || r[1] != "erga" || !state.repos.includes(b?.repo)) return fail(404, 10404, "repo not found");
-        return ok({
-          id: randomHex(8),
-          token: `art-read-${randomHex(8)}`,
-          scope: b.scope ?? "write",
-          expires_at: new Date(Date.now() + (b.ttl ?? 3600) * 1000).toISOString(),
-        });
-      }
       const zoned = await accountZones(state, answers, m, rest, req);
       if (zoned) return zoned;
     }
@@ -505,21 +459,16 @@ export function mockCloudflare(
     return new Response("Not found", { status: 404 });
   }
 
-  const oauth = mockOAuth(state);
   const fetch: Fetch = async (input, init) => {
     const req = new Request(input, init);
     const url = new URL(req.url);
     if (opts.delayMs) await sleep(opts.delayMs);
-    // Cloudflare's OAuth (dev/mock-cloudflare-oauth.ts).
-    const signIn = await oauth(req, url);
-    if (signIn) return signIn;
     if (url.origin == "https://api.cloudflare.com") {
       const path = url.pathname.replace(/^\/client\/v4/, "") + url.search;
       const token = /^Bearer (\S+)$/.exec(req.headers.get("authorization") ?? "")?.[1] ?? "";
       const upload = path.startsWith("/accounts/") && path.includes("/workers/assets/upload");
       state.calls.push(`${req.method} ${path}`);
-      if (!upload && (!token.startsWith("mock-") || state.refusedTokens?.includes(token))) return fail(401, 1000, "Invalid API Token");
-      if (!upload && state.rotatedTokens?.includes(token)) return fail(401, 10000, "Authentication error");
+      if (!upload && !token.startsWith("mock-")) return fail(401, 1000, "Invalid API Token");
       return api(req, path, upload ? subFor ?? "" : token);
     }
     return (await site(req, url)) ?? new Response("This mock doesn't know that address", { status: 502 });

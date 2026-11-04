@@ -7,10 +7,7 @@
 // or, besides that, its own access: "Can create and edit content" (write),
 // "Can authenticate" (read), or none of its own, where only the group rules
 // (server/directory/access.ts) let it in. A person an admin added before
-// their first sign-in waits in people.ts. Apart from that, an admin may grant
-// anyone the deploy role: they may then use /deploy when the deploy_page
-// setting keeps it for admins. Admins may anyway: an
-// admin may always deploy (User.mayDeploy, hasDeploy). The server always keeps an
+// their first sign-in waits in people.ts. The server always keeps an
 // admin: nobody may demote or remove the last one. The first admins come from the
 // deploy: the logins in the ADMINS binding (cloudflare.config.ts; locally,
 // DEV_LOGIN too) are always admins and may always sign in, and get their row
@@ -57,10 +54,6 @@ export interface User {
   role: ServerRole;
   /** Their own access besides admin (users.access): write, read, or null (only the group rules decide). */
   access: "write" | "read" | null;
-  /** The deploy role as granted (users.deploy): what setDeploy sets. An admin may deploy without it (mayDeploy). */
-  deploy: boolean;
-  /** Whether they may deploy: an admin, or granted the deploy role. The one answer hasDeploy, /deploy and the Users page use. */
-  mayDeploy: boolean;
   /** Listed in ADMINS: always an admin, and can't be demoted or removed here. */
   bootstrap: boolean;
   created: number;
@@ -165,13 +158,6 @@ export class Users {
     const actor = typeof who == "string" ? { login: who } : who;
     if (actor.test) return false;
     return (await this.get(actor.login))?.role == "admin";
-  }
-
-  /** Whether `login` may deploy: an admin, or granted the deploy role (User.mayDeploy; a test person never may). */
-  async hasDeploy(who: Actor | string): Promise<boolean> {
-    const actor = typeof who == "string" ? { login: who } : who;
-    if (actor.test) return false;
-    return !!(await this.get(actor.login))?.mayDeploy;
   }
 
   /**
@@ -337,20 +323,6 @@ export class Users {
     return (await this.get(login))!;
   }
 
-  /** Grants someone who may sign in the deploy role, or revokes it. Admins only. */
-  async setDeploy(by: Actor, login: string, deploy: boolean): Promise<User> {
-    await this.mustAdmin(by);
-    login = login.toLowerCase();
-    const user = await this.get(login);
-    if (!user) throw new NotAllowed({ message: `${login} isn't a user: add them first.` });
-    // A bootstrap admin who hasn't signed in yet has no row: make it, as signing in would.
-    if (user.created == 0) await this.sql.run("INSERT INTO users (login, name, role, created) VALUES (?1, ?1, 'admin', ?2) ON CONFLICT (login) DO NOTHING", login, Date.now());
-    await this.sql.batch([["UPDATE users SET deploy = ?2 WHERE login = ?1", login, deploy ? 1 : 0], this.logged(by, Date.now(), { login, event: "deploy", deploy })]);
-    this.known.delete(login);
-    await this.pagesChanged([`user:${login}`]);
-    return (await this.get(login))!;
-  }
-
   /** Stops someone signing in (their sessions stop working within seconds; their documents stay). Admins only. */
   async remove(by: Actor, login: string): Promise<void> {
     await this.mustAdmin(by);
@@ -376,7 +348,7 @@ export class Users {
   }
 
   /** The change log's entry for a change to a user, under the admin who made it and how. */
-  private logged(by: Actor, at: number, user: { login: string; event: "added" | "role" | "deploy" | "removed"; role?: string; deploy?: boolean }): Statement {
+  private logged(by: Actor, at: number, user: { login: string; event: "added" | "role" | "removed"; role?: string }): Statement {
     return changeLogEntry(at, by.login, by.via, [{ key: "user", from: null, to: null, user }]);
   }
 
@@ -394,8 +366,6 @@ export class Users {
       name: r.name,
       role,
       access: r.access == "write" || r.access == "read" ? r.access : null,
-      deploy: !!r.deploy,
-      mayDeploy: role == "admin" || !!r.deploy,
       bootstrap,
       created: Number(r.created),
       addedBy: r.added_by,
@@ -413,8 +383,6 @@ export class Users {
       name: login,
       role: "admin",
       access: null,
-      deploy: false,
-      mayDeploy: true,
       bootstrap: true,
       created: 0,
       addedBy: null,

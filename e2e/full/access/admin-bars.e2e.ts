@@ -36,9 +36,7 @@ test("the admin pages' bars and agent have the editor's look on a white document
   await openEditor(tab, server, "top/white");
   const editor = await looks(page, { left: "#nav-docs", right: ".chrome-top" });
   expect(editor.left.background).toContain("0.035");
-  // (The dev server has no deploys: the Ops page's list of them gets a 409, as without this change.)
-  tab.strict = false;
-  for (const path of ["/admin", "/admin/users", "/admin/ops"]) {
+  for (const path of ["/admin", "/admin/users", "/admin/changes"]) {
     await page.goto(`${server.root}${path}`);
     await settle(page);
     expect(await looks(page, APP), path).toEqual(editor);

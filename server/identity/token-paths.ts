@@ -9,7 +9,7 @@ const APP_SEGMENTS = new Set(["deploy", "git", "source"]);
 /**
  * A path in reach of a token without the admin scope on staging: the server's API and MCP for agents, the
  * operations (/api/tools), and a document's own host (/<owner>/<doc>/api/..., /d/<id>/doc/...). Not the
- * homepage's API, the deploys', the Ops page's, the admin agent's or anything else under /api.
+ * homepage's API, the admin agent's or anything else under /api.
  */
 export function tokenPath(path: string): boolean {
   path = path.replace(/\/+$/, "") || "/";

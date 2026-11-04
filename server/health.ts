@@ -1,5 +1,5 @@
 // The app's health check, GET /api/health: whether this server works, for
-// the deploy pipeline after each deploy (control/deploys/pipeline.ts, the live step:
+// the deploy pipeline after each deploy (deploy/pipeline/pipeline.ts, the live step:
 // a release that answers its version but fails this is rolled back) and for
 // anyone who wants to know. It answers the release and target (as
 // /api/deploys/version does) and a few checks, each timed:
@@ -19,7 +19,9 @@ export interface HealthReport { ok: boolean; version: string | null; target: str
 /** The health report: every check runs, so the answer says all that's wrong. */
 export async function health(p: Platform): Promise<HealthReport> {
   const checks: Record<string, HealthCheck> = {
-    db: await timed(async () => { await p.directory.config.get("deploy_page"); }),
+    db: await timed(async () => {
+      await p.directory.config.get("public_source");
+    }),
     documents: await timed(async () => {
       const id = await p.directory.homeId();
       if (!id) return "no homepage document: nothing to open";

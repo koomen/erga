@@ -74,9 +74,9 @@ export const deployed = (server: Server, ms = 5_000) => until(async () => (await
 /** The homepage's state, as ls answers it to `user` (the dev server's ?user=; none: its own person); not the homepage: { isHome: false }. */
 export const home = async (server: Server, id: string, user?: string) =>
   ((await runTool(server.root, "ls", { document: id }, user ? { user } : {})).result?.homepage ?? { isHome: false }) as HomeState;
-/** redeploy, target homepage (Deploy in the settings), as `user`, from `origin` (the site's own, unless given). */
+/** deploy_homepage (Deploy in the settings), as `user`, from `origin` (the site's own, unless given). */
 export const redeploy = (server: Server, user?: string, origin?: string) =>
-  runTool(server.root, "redeploy", { target: "homepage" }, { ...(user ? { user } : {}), ...(origin ? { origin } : {}) });
+  runTool(server.root, "deploy_homepage", {}, { ...(user ? { user } : {}), ...(origin ? { origin } : {}) });
 
 /**
  * An admin-scope agent token of DEV_LOGIN's (only an admin's token with it may edit the homepage: server/directory/,

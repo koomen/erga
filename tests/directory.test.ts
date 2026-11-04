@@ -174,26 +174,16 @@ test("users: who may sign in, bootstrap admins and server roles", async () => {
   expect(await users.signedIn("bo", "Bo", { create: true })).toMatchObject({ login: "bo", role: "user", addedBy: null });
 });
 
-test("users: the deploy role, and the server always keeps an admin", async () => {
+test("users: the server always keeps an admin", async () => {
   // No bootstrap admins (ADMINS empty): the admins are rows, and the last one stays.
   const sql = memory(), { users } = fresh({}, sql);
   await sql.run("INSERT INTO users (login, name, role, created) VALUES ('ada', 'Ada', 'admin', 1)");
   await users.signedIn("bo", "Bo", { create: true });
   const ada = { login: "ada", admin: true };
-  // Users have no deploy role until an admin grants it; only an admin may.
-  expect(await users.hasDeploy("bo")).toBe(false);
-  await expect(users.setDeploy({ login: "bo", admin: true }, "bo", true)).rejects.toBeInstanceOf(NotAllowed);
-  await expect(users.setDeploy({ login: "ada" }, "bo", true)).rejects.toThrow(/no admin power/);
-  expect(await users.setDeploy(ada, "Bo", true)).toMatchObject({ login: "bo", role: "user", deploy: true });
-  expect(await users.hasDeploy("bo")).toBe(true);
-  expect(await users.hasDeploy({ login: "bo", test: true })).toBe(false);
-  expect((await users.list(ada)).map((u) => [u.login, u.role, u.deploy, u.mayDeploy])).toEqual([["ada", "admin", false, true], ["bo", "user", true, true]]);
-  expect(await users.setDeploy(ada, "bo", false)).toMatchObject({ deploy: false, mayDeploy: false });
-  // An admin may always deploy, granted or not: the one rule /deploy and the Users page read.
-  expect(await users.hasDeploy("ada")).toBe(true);
-  expect(await users.hasDeploy({ login: "ada", test: true })).toBe(false);
-  expect(await users.hasDeploy("bo")).toBe(false);
-  await expect(users.setDeploy(ada, "nobody", true)).rejects.toThrow(/isn't a user/);
+  expect((await users.list(ada)).map((u) => [u.login, u.role])).toEqual([
+    ["ada", "admin"],
+    ["bo", "user"],
+  ]);
   // The last admin can't demote nor remove themselves.
   await expect(users.setRole(ada, "ada", "user")).rejects.toThrow(/You're the last admin/);
   await expect(users.remove(ada, "ada")).rejects.toThrow(/You're the last admin/);
@@ -203,12 +193,11 @@ test("users: the deploy role, and the server always keeps an admin", async () =>
   const bo = { login: "bo", admin: true };
   expect((await users.setRole(ada, "ada", "user")).role).toBe("user");
   await expect(users.remove(bo, "bo")).rejects.toThrow(/You're the last admin/);
-  // Bootstrap admins count, signed in or not; one may have the deploy role too.
+  // Bootstrap admins count, signed in or not.
   const boot = fresh({ admins: ["root"] });
   const root = { login: "root", admin: true };
   await boot.users.add(root, "cy", { role: "admin" });
   expect((await boot.users.setRole({ login: "cy", admin: true }, "cy", "user")).role).toBe("user");
-  expect(await boot.users.setDeploy(root, "root", true)).toMatchObject({ login: "root", role: "admin", bootstrap: true, deploy: true });
 });
 
 test("server config: defaults, admins set and reset, the deploy locks", async () => {
@@ -249,7 +238,7 @@ test("server config: each change is a version, with who, when, and from what to 
   await config.set(root, "delete_docs_after_hours", 48);
   await expect(config.set(root, "delete_docs_after_hours", 0)).rejects.toBeInstanceOf(ConfigError);
   await config.set(ada, "delete_docs_after_hours", "never");
-  await config.set(ada, "deploy_page", "off");
+  await config.set(ada, "agent_keys", "own");
   await config.reset(root, "delete_docs_after_hours");
   await config.reset(root, "delete_docs_after_hours"); // already the default: no version
   // The server's own write (a claim) is recorded too, and only the one that wins.
@@ -261,7 +250,7 @@ test("server config: each change is a version, with who, when, and from what to 
   expect(versions.map((v) => [v.n, v.by, v.changes])).toEqual([
     [5, "erga", [{ key: "landing_document", from: null, to: "abcd1234" }]],
     [4, "root", [{ key: "delete_docs_after_hours", from: null, to: 24, reset: true }]],
-    [3, "ada", [{ key: "deploy_page", from: "users", to: "off" }]],
+    [3, "ada", [{ key: "agent_keys", from: "server", to: "own" }]],
     [2, "ada", [{ key: "delete_docs_after_hours", from: 48, to: null }]],
     [1, "root", [{ key: "delete_docs_after_hours", from: 24, to: 48 }]],
   ]);
@@ -270,18 +259,18 @@ test("server config: each change is a version, with who, when, and from what to 
   expect((await config.history(root, { limit: 2 })).versions.map((v) => v.n)).toEqual([5, 4]);
   expect((await config.history(root, { before: 4, limit: 2 })).versions.map((v) => v.n)).toEqual([3, 2]);
   // Two saves at once (a switch saved twice): one version. Two different ones: each says truly what it changed.
-  await Promise.all([config.set(root, "deploy_page", "admins"), config.set(root, "deploy_page", "admins")]);
+  await Promise.all([config.set(root, "agent_keys", "server"), config.set(root, "agent_keys", "server")]);
   await Promise.all([config.set(root, "delete_docs_after_hours", 12), config.set(ada, "delete_docs_after_hours", 36), config.reset(root, "delete_docs_after_hours")]);
   const raced = (await config.history(root)).versions.filter((v) => v.n > 5).reverse().map((v) => v.changes[0]);
-  expect(raced[0]).toEqual({ key: "deploy_page", from: "off", to: "admins" });
-  expect(raced.filter((c) => c.key == "deploy_page")).toHaveLength(1);
+  expect(raced[0]).toEqual({ key: "agent_keys", from: "own", to: "server" });
+  expect(raced.filter((c) => c.key == "agent_keys")).toHaveLength(1);
   const hours = raced.filter((c) => c.key == "delete_docs_after_hours");
   for (let i = 1; i < hours.length; i++) expect(hours[i].from).toEqual(hours[i - 1].to);
   expect(hours[0].from).toBe(24);
   expect<unknown>(hours.at(-1)?.to ?? 24).toBe(await config.get("delete_docs_after_hours"));
   // A locked key can't change, so it makes no version.
-  const locked = fresh({ admins: ["root"], locked: { deploy_page: "off" } });
-  await expect(locked.config.set(root, "deploy_page", "admins")).rejects.toBeInstanceOf(NotAllowed);
+  const locked = fresh({ admins: ["root"], locked: { agent_keys: "own" } });
+  await expect(locked.config.set(root, "agent_keys", "server")).rejects.toBeInstanceOf(NotAllowed);
   expect((await locked.config.history(root)).total).toBe(0);
 });
 

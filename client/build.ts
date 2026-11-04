@@ -21,12 +21,12 @@
 //     chunk-<h>.js       code two of them share, or that one of them imports only when it needs it (the source
 //                        view's CodeMirror and languages, the agent's screenshots)
 //     style-<h>.css, editor-<h>.html, inter-<h>.css, fonts/inter-...-<h>.woff2
-//     admin-<h>.css      the admin pages' one stylesheet (client/styles/admin.css, then ops.css)
+//     admin-<h>.css      the admin pages' one stylesheet (client/styles/admin.css)
 //   manifest.json      each file's address by its name, the chunks each script needs first, their integrity
 //                      hashes and the typeface's @font-face rules (shared/assets.ts): the Worker reads it and
 //                      names the files in the pages it makes (server/pages/assets.ts). Not served.
 //   _headers           the hashed files' headers, for Cloudflare's static serving (the deploy sends it as the
-//                      Worker's assets config: control/deploys/pipeline.ts)
+//                      Worker's assets config: deploy/pipeline/pipeline.ts)
 //   logo.png           Erga's logo (assets/logo/logo.png), public at /logo.png: a square 512 px PNG for
 //                      places that want one (an OAuth client's logo)
 //
@@ -221,8 +221,8 @@ async function build(): Promise<void> {
 
   const style = new Uint8Array(readFileSync(join(ROOT, "client/style.css")));
   files["style.css"] = put(`style-${hashOf(style)}.css`, style);
-  // The admin pages' one stylesheet (client/styles/admin.css, then the Ops page's): the same file on every admin page.
-  const admin = enc(["admin.css", "ops.css"].map((f) => readFileSync(join(ROOT, "client/styles", f), "utf8")).join("\n"));
+  // The admin pages' one stylesheet (client/styles/admin.css): the same file on every admin page.
+  const admin = enc(readFileSync(join(ROOT, "client/styles/admin.css"), "utf8"));
   files["admin.css"] = put(`admin-${hashOf(admin)}.css`, admin);
 
   // The editor's page, naming the files of this build: the typeface's rules and its own styles in it (no stylesheet to

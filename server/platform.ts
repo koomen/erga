@@ -71,8 +71,8 @@ export type LiveRows = (platform: Platform, session: Session, keys: string[], or
 
 /**
  * What the app needs from the platform it runs on. The layers above server/ add the parts that are theirs, each
- * where it is defined (a `declare module` of this file): control/ adds `source` (control/source/routes.ts) and
- * `deploys` (control/deploys/api.ts); agents/ adds `agentSettings` (agents/models.ts) and `adminAgent`
+ * where it is defined (a `declare module` of this file): repo-api.ts adds `repo`; agents/ adds `agentSettings`
+ * (agents/models.ts) and `adminAgent`
  * (agents/person/sessions.ts). cloudflare/platform.ts builds the whole of it.
  */
 export interface Platform {
@@ -123,7 +123,7 @@ export interface Platform {
   tokens: Tokens;
   /** Which of Erga's own deploy targets this server is, and where they are. */
   deploy: {
-    /** "production", "staging", or null on any other server (one /deploy made, local development). */
+    /** "production", "staging", or null on any other server (a fork's, local development). */
     target: "production" | "staging" | null;
     /** The release this server runs (the commit), or null where no deploy named one. */
     version: string | null;
@@ -140,19 +140,11 @@ export interface Platform {
     googleApp?: AppValues;
     /** A stand-in for Google's sign-in endpoints (the tests'); null or absent: Google's own. */
     google?: string | null;
-    /** An install's server: erga.dev's control Worker, whose GitHub callback (the App's one) relays the sign-in here (control/source/github.ts); null elsewhere. */
-    relay: string | null;
     /** Local development: the login signed in without GitHub; null elsewhere. */
     devLogin: string | null;
     /** What encrypts the secrets admins store (sign-in's secret, the API keys); null where the server can't keep them. */
     encryptionKey: string | null;
   };
-  /**
-   * The control Worker (control/), where the repository, the Ops page and the deploys live, when it's apart from
-   * this server: its address. The app sends admins there for those pages, and answers their routes with a redirect.
-   * Absent in local development and on a server /deploy made, where this server hosts them itself.
-   */
-  control?: { url: string };
   /** The news hub (server/news/): the open pages' sockets, which hear which of their rows changed. One object per server. */
   news: { fetch(request: Request): Promise<Response> };
   /** The homepage's deploys and its snapshot (server/home/deploys.ts), one object per server. */

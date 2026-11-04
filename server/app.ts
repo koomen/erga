@@ -19,7 +19,7 @@
 //   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
 //   GET /api/repo, /api/repo/tree/<ref>/<path>
-//                              Erga's repository, read-only JSON for any page (control/source/public-api.ts): the
+//                              Erga's old repository, read-only JSON for any page (repo-api.ts): the
 //                              setting public_source says who may read it
 //   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent; /llms.txt points agents to /mcp
 //   /.well-known/oauth-..., /oauth/...
@@ -28,8 +28,7 @@
 //   /_home-files/<gen>/<path>  the homepage's files, as deployed
 //   GET /source, /source/<branch>/<path>
 //                              Erga's source, for people: the homepage's page source.html, which reads the repository API
-//   /git/erga.git/...          Erga's own repository, over Git smart HTTP, and /git, /git/tree/... (its public page): the control Worker's (control/routes.ts), as are /admin/ops
-//                              and /api/events; `outside` answers them (a redirect to the control Worker, or itself in local development)
+//   /git/...                   Erga's old repository over Git: `outside` answers it (a redirect to the old control Worker)
 //   /admin, /admin/changes, /admin/users, /admin/auth, /admin/api-keys   the server's settings, their change log, its
 //                              users, how people sign in, the API keys
 //   /api/admin/agent[/...]     each admin's agent: its messages, events, conversation and panel layout
@@ -43,8 +42,8 @@
 //   GET /api/release           which of them this release has: open pages follow a redeploy with it,
 //                              and every page of the site's own gets live.js
 //
-// The routes that run only on Cloudflare (branch deploys and /deploy, the dev
-// server's) are `outside`'s: cloudflare/index.ts answers them, at their place
+// The routes that run only on Cloudflare (what the deploy pipeline asks, Git's
+// redirect, the dev server's) are `outside`'s: cloudflare/index.ts answers them, at their place
 // in the table. On staging (deploy/targets.json `adminsOnly`) every route, and
 // the documents' pages origin, is for Erga's admins only: one guard before
 // them all (server/identity/admins-only.ts lists what's exempt, and why).
@@ -54,7 +53,7 @@ import { adminGate, isAdminPath } from "./admin/index.ts";
 import { agentApi, isAgentPath } from "../agents/person/sessions.ts";
 import { isPageLlmPath, pageLlmApi } from "../agents/page-llm.ts";
 import { serverApi } from "./api.ts";
-import { isRepoApiPath, repoApi } from "../control/source/index.ts";
+import { isRepoApiPath, repoApi } from "./repo-api.ts";
 import { adoptLanding, documentRoutes, isPagesSite } from "./documents/index.ts";
 import { homePageOf, serveHome, serveHomeFile, serveHomePage, serveHomeRoot } from "./home/index.ts";
 import {
@@ -63,9 +62,7 @@ import {
   devSignIn,
   finishGoogleSignIn,
   finishSignIn,
-  isGithubConnectCallback,
   isOAuthPath,
-  mayDeploy,
   oauthRoutes,
   startGoogleSignIn,
   signOut,
@@ -117,7 +114,7 @@ export const app = (outside: Outside): Route =>
         async () => {
         const session = await p.sessionOf(request);
         const dir = p.directory;
-        return accountOf(session, !!session && (await dir.users.isAdmin(whoOf(session))), await mayDeploy(dir, session));
+        return accountOf(session, !!session && (await dir.users.isAdmin(whoOf(session))));
         },
         url.pathname + url.search
       )
@@ -135,7 +132,6 @@ const route = (url: URL, outside: Outside): Route =>
       p = yield* platform;
     const path = url.pathname;
     const assets = isAsset(path);
-    const elsewhere = outside(url);
     // Staging is for Erga's admins only: every route after this, and the pages origin, needs an admin's session or
     // admin-scope token, but for the exemptions server/identity/admins-only.ts lists and explains.
     const refused = yield* adminsOnlyGate;
@@ -151,8 +147,6 @@ const route = (url: URL, outside: Outside): Route =>
     if (path == "/auth/github") return yield* startSignIn;
     if (path == "/auth/google") return yield* startGoogleSignIn;
     if (path == "/auth/google/callback") return yield* finishGoogleSignIn;
-    // GitHub's App callback (Connect GitHub coming back) is the control Worker's; local development serves it here (`outside`).
-    if (isGithubConnectCallback(request, url)) return (yield* elsewhere) ?? (yield* finishSignIn);
     if (path == "/auth/github/callback") return yield* finishSignIn;
     if (path == "/auth/logout") return yield* signOut;
     if (path == "/auth/test") return yield* testSignIn;
@@ -163,16 +157,13 @@ const route = (url: URL, outside: Outside): Route =>
     // Erga's editing libraries, each at its one address, its newest build (a document's page imports it).
     const library = libraryOf(path);
     if (library && (request.method == "GET" || request.method == "HEAD")) return serveLibrary(library);
-    // Erga's own source and deploys (the Git endpoint, the Ops page, their APIs) are the control Worker's: `outside`
-    // answers them, with a redirect there when it is apart (Platform.control), or itself in local development.
-    if (path == "/git" || path.startsWith("/git/")) return (yield* elsewhere) ?? (yield* documentRoutes);
     // Every /admin route: the server's admins only, checked on the server before any of them answers.
     if (isAdminPath(path)) {
       const refused = yield* adminGate;
       if (refused) return refused;
     }
-    // Branch deploys and their status, /deploy, the dev server's routes: outside the app.
-    const there = yield* elsewhere;
+    // What the deploy pipeline asks, Git's redirect, the dev server's routes: outside the app.
+    const there = yield* outside(url);
     if (there) return there;
     const read = request.method == "GET" || request.method == "HEAD";
     // MCP's sign-in: the metadata, an app's registration, the person's approval, the token.

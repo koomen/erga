@@ -4,8 +4,7 @@
 //   - GET /api/release: the address of each of the editor's files, as the client
 //     build named them by their content's hash (client/build.ts, manifest.json),
 //     and the release ({ files: { "page.js": "/_erga/main-<hash>.js", ... },
-//     version, assets: the whole manifest, which the control Worker names the
-//     files from });
+//     version, assets: the whole manifest });
 //   - every HTML page of the site's own gets live.js, and a meta erga-build:
 //     a digest of the page's inline scripts (and the scripts it names), so a
 //     page can tell when the server now makes it with other code;

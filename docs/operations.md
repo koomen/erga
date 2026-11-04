@@ -11,15 +11,14 @@ staging.erga.dev (staging). Another deployment has its own names in
 - **The deploy workflow.** The `deploy` job of `.github/workflows/test.yml`
   runs `bun deploy/actions.ts <branch>` after the tests pass. It builds the
   commit and deploys it with the same pipeline as `bun own deploy` and
-  `bun deploy/run.ts` (`control/deploys/pipeline.ts`, `runPipeline`).
+  `bun deploy/run.ts` (`deploy/pipeline/pipeline.ts`, `runPipeline`).
 - **The app Workers.** One for each target in `deploy/targets.json`. Erga's
   own: `erga` (production, from `main`) and `erga-staging` (staging, from
   `staging`).
-- **The control Worker** (`control/`, `erga-control` at ops.erga.dev). It
-  holds the old repository and its Git endpoint, the old deploy pipeline,
-  the Ops page, the release store and the build container. It goes away in
-  a later change. Until then, the app Workers keep their `CONTROL` service
-  binding to it.
+- **The repository API** (`/api/repo`, for the homepage's page `/source`).
+  It reads the GitHub repository in `deploy/targets.json` (`repository`)
+  over GitHub's API. The old Git address `https://erga.dev/git/erga.git`
+  redirects to GitHub.
 
 ## The branches
 
@@ -147,38 +146,6 @@ needs an admin: an admin's session or an admin-scope token. The guard is
 
 A rollback does not change the database. Migrations only add, so the
 version before runs on the new tables.
-
-## The move from the control Worker to GitHub
-
-Before this move, the control Worker deploys on each push to its own Git
-(https://ops.erga.dev/git/erga.git). Its GitHub sync also brings each push
-on GitHub into that Git, and that push deploys too. If both systems run,
-each push deploys two times. Do these steps one time, in this order:
-
-1. On the Ops page (https://ops.erga.dev), on the GitHub card, click
-   "Sync now". GitHub then has the latest `staging` and `main`.
-2. On the GitHub card, click "Disconnect". The control Worker no longer
-   sees pushes on GitHub, and it no longer pushes there. (The admin agent
-   can do the same: the operation "Sync or disconnect GitHub", action
-   `disconnect`.)
-3. On the Deploy credential card, click "Disconnect". The control Worker
-   then cannot deploy anything, also if someone pushes to its Git.
-4. In each checkout, point `origin` to GitHub:
-
-       git remote set-url origin git@github.com:koomen/erga.git
-
-5. Add the secret `CLOUDFLARE_API_TOKEN` to `koomen/erga` (Settings >
-   Secrets and variables > Actions), with the permissions above.
-6. Merge the change into `staging` on GitHub, and push. The workflow
-   deploys staging. Check `GET /api/deploys/version` on staging.
-7. Move `main` when staging is good. The workflow deploys production.
-
-After the move, these things stop:
-
-- The Ops page's deploys, its Merge of feature branches and its rollbacks.
-- New releases in the release store. Production's deploy published them
-  for `/deploy` and for installs.
-- New code for the control Worker. It deployed itself after production.
 
 ## A new deployment
 

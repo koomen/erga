@@ -221,15 +221,15 @@ export const ADMIN_OPERATIONS: Operation[] = [
   },
   {
     name: "set_user",
-    ui: "Users (/admin/users): Add user, a user's role, the deploy role, and Remove",
+    ui: "Users (/admin/users): Add user, a user's role, and Remove",
     label: "Change a user",
     activity: "changing a user",
     admin: true,
-    description: "Adds a user, changes a user's role or deploy role, or removes a user.",
+    description: "Adds a user, changes a user's role, or removes a user.",
     parameters: Schema.Struct({
-      action: Schema.Literals(["add", "role", "deploy", "remove"]).annotate({
+      action: Schema.Literals(["add", "role", "remove"]).annotate({
         description:
-          "add (provider, handle, role; before they ever signed in too), role (role), deploy (deploy: may use /deploy), remove (sessions and tokens stop; documents stay)",
+          "add (provider, handle, role; before they ever signed in too), role (role), remove (sessions and tokens stop; documents stay)",
       }),
       provider: Schema.optionalKey(PROVIDER),
       handle: Schema.optionalKey(Schema.String.annotate({ description: "add: the GitHub login, or the Google account's email" })),
@@ -241,7 +241,6 @@ export const ADMIN_OPERATIONS: Operation[] = [
             "admin ('Admin'), write ('Can create and edit content'), read ('Can authenticate'), or none ('No role', an account only)",
         })
       ),
-      deploy: Schema.optionalKey(Schema.Boolean.annotate({ description: "deploy: true grants the deploy role, false revokes it" })),
     }),
     run: async (args, { dir, who }) => {
       const action = args.action;
@@ -261,10 +260,6 @@ export const ADMIN_OPERATIONS: Operation[] = [
         const role = need(args, "role", action);
         if (args.person != null) return personOf(await dir.people.setRole(who, Number(args.person), roleValue(role) as UserRole));
         return userOf(await dir.users.setUserRole(who, String(need(args, "login", action)), roleValue(role, { none: true })));
-      }
-      if (action == "deploy") {
-        if (typeof args.deploy != "boolean") throw new OperationError({ message: "deploy needs deploy: true or false.", status: 400 });
-        return userOf(await dir.users.setDeploy(who, String(need(args, "login", action)), args.deploy));
       }
       if (action == "remove") {
         if (args.person != null) {
@@ -378,8 +373,6 @@ function userOf(u: User) {
     name: u.name,
     role,
     roleLabel: ROLE_LABEL[role],
-    deploy: u.deploy,
-    mayDeploy: u.mayDeploy,
     bootstrap: u.bootstrap,
     added: u.created ? iso(u.created) : null,
     addedBy: u.addedBy,

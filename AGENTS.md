@@ -52,7 +52,12 @@ Read it before you push to a deployment's repository. On Erga's own:
 2. Push to `main` only when Pete asks: `git push origin staging:main`, after
    staging is good. Production deploys from `main`.
 3. A push is not a deploy. `curl -s https://staging.erga.dev/api/deploys/version`
-   must show your commit before you say it is on staging.
+   must show your commit before you say it is on staging. The run's log is
+   on GitHub (`gh run list --branch staging`, then `gh run view <id> --log`):
+   it shows each step, and a failed health check rolls back by itself.
+4. There is no Ops page and no deploy tool for agents. To deploy again,
+   re-run the workflow on GitHub; to deploy from a machine, `bun deploy/run.ts`
+   (docs/operations.md).
 
 ## Standing rules
 
@@ -133,22 +138,13 @@ Found a new trap? Write it here, in the same change.
 - `rm` only with `"${VAR:?}"` or a literal path, never a bare `$VAR`.
 - Bun older than 1.4 (`bun --version`) minifies `client/inline/` with other names: the dev server then rewrites
   `server/pages/inline-code.ts`, and `tests/inline-code.test.ts` fails on the committed file. Use Bun 1.4.2, as
-  the builder does (control/builder/Dockerfile), and never commit a rewrite made by an older Bun.
+  the deploy on GitHub Actions does (.github/workflows/test.yml), and never commit a rewrite made by an older Bun.
 - A passing local test, even one that fakes staging, is not proof. Run the
   real flow on staging, end to end, before you say a fix works. If you need
   an admin credential you don't have, say so.
-- The control Worker (erga-control) deploys itself with the pipeline that
-  runs now, which is the previous release. A new kind of binding that
-  `controlMetadata` must make (not one of `browser`, `ai`, `worker_loaders`:
-  deploy/release.ts passes those) takes effect one deploy later. A new Durable Object
-  class in `control/wrangler.jsonc`, or a change under `control/builder/`,
-  needs `bun deploy/setup.ts --control --yes` (OrbStack running) before
-  `main` deploys it. The new builder image rolls out with a lag: if the
-  first build still uses the old one, deploy again a few minutes later.
-- The repository lives in the control Worker, which deploys from `main`. Staging's and production's Ops pages call it
-  over the CONTROL binding (cloudflare/platform.ts, controlSource). A new repository method or field
-  (control/source/routes.ts, SourceObject) works on staging only after `main` deploys the control Worker: until then the
-  page must not break on its absence.
+- `/api/repo` (server/repo-github.ts) reads GitHub's API for `SOURCE_REPO`. GitHub answers only for a public
+  repository: while koomen/erga is private, the homepage's `/source` page shows an error. The sign-in app's
+  client id and secret raise GitHub's limit to 5,000 reads an hour; the edge cache keeps most reads from GitHub.
 - A document's object runs the old code until it restarts, minutes after a
   deploy if tabs keep it busy. The Worker calls its methods directly
   (`cloudflare/objects/document-stub.ts`). A deploy that adds a method of
@@ -157,7 +153,7 @@ Found a new trap? Write it here, in the same change.
   and only then call it.
 - Cloudflare refuses an upload that marks a Durable Object class deleted
   while the bundle still exports it. `cloudflare/index.ts` must not export
-  a deleted class; local development uses `cloudflare/dev-entry.ts`.
+  a deleted class (cloudflare.config.ts: `state: "deleted"`).
 - `bun run bench` before and after: one round each. A round is already the
   median of 5 runs.
 - view_page renders in the server's browser (cloudflare/render.ts): Cloudflare's
@@ -166,9 +162,9 @@ Found a new trap? Write it here, in the same change.
   same isolate gets "Cannot perform I/O on behalf of a different Durable Object".
   Keep it in the object (`browsers`), never in a module variable.
 - The release carries the metadata of each app binding that the pipeline does not make for each
-  target (control/deploys/bindings.ts), so a new kind like BROWSER needs no newer pipeline. A new kind
-  that the pipeline must make (a namespace, a bucket: `TARGET_KINDS`) reaches `main`, and the control
-  Worker, before the release that declares it; until then that release's deploys stop before any step.
+  target (deploy/pipeline/bindings.ts), so a new kind like BROWSER needs no change of the pipeline. A new
+  kind that the pipeline must make (a namespace, a bucket: `TARGET_KINDS`) needs code in
+  deploy/pipeline/account.ts (`workerMetadata`) in the same change; without it the deploy stops before any step.
 - A live list (`data-live-kind`, server/news/) gets new rows after the page loaded,
   and a changed row is a new element. Attach a row's listeners in its
   `wire(row)` (client/common/live-rows.ts), never in a loop over the rows at
@@ -208,23 +204,17 @@ Found a new trap? Write it here, in the same change.
   only places it (client/agent/layout.ts). Its conversation is the person's (`/api/agent`), not the document's: a
   test reads it at `${root}/api/agent/conversation`, never at the document's `/d/<id>/api/agent`. In the viewer, a reader has
   it only where the owner allows it (`share_document`, `reader_agent`), and never on a document shared with "*". A reader sees Erga's bars only where the owner leaves them on
-  (`reader_bars`): off, the viewer sets `--band-h` to 0 and hides the bars, so the page has no room at its top. The Ops pages are on
-  another origin: there the panel calls the app (`data-app` on `#agent`, credentials included), and `/api/agent` takes
-  only the app's own origin and `platform.control`'s, with CORS for the second.
+  (`reader_bars`): off, the viewer sets `--band-h` to 0 and hides the bars, so the page has no room at its top.
+  `/api/agent` takes only the app's own origin.
 - Staging's database is a copy of production's. A new table that holds secrets (encrypted under production's
   FACTORY_KEY) must be emptied in the copy, and staging's own rows kept: `ownCredentials` in
-  control/deploys/account.ts does it for `credentials` and `person_keys`. It runs on the control Worker, so it
-  takes effect one deploy late.
+  deploy/pipeline/account.ts does it for `credentials` and `person_keys`, in each deploy that copies the data.
 - The page's editor has its own socket and replica of the room (libs/text/ui/frame.ts), apart from the shell's. An
   edit typed on the page reaches the shell's replica only through the room, a moment later. A test that reads the
   shell's text waits for it (`ed.source()`); one that reads the editor's selection reads the frame's (`ed.selection()`).
   The editor starts a round trip after the pencil: a test waits for `window.ergaFrame.page` before it clicks. The
   editor's own controls (the style bar, the link bar, its note, the refresh pill) are in a shadow root on the
   page (libs/text/ui/controls.ts): a test reaches them with `ed.controls`, never in the shell's document.
-- GitHub's install page (`/apps/<slug>/installations/new`), for an account that already has the App, shows the
-  installation's settings, and Save stays off until something changes: it never comes back to Erga. So Connect GitHub
-  authorizes first and uses the installation the person has (control/github-routes.ts); the pretend GitHub does the same.
-  A Connect that sends a person to the install page again leaves Erga not connected, with no error.
 - An agent's edit lands in the room, and in each page, at once; the page plays its new text as typing behind the agent's
   caret, a visual effect only (libs/text/ui/marks.ts, playTyping). The text not typed yet is in the page, made transparent
   by the CSS highlight `erga-unshown`. A test that reads the page's text sees all of it at once. A page in the background

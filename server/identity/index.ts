@@ -2,15 +2,13 @@
 // with GitHub and its settings, the other of Erga's servers. The rest of the
 // app imports identity through this file.
 
-export { actingAdmin, mayDeploy, sessionOf, sign, unsign } from "./session.ts";
+export { actingAdmin, sessionOf, sign, unsign } from "./session.ts";
 export {
   chooseSignIn,
   finishGoogleSignIn,
   finishSignIn,
   githubAccounts,
-  GITHUB_CONNECT_COOKIE,
   googleToken,
-  isGithubConnectCallback,
   signOut,
   startGoogleSignIn,
   startSignIn,

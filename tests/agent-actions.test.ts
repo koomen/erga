@@ -12,7 +12,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { AGENT_ACTIONS, type AgentAction } from "../agents/actions";
 import { documentToolSpecs } from "../agents/document/tools";
 import { systemPrompt } from "../agents/person/prompt";
-import { ALL_OPERATIONS, allTools, KINDS, toolOf } from "../agents/tools";
+import { allTools, KINDS, toolOf } from "../agents/tools";
 import { OPERATIONS } from "../server/operations/index.ts";
 
 const ROOT = new URL("../", import.meta.url).pathname;
@@ -25,9 +25,7 @@ const ROUTE_TABLES = [
   "cloudflare/dev.ts",
   "agents/person/sessions.ts",
   "agents/page-llm.ts",
-  "control/source/routes.ts",
   "cloudflare/deploy-routes.ts",
-  "control/install/routes.ts",
   "server/identity/settings.ts",
   "server/identity/accounts.ts",
   "server/admin/routes.ts",
@@ -40,9 +38,7 @@ const ROUTE_TABLES = [
 /** The pages' own scripts (and the pages that carry theirs inline): every route they call must be audited. */
 const PAGE_SCRIPTS = [
   ...(readdirSync(ROOT + "client", { recursive: true }) as string[]).filter((f) => f.endsWith(".ts")).map((f) => `client/${f}`),
-  "control/source/page.ts",
   "server/identity/tokens-page.ts",
-  "control/install/page.ts",
   ...["settings", "api-keys", "auth", "access", "changes", "users"].map((p) => `server/admin/${p}.ts`),
   "server/documents/view.ts",
   "server/documents/make.ts",
@@ -90,7 +86,7 @@ test("the route tables are read: the known routes are found", () => {
   const found = every();
   for (const r of [
     "POST /api/agent/model",
-    "GET /git/tree/<ref>/<path>",
+    "GET /api/repo/tree/<ref>/<path>",
     "POST /admin/auth do=save",
     "GET /d/<id>/api/doc",
     "PUT /api/files/<path>",
@@ -139,15 +135,10 @@ test("each action has a tool that its agent has, or says why there's none", () =
 });
 
 test("every operation and document tool is an op of exactly one of the agents' tools, and each op is one", () => {
-  const all = [...ALL_OPERATIONS.map((o) => o.name), ...documentToolSpecs().map((t) => t.name)];
+  const all = [...OPERATIONS.map((o) => o.name), ...documentToolSpecs().map((t) => t.name)];
   expect(all.filter((n) => !toolOf(n))).toEqual([]);
   expect(ADMIN.filter((n) => !all.includes(n))).toEqual([]);
   expect(new Set(ADMIN).size).toBe(ADMIN.length);
-  // Erga's own code is not a document's files: its tool says so first (an agent read demo.js there for a document's).
-  expect(KINDS.find((k) => k.ops.includes("source"))).toMatchObject({
-    name: "erga_code",
-    description: expect.stringMatching(/^Erga's own server code, not a document's files/),
-  });
   // The agents' tools are few: each kind is one tool.
   expect(
     allTools()
@@ -160,20 +151,8 @@ test("only a secret, or what isn't a person's action, goes without a tool", () =
   for (const a of AGENT_ACTIONS.filter((a) => a.exempt && a.domain != "none")) expect(`${a.route}: ${a.exempt}`).toMatch(/secret/);
 });
 
-test("the known gaps are closed: production's deploy, the Ops page, keys and tokens", () => {
-  for (const t of [
-    "deploy_production",
-    "github",
-    "branches",
-    "deploys",
-    "redeploy",
-    "clear_api_key",
-    "whoami",
-    "revoke",
-    "sign_in",
-    "set_sign_in",
-  ])
-    expect(ADMIN).toContain(t);
+test("the known gaps are closed: the homepage's deploy, keys and tokens", () => {
+  for (const t of ["deploy_homepage", "clear_api_key", "whoami", "revoke", "sign_in", "set_sign_in"]) expect(ADMIN).toContain(t);
   // Share with agent makes agent tokens now (whoami lists them, revoke turns one off): no factory tokens, nor their tools.
   for (const t of ["list_factory_tokens", "revoke_factory_token"]) expect(ADMIN).not.toContain(t);
   for (const t of ["list_documents", "create_document", "delete_document"]) expect(DOCUMENT).toContain(t);
@@ -182,7 +161,7 @@ test("the known gaps are closed: production's deploy, the Ops page, keys and tok
   expect(new Set(ADMIN).size).toBe(ADMIN.length);
 });
 
-test("the admin agent's system prompt names every tool it has, and no longer says it can't merge or deploy", () => {
+test("the admin agent's system prompt names every tool it has", () => {
   const prompt = systemPrompt("root", true);
   // Each tool, and each op but the document tools': the prompt says they work in any document, named with "document".
   const docTools = new Set(documentToolSpecs().map((t) => t.name));

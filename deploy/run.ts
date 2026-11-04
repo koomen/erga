@@ -1,9 +1,8 @@
 #!/usr/bin/env bun
-// A deploy of one of Erga's own targets from this machine: the same pipeline
-// the servers run on themselves, with a
-// build made here instead of in the builder's container. For the first
-// deploy of a target (deploy/setup.ts runs it, with the target's secrets),
-// and as a way round a server that can't deploy itself.
+// A deploy of one of Erga's own targets from this machine: the same build and
+// pipeline as the GitHub Actions deploy (deploy/actions.ts). For a fresh copy
+// of production's data on staging, and as a way round a deploy on GitHub that
+// can't run.
 //
 //   bun deploy/run.ts staging [--commit <sha>] [--yes] [--fresh | --no-snapshot]
 //                                                        (staging keeps its frozen copy of production's data;
@@ -11,9 +10,6 @@
 //                                                        copy nothing even with no copy yet, and SNAPSHOT_TOKEN
 //                                                        isn't needed)
 //   bun deploy/run.ts production --commit <sha>          (asks you to type "production")
-//   bun deploy/run.ts control [--commit <sha>] [--yes]    (the control Worker itself, when it can't deploy itself:
-//                                                        its Worker only; a new container image needs
-//                                                        bun deploy/setup.ts --control)
 //
 // It deploys to deploy/targets.json's account (CLOUDFLARE_ACCOUNT_ID in the
 // environment overrides it), with your own credential for
@@ -33,24 +29,62 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { targetFor } from "../control/deploys/branches";
-import { buildIn } from "../control/builder/build";
-import { unpackRelease } from "../control/deploys/bundle";
-import { ALL_STEPS, guardTarget, runPipeline, stepsFor, targetHost, targetPagesShown, type Target } from "../control/deploys/pipeline";
-import { Cloudflare, type Fetch } from "../control/deploys/cloudflare-api";
-import { loadRelease, type Release } from "../control/deploys/release-format";
+import { buildIn } from "./pipeline/build";
+import { unpackRelease } from "./pipeline/bundle";
+import { ALL_STEPS, DeployError, guardTarget, runPipeline, stepsFor, targetHost, targetPagesShown, type Target } from "./pipeline/pipeline";
+import { Cloudflare, type Fetch } from "./pipeline/cloudflare-api";
+import { loadRelease, type Release } from "./pipeline/release-format";
 import { machineCredential } from "./local-credential";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare } from "../dev/mock-cloudflare";
-import { ACCOUNT, isDeployName, specOf, TARGETS, type OwnDeployName } from "./targets";
+import { ACCOUNT, isTargetName, PRODUCTION, REPOSITORY, TARGETS, type TargetName } from "./targets";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: ROOT }).stdout.toString().trim();
 
+/** What a target's deploy takes from its environment: the account, and (staging) the token its copy of production's documents goes through. */
+export interface DeployEnv {
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  SNAPSHOT_TOKEN?: string;
+}
+
+/**
+ * One of Erga's own targets as the pipeline deploys it: the Worker's account, its secrets kept from version to version
+ * (set once, by hand), the GitHub repository that /api/repo and /git read (SOURCE_REPO), and, for staging,
+ * production's data copied in when it has no copy yet, or with `fresh`.
+ */
+export function targetFor(name: TargetName, env: DeployEnv, fresh = false): Target {
+  if (!isTargetName(name)) throw new DeployError({ message: `Not one of Erga's own targets: ${name}.` });
+  const spec = TARGETS[name];
+  const accountId = env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
+  const from = spec.snapshotFrom ? TARGETS[spec.snapshotFrom] : null;
+  return {
+    label: spec.name, accountId, workerName: spec.worker, databaseName: spec.database,
+    app: { kind: "domain", zoneName: spec.zone, hostname: spec.host },
+    pages: { kind: "zone", zoneName: spec.pages.zone, domain: spec.pages.domain },
+    vars: { ...spec.vars, DEPLOY_TARGET: spec.name, SNAPSHOT_IMPORT: from ? "1" : "", SOURCE_REPO: REPOSITORY },
+    secrets: {},
+    keepSecrets: true,
+    checkVersion: true,
+    production: spec.name == "production",
+    guard: { ...PRODUCTION, accountId },
+    ...(from
+      ? {
+          snapshot: {
+            databaseName: from.database,
+            origin: `https://${from.host}`,
+            token: env.SNAPSHOT_TOKEN?.trim() ?? "",
+            ...(fresh ? { fresh: true } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
 export interface MachineDeploy {
-  name: OwnDeployName;
+  name: TargetName;
   /** The commit to build (default HEAD). */
   commit?: string;
-  /** Secrets to set with this upload (the first deploy's: deploy/setup.ts). */
+  /** Secrets to set with this upload (a first deploy's). */
   secrets?: Record<string, string>;
   /** Don't ask. */
   yes?: boolean;
@@ -106,17 +140,21 @@ export async function deployFromMachine(o: MachineDeploy): Promise<boolean> {
   if (!token) throw new Error("Set CLOUDFLARE_API_TOKEN, or log in with `bunx cf auth login` (see deploy/local-credential.ts).");
   const commit = o.commit ?? git("rev-parse", "HEAD");
   if (!o.commit && !mock && git("status", "--porcelain")) throw new Error("The checkout has changes that aren't committed: commit them, or name a commit (--commit).");
-  const spec = specOf(o.name);
-  const target: Target = { ...targetFor(o.name, { CLOUDFLARE_ACCOUNT_ID: accountId, SNAPSHOT_TOKEN: snapshotToken }, o.fresh ? { force: true } : undefined), secrets: o.secrets ?? {} };
+  const spec = TARGETS[o.name];
+  const target: Target = {
+    ...targetFor(o.name, { CLOUDFLARE_ACCOUNT_ID: accountId, SNAPSHOT_TOKEN: snapshotToken }, o.fresh),
+    secrets: o.secrets ?? {},
+  };
   if (o.noSnapshot) delete target.snapshot;
   const wrong = guardTarget(target);
   if (wrong) throw new Error(wrong);
   if (target.snapshot && target.snapshot.token.length < 32) throw new Error("Staging copies production's documents: set SNAPSHOT_TOKEN (production's).");
 
   log(`Deploy ${commit.slice(0, 12)} to ${o.name}${mock ? " (the mock Cloudflare: nothing real)" : ""}:`);
-  if (spec.control) log(`  account ${accountId}, Worker ${spec.worker} (the control Worker: its Worker only; its container image and namespaces stay)`);
-  else log(`  account ${accountId}, Worker ${spec.worker}, database ${target.databaseName}${target.snapshot?.fresh ? " (a new copy of production's, beside the one the Worker is on, which goes once the new version answers)" : target.snapshot ? " (its frozen copy of production's data kept; a new copy only if it has none)" : spec.snapshotFrom ? " (kept as it is: --no-snapshot)" : ""}`);
-  log(`  https://${targetHost(target)}${spec.control ? "" : `, documents' pages on ${targetPagesShown(target)}`}`);
+  log(
+    `  account ${accountId}, Worker ${spec.worker}, database ${target.databaseName}${target.snapshot?.fresh ? " (a new copy of production's, beside the one the Worker is on, which goes once the new version answers)" : target.snapshot ? " (its frozen copy of production's data kept; a new copy only if it has none)" : spec.snapshotFrom ? " (kept as it is: --no-snapshot)" : ""}`
+  );
+  log(`  https://${targetHost(target)}, documents' pages on ${targetPagesShown(target)}`);
   log(`  steps: build, ${stepsFor(target).map((s) => s.id).join(", ")}`);
   if (Object.keys(target.secrets).length) log(`  secrets set: ${Object.keys(target.secrets).join(", ")}`);
   if (o.name == "production") {
@@ -127,7 +165,7 @@ export async function deployFromMachine(o: MachineDeploy): Promise<boolean> {
   } else if (!ask("Go on?", o.yes)) { log("Not deployed."); return false; }
 
   const release = await buildHere(commit, log, mock);
-  const net = o.net ?? (mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fetch.bind(globalThis));
+  const net = o.net ?? (mock ? mockCloudflare({ fleet: true, stagingSecrets: true }).fetch : globalThis.fetch.bind(globalThis));
   const cf = new Cloudflare(token, net);
   await runPipeline(cf, release, target, {
     site: net,
@@ -142,7 +180,10 @@ if (import.meta.main) {
   const args = process.argv.slice(2);
   const name = args[0] ?? "";
   const at = args.indexOf("--commit");
-  if (!isDeployName(name)) { console.error("usage: bun deploy/run.ts <staging|production|control> [--commit <sha>] [--yes] [--fresh | --no-snapshot]"); process.exit(2); }
+  if (!isTargetName(name)) {
+    console.error("usage: bun deploy/run.ts <staging|production> [--commit <sha>] [--yes] [--fresh | --no-snapshot]");
+    process.exit(2);
+  }
   try {
     const done = await deployFromMachine({ name, commit: at >= 0 ? git("rev-parse", args[at + 1]) : undefined, yes: args.includes("--yes") && name != "production", noSnapshot: args.includes("--no-snapshot"), fresh: args.includes("--fresh") });
     process.exit(done ? 0 : 1);

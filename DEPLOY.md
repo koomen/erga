@@ -12,7 +12,7 @@ Give this prompt to your coding agent, in an empty folder:
 ```prompt
 Deploy my own Erga (https://erga.dev) to my Cloudflare account.
 
-1. Run: git clone https://erga.dev/git/erga.git erga && cd erga && bun install --frozen-lockfile
+1. Run: git clone https://github.com/koomen/erga.git erga && cd erga && bun install --frozen-lockfile
 2. Read DEPLOY.md in it, and do what its "For the agent" part says.
 3. Ask me all of its questions in one message, with the defaults. Do nothing in my account before I answer.
 4. Never ask me to paste a secret or a token into this chat. Secrets go only into the checklist page or a file.
@@ -33,7 +33,7 @@ defaults.
 | Production address | (you choose) | A name on a domain of your account, e.g. `erga.example.com`. Nothing may use it yet. |
 | Staging server | no | A second server at its own address, to try updates first. It has its own, empty data. |
 | Sign-in | GitHub | GitHub, or GitHub and Google. You (the first admin) sign in with GitHub. |
-| Server preset | website | `website`: a public homepage; documents shared "with anyone with the link" open for everyone; only you and people you add sign in. `company` ("sharing docs in my company"): nothing opens for people who are not signed in; people of your company's Google Workspace domain or GitHub organization sign in by themselves. Both keep documents until they are deleted, and turn off /deploy. Admins can change each setting later on /admin/settings. |
+| Server preset | website | `website`: a public homepage; documents shared "with anyone with the link" open for everyone; only you and people you add sign in. `company` ("sharing docs in my company"): nothing opens for people who are not signed in; people of your company's Google Workspace domain or GitHub organization sign in by themselves. Both keep documents until they are deleted. Admins can change each setting later on /admin/settings. |
 | Admin | your GitHub login | The first admin. |
 | Company domain or org | none | Only for `company`. |
 | Documents' pages | shared | Each document's page runs on an address apart from the app, for safety. `shared`: one workers.dev address (no domain needed). Or a second domain of your account: each document gets its own origin. |
@@ -53,7 +53,7 @@ defaults.
 ## Updates
 
 Your Erga updates from erga.dev. Ask your agent to "update my Erga". It runs
-`bun own update`: it pulls `main` from https://erga.dev/git/erga.git, and
+`bun own update`: it pulls `main` from https://github.com/koomen/erga.git, and
 deploys staging (if you have it), then production. Your own changes stay in
 your checkout; a conflict stops the update before any deploy.
 

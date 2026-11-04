@@ -1,23 +1,7 @@
 {
   "account": "c24e663b6f522eb02c60b6ce88ec4493",
   "admins": "koomen,dsiroker",
-  "source": {
-    "namespace": "erga",
-    "repo": "erga"
-  },
-  "control": {
-    "branch": "main",
-    "worker": "erga-control",
-    "host": "ops.erga.dev",
-    "zone": "erga.dev",
-    "releases": "erga-releases",
-    "vars": {
-      "GITHUB_APP_ID": "5354935",
-      "GITHUB_APP_SLUG": "erga-editor",
-      "GITHUB_APP_CLIENT_ID": "Iv23liSAkdrgzW0esRBO",
-      "CLOUDFLARE_OAUTH_CLIENT_ID": "62d43878d5673b62dd0453086a5f4fe9"
-    }
-  },
+  "repository": "koomen/erga",
   "targets": {
     "production": {
       "name": "production",
@@ -46,8 +30,7 @@
         "domain": "erga-pages-staging.dev"
       },
       "vars": {
-        "GITHUB_CLIENT_ID": "Ov23likQyJqb2dDatb5S",
-        "CLOUDFLARE_OAUTH_CLIENT_ID": ""
+        "GITHUB_CLIENT_ID": "Ov23likQyJqb2dDatb5S"
       },
       "snapshotFrom": "production",
       "adminsOnly": true

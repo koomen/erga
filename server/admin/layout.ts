@@ -1,8 +1,8 @@
-// The layout every admin page shares (/admin, /admin/changes, /admin/users, /admin/ops,
+// The layout every admin page shares (/admin, /admin/changes, /admin/users, /admin/access,
 // /admin/api-keys, /admin/auth): the bars of every page (server/pages/bars.ts: Erga › Admin › the page upper
 // left; upper right the quick actions, with Share with an agent, whose card is admin-share.js, built from
 // client/admin/admin-share.ts), the person's agent in the lower left (server/pages/agent.ts, as on every page),
-// and, on the left, a sidebar that links to Settings, API keys, Authentication, Access, Change log, Users and Ops.
+// and, on the left, a sidebar that links to Settings, API keys, Authentication, Access, Change log and Users.
 //
 // The sidebar collapses to a rail of icons and expands again, with an animation, and this browser remembers which
 // (localStorage "erga:admin-sidebar"), set before the sidebar paints, so it doesn't jump. On a phone it is a row of
@@ -25,7 +25,7 @@ import { esc } from "../../shared/html.ts";
 import type { Platform, Session } from "../platform.ts";
 import { actingAdmin } from "../identity/index.ts";
 
-export type AdminSection = "settings" | "keys" | "auth" | "access" | "changes" | "users" | "ops";
+export type AdminSection = "settings" | "keys" | "auth" | "access" | "changes" | "users";
 
 const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }[] = [
   { key: "settings", label: "Settings", path: "/admin", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>` },
@@ -34,17 +34,13 @@ const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }
   { key: "access", label: "Access", path: "/admin/access", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l7 3v5c0 4.3-3 7.7-7 9-4-1.3-7-4.7-7-9v-5l7-3Z"/><path d="M9 12l2 2 4-4"/></svg>` },
   { key: "changes", label: "Change log", path: "/admin/changes", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5v3.5h3.5"/><path d="M12 8v4.2l2.8 1.8"/></svg>` },
   { key: "users", label: "Users", path: "/admin/users", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="8.5" r="3.5"/><path d="M3.5 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M16 5.2a3.5 3.5 0 0 1 0 6.6M18 14.4c1.4.8 2.3 2.4 2.5 4.6"/></svg>` },
-  // Ops: the environments, the Cloudflare credential and Erga's repository. The control Worker's page: the app serves it in
-  // place over the CONTROL binding (/install, its Cloudflare credential, is marked Ops too). With no control Worker, the
-  // app says so on this page (cloudflare/index.ts).
-  { key: "ops", label: "Ops", path: "/admin/ops", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="6" rx="2"/><rect x="3.5" y="13.5" width="17" height="6" rx="2"/><path d="M7 7.5h.01M7 16.5h.01M11 7.5h6M11 16.5h6"/></svg>` },
 ];
 
 /** Each section's name and address, for the quick search (server/operations/pages.ts). */
 export const ADMIN_PAGES = SECTIONS.map(({ label, path }) => ({ label, path }));
 
-/** The sidebar: the toggle and a link for each section, each at the address `hrefOf` gives (another host's, for the control Worker). */
-export function adminSidebar(here: AdminSection | undefined, hrefOf: (path: string) => string): string {
+/** The sidebar: the toggle and a link for each section, each at the address `hrefOf` gives. */
+function adminSidebar(here: AdminSection | undefined, hrefOf: (path: string) => string): string {
   const links = SECTIONS.map((s) => `<li><a href="${esc(hrefOf(s.path))}"${s.key == here ? ` aria-current="page"` : ""}>${s.icon}<span class="label">${s.label}</span></a></li>`).join("");
   return `<nav class="admin-side" id="admin-side" aria-label="Admin"><button type="button" class="side-toggle" id="side-toggle" aria-controls="admin-side" aria-expanded="true" aria-label="Collapse the sidebar">${TOGGLE_ICON}</button><ul>${links}</ul></nav>`;
 }
@@ -59,20 +55,17 @@ export interface AdminLayout {
   here?: AdminSection;
   /** What goes in <main>. */
   body: string;
-  /** The page uses the whole width (the Ops page); otherwise a column. */
+  /** The page uses the whole width (the change log); otherwise a column. */
   wide?: boolean;
 }
 
-/** The admin pages' one stylesheet (client/styles/admin.css and ops.css, built as admin.css): the same file on every admin page, the control Worker's too. */
-export const adminStyleTag = () => `<link rel="stylesheet" id="erga-admin-style" href="${asset("admin.css")}">`;
+/** The admin pages' one stylesheet (client/styles/admin.css, built as admin.css): the same file on every admin page. */
+const adminStyleTag = () => `<link rel="stylesheet" id="erga-admin-style" href="${asset("admin.css")}">`;
 
-/** The sidebar's remembered state, before it paints. */
-export const SIDEBAR_EARLY_SCRIPT = inlineScript("admin-sidebar-early");
-/** The first page's view (window.ergaView): what its scripts stop when it goes. Every page's scripts read it (the Ops page's too). */
-export const VIEW_SCRIPT = inlineScript("admin-view");
-const EARLY_SCRIPT = `${SIDEBAR_EARLY_SCRIPT}${VIEW_SCRIPT}${inlineScript("img-fallback")}`;
+/** The sidebar's remembered state, before it paints; the first page's view (window.ergaView: what its scripts stop when it goes). */
+const EARLY_SCRIPT = `${inlineScript("admin-sidebar-early")}${inlineScript("admin-view")}${inlineScript("img-fallback")}`;
 /** The sidebar's toggle (client/inline/admin-sidebar.ts). */
-export const SIDEBAR_SCRIPT = inlineScript("admin-sidebar");
+const SIDEBAR_SCRIPT = inlineScript("admin-sidebar");
 
 /** An admin page, whole: the header, the sidebar and the page's own body. */
 export function adminLayout(o: AdminLayout): string {
@@ -96,10 +89,6 @@ ${scriptTag("admin-nav.js")}`, false);
 /** adminLayout as the answer of a route. */
 export const adminPage = (o: AdminLayout, status = 200) => html(adminLayout(o), status, NO_STORE);
 
-/** adminLayout as a web Response, for the control Worker's routes (control/), which make web Responses. */
-export const adminResponse = (o: AdminLayout, status = 200) =>
-  new Response(adminLayout(o), { status, headers: { "Content-Type": "text/html; charset=utf-8", ...NO_STORE } });
-
 export const isAdminPath = (path: string) => path == "/admin" || path.startsWith("/admin/");
 
 /**
@@ -107,7 +96,7 @@ export const isAdminPath = (path: string) => path == "/admin" || path.startsWith
  * here on the server. Signed out, a page sends you to sign in; anyone who
  * isn't an admin gets "not found" for a page (they can't tell there is one)
  * and 401 or 403 for a POST. The role is the only thing that counts: no
- * other permission (deploy_page, who may use /deploy; a document's sharing;
+ * other permission (a document's sharing;
  * an agent or test token) makes anyone an admin. Null lets an admin through;
  * each page's routes still check on their own, and asks for the unlock.
  */

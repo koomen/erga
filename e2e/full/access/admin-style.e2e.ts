@@ -1,6 +1,6 @@
 // The admin pages have one stylesheet (admin.css, client/styles/admin.css), so a page shown in place by a link
 // (client/admin/admin-nav.ts) is styled as it is after a load. Before, the in-place page kept the first page's style: from
-// Ops, API keys showed each key's label and env name run together, and its rows without their look.
+// another page, API keys showed each key's label and env name run together, and its rows without their look.
 import { expect, servers, test } from "../../helpers/fixtures";
 
 await servers.main();
@@ -8,7 +8,7 @@ await servers.main();
 test("a link from one admin page to another shows the new page styled, in place", async ({ tab }) => {
   const server = await servers.main(), { page } = tab;
   await page.setViewportSize({ width: 1400, height: 900 });
-  await page.goto(`${server.root}/admin/ops`);
+  await page.goto(`${server.root}/admin/changes`);
   // A mark on this window: still here after the links, so the pages came in place, not with a load.
   await page.evaluate(() => { (window as unknown as { stayed: boolean }).stayed = true; });
 
@@ -22,13 +22,20 @@ test("a link from one admin page to another shows the new page styled, in place"
   expect(keys).toMatchObject({ stayed: true, head: "flex", gap: "10px", row: "grid" });
 
   await page.click('.admin-side a[href^="/admin/users"]');
-  await page.waitForSelector("ol.users .switch .track");
+  await page.waitForSelector("ol.users > li");
   const users = await page.evaluate(() => ({
     stayed: (window as unknown as { stayed?: boolean }).stayed,
-    track: getComputedStyle(document.querySelector("ol.users .switch .track")!).width,
     row: getComputedStyle(document.querySelector("ol.users > li")!).display,
   }));
-  expect(users).toEqual({ stayed: true, track: "34px", row: "grid" });
+  expect(users).toEqual({ stayed: true, row: "grid" });
+
+  await page.click('.admin-side a[href^="/admin/auth"]');
+  await page.waitForSelector(".switch .track");
+  const auth = await page.evaluate(() => ({
+    stayed: (window as unknown as { stayed?: boolean }).stayed,
+    track: getComputedStyle(document.querySelector(".switch .track")!).width,
+  }));
+  expect(auth).toEqual({ stayed: true, track: "34px" });
 
   // A switch is the editor's blue when on and its grey when off (the app's tokens --caret and --rule).
   const colours = await page.evaluate(() => {

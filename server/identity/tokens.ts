@@ -115,11 +115,11 @@ const fromRow = (r: Row): AgentToken => ({
 
 export class Tokens {
   /** `dir` checks who may make which scope: an admin token for admins only, a document token for a document the person may open. */
-  /**
-   * `byHash`: a token is good when its hash is in the table, without the check that it was made with this secret. For
-   * the control Worker, which reads production's own database (not a copy) and has a secret of its own.
-   */
-  constructor(private sql: Sql, private secret: string, private dir: Directory, private byHash = false) {}
+  constructor(
+    private sql: Sql,
+    private secret: string,
+    private dir: Directory
+  ) {}
 
   /** The token with this id: an HMAC of it with the server's secret. */
   private async tokenFor(id: string): Promise<string> {
@@ -248,7 +248,7 @@ export class Tokens {
     const [row] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE hash = ?1`, await sha256Hex(token));
     // The row must be this server's: a copy of another server's database (staging takes production's) holds
     // its tokens' hashes, but their tokens were made with that server's secret, not ours.
-    if (!row || (!this.byHash && await this.tokenFor(row.id) != token)) return null;
+    if (!row || (await this.tokenFor(row.id)) != token) return null;
     const now = Date.now();
     if (row.expires != null && Number(row.expires) <= now) return null;
 

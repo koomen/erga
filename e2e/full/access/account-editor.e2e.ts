@@ -49,7 +49,7 @@ test("your avatar, far right of the editor's controls with your GitHub picture (
   expect(await menu()).toEqual({
     hidden: false,
     expanded: "true",
-    links: ["Documents /docs", "Settings #settings", "Deploy your own /deploy", "Admin settings /admin", "Sign out /auth/logout"],
+    links: ["Documents /docs", "Settings #settings", "Admin settings /admin", "Sign out /auth/logout"],
   });
   // Stays open: the same after the frames that follow the click (the old harness looked again 600 ms later; a pause has no place in the gate).
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))));

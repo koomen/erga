@@ -1,16 +1,13 @@
 // A release's bindings: the kinds the pipeline makes for each target, and every other kind, whose metadata the
-// release carries and the pipeline sends as it is (control/deploys/bindings.ts). A release with a new kind deploys
-// with the control Worker that runs now; one that needs a newer pipeline stops before it changes anything.
+// release carries and the pipeline sends as it is (deploy/pipeline/bindings.ts). A release with a new kind deploys
+// as it is; one that needs a newer pipeline stops before it changes anything.
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { targetOf } from "../control/deploys/branches";
-import { workerMetadata } from "../control/deploys/account";
-import { bindingsProblem, releaseBindings } from "../control/deploys/bindings";
-import { controlMetadata } from "../control/deploys/control-worker";
-import type { Release } from "../control/deploys/release-format";
+import { targetFor } from "../deploy/run";
+import { workerMetadata } from "../deploy/pipeline/account";
+import { bindingsProblem, releaseBindings } from "../deploy/pipeline/bindings";
+import type { Release } from "../deploy/pipeline/release-format";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
-import { TARGETS } from "../deploy/targets";
-import { controlConfig, controlWranglerConfig } from "../deploy/release";
 import { prepareRelease, release, stagingSecrets, staging, deployTo, bindingsOf } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 
@@ -18,7 +15,7 @@ quietConsole();
 beforeAll(prepareRelease, 120_000);
 
 const stagingMeta = (rel: Release) =>
-  workerMetadata(rel, targetOf(TARGETS.staging, { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT }), {
+  workerMetadata(rel, targetFor("staging", { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT }), {
     dbId: "db",
     assetsJwt: "jwt",
     pagesHost: null,
@@ -65,23 +62,7 @@ describe("the app Worker's bindings", () => {
     const mock = mockCloudflare({ fleet: true });
     const before = mock.state.calls.length;
     const run = deployTo(staging({ secrets: stagingSecrets }), mock, rel);
-    await expect(run).rejects.toThrow(/CACHE \(kv\).*Nothing changed.*must reach main/);
+    await expect(run).rejects.toThrow(/CACHE \(kv\).*Nothing changed.*Teach the pipeline/);
     expect(mock.state.calls.slice(before)).toEqual([]);
-  });
-});
-
-describe("the control Worker's bindings", () => {
-  test("control/wrangler.jsonc's bindings of the same form on every account go as the release writes them", () => {
-    const cfg = controlConfig({ ...controlWranglerConfig(), browser: { binding: "BROWSER" } });
-    expect(cfg.bindings).toEqual([{ type: "browser", name: "BROWSER" }]);
-    const rel: Release = { ...release, control: { ...release.control!, config: cfg } };
-    const meta = controlMetadata(rel, { accountId: FLEET_ACCOUNT, secrets: {} }, { DB: "db" }).bindings as any[];
-    expect(meta).toContainEqual({ type: "browser", name: "BROWSER" });
-  });
-
-  test("a key of control/wrangler.jsonc that the release's code doesn't know stops the build, not the deploy", () => {
-    expect(() => controlConfig({ ...controlWranglerConfig(), kv_namespaces: [{ binding: "CACHE" }] })).toThrow(
-      /kv_namespaces.*doesn't know/
-    );
   });
 });

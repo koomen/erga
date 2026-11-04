@@ -1,7 +1,6 @@
 // Who you are, in the upper right of every page erga.dev serves: your
 // avatar (your picture, shared/avatars.ts, or your initial on your colour if
-// you have none or it doesn't load), which opens a small menu (your name, Documents, Settings, Deploy
-// your own for those the deploy_page setting lets in, Admin settings for
+// you have none or it doesn't load), which opens a small menu (your name, Documents, Settings, Admin settings for
 // admins, Sign out); or, signed out, a person in a circle whose
 // menu has only Sign in (to the sign-in page, coming back to the same page).
 //
@@ -28,17 +27,20 @@ export interface Account {
   login: string;
   name: string;
   admin: boolean;
-  /** May use /deploy (the deploy_page setting): not an admin right. */
-  deploy?: boolean;
   /** Their picture (shared/avatars.ts); absent: none, so their initial shows. */
   avatar?: string;
   /** The ?user= a local tab carries, kept on the menu's links. */
   session: Session;
 }
 
-export const accountOf = (session: Session | null, admin: boolean, deploy = false): Account | null =>
-  !session || session.agent ? null : {
-    login: session.login, name: session.name, admin, deploy, session,
+export const accountOf = (session: Session | null, admin: boolean): Account | null =>
+  !session || session.agent
+    ? null
+    : {
+        login: session.login,
+        name: session.name,
+        admin,
+        session,
         ...(!session.test && session.avatar ? { avatar: session.avatar } : {}),
   };
 
@@ -73,7 +75,6 @@ export function accountMarkup(account: Account | null, here: string): string {
 <p class="erga-account-who"><b>${esc(account.name)}</b>${account.name.toLowerCase() != account.login.toLowerCase() ? `<span>${esc(account.login)}</span>` : ""}</p>
 <a href="${esc(link("/docs", s))}">Documents</a>
 <a href="#settings">Settings</a>
-${account.deploy ? `<a href="${esc(link("/deploy", s))}">Deploy your own</a>` : ""}
 ${account.admin ? `<a href="${esc(link("/admin", s))}">Admin settings</a>` : ""}
 <a href="/auth/logout">Sign out</a>
 </div>

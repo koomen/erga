@@ -35,14 +35,8 @@ const $ = (id: string) => document.getElementById(id)!;
 /** An address of the agent's API, as whoever this tab is (local development's ?user=, kept). */
 const USER = new URLSearchParams(location.search).get("user")?.trim();
 const asUser = (path: string) => (USER ? `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(USER)}` : path);
-/**
- * The app the agent lives in: this page's origin, or on the Ops pages (the control Worker's, another origin of the same
- * site) the app's, which the panel names (server/pages/agent.ts). There the person's cookie goes with each request.
- */
-const APP = $("agent").dataset.app ?? location.origin;
-const away = APP != location.origin;
 /** A request to the agent's API, as whoever this tab is. */
-const call = (path: string, init?: RequestInit) => fetch(APP + asUser(path), { ...init, credentials: away ? "include" : "same-origin" });
+const call = (path: string, init?: RequestInit) => fetch(asUser(path), { ...init, credentials: "same-origin" });
 const store = {
   get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k: string, v: string | null) => { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch { /* private window */ } },
@@ -69,11 +63,7 @@ const VERBS: Record<string, [string, string]> = {
   set_access: ["Changing the access rules:", "Changed the access rules:"],
   sign_in: ["Reading how people sign in", "Read how people sign in"],
   set_sign_in: ["Changing sign-in:", "Changed sign-in:"],
-  branches: ["Reading the branches", "Read the branches"],
-  deploys: ["Reading the deploys", "Read the deploys"],
-  redeploy: ["Redeploying", "Redeployed"],
-  source: ["Reading Erga's code:", "Read Erga's code:"],
-  erga_code: ["Reading Erga's code:", "Read Erga's code:"],
+  deploy_homepage: ["Deploying the homepage", "Deployed the homepage"],
 };
 
 /** The document the page has open, if any: the document tools' own when the agent names none. */
@@ -165,9 +155,7 @@ function noKeyLinks() {
       box = document.createElement("div");
       box.className = "agent-connect";
       box.innerHTML = `<p>Paste this into your agent (Claude Code, Codex, any MCP app). It signs you in, then works in Erga as you.</p><pre></pre><button type="button">Copy prompt</button>`;
-      const prompt = away
-        ? agentPrompt("/docs", APP)
-        : agentPrompt(document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? location.pathname);
+      const prompt = agentPrompt(document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? location.pathname);
       box.querySelector("pre")!.textContent = prompt;
       const copy = box.querySelector("button")!;
       copy.addEventListener(
@@ -353,8 +341,7 @@ async function load(tries = 0): Promise<void> {
 // restarts) is made again, a little later each time.
 let tries = 0;
 function connect() {
-  const app = new URL(APP);
-  const ws = new WebSocket(`${app.protocol == "https:" ? "wss:" : "ws:"}//${app.host}${asUser("/api/agent/events")}`);
+  const ws = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${asUser("/api/agent/events")}`);
   ws.onopen = () => {
     tries = 0;
     live((l) => l.connection("agent", true));
@@ -570,8 +557,6 @@ window.ergaAgentPanel = {
 // menu's Settings, and any link to "#settings", open it; so does an address that ends with #settings. A key saved or
 // removed there gives the agent other models: the panel reads them again.
 const settings = () => {
-  // (On the Ops pages, Settings is the app's: the dialog there.)
-  if (away) return void (location.href = `${APP}/docs#settings`);
   if (location.hash == "#settings") history.replaceState(history.state, "", location.pathname + location.search);
   void import("./settings-dialog").then((m) => m.openSettings());
 };

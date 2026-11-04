@@ -19,7 +19,7 @@ test("on /docs, your avatar in the upper right opens your menu; Escape closes it
   c = await corner(page);
   expect(c.open).toBe(true);
   expect(c.who).toContain("tester");
-  expect(c.links.map((l) => l.text)).toEqual(["Documents", "Settings", "Deploy your own", "Admin settings", "Sign out"]);
+  expect(c.links.map((l) => l.text)).toEqual(["Documents", "Settings", "Admin settings", "Sign out"]);
   await page.keyboard.press("Escape");
   await expect.poll(async () => (await corner(page)).open).toBe(false);
   await page.evaluate(() => document.querySelector("[data-erga-account] img")?.dispatchEvent(new Event("error")));

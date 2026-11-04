@@ -58,7 +58,7 @@ flowchart LR
   end
   D1[("D1: users, settings,<br/>documents and permissions")]
   R2[("R2: files that are not text")]
-  control["Control Worker (control/):<br/>repository, builds, deploys, Ops page"]
+  actions["GitHub Actions (deploy/):<br/>tests, build, deploy"]
   shell -- "HTTP" --> app
   shell -- "WebSocket (Yjs)" --> doc
   page -- "files, by a signed token" --> app
@@ -67,7 +67,7 @@ flowchart LR
   doc --> R2
   doc --> agents
   agents -- "model API" --> model["Anthropic"]
-  control -- "deploys" --> Worker
+  actions -- "deploys" --> Worker
 ```
 
 - **The shell** is the page at `/<owner>/<slug>` on the app's origin. It
@@ -90,10 +90,10 @@ flowchart LR
   a person's agent token, over the HTTP API or MCP (`server/api.ts`).
 - **The database** is D1: the users, the server's settings, and each
   document's address, owner and permissions (`server/directory/`).
-- **The control Worker** (`control/`) is apart from the app. It holds
-  Erga's Git repository, builds each commit in a container, deploys the
-  app, checks the app's health and rolls back a bad deploy. A broken app
-  cannot stop the way to fix it.
+- **The deploys.** GitHub holds Erga's repository (`koomen/erga`). GitHub
+  Actions runs the tests on each push, builds the commit, deploys it through
+  the Cloudflare API (`deploy/pipeline/`), checks the app's health and rolls
+  back a bad deploy. A broken app cannot stop the way to fix it.
 
 ## Self-host on Cloudflare
 
@@ -136,16 +136,14 @@ Erga's own servers are in `deploy/targets.json`. The repository
 targets. The rest of this part tells how they were set up.
 
 Erga needs a Cloudflare account on the Workers Paid plan: Workers, Durable
-Objects, D1 and R2, and for the control Worker, Containers (for builds) and
-Artifacts (for the repository). You need a zone for the app, and a
+Objects, D1, R2 and Browser Rendering. You need a zone for the app, and a
 separate zone for the pages origins, so that a page can never run on the
 app's origin.
 
-1. Put your values in `deploy/targets.json`: the account, the admins, the
-   hosts and zones, and the ids of your GitHub and Cloudflare OAuth apps.
-   You do not change code.
-2. Deploy production the first time (`bun deploy/run.ts production`), then
-   set up the control Worker and staging (`bun deploy/setup.ts`).
+1. `deploy/targets.json` has the values: the account, the admins, the hosts
+   and zones, and the ids of the GitHub OAuth apps.
+2. The first deploy of a target ran from a machine
+   (`bun deploy/run.ts production`), and its secrets were set by hand.
 3. After that, a push to `staging` on GitHub deploys staging, and a push to
    `main` deploys production.
 
@@ -200,6 +198,7 @@ health checks and rollbacks work.
                       own script (reader.ts), the documents list (docs.ts), the start page,
                       the account menu, the templates, and what every page shares (chrome.ts)
       home/           the homepage: its deploys (deploys.ts), serving / from the snapshot (serve.ts), the page (render.ts), the API
+      repo-api.ts     /api/repo: Erga's repository on GitHub, read-only (repo-github.ts)
       admin/          the admin pages, one file for each (settings.ts, api-keys.ts, auth.ts, access.ts, changes.ts,
                       users.ts), their routes (routes.ts) and the layout they share
       operations/     each thing a person does on the server, defined once (operation.ts): documents, sharing and
@@ -247,35 +246,26 @@ health checks and rollbacks work.
       pages/          the other pages' scripts: the settings, the pages tree
       live/           open pages across a redeploy (live.ts, client.ts, restore.ts)
       inline/         the scripts and styles a page carries inline, typed (build.ts --inline writes
-                      server/pages/inline-code.ts): the documents list, the Ops, install and admin pages, ...
+                      server/pages/inline-code.ts): the documents list, the admin pages, ...
       common/         what the inline scripts and the bundles share: fast-click.ts, new-doc.ts, bars.ts, quick.ts, ...
-      styles/         admin.css and ops.css, which the build writes as the admin pages' one stylesheet
+      styles/         admin.css, which the build writes as the admin pages' one stylesheet
     cloudflare/   only what runs on Cloudflare: the Worker's entry (index.ts), the Platform from its bindings
                   (platform.ts; env.ts types them), D1 (d1.ts), R2 (blobs.ts), the sandbox for pages' own APIs (sandbox.ts),
                   view_page's render in Browser Rendering (render.ts, browser.ts), the app's Durable Objects (objects/:
                   each gives its logic in server/, agents/ or document/ storage, alarms and sockets, and decides
                   nothing), what the deploy pipeline asks of the app (deploy-routes.ts), the dev server's routes
-                  (dev.ts, dev-entry.ts)
-    control/      the control Worker: Erga's repository and Git endpoint, the deploy pipeline, the Ops page and its
-                  sign-in, and the build container (builder/), apart from the app, so a broken app never takes the
-                  way to fix it down (index.ts the entry, settings.ts its settings, routes.ts, operations.ts: the Ops page's operations, which the app's
-                  /api/tools and every admin's agent have too, platform.ts, wrangler.jsonc: its bindings, env.ts types them; d1.ts). The app reaches it
-                  over a service binding; locally the app hosts its routes.
-      source/         Erga's own Git repository: its routes (routes.ts), the repository (repo.ts) and its Durable
-                      Object (source-host.ts), Git itself (git.ts, http.ts, merge.ts), the GitHub App (github.ts),
-                      the Ops page (page.ts) and its operations on the repository (operations.ts)
-      deploys/        the deploy pipeline (pipeline.ts; control-worker.ts for the control Worker's own deploy), its
-                      Cloudflare credential (credential.ts: an OAuth grant), branch deploys (branches.ts, in
-                      pipeline-object.ts), the release store (releases.ts), the Ops page's operations on the deploys (operations.ts), the event stream (api.ts)
-      install/        /deploy: installs in other accounts (install.ts, forks.ts, the page, its routes and session)
-      cloudflare.ts   what the control Worker has of Cloudflare: Artifacts, the GitHub App, the release bucket
-    deploy/       what a person runs on a machine: a deploy (run.ts), the GitHub Actions deploy (actions.ts, and
-                  actions-plan.ts, which decides what a push deploys), the release build (release.ts), the setup
-                  runbook (setup.ts), the first push of Erga's history (import-source.ts), the targets (targets.json,
-                  targets.ts), the settings a deploy locks (locked-settings.ts)
+                  (dev.ts)
+    deploy/       the deploys, which run on a machine or on GitHub Actions: Erga's own targets from a machine (run.ts),
+                  the GitHub Actions deploy (actions.ts, and actions-plan.ts, which decides what a push deploys), your
+                  own Erga (own/: `bun own`), the release build (release.ts), the targets (targets.json, targets.ts),
+                  the settings a deploy locks (locked-settings.ts)
+      pipeline/       the deploy pipeline through the Cloudflare API (pipeline.ts, and account.ts: the Worker's upload,
+                      D1, the health check, a rollback), the build of a checkout (build.ts, bundle.ts), the release's
+                      format and bindings (release-format.ts, bindings.ts), staging's copy of production's documents
+                      (copy-documents.ts)
     dev/          local development: start.ts (`bun start`), the Vite plugin, live reload, the server's own headless
                   Chrome for view_page (browser.ts), the formatter on changed
-                  lines (format.ts, `bun run format`), a Git server, a mock GitHub, Google and Cloudflare
+                  lines (format.ts, `bun run format`), a mock GitHub, Google and Cloudflare
                   (mock-cloudflare.ts) for tests, and the folders on disk that documents link to (the plugin)
     assets/       files the server ships: logo/, landing/ (the first homepage) and templates/ (new documents)
     docs/         self-host.md (deploy your own Erga), operations.md (how a deployment deploys), the screenshot above
@@ -285,24 +275,23 @@ health checks and rollbacks work.
 
 The folders are layers. A file imports only its own layer and the layers
 below it, lowest first: `shared/` (and each library's `api/`), `document/`, the areas of `server/`,
-`control/`, `agents/`, `server/app.ts` and `server/api.ts`, `cloudflare/`.
+`agents/`, `server/app.ts` and `server/api.ts`, `cloudflare/`.
 `client/` and each library's `ui/` import `shared/`, `libs/` and a few files of `document/`; `deploy/`,
 `dev/`, `tests/` and `e2e/` import anything. Each area of `server/`
 (directory, identity, documents, pages, home, admin, operations) is imported through
-its `index.ts`, its interface. Only `cloudflare/` and `control/` read the
-Workers' bindings, and `control/` never imports `cloudflare/`. `tests/imports.test.ts` has the whole rules and checks
-them.
+its `index.ts`, its interface. Only `cloudflare/` reads the Worker's bindings. `tests/imports.test.ts` has the
+whole rules and checks them.
 
 The configs at the root are the ones their tools look for there:
 `cloudflare.config.ts` (the Worker and its bindings), `vite.config.ts`,
 `e2e.config.ts`, `biome.json`, and the typecheck's three projects:
 `tsconfig.json` (what runs under Bun: deploy/, dev/, tests/, e2e/),
-`tsconfig.workers.json` (the Workers) and `tsconfig.browser.json` (the
+`tsconfig.workers.json` (the Worker) and `tsconfig.browser.json` (the
 browser).
 
 Building: `bun run build` (client/build.ts) writes the client's files to
 `.build/`; `bun run release` (deploy/release.ts) adds the Worker's release to
-`.build/release/`. The builder container runs both in each commit it deploys.
+`.build/release/`. A deploy runs both in the commit it deploys (deploy/pipeline/build.ts).
 
 ## License
 

@@ -1,12 +1,12 @@
 // The homepage: whether a document is the homepage and how its deploy goes (ls answers it, and the editor's settings
-// show it on the homepage), and its deploy again now (Redeploy there; admins only: the redeploy operation, with the
-// target homepage, control/deploys/operations.ts). The homepage itself is chosen on
-// /admin (the landing_document setting), never from the document.
+// show it on the homepage), and its deploy again now (Deploy there; admins only: the deploy_homepage operation). The
+// homepage itself is chosen on /admin (the landing_document setting), never from the document.
 
+import * as Schema from "effect/Schema";
 import type { DocRow } from "../directory/index.ts";
 import { forgetHome, HOME_FILES } from "../home/index.ts";
 import { byLine } from "../../shared/attribution.ts";
-import { type Caller, OperationError, platformOf } from "./operation.ts";
+import { type Caller, type Operation, OperationError, platformOf } from "./operation.ts";
 
 /**
  * The homepage's state, for ls, if `doc` is the homepage (else null): how its deploy goes, whether the caller may
@@ -19,14 +19,14 @@ export async function homepageOf(caller: Caller, doc: DocRow) {
   return { isHome: true, canDeploy: unlocked, locked: admin && !unlocked, deploy: await platformOf(caller).home.status() };
 }
 
-/** How long redeploy waits for the homepage's deploy to end (it usually takes well under a second). */
+/** How long deploy_homepage waits for the homepage's deploy to end (it usually takes well under a second). */
 const DEPLOY_WAIT_MS = 30_000;
 
 /**
- * Deploys the homepage again now, as `caller` (an admin: the redeploy operation checks), as Redeploy in its settings
- * does, and waits for the deploy to end: the answer has the version now live, the live address and each file's.
+ * Deploys the homepage again now, as `caller` (an admin: the operation checks), as Deploy in its settings does, and
+ * waits for the deploy to end: the answer has the version now live, the live address and each file's.
  */
-export async function redeployHome(caller: Caller) {
+async function redeployHome(caller: Caller) {
   const { dir, who } = caller;
   if (!(await dir.homeId()))
     throw new OperationError({
@@ -52,3 +52,17 @@ export async function redeployHome(caller: Caller) {
       : null;
   return { isHome: true, canDeploy: true, locked: false, deploy, live };
 }
+
+export const HOME_OPERATIONS: Operation[] = [
+  {
+    name: "deploy_homepage",
+    ui: "The editor's settings, on the homepage: Homepage, Deploy",
+    label: "Deploy the homepage",
+    activity: "deploying the homepage",
+    admin: true,
+    description:
+      "Deploys the homepage (landing_document) as it is now: answers when it is live, with each file's live address (live.files).",
+    parameters: Schema.Struct({}),
+    run: (_, caller) => redeployHome(caller),
+  },
+];

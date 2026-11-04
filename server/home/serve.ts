@@ -14,7 +14,7 @@ import { whoOf, type Platform } from "../platform.ts";
 import type { LivePage } from "./deploys.ts";
 import { HOME_FILES, homeHeader, pageInter, withHomeLlm, withToken } from "./render.ts";
 import { pageToken } from "./llm-token.ts";
-import { actingAdmin, mayDeploy } from "../identity/index.ts";
+import { actingAdmin } from "../identity/index.ts";
 
 /** The snapshot as this isolate last had it, and when it last asked whether it's still current. */
 let memo: { page: LivePage; checked: number } | null = null;
@@ -105,7 +105,7 @@ async function homePage(request: Request, platform: Platform): Promise<Response 
     return homeHeader({
       clone: link("/new?from=landing", session),
       edit: session && !session.agent && roleMay(role, "edit") ? withEdit(link(page.address, session)) : null,
-      account: accountOf(session, admin, await mayDeploy(dir, session)),
+      account: accountOf(session, admin),
       here: url.pathname + url.search,
       doc: page.docId,
       font: !pageInter(page.before),

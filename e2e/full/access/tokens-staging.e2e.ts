@@ -1,5 +1,5 @@
 // Staging: an admin's token without the admin scope reaches the API, MCP and its documents,
-// within its own scope, while its person is an admin; nothing of the admins' (pages, APIs, settings, deploys, Git).
+// within its own scope, while its person is an admin; nothing of the admins' (pages, APIs, settings, Git).
 import { expect, servers, test, until } from "../../helpers/fixtures";
 import { mockGithubId } from "../../../dev/github-mock";
 import { getter, mint, publish, tool } from "./access";
@@ -19,19 +19,14 @@ const ADMINS = (doc: { id: string; address: string }) =>
     ["GET", "/admin"],
     ["GET", "/admin/api-keys"],
     ["GET", "/admin/users"],
-    ["GET", "/admin/ops"],
     ["POST", "/api/tools/set_setting"],
     ["GET", "/api/agent"],
-    ["POST", "/api/tools/deploys"],
-    ["POST", "/api/tools/branches"],
-    ["GET", "/api/events"],
     ["GET", "/settings"],
     ["GET", "/tokens"],
     ["POST", "/tokens/new"],
     ["GET", "/docs"],
     ["GET", "/new"],
-    ["GET", "/deploy"],
-    ["POST", "/api/tools/redeploy"],
+    ["POST", "/api/tools/deploy_homepage"],
     ["GET", doc.address],
     ["GET", "/git/erga.git/info/refs?service=git-upload-pack"],
 ] as const;

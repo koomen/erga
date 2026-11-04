@@ -6,8 +6,6 @@
 // start`, dev/start.ts) the same Worker runs under Vite.
 import { bindings, defineConfig, exports, triggers } from "cf/config";
 import * as entrypoint from "./cloudflare/index.ts" with { type: "cf-worker" };
-// In development the entry adds the control Worker's objects, which the app hosts only there (cloudflare/dev-entry.ts).
-import * as devEntrypoint from "./cloudflare/dev-entry.ts" with { type: "cf-worker" };
 // The server settings the deploy fixes (locks): deploy/locked-settings.ts, with ERGA_SERVER_CONFIG
 // (JSON, from the environment) over them. client/build.ts and dev/start.ts check them first (`bun deploy/locked-settings.ts`).
 import { deployed } from "./deploy/locked-settings.ts";
@@ -33,7 +31,7 @@ export default defineConfig(({ mode }) => ({
     name: PROD.worker,
     compatibilityDate: "2026-09-30",
     compatibilityFlags: ["nodejs_compat"],
-    entrypoint: mode == "development" ? devEntrypoint : entrypoint,
+    entrypoint,
     domains: [PROD.host],
     // Each document's page runs on an origin of its own, <id>-<owner>.erga-pages.dev:
     // a wildcard route, with a proxied wildcard DNS record
@@ -54,13 +52,12 @@ export default defineConfig(({ mode }) => ({
     exports: {
       // Each document (cloudflare/objects/document.ts), named by its id.
       DocumentObject: exports.durableObject({ storage: "sqlite" }),
-      // The deploy page's sessions (/deploy, control/install/session.ts): each holds one person's Cloudflare token, only while they deploy.
-      Deployer: exports.durableObject({ storage: "sqlite" }),
-      // Erga's repository ("erga") and the deploys ("deploys") are the control Worker's objects (control/wrangler.jsonc).
-      // The app hosts them only in local development, where it plays the control Worker over the mock Cloudflare.
-      // On erga.dev and staging they are gone, with what they held (the old history and index, until 2026-10-13).
-      SourceHost: exports.durableObject(mode == "development" ? { storage: "sqlite" } : { state: "deleted" }),
-      Pipeline: exports.durableObject(mode == "development" ? { storage: "sqlite" } : { state: "deleted" }),
+      // The deploy page's sessions (/deploy, which installed Erga in other accounts): gone, with what they held (2026-11-04).
+      Deployer: exports.durableObject({ state: "deleted" }),
+      // Erga's repository and the deploys, which the control Worker held before: gone, with what they held (the old
+      // history and index, until 2026-10-13).
+      SourceHost: exports.durableObject({ state: "deleted" }),
+      Pipeline: exports.durableObject({ state: "deleted" }),
       // The homepage's deploys and the snapshot / serves: one object, "home".
       Home: exports.durableObject({ storage: "sqlite" }),
       // The server's own small storage (the sign-in values set on /admin/auth): one object, "own", which no copy of another server's data replaces.
@@ -83,12 +80,6 @@ export default defineConfig(({ mode }) => ({
     },
     env: {
       DOCUMENTS: bindings.durableObject({ worker: PROD.worker, exportName: "DocumentObject" }),
-      DEPLOYS: bindings.durableObject({ worker: PROD.worker, exportName: "Deployer" }),
-      // Local development only: the control Worker's objects, hosted here (the dev server stands in for Artifacts and GitHub).
-      ...(mode == "development" ? {
-        PIPELINE: bindings.durableObject({ worker: PROD.worker, exportName: "Pipeline" }),
-        SOURCE: bindings.durableObject({ worker: PROD.worker, exportName: "SourceHost" }),
-      } : {}),
       HOME: bindings.durableObject({ worker: PROD.worker, exportName: "Home" }),
       OWN: bindings.durableObject({ worker: PROD.worker, exportName: "OwnStorage" }),
       NEWS: bindings.durableObject({ worker: PROD.worker, exportName: "NewsHub" }),
@@ -115,12 +106,9 @@ export default defineConfig(({ mode }) => ({
       // ERGA_GITHUB_CLIENT_ID (development only) overrides the target's, "" for none: tests simulate a target with no app.
       GITHUB_CLIENT_ID: bindings.text(mode == "development" && process.env.ERGA_GITHUB_CLIENT_ID !== undefined ? process.env.ERGA_GITHUB_CLIENT_ID : mode == "development" && TARGETS.targets[process.env.ERGA_DEPLOY_TARGET ?? ""] ? TARGETS.targets[process.env.ERGA_DEPLOY_TARGET!].vars.GITHUB_CLIENT_ID ?? "" : PROD.vars.GITHUB_CLIENT_ID),
 
-      // Which branch-deploy target this server is: the pipeline sets it on each target it deploys
-      // ("staging" on erga-staging; empty on a server /deploy made). Locally: ERGA_DEPLOY_TARGET.
+      // Which of Erga's own targets this server is: the pipeline sets it on each target it deploys
+      // ("staging" on erga-staging; empty on a fork's server). Locally: ERGA_DEPLOY_TARGET.
       DEPLOY_TARGET: bindings.text(mode == "development" ? (process.env.ERGA_DEPLOY_TARGET ?? "") : PROD.name),
-      // The deploy page's Cloudflare OAuth client (public, PKCE: no secret), made under Manage Account > OAuth clients
-      // with the callback https://erga.dev/deploy/auth/cloudflare/callback. Empty: /deploy offers the API token link only.
-      CLOUDFLARE_OAUTH_CLIENT_ID: bindings.text(process.env.CLOUDFLARE_OAUTH_CLIENT_ID ?? ""),
       ...optionalSecret(mode, "GITHUB_CLIENT_SECRET"),
       SESSION_SECRET: bindings.secret(),
       ANTHROPIC_API_KEY: bindings.secret(),
@@ -146,22 +134,7 @@ export default defineConfig(({ mode }) => ({
 
         // Sign-in's settings, for the tests: a stand-in for github.com (the dev server's pretend GitHub unless given), and the other target's server.
         ERGA_GITHUB_ORIGIN: bindings.text(process.env.ERGA_GITHUB_ORIGIN ?? (process.env.ERGA_DEV_ORIGIN ? `${process.env.ERGA_DEV_ORIGIN}/__github` : "")),
-        // Erga's GitHub App, as the pretend GitHub knows it (dev/github-mock.ts, dev/vite-plugin.ts): the control routes the dev server
-        // serves sign in, connect and take the webhook with it. The key is made at each start (dev/start.ts).
-        GITHUB_APP_ID: bindings.text("1"),
-        GITHUB_APP_SLUG: bindings.text("erga-editor"),
-        GITHUB_APP_CLIENT_ID: bindings.text("Iv1.mockgithubapp0"),
-        GITHUB_APP_CLIENT_SECRET: bindings.text("mock-github-client-secret"),
-        GITHUB_APP_PRIVATE_KEY: bindings.text(process.env.ERGA_GITHUB_APP_KEY ?? ""),
-        GITHUB_WEBHOOK_SECRET: bindings.text("mock-webhook-secret"),
-        // A downstream dev server (ERGA_UPSTREAM): its fork's secret at upstream (tests set it; the webhook relay signs with its hash).
-        FORK_SECRET: bindings.text(process.env.ERGA_FORK_SECRET ?? ""),
-        // "1": /deploy and the branch deploys talk to a pretend Cloudflare, for their tests and for trying them safely.
-        ERGA_DEPLOY_MOCK: bindings.text(process.env.ERGA_DEPLOY_MOCK ?? ""),
-        // The dev server as a downstream of another (the tests start two): where upstream is, and the channel followed.
-        UPSTREAM: bindings.text(process.env.ERGA_UPSTREAM ?? ""),
-        CHANNEL: bindings.text(process.env.ERGA_CHANNEL ?? ""),
-        // The dev server's address, where its stand-ins for Artifacts and GitHub answer.
+        // The dev server's address, where its stand-in for GitHub and its own headless Chrome answer.
         ERGA_DEV_ORIGIN: bindings.text(process.env.ERGA_DEV_ORIGIN ?? ""),
         // The agent's key: a real one in .dev.vars, else the environment's, so a
         // placeholder in .dev.vars doesn't hide the key you exported. Never written to .dev.vars.

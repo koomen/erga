@@ -39,10 +39,6 @@ const appsOf = (platform: SignInPlatform) => new AuthApps(platform.own, platform
 // One per isolate and provider: a page that opens often asks GitHub or Google at most once a minute for the same values.
 const checks = new Map<Provider, { origin: string; check: (v: AppValues) => Promise<AppCheck> }>();
 const checkOf = (platform: SignInPlatform, provider: Provider) => {
-  // An install's server signs in with Erga's apps through erga.dev: nothing to check here, and nothing to paste.
-  if (platform.signIn.relay) return async (v: AppValues): Promise<AppCheck> => (v.clientId
-    ? { state: "working", summary: `Sign-in uses Erga's ${PROVIDERS[provider].label} app, through ${platform.signIn.relay}.`, reasons: [], at: Date.now() }
-    : { state: "not_set_up", summary: `This server has no client ID for Erga's ${PROVIDERS[provider].label} app.`, reasons: [`${PROVIDERS[provider].idEnv} isn't set.`], at: Date.now() });
   const origin = provider == "github" ? platform.signIn.github : platform.signIn.google ?? "";
   const had = checks.get(provider);
   if (had?.origin == origin) return had.check;

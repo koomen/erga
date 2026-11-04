@@ -18,7 +18,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { type AiError, LanguageModel, Prompt, Tool, type Response, type Toolkit } from "effect/ai";
 import { fileRefs, messageContent, type Attachment } from "../shared/attach";
-import { emptyLog, offerOf, reduce, type Log, type LogEvent } from "../shared/agent-log";
+import { emptyLog, reduce, type Log, type LogEvent } from "../shared/agent-log";
 import type { ToolContent } from "../document/agent";
 import {
   CUT,
@@ -34,10 +34,10 @@ import {
 import { fit, isModelChoice, languageModel, messagesFor, modelError, MODELS, usable, type AgentConfig, type ModelChoice } from "./models";
 import type { Usable } from "../shared/models";
 
-/** What a tool answers: content for the model (and the panel), and an `offer` (a button for the person) for the panel. */
+/** What a tool answers: content for the model (and the panel). */
 export interface ToolOutput {
   content: ToolContent[];
-  details?: { offer?: unknown };
+  details?: Record<string, never>;
 }
 
 /** A tool, as the embedded agents run it: its arguments as an Effect Schema (the model gets its JSON Schema). */
@@ -256,7 +256,6 @@ export function startLoop(opts: LoopOptions): AgentLoop {
       status: isError ? "error" : "done",
       detail: isError ? resultText(out).slice(0, 400) : undefined,
       image: isError ? undefined : resultImage(out),
-      offer: isError ? undefined : offerOf(out),
     });
   };
 

@@ -3,13 +3,13 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Cloudflare, findDatabase } from "../../control/deploys/pipeline";
-import { d1 } from "../../control/deploys/account";
+import { Cloudflare, findDatabase } from "../pipeline/pipeline";
+import { d1 } from "../pipeline/account";
 import { machineCredential } from "../local-credential";
 import { type Answers, type Facts, hostOf, namesOf, type TargetFacts, type TargetName, targetsOf } from "./plan";
 import { loadSecrets, type Own, ROOT, secretNames } from "./store";
 
-export const UPSTREAM = "https://erga.dev/git/erga.git";
+export const UPSTREAM = "https://github.com/koomen/erga.git";
 const git = (...args: string[]) => {
   const r = Bun.spawnSync(["git", ...args], { cwd: ROOT });
   return r.exitCode == 0 ? r.stdout.toString().trim() : null;

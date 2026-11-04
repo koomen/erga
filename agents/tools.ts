@@ -1,12 +1,12 @@
 // Every tool an agent has on the server, as its person. The tools are the
-// operations (server/operations/, and the Ops page's, control/operations.ts: the same ones the front end calls
+// operations (server/operations/: the same ones the front end calls
 // over POST /api/tools/<name>), and each document tool (read, edit, write, ...
 // of agents/document/tools.ts) for any document the caller names, run in that
 // document's host as the person's agent (`documentTools`). An agent sees them as a few tools, one for each kind of
 // action (KINDS), whose `op` argument names the operation or document tool.
 //
 //   a person's own agent (agents/person/sessions.ts) every operation its person may use (the admin ones, with admin
-//                        power, for an admin: the Ops page's too), and the document tools for any document
+//                        power, for an admin), and the document tools for any document
 //   an outside agent     (server/api.ts: /api/tools, /mcp) every operation its token's person may use (the admin
 //                        ones only with an admin token; none that reach beyond one document with a document token),
 //                        and the document tools for any document
@@ -29,14 +29,6 @@ import {
 } from "../server/operations/index.ts";
 import type { ToolContent } from "../document/agent.ts";
 import { CHANGES, documentToolSpecs } from "./document/tools.ts";
-import { CONTROL_OPERATIONS } from "../control/operations.ts";
-
-/**
- * Every operation: the server's (server/operations/), and the Ops page's (control/operations.ts), which work the
- * control Worker's repository and deploys and so live in control/, above server/. Add one to either list and the
- * front end's API, every agent and MCP have it.
- */
-export const ALL_OPERATIONS: Operation[] = [...OPERATIONS, ...CONTROL_OPERATIONS];
 
 /** A tool, for any agent: an operation, or a document tool for any document. */
 export type Tool = Omit<Operation, "ui"> & { readonly ui?: string };
@@ -156,23 +148,13 @@ export const KINDS: readonly {
   },
   {
     name: "settings",
-    description: "The server's settings, API keys and change log, and how people sign in (admins).",
-    ops: ["settings", "set_setting", "clear_api_key", "sign_in", "set_sign_in"],
+    description: "The server's settings, API keys and change log, how people sign in, the homepage's deploy (admins).",
+    ops: ["settings", "set_setting", "clear_api_key", "sign_in", "set_sign_in", "deploy_homepage"],
   },
   {
     name: "people",
     description: "The server's users, their roles and the group rules (admins).",
     ops: ["people", "set_user", "set_access"],
-  },
-  {
-    name: "erga_code",
-    description: "Erga's own server code, not a document's files: its source, branches, GitHub, upstream (admins).",
-    ops: ["source", "branches", "feature_branch", "github", "waiting_merge", "resolve_conflict_file"],
-  },
-  {
-    name: "deploys",
-    description: "Deploys: their state and logs, a redeploy, a rollback, production, releases, domains (admins).",
-    ops: ["deploys", "redeploy", "rollback", "deploy_production", "cut_release", "set_domain", "disconnect_deploy_credential"],
   },
 ];
 
@@ -274,7 +256,7 @@ function kindOf(k: (typeof KINDS)[number], members: Tool[], open: boolean): Kind
 }
 
 /** Every tool there is: the agents' (each kind, with all of its own), then each operation and document tool by its own name. */
-export const allTools = (): Tool[] => [...kindsOf([...ALL_OPERATIONS, ...documentTools()], false), ...ALL_OPERATIONS, ...documentTools()];
+export const allTools = (): Tool[] => [...kindsOf([...OPERATIONS, ...documentTools()], false), ...OPERATIONS, ...documentTools()];
 
 /**
  * The tools a caller may use: the kinds of the operations it's offered (the admin ones only with admin power; none
@@ -283,7 +265,7 @@ export const allTools = (): Tool[] => [...kindsOf([...ALL_OPERATIONS, ...documen
  */
 export async function toolsFor(caller: Caller, open = false): Promise<Tool[]> {
   const ops: Tool[] = [];
-  for (const op of ALL_OPERATIONS) if (await offered(op, caller)) ops.push(op);
+  for (const op of OPERATIONS) if (await offered(op, caller)) ops.push(op);
   return kindsOf([...ops, ...(open ? documentToolsHere() : documentTools())], open);
 }
 
@@ -357,10 +339,9 @@ export function agentTools(tools: Tool[], caller: Caller | (() => Caller) | null
 }
 
 
-/** A tool's answer as the agent loop takes it: the text for the model; content items as they are; an `offer` in it (a button for the person) goes to the panel too. */
+/** A tool's answer as the agent loop takes it: the text for the model; content items as they are. */
 export function toolResult(out: unknown): ToolOutput {
   if (Array.isArray(out) && out.every((c) => c && typeof c == "object" && "type" in c))
     return { content: out as ToolOutput["content"], details: {} };
-  const offer = out && typeof out == "object" && "offer" in out ? (out as { offer: unknown }).offer : undefined;
-  return { content: [{ type: "text" as const, text: typeof out == "string" ? out : JSON.stringify(out, null, 2) }], details: offer ? { offer } : {} };
+  return { content: [{ type: "text" as const, text: typeof out == "string" ? out : JSON.stringify(out, null, 2) }], details: {} };
 }

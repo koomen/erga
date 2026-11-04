@@ -1,4 +1,4 @@
-// The Users page's script (/admin/users, server/admin/users.ts): add a user, change a role or the deploy role, remove one.
+// The Users page's script (/admin/users, server/admin/users.ts): add a user, change a role, remove one.
 // Each change goes to the server, which checks it (admins only, and never the last admin); the page reloads to show the
 // list as it is now.
 
@@ -47,12 +47,11 @@ export default function adminUsers(c: UsersConfig): void {
       "Adding…"
     );
   });
-  /** A user's or a waiting person's row: the role, the deploy role, Remove. */
+  /** A user's or a waiting person's row: the role, Remove. */
   function wire(li: HTMLElement) {
     const login = li.dataset.login,
       person = li.dataset.person,
       role = li.querySelector<HTMLSelectElement>("select.role")!,
-      deploy = li.querySelector<HTMLInputElement>("input.deploy"),
       remove = li.querySelector(".remove")!;
     const whom: Record<string, unknown> = login ? { login } : { person: Number(person) };
     let was = role.value;
@@ -63,11 +62,6 @@ export default function adminUsers(c: UsersConfig): void {
       if (login == me && was == "admin" && !confirm("Stop being an admin? You won't see the admin pages any more.")) return undo();
       change({ action: "role", ...whom, role: role.value }, "Saving…", undo);
     });
-    deploy?.addEventListener("change", () =>
-      change({ action: "deploy", login: login!, deploy: deploy.checked }, "Saving…", () => {
-        deploy.checked = !deploy.checked;
-      })
-    );
     remove.addEventListener("click", () => {
       if (
         !confirm(
