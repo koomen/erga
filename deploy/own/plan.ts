@@ -205,6 +205,8 @@ export interface TargetFacts {
   adminIn: boolean | null;
   /** The company preset's access rule is there. */
   rule: boolean | null;
+  /** What Erga's Worker holds now: its secrets' names, and its plain values (the sign-in apps' ids). Null: no Worker of ours. */
+  held: { secrets: string[]; vars: Record<string, string> } | null;
 }
 
 export type Who = "agent" | "person";
@@ -223,6 +225,10 @@ export interface Step {
  * Every step, in order, with its state from what was observed. The first step that isn't done is the next one; each
  * says who does it (the agent, or the person) and exactly how.
  */
+/** The secret is in the secrets file, or on a server's Worker already: a deploy keeps a secret it doesn't send. */
+export const hasSecret = (f: Facts, key: string) =>
+  f.secrets.includes(key) || Object.values(f.targets).some((t) => t?.held?.secrets.includes(key));
+
 export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { github?: string; google?: string } }): Step[] {
   const out: Step[] = [];
   const page = o.port ? `http://localhost:${o.port}` : "the checklist page (bun own start)";
@@ -266,13 +272,13 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
     next: `The agent asks all of them in one message (bun own ask shows them, with defaults), then records the answers with bun own set key=value ... The person can also answer on ${page}.`,
   });
   if (!a || problem) return out;
-  const ghKey = "GITHUB_CLIENT_SECRET";
+  const ghSecret = hasSecret(f, "GITHUB_CLIENT_SECRET");
   add({
     id: "github",
     title: "GitHub sign-in app",
     who: "person",
-    ok: !!o.ids.github && f.secrets.includes(ghKey),
-    detail: o.ids.github ? `client id ${o.ids.github}${f.secrets.includes(ghKey) ? ", secret stored" : ", no secret yet"}` : "none yet",
+    ok: !!o.ids.github && ghSecret,
+    detail: o.ids.github ? `client id ${o.ids.github}${ghSecret ? ", secret stored" : ", no secret yet"}` : "none yet",
     next: `On ${page}, the person clicks "Create the GitHub App", then "Create GitHub App" on GitHub. Erga stores its id and secret by itself. (Already have an app? bun own signin github --from-file <file with GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET>, and add the callback ${targetsOf(
       a
     )
@@ -284,7 +290,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
       id: "google",
       title: "Google sign-in client",
       who: "person",
-      ok: !!o.ids.google && f.secrets.includes("GOOGLE_CLIENT_SECRET"),
+      ok: !!o.ids.google && hasSecret(f, "GOOGLE_CLIENT_SECRET"),
       detail: o.ids.google ? `client id ${o.ids.google}` : "none yet",
       next: `The person makes an OAuth client at https://console.cloud.google.com/auth/clients/create (type: Web application; authorized redirect URI${a.staging ? "s" : ""}: ${targetsOf(
         a

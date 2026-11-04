@@ -160,7 +160,32 @@ async function targetFacts(
     }
   }
   void head;
-  return { worker, address, version: v?.version ?? null, health, signIn, adminIn, rule };
+  return {
+    worker,
+    address,
+    version: v?.version ?? null,
+    health,
+    signIn,
+    adminIn,
+    rule,
+    held: worker == "ours" ? await heldBy(cf, acc, n.worker) : null,
+  };
+}
+
+/** The Worker's bindings now: the names of its secrets (never their values), and its plain values. */
+async function heldBy(cf: Cloudflare, acc: string, worker: string): Promise<TargetFacts["held"]> {
+  const r = await cf
+    .call<{ bindings?: { type: string; name: string; text?: string }[] }>(
+      "GET",
+      `${acc}/workers/scripts/${worker}/settings`,
+      "read the Worker's settings"
+    )
+    .catch(() => null);
+  if (!r?.bindings) return null;
+  return {
+    secrets: r.bindings.filter((b) => b.type == "secret_text").map((b) => b.name),
+    vars: Object.fromEntries(r.bindings.filter((b) => b.type == "plain_text").map((b) => [b.name, b.text ?? ""])),
+  };
 }
 
 /** Everything `bun own status` decides from. */
