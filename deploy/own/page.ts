@@ -3,7 +3,7 @@
 // with the agent (.erga/inbox.jsonl; the agent reads it with `bun own inbox --wait` and answers with `bun own say`).
 // It listens on 127.0.0.1 only, and takes a POST only from its own origin.
 
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { esc } from "../../shared/html";
@@ -135,6 +135,7 @@ export async function startPage(wanted: number, open: boolean) {
       return new Response("Not found.", { status: 404 });
     },
   });
+  mkdirSync(DIR, { recursive: true, mode: 0o700 });
   writeFileSync(join(DIR, "page.port"), String(server.port));
   console.log(`PASS  The checklist page: http://localhost:${server.port}/`);
   console.log("NEXT  Give the person this address. Keep this command running (in the background).");
