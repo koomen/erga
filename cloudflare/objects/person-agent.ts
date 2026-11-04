@@ -10,6 +10,7 @@ import { DurableObject } from "cloudflare:workers";
 import { STALE_MS } from "../../agents/chat-store";
 import { PersonAgents, type PersonAgentObject } from "../../agents/person/sessions.ts";
 import { platform } from "../platform";
+import { blobsOf } from "../blobs";
 import type { Env } from "../env";
 
 export class PersonAgent extends DurableObject<Env> implements PersonAgentObject {
@@ -17,7 +18,12 @@ export class PersonAgent extends DurableObject<Env> implements PersonAgentObject
     exec: <T>(query: string, ...params: (string | number | null)[]) => this.ctx.storage.sql.exec(query, ...params).toArray() as T[],
     transaction: <R>(f: () => R) => this.ctx.storage.transactionSync(f),
   };
-  private agents = new PersonAgents({ sql: this.sql, platform: platform(this.env), watch: () => void this.watch() });
+  private agents = new PersonAgents({
+    sql: this.sql,
+    platform: platform(this.env),
+    blobs: blobsOf(this.env),
+    watch: () => void this.watch(),
+  });
 
   agentState(login: string, origin: string, name?: string) {
     return this.agents.agentState(login, origin, name);

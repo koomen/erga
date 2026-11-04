@@ -86,7 +86,9 @@ export const jsonSchemaOf = (t: Tool): { type: "object"; required?: string[] } =
 // ---------------------------------------------------------------- the agents' tools: a few, each a kind of action
 
 /** Files by path, as a kind shows them: create_document and write check each one. */
-const FILES = Schema.Record(Schema.String, Schema.Unknown).annotate({ description: 'Each path: its text, or {"base64": "..."}.' });
+const FILES = Schema.Record(Schema.String, Schema.Unknown).annotate({
+  description: 'Each path: its text, or {"base64": "..."}; for write, also {"blob": "<sha-256>"}: an image sent to you.',
+});
 
 /**
  * The tools an agent sees: a few, each a kind of thing a person does, with `op` to pick the operation or document

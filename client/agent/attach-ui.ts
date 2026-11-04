@@ -157,19 +157,31 @@ export function attachments(o: AttachOptions): Attachments {
     }));
   }
 
-  // Dropping: the panel lights up while files are dragged over it. Drags
-  // that aren't files (text, a link) are left alone.
-  let depth = 0;
+  // Dropping: the panel lights up while files are dragged over it. Drags that aren't files (text, a link) are left
+  // alone. Lit while dragover comes (the browser sends one every few ms, even with the pointer still): a count of
+  // dragenter and dragleave goes wrong when the browser sends a stray dragleave between the panel's parts.
+  let unlight = 0;
   const isFiles = (e: DragEvent) => [...e.dataTransfer?.types ?? []].includes("Files");
-  pane.addEventListener("dragenter", (e) => { if (!isFiles(e)) return; e.preventDefault(); depth++; pane.classList.add("agent-drop"); });
-  pane.addEventListener("dragover", (e) => { if (!isFiles(e)) return; e.preventDefault(); e.dataTransfer!.dropEffect = "copy"; });
-  pane.addEventListener("dragleave", (e) => { if (!isFiles(e)) return; if (--depth <= 0) { depth = 0; pane.classList.remove("agent-drop"); } });
+  const light = (on: boolean) => {
+    clearTimeout(unlight);
+    pane.classList.toggle("agent-drop", on);
+    if (on) unlight = window.setTimeout(() => light(false), 300);
+  };
+  for (const type of ["dragenter", "dragover"])
+    pane.addEventListener(type, (e) => {
+      if (!isFiles(e as DragEvent)) return;
+      e.preventDefault();
+      (e as DragEvent).dataTransfer!.dropEffect = "copy";
+      light(true);
+    });
+  pane.addEventListener("dragleave", (e) => {
+    if (isFiles(e) && !pane.contains(e.relatedTarget as Node | null)) light(false);
+  });
   pane.addEventListener("drop", (e) => {
     if (!isFiles(e)) return;
     e.preventDefault();
     e.stopPropagation();
-    depth = 0;
-    pane.classList.remove("agent-drop");
+    light(false);
     add([...e.dataTransfer!.files]);
     input.focus();
   });

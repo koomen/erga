@@ -37,6 +37,9 @@ import { VIA } from "../../shared/attribution.ts";
 import { authOps } from "../../server/identity/index.ts";
 import type { Platform } from "../../server/platform.ts";
 import * as Effect from "effect/Effect";
+import { Base64 } from "effect/encoding";
+import * as Result from "effect/Result";
+import { storeBlob, type BlobStore } from "../../document/blobs.ts";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import { call, ctx, fromWeb, json, type Route } from "../../server/http.ts";
@@ -59,6 +62,8 @@ export interface PersonAgentsDeps {
   sql: ChatSql;
   platform: Platform;
   watch?: () => void;
+  /** Where an image sent to the agent is kept, so the agent can add it to a document (write's {"blob": ...}). */
+  blobs?: BlobStore;
 }
 
 export class PersonAgents {
@@ -163,6 +168,14 @@ export class PersonAgents {
     const files = checkAttachments(attached);
     if (typeof files == "string") return { ok: false, reason: files };
     if (!text.trim() && !files.length) return { ok: false, reason: "say something" };
+    // Each image is kept as a blob: the agent adds it to a document by its hash, without its bytes.
+    const blobs = this.deps.blobs;
+    if (blobs)
+      for (const f of files)
+        if (f.kind == "image") {
+          const bytes = Base64.decode(f.data);
+          if (Result.isSuccess(bytes)) f.blob = (await Effect.runPromise(storeBlob(blobs, bytes.success))).hash;
+        }
     s.here = typeof doc == "string" && /^[a-z0-9-]{1,64}$/.test(doc) ? doc : null;
     s.agent.prompt(text.slice(0, 20000), context ? context.slice(0, 4000) : null, files);
     return { ok: true };

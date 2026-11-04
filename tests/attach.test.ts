@@ -41,5 +41,11 @@ test("the model gets images as images and text files as text, after the message"
   const c = messageContent("Look", files) as { type: string; text?: string; data?: string; mediaType?: string }[];
   expect(c[0]).toEqual({ type: "text", text: `Look\n\n<file name="a.csv">\nx,y\n1,2\n</file>\n\n(Attached image: s.png)` });
   expect(c[1]).toEqual({ type: "file", mediaType: "image/png", data: "AAAA" });
-  expect(fileRefs(files)).toEqual([{ name: "a.csv", kind: "text", size: 7 }, { name: "s.png", kind: "image", size: 3, thumb: "data:image/jpeg;base64,AA" }]);
+  expect(fileRefs(files)).toEqual([
+    { name: "a.csv", kind: "text", size: 7 },
+    { name: "s.png", kind: "image", size: 3, thumb: "data:image/jpeg;base64,AA" },
+  ]); // An image the server kept: the agent gets its blob, to add it to a document.
+  const kept = messageContent("Add it", [{ ...files[1], blob: "ab".repeat(32) }]) as { text?: string }[];
+  expect(kept[0].text).toContain(`- s.png: {"blob": "${"ab".repeat(32)}"}`);
+  expect(kept[0].text).toContain(`{"images/s.png": {"blob": "…"}}`);
 });

@@ -47,9 +47,24 @@ test("the panel lights up while files are dragged over it, and stops when they l
   const ed = await open(tab);
   await drag(ed, "dragenter", "csv");
   expect(await lit(ed)).toBe(true);
-  expect(await ed.eval<string>(`getComputedStyle(document.getElementById("agent-log"), "::after").content`)).toContain("Drop files");
+  expect(await ed.eval<string>(`getComputedStyle(document.querySelector("#agent .agent-card"), "::after").content`)).toContain(
+    "Drop files"
+  );
   await drag(ed, "dragleave", "csv");
   expect(await lit(ed)).toBe(false);
+});
+
+test("the panel stays lit while files are still dragged over it, after a stray dragleave from inside it; it goes out once they stop", async ({
+  tab,
+}) => {
+  const ed = await open(tab);
+  await drag(ed, "dragenter", "csv");
+  // (Chrome can send a dragleave as the pointer moves between the panel's parts: the drag goes on.)
+  await drag(ed, "dragleave", "csv");
+  await drag(ed, "dragover", "csv");
+  expect(await lit(ed)).toBe(true);
+  // No more dragover (the files went elsewhere, with no dragleave here): it goes out by itself.
+  await expect.poll(() => lit(ed)).toBe(false);
 });
 
 test("a dropped CSV waits as a chip with its name and size; a PDF and a too-big text file are refused, with why", async ({ tab }) => {
@@ -105,6 +120,44 @@ test("Send takes the files: the model gets the pictures as images (the big one s
   await ed.loaded();
   await ed.openAgent();
   await expect.poll(async () => (await sent(ed)).files).toEqual(want);
+});
+
+test("an image sent to the agent is kept: the agent adds it to a document's files by its blob, as it was sent", async ({ tab }) => {
+  const ed = await open(tab);
+  await paste(ed, "shot");
+  await expect.poll(() => chips(ed)).toHaveLength(1);
+  // (Small enough to go as it is: the blob is the file's own sha-256.)
+  const hash = await ed.eval<string>(
+    `__files.shot.arrayBuffer().then((b) => crypto.subtle.digest("SHA-256", b)).then((d) => [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join(""))`
+  );
+  // (The fixture is a folder on disk, which takes only text: the picture goes into a document Erga keeps.)
+  const origin = new URL(ed.address).origin;
+  const tool = async (name: string, args: unknown) =>
+    (
+      (await (
+        await fetch(`${origin}/api/tools/${name}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Origin: origin },
+          body: JSON.stringify(args),
+        })
+      ).json()) as { result: { address: string } }
+    ).result;
+  const { address } = await tool("create_document", { title: "Pictures" });
+  const script = [
+    { tool: "edit", args: { op: "write", document: address, files: { "images/shot.png": { blob: hash } } } },
+    { text: "Added." },
+  ];
+  await ed.eval(
+    `(() => { const i = document.getElementById("agent-input"); i.value = ${JSON.stringify(`Add it @script ${JSON.stringify(script)}`)}; i.dispatchEvent(new Event("input")); i.focus(); return true; })()`
+  );
+  await ed.page.keyboard.press("Enter");
+  const reply = () => ed.eval<string>(`[...document.querySelectorAll("#agent-log .msg-assistant")].pop()?.textContent ?? ""`);
+  await expect.poll(reply, { timeout: 10_000 }).toContain("Added.");
+  // The document has the file: the picture as it was sent.
+  const size = await ed.eval<number>(`__files.shot.size`);
+  const entries = ((await tool("ls", { document: address })) as unknown as { entries: { path: string; size?: number; mime?: string }[] })
+    .entries;
+  expect(entries.find((e) => e.path == "images/shot.png")).toMatchObject({ size, mime: "image/png" });
 });
 
 test("the server refuses what the panel would: a PDF sent straight to the agent's API, with a reason", async () => {

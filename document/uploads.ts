@@ -148,8 +148,16 @@ export class Uploads {
         continue;
       }
       if (blobs) {
-        const bytes = isBlobRef(data) ? undefined : typeof data == "string" ? new TextEncoder().encode(data) : data;
-        const ref = isBlobRef(data) ? data : await Effect.runPromise(storeBlob(blobs, bytes!));
+        // A ref names a blob the store must have: its size is the store's.
+        let ref: BlobRef;
+        if (isBlobRef(data)) {
+          const kept = await blobs.head(data.hash);
+          if (!kept) {
+            out.refused.push({ path, why: `Erga keeps no file with the sha-256 ${data.hash}` });
+            continue;
+          }
+          ref = { hash: data.hash, size: kept.size, at: data.at };
+        } else ref = await Effect.runPromise(storeBlob(blobs, typeof data == "string" ? new TextEncoder().encode(data) : data));
         await Effect.runPromise(opened.room.putBlob(path, ref));
         out.written.push(path);
         continue;

@@ -72,6 +72,22 @@ test("POST /api/publish makes a document of a folder at its title's address: ima
   expect(list.slice(list.indexOf(`/${p.login}/published-app?edit"`)).split("</li>")[0]).not.toContain("Unedited");
 });
 
+test("write takes a file Erga keeps by its sha-256 (an image sent to the person's agent): the file, byte for byte; an unknown one is refused", async () => {
+  const p = await person(await servers.script());
+  const token = await p.token(),
+    t = tools(p.base, token);
+  await publish(p, token, "Has the picture");
+  const { pub } = await publish(p, token, "Gets the picture");
+  const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", PNG))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const r = await t.call("write", {
+    document: pub.address,
+    files: { "images/dot.png": { blob: hash }, "images/none.png": { blob: "0".repeat(64) } },
+  });
+  expect(r.status).toBe(200);
+  expect(r.data).toMatchObject({ written: ["images/dot.png"], refused: [{ path: "images/none.png" }] });
+  expect(new Uint8Array(await (await p.get(`/d/${pub.id}/doc/images/dot.png`)).arrayBuffer())).toEqual(PNG);
+});
+
 test("the document tools work on any of your documents, named by address, URL, slug or id; a failure says why; an unknown document is a 404; list_documents lists it", async () => {
   const p = await person(await servers.script());
   const token = await p.token(), t = tools(p.base, token);

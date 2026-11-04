@@ -34,6 +34,14 @@ import { DEFAULT_PAGE_LLM_MODEL, isPageLlmModel, PAGE_LLM_MODELS } from "../../s
 const FILES = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Struct({ base64: Schema.String })])).annotate({
   description: 'Each path\'s text, or {"base64": "..."} for bytes.',
 });
+/** Files to write: as FILES, or a file Erga keeps already, by its sha-256 (an image sent to your agent). */
+const WRITE_FILES = Schema.Record(
+  Schema.String,
+  Schema.Union([Schema.String, Schema.Struct({ base64: Schema.String }), Schema.Struct({ blob: Schema.String })])
+).annotate({
+  description:
+    'Each path\'s text, {"base64": "..."} for bytes, or {"blob": "<sha-256>"} for a file Erga keeps (an image sent to your agent).',
+});
 
 /**
  * How to write a page people can keep editing by hand (agents/document/PROMPT.md, short): in MCP's instructions
@@ -302,7 +310,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       path: Schema.optionalKey(str("The file.")),
       content: Schema.optionalKey(str("Its text (prefer edit for a change).")),
       content_base64: Schema.optionalKey(Schema.String),
-      files: Schema.optionalKey(FILES),
+      files: Schema.optionalKey(WRITE_FILES),
       replace: bool("With files: delete the other files."),
     }),
     run: async (args, caller) => {
@@ -317,7 +325,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       }
       // Many: as a publish, each file an edit (open editors show it at once, and anyone's undo history stays).
       const platform = platformOf(caller);
-      const files = decodeFiles(args.files);
+      const files = decodeFiles(args.files, true);
       const remove = new Set<string>();
       if (args.replace === true) for (const p of await platform.docs.paths(doc)) if (!(p in files)) remove.add(p);
       if (!Object.keys(files).length && !remove.size) throw new OperationError({ message: "Nothing to do: files is empty.", status: 400 });
@@ -400,12 +408,12 @@ export function cleanFilePath(p: string): string {
   return rel;
 }
 
-/** Files as operations take them: text, or {base64} for anything else. */
-function decodeFiles(raw: unknown): Record<string, string | Uint8Array> {
+/** Files as operations take them: text, or {base64} for anything else; with `blobs` (write), {blob} for a kept file. */
+function decodeFiles(raw: unknown, blobs = false): Record<string, FileData> {
   if (raw == null) return {};
   if (typeof raw != "object" || Array.isArray(raw))
     throw new OperationError({ message: "files must be an object of paths to contents.", status: 400 });
-  const out: Record<string, string | Uint8Array> = {};
+  const out: Record<string, FileData> = {};
   let total = 0;
   for (const [path, v] of Object.entries(raw as Record<string, unknown>)) {
     const rel = cleanFilePath(path);
@@ -415,6 +423,12 @@ function decodeFiles(raw: unknown): Record<string, string | Uint8Array> {
       const bytes = Base64.decode((v as { base64: string }).base64.replace(/\s+/g, ""));
       if (Result.isFailure(bytes)) throw new OperationError({ message: `${path}: that isn't base64.`, status: 400 });
       data = bytes.success;
+    } else if (blobs && v && typeof v == "object" && typeof (v as { blob?: unknown }).blob == "string") {
+      const hash = (v as { blob: string }).blob.trim().toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(hash)) throw new OperationError({ message: `${path}: a blob is a sha-256, 64 hex digits.`, status: 400 });
+      // (Its size comes from the blob store, which the document asks: uploads.ts.)
+      out[rel] = { hash, size: 0, at: Date.now() };
+      continue;
     } else if (v && typeof v == "object" && typeof (v as { text?: unknown }).text == "string") data = (v as { text: string }).text;
     else throw new OperationError({ message: `${path}: give its text as a string, or {"base64": "..."}.`, status: 400 });
     total = addFile(out, rel, data, total);
@@ -423,7 +437,7 @@ function decodeFiles(raw: unknown): Record<string, string | Uint8Array> {
 }
 
 /** Adds a file to `out`, within the limits; answers the total size so far. */
-export function addFile(out: Record<string, string | Uint8Array>, rel: string, data: string | Uint8Array, total: number): number {
+export function addFile(out: Record<string, FileData>, rel: string, data: string | Uint8Array, total: number): number {
   const size = typeof data == "string" ? new TextEncoder().encode(data).length : data.length;
   if (size > MAX_FILE)
     throw new OperationError({ message: `${rel} is ${(size / 1e6).toFixed(1)}MB: files can be at most ${MAX_FILE / 1e6}MB.`, status: 413 });
