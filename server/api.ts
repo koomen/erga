@@ -14,8 +14,8 @@
 //                                  (curl -F), whose multipart body isn't an operation's JSON arguments
 //   POST /api/auth/request         an agent asks for a token: a link for its person to approve
 //   POST /api/auth/poll            ... and collects the token once they have
-//   /tokens/...                    a person's tokens: approve or deny an agent's request; make one, and the test token, for
-//                                  the Settings dialog (server/identity/tokens-page.ts)
+//   /tokens/...                    a person's tokens: approve or deny an agent's request; make one, for the
+//                                  Settings dialog (server/identity/tokens-page.ts)
 //
 // The app (server/app.ts) sends those paths here: each answer is an Effect
 // (server/http.ts), with the platform that knows agent tokens. The share button's token

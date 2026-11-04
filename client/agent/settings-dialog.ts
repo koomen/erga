@@ -6,9 +6,9 @@
 //     to paste a new one, Save, and Remove. Their key runs every model of its provider in their agent, and wins over
 //     the server's. Save sends it to POST /api/agent/keys, never anywhere else; the list and Remove are the operations
 //     whoami (its apiKeys) and revoke. The agent's panel hears "erga:agent-keys" and reads its models again.
-//   - Tokens: the person's agent tokens (whoami's tokens) with Revoke (revoke); New token makes one (POST
-//     /tokens/new), shown once, with the lines to give an agent.
-//   - Test token: a token for running the test suite here, as test people (GET /tokens/test).
+//   - Tokens: the person's agent tokens (whoami's tokens), newest first: the first SHOWN, then "N more" and Show 10
+//     more, which asks whoami for the next MORE. Each has Revoke (revoke). An expired token isn't listed (whoami). New
+//     token makes one (POST /tokens/new), shown once, with the lines to give an agent.
 //
 // A key or a token is never in the page's address, its storage or the conversation. Its class names stay clear of the
 // app pages' own (client/inline/app.css: header, .new, .empty): the dialog is on all of them.
@@ -55,7 +55,7 @@ export function openSettings(): void {
   made.hidden = true;
   made.textContent = "";
   if (!dialog.open) dialog.showModal();
-  void Promise.all([keys(), tokens(), testToken()]);
+  void Promise.all([keys(), tokens()]);
 }
 
 function make(): HTMLDialogElement {
@@ -70,13 +70,12 @@ function make(): HTMLDialogElement {
 <section class="tokens" aria-labelledby="erga-settings-tokens"><h3 id="erga-settings-tokens">Tokens</h3>
 <p class="sub">A token lets an outside agent or a script (Claude Code, Codex, git) act as you, within its scope.</p>
 <div class="made" hidden></div><ul class="rows"></ul>
+<p class="more" hidden><span></span> <button type="button" class="pill">Show 10 more</button></p>
 <form class="make"><label>Name <input name="label" maxlength="80" placeholder="What it's for: Claude Code on my laptop" autocomplete="off"></label>
 <label>Scope <select name="scope"><option value="documents">All my documents</option><option value="document">One document</option></select></label>
 <label class="doc" hidden>Document <select name="doc"></select></label>
 <label>Expires <input type="date" name="expires" aria-label="Expiry date (optional)"></label>
-<button class="pill">Make token</button><p class="hint" role="status"></p></form></section>
-<section class="test" aria-labelledby="erga-settings-test"><h3 id="erga-settings-test">Test token</h3>
-<p class="sub">Runs the test suite here, as test people, on test documents only.</p><pre></pre></section>`;
+<button class="pill">Make token</button><p class="hint" role="status"></p></form></section>`;
   document.body.append(d);
   d.querySelector(".close")!.addEventListener("click", () => d.close());
   // A click on the backdrop (the dialog itself, outside its content) closes it.
@@ -90,6 +89,7 @@ function make(): HTMLDialogElement {
     e.preventDefault();
     void makeToken(form);
   });
+  d.querySelector("p.more button")!.addEventListener("click", () => void showMore());
   return d;
 }
 
@@ -157,41 +157,82 @@ const changed = () => window.dispatchEvent(new Event("erga:agent-keys"));
 
 // ---------------------------------------------------------------- Tokens
 
+/** How many tokens show at first, and how many more each Show 10 more adds. */
+const SHOWN = 5,
+  MORE = 10;
+type Mine = { adminPower?: boolean; tokens: Token[]; moreTokens: number };
+
 async function tokens() {
   const list = $("section.tokens ul.rows");
   const [me, docs] = await Promise.all([
-    runTool<{ adminPower?: boolean; tokens: Token[] }>("whoami").catch((e: Error) => e),
+    runTool<Mine>("whoami", { limit: SHOWN }).catch((e: Error) => e),
     runTool<{ id: string; title: string; address: string }[]>("list_documents").catch(() => []),
   ]);
   const doc = $<HTMLSelectElement>("select[name=doc]");
   doc.innerHTML = docs.map((d) => `<option value="${esc(d.id)}">${esc(d.title)} (${esc(d.address)})</option>`).join("");
   const scope = $<HTMLSelectElement>("select[name=scope]");
   if (!(me instanceof Error) && me.adminPower && !scope.querySelector("option[value=admin]")) scope.append(new Option("Admin", "admin"));
-  const rows = me instanceof Error ? me : me.tokens;
-  if (rows instanceof Error) {
-    list.innerHTML = `<li class="error">${esc(rows.message)}</li>`;
+  if (me instanceof Error) {
+    list.innerHTML = `<li class="error">${esc(me.message)}</li>`;
+    moreTokens(0);
     return;
   }
-  list.innerHTML = rows.length
-    ? rows
-        .map(
-          (
-            t
-          ) => `<li data-id="${esc(t.id)}"><div class="what"><b>${esc(t.label)}</b> <span class="state">${esc(SCOPES[t.scope] ?? t.scope)}${t.kind == "share" ? " · Share button" : ""} · expires ${esc(day(t.expires))} · last used ${esc(day(t.lastUsed))}</span></div>
+  list.innerHTML = me.tokens.length ? "" : `<li class="none">No tokens yet.</li>`;
+  addTokens(me.tokens);
+  moreTokens(me.moreTokens);
+}
+
+/** Show 10 more: the next tokens after the rows shown, from the server. */
+async function showMore() {
+  const button = $<HTMLButtonElement>("section.tokens p.more button");
+  button.disabled = true;
+  const shown = $("section.tokens ul.rows").querySelectorAll("li[data-id]").length;
+  try {
+    const me = await runTool<Mine>("whoami", { limit: MORE, offset: shown });
+    const first = addTokens(me.tokens);
+    moreTokens(me.moreTokens);
+    // The keyboard stays on the button, or goes to the first new row when there's no more.
+    if (!me.moreTokens) first?.querySelector<HTMLElement>(".revoke")?.focus();
+  } catch (err) {
+    alert((err as Error).message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/** "N more" under the list, with Show 10 more (Show N more for fewer); hidden when there are none. */
+function moreTokens(n: number) {
+  const p = $("section.tokens p.more");
+  p.hidden = n <= 0;
+  p.querySelector("span")!.textContent = `${n} more`;
+  p.querySelector("button")!.textContent = `Show ${Math.min(n, MORE)} more`;
+}
+
+/** Rows for `rows` at the end of the list, each with Revoke; the first of them. */
+function addTokens(rows: Token[]): HTMLElement | null {
+  const list = $("section.tokens ul.rows");
+  let first: HTMLElement | null = null;
+  for (const t of rows) {
+    list.insertAdjacentHTML(
+      "beforeend",
+      `<li data-id="${esc(t.id)}"><div class="what"><b>${esc(t.label)}</b> <span class="state">${esc(SCOPES[t.scope] ?? t.scope)}${t.kind == "share" ? " · Share button" : ""} · expires ${esc(day(t.expires))} · last used ${esc(day(t.lastUsed))}</span></div>
 <button type="button" class="pill revoke">Revoke</button></li>`
-        )
-        .join("")
-    : `<li class="none">No tokens yet.</li>`;
-  for (const li of list.querySelectorAll<HTMLElement>("li[data-id]"))
+    );
+    const li = list.lastElementChild as HTMLElement;
+    first ??= li;
     li.querySelector(".revoke")!.addEventListener("click", async () => {
       if (!confirm(`Revoke “${li.querySelector("b")!.textContent}”? Agents using it lose access at once.`)) return;
       try {
         await runTool("revoke", { token: li.dataset.id });
         li.remove();
+        // The last row shown went: the next ones, or "No tokens yet".
+        if (!list.querySelector("li[data-id]")) await tokens();
       } catch (err) {
         alert((err as Error).message);
       }
     });
+  }
+  return first;
 }
 
 async function makeToken(form: HTMLFormElement) {
@@ -230,15 +271,6 @@ async function makeToken(form: HTMLFormElement) {
   await tokens();
 }
 
-async function testToken() {
-  const pre = $("section.test pre");
-  const r = await fetch(`/tokens/test${user()}`).catch(() => null);
-  const body = (r?.ok ? await r.json().catch(() => null) : null) as { token: string; expires: string } | null;
-  pre.textContent = body ? `ERGA_TEST_TOKEN=${body.token} bun run test:prod` : "Couldn't make one: try again.";
-  $("section.test .sub").textContent =
-    `Runs the test suite here, as test people, on test documents only. Until ${body ? day(body.expires) : "…"}.`;
-}
-
 const STYLE = `
 #erga-settings { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--panel-border);
   border-radius: 14px; background: var(--bg); color: var(--fg); box-shadow: var(--shadow); font: 14px/1.45 var(--font-text); overflow: auto; }
@@ -265,6 +297,9 @@ const STYLE = `
 #erga-settings .hint { flex-basis: 100%; margin: 0; color: var(--soft); font-size: 13px; }
 #erga-settings .hint:empty { display: none; }
 #erga-settings .hint.error, #erga-settings li.error { color: #c0392b; }
+#erga-settings p.more { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0; padding: 8px 0 0; border-top: 1px solid var(--rule);
+  color: var(--soft); font-size: 13px; }
+#erga-settings p.more span { flex: 1 1 auto; }
 #erga-settings form.make { margin-top: 10px; }
 #erga-settings form.make label { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--soft); }
 #erga-settings pre { margin: 6px 0; padding: 8px 10px; background: var(--code-bg); border-radius: 8px; font: 12.5px/1.45 var(--font-mono);

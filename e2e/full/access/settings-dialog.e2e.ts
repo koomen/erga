@@ -94,6 +94,10 @@ test("tokens: Admin is offered to an admin only; a new token shows once, is list
   await openSettings(page);
   expect(await page.$("#erga-settings .made:not([hidden]) pre.secret")).toBeNull();
 
+  // There's no test token any more.
+  expect(await page.$("#erga-settings section.test")).toBeNull();
+  expect((await fetch(`${s.root}/tokens/test`, { redirect: "manual" })).status).not.toBe(200);
+
   // Someone who isn't an admin: no Admin scope.
   const p = await person(s);
   await page.goto(`${p.base}/auth/github?as=${p.login}&next=/docs`);
@@ -101,4 +105,41 @@ test("tokens: Admin is offered to an admin only; a new token shows once, is list
   await expect
     .poll(() => page.$$eval("#erga-settings select[name=scope] option", (o) => o.map((x) => (x as HTMLOptionElement).value)))
     .toEqual(["documents", "document"]);
+});
+
+test("tokens: the newest 5, then N more; Show 10 more loads the next ones by key or click; a revoke keeps the count", async ({ tab }) => {
+  const p = await person(await servers.script());
+  for (let i = 1; i <= 17; i++) await p.token(`T${i}`);
+  const page = tab.page;
+  await page.goto(`${p.base}/auth/github?as=${p.login}&next=/docs`);
+  await openSettings(page);
+  const rows = () => page.$$eval("#erga-settings section.tokens li[data-id] b", (b) => b.map((x) => x.textContent));
+  const more = () =>
+    page.evaluate(() => {
+      const m = document.querySelector<HTMLElement>("#erga-settings section.tokens p.more")!;
+      return m.hidden ? "" : (m.innerText ?? "").replace(/\s+/g, " ").trim();
+    });
+  await expect.poll(rows).toEqual(["T17", "T16", "T15", "T14", "T13"]);
+  expect(await more()).toBe("12 more Show 10 more");
+
+  // The keyboard: Show 10 more with Enter, and the focus stays on it.
+  await page.focus("#erga-settings section.tokens p.more button");
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => (await rows()).length).toBe(15);
+  expect((await rows()).slice(-1)).toEqual(["T3"]);
+  expect(await more()).toBe("2 more Show 2 more");
+  // A click: the last two, and no more to show; the focus goes to the first new row.
+  await page.click("#erga-settings section.tokens p.more button");
+  await expect.poll(async () => (await rows()).slice(-2)).toEqual(["T2", "T1"]);
+  expect(await more()).toBe("");
+  expect(await page.evaluate(() => document.activeElement?.closest("li")?.querySelector("b")?.textContent)).toBe("T2");
+
+  // Revoked: the row goes; opened again, the newest 5 and the rest as a count.
+  await page.evaluate(() => (window.confirm = () => true));
+  await page.click(`#erga-settings section.tokens li[data-id]:has-text("T16") .revoke`);
+  await expect.poll(async () => (await rows()).length).toBe(16);
+  await page.keyboard.press("Escape");
+  await openSettings(page);
+  await expect.poll(rows).toEqual(["T17", "T15", "T14", "T13", "T12"]);
+  expect(await more()).toBe("11 more Show 10 more");
 });

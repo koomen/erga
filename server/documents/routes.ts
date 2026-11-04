@@ -157,8 +157,7 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
     const person = {
       login: session.login,
       name: session.name,
-      ...(session.avatar && !session.test ? { avatar: session.avatar } : {}),
-      ...(session.test ? { testBy: session.test.by } : {}),
+      ...(session.avatar ? { avatar: session.avatar } : {}),
       ...(whoOf(session).admin ? { admin: true } : {}),
     };
     return plainJson(yield* call(() => editKey(platform.secret, doc.owner, doc.id, person)), 200, { "Cache-Control": "no-store" });
@@ -244,7 +243,7 @@ export function forwarded(request: Request, url: URL, rest: string, session: Ses
   const person = session && {
     login: session.login,
     name: session.name,
-    ...(session.avatar && !session.test ? { avatar: session.avatar } : {}),
+    ...(session.avatar ? { avatar: session.avatar } : {}),
   };
   return forwardedAs(request, url, rest, person, session && whoOf(session), checked);
 }

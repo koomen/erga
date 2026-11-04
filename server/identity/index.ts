@@ -12,7 +12,6 @@ export {
   signOut,
   startGoogleSignIn,
   startSignIn,
-  testSignIn,
 } from "./sign-in.ts";
 export { devSignIn, usernameStep } from "./accounts.ts";
 export { authOps, providersOn } from "./settings.ts";

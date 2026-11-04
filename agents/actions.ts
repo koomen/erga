@@ -167,7 +167,6 @@ export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ Settings (the dialog, on every page): the person's tokens
   { route: "GET /tokens/approve", domain: "none", action: "An agent's request for a token, to approve or deny", exempt: SIGN_IN },
   { route: "POST /tokens/new", domain: "admin", action: "Make an agent token (Settings)", exempt: SECRET },
-  { route: "GET /tokens/test", domain: "admin", action: "The test token (Settings)", exempt: SECRET },
   {
     route: "POST /tokens/approve",
     domain: "admin",

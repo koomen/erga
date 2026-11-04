@@ -50,6 +50,9 @@ const WRITE_FILES = Schema.Record(
 export const PAGE_RULES =
   "People keep editing pages by hand, and the editor locks text that doesn't match its source: write well-formed HTML (close every element, </p> and </li> too); keep text in plain leaf elements (p, h1-h6, li, td), never loose beside blocks; never let a script change text in the source (give it an empty element, or mark the text data-erga-noedit); link the document's files relatively (\"style.css\"), other documents by /<owner>/<slug>; keep the page's place (slide, view) in location.hash; set a background on body; leave data-erga attributes alone. For slides or a canvas, start from the slides or canvas template: a presentation defines window.ergaSteps and imports erga/steps, which gives the steps.";
 
+/** How many tokens whoami lists, if not told. */
+const TOKENS_SHOWN = 20;
+
 const bool = (description: string) => Schema.optionalKey(Schema.Boolean.annotate({ description }));
 
 export const DOCUMENT_OPERATIONS: Operation[] = [
@@ -58,11 +61,17 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     label: "Who you are",
     ui: "The account menu: who is signed in; Settings (/settings): your agent tokens and your API keys; the quick search (⌘K): its pages",
     description: "Who you act for: your tokens, API keys and Erga's pages.",
-    parameters: Schema.Struct({}),
-    run: async (_args, caller) => {
+    parameters: Schema.Struct({
+      limit: Schema.optionalKey(Schema.Int),
+      offset: Schema.optionalKey(Schema.Int.annotate({ description: "whoami: tokens to skip, to list the next ones." })),
+    }),
+    run: async (args, caller) => {
       const { who, token, dir } = caller;
       // A document token reaches one document: not its person's tokens, keys or pages.
       const wide = who.onlyDoc == null;
+      const limit = Math.min(Math.max(Number(args.limit) || TOKENS_SHOWN, 1), 100),
+        offset = Math.max(Number(args.offset) || 0, 0);
+      const mine = wide ? await platformOf(caller).tokens.list(who.login, limit, offset) : null;
       return {
         login: who.login,
         ...(caller.name ? { name: caller.name } : {}),
@@ -80,9 +89,10 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
               },
             }
           : {}),
-        ...(wide
+        ...(mine
           ? {
-              tokens: (await platformOf(caller).tokens.list(who.login)).map((t) => ({
+              // Newest first, `limit` of them (expired ones never); `moreTokens`: how many come after these.
+              tokens: mine.tokens.map((t) => ({
                 id: t.id,
                 label: t.label,
                 kind: t.kind,
@@ -93,6 +103,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
                 lastUsed: iso(t.lastUsed),
                 ...(t.id == token?.id ? { yours: true } : {}),
               })),
+              moreTokens: Math.max(mine.total - offset - mine.tokens.length, 0),
               // The person's own keys for their agent's models: never a key, only whether it's set. Pasted only in Settings, Agent.
               apiKeys: (await dir.personKeys.list(who)).map((k) => ({
                 name: k.name,
@@ -176,8 +187,6 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     run: async (args, caller) => {
       const { who } = caller,
         platform = platformOf(caller);
-      // Anyone who may sign in may make documents; test people only test documents.
-      if (who.test) throw new OperationError({ message: "You can't make documents on this server.", status: 403 });
       let files: Record<string, FileData> = decodeFiles(args.files);
       const published = Object.keys(files).length > 0;
       let index: string;

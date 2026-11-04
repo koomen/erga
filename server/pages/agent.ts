@@ -29,8 +29,8 @@ const PANEL = `<aside id="agent" class="agent" aria-label="Agent"><div class="ag
 </form>
 </div></div></aside>`;
 
-/** Who has an agent: someone signed in, in person (not a test person, nor an agent's token). */
-export const hasAgent = (session: Session | null) => !!session && !session.agent && !session.test;
+/** Who has an agent: someone signed in, in person (not an agent's token). */
+export const hasAgent = (session: Session | null) => !!session && !session.agent;
 
 /**
  * The agent for `session`'s person, or nothing: its markup, opened or closed as they left it before it paints, and its

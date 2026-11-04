@@ -32,10 +32,10 @@ export const BARS_STYLE = `<style>${inlineStyle("bars")}</style>`;
 
 /**
  * The breadcrumbs' bar: the wordmark, then each step (`steps`, made already). The wordmark goes to your documents at
- * `home` (a test person, who has none, or someone signed out: to its homepage).
+ * `home` (someone signed out: to its homepage).
  */
 const crumbsBar = (session: Session | null, home: string, steps: string) =>
-  `<nav class="erga-crumbs erga-bar erga-bar-l" aria-label="Breadcrumbs"><a class="erga-brand" href="${esc(link(`${home}${session && !session.test ? "/docs" : "/"}`, session))}" draggable="false"><span>${WORDMARK}</span></a>${steps}</nav>`;
+  `<nav class="erga-crumbs erga-bar erga-bar-l" aria-label="Breadcrumbs"><a class="erga-brand" href="${esc(link(`${home}${session ? "/docs" : "/"}`, session))}" draggable="false"><span>${WORDMARK}</span></a>${steps}</nav>`;
 
 /** The buttons' bar: the quick actions (on a phone, they open out of the avatar), then who you are (`corner`). */
 const buttonsBar = (actions: string, corner: string) =>
@@ -46,7 +46,7 @@ const buttonsBar = (actions: string, corner: string) =>
  * the document (signed out: erga › the document; the homepage: erga), and the buttons with who you are (`corner`).
  * Full screen only where there's a frame to fill the screen (`full`). The editor's own actions (Share, Document
  * settings) are folded into the pencil here; Clone is the New menu's last item. A project's title opens its pages
- * (the card after the bars: client/inline/viewer-tree.ts). A test person has no Documents; an agent sees no breadcrumbs.
+ * (the card after the bars: client/inline/viewer-tree.ts). An agent sees no breadcrumbs.
  */
 export function barsHtml(o: {
   session: Session | null;
@@ -57,7 +57,7 @@ export function barsHtml(o: {
   corner: string;
 }): string {
   const s = o.session;
-  const mine = !!s && !s.agent && !s.test;
+  const mine = !!s && !s.agent;
   const tree = o.project && !!s && o.title != null;
   const crumb = tree
     ? `<button type="button" class="erga-here erga-tree-btn" aria-expanded="false" aria-controls="erga-tree" aria-label="${esc(o.title ?? "")}: its pages"><span>${esc(o.title ?? "")}</span><svg class="erga-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></button>`
@@ -92,7 +92,7 @@ export function pageBars(
         : `<${here} class="erga-here" aria-current="page"><span>${esc(c.label)}</span></${here}>`
     )
     .join("");
-  const mine = !!session && !session.agent && !session.test;
+  const mine = !!session && !session.agent;
   const at = (path: string) => link(path, session);
   const actions = `${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${o.share ?? AGENT_SHARE_BUTTON}${mine ? (o.docs ?? docsButton(at("/docs"))) : ""}`;
   return `<script>${PAGE_TONE}</script>${crumbsBar(session, "", steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${agentPanel(session)}`;

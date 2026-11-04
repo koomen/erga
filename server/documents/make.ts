@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { FileData } from "../../document/document.ts";
 import { kindOf, titleOf, type DocKind } from "../../document/pages.ts";
-import { type DocRow, type Grant, ID, newDocId, NO_WRITE, NotAllowed, type Permission, TEST_ID, type Who } from "../directory/index.ts";
+import { type DocRow, type Grant, ID, newDocId, NO_WRITE, NotAllowed, type Permission, type Who } from "../directory/index.ts";
 import { addressOf, UNTITLED } from "../../document/names.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { landingDocument } from "./landing.ts";
@@ -64,7 +64,7 @@ export const newDoc = Effect.gen(function* () {
   if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) {
     return confirmAction("New document", params.get("from") ? "Make your copy of this page" : template ? `Make a new document: ${template.name}` : "Make a new document", `/new${url.search}`);
   }
-  if (!session.test && !(yield* call(() => platform.directory.mayWrite(session.login))))
+  if (!(yield* call(() => platform.directory.mayWrite(session.login))))
     return page("You can't make documents here", `${esc(NO_WRITE)} <a href="/docs">Your documents</a>`, 403);
   const wanted = params.get("id");
   const from = params.get("from");
@@ -81,16 +81,6 @@ export const newDoc = Effect.gen(function* () {
     index = start.index;
   // ?kind=project: a project from the start (create_document's kind), else the kind it copies, else from its files.
   const kind = params.get("kind") == "project" ? "project" as const : start.kind;
-  // A test person makes (or reuses) a test document under the address of whoever minted their token.
-  // Its address is its id, which never follows the title (the suite addresses it by id).
-  if (session.test) {
-    if (!wanted || !TEST_ID.test(wanted)) return page("Test documents only", "Name the test document: /new?id=test1234.", 400);
-    const owner = session.test.by.toLowerCase();
-    const known = yield* call(() => platform.directory.route(wanted));
-    if (known && (known.owner != owner || !known.test)) return page("Taken", "That test document's id is someone else's: pick another.", 409);
-    if (!known) yield* call(() => makeDoc(platform, owner, wanted, files, { test: true, index, kind }));
-    return redirect(`/${owner}/${wanted}?edit`);
-  }
   // Local development may name the document (the test suite wants "test" in its address),
   // and say how soon it goes if nobody edits it (?unedited=<ms>, for e2e/full/front/lifetime.e2e.ts).
   const dev = platform.dev(url);
@@ -114,8 +104,8 @@ export async function makeDoc(platform: Platform, owner: string, id: string, fil
   const created = Date.now();
   // A published one has been edited already (its files are someone's work): it never expires.
   // Nor does any when the server's delete_docs_after_hours is never (null).
-  const hours = opts.test || opts.published || opts.unedited ? null : await platform.directory.config.get("delete_docs_after_hours");
-  const expires = opts.test || opts.published ? null : opts.unedited ? created + opts.unedited : hours == null ? null : created + hours * HOUR;
+  const hours = opts.published || opts.unedited ? null : await platform.directory.config.get("delete_docs_after_hours");
+  const expires = opts.published ? null : opts.unedited ? created + opts.unedited : hours == null ? null : created + hours * HOUR;
   const index = opts.index ?? "index.html";
   const page = files[index];
   const pageText = typeof page == "string" ? page : page instanceof Uint8Array ? new TextDecoder().decode(page) : "";
@@ -124,19 +114,19 @@ export async function makeDoc(platform: Platform, owner: string, id: string, fil
   const { doc, added } = await platform.directory.add({
     id, owner, kind,
     ...(opts.title?.trim() ? { title: opts.title, titleSet: true } : { title: titleOf(pageText) ?? UNTITLED }),
-    ...(opts.test ? { slug: id, slugSet: true } : opts.slug?.trim() ? { slug: opts.slug, slugSet: true } : {}),
-    created, expires, test: opts.test,
+    ...(opts.slug?.trim() ? { slug: opts.slug, slugSet: true } : {}),
+    created,
+    expires,
     ...(opts.published ? { modified: created } : {}),
   });
   if (!added) return null;
-  if (await platform.docs.create(doc, files, index, { test: opts.test, expires, kind, ...(opts.published ? { modified: created } : {}) })) return doc;
+  if (await platform.docs.create(doc, files, index, { expires, kind, ...(opts.published ? { modified: created } : {}) })) return doc;
   // A host by that name was there already (one whose row went): leave it, and try another id.
   await platform.directory.remove(id);
   return null;
 }
 
 export interface MakeOptions {
-  test?: boolean;
   /** How soon it goes if nobody edits it, in ms (local development's tests). */
   unedited?: number;
   /** Its page (index.html if not given). */
@@ -157,7 +147,6 @@ export const listDocs = Effect.gen(function* () {
   const { request, platform } = yield* ctx;
   const session = yield* call(() => platform.sessionOf(request));
   if (!session) return signInFirst("/docs");
-  if (session.test) return page("Not for test people", "Test people have no documents of their own.", 403);
   if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't list others.", 403);
   const [docs, hours] = yield* call(() =>
     Promise.all([platform.docs.list(session.login), platform.directory.config.get("delete_docs_after_hours")])
@@ -180,9 +169,7 @@ export const shareToken = Effect.fnUntraced(function* (session: Session) {
     Effect.flatMap(Schema.decodeUnknownEffect(RotateBody)),
     Effect.orElseSucceed(() => ({ rotate: false }))
   );
-  const { token } = yield* call(() =>
-    platform.tokens.share({ login: session.login, name: session.name, testBy: session.test?.by }, rotate === true)
-  );
+  const { token } = yield* call(() => platform.tokens.share({ login: session.login, name: session.name }, rotate === true));
   return json({ token });
 });
 

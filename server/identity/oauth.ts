@@ -209,8 +209,7 @@ export const oauthRoutes: Route = Effect.gen(function* () {
       return back("invalid_target", `This server signs in for ${origin}/mcp only.`);
     const session = yield* call(() => platform.sessionOf(request));
     if (!session) return signInFirst(url.pathname + url.search);
-    if (session.agent || session.test)
-      return page("Sign in as yourself", "Only a person, signed in as themselves, can let an app act for them.", 403);
+    if (session.agent) return page("Sign in as yourself", "Only a person, signed in as themselves, can let an app act for them.", 403);
     const admin = yield* call(() => platform.directory.users.isAdmin(session.login));
     const asked = yield* call(() =>
       platform.tokens.request(

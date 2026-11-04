@@ -71,10 +71,10 @@ async function findSession(platform: Platform, request: Request): Promise<Sessio
   const session = as ? { login: loginOf(as), name: as, as }
     : (await cookieSession(platform, request, dev)) ?? (dev && !cookies(request).has(SIGNED_OUT) ? { login: platform.signIn.devLogin!, name: platform.signIn.devLogin! } : null);
   // Locally everyone may sign in, and gets a user's row the first time (last seen, the next). The read rule may say no.
-  const user = session && !session.test ? await users.signedIn(session.login, dev ? session.name : null, { create: dev }) : null;
-  if (session && !session.test && !user) return null;
+  const user = session ? await users.signedIn(session.login, dev ? session.name : null, { create: dev }) : null;
+  if (session && !user) return null;
   // A signed-in browser session comes with admin power: Users.isAdmin decides whether that's any.
-  if (session && !session.test) session.admin = true;
+  if (session) session.admin = true;
   // Their picture, from their row (the cookie never carries it): an old cookie shows the new picture too.
   if (session && user?.avatar) session.avatar = user.avatar;
   return session;
@@ -89,8 +89,6 @@ async function cookieSession(platform: Platform, request: Request, dev: boolean)
   try {
     const s = JSON.parse(Result.getOrThrow(Base64Url.decodeString(value))) as Session & { exp: number };
     if (typeof s.login != "string" || !(s.exp > Date.now() / 1000)) return null;
-    // A test person's token was minted by a user, who must still be one.
-    if (s.test) return (await users.allowed(s.test.by)) ? { login: s.login, name: s.name, test: { by: s.test.by } } : null;
     // Locally, someone with no row yet gets one (findSession); anyone with one passes the access rules, as on a server.
     return (dev && !(await users.get(s.login))) || (await users.allowed(s.login)) ? { login: s.login, name: s.name } : null;
   } catch { return null; }
@@ -101,13 +99,14 @@ async function tokenSession(platform: Platform, bearer: string, url: URL): Promi
   const users = platform.directory.users;
   const token = await platform.tokens.verify(bearer).catch(() => null);
   if (!token) return null;
-  // A test person's token opens only test documents, while whoever minted their test token may sign in.
   const session: Session = {
-    login: token.login, name: token.name, agent: token, ...(token.testBy ? { test: { by: token.testBy } } : {}),
+    login: token.login,
+    name: token.name,
+    agent: token,
     // Admin power only with the admin scope (Users.isAdmin still decides); a document token, its one document.
-    ...(token.scope == "admin" && !token.testBy ? { admin: true } : {}), ...(token.scope == "document" ? { onlyDoc: token.docId ?? "-" } : {}),
+    ...(token.scope == "admin" ? { admin: true } : {}),
+    ...(token.scope == "document" ? { onlyDoc: token.docId ?? "-" } : {}),
   };
-  if (token.testBy) return (await users.allowed(token.testBy)) ? session : null;
   return platform.dev(url) || (await users.allowed(token.login)) ? session : null;
 }
 
@@ -116,8 +115,8 @@ const loginOf = (name: string) =>
   name.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 39) || "me";
 
 /**
- * Whether the session has admin power now: an admin in person, or with an admin-scope token (Users.actsAsAdmin). A
- * test person never has; nor has an admin's token without the admin scope.
+ * Whether the session has admin power now: an admin in person, or with an admin-scope token (Users.actsAsAdmin). An
+ * admin's token without the admin scope never has it.
  */
 export const actingAdmin = async (users: Users, session: Session | null) => !!session && (await users.actsAsAdmin(whoOf(session)));
 

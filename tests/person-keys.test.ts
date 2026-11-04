@@ -94,7 +94,7 @@ test("the agent's settings: only that person's own keys, and the admin's choices
 test("the operations: the person's own list and remove; an agent never sees a key", async () => {
   const { dir } = fresh();
   await dir.personKeys.set(bob, "openai", OPENAI);
-  const platform = { tokens: { list: async () => [] } };
+  const platform = { tokens: { list: async () => ({ tokens: [], total: 0 }) } };
   const caller = { dir, who: { login: "bob", via: "agent" }, name: "Bob", origin: "http://x", platform } as never;
   const listed = JSON.stringify(((await runOperation(op("whoami"), {}, caller)) as { apiKeys: unknown }).apiKeys);
   expect(listed).toContain('"last4":"Ow42"');
@@ -127,7 +127,7 @@ test("POST /api/agent/keys: from the person's own page only; the answer never ho
   expect(text).not.toContain(OPENAI.slice(0, 20));
   expect(JSON.parse(text).key).toMatchObject({ name: "openai", set: true, last4: "Ow42" });
   expect((await post({ name: "openai", value: "nope" })).status).toBe(400);
-  // An agent's token session (or a test person) can't set one.
+  // An agent's token session can't set one.
   session = { login: "bob", name: "Bob", agent: {} } as unknown as Partial<Session>;
   expect((await post({ name: "openai", value: OPENAI })).status).toBe(403);
   session = { login: "bob", name: "Bob" };

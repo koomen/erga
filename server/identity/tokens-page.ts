@@ -1,11 +1,10 @@
 // A person's tokens (server/app.ts sends /tokens/... here): approving or denying an agent's request for one, a page;
-// and, for the Settings dialog (client/agent/settings-dialog.ts), making one and the test token, as JSON. The list
+// and, for the Settings dialog (client/agent/settings-dialog.ts), making one, as JSON. The list
 // and Revoke are the operations whoami and revoke. And a token's expiry as given, which the API reads too.
 //
 //   GET  /tokens/approve      ?code=: an agent's request for a token, with Approve (if the person may give it) and Deny
 //   POST /tokens/approve      code, answer (approve or deny), scope (documents: an admin request approved as documents only)
 //   POST /tokens/new          { label, scope, doc?, expires? }: a new token, answered once ({ token, info })
-//   GET  /tokens/test         { token, expires }: a token for running the test suite here, as test people
 
 
 import * as Effect from "effect/Effect";
@@ -15,7 +14,6 @@ import { appPage, pageBars, inlineStyle, page, safeNext } from "../pages/index.t
 import { dateTag, esc } from "../../shared/html.ts";
 import type { Platform, Session } from "../platform";
 import { normalCode, ScopeError, type Scope } from "./tokens.ts";
-import { mintTestToken } from "./sign-in.ts";
 import { type Note, noteOf, readOnce, seeOther } from "./flash.ts";
 import { callbackUrl, whereBack } from "./oauth.ts";
 import { call, ctx, Field, form, html, json, NO_STORE, redirect, text, type Route } from "../http.ts";
@@ -38,7 +36,6 @@ export const tokensRoutes: Route = Effect.gen(function* () {
   const session = yield* call(() => platform.sessionOf(request));
   if (!session) return redirect(`/auth/sign-in?next=${encodeURIComponent(safeNext(path + url.search))}`);
   if (session.agent) return page("Not for agents", "Tokens are made and approved by people, signed in.", 403);
-  if (session.test) return page("Not for test people", "Sign in as yourself to make a token.", 403);
   const post = request.method == "POST";
   // Only this site's own pages may make, approve or deny.
   if (post && request.headers.get("origin") != url.origin) return text("Forbidden", 403);
@@ -67,10 +64,6 @@ export const tokensRoutes: Route = Effect.gen(function* () {
     return "refused" in r
       ? json({ ok: false, error: r.refused }, 400)
       : json({ ok: true, token: r.value.token, info: r.value.info }, 200, NO_STORE);
-  }
-  if (path == "/tokens/test" && !post) {
-    const t = yield* call(() => mintTestToken(platform, session.login));
-    return json({ token: t.token, expires: t.expires.toISOString() }, 200, NO_STORE);
   }
   if (path != "/tokens/approve")
     return page(

@@ -43,7 +43,7 @@
 //                                   must work here as on production: /mcp, /api/publish,
 //                                   /api/tools/..., and /<owner or d>/<doc>/(api|doc)/..., and
 //                                   nothing else. The token's person must be an admin at each request, as
-//                                   for the pages origin; a test person's token never passes. Past this guard the token's
+//                                   for the pages origin. Past this guard the token's
 //                                   own scope decides, as on production: no admin
 //                                   power, so no /admin, settings, users, credentials or Git
 //
@@ -122,7 +122,7 @@ async function refusal(request: Request, base: Platform, url: URL) {
   // origin's token.
   const keyed = await keyedPerson(base, request, url);
   if (keyed) {
-    if (!keyed.testBy && (await users.isAdmin({ login: keyed.login }))) return null;
+    if (await users.isAdmin({ login: keyed.login })) return null;
     return text("Staging is for Erga's admins only.", 403, { "Cache-Control": "no-store" });
   }
 
@@ -133,7 +133,7 @@ async function refusal(request: Request, base: Platform, url: URL) {
   const session = git && !secret ? null : await base.sessionOf(git ? new Request(url, { headers: { authorization: `Bearer ${secret}` } }) : request);
   if (session && (await users.actsAsAdmin(whoOf(session)))) return null;
   // An admin's token of another scope: the API, MCP and documents' routes only (the exemption above), then its own scope.
-  const adminsToken = !!session?.agent && !session.test && (await users.isAdmin(whoOf(session)));
+  const adminsToken = !!session?.agent && (await users.isAdmin(whoOf(session)));
   if (adminsToken && !git && tokenPath(url.pathname)) return null;
 
   const signedIn = !!session && !session.agent;

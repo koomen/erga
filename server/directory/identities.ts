@@ -9,7 +9,7 @@
 // A username is the account's name in its addresses (/<username>/<id>): free
 // to choose on the first sign-in, valid for an address, and not a name in use
 // (an account, a bootstrap admin, a document's owner, a share, an old
-// address) nor one the app's routes or test people use. The accounts from
+// address) nor one the app's routes use, nor one that starts "test-" (the test people's, once). The accounts from
 // before identities keep their GitHub login as their username.
 
 import type { Sql, Statement } from "./model.ts";

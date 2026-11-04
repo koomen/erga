@@ -30,8 +30,7 @@ import { dirname, join, relative } from "path";
  *                  only, never a server real people reach (production)
  *   liveAgent      the agent runs a real model (costs money)
  *   browser        a headless Chrome is available here to open the shell
- *   roles          people can have view-only access (Doc.share); local only,
- *                  as test people on a deployment always edit their test documents
+ *   roles          people can have view-only access (Doc.share); local only
  */
 export type Capability = "restart" | "kill" | "disk" | "scriptedAgent" | "liveAgent" | "browser" | "roles";
 
@@ -156,7 +155,7 @@ export class RemoteTarget implements Target {
     this.name = `remote ${this.base}`;
     this.headers = { ...JSON.parse(process.env.ERGA_TARGET_HEADERS || "{}") };
     if (process.env.ERGA_TARGET_COOKIE) this.headers.Cookie = process.env.ERGA_TARGET_COOKIE;
-    // Each test person signed in as their own account, so the server sees different people.
+    // Each person signed in as their own account, so the server sees different people.
     this.users = JSON.parse(process.env.ERGA_TARGET_USERS || "{}");
     this.caps = new Set((process.env.ERGA_TARGET_CAPS || "browser").split(",").map((s) => s.trim()).filter(Boolean) as Capability[]);
     this.parallel = !!this.newDocUrl;

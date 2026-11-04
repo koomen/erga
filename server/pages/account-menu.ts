@@ -41,7 +41,7 @@ export const accountOf = (session: Session | null, admin: boolean): Account | nu
         name: session.name,
         admin,
         session,
-        ...(!session.test && session.avatar ? { avatar: session.avatar } : {}),
+        ...(session.avatar ? { avatar: session.avatar } : {}),
   };
 
 const PERSON = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="9.25" r="3.25"/><path d="M5.75 19c.9-3.1 3.3-4.75 6.25-4.75s5.35 1.65 6.25 4.75"/></svg>`;

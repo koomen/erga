@@ -65,7 +65,7 @@ test("GET /api/tools and MCP's tools/list: the few agents' tools, each loaded at
     "page",
   ]);
   // A tool with no arguments: an object with none.
-  expect(jsonSchemaOf(allTools().find((t) => t.name == "whoami")!) as unknown).toEqual({ type: "object", properties: {} });
+  expect(jsonSchemaOf(allTools().find((t) => t.name == "sign_in")!) as unknown).toEqual({ type: "object", properties: {} });
 });
 
 test("every tool of the registry, the admin agent's own and the model's: an object's schema", () => {

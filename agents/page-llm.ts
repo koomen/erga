@@ -55,8 +55,8 @@ async function signInChoices(p: Platform): Promise<SignInChoice[]> {
   return (Object.keys(PROVIDERS) as Provider[]).filter((id) => on[id]).map((id) => ({ id, label: PROVIDERS[id].label }));
 }
 
-/** The visitor, in person: test people and agents' tokens have no model here. */
-const visitorOf = (s: Session | null) => (s && !s.test && !s.agent ? s : null);
+/** The visitor, in person: agents' tokens have no model here. */
+const visitorOf = (s: Session | null) => (s && !s.agent ? s : null);
 
 /** What the page may call for `docId` now, as `session` (null: signed out): the model, or why not. */
 async function decide(p: Platform, docId: string, session: Session | null): Promise<{ doc: DocRow; model: ModelChoice } | { off: string }> {

@@ -310,11 +310,11 @@ declare module "../../server/platform.ts" {
 
 // ---------------------------------------------------------------- the routes
 
-/** Someone signed in, in person (in a browser: for their own agent panel, which no token reaches). Test people have none. */
+/** Someone signed in, in person (in a browser: for their own agent panel, which no token reaches). */
 const personOf = (platform: Platform, request: Request) =>
   call(async (): Promise<{ login: string; name: string } | null> => {
     const session = await platform.sessionOf(request);
-    if (!session || session.test || session.agent) return null;
+    if (!session || session.agent) return null;
     return { login: session.login.toLowerCase(), name: session.name };
   });
 

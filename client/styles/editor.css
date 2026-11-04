@@ -61,7 +61,7 @@ body.source :is(#frame, .erga-canvas) { visibility: hidden; }
 .agent-live[hidden] { display: none; }
 .agent-live span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The breadcrumbs, top left: Erga › Documents › the title, as on every page (server/pages/chrome.ts, crumbs; the viewer's, VIEW_STYLE,
-   sit just here). Documents is hidden for test people, who have none. */
+   sit just here). */
 /* Its bar starts 14px right of a panel on the left (or 6px from the window's edge); the text inside where it was without one. */
 .chrome-nav { left: max(6px, var(--safe-l), calc(var(--frame-l) - 2px)); padding: 3.5px 8px; transition: opacity var(--show-ms) var(--ease), left var(--agent-ms) var(--agent-ease); }
 .chrome-nav[hidden] { display: none; }

@@ -9,7 +9,7 @@ import { html, NO_STORE } from "../http.ts";
 /** The homepage when there's no landing document and none can be made (seedLanding): what Erga is, and the way in. */
 export async function startPage(platform: Platform, session: Session | null) {
   const admin = !!session && !session.agent && (await platform.directory.users.isAdmin(whoOf(session)));
-  const signedIn = session && !session.test;
+  const signedIn = !!session;
   const actions = signedIn
     ? `<a class="new" href="${esc(link("/docs", session))}">Your documents</a><a class="pill" href="${esc(link("/new", session))}">New document</a>`
     : `<a class="new" href="/auth/sign-in?next=%2Fdocs">Sign in</a>`;

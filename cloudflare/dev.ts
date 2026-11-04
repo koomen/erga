@@ -34,8 +34,7 @@ export const devRoutes = (env: Env) =>
     const body = yield* HttpServerRequest.schemaBodyJson(LinkBody).pipe(Effect.orDie);
     // Whoever's signed in, unless the dev server names the owner (linking again what it linked last run).
     const owner = (body.owner ?? session?.login)?.toLowerCase();
-    if (!owner || !OWNER.test(owner) || session?.test || !body.id || !idShaped(body.id) || !body.index || !body.path)
-      return text("Bad link", 400);
+    if (!owner || !OWNER.test(owner) || !body.id || !idShaped(body.id) || !body.index || !body.path) return text("Bad link", 400);
     const { id, index, path } = body;
     const doc = yield* call(() =>
       documentOf(env, id).link(owner, id, index, { path, slug: slugify(body.slug ?? "") || "untitled", only: !!body.only })
