@@ -76,3 +76,13 @@ test("Actions deploys only a Worker that has its own secrets: a new one is first
   expect(secretsProblem(["SESSION_SECRET"], "w")).toContain("FACTORY_KEY");
   expect(secretsProblem(["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET"], "w")).toBeNull();
 });
+
+test("a second deployment from the same repository (the environment koomen-test): its ERGA_HOST deploys only on main", () => {
+  const koomen = { ...fork, ERGA_HOST: "erga.koomen.dev", ERGA_STAGING: "", ERGA_ADMIN: "koomen", CLOUDFLARE_ACCOUNT_ID: ACCOUNT };
+  expect(actionDeploy({ branch: "main", vars: koomen, token: true })).toMatchObject({
+    kind: "own",
+    target: "production",
+    answers: { host: "erga.koomen.dev" },
+  });
+  expect("skip" in actionDeploy({ branch: "staging", vars: koomen, token: true })).toBe(true);
+});
