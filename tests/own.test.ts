@@ -65,7 +65,18 @@ test("the steps go in order, each with who does it, and the next one is the firs
     answers,
     facts({
       secrets: ["GITHUB_CLIENT_SECRET"],
-      targets: { production: { worker: "missing", address: "free", version: null, health: null, signIn: null, adminIn: null, rule: null } },
+      targets: {
+        production: {
+          worker: "missing",
+          address: "free",
+          version: null,
+          health: null,
+          signIn: null,
+          adminIn: null,
+          rule: null,
+          held: null,
+        },
+      },
     }),
     { ids }
   );
@@ -83,6 +94,7 @@ test("the steps go in order, each with who does it, and the next one is the firs
           signIn: null,
           adminIn: null,
           rule: null,
+          held: null,
         },
       },
     }),
@@ -94,12 +106,42 @@ test("the steps go in order, each with who does it, and the next one is the firs
     facts({
       secrets: ["GITHUB_CLIENT_SECRET"],
       targets: {
-        production: { worker: "ours", address: "ours", version: "abcdef123456", health: "ok", signIn: "ok", adminIn: false, rule: null },
+        production: {
+          worker: "ours",
+          address: "ours",
+          version: "abcdef123456",
+          health: "ok",
+          signIn: "ok",
+          adminIn: false,
+          rule: null,
+          held: null,
+        },
       },
     }),
     { ids }
   );
   expect(nextStep(up)).toMatchObject({ id: "admin-production", who: "person" });
+  // A new machine has no secrets file: the app's secret on the server's Worker is enough, and a deploy keeps it.
+  const held = { secrets: ["GITHUB_CLIENT_SECRET", "SESSION_SECRET", "FACTORY_KEY"], vars: { GITHUB_CLIENT_ID: "Iv1.x" } };
+  const elsewhere = steps(
+    answers,
+    facts({
+      targets: {
+        production: {
+          worker: "ours",
+          address: "ours",
+          version: "0123456789ab",
+          health: "ok",
+          signIn: "ok",
+          adminIn: true,
+          rule: null,
+          held,
+        },
+      },
+    }),
+    { ids }
+  );
+  expect(nextStep(elsewhere)).toMatchObject({ id: "deploy-production", who: "agent" });
 });
 
 test("the GitHub App's manifest has every server's callback, and no permissions", () => {

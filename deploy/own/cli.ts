@@ -27,6 +27,7 @@ import type { Sql } from "../../server/directory/index";
 import { deployedSettings } from "../../server/directory/settings";
 import {
   type Answers,
+  type Facts,
   hostOf,
   namesOf,
   nextStep,
@@ -63,8 +64,23 @@ export async function status(o: { json?: boolean; port?: number } = {}) {
   const own = loadOwn();
   const a = own.answers ? answersOf(own) : null;
   const f = await observe(own, a);
+  adoptIds(own, f);
   const list = steps(a, f, { port: o.port ?? pagePort(), ids: { github: own.github?.clientId, google: own.google?.clientId } });
   return { own, answers: a, facts: f, steps: list, next: nextStep(list) };
+}
+
+/**
+ * A checkout without .erga/own.json's app ids (a new machine) takes them from the server's Worker: they're public, and
+ * a deploy without them would drop GITHUB_CLIENT_ID.
+ */
+function adoptIds(own: ReturnType<typeof loadOwn>, f: Facts) {
+  const vars = Object.values(f.targets).map((t) => t?.held?.vars ?? {});
+  const github = vars.map((v) => v.GITHUB_CLIENT_ID).find(Boolean),
+    google = vars.map((v) => v.GOOGLE_CLIENT_ID).find(Boolean);
+  if ((own.github || !github) && (own.google || !google)) return;
+  if (!own.github && github) own.github = { clientId: github };
+  if (!own.google && google) own.google = { clientId: google };
+  saveOwn(own);
 }
 
 function printStatus(s: Awaited<ReturnType<typeof status>>) {
@@ -171,7 +187,7 @@ function targetOf(
   const host = hostOf(a, t),
     n = namesOf(host);
   const zoneName = zones.filter((z) => host == z || host.endsWith(`.${z}`)).sort((x, y) => y.length - x.length)[0];
-  const server = s.servers?.[t]!;
+  const server = s.servers?.[t];
   return {
     label: t,
     accountId: account,
@@ -181,9 +197,9 @@ function targetOf(
     app: { kind: "domain", zoneName, hostname: host },
     pages: a.pages == "shared" ? { kind: "shared" } : { kind: "zone", zoneName: a.pages },
     vars: varsOf(a, { github: own.github?.clientId, google: own.google?.clientId }),
+    // No server secrets in the file (a new machine): the Worker keeps the ones it has (keepSecrets).
     secrets: {
-      SESSION_SECRET: server.SESSION_SECRET,
-      FACTORY_KEY: server.FACTORY_KEY,
+      ...(server ? { SESSION_SECRET: server.SESSION_SECRET, FACTORY_KEY: server.FACTORY_KEY } : {}),
       ...(s.GITHUB_CLIENT_SECRET ? { GITHUB_CLIENT_SECRET: s.GITHUB_CLIENT_SECRET } : {}),
       ...(s.GOOGLE_CLIENT_SECRET ? { GOOGLE_CLIENT_SECRET: s.GOOGLE_CLIENT_SECRET } : {}),
     },
@@ -227,7 +243,10 @@ async function deploy(t: TargetName) {
   }
   const s = loadSecrets();
   s.servers ??= {};
-  if (!s.servers[t]) {
+  // A server's own secrets are made once, before its first deploy. A Worker that has them keeps them: new ones would
+  // sign everyone out, and make the values encrypted with the old FACTORY_KEY unreadable.
+  const held = tf?.held?.secrets ?? [];
+  if (!s.servers[t] && !(held.includes("SESSION_SECRET") && held.includes("FACTORY_KEY"))) {
     s.servers[t] = { SESSION_SECRET: random(), FACTORY_KEY: random() };
     saveSecrets(s);
   }
