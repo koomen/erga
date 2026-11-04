@@ -1,0 +1,78 @@
+[
+ {
+  "task": "essay-typo",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 8.371,
+  "apiCalls": 3,
+  "toolCalls": 2,
+  "toolErrors": 0,
+  "inputTokens": 30440,
+  "outputTokens": 341,
+  "tools": {
+   "Bash": 2
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "essay-typo",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 26.11,
+  "apiCalls": 6,
+  "toolCalls": 7,
+  "toolErrors": 1,
+  "inputTokens": 74687,
+  "outputTokens": 1376,
+  "tools": {
+   "mcp__erga__read": 4,
+   "mcp__erga__page": 1,
+   "mcp__erga__edit": 2
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "site-rename",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 15.907,
+  "apiCalls": 5,
+  "toolCalls": 4,
+  "toolErrors": 0,
+  "inputTokens": 56904,
+  "outputTokens": 840,
+  "tools": {
+   "Bash": 4
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "site-rename",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 44.29,
+  "apiCalls": 10,
+  "toolCalls": 16,
+  "toolErrors": 1,
+  "inputTokens": 149680,
+  "outputTokens": 3742,
+  "tools": {
+   "mcp__erga__read": 8,
+   "mcp__erga__edit": 7,
+   "mcp__erga__page": 1
+  },
+  "speed": [
+   "standard"
+  ]
+ }
+]

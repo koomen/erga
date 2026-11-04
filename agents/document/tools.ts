@@ -155,6 +155,39 @@ export function makeTools(
     await opts.caughtUp?.();
     return `${r.replaced ? "Replaced" : "Wrote"} ${path} (${readableSize(bytes.length)}, ${r.kind == "text" ? "as text" : "a file kept whole"}).`;
   };
+  /** read with a glob: each text file it matches, whole, after a line with its path, as far as MAX_BYTES goes. */
+  const readMany = (glob: string): string => {
+    const only = globToRegExp(glob.replace(/^\.?\//, ""));
+    const paths = ws.paths().filter((f) => only.test(f) && ws.isText(f));
+    if (!paths.length) throw new Error(`No text file matches ${glob}.`);
+    let out = "",
+      i = 0;
+    for (; i < paths.length; i++) {
+      const part = `==> ${paths[i]} <==\n${run(ws.read(paths[i]))}\n`;
+      if (out.length + part.length > MAX_BYTES) break;
+      out += part;
+    }
+    return i < paths.length
+      ? `${out}\n[${paths.length - i} more: ${paths.slice(i).join(", ")}. Read them by name, or with a narrower glob.]`
+      : out;
+  };
+  /** edit with a glob: each oldText replaced everywhere, in each text file the glob matches that has it (as sed would). */
+  const editMany = async (glob: string, edits: readonly TextEdit[]): Promise<string> => {
+    if (edits.some((e) => !e.oldText)) throw new Error("With a glob path, each edit gives oldText (no selector or cssRule).");
+    const only = globToRegExp(glob.replace(/^\.?\//, ""));
+    const done: string[] = [];
+    for (const f of ws.paths()) {
+      if (!only.test(f) || !ws.isText(f)) continue;
+      const here = run(ws.read(f));
+      const mine = edits.filter((e) => here.includes(e.oldText!)).map((e) => ({ ...e, replaceAll: true }));
+      if (!mine.length) continue;
+      const r = await Effect.runPromise(Effect.mapError(ws.edit(f, mine), (e) => new Error(e.message)));
+      opts.edited(r.path, r.at);
+      done.push(r.summary);
+    }
+    if (!done.length) throw new Error(`No file that ${glob} matches has any of the oldTexts: nothing was changed.`);
+    return done.join("\n");
+  };
   return [
     {
       name: "read",
@@ -162,7 +195,7 @@ export function makeTools(
       description: "Reads a file: text, an image or a PDF.",
       parameters: Schema.Struct({
         path: Schema.String.annotate({
-          description: `The file (text: ${MAX_LINES} lines at most).`,
+          description: `The file (text: ${MAX_LINES} lines at most); or a glob ("*.html"): each text file it matches, one after another.`,
         }),
         offset: Schema.optionalKey(Schema.Finite),
         limit: Schema.optionalKey(Schema.Finite),
@@ -179,6 +212,7 @@ export function makeTools(
         _id,
         p: { path: string; offset?: number; limit?: number; pages?: string; selector?: string; css_rule?: string; version?: string }
       ) => {
+        if (/[*?{]/.test(p.path) && p.version == null) return text(readMany(p.path));
         const path = run(modelPath(p.path));
         let all: string;
         if (p.version != null) {
@@ -213,12 +247,15 @@ export function makeTools(
       label: "Edit",
       description: "Replaces text, an element or a CSS rule in a file.",
       parameters: Schema.Struct({
-        path: Schema.String.annotate({ description: "The file" }),
+        path: Schema.String.annotate({
+          description: 'The file; or a glob ("**/*.html"): each oldText, everywhere in each file it matches',
+        }),
         edits: EDITS.annotate({
-          description: "Replacements, each unique; for a page's text, call_edit first.",
+          description: "Replacements, all at once, each unique unless replaceAll",
         }),
       }),
       execute: async (_id, p: { path: string; edits: readonly TextEdit[] }) => {
+        if (/[*?{]/.test(p.path)) return text(await editMany(p.path, p.edits));
         const r = await Effect.runPromise(Effect.match(ws.edit(p.path, p.edits), { onFailure: (e) => e, onSuccess: (r) => r }));
         if (r instanceof WorkspaceError)
           throw new Error(r.reason == "changed" ? await changedSince(r.message, run(modelPath(p.path))) : r.message);
@@ -231,17 +268,19 @@ export function makeTools(
       label: "Read the page's edits",
       description: "Lists a page's own edits: use them first for its text.",
       parameters: Schema.Struct({
-        path: Schema.String.annotate({
-          description: 'The page, e.g. "index.html"',
-        }),
+        path: Schema.optionalKey(
+          Schema.String.annotate({
+            description: 'The page (default "index.html")',
+          })
+        ),
       }),
-      execute: async (_id, p: { path: string }) => {
-        const { own, library } = await apisOf(run(modelPath(p.path)));
+      execute: async (_id, p: { path?: string }) => {
+        const { own, library } = await apisOf(run(modelPath(p.path ?? "index.html")));
         const apis = [
           own && { api: own.name, description: own.description, edits: own.edits },
           library && { api: library.name, description: library.description, edits: library.edits },
         ];
-        return text(JSON.stringify({ apis: apis.filter(Boolean) }, null, 1));
+        return text(JSON.stringify({ apis: apis.filter(Boolean) }));
       },
     },
     {
@@ -249,14 +288,14 @@ export function makeTools(
       label: "Edit the page",
       description: "Runs one of a page's edits (document_api).",
       parameters: Schema.Struct({
-        path: Schema.String.annotate({ description: 'The page, e.g. "index.html"' }),
+        path: Schema.optionalKey(Schema.String.annotate({ description: 'The page (default "index.html")' })),
         edit: Schema.String.annotate({ description: 'The edit\'s name, e.g. "replace_text".' }),
         input: Schema.Record(Schema.String, Schema.Unknown).annotate({
           description: "Its input, as its schema says.",
         }),
       }),
-      execute: async (_id, p: { path: string; edit: string; input: Record<string, unknown> }) => {
-        const path = run(modelPath(p.path));
+      execute: async (_id, p: { path?: string; edit: string; input: Record<string, unknown> }) => {
+        const path = run(modelPath(p.path ?? "index.html"));
         const { html, own, code, library } = await apisOf(path);
         const schema = (own?.edits.find((e) => e.name == p.edit) ?? library?.edits.find((e) => e.name == p.edit))?.input;
         const problem = schema && inputProblem(p.edit, schema, p.input);
@@ -318,7 +357,14 @@ export function makeTools(
         for (const f of ws.paths()) {
           if (out.length >= 100) break;
           if (only && !only.test(f)) continue;
-          if (ws.isText(f)) { run(ws.read(f)).split("\n").forEach((line, i) => { if (out.length < 100 && re.test(line)) out.push(`${f}:${i + 1}: ${cut(line)}`); }); continue; }
+          if (ws.isText(f)) {
+            run(ws.read(f))
+              .split("\n")
+              .forEach((line, i) => {
+                if (out.length < 100 && re.test(line)) out.push(`${f}:${i + 1}:${cut(line)}`);
+              });
+            continue;
+          }
           // A PDF through its text (extracted once, kept by the PDF's hash): page by page.
           if (!isPdf(f) || !opts.files) continue;
           const pages = await opts.files.pdfText(f).catch(() => null);

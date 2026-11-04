@@ -5,12 +5,13 @@
 const LAYOUTS = ["title", "content"];
 const slide = (n) => `body > section:nth-of-type(${n})`;
 
-/** A new slide's HTML, with its placeholder text (Erga selects it, to type over). */
-function slideHtml(layout, title) {
-  const t = String(title).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+/** A new slide's HTML, with its text, or placeholder text (Erga selects it, to type over). */
+function slideHtml(layout, title, points) {
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const t = esc(title);
   return layout == "title"
-    ? `<section class="slide" data-layout="title">\n  <h1>${t}</h1>\n  <p>Subtitle</p>\n</section>`
-    : `<section class="slide" data-layout="content">\n  <h2>${t}</h2>\n  <ul>\n    <li>A point</li>\n  </ul>\n</section>`;
+    ? `<section class="slide" data-layout="title">\n  <h1>${t}</h1>\n  <p>${esc(points[0] ?? "Subtitle")}</p>\n</section>`
+    : `<section class="slide" data-layout="content">\n  <h2>${t}</h2>\n  <ul>\n${(points.length ? points : ["A point"]).map((p) => `    <li>${esc(p)}</li>\n`).join("")}  </ul>\n</section>`;
 }
 
 /** How many slides the page has, as written. */
@@ -25,13 +26,18 @@ export default {
   edits: [
     {
       name: "add_slide",
-      description: "Adds a slide after another, with a layout and a title.",
+      description: "Adds a slide after another, with a layout, a title and its points.",
       input: {
         type: "object",
         properties: {
           after: { type: "integer", minimum: 0, description: "The slide it comes after; 0 for the start." },
           layout: LAYOUT,
           title: { type: "string", description: "Its heading (else a placeholder)." },
+          points: {
+            type: "array",
+            items: { type: "string" },
+            description: "Its text, plain: content's points; title's line (the first).",
+          },
         },
         required: ["after", "layout"],
       },
@@ -65,12 +71,13 @@ export default {
           : "The deck has no slides."
         : null;
     if (edit == "add_slide") {
-      const { after, layout, title } = input;
+      const { after, layout, title, points = [] } = input;
+      if (!Array.isArray(points) || points.some((p) => typeof p != "string")) return { refused: "points is a list of strings." };
       if (!LAYOUTS.includes(layout)) return { refused: `A slide's layout is one of ${LAYOUTS.join(", ")}.` };
       if (!count) return { refused: 'The page has no slides to put one beside: add a <section class="slide"> with edit.' };
       if (!Number.isInteger(after) || after < 0 || after > count)
         return { refused: `after is a slide's number, 1 to ${count}, or 0 for the start.` };
-      const html = slideHtml(layout, (typeof title == "string" && title.trim()) || "Title");
+      const html = slideHtml(layout, (typeof title == "string" && title.trim()) || "Title", points);
       return [after == 0 ? { op: "insert", html, before: slide(1) } : { op: "insert", html, after: slide(after) }];
     }
     if (edit == "delete_slide") {

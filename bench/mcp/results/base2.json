@@ -1,0 +1,573 @@
+[
+ {
+  "task": "app-swap",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 23.096,
+  "apiCalls": 5,
+  "toolCalls": 4,
+  "toolErrors": 0,
+  "inputTokens": 62429,
+  "outputTokens": 1775,
+  "tools": {
+   "Bash": 4
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "app-swap",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 36.773,
+  "apiCalls": 9,
+  "toolCalls": 11,
+  "toolErrors": 0,
+  "inputTokens": 123661,
+  "outputTokens": 2186,
+  "tools": {
+   "mcp__erga__read": 4,
+   "mcp__erga__edit": 4,
+   "mcp__erga__page": 3
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "canvas-add",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 21.113,
+  "apiCalls": 4,
+  "toolCalls": 3,
+  "toolErrors": 0,
+  "inputTokens": 55619,
+  "outputTokens": 1822,
+  "tools": {
+   "Bash": 2,
+   "Edit": 1
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "canvas-add",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 34.198,
+  "apiCalls": 8,
+  "toolCalls": 9,
+  "toolErrors": 1,
+  "inputTokens": 149886,
+  "outputTokens": 2318,
+  "tools": {
+   "mcp__erga__read": 5,
+   "mcp__erga__edit": 1,
+   "mcp__erga__page": 3
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "canvas-move",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 23.998,
+  "apiCalls": 4,
+  "toolCalls": 3,
+  "toolErrors": 0,
+  "inputTokens": 56351,
+  "outputTokens": 2096,
+  "tools": {
+   "Bash": 3
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "canvas-move",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 25.531,
+  "apiCalls": 6,
+  "toolCalls": 7,
+  "toolErrors": 1,
+  "inputTokens": 88499,
+  "outputTokens": 2167,
+  "tools": {
+   "mcp__erga__read": 5,
+   "mcp__erga__edit": 1,
+   "mcp__erga__page": 1
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "deck-add-slide",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 12.203,
+  "apiCalls": 4,
+  "toolCalls": 3,
+  "toolErrors": 0,
+  "inputTokens": 56113,
+  "outputTokens": 732,
+  "tools": {
+   "Bash": 2,
+   "Edit": 1
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "deck-add-slide",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 16.478,
+  "apiCalls": 5,
+  "toolCalls": 7,
+  "toolErrors": 1,
+  "inputTokens": 73490,
+  "outputTokens": 1016,
+  "tools": {
+   "mcp__erga__read": 5,
+   "mcp__erga__edit": 1,
+   "mcp__erga__page": 1
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "deck-trim",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 11.389,
+  "apiCalls": 4,
+  "toolCalls": 3,
+  "toolErrors": 0,
+  "inputTokens": 55967,
+  "outputTokens": 585,
+  "tools": {
+   "Bash": 3
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "deck-trim",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 25.321,
+  "apiCalls": 7,
+  "toolCalls": 8,
+  "toolErrors": 1,
+  "inputTokens": 106583,
+  "outputTokens": 1286,
+  "tools": {
+   "mcp__erga__read": 5,
+   "mcp__erga__edit": 2,
+   "mcp__erga__page": 1
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "essay-merge",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 18.029,
+  "apiCalls": 5,
+  "toolCalls": 4,
+  "toolErrors": 0,
+  "inputTokens": 80733,
+  "outputTokens": 1478,
+  "tools": {
+   "Bash": 4
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "essay-merge",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 33.48,
+  "apiCalls": 7,
+  "toolCalls": 8,
+  "toolErrors": 1,
+  "inputTokens": 140192,
+  "outputTokens": 3190,
+  "tools": {
+   "mcp__erga__read": 5,
+   "mcp__erga__edit": 2,
+   "mcp__erga__page": 1
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "essay-typo",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 6.837,
+  "apiCalls": 3,
+  "toolCalls": 2,
+  "toolErrors": 0,
+  "inputTokens": 30441,
+  "outputTokens": 388,
+  "tools": {
+   "Bash": 2
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "essay-typo",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 18.743,
+  "apiCalls": 6,
+  "toolCalls": 7,
+  "toolErrors": 1,
+  "inputTokens": 74616,
+  "outputTokens": 1391,
+  "tools": {
+   "mcp__erga__read": 4,
+   "mcp__erga__page": 1,
+   "mcp__erga__edit": 2
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "handbook-delete",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 18.219,
+  "apiCalls": 4,
+  "toolCalls": 3,
+  "toolErrors": 0,
+  "inputTokens": 44794,
+  "outputTokens": 1274,
+  "tools": {
+   "Bash": 3
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "handbook-delete",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 32.634,
+  "apiCalls": 7,
+  "toolCalls": 12,
+  "toolErrors": 1,
+  "inputTokens": 92184,
+  "outputTokens": 2813,
+  "tools": {
+   "mcp__erga__read": 4,
+   "mcp__erga__edit": 7,
+   "mcp__erga__page": 1
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "handbook-vacation",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 19.206,
+  "apiCalls": 5,
+  "toolCalls": 4,
+  "toolErrors": 0,
+  "inputTokens": 60920,
+  "outputTokens": 1296,
+  "tools": {
+   "Bash": 4
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "handbook-vacation",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 29.238,
+  "apiCalls": 6,
+  "toolCalls": 16,
+  "toolErrors": 0,
+  "inputTokens": 99526,
+  "outputTokens": 3045,
+  "tools": {
+   "mcp__erga__read": 9,
+   "mcp__erga__edit": 7
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "site-buttons",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 14.599,
+  "apiCalls": 5,
+  "toolCalls": 4,
+  "toolErrors": 0,
+  "inputTokens": 60287,
+  "outputTokens": 846,
+  "tools": {
+   "Bash": 4
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "site-buttons",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 19.36,
+  "apiCalls": 5,
+  "toolCalls": 7,
+  "toolErrors": 0,
+  "inputTokens": 65634,
+  "outputTokens": 1484,
+  "tools": {
+   "mcp__erga__read": 4,
+   "mcp__erga__edit": 2,
+   "mcp__erga__page": 1
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "site-new-page",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 19.988,
+  "apiCalls": 6,
+  "toolCalls": 5,
+  "toolErrors": 0,
+  "inputTokens": 78346,
+  "outputTokens": 1495,
+  "tools": {
+   "Bash": 4,
+   "Write": 1
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "site-new-page",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 32.125,
+  "apiCalls": 7,
+  "toolCalls": 13,
+  "toolErrors": 0,
+  "inputTokens": 96582,
+  "outputTokens": 2926,
+  "tools": {
+   "mcp__erga__read": 6,
+   "mcp__erga__edit": 6,
+   "mcp__erga__page": 1
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "site-prices",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 22.38,
+  "apiCalls": 5,
+  "toolCalls": 4,
+  "toolErrors": 0,
+  "inputTokens": 58851,
+  "outputTokens": 1274,
+  "tools": {
+   "Bash": 4
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "site-prices",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 32.84,
+  "apiCalls": 7,
+  "toolCalls": 10,
+  "toolErrors": 0,
+  "inputTokens": 113480,
+  "outputTokens": 2304,
+  "tools": {
+   "mcp__erga__read": 6,
+   "mcp__erga__edit": 4
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "site-rename",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 15.027,
+  "apiCalls": 5,
+  "toolCalls": 4,
+  "toolErrors": 0,
+  "inputTokens": 55182,
+  "outputTokens": 934,
+  "tools": {
+   "Bash": 4
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "site-rename",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 31.506,
+  "apiCalls": 7,
+  "toolCalls": 12,
+  "toolErrors": 1,
+  "inputTokens": 94727,
+  "outputTokens": 3175,
+  "tools": {
+   "mcp__erga__read": 5,
+   "mcp__erga__edit": 7
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "table-sort",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 39.072,
+  "apiCalls": 6,
+  "toolCalls": 5,
+  "toolErrors": 0,
+  "inputTokens": 126970,
+  "outputTokens": 3856,
+  "tools": {
+   "Bash": 4,
+   "Read": 1
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "table-sort",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 33.593,
+  "apiCalls": 7,
+  "toolCalls": 9,
+  "toolErrors": 0,
+  "inputTokens": 136623,
+  "outputTokens": 2987,
+  "tools": {
+   "mcp__erga__read": 3,
+   "mcp__erga__edit": 3,
+   "mcp__erga__page": 3
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "table-totals",
+  "mode": "local",
+  "pass": true,
+  "failures": [],
+  "wallS": 15.457,
+  "apiCalls": 5,
+  "toolCalls": 4,
+  "toolErrors": 0,
+  "inputTokens": 83702,
+  "outputTokens": 987,
+  "tools": {
+   "Bash": 4
+  },
+  "speed": [
+   "standard"
+  ]
+ },
+ {
+  "task": "table-totals",
+  "mode": "mcp",
+  "pass": true,
+  "failures": [],
+  "wallS": 19.602,
+  "apiCalls": 6,
+  "toolCalls": 7,
+  "toolErrors": 1,
+  "inputTokens": 118977,
+  "outputTokens": 1360,
+  "tools": {
+   "mcp__erga__read": 4,
+   "mcp__erga__page": 2,
+   "mcp__erga__edit": 1
+  },
+  "speed": [
+   "standard"
+  ]
+ }
+]

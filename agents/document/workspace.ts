@@ -47,6 +47,7 @@ export const EDITS = Schema.Array(
     selector: Schema.optionalKey(Schema.String),
     cssRule: Schema.optionalKey(Schema.String),
     newText: Schema.String,
+    replaceAll: Schema.optionalKey(Schema.Boolean.annotate({ description: "Every match of oldText" })),
   })
 );
 
@@ -170,13 +171,17 @@ export class YjsWorkspace implements Workspace {
       if (!minimal.length) return { path, at: spans[0].from, summary: `No change: the new text is the same as the old.` };
       const at = self.apply(path, t, minimal);
       // (What each replaced, as text: an edit by selector names it otherwise.)
-      return self.edited(
+      const done = self.edited(
         path,
         t,
         spans.map((x) => ({ oldText: current.slice(x.from, x.to), newText: x.insert })),
         minimal,
         at
       );
+      // An oldText found only with other white space: the agent learns the file's own.
+      if (!aimed.loose.length) return done;
+      const which = aimed.loose.map((i) => (edits.length > 1 ? `edits[${i}]` : "oldText")).join(", ");
+      return { ...done, summary: `${done.summary} (${which}: found with other white space than given.)` };
     });
   }
 

@@ -52,8 +52,18 @@ test("an agent's add_slide (call_edit) adds a slide to the deck; document_api li
   await expect.poll(() => ed.disk(), { timeout: DISK_MS }).toContain(`<section class="slide" data-layout="title">\n    <h1>Thanks</h1>`);
   await expect.poll(() => ed.frame<number>(`${F}.querySelectorAll("section.slide").length`)).toBe(3);
   expect(await ed.frame<boolean[]>(shown)).toEqual([true, false, false]);
+  // A slide with its points, in one call (the page: index.html, by default).
+  expect(
+    (
+      await tool("call_edit", {
+        edit: "add_slide",
+        input: { after: 3, layout: "content", title: "Why", points: ["Fast", "A & B"] },
+      })
+    ).text
+  ).toMatch(/^Made slides's add_slide\./);
+  expect((await tool("read", { path: "index.html" })).text).toMatch(/<h2>Why<\/h2>\s*<ul>\s*<li>Fast<\/li>\s*<li>A &amp; B<\/li>\s*<\/ul>/);
   expect(await fails("call_edit", { path: "index.html", edit: "delete_slide", input: { slide: 9 } })).toMatch(
-    /no slide 9: the deck has slides 1 to 3/
+    /no slide 9: the deck has slides 1 to 4/
   );
   expect(await fails("call_edit", { path: "index.html", edit: "move_slide", input: { slide: 3, by: -1 } })).toBe(
     "move_slide's input is wrong: to is required. document_api lists its input's schema."

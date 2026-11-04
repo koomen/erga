@@ -16,6 +16,8 @@ test("document_api lists the page's edits; call_edit runs one, the file and the 
   };
   expect(apis.map((a) => a.api)).toEqual(["erga/text"]);
   expect(apis[0].edits.map((e) => e.name)).toContain("replace_text");
+  // With no path, the page is index.html.
+  expect((await tool("document_api", {})).text).toBe((await tool("document_api", { path: "index.html" })).text);
   const done = await tool("call_edit", {
     path: "index.html",
     edit: "replace_text",

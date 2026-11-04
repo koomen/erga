@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Northwind Bikes: 2027 plan</title>
+<script type="module" src="https://erga.dev/erga/steps/editor.js"></script>
+<script type="module" src="canvas.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap">
+<style>
+  /* One large white canvas with frames on it (canvas.js moves the camera; erga/steps draws back, forward and the list).
+     Each frame is a step: the camera glides to the next frame in one smooth move. Drag to move around the canvas; scroll to move it, pinch (or ctrl and scroll) to zoom.
+     To move a frame, change its left and top; to add one, copy a section with class "frame" (its h2 is the step's name). */
+  :root {
+    --bg: #ffffff; --ink: #18202c; --muted: #566273;
+    --a: #2f6fd6; --b: #d4623a; --c: #2c9a6a; --d: #8a55c9;
+    --display: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+    --body: "Literata", Georgia, "Times New Roman", serif;
+  }
+  html, body { margin: 0; height: 100%; overflow: clip; background: var(--bg); color: var(--ink); }
+  .stage { position: fixed; inset: 0; overflow: clip; cursor: grab; touch-action: none; }
+  .stage.dragging, .stage.dragging * { cursor: grabbing; user-select: none; }
+  .canvas { position: absolute; left: 0; top: 0; width: 4400px; height: 2600px; transform-origin: 0 0; }
+  .path { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .path path { fill: none; stroke: #dde2e9; stroke-width: 6; stroke-dasharray: 2 22; stroke-linecap: round; }
+  .frame { position: absolute; box-sizing: border-box; width: 960px; height: 540px; padding: 72px 84px; display: flex; flex-direction: column; justify-content: center; gap: 24px;
+    cursor: pointer; }
+  .frame.current { cursor: auto; }
+  .frame h2 { margin: 0; font: 700 64px/1.1 var(--display); letter-spacing: -.015em; color: var(--accent, var(--a)); }
+  .frame p { margin: 0; font: 400 32px/1.45 var(--body); color: var(--muted); }
+  .frame:nth-of-type(2) { --accent: var(--b); }
+  .frame:nth-of-type(3) { --accent: var(--c); }
+  .frame:nth-of-type(4) { --accent: var(--d); }
+  .frame:nth-of-type(5) { --accent: var(--a); }
+  .frame:nth-of-type(6) { --accent: var(--b); }
+  .frame:nth-of-type(7) { --accent: var(--c); }
+  .frame:nth-of-type(8) { --accent: var(--d); }
+  .frame .note { font: 600 22px/1.3 var(--display); color: var(--ink); text-transform: uppercase; letter-spacing: .06em; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="canvas">
+    <svg class="path" viewBox="0 0 4400 2600" aria-hidden="true"><path d="M680 470 C 1200 300, 1500 400, 1780 390 S 2600 560, 2880 530 S 3800 600, 3880 470 S 3700 1300, 3480 1270 S 2500 1500, 2380 1470 S 1900 1200, 1980 1220 S 900 1300, 780 1270 S 1300 2200, 1880 2170"/></svg>
+    <section class="frame" style="left: 200px; top: 200px;">
+      <p class="note">Year in review</p>
+      <h2>Where we are</h2>
+      <p>Northwind sold 3,400 cargo bikes this year, up 41%, from two shops and the web store.</p>
+    </section>
+    <section class="frame" style="left: 1300px; top: 120px;">
+      <p class="note">Who buys</p>
+      <h2>Customers</h2>
+      <p>Two in three buyers are parents who replaced a second car. Most live within 5 km of a shop.</p>
+    </section>
+    <section class="frame" style="left: 2400px; top: 260px;">
+      <p class="note">Outside view</p>
+      <h2>Market</h2>
+      <p>Cargo bike sales in our three cities grow about 25% a year, and city subsidies end in 2028.</p>
+    </section>
+    <section class="frame" style="left: 3400px; top: 200px;">
+      <p class="note">Money in</p>
+      <h2>Pricing</h2>
+      <p>Our bikes sell at a premium of 15% over the nearest rival. Service plans add a margin we do not use yet.</p>
+    </section>
+    <section class="frame" style="left: 300px; top: 1000px;">
+      <p class="note">What we build</p>
+      <h2>Roadmap</h2>
+      <p>A folding model in spring, a rental fleet for families in summer, and a third shop in the autumn.</p>
+    </section>
+    <section class="frame" style="left: 1500px; top: 950px;">
+      <p class="note">Money out</p>
+      <h2>Budget</h2>
+      <p>Spend grows from 2.1 to 2.9 million: two thirds on the new shop and the rental fleet.</p>
+    </section>
+    <section class="frame" style="left: 2500px; top: 1800px;">
+      <p class="note">People</p>
+      <h2>Hiring</h2>
+      <p>Four mechanics, one fleet manager and a second buyer. The mechanics are the hardest roles to fill.</p>
+    </section>
+    <section class="frame" style="left: 3000px; top: 1000px;">
+      <p class="note">Watch out</p>
+      <h2>Risks</h2>
+      <p>Battery supply, the end of city subsidies, and theft of bikes from the rental fleet.</p>
+    </section>
+    <section class="frame" style="left: 1400px; top: 1900px;">
+      <p class="note">Decisions</p>
+      <h2>Next steps</h2>
+      <p>Sign the lease for the third shop by March, and order the rental fleet before the price rise.</p>
+    </section>
+  </div>
+</div>
+</body>
+</html>
