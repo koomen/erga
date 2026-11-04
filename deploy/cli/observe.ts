@@ -46,15 +46,15 @@ export const headOf = (ref: string): string | null => {
 
 /** Commits of a range (`git log` arguments), newest first. */
 export function commitsOf(...range: string[]): Commit[] {
-  const r = git("log", "--format=%H%x1f%s%x1f%ct%x1f%b%x1e", ...range);
+  const r = git("log", "--format=%H%x1f%s%x1f%ct%x1f%an%x1f%b%x1e", ...range);
   if (!r.ok || !r.out) return [];
   return r.out
     .split("\x1e")
     .map((x) => x.trim())
     .filter(Boolean)
     .map((x) => {
-      const [sha, subject, at, body] = x.split("\x1f");
-      return { sha, subject, at: Number(at) * 1000, body: body?.trim() ?? "" };
+      const [sha, subject, at, author, body] = x.split("\x1f");
+      return { sha, subject, at: Number(at) * 1000, author, body: body?.trim() ?? "" };
     });
 }
 
@@ -69,12 +69,16 @@ export function conflictsOf(onto: string, branch: string): string[] {
 
 /** The feature branches on GitHub: each with its place against staging. */
 export function branchesOf(check = true): Branch[] {
-  const r = git("for-each-ref", "refs/remotes/origin", "--format=%(refname:short)%1f%(objectname)%1f%(committerdate:unix)%1f%(subject)");
+  const r = git(
+    "for-each-ref",
+    "refs/remotes/origin",
+    "--format=%(refname:short)%1f%(objectname)%1f%(committerdate:unix)%1f%(subject)%1f%(authorname)"
+  );
   return r.out
     .split("\n")
     .filter(Boolean)
     .map((l) => l.split("\x1f"))
-    .map(([ref, sha, at, subject]) => ({ name: ref.replace(/^origin\//, ""), sha, at: Number(at) * 1000, subject }))
+    .map(([ref, sha, at, subject, author]) => ({ name: ref.replace(/^origin\//, ""), sha, at: Number(at) * 1000, subject, author }))
     .filter((b) => b.name != "HEAD" && b.name != "origin" && !(PROTECTED as readonly string[]).includes(b.name))
     .map((b) => {
       const [behind, ahead] = git("rev-list", "--left-right", "--count", `origin/staging...origin/${b.name}`).out.split(/\s+/).map(Number);
