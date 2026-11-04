@@ -1,12 +1,12 @@
 // Where Erga's own branches deploy: the one list of them. cloudflare.config.ts
 // reads production's names from targets.json (its Worker, database, domain and pages
 // route), and the deploy pipeline turns each into a target to deploy to
-// (deploy/run.ts, targetFor). A fork deploys with `bun own` instead (DEPLOY.md).
+// (deploy/run.ts, targetFor). A fork deploys with `bun erga own` instead (`bun erga own skill`).
 //
 //   production   branch main      erga.dev           Worker erga          D1 erga           pages *.erga-pages.dev
 //   staging      branch staging   staging.erga.dev   Worker erga-staging  D1 erga-staging   pages *.erga-pages-staging.dev
 //
-// GitHub Actions deploys both (deploy/actions.ts, docs/operations.md): a push
+// GitHub Actions deploys both (deploy/actions.ts): a push
 // to `staging` deploys staging, a push to `main` deploys production.
 //
 // Both targets are in the same Cloudflare account (targets.json `account`;

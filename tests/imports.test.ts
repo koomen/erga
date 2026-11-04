@@ -1,4 +1,4 @@
-// The shape of the code, as rules its imports keep (README.md, "The layout"). The layers, lowest first: a file
+// The shape of the code, as rules its imports keep (this header). The layers, lowest first: a file
 // imports only its own layer and the layers below it.
 //
 //   1. shared/        nothing of ours (assets/ is data: any layer may import it). A library's API (libs/<name>/api/) is

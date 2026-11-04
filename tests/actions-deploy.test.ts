@@ -72,7 +72,7 @@ test("a fork's target sends no secret and keeps the Worker's; it never takes erg
 });
 
 test("Actions deploys only a Worker that has its own secrets: a new one is first deployed from a machine", () => {
-  expect(secretsProblem(null, "w")).toContain("bun own deploy");
+  expect(secretsProblem(null, "w")).toContain("bun erga own deploy");
   expect(secretsProblem(["SESSION_SECRET"], "w")).toContain("FACTORY_KEY");
   expect(secretsProblem(["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET"], "w")).toBeNull();
 });

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stops a push to staging or main that bun erga does not make (deploy/cli/pre-push.ts). bun erga hooks turns it on.
+exec bun "$(git rev-parse --show-toplevel)/deploy/cli/pre-push.ts" "$@"

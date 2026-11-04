@@ -2,7 +2,7 @@
 // fork's servers, from the answers in its repository variables. Pure: no network, no files.
 //
 // A fork sets these repository variables (Settings > Secrets and variables > Actions > Variables), the same answers as
-// `bun own set` takes (deploy/own/plan.ts QUESTIONS):
+// `bun erga own set` takes (deploy/own/plan.ts QUESTIONS):
 //
 //   ERGA_HOST                 the production address (erga.example.com). Its presence makes this a fork's deploy.
 //   ERGA_STAGING              a staging address, or nothing (no staging server)
@@ -78,13 +78,13 @@ export function actionDeploy(o: { branch: string; vars: Record<string, string | 
 /**
  * Why a deploy from Actions mustn't go on, from the Worker's secrets (their names; null: there's no Worker yet). Actions
  * sends no secret and keeps the Worker's: a Worker without its own SESSION_SECRET and FACTORY_KEY would make a server
- * nobody can sign in to. Its first deploy runs on a machine, which makes them (`bun own deploy`).
+ * nobody can sign in to. Its first deploy runs on a machine, which makes them (`bun erga own deploy`).
  */
 export function secretsProblem(names: string[] | null, worker: string): string | null {
   if (!names)
-    return `There's no Worker ${worker} yet. Run the first deploy from your machine (bun own deploy), which sets its secrets; GitHub deploys it after that.`;
+    return `There's no Worker ${worker} yet. Run the first deploy from your machine (bun erga own deploy), which sets its secrets; GitHub deploys it after that.`;
   const missing = ["SESSION_SECRET", "FACTORY_KEY"].filter((n) => !names.includes(n));
   return missing.length
-    ? `The Worker ${worker} has no ${missing.join(" and ")}. Run a deploy from your machine once (bun own deploy), which sets them; GitHub deploys it after that.`
+    ? `The Worker ${worker} has no ${missing.join(" and ")}. Run a deploy from your machine once (bun erga own deploy), which sets them; GitHub deploys it after that.`
     : null;
 }

@@ -2,10 +2,10 @@
 //
 //   .erga/own.json        the person's answers, the account, the sign-in apps' public ids (no secret)
 //   .erga/secrets.json    mode 600: each server's SESSION_SECRET and FACTORY_KEY, the sign-in apps' secrets, the
-//                         agent's admin tokens. Never printed: `bun own status` names the keys only.
+//                         agent's admin tokens. Never printed: `bun erga own status` names the keys only.
 //   .erga/inbox.jsonl     the checklist page's conversation: the person's messages and the agent's answers
 //
-// A person who loses .erga/ keeps a working server: the secrets stay on the Workers. Only `bun own token` and a new
+// A person who loses .erga/ keeps a working server: the secrets stay on the Workers. Only `bun erga own token` and a new
 // server need them; keep a copy of secrets.json in a password manager.
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -28,7 +28,7 @@ export interface Secrets {
   GOOGLE_CLIENT_SECRET?: string;
   /** Each server's own: made at random before its first deploy. */
   servers?: Partial<Record<TargetName, { SESSION_SECRET: string; FACTORY_KEY: string }>>;
-  /** The agent's admin token on each server (bun own token). */
+  /** The agent's admin token on each server (bun erga own token). */
   tokens?: Partial<Record<TargetName, string>>;
 }
 

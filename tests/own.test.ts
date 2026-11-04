@@ -1,4 +1,4 @@
-// bun own (deploy/own/plan.ts): the answers, the names, and the steps it decides from what it saw.
+// bun erga own (deploy/own/plan.ts): the answers, the names, and the steps it decides from what it saw.
 import { expect, test } from "bun:test";
 import {
   answersProblem,
@@ -25,7 +25,6 @@ const facts = (over: Partial<Facts> = {}): Facts => ({
   workersSubdomain: "me",
   targets: {},
   secrets: [],
-  upstream: null,
   ...over,
 });
 const answers = { ...defaultAnswers("ada"), host: "erga.example.com" };
@@ -80,7 +79,7 @@ test("the steps go in order, each with who does it, and the next one is the firs
     }),
     { ids }
   );
-  expect(nextStep(ready)).toMatchObject({ id: "deploy-production", who: "agent", next: "Run: bun own deploy production" });
+  expect(nextStep(ready)).toMatchObject({ id: "deploy-production", who: "agent", next: "Run: bun erga own deploy production" });
   const taken = steps(
     answers,
     facts({

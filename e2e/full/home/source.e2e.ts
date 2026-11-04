@@ -25,7 +25,7 @@ test("/source and every path under it are the homepage's source.html, as it is; 
     })
     .toBe(true);
 
-  for (const path of ["/source", "/source/", "/source/main", "/source/main/server/app.ts", "/source/staging/docs/self-host.md"]) {
+  for (const path of ["/source", "/source/", "/source/main", "/source/main/server/app.ts", "/source/staging/deploy/cli/SKILL.md"]) {
     const r = await get(server, path);
     expect(`${path}: ${r.status}`).toBe(`${path}: 200`);
     const html = await r.text();
