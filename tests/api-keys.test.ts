@@ -108,7 +108,7 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   const post = (fields: Record<string, string>, from = origin) =>
     fetch(`${origin}/admin/credentials`, { method: "POST", body: new URLSearchParams(fields), headers: { Origin: from } });
   const before = await (await fetch(`${origin}/admin/api-keys`)).text();
-  expect(before).toContain("Using the deploy's ANTHROPIC_API_KEY");
+  expect(before).toContain("Using the deploy's</span> <code>ANTHROPIC_API_KEY</code>");
   // A provider's models show once the server has a key for it: Anthropic's (the deploy's), not OpenAI's.
   expect(before).toContain(`value="sonnet" checked`);
   expect(before).not.toContain(`value="gpt-6.1-sol"`);
@@ -122,9 +122,9 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   expect((await post({ name: "gemini", value: OPENAI })).status).toBe(400);
   const html = await (await fetch(`${origin}/admin/api-keys`)).text();
   expect(html).not.toContain(ANTHROPIC.slice(0, 20));
-  expect(html).toContain(`Key saved</span> · …Ab12`);
+  expect(html).toContain(`Key saved</span> · <code>…Ab12</code>`);
   const log = await (await fetch(`${origin}/admin/changes`)).text();
-  expect(log).toContain(`<span class="key">ANTHROPIC_API_KEY</span> key set`);
+  expect(log).toContain(`<span class="key">API key</span> <code>ANTHROPIC_API_KEY</code> set`);
   expect(log).not.toContain(ANTHROPIC.slice(0, 20));
   // The keys have their own page now: Settings has none of them; every key and deploy secret is on API keys.
   expect(await (await fetch(`${origin}/admin`)).text()).not.toContain('li class="provider"');

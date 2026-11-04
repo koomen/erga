@@ -18,12 +18,15 @@ export default function adminAccess(): void {
       publicBox.checked = false;
       return;
     }
+    const state = publicBox.closest("li")?.querySelector(".state");
+    if (state) state.textContent = publicBox.checked ? "On" : "Off";
     say(publicHint, "Saving…");
     try {
       await runTool("set_access", { action: "public", on: publicBox.checked });
       say(publicHint, "Saved.");
     } catch (err) {
       publicBox.checked = !publicBox.checked;
+      if (state) state.textContent = publicBox.checked ? "On" : "Off";
       say(publicHint, (err as Error).message, true);
     }
   });
@@ -85,7 +88,7 @@ export default function adminAccess(): void {
   const signal = window.ergaView?.signal;
   liveList(rules, { wire }, signal);
   liveList(
-    document.querySelector<HTMLElement>("section.public-sharing")!,
+    document.querySelector<HTMLElement>("section.public-sharing ol")!,
     { wire: (row) => wirePublic(row.querySelector("input")!) },
     signal
   );

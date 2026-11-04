@@ -1,6 +1,6 @@
 // The admin pages have one stylesheet (admin.css, client/styles/admin.css), so a page shown in place by a link
 // (client/admin/admin-nav.ts) is styled as it is after a load. Before, the in-place page kept the first page's style: from
-// another page, API keys showed each key's label and env name run together, and its rows without their look.
+// another page, API keys showed its rows without their look (a grid: the name at the left, the key at the right).
 import { expect, servers, test } from "../../helpers/fixtures";
 
 await servers.main();
@@ -13,13 +13,18 @@ test("a link from one admin page to another shows the new page styled, in place"
   await page.evaluate(() => { (window as unknown as { stayed: boolean }).stayed = true; });
 
   await page.click('.admin-side a[href^="/admin/api-keys"]');
-  await page.waitForSelector("li.provider .head");
+  await page.waitForSelector("li.provider .about");
   const keys = await page.evaluate(() => {
-    const head = getComputedStyle(document.querySelector("li.provider .head")!),
+    const name = getComputedStyle(document.querySelector("li.provider .key")!),
       row = getComputedStyle(document.querySelector("ol.rows > li.provider")!);
-    return { stayed: (window as unknown as { stayed?: boolean }).stayed, head: head.display, gap: head.columnGap, row: row.display };
+    return {
+      stayed: (window as unknown as { stayed?: boolean }).stayed,
+      weight: name.fontWeight,
+      row: row.display,
+      columns: row.gridTemplateColumns.split(" ").length,
+    };
   });
-  expect(keys).toMatchObject({ stayed: true, head: "flex", gap: "10px", row: "grid" });
+  expect(keys).toMatchObject({ stayed: true, weight: "600", row: "grid", columns: 2 });
 
   await page.click('.admin-side a[href^="/admin/users"]');
   await page.waitForSelector("ol.users > li");
