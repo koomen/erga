@@ -10,6 +10,7 @@ import type * as Y from "yjs";
 import type { DocName } from "./api.ts";
 import { assets, files as texts } from "./content.ts";
 import { resolvePage } from "./pages.ts";
+import { headOf, type PageHead } from "../shared/page-head.ts";
 import { digest, NoSuchDocument, StoreError } from "./room.ts";
 import { throttle } from "../shared/time.ts";
 import type { Storage } from "./storage.ts";
@@ -20,6 +21,8 @@ export interface ViewState {
   ver: string;
   index: string;
   paths: string[];
+  /** Each page's head's details (shared/page-head.ts), for the pages that have any. */
+  heads: Record<string, PageHead>;
 }
 
 /** Document.view's answer: what the person may do, the document's name as last told, and (if they may view) the version and file, with its text. */
@@ -32,6 +35,8 @@ export interface ViewAnswer {
   file?: string | null;
   /** The page's own address under the document's (resolvePage's canonical). */
   canonical?: string | null;
+  /** The page's head's details: its title, description, icon and link picture, as its <head> says. */
+  head?: PageHead;
   /** No file changed in QUIET_MS: the answer may be kept a moment (server/documents/view.ts). */
   quiet?: boolean;
 }
@@ -109,7 +114,8 @@ export class DocumentView {
       if (!self.o.isOpen() && !info.disk) {
         yield* Effect.promise(() => self.o.closing());
         const kept = yield* io(() => self.o.storage.get<ViewState>(VIEW));
-        if (kept && kept.index == info.index) {
+        // (A view kept before the heads were part of it is worked out again.)
+        if (kept && kept.index == info.index && kept.heads) {
           self.kept = true;
           return (self.latest = kept);
         }
@@ -118,13 +124,22 @@ export class DocumentView {
       if (!doc) return yield* new NoSuchDocument({ message: "There's no such document." });
       const encoder = new TextEncoder();
       const entries: [string, string][] = [];
-      for (const [path, text] of texts(doc).entries()) entries.push([path, digest(encoder.encode(text.toString()))]);
+      const heads: Record<string, PageHead> = {};
+      for (const [path, text] of texts(doc).entries()) {
+        const s = text.toString();
+        entries.push([path, digest(encoder.encode(s))]);
+        if (/\.html?$/i.test(path)) {
+          const head = headOf(s);
+          if (Object.keys(head).length) heads[path] = head;
+        }
+      }
       for (const [path, d] of assets(doc).entries()) if (!texts(doc).has(path)) entries.push([path, d]);
       entries.sort(([a], [b]) => (a < b ? -1 : 1));
       const state: ViewState = {
         ver: "l" + hashText(JSON.stringify([info.index, entries])),
         index: info.index,
         paths: entries.map(([p]) => p),
+        heads,
       };
       self.latest = state;
       self.kept = true;
@@ -173,6 +188,16 @@ export class DocumentView {
     // Quiet: no file changed in a while, so the app may keep this answer a moment. A document being edited is
     // asked each time.
     const quiet = Date.now() - this.lastChange > QUIET_MS;
-    return { role, name, test: !!info.test, ver: state.ver, file: found?.file ?? null, canonical: found?.canonical ?? null, quiet };
+    const head = found ? state.heads[found.file] : undefined;
+    return {
+      role,
+      name,
+      test: !!info.test,
+      ver: state.ver,
+      file: found?.file ?? null,
+      canonical: found?.canonical ?? null,
+      quiet,
+      ...(head ? { head } : {}),
+    };
   }
 }

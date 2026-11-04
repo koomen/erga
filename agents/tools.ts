@@ -128,7 +128,7 @@ export const KINDS: readonly {
   {
     name: "edit",
     description: "Changes a document: a file's text, files, pages, a version.",
-    ops: ["edit", "write", "call_edit", "new", "mv", "cp", "rm", "set_kind", "restore_version"],
+    ops: ["edit", "write", "call_edit", "set_head", "new", "mv", "cp", "rm", "set_kind", "restore_version"],
     fields: {
       path: 'A file, folder or page; edit takes a glob too ("**/*.html"), to change many files at once.',
       from: 'A file or folder ("." for all, with cp).',

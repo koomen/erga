@@ -254,7 +254,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     window.ergaShell?.ready();
     return;
   }
-  document.title = info.docName?.title ?? info.name;
+  document.title = document.documentElement.dataset.pageTitle || (info.docName?.title ?? info.name);
   // Someone edits the source (the lock: document/room.ts): the source view gives way to the page, which says so and is
   // read-only meanwhile (libs/text/ui/frame.ts).
   roomInfo(collab.doc).observe(() => {

@@ -20,7 +20,7 @@ const render = (index: string, more: Record<string, string | Uint8Array> = {}) =
 
 test("its files point at the deploy's addresses; everything else stays as it is", async () => {
   const r = await render(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=500"><title>Own</title>
-<link rel="stylesheet" href="style.css?v=2"><link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="style.css?v=2"><link rel="preconnect" href="https://fonts.googleapis.com"><meta property="og:image" content="img/bg.png">
 <style>@import "style.css"; .x { background: url('img/bg.png') } .y { background: url(/abs.png) } .z { background: url(data:image/png;base64,AA==) }</style>
 <script src="./script.js"></script></head>
 <body><svg><title>An icon</title></svg><img src="img/a%20b.png" srcset="img/bg.png 1x, img/a%20b.png 2x, https://x.test/c.png 3x"><img src="missing.png">
@@ -42,10 +42,12 @@ test("its files point at the deploy's addresses; everything else stays as it is"
   expect(html).toContain('href="#top"');
   expect(html).toContain('style="background-image: url(/_home-files/g1/img/bg.png)"');
   expect(html).toContain('poster="/_home-files/g1/img/bg.png"');
-  // The viewer's viewport, not the page's; the document's title for the tab, as the viewer gives it, but an SVG's own title stays.
+  // The picture a link shows is a file of the deploy too.
+  expect(html).toContain('<meta property="og:image" content="/_home-files/g1/img/bg.png">');
+  // The viewer's viewport, not the page's; the page's own title for the tab, as the viewer gives it, and an SVG's own title stays.
   expect(html).not.toContain("width=500");
   expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">');
-  expect(html).toContain("<title>The Title</title>");
+  expect(html).toContain("<title>Own</title>");
   expect(html).toContain("<title>An icon</title>");
   expect(html.startsWith("<!doctype html>")).toBe(true);
   // The controls go just before </body>.

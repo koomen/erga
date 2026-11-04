@@ -25,8 +25,17 @@
 // (server/documents/routes.ts: which page an address is) and the browser (the editor and
 // the tree's UI), so it holds only plain functions and the operations' shape.
 
+import type { PageHead } from "../shared/page-head.ts";
+
 /** One entry in the tree: a page (.html), any other file, or a folder. */
-export interface TreeEntry { path: string; type: "page" | "file" | "folder"; /** A page's title, when it has one (the API adds it). */ title?: string }
+export interface TreeEntry {
+  path: string;
+  type: "page" | "file" | "folder";
+  /** A page's title, when it has one (the API adds it). */
+  title?: string;
+  /** A page's head's details (shared/page-head.ts), when it has any (the API adds them). */
+  head?: PageHead;
+}
 
 /** What can be done to the tree (the operations new_page, mkdir, mv, rm, make_project, make_document): rename is a move. */
 export type TreeOp =

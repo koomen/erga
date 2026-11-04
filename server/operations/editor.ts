@@ -1,6 +1,6 @@
 // The operations inside one document, as a person does them in the editor: what it is (ls: its name and address,
 // kind, homepage, access, files and pages), its name (the title card), its pages and folders (the page tree), its kind
-// (the settings' Document/Project switch) and its versions (the settings' Versions). Each takes `document`; the
+// (the settings' Document/Project switch), a page's head (the settings' Page) and its versions (the settings' Versions). Each takes `document`; the
 // person's own agent may leave it out for the one open on their page (Caller.here). They reach the document's host
 // through its Durable Object's calls (platform.docs), as the person, after the directory says they may.
 //
@@ -17,6 +17,7 @@ import { globToRegExp } from "../../shared/glob.ts";
 import { accessOf, cleanFilePath, readersOf } from "./documents.ts";
 import { homepageOf } from "./home.ts";
 import { byLine } from "../../shared/attribution.ts";
+import { HEAD_FIELDS, headOf, withHead, type PageHead } from "../../shared/page-head.ts";
 import {
   type Caller,
   described,
@@ -267,6 +268,45 @@ export const EDITOR_OPERATIONS: Operation[] = [
       if (args.kind != "project" && args.kind != "document")
         throw new OperationError({ message: "kind is project or document.", status: 400 });
       return treeOp(caller, args.document, { op: args.kind == "project" ? "make_project" : "make_document" });
+    },
+  },
+  {
+    name: "set_head",
+    label: "Set the page's details",
+    activity: "setting the page's details",
+    ui: "The editor's settings: Page, Details (the page's title, description, icon and link picture)",
+    description: "Sets a page's title, description, icon or link picture.",
+    parameters: Schema.Struct({
+      document: DOCUMENT,
+      path: Schema.optionalKey(PATH("The page (default: the document's own).")),
+      title: Schema.optionalKey(str("The browser tab's title, and a link's; \"\" removes it.")),
+      description: Schema.optionalKey(str("A sentence or two for search results and link previews.")),
+      icon: Schema.optionalKey(str("The tab's icon: a file of the document (relative to the page) or a URL.")),
+      image: Schema.optionalKey(str("The picture a link to the page shows (og:image): a file or a URL.")),
+    }),
+    run: async (args, caller) => {
+      const doc = await findDocument(caller, args.document, "edit");
+      const changes: PageHead = {};
+      for (const f of HEAD_FIELDS) if (typeof args[f] == "string") changes[f] = args[f];
+      if (!Object.keys(changes).length)
+        throw new OperationError({ message: "Give at least one of title, description, icon and image.", status: 400 });
+      const platform = platformOf(caller);
+      const snap = await platform.docs.snapshot(doc);
+      if (!snap) throw new OperationError({ message: "There's no such document.", status: 404 });
+      const path = typeof args.path == "string" && args.path.trim() ? cleanFilePath(args.path) : snap.index;
+      const text = snap.files[path];
+      if (!/\.html?$/i.test(path) || typeof text != "string")
+        throw new OperationError({
+          message: `${path} isn't a page of ${described(doc, caller).address}: only a page has these.`,
+          status: 404,
+        });
+      // The page's <head> as it should be: only its differences reach the room, as an edit (open editors show it).
+      const now = withHead(text, changes);
+      if (now != text) {
+        const r = await platform.docs.publish(doc, { [path]: now }, [], byLine(caller.who.login.toLowerCase(), caller.who.via));
+        if (r.refused.length) throw new OperationError({ message: r.refused[0].why, status: 409 });
+      }
+      return { document: described(doc, caller), path, head: headOf(now) };
     },
   },
   {

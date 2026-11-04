@@ -10,6 +10,9 @@ import { FIX_REPORTED, pageReport } from "../shared/page-report.ts";
 const frameOf = (editable: boolean, editing = false) => {
   const { before, after } = viewerPage({
     title: "T",
+    head: {},
+    file: "index.html",
+    files: "https://abcd1234-ada.erga-pages.dev/t/tok/",
     docId: "abcd1234",
     pages: "https://abcd1234-ada.erga-pages.dev",
     meta: "",
