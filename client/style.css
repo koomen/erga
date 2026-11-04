@@ -446,9 +446,12 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 .msg-user > .msg-files:not(:first-child) { margin-top: 6px; }
 .msg-files .file-chip.image { height: 96px; }
 .msg-files .file-chip.image img { max-width: 220px; }
-.agent-drop .agent-log { background: color-mix(in srgb, var(--caret) 7%, transparent); outline: 2px dashed color-mix(in srgb, var(--caret) 70%, transparent); outline-offset: -6px; border-radius: 12px; }
-.agent-drop .agent-log::after { content: "Drop files to attach them"; position: sticky; bottom: 10px; align-self: center; margin-top: auto; padding: 6px 14px; border-radius: 999px; background: var(--fg-strong); color: var(--bg); font: 600 12.5px var(--font-text); pointer-events: none; }
-.agent-drop .agent-log:empty::before { content: none; }
+/* Files dragged over the panel (attach-ui.ts): the whole open panel lights up, with what a drop does in its middle. */
+.agent-drop .agent-card::after {
+  content: "Drop files to attach them"; position: absolute; inset: 6px; z-index: 5; display: grid; place-items: center; border-radius: 13px;
+  background: color-mix(in srgb, var(--caret) 9%, transparent); outline: 2px dashed color-mix(in srgb, var(--caret) 70%, transparent); outline-offset: -2px;
+  color: var(--fg-strong); font: 600 13px var(--font-text); pointer-events: none;
+}
 .agent-hint { margin: 0 10px 8px; padding: 7px 10px; border-radius: 10px; background: var(--code-bg); color: var(--soft); font-size: 12.5px; line-height: 1.45; }
 .agent-hint.sticky { color: var(--fg); }
 .agent-hint[hidden] { display: none; }

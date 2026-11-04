@@ -16,6 +16,8 @@ export interface Attachment {
   size: number;
   /** An image's thumbnail, as a small data: URL, for the transcript. */
   thumb?: string;
+  /** An image the server kept (agents/person/sessions.ts): its sha-256, which write's {"blob": ...} adds to a document. */
+  blob?: string;
 }
 
 /** An attachment as the transcript shows it. */
@@ -93,6 +95,11 @@ export function messageContent(text: string, files: Attachment[] = []): string |
   const texts = files.filter((f) => f.kind == "text").map((f) => `<file name="${attr(f.name)}">\n${f.data}\n</file>`);
   const images = files.filter((f) => f.kind == "image");
   const names = images.map((f) => f.name).join(", ");
-  const body = [text, ...texts, ...(images.length ? [`(Attached image${images.length > 1 ? "s" : ""}: ${names})`] : [])].filter(Boolean).join("\n\n");
+  // A kept image can go into a document as it is: write's files take it by its hash.
+  const kept = images.filter((f) => f.blob).map((f) => `- ${f.name}: {"blob": "${f.blob}"}`);
+  const note = kept.length
+    ? `(Attached image${images.length > 1 ? "s" : ""}: ${names}. Each is kept as a file: to add one to a document, give write's files its blob, e.g. {"images/${images.find((f) => f.blob)!.name}": {"blob": "…"}}.\n${kept.join("\n")})`
+    : `(Attached image${images.length > 1 ? "s" : ""}: ${names})`;
+  const body = [text, ...texts, ...(images.length ? [note] : [])].filter(Boolean).join("\n\n");
   return [{ type: "text", text: body }, ...images.map((f): Part => ({ type: "file", mediaType: f.mimeType, data: f.data }))];
 }

@@ -5,7 +5,7 @@ import * as M from "../../../shared/manuscript";
 import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
 import { contentIn, escapeAttr, findDiff, norm, placeholderBr, setChecked } from "../api/source";
-import { hasFiles, LOADING_AGAIN, showDropCaret, showDropNote } from "./drop";
+import { draggedImages, hasFiles, type ImageSpot, inDropGap, LOADING_AGAIN, showDropCaret, showDropImage, showDropNote } from "./drop";
 import { isMac, pageOwnBox } from "./core";
 import { TEXT_ATTR } from "../../../shared/page-html";
 import { leaveCode } from "../api/blocks";
@@ -96,18 +96,26 @@ export abstract class EditorInput extends EditorClipboard {
     on("dragover", (e) => {
       if (!hasFiles(e)) return;
       e.preventDefault();
-      const at = this.dropAt(e);
-      e.dataTransfer!.dropEffect = at ? "copy" : "none";
+      // Images: a gap between blocks, with a faint image where they go; other files: a line in the text.
+      const images = draggedImages(e),
+        spot = images ? this.imageDropAt(e) : null;
+      const at = spot ? null : this.dropAt(e);
+      e.dataTransfer!.dropEffect = spot || at ? "copy" : "none";
+      showDropImage(doc, spot?.spot ?? null, images);
       showDropCaret(doc, at?.range ?? null);
     });
     on("dragleave", (e) => {
-      if (hasFiles(e) && !e.relatedTarget) showDropCaret(doc, null);
+      if (!hasFiles(e) || e.relatedTarget) return;
+      showDropCaret(doc, null);
+      showDropImage(doc, null);
+      this.imageDrop = null;
     });
     on("drop", (e) => {
       if (hasFiles(e)) {
         e.preventDefault();
         showDropCaret(doc, null);
-        if (!this.readOnly) this.dropFiles(e);
+        if (this.readOnly) showDropImage(doc, null);
+        else this.dropFiles(e);
       } else if (this.ours(e)) e.preventDefault();
     });
     on("mousedown", (e) => this.mousedown(e));
@@ -156,14 +164,48 @@ export abstract class EditorInput extends EditorClipboard {
     return pos != null && editableAt(u!, pos) ? { pos, range } : null;
   }
 
+  /** Where dragged images go (the last place, while the pointer is in the gap it opened). */
+  private imageDrop: { pos: number; spot: ImageSpot } | null = null;
+
+  /**
+   * Where images dragged over the page go: before or after the paragraph or heading under the pointer (its upper half:
+   * before), never inside its text. Null on any other block: they go in at the pointer, as other files do.
+   */
+  protected imageDropAt(e: DragEvent): { pos: number; spot: ImageSpot } | null {
+    if (this.imageDrop?.spot.el.isConnected && inDropGap(this.doc!, e.clientX, e.clientY)) return this.imageDrop;
+    const at = this.dropAt(e),
+      u = at && M.unitAt(this.units, at.pos),
+      el = u && this.elOf(u);
+    if (!u || !el || !/^(p|h[1-6])$/.test(u.tag)) return (this.imageDrop = null);
+    const r = el.getBoundingClientRect(),
+      side = e.clientY < r.top + r.height / 2 ? "before" : "after";
+    return (this.imageDrop = { pos: side == "before" ? u.contentFrom : u.contentTo, spot: { el, side } });
+  }
+
   /** Files dropped on the text: to the caller, which adds them to the document's files (onDropFiles). */
   protected dropFiles(e: DragEvent): void {
     const files = [...(e.dataTransfer?.files ?? [])];
-    if (!files.length) return;
+    const images = files.length && files.every((f) => f.type.startsWith("image/"));
+    const spot = images ? this.imageDropAt(e) : null;
+    this.imageDrop = null;
     const point = { x: e.clientX, y: e.clientY };
-    if (this.rendering) return showDropNote(this.doc!, point, LOADING_AGAIN);
-    const at = this.dropAt(e);
-    if (!at) return showDropNote(this.doc!, point, "A file can go only into the text you can edit. Drop it on a paragraph.");
+    const none = (message: string) => {
+      showDropImage(this.doc!, null);
+      showDropNote(this.doc!, point, message);
+    };
+    if (!files.length) return showDropImage(this.doc!, null);
+    if (this.rendering) return none(LOADING_AGAIN);
+    const at = spot ?? this.dropAt(e);
+    if (!at) return none("A file can go only into the text you can edit. Drop it on a paragraph.");
+    // The images themselves wait in the gap until they're in the text (insertFiles), or can't be (dropError).
+    if (spot)
+      showDropImage(
+        this.doc!,
+        spot.spot,
+        files.length,
+        files.map((f) => URL.createObjectURL(f))
+      );
+    else showDropImage(this.doc!, null);
     this.config.onDropFiles?.(files, at.pos, point);
   }
 
@@ -174,6 +216,7 @@ export abstract class EditorInput extends EditorClipboard {
    * caret stays where it is. False if the text there can't take them (it changed meanwhile).
    */
   insertFiles(at: number, items: { href: string; name: string; image: boolean }[]): boolean {
+    if (this.doc) showDropImage(this.doc, null);
     const u = M.unitAt(this.units, at);
     if (!items.length || !u || !this.verify(u) || !editableAt(u, at)) return false;
     const src = this.src;
@@ -185,8 +228,11 @@ export abstract class EditorInput extends EditorClipboard {
     const before = contentIn(src, u, u.contentFrom, at),
       after = contentIn(src, u, at, u.contentTo);
     if (items.some((i) => i.image) && /^(p|h[1-6])$/.test(u.tag) && before != after) {
+      // Each image centred, in a paragraph of its own, no wider than the text.
       const sep = "\n" + M.lineIndent(src, u.openFrom),
-        blocks = html.map((h) => `<p>${h}</p>`).join(sep);
+        blocks = html
+          .map((h) => `<p style="text-align: center">${h.replace(/^<img /, '<img style="max-width: 100%; height: auto" ')}</p>`)
+          .join(sep);
       this.dispatch({
         changes: before ? { from: u.to, insert: sep + blocks } : { from: u.from, insert: blocks + sep },
         userEvent: "input.drop",
@@ -203,6 +249,7 @@ export abstract class EditorInput extends EditorClipboard {
 
   /** Says why files dropped at `point` (the window's coordinates) didn't go in, there on the page. */
   dropError(point: { x: number; y: number }, message: string): void {
+    if (this.doc) showDropImage(this.doc, null);
     if (this.doc) showDropNote(this.doc, point, message);
   }
 
