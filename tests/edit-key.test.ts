@@ -30,25 +30,13 @@ test("an edit key names its person for one document, and only for a while", asyn
   ).toBeNull();
 });
 
-test("a key's person has this one document, and admin power only if their session had it; a test person stays one", async () => {
-  expect(keyWho({ login: "ada", name: "Ada" }, "abcd2345")).toEqual({ login: "ada", test: false, onlyDoc: "abcd2345" });
+test("a key's person has this one document, and admin power only if their session had it", async () => {
+  expect(keyWho({ login: "ada", name: "Ada" }, "abcd2345")).toEqual({ login: "ada", onlyDoc: "abcd2345" });
   const admin = await readEditKey(
     "s",
     (await editKey("s", "koomen", "abcd2345", { login: "koomen", name: "P", admin: true })).key,
     "koomen",
     "abcd2345"
   );
-  expect(keyWho(admin!, "abcd2345")).toEqual({ login: "koomen", test: false, admin: true, onlyDoc: "abcd2345" });
-  // (A test person never has it.)
-  const test = await readEditKey(
-    "s",
-    (await editKey("s", "koomen", "abcd2345", { login: "t-2", name: "T", testBy: "koomen", admin: true })).key,
-    "koomen",
-    "abcd2345"
-  );
-  expect(test?.admin).toBeUndefined();
-  const { key } = await editKey("s", "koomen", "abcd2345", { login: "t-1", name: "T", testBy: "Koomen" });
-  const person = await readEditKey("s", key, "koomen", "abcd2345");
-  expect(person).toEqual({ login: "t-1", name: "T", testBy: "koomen" });
-  expect(keyWho(person!, "abcd2345")).toEqual({ login: "t-1", test: true, by: "koomen", onlyDoc: "abcd2345" });
+  expect(keyWho(admin!, "abcd2345")).toEqual({ login: "koomen", admin: true, onlyDoc: "abcd2345" });
 });

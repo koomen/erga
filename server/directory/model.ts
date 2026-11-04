@@ -50,15 +50,9 @@ export interface DocFound {
 /** A role that can be given to someone (a document's owner is who made it, and stays so). */
 export type Grant = "editor" | "viewer";
 export type Action = "open" | "edit" | "rename" | "delete" | "share";
-/**
- * Someone asking to do something: a login (lowercase), and whether they're a
- * test person (who may touch only test documents), and if so whose test
- * token signed them in (`by`, lowercase).
- */
+/** Someone asking to do something: a login (lowercase). */
 export interface Who {
   login: string;
-  test?: boolean;
-  by?: string;
   /** Comes with admin power: a browser session, or an admin token. Set by the app. */
   admin?: boolean;
   /** A document token's document: they may touch this one document, and no other. */
@@ -157,8 +151,6 @@ export const OWNER = /^[A-Za-z0-9-]{1,39}$/,
   ID = /^[a-z0-9]{8}$/;
 /** Whether a segment could be an id. */
 export const idShaped = (s: string) => ID.test(s);
-/** Test documents: what test people may open, and where the scripted agent stands in for the model. */
-export const TEST_ID = /^test[a-z0-9]{4}$/;
 export const ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 /** A new document's id: 8 characters of ALPHABET. */
 export const newDocId = () => randomString(8, ALPHABET);

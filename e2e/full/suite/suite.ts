@@ -11,7 +11,7 @@
 //                         write delay), each a scratch copy of a fixture linked from disk; a test that restarts
 //                         or kills the server gets a server of its own, with its document opened as it starts.
 //   remote                ERGA_SUITE_TARGET names a JSON file of RemoteTarget's settings (ERGA_TARGET_DOC and
-//                         the rest, e2e/full/suite/target.ts), as prod.ts writes it. A file, not the environment:
+//                         the rest, e2e/full/suite/target.ts). A file, not the environment:
 //                         the runner drops variables that look like credentials, as cookies do.
 //
 // Randomised tests are seeded: ERGA_SUITE_SEED=n replays one (a failure names its seed). ERGA_SUITE_LONG=1 runs the

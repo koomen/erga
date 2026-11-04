@@ -48,8 +48,6 @@ export interface AgentToken {
    * token; "agent": any other.
    */
   kind: "agent" | "share";
-  /** A test person's token: who minted their test token. */
-  testBy: string | null;
   /** What it may do (see the top of this file). */
   scope: Scope;
   /** A document token's document (its id). */
@@ -84,8 +82,11 @@ export interface OAuthBack {
 /** How long an OAuth request's authorization code works, once approved. */
 export const CODE_MINUTES = 10;
 
-/** Whom a token is for: a login and name, and for a test person, who minted their test token. */
-export interface Who { login: string; name: string; testBy?: string | null }
+/** Whom a token is for: a login and name. */
+export interface Who {
+  login: string;
+  name: string;
+}
 
 export const TOKEN_PREFIX = "erga_";
 export const LABEL_MAX = 80;
@@ -98,13 +99,31 @@ const CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
 
 const clipLabel = (s: string | null | undefined, fallback: string) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, LABEL_MAX) || fallback;
 
-interface Row { id: string; login: string; name: string; label: string; kind: string; test_by: string | null; scope: string; doc_id: string | null; expires: number | null; created: number; last_used: number | null }
-const COLUMNS = "id, login, name, label, kind, test_by, scope, doc_id, expires, created, last_used";
+interface Row {
+  id: string;
+  login: string;
+  name: string;
+  label: string;
+  kind: string;
+  scope: string;
+  doc_id: string | null;
+  expires: number | null;
+  created: number;
+  last_used: number | null;
+}
+const COLUMNS = "id, login, name, label, kind, scope, doc_id, expires, created, last_used";
 const scopeOf = (s: unknown): Scope => (SCOPES.includes(s as Scope) ? s as Scope : "documents");
 const fromRow = (r: Row): AgentToken => ({
-  id: r.id, login: r.login, name: r.name, label: r.label, kind: r.kind == "share" ? "share" : "agent", testBy: r.test_by ?? null,
-  scope: scopeOf(r.scope), docId: r.doc_id ?? null, expires: r.expires == null ? null : Number(r.expires),
-  created: Number(r.created), lastUsed: r.last_used == null ? null : Number(r.last_used),
+  id: r.id,
+  login: r.login,
+  name: r.name,
+  label: r.label,
+  kind: r.kind == "share" ? "share" : "agent",
+  scope: scopeOf(r.scope),
+  docId: r.doc_id ?? null,
+  expires: r.expires == null ? null : Number(r.expires),
+  created: Number(r.created),
+  lastUsed: r.last_used == null ? null : Number(r.last_used),
 });
 
 export class Tokens {
@@ -140,11 +159,11 @@ export class Tokens {
     if (!SCOPES.includes(grant.scope)) throw new ScopeError({ message: `"${grant.scope}" isn't a scope: document, documents or admin.` });
     const expires = grant.expires == null ? null : Number(grant.expires);
     if (expires != null && !(expires > Date.now())) throw new ScopeError({ message: "The expiry must be in the future." });
-    if (grant.scope == "admin" && (who.testBy || !(await this.dir.users.isAdmin(who.login))))
+    if (grant.scope == "admin" && !(await this.dir.users.isAdmin(who.login)))
       throw new ScopeError({ message: "Only an admin can make an admin token." });
     if (grant.scope != "document") return { scope: grant.scope, docId: null, expires };
     const doc = grant.docId ? await this.dir.find(grant.docId) : null;
-    const as = { login: who.login.toLowerCase(), test: !!who.testBy, by: who.testBy?.toLowerCase() };
+    const as = { login: who.login.toLowerCase() };
     if (!doc || !(await this.dir.access(as, doc))) throw new ScopeError({ message: "A document token needs a document you may open." });
     return { scope: "document", docId: doc.id, expires };
   }
@@ -158,7 +177,6 @@ export class Tokens {
       name: who.name || who.login,
       label: clipLabel(label, "Agent"),
       kind,
-      testBy: who.testBy?.toLowerCase() ?? null,
       scope,
       docId,
       expires,
@@ -167,14 +185,13 @@ export class Tokens {
     };
     const token = await this.tokenFor(info.id);
     await this.sql.run(
-      "INSERT INTO agent_tokens (id, hash, login, name, label, kind, test_by, scope, doc_id, expires, created, last_used) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
+      "INSERT INTO agent_tokens (id, hash, login, name, label, kind, scope, doc_id, expires, created, last_used) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
       info.id,
       await sha256Hex(token),
       info.login,
       info.name,
       info.label,
       info.kind,
-      info.testBy,
       info.scope,
       info.docId,
       info.expires,
@@ -232,13 +249,25 @@ export class Tokens {
     return fromRow(row);
   }
 
-  /** Someone's tokens, newest first. */
-  async list(login: string): Promise<AgentToken[]> {
-    const rows = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE login = ?1 ORDER BY created DESC`, login.toLowerCase());
-    return rows.map(fromRow);
+  /**
+   * Someone's tokens that still work, newest first: `limit` of them after the first `offset`, and how many there are in
+   * all. An expired token works no more, and isn't listed; a revoked one is gone.
+   */
+  async list(login: string, limit: number, offset = 0): Promise<{ tokens: AgentToken[]; total: number }> {
+    const live = "login = ?1 AND (expires IS NULL OR expires > ?2)";
+    const [rows, [count]] = await Promise.all([
+      this.sql.all<Row>(
+        `SELECT ${COLUMNS} FROM agent_tokens WHERE ${live} ORDER BY created DESC, rowid DESC LIMIT ?3 OFFSET ?4`,
+        login.toLowerCase(),
+        Date.now(),
+        limit,
+        offset
+      ),
+      this.sql.all<{ n: number }>(`SELECT COUNT(*) AS n FROM agent_tokens WHERE ${live}`, login.toLowerCase(), Date.now()),
+    ]);
+    return { tokens: rows.map(fromRow), total: Number(count?.n ?? 0) };
   }
 
-  /** Turns one of someone's tokens off; false if they have none by that id. */
   /**
    * Turns one of `login`'s tokens off. `via`: how they did it, when not in
    * person: the change log (/admin/changes) records it under

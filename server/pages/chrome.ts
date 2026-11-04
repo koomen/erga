@@ -69,9 +69,9 @@ export const fromElsewhere = (request: Request) => {
 
 /**
  * / sends someone signed in to their documents, however they came; the homepage project is at /_home for them. Not an
- * agent's token, nor a test person; signed out, always the homepage.
+ * agent's token; signed out, always the homepage.
  */
-export const homeGoesToDocs = (session: Session | null) => !!session && !session.agent && !session.test;
+export const homeGoesToDocs = (session: Session | null) => !!session && !session.agent;
 
 
 export const signInFirst = (next: string) => redirect(`/auth/sign-in?next=${encodeURIComponent(safeNext(next))}`);

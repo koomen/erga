@@ -97,7 +97,7 @@ export const isAdminPath = (path: string) => path == "/admin" || path.startsWith
  * isn't an admin gets "not found" for a page (they can't tell there is one)
  * and 401 or 403 for a POST. The role is the only thing that counts: no
  * other permission (a document's sharing;
- * an agent or test token) makes anyone an admin. Null lets an admin through;
+ * an agent token) makes anyone an admin. Null lets an admin through;
  * each page's routes still check on their own, and asks for the unlock.
  */
 export const adminGate = Effect.gen(function* () {

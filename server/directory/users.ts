@@ -70,14 +70,14 @@ export interface User {
 }
 
 /**
- * Someone acting, to a guarded call: a login (lowercase), whether they're a
- * test person (never an admin), and whether they come with admin power
+ * Someone acting, to a guarded call: a login (lowercase), and whether they come with admin power
  * (`admin`): a signed-in browser session does, a token only with the admin
  * scope. Every admin-only call needs it, and the person must be
  * an admin too (actsAsAdmin). The app sets `admin`.
  */
 export interface Actor {
-  login: string; test?: boolean; admin?: boolean;
+  login: string;
+  admin?: boolean;
   /** How they act, when not in person: through one of their agents. What they change is recorded under their login, with this. */
   via?: string;
 }
@@ -153,10 +153,9 @@ export class Users {
     return user != null && (await this.gate(user));
   }
 
-  /** Whether `login` is an admin (a test person never is). */
+  /** Whether `login` is an admin. */
   async isAdmin(who: Actor | string): Promise<boolean> {
     const actor = typeof who == "string" ? { login: who } : who;
-    if (actor.test) return false;
     return (await this.get(actor.login))?.role == "admin";
   }
 
@@ -216,7 +215,7 @@ export class Users {
   }
 
   /** Forgets what was remembered of `login` (a row written elsewhere: a new account, server/directory/identities.ts). */
-  /** Each login's picture, for a list of people (a share list): those with one; anyone ("*") and test people have none. */
+  /** Each login's picture, for a list of people (a share list): those with one; anyone ("*") has none. */
   async avatars(logins: string[]): Promise<Record<string, string>> {
     const wanted = [...new Set(logins.map((l) => l.toLowerCase()).filter((l) => l != "*" && !l.startsWith("test-")))];
     // D1 binds at most 100 values to a statement.

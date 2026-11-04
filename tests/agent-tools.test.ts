@@ -40,7 +40,6 @@ test("admin tools are offered to admins only, and refused to anyone else", async
   expect((await ops({ login: "bo" })).sort()).toEqual(
     [...OPERATIONS.filter((o) => !o.admin).map((o) => o.name), ...documentTools().map((t) => t.name)].sort()
   );
-  expect(await names({ login: "root", test: true })).not.toContain("people");
   const e = await failure(run({ dir, who: { login: "bo" } }, "settings"));
   expect(e).toBeInstanceOf(OperationError);
   expect(e.status).toBe(403);
@@ -246,8 +245,6 @@ test("the documents list: the document agent lists, makes (blank, a template, a 
   expect((await failure(run(ada, "delete_document", { document: "/ada/plan" }))).status).toBe(409);
   expect((await failure(run(ada, "delete_document", { document: "bbbbbbbb" }))).status).toBe(403);
   expect((await failure(run(ada, "delete_document", {}))).status).toBe(400);
-  // A test person makes no documents.
-  expect((await failure(run({ ...ada, who: { login: "test-ada", test: true } }, "create_document"))).status).toBe(403);
   expect((await toolsFor(ada, true)).flatMap(opsOf)).toContain("delete_document");
 });
 

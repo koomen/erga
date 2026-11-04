@@ -47,8 +47,9 @@ The homepage and tokens:
   Deploy in its settings does. read op ls says whether a document is the homepage, and
   how its deploy goes. An edit to the homepage never deploys by itself: it goes live only
   on a deploy, which answers once it is live, with each file's live address.
-- documents op whoami lists ${owner}'s own agent tokens, and op revoke turns one off: the
-  one Share with agent made for an outside agent too (kind share, scope admin). A token is
+- documents op whoami lists ${owner}'s own agent tokens, newest first (moreTokens: how many
+  more; offset lists them), and op revoke turns one off by its id: the ones Share with agent
+  and MCP sign-ins made for outside agents too. A token is
   made, or an agent's request approved, only on the page (/settings, or Share with agent).
 - Deploy the homepage or revoke a token only when ${owner} asks for it in this
   conversation. Say what you did, and what happens next.

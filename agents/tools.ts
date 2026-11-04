@@ -113,6 +113,7 @@ export const KINDS: readonly {
     fields: {
       title: 'Default or "": the first heading.',
       slug: 'Its address after /<owner>/; default or "": from the title.',
+      limit: "How many documents, or whoami's tokens (default 20).",
       files: FILES,
     },
   },

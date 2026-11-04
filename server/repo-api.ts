@@ -96,7 +96,7 @@ export const repoApi: Route = Effect.gen(function* () {
 
 async function isAdmin(p: Platform, request: Request): Promise<boolean> {
   const session = await p.sessionOf(request);
-  return !!session && !session.test && (await p.directory.users.isAdmin(whoOf(session)));
+  return !!session && (await p.directory.users.isAdmin(whoOf(session)));
 }
 
 /** The answer's body for the path. */

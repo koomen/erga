@@ -184,13 +184,11 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // The host attributes your edits and your agent to who you are, so the tab takes that.
   const info = shell.info;
   const me: Author = { user: info.userId, name: info.user, color: colorFor(info.userId), kind: "person", ...(info.avatar ? { avatar: info.avatar } : {}) };
-  // Your documents to go back to (test people have none), as whoever this tab is.
-  $("nav-back").hidden = me.user.startsWith("test-");
+  // Your documents to go back to, as whoever this tab is; the wordmark goes there too.
+  $("nav-back").hidden = false;
   ($("nav-back") as HTMLAnchorElement).href = `/docs${as}`;
-  $("btn-docs").hidden = $("nav-back").hidden;
   ($("btn-docs") as HTMLAnchorElement).href = `/docs${as}`;
-  // The wordmark goes to your documents too (a test person's to /, as they have none).
-  ($("nav-brand") as HTMLAnchorElement).href = $("nav-back").hidden ? `/${as}` : `/docs${as}`;
+  ($("nav-brand") as HTMLAnchorElement).href = `/docs${as}`;
   // The editor's own page actions (client/editor.html, .edit-group) open out of the pencil while editing and close back into it: they
   // clip sideways while they move, and not once they're open and still (settled), so their tooltips reach past the group.
   const editGroup = $("edit-group"), body = document.body;

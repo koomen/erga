@@ -19,8 +19,6 @@ import { VIA } from "../shared/attribution.ts";
 export interface Session {
   login: string;
   name: string;
-  /** A test person, signed in with a test token minted by `by` (hosted only). */
-  test?: { by: string };
   /** In local development, the name a tab gave in ?user=, carried along in the links it follows. */
   as?: string;
   /** Signed in with an agent token: an agent acting as this person. */
@@ -214,8 +212,9 @@ export interface Platform {
 
 /** Who a session is, to the directory's `may`. */
 export const whoOf = (session: Session): Who => ({
-  login: session.login.toLowerCase(), test: !!session.test, ...(session.test ? { by: session.test.by.toLowerCase() } : {}),
-  ...(session.admin && !session.test ? { admin: true } : {}), ...(session.onlyDoc != null ? { onlyDoc: session.onlyDoc } : {}),
+  login: session.login.toLowerCase(),
+  ...(session.admin ? { admin: true } : {}),
+  ...(session.onlyDoc != null ? { onlyDoc: session.onlyDoc } : {}),
   // An agent with their token acts for them: what it does is theirs, via it.
   ...(session.agent ? { via: VIA.token(session.agent.label) } : {}),
 });

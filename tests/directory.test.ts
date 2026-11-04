@@ -73,7 +73,6 @@ test("the list, removal and who may", async () => {
   // The owner may do anything; nobody else anything, until it's shared.
   for (const action of ["open", "edit", "rename", "delete", "share"] as const) expect(await dir.may({ login: "ada" }, action, one)).toBe(true);
   for (const action of ["open", "edit", "rename", "delete", "share"] as const) expect(await dir.may({ login: "bo" }, action, one)).toBe(false);
-  expect(await dir.may({ login: "test-ada", test: true, by: "ada" }, "open", one)).toBe(false);
   expect(await dir.may(null, "open", one)).toBe(false);
   await dir.remove("aaaaaaaa");
   expect(await dir.get("aaaaaaaa")).toBeNull();
@@ -113,11 +112,6 @@ test("sharing: editors, viewers and anyone with the link", async () => {
   await dir.share({ login: "ada" }, one.id, "bo", null);
   expect(await dir.access({ login: "bo" }, one)).toBeNull();
   expect(await dir.access({ login: "dee" }, one)).toBeNull();
-  // Test people may touch only test documents, as editors of their token's minter's.
-  const t = (await dir.add(doc("tttttttt", "Test", { test: true }))).doc;
-  expect(await dir.access({ login: "test-bo", test: true, by: "ada" }, t)).toBe("editor");
-  expect(await dir.may({ login: "test-bo", test: true, by: "ada" }, "delete", t)).toBe(false);
-  expect(await dir.access({ login: "test-bo", test: true, by: "bo" }, t)).toBeNull();
   // A document made shared with everyone (local development's on disk).
   const disk = (await dir.add(doc("dddddddd", "Disk", { everyone: "editor" }))).doc;
   expect(await dir.may({ login: "anyone" }, "edit", disk)).toBe(true);
@@ -152,10 +146,9 @@ test("users: who may sign in, bootstrap admins and server roles", async () => {
   expect((await users.get("ada"))?.githubId).toBe(583231);
   expect(await users.get("nobody")).toBeNull();
   expect(await users.isAdmin("ada")).toBe(false);
-  // Admins make admins; a test person never is one; bootstrap admins can't be demoted or removed here.
+  // Admins make admins; bootstrap admins can't be demoted or removed here.
   await users.setRole({ login: "root", admin: true }, "ada", "admin");
   expect(await users.isAdmin("ada")).toBe(true);
-  expect(await users.isAdmin({ login: "ada", test: true })).toBe(false);
   await expect(users.setRole({ login: "ada" }, "root", "user")).rejects.toBeInstanceOf(NotAllowed);
   await expect(users.remove({ login: "ada" }, "root")).rejects.toBeInstanceOf(NotAllowed);
   await expect(users.add({ login: "ada" }, "not a login!")).rejects.toBeInstanceOf(NotAllowed);
@@ -163,7 +156,6 @@ test("users: who may sign in, bootstrap admins and server roles", async () => {
   await expect(users.list({ login: "ada" })).rejects.toThrow(/no admin power/);
   await expect(users.list({ login: "ada", admin: false })).rejects.toThrow(/no admin power/);
   expect(await users.actsAsAdmin({ login: "ada", admin: true })).toBe(true);
-  expect(await users.actsAsAdmin({ login: "ada", test: true, admin: true })).toBe(false);
   expect((await users.list({ login: "ada", admin: true })).map((u) => [u.login, u.role])).toEqual([["ada", "admin"], ["root", "admin"]]);
   await expect(users.list({ login: "bo" })).rejects.toBeInstanceOf(NotAllowed);
   // Removed, they may no longer sign in (at once here; within seconds on other isolates).

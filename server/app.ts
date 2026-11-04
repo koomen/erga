@@ -15,7 +15,6 @@
 //   /auth/github[/callback], /auth/google[/callback]
 //                              signing in with each; /auth/logout signs out; ?app=pending, a test sign-in with the
 //                              values that wait on /admin/auth
-//   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
 //   GET /api/repo, /api/repo/tree/<ref>/<path>
@@ -24,7 +23,7 @@
 //   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent; /llms.txt points agents to /mcp
 //   /.well-known/oauth-..., /oauth/...
 //                              MCP's sign-in: an agent's app gets a token through its person's browser (server/identity/oauth.ts)
-//   /tokens/...                approving an agent's request for a token; making one and the test token (the Settings dialog)
+//   /tokens/...                approving an agent's request for a token; making one (the Settings dialog)
 //   /_home-files/<gen>/<path>  the homepage's files, as deployed
 //   GET /source, /source/<branch>/<path>
 //                              Erga's source, for people: the homepage's page source.html, which reads the repository API
@@ -67,7 +66,6 @@ import {
   startGoogleSignIn,
   signOut,
   startSignIn,
-  testSignIn,
   tokensRoutes,
   usernameStep,
 } from "./identity/index.ts";
@@ -149,7 +147,6 @@ const route = (url: URL, outside: Outside): Route =>
     if (path == "/auth/google/callback") return yield* finishGoogleSignIn;
     if (path == "/auth/github/callback") return yield* finishSignIn;
     if (path == "/auth/logout") return yield* signOut;
-    if (path == "/auth/test") return yield* testSignIn;
     if (path == "/auth/username") return yield* usernameStep;
     if (path == "/auth/dev") return yield* devSignIn;
     // The editor's own files: its code, styles and typeface, and its page, which a document's page adds to itself to go into the editor.

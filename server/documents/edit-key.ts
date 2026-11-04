@@ -20,7 +20,6 @@ export interface KeyPerson {
   login: string;
   name: string;
   avatar?: string;
-  testBy?: string;
   admin?: boolean;
 }
 
@@ -41,8 +40,7 @@ export async function editKey(
         l: person.login.toLowerCase(),
         n: person.name,
         ...(person.avatar ? { a: person.avatar } : {}),
-        ...(person.testBy ? { t: person.testBy.toLowerCase() } : {}),
-        ...(person.admin && !person.testBy ? { m: 1 } : {}),
+        ...(person.admin ? { m: 1 } : {}),
       })
     )
   );
@@ -62,8 +60,7 @@ export async function readEditKey(secret: string, key: string, owner: string, id
       login: c.l,
       name: c.n,
       ...(typeof c.a == "string" ? { avatar: c.a } : {}),
-      ...(typeof c.t == "string" ? { testBy: c.t } : {}),
-      ...(c.m === 1 && typeof c.t != "string" ? { admin: true } : {}),
+      ...(c.m === 1 ? { admin: true } : {}),
     };
   } catch {
     return null;
@@ -73,8 +70,6 @@ export async function readEditKey(secret: string, key: string, owner: string, id
 /** Who a key's person is, to the document: this one document, with admin power only if their session had it. */
 export const keyWho = (person: KeyPerson, id: string): Who => ({
   login: person.login,
-  test: !!person.testBy,
-  ...(person.testBy ? { by: person.testBy } : {}),
   ...(person.admin ? { admin: true } : {}),
   onlyDoc: id,
 });

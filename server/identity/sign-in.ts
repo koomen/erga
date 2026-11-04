@@ -1,4 +1,4 @@
-// Signing in with GitHub or Google, and signing out; test people for the test suite.
+// Signing in with GitHub or Google, and signing out.
 // Each provider's answer goes on to the same steps (accounts.ts): which account it is (by the provider's id), or a
 // username first.
 // An admin chooses which providers are on (/admin/auth, settings.ts); one that's off signs in only admins (a test).
@@ -10,12 +10,6 @@
 // works puts them in use (apps.ts, the lockout rules). Everyone else keeps
 // signing in with the values that work.
 //
-// A signed-in person can also mint a test token (/tokens): it signs in
-// throwaway test people (Ada, Bo...) who can open only test documents (ids
-// starting "test"), so the test suite can run against erga.dev. The tokens
-// travel in a URL (/auth/test?token=…), so they can show in logs: they open
-// only test documents, and last a week.
-//
 //   /auth/sign-in[?next=]                the providers that are on, to choose from (one: straight there)
 //   /auth/github[?next=][&app=pending]   off to GitHub, back to `next` (&app=test: an admin's test while GitHub is off)
 //   /auth/github/callback                GitHub's answer: a code, traded for who they are
@@ -23,15 +17,13 @@
 //   /auth/google/callback                Google's answer: a code, traded for who they are (their sub, their email
 //                                        and whether Google verified it, their Workspace: hd, their picture)
 //   /auth/logout                         signs out (another site's link to it asks first)
-//   /auth/test?token=&as=                a test person, signed in with a test token
 
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
-import * as Result from "effect/Result";
 import { HttpServerResponse } from "effect/http";
 import { confirmAction, fromElsewhere, page, safeNext } from "../pages/index.ts";
 import type { Platform, Session } from "../platform.ts";
-import { call, ctx, redirect, text, type Route } from "../http.ts";
+import { call, ctx, redirect, type Route } from "../http.ts";
 import { cookies, withCookie } from "./cookies.ts";
 import { providersOn, signInApp, testedSignIn } from "./settings.ts";
 import { type AppValues, googleEndpoints, PROVIDERS, type Provider } from "./apps.ts";
@@ -380,50 +372,6 @@ export const finishGoogleSignIn: Route = Effect.gen(function* () {
   return yield* vouchedSignIn(platform, request, v, next ?? "/", { onlyAdmins }, async (login) => {
     if (testing) await testedSignIn(platform, app.clientId, { ok: true, login, admin: await platform.directory.users.isAdmin({ login }) }, "google");
   });
-});
-
-// ------------------------------------------------------------ test tokens
-
-const TOKEN = "erga_test_", TOKEN_DAYS = 7;
-
-/** A test token for the test suite, minted by a signed-in (non-test) person; valid for a week. */
-export async function mintTestToken(platform: Pick<Platform, "secret">, by: string): Promise<{ token: string; expires: Date }> {
-  const exp = Math.floor(Date.now() / 1000) + TOKEN_DAYS * DAY;
-  // Signed with a "test-token:" prefix, so a token can never pass for a session cookie or the other way round.
-  const payload = Base64Url.encode(JSON.stringify({ by, exp }));
-  const signed = await sign(platform.secret, `test-token:${payload}`);
-  return { token: TOKEN + signed.slice("test-token:".length), expires: new Date(exp * 1000) };
-}
-
-async function readTestToken(platform: Platform, token: string): Promise<{ by: string; exp: number } | null> {
-  if (!token.startsWith(TOKEN)) return null;
-  const value = await unsign(platform.secret, `test-token:${token.slice(TOKEN.length)}`);
-  if (!value) return null;
-  try {
-    const t = JSON.parse(Result.getOrThrow(Base64Url.decodeString(value.slice("test-token:".length)))) as { by: string; exp: number };
-    return t.exp > Date.now() / 1000 && (await platform.directory.users.allowed(t.by)) ? t : null;
-  } catch { return null; }
-}
-
-/** /auth/test?token=...&as=Ada: signs in a test person, for as long as the token lasts. */
-export const testSignIn: Route = Effect.gen(function* () {
-  const { platform, request, url } = yield* ctx;
-  const t = yield* call(() => readTestToken(platform, url.searchParams.get("token") ?? ""));
-  if (!t) return text("Unknown or expired test token", 401);
-  const name = (url.searchParams.get("as") ?? "Tester").trim().slice(0, 40) || "Tester";
-  const login =
-    "test-" +
-    (name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "") || "tester");
-  return yield* signIn(
-    platform,
-    request,
-    { login, name, test: { by: t.by } },
-    safeNext(url.searchParams.get("next")),
-    t.exp - Math.floor(Date.now() / 1000)
-  );
 });
 
 /** /auth/logout (another site's link to it asks first) */

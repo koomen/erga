@@ -25,9 +25,8 @@
 //   edit, rename   owner, editor
 //   delete, share  owner
 //
-// Test people (signed in with a test token, hosted) may touch only test
-// documents, and those as editors of the documents of whoever minted their
-// token. Server admins get nothing on documents by being admins.
+// Server admins get nothing on documents by being admins. No list shows a
+// test document (`test`: one the test people made, whom Erga no longer has).
 //
 // The homepage (landing_document) is the exception: its scripts run on
 // this site itself, so while it's the homepage only admins
@@ -72,7 +71,6 @@ import {
   type Route,
   type Sql,
   type Statement,
-  TEST_ID,
   type Who,
   type Grant,
 } from "./model.ts";
@@ -284,9 +282,8 @@ export class Directory {
    * query, since a document's page needs both before it can answer.
    */
   async openAs(who: Who, owner: string, segment: string): Promise<{ doc: DocRow; role: Role | null } | null> {
-    // A test person's role follows from the document alone (access asks nothing more of the database), and a
-    // document token's person has a role only on its document (access).
-    if (who.test || who.onlyDoc != null) {
+    // A document token's person has a role only on its document (access).
+    if (who.onlyDoc != null) {
       const doc = owner == "d" ? await this.get(segment) : (await this.locate(owner, segment))?.doc ?? null;
       return doc && { doc, role: await this.access(who, doc) };
     }
@@ -525,7 +522,7 @@ export class Directory {
    * permissions besides the owner's each has (`shared`; "*" counts as one). With `ids`, only those of them.
    */
   async list(login: string, ids?: readonly string[]): Promise<(DocRow & { role: Role; shared: number })[]> {
-    const only = ids ? ids.filter((id) => ID.test(id) || TEST_ID.test(id)) : null;
+    const only = ids ? ids.filter((id) => ID.test(id)) : null;
     if (only && !only.length) return [];
     const rows = await this.sql.all<Row & { role: Role; shared: number }>(
       `SELECT d.*, p.role, (SELECT COUNT(*) FROM permissions q WHERE q.doc_id = d.id AND q.role != 'owner') AS shared
@@ -585,12 +582,11 @@ export class Directory {
 
   /**
    * What someone may do with a document, as a role: the better of their own
-   * permission and anyone's ("*"); a test person is an editor of their
-   * token's minter's test documents and nothing else. A document token's
+   * permission and anyone's ("*"). A document token's
    * person (`onlyDoc`) has nothing on any other document. Null: nothing at all.
    */
   async access(who: Who | null, doc: { id: string; owner: string; test: boolean }): Promise<Role | null> {
-    if (!who || (who.onlyDoc != null && who.onlyDoc != doc.id) || who.test) return this.decide(who, doc, []);
+    if (!who || (who.onlyDoc != null && who.onlyDoc != doc.id)) return this.decide(who, doc, []);
     const rows = await this.sql.all<{ login: string; role: Role }>("SELECT login, role FROM permissions WHERE doc_id = ?1 AND login IN (?2, ?3)", doc.id, who.login.toLowerCase(), ANYONE);
     return this.decide(who, doc, rows);
   }
@@ -603,7 +599,6 @@ export class Directory {
   async decide(who: Who | null, doc: { id: string; owner: string; test: boolean }, permissions: readonly { login: string; role: Role }[]): Promise<Role | null> {
     if (!who) return null;
     if (who.onlyDoc != null && who.onlyDoc != doc.id) return null;
-    if (who.test) return doc.test && who.by != null && who.by.toLowerCase() == doc.owner ? "editor" : null;
     const login = who.login.toLowerCase();
     const best = permissions.reduce<Role | null>((b, p) => (p.login != login && p.login != ANYONE) || (b && RANK[b] >= RANK[p.role]) ? b : p.role, null);
     // The owner as the permissions say: a host's copy of its owner is the one it was made with, and the homepage

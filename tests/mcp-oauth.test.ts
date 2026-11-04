@@ -172,10 +172,9 @@ test("a wrong verifier uses the code up; Deny sends the person back to the app w
   expect(await tokens.deny(two.userCode)).toEqual({ oauth: { redirectUri: oauth.redirectUri, state: "s" } });
 });
 
-test("/ sends someone signed in to /docs, however they came; not a test person, an agent, or someone signed out", () => {
+test("/ sends someone signed in to /docs, however they came; not an agent, or someone signed out", () => {
   const ada: Session = { login: "ada", name: "Ada" };
   expect(homeGoesToDocs(ada)).toBe(true);
   expect(homeGoesToDocs(null)).toBe(false);
-  expect(homeGoesToDocs({ ...ada, test: { by: "koomen" } })).toBe(false);
   expect(homeGoesToDocs({ ...ada, agent: {} as Session["agent"] })).toBe(false);
 });

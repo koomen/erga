@@ -118,9 +118,12 @@ const nothing = () => page("Not found", "There's no document here. <a href=\"/\"
 /** A document that's there, at a page that isn't. */
 const noPage = (address: string) => page("Not found", `This document has no page here. <a href="${esc(address)}">Go to its first page</a>.`, 404);
 
-const refused = (session: Session) => session.test
-  ? page("Test documents only", "Test people can open only test documents.", 403)
-  : page("Not shared with you", `This document hasn't been shared with <b>${esc(session.login)}</b>. Ask its owner to share it with you.`, 403);
+const refused = (session: Session) =>
+  page(
+    "Not shared with you",
+    `This document hasn't been shared with <b>${esc(session.login)}</b>. Ask its owner to share it with you.`,
+    403
+  );
 
 /** An address under a document's that names a file that isn't a page: its last part has an extension, not .html. */
 const FILE = /(?:^|\/)[^/]+\.(?!html?$)[a-z0-9]+$/i;
@@ -319,7 +322,7 @@ async function render(
   const clone = link(`/new?from=${landing ? "landing" : d.id}`, session);
   const here = pageAddress(d.file) ? `${address}/${pageAddress(d.file).split("/").map(encodeURIComponent).join("/")}` : address;
   const edit = canEdit ? editButton(withEdit(link(here, session)), false) : "";
-  const canShare = canEdit && !!session && !session.test && roleMay(d.role, "share");
+  const canShare = canEdit && !!session && roleMay(d.role, "share");
   // What a reader gets, as the owner set it (share_document: reader_agent, reader_bars): an editor gets all of it. Their agent
   // (signed in, with a role here), and Erga's bars over the page.
   const reader = canEdit ? { agent: true, bars: true } : await dir.readerOptions(d.id);
