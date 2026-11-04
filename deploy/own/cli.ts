@@ -339,9 +339,14 @@ async function api(t: TargetName, method: string, path: string, body?: unknown):
     body: body ? JSON.stringify(body) : undefined,
   });
 }
-async function tool(t: TargetName, name: string, args: Record<string, unknown>) {
-  const r = await api(t, "POST", `/api/tools/${name}`, args);
-  const j = (await r.json().catch(() => ({ ok: false, error: `${r.status}` }))) as { ok: boolean; result?: unknown; error?: string };
+async function tool(t: TargetName, name: string, args: Record<string, unknown>, retry?: RegExp) {
+  let j: { ok: boolean; result?: unknown; error?: string } = { ok: false };
+  for (let i = 0; i < 15; i++) {
+    const r = await api(t, "POST", `/api/tools/${name}`, args);
+    j = (await r.json().catch(() => ({ ok: false, error: `${r.status}` }))) as typeof j;
+    if (j.ok || !retry?.test(j.error ?? "")) break;
+    await Bun.sleep(2000);
+  }
   if (!j.ok) fail(`${name} ${JSON.stringify(args).slice(0, 120)}: ${j.error}`, "Read the error; bun own status.");
   return j.result;
 }
@@ -365,7 +370,8 @@ async function home(folder: string | undefined, t: TargetName) {
   if (!files["index.html"]) fail(`${folder} has no index.html.`, "The homepage starts at index.html.");
   const a = answersOf(loadOwn());
   await site(`https://${hostOf(a, t)}/`, { redirect: "manual" }); // The server makes the homepage project at its first visit.
-  await tool(t, "edit", { op: "write", document: "/_home", files, replace: true });
+  // It makes it in the background: until it's there, the write says there's no such document.
+  await tool(t, "edit", { op: "write", document: "/_home", files, replace: true }, /no document|not found|isn't there/i);
   // A new version of the homepage serves only once it's deployed (server/home/deploys.ts).
   await tool(t, "deploys", { op: "redeploy", target: "homepage" });
   pass(
