@@ -14,19 +14,7 @@ await servers.main();
  * The pages of the site's own, one of each kind (the local server's person is signed in, and an admin; / is the
  * homepage only signed out: signed in, it goes to /docs, and the homepage project's page is /_home).
  */
-const PAGES = [
-  "/",
-  "/_home",
-  "/docs",
-  "/settings",
-  "/tokens",
-  "/admin",
-  "/admin/users",
-  "/admin/auth",
-  "/admin/ops",
-  "/git",
-  "/no/such-page",
-];
+const PAGES = ["/", "/_home", "/docs", "/settings", "/tokens", "/admin", "/admin/users", "/admin/auth", "/admin/changes", "/no/such-page"];
 
 test("every kind of the site's own page sends frame-ancestors 'self', X-Frame-Options, and its policy; a document's page names its viewer", async () => {
   const s = await servers.main();

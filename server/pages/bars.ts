@@ -19,9 +19,6 @@ export const AGENT_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><g transf
 /** Share with an agent, as the editor's (client/editor.html, #btn-agent-share): it copies a one-line prompt (client/common/bars.ts). For anyone who can read the page. */
 export const AGENT_SHARE_BUTTON = `<button type="button" class="erga-view-button erga-agent-share" aria-label="Share with an agent: copy a prompt for it" data-tip="Share with an agent">${AGENT_ICON}</button>`;
 
-/** Share with an agent on a page served elsewhere (the control Worker's): its prompt names the app's origin, `app`. */
-const shareButton = (app: string) => (app ? AGENT_SHARE_BUTTON.replace("<button ", `<button data-app="${esc(app)}" `) : AGENT_SHARE_BUTTON);
-
 /** Documents, as the editor's (client/editor.html, #btn-docs), at `href`: for someone signed in who has documents. */
 export const docsButton = (href: string) =>
   `<a href="${esc(href)}" class="erga-view-button erga-docs-button" draggable="false" aria-label="Documents" data-tip="Documents"><svg viewBox="0 0 24 24" aria-hidden="true"><g stroke-width="1.5"><rect x="4.75" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="4.75" y="13.5" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="13.5" width="5.75" height="5.75" rx="1.25"/></g></svg></a>`;
@@ -76,20 +73,18 @@ export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-f
 
 /**
  * The header of the app's own pages (appPage: Documents, Settings, the admin pages, the start page, sign-in, the error
- * pages; the control Worker's too): erga › each step of `trail` (the last is this page, in a `here` tag: the admin
+ * pages): erga › each step of `trail` (the last is this page, in a `here` tag: the admin
  * pages' is their <h1>), and the quick actions: New document, the page's own (`actions`), Documents (`docs` puts
  * another button in its place: Documents itself has Home page there), then who you are. Share with an agent is on every page, before
  * Documents (`share`: a page's own, as the admin pages' with its admin token). The account corner goes in `corner`, or where the
- * Worker puts it (ACCOUNT_SLOT: withAccount). `home`: the app's origin, for a page served elsewhere (the control Worker's); its links go there.
- * Your agent comes with them, the same on a page served elsewhere: there it talks to the app at `home` (server/pages/agent.ts).
+ * Worker puts it (ACCOUNT_SLOT: withAccount). Your agent comes with them (server/pages/agent.ts).
  */
 export function pageBars(
   session: Session | null,
   trail: Crumb[],
-  o: { here?: string; home?: string; actions?: string; share?: string; docs?: string; corner?: string } = {}
+  o: { here?: string; actions?: string; share?: string; docs?: string; corner?: string } = {}
 ): string {
-  const home = (o.home ?? "").replace(/\/+$/, ""),
-    here = o.here ?? "span";
+  const here = o.here ?? "span";
   const steps = trail
     .map((c) =>
       c.href
@@ -98,9 +93,9 @@ export function pageBars(
     )
     .join("");
   const mine = !!session && !session.agent && !session.test;
-  const at = (path: string) => link(home + path, session);
-  const actions = `${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${o.share ?? shareButton(home)}${mine ? (o.docs ?? docsButton(at("/docs"))) : ""}`;
-  return `<script>${PAGE_TONE}</script>${crumbsBar(session, home, steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${agentPanel(session, o.home)}`;
+  const at = (path: string) => link(path, session);
+  const actions = `${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${o.share ?? AGENT_SHARE_BUTTON}${mine ? (o.docs ?? docsButton(at("/docs"))) : ""}`;
+  return `<script>${PAGE_TONE}</script>${crumbsBar(session, "", steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${agentPanel(session)}`;
 }
 
 /**
@@ -117,14 +112,9 @@ const plainPage = (title: string, body: string) =>
 /**
  * A small page for when there's nothing to show, or something about signing in goes wrong: the app's look (its type and
  * colours, light or dark with the system), a title and a few lines, in a column. It needs no session: the stylesheet and
- * the typeface are the app's own files (pages/assets.ts), which the control Worker names at the app's origin.
+ * the typeface are the app's own files (pages/assets.ts).
  */
 export const page = (title: string, body: string, status: number) => html(plainPage(title, body), status, NO_STORE);
-
-/** The same page as a web Response, for the control Worker's routes (control/), which make web Responses. */
-export function webPage(title: string, body: string, status: number): Response {
-  return new Response(plainPage(title, body), { status, headers: { "Content-Type": "text/html; charset=utf-8", ...NO_STORE } });
-}
 
 /**
  * For an action another site may not take on someone's behalf: asks them to

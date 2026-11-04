@@ -18,8 +18,8 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { randomBytes } from "node:crypto";
-import { DeployError, findDatabase, runPipeline, Unhealthy } from "../../control/deploys/pipeline";
-import { d1 } from "../../control/deploys/account";
+import { DeployError, findDatabase, runPipeline, Unhealthy } from "../pipeline/pipeline";
+import { d1 } from "../pipeline/account";
 import { buildHere } from "../run";
 import { PRODUCTION } from "../targets";
 import { Tokens } from "../../server/identity/tokens";

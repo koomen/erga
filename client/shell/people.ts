@@ -141,11 +141,20 @@ export function mountPeople(shell: Shell) {
     if (!e.composedPath().includes(people)) stackPeople();
   });
   // Your avatar opens a small menu: who you are, Documents, Settings,
-  // Deploy your own if the deploy_page setting lets you, Admin settings if you're an admin, Sign out (the same as every other page's upper
+  // Admin settings if you're an admin, Sign out (the same as every other page's upper
   // right, server/pages/account-menu.ts). The app says which links (meta erga-account).
   const account = $("account");
   const accountLinks = (() => {
-    try { return JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "") as { docs?: string; settings?: string; deploy?: string; admin?: string; signOut?: string }; } catch { return null; }
+    try {
+      return JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "") as {
+        docs?: string;
+        settings?: string;
+        admin?: string;
+        signOut?: string;
+      };
+    } catch {
+      return null;
+    }
   })();
   let accountBtn: HTMLElement | null = null;
   function accountButton(b: HTMLElement) {
@@ -168,7 +177,6 @@ export function mountPeople(shell: Shell) {
     const set = (id: string, href: string | undefined) => { const a = $(id) as HTMLAnchorElement; a.hidden = !href; if (href) a.href = href; };
     set("account-docs", shell.me.user.startsWith("test-") ? undefined : accountLinks!.docs);
     set("account-settings", shell.me.user.startsWith("test-") ? undefined : accountLinks!.settings);
-    set("account-deploy", accountLinks!.deploy);
     set("account-admin", accountLinks!.admin);
     set("account-out", accountLinks!.signOut);
   }

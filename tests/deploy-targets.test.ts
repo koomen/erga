@@ -6,21 +6,17 @@
 // Staging: every step, its own Worker, database, Durable Objects, secrets and
 // pages origin, a copy of production's database and documents, and nothing
 // written to production. Production: its Worker replaced in place, its secrets
-// kept. The guards. The snapshot endpoints, the documents' bucket, the config.
+// kept. The guards. The snapshot endpoints, the documents' bucket.
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { readFileSync } from "fs";
-import { join } from "path";
-import { targetOf } from "../control/deploys/branches";
-import { artifactsNamespace } from "../control/builder/build";
-import { ALL_STEPS, guardTarget, runPipeline, targetOfPlan } from "../control/deploys/pipeline";
-import { bucketName, workerMetadata } from "../control/deploys/account";
-import { Cloudflare } from "../control/deploys/cloudflare-api";
-import type { Release } from "../control/deploys/release-format";
+import { targetFor } from "../deploy/run";
+import { TARGETS } from "../deploy/targets";
+import { ALL_STEPS, guardTarget, runPipeline } from "../deploy/pipeline/pipeline";
+import { bucketName } from "../deploy/pipeline/account";
+import { Cloudflare } from "../deploy/pipeline/cloudflare-api";
+import type { Release } from "../deploy/pipeline/release-format";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare, PROD_DB, PROD_DOCS } from "../dev/mock-cloudflare";
 import { memoryStore, snapshotRoutes } from "../document/snapshot";
-import { ACCOUNT, ADMINS, CONTROL, SOURCE, TARGETS } from "../deploy/targets";
-import { controlConfig, controlWranglerConfig } from "../deploy/release";
 import {
   prepareRelease,
   release,
@@ -34,7 +30,6 @@ import {
   stagingDbOf,
   productionOf,
   writesToProduction,
-  ROOT,
 } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 
@@ -77,9 +72,7 @@ describe("staging", () => {
     expect(b.PAGES_DOMAIN.text).toBe("erga-pages-staging.dev");
     expect(b.ERGA_VERSION.text).toBe(release.version);
     expect(b.ERGA_DEPLOYED).toBeUndefined();
-    expect(b.CLOUDFLARE_ACCOUNT_ID.text).toBe(FLEET_ACCOUNT);
-    expect(b.CONTROL).toEqual({ type: "service", name: "CONTROL", service: "erga-control", entrypoint: "App" });
-    expect(b.CONTROL_URL).toEqual({ type: "plain_text", name: "CONTROL_URL", text: "https://ops.erga.dev" });
+    expect(b.SOURCE_REPO).toEqual({ type: "plain_text", name: "SOURCE_REPO", text: "koomen/erga" });
     expect(b.ARTIFACTS).toBeUndefined();
     expect(b.ADMINS.text).toBe("koomen,dsiroker");
     expect(mock.state.secrets["erga-staging"].SESSION_SECRET).toBe(stagingSecrets.SESSION_SECRET);
@@ -186,7 +179,7 @@ describe("production", () => {
   test("its Worker replaced in place: the same database and domain, its secrets kept, its tombstone sent, no copying", async () => {
     const mock = mockCloudflare({ fleet: true });
     const secrets = { ...mock.state.secrets.erga };
-    const { steps } = await deployTo(targetOf(TARGETS.production, env()), mock);
+    const { steps } = await deployTo(targetFor("production", env()), mock);
     expect(steps.filter((s) => s.endsWith(":running")).map((s) => s.split(":")[0])).toEqual(["account", "database", "migrations", "assets", "worker", "address", "pages", "live"]);
     expect(steps).toContain("database:done using Erga's database from before (" + PROD_DB + ")");
     expect(mock.state.databases.length).toBe(1);
@@ -217,7 +210,7 @@ describe("production", () => {
     expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "my-erga-pages.dev" } })).toBeNull();
     expect(g.pages).toEqual({ kind: "zone", zoneName: "erga-pages-staging.dev", domain: "erga-pages-staging.dev" });
     expect(guardTarget({ ...g, snapshot: { ...g.snapshot!, databaseName: "erga-staging" } })).toMatch(/can't go into the database it's copied from/);
-    expect(guardTarget({ ...targetOf(TARGETS.production, env()), snapshot: g.snapshot })).toMatch(/Production never takes a copy/);
+    expect(guardTarget({ ...targetFor("production", env()), snapshot: g.snapshot })).toMatch(/Production never takes a copy/);
     // A server /deploy made in someone else's account may be called erga: the guard is production's account's.
     expect(guardTarget({ ...g, snapshot: undefined, workerName: "erga", databaseName: "erga", accountId: "f".repeat(32) })).toBeNull();
   });
@@ -310,22 +303,6 @@ describe("the snapshot endpoints", () => {
   });
 });
 
-describe("one config file names the deployment (docs/self-host.md)", () => {
-  test("control/wrangler.jsonc names nothing of the deployment: deploy/targets.json fills it in", () => {
-    const wrangler = readFileSync(join(ROOT, "control/wrangler.jsonc"), "utf8").replace(/^\s*\/\/.*$/gm, "");
-    for (const v of [ACCOUNT, ADMINS, CONTROL.host, CONTROL.worker, CONTROL.releases, ...Object.values(CONTROL.vars)]) expect(wrangler).not.toContain(v);
-    const w = controlWranglerConfig("db-id") as { name: string; routes: unknown; d1_databases: unknown; artifacts: unknown; r2_buckets: unknown; vars: Record<string, string> };
-    expect(w.name).toBe(CONTROL.worker);
-    expect(w.routes).toEqual([{ pattern: CONTROL.host, custom_domain: true }]);
-    expect(w.d1_databases).toEqual([{ binding: "DB", database_name: TARGETS.production.database, database_id: "db-id" }]);
-    expect(w.artifacts).toEqual([{ binding: "ARTIFACTS", namespace: SOURCE.namespace }]);
-    expect(w.r2_buckets).toEqual([{ binding: "RELEASES", bucket_name: CONTROL.releases }]);
-    expect(w.vars).toEqual({ ADMINS, CLOUDFLARE_ACCOUNT_ID: ACCOUNT, APP_URL: `https://${TARGETS.production.host}`, ...CONTROL.vars });
-    // The release's copy of it has no database id: the pipeline finds the database by name.
-    expect(controlConfig(controlWranglerConfig()).d1).toEqual([{ name: "DB", databaseName: TARGETS.production.database }]);
-  });
-});
-
 describe("documents' files: an R2 bucket of each target's own", () => {
   test("the pipeline makes the bucket a release binds, once, and binds it by the target's Worker's name", async () => {
     const rel: Release = { ...release, worker: { ...release.worker, env: { ...release.worker.env, FILES: { type: "r2", name: "erga-files" } } } };
@@ -339,21 +316,5 @@ describe("documents' files: an R2 bucket of each target's own", () => {
     await deployTo(staging({ secrets: stagingSecrets }), mock, rel);
     expect(made()).toBe(before);
     expect(bucketName({ workerName: "erga" }, "FILES")).toBe("erga-files");
-  });
-});
-
-describe("Erga's source on its own servers", () => {
-  test("a release's Artifacts binding goes to no app Worker (the control Worker holds the repository); a target that names the namespace gets it", () => {
-    const rel: Release = { ...release, worker: { ...release.worker, env: { ...release.worker.env, ARTIFACTS: { type: "artifacts", namespace: "erga" } } } };
-    const meta = (t: Parameters<typeof workerMetadata>[1]) => workerMetadata(rel, t, { dbId: "db", assetsJwt: "jwt", pagesHost: null }).bindings as any[];
-    expect(meta(targetOf(TARGETS.staging, { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT })).find((b) => b.name == "ARTIFACTS")).toBeUndefined();
-    expect(meta({ ...targetOf(TARGETS.staging, { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT }), artifacts: "erga" }).find((b) => b.name == "ARTIFACTS")).toEqual({ type: "artifacts", name: "ARTIFACTS", namespace: "erga" });
-    const plan = { accountId: FLEET_ACCOUNT, workerName: "erga", subdomain: "ada", createSubdomain: false, app: { kind: "workers.dev" as const }, pages: { kind: "shared" as const }, admin: "ada" } as any;
-    expect(meta(targetOfPlan(plan, "s".repeat(32))).find((b) => b.name == "ARTIFACTS")).toBeUndefined();
-  });
-
-  test("a branch build binds the namespace the commit's own deploy/targets.json names", () => {
-    expect(artifactsNamespace(ROOT)).toBe("erga");
-    expect(artifactsNamespace("/nonexistent")).toBeNull();
   });
 });

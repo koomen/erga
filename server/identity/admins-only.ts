@@ -1,13 +1,13 @@
 // Staging is for Erga's admins only. staging.erga.dev runs on a copy of
-// production's data (frozen: only a Redeploy with a fresh copy replaces it),
+// production's data (frozen: only a deploy with a fresh copy replaces it),
 // so a server whose deploy target says `adminsOnly`
 // (deploy/targets.json, Platform.adminsOnly; the pipeline sets DEPLOY_TARGET on each deploy, so no
 // setting turns this off) lets a request in only with admin power: an
 // admin's signed-in session, or an admin-scope token (tokens.ts;
 // Users.actsAsAdmin). Anyone else gets a page (signed out: sign in; signed in:
 // admins only, with a link to production) or a JSON 403, and Git a 401 that
-// asks for a token. This is the one guard, at the app, before every route; production and servers made
-// by /deploy never run it.
+// asks for a token. This is the one guard, at the app, before every route; production and a fork's servers
+// never run it.
 //
 // What gets in without an admin, and why (each one checks its own credential):
 //
@@ -35,8 +35,8 @@
 //                                   no Authorization header, which answers only the 401 that starts the sign-in. The
 //                                   person's own step, /oauth/authorize, is not exempt: it needs an admin, signed in
 //   GET /llms.txt                   a few fixed lines that point to /mcp (no data)
-//   GET /api/repo[/...]             Erga's repository, read-only (control/source/public-api.ts): the same source anyone
-//                                   may clone from production. It checks the setting public_source itself: off, it
+//   GET /api/repo[/...]             Erga's old repository, read-only (server/repo-api.ts): the same source anyone
+//                                   may read from production. It checks the setting public_source itself: off, it
 //                                   answers only an admin
 //   the API, MCP and documents' own routes with an admin's token of another scope (document, documents)
 //                                   an admin shares a document with an outside agent (the editor's Share card) and it
@@ -45,14 +45,14 @@
 //                                   nothing else. The token's person must be an admin at each request, as
 //                                   for the pages origin; a test person's token never passes. Past this guard the token's
 //                                   own scope decides, as on production: no admin
-//                                   power, so no /admin, settings, users, deploys, credentials, Ops page or Git
+//                                   power, so no /admin, settings, users, credentials or Git
 //
 //   a document's socket, or a file put into it, with an edit key
 //                                   the page's editor sends them from the pages origin, with no cookie; the key
 //                                   (documents/edit-key.ts) names its person, who must be an admin at each request
 //
-// Everything else needs an admin: documents and their sockets, /docs, the homepage and the homepage, /new, /deploy,
-// /tokens, the APIs and MCP, the Git endpoint (anonymous reads too), and the documents' pages origin
+// Everything else needs an admin: documents and their sockets, /docs, the homepage and the homepage, /new,
+// /tokens, the APIs and MCP, Git's redirect (anonymous reads too), and the documents' pages origin
 // (*.erga-pages-staging.dev). That origin has no cookies: on this server its tokens name the admin they were made for
 // (server/documents/pages-origin.ts, pagesToken's `by`), and a file is served only while that person is still an admin. A token without a name
 // (made before this guard, or by another server) is refused.

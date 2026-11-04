@@ -1,30 +1,24 @@
-// Where Erga's own branches deploy: the one list of them, and the one file a
-// fork changes to deploy Erga to its own Cloudflare account and domains
-// (docs/self-host.md). cloudflare.config.ts
+// Where Erga's own branches deploy: the one list of them. cloudflare.config.ts
 // reads production's names from targets.json (its Worker, database, domain and pages
-// route), and the deploy pipeline turns
-// each into a target to deploy to.
+// route), and the deploy pipeline turns each into a target to deploy to
+// (deploy/run.ts, targetFor). A fork deploys with `bun own` instead (DEPLOY.md).
 //
 //   production   branch main      erga.dev           Worker erga          D1 erga           pages *.erga-pages.dev
 //   staging      branch staging   staging.erga.dev   Worker erga-staging  D1 erga-staging   pages *.erga-pages-staging.dev
 //
-// Both are deployed by the control Worker (`control`: erga-control, at
-// ops.erga.dev, control/), which holds Erga's repository, the pipeline, the
-// Ops page and the build container, apart from the app, so a broken app
-// never takes the way to fix it down with it. It is the one Worker in the
-// account that deploys, with the one credential: an admin's OAuth grant (control/deploys/credential.ts).
+// GitHub Actions deploys both (deploy/actions.ts, docs/operations.md): a push
+// to `staging` deploys staging, a push to `main` deploys production.
 //
-// Both targets are in the same Cloudflare account (targets.json `account`:
-// the control Worker's CLOUDFLARE_ACCOUNT_ID; CLOUDFLARE_ACCOUNT_ID in the
-// environment overrides it for deploy/run.ts and deploy/setup.ts). Staging
-// shares nothing writable with production: its own Worker, so its own
+// Both targets are in the same Cloudflare account (targets.json `account`;
+// CLOUDFLARE_ACCOUNT_ID in the environment overrides it for deploy/run.ts).
+// Staging shares nothing writable with production: its own Worker, so its own
 // Durable Object namespaces, its own database, its own secrets
 // (SESSION_SECRET, its own GitHub OAuth app) and its own pages origin. It
 // runs on a copy of production's data (`snapshotFrom`), frozen: a deploy
-// keeps it, and only a Redeploy with a fresh copy (or a first deploy, with no
-// copy yet) copies again: the database through D1's export (read-only on
-// production) and every document's Durable Object through production's
-// read-only snapshot endpoint.
+// keeps it, and only a deploy with a fresh copy (deploy/run.ts staging --fresh,
+// or a first deploy, with no copy yet) copies again: the database through D1's
+// export (read-only on production) and every document's Durable Object through
+// production's read-only snapshot endpoint.
 //
 // Everything here is public (names, hostnames, OAuth client ids). Secrets are
 // set on each Worker once and kept by every deploy after.
@@ -37,7 +31,7 @@ export type TargetName = "production" | "staging";
 
 export interface TargetSpec {
   name: TargetName;
-  /** The branch of the source repo (Cloudflare Artifacts) whose head this target runs. */
+  /** The branch of the GitHub repository whose pushes deploy this target. */
   branch: "main" | "staging";
   /** The Worker, and the D1 database bound to it as DB (found by name, made if missing). */
   worker: string;
@@ -52,12 +46,12 @@ export interface TargetSpec {
    * (erga-pages.dev, erga-pages-staging.dev), with `domain` the zone itself:
    * the zone's free Universal SSL certificate covers *.<zone>, one level
    * down only. A domain deeper in a zone would need an advanced certificate,
-   * which is paid (deploy/setup.ts --certificate).
+   * which is paid.
    */
   pages: { zone: string; domain: string };
   /** Text bindings this target sets over the build's (cloudflare.config.ts). */
   vars: Record<string, string>;
-  /** Copy another target's data in (staging: production's): on a first deploy, and on a Redeploy with a fresh copy. */
+  /** Copy another target's data in (staging: production's): on a first deploy, and on a deploy with a fresh copy. */
   snapshotFrom?: TargetName;
   /**
    * Only Erga's admins may use this target's server (staging, which runs on a copy of production's data): every request
@@ -67,47 +61,22 @@ export interface TargetSpec {
   adminsOnly?: boolean;
 }
 
-/**
- * The control Worker: Erga's repository, the pipeline, the Ops page and
- * the build container, on its own hostname. It deploys itself too, from
- * `branch` (main), after production: the release carries its bundle
- * (deploy/release.ts), and the pipeline uploads it with the same health
- * check and rollback as the app's targets (control/deploys/control-worker.ts). Its
- * container image, and a new Durable Object class, still need wrangler
- * (deploy/setup.ts --control).
- */
-export interface ControlSpec {
-  branch: "main";
-  worker: string;
-  /** Its hostname (a Workers custom domain), and the zone it's on. */
-  host: string;
-  zone: string;
-  /** The release store's R2 bucket (control/deploys/releases.ts; deploy/setup.ts makes it). */
-  releases: string;
-  /** Text bindings over control/wrangler.jsonc's: Erga's GitHub App (id, slug, client id) and its OAuth client on Cloudflare. */
-  vars: Record<string, string>;
-}
 
 import data from "./targets.json";
 
-/** The Cloudflare account every target and the control Worker are in (32 hex digits). */
+/** The Cloudflare account every target is in (32 hex digits). */
 export const ACCOUNT: string = data.account;
 
 /** The bootstrap admins: the same on every target. */
 export const ADMINS: string = data.admins;
 
-/** The source: one Artifacts repo, with branches main and staging. */
-export const SOURCE: { namespace: string; repo: string } = data.source;
-
-/** The control Worker (control/): it deploys every target, and holds the build container. */
-export const CONTROL: ControlSpec = data.control as ControlSpec;
-/** The entrypoint of the control Worker that the app's CONTROL service binding reaches (control/index.ts, class App). */
-export const CONTROL_ENTRYPOINT = "App";
+/** Erga's repository on GitHub (owner/name): /api/repo and /git on Erga's own targets read it (SOURCE_REPO). */
+export const REPOSITORY: string = data.repository;
 
 /**
  * The targets themselves are in targets.json (staging's GITHUB_CLIENT_ID is
  * its own GitHub OAuth app's: homepage https://staging.erga.dev, callback
- * https://staging.erga.dev/auth/github/callback; deploy/setup.ts).
+ * https://staging.erga.dev/auth/github/callback).
  * Staging is for admins only (`adminsOnly`), and its admins sign in with that
  * app, not production's: until someone makes it (on GitHub, by hand: GitHub
  * has no API for OAuth apps), puts its Client ID here and sets its secret
@@ -121,15 +90,6 @@ export const TARGETS = Object.fromEntries(Object.entries(data.targets).map(([nam
 
 export const isTargetName = (s: string): s is TargetName => s in TARGETS;
 
-/** Everything a control Worker deploys: Erga's own targets and the control Worker itself (last: after production, on main); an install's app ("app") and its control Worker (control/deploys/fleet.ts). */
-export type DeployName = TargetName | "control" | "app";
-/** Erga's own deploys: what deploy/run.ts and the setup deploy from a machine. */
-export type OwnDeployName = TargetName | "control";
-export const isDeployName = (s: string): s is OwnDeployName => isTargetName(s) || s == "control";
-/** What a deploy of `name` is: its branch, its Worker, its hostname, and (an app target) whose data it copies. */
-export const specOf = (name: OwnDeployName): { name: DeployName; branch: "main" | "staging"; worker: string; host: string; snapshotFrom?: TargetName; control: boolean } =>
-  name == "control" ? { name, branch: CONTROL.branch, worker: CONTROL.worker, host: CONTROL.host, control: true } : { ...TARGETS[name], control: false };
-
 /** Whether a server whose DEPLOY_TARGET is this is for Erga's admins only (`adminsOnly`: staging; server/identity/admins-only.ts). */
 export const isAdminsOnly = (deployTarget: string | undefined): boolean => {
   const name = deployTarget?.trim() ?? "";
@@ -141,26 +101,3 @@ export const isAdminsOnly = (deployTarget: string | undefined): boolean => {
  * would touch one of these stops before it starts.
  */
 export const PRODUCTION = { worker: TARGETS.production.worker, database: TARGETS.production.database, host: TARGETS.production.host, pages: TARGETS.production.pages.domain };
-
-/** The control Worker's text bindings: the admins, the account, the app's address, and targets.json's control vars. */
-export const controlVars = (): Record<string, string> => ({ ADMINS, CLOUDFLARE_ACCOUNT_ID: ACCOUNT, APP_URL: `https://${TARGETS.production.host}`, ...CONTROL.vars });
-
-/**
- * control/wrangler.jsonc (its bindings, without the deployment's names) with
- * this deployment's names filled in: the Worker's name and hostname,
- * production's database, the Artifacts namespace, the release store's bucket,
- * and controlVars. deploy/release.ts reads it into each release, and
- * deploy/setup.ts --control hands it to wrangler (with the database's id).
- */
-export function controlWrangler(template: Record<string, unknown>, databaseId?: string): Record<string, unknown> {
-  const w = template as { d1_databases?: { binding: string }[]; artifacts?: { binding: string }[]; r2_buckets?: { binding: string }[]; vars?: Record<string, string> };
-  return {
-    ...template,
-    name: CONTROL.worker,
-    routes: [{ pattern: CONTROL.host, custom_domain: true }],
-    d1_databases: (w.d1_databases ?? []).map((d) => ({ ...d, database_name: TARGETS.production.database, ...(databaseId ? { database_id: databaseId } : {}) })),
-    artifacts: (w.artifacts ?? []).map((a) => ({ ...a, namespace: SOURCE.namespace })),
-    r2_buckets: (w.r2_buckets ?? []).map((b) => ({ ...b, bucket_name: CONTROL.releases })),
-    vars: { ...controlVars(), ...w.vars },
-  };
-}

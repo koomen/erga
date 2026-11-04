@@ -3,18 +3,12 @@
 // username first.
 // An admin chooses which providers are on (/admin/auth, settings.ts); one that's off signs in only admins (a test).
 //
-// The GitHub app is the deploy's (Platform.signIn.app: an OAuth app on
-// erga.dev's app Workers; Erga's GitHub App on a control Worker, the same code
-// flow), or the one an admin set on /admin/auth (settings.ts). New values set
+// The GitHub app is the deploy's (Platform.signIn.app: an OAuth app), or the
+// one an admin set on /admin/auth (settings.ts). New values set
 // there while the app in use works wait for a test sign-in:
 // /auth/github?app=pending signs in with them, and an admin's sign-in that
 // works puts them in use (apps.ts, the lockout rules). Everyone else keeps
 // signing in with the values that work.
-//
-// An install's servers (Platform.signIn.relay) sign in with Erga's GitHub
-// App through erga.dev's callback, the App's only one: the state names this
-// origin, erga.dev trades the code for the token and sends the browser back
-// here with it sealed under the state's nonce (control/source/github.ts).
 //
 // A signed-in person can also mint a test token (/tokens): it signs in
 // throwaway test people (Ada, Bo...) who can open only test documents (ids
@@ -43,7 +37,6 @@ import { providersOn, signInApp, testedSignIn } from "./settings.ts";
 import { type AppValues, googleEndpoints, PROVIDERS, type Provider } from "./apps.ts";
 import { SESSION_COOKIE, sign, SIGNED_OUT, unsign } from "./session.ts";
 import { randomToken } from "../../shared/bytes.ts";
-import { openRelay, relayNonce, relayState } from "../../shared/relay.ts";
 import { type GithubLookup, NotAllowed, type Vouched } from "../directory/index.ts";
 import { vouchedSignIn } from "./accounts.ts";
 import { esc } from "../../shared/html.ts";
@@ -107,8 +100,7 @@ export const startSignIn: Route = Effect.gen(function* () {
     return yield* signIn(platform, request, { login, name: login }, next);
   }
   // A test sign-in with the values that wait on /admin/auth: the state says so, for the callback.
-  const relay = platform.signIn.relay;
-  const testing = !relay && url.searchParams.get("app") == "pending";
+  const testing = url.searchParams.get("app") == "pending";
   // Sign-in with GitHub turned off on /admin/auth: only an admin's test sign-in (?app=test) goes on.
   const offTest = !testing && url.searchParams.get("app") == "test";
   if (!testing && !offTest && !(yield* call(() => providersOn(platform))).github) return yield* providerOff(platform, "github", next);
@@ -116,11 +108,10 @@ export const startSignIn: Route = Effect.gen(function* () {
   if (testing && !app) return nothingToTest();
   // No GitHub OAuth app yet (staging's, until an admin makes one): GitHub would answer a 404, so say so here instead.
   if (!app?.clientId) return noOAuthApp(url.origin);
-  // An install: the state names this origin, for erga.dev's callback to relay the answer here.
-  const state = relay ? relayState(url.origin, randomToken(18)) : (testing ? TESTING : offTest ? OFF_TEST : "") + randomToken(18);
+  const state = (testing ? TESTING : offTest ? OFF_TEST : "") + randomToken(18);
   const github = new URL(`${originsOf(platform).www}/login/oauth/authorize`);
   github.searchParams.set("client_id", app.clientId);
-  github.searchParams.set("redirect_uri", `${relay ?? url.origin}/auth/github/callback`);
+  github.searchParams.set("redirect_uri", `${url.origin}/auth/github/callback`);
   // read:org, only while a rule names a GitHub organization: their memberships, private ones too (an OAuth app's scope;
   // Erga's GitHub App ignores scopes: it needs the Members permission, and to be installed on the organization).
   github.searchParams.set("scope", (yield* call(() => orgRules(platform))).length ? "read:user read:org" : "read:user");
@@ -205,29 +196,9 @@ export async function memberships(api: string, token: string): Promise<string[]>
   return Array.isArray(list) ? [...new Set(list.filter((m) => m.state == "active" && m.organization?.login).map((m) => m.organization!.login!.toLowerCase()))] : [];
 }
 
-/** The cookie of a Connect GitHub in flight (control/github-routes.ts). */
-export const GITHUB_CONNECT_COOKIE = "erga_github";
-
-/**
- * Whether /auth/github/callback is Connect GitHub coming back (the control Worker's), not a sign-in: from the install
- * page (installation_id), or from the authorize page while Connect's cookie is set (control/github-routes.ts tells them apart
- * by the state, and finishes a sign-in itself).
- */
-export const isGithubConnectCallback = (request: Request, url: URL) =>
-  url.pathname == "/auth/github/callback" &&
-  (url.searchParams.has("installation_id") || url.searchParams.has("setup_action") || cookies(request).has(GITHUB_CONNECT_COOKIE));
-
 /** /auth/github/callback: GitHub sends the person back with a code to trade for who they are. */
 /** What GitHub's or Google's token exchange answers. */
 type Token = { access_token?: string; error?: string; error_description?: string };
-
-/** The token erga.dev relayed for an install's sign-in, sealed under the state's nonce. */
-const relayedToken = (state: string, relayed: string): Promise<Token> =>
-  openRelay<{ token?: string; error?: string }>(relayNonce(state), relayed).then((o) =>
-    o
-      ? { access_token: o.token, error: o.error ? "relay" : undefined, error_description: o.error }
-      : { error: "relay", error_description: "the answer relayed from upstream didn't open: it was for another sign-in" }
-  );
 
 /** GitHub's token for the callback's code, traded with the app's secret. */
 const githubToken = (platform: Platform, www: string, app: AppValues | null, url: URL): Promise<Token> =>
@@ -263,9 +234,8 @@ export const finishSignIn: Route = Effect.gen(function* () {
   if (!state || state != url.searchParams.get("state")) return page("Sign-in expired", "That sign-in link is stale. <a href=\"/\">Start again</a>.", 400);
 
   const { www, api } = originsOf(platform);
-  // The token: relayed from erga.dev (an install: sealed under the state's nonce), or the code traded here.
-  const relayed = url.searchParams.get("relay");
-  const token = yield* call(() => (relayed ? relayedToken(state, relayed) : githubToken(platform, www, app, url)));
+  // The token: the code traded here.
+  const token = yield* call(() => githubToken(platform, www, app, url));
   if (!token.access_token) {
     // GitHub's own reason (e.g. incorrect_client_credentials: a wrong GITHUB_CLIENT_SECRET) goes to the logs and the page.
     console.log(`GitHub sign-in failed: ${token.error}: ${token.error_description}`);
@@ -317,18 +287,16 @@ export const startGoogleSignIn: Route = Effect.gen(function* () {
   const next = safeNext(url.searchParams.get("next"));
   // Local development signs in without a provider, as /auth/github does.
   if (platform.dev(url)) return yield* startSignIn;
-  const relay = platform.signIn.relay;
-  const testing = !relay && url.searchParams.get("app") == "pending";
+  const testing = url.searchParams.get("app") == "pending";
   const offTest = !testing && url.searchParams.get("app") == "test";
   if (!testing && !offTest && !(yield* call(() => providersOn(platform))).google) return yield* providerOff(platform, "google", next);
   const app = yield* call(() => signInApp(platform, testing ? "pending" : "active", "google"));
   if (testing && !app) return nothingToTest();
   if (!app?.clientId) return noGoogleClient(url.origin);
-  // An install: the state names this origin, for erga.dev's callback to relay the answer here, as GitHub's does.
-  const state = relay ? relayState(url.origin, randomToken(18)) : (testing ? TESTING : offTest ? OFF_TEST : "") + randomToken(18);
+  const state = (testing ? TESTING : offTest ? OFF_TEST : "") + randomToken(18);
   const google = new URL(googleEndpoints(platform.signIn.google ?? null).authorize);
   google.searchParams.set("client_id", app.clientId);
-  google.searchParams.set("redirect_uri", `${relay ?? url.origin}/auth/google/callback`);
+  google.searchParams.set("redirect_uri", `${url.origin}/auth/google/callback`);
   google.searchParams.set("response_type", "code");
   google.searchParams.set("scope", "openid email profile");
   google.searchParams.set("state", state);
@@ -368,15 +336,10 @@ export const finishGoogleSignIn: Route = Effect.gen(function* () {
   const endpoints = googleEndpoints(platform.signIn.google ?? null);
   // The person said no on Google's page, or Google refused: nothing changes.
   const refused = url.searchParams.get("error");
-  // The token: relayed from erga.dev (an install: sealed under the state's nonce), or the code traded here.
-  const relayed = url.searchParams.get("relay");
+  // The token: the code traded here.
   const token: Token = refused
     ? { error: refused, error_description: refused == "access_denied" ? "you didn't allow it" : refused }
-    : yield* call(() =>
-        relayed
-          ? relayedToken(state, relayed)
-          : googleToken(endpoints, app, url.searchParams.get("code") ?? "", `${url.origin}/auth/google/callback`)
-      );
+    : yield* call(() => googleToken(endpoints, app, url.searchParams.get("code") ?? "", `${url.origin}/auth/google/callback`));
   if (!token.access_token) {
     console.log(`Google sign-in failed: ${token.error}: ${token.error_description}`);
     const why = token.error ? ` (${esc(token.error_description ?? token.error)})` : "";

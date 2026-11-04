@@ -12,20 +12,10 @@
 // It sends no secret: each Worker keeps its own (keepSecrets). Staging keeps its frozen copy of production's data: a
 // fresh copy is `bun deploy/run.ts staging --fresh`, from a machine.
 
-import {
-  ALL_STEPS,
-  Cloudflare,
-  type Carry,
-  DeployError,
-  rollbackTo,
-  runPipeline,
-  type Target,
-  Unhealthy,
-} from "../control/deploys/pipeline";
-import { targetFor } from "../control/deploys/branches";
+import { ALL_STEPS, Cloudflare, type Carry, DeployError, rollbackTo, runPipeline, type Target, Unhealthy } from "./pipeline/pipeline";
 import { actionDeploy, secretsProblem } from "./actions-plan";
 import { answersProblem, ownTarget } from "./own/plan";
-import { buildHere } from "./run";
+import { buildHere, targetFor } from "./run";
 
 const say = (s: string) => console.log(s);
 const stop = (s: string): never => {

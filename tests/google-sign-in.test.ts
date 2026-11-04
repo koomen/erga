@@ -156,34 +156,6 @@ test("new values for the client wait for an admin's test sign-in with them, as G
   );
 });
 
-test("an install signs in with Erga's Google client through erga.dev's callback, which trades the code and relays the token sealed", async () => {
-  const INSTALL = "https://erga.install.test", OPS = "https://ops.erga.test";
-  google = mockGoogle({ clientId: APP.clientId, clientSecret: APP.secret, redirects: [`${OPS}/auth/google/callback`], user: ADA });
-  const { platform, directory } = server();
-  (platform.signIn as { relay: string; googleApp: unknown }).relay = OPS;
-  // The install has the client's id only (no secret): the relay has the rest.
-  (platform.signIn as { googleApp: unknown }).googleApp = { clientId: APP.clientId, secret: "" };
-  await platform.own.put("auth:providers", { github: true, google: true });
-  await directory.identities.createAccount("ada", { provider: "google", subject: "1001", handle: "ada@example.com", name: "Ada", emails: [] }, writes("ada"));
-  const start = await respond(startGoogleSignIn, new Request(`${INSTALL}/auth/google?next=/docs`), platform);
-  const to = new URL(start.headers.get("location")!);
-  expect(to.searchParams.get("redirect_uri")).toBe(`${OPS}/auth/google/callback`);
-  const atGoogle = await google.fetch(new Request(to));
-  const { controlRoutes } = await import("../control/routes");
-  const control = { platform: {}, deploys: { isInstall: async (o: string) => o == INSTALL }, forks: {}, google: { ...APP, origin: GOOGLE }, net: globalThis.fetch } as never;
-  const relayed = await controlRoutes(new Request(atGoogle.headers.get("location")!), control);
-  expect(relayed.status).toBe(302);
-  const back = new URL(relayed.headers.get("location")!);
-  expect(back.origin).toBe(INSTALL);
-  expect(back.searchParams.get("code")).toBeNull();
-  const done = await respond(finishGoogleSignIn, new Request(back, { headers: { cookie: cookieOf(start) } }), platform);
-  expect(done.status).toBe(302);
-  expect(done.headers.get("location")).toBe("/docs");
-  // A state that names a server that isn't an install relays nothing.
-  const stranger = await controlRoutes(new Request(atGoogle.headers.get("location")!), { ...(control as object), deploys: { isInstall: async () => false } } as never);
-  expect(stranger.status).toBe(400);
-});
-
 test("a Google account's picture is Google's, kept at each sign-in; with none, no picture (never GitHub's)", async () => {
   const { platform, directory } = server();
   await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", true);

@@ -16,9 +16,7 @@ import { directoryOf, factoryKey, tokensOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
 import { isAdminsOnly, isTargetName, TARGETS } from "../deploy/targets";
-import { sourceService } from "../control/source/service";
-import type { App } from "../control/index";
-import type { SourceService } from "../control/source/index.ts";
+import { githubRepository } from "../server/repo-github";
 import { agentSettingsFrom } from "../agents/models";
 import { documentOf } from "./objects/document-stub";
 import { blobsOf } from "./blobs";
@@ -76,8 +74,6 @@ const SETTINGS = Config.all({
   googleApp: Config.all({ clientId: text("GOOGLE_CLIENT_ID"), secret: text("GOOGLE_CLIENT_SECRET") }),
   githubOrigin: origin("ERGA_GITHUB_ORIGIN"),
   googleOrigin: origin("ERGA_GOOGLE_ORIGIN"),
-  relay: origin("SIGN_IN_RELAY"),
-  controlUrl: origin("CONTROL_URL"),
   /** How often the served homepage looks for a newer deploy (ms); not a number: 0, every request. */
   homeRecheckMs: text("ERGA_HOME_RECHECK_MS").pipe(Config.map((v) => (v ? Number(v) || 0 : 5000))),
 });
@@ -91,40 +87,6 @@ const landingOf = ({ admins, devLogin }: { admins: string[]; devLogin: string })
   const owner = dev && OWNER.test(dev) ? dev : admins[0] ?? null;
   return { files: LANDING, owner };
 };
-
-/** The repository as the app reaches it through the control Worker: its object's calls over the binding; no remote of its own (the Git endpoint is the control Worker's). */
-function controlSource(control: Service<App>): SourceService {
-  return {
-    object: {
-      advertise: (origin) => control.advertise(origin),
-      branches: (origin) => control.branches(origin),
-      githubStatus: (origin) => control.githubStatus(origin),
-      syncGithub: (origin, by) => control.syncGithub(origin, by),
-      connectGithub: (origin, link, by) => control.connectGithub(origin, link, by),
-      disconnectGithub: (origin) => control.disconnectGithub(origin),
-      githubPushed: (origin, event) => control.githubPushed(origin, event),
-      files: (origin, commit) => control.files(origin, commit),
-      read: (origin, q) => control.read(origin, q),
-      merge: (origin, who, commit) => control.merge(origin, who, commit),
-      mergeFeature: (origin, who, name, message) => control.mergeFeature(origin, who, name, message),
-      deleteFeature: (origin, name, who) => control.deleteFeature(origin, name, who),
-      checkFeature: (origin, name) => control.checkFeature(origin, name),
-      release: (origin, who, o) => control.release(origin, who, o),
-      update: (origin, who) => control.update(origin, who),
-      resolveUpdate: (origin, who, path, content) => control.resolveUpdate(origin, who, path, content),
-      finishUpdate: (origin, who) => control.finishUpdate(origin, who),
-      abandonUpdate: (origin) => control.abandonUpdate(origin),
-      fetch: async () => new Response("Pushes go to the control Worker's Git endpoint.", { status: 404 }),
-    },
-    remote: async () => null,
-  };
-}
-
-/** The deploys on a server that has none (no control Worker, and not local development): every call says so. */
-const noDeploys: Platform["deploys"] = (() => {
-  const none = async () => { throw new Error("This server has no control Worker: there are no deploys here."); };
-  return { status: none, logOf: none, redeploy: none, redeployWith: none, rollback: none, releases: none, promoteRelease: none, withdrawRelease: none } as unknown as Platform["deploys"];
-})();
 
 /** Where documents' pages run: an origin each under PAGES_DOMAIN (production's pages domain when unset: deploy/targets.json), or the one PAGES_HOST. */
 const pagesDomainOf = (env: Env) => env.PAGES_DOMAIN?.trim() || TARGETS.production.pages.domain;
@@ -152,9 +114,9 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
   const standIn = (value: string) => (env.DEV_LOGIN && value ? value : null);
   // The server's own storage: its object.
   const own = () => env.OWN.getByName("own");
-  // The control Worker, over its binding (erga.dev, staging.erga.dev): the repository and the deploys are there. In local
-  // development the app hosts the deploys' object itself; a server with neither has no deploys.
-  const control = env.CONTROL ? (env.CONTROL as unknown as Service<App>) : null;
+  // Erga's repository on GitHub, read-only (erga.dev, staging.erga.dev: SOURCE_REPO): /api/repo reads it. Absent elsewhere.
+  const source = env.SOURCE_REPO?.trim();
+  const repo = source ? githubRepository(source, { clientId: env.GITHUB_CLIENT_ID, secret: env.GITHUB_CLIENT_SECRET }) : undefined;
   const p: Platform = {
     directory,
     sessionOf: (request) => sessionOf(p, request),
@@ -178,17 +140,14 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       github: standIn(settings.githubOrigin) ?? "https://github.com",
       googleApp: settings.googleApp,
       google: standIn(settings.googleOrigin),
-      relay: settings.relay || null,
       devLogin: settings.devLogin || null,
       encryptionKey: factoryKey(env),
     },
     own: { get: (k) => own().get(k), put: (k, v) => own().put(k, v), delete: (k) => own().delete(k) },
-    source: control ? controlSource(control) : sourceService(env),
     home: env.HOME.getByName("home"),
     news: env.NEWS.getByName("news"),
     personAgent: (login: string) => env.AGENTS.getByName(login),
-    deploys: control ?? env.PIPELINE?.getByName("deploys") ?? noDeploys,
-    ...(settings.controlUrl ? { control: { url: settings.controlUrl } } : {}),
+    ...(repo ? { repo } : {}),
     agentSettings: (login?: string) => agentSettingsFrom(env, env.DB ? directoryOf(env) : null, login),
     edge: {
       cache: edgeCache(),

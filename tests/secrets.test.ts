@@ -35,20 +35,6 @@ test("the Share buttons on a copy of production's database (staging's) give a to
   expect((await production.share(ada, false)).token).not.toBe(shared.token);
 });
 
-test("a build's failed fetch never puts the source token in its error, or the deploy log", async () => {
-  const { buildCommit } = await import("../control/builder/build");
-  const token = "art_" + "s3cr3t".repeat(6), lines: string[] = [];
-  const dir = `${process.env.TMPDIR ?? "/tmp"}/erga-secrets-${process.pid}`;
-  // Nothing listens on port 9: git fails at once.
-  const err = await buildCommit({ source: { cloneUrl: "http://127.0.0.1:9/erga.git", token }, commit: "0123456789abcdef0123456789abcdef01234567", branch: "staging", dir, log: (l) => lines.push(l) }).catch((e: Error) => e);
-  expect(err).toBeInstanceOf(Error);
-  const said = `${(err as Error).message}\n${lines.join("\n")}`;
-  expect(said).toContain("git fetch");
-  expect(said).not.toContain(token);
-  expect(said).not.toContain(btoa(`x:${token}`));
-  (await import("node:fs")).rmSync(dir, { recursive: true, force: true });
-});
-
 test("a document's pages token is checked whole (its MAC compared in constant time): a changed one opens nothing", async () => {
   const { pagesToken, readPagesToken } = await import("../server/documents");
   const token = await pagesToken("pages-secret", "ada", "abcd1234", "https://erga.dev");

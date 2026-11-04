@@ -35,7 +35,7 @@ test("on /docs, ⌘K opens it with Erga's pages and, for an admin, the admin one
   await expect.poll(async () => (await pane(page))?.rows).toEqual(["Authentication/admin/auth"]);
   await page.keyboard.press("Backspace");
   await page.keyboard.press("Backspace");
-  await expect.poll(async () => (await pane(page))?.rows.length).toBe(7);
+  await expect.poll(async () => (await pane(page))?.rows.length).toBe(6);
   await page.keyboard.press("ArrowDown");
   expect((await pane(page))!.picked).toBe("API keys");
   await page.keyboard.press("Enter");

@@ -1,7 +1,7 @@
 // The typecheck has three projects, one for each place the code runs (bun run typecheck checks all three):
 //
 //   tsconfig.json           the tools: what runs under Bun (deploy/, dev/, tests/, e2e/, the build scripts), DOM and Bun types
-//   tsconfig.workers.json   the Workers: server/, document/, agents/, control/, cloudflare/, Workers types, no DOM
+//   tsconfig.workers.json   the Worker: server/, document/, agents/, cloudflare/, Workers types, no DOM
 //   tsconfig.browser.json   the browser: client/ and shared/, DOM types, no Bun
 //
 // A file a project imports is checked with that project's types too: shared/ under all three.
@@ -29,8 +29,6 @@
     "e2e.config.ts",
     "vite.config.ts",
     "client/build.ts",
-    "control/builder/build.ts",
-    "control/builder/server.ts",
     "assets/logo"
   ],
   // It tests a Worker file with the Workers' types: tsconfig.workers.json checks it.

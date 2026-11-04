@@ -37,13 +37,6 @@ test("a page names this build's files: its scripts as modules, with the chunks t
   expect(stemOf("/_erga/fonts/inter-latin-normal-iiii9999.woff2")).toBe("/_erga/fonts/inter-latin-normal");
 });
 
-test("the control Worker names the app's files at the app's origin", () => {
-  useAssets(MANIFEST, "https://erga.test/");
-  expect(asset("style.css")).toBe("https://erga.test/_erga/style-cccc3333.css");
-  expect(fontTags()).toContain("url(https://erga.test/_erga/fonts/inter-latin-normal-iiii9999.woff2)");
-  useAssets(MANIFEST);
-});
-
 test("an editor's page names the editor's half at the app's origin, with the integrity of every script it may load, before any of the page's own", () => {
   useAssets(MANIFEST);
   const page = readerPage("<!doctype html><html><head><script type=\"module\" src=\"app.js\"></script></head><body></body></html>", { shell: "https://erga.test", prefix: "/t/x/", src: "s", editor: true });

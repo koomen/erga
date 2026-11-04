@@ -175,7 +175,7 @@ body.chrome-hidden .chrome-bottom:has(.status.error) { opacity: 1; }
 }
 /* Its card or menu is open, where the tooltip would be. */
 .icon-btn[aria-expanded="true"][data-tip]::after, .avatar[aria-expanded="true"][data-tip]::before { display: none; }
-/* A control that's on (paused, editing, its card open) is blue, and keeps the same hover as the others: in the editor and on /admin/ops. */
+/* A control that's on (paused, editing, its card open) is blue, and keeps the same hover as the others: in the editor and on the admin pages. */
 .chrome-top :is(.icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"]) { color: var(--caret); }
 
 .stat {
@@ -398,14 +398,6 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 .agent-connect p { margin: 0 0 4px; color: var(--soft); }
 .agent-connect pre { margin: 0 0 6px; padding: 6px 8px; border-radius: 7px; background: var(--code-bg); font: 12px/1.45 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-connect button { height: 28px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 7px; background: var(--bg); color: var(--fg); font: 550 12.5px var(--font-text); cursor: pointer; }
-/* A tool's offer: a button only the person clicks (Connect Cloudflare), and how it ended. */
-.msg-tool { flex-wrap: wrap; }
-.msg-tool > .offer { flex: 1 0 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-left: 13px; margin-top: 4px; }
-.msg-tool .offer-button { height: 28px; padding: 0 12px; border: 1px solid var(--fg-strong); border-radius: 7px; background: var(--fg-strong); color: var(--bg); font: 550 12.5px var(--font-text); cursor: pointer; }
-.msg-tool .offer-button:hover { opacity: 0.86; }
-.msg-tool .offer-button:disabled { opacity: 0.5; cursor: default; }
-.msg-tool .offer-button:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }
-.msg-tool .offer-note { min-width: 0; font-size: 12px; color: var(--soft); overflow-wrap: anywhere; }
 .msg-error { color: #d0453a; white-space: pre-wrap; font-size: 13px; }
 @keyframes agent-pulse { from { opacity: 0.35; } to { opacity: 1; } }
 .agent-compose { padding: 10px; border-top: 1px solid var(--rule); display: flex; gap: 6px; align-items: flex-end; }

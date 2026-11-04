@@ -21,7 +21,7 @@
 // (server/http.ts), with the platform that knows agent tokens. The share button's token
 // (<document>/api/share) is server/documents/make.ts's.
 //
-// The tools are agents/tools.ts's: the operations (server/operations/, control/operations.ts), and every document
+// The tools are agents/tools.ts's: the operations (server/operations/), and every document
 // tool (read, edit, write, ...) with a `document` argument, run in that document's host as the person's agent. A
 // document is always named by that argument, never by the URL.
 
@@ -299,7 +299,7 @@ const rpc = Effect.fnUntraced(function* (raw: unknown, ctx: ToolContext) {
       });
     case "tools/call": {
       const name = String(m.params?.name ?? "");
-      // One line in the server's log (wrangler tail, the Ops page) for each call: the tool, its time, ok or error.
+      // One line in the server's log (wrangler tail) for each call: the tool, its time, ok or error.
       // Never its arguments: they can hold secrets.
       const started = Date.now();
       const logged = (outcome: "ok" | "error") =>
@@ -385,7 +385,7 @@ const adminStatus = (platform: Platform, session: Session) =>
 const instructionsFor = (ctx: ToolContext, admin: boolean | "locked") =>
   [
     `Erga (${ctx.origin}) as ${ctx.session.name} (${ctx.session.login}): their documents, and any document they may edit`,
-    admin === true ? "; as they're an admin, the server too: its settings, users, source and deploys" : "",
+    admin === true ? "; as they're an admin, the server too: its settings, users, sign-in and homepage" : "",
     ".",
     ctx.session.onlyDoc != null ? ` This token reaches one document only (id ${ctx.session.onlyDoc}).` : "",
     admin == "locked"

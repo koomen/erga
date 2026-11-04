@@ -26,7 +26,6 @@ import { HttpServerResponse } from "effect/http";
 import { call, ctx, html, redirect } from "../http.ts";
 import { pageAddress } from "../../document/pages.ts";
 import type { ViewAnswer } from "../../document/view.ts";
-import { mayDeploy } from "../identity/index.ts";
 import { ID, OWNER, roleMay } from "../directory/index.ts";
 import type { Role } from "../../document/access.ts";
 import type { DocKind } from "../../document/pages.ts";
@@ -255,11 +254,10 @@ async function landingView(platform: Platform, request: Request, session: Sessio
 }
 
 /** What the editor's menu on your avatar needs to know that the document doesn't: the links it offers. */
-const accountMeta = (session: Session, admin: boolean, deploy: boolean) => {
+const accountMeta = (session: Session, admin: boolean) => {
   const links = {
     docs: link("/docs", session),
     settings: "#settings",
-    ...(deploy ? { deploy: link("/deploy", session) } : {}),
     ...(admin ? { admin: link("/admin", session) } : {}),
     signOut: "/auth/logout",
   };
@@ -287,7 +285,7 @@ async function render(
   const dir = platform.directory;
   const canEdit = !!session && !session.agent && roleMay(d.role, "edit");
   const editing = canEdit && url.searchParams.has("edit");
-  const [admin, deploy] = await Promise.all([session ? dir.users.isAdmin(whoOf(session)) : false, mayDeploy(dir, session)]);
+  const admin = session ? await dir.users.isAdmin(whoOf(session)) : false;
   // On a server for admins alone (staging), the token names the admin.
   const by = platform.adminsOnly && session ? session.login : null;
   const token = await pagesToken(platform.secret, d.owner, d.id, url.origin, undefined, { ...(by ? { by } : {}), ...(canEdit ? { edit: true } : {}) });
@@ -303,7 +301,7 @@ async function render(
   const reader = canEdit ? { agent: true, bars: true } : await dir.readerOptions(d.id);
   const agent = hasAgent(session) && (canEdit || (roleMay(d.role, "open") && reader.agent));
   const meta = `<meta name="erga-address" content="${esc(address)}"><meta name="erga-page" content="${esc(d.file)}"><meta name="erga-pages" content="${esc(files)}">` + (canEdit && session
-      ? `<meta name="erga-base" content="/d/${d.id}">${canShare ? `<meta name="erga-share" content="owner">` : ""}${accountMeta(session, admin && !session.agent, deploy)}`
+      ? `<meta name="erga-base" content="/d/${d.id}">${canShare ? `<meta name="erga-share" content="owner">` : ""}${accountMeta(session, admin && !session.agent)}`
     : "");
   const shell = viewerPage({
     title: d.title,
@@ -318,7 +316,7 @@ async function render(
     landing,
     clone,
     edit,
-    corner: accountHtml(accountOf(session, admin, deploy), url.pathname + url.search),
+    corner: accountHtml(accountOf(session, admin), url.pathname + url.search),
     // The page follows each change while it's open: for someone signed in in their browser, who may open its room.
     ...(session && !session.agent ? { live: d.ver } : {}),
     ...(session && !session.agent && d.kind == "project" ? { project: address } : {}),

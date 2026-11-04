@@ -1,8 +1,5 @@
-// The app Worker's own deploy routes: what the deploy pipeline (in the
-// control Worker) asks of a server it deploys, and what staging's data copy
-// goes through. They run in the app Worker only: they read its documents. The deploys' event stream (/api/events) is the
-// control Worker's (control/deploys/api.ts); in local development the app
-// hosts it too (cloudflare/index.ts).
+// The app Worker's own deploy routes: what the deploy pipeline (deploy/pipeline/) asks of a server it deploys, and
+// what staging's data copy goes through. They run in the app Worker only: they read its documents.
 //
 //   GET  /api/deploys/version           anyone: {version, target}, the release this server runs (the pipeline waits for it)
 //   GET  /api/health                    anyone: {ok, version, target, checks}: the app works (server/health.ts); 503 when it doesn't

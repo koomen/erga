@@ -17,7 +17,7 @@
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 import { type Platform, type Session, whoOf } from "../platform.ts";
-import type { Directory, Users } from "../directory/index.ts";
+import type { Users } from "../directory/index.ts";
 import { cookies } from "./cookies.ts";
 
 export const SESSION_COOKIE = "erga_session";
@@ -121,13 +121,3 @@ const loginOf = (name: string) =>
  */
 export const actingAdmin = async (users: Users, session: Session | null) => !!session && (await users.actsAsAdmin(whoOf(session)));
 
-/**
- * Who may use /deploy: the deploy_page setting (off, admins and those with the deploy role, or users), and never a test
- * person or an agent's token. It's a permission of its own: it gives nothing of an admin's (settings, users, the Ops page).
- */
-export async function mayDeploy(directory: Directory, session: Session | null): Promise<boolean> {
-  if (!session || session.test || session.agent) return false;
-  const mode = await directory.config.get("deploy_page");
-  if (mode == "users") return true;
-  return mode == "admins" && (await directory.users.hasDeploy(whoOf(session)));
-}

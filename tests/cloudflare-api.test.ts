@@ -1,12 +1,12 @@
-// Cloudflare's API as it really answers (control/deploys/cloudflare-api.ts), not as its API schema says: the assets'
+// Cloudflare's API as it really answers (deploy/pipeline/cloudflare-api.ts), not as its API schema says: the assets'
 // upload session answered `"errors": null, "messages": null` (recorded 2026-10-29 from api.cloudflare.com, its JWT
 // swapped for one of the same shape). The client read that as no answer at all, and every deploy stopped at "Upload
 // the editor's files" (no upload token came back). dev/mock-cloudflare.ts answers the same way now.
 
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
-import { Cloudflare, DeployError } from "../control/deploys/cloudflare-api";
-import { uploadAssets } from "../control/deploys/account";
+import { Cloudflare, DeployError } from "../deploy/pipeline/cloudflare-api";
+import { uploadAssets } from "../deploy/pipeline/account";
 
 const claims = { iss: "https://api.workers.cloudflare.com", wrangler_single_asset_uploads: false, edge_kv: false };
 const JWT = `cfwau_eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.sig`;
@@ -39,7 +39,7 @@ test("an answer with errors and messages null: its result, as Cloudflare sent it
 test("the editor's files go up on Cloudflare's real answers: the session, then the bucket, then the completion token", async () => {
   const bytes = new TextEncoder().encode("hello");
   // The session asks for whatever hash the file has: the answer names it.
-  const { assetHash } = await import("../control/deploys/account");
+  const { assetHash } = await import("../deploy/pipeline/account");
   const hash = await assetHash("/probe.txt", bytes);
   const { cf, calls } = cloudflare(
     new Response(SESSION.replace("0123456789abcdef0123456789abcdef", hash)),

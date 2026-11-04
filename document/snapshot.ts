@@ -1,11 +1,11 @@
 // A document's storage as one value, to copy documents' Durable Objects from
 // one server to another: how staging gets production's documents when it
-// copies its data (the pipeline's "documents" step, control/deploys/pipeline.ts,
-// with control/deploys/copy-documents.ts). The database is copied by D1 itself (export
+// copies its data (the pipeline's "documents" step, deploy/pipeline/pipeline.ts,
+// with deploy/pipeline/copy-documents.ts). The database is copied by D1 itself (export
 // and import); a Durable Object's storage can only be read from inside the
 // Worker that owns it, so production serves a read-only snapshot endpoint and
 // staging an import one, both behind a shared bearer token (SNAPSHOT_TOKEN,
-// set on both Workers by deploy/setup.ts). With it staging can read every
+// set on both Workers by hand: bunx cf workers secrets update SNAPSHOT_TOKEN). With it staging can read every
 // production document, so it is at least 32 characters, compared in constant time:
 //
 //   POST /api/snapshot/docs          {ids, after?}  → {docs: [{id, entries, alarm, more?}], done, failed}

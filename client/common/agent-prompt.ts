@@ -4,13 +4,13 @@
 
 import { showCopied } from "./copied";
 
-/** The line for the page at `address` (its path) on Erga at `origin` (a page the control Worker serves names the app's). */
+/** The line for the page at `address` (its path) on Erga at `origin`. */
 export const agentPrompt = (address: string, origin = location.origin) =>
   `Add Erga's MCP server, ${origin}/mcp, then open ${origin}${address}.`;
 
 /** Copies the line for the document at `address` (its path); the button confirms. Answers the line if the clipboard can't be reached, else null. */
-export async function copyAgentPrompt(button: HTMLElement, address: string, origin?: string): Promise<string | null> {
-  const prompt = agentPrompt(address, origin);
+export async function copyAgentPrompt(button: HTMLElement, address: string): Promise<string | null> {
+  const prompt = agentPrompt(address);
   const ok = await navigator.clipboard.writeText(prompt).then(
     () => true,
     () => false

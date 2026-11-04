@@ -119,7 +119,7 @@ export const SETTINGS = {
   public_source: setting<boolean>({
     label: "Public source",
     description:
-      "Anyone can read Erga's source through the repository API (/api/repo), which the page /source shows. Off: only admins can; anyone else gets a 404. Git clones and the /git page on the control Worker stay as they are.",
+      "Anyone can read Erga's source through the repository API (/api/repo), which the page /source shows. Off: only admins can; anyone else gets a 404. Git clones and the /git page on the old control Worker stay as they are.",
     default: true,
     parse: boolean,
   }),
@@ -147,16 +147,6 @@ export const SETTINGS = {
       if (bad) throw new ConfigError({ message: `has "${bad}", which isn't one of the models: ${Object.keys(MODELS).join(", ")}` });
       return [...new Set(list as string[])];
     },
-  }),
-  deploy_page: setting<"off" | "admins" | "users">({
-    description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins (and users with the deploy role, on /admin/users) or users (anyone signed in).",
-    default: "users",
-    parse: (v) => {
-      const s = typeof v == "string" ? v.trim().toLowerCase() : v;
-      if (s === "off" || s === "admins" || s === "users") return s;
-      throw new ConfigError({ message: 'must be "off", "admins" or "users"' });
-    },
-    choices: ["off", "admins", "users"],
   }),
 };
 
@@ -249,9 +239,9 @@ export interface SettingChange {
     /** main moved past the production gate (its tests hadn't passed), or staging past the staging rule: an admin's emergency override, with their reason and what the gate or rule said. */
     override?: { reason: string; gate: string };
   };
-  /** An admin opened an override of the staging rule (key "staging"; control/source/repo.ts, STAGING_RULE): their pushes to staging land until `until` (ms). `from` and `to` are null. A push made under it is a `release` with `override`. */
+  /** An admin opened an override of the staging rule (key "staging"; the old control Worker's repository): their pushes to staging land until `until` (ms). `from` and `to` are null. A push made under it is a `release` with `override`. The change log keeps the ones from before. */
   stagingOverride?: { reason: string; until: number };
-  /** A user (key "user"): added, their role or deploy role changed, or removed. `from` and `to` are null. */
+  /** A user (key "user"): added, their role changed, or removed (or, before 2026-11-04, their deploy role changed). `from` and `to` are null. */
   user?: { login: string; event: "added" | "role" | "deploy" | "removed"; role?: string; deploy?: boolean };
   /** An access rule (key "access"; server/directory/access.ts): added, its access changed, or removed. `from` and `to` are null. */
   access?: { event: "added" | "changed" | "removed"; kind: string; value: string; access: string; from?: string };

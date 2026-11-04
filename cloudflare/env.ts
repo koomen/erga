@@ -1,9 +1,5 @@
 import type { BrowserBinding } from "./cdp";
-import type { ArtifactsBinding } from "../control/cloudflare";
-import type { Deployer } from "../control/install/session";
 import type { DocumentObject } from "./objects/document";
-import type { SourceHost } from "../control/source/source-host";
-import type { Pipeline } from "../control/deploys/pipeline-object";
 import type { Home } from "./objects/home";
 import type { NewsHub } from "./objects/news";
 import type { OwnStorage } from "./objects/own";
@@ -64,55 +60,28 @@ export interface Env {
   SESSION_SECRET: string;
   /** The Anthropic key, a Worker secret: the fallback while an admin has stored none on /admin (server/directory/api-keys.ts; read by agents/models.ts). */
   ANTHROPIC_API_KEY: string;
-  /** The deploy page's sessions (/deploy, control/install/routes.ts): one Durable Object each, holding the Cloudflare token for the deploy only. */
-  DEPLOYS: DurableObjectNamespace<Deployer>;
-  /**
-   * The deploy page's Cloudflare OAuth client (a public client, PKCE): with
-   * one, /deploy offers "Authorize with Cloudflare"; without, the token link
-   * only. CLOUDFLARE_OAUTH_SCOPES overrides the scopes it asks for.
-   */
-  CLOUDFLARE_OAUTH_CLIENT_ID?: string;
-  CLOUDFLARE_OAUTH_SCOPES?: string;
-  /** The same client's secret, if it was made confidential (a public PKCE client has none). */
-  CLOUDFLARE_OAUTH_CLIENT_SECRET?: string;
   /**
    * Where documents' pages run: one origin each under this domain
    * (<id>-<owner>.<PAGES_DOMAIN>, a wildcard route), production's pages domain (deploy/targets.json) when
    * unset; or PAGES_HOST, one host they all share (a server on workers.dev,
-   * which has no wildcards; control/deploys/pipeline.ts sets one or the other).
+   * which has no wildcards; deploy/pipeline/pipeline.ts sets one or the other).
    */
   PAGES_DOMAIN?: string;
   PAGES_HOST?: string;
-  /** Local development only: the deploys' object ("deploys"), hosted by the app in place of the control Worker. */
-  PIPELINE?: DurableObjectNamespace<Pipeline>;
   /**
    * Which of Erga's own deploy targets this server is:
    * "production" on erga.dev, "staging" on staging.erga.dev, empty on any
-   * other (a /deploy server, local development unless ERGA_DEPLOY_TARGET).
+   * other (a fork's server, local development unless ERGA_DEPLOY_TARGET).
    */
   DEPLOY_TARGET?: string;
   /** The release this server runs (the commit, 12 characters; the pipeline sets it). GET /api/deploys/version answers it. */
   ERGA_VERSION?: string;
-  /** The Cloudflare account the server is in (the pipeline sets it): where it deploys itself. */
-  CLOUDFLARE_ACCOUNT_ID?: string;
   /** A secret, the same on production and staging: production's read-only snapshot endpoint takes it, and staging's import. */
   SNAPSHOT_TOKEN?: string;
   /** "1" on staging: the server takes snapshots in (never on production). */
   SNAPSHOT_IMPORT?: string;
-  /** The control Worker (control/index.ts), bound on the app Workers the pipeline deploys: the app's way to the Ops page's API, for its admin agent. */
-  CONTROL?: Fetcher;
-  /** Where the control Worker is (https://ops.erga.dev), on an app Worker the pipeline deployed; the app sends its admins there. */
-  CONTROL_URL?: string;
-  /** An install's control Worker only (control/install/install.ts): erga.dev's control Worker, whose store it upgrades from and whose OAuth callback relays its consent; and its one target, as JSON (InstallSpec). */
-  UPSTREAM?: string;
-  INSTALL?: string;
-  /** An install's control Worker only: the channel it follows (stable unless "edge"). */
-  CHANNEL?: string;
-  /** An install's control Worker only (a secret): what it reaches its fork's repository and builds at upstream with (control/install/forks.ts). */
-  FORK_SECRET?: string;
-  CF_VERSION_METADATA?: { id?: string };
-  /** Local development only: "1" has /deploy and the branch deploys talk to a pretend Cloudflare, never the real one. */
-  ERGA_DEPLOY_MOCK?: string;
+  /** Erga's repository on GitHub (owner/name), on erga.dev and staging: /api/repo reads it, and /git redirects to it. */
+  SOURCE_REPO?: string;
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */
   DEV_LOGIN?: string;
 
@@ -126,29 +95,7 @@ export interface Env {
   ERGA_GITHUB_ORIGIN?: string;
   /** Local development only: a stand-in for Google's sign-in endpoints. */
   ERGA_GOOGLE_ORIGIN?: string;
-  /** Local development only: the repository's object ("erga"), hosted by the app in place of the control Worker. */
-  SOURCE?: DurableObjectNamespace<SourceHost>;
-  /**
-   * Cloudflare Artifacts, where Erga's repository is:
-   * bound only when the deploy names a namespace (ERGA_ARTIFACTS_NAMESPACE).
-   */
-  ARTIFACTS?: ArtifactsBinding;
-  /**
-   * Erga's GitHub App (control/source/github.ts; control/cloudflare.ts), on a control Worker: its id, slug and client
-   * id; and on erga.dev's, its secrets: the client secret (sign-in's code exchange), the private key (PKCS#8 PEM:
-   * installation tokens) and the webhook secret. An install's control Worker has the public parts only.
-   */
-  GITHUB_APP_ID?: string;
-  GITHUB_APP_SLUG?: string;
-  GITHUB_APP_CLIENT_ID?: string;
-  /** Erga's Google OAuth client's id, for installs (their sign-in with Google goes through erga.dev's control Worker). */
-  GOOGLE_APP_CLIENT_ID?: string;
-  GITHUB_APP_CLIENT_SECRET?: string;
-  GITHUB_APP_PRIVATE_KEY?: string;
-  GITHUB_WEBHOOK_SECRET?: string;
-  /** An install's app Worker: erga.dev's control Worker, whose GitHub callback relays its sign-in (the App's one callback). */
-  SIGN_IN_RELAY?: string;
-  /** Local development only: the dev server's address, where the stand-ins for Artifacts and GitHub are. */
+  /** Local development only: the dev server's address, where its own headless Chrome is (cloudflare/browser.ts). */
   ERGA_DEV_ORIGIN?: string;
   /** Local development only: how often the Worker checks for a newer homepage deploy (5 seconds by default; tests shorten it). */
   ERGA_HOME_RECHECK_MS?: string;

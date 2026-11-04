@@ -15,7 +15,7 @@ import { parseDeployed } from "../server/directory/settings";
 
 const facts = (over: Partial<Facts> = {}): Facts => ({
   bun: "1.3.14",
-  origin: "https://erga.dev/git/erga.git",
+  origin: "https://github.com/koomen/erga.git",
   installed: true,
   dirty: false,
   head: "abcdef1234567890",
@@ -52,7 +52,7 @@ test("the names come from the address, so they never take erga.dev's own (erga)"
 test("a preset sets defaults the server takes, and locks nothing", () => {
   const vars = varsOf({ ...answers, preset: "company" }, { github: "Iv1.x" });
   expect(vars.SERVER_CONFIG).toBe("{}");
-  expect(parseDeployed(vars.SERVER_DEFAULTS)).toEqual({ public_sharing: false, delete_docs_after_hours: null, deploy_page: "off" });
+  expect(parseDeployed(vars.SERVER_DEFAULTS)).toEqual({ public_sharing: false, delete_docs_after_hours: null });
   expect(vars).toMatchObject({ ADMINS: "ada", GITHUB_CLIENT_ID: "Iv1.x", DEPLOY_TARGET: "" });
 });
 

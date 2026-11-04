@@ -2,9 +2,9 @@
 // does is an operation (server/operations/), which the front end calls over POST /api/tools/<name> and every agent
 // has as a tool: the entries for those come from the operations themselves (`ui`), at the end of the list.
 //
-//   your agent          (agents/person/agent.ts: on every page) everything its person may: the admin operations (for an admin), the Ops page
-//                       (source and deploys), the homepage's deploy, and the document tools (agents/tools.ts) in any
-//                       document they may open or edit
+//   your agent          (agents/person/agent.ts: on every page) everything its person may: the admin operations (for an
+//                       admin), the homepage's deploy, and the document tools (agents/tools.ts) in any document they
+//                       may open or edit
 //
 // The exceptions: an agent with a document token never has admin power, even an admin's: "admin" actions are an
 // admin's own agent's, and an admin token's. A secret (an API key, a GitHub app's secret, a new agent token) is
@@ -18,7 +18,7 @@
 // operations, and fails when one isn't here, or when a tool named here isn't the agent's. So a new
 // route, or a new button calling one, needs a line here and, unless it's a secret, a tool.
 
-import { ALL_OPERATIONS } from "./tools.ts";
+import { OPERATIONS } from "../server/operations/index.ts";
 
 /**
  * Who the action belongs to: "admin", the admin agent's only (it needs admin power); "document", every agent's (the
@@ -42,6 +42,8 @@ const SECRET = "a secret: pasted or made only on the page, never in a conversati
 const PANEL = "the agent panel itself (the conversation, its model, stop, undo, redo)";
 const STREAM = "the page's live updates (server-sent events)";
 const SIGN_IN = "signing in: the person in their own browser, before any agent acts for them";
+const SOURCE =
+  "Erga's source, read-only and public: not a change to the server (an agent reads Erga's source on GitHub, github.com/koomen/erga)";
 
 export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ /admin: settings, change log, users, API keys
@@ -105,93 +107,33 @@ export const AGENT_ACTIONS: AgentAction[] = [
   },
   { route: "POST /api/agent/keys", domain: "none", action: "Add or replace your own API key (Settings, Agent)", exempt: SECRET },
 
-  // ------------------------------------------------------------ /admin/ops: the Ops page, source and deploys. Its actions are
-  // operations (control/operations.ts), at the end with the others; these are the routes that stay routes.
-  { route: "GET /git", domain: "admin", action: "Read Erga's source and its recent commits (the public page, for anyone)", tool: "source" },
-  {
-    route: "GET /git/tree/<ref>/<path>",
-    domain: "admin",
-    action: "Read a folder or a file of Erga's source (the public page, for anyone)",
-    tool: "source",
-  },
+  // ------------------------------------------------------------ Erga's source: the homepage's page /source, over the repository API
+  // (server/repo-api.ts), which reads the repository on GitHub (server/repo-github.ts).
   {
     route: "GET /source",
-    domain: "admin",
+    domain: "none",
     action: "Read Erga's source: its files, README and recent commits (the homepage's source page, for anyone)",
-    tool: "source",
+    exempt: SOURCE,
   },
   {
     route: "GET /source/<branch>/<path>",
-    domain: "admin",
+    domain: "none",
     action: "Read a folder or a file of Erga's source (the homepage's source page, for anyone)",
-    tool: "source",
+    exempt: SOURCE,
   },
   {
     route: "GET /api/repo",
-    domain: "admin",
+    domain: "none",
     action: "Read Erga's repository: its branches, recent commits and tags (the repository API, for any page)",
-    tool: "source",
+    exempt: SOURCE,
   },
   {
     route: "GET /api/repo/tree/<ref>/<path>",
-    domain: "admin",
+    domain: "none",
     action: "Read a folder or a file of Erga's source (the repository API, for any page)",
-    tool: "source",
+    exempt: SOURCE,
   },
-  // GitHub (control/source/github.ts; control/github-routes.ts): Erga's GitHub App, connected to one repository. Connect is a consent on
-  // GitHub's authorize and install pages, in a popup; the agent reads the state, syncs, disconnects, and offers the button.
-  {
-    route: "GET /github/connect",
-    domain: "none",
-    action:
-      "Connect GitHub: GitHub's authorize page, then the App's install page when it has no installation yet, in a popup (Ops, the GitHub card; the button under the agent's branches)",
-    exempt:
-      "a secret: the consent gives Erga's GitHub App access to the person's repositories, only on GitHub's own page in their browser, never in a conversation (the agent offers the button)",
-  },
-  {
-    route: "POST /github/connect/pick",
-    domain: "none",
-    action: "Pick the repository, or have Erga make one, in the popup after GitHub's install page",
-    exempt: "the consent's own pages: it acts with the person's GitHub token, which only the popup holds",
-  },
-  {
-    route: "POST /github/webhook",
-    domain: "none",
-    action: "GitHub tells Erga of a push (the App's webhook): the repository syncs in",
-    exempt: "server to server: GitHub's, signed with the webhook secret (or relayed from upstream, signed with the fork's secret)",
-  },
-  // A downstream's control Worker, with its fork's secret (control/routes.ts): its repository's token, and builds of its commits.
-  { route: "POST /forks/<id>/token", domain: "none", action: "A downstream's control Worker gets a token for its fork's repository", exempt: "server to server, with the fork's secret" },
-  { route: "POST /forks/<id>/builder/build|cancel", domain: "none", action: "A downstream's control Worker has one of its commits built here", exempt: "server to server, with the fork's secret" },
-  { route: "POST /forks/<id>/github/token|uninstall", domain: "none", action: "A downstream's control Worker gets a GitHub installation token for its connected repository, or has the App uninstalled", exempt: "server to server, with the fork's secret" },
-  { route: "POST /forks/<id>/hosts", domain: "none", action: "A downstream's control Worker tells upstream its hosts (its domains changed)", exempt: "server to server, with the fork's secret" },
-  // The release store (control/routes.ts, control/deploys/releases.ts): the channels edge and stable.
-  {
-    route: "GET /releases",
-    domain: "admin",
-    action: "Read the release store's channels (public; the Ops page marks them on the log)",
-    tool: "branches",
-  },
-  // The control Worker's Cloudflare credential (control/routes.ts): a consent in the browser, from the Ops page's
-  // Cloudflare card (a popup). The admin agent reads it and offers the button; the consent is the admin's own.
-  {
-    route: "GET /api/install",
-    domain: "admin",
-    action: "Read whether the control Worker's Cloudflare credential is connected (deploys says it)",
-    tool: "deploys",
-  },
-  {
-    route: "GET|POST /install/start",
-    domain: "none",
-    action:
-      "Connect Cloudflare: consent on Cloudflare's own page, in a popup (the Ops page's Cloudflare card, or the button under the agent's deploys)",
-    exempt:
-      "a secret: the consent gives Erga a grant, on Cloudflare's consent screen, never in a conversation (the agent offers the button)",
-  },
-  { route: "GET /install/callback", domain: "none", action: "Back from Cloudflare's consent page", exempt: "the consent's own return" },
-  { route: "POST /install/disconnect", domain: "admin", action: "Disconnect: revoke and forget the control Worker's Cloudflare credential (/install)", tool: "disconnect_deploy_credential" },
   { route: "GET /api/health", domain: "none", action: "The app's health check", exempt: "the deploy pipeline's, after each deploy" },
-  { route: "GET /api/events", domain: "none", action: "The Ops page's live updates", exempt: STREAM },
   { route: "GET /api/news", domain: "none", action: "An open page's live updates", exempt: STREAM },
   { route: "GET /api/news/rows", domain: "none", action: "The rows an open page shows, after they changed", exempt: STREAM },
   {
@@ -238,17 +180,6 @@ export const AGENT_ACTIONS: AgentAction[] = [
     action: "Approve an agent's request for a token (/tokens/approve)",
     exempt: `${SECRET} (it hands a new token to an outside agent)`,
   },
-
-  // ------------------------------------------------------------ /deploy: Erga on your own Cloudflare account (the control Worker's page)
-  { route: "GET /deploy/auth/cloudflare", domain: "none", action: "Authorize with Cloudflare: consent on Cloudflare's own page, in the browser (/deploy)", exempt: "a credential: given on the page, through Cloudflare's consent screen, never in a conversation" },
-  { route: "POST /deploy/api/connect", domain: "admin", action: "Connect a Cloudflare account with an API token (/deploy)", exempt: SECRET },
-  { route: "GET /deploy/api/session", domain: "admin", action: "Read the deploy's progress (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
-  { route: "POST /deploy/api/account", domain: "admin", action: "Pick a Cloudflare account (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
-  { route: "POST /deploy/api/domains/search", domain: "admin", action: "Search for a domain (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
-  { route: "POST /deploy/api/domains/register", domain: "admin", action: "Buy a domain (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
-  { route: "POST /deploy/api/start", domain: "admin", action: "Install Erga in the account (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
-  { route: "POST /deploy/api/forget", domain: "admin", action: "Forget the Cloudflare token (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
-  { route: "GET /deploy/api/mock", domain: "none", action: "What pretend Cloudflare was asked (tests only)", exempt: "the tests' pretend Cloudflare" },
 
   // ------------------------------------------------------------ the documents list (/docs, server/documents/make.ts)
   { route: "GET /docs", domain: "document", action: "Read your documents (Documents)", tool: "list_documents" },
@@ -416,7 +347,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
     action: "A page or an agent runs an operation",
     exempt: "the API itself: each operation is below, with its tool",
   },
-  ...ALL_OPERATIONS.map(
+  ...OPERATIONS.map(
     (op): AgentAction => ({ route: `POST /api/tools/${op.name}`, domain: op.admin ? "admin" : "document", action: op.ui, tool: op.name })
   ),
 ];

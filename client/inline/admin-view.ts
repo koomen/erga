@@ -1,5 +1,5 @@
 // The first admin page's view (window.ergaView): what its scripts stop when it goes. Every admin page's scripts read
-// it, the Ops page's too; admin-nav.ts makes the next page's.
+// it; admin-nav.ts makes the next page's.
 
 export default function adminView(): void {
   window.ergaView = (() => {

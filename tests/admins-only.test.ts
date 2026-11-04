@@ -68,7 +68,7 @@ test("an admin's token without the admin scope reaches only the API, MCP and doc
     expect(`${p}: ${tokenPath(p)}`).toBe(`${p}: true`);
   for (const p of [
     "/admin",
-    "/admin/ops/api/x",
+    "/admin/users/api/x",
     "/api/admin/agent",
     "/api/admin/guide",
     "/api",

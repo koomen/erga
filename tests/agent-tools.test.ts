@@ -152,24 +152,6 @@ test("access: a group rule added, changed and removed, public sharing switched, 
   expect((await failure(run(root, "set_user", { action: "deploy", login: "root" }))).status).toBe(400);
 });
 
-test("users: the deploy role, granted and revoked by an admin only", async () => {
-  const dir = fresh({ admins: ["root"] });
-  const root = { dir, who: { login: "root", admin: true } };
-  await dir.users.add(root.who, "bo");
-  expect((await run(root, "people")).users.find((u: { login: string }) => u.login == "bo").deploy).toBe(false);
-  expect(await run(root, "set_user", { action: "deploy", login: "bo", deploy: true })).toMatchObject({
-    login: "bo",
-    role: "write",
-    deploy: true,
-  });
-  expect(await dir.users.hasDeploy("bo")).toBe(true);
-  expect(
-    (await failure(run({ dir, who: { login: "bo", admin: true } }, "set_user", { action: "deploy", login: "bo", deploy: false }))).status
-  ).toBe(403);
-  expect((await run(root, "set_user", { action: "deploy", login: "bo", deploy: false })).deploy).toBe(false);
-  expect((await failure(run(root, "set_user", { action: "deploy", login: "nobody", deploy: true }))).status).toBe(404);
-});
-
 test("sharing: the owner sees and changes who has access; editors change the readers' options; the document agent defaults to its document", async () => {
   // Users can share content publicly here (anyone with the link): the Access page's switch.
   const dir = fresh({ defaults: { public_sharing: true }, admins: ["root"] });

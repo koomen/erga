@@ -20,7 +20,7 @@ export { readerPage, readerVersion } from "./reader.ts";
 export { startPage } from "./start.ts";
 export { hasAgent } from "./agent.ts";
 export { editButton, RESTORE_KEY, VIEW_STYLE, viewerPage } from "./viewer.ts";
-export { AGENT_ICON, barsHtml, confirmAction, page, pageBars, webPage } from "./bars.ts";
+export { AGENT_ICON, barsHtml, confirmAction, page, pageBars } from "./bars.ts";
 export {
   type Account,
   ACCOUNT_STYLE,
@@ -41,7 +41,6 @@ export {
   libraryOf,
   serveLibrary,
   loadAssets,
-  remoteAssets,
   scriptTag,
   serveAsset,
   useAssets,

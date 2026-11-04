@@ -34,5 +34,5 @@ test("a viewer at the editor's address gets the viewer, with the document as it 
   };
   expect(state).toMatchObject({ canEdit: false, current: { n: 5 } });
   expect((await runTool(server.root, "restore_version", { document: doc.id, version: "v3" }, { user: "Bo" })).status).toBe(403);
-  expect((await runTool(server.root, "redeploy", { target: "homepage" }, { user: "Bo" })).status).toBe(403);
+  expect((await runTool(server.root, "deploy_homepage", {}, { user: "Bo" })).status).toBe(403);
 });

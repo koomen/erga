@@ -1,6 +1,6 @@
-// The Workers (the app's and the control Worker's): Cloudflare's runtime types (.cloudflare/types, which
-// `bun run typecheck` makes from cloudflare.config.ts first), Node's (the Workers run with nodejs_compat: node:crypto,
-// node:async_hooks), no DOM and no Bun. See tsconfig.json.
+// The app Worker: Cloudflare's runtime types (.cloudflare/types, which `bun run typecheck` makes from
+// cloudflare.config.ts first), Node's (the Worker runs with nodejs_compat: node:crypto, node:async_hooks), no DOM and
+// no Bun. See tsconfig.json.
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "lib": ["ES2022"], "types": ["node"] },
@@ -10,7 +10,6 @@
     "server",
     "document",
     "agents",
-    "control",
     "cloudflare",
     // A library's API needs no browser: the document's object runs it for agents.
     "libs/*/api",
@@ -18,7 +17,5 @@
     // A test of a Worker file: bun:test's types alone, with the Workers' own.
     "node_modules/bun-types/test.d.ts",
     "tests/document-host.test.ts"
-  ],
-  // The build container's server runs under Bun: tsconfig.json checks it.
-  "exclude": ["control/builder/build.ts", "control/builder/server.ts"]
+  ]
 }

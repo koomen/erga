@@ -1,10 +1,9 @@
-// The pretend Cloudflare's fleet (dev/mock-cloudflare.ts, the `fleet` option): Erga's own account as the branch deploys
-// see it (dev/mock-builder.ts is the pretend builder).
+// The pretend Cloudflare's fleet (dev/mock-cloudflare.ts, the `fleet` option): Erga's own account as its deploys see it.
 
 import { memoryStore } from "../document/snapshot";
-import { ACCOUNT_ID, deployVersion, FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, PROD_DB, PROD_DOCS, type MockState } from "./mock-cloudflare";
+import { ACCOUNT_ID, deployVersion, MOCK_SNAPSHOT_TOKEN, PROD_DB, PROD_DOCS, type MockState } from "./mock-cloudflare";
 
-/** Erga's own account: production as cf deploy left it, the builder, the source (the fleet option). */
+/** Erga's own account: production as cf deploy left it (the fleet option). */
 export function seedFleet(state: MockState) {
   state.account = { id: ACCOUNT_ID, name: "Erga" };
   state.subdomain = "erga";
@@ -37,7 +36,6 @@ export function seedFleet(state: MockState) {
       ...PROD_DOCS.map(
         (id, i) => `INSERT INTO documents (id, owner, slug, title) VALUES ('${id}', 'ada', 'doc-${i + 1}', 'Document ${i + 1}');`
       ),
-      "INSERT INTO server_config (key, value) VALUES ('deploy_page', '\"admins\"');",
     ],
   });
   const prodBindings = [
@@ -58,45 +56,11 @@ export function seedFleet(state: MockState) {
     GITHUB_CLIENT_SECRET: "production-github-secret",
     SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN,
   };
-  // The control Worker (control/): the repository, the pipeline, the build container; deployed by deploy/setup.ts.
-  // As wrangler deployed it (control/wrangler.jsonc): no ERGA_VERSION until it deploys itself.
-  state.scripts["erga-control"] = {
-    metadata: {
-      main_module: "index.js",
-      compatibility_date: "2026-09-30",
-      bindings: [
-        { type: "durable_object_namespace", name: "BUILDS", class_name: "Builder" },
-        { type: "durable_object_namespace", name: "PIPELINE", class_name: "Pipeline" },
-        { type: "durable_object_namespace", name: "SOURCE", class_name: "SourceHost" },
-        { type: "durable_object_namespace", name: "DEPLOYS", class_name: "Deployer" },
-        { type: "d1", name: "DB", database_id: PROD_DB, id: PROD_DB },
-        { type: "artifacts", name: "ARTIFACTS", namespace: "erga" },
-        { type: "version_metadata", name: "CF_VERSION_METADATA" },
-        { type: "plain_text", name: "CLOUDFLARE_ACCOUNT_ID", text: FLEET_ACCOUNT },
-        { type: "plain_text", name: "APP_URL", text: "https://erga.dev" },
-      ],
-    },
-    modules: ["index.js"],
-    workersDev: false,
-    tags: [],
-    namespaces: ["Builder", "Pipeline", "SourceHost", "Deployer"],
-  };
-  state.versions = { erga: 1, "erga-control": 1 };
+  state.versions = { erga: 1 };
   deployVersion(state, "erga", state.scripts.erga);
-  deployVersion(state, "erga-control", state.scripts["erga-control"]);
   state.domains.push({ hostname: "erga.dev", service: "erga", zone_id: state.zones[0].id });
-  state.domains.push({ hostname: "ops.erga.dev", service: "erga-control", zone_id: state.zones[0].id });
   state.routes[state.zones[1].id] = [{ pattern: "*.erga-pages.dev/*", script: "erga" }];
   state.dns[state.zones[1].id] = [{ type: "AAAA", name: "*.erga-pages.dev", content: "100::", proxied: true }];
-  // The Ops page's domain cases: a zone whose name servers haven't moved to Cloudflare yet, and a name with a record of its own.
-  state.zones.push({
-    id: "zone00000000000000000000000e7ga4",
-    name: "erga-moving.dev",
-    status: "pending",
-    name_servers: ["ada.ns.cloudflare.com", "bob.ns.cloudflare.com"],
-    original_name_servers: ["ns1.registrar.example", "ns2.registrar.example"],
-  });
-  state.dns[state.zones[0].id] = [{ type: "A", name: "blog.erga.dev", content: "192.0.2.10", proxied: false }];
   const docs = memoryStore();
   PROD_DOCS.forEach((id, i) =>
     docs.docs.set(id, {

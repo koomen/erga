@@ -62,8 +62,6 @@ test("each change on the admin pages sends its row's key to the admins, with the
   await dir.users.setUserRole(admin, "dee", "admin");
   expect(take()).toEqual(["user:dee>admins", `change:${await log()}>admins`]);
   // Dee is an admin now: a change to any user sends Dee's row too, which says whether Dee is the last admin.
-  await dir.users.setDeploy(admin, "dee", true);
-  expect(take()).toEqual(["user:dee>admins", `change:${await log()}>admins`]);
   await dir.users.add(admin, "eve");
   expect(take()).toEqual(["user:eve>admins", "user:dee>admins", `change:${await log()}>admins`]);
 });

@@ -2,19 +2,7 @@
 // keys, sign-in) and the layout they share. The rest of the app imports admin
 // through this file. Each admin's agent is agents/person/.
 
-export {
-  ADMIN_PAGES,
-  adminGate,
-  adminPage,
-  adminResponse,
-  adminSidebar,
-  adminStyleTag,
-  isAdminPath,
-  SIDEBAR_EARLY_SCRIPT,
-  SIDEBAR_SCRIPT,
-  VIEW_SCRIPT,
-  type AdminLayout,
-} from "./layout.ts";
+export { ADMIN_PAGES, adminGate, isAdminPath } from "./layout.ts";
 export { adminRoutes } from "./routes.ts";
 export { accessRows } from "./access.ts";
 export { apiKeysRows } from "./api-keys.ts";

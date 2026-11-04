@@ -8,14 +8,6 @@ import { byLine } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
 import { avatarHtml } from "./parts.ts";
 
-/** The deploy role's switch: a checkbox (role="switch"); off, with why in its title, for an admin (who may always deploy). */
-function deploySwitch(u: User): string {
-  const fixed = u.role == "admin" ? "An admin: admins may always deploy" : "";
-  return `<label class="switch" title="${esc(fixed || "Deploy: may use /deploy when deploy_page is admins")}">
-      <input type="checkbox" role="switch" class="deploy" aria-label="Deploy role for ${esc(u.login)}"${u.mayDeploy ? " checked" : ""}${fixed ? " disabled" : ""}><span class="track" aria-hidden="true"></span>
-    </label>`;
-}
-
 /** A role's select: the three roles, and for an account "No role" (only the groups decide). */
 function roleSelect(now: UserRole | "none", label: string, o: { none?: boolean; fixed?: string } = {}): string {
   const roles: (UserRole | "none")[] = o.none ? [...USER_ROLES, "none"] : [...USER_ROLES];
@@ -49,7 +41,6 @@ function userRow(u: User, ids: Identity[], session: Session, lastAdmin: boolean)
     ${joined}
     ${seen}
     ${roleSelect(role, u.login, { none: true, fixed })}
-    ${deploySwitch(u)}
     <button type="button" class="act remove" aria-label="Remove ${esc(u.login)}" title="${esc(fixed || "Remove: they can't sign in any more, unless a group lets them in")}"${fixed ? " disabled" : ""}>${ICON.delete}</button>
   </li>`;
 }
@@ -65,7 +56,6 @@ function personRow(p: Person): string {
     <time class="joined never">not yet</time>
     <time class="seen never">never</time>
     ${roleSelect(p.role, label)}
-    <span></span>
     <button type="button" class="act remove" aria-label="Remove ${esc(label)}" title="Remove: they can't sign in, unless a group lets them in">${ICON.delete}</button>
   </li>`;
 }
@@ -90,7 +80,7 @@ export async function usersPage(platform: Platform, session: Session) {
       <button class="new">Add user</button>
     </form>
     <p class="hint" id="users-hint" role="status"></p>
-    <div class="labels" aria-hidden="true"><span>User</span><span class="t">Joined</span><span class="t seen">Last seen</span><span>Role</span><span class="c">Deploy</span><span></span></div>
+    <div class="labels" aria-hidden="true"><span>User</span><span class="t">Joined</span><span class="t seen">Last seen</span><span>Role</span><span></span></div>
     <ol class="rows users" data-live-kind="user person" data-live-view="users" data-live-order="asc" data-live-at="${Date.now()}">
 ${users.map((u) => userRow(u, ids.get(u.login) ?? [], session, u.role == "admin" && admins.length == 1)).join("\n")}
 ${people.map(personRow).join("\n")}

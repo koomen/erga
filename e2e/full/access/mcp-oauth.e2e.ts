@@ -221,7 +221,7 @@ const whoami = async (root: string, token: string) =>
     token: { scope: string; expires: string | null };
   };
 
-test("the MCP sign-in gives the person's own power: an admin's app gets admin power and the Ops page's deploys; anyone else's, documents", async () => {
+test("the MCP sign-in gives the person's own power: an admin's app gets admin power and the admin tools; anyone else's, documents", async () => {
   const root = (await servers.main()).root;
   // The admin (the dev login): the card says what the app gets, and the token is admin scope, with no expiry.
   const admin = await signInOver(root, null);
@@ -229,7 +229,7 @@ test("the MCP sign-in gives the person's own power: an admin's app gets admin po
   expect(admin.scope).toBe("admin");
   expect(await whoami(root, admin.token)).toMatchObject({ adminPower: true, token: { scope: "admin", expires: null } });
   const names = (await mcp(root, admin.token, "tools/list")).result.tools.map((t: { name: string }) => t.name);
-  expect(names).toEqual(expect.arrayContaining(["deploys", "erga_code", "settings", "people"]));
+  expect(names).toEqual(expect.arrayContaining(["settings", "people"]));
 
   // A person who isn't an admin: documents scope, no admin tools.
   const { cookie } = await signIn(await servers.main(), freshLogin("mcp"));
@@ -238,7 +238,7 @@ test("the MCP sign-in gives the person's own power: an admin's app gets admin po
   expect(plain.scope).toBe("documents");
   expect(await whoami(root, plain.token)).toMatchObject({ adminPower: false, token: { scope: "documents" } });
   const theirs = (await mcp(root, plain.token, "tools/list")).result.tools.map((t: { name: string }) => t.name);
-  expect(theirs).not.toContain("deploys");
+  expect(theirs).not.toContain("settings");
 });
 
 test("an admin can give the app documents only: the card offers the choice, and the token has no admin power", async ({ tab }) => {

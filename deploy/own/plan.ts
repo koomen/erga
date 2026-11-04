@@ -2,7 +2,7 @@
 // that answers. Pure: no network, no files (deploy/own/facts.ts observes; deploy/own/cli.ts acts). DEPLOY.md is the
 // manual; `bun own status` prints these steps, and the local checklist page (deploy/own/page.ts) shows them.
 
-import type { Target } from "../../control/deploys/pipeline";
+import type { Target } from "../pipeline/pipeline";
 import { ACCOUNT, PRODUCTION } from "../targets";
 
 /** The person's decisions, asked all at once (`bun own ask`), with these defaults. No secret is ever in here. */
@@ -34,13 +34,13 @@ export const PRESETS: Record<PresetName, { title: string; summary: string; defau
     title: "A website",
     summary:
       "Your homepage is public. Documents you share with anyone with the link open for everyone. Only you (and people you add) sign in.",
-    defaults: { public_sharing: true, delete_docs_after_hours: null, deploy_page: "off" },
+    defaults: { public_sharing: true, delete_docs_after_hours: null },
     open: "Only the admins, and the people an admin adds on /admin/users.",
   },
   company: {
     title: "Sharing docs in my company",
     summary: "Documents stay inside: nothing opens for people who are not signed in. People of your company sign in by themselves.",
-    defaults: { public_sharing: false, delete_docs_after_hours: null, deploy_page: "off" },
+    defaults: { public_sharing: false, delete_docs_after_hours: null },
     open: "The admins, people an admin adds, and everyone in the company's domain or GitHub organization (an access rule).",
   },
 };

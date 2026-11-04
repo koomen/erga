@@ -21,7 +21,7 @@
 //     current one marked; Show older versions loads ten more. Edit, on hover or
 //     focus, makes a copy of a version the current one (restore_version).
 //
-// It runs the operations (server/operations/: versions, restore_version, ls, set_kind, redeploy (target homepage),
+// It runs the operations (server/operations/: versions, restore_version, ls, set_kind, deploy_homepage,
 // share_document; over POST /api/tools/<name>), and refreshes on the event channel's
 // { type: "versions" }, { type: "home" } and { type: "tree" } (main.ts passes them on), open or not.
 // Someone who can't edit sees it all read-only.
@@ -483,7 +483,7 @@ function mount(host: SettingsHost): Settings {
     if (home) home = { ...home, deploy: { ...home.deploy, state: "deploying", error: null } };
     renderHome();
     try {
-      await runTool("redeploy", { target: "homepage" });
+      await runTool("deploy_homepage", {});
     } catch (e) {
       homeError.textContent = `Couldn't deploy: ${(e as Error).message}`;
     }
