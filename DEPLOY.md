@@ -100,6 +100,12 @@ past a `FAIL`. Run every command from the checkout's folder.
 
 Rules:
 
+- Don't curl or open the new address yourself before `bun own deploy` says
+  it answers: this machine would remember "no such host" for up to 30
+  minutes. `bun own` asks Cloudflare's DNS directly.
+- Bun installs into `~/.bun/bin`, which a new shell may not have on its
+  PATH: look there before you install it again.
+
 - Ask the person before you make, change or delete anything in their
   account. `bun own remove` deletes a server with all its documents: only
   when the person asks for it, in those words.

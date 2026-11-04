@@ -46,7 +46,8 @@ export const site: typeof fetch = Object.assign(
         .then((x) => x.json())
         .catch(() => null)) as { Answer?: { type: number; data: string }[] } | null;
       const ip = r?.Answer?.find((a) => a.type == 1)?.data;
-      if (!ip) return fetch(input, init);
+      // Not in Cloudflare's DNS yet: say so, and never ask this machine, which would remember "no such host".
+      if (!ip) throw new TypeError(`${host} isn't in DNS yet`);
       known = { ip, at: Date.now() };
       addresses.set(host, known);
     }
