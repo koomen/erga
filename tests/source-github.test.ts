@@ -54,7 +54,9 @@ describe("the sync with GitHub", () => {
     const link = await f.connectGithub("ada/erga");
     await settle();
     const status = f.repo.githubStatus();
-    expect(status).toMatchObject({ connected: true, state: "idle", error: null, lastSyncBy: "ada", link: { repo: { fullName: "ada/erga" }, by: "ada" } });
+    // The first sync's push can come back as GitHub's webhook, and a second sync (ada, via a push on GitHub) may follow it.
+    expect(status.lastSyncBy).toStartWith("ada");
+    expect(status).toMatchObject({ connected: true, state: "idle", error: null, link: { repo: { fullName: "ada/erga" }, by: "ada" } });
     expect(status.lastSyncAt).toBeGreaterThan(0);
     expect(status.refs).toEqual({ main: await head(f.erga, "main"), staging: await head(f.erga, "staging") });
     expect(await head(github, "staging")).toBe(await head(f.erga, "staging"));
