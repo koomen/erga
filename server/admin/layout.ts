@@ -53,10 +53,10 @@ export interface AdminLayout {
   title: string;
   /** Which sidebar link is this page. */
   here?: AdminSection;
-  /** What goes in <main>. */
+  /** One short line under the page's heading: what the page is for. */
+  lede: string;
+  /** What goes in <main>, after the heading and the lede. */
   body: string;
-  /** The page uses the whole width (the change log); otherwise a column. */
-  wide?: boolean;
 }
 
 /** The admin pages' one stylesheet (client/styles/admin.css, built as admin.css): the same file on every admin page. */
@@ -77,7 +77,8 @@ export function adminLayout(o: AdminLayout): string {
 ${bars}
 <div class="admin-body">
 ${side}
-<main class="admin-main${o.wide ? " wide" : ""}" id="admin-panes">
+<main class="admin-main" id="admin-panes">
+<header class="page-head"><h2 id="page-head">${esc(o.title)}</h2><p class="lede">${esc(o.lede)}</p></header>
 ${o.body}
 </main>
 </div>

@@ -26,7 +26,8 @@ type Shown = ConfigEntry & { doc?: { address: string; title: string } | null };
  */
 function valueInput(e: Shown, never: boolean): string {
   const locked = e.locked;
-  const attrs = `name="value" id="set-${esc(e.key)}" aria-label="${esc(e.key)}"${locked ? " disabled" : ""}`;
+  const attrs = `name="value" id="set-${esc(e.key)}" aria-label="${esc(e.label ?? e.key)}"${locked ? " disabled" : ""}`;
+  const unit = unitOf(e.key);
   const control = controlOf(e);
   if (control == "switch") {
     const text = typeof e.default != "boolean",
@@ -56,17 +57,19 @@ function valueInput(e: Shown, never: boolean): string {
       </div>`;
   }
   if (never && typeof e.default == "number") {
-    const off = e.value === null,
-      unit = e.key.endsWith("_hours") ? "hours" : "";
-    return `<select class="mode" name="mode" aria-label="${esc(e.key)}: after a time, or never"${locked ? " disabled" : ""}><option value="after"${off ? "" : " selected"}>After</option><option value="never"${off ? " selected" : ""}>Never</option></select>
-      <span class="amount"${off ? " hidden" : ""}><input class="input" type="number" step="1" min="1" ${attrs} data-kind="number-or-never" value="${esc(String(off ? e.default : e.value))}"${off ? "" : " required"}>${unit ? ` <span class="unit">${unit}</span>` : ""}</span>`;
+    const off = e.value === null;
+    return `<select class="mode" name="mode" aria-label="${esc(e.label ?? e.key)}: after a time, or never"${locked ? " disabled" : ""}><option value="after"${off ? "" : " selected"}>After</option><option value="never"${off ? " selected" : ""}>Never</option></select>
+      <span class="amount"${off ? " hidden" : ""}><input class="input" type="number" step="1" min="1" ${attrs} data-kind="number-or-never" value="${esc(String(off ? e.default : e.value))}"${off ? "" : " required"}>${unit ? `<span class="unit">${unit}</span>` : ""}</span>`;
   }
   if (typeof e.default == "number")
-    return `<input class="input" type="number" step="1" ${attrs} data-kind="number" value="${esc(String(e.value))}" required>`;
+    return `<span class="amount"><input class="input" type="number" step="1" ${attrs} data-kind="number" value="${esc(String(e.value))}" required>${unit ? `<span class="unit">${unit}</span>` : ""}</span>`;
   if (typeof e.default == "string")
     return `<input class="input" ${attrs} data-kind="string" value="${esc(String(e.value))}" autocomplete="off" spellcheck="false">`;
   return `<input class="input mono" ${attrs} data-kind="json" value="${esc(JSON.stringify(e.value))}" autocomplete="off" spellcheck="false">`;
 }
+
+/** The unit of a number setting, from the end of its key: "_hours", "_mb", "_gb". */
+const unitOf = (key: string) => ({ hours: "hours", mb: "MB", gb: "GB" })[key.slice(key.lastIndexOf("_") + 1)] ?? "";
 
 /** How a setting is set: "switch", "choice" and "document" save as soon as they change; the rest have Save. */
 function controlOf(e: Shown): "switch" | "choice" | "users" | "document" | "typed" {
@@ -84,28 +87,31 @@ const chip = (login: string, locked: boolean) =>
 export function settingRow(e: Shown, session: Session, never: boolean, place: number): string {
   const def = `default ${shown(e.default, e.kind)}`;
   const control = controlOf(e);
-  const meta = e.locked
-    ? `<span class="badge" title="Locked by the deploy (deploy/locked-settings.ts or ERGA_SERVER_CONFIG) · ${esc(def)}">Locked</span>`
-    : "";
+  const meta = e.locked ? `<span class="badge" title="Fixed by the deploy · ${esc(def)}">Locked</span>` : "";
   const doc =
     e.kind == "document" && e.value != null
       ? e.doc
         ? `<a class="open-doc" href="${esc(link(e.doc.address, session))}">${esc(e.doc.title)}</a>`
         : `<span class="gone" title="No such document now: the homepage is the plain one">missing</span>`
       : "";
+  // Reset where the control can't simply pick the default (a switch, a choice can): in the line that says who set it.
+  const reset =
+    e.source == "set" && !e.locked && control != "switch" && control != "choice"
+      ? ` · <button type="button" class="reset" title="Back to ${esc(e.kind == "document" ? "the demo page" : shown(e.default, e.kind))}">Reset</button>`
+      : "";
   // Under each setting: when it was last set, and by whom (its default on hover).
   const set =
-    e.source == "set" && e.updated != null
-      ? `<p class="set" title="${esc(def)}">Last set at ${esc(setAt(e.updated))}${e.updatedBy ? ` by ${esc(byLine(e.updatedBy, e.updatedVia))}` : ""}</p>`
+    e.source == "set"
+      ? `<p class="set"><span title="${esc(def)}">${e.updated != null ? `Set ${esc(setAt(e.updated))}${e.updatedBy ? ` by ${esc(byLine(e.updatedBy, e.updatedVia))}` : ""}` : "Set"}</span>${reset}</p>`
       : "";
-  // Save for what's typed in (a document saves as it's chosen); Reset where the control can't simply pick the default (a switch, a choice can).
+  // Save for what's typed in (a document saves as it's chosen).
   const buttons =
-    e.locked || control == "switch" || control == "choice"
+    e.locked || control == "switch" || control == "choice" || control == "document"
       ? ""
-      : `${control == "document" ? "" : `<button class="pill save" disabled>Save</button>`}${e.source == "set" ? `<button type="button" class="pill reset" title="Back to ${esc(e.kind == "document" ? "the repo's demo page" : shown(e.default, e.kind))}">Reset</button>` : ""}`;
+      : `<button class="pill save" disabled>Save</button>`;
   return `  <li class="setting" data-key="${esc(e.key)}" data-control="${control}" data-live="setting:${esc(e.key)}" data-sort="${place}">
     <div class="about">
-      <div class="head"><label class="key${e.label ? " named" : ""}" for="${control == "document" ? "find-" : "set-"}${esc(e.key)}"${e.label ? ` title="${esc(e.key)}"` : ""}>${esc(e.label ?? e.key)}</label>${meta || doc ? `<span class="meta">${[meta, doc].filter(Boolean).join(`<span aria-hidden="true">·</span>`)}</span>` : ""}</div>
+      <div class="head"><label class="key" for="${control == "document" ? "find-" : "set-"}${esc(e.key)}" title="${esc(e.key)}">${esc(e.label ?? e.key)}</label>${meta || doc ? `<span class="meta">${[meta, doc].filter(Boolean).join(`<span aria-hidden="true">·</span>`)}</span>` : ""}</div>
       <p class="desc">${esc(e.description)}</p>
       ${set}
     </div>
@@ -156,10 +162,10 @@ export async function settingsPage(platform: Platform, session: Session) {
     session,
     title: "Settings",
     here: "settings",
+    lede: "Limits and defaults for this server.",
     body: `
-  <section aria-labelledby="settings-head">
-    <h2 id="settings-head">Settings</h2>
-    <ol class="rows" data-live-kind="setting" data-live-view="settings" data-live-order="asc" data-live-at="${Date.now()}">
+  <section aria-labelledby="page-head">
+    <ol class="rows settings" data-live-kind="setting" data-live-view="settings" data-live-order="asc" data-live-at="${Date.now()}">
 ${rows.map((r) => r.html).join("\n")}
     </ol>
     <datalist id="user-logins">${users.map((u) => `<option value="${esc(u.login)}">`).join("")}</datalist>

@@ -25,19 +25,17 @@ export function credentialRow(c: CredentialEntry, session: Session, place: numbe
   const state = c.unreadable
     ? `<span class="bad">Saved, but this server can't open it. Paste it again.</span>`
     : c.set
-      ? `<span class="on">Key saved</span> · …${esc(c.last4 ?? "")}${c.updated != null ? ` · ${esc(setAt(c.updated))}${c.updatedBy ? ` by ${esc(byLine(c.updatedBy, c.updatedVia))}` : ""}` : ""}`
+      ? `<span class="on">Key saved</span> · <code>…${esc(c.last4 ?? "")}</code>${c.updated != null ? ` · ${esc(setAt(c.updated))}${c.updatedBy ? ` by ${esc(byLine(c.updatedBy, c.updatedVia))}` : ""}` : ""}`
       : c.fallback
-        ? `<span class="on">Using the deploy's ${esc(c.env)}</span>`
+        ? `<span class="on">Using the deploy's</span> <code>${esc(c.env)}</code>`
         : "No key";
   const models = has
-    ? `<div class="models" role="group" aria-label="${esc(c.service)} models available"><span class="label">Models available</span>${modelsOf(
-        c.name
-      )
+    ? `<div class="models" role="group" aria-label="${esc(c.service)} models available"><span class="label">Models</span>${modelsOf(c.name)
         .map((m) => `<label><input type="checkbox" value="${esc(m)}"${off.includes(m) ? "" : " checked"}> ${esc(MODELS[m].label)}</label>`)
         .join("")}</div>`
     : "";
   return `  <li class="provider" data-live="apikey:${esc(c.name)}" data-sort="${place}" data-name="${esc(c.name)}" data-label="${esc(c.label)}" data-env="${esc(c.env)}"${c.fallback ? ` data-fallback="1"` : ""}>
-    <div class="head"><label for="${id}">${esc(c.service)}</label><span class="state">${state}</span></div>
+    <div class="about"><label class="key" for="${id}">${esc(c.service)}</label><p class="state">${state}</p></div>
     <form class="value" method="post" action="${esc(link("/admin/credentials", session))}">
       <input class="input secret" type="password" name="value" id="${id}" aria-label="${esc(c.label)}" placeholder="${c.set ? "Paste a new key" : "Paste the key"}" autocomplete="off" autocapitalize="off" spellcheck="false"${c.canStore ? "" : ` disabled title="This server has no FACTORY_KEY, so it can't store a key."`}>
       <button class="pill save" disabled>${c.set ? "Replace" : "Save"}</button>${c.set ? `<button type="button" class="pill clear">Clear</button>` : ""}
@@ -49,8 +47,10 @@ export function credentialRow(c: CredentialEntry, session: Session, place: numbe
 
 /** A secret only the deploy sets: whether this server has it, and what it is for. */
 function deploySecretRow(d: DeploySecretEntry): string {
-  const state = d.set ? `<span class="on">Set</span>` : d.standIn ? "Not set (the session secret stands in)" : "Not set";
-  return `  <li class="deploy-secret" data-env="${esc(d.env)}"><span class="key">${esc(d.env)}</span> <span class="state">${state}</span><p class="desc">${esc(d.description)}</p></li>`;
+  const state = d.set
+    ? `<span class="badge ok">Set</span>`
+    : `<span class="badge"${d.standIn ? ` title="The session secret stands in"` : ""}>Not set</span>`;
+  return `  <li class="deploy-secret" data-env="${esc(d.env)}"><div class="about"><code class="key">${esc(d.env)}</code><p class="desc">${esc(d.description)}</p></div>${state}</li>`;
 }
 
 /** /admin/api-keys. The page never has a key. */
@@ -67,25 +67,31 @@ export async function apiKeysPage(platform: Platform, session: Session) {
     session,
     title: "API keys",
     here: "keys",
+    lede: "The keys the agents use to call the model providers.",
     body: `
-  <section aria-labelledby="keys-head" class="credentials">
-    <h2 id="keys-head">API keys</h2>
-    <select id="agent-keys" class="keys-mode" aria-label="Whose keys the agents use">
-      <option value="server"${own ? "" : " selected"}>Server will provide keys</option>
-      <option value="own"${own ? " selected" : ""}>Users provide their own keys</option>
-    </select>
-    <p class="hint" id="keys-mode-hint" role="status"></p>
-    <p class="lede own-note"${own ? "" : " hidden"}>Each person adds their keys in Settings.</p>
+  <section aria-labelledby="page-head" class="credentials">
+    <ol class="rows settings">
+      <li class="setting">
+        <div class="about"><label class="key" for="agent-keys" title="agent_keys">Whose keys the agents use</label><p class="desc">A person's own key always wins for its provider.</p></div>
+        <div class="value"><select id="agent-keys" class="keys-mode">
+          <option value="server"${own ? "" : " selected"}>Server will provide keys</option>
+          <option value="own"${own ? " selected" : ""}>Users provide their own keys</option>
+        </select></div>
+        <p class="hint" id="keys-mode-hint" role="status"></p>
+      </li>
+    </ol>
+    <p class="empty own-note"${own ? "" : " hidden"}>Each person adds their own keys in their Settings.</p>
     <ol class="rows providers" data-live-kind="apikey" data-live-view="api-keys" data-live-order="asc" data-live-at="${Date.now()}"${own ? " hidden" : ""}>
 ${credentials.map((c, place) => credentialRow(c, session, place, off)).join("\n")}
     </ol>
   </section>
-  <details class="deploy-secrets">
-    <summary>Set in the deploy</summary>
+  <section class="deploy-secrets" aria-labelledby="deploy-head">
+    <h3 class="sub-head" id="deploy-head">Set by the deploy</h3>
+    <p class="lede">Worker secrets. Only a deploy changes them.</p>
     <ol class="rows">
 ${deployed.map(deploySecretRow).join("\n")}
     </ol>
-  </details>
+  </section>
 <script>${TIMES_SCRIPT}${inlineCall("admin-api-keys")}</script>`,
   });
 }

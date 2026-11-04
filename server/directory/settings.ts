@@ -29,7 +29,7 @@ class Interleaved extends Data.TaggedError("Interleaved") {}
 export class ConfigError extends Schema.TaggedError<ConfigError>()("ConfigError", { message: Schema.String }) {}
 
 export interface Setting<T = unknown> {
-  /** Its name on the admin page, where it isn't the key. */
+  /** Its name on the admin page: words for a person, never the key. */
   label?: string;
   /** What it does, for the admin (or agent) changing it. */
   description: string;
@@ -83,7 +83,8 @@ export const AGENT_SETTINGS: readonly string[] = ["agent_keys", "agent_models_of
 /** Every setting the server has. */
 export const SETTINGS = {
   delete_docs_after_hours: setting<number | null>({
-    description: "Hours before an unedited new document is deleted; null: never.",
+    label: "Delete unedited new documents",
+    description: "A new document that nobody edits is deleted after this many hours.",
     default: 24,
     // null, or "never" (as an agent or a deploy might say it), is never.
     parse: (v) => {
@@ -94,39 +95,41 @@ export const SETTINGS = {
     },
   }),
   landing_document: setting<string | null>({
-    label: "Homepage Project",
-    description: "Document or project shown at /; empty: a fresh copy of the repo's demo page.",
+    label: "Homepage",
+    description: "The document or project shown at /. Empty: the demo page.",
     default: null,
     parse: (v) => (v === null || v === "" ? null : text(300)(v) || null),
     kind: "document",
   }),
   max_file_mb: setting<number>({
-    description: "The most megabytes one file may have, as someone or their agent adds it to a document (an upload, a write of bytes).",
+    label: "Largest file",
+    description: "The largest file, in MB, that a person or an agent can add to a document.",
     default: 100,
     parse: integer(1, 500),
   }),
   max_project_gb: setting<number>({
-    description: "The most gigabytes the files of one project (a document is a project with one page) may have together; an upload that would pass it is refused.",
+    label: "Largest project",
+    description: "The most space, in GB, that all the files of one project can use.",
     default: 5,
     parse: integer(1, 1000),
   }),
   public_sharing: setting<boolean>({
+    label: "Public sharing",
     description:
-      "Users can share content publicly: a document shared with anyone with the link opens for people who aren't signed in too, as viewers (the Access page). Off: nobody may share with anyone with the link, and such shares made before open only for people who sign in. The homepage is public either way.",
+      "Owners can share a document with anyone who has the link, signed in or not. Off: those links open only after a sign-in. The homepage is always public.",
     default: false,
     parse: boolean,
   }),
   public_source: setting<boolean>({
     label: "Public source",
-    description:
-      "Anyone can read Erga's source through the repository API (/api/repo), which the page /source shows. Off: only admins can; anyone else gets a 404. Git clones and the /git page on the old control Worker stay as they are.",
+    description: "Anyone can read Erga's source at /source and /api/repo. Off: only admins can.",
     default: true,
     parse: boolean,
   }),
   agent_keys: setting<"server" | "own">({
-    label: "Agents' keys",
+    label: "Whose keys the agents use",
     description:
-      'Whose API keys the agents use. "server": the keys on /admin/api-keys work for everyone, and a person\'s own key wins for its provider. "own": each person brings their own keys (Settings, Agent), and the agents never use a server key.',
+      '"server": the keys on the API keys page, for everyone (a person\'s own key wins). "own": each person adds their own keys in Settings, and the agents never use a server key.',
     default: "server",
     parse: (v) => {
       const s = typeof v == "string" ? v.trim().toLowerCase() : v;
@@ -137,7 +140,7 @@ export const SETTINGS = {
   }),
   agent_models_off: setting<string[]>({
     label: "Models a server key doesn't run",
-    description: `Models of the agent's list that a server key doesn't run (a person's own key still does): a list of ${Object.keys(MODELS).join(", ")}.`,
+    description: `The models that a server key doesn't run; a person's own key still runs them. A list of: ${Object.keys(MODELS).join(", ")}.`,
     default: [],
     parse: (v) => {
       const list = typeof v == "string" ? v.split(/[\s,]+/).filter(Boolean) : v;

@@ -14,7 +14,7 @@ ${owner} is an admin of this Erga server. For the server (the admin pages, /admi
   its default, who set it last) and which API keys are set (never a key); with changes:
   true, the change log (/admin/changes). op set_setting changes a setting (the value as
   JSON), or puts it back to its default (reset). A setting the deploy locks can't be
-  changed: say so. The homepage (landing_document, "Homepage Project") may be any document
+  changed: say so. The homepage (landing_document, "Homepage") may be any document
   or project on the server: documents (op list_documents) with all finds one by its title,
   owner or address. Each change you make goes in the change log under ${owner}'s name, as
   if they made it on /admin.

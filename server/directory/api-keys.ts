@@ -73,10 +73,30 @@ export const CREDENTIALS = {
  * the one feature it serves.
  */
 export const DEPLOY_SECRETS = [
-  { env: "SESSION_SECRET", service: "Erga", description: "Signs sessions, agent tokens and admin tokens. If it changes, everyone is signed out.", why: "It is the root key of every sign-in." },
-  { env: "FACTORY_KEY", service: "Erga", description: "Encrypts the keys on this page and the sign-in secrets.", why: "The keys on this page are encrypted with it." },
-  { env: "GITHUB_CLIENT_SECRET", service: "GitHub", description: "Signs people in with GitHub (the OAuth app). The Authentication page (/admin/auth) shows whether it works, and can set another app's values over it.", why: "A wrong value stops every sign-in, the admin's too: the Authentication page checks values with GitHub before it uses them." },
-  { env: "SNAPSHOT_TOKEN", service: "Erga", description: "Lets staging copy production's documents.", why: "Production and staging must have the same value." },
+  {
+    env: "SESSION_SECRET",
+    service: "Erga",
+    description: "Signs sessions, agent tokens and admin tokens. If it changes, everyone is signed out.",
+    why: "It is the root key of every sign-in.",
+  },
+  {
+    env: "FACTORY_KEY",
+    service: "Erga",
+    description: "Encrypts the keys on this page and the sign-in secrets.",
+    why: "The keys on this page are encrypted with it.",
+  },
+  {
+    env: "GITHUB_CLIENT_SECRET",
+    service: "GitHub",
+    description: "The secret of the GitHub OAuth app that signs people in. Authentication shows whether it works.",
+    why: "A wrong value stops every sign-in, the admin's too: the Authentication page checks values with GitHub before it uses them.",
+  },
+  {
+    env: "SNAPSHOT_TOKEN",
+    service: "Erga",
+    description: "Lets staging copy production's documents.",
+    why: "Production and staging must have the same value.",
+  },
 ] as const;
 
 /** A deploy-time secret as an admin sees it: only whether the deploy has it. */

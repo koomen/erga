@@ -61,6 +61,12 @@ test("Users, Settings and the Change log follow an agent's changes as they're ma
   const other = freshLogin("u");
   await a.call("set_user", { action: "add", provider: "github", handle: other, role: "read" });
   await expect.poll(top).toContain(other);
+  // A group rule's change says which group and its access (it showed as a setting before: "access never → never").
+  const group = freshLogin("org");
+  await a.call("set_access", { action: "add", kind: "github_org", value: group, access: "read" });
+  await expect.poll(top).toContain(`${group} added: Can authenticate`);
+  const rule = ((await a.call("people")).data as { rules: { id: number; value: string }[] }).rules.find((r) => r.value == group)!.id;
+  await a.call("set_access", { action: "remove", id: rule });
   await a.call("set_user", {
     action: "remove",
     person: ((await a.call("people")).data as { users: { person?: number; handle?: string }[] }).users.find((x) => x.handle == other)!

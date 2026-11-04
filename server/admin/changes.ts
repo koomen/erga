@@ -4,6 +4,7 @@ import {
   type Access,
   ACCESS_LABEL,
   KIND_LABEL,
+  ROLE_LABEL,
   type RuleKind,
   type SettingChange,
   type Settings,
@@ -42,17 +43,18 @@ function viaChip(via: string): { text: string; title: string } {
 
 /** A change log line for something other than a setting: a factory task added or merged, main moved to production, a user or a token changed. */
 function eventItem(c: SettingChange): string {
+  const role = (r: string) => esc(ROLE_LABEL[r as keyof typeof ROLE_LABEL] ?? r);
   if (c.user) {
     const u = c.user;
     const what =
       u.event == "added"
-        ? `added${u.role ? ` as ${esc(u.role)}` : ""}`
+        ? `added${u.role ? `: ${role(u.role)}` : ""}`
         : u.event == "removed"
           ? "removed"
           : u.event == "role"
-            ? `made ${esc(u.role ?? "user")}`
+            ? `role: ${role(u.role ?? "none")}`
             : `deploy role ${u.deploy ? "granted" : "revoked"}`;
-    return `<li><span class="key">user</span> <span class="title">${esc(u.login)}</span> ${what}</li>`;
+    return `<li><span class="key">User</span> <span class="title">${esc(u.login)}</span> ${what}</li>`;
   }
   if (c.access) {
     const a = c.access,
@@ -61,13 +63,13 @@ function eventItem(c: SettingChange): string {
     const shown = (x?: string) => esc(ACCESS_LABEL[x as Access] ?? x ?? "");
     const what =
       a.event == "added" ? `added: ${shown(a.access)}` : a.event == "removed" ? "removed" : `${shown(a.from)} → ${shown(a.access)}`;
-    return `<li><span class="key">access</span> ${who} ${what}</li>`;
+    return `<li><span class="key">Access</span> ${who} ${what}</li>`;
   }
   if (c.signIn) {
     const a = c.signIn,
       server = a.target ? `${esc(a.target)}'s` : "the";
     const name = a.provider == "google" ? "Google" : "GitHub";
-    if (a.event == "on" || a.event == "off") return `<li><span class="key">sign-in</span> sign-in with ${name} turned ${a.event}</li>`;
+    if (a.event == "on" || a.event == "off") return `<li><span class="key">Sign-in</span> ${name} turned ${a.event}</li>`;
     const what =
       a.event == "set"
         ? `in use: client ID <code>${esc(a.clientId ?? "")}</code>`
@@ -78,17 +80,17 @@ function eventItem(c: SettingChange): string {
             : a.event == "discarded"
               ? `new values discarded`
               : "cleared: the deploy's values again";
-    return `<li><span class="key">sign-in</span> ${server} ${name} app ${what}</li>`;
+    return `<li><span class="key">Sign-in</span> ${server} ${name} app ${what}</li>`;
   }
   if (c.token)
-    return `<li><span class="key">token</span> <span class="title">${esc(c.token.label)}</span> (${esc(c.token.of)}’s) revoked</li>`;
+    return `<li><span class="key">Token</span> <span class="title">${esc(c.token.label)}</span> (${esc(c.token.of)}’s) revoked</li>`;
   const sha = (s: unknown) => `<code class="sha" title="${esc(String(s))}">${esc(String(s).slice(0, 7))}</code>`;
   if (c.task) {
     const what = c.task.event == "added" ? "added" : `merged into staging${c.task.commit ? ` as ${sha(c.task.commit)}` : ""}`;
-    return `<li><span class="key">task #${c.task.id}</span> ${what}: <span class="title">${esc(c.task.title)}</span></li>`;
+    return `<li><span class="key">Task #${c.task.id}</span> ${what}: <span class="title">${esc(c.task.title)}</span></li>`;
   }
   if (c.stagingOverride)
-    return `<li><span class="key">staging</span> pushes allowed until ${esc(new Date(c.stagingOverride.until).toISOString().slice(11, 16))} UTC <span class="badge">staging rule overridden</span> <span class="title">${esc(c.stagingOverride.reason)}</span></li>`;
+    return `<li><span class="key">Staging</span> pushes allowed until ${esc(new Date(c.stagingOverride.until).toISOString().slice(11, 16))} UTC <span class="badge">staging rule overridden</span> <span class="title">${esc(c.stagingOverride.reason)}</span></li>`;
   const r = c.release!;
   const commits = r.commits.map((x) => `<li>${sha(x.sha)} ${esc(x.subject)}</li>`).join("");
   const more = r.total > r.commits.length ? `<li class="more">and ${r.total - r.commits.length} older</li>` : "";
@@ -100,7 +102,7 @@ function eventItem(c: SettingChange): string {
   const list = r.commits.length
     ? ` <details><summary>${plural(r.total, "commit")}</summary><ul class="commits">${commits}${more}</ul></details>`
     : "";
-  return `<li><span class="key">${c.key == "staging" ? "staging" : "main"}</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)}${override}${list}</li>`;
+  return `<li><span class="key">${c.key == "staging" ? "Staging" : "Main"}</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)}${override}${list}</li>`;
 }
 
 /**
@@ -110,22 +112,25 @@ function eventItem(c: SettingChange): string {
  */
 function changeRow(
   v: SettingsVersion,
-  kinds: Record<string, string | undefined>,
+  settings: Settings,
   docs: Map<string, { address: string; title: string }>,
   avatars: Record<string, string>
 ): string {
   const at = new Date(v.at).toISOString();
   const value = (key: string, x: unknown) => {
-    const doc = kinds[key] == "document" && x != null ? docs.get(String(x)) : undefined;
-    return `<span class="was">${esc(doc ? doc.address : shown(x, kinds[key]))}</span>`;
+    const kind = settings[key]?.kind;
+    const doc = kind == "document" && x != null ? docs.get(String(x)) : undefined;
+    return `<span class="was">${esc(doc ? doc.address : shown(x, kind))}</span>`;
   };
+  // A setting by its name on the admin page, its key on hover.
+  const name = (key: string) => `<span class="key" title="${esc(key)}">${esc(settings[key]?.label ?? key)}</span>`;
   const what = v.changes
     .map((c) =>
-      c.task || c.release || c.stagingOverride || c.user || c.token || c.signIn
+      c.task || c.release || c.stagingOverride || c.user || c.token || c.signIn || c.access
         ? eventItem(c)
         : c.credential
-          ? `<li><span class="key">${esc(c.key)}</span> key ${esc(c.credential)}</li>`
-          : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`
+          ? `<li><span class="key">API key</span> <code>${esc(c.key)}</code> ${esc(c.credential)}</li>`
+          : `<li>${name(c.key)} ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`
     )
     .join("");
   return `  <li class="change" data-n="${v.n}" data-live="change:${v.n}" data-sort="${v.n}">
@@ -135,13 +140,10 @@ function changeRow(
 
 /** These versions' rows, newest first: each setting that names a document shows it by its address now, as /admin does. */
 async function changeRows(platform: Platform, versions: SettingsVersion[]): Promise<{ n: number; html: string }[]> {
-  const config = platform.directory.config;
-  const kinds: Record<string, string | undefined> = Object.fromEntries(
-    Object.entries(config.settings as Settings).map(([k, s]) => [k, s.kind])
-  );
+  const settings = platform.directory.config.settings as Settings;
   const ids = new Set(
     versions
-      .flatMap((v) => v.changes.filter((c) => kinds[c.key] == "document").flatMap((c) => [c.from, c.to]))
+      .flatMap((v) => v.changes.filter((c) => settings[c.key]?.kind == "document").flatMap((c) => [c.from, c.to]))
       .filter((x) => x != null)
       .map(String)
   );
@@ -156,7 +158,7 @@ async function changeRows(platform: Platform, versions: SettingsVersion[]): Prom
     ).flat()
   );
   const avatars = await platform.directory.users.avatars(versions.map((v) => v.by).filter((by) => by && by != SYSTEM));
-  return versions.map((v) => ({ n: v.n, html: changeRow(v, kinds, docs, avatars) }));
+  return versions.map((v) => ({ n: v.n, html: changeRow(v, settings, docs, avatars) }));
 }
 
 /** /admin/changes: the change log, every change to the settings, factory task added or merged, and production deploy, newest first (`before`: only those older than version n). */
@@ -169,9 +171,8 @@ export async function changesPage(platform: Platform, session: Session, before?:
     session,
     title: "Change log",
     here: "changes",
-    wide: true,
+    lede: `Every change to settings, users, access, keys, tokens and deploys, newest first.${history.total ? ` ${plural(history.total, "change")} in all.` : ""}`,
     body: `
-  <p class="lede">A log of every change to the server's admin surface, including settings, users, keys, tokens, source, and deploys.${history.total ? ` ${plural(history.total, "change")}.` : ""}</p>
   <ol class="changes"${before ? "" : ` data-live-kind="change" data-live-view="changes" data-live-at="${Date.now()}"`}${rows.length ? "" : " hidden"}>
 ${rows.map((r) => r.html).join("\n")}
   </ol>

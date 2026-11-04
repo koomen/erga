@@ -55,7 +55,7 @@ test("a users setting is a picker: chips for its users, no typed list; the line 
   const html = await (await fetch(`http://localhost:${server.port}/admin`)).text();
   expect(html).toContain(`<li class="chip" data-login="alice">alice<button type="button" class="unpick"`);
   expect(html).toContain(`<datalist id="user-logins"><option value="alice"><option value="bob"><option value="carol"></datalist>`);
-  expect(html).toContain(`Last set at 2026-10-05 14:03 UTC by bob`);
+  expect(html).toContain(`Set 2026-10-05 14:03 UTC by bob`);
   expect(html).toMatch(/data-key="factory" data-control="switch"/);
   expect(html).not.toContain("factory-title");
 });

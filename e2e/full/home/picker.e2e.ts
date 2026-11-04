@@ -1,4 +1,4 @@
-// The Homepage Project setting on /admin (landing_document): a box that finds any of the server's documents and projects
+// The Homepage setting on /admin (landing_document): a box that finds any of the server's documents and projects
 // as you type (the operation list_documents, with all), each with its owner, address and kind; choosing one saves it, and Reset puts the
 // repo's demo page back.
 import { expect, servers, test } from "../../helpers/fixtures";
@@ -10,7 +10,7 @@ test.afterEach(async () => {
   await resetLanding(await servers.short());
 });
 
-test("the Homepage Project picker finds a document by its title as you type; choosing it saves it; Reset undoes it", async ({ tab }) => {
+test("the Homepage picker finds a document by its title as you type; choosing it saves it; Reset undoes it", async ({ tab }) => {
   const server = await servers.short(),
     { page } = tab;
   await fresh(server);
@@ -25,8 +25,8 @@ test("the Homepage Project picker finds a document by its title as you type; cho
   await page.goto(`${server.root}/admin`);
   const row = 'li.setting[data-key="landing_document"]';
   const text = (sel: string) => page.locator(`${row} ${sel}`).first().textContent();
-  expect(await text("label.key")).toBe("Homepage Project");
-  expect(await text(".desc")).toContain("Document or project shown at /");
+  expect(await text("label.key")).toBe("Homepage");
+  expect(await text(".desc")).toContain("The document or project shown at /");
 
   // A part of the title, typed: the document shows, with its owner and address, and its kind.
   const find = page.locator(`${row} input.find[role=combobox]`);

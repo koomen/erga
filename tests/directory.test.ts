@@ -302,8 +302,16 @@ test("server config: what the deploy fixes is locked, with its deployed value", 
   expect(config.isLocked("delete_docs_after_hours")).toBe(true);
   expect(await config.get("delete_docs_after_hours")).toBe(72);
   expect(await config.entry("delete_docs_after_hours")).toEqual({
-    key: "delete_docs_after_hours", description: SETTINGS.delete_docs_after_hours.description, default: 24,
-    value: 72, source: "locked", locked: true, deployed: 72, updated: null, updatedBy: null,
+    key: "delete_docs_after_hours",
+    label: SETTINGS.delete_docs_after_hours.label,
+    description: SETTINGS.delete_docs_after_hours.description,
+    default: 24,
+    value: 72,
+    source: "locked",
+    locked: true,
+    deployed: 72,
+    updated: null,
+    updatedBy: null,
   });
   expect((await config.list(admin)).map((e) => [e.key, e.locked, e.value])).toContainEqual(["delete_docs_after_hours", true, 72]);
   // Nobody changes it here, admin or not, and saying why (for a person or an agent).

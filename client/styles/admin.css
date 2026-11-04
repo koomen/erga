@@ -3,8 +3,13 @@
    the same file, so the browser keeps one copy, and a page shown in place (client/admin/admin-nav.ts) needs no style of
    its own. A page can't add its own: one look, the same on every page.
 
-   The look of a thing is the same wherever it is: a section's heading, a lede, a row, a setting's row, a switch, a
-   state line, a card's title, and the colours for working, waiting and failed. */
+   The look of a thing is the same wherever it is:
+   - a page: its heading and one line under it (.page-head), then its sections, each with a small heading (.sub-head);
+   - a row: its name (a setting's label, a user, a group, a provider) strong, one line under it soft, its control at the
+     right, the controls of every page in one column width;
+   - words for people in the text font; a key, an ID, a URL or an environment name in the mono font (code);
+   - one spacing scale (4, 8, 12, 16, 24, 32, 48 px), one control height (34 px), one colour each for working, waiting
+     and failed. */
 
 /* The header is every page's bars (server/pages/bars.ts); your agent is every page's (server/pages/agent.ts). */
 /* The sidebar beside the page. */
@@ -26,9 +31,8 @@
 /* No animation as the page opens in the state it remembers: only when it's toggled. */
 :root:not(.side-ready) .admin-side, :root:not(.side-ready) .admin-side .label { transition: none; }
 @media (prefers-reduced-motion: reduce) { .admin-side, .admin-side .label { transition: none; } }
-main.admin-main { min-width: 0; max-width: 880px; margin: 0 auto; padding: 8px 24px 96px; }
-main.admin-main.wide { max-width: none; margin: 0; padding: 0 max(16px, env(safe-area-inset-right)) 24px 8px; }
-main.admin-main > header { margin-bottom: 24px; }
+/* The page beside the sidebar: a centred column, the same width on every page. */
+.admin-body > main.admin-main { flex: 1; min-width: 0; max-width: 880px; margin: 0 auto; padding: 8px 24px 96px; display: block; }
 /* A phone: the links in a row above the page, always with their labels. */
 @media (max-width: 720px) {
   .admin-body { flex-direction: column; align-items: stretch; padding: 58px 0 0; }
@@ -36,57 +40,69 @@ main.admin-main > header { margin-bottom: 24px; }
   .admin-side ul { flex-direction: row; margin: 0; overflow-x: auto; }
   .side-closed .admin-side .label { opacity: 1; }
   .side-toggle { display: none; }
-  main.admin-main, main.admin-main.wide { padding: 8px 16px 64px; }
+  .admin-body > main.admin-main { padding: 12px 16px 64px; }
 }
 
-/* The admin pages' own parts, after the layout. */
 /* Working, waiting and failed: one colour each, on every page. */
 :root { --ok: #1f7a4d; --warn: #b45309; --bad: #c2410c; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ok: #4cc38a; --warn: #f0a742; --bad: #ff8a65; } }
 :root[data-theme="dark"] { --ok: #4cc38a; --warn: #f0a742; --bad: #ff8a65; }
-.hint.error { color: var(--bad); }
 
-/* A section, and its heading: the same on every page. */
-:where(main.admin-main > section) { margin-bottom: 40px; }
-:where(main.admin-main > section > h2) { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px;
-  font-size: 18px; line-height: 1.3; font-weight: 650; letter-spacing: -0.01em; color: var(--fg-strong); }
-:where(main.admin-main) h2 small { font-size: 13px; font-weight: 400; letter-spacing: normal; color: var(--soft); }
-/* The lines under a heading that say what the section is. */
-.lede { margin: 0 0 16px; font-size: 13.5px; color: var(--soft); }
-ol.rows > li .doc { cursor: default; }
-.mono { font-family: var(--font-mono); font-size: 12.5px; }
+/* The page's heading and its one line; a section's heading and its line. */
+main.admin-main > header.page-head { display: block; margin: 0 0 24px; }
+.page-head h2 { margin: 0; font-size: 22px; line-height: 1.25; font-weight: 650; letter-spacing: -0.015em; color: var(--fg-strong); }
+.page-head .lede { margin: 4px 0 0; }
+.lede { margin: 0 0 16px; font-size: 13.5px; line-height: 1.5; color: var(--soft); }
+.sub-head { margin: 0 0 4px; font-size: 15px; line-height: 1.3; font-weight: 600; color: var(--fg-strong); }
+.sub-head + :not(.lede) { margin-top: 12px; }
+:where(main.admin-main > section) { margin: 0 0 40px; }
 
-/* A link in the text (help, notes): the editor's link colour, readable light or dark. A link with a look of its own (a
-   class: buttons, the sidebar, a document's name) keeps it. */
+/* Text: a link in the text has the editor's link colour; a value for machines is mono. */
 :where(main.admin-main a:not([class])) { color: var(--link); }
+main.admin-main code, .mono { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg-strong); overflow-wrap: anywhere; }
+.badge.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
 
-/* A setting's row (its key, description and control), on Settings and API keys. */
-ol.rows > li.setting { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 16px; padding: 10px 4px; }
-.setting .about { min-width: 0; }
+/* Messages under a control: soft, red when something failed. */
+main.admin-main .hint { margin: 6px 0 0; font-size: 12.5px; color: var(--soft); }
+main.admin-main .hint:empty { display: none; }
+main.admin-main .hint.error { color: var(--bad); }
+
+/* Every control the same height; a select's text where an input's is. */
+main.admin-main :is(select, .input) { box-sizing: border-box; height: 34px; }
+main.admin-main select { padding: 0 28px 0 10px; border-radius: 8px; background-color: var(--bg); font-size: 13.5px; }
+/* A select nobody may change (the last admin's role): its value as plain text, in line with the others. */
+main.admin-main select:disabled { border-color: transparent; background-color: transparent; color: var(--fg); opacity: 1; }
+main.admin-main .input.secret, main.admin-main form.configure .input { font-family: var(--font-mono); font-size: 12.5px; }
+
+/* A row: its name and the line under it at the left, its control at the right. */
+ol.rows > li { padding: 14px 4px; }
+ol.rows > :is(li.setting, li.provider, li.deploy-secret) { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 24px; }
+:is(li.setting, li.provider, li.deploy-secret) .about { min-width: 0; }
+:is(li.setting, li.provider) .key, ol.users .title, ol.rules .title { margin: 0; font-size: 14px; font-weight: 600; color: var(--fg-strong); }
+:is(li.setting, li.provider, li.deploy-secret) :is(.desc, .state) { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--soft); }
+:is(li.setting, li.provider) > .hint { grid-column: 1 / -1; margin: 0; }
+:is(li.setting, li.provider) .value { display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-end; gap: 8px; }
+
+/* A setting's row (Settings; the agents' keys on API keys; public sharing on Access). */
 .setting .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
-.setting .key { margin: 0; font-family: var(--font-mono); font-size: 13.5px; color: var(--fg-strong); }
-.setting .desc { margin: 2px 0 0; font-size: 13px; color: var(--soft); }
-.setting .meta { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 5px; font-size: 12px; color: var(--soft); }
+.setting .meta { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 12px; color: var(--soft); }
 .setting .meta .badge { margin: 0; }
-.setting .meta time { margin: 0; font-size: inherit; }
 .setting .meta a { color: inherit; }
 .setting .meta .gone { color: var(--bad); }
-.setting .value { display: flex; align-items: center; gap: 6px; }
-.setting .value .input { width: 7.5em; text-align: right; font-feature-settings: "tnum"; }
-.setting .value .input:not([type=number]) { width: 12em; text-align: left; }
-.setting .value .amount { display: flex; align-items: center; gap: 6px; }
-.setting .value .amount[hidden] { display: none; }
-.setting .value .unit { font-size: 13.5px; color: var(--soft); }
-.setting .set { margin: 3px 0 0; font-size: 12px; color: var(--chrome); }
-.setting .hint { grid-column: 1 / -1; margin: 0; }
-.setting .value select { min-width: 9em; height: 34px; }
+.setting .set { margin: 4px 0 0; font-size: 12px; color: var(--chrome); }
+.setting .set .reset { padding: 0; border: 0; background: none; color: var(--link); font: inherit; cursor: pointer; }
+.setting .set .reset:hover { text-decoration: underline; }
+.setting .value .amount { display: flex; align-items: center; gap: 8px; }
+.setting .value .amount[hidden], .setting .value [hidden] { display: none; }
+.setting .value .input[type=number] { width: 6.5em; text-align: right; font-feature-settings: "tnum"; }
+.setting .value .input:not([type=number]) { width: 14em; }
+.setting .value .unit { min-width: 3em; font-size: 13px; color: var(--soft); }
+.setting .value select { min-width: 6.5em; }
 .setting .value .input.pick { width: 9em; }
-.setting .value .input.secret { width: 15em; font-family: var(--font-mono); font-size: 12.5px; }
-.setting .value [hidden] { display: none; }
+.keys-mode { min-width: 15em; }
 /* A document setting's picker (the homepage): a box to find one, and what it finds below it, each with its owner, address and kind. */
-.setting .key.named { font-family: inherit; font-size: 14px; font-weight: 600; }
 .doc-pick { position: relative; }
-.setting .value .input.find { width: 17em; }
+.setting .value .input.find { width: 16em; }
 .doc-pick .found { position: absolute; z-index: 20; top: calc(100% + 4px); right: 0; width: 26em; max-width: calc(100vw - 32px); max-height: 320px; overflow-y: auto; box-sizing: border-box; margin: 0; padding: 4px; list-style: none;
   border: 1px solid var(--rule); border-radius: 10px; background: var(--bg); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
 .doc-pick .found li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; column-gap: 10px; padding: 7px 10px; border-radius: 7px; cursor: pointer; }
@@ -94,34 +110,28 @@ ol.rows > li.setting { display: grid; grid-template-columns: 1fr auto; align-ite
 .doc-pick .found .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--fg-strong); }
 .doc-pick .found .where { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--soft); }
 .doc-pick .found .none { display: block; cursor: default; font-size: 13px; color: var(--soft); }
-@media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } }
+/* A users setting: a chip for each, and a box to add one. */
 .picker { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; max-width: 26em; }
 .chips { display: contents; list-style: none; margin: 0; padding: 0; }
-.keys-mode { height: 34px; min-width: 16em; margin: 4px 0 8px; }
-ol.rows > li.provider { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px 16px; padding: 12px 4px; }
-.provider .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
-.provider .head label { font-weight: 600; color: var(--fg-strong); }
-.provider .state { font-size: 13px; color: var(--soft); }
-.provider .state .bad { color: var(--bad); }
-.provider .value { display: flex; align-items: center; gap: 6px; }
-.provider .value .input { width: 14em; }
-.provider .models { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: 13.5px; }
-.provider .models .label { font-size: 12.5px; color: var(--soft); }
-.provider .hint { grid-column: 1 / -1; margin: 0; }
-.deploy-secrets { margin-top: 28px; }
-.deploy-secrets summary { cursor: pointer; font-size: 13.5px; color: var(--soft); }
-.deploy-secrets li { padding: 8px 4px; }
-.deploy-secrets .key { font-family: var(--font-mono); font-size: 13px; color: var(--fg-strong); }
-.deploy-secrets .state { font-size: 12.5px; color: var(--soft); }
-.deploy-secrets .desc { margin: 2px 0 0; font-size: 12.5px; color: var(--soft); }
 .chip { display: inline-flex; align-items: center; gap: 2px; height: 26px; padding: 0 4px 0 10px; border-radius: 999px; font-size: 13px; color: var(--fg-strong); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
 .chip:not(:has(button)) { padding-right: 10px; }
 .unpick { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--chrome); cursor: pointer; }
 .unpick:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 18%, transparent); }
 .unpick svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 
-/* A switch (a setting, a user's role): the track, and On or Off beside it where the row says it. Blue when on, grey when
-   off, and the circle the page's colour: the editor's (its switches and buttons, as libs/text/ui/controls.ts draws its .switch), light or dark. */
+/* API keys: a row for each provider (its key, and its models), then what only the deploy sets. */
+.own-note.empty { margin: 16px 0 0; padding: 24px; }
+.provider .state .on { color: var(--fg-strong); font-weight: 500; }
+.provider .state .bad { color: var(--bad); }
+.provider .value .input.secret { width: 17em; }
+.provider .models { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 6px; font-size: 13px; color: var(--fg); }
+.provider .models .label { font-size: 12px; color: var(--soft); }
+.provider .models label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.provider .models input { margin: 0; accent-color: var(--caret); }
+li.deploy-secret .key { font-size: 13px; font-weight: 600; }
+
+/* A switch (a setting, a provider's sign-in): the track, and On or Off beside it. Blue when on, grey when off, and the
+   circle the page's colour: the editor's (libs/text/ui/controls.ts draws its .switch the same), light or dark. */
 .switch { position: relative; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--soft); user-select: none; }
 .switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: inherit; }
 .switch .track { position: relative; flex: none; width: 34px; height: 20px; border-radius: 999px; background: var(--rule); transition: background-color 150ms ease; }
@@ -132,119 +142,114 @@ ol.rows > li.provider { display: grid; grid-template-columns: 1fr auto; align-it
 .switch .state { min-width: 2em; }
 .switch:has(input:disabled) { cursor: default; opacity: 0.5; }
 
-/* A state line: what a credential is now (an API key, the Cloudflare grant), the word that matters strong; a dot before it, where the page has one. */
-.state-line { margin: 3px 0 0; font-size: 13px; color: var(--soft); }
-.state-line :is(.on, b) { color: var(--fg-strong); font-weight: 600; }
-.state-line .last4 { font-family: var(--font-mono); font-size: 12px; color: var(--fg); }
-.state-line .dot { display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--chrome); vertical-align: 1px; }
-.state-line.ok .dot { background: var(--ok); }
-.state-line.bad .dot { background: var(--bad); }
-
-/* Authentication: a card for each server. */
-section.provider { margin: 26px 0 0; }
-section.provider > header { display: flex; justify-content: flex-start; align-items: center; gap: 14px; margin: 0 0 10px; }
-.provider-head { margin: 0; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
-section.provider > .provider-hint { margin: -4px 0 10px; }
-.server { margin: 0 0 22px; padding: 18px 20px 20px; border: 1px solid var(--rule); border-radius: 12px; }
-.server > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin: 0 0 6px; }
-.server h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--fg-strong); }
-.server h3 small { margin-left: 6px; font-size: 13px; font-weight: 400; color: var(--soft); }
-.server .state { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; }
-.server .state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.server .state.working { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
-.server .state.misconfigured { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
-.server .state.not_set_up { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
-.server .state.unknown { color: var(--soft); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
-.server .summary { margin: 0 0 12px; font-size: 13.5px; color: var(--fg); }
-.server .reasons { margin: -6px 0 12px; padding-left: 18px; font-size: 13px; color: var(--soft); }
-.server dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 7px 18px; margin: 0 0 4px; font-size: 13.5px; }
+/* Authentication: a card for each provider: its name, its state and its switch at the top, then its app. */
+section.provider { margin: 0 0 16px; padding: 20px; border: 1px solid var(--rule); border-radius: 12px; }
+section.provider > header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0; }
+.provider-head { margin: 0; font-size: 16px; font-weight: 600; color: var(--fg-strong); }
+section.provider > header .switch { margin-left: auto; }
+section.provider > .provider-hint { margin: 6px 0 0; }
+.app-state { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.app-state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.app-state.working { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.app-state.misconfigured { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
+.app-state.not_set_up { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
+.app-state.unknown { color: var(--soft); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
+.server { margin: 12px 0 0; }
+.server .summary { margin: 0; font-size: 13.5px; color: var(--fg); }
+.server .reasons { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: var(--soft); }
+.server dl { display: grid; grid-template-columns: 8.5em minmax(0, 1fr); align-items: baseline; gap: 8px 16px; margin: 16px 0 0; font-size: 13px; }
 .server dt { color: var(--soft); }
 .server dd { margin: 0; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; color: var(--fg-strong); }
-.server dd code { font-family: var(--font-mono); font-size: 12.5px; overflow-wrap: anywhere; }
 .server dd .src { font-size: 12px; color: var(--soft); }
 .server .copy { height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--soft); font: inherit; font-size: 11.5px; cursor: pointer; }
 .server .copy:hover { color: var(--fg-strong); }
 .server .note { margin: 12px 0 0; font-size: 13px; color: var(--soft); }
-.server .pending { margin: 14px 0 0; padding: 12px 14px; border-radius: 10px; background: color-mix(in srgb, var(--chrome) 9%, transparent); font-size: 13.5px; }
+.server .pending { margin: 16px 0 0; padding: 12px 16px; border-radius: 10px; background: color-mix(in srgb, var(--chrome) 9%, transparent); font-size: 13px; }
 .server .pending p { margin: 0 0 8px; }
 .server .pending .failed { color: var(--bad); }
 .server .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .server .row a.pill { text-decoration: none; }
-.server details { margin: 14px 0 0; font-size: 13.5px; }
+.server details { margin: 16px 0 0; font-size: 13px; }
 .server details > summary { cursor: pointer; color: var(--fg-strong); font-weight: 500; }
 .server ol.steps { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; color: var(--fg); }
-.server form.configure { margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--rule); display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
-.server form.configure label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--soft); }
-.server form.configure .input { width: 100%; font-family: var(--font-mono); font-size: 12.5px; }
-.server form.configure .lede { grid-column: 1 / -1; margin: 0; }
-.server .hint { margin: 8px 0 0; font-size: 13px; color: var(--soft); }
-.server .hint.error { color: var(--bad); }
-@media (max-width: 640px) { .server form.configure { grid-template-columns: 1fr; } .server dl { grid-template-columns: 1fr; gap: 2px; } .server dd { margin-bottom: 6px; } }
+.server form.configure { margin: 16px 0 0; padding-top: 16px; border-top: 1px solid var(--rule); display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+.server form.configure label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--soft); }
+.server form.configure .input { width: 100%; }
+.server form.configure .lede { grid-column: 1 / -1; margin: 0 0 4px; font-size: 13px; }
+.server > .hint { margin: 8px 0 0; }
 
-/* Users: add one, and a row for each, with its roles as switches. */
-.add-user { display: flex; gap: 8px; margin: 0 0 14px; }
-.add-user .input { flex: 1; }
-#users-hint { margin: -6px 0 12px; }
-.labels, ol.users > li { display: grid; grid-template-columns: minmax(0, 1fr) 5.5rem 5.5rem 14rem 34px; align-items: center; column-gap: 12px; }
-ol.users select.role { justify-self: stretch; }
-.add-user { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
-.add-user .input { flex: 1; min-width: 180px; }
-.labels { padding: 0 4px 6px; font-size: 12px; color: var(--soft); }
-.labels .t, ol.users time { justify-self: start; margin: 0; }
-ol.users > li { padding: 10px 4px; }
-ol.users .who { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
-ol.users .who .badge { align-self: center; }
-/* Their picture (or initial), before their username. */
-ol.users .who .avatar { align-self: center; width: 22px; height: 22px; margin-right: -2px; font-size: 11px; }
-ol.users .who .added { flex-basis: 100%; font-size: 12px; color: var(--chrome); }
-ol.users .never { font-style: italic; }
-@media (max-width: 640px) { .labels, ol.users time { display: none; } ol.users > li { grid-template-columns: minmax(0, 1fr) 34px; row-gap: 6px; } ol.users select.role { grid-row: 2; grid-column: 1 / -1; } }
-ol.rules { margin: 0 0 14px; }
-ol.rules > li { display: grid; grid-template-columns: minmax(0, 1fr) 15.5rem 34px; align-items: center; column-gap: 12px; padding: 10px 4px; }
-ol.rules .who { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
-ol.rules .kind { font-size: 12.5px; color: var(--soft); }
-ol.rules select.access { justify-self: stretch; }
-@media (max-width: 640px) { ol.rules > li { grid-template-columns: minmax(0, 1fr) 34px; row-gap: 6px; } ol.rules select.access { grid-row: 2; } }
-.add-rule { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
-.add-rule .input { flex: 1; min-width: 180px; }
-section.rules { margin-bottom: 30px; }
-section.public-sharing .switch { font-size: 14px; color: var(--fg-strong); }
-section.public-sharing .hint { margin: 8px 0 0; }
+/* A form that adds a row (a user, a group): its fields in one line, above the list. */
+:is(.add-user, .add-rule) { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+:is(.add-user, .add-rule) .input { flex: 1; min-width: 120px; }
+:is(#users-hint, #rules-hint) { margin: -8px 0 12px; }
 
-/* The change log: one row each, across the page: who (their avatar, and how), what changed (each change on its own line, in full), when. */
+/* Users and groups: a row for each, its role (or access) in one column, the same width on both pages. */
+.labels, ol.users > li { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem 12rem 34px; align-items: center; column-gap: 12px; }
+ol.rules > li { display: grid; grid-template-columns: minmax(0, 1fr) 12rem 34px; align-items: center; column-gap: 12px; }
+:is(ol.users select.role, ol.rules select.access) { justify-self: stretch; width: 100%; }
+.labels { padding: 0 4px 8px; font-size: 12px; font-weight: 500; color: var(--soft); }
+.labels span:nth-child(3) { padding-left: 11px; }
+.labels .t, ol.users > li > time { justify-self: start; margin: 0; font-size: 13px; }
+ol.users > li > time.never { color: var(--chrome); }
+ol.users .added time { margin: 0; font-size: inherit; color: inherit; }
+/* Who: their picture at the left of two lines, their name and the line under it. */
+ol.users .who { min-width: 0; display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; column-gap: 10px; row-gap: 1px; }
+ol.users .who .avatar { grid-row: 1 / span 2; }
+ol.users .who .name { min-width: 0; display: flex; align-items: center; gap: 8px; }
+ol.rules .who { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+:is(ol.users, ol.rules) .who .title { flex: 0 1 auto; }
+ol.users .who .note { font-size: 13px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(ol.users, ol.rules) .who :is(.added, .kind) { font-size: 12.5px; color: var(--soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ol.users .avatar.waiting { background: transparent; border: 1.5px dashed var(--rule); box-sizing: border-box; }
+@media (max-width: 640px) {
+  .labels, ol.users > li > time { display: none; }
+  ol.users > li, ol.rules > li { grid-template-columns: minmax(0, 1fr) 34px; row-gap: 8px; }
+  :is(ol.users select.role, ol.rules select.access) { grid-row: 2; grid-column: 1 / -1; }
+}
+
+/* The change log: one row each: who (their avatar, and how), what changed (each change on its own line), when. */
 /* A live list with no rows yet (server/news/), and the words the page shows instead. */
 [data-live-kind][hidden], .changes-empty[hidden] { display: none; }
-.changes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(180px, max-content) minmax(0, 1fr) max-content; column-gap: 24px; border-bottom: 1px solid var(--rule); }
-.changes > li.change { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: start; padding: 10px 4px; border-top: 1px solid var(--rule); font-size: 13.5px; line-height: 1.55; }
-.changes > li.change:hover { background: color-mix(in srgb, var(--chrome) 5%, transparent); }
-.changes > li.change > time { margin: 0; padding-top: 2px; font-size: 12.5px; color: var(--soft); font-feature-settings: "tnum"; white-space: nowrap; text-align: right; }
+.changes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(150px, max-content) minmax(0, 1fr) max-content; column-gap: 24px; border-bottom: 1px solid var(--rule); }
+.changes > li.change { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: start; padding: 12px 4px; border-top: 1px solid var(--rule); font-size: 13.5px; line-height: 1.55; }
+.changes > li.change > time { margin: 0; padding-top: 3px; font-size: 12.5px; color: var(--soft); font-feature-settings: "tnum"; white-space: nowrap; text-align: right; }
 .changes .who { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.changes .who .by { color: var(--fg-strong); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.changes .who .by { color: var(--fg-strong); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .changes .who .via { flex: none; font-size: 11.5px; color: var(--soft); border: 1px solid var(--rule); border-radius: 999px; padding: 0 7px; white-space: nowrap; }
 :is(.changes, ol.users) .avatar { position: relative; flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; overflow: hidden;
   background: var(--c, var(--chrome)); color: #fff; font: 600 12.5px var(--font-text); }
 :is(.changes, ol.users) .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .changes .avatar.system { background: color-mix(in srgb, var(--chrome) 25%, transparent); color: var(--soft); }
-.changes .what { list-style: none; margin: 0; padding: 4px 0 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.changes .what > li { overflow-wrap: anywhere; }
+.changes .what { list-style: none; margin: 0; padding: 3px 0 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.changes .what > li { overflow-wrap: anywhere; color: var(--fg); }
 @media (max-width: 720px) {
   .changes { grid-template-columns: minmax(0, 1fr) max-content; }
   .changes .what { grid-column: 1 / -1; grid-row: 2; padding: 6px 0 0 38px; }
 }
-.changes .key { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg-strong); margin-right: 4px; }
+.changes .key { margin-right: 6px; font-weight: 600; color: var(--fg-strong); }
 .changes .was { font-feature-settings: "tnum"; }
-.changes .to { color: var(--soft); margin: 0 3px; }
+.changes .to { color: var(--soft); margin: 0 4px; }
 .changes .badge { margin: 0 0 0 4px; }
-.changes .sha { font-family: var(--font-mono); font-size: 12px; }
 .changes .title { color: var(--fg-strong); }
 .changes .commits { list-style: none; margin: 4px 0 2px; padding: 0 0 0 12px; border-left: 2px solid var(--rule); font-size: 12.5px; }
 .changes .commits li { padding: 1px 0; }
 .changes .commits .more { color: var(--soft); }
 .changes details { display: inline; font-size: 12.5px; }
 .changes details summary { display: inline; color: var(--soft); cursor: pointer; }
-.changes-empty, .changes-more { margin: 6px 2px 0; font-size: 13px; color: var(--soft); }
+.changes-empty { margin: 0; padding: 48px 24px; border: 1px dashed var(--rule); border-radius: 12px; text-align: center; font-size: 13.5px; color: var(--soft); }
+.changes-more { margin: 12px 4px 0; font-size: 13px; color: var(--soft); }
 
-/* The page beside the sidebar: a centred column, or the whole width. */
-.admin-body > main.admin-main { flex: 1; }
-.admin-body > main.admin-main:not(.wide) { margin: 0 auto; }
-@media (max-width: 720px) { .admin-body > main.admin-main { padding-top: 12px; } }
+/* A phone: a row's control under its words, at the left. */
+@media (max-width: 560px) {
+  ol.rows > :is(li.setting, li.provider) { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  :is(li.setting, li.provider) .value { justify-content: flex-start; }
+  /* A switch stays at the right of its words, as on a phone's own settings. */
+  ol.rows > li.setting[data-control="switch"], ol.rows > li.setting:has(> .value > .switch) { grid-template-columns: minmax(0, 1fr) auto; }
+  .setting .value .input:not([type=number]), .provider .value .input.secret, .setting .value .input.find { width: auto; flex: 1; min-width: 0; }
+  .setting .value .doc-pick { flex: 1; }
+  .setting .value .doc-pick .input.find { width: 100%; }
+  section.provider { padding: 16px; }
+  .server dl { grid-template-columns: 1fr; gap: 2px; }
+  .server dd { margin-bottom: 8px; }
+  .server form.configure { grid-template-columns: 1fr; }
+}
