@@ -76,12 +76,6 @@ export const AGENT_ACTIONS: AgentAction[] = [
     action: "Set a GitHub app's or Google client's ID and secret (Authentication)",
     exempt: SECRET,
   },
-  {
-    route: "POST /admin/share",
-    domain: "admin",
-    action: "Make an admin token for an outside agent (Share with agent, every admin page)",
-    exempt: SECRET,
-  },
 
   // ------------------------------------------------------------ your agent's panel
   { route: "GET /api/agent", domain: "none", action: "Your agent's panel", exempt: PANEL },

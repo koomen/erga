@@ -23,7 +23,7 @@ const clickOn = async (ed: Editor, selector: string) => {
 };
 const cardOpen = (ed: Editor) => ed.eval<boolean>(`!document.getElementById("sharing").hidden`);
 
-test("Share with an agent copies one line, Erga's MCP server and then this document, says Copied in its tooltip, and opens no card", async ({
+test("Share with an agent opens its menu; Install Erga's MCP copies one line, Erga's MCP server and then this document, says Copied in its tooltip, and opens no card", async ({
   tab,
 }) => {
   const ed = await openEditor(tab, await servers.main(), "empty");
@@ -32,18 +32,18 @@ test("Share with an agent copies one line, Erga's MCP server and then this docum
   await ed.clickEnd("[data-erga-text]:not(.erga-locked)");
   await ed.idle();
   await clickOn(ed, "#btn-agent-share");
+  await clickOn(ed, "#btn-agent-share-menu .am-mcp");
   await expect.poll(() => ed.eval<string>(`document.getElementById("btn-agent-share").dataset.tip`)).toBe("Copied ✓");
   expect(await tab.page.evaluate(() => navigator.clipboard.readText())).toBe(
     `Add Erga's MCP server, ${origin}/mcp, then open ${ed.address}.`
   );
-  // Its icon stays, and its tooltip has its name back after the moment; the Share card stays closed.
-  expect(await ed.eval<boolean>(`!!document.querySelector("#btn-agent-share svg") && document.getElementById("sharing").hidden`)).toBe(
-    true
-  );
+  // Its icon stays, and its tooltip has its name back after the moment; the menu closed, and the Share card stays closed.
+  expect(
+    await ed.eval<boolean>(
+      `!!document.querySelector("#btn-agent-share svg") && document.getElementById("sharing").hidden && document.getElementById("btn-agent-share-menu").hidden`
+    )
+  ).toBe(true);
   await expect.poll(() => ed.eval<string>(`document.getElementById("btn-agent-share").dataset.tip`)).toBe("Share with an agent");
-  // The caret stays in the text: typing goes on.
-  await ed.type("x");
-  await ed.shows("x|");
 });
 
 test("the Share button opens only Share with people; Escape closes it", async ({ tab }) => {

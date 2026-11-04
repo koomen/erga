@@ -16,8 +16,8 @@ import { agentPanel } from "./agent.ts";
 /** Share with an agent's icon, as the editor's (client/editor.html, #btn-agent-share). */
 export const AGENT_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.12) translate(-12 -11.5)" stroke-width="1.4"><rect x="3.5" y="9" width="10.5" height="8.5" rx="3"/><path d="M8.75 9V6.5"/><circle cx="8.75" cy="5.5" r="1"/><circle cx="6.75" cy="13.25" r=".9" fill="currentColor" stroke="none"/><circle cx="10.75" cy="13.25" r=".9" fill="currentColor" stroke="none"/><path d="M2 12.5v1.5M15.5 12.5v1.5"/><path d="M18.75 3.5v6M15.75 6.5h6"/></g></svg>`;
 
-/** Share with an agent, as the editor's (client/editor.html, #btn-agent-share): it copies a one-line prompt (client/common/bars.ts). For anyone who can read the page. */
-export const AGENT_SHARE_BUTTON = `<button type="button" class="erga-view-button erga-agent-share" aria-label="Share with an agent: copy a prompt for it" data-tip="Share with an agent">${AGENT_ICON}</button>`;
+/** Share with an agent, as the editor's (client/editor.html, #btn-agent-share): its menu (client/common/agent-menu.ts): the MCP prompt for anyone who can read the page, and a prompt with a token for someone signed in. */
+export const AGENT_SHARE_BUTTON = `<button type="button" class="erga-view-button erga-agent-share" aria-label="Share with an agent" data-tip="Share with an agent">${AGENT_ICON}</button>`;
 
 /** Documents, as the editor's (client/editor.html, #btn-docs), at `href`: for someone signed in who has documents. */
 export const docsButton = (href: string) =>
