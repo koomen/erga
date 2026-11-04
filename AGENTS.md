@@ -8,8 +8,8 @@ README.md maps the folders. Pete (`koomen`) owns Erga.
 
 A small fix that fits in one commit goes straight to `staging`. Larger work
 goes on a feature branch of its own (`git push origin HEAD:<branch>`, any
-name but `staging` and `main`); Pete, or an agent he asks, merges it from the
-Ops page as one commit on staging. `bun run test` (format, lint, typecheck,
+name but `staging` and `main`); Pete, or an agent he asks, merges it into
+staging as one commit. `bun run test` (format, lint, typecheck,
 unit tests, smoke run) must end with `all passing` before every push, to a
 feature branch too. Run the e2e file or folder of the part
 you change (`bun run test:e2e e2e/full/page/`); the whole suite
@@ -45,9 +45,10 @@ docs/operations.md tells how a deployment builds, deploys and rolls back.
 Read it before you push to a deployment's repository. On Erga's own:
 
 1. Push to `staging` (`git push origin HEAD:staging`), or to a feature branch
-   (`git push origin HEAD:<branch>`). Staging deploys at once. A feature
-   branch does not deploy: Merge on the Ops page (`feature_branch`) puts
-   it on staging as one commit, and staging deploys that.
+   (`git push origin HEAD:<branch>`). `origin` is GitHub
+   (`koomen/erga`). GitHub Actions deploys staging after the tests pass.
+   A feature branch does not deploy: Pete merges it into staging as one
+   commit, and staging deploys that.
 2. Never push to `main`. Pete moves `main`, and production deploys from it.
 3. A push is not a deploy. `curl -s https://staging.erga.dev/api/deploys/version`
    must show your commit before you say it is on staging.

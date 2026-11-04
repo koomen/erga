@@ -18,10 +18,10 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { randomBytes } from "node:crypto";
-import { DeployError, findDatabase, runPipeline, type Target, Unhealthy } from "../../control/deploys/pipeline";
+import { DeployError, findDatabase, runPipeline, Unhealthy } from "../../control/deploys/pipeline";
 import { d1 } from "../../control/deploys/account";
 import { buildHere } from "../run";
-import { ACCOUNT, PRODUCTION } from "../targets";
+import { PRODUCTION } from "../targets";
 import { Tokens } from "../../server/identity/tokens";
 import type { Sql } from "../../server/directory/index";
 import { deployedSettings } from "../../server/directory/settings";
@@ -31,6 +31,7 @@ import {
   hostOf,
   namesOf,
   nextStep,
+  ownTarget,
   parseAnswer,
   PRESETS,
   QUESTIONS,
@@ -39,10 +40,9 @@ import {
   summary,
   type TargetName,
   targetsOf,
-  varsOf,
 } from "./plan";
 import { cloudflare, gitOf, observe, signInCheck, site, UPSTREAM, upstreamHead } from "./facts";
-import { addMessage, answersOf, DIR, loadOwn, loadSecrets, messages, readEnvFile, ROOT, saveOwn, saveSecrets, type Secrets } from "./store";
+import { addMessage, answersOf, DIR, loadOwn, loadSecrets, messages, readEnvFile, ROOT, saveOwn, saveSecrets } from "./store";
 
 const say = (s = "") => console.log(s);
 const pass = (s: string) => say(`PASS  ${s}`);
@@ -174,42 +174,6 @@ function signin(provider: string, file: string | undefined) {
 
 const random = () => randomBytes(32).toString("hex");
 
-/** The pipeline's target for one of the person's servers. */
-function targetOf(
-  a: Answers,
-  t: TargetName,
-  account: string,
-  zones: string[],
-  subdomain: string | null,
-  own: ReturnType<typeof loadOwn>,
-  s: Secrets
-): Target {
-  const host = hostOf(a, t),
-    n = namesOf(host);
-  const zoneName = zones.filter((z) => host == z || host.endsWith(`.${z}`)).sort((x, y) => y.length - x.length)[0];
-  const server = s.servers?.[t];
-  return {
-    label: t,
-    accountId: account,
-    workerName: n.worker,
-    databaseName: n.database,
-    ...(a.pages == "shared" ? { subdomain: subdomain ?? n.worker.slice(0, 40), createSubdomain: !subdomain } : {}),
-    app: { kind: "domain", zoneName, hostname: host },
-    pages: a.pages == "shared" ? { kind: "shared" } : { kind: "zone", zoneName: a.pages },
-    vars: varsOf(a, { github: own.github?.clientId, google: own.google?.clientId }),
-    // No server secrets in the file (a new machine): the Worker keeps the ones it has (keepSecrets).
-    secrets: {
-      ...(server ? { SESSION_SECRET: server.SESSION_SECRET, FACTORY_KEY: server.FACTORY_KEY } : {}),
-      ...(s.GITHUB_CLIENT_SECRET ? { GITHUB_CLIENT_SECRET: s.GITHUB_CLIENT_SECRET } : {}),
-      ...(s.GOOGLE_CLIENT_SECRET ? { GOOGLE_CLIENT_SECRET: s.GOOGLE_CLIENT_SECRET } : {}),
-    },
-    keepSecrets: true,
-    checkVersion: true,
-    // Erga's own erga.dev names stay out of reach, in Erga's own account.
-    guard: { ...PRODUCTION, accountId: ACCOUNT },
-  };
-}
-
 async function deploy(t: TargetName) {
   const st = await status();
   const { own, answers: a, facts: f } = st;
@@ -252,7 +216,19 @@ async function deploy(t: TargetName) {
   }
   const c = cloudflare();
   if ("why" in c) return fail(c.why, "bunx cf auth login");
-  const target = targetOf(a, t, f.account, f.zones, f.workersSubdomain, own, s);
+  const server = s.servers[t];
+  const target = ownTarget(a, t, {
+    account: f.account,
+    zones: f.zones,
+    subdomain: f.workersSubdomain,
+    ids: { github: own.github?.clientId, google: own.google?.clientId },
+    // No server secrets in the file (a new machine): the Worker keeps the ones it has (keepSecrets).
+    secrets: {
+      ...(server ? { SESSION_SECRET: server.SESSION_SECRET, FACTORY_KEY: server.FACTORY_KEY } : {}),
+      ...(s.GITHUB_CLIENT_SECRET ? { GITHUB_CLIENT_SECRET: s.GITHUB_CLIENT_SECRET } : {}),
+      ...(s.GOOGLE_CLIENT_SECRET ? { GOOGLE_CLIENT_SECRET: s.GOOGLE_CLIENT_SECRET } : {}),
+    },
+  });
   const commit = f.head!;
   say(
     `Deploy ${commit.slice(0, 12)} to ${t}: https://${hostOf(a, t)} (Worker ${target.workerName}, database ${target.databaseName}, bucket ${namesOf(hostOf(a, t)).bucket}).`

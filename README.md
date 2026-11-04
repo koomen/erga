@@ -99,7 +99,41 @@ flowchart LR
 
 The quick way: give your coding agent the prompt at the top of DEPLOY.md. It
 deploys your own Erga with `bun own`, and a checklist page on your machine
-shows each step. The rest of this part is the way Erga's own deployment runs.
+shows each step.
+
+### Fork on GitHub, deploy with GitHub Actions
+
+After the first deploy, GitHub can deploy your Erga for you. A push to `main`
+deploys production. A push to `staging` deploys staging, if you have one.
+The workflow is `.github/workflows/test.yml`: the deploy runs only after the
+tests pass.
+
+1. Fork `koomen/erga` on GitHub, and clone your fork.
+2. Deploy one time from your machine: `bun own` (DEPLOY.md). This makes
+   the Worker and puts its secrets on it: `SESSION_SECRET`, `FACTORY_KEY`
+   and the sign-in app's secret. The Actions deploy keeps the secrets that
+   the Worker has, and never sets them.
+3. In your fork, open Settings > Secrets and variables > Actions.
+4. Add the secret `CLOUDFLARE_API_TOKEN`. docs/operations.md lists the
+   permissions that it needs.
+5. Add these variables, with the same answers that `.erga/own.json` has:
+   - `CLOUDFLARE_ACCOUNT_ID`: the account's id.
+   - `ERGA_HOST`: the production address, for example `erga.example.com`.
+   - `ERGA_ADMIN`: the first admin's GitHub login.
+   - `ERGA_GITHUB_CLIENT_ID`: the client id of your GitHub sign-in app.
+   - If you need them: `ERGA_STAGING`, `ERGA_PROVIDERS`, `ERGA_PRESET`,
+     `ERGA_COMPANY`, `ERGA_PAGES`, `ERGA_GOOGLE_CLIENT_ID`.
+6. To get Erga's updates, click "Sync fork" on GitHub. The push to `main`
+   deploys them.
+
+`deploy/actions-plan.ts` reads the variables. A repository without the
+secret deploys nothing.
+
+### Erga's own deployment
+
+Erga's own servers are in `deploy/targets.json`. The repository
+`koomen/erga` has no `ERGA_HOST` variable, so its workflow deploys those
+targets. The rest of this part tells how they were set up.
 
 Erga needs a Cloudflare account on the Workers Paid plan: Workers, Durable
 Objects, D1 and R2, and for the control Worker, Containers (for builds) and
@@ -112,9 +146,8 @@ app's origin.
    You do not change code.
 2. Deploy production the first time (`bun deploy/run.ts production`), then
    set up the control Worker and staging (`bun deploy/setup.ts`).
-3. Open the control Worker's page, and connect Cloudflare.
-4. After that, a push to `staging` deploys staging, and a move of `main`
-   deploys production.
+3. After that, a push to `staging` on GitHub deploys staging, and a push to
+   `main` deploys production.
 
 docs/self-host.md gives each step. docs/operations.md tells how deploys,
 health checks and rollbacks work.
@@ -236,7 +269,8 @@ health checks and rollbacks work.
                       pipeline-object.ts), the release store (releases.ts), the Ops page's operations on the deploys (operations.ts), the event stream (api.ts)
       install/        /deploy: installs in other accounts (install.ts, forks.ts, the page, its routes and session)
       cloudflare.ts   what the control Worker has of Cloudflare: Artifacts, the GitHub App, the release bucket
-    deploy/       what a person runs on a machine: a deploy (run.ts), the release build (release.ts), the setup
+    deploy/       what a person runs on a machine: a deploy (run.ts), the GitHub Actions deploy (actions.ts, and
+                  actions-plan.ts, which decides what a push deploys), the release build (release.ts), the setup
                   runbook (setup.ts), the first push of Erga's history (import-source.ts), the targets (targets.json,
                   targets.ts), the settings a deploy locks (locked-settings.ts)
     dev/          local development: start.ts (`bun start`), the Vite plugin, live reload, the server's own headless
