@@ -52,16 +52,17 @@ const failed = (error: string, code: LlmCode = "error"): LlmAnswer => ({ ok: fal
 
 /**
  * One op for document `doc`, on the app's own site, with the visitor's cookie: the route's answer. Signed out, a call
- * (or "sign-in") shows the sign-in dialog, whose choices come back to `back` (the page's address).
+ * (or "sign-in") shows the sign-in dialog, whose choices come back to `back` (the page's address). `token`: the
+ * homepage's page token, which lets a visitor signed out call its model (server/home/llm-token.ts).
  */
-export async function llmFetch(doc: string, o: LlmOp, back: string): Promise<LlmAnswer> {
+export async function llmFetch(doc: string, o: LlmOp, back: string, token?: string): Promise<LlmAnswer> {
   if (o.op == "sign-in") {
     const s = await route(doc, { op: "status" });
     const providers = s.ok && (s.result as { providers?: SignInChoice[] }).providers;
     if (providers) showSignIn(providers, back);
     return { ok: true, result: null };
   }
-  const a = await route(doc, o);
+  const a = await route(doc, o, token);
   if (!a.ok) {
     if (a.code == "sign_in") showSignIn(a.providers ?? [], back);
     return failed(a.error, a.code);
@@ -72,7 +73,11 @@ export async function llmFetch(doc: string, o: LlmOp, back: string): Promise<Llm
 }
 
 /** The route's answer to one op; "sign_in" with the providers that are on. */
-async function route(doc: string, o: Exclude<LlmOp, { op: "sign-in" }>): Promise<LlmAnswer & { providers?: SignInChoice[] }> {
+async function route(
+  doc: string,
+  o: Exclude<LlmOp, { op: "sign-in" }>,
+  token?: string
+): Promise<LlmAnswer & { providers?: SignInChoice[] }> {
   // (Local development's ?user=, the person this tab is.)
   const user = new URLSearchParams(location.search).get("user");
   const as = user ? "user=" + encodeURIComponent(user) : "";
@@ -83,7 +88,7 @@ async function route(doc: string, o: Exclude<LlmOp, { op: "sign-in" }>): Promise
           method: "POST",
           credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ document: doc, system: o.system, messages: o.messages, max_tokens: o.max_tokens }),
+          body: JSON.stringify({ document: doc, token, system: o.system, messages: o.messages, max_tokens: o.max_tokens }),
         }).catch(() => null);
   if (!r) return failed("Couldn't reach Erga: try again.");
   const body = await r.json().catch(() => null);

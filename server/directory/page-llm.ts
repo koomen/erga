@@ -1,4 +1,4 @@
-// A document's page may call a model as its signed-in visitor (window.ergaLLM: agents/page-llm.ts has the route): its
+// A document's page may call a model as its signed-in visitor (the homepage's, a signed-out one too) (window.ergaLLM: agents/page-llm.ts has the route): its
 // owner's setting (on or off, and the model: share_document page_llm), the log of each call (page_llm_use,
 // server/migrations/0320_page_llm.sql), and the limits that log is counted against. The calls spend the server's model
 // keys, so each visitor, and the whole server, has a limit for each hour.
@@ -17,6 +17,10 @@ export const PAGE_LLM_LIMITS = {
   messages: 40,
   hour: 3_600_000,
   visitor: { requests: 30, tokens: 60_000 },
+  /** A signed-out visitor of the homepage's project, by IP address (agents/page-llm.ts): a few runs of its demos. */
+  guest: { requests: 20, tokens: 30_000 },
+  /** All of them together: a part of `server`, so they never use up what the signed-in visitors have. */
+  guests: { requests: 600, tokens: 1_000_000 },
   server: { requests: 2_000, tokens: 3_000_000 },
 } as const;
 
@@ -63,6 +67,15 @@ export class PageLlm {
         ? "SELECT COUNT(*) AS n, SUM(input_tokens + output_tokens) AS t FROM page_llm_use WHERE login = ?2 AND at > ?1"
         : "SELECT COUNT(*) AS n, SUM(input_tokens + output_tokens) AS t FROM page_llm_use WHERE at > ?1",
       ...(login ? [since, login.toLowerCase()] : [since])
+    );
+    return { requests: Number(row?.n ?? 0), tokens: Number(row?.t ?? 0) };
+  }
+
+  /** The use in the hour before `now` of every signed-out visitor together (their login is "ip:" and a hash). */
+  async usedByGuests(now: number): Promise<PageLlmUse> {
+    const [row] = await this.sql.all<{ n: number; t: number | null }>(
+      "SELECT COUNT(*) AS n, SUM(input_tokens + output_tokens) AS t FROM page_llm_use WHERE login LIKE 'ip:%' AND at > ?1",
+      now - PAGE_LLM_LIMITS.hour
     );
     return { requests: Number(row?.n ?? 0), tokens: Number(row?.t ?? 0) };
   }

@@ -5,7 +5,7 @@
 //   GET  /api/llm                 ?document=<id>: { on, model, signedIn }: whether the page may call the model now (on: the owner
 //                                 turned it on, the server's keys run the model, and the visitor may open it), its
 //                                 name, and whether the visitor is signed in (signed out: and providers, as below)
-//   POST /api/llm                 { document, system?, messages: [{ role: "user" | "assistant", content }], max_tokens? }:
+//   POST /api/llm                 { document, token?, system?, messages: [{ role: "user" | "assistant", content }], max_tokens? }:
 //                                 { text }; or { error, code }: "sign_in" (401), "off" (403), "limit" (429), "error".
 //                                 "sign_in" has providers: [{ id, label }], the sign-in providers that are on, for the
 //                                 sign-in dialog (client/common/sign-in-dialog.ts)
@@ -13,6 +13,12 @@
 // The pages origin never gets the session or a key: only this site's own pages may call this (their Origin), with the
 // visitor's cookie, for the one document they show. Each call is logged, and counted against the visitor's limits and
 // the whole server's (server/directory/page-llm.ts, PAGE_LLM_LIMITS); max_tokens is capped here.
+//
+// The homepage's project is the one exception: anyone may read it, so a signed-out visitor may call its model too, where
+// page_llm is on, from one of its pages only: the request must come from this site (Origin, and Sec-Fetch-Site when the
+// browser sends it) and carry the page's token (server/home/llm-token.ts: `token`, an hour old at most). Such a
+// visitor is counted by their IP address (a hash of it), with the smaller limit `guest`, and all of them together
+// with `guests`, so they never use up what the signed-in visitors have.
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -23,6 +29,7 @@ import { PAGE_LLM_LIMITS, roleMay, underLimit, type DocRow } from "../server/dir
 import { whoOf, type Platform, type Session } from "../server/platform.ts";
 import { PROVIDERS, providersOn, type Provider } from "../server/identity/index.ts";
 import type { SignInChoice } from "../shared/sign-in.ts";
+import { tokenOk } from "../server/home/index.ts";
 import { DEFAULT_PAGE_LLM_MODEL, isPageLlmModel, MODELS, type ModelChoice } from "../shared/models.ts";
 import { modelError, pageModel } from "./models.ts";
 
@@ -31,6 +38,7 @@ export const isPageLlmPath = (path: string) => path == "/api/llm";
 const Message = Schema.Struct({ role: Schema.Literals(["user", "assistant"]), content: Schema.String });
 const Ask = Schema.Struct({
   document: Schema.String,
+  token: Schema.optionalKey(Schema.String),
   system: Schema.optionalKey(Schema.String),
   messages: Schema.Array(Message),
   max_tokens: Schema.optionalKey(Schema.Finite),
@@ -66,6 +74,13 @@ async function decide(p: Platform, docId: string, session: Session | null): Prom
   return { doc, model };
 }
 
+/** Who a signed-out visitor is counted as: "ip:" and a hash of their IP address (the log never keeps the address). */
+async function guestOf(request: Request): Promise<string> {
+  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ip)));
+  return "ip:" + Array.from(hash.slice(0, 8), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 /** The tokens a call may answer: what the page asks, within 1 and the cap. */
 const capped = (asked: number | undefined) =>
   Math.max(1, Math.min(PAGE_LLM_LIMITS.maxTokens, Math.floor(asked ?? PAGE_LLM_LIMITS.maxTokens)));
@@ -99,26 +114,39 @@ export const pageLlmApi: Route = Effect.gen(function* () {
     Effect.orElseSucceed(() => null)
   );
   if (!ask) return fail("error", "The body must be { document, system?, messages: [{ role, content }], max_tokens? }.");
-  if (!visitor)
+  // Signed out: only the homepage's model, as a guest (its IP address), from one of its pages (their token).
+  const guest = !visitor && (yield* call(() => platform.directory.homeId())) == ask.document;
+  if (!visitor && !guest)
     return json(
       { error: "Sign in to use this page's model.", code: "sign_in", providers: yield* call(() => signInChoices(platform)) },
       401
     );
+  if (guest) {
+    const site = request.headers.get("sec-fetch-site");
+    if (site != null && site != "same-origin") return fail("error", "Forbidden", 403);
+    if (!(yield* call(() => tokenOk(platform.secret, ask.token, ask.document, Date.now()))))
+      return fail("error", "Reload this page to use its model.", 403);
+  }
   const now = yield* call(() => decide(platform, ask.document, visitor));
   if ("off" in now) return fail("off", now.off);
   const wrong = tooBig(ask);
   if (wrong) return fail("error", wrong);
   const pageLlm = platform.directory.pageLlm,
     at = Date.now();
-  const [mine, all] = yield* call(() => Promise.all([pageLlm.used(at, visitor.login), pageLlm.used(at)]));
-  if (!underLimit(mine, PAGE_LLM_LIMITS.visitor))
+  const login = visitor ? visitor.login : yield* call(() => guestOf(request));
+  const [mine, guests, all] = yield* call(() =>
+    Promise.all([pageLlm.used(at, login), guest ? pageLlm.usedByGuests(at) : null, pageLlm.used(at)])
+  );
+  if (!underLimit(mine, visitor ? PAGE_LLM_LIMITS.visitor : PAGE_LLM_LIMITS.guest))
     return fail("limit", "You reached this hour's limit for pages' models. Try again later.", 429);
+  if (guests && !underLimit(guests, PAGE_LLM_LIMITS.guests))
+    return fail("limit", "This page's model reached its limit for this hour. Try again later, or sign in.", 429);
   if (!underLimit(all, PAGE_LLM_LIMITS.server))
     return fail("limit", "Pages' models reached this server's limit for this hour. Try again later.", 429);
   const cfg = yield* call(() => platform.agentSettings());
   const layer = "missing" in cfg ? null : pageModel(cfg, now.model, capped(ask.max_tokens));
   if (!layer) return fail("off", `The server has no API key that runs ${MODELS[now.model].label} now.`);
-  const id = yield* call(() => pageLlm.start({ login: visitor.login, docId: now.doc.id, model: now.model, now: at }));
+  const id = yield* call(() => pageLlm.start({ login, docId: now.doc.id, model: now.model, now: at }));
   const prompt = Prompt.make([
     ...(ask.system ? [{ role: "system" as const, content: ask.system }] : []),
     ...ask.messages.map((m) => ({ role: m.role, content: [{ type: "text" as const, text: m.content }] })),
@@ -138,11 +166,11 @@ export const pageLlmApi: Route = Effect.gen(function* () {
     Effect.result
   );
   if (answer._tag == "Failure") {
-    console.log(`page model: ${visitor.login} on ${now.doc.id} (${now.model}) failed: ${modelError(answer.failure)}`);
+    console.log(`page model: ${login} on ${now.doc.id} (${now.model}) failed: ${modelError(answer.failure)}`);
     return fail("error", `The model failed: ${modelError(answer.failure)}`, 502);
   }
   const { text, input, output } = answer.success;
   yield* call(() => pageLlm.finish(id, { input, output }));
-  console.log(`page model: ${visitor.login} on ${now.doc.id} (${now.model}): ${input} in, ${output} out`);
+  console.log(`page model: ${login} on ${now.doc.id} (${now.model}): ${input} in, ${output} out`);
   return json({ text });
 });
