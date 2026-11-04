@@ -2,6 +2,9 @@
 // that answers. Pure: no network, no files (deploy/own/facts.ts observes; deploy/own/cli.ts acts). DEPLOY.md is the
 // manual; `bun own status` prints these steps, and the local checklist page (deploy/own/page.ts) shows them.
 
+import type { Target } from "../../control/deploys/pipeline";
+import { ACCOUNT, PRODUCTION } from "../targets";
+
 /** The person's decisions, asked all at once (`bun own ask`), with these defaults. No secret is ever in here. */
 export interface Answers {
   /** The production address: a hostname on a zone in the account ("erga.example.com"). */
@@ -164,6 +167,41 @@ export function varsOf(a: Answers, ids: { github?: string; google?: string }): R
     SERVER_DEFAULTS: JSON.stringify(PRESETS[a.preset].defaults),
     CLOUDFLARE_OAUTH_CLIENT_ID: "",
     DEPLOY_TARGET: "",
+  };
+}
+
+/**
+ * The pipeline's target for one of the person's servers: `bun own deploy` sends the secrets it has; a GitHub Actions
+ * deploy (deploy/actions.ts) sends none, and the Worker keeps the ones it has (keepSecrets).
+ */
+export function ownTarget(
+  a: Answers,
+  t: TargetName,
+  o: {
+    account: string;
+    zones: string[];
+    subdomain: string | null;
+    ids: { github?: string; google?: string };
+    secrets: Record<string, string>;
+  }
+): Target {
+  const host = hostOf(a, t),
+    n = namesOf(host);
+  const zoneName = o.zones.filter((z) => host == z || host.endsWith(`.${z}`)).sort((x, y) => y.length - x.length)[0];
+  return {
+    label: t,
+    accountId: o.account,
+    workerName: n.worker,
+    databaseName: n.database,
+    ...(a.pages == "shared" ? { subdomain: o.subdomain ?? n.worker.slice(0, 40), createSubdomain: !o.subdomain } : {}),
+    app: { kind: "domain", zoneName, hostname: host },
+    pages: a.pages == "shared" ? { kind: "shared" } : { kind: "zone", zoneName: a.pages },
+    vars: varsOf(a, o.ids),
+    secrets: o.secrets,
+    keepSecrets: true,
+    checkVersion: true,
+    // Erga's own erga.dev names stay out of reach, in Erga's own account.
+    guard: { ...PRODUCTION, accountId: ACCOUNT },
   };
 }
 

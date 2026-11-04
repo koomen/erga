@@ -32,3 +32,29 @@ jobs:
         env:
           # A pull request: its target branch. A push: the commit before it (or origin/staging for a new branch).
           ERGA_FORMAT_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+
+  # After the tests pass: a push to main deploys production, a push to staging deploys staging (deploy/actions.ts).
+  # A fork deploys its own servers from its repository variables (deploy/actions-plan.ts); a repository without the
+  # secret CLOUDFLARE_API_TOKEN deploys nothing. One deploy per branch at a time: a newer push waits, and replaces any
+  # older one that waits.
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'staging')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: deploy-${{ github.ref_name }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - run: bun install --frozen-lockfile
+      - run: bun deploy/actions.ts ${{ github.ref_name }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ERGA_VARS: ${{ toJSON(vars) }}
