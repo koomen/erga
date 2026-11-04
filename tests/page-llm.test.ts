@@ -20,3 +20,16 @@ test("calls count against the visitor's hour and the server's, from the moment t
   expect(underLimit(await llm.used(t, "bo"), PAGE_LLM_LIMITS.visitor)).toBe(true);
   expect(underLimit({ requests: PAGE_LLM_LIMITS.visitor.requests, tokens: 0 }, PAGE_LLM_LIMITS.visitor)).toBe(false);
 });
+
+test("signed-out visitors (login ip:...) count together, apart from the signed-in ones", async () => {
+  const llm = new PageLlm(memory());
+  const t = 10 * PAGE_LLM_LIMITS.hour;
+  const a = await llm.start({ login: "ip:00aa", docId: "home", model: "haiku", now: t - 10 });
+  await llm.finish(a, { input: 100, output: 200 });
+  await llm.start({ login: "ip:00bb", docId: "home", model: "haiku", now: t - 5 });
+  await llm.start({ login: "ada", docId: "home", model: "haiku", now: t - 5 });
+  await llm.start({ login: "ip:00cc", docId: "home", model: "haiku", now: t - PAGE_LLM_LIMITS.hour - 1 });
+  expect(await llm.usedByGuests(t)).toEqual({ requests: 2, tokens: 300 });
+  expect(await llm.used(t, "ip:00aa")).toEqual({ requests: 1, tokens: 300 });
+  expect(await llm.used(t)).toEqual({ requests: 3, tokens: 300 });
+});
