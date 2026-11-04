@@ -11,6 +11,7 @@ export interface Commit {
   /** The message's lines after the subject. */
   body?: string;
   at?: number;
+  author?: string;
 }
 
 /** A server as GET /api/deploys/version and GET /api/health answer: its release (12 characters) and its health. */
@@ -44,6 +45,7 @@ export interface Branch {
   conflicts: string[] | null;
   at: number;
   subject: string;
+  author?: string;
 }
 
 /** Why `bun erga merge <branch>` must not go on, or null. */
