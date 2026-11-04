@@ -21,6 +21,7 @@
   },
   "include": [
     "shared/text-imports.d.ts",
+    "bench",
     "deploy",
     "dev",
     "tests",

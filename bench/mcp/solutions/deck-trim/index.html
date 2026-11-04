@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tidewater Robotics: seed round</title>
+<script type="module" src="https://erga.dev/erga/steps/editor.js"></script>
+<script type="module" src="slides.js"></script>
+<meta name="erga-api" content="api.js">
+<style>
+  /* A deck of 16:9 slides (Google Slides' shape), one at a time, as large as the window allows: slides.js shows them
+     and adds slides in the editor (with api.js), and erga/steps draws back, forward and the list of slides. Sizes
+     inside a slide are in cqw (hundredths of the slide's width), so everything scales with it. */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #f1f3f4; }
+  body { display: grid; place-items: center; }
+  .slide { grid-area: 1 / 1; container-type: inline-size; box-sizing: border-box; overflow: hidden;
+    width: min(100vw, calc(100vh * 16 / 9)); height: min(100vh, calc(100vw * 9 / 16));
+    padding: 5.5cqw 6.5cqw; display: flex; flex-direction: column; justify-content: flex-start; gap: 2.5cqw; background: #fff;
+    font-family: Arial, Helvetica, sans-serif; color: #202124; box-shadow: 0 1px 3px rgba(60, 64, 67, .3); }
+  .slide[hidden] { display: none; }
+  .slide h1, .slide h2, .slide p, .slide ul { margin: 0; }
+  .slide h1 { font-size: 7.2cqw; font-weight: 400; line-height: 1.15; }
+  .slide h2 { font-size: 5cqw; font-weight: 400; line-height: 1.2; }
+  .slide p, .slide li { font-size: 2.5cqw; line-height: 1.4; }
+  /* The title slide: its title and subtitle in the middle. */
+  .slide[data-layout="title"] { justify-content: center; align-items: stretch; text-align: center; gap: 2cqw; }
+  .slide[data-layout="title"] p { font-size: 3.3cqw; color: #5f6368; }
+  /* The deck's own additions: a line of figures, and the small grey line under a heading. */
+  .slide .lede { color: #5f6368; }
+  .slide .stats { display: flex; gap: 4cqw; margin-top: 1cqw; }
+  .slide .stat { flex: 1; }
+  .slide .stat strong { display: block; font-size: 5.5cqw; font-weight: 400; color: #1a73e8; }
+  .slide .stat span { font-size: 2cqw; color: #5f6368; }
+</style>
+</head>
+<body>
+<section class="slide" data-layout="title">
+  <h1>Tidewater Robotics</h1>
+  <p>Hull-cleaning robots for working harbours · Seed round, November</p>
+</section>
+<section class="slide" data-layout="content">
+  <h2>The problem</h2>
+  <ul>
+    <li>Barnacles and weed on a ship's hull raise fuel use by up to 10%.</li>
+    <li>Cleaning today means divers or a dry dock: slow, costly and dangerous.</li>
+    <li>New rules in the EU and Australia limit in-water cleaning that releases debris.</li>
+  </ul>
+</section>
+<section class="slide" data-layout="content">
+  <h2>Our robot</h2>
+  <ul>
+    <li>A magnetic crawler that cleans a hull while the ship is loading in port.</li>
+    <li>It captures 98% of the debris it removes, so ports allow it.</li>
+    <li>One operator on the quay runs two robots from a tablet.</li>
+  </ul>
+</section>
+<section class="slide" data-layout="content">
+  <h2>Traction</h2>
+  <p class="lede">Twelve months since the first paid clean.</p>
+  <div class="stats">
+    <p class="stat"><strong>214</strong><span>hulls cleaned</span></p>
+    <p class="stat"><strong>3</strong><span>ports under contract</span></p>
+    <p class="stat"><strong>$1.2M</strong><span>annual recurring revenue</span></p>
+  </div>
+</section>
+<section class="slide" data-layout="content">
+  <h2>Business model</h2>
+  <ul>
+    <li>Ports pay a yearly licence for each robot stationed on their quay.</li>
+    <li>Shipping lines pay per clean, booked with their berth.</li>
+    <li>Gross margin on a clean is 64% today, and 75% at two robots per port.</li>
+  </ul>
+</section>
+<section class="slide" data-layout="content">
+  <h2>Team</h2>
+  <ul>
+    <li>Maren Olsen, CEO: ran port operations at a North Sea terminal for eight years.</li>
+    <li>David Okafor, CTO: built underwater inspection drones for offshore wind.</li>
+    <li>Lucía Gómez, head of sales: sold berth software to 30 ports in Europe.</li>
+  </ul>
+</section>
+<section class="slide" data-layout="content">
+  <h2>Roadmap</h2>
+  <ul>
+    <li>Next quarter: second-generation robot with twice the cleaning speed.</li>
+    <li>Next year: Rotterdam, Singapore and Long Beach.</li>
+    <li>In two years: inspection reports for insurers from the same robot.</li>
+  </ul>
+</section>
+<section class="slide" data-layout="content">
+  <h2>The ask</h2>
+  <ul>
+    <li>We are raising $6M to build 20 robots and open five more ports.</li>
+    <li>Half of the round goes to robots, a third to the team, the rest to certification.</li>
+    <li>The round gives us 24 months of runway.</li>
+  </ul>
+</section>
+<section class="slide" data-layout="title">
+  <h1>Thank you</h1>
+  <p>maren@tidewater.example · tidewater.example</p>
+</section>
+</body>
+</html>

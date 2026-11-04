@@ -129,6 +129,9 @@ Found a new trap? Write it here, in the same change.
   broken indentation that the check then flags again. Format a new file whole:
   `node_modules/.bin/biome format --write <file>`.
 - `rm` only with `"${VAR:?}"` or a literal path, never a bare `$VAR`.
+- Bun older than 1.4 (`bun --version`) minifies `client/inline/` with other names: the dev server then rewrites
+  `server/pages/inline-code.ts`, and `tests/inline-code.test.ts` fails on the committed file. Use Bun 1.4.2, as
+  the builder does (control/builder/Dockerfile), and never commit a rewrite made by an older Bun.
 - A passing local test, even one that fakes staging, is not proof. Run the
   real flow on staging, end to end, before you say a fix works. If you need
   an admin credential you don't have, say so.

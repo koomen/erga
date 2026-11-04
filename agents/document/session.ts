@@ -223,7 +223,8 @@ async function startSession(opts: SessionOptions, sandbox: Sandbox): Promise<Age
         // (Only an edit of a page that's there, or of a file someone has open in the source view: a new file, or a
         // stylesheet nobody has open, can't be in anyone's typing.)
         const clean = path != null ? cleanPath(path) : null;
-        const page = !!clean && /\.html?$/i.test(clean) && files(doc).has(clean);
+        // (A glob's edit may reach any page.)
+        const page = !!clean && (/[*?{]/.test(clean) || (/\.html?$/i.test(clean) && files(doc).has(clean)));
         const open = !!clean && someoneHas(clean);
         // (Named as its edits are: a shared agent's under its person, via its token's label.)
         const who = via ? byLine(owner.name, via) : me.name;

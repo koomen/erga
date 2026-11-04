@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unit converter</title>
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<main class="card">
+  <h1>Unit converter</h1>
+  <p class="hint">Pick a kind of quantity, type a value, and choose the units.</p>
+  <form id="converter" autocomplete="off">
+    <label class="field">Quantity
+      <select id="category">
+        <option value="length">Length</option>
+        <option value="mass">Mass</option>
+        <option value="temperature">Temperature</option>
+        <option value="volume">Volume</option>
+      </select>
+    </label>
+    <label class="field">Value
+      <input id="value" type="number" step="any" value="1">
+    </label>
+    <div class="units">
+      <label class="field">From
+        <select id="from"></select>
+      </label>
+      <label class="field">To
+        <select id="to"></select>
+      </label>
+    </div>
+  </form>
+  <p class="result"><output id="result" for="value from to"></output></p>
+  <h2>Recent conversions</h2>
+  <ol id="history" class="history"></ol>
+</main>
+</body>
+</html>
