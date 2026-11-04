@@ -33,3 +33,6 @@ deploy/builder/deps/
 # The load benchmark's results (e2e/bench/run.ts)
 .bench/
 control/wrangler.deploy.json
+
+# Your own Erga's settings and secrets (bun own: deploy/own/store.ts)
+.erga/
