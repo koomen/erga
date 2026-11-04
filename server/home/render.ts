@@ -28,6 +28,7 @@ import {
   type Account,
 } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
+import { TOKEN_SLOT } from "./llm-token.ts";
 
 /** Where a deploy's files are served: /_home-files/<gen>/<path> (/_home is the homepage project's address), each address never reused, so browsers keep them for good. */
 export const HOME_FILES = "/_home-files/";
@@ -132,8 +133,9 @@ export async function renderHome(opts: {
   const head = /<head[\s>]/i.test(source);
   const headPart = source.slice(0, Math.max(0, source.search(/<body[\s>]/i)) || source.length);
   const titled = /<title[\s>]/i.test(headPart);
-  // And first, window.ergaLLM, the page's model, before any script of its own (client/inline/home-llm.ts).
-  const extra = `${VIEWPORT}<script>${inlineCall("home-llm", opts.doc)}</script>${STILL}${titled ? "" : `<title>${esc(opts.title)}</title>`}`;
+  // And first, window.ergaLLM, the page's model, before any script of its own (client/inline/home-llm.ts), with the slot
+  // for its page token, which serve.ts fills for each visitor (withToken).
+  const extra = `${VIEWPORT}<script>${inlineCall("home-llm", opts.doc, TOKEN_SLOT)}</script>${STILL}${titled ? "" : `<title>${esc(opts.title)}</title>`}`;
   let css = "", titleDone = false;
   const rewriter = new HTMLRewriter()
     .on("base[href]", { element(e) { try { base = new URL(e.getAttribute("href")!, base); } catch { /* not a URL */ } } })
@@ -168,6 +170,20 @@ export async function renderHome(opts: {
     return { before: html.slice(0, at), after: html.slice(at) };
   }
   return { before: html.slice(0, at), after: html.slice(at + MARK.length) };
+}
+
+/** The deployed homepage's page (renderHome's `before`) with its page token (llm-token.ts) in the slot. */
+export const withToken = (before: string, token: string) => before.replace(JSON.stringify(TOKEN_SLOT), JSON.stringify(token));
+
+/**
+ * Another HTML page of the homepage's (served as it is at its own path: serve.ts), with window.ergaLLM for document
+ * `doc` and its page `token` before any script of its own, as the homepage's own page has it (renderHome).
+ */
+export function withHomeLlm(html: string, doc: string, token: string): string {
+  const script = `<script>${inlineCall("home-llm", doc, token)}</script>`;
+  const head = /<head(\s[^>]*)?>/i.exec(html);
+  const at = head ? head.index + head[0].length : /^\s*(<!doctype[^>]*>)?/i.exec(html)![0].length;
+  return html.slice(0, at) + script + html.slice(at);
 }
 
 /**

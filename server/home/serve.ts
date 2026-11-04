@@ -12,7 +12,8 @@ import { roleMay } from "../directory/index.ts";
 import { accountOf, link, OWN_ACCOUNT, withEdit } from "../pages/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import type { LivePage } from "./deploys.ts";
-import { HOME_FILES, homeHeader, pageInter } from "./render.ts";
+import { HOME_FILES, homeHeader, pageInter, withHomeLlm, withToken } from "./render.ts";
+import { pageToken } from "./llm-token.ts";
 import { actingAdmin, mayDeploy } from "../identity/index.ts";
 
 /** The snapshot as this isolate last had it, and when it last asked whether it's still current. */
@@ -124,7 +125,7 @@ async function homePage(request: Request, platform: Platform): Promise<Response 
   const encoder = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
     async start(c) {
-      c.enqueue(encoder.encode(page.before));
+      c.enqueue(encoder.encode(withToken(page.before, await pageToken(platform.secret, page.docId, Date.now()))));
       let header = "";
       try { header = await controls; } catch (e) { console.log(`the homepage's controls failed: ${e}`); }
       c.enqueue(encoder.encode(header + page.after));
@@ -182,7 +183,7 @@ async function homeRoot(request: Request, platform: Platform): Promise<Response 
   return homeFileAt(request, platform, url, rel);
 }
 
-/** The current deploy's file `rel`, as it is; null if the deploy has none. `own`: a page with nothing of the site's in it. */
+/** The current deploy's file `rel`, as it is (an HTML page with window.ergaLLM); null if the deploy has none. `own`: a page with nothing of the site's in it. */
 async function homeFileAt(request: Request, platform: Platform, url: URL, rel: string, own = false): Promise<Response | null> {
   const live = await livePage(platform, url);
   if (!live || !live.page.files.includes(rel)) return null;
@@ -195,7 +196,11 @@ async function homeFileAt(request: Request, platform: Platform, url: URL, rel: s
     ...AUTHORS_POLICY,
   };
   if (own) headers[OWN_ACCOUNT] = "1";
-  return new Response(request.method == "HEAD" ? null : (file.bytes as BodyInit), { headers });
+  // An HTML page gets the homepage's model (window.ergaLLM), as the homepage's own page does.
+  const body = /^text\/html/i.test(file.type)
+    ? withHomeLlm(new TextDecoder().decode(file.bytes), live.page.docId, await pageToken(platform.secret, live.page.docId, Date.now()))
+    : (file.bytes as BodyInit);
+  return new Response(request.method == "HEAD" ? null : body, { headers });
 }
 
 /**
