@@ -103,6 +103,24 @@ The variable `ERGA_HOST` tells the workflow that the repository is a fork.
 Without it, the workflow deploys the targets in `deploy/targets.json`, and
 only in Erga's own account.
 
+## A second deployment from the same repository
+
+`koomen/erga` also deploys erga.koomen.dev. It is in the same Cloudflare
+account, so the same `CLOUDFLARE_API_TOKEN` deploys it.
+
+- The job `deploy-koomen` (`.github/workflows/test.yml`) runs after
+  production's deploy, on a push to `main` only. erga.koomen.dev has no
+  staging.
+- Its answers are the variables of the GitHub environment `koomen-test`
+  (Settings > Environments > koomen-test): `CLOUDFLARE_ACCOUNT_ID`, `ERGA_HOST`,
+  `ERGA_STAGING`, `ERGA_PROVIDERS`, `ERGA_PRESET`, `ERGA_ADMIN`,
+  `ERGA_PAGES` and `ERGA_GITHUB_CLIENT_ID`. They are the same as a
+  fork's. The environment's variables replace the repository's.
+- Its Worker keeps its own secrets. No secret of it is in GitHub.
+
+To add another deployment, make an environment with its variables, and
+copy the job with the environment's name.
+
 ## Staging
 
 Staging is for admins only. It runs on a copy of production's data. The

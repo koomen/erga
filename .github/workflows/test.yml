@@ -58,3 +58,29 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           ERGA_VARS: ${{ toJSON(vars) }}
+
+  # A second deployment from this repository: erga.koomen.dev, after Erga's own production. Its answers (ERGA_HOST and
+  # the others, as a fork's) are the variables of the GitHub environment `koomen-test`, over the repository's. It has no
+  # staging, so only main deploys it (deploy/actions-plan.ts).
+  deploy-koomen:
+    needs: deploy
+    if: github.event_name == 'push' && github.ref_name == 'main'
+    environment: koomen-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: deploy-koomen-test
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - run: bun install --frozen-lockfile
+      - run: bun deploy/actions.ts ${{ github.ref_name }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ERGA_VARS: ${{ toJSON(vars) }}
