@@ -1,11 +1,11 @@
 // Your own Erga: what the person decides, the names that follow from it, and the steps from a clone to a server
-// that answers. Pure: no network, no files (deploy/own/facts.ts observes; deploy/own/cli.ts acts). DEPLOY.md is the
-// manual; `bun own status` prints these steps, and the local checklist page (deploy/own/page.ts) shows them.
+// that answers. Pure: no network, no files (deploy/own/facts.ts observes; deploy/own/cli.ts acts). `bun erga own skill` is the
+// manual; `bun erga own status` prints these steps, and the local checklist page (deploy/own/page.ts) shows them.
 
 import type { Target } from "../pipeline/pipeline";
 import { ACCOUNT, PRODUCTION } from "../targets";
 
-/** The person's decisions, asked all at once (`bun own ask`), with these defaults. No secret is ever in here. */
+/** The person's decisions, asked all at once (`bun erga own ask`), with these defaults. No secret is ever in here. */
 export interface Answers {
   /** The production address: a hostname on a zone in the account ("erga.example.com"). */
   host: string;
@@ -127,7 +127,7 @@ export function parseAnswer(key: keyof Answers, raw: string): { value: Answers[k
 
 /** What's still wrong with the answers as a whole (each one on its own is parsed already); null if nothing. */
 export function answersProblem(a: Answers, zones: string[]): string | null {
-  if (!a.host) return "Answer the questions first (bun own ask).";
+  if (!a.host) return "Answer the questions first (bun erga own ask).";
   if (!a.admin) return "Name the first admin: your GitHub login.";
   const zoneOf = (h: string) => zones.filter((z) => h == z || h.endsWith(`.${z}`)).sort((x, y) => y.length - x.length)[0] ?? null;
   for (const h of [a.host, a.staging].filter(Boolean))
@@ -171,7 +171,7 @@ export function varsOf(a: Answers, ids: { github?: string; google?: string }): R
 }
 
 /**
- * The pipeline's target for one of the person's servers: `bun own deploy` sends the secrets it has; a GitHub Actions
+ * The pipeline's target for one of the person's servers: `bun erga own deploy` sends the secrets it has; a GitHub Actions
  * deploy (deploy/actions.ts) sends none, and the Worker keeps the ones it has (keepSecrets).
  */
 export function ownTarget(
@@ -225,8 +225,71 @@ export interface Facts {
   targets: Partial<Record<TargetName, TargetFacts>>;
   /** Which secrets the secrets file holds (names only). */
   secrets: string[];
-  /** The upstream's main (erga.dev), to tell if an update is waiting. */
-  upstream: string | null;
+  /** The person's fork on GitHub, as gh sees it (deploy/own/facts.ts, githubFacts). Absent: not looked at. */
+  github?: GitHubFacts;
+}
+
+/** The repository GitHub Actions deploys from: the person's fork of Erga, its variables, its secrets and its last run. */
+export interface GitHubFacts {
+  /** gh's login, or null: gh is missing or not logged in. */
+  login: string | null;
+  /** The checkout's origin on GitHub (owner/name), and the repository it is a fork of. */
+  repo: string | null;
+  parent: string | null;
+  /** The Actions variables and the secrets' names (null: not readable). */
+  variables: Record<string, string> | null;
+  secrets: string[] | null;
+  /** The last workflow run of a push to main. */
+  run: { sha: string; status: string; conclusion: string; url: string } | null;
+}
+
+/** Erga's own repository on GitHub, which a person forks. */
+export const UPSTREAM_REPO = "koomen/erga";
+
+/**
+ * The Actions variables that make the fork deploy the person's servers (deploy/actions-plan.ts reads them): the same
+ * answers as .erga/own.json, and the account. Nothing secret.
+ */
+export function actionVars(a: Answers, ids: { github?: string; google?: string }, account: string): Record<string, string> {
+  return {
+    CLOUDFLARE_ACCOUNT_ID: account,
+    ERGA_HOST: a.host,
+    ...(a.staging ? { ERGA_STAGING: a.staging } : {}),
+    ERGA_PROVIDERS: a.providers.join(","),
+    ERGA_PRESET: a.preset,
+    ERGA_ADMIN: a.admin,
+    ...(a.company ? { ERGA_COMPANY: a.company } : {}),
+    ERGA_PAGES: a.pages,
+    ERGA_GITHUB_CLIENT_ID: ids.github ?? "",
+    ...(a.providers.includes("google") && ids.google ? { ERGA_GOOGLE_CLIENT_ID: ids.google } : {}),
+  };
+}
+
+/** The variables that are missing or different on GitHub. */
+export const varsToSet = (want: Record<string, string>, have: Record<string, string> | null) =>
+  Object.fromEntries(Object.entries(want).filter(([k, v]) => have?.[k] != v));
+
+/** The permissions the Actions deploy's Cloudflare token needs, as Cloudflare's template link takes them. */
+export const TOKEN_PERMISSIONS = [
+  { key: "account_settings", type: "read" },
+  { key: "workers_scripts", type: "edit" },
+  { key: "d1", type: "edit" },
+  { key: "workers_r2", type: "edit" },
+  { key: "workers_routes", type: "edit" },
+  { key: "zone", type: "read" },
+  { key: "dns", type: "edit" },
+];
+
+/** Cloudflare's "Create API token" page, filled in with exactly what the deploy needs. */
+export const tokenTemplateUrl = () =>
+  `https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=${encodeURIComponent(JSON.stringify(TOKEN_PERMISSIONS))}&accountId=*&zoneId=all&name=${encodeURIComponent("Erga deploy (GitHub Actions)")}`;
+
+/** Why forking failed, in words, from gh's error. */
+export function forkProblem(err: string): string {
+  if (/auth login|not logged|authentication/i.test(err)) return "gh is not logged in. The person runs: gh auth login";
+  if (/HTTP 404|Not Found|Could not resolve/i.test(err))
+    return `GitHub did not find ${UPSTREAM_REPO}, or this login cannot read it. Check that gh is logged in as the person (gh auth status).`;
+  return `gh repo fork failed: ${err.slice(0, 300)}`;
 }
 
 export interface TargetFacts {
@@ -269,7 +332,7 @@ export const hasSecret = (f: Facts, key: string) =>
 
 export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { github?: string; google?: string } }): Step[] {
   const out: Step[] = [];
-  const page = o.port ? `http://localhost:${o.port}` : "the checklist page (bun own start)";
+  const page = o.port ? `http://localhost:${o.port}` : "the checklist page (bun erga own start)";
   const add = (s: Omit<Step, "state"> & { ok: boolean | null; failed?: boolean }) => {
     const before = out.length && out.some((x) => x.state != "done");
     out.push({
@@ -298,7 +361,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
     detail: f.login.ok ? `${f.login.accounts.length} account(s)${f.account ? `; using ${f.account}` : ""}` : f.login.why,
     next: !f.login.ok
       ? "The agent runs `bunx cf auth login`: a browser opens; the person signs in to Cloudflare and clicks Allow."
-      : "Several accounts: the agent asks which one, then runs: bun own set account=<id>",
+      : "Several accounts: the agent asks which one, then runs: bun erga own set account=<id>",
   });
   const problem = a ? answersProblem(a, f.zones) : "Answer the questions first.";
   add({
@@ -307,7 +370,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
     who: "person",
     ok: !problem,
     detail: a && !problem ? summary(a) : (problem ?? ""),
-    next: `The agent asks all of them in one message (bun own ask shows them, with defaults), then records the answers with bun own set key=value ... The person can also answer on ${page}.`,
+    next: `The agent asks all of them in one message (bun erga own ask shows them, with defaults), then records the answers with bun erga own set key=value ... The person can also answer on ${page}.`,
   });
   if (!a || problem) return out;
   const ghSecret = hasSecret(f, "GITHUB_CLIENT_SECRET");
@@ -317,7 +380,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
     who: "person",
     ok: !!o.ids.github && ghSecret,
     detail: o.ids.github ? `client id ${o.ids.github}${ghSecret ? ", secret stored" : ", no secret yet"}` : "none yet",
-    next: `On ${page}, the person clicks "Create the GitHub App", then "Create GitHub App" on GitHub. Erga stores its id and secret by itself. (Already have an app? bun own signin github --from-file <file with GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET>, and add the callback ${targetsOf(
+    next: `On ${page}, the person clicks "Create the GitHub App", then "Create GitHub App" on GitHub. Erga stores its id and secret by itself. (Already have an app? bun erga own signin github --from-file <file with GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET>, and add the callback ${targetsOf(
       a
     )
       .map((t) => callbackOf(hostOf(a, t), "github"))
@@ -363,10 +426,10 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
             ? `release ${tf.version}${f.head && tf.version != f.head.slice(0, 12) ? ` (the checkout is at ${f.head.slice(0, 12)})` : ""}, health ${tf.health == "ok" ? "ok" : ((tf.health as { bad: string } | null)?.bad ?? "unknown")}`
             : "not deployed yet"),
       next: clash
-        ? `The person decides: free ${host} or pick another address (bun own set host=...).`
+        ? `The person decides: free ${host} or pick another address (bun erga own set host=...).`
         : f.dirty
           ? "Commit or stash the changed files first: a deploy builds a commit."
-          : `Run: bun own deploy ${t}`,
+          : `Run: bun erga own deploy ${t}`,
     });
     add({
       id: `signin-${t}`,
@@ -380,7 +443,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
           : typeof tf?.signIn == "object" && tf.signIn
             ? tf.signIn.bad
             : "not checked",
-      next: `Run: bun own deploy ${t} (it sends the sign-in app's values), then bun own status.`,
+      next: `Run: bun erga own deploy ${t} (it sends the sign-in app's values), then bun erga own status.`,
     });
     add({
       id: `admin-${t}`,
@@ -392,6 +455,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
       next: `The person opens https://${host}/auth/sign-in and signs in with GitHub as ${a.admin} (GitHub asks to authorize the app once).`,
     });
   }
+  githubSteps(a, f, o.ids, add);
   if (a.preset == "company" && a.company)
     add({
       id: "rule",
@@ -399,9 +463,61 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
       who: "agent",
       ok: !!f.targets.production?.rule,
       detail: f.targets.production?.rule ? "the access rule is there" : "no rule yet",
-      next: "Run: bun own preset (it adds the access rule with your admin token).",
+      next: "Run: bun erga own preset (it adds the access rule with your admin token).",
     });
   return out;
+}
+
+/** After the first deploy: the fork on GitHub, and GitHub Actions deploys each push to main (and staging). */
+function githubSteps(
+  a: Answers,
+  f: Facts,
+  ids: { github?: string; google?: string },
+  add: (s: Omit<Step, "state"> & { ok: boolean | null; failed?: boolean }) => void
+) {
+  const g = f.github;
+  const own = !!g?.repo && g.repo.toLowerCase() != UPSTREAM_REPO;
+  add({
+    id: "fork",
+    title: "Your fork on GitHub",
+    who: "agent",
+    ok: own,
+    detail: !g
+      ? "not looked at"
+      : !g.login
+        ? "gh is not logged in"
+        : own
+          ? `${g.repo}${g.parent ? `, a fork of ${g.parent}` : ""}`
+          : `origin is ${g.repo ?? "not on GitHub"}`,
+    next: !g?.login ? "The person runs: gh auth login. Then: bun erga own fork" : "Run: bun erga own fork",
+  });
+  const missing = f.account ? Object.keys(varsToSet(actionVars(a, ids, f.account), g?.variables ?? null)) : ["CLOUDFLARE_ACCOUNT_ID"];
+  add({
+    id: "actions-vars",
+    title: "GitHub Actions knows your servers",
+    who: "agent",
+    ok: own && !!g?.variables && !missing.length,
+    detail: !g?.variables ? "variables not read" : missing.length ? `to set: ${missing.join(", ")}` : "every variable is set",
+    next: "Run: bun erga own actions (it sets the variables, and turns Actions on in the fork).",
+  });
+  add({
+    id: "actions-token",
+    title: "GitHub Actions may deploy to Cloudflare",
+    who: "person",
+    ok: !!g?.secrets?.includes("CLOUDFLARE_API_TOKEN"),
+    detail: g?.secrets?.includes("CLOUDFLARE_API_TOKEN") ? "the secret CLOUDFLARE_API_TOKEN is set" : "no CLOUDFLARE_API_TOKEN secret yet",
+    next: `The person makes a token at ${tokenTemplateUrl()} (Continue to summary, Create Token), then pastes it on the checklist page, or runs bun erga own actions-token in a terminal. Never in the chat.`,
+  });
+  const live = f.targets.production?.version;
+  add({
+    id: "actions-run",
+    title: "GitHub deploys main",
+    who: "agent",
+    ok: g?.run?.status == "completed" && g.run.conclusion == "success" && !!live && g.run.sha.slice(0, 12) == live,
+    failed: g?.run?.status == "completed" && g.run.conclusion != "success",
+    detail: !g?.run ? "no run of main yet" : `the last run of main: ${g.run.conclusion || g.run.status} (${g.run.url})`,
+    next: "Run: bun erga own update (it syncs the fork with Erga's main; GitHub then tests and deploys it). A failed run: read its log.",
+  });
 }
 
 export const summary = (a: Answers) =>

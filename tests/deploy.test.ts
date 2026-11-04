@@ -1,4 +1,4 @@
-// The deploy pipeline on a new server in someone's own account (as `bun own` deploys one), against the pretend
+// The deploy pipeline on a new server in someone's own account (as `bun erga own` deploys one), against the pretend
 // Cloudflare, with the release this checkout builds (deploy/release.ts, made here if there's none): every step, what
 // it asks Cloudflare for, a second deploy, what it refuses, its errors, and the pieces around it (the assets' hash,
 // the shared pages host).

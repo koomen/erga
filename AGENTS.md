@@ -2,19 +2,14 @@
 
 Read the code. This file only holds what reading won't tell you: the rules,
 the traps, and the decisions that look arbitrary until you know why.
-README.md maps the folders. Pete (`koomen`) owns Erga.
+Pete (`koomen`) owns Erga.
 
 ## How to work
 
-A small fix that fits in one commit goes straight to `staging`. Larger work
-goes on a feature branch of its own (`git push origin HEAD:<branch>`, any
-name but `staging` and `main`); Pete, or an agent he asks, merges it into
-staging as one commit. `bun run test` (format, lint, typecheck,
-unit tests, smoke run) must end with `all passing` before every push, to a
-feature branch too. Run the e2e file or folder of the part
-you change (`bun run test:e2e e2e/full/page/`); the whole suite
-(`bun run test:full`) only when asked. A new smoke test (`e2e/smoke/`, 90 s limit)
-replaces one.
+Run `bun erga skill` before you start, and do what it says. In short: one
+feature branch for each task, `bun run test` must end with `all passing`
+before each push, and only `bun erga` moves `staging` and `main`, when Pete
+asks. There are no pull requests.
 
 ## Testing as the user
 
@@ -41,23 +36,7 @@ result each time.
 
 ## Deploys
 
-docs/operations.md tells how a deployment builds, deploys and rolls back.
-Read it before you push to a deployment's repository. On Erga's own:
-
-1. Push to `staging` (`git push origin HEAD:staging`), or to a feature branch
-   (`git push origin HEAD:<branch>`). `origin` is GitHub
-   (`koomen/erga`). GitHub Actions deploys staging after the tests pass.
-   A feature branch does not deploy: Pete merges it into staging as one
-   commit, and staging deploys that.
-2. Push to `main` only when Pete asks: `git push origin staging:main`, after
-   staging is good. Production deploys from `main`.
-3. A push is not a deploy. `curl -s https://staging.erga.dev/api/deploys/version`
-   must show your commit before you say it is on staging. The run's log is
-   on GitHub (`gh run list --branch staging`, then `gh run view <id> --log`):
-   it shows each step, and a failed health check rolls back by itself.
-4. There is no Ops page and no deploy tool for agents. To deploy again,
-   re-run the workflow on GitHub; to deploy from a machine, `bun deploy/run.ts`
-   (docs/operations.md).
+`bun erga skill` tells how a change reaches staging and production.
 
 ## Standing rules
 
@@ -75,7 +54,7 @@ Read it before you push to a deployment's repository. On Erga's own:
    adds: deployed servers applied the old ones, and a rollback must still
    run on the new schema. A destructive one starts with
    `-- erga: destructive` and says why (`tests/migrations.test.ts`).
-4. **Keep the layers** (README.md, "The layout"; `tests/imports.test.ts`,
+4. **Keep the layers** (`tests/imports.test.ts`,
    `tests/browser-imports.test.ts`).
 5. **Server code uses Effect by default**: Schema for outside values, typed
    errors, Schedule, Config, `effect/http`, `effect/ai`. The browser never
@@ -220,7 +199,7 @@ Found a new trap? Write it here, in the same change.
   by the CSS highlight `erga-unshown`. A test that reads the page's text sees all of it at once. A page in the background
   shows it at once, unplayed. No change from elsewhere gets a highlight (Pete's decision): only the caret shows it.
 - A machine that asks for a new hostname a moment before its DNS record exists keeps "no such host" for up to
-  30 minutes (macOS caches the negative answer). `bun own` (deploy/own/facts.ts, `site`) looks up its servers'
+  30 minutes (macOS caches the negative answer). `bun erga own` (deploy/own/facts.ts, `site`) looks up its servers'
   names with Cloudflare's DNS over HTTPS for that reason; use `site` for any check of a new address.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.

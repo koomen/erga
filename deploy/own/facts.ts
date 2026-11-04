@@ -1,4 +1,4 @@
-// What `bun own` observes before it decides anything: this machine, the person's Cloudflare account, and each
+// What `bun erga own` observes before it decides anything: this machine, the person's Cloudflare account, and each
 // server as the world sees it. Each fact is what was seen, or null when it couldn't look (deploy/own/plan.ts decides).
 
 import { existsSync, readFileSync } from "node:fs";
@@ -6,10 +6,58 @@ import { join } from "node:path";
 import { Cloudflare, findDatabase } from "../pipeline/pipeline";
 import { d1 } from "../pipeline/account";
 import { machineCredential } from "../local-credential";
-import { type Answers, type Facts, hostOf, namesOf, type TargetFacts, type TargetName, targetsOf } from "./plan";
+import { type Answers, type Facts, type GitHubFacts, hostOf, namesOf, type TargetFacts, type TargetName, targetsOf } from "./plan";
 import { loadSecrets, type Own, ROOT, secretNames } from "./store";
 
-export const UPSTREAM = "https://github.com/koomen/erga.git";
+
+/** gh's answer as JSON, or null (gh missing, not logged in, or no access). */
+export function gh<T>(...args: string[]): T | null {
+  const r = Bun.spawnSync(["gh", ...args], { cwd: ROOT, stdout: "pipe", stderr: "ignore" });
+  if (r.exitCode != 0) return null;
+  try {
+    return JSON.parse(r.stdout.toString()) as T;
+  } catch {
+    return null;
+  }
+}
+
+/** The checkout's origin on GitHub (owner/name), or null. */
+export const originRepo = (): string | null => {
+  const m = /github\.com[:/]([^/]+\/[^/]+?)(\.git)?$/.exec(git("remote", "get-url", "origin") ?? "");
+  return m ? m[1] : null;
+};
+
+/** The person's fork as gh sees it: its parent, its Actions variables and secrets' names, and main's last run. */
+export function githubFacts(): GitHubFacts {
+  const login = gh<{ login: string }>("api", "user")?.login ?? null;
+  const repo = originRepo();
+  if (!login || !repo) return { login, repo, parent: null, variables: null, secrets: null, run: null };
+  const view = gh<{ parent: { owner: { login: string }; name: string } | null }>("repo", "view", repo, "--json", "parent");
+  const variables = gh<{ name: string; value: string }[]>("variable", "list", "-R", repo, "--json", "name,value");
+  const secrets = gh<{ name: string }[]>("secret", "list", "-R", repo, "--json", "name");
+  const run = gh<{ headSha: string; status: string; conclusion: string; url: string }[]>(
+    "run",
+    "list",
+    "-R",
+    repo,
+    "--branch",
+    "main",
+    "--event",
+    "push",
+    "-L",
+    "1",
+    "--json",
+    "headSha,status,conclusion,url"
+  )?.[0];
+  return {
+    login,
+    repo,
+    parent: view?.parent ? `${view.parent.owner.login}/${view.parent.name}` : null,
+    variables: variables ? Object.fromEntries(variables.map((v) => [v.name, v.value])) : null,
+    secrets: secrets ? secrets.map((s) => s.name) : null,
+    run: run ? { sha: run.headSha, status: run.status, conclusion: run.conclusion, url: run.url } : null,
+  };
+}
 const git = (...args: string[]) => {
   const r = Bun.spawnSync(["git", ...args], { cwd: ROOT });
   return r.exitCode == 0 ? r.stdout.toString().trim() : null;
@@ -188,7 +236,7 @@ async function heldBy(cf: Cloudflare, acc: string, worker: string): Promise<Targ
   };
 }
 
-/** Everything `bun own status` decides from. */
+/** Everything `bun erga own status` decides from. */
 export async function observe(own: Own, a: Answers | null): Promise<Facts & { zoneIds: { id: string; name: string }[] }> {
   const head = git("rev-parse", "HEAD");
   const dirty = !!git("status", "--porcelain", "--untracked-files=no");
@@ -205,7 +253,7 @@ export async function observe(own: Own, a: Answers | null): Promise<Facts & { zo
     workersSubdomain: null,
     targets: {},
     secrets: secretNames(loadSecrets()),
-    upstream: null,
+    github: githubFacts(),
   };
   const c = cloudflare();
   if ("why" in c) {
@@ -238,8 +286,6 @@ export async function observe(own: Own, a: Answers | null): Promise<Facts & { zo
   return facts;
 }
 
-/** The upstream's main: its commit (git ls-remote), or null. */
-export const upstreamHead = () => git("ls-remote", UPSTREAM, "refs/heads/main")?.split(/\s/)[0] ?? null;
 
 export const gitOf = git;
 export const readText = (p: string) => readFileSync(p, "utf8");

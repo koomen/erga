@@ -1,19 +1,22 @@
-#!/usr/bin/env bun
-// Your own Erga, deployed by your coding agent: `bun own <command>`. DEPLOY.md is the manual.
+// Your own Erga, deployed by your coding agent: `bun erga own <command>` (deploy/cli/main.ts).
 // Each command says what it saw, PASS or FAIL, and the next step. The person decides; the agent runs these.
 //
-//   bun own status [--json]          every step, done or not, and the next one (who does it, and how)
-//   bun own ask                      the person's questions, with the defaults, to ask in one message
-//   bun own set key=value ...        records answers (host, staging, providers, preset, admin, company, pages, account)
-//   bun own start [--port N]         the checklist page on localhost: steps, live checks, the person's forms, a chat
-//   bun own signin github|google --from-file <file>   an existing app's values (KEY=value lines), never printed
-//   bun own deploy [production|staging]               build this checkout and deploy it (makes what's missing)
-//   bun own token [production|staging]                an admin token for this agent, stored in .erga/secrets.json
-//   bun own home <folder> [production|staging]        the folder's files become the homepage project (/_home)
-//   bun own preset [production|staging]               the preset's access rule (company)
-//   bun own update                   pulls erga.dev's main, then deploys each server
-//   bun own inbox [--wait]           the person's new messages from the checklist page; bun own say "<text>" answers
-//   bun own remove <production|staging> --yes         deletes that server: its Workers, database and bucket
+//   bun erga own skill               the agent's manual: the steps, the rules, what to do when one fails
+//   bun erga own status [--json]     every step, done or not, and the next one (who does it, and how)
+//   bun erga own ask                 the person's questions, with the defaults, to ask in one message
+//   bun erga own set key=value ...   records answers (host, staging, providers, preset, admin, company, pages, account)
+//   bun erga own start [--port N]    the checklist page on localhost: steps, live checks, the person's forms, a chat
+//   bun erga own signin github|google --from-file <file>   an existing app's values (KEY=value lines), never printed
+//   bun erga own deploy [production|staging]               build this checkout and deploy it (makes what's missing)
+//   bun erga own fork [--dry-run]    forks koomen/erga to the person's GitHub, and makes the fork this checkout's origin
+//   bun erga own actions [--dry-run] sets the fork's Actions variables and turns Actions on: GitHub deploys main then
+//   bun erga own actions-token       reads a Cloudflare API token in the terminal (hidden) and stores it as the fork's secret
+//   bun erga own update              syncs the fork's main with Erga's (gh repo sync); GitHub then tests and deploys it
+//   bun erga own token [production|staging]                an admin token for this agent, stored in .erga/secrets.json
+//   bun erga own home <folder> [production|staging]        the folder's files become the homepage project (/_home)
+//   bun erga own preset [production|staging]               the preset's access rule (company)
+//   bun erga own inbox [--wait]      the person's new messages from the checklist page; bun erga own say "<text>" answers
+//   bun erga own remove <production|staging> --yes         deletes that server: its Workers, database and bucket
 
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -21,6 +24,7 @@ import { randomBytes } from "node:crypto";
 import { DeployError, findDatabase, runPipeline, Unhealthy } from "../pipeline/pipeline";
 import { d1 } from "../pipeline/account";
 import { buildHere } from "../run";
+import { OWN_SKILL } from "./skill";
 import { PRODUCTION } from "../targets";
 import { Tokens } from "../../server/identity/tokens";
 import type { Sql } from "../../server/directory/index";
@@ -32,6 +36,8 @@ import {
   namesOf,
   nextStep,
   ownTarget,
+  actionVars,
+  forkProblem,
   parseAnswer,
   PRESETS,
   QUESTIONS,
@@ -40,8 +46,11 @@ import {
   summary,
   type TargetName,
   targetsOf,
+  tokenTemplateUrl,
+  UPSTREAM_REPO,
+  varsToSet,
 } from "./plan";
-import { cloudflare, gitOf, observe, signInCheck, site, UPSTREAM, upstreamHead } from "./facts";
+import { cloudflare, gh, githubFacts, observe, originRepo, signInCheck, site } from "./facts";
 import { addMessage, answersOf, DIR, loadOwn, loadSecrets, messages, readEnvFile, ROOT, saveOwn, saveSecrets } from "./store";
 
 const say = (s = "") => console.log(s);
@@ -106,7 +115,7 @@ const pagePort = () => {
 function ask() {
   const own = loadOwn();
   const a = answersOf(own, ghLogin());
-  say("Ask the person these in ONE message, with the defaults. Record the answers with: bun own set key=value ...");
+  say("Ask the person these in ONE message, with the defaults. Record the answers with: bun erga own set key=value ...");
   say();
   for (const q of QUESTIONS) {
     const v = a[q.key];
@@ -146,11 +155,11 @@ export function setAnswers(pairs: Record<string, string>): string[] {
 
 function signin(provider: string, file: string | undefined) {
   if (provider != "github" && provider != "google")
-    fail(`No sign-in called ${provider}.`, "bun own signin github --from-file <file>, or google.");
+    fail(`No sign-in called ${provider}.`, "bun erga own signin github --from-file <file>, or google.");
   if (!file)
     fail(
       "No file given.",
-      `bun own signin ${provider} --from-file <file with ${provider.toUpperCase()}_CLIENT_ID and ${provider.toUpperCase()}_CLIENT_SECRET>`
+      `bun erga own signin ${provider} --from-file <file with ${provider.toUpperCase()}_CLIENT_ID and ${provider.toUpperCase()}_CLIENT_SECRET>`
     );
   const env = readEnvFile(file!);
   const P = provider.toUpperCase();
@@ -169,7 +178,7 @@ function signin(provider: string, file: string | undefined) {
   saveOwn(own);
   saveSecrets(s);
   pass(`${provider} sign-in: client id ${id}; its secret is in .erga/secrets.json (not shown).`);
-  say(`NEXT  Make sure the app's callback URL is https://<your host>/auth/${provider}/callback, then: bun own deploy`);
+  say(`NEXT  Make sure the app's callback URL is https://<your host>/auth/${provider}/callback, then: bun erga own deploy`);
 }
 
 const random = () => randomBytes(32).toString("hex");
@@ -185,7 +194,7 @@ async function deploy(t: TargetName) {
   if (!targetsOf(a).includes(t))
     fail(
       `This Erga has no ${t} server.`,
-      t == "staging" ? "Answer the staging question first: bun own set staging=<host>" : "bun own deploy production"
+      t == "staging" ? "Answer the staging question first: bun erga own set staging=<host>" : "bun erga own deploy production"
     );
   const tf = f.targets[t];
   if (tf?.worker == "other")
@@ -196,7 +205,7 @@ async function deploy(t: TargetName) {
   if (tf && typeof tf.address == "object")
     fail(
       `${hostOf(a, t)} is taken: ${tf.address.taken}.`,
-      "The person decides: free the address, or pick another one (bun own set host=...)."
+      "The person decides: free the address, or pick another one (bun erga own set host=...)."
     );
   if (f.dirty)
     fail("Tracked files have changes that aren't committed: a deploy builds a commit.", "Commit them (or git stash), then deploy again.");
@@ -267,7 +276,7 @@ async function deploy(t: TargetName) {
   const check = await signInCheck(hostOf(a, t), own.github?.clientId);
   if (check == "ok") pass(`Sign-in: https://${hostOf(a, t)}/auth/github goes to GitHub with your app.`);
   else say(`FAIL  Sign-in: ${check && typeof check == "object" ? check.bad : "no answer"}`);
-  say(`NEXT  (person) Open https://${hostOf(a, t)}/auth/sign-in and sign in with GitHub as ${a.admin}. Then: bun own status`);
+  say(`NEXT  (person) Open https://${hostOf(a, t)}/auth/sign-in and sign in with GitHub as ${a.admin}. Then: bun erga own status`);
 }
 
 /** The server's database as the token code's Sql, over Cloudflare's D1 API. */
@@ -280,7 +289,7 @@ async function sqlOf(t: TargetName): Promise<{ sql: Sql; host: string }> {
   const host = hostOf(a, t),
     acc = `/accounts/${account}`;
   const db = await findDatabase(c.cf, acc, namesOf(host).database);
-  if (!db) return fail(`${t} has no database yet.`, `bun own deploy ${t}`);
+  if (!db) return fail(`${t} has no database yet.`, `bun erga own deploy ${t}`);
   const all = async <T>(q: string, ...p: (string | number | null)[]) => ((await d1(c.cf, acc, db, q, p, "read the database")) ?? []) as T[];
   return {
     host,
@@ -304,19 +313,19 @@ async function token(t: TargetName) {
   if (!secret)
     fail(
       `No SESSION_SECRET for ${t} in .erga/secrets.json.`,
-      `bun own deploy ${t} makes one (a server deployed elsewhere: its token comes from https://${hostOf(a, t)}/tokens).`
+      `bun erga own deploy ${t} makes one (a server deployed elsewhere: its token comes from https://${hostOf(a, t)}/tokens).`
     );
   const { sql, host } = await sqlOf(t);
   const dir = { users: { isAdmin: async () => true }, publish: async () => {} } as unknown as ConstructorParameters<typeof Tokens>[2];
   const made = await new Tokens(sql, secret!, dir).mint(
     { login: a.admin, name: a.admin } as Parameters<Tokens["mint"]>[0],
-    "bun own (your coding agent)",
+    "bun erga own (your coding agent)",
     { scope: "admin", expires: Date.now() + 30 * 86400_000 }
   );
   s.tokens = { ...s.tokens, [t]: made.token };
   saveSecrets(s);
   const r = await api(t, "GET", "/api/tools");
-  if (!r.ok) fail(`The token doesn't work on ${host}: ${r.status}.`, `Is ${a.admin} in ADMINS? bun own status`);
+  if (!r.ok) fail(`The token doesn't work on ${host}: ${r.status}.`, `Is ${a.admin} in ADMINS? bun erga own status`);
   pass(
     `An admin token for ${a.admin} on ${host}, for 30 days, is in .erga/secrets.json (tokens.${t}; not shown). Revoke it on https://${host}/settings.`
   );
@@ -327,7 +336,7 @@ async function api(t: TargetName, method: string, path: string, body?: unknown):
   const own = loadOwn(),
     a = answersOf(own),
     tok = loadSecrets().tokens?.[t];
-  if (!tok) return fail(`No token for ${t}.`, `bun own token ${t}`);
+  if (!tok) return fail(`No token for ${t}.`, `bun erga own token ${t}`);
   return site(`https://${hostOf(a, t)}${path}`, {
     method,
     headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
@@ -342,12 +351,12 @@ async function tool(t: TargetName, name: string, args: Record<string, unknown>, 
     if (j.ok || !retry?.test(j.error ?? "")) break;
     await Bun.sleep(2000);
   }
-  if (!j.ok) fail(`${name} ${JSON.stringify(args).slice(0, 120)}: ${j.error}`, "Read the error; bun own status.");
+  if (!j.ok) fail(`${name} ${JSON.stringify(args).slice(0, 120)}: ${j.error}`, "Read the error; bun erga own status.");
   return j.result;
 }
 
 async function home(folder: string | undefined, t: TargetName) {
-  if (!folder) fail("No folder given.", "bun own home <folder>: its index.html becomes the homepage.");
+  if (!folder) fail("No folder given.", "bun erga own home <folder>: its index.html becomes the homepage.");
   const files: Record<string, string | { base64: string }> = {};
   const walk = (d: string) => {
     for (const e of readdirSync(d)) {
@@ -368,7 +377,7 @@ async function home(folder: string | undefined, t: TargetName) {
   // It makes it in the background: until it's there, the write says there's no such document.
   await tool(t, "edit", { op: "write", document: "/_home", files, replace: true }, /no document|not found|isn't there/i);
   // A new version of the homepage serves only once it's deployed (server/home/deploys.ts).
-  await tool(t, "deploys", { op: "redeploy", target: "homepage" });
+  await tool(t, "deploy_homepage", {});
   pass(
     `${Object.keys(files).length} files are the homepage project now: https://${hostOf(a, t)}/ (edit it at https://${hostOf(a, t)}/_home).`
   );
@@ -385,23 +394,119 @@ async function preset(t: TargetName) {
   pass(`People of ${a.company} (${kind}) may sign in and write on ${hostOf(a, t)}.`);
 }
 
-async function update() {
-  const head = upstreamHead();
-  if (!head) fail(`Can't read ${UPSTREAM}.`, "Check the network, then bun own update again.");
-  const run = (cmd: string[]) => {
-    const r = Bun.spawnSync(cmd, { cwd: ROOT, stdout: "inherit", stderr: "inherit" });
-    return r.exitCode == 0;
-  };
-  if (!run(["git", "fetch", UPSTREAM, "main"])) fail("git fetch failed.", "Read git's error above.");
-  if (gitOf("merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD") != null) pass(`Already up to date with erga.dev (${head!.slice(0, 12)}).`);
-  else if (!run(["git", "merge", "--no-edit", "FETCH_HEAD"]))
-    fail("The update from erga.dev conflicts with your changes.", "Resolve the conflicts (git status), commit, then bun own deploy.");
-  if (!run(["bun", "install", "--frozen-lockfile"])) fail("bun install failed.", "Read its error above.");
-  const a = answersOf(loadOwn());
-  for (const t of a.staging ? (["staging", "production"] as const) : (["production"] as const)) {
-    const r = Bun.spawnSync(["bun", "deploy/own/cli.ts", "deploy", t], { cwd: ROOT, stdout: "inherit", stderr: "inherit" });
-    if (r.exitCode != 0) fail(`The deploy of ${t} failed.`, "Read its error above.");
+/** A command's exit and output; with `inherit`, it prints as it runs. */
+const run = (cmd: string[], o: { input?: string; inherit?: boolean } = {}) => {
+  const r = Bun.spawnSync(cmd, {
+    cwd: ROOT,
+    stdin: o.input != null ? new TextEncoder().encode(o.input) : "ignore",
+    stdout: o.inherit ? "inherit" : "pipe",
+    stderr: o.inherit ? "inherit" : "pipe",
+  });
+  return { ok: r.exitCode == 0, out: r.stdout?.toString().trim() ?? "", err: r.stderr?.toString().trim() ?? "" };
+};
+
+/** Forks Erga to the person's GitHub account; the fork becomes `origin`, Erga's repository `upstream`. */
+function fork(dry: boolean) {
+  const g = githubFacts();
+  if (!g.login) fail("gh is not logged in here.", "The person runs: gh auth login");
+  if (g.repo && g.repo.toLowerCase() != UPSTREAM_REPO) {
+    pass(`origin is ${g.repo} already${g.parent ? `, a fork of ${g.parent}` : ""}.`);
+    say("NEXT  bun erga own status");
+    return;
   }
+  if (g.login!.toLowerCase() == UPSTREAM_REPO.split("/")[0])
+    fail(`${g.login} owns ${UPSTREAM_REPO}: it has no fork of its own.`, "Fork with another GitHub account.");
+  const cmd = ["gh", "repo", "fork", UPSTREAM_REPO, "--remote", "--remote-name", "origin"];
+  if (dry) {
+    say(`Would run: ${cmd.join(" ")}`);
+    say(`It makes ${g.login}/erga on GitHub (with main and staging), points origin at it, and keeps ${UPSTREAM_REPO} as upstream.`);
+    return;
+  }
+  const r = run(cmd);
+  if (!r.ok) fail(forkProblem(`${r.err} ${r.out}`), "Fix what it names, then bun erga own fork again.");
+  const repo = originRepo();
+  pass(`Your fork: https://github.com/${repo}. origin points at it; upstream is ${UPSTREAM_REPO}.`);
+  say("NEXT  bun erga own status");
+}
+
+/** The fork's Actions variables (deploy/actions-plan.ts reads them), and Actions turned on (GitHub turns it off on a new fork). */
+function actions(dry: boolean) {
+  const own = loadOwn(),
+    a = answersOf(own);
+  const g = githubFacts();
+  if (!g.repo || g.repo.toLowerCase() == UPSTREAM_REPO) fail("origin is not your fork.", "bun erga own fork");
+  if (!a.host || !own.account || !own.github?.clientId)
+    fail("The answers, the account or the GitHub app's id are missing.", "bun erga own status shows which; deploy once first.");
+  const want = actionVars(a, { github: own.github?.clientId, google: own.google?.clientId }, own.account!);
+  const todo = varsToSet(want, g.variables);
+  if (dry) {
+    for (const [k, v] of Object.entries(todo)) say(`Would set ${k}=${v} on ${g.repo}`);
+    if (!Object.keys(todo).length) say("Every variable is set already.");
+    say(`Would turn on Actions: gh api -X PUT repos/${g.repo}/actions/permissions -F enabled=true -f allowed_actions=all`);
+    return;
+  }
+  for (const [k, v] of Object.entries(todo)) {
+    const r = run(["gh", "variable", "set", k, "-R", g.repo!, "--body", v]);
+    if (!r.ok) fail(`gh variable set ${k} failed: ${r.err}`, "Check that gh may write to the fork (gh auth status).");
+  }
+  const on = run(["gh", "api", "-X", "PUT", `repos/${g.repo}/actions/permissions`, "-F", "enabled=true", "-f", "allowed_actions=all"]);
+  if (!on.ok) say(`NOTE  Actions could not be turned on: ${on.err}. Open https://github.com/${g.repo}/actions and turn workflows on.`);
+  pass(`${Object.keys(todo).length} variable(s) set on ${g.repo}; Actions is on. A push to main deploys https://${a.host}.`);
+  say(
+    g.secrets?.includes("CLOUDFLARE_API_TOKEN") ? "NEXT  bun erga own update" : `NEXT  (person) The Cloudflare token: ${tokenTemplateUrl()}`
+  );
+}
+
+/** Checks a Cloudflare API token, then stores it as the fork's CLOUDFLARE_API_TOKEN secret. Never printed. */
+export async function storeActionsToken(token: string): Promise<string | null> {
+  const repo = originRepo();
+  if (!repo || repo.toLowerCase() == UPSTREAM_REPO) return "origin is not your fork: bun erga own fork first.";
+  const r = await fetch("https://api.cloudflare.com/client/v4/user/tokens/verify", { headers: { Authorization: `Bearer ${token}` } }).catch(
+    () => null
+  );
+  const body = (await r?.json().catch(() => null)) as { success?: boolean; result?: { status?: string } } | null;
+  if (!body?.success || body.result?.status != "active")
+    return "Cloudflare does not accept this token (it is not active). Make it again with the link.";
+  const set = run(["gh", "secret", "set", "CLOUDFLARE_API_TOKEN", "-R", repo], { input: token });
+  return set.ok ? null : `gh secret set failed: ${set.err}`;
+}
+
+async function actionsToken() {
+  say(`Make the token here (the permissions are filled in): ${tokenTemplateUrl()}`);
+  const token = await readHidden("Paste the token (it is not shown): ");
+  if (!token) fail("No token.", "Run bun erga own actions-token again, and paste the token.");
+  const problem = await storeActionsToken(token);
+  if (problem) fail(problem, "Fix what it names, then run bun erga own actions-token again.");
+  pass(`The secret CLOUDFLARE_API_TOKEN is set on ${originRepo()}.`);
+  say("NEXT  bun erga own update");
+}
+
+/** A line from the terminal, not echoed. */
+async function readHidden(question: string): Promise<string> {
+  process.stdout.write(question);
+  const tty = process.stdin.isTTY;
+  if (tty) Bun.spawnSync(["stty", "-echo"], { stdin: "inherit" });
+  try {
+    for await (const line of console) return line.trim();
+    return "";
+  } finally {
+    if (tty) Bun.spawnSync(["stty", "echo"], { stdin: "inherit" });
+    process.stdout.write("\n");
+  }
+}
+
+/** Syncs the fork's main with Erga's (as "Sync fork" on GitHub does); GitHub Actions then tests and deploys it. */
+async function update() {
+  const repo = originRepo();
+  if (!repo || repo.toLowerCase() == UPSTREAM_REPO) fail("origin is not your fork.", "bun erga own fork");
+  const before = gh<{ object: { sha: string } }>("api", `repos/${repo}/git/ref/heads/main`)?.object.sha;
+  const r = run(["gh", "repo", "sync", repo!, "--source", UPSTREAM_REPO, "--branch", "main"]);
+  if (!r.ok)
+    fail(`gh repo sync failed: ${r.err}`, "Your fork's main has commits of its own: merge Erga's main into it on your machine, then push.");
+  const after = gh<{ object: { sha: string } }>("api", `repos/${repo}/git/ref/heads/main`)?.object.sha;
+  if (before == after) pass(`${repo}'s main is up to date with ${UPSTREAM_REPO} (${after?.slice(0, 12)}).`);
+  else pass(`${repo}'s main moved to ${after?.slice(0, 12)}. GitHub tests it, then deploys it: bun erga own status shows the run.`);
+  run(["git", "fetch", "--quiet", "origin"]);
 }
 
 async function inbox(wait: boolean) {
@@ -431,7 +536,7 @@ async function remove(t: TargetName, yes: boolean) {
   if (!yes)
     fail(
       `This deletes ${t} (${host}): the Workers ${n.worker} and ${n.pagesWorker}, the database ${n.database} and the bucket ${n.bucket}, with every document on it.`,
-      `Only if the person said yes: bun own remove ${t} --yes`
+      `Only if the person said yes: bun erga own remove ${t} --yes`
     );
   if (n.worker == PRODUCTION.worker || n.database == PRODUCTION.database) fail("Those are erga.dev's names.", "Never.");
   const c = cloudflare();
@@ -475,8 +580,8 @@ const targetArg = (v: string | undefined): TargetName =>
       ? "production"
       : fail(`No server called ${v}.`, "production or staging.");
 
-if (import.meta.main) {
-  const [cmd, ...rest] = process.argv.slice(2);
+export async function ownMain(argv: string[]) {
+  const [cmd, ...rest] = argv;
   const flag = (f: string) => rest.includes(f);
   const opt = (f: string) => {
     const i = rest.indexOf(f);
@@ -505,7 +610,7 @@ if (import.meta.main) {
         for (const p of problems) say(`FAIL  ${p}`);
         const a = answersOf(loadOwn());
         if (!problems.length) pass(`Recorded. ${a.host ? summary(a) : ""}`);
-        say("NEXT  bun own status");
+        say("NEXT  bun erga own status");
         process.exit(problems.length ? 1 : 0);
         break;
       }
@@ -532,8 +637,20 @@ if (import.meta.main) {
       case "update":
         await update();
         break;
+      case "fork":
+        fork(flag("--dry-run"));
+        break;
+      case "actions":
+        actions(flag("--dry-run"));
+        break;
+      case "actions-token":
+        await actionsToken();
+        break;
       case "inbox":
         await inbox(flag("--wait"));
+        break;
+      case "skill":
+        say(OWN_SKILL);
         break;
       case "say":
         addMessage("agent", plain.join(" "));
@@ -546,14 +663,13 @@ if (import.meta.main) {
         say(
           readFileSync(new URL(import.meta.url), "utf8")
             .split("\n")
-            .filter((l) => l.startsWith("//"))
-            .slice(0, 16)
+            .filter((l, i, all) => i < all.findIndex((x) => !x.startsWith("//")))
             .map((l) => l.slice(3))
             .join("\n")
         );
-        process.exit(cmd ? 2 : 0);
+        process.exit(cmd && cmd != "help" ? 2 : 0);
     }
   } catch (e) {
-    fail((e as Error).message, "Read the error above; bun own status shows where things are.");
+    fail((e as Error).message, "Read the error above; bun erga own status shows where things are.");
   }
 }

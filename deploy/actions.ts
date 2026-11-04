@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // The deploy on GitHub Actions (.github/workflows/test.yml, the deploy job, after the tests pass): a push to main
-// deploys production, a push to staging deploys staging. The same build and pipeline as `bun own deploy` and
+// deploys production, a push to staging deploys staging. The same build and pipeline as `bun erga own deploy` and
 // deploy/run.ts: buildHere, then runPipeline (migrations, upload, the health check), and a rollback to the version
 // before when the new one isn't healthy.
 //

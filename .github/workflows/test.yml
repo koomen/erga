@@ -1,11 +1,12 @@
-# The tests on every pull request and push: `bun run test` (the format check, lint, typecheck,
+# The tests on every push (pull requests are off: `bun erga skill`): `bun run test` (the format check, lint, typecheck,
 # unit tests and the smoke run in Chromium). No secrets: the dev server signs in with DEV_LOGIN
 # and the agent runs its scripted model.
 name: test
 
 on:
-  pull_request:
   push:
+    # Branches only: a release's tag (bun erga release) needs no run.
+    branches: ['**']
 
 permissions:
   contents: read
@@ -30,8 +31,8 @@ jobs:
       - run: bun run test:browsers --with-deps
       - run: bun run test
         env:
-          # A pull request: its target branch. A push: the commit before it (or origin/staging for a new branch).
-          ERGA_FORMAT_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+          # The commit before the push (a new branch: dev/format.ts compares with origin/staging).
+          ERGA_FORMAT_BASE: ${{ github.event.before }}
 
   # After the tests pass: a push to main deploys production, a push to staging deploys staging (deploy/actions.ts).
   # A fork deploys its own servers from its repository variables (deploy/actions-plan.ts); a repository without the
@@ -39,7 +40,7 @@ jobs:
   # older one that waits.
   deploy:
     needs: test
-    if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'staging')
+    if: github.ref_name == 'main' || github.ref_name == 'staging'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
@@ -64,7 +65,7 @@ jobs:
   # staging, so only main deploys it (deploy/actions-plan.ts).
   deploy-koomen:
     needs: deploy
-    if: github.event_name == 'push' && github.ref_name == 'main'
+    if: github.ref_name == 'main'
     environment: koomen-test
     runs-on: ubuntu-latest
     timeout-minutes: 30

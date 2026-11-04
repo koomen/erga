@@ -144,7 +144,7 @@ async function pageFile(request: Request, url: URL, doc: { owner: string; id: st
   // checked against the file's: the file's own (stripped of ours) goes to the document.
   const ours = `.${readerVersion()}${claims.edit ? "w" : ""}`;
   const asked = new Headers(request.headers);
-  // This origin has no cookies of its own. Until erga-pages.dev is on the Public Suffix List (docs/psl-submission.md),
+  // This origin has no cookies of its own. Until erga-pages.dev is on the Public Suffix List (a request to publicsuffix.org),
   // one document's page can set a cookie for all of them: it goes no further than here.
   asked.delete("cookie");
   const inm = asked.get("if-none-match");
