@@ -43,8 +43,9 @@ html:is(.page-light, .page-dark) body:not(.source) .chrome { --bg: var(--band); 
 body.source :is(#frame, .erga-canvas) { visibility: hidden; }
 #source { position: fixed; top: var(--top-clear); bottom: var(--kb, 0px); left: var(--safe-l); right: var(--safe-r); }
 #source[hidden] { display: none; }
+/* Over the page's part of the window, beside the agent's panel (the frame's --frame-l and --frame-r). */
 #welcome {
-  position: fixed; inset: 0; display: grid; place-items: center; text-align: center;
+  position: fixed; inset: 0 var(--frame-r) 0 var(--frame-l); display: grid; place-items: center; text-align: center;
   color: var(--soft); font-size: 15px; line-height: 1.6; padding: 24px;
 }
 #welcome code { font-family: var(--font-mono); font-size: 0.9em; background: var(--code-bg); border-radius: 4px; padding: 0.1em 0.35em; }

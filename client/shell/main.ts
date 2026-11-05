@@ -29,6 +29,7 @@ import { mountSharing } from "./sharing";
 import { mountToast } from "./toast";
 import { mountViews } from "./views";
 import { mountPageRequests } from "./page-requests";
+import { awaitHello } from "./opening";
 import { editorContext } from "./agent-context";
 
 declare global {
@@ -100,17 +101,27 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // whole text. Presence, connection news and events before the shell is set up are picked up once it is (`started`).
   let started = false;
   const pending: SocketEvent[] = [];
-  const early = window.ergaSocket, start = window.ergaStart;
-  window.ergaSocket = window.ergaStart = undefined;
-  const collab: Collab = new Collab({
-    url: (q) =>
-      `${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${BASE}/api/room?${new URLSearchParams({ events: "1", ...(asked ? { user: asked } : {}), ...Object.fromEntries(q) })}`,
-    start:
-      start ??
+  const early = window.ergaSocket,
+    start =
+      window.ergaStart ??
       fetch(`${BASE}/api/start${as}`).then(
         (r) => (r.ok ? r.arrayBuffer() : null),
         () => null
-      ),
+      );
+  window.ergaSocket = window.ergaStart = undefined;
+  // A start that brought nothing: whether the host says there's no such document (only its 404 says so).
+  const missing = start.then(
+    async (bytes) =>
+      !bytes &&
+      (await fetch(`${BASE}/api/start${as}`).then(
+        (r) => r.status == 404,
+        () => false
+      ))
+  );
+  const collab: Collab = new Collab({
+    url: (q) =>
+      `${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${BASE}/api/room?${new URLSearchParams({ events: "1", ...(asked ? { user: asked } : {}), ...Object.fromEntries(q) })}`,
+    start,
     early,
     onEvent: (msg) => { if (started) shell.room.socketEvent(msg); else pending.push(msg); },
     onRemote: (changes, author) => {
@@ -134,17 +145,12 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       $("stale-reload").addEventListener("click", () => location.reload());
     },
   });
-  try {
-    const first = await Promise.race([collab.hello, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the room didn't answer")), 8000))]);
-    shell.info = first.info;
-    shell.docKind = first.tree.kind ?? "project";
-    performance.mark("erga:hello");
-  } catch (e) {
-    $("welcome").hidden = false;
-    $("welcome").innerHTML = `<div><p>Nothing to edit here.</p><p>Open one from <a href="/docs">your documents</a>.</p></div>`;
-    window.ergaShell?.ready();
-    return;
-  }
+  // However long the room takes (opening.ts): a slow document isn't a missing one.
+  const first = await awaitHello(collab.hello, missing);
+  if (!first) return;
+  shell.info = first.info;
+  shell.docKind = first.tree.kind ?? "project";
+  performance.mark("erga:hello");
 
   // Which of the document's pages this is: the one the address named (the app says, erga-page),
   // else the document's own. One room holds them all; this tab edits this one, and goes to another by its address.
