@@ -9,11 +9,10 @@
 // cloudflare.config.ts, its static assets and the migrations). Its output is
 // a live server, each step reported as it goes. Its callers:
 //
-//   - a deploy from a machine: a registered instance (`bun erga deploy` and `bun erga setup`, deploy/cli/deploy.ts), and
-//     Erga's own targets (deploy/run.ts).
+//   - a deploy from a machine: a registered instance (`bun erga deploy` and `bun erga setup`, deploy/cli/deploy.ts).
 //
 // Staging runs on a copy of production's data, frozen: a deploy keeps it,
-// and copies afresh only when asked (deploy/run.ts staging --fresh) or when
+// and copies afresh only when asked (`bun erga deploy <commit> <staging host> --fresh`) or when
 // staging has no copy yet (Target.snapshot: the "data" and "documents" steps).
 //
 // The steps (ALL_STEPS): check the account, find or make the D1 database
@@ -94,8 +93,8 @@ export interface Deployed { url: string; pages: string; database: string; worker
 
 /**
  * Where a deploy goes: everything the pipeline needs to know about it, in
- * any account. deploy/run.ts makes production's and staging's from
- * deploy/targets.ts (targetFor); `bun erga setup` makes a new instance's (deploy/own/plan.ts, ownTarget).
+ * any account. `bun erga deploy` and `bun erga setup` make a registered instance's from its entry (deploy/cli/deploy.ts,
+ * entryTarget); setup makes the entry from its answers (deploy/own/plan.ts, ownTarget).
  */
 export interface Target {
   /** What to call it in the log ("staging", or the account's name). */
@@ -141,14 +140,14 @@ export interface Target {
    * written to the source.
    *
    * A deploy copies only when the target has no copy yet, or with `fresh`
-   * (asked for: deploy/run.ts staging --fresh): copyReason. Otherwise the
+   * (asked for: `bun erga deploy --fresh`): copyReason. Otherwise the
    * target keeps its database and documents as they are (staging's copy is
    * frozen), and new migrations run on that database in place.
    */
   snapshot?: { databaseName: string; origin: string; token: string; fresh?: boolean };
-  /** This is production (erga.dev): only then may the target use production's names. */
+  /** This is a primary: only then may the target use the guard's names. */
   production?: boolean;
-  /** Production's names (deploy/targets.ts PRODUCTION): a target that isn't production and uses one stops before it starts. */
+  /** Its primary's names (a staging instance's): a target that isn't production and uses one stops before it starts. */
   guard?: { worker: string; database: string; host: string; pages: string; accountId?: string };
 }
 
@@ -236,7 +235,7 @@ export function guardTarget(t: Target): string | null {
   const pages = t.pages.kind == "zone" ? (t.pages.domain ?? t.pages.zoneName).toLowerCase() : null;
   if (g && !t.production) {
     if (host == g.host || pages == g.pages) return `This deploy (${t.label}) would put a server on production's address (${host == g.host ? g.host : `*.${g.pages}`}). It stops here: production is deployed only as production.`;
-    // Pages under production's (*.x.erga-pages.dev): a route on production's pages zone, which only production uses.
+    // Pages under production's (*.x.example-pages.com): a route on production's pages zone, which only production uses.
     if (pages?.endsWith(`.${g.pages}`)) return `This deploy (${t.label}) would put documents' pages under production's pages domain (*.${pages}, in ${g.pages}). It stops here: give it a pages domain of its own.`;
     const sameAccount = !g.accountId || g.accountId == t.accountId;
     if (sameAccount && t.workerName == g.worker) return `This deploy (${t.label}) would replace production's Worker (${g.worker}). It stops here.`;
@@ -256,7 +255,7 @@ export function guardTarget(t: Target): string | null {
 /**
  * The deploy pipeline: puts `release` on `target`, step by step, reporting
  * each as it starts and ends. The one pipeline for every deploy, each from a machine
- * (`bun erga deploy`, `bun erga setup`, deploy/run.ts).
+ * (`bun erga deploy`, `bun erga setup`).
  * Every step is safe to run again. `carry` gets what each step leaves (the restore point: a rollback goes back to it).
  */
 export async function runPipeline(
@@ -376,7 +375,7 @@ export async function runPipeline(
         return `"${name}" (${carry.dbId}), a new copy beside ${live ? `"${live.name}", which ${target.workerName} stays on until its upload` : "nothing (there's no copy yet)"}: ${why}${leftNote}`;
       }
       const found = await findDatabase(cf, acc, target.databaseName)
-        // A target that takes copies, deployed without one (deploy/run.ts --no-snapshot): the copy its Worker is on.
+        // A target that takes copies, deployed without one: the copy its Worker is on.
         ?? await (async () => { const b = await boundDatabase(cf, acc, target.workerName).catch(() => null); return b && (await copiesOf(cf, acc, target.databaseName)).some((c) => c.uuid == b) ? b : null; })();
       if (found) {
         // Erga's if it has Erga's first migration; usable if it's empty (made by a run that stopped before its tables).

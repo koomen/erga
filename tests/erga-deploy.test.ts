@@ -1,5 +1,5 @@
 // `bun erga deploy` and `bun erga rollback` (deploy/cli/deploy.ts), from .erga/config.json, against the mock
-// Cloudflare's copy of Erga's account (ERGA_DEPLOY_MOCK=1): the upload has the entry's vars, a staging entry gets
+// Cloudflare's example account (ERGA_DEPLOY_MOCK=1): the upload has the entry's vars, a staging entry gets
 // SNAPSHOT_FROM and keeps its copy of the data, no secret goes out, the lock and the job record, the tests' gate, and
 // a primary with no commit named takes the commit its staging instances report (a fake GET /api/ops). With --fresh, or
 // with no copy yet, a staging entry gets a new copy of its primary's database and documents (its SNAPSHOT_TOKEN from
@@ -23,16 +23,16 @@ import {
 } from "../deploy/cli/deploy";
 import { deployFacts } from "../deploy/pipeline/account";
 import { guardTarget } from "../deploy/pipeline/pipeline";
-import { targetFor } from "../deploy/run";
 import { MOCK_SNAPSHOT_TOKEN, mockCloudflare, PROD_DOCS } from "../dev/mock-cloudflare";
 import {
   bindingsOf,
   bootstrap,
-  env,
   prepareRelease,
+  primary as primaryTarget,
   productionOf,
   ROOT,
   SHA1,
+  staging as stagingTarget,
   stagingCopies,
   stagingDbOf,
   writesToProduction,
@@ -42,11 +42,11 @@ import { quietConsole } from "./helpers/quiet.ts";
 quietConsole();
 
 const HEAD = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: ROOT }).stdout.toString().trim();
-const primary: Entry = { host: "erga.dev", ...deployFacts(targetFor("production", env())), token: "erga_ops_primary" };
-const stagingFacts = deployFacts(targetFor("staging", env()));
+const primary: Entry = { host: "example.com", ...deployFacts(primaryTarget()), token: "erga_ops_primary" };
+const stagingFacts = deployFacts(stagingTarget());
 const staging: Entry = {
-  host: "staging.erga.dev",
-  stagingOf: "erga.dev",
+  host: "staging.example.com",
+  stagingOf: "example.com",
   ...stagingFacts,
   // A plain setting that only the entry has: the upload must carry it.
   vars: { ...stagingFacts.vars, GITHUB_CLIENT_ID: "Ov23-from-the-entry" },
@@ -90,7 +90,7 @@ describe("bun erga deploy", () => {
     const secrets = { ...mock.state.secrets["erga-staging"] };
     fresh(primary, staging);
     const lines: string[] = [];
-    expect(await deployInstance({ dir, host: "staging.erga.dev", commit: "HEAD", net: mock.fetch, print: (l) => lines.push(l) })).toBe(
+    expect(await deployInstance({ dir, host: "staging.example.com", commit: "HEAD", net: mock.fetch, print: (l) => lines.push(l) })).toBe(
       HEAD
     );
 
@@ -98,8 +98,8 @@ describe("bun erga deploy", () => {
     expect(b.ERGA_VERSION.text).toBe(HEAD.slice(0, 12));
     expect(b.GITHUB_CLIENT_ID.text).toBe("Ov23-from-the-entry");
     expect(b.DEPLOY_TARGET.text).toBe("staging");
-    expect(b.SNAPSHOT_FROM.text).toBe("https://erga.dev");
-    expect(JSON.parse(b.ERGA_DEPLOY.text).vars.SNAPSHOT_FROM).toBe("https://erga.dev");
+    expect(b.SNAPSHOT_FROM.text).toBe("https://example.com");
+    expect(JSON.parse(b.ERGA_DEPLOY.text).vars.SNAPSHOT_FROM).toBe("https://example.com");
     expect(b.DB.database_id).toBe(db);
     expect(lines.some((l) => l.startsWith("Copy production's database"))).toBe(false);
     expect(mock.state.scripts["erga-staging"].metadata.keep_bindings).toEqual(["secret_text", "secret_key"]);
@@ -108,21 +108,21 @@ describe("bun erga deploy", () => {
 
     // The job record: the command, the commit, the tests, the output, the result. The lock is free again.
     const [job] = records();
-    expect(job[0]).toMatchObject({ command: `bun erga deploy HEAD staging.erga.dev`, host: "staging.erga.dev", from: "terminal" });
+    expect(job[0]).toMatchObject({ command: `bun erga deploy HEAD staging.example.com`, host: "staging.example.com", from: "terminal" });
     expect(job).toContainEqual({ commit: HEAD });
     expect(job).toContainEqual({ tests: "passed before" });
     expect(job.at(-1).result).toBe("ok");
     expect(job.filter((x) => x.out).length).toBe(lines.length);
-    expect(existsSync(lockPath(dir, "staging.erga.dev"))).toBe(false);
+    expect(existsSync(lockPath(dir, "staging.example.com"))).toBe(false);
 
     // A rollback by host, from the entry: the version before (the bootstrap's) serves again.
-    expect(await rollbackInstance({ dir, host: "staging.erga.dev", net: mock.fetch, print: () => {} })).toBe(SHA1.slice(0, 12));
+    expect(await rollbackInstance({ dir, host: "staging.example.com", net: mock.fetch, print: () => {} })).toBe(SHA1.slice(0, 12));
     expect(bindingsOf(mock.state, "erga-staging").ERGA_VERSION.text).toBe(SHA1.slice(0, 12));
   }, 60_000);
 
   test("a staging instance needs a commit; its primary's names are its guard", async () => {
     fresh(primary, staging);
-    await expect(deployInstance({ dir, host: "staging.erga.dev", net: mockCloudflare({ fleet: true }).fetch })).rejects.toThrow(
+    await expect(deployInstance({ dir, host: "staging.example.com", net: mockCloudflare({ fleet: true }).fetch })).rejects.toThrow(
       "name the commit"
     );
     const config = withEntry(withEntry({ instances: [] }, primary), { ...staging, worker: "erga" });
@@ -132,18 +132,21 @@ describe("bun erga deploy", () => {
 
   test("a second deploy to the same host stops; a lock of a process that stopped is free", async () => {
     fresh(primary, staging);
-    const free = takeLock(dir, "erga.dev", "bun erga deploy main erga.dev");
-    await expect(deployInstance({ dir, host: "erga.dev", commit: "HEAD", net: mockCloudflare({ fleet: true }).fetch })).rejects.toThrow(
-      `erga.dev is locked: bun erga deploy main erga.dev (process ${process.pid})`
+    const free = takeLock(dir, "example.com", "bun erga deploy main example.com");
+    await expect(deployInstance({ dir, host: "example.com", commit: "HEAD", net: mockCloudflare({ fleet: true }).fetch })).rejects.toThrow(
+      `example.com is locked: bun erga deploy main example.com (process ${process.pid})`
     );
     free();
-    expect(existsSync(lockPath(dir, "erga.dev"))).toBe(false);
+    expect(existsSync(lockPath(dir, "example.com"))).toBe(false);
 
     const dead = Bun.spawn(["true"]);
     await dead.exited;
-    writeFileSync(lockPath(dir, "erga.dev"), JSON.stringify({ pid: dead.pid, command: "bun erga deploy x erga.dev", started: "then" }));
+    writeFileSync(
+      lockPath(dir, "example.com"),
+      JSON.stringify({ pid: dead.pid, command: "bun erga deploy x example.com", started: "then" })
+    );
     const mock = mockCloudflare({ fleet: true });
-    expect(await deployInstance({ dir, host: "erga.dev", commit: "HEAD", net: mock.fetch, print: () => {} })).toBe(HEAD);
+    expect(await deployInstance({ dir, host: "example.com", commit: "HEAD", net: mock.fetch, print: () => {} })).toBe(HEAD);
     expect(bindingsOf(mock.state, "erga").ERGA_VERSION.text).toBe(HEAD.slice(0, 12));
     expect(bindingsOf(mock.state, "erga").SNAPSHOT_FROM).toBeUndefined();
   }, 60_000);
@@ -155,13 +158,13 @@ describe("bun erga deploy", () => {
     const tested: string[] = [];
     const failing = async (sha: string) => (tested.push(sha), false);
     await expect(
-      deployInstance({ dir, host: "erga.dev", commit: "HEAD", net: mock.fetch, print: () => {}, test: failing })
+      deployInstance({ dir, host: "example.com", commit: "HEAD", net: mock.fetch, print: () => {}, test: failing })
     ).rejects.toThrow('did not end with "all passing"');
     expect(tested).toEqual([HEAD]);
     expect(mock.state.calls).toEqual([]);
     expect(records()[0].at(-1).result).toBe("failed");
 
-    await deployInstance({ dir, host: "erga.dev", commit: "HEAD", noTests: true, net: mock.fetch, print: () => {}, test: failing });
+    await deployInstance({ dir, host: "example.com", commit: "HEAD", noTests: true, net: mock.fetch, print: () => {}, test: failing });
     expect(tested).toEqual([HEAD]);
     expect(records().some((r) => r.some((x) => x.tests == "skipped: --no-tests") && r.at(-1).result == "ok")).toBe(true);
   }, 60_000);
@@ -174,7 +177,7 @@ describe("bun erga deploy --fresh", () => {
   const exported = (mock: ReturnType<typeof mockCloudflare>, from: number) =>
     mock.state.calls.slice(from).some((c) => c.endsWith("/export"));
   const deploy = (mock: ReturnType<typeof mockCloudflare>, fresh?: boolean) =>
-    deployInstance({ dir, host: "staging.erga.dev", commit: "HEAD", fresh, net: mock.fetch, print: () => {} });
+    deployInstance({ dir, host: "staging.example.com", commit: "HEAD", fresh, net: mock.fetch, print: () => {} });
 
   test("a new database with the primary's data and documents; without --fresh, nothing copies; without the token, it stops before the build", async () => {
     const mock = mockCloudflare({ fleet: true });
@@ -193,12 +196,12 @@ describe("bun erga deploy --fresh", () => {
 
     // --fresh with no SNAPSHOT_TOKEN: it says where to put it, and nothing is built or uploaded.
     const calls = mock.state.calls.length;
-    await expect(deploy(mock, true)).rejects.toThrow(`Put it in ${secretsPath(dir)} as { "erga.dev": { "SNAPSHOT_TOKEN": "..." } }`);
+    await expect(deploy(mock, true)).rejects.toThrow(`Put it in ${secretsPath(dir)} as { "example.com": { "SNAPSHOT_TOKEN": "..." } }`);
     expect(mock.state.calls.slice(calls).every((c) => c.startsWith("GET "))).toBe(true);
     expect(records().at(-1)!.at(-1).result).toBe("failed");
 
     // With the token in .erga/secrets.json: a new database, bound; the old copy deleted; the primary's documents.
-    writeFileSync(secretsPath(dir), JSON.stringify({ "erga.dev": { SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN } }));
+    writeFileSync(secretsPath(dir), JSON.stringify({ "example.com": { SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN } }));
     const again = mock.state.calls.length;
     await deploy(mock, true);
     const now = stagingDbOf(mock.state);
@@ -215,16 +218,18 @@ describe("bun erga deploy --fresh", () => {
   }, 60_000);
 
   test("a staging instance with no copy yet gets one without --fresh; a primary refuses --fresh", async () => {
-    const mock = mockCloudflare({ fleet: true, stagingSecrets: true });
+    const mock = mockCloudflare({ fleet: true });
+    // The staging Worker isn't there yet, but its secrets are (as setup gives them): the deploy sends none.
+    mock.state.secrets["erga-staging"] = { SESSION_SECRET: "mock-staging-session-secret", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN };
     fresh(primary, staging);
-    writeFileSync(secretsPath(dir), JSON.stringify({ "erga.dev": { SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN } }));
+    writeFileSync(secretsPath(dir), JSON.stringify({ "example.com": { SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN } }));
     await deploy(mock);
     expect(stagingDbOf(mock.state).name.startsWith("erga-staging-")).toBe(true);
     expect(exported(mock, 0)).toBe(true);
     for (const id of PROD_DOCS) expect(words(mock, id)).toContain("production's words");
     expect(records().at(-1)).toContainEqual({ copy: "no copy yet" });
 
-    await expect(deployInstance({ dir, host: "erga.dev", commit: "HEAD", fresh: true, net: mock.fetch })).rejects.toThrow(
+    await expect(deployInstance({ dir, host: "example.com", commit: "HEAD", fresh: true, net: mock.fetch })).rejects.toThrow(
       "--fresh is only for a staging instance"
     );
   }, 60_000);
@@ -261,9 +266,9 @@ describe("a primary with no commit", () => {
       const mock = mockCloudflare({ fleet: true });
       const net: typeof mock.fetch = (input, init) => (String(input).includes(fake) ? fetch(input, init) : mock.fetch(input, init));
       const lines: string[] = [];
-      expect(await deployInstance({ dir, host: "erga.dev", net, print: (l) => lines.push(l) })).toBe(HEAD);
+      expect(await deployInstance({ dir, host: "example.com", net, print: (l) => lines.push(l) })).toBe(HEAD);
       expect(asked.sort()).toEqual(["/api/health ", "/api/ops Bearer erga_ops_staging"]);
-      expect(lines[0]).toBe(`The staging instances of erga.dev run ${HEAD.slice(0, 12)}, healthy: that commit deploys.`);
+      expect(lines[0]).toBe(`The staging instances of example.com run ${HEAD.slice(0, 12)}, healthy: that commit deploys.`);
       expect(bindingsOf(mock.state, "erga").ERGA_VERSION.text).toBe(HEAD.slice(0, 12));
     } finally {
       server.stop(true);
@@ -312,8 +317,8 @@ describe("the branches move only after a healthy deploy", () => {
         if (/ is at .* on origin\.$/.test(l)) seen.push(l);
       };
 
-      // merge: the deploy to staging.erga.dev, then the push of staging. main stays.
-      expect(await deployStaging({ dir, sha: c2, clone, net: mock.fetch, print })).toEqual(["staging.erga.dev"]);
+      // merge: the deploy to staging.example.com, then the push of staging. main stays.
+      expect(await deployStaging({ dir, sha: c2, clone, net: mock.fetch, print })).toEqual(["staging.example.com"]);
       expect(seen).toEqual([`deployed; staging ${c1.slice(0, 7)}, main ${c1.slice(0, 7)}`, `staging is at ${c2.slice(0, 12)} on origin.`]);
       expect(bindingsOf(mock.state, "erga-staging").ERGA_VERSION.text).toBe(c2.slice(0, 12));
       expect([remote("staging"), remote("main")]).toEqual([c2, c1]);
@@ -325,11 +330,11 @@ describe("the branches move only after a healthy deploy", () => {
 
       // A primary: the deploy, then main moves to its commit. Again: main has it, and stays.
       seen.length = 0;
-      expect(await deployInstance({ dir, host: "erga.dev", commit: c2, clone, net: mock.fetch, print })).toBe(c2);
+      expect(await deployInstance({ dir, host: "example.com", commit: c2, clone, net: mock.fetch, print })).toBe(c2);
       expect(seen).toEqual([`deployed; staging ${c2.slice(0, 7)}, main ${c1.slice(0, 7)}`, `main is at ${c2.slice(0, 12)} on origin.`]);
       expect(bindingsOf(mock.state, "erga").ERGA_VERSION.text).toBe(c2.slice(0, 12));
       const lines: string[] = [];
-      await deployInstance({ dir, host: "erga.dev", commit: c2, clone, net: mock.fetch, print: (l) => lines.push(l) });
+      await deployInstance({ dir, host: "example.com", commit: c2, clone, net: mock.fetch, print: (l) => lines.push(l) });
       expect(lines).toContain(`main has ${c2.slice(0, 12)} already: main stays.`);
       expect(records().some((r) => r.some((x) => x.main == "kept"))).toBe(true);
 
@@ -338,7 +343,7 @@ describe("the branches move only after a healthy deploy", () => {
       const apart = commit("C3: not on main");
       writeFileSync(passPath(dir, apart), "all passing\n");
       const calls = mock.state.calls.length;
-      await expect(deployInstance({ dir, host: "erga.dev", commit: apart, clone, net: mock.fetch, print })).rejects.toThrow(
+      await expect(deployInstance({ dir, host: "example.com", commit: apart, clone, net: mock.fetch, print })).rejects.toThrow(
         "is not on main"
       );
       expect(mock.state.calls.length).toBe(calls);

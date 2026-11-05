@@ -1,4 +1,4 @@
-// The credential deploy/run.ts uses on this machine: a
+// The credential a deploy from this machine uses (`bun erga deploy`): a
 // person's own, never a server's. CLOUDFLARE_API_TOKEN if it's set; else
 // the cf CLI's own login (`bunx cf auth login`), refreshed first. Making
 // Erga's deploy tokens needs one that may make account

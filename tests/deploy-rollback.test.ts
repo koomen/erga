@@ -27,7 +27,7 @@ describe("rollbacks", () => {
     const failed = await run(SHA3, carry).catch((e) => e);
     expect(failed).toBeInstanceOf(Unhealthy);
     expect(failed.message).toContain(
-      `Release ${SHA3.slice(0, 12)} is up at https://staging.erga.dev, but its health check fails: documents: a document didn't open`
+      `Release ${SHA3.slice(0, 12)} is up at https://staging.example.com, but its health check fails: documents: a document didn't open`
     );
     // The restore point: the Worker version and release before this deploy.
     const before = carry.restore!.versionId!;

@@ -2,7 +2,7 @@
 // or rolled back from this machine, with nothing from the instance but, for a primary with no commit named, the commit
 // its staging instances run. Every deploy runs on a machine: a push deploys nothing. After a healthy deploy of a primary,
 // main on origin moves forward to its commit; `bun erga merge` deploys its commit to each staging instance, then moves
-// staging (deployStaging). The build and the pipeline are today's (deploy/run.ts buildHere, runPipeline); the target
+// staging (deployStaging). The build and the pipeline are today's (buildHere, runPipeline); the target
 // comes from the entry only: its names, its vars, the secrets the Worker keeps. No secret goes out.
 //
 // A staging instance keeps its copy of its primary's data (as GitHub's deploy does), and gets DEPLOY_TARGET=staging and
@@ -12,7 +12,7 @@
 // rollback holds the lock .erga/jobs/<host>.lock and writes its job record in .erga/jobs/. A deploy runs only a commit
 // whose tests passed: .erga/tests/<sha>, which this CLI writes when `bun run test` ends with "all passing".
 //
-// ERGA_DEPLOY_MOCK=1: against the mock Cloudflare's copy of Erga's account (dev/mock-cloudflare.ts, the fleet), with
+// ERGA_DEPLOY_MOCK=1: against the mock Cloudflare's example account (dev/mock-cloudflare.ts, the fleet), with
 // .build/release/ for the build: nothing real is touched. No branch moves on origin, but in a clone a test gives.
 
 import {
@@ -241,7 +241,8 @@ export function stagingCommit(primary: string, answers: Answer[]): { version: st
   return { version: versions[0] };
 }
 
-const healthOf = async (origin: string, site: Fetch) => {
+/** Whether the instance at `origin` answers GET /api/health with ok. */
+export const healthOf = async (origin: string, site: Fetch) => {
   const r = await site(`${origin}/api/health`, { signal: AbortSignal.timeout(8000), headers: { "Cache-Control": "no-cache" } }).catch(
     () => null
   );
@@ -360,7 +361,7 @@ export async function netOf(o: { net?: Fetch; token?: string }) {
   if (mocked()) {
     const { mockCloudflare } = await import("../../dev/mock-cloudflare");
     return {
-      net: o.net ?? mockCloudflare({ fleet: true, stagingSecrets: true }).fetch,
+      net: o.net ?? mockCloudflare({ fleet: true }).fetch,
       token: o.token ?? "mock-machine-token",
       quick: { sleep: async () => {}, waitMs: 2000 },
     };
@@ -432,7 +433,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     log(
       `  https://${targetHost(target)}, documents' pages on ${targetPagesShown(target)}; ${sent.length ? `the secrets sent: ${sent.join(", ")}` : "no secret sent"}`
     );
-    const { buildHere } = await import("../run");
+    const { buildHere } = await import("../pipeline/build");
     const release = await buildHere(sha, log, mocked());
     const carry: Carry = {};
     try {

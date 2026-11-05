@@ -13,8 +13,6 @@
     "typecheck": "node --no-experimental-webstorage -e \"import('vite').then((v) => v.resolveConfig({}, 'serve'))\" && tsc -p . && tsc -p tsconfig.workers.json && tsc -p tsconfig.browser.json",
     "erga": "bun deploy/cli/main.ts",
     "prepare": "bun deploy/cli/prepare.ts || true",
-    "deploy": "bun deploy/run.ts production",
-    "deploy:staging": "bun deploy/run.ts staging",
     "release": "bun deploy/release.ts",
     "test:full": "bun e2e/run.ts --full",
     "test:e2e": "bun e2e/run.ts --e2e",

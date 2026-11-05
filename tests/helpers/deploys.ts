@@ -5,7 +5,6 @@
 import { expect } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { targetFor, type DeployEnv } from "../../deploy/run";
 import { runPipeline, type Target } from "../../deploy/pipeline/pipeline";
 import { Cloudflare } from "../../deploy/pipeline/cloudflare-api";
 import { loadRelease, type Release } from "../../deploy/pipeline/release-format";
@@ -35,19 +34,47 @@ export const SHA1 = "1111111111111111111111111111111111111111",
   SHA2 = "2222222222222222222222222222222222222222",
   SHA3 = "3333333333333333333333333333333333333333";
 export const quick = { sleep: async () => {}, waitMs: 2000 };
-export const env = (over: DeployEnv = {}): DeployEnv => ({
-  CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT,
-  SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN,
-  ...over,
+
+/** The fleet's primary (example.com) as the pipeline deploys it: its names, its plain settings, its secrets kept. */
+export const primary = (): Target => ({
+  label: "production",
+  accountId: FLEET_ACCOUNT,
+  workerName: "erga",
+  databaseName: "erga",
+  app: { kind: "domain", zoneName: "example.com", hostname: "example.com" },
+  pages: { kind: "zone", zoneName: "example-pages.com", domain: "example-pages.com" },
+  vars: { GITHUB_CLIENT_ID: "Ov23primary", DEPLOY_TARGET: "production", SNAPSHOT_IMPORT: "" },
+  secrets: {},
+  keepSecrets: true,
+  checkVersion: true,
+  production: true,
 });
+/** The primary's names, which its staging instance may not touch. */
+const guard = { worker: "erga", database: "erga", host: "example.com", pages: "example-pages.com", accountId: FLEET_ACCOUNT };
 /** Staging's secrets, as its first deploy from a machine gives them. */
 export const stagingSecrets = {
   SESSION_SECRET: "staging-session-secret-0123456789",
   GITHUB_CLIENT_SECRET: "staging-github-secret-0123456789",
   SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN,
 };
-export const staging = (over: Partial<Target> = {}): Target => ({ ...targetFor("staging", env()), ...over });
-/** The target with a fresh copy of production's data asked for (deploy/run.ts --fresh): staging's copy is frozen otherwise. */
+/** Its staging instance (staging.example.com), which copies the primary's data in when it has no copy yet. */
+export const staging = (over: Partial<Target> = {}): Target => ({
+  label: "staging",
+  accountId: FLEET_ACCOUNT,
+  workerName: "erga-staging",
+  databaseName: "erga-staging",
+  app: { kind: "domain", zoneName: "example.com", hostname: "staging.example.com" },
+  pages: { kind: "zone", zoneName: "example-pages-staging.com", domain: "example-pages-staging.com" },
+  vars: { GITHUB_CLIENT_ID: "Ov23staging", DEPLOY_TARGET: "staging", SNAPSHOT_IMPORT: "1", SNAPSHOT_FROM: "https://example.com" },
+  secrets: {},
+  keepSecrets: true,
+  checkVersion: true,
+  production: false,
+  guard,
+  snapshot: { databaseName: "erga", origin: "https://example.com", token: MOCK_SNAPSHOT_TOKEN },
+  ...over,
+});
+/** The target with a fresh copy of the primary's data asked for: staging's copy is frozen otherwise. */
 export const afresh = (t: Target): Target => ({ ...t, snapshot: { ...t.snapshot!, fresh: true } });
 
 export async function deployTo(target: Target, mock: ReturnType<typeof mockCloudflare>, rel: Release = release) {

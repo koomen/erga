@@ -1,6 +1,6 @@
 /* The look of the ops page (`bun erga`, deploy/cli/ops-view.ts): the app's tokens (client/style.css), the glass bars
-   (client/inline/bars.css, which the page also loads), a sidebar of the primaries, and the Deploys tab after the old
-   Ops page's log (deploy/cli/dashboard.css), Logs, History, and Setup's checklist. */
+   (client/inline/bars.css, which the page also loads), a sidebar of the primaries, and the
+   Deploys, Logs, History and Setup tabs. */
 
 :root {
   --bg: #ffffff; --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73; --chrome: #a1a1a9; --rule: #e6e6ea; --code-bg: #f4f4f6;

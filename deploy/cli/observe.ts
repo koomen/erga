@@ -1,8 +1,10 @@
-// What `bun erga` reads: git (the checkout's view of GitHub, after a fetch), GitHub through the gh CLI, and each
-// server's GET /api/deploys/version and GET /api/health. Each call says what it saw; nothing here decides (flow.ts).
+// What `bun erga` reads: git (the checkout's view of GitHub), and each registered instance's GET /api/ops (with its ops
+// token) and GET /api/health. Each call says what it saw; nothing here decides (flow.ts).
 
-import { TARGETS } from "../targets";
-import { type Branch, type Commit, PROTECTED, type Run, type Server, type State, stateOf } from "./flow";
+import { type Config, originOf } from "./config";
+import { healthOf } from "./deploy";
+import { type Branch, type Commit, type Instance, PROTECTED, type State, stateOf } from "./flow";
+import { readOps } from "./ops";
 
 export const ROOT = new URL("../..", import.meta.url).pathname;
 
@@ -101,130 +103,33 @@ export const tagsOf = () =>
       return { name, sha };
     });
 
-/** The repository's variables (and an environment's, with `env`), or {} when gh can't read them. */
-export function variablesOf(repo: string, env?: string): Record<string, string> {
-  const list = ghJson<{ name: string; value: string }[]>(
-    "variable",
-    "list",
-    "-R",
-    repo,
-    ...(env ? ["--env", env] : []),
-    "--json",
-    "name,value"
+/** What each registered instance answers now: the commit it runs (its ops token) and its health. */
+export function instancesOf(config: Config, site: typeof fetch = fetch): Promise<Instance[]> {
+  const get = (url: string | URL | Request, init?: RequestInit) => site(url, { ...init, signal: AbortSignal.timeout(8000) });
+  return Promise.all(
+    config.instances.map(async (e) => {
+      const origin = originOf(e.host);
+      const [ops, healthy] = await Promise.all([
+        readOps(origin, e.token, get).then(
+          (f) => ({ version: f.version }),
+          (err: Error) => ({
+            version: null,
+            error: /refused/.test(err.message) ? `refuses its ops token: bun erga login ${e.host}` : "no answer",
+          })
+        ),
+        healthOf(origin, get).catch(() => null),
+      ]);
+      return { host: e.host, ...(e.stagingOf ? { stagingOf: e.stagingOf } : {}), ...ops, healthy };
+    })
   );
-  return Object.fromEntries((list ?? []).map((v) => [v.name, v.value]));
 }
 
-/**
- * The servers the workflow deploys: a fork's from its variables (ERGA_HOST, ERGA_STAGING), else Erga's own
- * (deploy/targets.json); and each GitHub environment with its own ERGA_HOST (deployed from main after production).
- */
-export function serversOf(repo: string): Omit<Server, "version" | "healthy">[] {
-  const vars = variablesOf(repo);
-  const out: Omit<Server, "version" | "healthy">[] = vars.ERGA_HOST
-    ? [
-        { name: "production", host: vars.ERGA_HOST, branch: "main" },
-        ...(vars.ERGA_STAGING ? [{ name: "staging", host: vars.ERGA_STAGING, branch: "staging" }] : []),
-      ]
-    : Object.values(TARGETS).map((t) => ({ name: t.name, host: t.host, branch: t.branch }));
-  const envs = ghJson<{ environments?: { name: string }[] }>("api", `repos/${repo}/environments`)?.environments ?? [];
-  for (const e of envs) {
-    const host = variablesOf(repo, e.name).ERGA_HOST;
-    if (host && !out.some((s) => s.host == host)) out.push({ name: e.name, host, branch: "main" });
-  }
-  return out;
-}
-
-/** What a server answers now: its release and its health. */
-export async function answerOf(host: string): Promise<{ version: string | null; healthy: boolean | null }> {
-  const get = async (path: string) => {
-    const r = await fetch(`https://${host}${path}`, { signal: AbortSignal.timeout(8000), headers: { "Cache-Control": "no-cache" } }).catch(
-      () => null
-    );
-    return r ? { status: r.status, body: (await r.json().catch(() => null)) as Record<string, unknown> | null } : null;
-  };
-  const [v, h] = await Promise.all([get("/api/deploys/version"), get("/api/health")]);
-  return {
-    version: typeof v?.body?.version == "string" ? (v.body.version as string) : null,
-    healthy: h ? h.status == 200 && h.body?.ok === true : null,
-  };
-}
-
-interface GhRun {
-  databaseId: number;
-  headSha: string;
-  headBranch: string;
-  status: string;
-  conclusion: string;
-  url: string;
-  createdAt: string;
-  event: string;
-}
-const runOf = (r: GhRun): Run => ({
-  sha: r.headSha,
-  branch: r.headBranch,
-  status: r.status,
-  conclusion: r.conclusion,
-  url: r.url,
-  at: Date.parse(r.createdAt),
-});
-
-/** The workflow's recent runs of pushes (all branches), newest first. */
-export const runsOf = (repo: string, o: { branch?: string; commit?: string; limit?: number } = {}): (Run & { id: number })[] =>
-  (
-    ghJson<GhRun[]>(
-      "run",
-      "list",
-      "-R",
-      repo,
-      "--workflow",
-      "test.yml",
-      "--event",
-      "push",
-      "-L",
-      String(o.limit ?? 40),
-      ...(o.branch ? ["--branch", o.branch] : []),
-      ...(o.commit ? ["--commit", o.commit] : []),
-      "--json",
-      "databaseId,headSha,headBranch,status,conclusion,url,createdAt,event"
-    ) ?? []
-  ).map((r) => ({ ...runOf(r), id: r.databaseId }));
-
-/** A run's jobs. */
-export const jobsOf = (repo: string, id: number): NonNullable<Run["jobs"]> =>
-  ghJson<{ jobs: { name: string; status: string; conclusion: string; url: string }[] }>(
-    "run",
-    "view",
-    String(id),
-    "-R",
-    repo,
-    "--json",
-    "jobs"
-  )?.jobs ?? [];
-
-let known: { repo: string; at: number; list: ReturnType<typeof serversOf> } | null = null;
-
-/** Everything the dashboard and `bun erga status` show. */
-export async function readState(o: { checkConflicts?: boolean } = {}): Promise<State> {
-  const repo = repoOf();
-  if (!repo) throw new Error("This checkout's origin is not a GitHub repository.");
-  fetchOrigin();
-  // The servers change only with the repository's variables: the dashboard, which reads every few seconds, reads them
-  // again every 10 minutes.
-  if (!known || known.repo != repo || Date.now() - known.at > 600_000) known = { repo, at: Date.now(), list: serversOf(repo) };
-  const servers = await Promise.all(known.list.map(async (s) => ({ ...s, ...(await answerOf(s.host)) })));
-  const runs = runsOf(repo);
-  // The deploy jobs of each server's latest run: the dashboard links their logs.
-  const latest = new Map<string, Run & { id: number }>();
-  for (const r of runs) if (!latest.has(r.branch)) latest.set(r.branch, r);
-  for (const r of latest.values()) if (r.branch == "main" || r.branch == "staging") r.jobs = jobsOf(repo, r.id);
+/** Everything `bun erga status` shows. It only reads: no fetch, so the branches are as this clone last saw them. */
+export async function readState(config: Config, site?: typeof fetch): Promise<State> {
   return stateOf({
-    repo,
-    at: Date.now(),
     heads: { main: headOf("origin/main"), staging: headOf("origin/staging") },
-    servers,
-    runs,
-    branches: branchesOf(o.checkConflicts ?? true),
+    instances: await instancesOf(config, site),
+    branches: branchesOf(),
     waiting: commitsOf("origin/main..origin/staging"),
     log: commitsOf("-n", "20", "origin/main"),
     tags: tagsOf(),
