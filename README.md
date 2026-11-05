@@ -23,7 +23,7 @@ Erga runs on your own Cloudflare account and domain. You need Bun, git, a
 GitHub account and a Cloudflare account on the Workers Paid plan.
 
     git clone https://github.com/koomen/erga.git && cd erga && bun install
-    bun erga setup erga.example.com start   # a checklist page on your machine shows each step, live
+    bun erga setup erga.example.com start   # the ops page's Setup tab shows each step, live
 
 Or give your coding agent this prompt in an empty folder: "Set up my own Erga
 from https://github.com/koomen/erga at <your address>. Clone it, run

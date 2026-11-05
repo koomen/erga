@@ -9,12 +9,12 @@
 //   bun erga setup <host> ask                  the person's questions, with the defaults, to ask in one message
 //   bun erga setup <host> set key=value ...    records answers (staging, providers, preset, admin, company, pages,
 //                                              feedback, account)
-//   bun erga setup <host> start [--port N]     the checklist page on localhost: steps, live checks, the person's forms, a chat
+//   bun erga setup <host> start [--port N]     the ops page's Setup tab: steps, live checks, the person's forms, a chat
 //   bun erga setup <host> signin github|google --from-file <file>   an existing app's values (KEY=value lines), never printed
 //   bun erga setup <host> token [production|staging]                an admin token for this agent, in .erga/secrets.json
 //   bun erga setup <host> home <folder> [production|staging]        the folder's files become the homepage project (/_home)
 //   bun erga setup <host> preset [production|staging]               the preset's access rule (company)
-//   bun erga setup <host> inbox [--wait]       the person's new messages from the checklist page; ... say "<text>" answers
+//   bun erga setup <host> inbox [--wait]       the person's new messages from the Setup tab; ... say "<text>" answers
 //   bun erga setup <host> remove <production|staging> --yes         deletes that server: its Workers, database and bucket
 
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -506,7 +506,7 @@ export async function setupMain(argv: string[]) {
       }
       case "start": {
         const { startPage } = await import("./page");
-        await startPage(Number(opt("--port")) || 4747, flag("--open"));
+        await startPage(Number(opt("--port")) || 4801, flag("--open"));
         break;
       }
       case "signin":
@@ -526,7 +526,7 @@ export async function setupMain(argv: string[]) {
         break;
       case "say":
         addMessage("agent", plain.join(" "));
-        pass("Sent to the checklist page.");
+        pass("Sent to the Setup tab of the ops page.");
         break;
       case "remove":
         await remove(targetArg(plain[0]), flag("--yes"));

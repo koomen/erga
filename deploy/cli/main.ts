@@ -3,7 +3,7 @@
 // as one commit and deploys it to each staging instance, `deploy` deploys a primary and moves main, `release` tags main.
 // Every deploy runs on this machine: a push deploys nothing. `bun erga skill` is the agents' manual.
 //
-//   bun erga [--port N] [--no-open]     the ops page: the registered instances, the branches and the log, on localhost
+//   bun erga [--port N] [--no-open]     the ops page on localhost: the registered instances, setup, deploys, logs, history
 //   bun erga skill                      how an agent works in this repository (the workflow and its rules)
 //   bun erga start <branch>             a new feature branch from origin/staging, in this checkout
 //   bun erga status                     production, staging, the feature branches and the commits, as text
