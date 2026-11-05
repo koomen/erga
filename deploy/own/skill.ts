@@ -1,5 +1,5 @@
 // `bun erga setup skill`: the manual for a coding agent that sets up a new Erga instance. The person decides; the agent
-// runs `bun erga setup <host>`; a checklist page on the person's machine shows each step (deploy/own/page.ts).
+// runs `bun erga setup <host>`; the Setup tab of the ops page on the person's machine shows each step (deploy/own/page.ts).
 
 export const SETUP_SKILL = `# Set up a new Erga instance
 
@@ -28,7 +28,7 @@ minutes.
    message, with the defaults. Record the answers:
    bun erga setup <host> set staging=no providers=github preset=website
    admin=<login> pages=shared feedback=no
-5. Sign-in: the person clicks "Create the GitHub App" on the checklist page.
+5. Sign-in: the person clicks "Create the GitHub App" on the Setup tab.
    An app they have already: they put GITHUB_CLIENT_ID=... and
    GITHUB_CLIENT_SECRET=... lines in a file, and you run
    bun erga setup <host> signin github --from-file <path>. Never print the
@@ -65,7 +65,7 @@ minutes.
   account. bun erga setup <host> remove deletes a server with all its
   documents: only when the person asks for it, in those words.
 - A secret never goes into the chat, a commit or a command line. The person
-  types it on the checklist page, or puts it in a file.
+  types it on the Setup tab, or puts it in a file.
 - Don't curl or open a new address before bun erga setup says it answers:
   this machine would remember "no such host" for up to 30 minutes.
 - Setup refuses a name or an address that something else uses, and a host

@@ -1,7 +1,7 @@
 // A new Erga instance (`bun erga setup <host>`): what the person decides, the names that follow from it, and the steps
 // from a clone to a registered instance. Pure: no network, no files (deploy/own/facts.ts observes; deploy/own/cli.ts
-// acts). `bun erga setup skill` is the manual; `bun erga setup <host> status` prints these steps, and the local checklist
-// page (deploy/own/page.ts) shows them.
+// acts). `bun erga setup skill` is the manual; `bun erga setup <host> status` prints these steps, and the Setup tab of the
+// ops page (deploy/own/page.ts) shows them.
 
 import type { Entry } from "../cli/config";
 import { deployFacts } from "../pipeline/account";
@@ -308,7 +308,7 @@ export const hasSecret = (f: Facts, host: string, key: string) =>
 export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { github?: string; google?: string } }): Step[] {
   const out: Step[] = [];
   const cmd = `bun erga setup ${a?.host || "<host>"}`;
-  const page = o.port ? `http://localhost:${o.port}` : `the checklist page (${cmd} start)`;
+  const page = o.port ? `http://127.0.0.1:${o.port}/#${a?.host ?? ""}/setup` : `the ops page's Setup tab (${cmd} start)`;
   const add = (s: Omit<Step, "state"> & { ok: boolean | null; failed?: boolean }) => {
     const before = out.length && out.some((x) => x.state != "done");
     out.push({

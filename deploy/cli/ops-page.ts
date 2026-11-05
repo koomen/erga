@@ -3,7 +3,7 @@
 // through /api/events), the clone's git as it is (no fetch), and each instance's commit and health, with its ops token:
 // every 30 seconds, and every 5 while a job runs. Every command works without it.
 
-import { existsSync, readdirSync, readFileSync, type FSWatcher, watch } from "node:fs";
+import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Entry, originOf, readConfig } from "./config";
 import { readOps } from "./ops";
@@ -26,11 +26,16 @@ export async function askInstance(e: Entry): Promise<Answer> {
   const origin = originOf(e.host);
   const site = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
   const [ops, health] = await Promise.all([
-    readOps(origin, e.token, site).then(
+    // An instance that setup has not registered yet has no token.
+    (e.token ? readOps(origin, e.token, site) : Promise.reject(new Error("no token"))).then(
       (f) => ({ version: f.version }),
       (err: Error) => ({
         version: null,
-        error: /refused/.test(err.message) ? `refuses the ops token: bun erga login ${e.host}` : "no answer",
+        error: !e.token
+          ? `not registered yet: bun erga setup ${e.host}`
+          : /refused/.test(err.message)
+            ? `refuses the ops token: bun erga login ${e.host}`
+            : "no answer",
       })
     ),
     site(`${origin}/api/health`, { headers: { "Cache-Control": "no-cache" } }).then(
@@ -99,12 +104,22 @@ function readJobs(dir: string): JobRecord[] {
     .slice(-200)
     .map((f) => {
       try {
-        return jobOf(readFileSync(join(jobs, f), "utf8"), alive);
+        return jobOf(readFileSync(join(jobs, f), "utf8"), alive, f.slice(0, -".jsonl".length));
       } catch {
         return null;
       }
     })
     .filter((j) => j != null);
+}
+
+/** The host of the setup in progress: .erga/setup.json's answers (deploy/own/store.ts), or "". */
+function setupHost(dir: string): string {
+  try {
+    const host = (JSON.parse(readFileSync(join(dir, "setup.json"), "utf8")) as { answers?: { host?: unknown } }).answers?.host;
+    return typeof host == "string" ? host : "";
+  } catch {
+    return "";
+  }
 }
 
 export interface OpsPageOptions {
@@ -126,7 +141,7 @@ const FILES: Record<string, [string, string]> = {
 export function serveOpsPage(o: OpsPageOptions) {
   const ask = o.ask ?? askInstance;
   const script = readFileSync(join(ROOT, "deploy/cli/ops-page.js"), "utf8");
-  const facts: Facts = { config: { instances: [] }, answers: {}, git: { error: "Reading git…" }, jobs: [] };
+  const facts: Facts = { config: { instances: [] }, answers: {}, git: { error: "Reading git…" }, jobs: [], setup: "" };
   let refs = "";
   let asked = 0;
   let sent = "";
@@ -159,6 +174,7 @@ export function serveOpsPage(o: OpsPageOptions) {
     const hosts = new Set(entries().map((e) => e.host));
     for (const h of Object.keys(facts.answers)) if (!hosts.has(h)) delete facts.answers[h];
     facts.jobs = readJobs(o.dir);
+    facts.setup = setupHost(o.dir);
   };
   const readClone = () => {
     try {
@@ -234,10 +250,16 @@ export function serveOpsPage(o: OpsPageOptions) {
     fetch(req, srv) {
       const url = new URL(req.url);
       // Only this machine's browser, by this server's name: another site can't reach it through DNS rebinding.
-      if (![`localhost:${srv.port}`, `127.0.0.1:${srv.port}`].includes(req.headers.get("host") ?? ""))
-        return new Response("Wrong host.", { status: 403 });
+      const names = [`localhost:${srv.port}`, `127.0.0.1:${srv.port}`];
+      if (!names.includes(req.headers.get("host") ?? "")) return new Response("Wrong host.", { status: 403 });
+      // A POST only from this page (the Setup tab's forms): no other site.
+      if (req.method != "GET" && !names.some((n) => req.headers.get("origin") == `http://${n}`))
+        return new Response("Wrong origin.", { status: 403 });
+      // The Setup tab: the checklist of `bun erga setup` (deploy/own/page.ts), loaded only when it is used.
+      if (url.pathname == "/setup.js" || url.pathname.startsWith("/setup/"))
+        return import("../own/page").then((p) => p.setupRoute(req, url));
       if (url.pathname == "/") return html(pageHtml(viewHtml(facts, ""), script));
-      if (url.pathname == "/view") return html(viewHtml(facts, url.searchParams.get("primary") ?? ""));
+      if (url.pathname == "/view") return html(viewHtml(facts, url.searchParams.get("hash") ?? ""));
       if (url.pathname == "/api/events") {
         let me: ReadableStreamDefaultController<string>;
         const stream = new ReadableStream<string>({
@@ -289,6 +311,9 @@ export function startOpsPage(o: { dir: string; cwd: string; port?: number; open:
   }
   if (!page) throw new Error(`No free port from ${from} to ${from + 19}.`);
   const url = `http://127.0.0.1:${page.server.port}/`;
+  // Setup's step texts give the person this page's address (deploy/own/cli.ts, pagePort).
+  mkdirSync(o.dir, { recursive: true, mode: 0o700 });
+  writeFileSync(join(o.dir, "page.port"), String(page.server.port));
   console.log(`PASS  The ops page: ${url}`);
   console.log(`NOTE  It shows the instances of ${join(o.dir, "config.json")}. Keep this command running; Ctrl-C stops it.`);
   if (o.open) Bun.spawn([process.platform == "darwin" ? "open" : "xdg-open", url], { stdout: "ignore", stderr: "ignore" });

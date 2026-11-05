@@ -1,7 +1,8 @@
 // The ops page's view (`bun erga`, deploy/cli/ops-page.ts serves it): pure, the facts in and HTML out. On the left, the
-// primaries of .erga/config.json, each with its staging instances. On the right, the chosen primary's tabs (Deploys
-// now; Setup, Logs and History come with plan to-do 11), the job line under them, and the Deploys tab: the feature
-// branches, then the clone's log with a column for each of the primary's instances and "live" at the commit it runs.
+// primaries of .erga/config.json, each with its staging instances. On the right, the chosen primary's tabs, the job line
+// under them, and the chosen tab. Deploys: the feature branches, then the clone's log with a column for each of the
+// primary's instances and "live" at the commit it runs. Logs: a job's output. History: the jobs of the primary and its
+// staging instances. Setup: the checklist of `bun erga setup`.
 
 import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo";
 import { esc } from "../../shared/html";
@@ -17,6 +18,8 @@ export interface Answer {
 
 /** A job's record in .erga/jobs/ (deploy/cli/deploy.ts, startJob), as the page reads it. */
 export interface JobRecord {
+  /** Its file's name, without .jsonl. */
+  id: string;
   command: string;
   host: string;
   from: string;
@@ -25,9 +28,13 @@ export interface JobRecord {
   result?: "ok" | "failed";
   error?: string;
   ended?: string;
+  /** Its output, as it came (the last OUT_LINES lines). */
+  out: string[];
   /** No result yet, and its process lives. */
   running: boolean;
 }
+
+const OUT_LINES = 2000;
 
 export interface Commit {
   sha: string;
@@ -60,10 +67,12 @@ export interface Facts {
   answers: Record<string, Answer>;
   git: Git | { error: string };
   jobs: JobRecord[];
+  /** The host of the setup in progress (.erga/setup.json, `bun erga setup <host>`), or "". */
+  setup: string;
 }
 
 /** A job record from its file's lines, or null if it has no start line. */
-export function jobOf(text: string, alive: (pid: number) => boolean): JobRecord | null {
+export function jobOf(text: string, alive: (pid: number) => boolean, id = ""): JobRecord | null {
   const lines = text
     .split("\n")
     .filter(Boolean)
@@ -77,13 +86,16 @@ export function jobOf(text: string, alive: (pid: number) => boolean): JobRecord 
   const head = lines[0];
   if (typeof head?.command != "string" || typeof head.host != "string") return null;
   const job: JobRecord = {
+    id,
     command: head.command,
     host: head.host,
     from: typeof head.from == "string" ? head.from : "terminal",
     started: String(head.started ?? ""),
+    out: [],
     running: false,
   };
   for (const l of lines.slice(1)) {
+    if (typeof l.out == "string") job.out.push(l.out);
     if (typeof l.commit == "string") job.commit = l.commit;
     if (l.result == "ok" || l.result == "failed") {
       job.result = l.result as "ok" | "failed";
@@ -91,6 +103,7 @@ export function jobOf(text: string, alive: (pid: number) => boolean): JobRecord 
       if (typeof l.error == "string") job.error = l.error;
     }
   }
+  job.out = job.out.slice(-OUT_LINES);
   job.running = !job.result && typeof head.pid == "number" && alive(head.pid);
   return job;
 }
@@ -100,11 +113,29 @@ export interface Group {
   staging: Entry[];
 }
 
-/** Each primary with its staging instances, in the file's order. A staging instance whose primary has no entry stands alone. */
-export function groupsOf(config: Config): Group[] {
+/**
+ * Each primary with its staging instances, in the file's order. A staging instance whose primary has no entry stands
+ * alone. The setup's host, before setup writes its entry, comes last, with no facts and no token.
+ */
+export function groupsOf(config: Config, setup = ""): Group[] {
   const hosts = new Set(config.instances.map((e) => e.host));
   const primaries = config.instances.filter((e) => !e.stagingOf || !hosts.has(e.stagingOf));
-  return primaries.map((p) => ({ primary: p, staging: config.instances.filter((e) => e.stagingOf == p.host && p != e) }));
+  const groups = primaries.map((p) => ({ primary: p, staging: config.instances.filter((e) => e.stagingOf == p.host && p != e) }));
+  if (setup && !hosts.has(setup))
+    groups.push({
+      primary: {
+        host: setup,
+        account: "",
+        worker: "",
+        database: "",
+        app: { kind: "workers.dev" },
+        pages: { kind: "shared" },
+        vars: {},
+        token: "",
+      },
+      staging: [],
+    });
+  return groups;
 }
 
 /** The group a hash names (a primary or one of its staging instances), else the first. */
@@ -145,7 +176,7 @@ function stateOf(a: Answer | undefined): { cls: string; what: string } {
 function side(groups: Group[], chosen: Group | null, answers: Record<string, Answer>): string {
   if (!groups.length) return `<p class="none">No instances.</p>`;
   const item = (e: Entry, cls: string) => {
-    const st = stateOf(answers[e.host]);
+    const st = e.token ? stateOf(answers[e.host]) : { cls: "", what: "not registered yet: bun erga setup" };
     return `<span class="${cls}" title="${esc(`${e.host}: ${st.what}`)}"><i class="light ${st.cls}"></i><span>${esc(e.host)}</span></span>`;
   };
   return `<ul class="primaries">${groups
@@ -156,12 +187,14 @@ function side(groups: Group[], chosen: Group | null, answers: Record<string, Ans
     .join("")}</ul>`;
 }
 
-/** The job line: the job that runs on one of the group's instances, else the group's last job. */
-function jobLine(g: Group, jobs: JobRecord[], now: number): string {
+/** The jobs of the group's instances, newest first. */
+const jobsOf = (g: Group, jobs: JobRecord[]) => {
   const hosts = [g.primary.host, ...g.staging.map((s) => s.host)];
-  const mine = jobs.filter((j) => hosts.includes(j.host)).sort((a, b) => b.started.localeCompare(a.started));
-  const job = mine.find((j) => j.running) ?? mine[0];
-  if (!job) return `<div class="job none">No job yet. A deploy or a rollback of ${esc(g.primary.host)} shows here as it runs.</div>`;
+  return jobs.filter((j) => hosts.includes(j.host)).sort((a, b) => b.started.localeCompare(a.started));
+};
+
+/** A job's light (its class) and its state in words: "done 5 minutes ago · from a terminal". */
+function jobState(job: JobRecord, now: number): { cls: string; what: string } {
   const from = `from ${job.from == "page" ? "this page" : `a ${job.from}`}`;
   const end = Date.parse(job.ended ?? "") || Date.parse(job.started) || now;
   const what = job.running
@@ -171,8 +204,48 @@ function jobLine(g: Group, jobs: JobRecord[], now: number): string {
       : job.result == "failed"
         ? `failed ${timeAgo(end, now)}${job.error ? `: ${job.error}` : ""} · ${from}`
         : `stopped · ${from}`;
-  const cls = job.running ? "running" : (job.result ?? "stopped");
-  return `<div class="job ${cls}" title="${esc(what)}"><i class="light"></i><code>${esc(job.command)}</code><span>${esc(what)}</span></div>`;
+  return { cls: job.running ? "running" : (job.result ?? "stopped"), what };
+}
+
+/** The job line: the job that runs on one of the group's instances, else the group's last job. */
+function jobLine(g: Group, mine: JobRecord[], now: number): string {
+  const job = mine.find((j) => j.running) ?? mine[0];
+  if (!job) return `<div class="job none">No job yet. A deploy or a rollback of ${esc(g.primary.host)} shows here as it runs.</div>`;
+  const st = jobState(job, now);
+  return `<a class="job ${st.cls}" href="#${esc(g.primary.host)}/logs/${esc(job.id)}" title="${esc(st.what)}"><i class="light"></i><code>${esc(job.command)}</code><span>${esc(st.what)}</span></a>`;
+}
+
+/** "45 s", "3 min 5 s", "1 h 2 min". */
+const took = (job: JobRecord, now: number) => {
+  const end = job.running ? now : Date.parse(job.ended ?? "");
+  const s = Math.round((end - Date.parse(job.started)) / 1000);
+  if (!Number.isFinite(s) || s < 0) return "";
+  if (s < 60) return `${s} s`;
+  return s < 3600 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${Math.floor(s / 3600)} h ${Math.floor(s / 60) % 60} min`;
+};
+
+/** Logs: the output of the job that the hash names, else of the job that runs, else of the last one. */
+function logs(g: Group, mine: JobRecord[], id: string, now: number): string {
+  const job = mine.find((j) => j.id == id) ?? mine.find((j) => j.running) ?? mine[0];
+  if (!job) return `<p class="note">No job yet. The output of a deploy or a rollback of ${esc(g.primary.host)} shows here as it runs.</p>`;
+  const st = jobState(job, now);
+  const lines = job.out.map((l) => `<span>${esc(l)}</span>`).join("\n");
+  const end = job.error ? `\n<span class="bad">${esc(job.error)}</span>` : "";
+  return `<section class="logs" data-job="${esc(job.id)}" aria-label="The job's output"><div class="log-head"><code>${esc(job.command)}</code><span class="when">${esc(new Date(Date.parse(job.started) || now).toLocaleString())}</span><span class="state ${st.cls}">${esc(job.running ? "runs" : st.cls == "ok" ? "done" : st.cls)}${took(job, now) ? ` · ${took(job, now)}` : ""}</span></div><pre class="log">${lines || (job.running ? "<span>No output yet.</span>" : "<span>No output.</span>")}${end}</pre></section>`;
+}
+
+/** History: the jobs of the primary and its staging instances, newest first. */
+function history(g: Group, mine: JobRecord[], now: number): string {
+  if (!mine.length)
+    return `<p class="note">No job yet. Each deploy and rollback of ${esc(g.primary.host)} and its staging instances shows here.</p>`;
+  const rows = mine
+    .map((j) => {
+      const st = jobState(j, now);
+      const result = j.running ? "runs" : j.result == "ok" ? "done" : j.result == "failed" ? "failed" : "stopped";
+      return `<a class="h-row ${st.cls}" href="#${esc(g.primary.host)}/logs/${esc(j.id)}" data-job="${esc(j.id)}"><span class="h-state"><i class="light"></i>${result}</span><code class="h-cmd" title="${esc(j.error ?? j.command)}">${esc(j.command)}</code><span class="h-host">${esc(j.host)}</span><span class="h-from">${esc(j.from == "page" ? "this page" : j.from)}</span><time datetime="${esc(j.started)}" title="${esc(j.started)}">${esc(timeAgo(Date.parse(j.started) || now, now))}</time><span class="h-took">${esc(took(j, now))}</span></a>`;
+    })
+    .join("");
+  return `<section class="history" aria-label="Jobs"><div class="h-row h-head"><span>Result</span><span>Command</span><span>Instance</span><span>From</span><span>Started</span><span>Took</span></div>${rows}</section>`;
 }
 
 function branches(git: Git, now: number): string {
@@ -246,22 +319,53 @@ function log(g: Group, f: Facts & { git: Git }, now: number): string {
   </section>`;
 }
 
-/** The tabs of a primary. Plan to-do 11 adds Setup, Logs and History. */
-const TABS = ["Deploys"];
+/**
+ * Setup: the checklist of the setup in progress, when it is this primary's (deploy/own/page.ts fills the box, and the
+ * page's script keeps it when the page draws again, so a form keeps what the person types). Else, how to start one.
+ */
+function setupTab(g: Group, setup: string): string {
+  if (g.primary.host == setup) return `<div class="setup" data-host="${esc(setup)}"></div>`;
+  const other = setup ? ` The setup of <a href="#${esc(setup)}/setup">${esc(setup)}</a> is in progress.` : "";
+  return `<p class="note">${esc(g.primary.host)} is ${g.primary.token ? "registered" : "not registered yet"}. A new instance starts with <code>bun erga setup &lt;host&gt;</code>: its checklist then shows here.${other}</p>`;
+}
 
-/** The live part of the page: the sidebar and the chosen primary. `name` is the page's hash. */
+/** The tabs of a primary, by their name in the hash (#<primary>/<tab>). */
+const TABS: Record<string, string> = { setup: "Setup", deploys: "Deploys", logs: "Logs", history: "History" };
+
+/** The newest job of all, for the page's script: when another one starts, the page switches to its primary. */
+function newest(groups: Group[], jobs: JobRecord[]): string {
+  const job = jobs.reduce<JobRecord | null>((a, j) => (!a || j.started > a.started ? j : a), null);
+  const g = job && chosenOf(groups, job.host);
+  return job && g ? ` data-newest="${esc(job.id)}" data-newest-primary="${esc(g.primary.host)}"` : "";
+}
+
+/** The live part of the page: the sidebar and the chosen primary. `name` is the page's hash: <host>[/<tab>[/<job>]]. */
 export function viewHtml(f: Facts, name: string, now = Date.now()): string {
   if ("error" in f.config)
     return `<aside class="side"></aside><section class="main"><p class="note bad">${esc(f.config.error)}</p></section>`;
-  const groups = groupsOf(f.config);
-  const g = chosenOf(groups, name);
+  const [host = "", wanted = "", id = ""] = name.split("/");
+  const groups = groupsOf(f.config, f.setup);
+  const g = chosenOf(groups, host);
   const sidebar = `<aside class="side" aria-label="Instances"><h2 class="side-head">Instances</h2>${side(groups, g, f.answers)}</aside>`;
   if (!g)
     return `${sidebar}<section class="main"><p class="note">No instance is registered in this clone's .erga/config.json. Add one: <code>bun erga register &lt;host&gt;</code></p></section>`;
-  const tabs = `<nav class="tabs" role="tablist">${TABS.map((t, i) => `<span class="tab" role="tab" aria-selected="${i == 0}">${t}</span>`).join("")}</nav>`;
-  const deploys =
-    "error" in f.git ? `<p class="note bad">${esc(f.git.error)}</p>` : branches(f.git, now) + log(g, { ...f, git: f.git }, now);
-  return `${sidebar}<section class="main" data-primary="${esc(g.primary.host)}"><h2 class="title">${esc(g.primary.host)}</h2>${tabs}${jobLine(g, f.jobs, now)}<div class="tab-body">${deploys}</div></section>`;
+  // A primary that setup has not registered yet opens on its Setup tab.
+  const tab = TABS[wanted] ? wanted : g.primary.host == f.setup && !g.primary.token ? "setup" : "deploys";
+  const tabs = `<nav class="tabs" role="tablist">${Object.entries(TABS)
+    .map(([k, t]) => `<a class="tab" role="tab" href="#${esc(g.primary.host)}/${k}" aria-selected="${k == tab}">${t}</a>`)
+    .join("")}</nav>`;
+  const mine = jobsOf(g, f.jobs);
+  const body =
+    tab == "logs"
+      ? logs(g, mine, id, now)
+      : tab == "history"
+        ? history(g, mine, now)
+        : tab == "setup"
+          ? setupTab(g, f.setup)
+          : "error" in f.git
+            ? `<p class="note bad">${esc(f.git.error)}</p>`
+            : branches(f.git, now) + log(g, { ...f, git: f.git }, now);
+  return `${sidebar}<section class="main" data-primary="${esc(g.primary.host)}" data-tab="${tab}"${newest(groups, f.jobs)}><h2 class="title">${esc(g.primary.host)}</h2>${tabs}${jobLine(g, mine, now)}<div class="tab-body">${body}</div></section>`;
 }
 
 /** The whole page: Erga's bar, the live part, and the page's script. */
@@ -274,6 +378,6 @@ export function pageHtml(live: string, script: string): string {
 <nav class="erga-crumbs erga-bar erga-bar-l" aria-label="Breadcrumbs"><a class="erga-brand" href="/"><span>${WORDMARK}</span></a><h1 class="erga-here" aria-current="page"><span>Ops</span></h1></nav>
 <p class="gone" id="gone" hidden>bun erga stopped. Run it again, and this page follows.</p>
 <div class="ops" id="ops">${live}</div>
-<script>${script}</script>
+<script src="/setup.js"></script><script>${script}</script>
 </body></html>`;
 }

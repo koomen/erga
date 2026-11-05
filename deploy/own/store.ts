@@ -6,7 +6,7 @@
 //                         (SESSION_SECRET, FACTORY_KEY, the sign-in apps' secrets, SNAPSHOT_TOKEN under a primary with
 //                         a staging server), and the agent's admin token (ADMIN_TOKEN). Never printed: status names the
 //                         keys only.
-//   .erga/inbox.jsonl     the checklist page's conversation: the person's messages and the agent's answers
+//   .erga/inbox.jsonl     the Setup tab's conversation: the person's messages and the agent's answers
 //
 // A person who loses .erga/ keeps a working server: the secrets stay on the Workers. Only `bun erga setup <host> token`
 // and a new server need them; keep a copy of secrets.json in a password manager.
