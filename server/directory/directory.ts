@@ -85,10 +85,32 @@ export const roleMay = (role: Role | null, action: Action): boolean => role != n
 export const TITLE_MAX = 200;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-interface Row { id: string; owner: string; slug: string; title: string; title_set: number; slug_set: number; created: number; modified: number | null; expires: number | null; test: number; kind?: string | null }
+interface Row {
+  id: string;
+  owner: string;
+  slug: string;
+  title: string;
+  title_set: number;
+  slug_set: number;
+  created: number;
+  modified: number | null;
+  expires: number | null;
+  test: number;
+  scratch?: number;
+  kind?: string | null;
+}
 const fromRow = (r: Row): DocRow => ({
-  id: r.id, owner: r.owner, slug: r.slug, title: r.title, titleSet: !!r.title_set, slugSet: !!r.slug_set,
-  created: Number(r.created), modified: r.modified == null ? null : Number(r.modified), expires: r.expires == null ? null : Number(r.expires), test: !!r.test,
+  id: r.id,
+  owner: r.owner,
+  slug: r.slug,
+  title: r.title,
+  titleSet: !!r.title_set,
+  slugSet: !!r.slug_set,
+  created: Number(r.created),
+  modified: r.modified == null ? null : Number(r.modified),
+  expires: r.expires == null ? null : Number(r.expires),
+  test: !!r.test,
+  scratch: !!r.scratch,
   kind: isDocKind(r.kind) ? r.kind : null,
 });
 const unique = (e: unknown) => /UNIQUE constraint failed|SQLITE_CONSTRAINT/i.test(String((e as Error)?.message ?? e));
@@ -319,11 +341,40 @@ export class Directory {
       const slug = await this.free(owner, doc.id, base, false);
       await this.sql.batch([
         ["DELETE FROM slug_history WHERE owner = ?1 AND slug = ?2", owner, slug],
-        [`INSERT INTO documents (id, owner, slug, title, title_set, slug_set, created, modified, expires, test, kind)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
-          doc.id, owner, slug, title, doc.titleSet ? 1 : 0, doc.slugSet ? 1 : 0, doc.created, doc.modified ?? null, doc.expires ?? null, doc.test ? 1 : 0, doc.kind ?? null],
-        ["INSERT OR REPLACE INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, 'owner', ?3, NULL)", doc.id, owner, Date.now()],
-        ...(doc.everyone ? [["INSERT OR REPLACE INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, ?3, ?4, ?5)", doc.id, ANYONE, doc.everyone, Date.now(), owner] as Statement] : []),
+        [
+          `INSERT INTO documents (id, owner, slug, title, title_set, slug_set, created, modified, expires, test, kind, scratch)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
+          doc.id,
+          owner,
+          slug,
+          title,
+          doc.titleSet ? 1 : 0,
+          doc.slugSet ? 1 : 0,
+          doc.created,
+          doc.modified ?? null,
+          doc.expires ?? null,
+          doc.test ? 1 : 0,
+          doc.kind ?? null,
+          doc.scratch ? 1 : 0,
+        ],
+        [
+          "INSERT OR REPLACE INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, 'owner', ?3, NULL)",
+          doc.id,
+          owner,
+          Date.now(),
+        ],
+        ...(doc.everyone
+          ? [
+              [
+                "INSERT OR REPLACE INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, ?3, ?4, ?5)",
+                doc.id,
+                ANYONE,
+                doc.everyone,
+                Date.now(),
+                owner,
+              ] as Statement,
+            ]
+          : []),
       ]);
       return { doc: (await this.get(doc.id))!, added: true };
     };
@@ -341,7 +392,12 @@ export class Directory {
   async edited(id: string, at: { modified: number | null; pageTitle: string | null }): Promise<{ doc: DocRow; renamed: boolean } | null> {
     const doc = await this.get(id);
     if (!doc) return null;
-    if (at.modified != null) await this.sql.run("UPDATE documents SET modified = ?2, expires = NULL WHERE id = ?1", id, at.modified);
+    if (at.modified != null)
+      await this.sql.run(
+        "UPDATE documents SET modified = ?2, expires = CASE scratch WHEN 1 THEN expires END WHERE id = ?1",
+        id,
+        at.modified
+      );
     const title = clip(at.pageTitle ?? "") || UNTITLED;
     if (doc.titleSet || title == doc.title) {
       if (at.modified != null && at.modified != doc.modified) await this.docChanged(id);
@@ -498,6 +554,12 @@ export class Directory {
     await this.docChanged(id);
   }
 
+  /** A scratch document saved: on its owner's list, and kept. */
+  async keep(id: string): Promise<void> {
+    await this.sql.run("UPDATE documents SET scratch = 0, expires = NULL WHERE id = ?1", id);
+    await this.docChanged(id);
+  }
+
   async setExpires(id: string, expires: number | null): Promise<void> {
     await this.sql.run("UPDATE documents SET expires = ?2 WHERE id = ?1", id, expires);
     await this.docChanged(id);
@@ -518,7 +580,7 @@ export class Directory {
   }
 
   /**
-   * The documents someone has a permission of their own on (test documents
+   * The documents someone has a permission of their own on (test and scratch documents
    * aside), most recently edited first, with their role and how many
    * permissions besides the owner's each has (`shared`; "*" counts as one). With `ids`, only those of them.
    */
@@ -528,7 +590,7 @@ export class Directory {
     const rows = await this.sql.all<Row & { role: Role; shared: number }>(
       `SELECT d.*, p.role, (SELECT COUNT(*) FROM permissions q WHERE q.doc_id = d.id AND q.role != 'owner') AS shared
        FROM permissions p JOIN documents d ON d.id = p.doc_id
-       WHERE p.login = ?1 AND d.test = 0${only ? ` AND d.id IN (${only.map((_, i) => `?${i + 2}`).join(", ")})` : ""}
+       WHERE p.login = ?1 AND d.test = 0 AND d.scratch = 0${only ? ` AND d.id IN (${only.map((_, i) => `?${i + 2}`).join(", ")})` : ""}
        ORDER BY COALESCE(d.modified, d.created) DESC`,
       login.toLowerCase(),
       ...(only ?? [])
@@ -565,7 +627,7 @@ export class Directory {
     q = q.replace(/^\/+|\/+$/g, "").toLowerCase();
     const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
     const rows = await this.sql.all<Row>(
-      `SELECT * FROM documents WHERE test = 0 AND (?1 = '' OR LOWER(title) LIKE ?2 ESCAPE '\\' OR owner LIKE ?2 ESCAPE '\\'
+      `SELECT * FROM documents WHERE test = 0 AND scratch = 0 AND (?1 = '' OR LOWER(title) LIKE ?2 ESCAPE '\\' OR owner LIKE ?2 ESCAPE '\\'
          OR (owner || '/' || slug) LIKE ?2 ESCAPE '\\' OR id = ?1)
        ORDER BY COALESCE(modified, created) DESC LIMIT ?3`,
       q,

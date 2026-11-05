@@ -7,6 +7,8 @@
 //                              landing document (a setting), with an Edit button for those who may. Someone signed
 //                              in goes to /docs instead (homeGoesToDocs); /_home is the homepage project for them
 //   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the homepage's
+//   /scratch                   a scratch document for you: off your list, deleted delete_docs_after_hours after it's
+//                              made unless you save it (signs you in first)
 //   /docs                      your documents (the directory), latest edit first
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with), the editor at ?edit; /d/<id>,
 //                              /<owner>/<id> and old slugs redirect here

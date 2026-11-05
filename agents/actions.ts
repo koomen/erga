@@ -183,6 +183,12 @@ export const AGENT_ACTIONS: AgentAction[] = [
     tool: "create_document",
   },
   {
+    route: "GET /scratch",
+    domain: "document",
+    action: "Make a scratch document: off the list, deleted after delete_docs_after_hours (Documents, + Scratch)",
+    tool: "create_document",
+  },
+  {
     route: "POST /d/<id>/api/key",
     domain: "document",
     action: "The edit key the page's editor opens its socket with, on the pages origin (editor)",

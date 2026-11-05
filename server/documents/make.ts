@@ -94,6 +94,37 @@ export const newDoc = Effect.gen(function* () {
 });
 
 /**
+ * /scratch: a new blank scratch document for the signed-in person, opened in the editor at its random address. It isn't
+ * on their list, and it goes delete_docs_after_hours after it's made (never, if that's never) unless they save it (save_document).
+ */
+export const scratchDoc = Effect.gen(function* () {
+  const { request, url, platform } = yield* ctx;
+  const session = yield* call(() => platform.sessionOf(request));
+  if (!session) return signInFirst("/scratch");
+  if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't make others.", 403);
+  if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request))
+    return confirmAction("Scratch document", "Make a scratch document", `/scratch${url.search}`);
+  if (!(yield* call(() => platform.directory.mayWrite(session.login))))
+    return page("You can't make documents here", `${esc(NO_WRITE)} <a href="/docs">Your documents</a>`, 403);
+  const start = yield* call(() => startingFiles(platform, null));
+  if (!start) return page("Couldn't make a document", "This server has no blank page to start from.", 500);
+  // Local development may say how soon it goes (?unedited=<ms>), to test it.
+  const unedited = (platform.dev(url) && Number(url.searchParams.get("unedited"))) || undefined;
+  for (let tries = 0; tries < 5; tries++) {
+    const made = yield* call(() =>
+      makeDoc(platform, session.login.toLowerCase(), newDocId(), start.files, {
+        index: start.index,
+        kind: start.kind,
+        scratch: true,
+        unedited,
+      })
+    );
+    if (made) return redirect(withEdit(link(addressOf(made), session)));
+  }
+  return page("Couldn't make a document", 'Something went wrong picking an address. <a href="/scratch">Try again</a>.', 500);
+});
+
+/**
  * Makes a document from a template's files: its row in the directory (titled
  * by the template's heading, its slug following that), then its host. Null
  * if the id is taken.
@@ -104,8 +135,10 @@ export async function makeDoc(platform: Platform, owner: string, id: string, fil
   const created = Date.now();
   // A published one has been edited already (its files are someone's work): it never expires.
   // Nor does any when the server's delete_docs_after_hours is never (null).
-  const hours = opts.published || opts.unedited ? null : await platform.directory.config.get("delete_docs_after_hours");
-  const expires = opts.published ? null : opts.unedited ? created + opts.unedited : hours == null ? null : created + hours * HOUR;
+  // A scratch one goes then too, edited or not, published or not.
+  const kept = opts.published && !opts.scratch;
+  const hours = kept || opts.unedited ? null : await platform.directory.config.get("delete_docs_after_hours");
+  const expires = kept ? null : opts.unedited ? created + opts.unedited : hours == null ? null : created + hours * HOUR;
   const index = opts.index ?? "index.html";
   const page = files[index];
   const pageText = typeof page == "string" ? page : page instanceof Uint8Array ? new TextDecoder().decode(page) : "";
@@ -114,13 +147,22 @@ export async function makeDoc(platform: Platform, owner: string, id: string, fil
   const { doc, added } = await platform.directory.add({
     id, owner, kind,
     ...(opts.title?.trim() ? { title: opts.title, titleSet: true } : { title: titleOf(pageText) ?? UNTITLED }),
-    ...(opts.slug?.trim() ? { slug: opts.slug, slugSet: true } : {}),
+    // A scratch one's address is its random id until it's saved (save_document).
+    ...(opts.scratch ? { slug: id, slugSet: true, scratch: true } : opts.slug?.trim() ? { slug: opts.slug, slugSet: true } : {}),
     created,
     expires,
     ...(opts.published ? { modified: created } : {}),
   });
   if (!added) return null;
-  if (await platform.docs.create(doc, files, index, { expires, kind, ...(opts.published ? { modified: created } : {}) })) return doc;
+  if (
+    await platform.docs.create(doc, files, index, {
+      expires,
+      kind,
+      ...(opts.published ? { modified: created } : {}),
+      ...(opts.scratch ? { scratch: true } : {}),
+    })
+  )
+    return doc;
   // A host by that name was there already (one whose row went): leave it, and try another id.
   await platform.directory.remove(id);
   return null;
@@ -138,6 +180,8 @@ export interface MakeOptions {
   slug?: string;
   /** Made from someone's files (the server's API): counts as edited, so it never expires. */
   published?: boolean;
+  /** A scratch document: off the list, its address its id, and gone delete_docs_after_hours after it's made, edited or not. */
+  scratch?: boolean;
 }
 
 /** A new document's id: 8 letters and digits, none easily mistaken for another. */

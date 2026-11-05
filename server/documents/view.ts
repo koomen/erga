@@ -69,6 +69,8 @@ interface Decision {
   kind?: DocKind | null;
   /** The page's head's details (shared/page-head.ts): the tab's title and icon, and a link's preview. */
   head?: PageHead;
+  /** A scratch document: when it goes (null: never). */
+  scratch?: { expires: number | null };
 }
 
 /** Decisions in this isolate: key -> when, and what. */
@@ -152,9 +154,18 @@ async function address(
   let answer: ViewAnswer | null = null;
   if (!d) {
     // The document at the address: by id straight from its host; by slug, the directory finds it.
-    let row: { id: string; owner: string; slug: string; title: string; kind: DocKind | null } | null = null;
-    if (first == "d") { if (!ID.test(second)) return nothing(); }
-    else {
+    let row: {
+      id: string;
+      owner: string;
+      slug: string;
+      title: string;
+      kind: DocKind | null;
+      scratch: boolean;
+      expires: number | null;
+    } | null = null;
+    if (first == "d") {
+      if (!ID.test(second)) return nothing();
+    } else {
       if (!OWNER.test(first)) return nothing();
       row = (await platform.directory.locate(first, second))?.doc ?? null;
       if (!row) return nothing();
@@ -187,6 +198,7 @@ async function address(
       canonical: answer.canonical ?? "",
       kind: row?.kind ?? null,
       head: answer.head,
+      ...(row?.scratch ? { scratch: { expires: row.expires } } : {}),
     };
     if (answer.quiet) keepDecision(platform, key, d);
   }
@@ -350,6 +362,7 @@ async function render(
     // The page follows each change while it's open: for someone signed in in their browser, who may open its room.
     ...(session && !session.agent ? { live: d.ver } : {}),
     ...(session && !session.agent && d.kind == "project" ? { project: address } : {}),
+    ...(canEdit && d.scratch ? { scratch: { expires: d.scratch.expires, save: canShare } } : {}),
   });
   const before = shell.before,
     after = shell.after;

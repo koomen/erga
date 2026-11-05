@@ -8,7 +8,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Base64 } from "effect/encoding";
 import { ANYONE, type DocRow, type Grant, newDocId, NO_WRITE } from "../directory/index.ts";
-import { makeDoc, startingFiles } from "../documents/index.ts";
+import { forgetDecisions, makeDoc, startingFiles } from "../documents/index.ts";
 import { TEMPLATES, templateById } from "../pages/index.ts";
 import type { FileData } from "../../document/document.ts";
 import { cleanRel, isDocKind, type DocKind } from "../../document/pages.ts";
@@ -163,7 +163,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     activity: "making a document",
     wide: true,
     loose: true,
-    ui: "Documents (/docs): New, from a template or a copy; the viewer's Clone; publishing a folder of files",
+    ui: "Documents (/docs): New, from a template or a copy, and + Scratch (/scratch); the viewer's Clone; publishing a folder of files",
     description: "Makes a document from files, a template or a copy.",
     parameters: Schema.Struct({
       files: Schema.optionalKey(FILES),
@@ -183,10 +183,14 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
           description: "document (one page) or project (pages).",
         })
       ),
+      scratch: bool("Not on the list; deleted delete_docs_after_hours after it's made (a setting), unless saved (save_document)."),
     }),
     run: async (args, caller) => {
       const { who } = caller,
         platform = platformOf(caller);
+      const scratch = args.scratch === true;
+      if (scratch && args.slug)
+        throw new OperationError({ message: "A scratch document's address is random until it's saved: no slug.", status: 400 });
       let files: Record<string, FileData> = decodeFiles(args.files);
       const published = Object.keys(files).length > 0;
       let index: string;
@@ -225,6 +229,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
           title: optString(args.title, "title"),
           slug: optString(args.slug, "slug"),
           kind: isDocKind(args.kind) ? args.kind : startKind,
+          scratch,
         });
         if (doc)
           return {
@@ -232,10 +237,40 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
             page: index,
             files: Object.keys(files).sort(),
             ...(from ? { from } : {}),
-            ...(published || doc.expires == null ? {} : { expires: `${iso(doc.expires)}, unless someone edits it` }),
+            ...(doc.expires == null || (published && !scratch)
+              ? {}
+              : { expires: `${iso(doc.expires)}, ${scratch ? "unless someone saves it (save_document)" : "unless someone edits it"}` }),
           };
       }
       throw new OperationError({ message: "Couldn't pick an address for it: try again.", status: 500 });
+    },
+  },
+  {
+    name: "save_document",
+    label: "Save a scratch document",
+    activity: "saving a scratch document",
+    ui: "A scratch document's page: Save",
+    description: "Saves a scratch document: on the list, never deleted.",
+    parameters: Schema.Struct({ document: DOCUMENT, title: Schema.optionalKey(str("Default: the first heading.")) }),
+    run: async (args, caller) => {
+      const doc = await findDocument(caller, args.document, "edit");
+      if (!(await caller.dir.may(caller.who, "delete", doc)))
+        throw new OperationError({ message: "Only its owner can save a scratch document.", status: 403 });
+      if (!doc.scratch) throw new OperationError({ message: "That document is saved already: it isn't a scratch document.", status: 409 });
+      const platform = platformOf(caller);
+      await platform.docs.keep(doc);
+      await caller.dir.keep(doc.id);
+      forgetDecisions(doc.id);
+      // Its address was its id: now it follows the title (the one given, one set before, or the first heading's now).
+      const given = optString(args.title, "title")?.trim();
+      const title = given || (doc.titleSet ? undefined : null);
+      const r = await platform.docs.rename(
+        doc,
+        { id: caller.who.login.toLowerCase(), name: caller.name ?? caller.who.login },
+        { slug: null, ...(title !== undefined ? { title } : {}) }
+      );
+      if (!r.ok) throw new OperationError({ message: r.error, status: 400 });
+      return { saved: described((await platform.directory.get(doc.id)) ?? doc, caller) };
     },
   },
   {

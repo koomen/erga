@@ -74,7 +74,9 @@ Documents: name one with "document" (its address, URL, id, or the slug of one of
 ${owner}'s). The page note says which document and page are open, if any: "this" means it.
 
 - documents: list_documents, create_document, delete_document, rename_document and
-  share_document: the documents list (/docs) and sharing (its owner's). Any editor may use
+  share_document: the documents list (/docs) and sharing (its owner's). create_document
+  with scratch makes a scratch document (/scratch: off the list, deleted as unedited ones are);
+  save_document keeps one. Any editor may use
   share_document to let a document's readers use their own agent on it, show or hide
   Erga's bars over it for them, and let its page call a model as its visitor (page_llm).
   whoami says who you act for, and lists the pages of this Erga (not documents) they may

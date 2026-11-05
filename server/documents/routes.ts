@@ -48,7 +48,7 @@ import { adminRoutes, isAdminPath } from "../admin/index.ts";
 import { ID, OWNER, type Route, type Who } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { HOME_OWNER, HOME_SLUG } from "../../document/names.ts";
-import { listDocs, newDoc, shareToken } from "./make.ts";
+import { listDocs, newDoc, scratchDoc, shareToken } from "./make.ts";
 import { adoptLanding, landingDocument } from "./landing.ts";
 import { pagesOrigin, pagesRoutes, pagesHost } from "./pages-origin.ts";
 import { editKey, type KeyPerson, keyWho, readEditKey } from "./edit-key.ts";
@@ -64,6 +64,7 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   if (pages) return yield* pagesRoutes(pages);
   if (path == "/") return yield* viewLanding;
   if (path == "/new") return yield* newDoc;
+  if (path == "/scratch") return yield* scratchDoc;
   if (path == "/docs") return yield* listDocs;
   if (isAdminPath(path)) return yield* adminRoutes;
 

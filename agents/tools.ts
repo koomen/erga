@@ -109,7 +109,7 @@ export const KINDS: readonly {
   {
     name: "documents",
     description: "Lists, makes, renames, shares and deletes documents.",
-    ops: ["list_documents", "create_document", "rename_document", "share_document", "delete_document", "whoami", "revoke"],
+    ops: ["list_documents", "create_document", "save_document", "rename_document", "share_document", "delete_document", "whoami", "revoke"],
     fields: {
       title: 'Default or "": the first heading.',
       slug: 'Its address after /<owner>/; default or "": from the title.',
