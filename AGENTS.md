@@ -11,6 +11,27 @@ feature branch for each task, `bun run test` must end with `all passing`
 before each push, and only `bun erga` moves `staging` and `main`, when Pete
 asks. There are no pull requests.
 
+Pete works with [herdr-core](https://github.com/herdrdev/herdr-core), in
+this way:
+
+1. Pete talks to one manager agent. The manager does not write code.
+2. For each task, the manager starts a new agent with herdr-core, in its
+   own terminal and worktree: `hc run --bg --name <task> --cwd <worktree>
+   claude "<brief>"`. Never a subagent of the manager's own session: Pete
+   must see each agent and talk to it. A task is small: its change is one
+   commit on staging.
+3. The task's agent does the work on its own feature branch, pushes it, and
+   stops. It does not merge. The branch waits.
+4. When Pete says to merge, the manager starts one agent for the merges,
+   with `hc run` as in step 2.
+   That agent merges all the waiting branches into staging, in the order
+   that gives the fewest conflicts, and fixes each conflict as it comes.
+5. Each merge is one squashed commit (`bun erga merge <branch> -m`). Its
+   message tells what the whole task does, not the branch's steps.
+6. When a task's commit is on production (`bun erga promote`), the manager
+   retires the task's agent. Until then, the agent stays: it knows its task
+   if the merge or staging shows a problem.
+
 ## Testing as the user
 
 Agents and tests use the code the way its intended user does:
