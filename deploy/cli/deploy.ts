@@ -6,7 +6,9 @@
 // comes from the entry only: its names, its vars, the secrets the Worker keeps. No secret goes out.
 //
 // A staging instance keeps its copy of its primary's data (as GitHub's deploy does), and gets DEPLOY_TARGET=staging and
-// SNAPSHOT_FROM (its primary's address) over its entry's vars; its primary's names are its guard. Each deploy or
+// SNAPSHOT_FROM (its primary's address) over its entry's vars; its primary's names are its guard. With --fresh, or when it
+// has no copy yet, it gets a new copy: the pipeline's snapshot of the primary's database and documents, with the primary's
+// SNAPSHOT_TOKEN (the environment, or .erga/secrets.json). Each deploy or
 // rollback holds the lock .erga/jobs/<host>.lock and writes its job record in .erga/jobs/. A deploy runs only a commit
 // whose tests passed: .erga/tests/<sha>, which this CLI writes when `bun run test` ends with "all passing".
 //
@@ -29,8 +31,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ALL_STEPS,
+  boundDatabase,
   type Carry,
   Cloudflare,
+  copiesOf,
   DeployError,
   type Fetch,
   guardTarget,
@@ -42,7 +46,7 @@ import {
   targetSharedPagesHost,
   Unhealthy,
 } from "../pipeline/pipeline";
-import { type Config, type Entry, entryOf, originOf, readConfig } from "./config";
+import { type Config, type Entry, entryOf, originOf, readConfig, secretsPath, snapshotTokenOf } from "./config";
 import { previousVersion } from "./flow";
 import { readOps } from "./ops";
 
@@ -70,10 +74,10 @@ const namesOf = (e: Entry) => ({
 
 /**
  * What the pipeline deploys for `entry`: its names and vars, no secret (the Worker keeps its own). A staging instance
- * keeps its copy of its primary's data (no snapshot), gets DEPLOY_TARGET=staging and SNAPSHOT_FROM over its vars, and
- * may not touch its primary's names.
+ * gets DEPLOY_TARGET=staging and SNAPSHOT_FROM over its vars, and may not touch its primary's names. It keeps its copy
+ * of its primary's data, unless `copy` is given: then the pipeline copies the primary's database and documents.
  */
-export function entryTarget(config: Config, entry: Entry): Target {
+export function entryTarget(config: Config, entry: Entry, copy?: { token: string; fresh: boolean }): Target {
   const own = { ...namesOf(entry), secrets: {}, keepSecrets: true, checkVersion: true };
   if (!entry.stagingOf) return { ...own, vars: { ...entry.vars }, production: true };
   const primary = entryOf(config, entry.stagingOf);
@@ -84,7 +88,8 @@ export function entryTarget(config: Config, entry: Entry): Target {
   const p = namesOf(primary);
   return {
     ...own,
-    vars: { ...entry.vars, DEPLOY_TARGET: "staging", SNAPSHOT_FROM: originOf(primary.host) },
+    vars: { ...entry.vars, DEPLOY_TARGET: "staging", SNAPSHOT_FROM: originOf(primary.host), SNAPSHOT_IMPORT: "1" },
+    ...(copy ? { snapshot: { databaseName: primary.database, origin: originOf(primary.host), token: copy.token, fresh: copy.fresh } } : {}),
     guard: {
       worker: p.workerName,
       database: p.databaseName,
@@ -297,6 +302,30 @@ function pushTo(o: { clone?: string; print?: (line: string) => void }, sha: stri
   (o.print ?? console.log)(`${branch} is at ${sha.slice(0, 12)} on origin.`);
 }
 
+// ------------------------------------------------------------------ the copy of the primary's data
+
+/** Whether the Worker of a staging target runs on a copy of its primary's data (the pipeline's database step keeps it). */
+async function hasCopy(cf: Cloudflare, t: Target): Promise<boolean> {
+  const acc = `/accounts/${t.accountId}`;
+  const bound = await boundDatabase(cf, acc, t.workerName);
+  return !!bound && (await copiesOf(cf, acc, t.databaseName)).some((c) => c.uuid == bound);
+}
+
+/** The staging target with the copy of its primary's data, or null: it keeps its copy. It stops when the token is missing. */
+async function copyTarget(dir: string, config: Config, entry: Entry, cf: Cloudflare, fresh: boolean): Promise<Target | null> {
+  const primary = entry.stagingOf!;
+  if (!fresh && (await hasCopy(cf, entryTarget(config, entry)))) return null;
+  const token = snapshotTokenOf(dir, primary);
+  if (token.length < 32)
+    throw new Error(
+      `${fresh ? "--fresh copies" : `${entry.host} has no copy of ${primary}'s data yet, so this deploy copies`} ${primary}'s documents, with ${primary}'s SNAPSHOT_TOKEN. There is none. Put it in ${secretsPath(dir)} as { "${primary}": { "SNAPSHOT_TOKEN": "..." } } (mode 600), or set SNAPSHOT_TOKEN.`
+    );
+  const target = entryTarget(config, entry, { token, fresh });
+  const wrong = guardTarget(target);
+  if (wrong) throw new Error(wrong);
+  return target;
+}
+
 // ------------------------------------------------------------------ deploy
 
 export interface DeployOptions {
@@ -305,6 +334,8 @@ export interface DeployOptions {
   host: string;
   /** A commit or a branch; required for a staging instance. None for a primary: the commit its staging instances run. */
   commit?: string;
+  /** A staging instance only: a new copy of its primary's data in place of the one it keeps. */
+  fresh?: boolean;
   /** Skip the tests' gate: the job record says so. */
   noTests?: boolean;
   /** The command as typed, for the lock and the job record. */
@@ -343,11 +374,14 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   if (!entry) throw new Error(`${o.host} has no entry in .erga/config.json. Register it first: bun erga register ${o.host}`);
   if (entry.stagingOf && !o.commit)
     throw new Error(`${o.host} is a staging instance: name the commit (bun erga deploy <commit> ${o.host}).`);
-  const target = entryTarget(config, entry);
+  if (o.fresh && !entry.stagingOf)
+    throw new Error(`${o.host} is a primary: --fresh is only for a staging instance, which copies its primary's data.`);
+  let target = entryTarget(config, entry);
   const wrong = guardTarget(target);
   if (wrong) throw new Error(wrong);
   const { net, token, quick } = await netOf(o);
-  const command = o.command ?? `bun erga deploy ${o.commit ? `${o.commit} ` : ""}${o.host}`;
+  const cf = new Cloudflare(token, net);
+  const command = o.command ?? `bun erga deploy ${o.commit ? `${o.commit} ` : ""}${o.host}${o.fresh ? " --fresh" : ""}`;
   const free = takeLock(o.dir, o.host, command);
   const job = startJob(o.dir, { command, host: o.host, print: o.print });
   const log = job.log;
@@ -364,6 +398,12 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     job.note({ commit: sha });
     // A primary: main must have the commit, or move forward to it. Checked before the build, so a deploy never leaves main behind.
     const main = entry.stagingOf ? null : mocked() && !o.clone ? "mock" : mainMove(clone, sha);
+    // Before the tests and the build: a copy that needs a token it does not have stops here.
+    const copying = entry.stagingOf ? await copyTarget(o.dir, config, entry, cf, !!o.fresh) : null;
+    if (copying) {
+      target = copying;
+      job.note({ copy: o.fresh ? "fresh" : "no copy yet" });
+    }
 
     if (o.noTests) {
       job.note({ tests: "skipped: --no-tests" });
@@ -380,12 +420,11 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
 
     log(`Deploy ${sha.slice(0, 12)} to ${o.host}${mocked() ? " (the mock Cloudflare: nothing real)" : ""}:`);
     log(
-      `  account ${target.accountId}, Worker ${target.workerName}, database ${target.databaseName}${entry.stagingOf ? ` (its copy of ${entry.stagingOf}'s data kept)` : ""}`
+      `  account ${target.accountId}, Worker ${target.workerName}, database ${target.databaseName}${!entry.stagingOf ? "" : copying ? ` (a new copy of ${entry.stagingOf}'s database and documents: ${o.fresh ? "--fresh" : "it has no copy yet"})` : ` (its copy of ${entry.stagingOf}'s data kept)`}`
     );
     log(`  https://${targetHost(target)}, documents' pages on ${targetPagesShown(target)}; no secret sent`);
     const { buildHere } = await import("../run");
     const release = await buildHere(sha, log, mocked());
-    const cf = new Cloudflare(token, net);
     const carry: Carry = {};
     try {
       await runPipeline(cf, release, target, {

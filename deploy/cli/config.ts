@@ -4,6 +4,7 @@
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { DeployFacts } from "./ops";
 
@@ -67,4 +68,21 @@ export function withEntry(config: Config, entry: Entry): Config {
 export function originOf(host: string): string {
   if (host.includes("://")) return new URL(host).origin;
   return /^(localhost|127\.0\.0\.1)(:|$)/.test(host) ? `http://${host}` : `https://${host}`;
+}
+
+export const secretsPath = (dir: string) => join(dir, "secrets.json");
+
+const SnapshotSecret = Schema.Struct({ SNAPSHOT_TOKEN: Schema.String });
+
+/**
+ * A primary's SNAPSHOT_TOKEN, for a copy of its documents: SNAPSHOT_TOKEN in the environment, else
+ * `{ "<primary host>": { "SNAPSHOT_TOKEN": "..." } }` in .erga/secrets.json. "" if neither has it.
+ */
+export function snapshotTokenOf(dir: string, primary: string): string {
+  const own = process.env.SNAPSHOT_TOKEN?.trim();
+  if (own) return own;
+  const path = secretsPath(dir);
+  if (!existsSync(path)) return "";
+  const file = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  return Option.getOrUndefined(Schema.decodeUnknownOption(SnapshotSecret)(file[primary]))?.SNAPSHOT_TOKEN.trim() ?? "";
 }

@@ -1,14 +1,16 @@
 // `bun erga deploy` and `bun erga rollback` (deploy/cli/deploy.ts), from .erga/config.json, against the mock
 // Cloudflare's copy of Erga's account (ERGA_DEPLOY_MOCK=1): the upload has the entry's vars, a staging entry gets
 // SNAPSHOT_FROM and keeps its copy of the data, no secret goes out, the lock and the job record, the tests' gate, and
-// a primary with no commit named takes the commit its staging instances report (a fake GET /api/ops). And the branches:
-// merge deploys to each staging instance, then pushes staging; a primary's deploy then moves main (a clone of its own).
+// a primary with no commit named takes the commit its staging instances report (a fake GET /api/ops). With --fresh, or
+// with no copy yet, a staging entry gets a new copy of its primary's database and documents (its SNAPSHOT_TOKEN from
+// .erga/secrets.json); without the token, it stops before the build. And the branches: merge deploys to each staging
+// instance, then pushes staging; a primary's deploy then moves main (a clone of its own).
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { type Entry, withEntry, writeConfig } from "../deploy/cli/config";
+import { type Entry, secretsPath, withEntry, writeConfig } from "../deploy/cli/config";
 import {
   deployInstance,
   deployStaging,
@@ -22,8 +24,19 @@ import {
 import { deployFacts } from "../deploy/pipeline/account";
 import { guardTarget } from "../deploy/pipeline/pipeline";
 import { targetFor } from "../deploy/run";
-import { mockCloudflare } from "../dev/mock-cloudflare";
-import { bindingsOf, bootstrap, env, prepareRelease, productionOf, ROOT, SHA1 } from "./helpers/deploys.ts";
+import { MOCK_SNAPSHOT_TOKEN, mockCloudflare, PROD_DOCS } from "../dev/mock-cloudflare";
+import {
+  bindingsOf,
+  bootstrap,
+  env,
+  prepareRelease,
+  productionOf,
+  ROOT,
+  SHA1,
+  stagingCopies,
+  stagingDbOf,
+  writesToProduction,
+} from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 
 quietConsole();
@@ -51,6 +64,7 @@ const fresh = (...entries: Entry[]) => {
 const records = () =>
   readdirSync(join(dir, "jobs"))
     .filter((f) => f.endsWith(".jsonl"))
+    .sort() // a name starts with its start time: the order of the jobs
     .map((f) =>
       readFileSync(join(dir, "jobs", f), "utf8")
         .trim()
@@ -150,6 +164,69 @@ describe("bun erga deploy", () => {
     await deployInstance({ dir, host: "erga.dev", commit: "HEAD", noTests: true, net: mock.fetch, print: () => {}, test: failing });
     expect(tested).toEqual([HEAD]);
     expect(records().some((r) => r.some((x) => x.tests == "skipped: --no-tests") && r.at(-1).result == "ok")).toBe(true);
+  }, 60_000);
+});
+
+describe("bun erga deploy --fresh", () => {
+  const words = (mock: ReturnType<typeof mockCloudflare>, id: string) =>
+    new TextDecoder().decode(mock.state.docs["erga-staging"].docs.get(id)?.entries.get("file:index.html") as Uint8Array);
+  /** Whether the primary's database was exported since the call numbered `from`. */
+  const exported = (mock: ReturnType<typeof mockCloudflare>, from: number) =>
+    mock.state.calls.slice(from).some((c) => c.endsWith("/export"));
+  const deploy = (mock: ReturnType<typeof mockCloudflare>, fresh?: boolean) =>
+    deployInstance({ dir, host: "staging.erga.dev", commit: "HEAD", fresh, net: mock.fetch, print: () => {} });
+
+  test("a new database with the primary's data and documents; without --fresh, nothing copies; without the token, it stops before the build", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const before = productionOf(mock.state);
+    const copy = stagingDbOf(mock.state).name;
+    mock.state.docs["erga-staging"].docs.get(PROD_DOCS[0])!.entries.set("file:index.html", new TextEncoder().encode("edited on staging"));
+    fresh(primary, staging);
+
+    // Without --fresh: the copy stays, with what an admin changed on it, and nothing is exported. No token is needed.
+    const mark = mock.state.calls.length;
+    await deploy(mock);
+    expect(stagingDbOf(mock.state).name).toBe(copy);
+    expect(words(mock, PROD_DOCS[0])).toBe("edited on staging");
+    expect(exported(mock, mark)).toBe(false);
+
+    // --fresh with no SNAPSHOT_TOKEN: it says where to put it, and nothing is built or uploaded.
+    const calls = mock.state.calls.length;
+    await expect(deploy(mock, true)).rejects.toThrow(`Put it in ${secretsPath(dir)} as { "erga.dev": { "SNAPSHOT_TOKEN": "..." } }`);
+    expect(mock.state.calls.slice(calls).every((c) => c.startsWith("GET "))).toBe(true);
+    expect(records().at(-1)!.at(-1).result).toBe("failed");
+
+    // With the token in .erga/secrets.json: a new database, bound; the old copy deleted; the primary's documents.
+    writeFileSync(secretsPath(dir), JSON.stringify({ "erga.dev": { SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN } }));
+    const again = mock.state.calls.length;
+    await deploy(mock, true);
+    const now = stagingDbOf(mock.state);
+    expect(now.name).not.toBe(copy);
+    expect(now.name.startsWith("erga-staging-")).toBe(true);
+    expect(stagingCopies(mock.state)).toEqual([now.name]);
+    expect((now.rows ?? []).join("\n")).toContain("doc-1");
+    expect(exported(mock, again)).toBe(true);
+    for (const id of PROD_DOCS) expect(words(mock, id)).toContain("production's words");
+    expect(records().at(-1)).toContainEqual({ copy: "fresh" });
+    expect(bindingsOf(mock.state, "erga-staging").SNAPSHOT_IMPORT.text).toBe("1");
+    expect(productionOf(mock.state)).toBe(before);
+    expect(writesToProduction(mock.state)).toEqual([]);
+  }, 60_000);
+
+  test("a staging instance with no copy yet gets one without --fresh; a primary refuses --fresh", async () => {
+    const mock = mockCloudflare({ fleet: true, stagingSecrets: true });
+    fresh(primary, staging);
+    writeFileSync(secretsPath(dir), JSON.stringify({ "erga.dev": { SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN } }));
+    await deploy(mock);
+    expect(stagingDbOf(mock.state).name.startsWith("erga-staging-")).toBe(true);
+    expect(exported(mock, 0)).toBe(true);
+    for (const id of PROD_DOCS) expect(words(mock, id)).toContain("production's words");
+    expect(records().at(-1)).toContainEqual({ copy: "no copy yet" });
+
+    await expect(deployInstance({ dir, host: "erga.dev", commit: "HEAD", fresh: true, net: mock.fetch })).rejects.toThrow(
+      "--fresh is only for a staging instance"
+    );
   }, 60_000);
 });
 
