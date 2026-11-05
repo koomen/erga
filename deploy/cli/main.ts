@@ -1,16 +1,17 @@
 #!/usr/bin/env bun
 // Erga's command line: `bun erga <command>`. Development happens on feature branches; `merge` puts a branch on staging
-// as one commit, `promote` moves main (production) to staging, `release` tags main. `bun erga skill` is the agents' manual.
+// as one commit and deploys it to each staging instance, `deploy` deploys a primary and moves main, `release` tags main.
+// Every deploy runs on this machine: a push deploys nothing. `bun erga skill` is the agents' manual.
 //
 //   bun erga skill                      how an agent works in this repository (the workflow and its rules)
 //   bun erga start <branch>             a new feature branch from origin/staging, in this checkout
 //   bun erga status                     production, staging, the feature branches and the commits, as text
 //   bun erga dashboard [--port N]       the same, as a live page on localhost
-//   bun erga merge <branch> [-m text]   the branch onto staging as one commit: tests, push, wait for the deploy
-//   bun erga promote                    main to staging's head (production deploys): only when Pete asks
+//   bun erga merge <branch> [-m text]   the branch onto staging as one commit: tests, a deploy to each staging
+//                                       instance, then the push of staging
 //   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
 //   bun erga deploy [<commit>] <host> [--no-tests]            deploys a registered instance from this machine; a primary
-//                                       with no commit takes the commit its staging instances run
+//                                       with no commit takes the commit its staging instances run, and main moves to it
 //   bun erga rollback <host> [--yes]    a registered instance's Worker version from before its last deploy
 //   bun erga register <host> [--staging-of <host>]            signs in to an instance as an admin, in the browser, and
 //                                       adds it to .erga/config.json: its deploy facts, its plain settings, an ops token
@@ -25,26 +26,20 @@ import {
   mergeRefusal,
   nextVersion,
   PROTECTED,
-  promoteRefusal,
   releaseNotes,
   releaseRefusal,
   squashMessage,
   statusText,
 } from "./flow";
 import {
-  answerOf,
   commitsOf,
   conflictsOf,
   fetchOrigin,
-  ghJson,
   git,
   headOf,
-  jobsOf,
   readState,
   repoOf,
   ROOT,
-  runsOf,
-  serversOf,
   sh,
   tagsOf,
 } from "./observe";
@@ -56,8 +51,6 @@ const fail = (s: string, next?: string): never => {
   if (next) say(`NEXT  ${next}`);
   process.exit(1);
 };
-/** The environment of a push that `bun erga` makes: the pre-push hook lets it through (deploy/cli/pre-push.ts). */
-const CLI_PUSH = { ERGA_CLI_PUSH: "1" };
 
 const needRepo = () => repoOf() ?? fail("This checkout's origin is not a GitHub repository.", "git remote -v");
 
@@ -89,50 +82,10 @@ function start(name: string | undefined) {
   say(`NEXT  Commit, then push it: git push origin HEAD:${name}. When Pete asks: bun erga merge ${name}`);
 }
 
-// ------------------------------------------------------------------ waiting for a deploy
-
-/** Waits for the workflow run of `sha` on `branch`, says each job's result, then checks the branch's servers. */
-async function waitDeploy(repo: string, sha: string, branch: string) {
-  const short = sha.slice(0, 12);
-  let run = runsOf(repo, { commit: sha, branch, limit: 5 })[0];
-  for (let i = 0; !run && i < 24; i++) {
-    await Bun.sleep(5000);
-    run = runsOf(repo, { commit: sha, branch, limit: 5 })[0];
-  }
-  if (!run) fail(`GitHub started no workflow run for ${short} on ${branch} in 2 minutes.`, `gh run list -R ${repo} --branch ${branch}`);
-  say(`      The run: ${run.url}`);
-  const seen = new Map<string, string>();
-  const deadline = Date.now() + 45 * 60_000;
-  let view: { status: string; conclusion: string } | null = null;
-  while (Date.now() < deadline) {
-    view = ghJson<{ status: string; conclusion: string }>("run", "view", String(run.id), "-R", repo, "--json", "status,conclusion");
-    for (const j of jobsOf(repo, run.id)) {
-      const now = j.status == "completed" ? j.conclusion : j.status;
-      if (seen.get(j.name) != now) say(`      job ${j.name}: ${now}`);
-      seen.set(j.name, now);
-    }
-    if (view?.status == "completed") break;
-    await Bun.sleep(15_000);
-  }
-  if (!view || view.status != "completed") return fail(`The run did not end in 45 minutes: ${run.url}`);
-  if (view.conclusion != "success") fail(`The run ended with ${view.conclusion}: ${run.url}`, "Read the failed job's log there.");
-  pass(`The run for ${short} ended with success.`);
-  for (const s of serversOf(repo).filter((x) => x.branch == branch)) {
-    let a = await answerOf(s.host);
-    for (let i = 0; i < 12 && (a.version != short || !a.healthy); i++) {
-      await Bun.sleep(5000);
-      a = await answerOf(s.host);
-    }
-    const line = `${s.name} https://${s.host}: version ${a.version ?? "no answer"}, health ${a.healthy ? "ok" : "FAIL"}`;
-    if (a.version == short && a.healthy) pass(line);
-    else say(`FAIL  ${line} (expected ${short})`);
-  }
-}
-
 // ------------------------------------------------------------------ merge
 
-async function merge(branch: string | undefined, message: string | undefined, wait: boolean) {
-  const repo = needRepo();
+async function merge(branch: string | undefined, message: string | undefined) {
+  needRepo();
   const f = fetchOrigin();
   if (!f.ok) fail(`git fetch failed: ${f.err}`);
   const name = branch ?? "";
@@ -172,43 +125,21 @@ async function merge(branch: string | undefined, message: string | undefined, wa
     }
     pass("bun run test: all passing.");
     const { ergaDir } = await import("./config");
-    const { recordPass } = await import("./deploy");
+    const { deployStaging, recordPass } = await import("./deploy");
     recordPass(ergaDir(), sha, t.out);
-    const p = at(["git", "push", "--quiet", "origin", "HEAD:refs/heads/staging"], { env: CLI_PUSH });
-    if (!p.ok) fail(`The push to staging failed: ${p.err}`, "Staging moved while the tests ran: run bun erga merge again.");
-    pass(`staging is at ${sha.slice(0, 12)}: ${text.split("\n")[0]}`);
+    const hosts = await deployStaging({ dir: ergaDir(), sha, command: `bun erga merge ${name}` }).catch((e: Error) =>
+      fail(e.message, `Fix it, then run bun erga merge ${name} again.`)
+    );
+    for (const h of hosts) pass(`${h} runs ${sha.slice(0, 12)}, healthy.`);
+    pass(`Merged ${name} as ${sha.slice(0, 12)}: ${text.split("\n")[0]}`);
     const d = git("push", "--quiet", "origin", "--delete", name);
     if (d.ok) pass(`The branch ${name} is deleted on GitHub.`);
     else say(`NOTE  The branch ${name} is still on GitHub: ${d.err}`);
     if (git("rev-parse", "--verify", "--quiet", `refs/heads/${name}`).ok)
       say(`NOTE  The local branch ${name} is still here. Delete it when you are done with it: git branch -D ${name}`);
-    if (wait) await waitDeploy(repo, sha, "staging");
-    else say(`NEXT  bun erga status shows staging's deploy.`);
   } finally {
     git("worktree", "remove", "--force", dir);
   }
-}
-
-// ------------------------------------------------------------------ promote
-
-async function promote(wait: boolean) {
-  const repo = needRepo();
-  fetchOrigin();
-  const S = headOf("origin/staging"),
-    M = headOf("origin/main");
-  if (!S || !M) return fail("There is no origin/staging or origin/main.");
-  const fastForward = git("merge-base", "--is-ancestor", M, S).ok;
-  const run = runsOf(repo, { commit: S, branch: "staging", limit: 5 })[0] ?? null;
-  const spec = serversOf(repo).find((s) => s.branch == "staging") ?? null;
-  const server = spec ? { ...spec, ...(await answerOf(spec.host)) } : null;
-  const no = promoteRefusal({ staging: S, main: M, fastForward, run, server });
-  if (no) fail(no);
-  const count = git("rev-list", "--count", `${M}..${S}`).out;
-  say(`Promote: main ${M.slice(0, 12)} to staging ${S.slice(0, 12)} (${count} commits).`);
-  const p = sh(["git", "push", "--quiet", "origin", `${S}:refs/heads/main`], { env: CLI_PUSH });
-  if (!p.ok) fail(`The push to main failed: ${p.err}`);
-  pass(`main is at ${S.slice(0, 12)}. GitHub deploys production now.`);
-  if (wait) await waitDeploy(repo, S, "main");
 }
 
 // ------------------------------------------------------------------ release
@@ -343,9 +274,7 @@ export async function main(argv: string[]) {
       return startDashboard(Number(opt("--port")) || 4748, flag("--open"));
     }
     case "merge":
-      return merge(plain[0], opt("-m"), !flag("--no-wait"));
-    case "promote":
-      return promote(!flag("--no-wait"));
+      return merge(plain[0], opt("-m"));
     case "release":
       return release(plain[0], flag("--dry-run"));
     case "deploy":

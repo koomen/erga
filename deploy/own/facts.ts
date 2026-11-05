@@ -27,37 +27,15 @@ export const originRepo = (): string | null => {
   return m ? m[1] : null;
 };
 
-/** The person's fork as gh sees it: its parent, its Actions variables and secrets' names, and main's last run. */
+/** The person's fork as gh sees it: its parent. */
 export function githubFacts(): GitHubFacts {
   const login = gh<{ login: string }>("api", "user")?.login ?? null;
   const repo = originRepo();
-  if (!login || !repo) return { login, repo, parent: null, variables: null, secrets: null, run: null };
+  if (!login || !repo) return { login, repo, parent: null };
   const view = gh<{ parent: { owner: { login: string }; name: string } | null }>("repo", "view", repo, "--json", "parent");
-  const variables = gh<{ name: string; value: string }[]>("variable", "list", "-R", repo, "--json", "name,value");
-  const secrets = gh<{ name: string }[]>("secret", "list", "-R", repo, "--json", "name");
-  const run = gh<{ headSha: string; status: string; conclusion: string; url: string }[]>(
-    "run",
-    "list",
-    "-R",
-    repo,
-    "--branch",
-    "main",
-    "--event",
-    "push",
-    "-L",
-    "1",
-    "--json",
-    "headSha,status,conclusion,url"
-  )?.[0];
-  return {
-    login,
-    repo,
-    parent: view?.parent ? `${view.parent.owner.login}/${view.parent.name}` : null,
-    variables: variables ? Object.fromEntries(variables.map((v) => [v.name, v.value])) : null,
-    secrets: secrets ? secrets.map((s) => s.name) : null,
-    run: run ? { sha: run.headSha, status: run.status, conclusion: run.conclusion, url: run.url } : null,
-  };
+  return { login, repo, parent: view?.parent ? `${view.parent.owner.login}/${view.parent.name}` : null };
 }
+
 const git = (...args: string[]) => {
   const r = Bun.spawnSync(["git", ...args], { cwd: ROOT });
   return r.exitCode == 0 ? r.stdout.toString().trim() : null;

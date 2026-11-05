@@ -20,22 +20,23 @@ and `main`. There are no pull requests.
    with `all passing`. Also run the e2e tests of the part you change
    (`bun run test:e2e e2e/full/page/`). The whole suite
    (`bun run test:full`) only when Pete asks.
-3. A pushed feature branch does not deploy. Tell Pete the branch name and
-   what it changes.
+3. A push deploys nothing. Tell Pete the branch name and what it changes.
 4. When Pete asks, merge the branch into staging:
 
        bun erga merge <branch> [-m "message"]
 
-   It squashes the branch into one commit on staging, runs the tests on that
-   commit, pushes staging, deletes the branch on GitHub, and waits for the
-   deploy. It stops on a conflict: rebase the branch on `origin/staging`,
-   push it again, and merge again.
-5. A push is not a deploy. `merge` reports staging's version and health
-   when the deploy ends. Check the change on https://staging.erga.dev
-   before you say that it works. Staging is for admins only.
-6. Only when Pete asks: `bun erga promote` moves `main` to staging's head,
-   and production deploys. It refuses when staging's run failed, or when
-   staging does not run staging's head.
+   It squashes the branch into one commit, runs the tests on that commit,
+   deploys it from this machine to each registered staging instance, then
+   pushes staging and deletes the branch on GitHub. It stops on a conflict:
+   rebase the branch on `origin/staging`, push it again, and merge again.
+   It stops when a deploy fails, and staging stays where it was.
+5. `merge` reports each staging instance's commit and health. Check the
+   change on https://staging.erga.dev before you say that it works.
+   Staging is for admins only.
+6. Only when Pete asks: `bun erga deploy erga.dev` deploys the commit that
+   staging runs to production, from this machine. Then it moves `main` to
+   that commit and pushes it. erga.koomen.dev has no staging instance:
+   `bun erga deploy main erga.koomen.dev`.
 7. Only when Pete asks: `bun erga release [vX.Y.Z|major|minor|patch]`
    tags `main` and makes a GitHub release with notes from the commits.
    `--dry-run` shows the version and the notes first.
@@ -43,7 +44,7 @@ and `main`. There are no pull requests.
 ## The other commands
 
 - `bun erga status`: production, staging, the feature branches (ahead,
-  behind, conflicts) and the commits that wait for promote.
+  behind, conflicts) and the commits on staging that are not on main.
 - `bun erga dashboard`: the same, as a live page on localhost.
 - `bun erga deploy [<commit>] <host>`: deploys a registered instance from
   this machine, with the facts in `.erga/config.json`. Only when Pete asks.
@@ -51,8 +52,9 @@ and `main`. There are no pull requests.
   copy of production's data. A primary with no commit takes the commit
   that its staging instances run (they must agree and be healthy). It
   deploys only a commit whose tests passed (`.erga/tests/<sha>`; `merge`
-  writes it), else it runs them first. It does not move `main`: `promote`
-  stays until GitHub stops deploying.
+  writes it), else it runs them first; `--no-tests` skips them. After a healthy deploy of a
+  primary, `main` moves forward to the commit and the CLI pushes it. A
+  primary does not deploy a commit apart from `main`.
 - `bun erga rollback <host>`: a registered instance's Worker version from
   before its last deploy, in seconds. Only when Pete asks. The next deploy
   goes forward again.
@@ -70,26 +72,21 @@ and `main`. There are no pull requests.
 - Never push to `staging` or `main` with git. The pre-push hook stops it
   (`bun install` turns the hook on, in a clone).
 - Never open a pull request. Pull requests are off on GitHub.
-- `merge`, `promote`, `release` and `rollback` run only when Pete asks.
+- `merge`, `deploy`, `release` and `rollback` run only when Pete asks.
 - Report what you observed (a version, a health check, a run's result),
   never what you assumed.
-- When a deploy fails, read the run's log: `gh run list --branch staging`,
-  then `gh run view <id> --log-failed`. A failed health check rolls the
-  Worker back by itself.
+- When a deploy fails, read its output, or its job record in
+  `.erga/jobs/`. A failed health check rolls the Worker back by itself.
 - AGENTS.md has the code's rules and traps.
 
 ## How a deploy runs
 
-- `.github/workflows/test.yml` runs the tests on each push. After they pass,
-  a push to `staging` or `main` runs `bun deploy/actions.ts <branch>`: the
-  build, the D1 migrations, the Worker, the addresses, the health check.
-  `deploy/actions-plan.ts` decides what a push deploys.
-- The Workers keep their own secrets. The workflow has only
-  `CLOUDFLARE_API_TOKEN` (its permissions: `TOKEN_PERMISSIONS` in
-  `deploy/own/plan.ts`).
-- erga.koomen.dev deploys after production, from the GitHub environment
-  `koomen-test` and its variables. Another deployment: a new environment,
-  and a copy of the `deploy-koomen` job.
+- Every deploy runs on a machine, with its Cloudflare credential:
+  `CLOUDFLARE_API_TOKEN`, else the cf CLI's login (`bunx cf auth login`).
+  GitHub only keeps the repository: it runs no workflow and has no token.
+- A deploy builds the commit in a scratch worktree, then runs the pipeline:
+  the D1 migrations, the static files, the Worker, the addresses, the
+  health check. A deploy sends no secret: the Workers keep their own.
 - Staging runs on a frozen copy of production's data. Only
   `bun deploy/run.ts staging --fresh`, from a machine, copies it again.
 - A rollback never changes the database: migrations only add.

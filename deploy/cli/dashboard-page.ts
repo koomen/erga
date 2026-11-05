@@ -200,11 +200,11 @@ function repo(s: State, now: number): string {
   <div class="box clone" id="clone">
     <h2>Clone and push<button class="pill" type="button" id="clone-copy" data-copy="${esc(copy)}" title="Copies the three commands">Copy</button></h2>
     <pre><code>${esc(copy)}</code></pre>
-    <ul class="facts"><li>A feature branch never deploys. Merge puts it on staging as one commit.</li><li>main only follows staging. Merge it here.</li></ul>
+    <ul class="facts"><li>A feature branch never deploys. Merge puts it on staging as one commit.</li><li>main moves when a primary deploys: <code>bun erga deploy &lt;host&gt;</code>.</li></ul>
   </div>
   <div class="box actions"><h2>Branches and releases</h2>
     <p class="state"><span id="ahead">${ahead ? `staging is ${plural(ahead, "commit")} ahead of production` : "staging and production are the same"}</span><span id="release-state">${s.latestRelease ? "Latest release: " + esc(s.latestRelease) : "No release yet"}</span></p>
-    <div class="repo-buttons"><button class="new" id="merge" type="button" data-act="promote-open" data-head="${esc(sha7(s.heads.staging))}" data-count="${ahead}"${ahead ? "" : " disabled"} title="${ahead ? "Moves main to staging's head: production deploys it." : "Nothing to merge: main is at staging's head."}">Merge staging into main</button><button class="pill" id="release-pill" type="button" data-act="release-open" data-version="${esc(version)}" data-head="${esc(sha7(s.heads.main))}"${tagged || !s.log.length ? " disabled" : ""} title="${tagged ? "main's head has a release already." : "A version tag on main's head, and a GitHub release."}">Cut release</button></div>
+    <div class="repo-buttons"><button class="pill" id="release-pill" type="button" data-act="release-open" data-version="${esc(version)}" data-head="${esc(sha7(s.heads.main))}"${tagged || !s.log.length ? " disabled" : ""} title="${tagged ? "main's head has a release already." : "A version tag on main's head, and a GitHub release."}">Cut release</button></div>
   </div>
   </div>
   <section class="box features" id="features" aria-labelledby="features-head">
@@ -241,11 +241,6 @@ const DIALOGS = `
     <p>All of the branch's changes become one commit on staging, and staging deploys it. Then the branch is deleted. The tests run on the merged commit first.</p>
     <label>Commit message<textarea id="feature-message" spellcheck="true" placeholder="Empty: the branch's commit messages"></textarea></label>
     <div class="buttons"><span id="feature-status" role="status" aria-live="polite"></span><button type="button" data-close>Cancel</button><button type="button" class="primary" id="feature-go">Merge</button></div>
-  </dialog>
-  <dialog id="promote-dlg" aria-labelledby="promote-title">
-    <h2 id="promote-title">Merge staging into main</h2>
-    <p>main moves to staging's head <code id="promote-head"></code> (<span id="promote-count"></span>), and production deploys it. It stops when staging's own run failed, or staging does not run its head.</p>
-    <div class="buttons"><span role="status"></span><button type="button" data-close>Cancel</button><button type="button" class="primary" id="promote-go">Merge</button></div>
   </dialog>
   <dialog id="release-dlg" aria-labelledby="release-title">
     <h2 id="release-title">Cut a release</h2>

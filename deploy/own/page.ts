@@ -7,9 +7,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { esc } from "../../shared/html";
-import { githubManifest, PRESETS, QUESTIONS, tokenTemplateUrl } from "./plan";
+import { githubManifest, PRESETS, QUESTIONS } from "./plan";
 import { addMessage, answersOf, DIR, loadOwn, loadSecrets, messages, saveOwn, saveSecrets } from "./store";
-import { setAnswers, status, storeActionsToken } from "./cli";
+import { setAnswers, status } from "./cli";
 
 const json = (v: unknown, s = 200) =>
   new Response(JSON.stringify(v), { status: s, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
@@ -82,16 +82,6 @@ export async function startPage(wanted: number, open: boolean) {
         saveSecrets(s);
         cached = null;
         return json({ problems: [] });
-      }
-      // The Cloudflare token for GitHub Actions: checked with Cloudflare, then stored as the fork's secret. Never kept here.
-      if (p == "/api/actions-token" && req.method == "POST") {
-        const { token } = (await req.json()) as { token?: string };
-        if (!token?.trim()) return json({ problems: ["Paste the token first."] });
-        const problem = await storeActionsToken(token.trim());
-        cached = null;
-        if (!problem)
-          addMessage("agent", "The Cloudflare token is stored as your fork's secret CLOUDFLARE_API_TOKEN. GitHub can deploy now.");
-        return json({ problems: problem ? [problem] : [] });
       }
       // GitHub's app manifest: a form the browser posts to GitHub, which makes the app, then comes back here.
       if (p == "/github/new" && req.method == "GET") {
@@ -204,7 +194,6 @@ code{font:12.5px ui-monospace,Menlo,monospace;background:var(--zebra);padding:1p
 <div class="card hidden" id="github"><h2>GitHub sign-in</h2><p>One click makes a GitHub App for sign-in, with the right addresses. GitHub then sends its values back to this page. Nothing to copy.</p>
 <div id="ghmake"><p><a class="btn" href="/github/new">Create the GitHub App</a></p><small>For an organization's app: <a href="#" id="orgapp">make it under an organization</a>.</small></div><p id="ghdone" class="hidden"></p></div>
 <div class="card hidden" id="google"><h2>Google sign-in</h2><ol id="gsteps"></ol><form id="gform"><label><b>Client ID</b><input name="id" autocomplete="off"></label><label><b>Client secret</b><input name="secret" type="password" autocomplete="off"><small>It goes to .erga/secrets.json on this machine, and to your server. Never paste it in the chat.</small></label><button>Save</button><div class="problems" id="gprob"></div></form></div>
-<div class="card hidden" id="cftoken"><h2>Cloudflare token for GitHub</h2><p>GitHub Actions deploys your fork's main with a Cloudflare API token. <a href="${esc(tokenTemplateUrl())}" target="_blank">Make the token</a> (the permissions are filled in: click Continue to summary, then Create Token), and paste it here.</p><form id="tform"><label><b>API token</b><input name="token" type="password" autocomplete="off"><small>Cloudflare checks it, then it goes to your fork's secrets on GitHub. It is not stored on this machine. Never paste it in the chat.</small></label><button>Save</button><div class="problems" id="tprob"></div></form></div>
 <div class="card" id="chat"><h2>Your agent</h2><div class="log" id="log"></div><form id="say"><textarea name="text" rows="2" placeholder="A message to your coding agent"></textarea><button>Send</button></form><small>Your agent reads these with <code>bun erga own inbox</code>. Your terminal works too.</small></div>
 </aside></div>
 <script>
@@ -225,8 +214,6 @@ async function refresh(fresh){
   $("#ghdone").classList.toggle("hidden",!s.github);$("#ghmake").classList.toggle("hidden",!!s.github);
   if(decided&&!refresh.folded){refresh.folded=true;$("#decide").open=false;}
   if(s.github)$("#ghdone").innerHTML="Your app: "+(s.github.url?\`<a href="\${h(s.github.url)}" target="_blank">\${h(s.github.slug||s.github.clientId)}</a>\`:h(s.github.clientId));
-  const tok=s.steps.find(x=>x.id=="actions-token");
-  $("#cftoken").classList.toggle("hidden",!tok||tok.state=="done");
   const g=decided&&a.providers.includes("google");
   $("#google").classList.toggle("hidden",!g);
   if(g){const hosts=[a.host,a.staging].filter(Boolean);$("#gsteps").innerHTML=\`<li>Open <a href="https://console.cloud.google.com/auth/clients/create" target="_blank">Google Cloud: Create OAuth client</a> (make a project first if it asks).</li><li>Application type: <b>Web application</b>. Name: Erga.</li><li>Authorized redirect URIs: \${hosts.map(x=>"<code>https://"+h(x)+"/auth/google/callback</code>").join(" and ")}</li><li>Create, then type the Client ID and Client secret here.</li>\`+(s.google?"<li><b>Saved: "+h(s.google.clientId)+"</b></li>":"");}
@@ -234,7 +221,6 @@ async function refresh(fresh){
 async function chat(){const m=await fetch("/api/messages").then(r=>r.json());const log=$("#log");const end=log.scrollTop+log.clientHeight>=log.scrollHeight-8;log.innerHTML=m.map(x=>\`<div class="msg \${x.from}">\${h(x.text)}</div>\`).join("")||'<div class="msg agent">Your agent will write here too.</div>';if(end)log.scrollTop=log.scrollHeight;}
 $("#answers").onsubmit=async(e)=>{e.preventDefault();const r=await post("/api/answers",Object.fromEntries(new FormData(e.target)));$("#aprob").textContent=r.problems.join(" ");refresh(true);};
 $("#gform").onsubmit=async(e)=>{e.preventDefault();const r=await post("/api/google",Object.fromEntries(new FormData(e.target)));$("#gprob").textContent=r.problems.join(" ");if(!r.problems.length)e.target.reset();refresh(true);};
-$("#tform").onsubmit=async(e)=>{e.preventDefault();$("#tprob").textContent="Checking...";const r=await post("/api/actions-token",Object.fromEntries(new FormData(e.target)));$("#tprob").textContent=r.problems.join(" ");if(!r.problems.length)e.target.reset();refresh(true);};
 $("#say").onsubmit=async(e)=>{e.preventDefault();const t=e.target.text.value.trim();if(!t)return;await post("/api/messages",{text:t});e.target.reset();chat();};
 $("#orgapp").onclick=(e)=>{e.preventDefault();const o=prompt("The organization's GitHub login:");if(o)location.href="/github/new?org="+encodeURIComponent(o);};
 refresh(true);chat();setInterval(refresh,6000);setInterval(chat,2000);

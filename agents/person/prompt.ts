@@ -57,7 +57,7 @@ The homepage and tokens:
   GitHub issue (none yet: it waits).
 
 Erga's own code and its deploys aren't yours: GitHub holds the code (github.com/koomen/erga),
-and GitHub Actions deploys it. You can't read, change or deploy it from here: say so.
+and its admins deploy it from their own machines. You can't read, change or deploy it from here: say so.
 `;
 
 export const systemPrompt = (owner: string, admin: boolean) =>

@@ -172,9 +172,9 @@ test("the server: the page has the token; an action without it, or from another 
   expect(page).toContain(`content="${token}"`);
   expect(await (await fetch(`${root}/view`)).text()).toContain("clean-one");
 
-  expect((await act({ action: "promote" }, {})).status).toBe(403);
-  expect((await act({ action: "promote" }, { "X-Erga-Token": "wrong" })).status).toBe(403);
-  expect((await act({ action: "promote" }, { "X-Erga-Token": token, Origin: "https://evil.example" })).status).toBe(403);
+  expect((await act({ action: "release", version: "v1.0.0" }, {})).status).toBe(403);
+  expect((await act({ action: "release", version: "v1.0.0" }, { "X-Erga-Token": "wrong" })).status).toBe(403);
+  expect((await act({ action: "release", version: "v1.0.0" }, { "X-Erga-Token": token, Origin: "https://evil.example" })).status).toBe(403);
   expect((await fetch(`${root}/api/log?run=1`)).status).toBe(403);
   expect(started).toEqual([]);
 });
@@ -195,8 +195,7 @@ test("the server: each button runs its bun erga command, and only a real feature
 
   await act({ action: "rollback", server: "production" });
   expect(started.at(-1)!.argv.slice(-3)).toEqual(["rollback", "production", "--yes"]);
-  await act({ action: "promote" });
-  expect(started.at(-1)!.argv.slice(-1)).toEqual(["promote"]);
+  expect((await act({ action: "promote" })).status).toBe(400);
   await act({ action: "rerun", run: "22" });
   expect(started.at(-1)!.argv).toEqual(["gh", "run", "rerun", "22", "--failed", "-R", "koomen/erga"]);
 });

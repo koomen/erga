@@ -1,5 +1,5 @@
 // A release that is up but unhealthy: the pipeline stops at its live step and says what failed, and the version
-// before it serves again in one call (rollbackTo, as deploy/actions.ts does by itself).
+// before it serves again in one call (rollbackTo, as `bun erga deploy` does by itself).
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";

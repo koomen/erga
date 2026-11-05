@@ -6,8 +6,8 @@
 //   production   branch main      erga.dev           Worker erga          D1 erga           pages *.erga-pages.dev
 //   staging      branch staging   staging.erga.dev   Worker erga-staging  D1 erga-staging   pages *.erga-pages-staging.dev
 //
-// GitHub Actions deploys both (deploy/actions.ts): a push
-// to `staging` deploys staging, a push to `main` deploys production.
+// Each deploy runs on a machine (`bun erga deploy`, deploy/cli/deploy.ts): a
+// push deploys nothing.
 //
 // Both targets are in the same Cloudflare account (targets.json `account`;
 // CLOUDFLARE_ACCOUNT_ID in the environment overrides it for deploy/run.ts).

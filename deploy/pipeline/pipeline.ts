@@ -9,8 +9,8 @@
 // cloudflare.config.ts, its static assets and the migrations). Its output is
 // a live server, each step reported as it goes. Its callers:
 //
-//   - the GitHub Actions deploy (deploy/actions.ts): Erga's own targets, and a fork's servers;
-//   - a deploy from a machine: Erga's own targets (deploy/run.ts), and `bun erga own deploy` (deploy/own/cli.ts).
+//   - a deploy from a machine: a registered instance (`bun erga deploy`, deploy/cli/deploy.ts), Erga's own targets
+//     (deploy/run.ts), and `bun erga own deploy` (deploy/own/cli.ts).
 //
 // Staging runs on a copy of production's data, frozen: a deploy keeps it,
 // and copies afresh only when asked (deploy/run.ts staging --fresh) or when
@@ -255,8 +255,8 @@ export function guardTarget(t: Target): string | null {
 
 /**
  * The deploy pipeline: puts `release` on `target`, step by step, reporting
- * each as it starts and ends. The one pipeline for every deploy: from GitHub
- * Actions (deploy/actions.ts), and from a machine (deploy/run.ts, `bun erga own`).
+ * each as it starts and ends. The one pipeline for every deploy, each from a machine
+ * (`bun erga deploy`, deploy/run.ts, `bun erga own`).
  * Every step is safe to run again. `carry` gets what each step leaves (the restore point: a rollback goes back to it).
  */
 export async function runPipeline(
