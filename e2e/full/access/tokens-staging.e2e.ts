@@ -3,6 +3,7 @@
 import { expect, servers, test, until } from "../../helpers/fixtures";
 import { mockGithubId } from "../../../dev/github-mock";
 import { getter, mint, publish, tool } from "./access";
+import { signedOut } from "../home/home";
 
 const staging = () => servers.of("staging-tokens", { env: { ERGA_DEPLOY_TARGET: "staging" } });
 await staging();
@@ -115,4 +116,18 @@ test("on staging a token works only while its person is an admin: refused once t
   expect(((await refused.json()) as { adminsOnly?: boolean }).adminsOnly).toBe(true);
   // Not an admin: staging lets them make no token at all.
   expect((await mint(root, cookie, { label: "Again", scope: "documents" })).token).toBe("");
+});
+
+test("a server whose deploy says DEPLOY_TARGET=staging is for admins only: signed out, a page asks to sign in, and the API refuses", async () => {
+  const server = await staging(),
+    get = getter(server.root);
+  const page = await get("/docs", { headers: { ...signedOut(server), Accept: "text/html" } });
+  expect(page.status).toBe(403);
+  const html = await page.text();
+  expect(html).toContain("Staging is for admins: sign in");
+  // No SNAPSHOT_FROM here: the page names no primary, and no instance's name.
+  expect(html).not.toContain("Erga itself");
+  const api = await get("/api/tools", { headers: signedOut(server) });
+  expect(api.status).toBe(403);
+  expect(((await api.json()) as { adminsOnly?: boolean }).adminsOnly).toBe(true);
 });

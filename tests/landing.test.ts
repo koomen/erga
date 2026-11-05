@@ -176,3 +176,13 @@ test("a locked setting, or nobody to own it, makes nothing", async () => {
   expect(await landingDocument(platformOn(sql, hosts, { owner: null }))).toBeNull();
   expect(hosts.size).toBe(0);
 });
+
+test("on a deployed server (no DEV_LOGIN, no admin in the deploy) the oldest admin row claims the homepage it makes", async () => {
+  const sql = memory(),
+    hosts = new Map();
+  await sql.run(
+    "INSERT INTO users (login, name, role, created) VALUES ('bo', 'bo', 'admin', 9), ('ada', 'ada', 'admin', 5), ('cy', 'cy', 'user', 1)"
+  );
+  expect(await landingDocument(platformOn(sql, hosts, { owner: null }))).toMatchObject({ owner: HOME_OWNER });
+  expect(await sql.all("SELECT updated_by FROM server_config WHERE key = 'landing_document'")).toEqual([{ updated_by: "ada" }]);
+});

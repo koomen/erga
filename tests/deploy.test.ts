@@ -58,7 +58,7 @@ const plan = (over: Partial<Target> = {}): Target => ({
   subdomain: "ada-mock",
   app: { kind: "workers.dev" },
   pages: { kind: "shared" },
-  vars: { ADMINS: "ada", GITHUB_CLIENT_ID: "", SERVER_CONFIG: "{}", DEPLOY_TARGET: "" },
+  vars: { GITHUB_CLIENT_ID: "", SERVER_CONFIG: "{}", DEPLOY_TARGET: "" },
   secrets: { SESSION_SECRET: "a-secret-for-the-new-server-0123456789" },
   ...over,
 });
@@ -109,7 +109,6 @@ describe("deploying", () => {
     expect(b.HOME).toMatchObject({ type: "durable_object_namespace", class_name: "Home" });
     expect(b.DB).toMatchObject({ type: "d1", database_id: db.uuid });
     expect(b.ASSETS.type).toBe("assets");
-    expect(b.ADMINS).toMatchObject({ type: "plain_text", text: "ada" });
     expect(b.GITHUB_CLIENT_ID.text).toBe("");
     expect(b.SERVER_CONFIG.text).toBe("{}");
     expect(b.SESSION_SECRET.type).toBe("secret_text");

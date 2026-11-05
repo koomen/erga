@@ -4,7 +4,6 @@ import { expect, test } from "bun:test";
 import { Directory } from "../server/directory";
 import { health } from "../server/health";
 import type { Platform } from "../server/platform";
-import { TARGETS } from "../deploy/targets";
 import { memory } from "./helpers/memory-sql";
 
 function directory(): Directory {
@@ -15,7 +14,7 @@ function directory(): Directory {
 const platform = (dir: Directory, exists: (id: string) => Promise<boolean>): Platform =>
   ({
     directory: dir,
-    deploy: { target: "staging", version: "abcdef123456", targets: TARGETS },
+    deploy: { target: "staging", version: "abcdef123456", primary: null },
     docs: { index: async (doc: { id: string }) => ((await exists(doc.id)) ? "index.html" : null) },
 } as unknown as Platform);
 

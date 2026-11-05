@@ -1,6 +1,5 @@
-// Which servers are for admins only (deploy/targets.json `adminsOnly`), and sign-in on a server with no GitHub OAuth app.
+// Pages tokens on a server for admins only, and sign-in on a server with no GitHub OAuth app.
 import { expect, test } from "bun:test";
-import { isAdminsOnly, TARGETS } from "../deploy/targets";
 import { pagesToken, readPagesClaims } from "../server/documents/index.ts";
 import { finishSignIn, startSignIn } from "../server/identity/sign-in";
 import type { Platform } from "../server/platform";
@@ -11,16 +10,9 @@ import { respond } from "../server/http.ts";
 const serverWith = (clientId: string): Platform => ({
   secret: "x", dev: () => false, directory: {} as Directory,
   signIn: { app: { clientId, secret: "" }, github: "https://github.com", devLogin: null, encryptionKey: null },
-  deploy: { target: null, version: null, targets: TARGETS },
+  deploy: { target: null, version: null, primary: null },
   own: { get: async () => undefined, put: async () => {}, delete: async () => {} },
 } as unknown as Platform);
-
-test("staging is for admins only; production, a /deploy server and local development aren't", () => {
-  expect(TARGETS.staging.adminsOnly).toBe(true);
-  expect(isAdminsOnly("staging")).toBe(true);
-  expect(isAdminsOnly(" staging ")).toBe(true);
-  for (const t of ["production", "", undefined, "constructor", "toString", "Staging"]) expect(isAdminsOnly(t)).toBe(false);
-});
 
 test("a pages token names its admin only when asked to (staging), and it can't be changed", async () => {
   const plain = await pagesToken("s", "ada", "abcd2345", "https://staging.erga.dev");

@@ -170,10 +170,9 @@ async function localStatus(platform: SignInPlatform, origin: string, provider: P
   const target = targetOf(platform);
   const pagePlace = `on this server's Authentication page (${origin}/admin/auth)`;
   return statusOf(contextOf(platform, provider), {
-    origin: target && !platform.signIn.devLogin ? `https://${platform.deploy.targets[target].host}` : origin,
+    origin,
     target,
     dev: platform.dev(new URL(origin)),
-    worker: target ? platform.deploy.targets[target].worker : undefined,
     pagePlace,
   });
 }

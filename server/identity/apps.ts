@@ -2,8 +2,8 @@
 // Authentication page shows it (/admin/auth, server/admin/auth.ts) and the admin agent
 // reads it.
 //
-// The deploy gives each server its app: the public client ID in
-// deploy/targets.json (GITHUB_CLIENT_ID), the client secret as a Worker secret
+// The deploy gives each server its app: the public client ID as a text
+// binding (GITHUB_CLIENT_ID), the client secret as a Worker secret
 // (GITHUB_CLIENT_SECRET). An admin may also paste a client ID and secret on
 // the page, so a server can be fixed without a deploy. Those win over the
 // deploy's while they are set; Clear goes back to the deploy's.
@@ -182,7 +182,13 @@ export async function checkGoogleApp(v: AppValues, o: { fetch?: typeof fetch; or
     f(googleEndpoints(o.origin ?? null).token, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-      body: new URLSearchParams({ client_id: v.clientId, client_secret: v.secret, code: `erga-check-${crypto.randomUUID()}`, grant_type: "authorization_code", redirect_uri: "https://erga.dev/auth/google/callback" }).toString(),
+      body: new URLSearchParams({
+        client_id: v.clientId,
+        client_secret: v.secret,
+        code: `erga-check-${crypto.randomUUID()}`,
+        grant_type: "authorization_code",
+        redirect_uri: "https://example.com/auth/google/callback",
+      }).toString(),
       signal,
     })
   );
@@ -435,12 +441,10 @@ export interface AuthStatus {
 }
 
 /** The steps to make a provider's OAuth app for a server, and where its values go. */
-export function setupSteps(o: { origin: string; target: string | null; worker?: string; pagePlace: string; provider?: Provider }): string[] {
+export function setupSteps(o: { origin: string; target: string | null; pagePlace: string; provider?: Provider }): string[] {
   const provider = o.provider ?? "github", p = PROVIDERS[provider];
   const name = o.target ? `Erga (${o.target})` : "Erga";
-  const deploy = o.target && o.worker
-    ? `Or set them in the deploy: put the Client ID in deploy/targets.json (targets.${o.target}.vars.${p.idEnv}), set the secret with "bunx cf workers secrets update ${p.secretEnv} --name ${o.worker}", and deploy.`
-    : `Or set them in the deploy: ${p.idEnv} as a text binding, and ${p.secretEnv} as a Worker secret.`;
+  const deploy = `Or set them in the deploy: ${p.idEnv} as a text binding, and ${p.secretEnv} as a Worker secret.`;
   if (provider == "google") return [
     `Open ${p.newApp}, in the Google Cloud project that should own the client. If Google asks, set up the OAuth consent screen first (External, the app name "${name}", your support email).`,
     `Click Create credentials, then OAuth client ID. Choose the application type Web application, and the name "${name}".`,
@@ -461,7 +465,7 @@ export function setupSteps(o: { origin: string; target: string | null; worker?: 
 /** One server's status: what it uses, what the page set, and a live check of each. */
 export async function statusOf(
   c: AppContext,
-  o: { origin: string; target: string | null; dev: boolean; worker?: string; pagePlace: string }
+  o: { origin: string; target: string | null; dev: boolean; pagePlace: string }
 ): Promise<AuthStatus> {
   const [now, kept, pendingValues] = await Promise.all([inUse(c), c.apps.read(c.provider), c.apps.values(c.provider, "pending")]);
   const [check, pendingCheck] = await Promise.all([c.check(now), pendingValues ? c.check(pendingValues) : null]);
@@ -479,7 +483,8 @@ export async function statusOf(
     canStore: c.apps.canStore,
     check,
     pendingCheck,
-    setup: check.state == "working" ? null : setupSteps({ origin: o.origin, target: o.target, worker: o.worker, pagePlace: o.pagePlace, provider: c.provider }),
+    setup:
+      check.state == "working" ? null : setupSteps({ origin: o.origin, target: o.target, pagePlace: o.pagePlace, provider: c.provider }),
   };
 }
 

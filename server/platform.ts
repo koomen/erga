@@ -83,9 +83,9 @@ export interface Platform {
    * server makes the homepage by itself when landing_document is unset or
    * names a document that's gone (seedLanding): its text files by path, whose
    * document becomes the homepage project (nobody's), and `owner` (locally
-   * DEV_LOGIN, else the deploy's first bootstrap admin) claims the setting, and
+   * DEV_LOGIN; null: the server's first admin) claims the setting, and
    * gets the homepage project from before when it's made again. No owner
-   * (no ADMINS, no DEV_LOGIN): / is a plain start page.
+   * (no admin yet): / is a plain start page.
    */
   landing?: { files: Record<string, string | Uint8Array>; owner: string | null };
   /** The app's own static files (the editor's page and scripts, their builds, the release): the answer for this request. */
@@ -111,7 +111,7 @@ export interface Platform {
   /** Signs the tokens that open a document's files on its pages origin. */
   secret: string;
   /**
-   * A server for Erga's admins alone (staging: deploy/targets.json `adminsOnly`; server/identity/admins-only.ts guards every
+   * A server for its admins alone (staging: DEPLOY_TARGET=staging, which the deploy sets; server/identity/admins-only.ts guards every
    * request). Its pages tokens name the admin they were made for, so its pages origin can check them again.
    */
   adminsOnly?: boolean;
@@ -119,9 +119,9 @@ export interface Platform {
   directory: Directory;
   /** Agent tokens. */
   tokens: Tokens;
-  /** Which of Erga's own deploy targets this server is, and where they are. */
+  /** Which deploy target this server is, and what it runs. */
   deploy: {
-    /** "production", "staging", or null on any other server (a fork's, local development). */
+    /** "production", "staging", or null where the deploy named none (DEPLOY_TARGET; local development). */
     target: "production" | "staging" | null;
     /** The release this server runs (the commit), or null where no deploy named one. */
     version: string | null;
@@ -131,8 +131,8 @@ export interface Platform {
      * answers it, to an admin's ops token only.
      */
     facts: unknown;
-    /** Erga's own targets, as deploy/targets.json names them: each one's host (erga.dev) and Worker. */
-    targets: Record<"production" | "staging", { host: string; worker: string }>;
+    /** A staging server's primary: the origin it copies documents and images from (SNAPSHOT_FROM), or null. */
+    primary: string | null;
   };
   /** Sign-in's fixed values, from the deploy. */
   signIn: {

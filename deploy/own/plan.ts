@@ -157,10 +157,9 @@ export const hostOf = (a: Answers, t: TargetName) => (t == "production" ? a.host
 export const targetsOf = (a: Answers): TargetName[] => (a.staging ? ["production", "staging"] : ["production"]);
 export const callbackOf = (host: string, provider: "github" | "google") => `https://${host}/auth/${provider}/callback`;
 
-/** The bindings of a target that aren't secrets: the admins, the sign-in apps' ids, the preset. */
+/** The bindings of a target that aren't secrets: the sign-in apps' ids, the preset. No admin: the database holds them (firstAdmin). */
 export function varsOf(a: Answers, ids: { github?: string; google?: string }): Record<string, string> {
   return {
-    ADMINS: a.admin,
     GITHUB_CLIENT_ID: ids.github ?? "",
     ...(a.providers.includes("google") && ids.google ? { GOOGLE_CLIENT_ID: ids.google } : {}),
     SERVER_CONFIG: "{}",

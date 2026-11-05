@@ -9,12 +9,11 @@
 //                     imports identity/; documents/ and admin/ never import operations/.
 //   4. agents/        each person's agent and the tools
 //   5. server/app.ts and server/api.ts: the route table, and the HTTP API for outside agents
-//   6. cloudflare/    the app Worker. Also deploy/targets.ts.
+//   6. cloudflare/    the app Worker. It knows no instance's name: the deploy and the request tell it.
 //   7. client/        the browser: shared/, and of document/ only content.ts, pages.ts, merge.ts and api.ts's types.
 //                     A library's UI (libs/<name>/ui/) is in this layer too. A library's API never imports its UI.
 //                     (tests/browser-imports.test.ts follows what the bundles reach)
-//   8. deploy/, dev/, tests/, e2e/, client/build.ts and the scripts at the top: anything. Nothing imports them but
-//      deploy/targets.ts (layer 6).
+//   8. deploy/, dev/, tests/, e2e/, client/build.ts and the scripts at the top: anything. Nothing imports them.
 //
 // And:
 //   - An area of server/ is imported from outside only through its index.ts. Tools may look inside, and so may
@@ -98,7 +97,6 @@ function wrong(from: string, to: string, type: boolean): string | null {
     return "the browser imports only shared/ and a few files of document/";
   }
   if (theirs == 8) {
-    if (to == "deploy/targets" && mine == 6) return null;
     return "nothing above the tools imports them";
   }
   if (theirs == 7) return "only the browser imports client/ and a library's UI";
@@ -137,6 +135,9 @@ test("the rules catch what they are for", () => {
     ["server/platform", "cloudflare/env"],
     ["agents/tools", "server/api"],
     ["server/identity/settings", "deploy/targets"],
+    ["cloudflare/platform", "deploy/targets"],
+    ["cloudflare/blobs", "deploy/targets"],
+    ["client/shell/main", "deploy/targets"],
     ["cloudflare/objects/document", "dev/disk-storage"],
     ["server/health", "deploy/pipeline/pipeline"],
     ["server/app", "cloudflare:workers"],
@@ -153,7 +154,6 @@ test("the rules catch what they are for", () => {
     ["agents/document/tools", "libs/text/api/rules", false],
     ["client/shell/main", "libs/text/ui/editor", false],
     ["cloudflare/platform", "server/health", true],
-    ["cloudflare/platform", "deploy/targets", false],
     ["tests/room.test", "cloudflare/objects/document", false],
   ] as const;
   for (const [from, to, type] of yes) expect([from, to, wrong(from, to, type)]).toEqual([from, to, null]);

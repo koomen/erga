@@ -1,6 +1,5 @@
 {
   "account": "c24e663b6f522eb02c60b6ce88ec4493",
-  "admins": "koomen,dsiroker",
   "targets": {
     "production": {
       "name": "production",
@@ -31,8 +30,7 @@
       "vars": {
         "GITHUB_CLIENT_ID": "Ov23likQyJqb2dDatb5S"
       },
-      "snapshotFrom": "production",
-      "adminsOnly": true
+      "snapshotFrom": "production"
     }
   }
 }

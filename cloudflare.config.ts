@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 // pipeline deploys from (deploy/targets.json, typed by deploy/targets.ts), so there's one source of truth for both.
 // Read as a file, not imported: the dev server can't load a module the config imports into the Worker too.
 const TARGETS = JSON.parse(readFileSync(decodeURIComponent(new URL("./deploy/targets.json", import.meta.url).pathname), "utf8"));
-const PROD = { ...TARGETS.targets.production, vars: { ADMINS: TARGETS.admins, ...TARGETS.targets.production.vars } };
+const PROD = TARGETS.targets.production;
 
 /** The local database's id (the dev server's D1): any UUID. Production's is found by name (the deploy pipeline). */
 const LOCAL_DB = "00000000-0000-4000-8000-00000000e29a";
@@ -97,9 +97,6 @@ export default defineConfig(({ mode }) => ({
       // Documents' blobs: their files that aren't text, by sha-256 (cloudflare/blobs.ts). Each target has a bucket of its
       // own, named after its Worker (the pipeline binds erga-staging-files on staging); locally, Miniflare's R2.
       FILES: bindings.r2({ name: `${PROD.worker}-files` }),
-      // The bootstrap admins: always admins, always allowed to sign in. Admins let
-      // everyone else in (the users table). Locally DEV_LOGIN is one too.
-      ADMINS: bindings.text(PROD.vars.ADMINS),
       // The settings the deploy fixes, as JSON. Admins set the rest.
       SERVER_CONFIG: bindings.text(JSON.stringify(deployed())),
       // Locally, the client ID of the target the dev server plays (ERGA_DEPLOY_TARGET), else production's.

@@ -67,11 +67,10 @@ export const sqlOn = (db: D1Database): Sql => {
 let directory: { db: D1Database; dir: Directory } | null = null;
 
 /**
- * The deploy's bootstrap admins: ADMINS, and locally DEV_LOGIN too (who's
- * signed in without GitHub, so local development always has an admin).
+ * The bootstrap admins: locally DEV_LOGIN (who's signed in without GitHub, so local development always has an admin).
+ * A deployed server has none: its admins are rows in its database.
  */
-export const adminsOf = (env: Env): string[] =>
-  [...(env.ADMINS ?? "").split(","), ...(env.DEV_LOGIN ? [env.DEV_LOGIN] : [])].map((l) => l.trim().toLowerCase()).filter(Boolean);
+const adminsOf = (env: Env): string[] => (env.DEV_LOGIN?.trim() ? [env.DEV_LOGIN.trim().toLowerCase()] : []);
 
 /** The directory, on this Worker's database, with the settings the deploy locks (SERVER_CONFIG). */
 export function directoryOf(env: Env): Directory {

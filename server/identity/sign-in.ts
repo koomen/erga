@@ -180,7 +180,7 @@ const nothingToTest = () => page("Nothing to test", `No new sign-in values wait 
 const noOAuthApp = (origin: string) =>
   page(
     "Sign-in isn't set up",
-    `Sign-in isn't set up on this server: it has no GitHub OAuth app. An admin makes an OAuth app on GitHub (homepage ${esc(origin)}, callback ${esc(origin)}/auth/github/callback), and pastes its Client ID and client secret on the Authentication page (/admin/auth; staging's are set on production's). Or they put its Client ID in <code>GITHUB_CLIENT_ID</code> (for Erga's own targets, <code>deploy/targets.json</code>; <code>deploy/targets.ts</code> says how), set its client secret as the <code>GITHUB_CLIENT_SECRET</code> secret, and deploy.`,
+    `Sign-in isn't set up on this server: it has no GitHub OAuth app. An admin makes an OAuth app on GitHub (homepage ${esc(origin)}, callback ${esc(origin)}/auth/github/callback), and pastes its Client ID and client secret on this server's Authentication page (/admin/auth). Or they put its Client ID in the deploy's <code>GITHUB_CLIENT_ID</code>, set its client secret as the <code>GITHUB_CLIENT_SECRET</code> secret, and deploy.`,
     503
   );
 

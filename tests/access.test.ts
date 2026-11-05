@@ -114,7 +114,7 @@ test("users added before their first sign-in: a GitHub account by its id, a Goog
   // Adding the account of someone who's a user already gives them the role.
   expect((await dir.addUser(ADMIN, { provider: "google", handle: "ida@example.com" }, "admin")).user?.role).toBe("admin");
   expect((await dir.addUser(ADMIN, { provider: "github", handle: "jo-renamed" }, "write")).person?.handle).toBe("jo-renamed");
-  // An admin by the deploy is one already: said, not refused.
+  // A bootstrap admin (DEV_LOGIN) is one already: said, not refused.
   expect((await dir.addUser(ADMIN, { provider: "github", handle: "koomen" }, "read")).note).toBe("koomen is already an admin.");
   // A role for someone waiting changes; removed, they can't join.
   const { person: kai } = await dir.addUser(ADMIN, { provider: "github", handle: "kai" }, "read");
@@ -180,7 +180,7 @@ test("the rules' own rules: admins only; groups only; everybody's stays; values 
   expect(await accessOf(dir, "lu")).toBe("write");
   await dir.users.remove(ADMIN, "lu");
   expect(await dir.users.allowed("lu")).toBe(false);
-  await expect(dir.users.setUserRole(ADMIN, "koomen", "read")).rejects.toThrow("by the deploy");
+  await expect(dir.users.setUserRole(ADMIN, "koomen", "read")).rejects.toThrow("DEV_LOGIN");
 });
 
 test("suggestions: the Workspace domains and GitHub organizations of people who signed in here", async () => {

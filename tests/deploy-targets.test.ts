@@ -73,7 +73,9 @@ describe("staging", () => {
     expect(b.ERGA_VERSION.text).toBe(release.version);
     expect(b.ERGA_DEPLOYED).toBeUndefined();
     expect(b.ARTIFACTS).toBeUndefined();
-    expect(b.ADMINS.text).toBe("koomen,dsiroker");
+    // No admin in the deploy; its primary's address, where staging reads the documents' images (as bun erga deploy sets it).
+    expect(b.ADMINS).toBeUndefined();
+    expect(b.SNAPSHOT_FROM.text).toBe("https://erga.dev");
     expect(mock.state.secrets["erga-staging"].SESSION_SECRET).toBe(stagingSecrets.SESSION_SECRET);
     expect(mock.state.secrets["erga-staging"].SESSION_SECRET).not.toBe(mock.state.secrets.erga.SESSION_SECRET);
     const meta = mock.state.scripts["erga-staging"].metadata;
@@ -189,6 +191,7 @@ describe("production", () => {
     expect(b.DB.database_id).toBe(PROD_DB);
     expect(b.DEPLOY_TARGET.text).toBe("production");
     expect(b.SNAPSHOT_IMPORT.text).toBe("");
+    expect(b.SNAPSHOT_FROM).toBeUndefined();
     expect(b.PAGES_DOMAIN.text).toBe("erga-pages.dev");
     expect(b.GITHUB_CLIENT_ID.text).toBe(TARGETS.production.vars.GITHUB_CLIENT_ID);
     expect(mock.state.scripts.erga.metadata.exports.DocList).toEqual({ type: "durable-object", state: "deleted" });

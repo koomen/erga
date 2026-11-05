@@ -30,16 +30,16 @@ function userRow(u: User, ids: Identity[], session: Session, lastAdmin: boolean)
   const me = u.login == session.login.toLowerCase();
   const joined = u.created ? ` · Joined ${dateTag(u.created, "joined")}` : "";
   const seen = u.lastSeen != null ? dateTag(u.lastSeen, "seen") : NEVER;
-  const added = u.bootstrap ? "Admin by the deploy" : u.addedBy ? `Added by ${byLine(u.addedBy, u.addedVia)}` : "";
+  const added = u.bootstrap ? "Admin by the dev server" : u.addedBy ? `Added by ${byLine(u.addedBy, u.addedVia)}` : "";
   // The same reason keeps them from being removed.
   const fixed = u.bootstrap
-    ? "An admin by the deploy (ADMINS): change it there"
+    ? "The dev server's own admin (DEV_LOGIN)"
     : lastAdmin
       ? `${me ? "You're" : "The"} last admin: make someone else an admin first`
       : "";
   const role: UserRole | "none" = u.role == "admin" ? "admin" : (u.access ?? "none");
   return `  <li data-login="${esc(u.login)}" data-live="user:${esc(u.login)}" data-sort="${esc(u.login)}">
-    <div class="who">${avatarHtml(u.login, u.avatar)}<span class="name"><span class="title">${esc(u.login)}</span>${u.name && u.name.toLowerCase() != u.login ? `<span class="note">${esc(u.name)}</span>` : ""}${me ? `<span class="badge">you</span>` : ""}</span><span class="added"${u.bootstrap ? ` title="ADMINS in the deploy"` : ""}>${esc([accountOf(u, ids), added].filter(Boolean).join(" · "))}${joined}</span></div>
+    <div class="who">${avatarHtml(u.login, u.avatar)}<span class="name"><span class="title">${esc(u.login)}</span>${u.name && u.name.toLowerCase() != u.login ? `<span class="note">${esc(u.name)}</span>` : ""}${me ? `<span class="badge">you</span>` : ""}</span><span class="added"${u.bootstrap ? ` title="DEV_LOGIN"` : ""}>${esc([accountOf(u, ids), added].filter(Boolean).join(" · "))}${joined}</span></div>
     ${seen}
     ${roleSelect(role, u.login, { none: true, fixed })}
     <button type="button" class="act remove" aria-label="Remove ${esc(u.login)}" title="${esc(fixed || "Remove: they can't sign in any more, unless a group lets them in")}"${fixed ? " disabled" : ""}>${ICON.delete}</button>
