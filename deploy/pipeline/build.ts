@@ -1,5 +1,5 @@
-// Building one checkout of Erga into a release, on the machine that deploys it (a developer's, or the GitHub Actions
-// runner: deploy/run.ts, buildHere). A Worker can't run `bun install` or Vite, so this is the one part of a deploy
+// Building one checkout of Erga into a release, on the machine that deploys it (deploy/run.ts,
+// buildHere). A Worker can't run `bun install` or Vite, so this is the one part of a deploy
 // that runs outside the Cloudflare API.
 //
 //   1. bun install --frozen-lockfile    (or the checkout's own node_modules, linked)

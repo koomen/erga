@@ -171,8 +171,8 @@ export function varsOf(a: Answers, ids: { github?: string; google?: string }): R
 }
 
 /**
- * The pipeline's target for one of the person's servers: `bun erga own deploy` sends the secrets it has; a GitHub Actions
- * deploy (deploy/actions.ts) sends none, and the Worker keeps the ones it has (keepSecrets).
+ * The pipeline's target for one of the person's servers: `bun erga own deploy` sends the secrets it has, and the Worker
+ * keeps the ones it has (keepSecrets).
  */
 export function ownTarget(
   a: Answers,
@@ -229,60 +229,17 @@ export interface Facts {
   github?: GitHubFacts;
 }
 
-/** The repository GitHub Actions deploys from: the person's fork of Erga, its variables, its secrets and its last run. */
+/** The person's fork of Erga on GitHub, where `bun erga own update` brings Erga's new changes. */
 export interface GitHubFacts {
   /** gh's login, or null: gh is missing or not logged in. */
   login: string | null;
   /** The checkout's origin on GitHub (owner/name), and the repository it is a fork of. */
   repo: string | null;
   parent: string | null;
-  /** The Actions variables and the secrets' names (null: not readable). */
-  variables: Record<string, string> | null;
-  secrets: string[] | null;
-  /** The last workflow run of a push to main. */
-  run: { sha: string; status: string; conclusion: string; url: string } | null;
 }
 
 /** Erga's own repository on GitHub, which a person forks. */
 export const UPSTREAM_REPO = "koomen/erga";
-
-/**
- * The Actions variables that make the fork deploy the person's servers (deploy/actions-plan.ts reads them): the same
- * answers as .erga/own.json, and the account. Nothing secret.
- */
-export function actionVars(a: Answers, ids: { github?: string; google?: string }, account: string): Record<string, string> {
-  return {
-    CLOUDFLARE_ACCOUNT_ID: account,
-    ERGA_HOST: a.host,
-    ...(a.staging ? { ERGA_STAGING: a.staging } : {}),
-    ERGA_PROVIDERS: a.providers.join(","),
-    ERGA_PRESET: a.preset,
-    ERGA_ADMIN: a.admin,
-    ...(a.company ? { ERGA_COMPANY: a.company } : {}),
-    ERGA_PAGES: a.pages,
-    ERGA_GITHUB_CLIENT_ID: ids.github ?? "",
-    ...(a.providers.includes("google") && ids.google ? { ERGA_GOOGLE_CLIENT_ID: ids.google } : {}),
-  };
-}
-
-/** The variables that are missing or different on GitHub. */
-export const varsToSet = (want: Record<string, string>, have: Record<string, string> | null) =>
-  Object.fromEntries(Object.entries(want).filter(([k, v]) => have?.[k] != v));
-
-/** The permissions the Actions deploy's Cloudflare token needs, as Cloudflare's template link takes them. */
-export const TOKEN_PERMISSIONS = [
-  { key: "account_settings", type: "read" },
-  { key: "workers_scripts", type: "edit" },
-  { key: "d1", type: "edit" },
-  { key: "workers_r2", type: "edit" },
-  { key: "workers_routes", type: "edit" },
-  { key: "zone", type: "read" },
-  { key: "dns", type: "edit" },
-];
-
-/** Cloudflare's "Create API token" page, filled in with exactly what the deploy needs. */
-export const tokenTemplateUrl = () =>
-  `https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=${encodeURIComponent(JSON.stringify(TOKEN_PERMISSIONS))}&accountId=*&zoneId=all&name=${encodeURIComponent("Erga deploy (GitHub Actions)")}`;
 
 /** Why forking failed, in words, from gh's error. */
 export function forkProblem(err: string): string {
@@ -455,7 +412,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
       next: `The person opens https://${host}/auth/sign-in and signs in with GitHub as ${a.admin} (GitHub asks to authorize the app once).`,
     });
   }
-  githubSteps(a, f, o.ids, add);
+  forkStep(f, add);
   if (a.preset == "company" && a.company)
     add({
       id: "rule",
@@ -468,13 +425,8 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
   return out;
 }
 
-/** After the first deploy: the fork on GitHub, and GitHub Actions deploys each push to main (and staging). */
-function githubSteps(
-  a: Answers,
-  f: Facts,
-  ids: { github?: string; google?: string },
-  add: (s: Omit<Step, "state"> & { ok: boolean | null; failed?: boolean }) => void
-) {
+/** After the first deploy: the person's fork on GitHub, where `bun erga own update` brings Erga's new changes. */
+function forkStep(f: Facts, add: (s: Omit<Step, "state"> & { ok: boolean | null; failed?: boolean }) => void) {
   const g = f.github;
   const own = !!g?.repo && g.repo.toLowerCase() != UPSTREAM_REPO;
   add({
@@ -490,33 +442,6 @@ function githubSteps(
           ? `${g.repo}${g.parent ? `, a fork of ${g.parent}` : ""}`
           : `origin is ${g.repo ?? "not on GitHub"}`,
     next: !g?.login ? "The person runs: gh auth login. Then: bun erga own fork" : "Run: bun erga own fork",
-  });
-  const missing = f.account ? Object.keys(varsToSet(actionVars(a, ids, f.account), g?.variables ?? null)) : ["CLOUDFLARE_ACCOUNT_ID"];
-  add({
-    id: "actions-vars",
-    title: "GitHub Actions knows your servers",
-    who: "agent",
-    ok: own && !!g?.variables && !missing.length,
-    detail: !g?.variables ? "variables not read" : missing.length ? `to set: ${missing.join(", ")}` : "every variable is set",
-    next: "Run: bun erga own actions (it sets the variables, and turns Actions on in the fork).",
-  });
-  add({
-    id: "actions-token",
-    title: "GitHub Actions may deploy to Cloudflare",
-    who: "person",
-    ok: !!g?.secrets?.includes("CLOUDFLARE_API_TOKEN"),
-    detail: g?.secrets?.includes("CLOUDFLARE_API_TOKEN") ? "the secret CLOUDFLARE_API_TOKEN is set" : "no CLOUDFLARE_API_TOKEN secret yet",
-    next: `The person makes a token at ${tokenTemplateUrl()} (Continue to summary, Create Token), then pastes it on the checklist page, or runs bun erga own actions-token in a terminal. Never in the chat.`,
-  });
-  const live = f.targets.production?.version;
-  add({
-    id: "actions-run",
-    title: "GitHub deploys main",
-    who: "agent",
-    ok: g?.run?.status == "completed" && g.run.conclusion == "success" && !!live && g.run.sha.slice(0, 12) == live,
-    failed: g?.run?.status == "completed" && g.run.conclusion != "success",
-    detail: !g?.run ? "no run of main yet" : `the last run of main: ${g.run.conclusion || g.run.status} (${g.run.url})`,
-    next: "Run: bun erga own update (it syncs the fork with Erga's main; GitHub then tests and deploys it). A failed run: read its log.",
   });
 }
 

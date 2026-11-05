@@ -1,14 +1,24 @@
 // `bun erga deploy` and `bun erga rollback` (deploy/cli/deploy.ts), from .erga/config.json, against the mock
 // Cloudflare's copy of Erga's account (ERGA_DEPLOY_MOCK=1): the upload has the entry's vars, a staging entry gets
 // SNAPSHOT_FROM and keeps its copy of the data, no secret goes out, the lock and the job record, the tests' gate, and
-// a primary with no commit named takes the commit its staging instances report (a fake GET /api/ops).
+// a primary with no commit named takes the commit its staging instances report (a fake GET /api/ops). And the branches:
+// merge deploys to each staging instance, then pushes staging; a primary's deploy then moves main (a clone of its own).
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type Entry, withEntry, writeConfig } from "../deploy/cli/config";
-import { deployInstance, entryTarget, lockPath, passPath, rollbackInstance, stagingCommit, takeLock } from "../deploy/cli/deploy";
+import {
+  deployInstance,
+  deployStaging,
+  entryTarget,
+  lockPath,
+  passPath,
+  rollbackInstance,
+  stagingCommit,
+  takeLock,
+} from "../deploy/cli/deploy";
 import { deployFacts } from "../deploy/pipeline/account";
 import { guardTarget } from "../deploy/pipeline/pipeline";
 import { targetFor } from "../deploy/run";
@@ -180,6 +190,85 @@ describe("a primary with no commit", () => {
       expect(bindingsOf(mock.state, "erga").ERGA_VERSION.text).toBe(HEAD.slice(0, 12));
     } finally {
       server.stop(true);
+    }
+  }, 60_000);
+});
+
+describe("the branches move only after a healthy deploy", () => {
+  test("merge: one deploy to each staging instance, then staging; a primary: its deploy, then main; a plain push stops", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "erga-branches-"));
+    const env = { ...process.env, ERGA_CLI_PUSH: "", PATH: `${dirname(process.execPath)}:${process.env.PATH}` };
+    const clone = join(tmp, "clone");
+    const run = (...cmd: string[]) => {
+      const r = Bun.spawnSync(cmd, { cwd: clone, env, stdout: "pipe", stderr: "pipe" });
+      return { code: r.exitCode, out: r.stdout.toString().trim(), err: r.stderr.toString() };
+    };
+    const commit = (m: string) => (
+      run("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", m), run("git", "rev-parse", "HEAD").out
+    );
+    const remote = (b: string) => run("git", "ls-remote", "origin", `refs/heads/${b}`).out.split(/\s/)[0];
+    const PATH = process.env.PATH;
+    try {
+      // origin with main and staging at C1; the clone has the pre-push hook on, as bun install sets it.
+      Bun.spawnSync(["git", "init", "-q", "--bare", join(tmp, "origin.git")]);
+      mkdirSync(join(clone, "deploy/cli/hooks"), { recursive: true });
+      for (const f of ["deploy/cli/hooks/pre-push", "deploy/cli/pre-push.ts", "deploy/cli/flow.ts"])
+        copyFileSync(join(ROOT, f), join(clone, f));
+      chmodSync(join(clone, "deploy/cli/hooks/pre-push"), 0o755);
+      run("git", "init", "-q", "-b", "work");
+      run("git", "add", "-A");
+      const c1 = commit("C1");
+      run("git", "remote", "add", "origin", join(tmp, "origin.git"));
+      run("git", "push", "-q", "origin", `${c1}:refs/heads/main`, `${c1}:refs/heads/staging`);
+      run("git", "config", "core.hooksPath", "deploy/cli/hooks");
+      const c2 = commit("C2: the merged commit");
+
+      fresh(primary, staging);
+      writeFileSync(passPath(dir, c2), "all passing\n");
+      const mock = mockCloudflare({ fleet: true });
+      await bootstrap(mock);
+      // The hook needs bun on the PATH, in the push that the CLI makes.
+      process.env.PATH = env.PATH;
+      const seen: string[] = [];
+      const print = (l: string) => {
+        if (l.startsWith("Deployed")) seen.push(`deployed; staging ${remote("staging").slice(0, 7)}, main ${remote("main").slice(0, 7)}`);
+        if (/ is at .* on origin\.$/.test(l)) seen.push(l);
+      };
+
+      // merge: the deploy to staging.erga.dev, then the push of staging. main stays.
+      expect(await deployStaging({ dir, sha: c2, clone, net: mock.fetch, print })).toEqual(["staging.erga.dev"]);
+      expect(seen).toEqual([`deployed; staging ${c1.slice(0, 7)}, main ${c1.slice(0, 7)}`, `staging is at ${c2.slice(0, 12)} on origin.`]);
+      expect(bindingsOf(mock.state, "erga-staging").ERGA_VERSION.text).toBe(c2.slice(0, 12));
+      expect([remote("staging"), remote("main")]).toEqual([c2, c1]);
+
+      // A plain git push to main still stops.
+      const plain = run("git", "push", "origin", `${c2}:refs/heads/main`);
+      expect(plain.code).not.toBe(0);
+      expect(plain.err).toContain("erga: Don't push to main directly");
+
+      // A primary: the deploy, then main moves to its commit. Again: main has it, and stays.
+      seen.length = 0;
+      expect(await deployInstance({ dir, host: "erga.dev", commit: c2, clone, net: mock.fetch, print })).toBe(c2);
+      expect(seen).toEqual([`deployed; staging ${c2.slice(0, 7)}, main ${c1.slice(0, 7)}`, `main is at ${c2.slice(0, 12)} on origin.`]);
+      expect(bindingsOf(mock.state, "erga").ERGA_VERSION.text).toBe(c2.slice(0, 12));
+      const lines: string[] = [];
+      await deployInstance({ dir, host: "erga.dev", commit: c2, clone, net: mock.fetch, print: (l) => lines.push(l) });
+      expect(lines).toContain(`main has ${c2.slice(0, 12)} already: main stays.`);
+      expect(records().some((r) => r.some((x) => x.main == "kept"))).toBe(true);
+
+      // A commit apart from main does not deploy: nothing is built or uploaded.
+      run("git", "checkout", "-q", "--detach", c1);
+      const apart = commit("C3: not on main");
+      writeFileSync(passPath(dir, apart), "all passing\n");
+      const calls = mock.state.calls.length;
+      await expect(deployInstance({ dir, host: "erga.dev", commit: apart, clone, net: mock.fetch, print })).rejects.toThrow(
+        "is not on main"
+      );
+      expect(mock.state.calls.length).toBe(calls);
+      expect(remote("main")).toBe(c2);
+    } finally {
+      process.env.PATH = PATH;
+      rmSync(tmp, { recursive: true, force: true });
     }
   }, 60_000);
 });

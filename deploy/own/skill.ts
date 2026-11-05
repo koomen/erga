@@ -39,19 +39,15 @@ on it, a GitHub account with the GitHub CLI logged in (gh auth login), Bun
    bucket, the address and the pages address, in 3 to 6 minutes. It is
    safe to run again after a failure.
 8. The person signs in at https://<host>/auth/sign-in.
-9. bun erga own actions: the fork's GitHub Actions variables, and Actions
-   on. Then the person makes a Cloudflare API token with the link that
-   bun erga own status gives, and pastes it on the checklist page (or runs
-   bun erga own actions-token in a terminal). From then on, a push to the
-   fork's main deploys production, and a push to staging deploys staging.
-10. bun erga own update: syncs the fork's main with Erga's (as "Sync fork"
-    on GitHub). GitHub then tests it and deploys it. bun erga own status
-    shows the run.
-11. If the person wants it: bun erga own token gives you an admin token for
+9. bun erga own update: syncs the fork's main with Erga's (as "Sync fork"
+   on GitHub). Then git pull origin main here, and bun erga own deploy
+   production (and staging). A push deploys nothing: every deploy runs on
+   this machine.
+10. If the person wants it: bun erga own token gives you an admin token for
     their server (in .erga/secrets.json, never printed). With it,
     bun erga own home <folder> makes a folder the homepage, and
     bun erga own preset adds the company preset's access rule.
-12. Tell the person the address, that .erga/secrets.json holds the
+11. Tell the person the address, that .erga/secrets.json holds the
     server's secrets (keep a copy in a password manager), and how to update.
 
 ## The rules

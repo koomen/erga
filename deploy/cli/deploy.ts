@@ -1,6 +1,8 @@
 // `bun erga deploy [<commit>] <host>` and `bun erga rollback <host>`: a registered instance (.erga/config.json), deployed
 // or rolled back from this machine, with nothing from the instance but, for a primary with no commit named, the commit
-// its staging instances run. The build and the pipeline are today's (deploy/run.ts buildHere, runPipeline); the target
+// its staging instances run. Every deploy runs on a machine: a push deploys nothing. After a healthy deploy of a primary,
+// main on origin moves forward to its commit; `bun erga merge` deploys its commit to each staging instance, then moves
+// staging (deployStaging). The build and the pipeline are today's (deploy/run.ts buildHere, runPipeline); the target
 // comes from the entry only: its names, its vars, the secrets the Worker keeps. No secret goes out.
 //
 // A staging instance keeps its copy of its primary's data (as GitHub's deploy does), and gets DEPLOY_TARGET=staging and
@@ -9,7 +11,7 @@
 // whose tests passed: .erga/tests/<sha>, which this CLI writes when `bun run test` ends with "all passing".
 //
 // ERGA_DEPLOY_MOCK=1: against the mock Cloudflare's copy of Erga's account (dev/mock-cloudflare.ts, the fleet), with
-// .build/release/ for the build: nothing real is touched.
+// .build/release/ for the build: nothing real is touched. No branch moves on origin, but in a clone a test gives.
 
 import {
   appendFileSync,
@@ -45,10 +47,13 @@ import { previousVersion } from "./flow";
 import { readOps } from "./ops";
 
 const ROOT = new URL("../..", import.meta.url).pathname;
-const git = (...args: string[]) => {
-  const r = Bun.spawnSync(["git", ...args], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+/** git in a clone. `push`: as `bun erga`, which the pre-push hook lets through (deploy/cli/pre-push.ts). */
+const gitIn = (clone: string, args: string[], push = false) => {
+  const env = push ? { ...process.env, ERGA_CLI_PUSH: "1" } : process.env;
+  const r = Bun.spawnSync(["git", ...args], { cwd: clone, env, stdout: "pipe", stderr: "pipe" });
   return { ok: r.exitCode == 0, out: r.stdout.toString().trim(), err: r.stderr.toString().trim() };
 };
+const git = (...args: string[]) => gitIn(ROOT, args);
 
 // ------------------------------------------------------------------ the target
 
@@ -251,11 +256,45 @@ async function stagingAnswers(config: Config, primary: string, site: Fetch): Pro
   );
 }
 
-/** The full commit of a name or a short sha, in this clone, or an error that says to fetch. */
-export function commitOf(name: string): string {
-  const r = git("rev-parse", "--verify", "--quiet", `${name}^{commit}`);
+/** The full commit of a name or a short sha, in the clone, or an error that says to fetch. */
+export function commitOf(name: string, clone = ROOT): string {
+  const r = gitIn(clone, ["rev-parse", "--verify", "--quiet", `${name}^{commit}`]);
   if (!r.ok || !r.out) throw new Error(`This clone has no commit ${name}. Fetch it (git fetch origin), or name another.`);
   return r.out;
+}
+
+// ------------------------------------------------------------------ the branches on origin
+
+const isAncestor = (clone: string, a: string, b: string) => gitIn(clone, ["merge-base", "--is-ancestor", a, b]).ok;
+
+/** The commit of `branch` on origin (it may be one this clone does not have), or null: no such branch. */
+function remoteHead(clone: string, branch: string): string | null {
+  const r = gitIn(clone, ["ls-remote", "origin", `refs/heads/${branch}`]);
+  if (!r.ok) throw new Error(`git ls-remote origin failed: ${r.err}`);
+  return r.out.split(/\s/)[0] || null;
+}
+
+/**
+ * What a deploy of `sha` to a primary does to main on origin: "has" (main has the commit: main stays), or "forward"
+ * (main moves to it after the deploy). A commit apart from main does not deploy: main would lose commits.
+ */
+export function mainMove(clone: string, sha: string): "has" | "forward" {
+  const main = remoteHead(clone, "main");
+  if (!main) return "forward";
+  const f = gitIn(clone, ["fetch", "--quiet", "origin", "main"]);
+  if (!f.ok) throw new Error(`git fetch origin main failed: ${f.err}`);
+  if (isAncestor(clone, sha, main)) return "has";
+  if (isAncestor(clone, main, sha)) return "forward";
+  throw new Error(
+    `${sha.slice(0, 12)} is not on main, and main (${main.slice(0, 12)}) has commits that it does not have. A primary deploys only a commit of main, or one after main's head.`
+  );
+}
+
+/** Moves `branch` on origin to `sha`, forward only (no force), as `bun erga`. */
+function pushTo(o: { clone?: string; print?: (line: string) => void }, sha: string, branch: string) {
+  const p = gitIn(o.clone ?? ROOT, ["push", "--quiet", "origin", `${sha}:refs/heads/${branch}`], true);
+  if (!p.ok) throw new Error(`The push of ${sha.slice(0, 12)} to ${branch} failed: ${p.err}`);
+  (o.print ?? console.log)(`${branch} is at ${sha.slice(0, 12)} on origin.`);
 }
 
 // ------------------------------------------------------------------ deploy
@@ -276,6 +315,8 @@ export interface DeployOptions {
   print?: (line: string) => void;
   /** The tests of a commit with no pass yet (default: `bun run test` in a scratch worktree). */
   test?: (sha: string, log: (line: string) => void) => Promise<boolean>;
+  /** The clone whose commits deploy, and whose origin's main a primary moves (default: this one). */
+  clone?: string;
 }
 
 const mocked = () => process.env.ERGA_DEPLOY_MOCK == "1";
@@ -310,16 +351,19 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   const free = takeLock(o.dir, o.host, command);
   const job = startJob(o.dir, { command, host: o.host, print: o.print });
   const log = job.log;
+  const clone = o.clone ?? ROOT;
   try {
     let sha: string;
-    if (o.commit) sha = commitOf(o.commit);
+    if (o.commit) sha = commitOf(o.commit, clone);
     else {
       const chosen = stagingCommit(o.host, await stagingAnswers(config, o.host, net));
       if ("problem" in chosen) throw new Error(chosen.problem);
-      sha = commitOf(chosen.version);
+      sha = commitOf(chosen.version, clone);
       log(`The staging instances of ${o.host} run ${chosen.version}, healthy: that commit deploys.`);
     }
     job.note({ commit: sha });
+    // A primary: main must have the commit, or move forward to it. Checked before the build, so a deploy never leaves main behind.
+    const main = entry.stagingOf ? null : mocked() && !o.clone ? "mock" : mainMove(clone, sha);
 
     if (o.noTests) {
       job.note({ tests: "skipped: --no-tests" });
@@ -360,6 +404,17 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       throw e instanceof DeployError ? new Error(e.message) : e;
     }
     log(`Deployed ${sha.slice(0, 12)} to https://${targetHost(target)}: healthy.`);
+    if (main == "forward") {
+      try {
+        pushTo({ clone: o.clone, print: log }, sha, "main");
+      } catch (e) {
+        throw new Error(`${o.host} runs ${sha.slice(0, 12)}, healthy, but main did not move. ${(e as Error).message}`);
+      }
+      job.note({ main: "moved" });
+    } else if (main == "has") {
+      log(`main has ${sha.slice(0, 12)} already: main stays.`);
+      job.note({ main: "kept" });
+    } else if (main == "mock") log("NOTE  The mock: main on origin does not move.");
     job.end("ok");
     return sha;
   } catch (e) {
@@ -368,6 +423,36 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   } finally {
     free();
   }
+}
+
+// ------------------------------------------------------------------ merge
+
+/**
+ * `bun erga merge`'s deploy: `sha` (a commit with a pass of its tests) to each registered staging instance, one after the
+ * other, then staging on origin moves to it. It stops at the first failure, and staging stays. With no staging instance,
+ * it says so, and only moves staging. The result: the hosts it deployed.
+ */
+export async function deployStaging(
+  o: Pick<DeployOptions, "dir" | "net" | "token" | "print" | "clone" | "command"> & { sha: string }
+): Promise<string[]> {
+  const clone = o.clone ?? ROOT;
+  const print = o.print ?? console.log;
+  const real = !mocked() || !!o.clone;
+  // staging may have moved while the tests ran: then the commit would not reach the branch, so it deploys nowhere.
+  const staging = real ? remoteHead(clone, "staging") : null;
+  if (staging && !isAncestor(clone, staging, o.sha))
+    throw new Error(`staging moved to ${staging.slice(0, 12)} while the tests ran. Nothing deployed. Run bun erga merge again.`);
+  const hosts = readConfig(o.dir)
+    .instances.filter((e) => e.stagingOf)
+    .map((e) => e.host);
+  if (!hosts.length)
+    print(
+      "NOTE  No staging instance in .erga/config.json: the commit deploys nowhere. Register one: bun erga register <host> --staging-of <primary>"
+    );
+  for (const host of hosts) await deployInstance({ ...o, host, commit: o.sha });
+  if (real) pushTo(o, o.sha, "staging");
+  else print("NOTE  The mock: staging on origin does not move.");
+  return hosts;
 }
 
 // ------------------------------------------------------------------ rollback

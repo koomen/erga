@@ -4,7 +4,7 @@
 // servers over HTTPS (deploy/cli/observe.ts), in a worker thread, while a page is open: every 5 seconds while a deploy
 // waits or runs, else every 30 (pollDelay, deploy/cli/flow.ts). /view tells the page when to ask again (X-Erga-Poll).
 //
-// Its buttons run `bun erga` itself (merge, promote, release, rollback), `gh run rerun` (Retry) and a delete of a
+// Its buttons run `bun erga` itself (merge, release, rollback), `gh run rerun` (Retry) and a delete of a
 // feature branch on GitHub, one at a time, and the page shows the output as it comes. It listens on 127.0.0.1 only.
 // An action needs this run's random token, which only the page has (a meta tag): another site in the browser can't
 // read the page (no CORS), so it can't send one.
@@ -19,7 +19,6 @@ import { ROOT, repoOf } from "./observe";
 /** What the page may ask for: each turns into one command (`argvOf`). */
 export type Action =
   | { action: "merge"; branch: string; message?: string }
-  | { action: "promote" }
   | { action: "release"; version: string }
   | { action: "rollback"; server: string }
   | { action: "rerun"; run: string }
@@ -35,8 +34,6 @@ export function argvOf(a: Partial<Action> & Record<string, unknown>, repo: strin
     case "merge":
       if (!branchOk(a.branch)) return { error: "That is not a feature branch." };
       return [...erga, "merge", a.branch, ...(typeof a.message == "string" && a.message.trim() ? ["-m", a.message.trim()] : [])];
-    case "promote":
-      return [...erga, "promote"];
     case "release":
       if (typeof a.version != "string" || !/^v\d+\.\d+\.\d+$/.test(a.version)) return { error: "A version is vX.Y.Z." };
       return [...erga, "release", a.version];
@@ -293,6 +290,6 @@ export async function startDashboard(wanted: number, open: boolean) {
   console.log(
     "NOTE  Keep this command running. It reads GitHub and the servers while the page is open: every 5 seconds during a deploy, else every 30."
   );
-  console.log("NOTE  Its buttons run bun erga merge, promote, release and rollback. Use them only when Pete asks.");
+  console.log("NOTE  Its buttons run bun erga merge, release and rollback. Use them only when Pete asks.");
   if (open) Bun.spawn(["open", `http://localhost:${server.port}/`]);
 }

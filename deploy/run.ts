@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 // A deploy of one of Erga's own targets from this machine: the same build and
-// pipeline as the GitHub Actions deploy (deploy/actions.ts). For a fresh copy
-// of production's data on staging, and as a way round a deploy on GitHub that
-// can't run.
+// pipeline as `bun erga deploy` (deploy/cli/deploy.ts). For a fresh copy
+// of production's data on staging.
 //
 //   bun deploy/run.ts staging [--commit <sha>] [--yes] [--fresh | --no-snapshot]
 //                                                        (staging keeps its frozen copy of production's data;

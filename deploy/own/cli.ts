@@ -9,9 +9,7 @@
 //   bun erga own signin github|google --from-file <file>   an existing app's values (KEY=value lines), never printed
 //   bun erga own deploy [production|staging]               build this checkout and deploy it (makes what's missing)
 //   bun erga own fork [--dry-run]    forks koomen/erga to the person's GitHub, and makes the fork this checkout's origin
-//   bun erga own actions [--dry-run] sets the fork's Actions variables and turns Actions on: GitHub deploys main then
-//   bun erga own actions-token       reads a Cloudflare API token in the terminal (hidden) and stores it as the fork's secret
-//   bun erga own update              syncs the fork's main with Erga's (gh repo sync); GitHub then tests and deploys it
+//   bun erga own update              syncs the fork's main with Erga's (gh repo sync); bun erga own deploy then deploys it
 //   bun erga own token [production|staging]                an admin token for this agent, stored in .erga/secrets.json
 //   bun erga own home <folder> [production|staging]        the folder's files become the homepage project (/_home)
 //   bun erga own preset [production|staging]               the preset's access rule (company)
@@ -36,7 +34,6 @@ import {
   namesOf,
   nextStep,
   ownTarget,
-  actionVars,
   forkProblem,
   parseAnswer,
   PRESETS,
@@ -46,9 +43,7 @@ import {
   summary,
   type TargetName,
   targetsOf,
-  tokenTemplateUrl,
   UPSTREAM_REPO,
-  varsToSet,
 } from "./plan";
 import { cloudflare, gh, githubFacts, observe, originRepo, signInCheck, site } from "./facts";
 import { addMessage, answersOf, DIR, loadOwn, loadSecrets, messages, readEnvFile, ROOT, saveOwn, saveSecrets } from "./store";
@@ -429,73 +424,7 @@ function fork(dry: boolean) {
   say("NEXT  bun erga own status");
 }
 
-/** The fork's Actions variables (deploy/actions-plan.ts reads them), and Actions turned on (GitHub turns it off on a new fork). */
-function actions(dry: boolean) {
-  const own = loadOwn(),
-    a = answersOf(own);
-  const g = githubFacts();
-  if (!g.repo || g.repo.toLowerCase() == UPSTREAM_REPO) fail("origin is not your fork.", "bun erga own fork");
-  if (!a.host || !own.account || !own.github?.clientId)
-    fail("The answers, the account or the GitHub app's id are missing.", "bun erga own status shows which; deploy once first.");
-  const want = actionVars(a, { github: own.github?.clientId, google: own.google?.clientId }, own.account!);
-  const todo = varsToSet(want, g.variables);
-  if (dry) {
-    for (const [k, v] of Object.entries(todo)) say(`Would set ${k}=${v} on ${g.repo}`);
-    if (!Object.keys(todo).length) say("Every variable is set already.");
-    say(`Would turn on Actions: gh api -X PUT repos/${g.repo}/actions/permissions -F enabled=true -f allowed_actions=all`);
-    return;
-  }
-  for (const [k, v] of Object.entries(todo)) {
-    const r = run(["gh", "variable", "set", k, "-R", g.repo!, "--body", v]);
-    if (!r.ok) fail(`gh variable set ${k} failed: ${r.err}`, "Check that gh may write to the fork (gh auth status).");
-  }
-  const on = run(["gh", "api", "-X", "PUT", `repos/${g.repo}/actions/permissions`, "-F", "enabled=true", "-f", "allowed_actions=all"]);
-  if (!on.ok) say(`NOTE  Actions could not be turned on: ${on.err}. Open https://github.com/${g.repo}/actions and turn workflows on.`);
-  pass(`${Object.keys(todo).length} variable(s) set on ${g.repo}; Actions is on. A push to main deploys https://${a.host}.`);
-  say(
-    g.secrets?.includes("CLOUDFLARE_API_TOKEN") ? "NEXT  bun erga own update" : `NEXT  (person) The Cloudflare token: ${tokenTemplateUrl()}`
-  );
-}
-
-/** Checks a Cloudflare API token, then stores it as the fork's CLOUDFLARE_API_TOKEN secret. Never printed. */
-export async function storeActionsToken(token: string): Promise<string | null> {
-  const repo = originRepo();
-  if (!repo || repo.toLowerCase() == UPSTREAM_REPO) return "origin is not your fork: bun erga own fork first.";
-  const r = await fetch("https://api.cloudflare.com/client/v4/user/tokens/verify", { headers: { Authorization: `Bearer ${token}` } }).catch(
-    () => null
-  );
-  const body = (await r?.json().catch(() => null)) as { success?: boolean; result?: { status?: string } } | null;
-  if (!body?.success || body.result?.status != "active")
-    return "Cloudflare does not accept this token (it is not active). Make it again with the link.";
-  const set = run(["gh", "secret", "set", "CLOUDFLARE_API_TOKEN", "-R", repo], { input: token });
-  return set.ok ? null : `gh secret set failed: ${set.err}`;
-}
-
-async function actionsToken() {
-  say(`Make the token here (the permissions are filled in): ${tokenTemplateUrl()}`);
-  const token = await readHidden("Paste the token (it is not shown): ");
-  if (!token) fail("No token.", "Run bun erga own actions-token again, and paste the token.");
-  const problem = await storeActionsToken(token);
-  if (problem) fail(problem, "Fix what it names, then run bun erga own actions-token again.");
-  pass(`The secret CLOUDFLARE_API_TOKEN is set on ${originRepo()}.`);
-  say("NEXT  bun erga own update");
-}
-
-/** A line from the terminal, not echoed. */
-async function readHidden(question: string): Promise<string> {
-  process.stdout.write(question);
-  const tty = process.stdin.isTTY;
-  if (tty) Bun.spawnSync(["stty", "-echo"], { stdin: "inherit" });
-  try {
-    for await (const line of console) return line.trim();
-    return "";
-  } finally {
-    if (tty) Bun.spawnSync(["stty", "echo"], { stdin: "inherit" });
-    process.stdout.write("\n");
-  }
-}
-
-/** Syncs the fork's main with Erga's (as "Sync fork" on GitHub does); GitHub Actions then tests and deploys it. */
+/** Syncs the fork's main with Erga's (as "Sync fork" on GitHub does). A deploy from this machine then deploys it. */
 async function update() {
   const repo = originRepo();
   if (!repo || repo.toLowerCase() == UPSTREAM_REPO) fail("origin is not your fork.", "bun erga own fork");
@@ -505,8 +434,9 @@ async function update() {
     fail(`gh repo sync failed: ${r.err}`, "Your fork's main has commits of its own: merge Erga's main into it on your machine, then push.");
   const after = gh<{ object: { sha: string } }>("api", `repos/${repo}/git/ref/heads/main`)?.object.sha;
   if (before == after) pass(`${repo}'s main is up to date with ${UPSTREAM_REPO} (${after?.slice(0, 12)}).`);
-  else pass(`${repo}'s main moved to ${after?.slice(0, 12)}. GitHub tests it, then deploys it: bun erga own status shows the run.`);
+  else pass(`${repo}'s main moved to ${after?.slice(0, 12)}.`);
   run(["git", "fetch", "--quiet", "origin"]);
+  say("NEXT  git pull origin main in this checkout, then: bun erga own deploy production (and staging).");
 }
 
 async function inbox(wait: boolean) {
@@ -639,12 +569,6 @@ export async function ownMain(argv: string[]) {
         break;
       case "fork":
         fork(flag("--dry-run"));
-        break;
-      case "actions":
-        actions(flag("--dry-run"));
-        break;
-      case "actions-token":
-        await actionsToken();
         break;
       case "inbox":
         await inbox(flag("--wait"));

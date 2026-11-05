@@ -1,8 +1,8 @@
-// What `bun erga` decides: when a merge, a promote or a release must stop, the message of a squashed merge, the next
+// What `bun erga` decides: when a merge or a release must stop, the message of a squashed merge, the next
 // release's version and notes, a rollback's version, and the dashboard's state. Pure: no network, no git, no files
 // (deploy/cli/observe.ts reads GitHub and the servers; deploy/cli/main.ts acts).
 
-/** The branches that deploy. Only `bun erga` moves them. */
+/** The branches that `bun erga` moves: staging (merge) and main (a deploy of a primary). */
 export const PROTECTED = ["staging", "main"] as const;
 
 export interface Commit {
@@ -52,7 +52,7 @@ export interface Branch {
 export function mergeRefusal(o: { branch: string; exists: boolean; ahead: number; conflicts: string[] }): string | null {
   if (!o.branch) return "Name the branch: bun erga merge <branch>.";
   if ((PROTECTED as readonly string[]).includes(o.branch))
-    return `${o.branch} is not a feature branch. To move main to staging's head, use: bun erga promote.`;
+    return `${o.branch} is not a feature branch. A deploy of a primary moves main: bun erga deploy <host>.`;
   if (!o.exists) return `There is no branch ${o.branch} on GitHub. Push it first: git push origin HEAD:${o.branch}`;
   if (o.ahead == 0) return `${o.branch} has no commits that staging does not have. Nothing to merge.`;
   if (o.conflicts.length)
@@ -91,29 +91,6 @@ export function squashMessage(branch: string, commits: Commit[], given?: string)
       .join("\n")}`;
   }
   return trailers.size ? `${text}\n\n${[...trailers].join("\n")}` : text;
-}
-
-/** Why `bun erga promote` must not go on, or null: main moves only to a staging head that deployed and is healthy. */
-export function promoteRefusal(o: {
-  staging: string;
-  main: string;
-  /** main is an ancestor of staging (a fast-forward). */
-  fastForward: boolean;
-  run: Run | null;
-  server: Server | null;
-}): string | null {
-  if (o.staging == o.main) return "main is at staging's head already. Nothing to promote.";
-  if (!o.fastForward)
-    return "main has commits that staging does not have: main can only move forward to staging. Put those commits on staging first (bun erga merge).";
-  const short = o.staging.slice(0, 12);
-  if (!o.run) return `GitHub has no workflow run for staging's head ${short} yet. Wait for it: bun erga status.`;
-  if (o.run.status != "completed") return `Staging's run for ${short} is ${o.run.status}. Wait for it to end: ${o.run.url}`;
-  if (o.run.conclusion != "success") return `Staging's run for ${short} ended with ${o.run.conclusion}: ${o.run.url}. Fix staging first.`;
-  if (!o.server) return "There is no staging server to check. Promote needs a staging server that runs staging's head.";
-  if (o.server.version != short)
-    return `${o.server.host} runs ${o.server.version ?? "nothing that answers"}, not staging's head ${short}. Wait for the deploy, or look at its run: ${o.run.url}`;
-  if (!o.server.healthy) return `${o.server.host} is not healthy: GET /api/health did not answer ok. Fix staging first.`;
-  return null;
 }
 
 const SEMVER = /^v(\d+)\.(\d+)\.(\d+)$/;
@@ -277,5 +254,5 @@ export function pushRefusal(ref: string, cli: boolean): string | null {
   if (cli || !(PROTECTED as readonly string[]).includes(name)) return null;
   return name == "staging"
     ? "Don't push to staging directly. Push your branch (git push origin HEAD:<branch>), then: bun erga merge <branch>. bun erga skill tells the rest."
-    : "Don't push to main directly. Pete moves main: bun erga promote. bun erga skill tells the rest.";
+    : "Don't push to main directly. A deploy of a primary moves main: bun erga deploy <host>. bun erga skill tells the rest.";
 }

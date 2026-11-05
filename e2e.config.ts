@@ -51,6 +51,6 @@ export default {
   trace: "retain-on-failure",
   video: "off",
   output: ".e2e",
-  reporters: process.env.CI ? ["list", "junit"] : ["list"],
+  reporters: ["list"],
   cache: "off",
 } satisfies E2EConfig;

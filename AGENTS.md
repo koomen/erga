@@ -28,8 +28,8 @@ this way:
    that gives the fewest conflicts, and fixes each conflict as it comes.
 5. Each merge is one squashed commit (`bun erga merge <branch> -m`). Its
    message tells what the whole task does, not the branch's steps.
-6. When a task's commit is on production (`bun erga promote`), the manager
-   retires the task's agent. Until then, the agent stays: it knows its task
+6. When a task's commit is on production (`bun erga deploy erga.dev`), the
+   manager retires the task's agent. Until then, the agent stays: it knows its task
    if the merge or staging shows a problem.
 
 ## Testing as the user
@@ -57,7 +57,11 @@ result each time.
 
 ## Deploys
 
-`bun erga skill` tells how a change reaches staging and production.
+GitHub only keeps the repository: it runs no workflow, no tests and no
+deploy. Every deploy runs on a machine, and runs `bun run test` first
+(`--no-tests` skips them). `bun erga merge`
+deploys to staging, and `bun erga deploy erga.dev` deploys staging's commit
+to production and moves `main`. `bun erga skill` tells the rest.
 
 ## Standing rules
 
@@ -137,8 +141,8 @@ Found a new trap? Write it here, in the same change.
   `node_modules/.bin/biome format --write <file>`.
 - `rm` only with `"${VAR:?}"` or a literal path, never a bare `$VAR`.
 - Bun older than 1.4 (`bun --version`) minifies `client/inline/` with other names: the dev server then rewrites
-  `server/pages/inline-code.ts`, and `tests/inline-code.test.ts` fails on the committed file. Use Bun 1.4.2, as
-  the deploy on GitHub Actions does (.github/workflows/test.yml), and never commit a rewrite made by an older Bun.
+  `server/pages/inline-code.ts`, and `tests/inline-code.test.ts` fails on the committed file. Use Bun 1.4.2
+  (`@types/bun` in package.json), and never commit a rewrite made by an older Bun.
 - A passing local test, even one that fakes staging, is not proof. Run the
   real flow on staging, end to end, before you say a fix works. If you need
   an admin credential you don't have, say so.

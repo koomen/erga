@@ -23,7 +23,7 @@
       return j;
     });
 
-  // The dialogs are outside #live, so it changes also while one is open (the log of a promote, say). Only a button in
+  // The dialogs are outside #live, so it changes also while one is open (the log of a merge, say). Only a button in
   // #live that waits for its second click keeps it as it is.
   const armed = () => !!live.querySelector("[data-armed]");
   let timer = 0;
@@ -165,11 +165,6 @@
       $("feature-go").dataset.branch = b.dataset.branch;
       return $("feature-dlg").showModal();
     }
-    if (act == "promote-open") {
-      $("promote-head").textContent = b.dataset.head;
-      $("promote-count").textContent = b.dataset.count + (b.dataset.count == "1" ? " commit" : " commits");
-      return $("promote-dlg").showModal();
-    }
     if (act == "release-open") {
       $("release-head").textContent = b.dataset.head;
       $("release-version").value = b.dataset.version;
@@ -192,10 +187,6 @@
     const message = $("feature-message").value.trim();
     $("feature-dlg").close();
     start({ action: "merge", branch, message }, "bun erga merge " + branch, "staging");
-  });
-  $("promote-go").addEventListener("click", () => {
-    $("promote-dlg").close();
-    start({ action: "promote" }, "bun erga promote", "production");
   });
   $("release-go").addEventListener("click", () => {
     const version = $("release-version").value.trim();

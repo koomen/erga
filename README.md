@@ -28,8 +28,8 @@ GitHub CLI (`gh auth login`) and a Cloudflare account on the Workers Paid plan.
 
 Or give your coding agent this prompt in an empty folder: "Deploy my own Erga
 from https://github.com/koomen/erga. Clone it, run `bun install`, then follow
-`bun erga own skill`." After the first deploy, GitHub Actions deploys each
-update, and `bun erga own update` brings in Erga's new changes.
+`bun erga own skill`." Every deploy runs on your machine: `bun erga own update`
+brings in Erga's new changes, and `bun erga own deploy` deploys them.
 
 ## Develop
 
