@@ -53,7 +53,7 @@ and `main`. There are no pull requests.
 ## The rules
 
 - Never push to `staging` or `main` with git. The pre-push hook stops it
-  (`bun erga hooks` turns the hook on; `bun install` does it too).
+  (`bun install` turns the hook on, in a clone).
 - Never open a pull request. Pull requests are off on GitHub.
 - `merge`, `promote`, `release` and `rollback` run only when Pete asks.
 - Report what you observed (a version, a health check, a run's result),
