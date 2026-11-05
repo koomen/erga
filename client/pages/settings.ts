@@ -20,7 +20,9 @@
 //     (the landing_document setting), never here.
 //   - Versions: the latest ten, each with its number, the model's five-word
 //     description (a quiet placeholder until it arrives), when and who; the
-//     current one marked; Show older versions loads ten more. Edit, on hover or
+//     current one marked, and on the homepage the deployed one. A deployed version older than the latest ten shows
+//     in its own place: the latest five, a gap, then five around it (two newer, it, two older); only those five are
+//     read. Show older versions loads the ten before the oldest one shown. Edit, on hover or
 //     focus, makes a copy of a version the current one (restore_version).
 //
 // It runs the operations (server/operations/: versions, restore_version, ls, set_kind, deploy_homepage,
@@ -124,6 +126,7 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-list .ds-meta { grid-column: 2 / span 2; font-size: 11.5px; color: var(--chrome); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-tags { display: flex; gap: 4px; }
 .ds-tag { font: 600 10.5px/1 var(--font-text); padding: 3px 6px; border-radius: 999px; color: var(--soft); background: var(--code-bg); white-space: nowrap; }
+.ds-list li.ds-gap { display: block; padding: 3px 0 3px 42px; font-size: 11.5px; color: var(--chrome); }
 .ds-foot { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 0; font-size: 11.5px; color: var(--chrome); }
 .ds-skel { height: 12px; border-radius: 6px; background: var(--code-bg); margin: 10px 0; animation: ds-pulse 1.1s ease-in-out infinite alternate; }
 @keyframes ds-pulse { from { opacity: 0.5; } to { opacity: 1; } }
@@ -284,6 +287,7 @@ function mount(host: SettingsHost): Settings {
       loadError = null;
       render();
       renderHome();
+      loadAround();
     } catch (e) {
       if (seq != loadSeq) return;
       loadError = (e as Error).message;
@@ -295,7 +299,7 @@ function mount(host: SettingsHost): Settings {
   /** Show older versions: the ten before the oldest one shown. */
   let loadingOlder = false;
   async function loadOlder() {
-    const oldest = shown().at(-1);
+    const oldest = visible().at(-1);
     if (!data || !oldest || oldest.n <= 1 || loadingOlder) return;
     loadingOlder = true;
     render();
@@ -308,6 +312,33 @@ function mount(host: SettingsHost): Settings {
     render();
   }
   olderBtn.addEventListener("click", () => loadOlder());
+  /** The homepage's deployed version, on the homepage only. */
+  const deployed = () => (home?.isHome ? home.deploy.version : null);
+  /** The deployed version, when it's older than the latest ten: the list shows it apart, after a gap. */
+  const apart = () => {
+    const d = deployed();
+    return data && d != null && d < (data.versions.at(-1)?.n ?? 1) ? d : null;
+  };
+  /** The versions the list shows, newest first: with a deployed version apart, the latest five, then from two newer than it down. */
+  const visible = () => {
+    const all = shown(),
+      d = apart();
+    return d == null ? all : [...all.slice(0, 5), ...all.filter((v) => v.n <= d + 2)];
+  };
+  /** The five around a deployed version that's apart: read only those, once. */
+  let aroundSeq = 0;
+  async function loadAround() {
+    const d = apart();
+    if (d == null || loaded.has(d)) return;
+    const seq = ++aroundSeq;
+    const r = await runTool<Versions>("versions", { document: host.docId, before: `v${d + 3}`, limit: 5 }).catch((e: Error) => {
+      histError.textContent = `Couldn't load the deployed version: ${e.message}`;
+      return null;
+    });
+    if (!r || seq != aroundSeq) return;
+    add(r.versions);
+    render();
+  }
   /** The document as ls answers it: its tree and kind, the homepage's state (on the homepage), and its access (for the owner). */
   async function loadDoc() {
     const seq = ++docSeq;
@@ -323,6 +354,8 @@ function mount(host: SettingsHost): Settings {
     renderHome();
     renderAgent();
     renderPage();
+    if (data) render();
+    loadAround();
   }
 
   /** The page shown now: its file, the tab's title, and Details. */
@@ -394,7 +427,7 @@ function mount(host: SettingsHost): Settings {
   let restoring: string | null = null;
   async function restore(id: string) {
     if (!data || restoring) return;
-    const v = data.versions.find((x) => x.id == id);
+    const v = [...loaded.values()].find((x) => x.id == id);
     restoring = id;
     histError.textContent = "";
     render();
@@ -437,17 +470,30 @@ function mount(host: SettingsHost): Settings {
     totalEl.textContent = data.total > 1 ? `${data.total} in all` : "";
     // The list is drawn afresh: an Edit button that had focus keeps it.
     const focused = (document.activeElement as HTMLElement | null)?.closest?.("#ds-list [data-restore]")?.getAttribute("data-restore");
-    const vs = shown();
-    list.innerHTML = vs.map((v) => {
-      const tags = v.id == current.id ? `<span class="ds-tag">Current</span>` : "";
-      const edit = v.id == current.id || !data!.canEdit ? ""
+    // A deployed version apart: the latest five, a gap, then what's loaded from two newer than it down.
+    const vs = visible(),
+      d = apart();
+    const row = (v: Version) => {
+      const tags = [v.id == current.id ? "Current" : "", v.n == deployed() ? "Deployed" : ""]
+        .filter(Boolean)
+        .map((t) => `<span class="ds-tag">${t}</span>`)
+        .join("");
+      const edit =
+        v.id == current.id || !data!.canEdit
+          ? ""
         : `<button type="button" class="ds-edit${restoring == v.id ? " busy" : ""}" data-restore="${esc(v.id)}" aria-label="Edit version ${v.n}: make a copy of it the current version" title="Make a copy of version ${v.n} the current version, to edit it">${restoring == v.id ? "Restoring…" : "Edit"}</button>`;
       return `<li data-n="${v.n}"><span class="ds-n">v${v.n}</span><span class="ds-desc">${desc(v)}</span><span class="ds-tags">${tags}</span><span class="ds-meta" title="${esc(new Date(v.at).toLocaleString())}">${esc(whoWhen(v))}</span>${edit}</li>`;
-    }).join("");
+    };
+    const hidden = d == null || vs.length <= 5 ? 0 : vs[4].n - vs[5].n - 1;
+    list.innerHTML = vs
+      .map(
+        (v, i) => (i == 5 && hidden ? `<li class="ds-gap" aria-label="${hidden} versions not shown">… ${hidden} more</li>` : "") + row(v)
+      )
+      .join("");
     if (focused) [...list.querySelectorAll<HTMLElement>("[data-restore]")].find((b) => b.dataset.restore == focused)?.focus();
     const older = (vs.at(-1)?.n ?? 1) > 1;
     foot.hidden = !older;
-    footText.textContent = `The latest ${vs.length} of ${data.total}.`;
+    footText.textContent = d == null ? `The latest ${vs.length} of ${data.total}.` : `${vs.length} of ${data.total}.`;
     olderBtn.textContent = loadingOlder ? "Loading…" : "Show older versions";
     if (loadingOlder) olderBtn.setAttribute("aria-disabled", "true"); else olderBtn.removeAttribute("aria-disabled");
   }

@@ -70,3 +70,36 @@ test("a new version never deploys by itself: the settings say the live page is o
   expect(await front()).toContain("Draft 5");
   held.release();
 });
+
+test("a deployed version older than the latest ten shows apart: the latest five, a gap, then five with it third; Show older versions goes on below it", async ({
+  tab,
+}) => {
+  const server = await servers.short();
+  const doc = await draftDoc(server, "Front page", 8);
+  expect((await setLanding(server, doc.id)).error).toBeUndefined();
+  await expect.poll(async () => (await doc.owner.home(doc.id)).deploy.version).toBe(8);
+  // 16 restores: versions 9 to 24, none deployed.
+  for (let n = 9; n <= 24; n++) expect((await doc.owner.restore(doc.id, `v${(n % 8) + 1}`)).ok).toBe(true);
+  expect((await doc.owner.versions(doc.id)).total).toBe(24);
+  tab.strict = true;
+  const s = await openDocEditor(tab.page, server, doc.address);
+  await s.open();
+  await expect.poll(() => s.listed()).toEqual([24, 23, 22, 21, 20, 10, 9, 8, 7, 6]);
+  const rows = () =>
+    s.eval<string[]>(`[...document.querySelectorAll("#ds-list li")].map((li) => li.textContent.replace(/\\s+/g, " ").trim())`);
+  const r = await rows();
+  expect(r[5]).toBe("… 9 more");
+  expect(r[0]).toContain("Current");
+  expect(r[8].startsWith("v8")).toBe(true);
+  expect(r[8]).toContain("Deployed");
+  expect(r.filter((t) => t.includes("Deployed"))).toHaveLength(1);
+  expect(await s.text("#ds-foot-text")).toBe("10 of 24.");
+  await s.clickOn("#ds-older");
+  await expect.poll(() => s.listed()).toEqual([24, 23, 22, 21, 20, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+  expect(await s.eval<boolean>(`document.getElementById("ds-foot").hidden`)).toBe(true);
+  // Deploy: the deployed version is the latest, in the list of ten, with no gap.
+  await s.clickOn("#ds-redeploy");
+  await expect.poll(() => s.text("#ds-status")).toMatch(/^Deployed at .*version 24/);
+  await expect.poll(async () => (await rows())[0]).toContain("Deployed");
+  expect((await rows()).some((t) => t.startsWith("…"))).toBe(false);
+});
