@@ -23,6 +23,12 @@
 //                                   editing library's address, /erga/<name>/editor.js, one line that imports its build
 //   GET /api/deploys/version        the release and target, which the deploy pipeline waits on
 //   GET /api/health                 the health check the pipeline runs after (ok, the release, the checks: no data)
+//   GET /api/ops                    the deploy facts, for an admin's ops token only (server/api.ts checks
+//                                   it: an ops token signs no one in, so this guard can't)
+//   POST /api/auth/request, /api/auth/poll
+//                                   the CLI's sign-in (deploy/cli/ops.ts) asks for a token with no session: the request
+//                                   holds no data, and only an admin approves it, on /tokens/approve, which is behind
+//                                   this guard; the poll's own credential is the request's code
 //   /api/snapshot/...               the deploy copying production's documents in, and staging reading a blob its copy
 //                                   lacks (/api/snapshot/blob/<sha-256>), both with SNAPSHOT_TOKEN
 //   /__erga/...                     local development only, behind the dev server's secret
@@ -72,7 +78,8 @@ function exempt(request: Request, base: Platform, url: URL): boolean {
   const method = request.method;
   if (path == "/auth/sign-in" || path == "/auth/github" || path == "/auth/github/callback" || path == "/auth/google" || path == "/auth/google/callback" || path == "/auth/logout") return true;
   if (isAssetPath(path) || path == "/logo.png" || libraryOf(path)) return method == "GET" || method == "HEAD";
-  if (path == "/api/deploys/version" || path == "/api/health") return method == "GET" || method == "HEAD";
+  if (path == "/api/deploys/version" || path == "/api/health" || path == "/api/ops") return method == "GET" || method == "HEAD";
+  if (path == "/api/auth/request" || path == "/api/auth/poll") return method == "POST";
   if (path.startsWith("/api/snapshot/")) return true;
   if (path.startsWith("/__erga/")) return true;
   const read = method == "GET" || method == "HEAD" || method == "OPTIONS";

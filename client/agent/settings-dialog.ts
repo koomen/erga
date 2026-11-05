@@ -36,7 +36,12 @@ interface Token {
   lastUsed: string | null;
 }
 
-const SCOPES: Record<string, string> = { document: "One document", documents: "All my documents", admin: "Admin" };
+const SCOPES: Record<string, string> = {
+  document: "One document",
+  documents: "All my documents",
+  admin: "Admin",
+  ops: "Ops (deploy facts)",
+};
 /** In local development the page's ?user= says who is signed in: the calls go as them too. */
 const user = () => {
   const u = new URLSearchParams(location.search).get("user");

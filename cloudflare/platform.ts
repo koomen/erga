@@ -70,6 +70,8 @@ const SETTINGS = Config.all({
   devLogin: text("DEV_LOGIN"),
   target: text("DEPLOY_TARGET"),
   version: text("ERGA_VERSION"),
+  /** Where the pipeline deployed this server (ERGA_DEPLOY, JSON: deploy/pipeline/account.ts deployFacts), or null. */
+  deployFacts: text("ERGA_DEPLOY").pipe(Config.map((v): unknown => Result.getOrNull(Result.try(() => (v ? JSON.parse(v) : null))))),
   pagesHost: text("PAGES_HOST"),
   githubApp: Config.all({ clientId: text("GITHUB_CLIENT_ID"), secret: text("GITHUB_CLIENT_SECRET") }),
   googleApp: Config.all({ clientId: text("GOOGLE_CLIENT_ID"), secret: text("GOOGLE_CLIENT_SECRET") }),
@@ -141,6 +143,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     deploy: {
       target: isTargetName(target) ? target : null,
       version: settings.version || null,
+      facts: settings.deployFacts,
       targets: TARGETS,
     },
     signIn: {

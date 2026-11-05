@@ -98,7 +98,8 @@ async function cookieSession(platform: Platform, request: Request, dev: boolean)
 async function tokenSession(platform: Platform, bearer: string, url: URL): Promise<Session | null> {
   const users = platform.directory.users;
   const token = await platform.tokens.verify(bearer).catch(() => null);
-  if (!token) return null;
+  // An ops token signs no one in: it reads only GET /api/ops (server/api.ts), which checks it itself.
+  if (!token || token.scope == "ops") return null;
   const session: Session = {
     login: token.login,
     name: token.name,

@@ -9,7 +9,7 @@ import type { Platform } from "../server/platform";
 import { sessionOf } from "../server/identity/index.ts";
 import { serverApi } from "../server/api";
 import { respond } from "../server/http";
-import { ScopeError, Tokens } from "../server/identity/tokens";
+import { OPS_DAYS, ScopeError, Tokens } from "../server/identity/tokens";
 import { memory } from "./helpers/memory-sql";
 
 const ORIGIN = "https://erga.test";
@@ -205,4 +205,53 @@ test("one API for every token: GET /api/tools and MCP's tools/list give the same
   expect(pointer.length).toBeLessThan(800);
   expect(pointer).not.toContain("list_documents");
   expect(await (await llms({ Authorization: `Bearer ${admin}` })).text()).toBe(pointer);
+});
+
+test("an ops token: for an admin only, OPS_DAYS at most; it signs no one in, and reads only GET /api/ops while its person is an admin", async () => {
+  const { tokens, call, dir, root, platform } = await server();
+  await expect(tokens.mint(bo, "Bo's", { scope: "ops" })).rejects.toThrow(/Only an admin/);
+  const day = 86_400_000;
+  const { token, info } = await tokens.mint(ada, "bun erga", { scope: "ops", expires: Date.now() + 365 * day });
+  expect(info.scope).toBe("ops");
+  expect(info.expires! - Date.now()).toBeLessThanOrEqual(OPS_DAYS * day);
+  expect(info.expires! - Date.now()).toBeGreaterThan((OPS_DAYS - 1) * day);
+  // Asked for a week: a week.
+  const week = (await tokens.mint(ada, "Short", { scope: "ops", expires: Date.now() + 7 * day })).info.expires!;
+  expect(Math.round((week - Date.now()) / day)).toBe(7);
+
+  // No session: no tool, no MCP, no document.
+  const asked = (path: string, init: RequestInit = {}) =>
+    new Request(`${ORIGIN}${path}`, { ...init, headers: { Authorization: `Bearer ${token}`, ...init.headers } });
+  expect(await platform.sessionOf(asked("/docs"))).toBeNull();
+  for (const tool of ["whoami", "list_documents", "people", "settings"]) expect((await call(token, tool)).status).toBe(401);
+  expect((await respond(serverApi, asked("/mcp", { method: "POST", body: "{}" }), platform)).status).toBe(401);
+
+  // GET /api/ops: the release, the target, the host and the deploy facts, from the Worker's own vars.
+  const deploy = { account: "a1", worker: "w", database: "d", app: { kind: "workers.dev" }, pages: { kind: "shared" } };
+  const deployed = { ...platform, deploy: { target: null, version: "abc123def456", facts: deploy } } as unknown as Platform;
+  const ops = async (bearer?: string) =>
+    respond(serverApi, new Request(`${ORIGIN}/api/ops`, { headers: bearer ? { Authorization: `Bearer ${bearer}` } : {} }), deployed);
+  const r = await ops(token);
+  expect(r.status).toBe(200);
+  expect(await r.json()).toEqual({ version: "abc123def456", target: null, host: "erga.test", deploy });
+  // Any other token, none, or this one once its person is no admin: refused.
+  expect((await ops((await tokens.mint(ada, "Admin", { scope: "admin" })).token)).status).toBe(401);
+  expect((await ops()).status).toBe(401);
+  await dir.users.setRole(root, "ada", "user");
+  expect((await ops(token)).status).toBe(401);
+  // On the person's list, where they revoke it.
+  expect((await tokens.list("ada", 20)).tokens.some((t) => t.id == info.id && t.scope == "ops")).toBe(true);
+  expect(await tokens.revoke("ada", info.id)).toBe(true);
+  expect(await tokens.verify(token)).toBeNull();
+});
+
+test("the device flow asks for an ops token: its approval shows when it ends, OPS_DAYS at most", async () => {
+  const { tokens } = await server();
+  const asked = await tokens.request("bun erga", { scope: "ops" });
+  const waiting = await tokens.pending(asked.userCode);
+  expect(waiting?.grant.scope).toBe("ops");
+  expect(waiting!.grant.expires! - Date.now()).toBeLessThanOrEqual(OPS_DAYS * 86_400_000);
+  const approved = await tokens.approve(asked.userCode, ada);
+  expect(approved?.info.scope).toBe("ops");
+  expect((await tokens.collect(asked.code)).status).toBe("ready");
 });

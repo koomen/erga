@@ -132,7 +132,7 @@ const NewToken = Schema.Struct({
   expires: Schema.optionalKey(Schema.String),
 });
 
-const SCOPE_NAMES: Record<Scope, string> = { document: "One document", documents: "All my documents", admin: "Admin" };
+const SCOPE_NAMES: Record<Scope, string> = { document: "One document", documents: "All my documents", admin: "Admin", ops: "Ops" };
 
 /** A document token's document, as a line shows it: its title and address, or "a document that's gone". */
 async function docLabel(platform: Platform, ref: string | null): Promise<string> {
@@ -150,9 +150,17 @@ async function approvalCard(
   waiting: { label: string; grant: { scope: Scope; docId: string | null; expires: number | null }; oauth: { redirectUri: string } | null }
 ): Promise<string> {
   const g = waiting.grant;
-  const may = await platform.tokens.check({ login: session.login, name: session.name }, g).then(() => null, (e) => (e instanceof ScopeError ? e.message : "This request can't be approved."));
-  const what = g.scope == "document" ? `one document: ${await docLabel(platform, g.docId)}. It can do there what you can do, and nothing anywhere else.`
-    : g.scope == "documents" ? "all your documents: everything you can do with documents, but no admin power."
+  const may = await platform.tokens.check({ login: session.login, name: session.name }, g).then(
+    () => null,
+    (e) => (e instanceof ScopeError ? e.message : "This request can't be approved.")
+  );
+  const what =
+    g.scope == "document"
+      ? `one document: ${await docLabel(platform, g.docId)}. It can do there what you can do, and nothing anywhere else.`
+      : g.scope == "documents"
+        ? "all your documents: everything you can do with documents, but no admin power."
+        : g.scope == "ops"
+          ? "this server's deploy facts: the commit it runs, and its Cloudflare account, Worker, database and domains. It reads nothing else: no documents, and no admin power."
         : "all your documents, and admin power: everything you can do in Erga, the server's settings, users, source and deploys included, while you're an admin.";
   // An admin request the person may approve: they choose admin power (the default) or documents only.
   const choose = g.scope == "admin" && !may;

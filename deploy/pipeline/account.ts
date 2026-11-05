@@ -34,7 +34,7 @@ export const servedAssets = (release: Release) => Object.fromEntries(Object.entr
 export function workerMetadata(release: Release, target: Target, o: { dbId: string; assetsJwt: string; pagesHost: string | null; existing?: boolean }) {
   const w = release.worker;
   // Which release this is (GET /api/deploys/version answers it).
-  const text: Record<string, string> = { ERGA_VERSION: release.version, ...target.vars };
+  const text: Record<string, string> = { ERGA_VERSION: release.version, ERGA_DEPLOY: JSON.stringify(deployFacts(target)), ...target.vars };
   const secrets = target.secrets;
   const bindings: Record<string, unknown>[] = [];
   const named = new Set<string>();
@@ -88,6 +88,19 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     tags: [WORKER_TAG],
   };
 }
+
+/**
+ * What the server answers an admin's ops token (GET /api/ops) of where it is deployed: the target's own names, so a
+ * deploy from a machine can deploy it again with no list of targets in the code. Never a secret.
+ */
+export const deployFacts = (t: Target) => ({
+  account: t.accountId,
+  worker: t.workerName,
+  database: t.databaseName,
+  ...(t.subdomain ? { subdomain: t.subdomain } : {}),
+  app: t.app,
+  pages: t.pages,
+});
 
 /**
  * The R2 bucket a target binds as `binding`: one of its own, named after its
