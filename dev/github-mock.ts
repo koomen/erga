@@ -36,6 +36,9 @@ export interface MockGithubState {
   tokens: { token: string; kind: "user"; login?: string }[];
 }
 
+/** When the pretend GitHub's rate limit resets (x-ratelimit-reset, in seconds): 2030-01-01 12:34 UTC. */
+const RESET = Date.UTC(2030, 0, 1, 12, 34) / 1000;
+
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 const html = (body: string, status = 200) =>
   new Response(
@@ -113,10 +116,17 @@ export function mockGithub(opts: MockGithubOptions) {
     const p = path.slice(4);
     let m: RegExpExecArray | null;
     // A person's public profile, for a GitHub account's access rule: every login is a person (its id a number made from
-    // the login, the same each time), but no-such-* ones, which GitHub doesn't know.
+    // the login, the same each time), but no-such-* ones, which GitHub doesn't know. A rate-limited-* one answers as
+    // GitHub does when a server's IP used up its 60 lookups an hour, unless the app's client id and secret come with it.
     if ((m = /^\/users\/([^/]+)$/.exec(p)) && request.method == "GET") {
       const login = decodeURIComponent(m[1]);
       if (login.toLowerCase().startsWith("no-such-")) return json({ message: "Not Found" }, 404);
+      const asApp = request.headers.get("authorization") == `Basic ${btoa(`${opts.app.clientId}:${opts.app.clientSecret}`)}`;
+      if (login.toLowerCase().startsWith("rate-limited-") && !asApp)
+        return Response.json(
+          { message: "API rate limit exceeded for 203.0.113.7." },
+          { status: 403, headers: { "x-ratelimit-limit": "60", "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(RESET) } }
+        );
       return json({ login, id: mockGithubId(login), type: "User" });
     }
     const me = userToken(request);

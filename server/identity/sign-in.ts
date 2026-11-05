@@ -42,18 +42,35 @@ const originsOf = (platform: Platform) => ({ www: platform.signIn.github, api: a
 /**
  * A GitHub account by its login, as GitHub's public users API answers (GET /users/<login>): its numeric id and its
  * login now; null when GitHub has no such account. For a GitHub account added on the Users page (server/directory/people.ts).
+ * It asks as the sign-in app (`app`: its client id and secret, when there is one), so GitHub counts the lookups against
+ * the app's 5,000 an hour, not the 60 an hour of the server's IP, which other Cloudflare Workers share.
  */
-export function githubAccounts(github: string): GithubLookup {
+export function githubAccounts(github: string, app: () => Promise<AppValues | null>): GithubLookup {
   return async (login) => {
+    const values = await app();
     const r = await fetch(`${apiOf(github)}/users/${encodeURIComponent(login)}`, {
-      headers: { Accept: "application/vnd.github+json", "User-Agent": "Erga" },
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "Erga",
+        ...(values?.clientId && values.secret ? { Authorization: `Basic ${btoa(`${values.clientId}:${values.secret}`)}` } : {}),
+      },
     }).catch(() => null);
     if (r?.status == 404) return null;
     const body = r?.ok ? ((await r.json().catch(() => null)) as { id?: number; login?: string; type?: string } | null) : null;
-    if (!body?.id || !body.login)
+    if (!body?.id || !body.login) {
+      // One line in the server's log: never the login, nor the app's values.
+      console.log(`GitHub's users lookup: ${r ? `status ${r.status}` : "no answer"}`);
+      const reset = Number(r?.headers.get("x-ratelimit-reset"));
+      if ((r?.status == 403 || r?.status == 429) && r.headers.get("x-ratelimit-remaining") == "0")
+        throw new NotAllowed({
+          message: reset
+            ? `GitHub's rate limit stops this lookup until ${new Date(reset * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC: try again then.`
+            : "GitHub's rate limit stops this lookup: try again in an hour.",
+        });
       throw new NotAllowed({
         message: `GitHub didn't answer for "${login}" (${r ? `status ${r.status}` : "no answer"}): try again in a minute.`,
       });
+    }
     if (body.type && body.type != "User")
       throw new NotAllowed({ message: `"${body.login}" is a GitHub ${body.type.toLowerCase()}, not a person's account.` });
     return { id: String(body.id), login: body.login };
