@@ -16,7 +16,9 @@ test("denied: the agent's poll hears it's gone", async () => {
   expect((await poll(root, denied.code)).status).toBe(410);
 });
 
-test("the approval page shows the scope, the document and the expiry, with Approve and Deny; approved in the browser, the agent collects a document token", async ({ tab }) => {
+test("the approval page shows the scope, the document and the expiry, with Approve and Deny, and no agent; approved in the browser, the agent collects a document token", async ({
+  tab,
+}) => {
   const root = (await servers.main()).root;
   tab.strict = true;
   const made = await publish(root, (await mint(root, null, { label: "Docs", scope: "documents" })).token, "Scoped one");
@@ -26,6 +28,8 @@ test("the approval page shows the scope, the document and the expiry, with Appro
   for (const part of ["One document", "Scoped one", "Expires", ">Deny<", ">Approve<"]) expect(html).toContain(part);
   const page = tab.page;
   await page.goto(root + approvePath);
+  // A page where the person grants access has no agent: it can't see or act on the approval.
+  expect(await page.locator("#agent, .agent-fab").count()).toBe(0);
   await page.evaluate(() => (document.querySelector("button[value=approve]") as HTMLButtonElement).click());
   await until(() => page.evaluate(() => document.body.innerText.includes("Approved")), 10_000, "approved in the browser");
   const got = (await (await poll(root, asked.code)).json()) as { token?: string };

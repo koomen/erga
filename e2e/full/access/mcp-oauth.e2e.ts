@@ -92,6 +92,7 @@ test("an MCP app signs in through the browser: register, approve on Erga, trade 
     const page = tab.page;
     await page.goto(authorize);
     expect(new URL(page.url()).pathname).toBe("/tokens/approve");
+    expect(await page.locator("#agent, .agent-fab").count()).toBe(0);
     const card = await page.evaluate(() => document.querySelector(".approve")?.textContent ?? "");
     for (const part of ["Claude Code (erga)", "all your documents, and admin power", "the app, on this computer"])
       expect(card).toContain(part);
