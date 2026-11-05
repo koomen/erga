@@ -7,6 +7,9 @@
 //   admin       everything the person can do, admin power included while they
 //               are an admin (Users.isAdmin, checked on every request); only an
 //               admin can make one, and pushing to Erga's Git endpoint needs one
+//   ops         the server's deploy facts (GET /api/ops: server/api.ts) and nothing else: no session,
+//               so no documents, API or admin power anywhere; for an admin only, and for OPS_DAYS at most. The
+//               CLI (deploy/cli/ops.ts) asks for one with the device flow below
 //
 // and, if its maker chose one, an expiry, after which it stops working. The
 // share button in the editor makes a documents token, /tokens makes and
@@ -58,8 +61,13 @@ export interface AgentToken {
   lastUsed: number | null;
 }
 
-export type Scope = "document" | "documents" | "admin";
-export const SCOPES: readonly Scope[] = ["document", "documents", "admin"];
+export type Scope = "document" | "documents" | "admin" | "ops";
+export const SCOPES: readonly Scope[] = ["document", "documents", "admin", "ops"];
+/** An ops token's longest life, in days: it ends then, or sooner if asked. */
+export const OPS_DAYS = 90;
+/** An ops token's end: the one asked for, but never more than OPS_DAYS from now. */
+const opsEnd = (expires: number | null | undefined) => Math.min(expires ?? Infinity, Date.now() + OPS_DAYS * 86_400_000);
+const NOT_A_SCOPE = (s: string) => `"${s}" isn't a scope: document, documents, admin or ops.`;
 
 /** What a token is for, as its maker asks: its scope, a document token's document, and when it ends (or never). */
 export interface Grant { scope: Scope; docId?: string | null; expires?: number | null }
@@ -156,11 +164,12 @@ export class Tokens {
    * a document they may open, and an expiry in the future. Returns it tidied.
    */
   async check(who: Who, grant: Grant): Promise<Required<Grant>> {
-    if (!SCOPES.includes(grant.scope)) throw new ScopeError({ message: `"${grant.scope}" isn't a scope: document, documents or admin.` });
-    const expires = grant.expires == null ? null : Number(grant.expires);
+    if (!SCOPES.includes(grant.scope)) throw new ScopeError({ message: NOT_A_SCOPE(grant.scope) });
+    let expires = grant.expires == null ? null : Number(grant.expires);
     if (expires != null && !(expires > Date.now())) throw new ScopeError({ message: "The expiry must be in the future." });
-    if (grant.scope == "admin" && !(await this.dir.users.isAdmin(who.login)))
-      throw new ScopeError({ message: "Only an admin can make an admin token." });
+    if ((grant.scope == "admin" || grant.scope == "ops") && !(await this.dir.users.isAdmin(who.login)))
+      throw new ScopeError({ message: `Only an admin can make an ${grant.scope} token.` });
+    if (grant.scope == "ops") expires = opsEnd(expires);
     if (grant.scope != "document") return { scope: grant.scope, docId: null, expires };
     const doc = grant.docId ? await this.dir.find(grant.docId) : null;
     const as = { login: who.login.toLowerCase() };
@@ -299,7 +308,7 @@ export class Tokens {
     grant: Grant,
     oauth?: OAuthAsk
   ): Promise<{ code: string; userCode: string; label: string; expires: number }> {
-    if (!SCOPES.includes(grant.scope)) throw new ScopeError({ message: `"${grant.scope}" isn't a scope: document, documents or admin.` });
+    if (!SCOPES.includes(grant.scope)) throw new ScopeError({ message: NOT_A_SCOPE(grant.scope) });
     if (grant.scope == "document" && !grant.docId)
       throw new ScopeError({ message: "A document token needs a document: give doc (its address, URL or id)." });
     if (grant.expires != null && !(Number(grant.expires) > Date.now()))
@@ -320,7 +329,7 @@ export class Tokens {
       expires,
       grant.scope,
       grant.scope == "document" ? String(grant.docId).slice(0, 300) : null,
-      grant.expires == null ? null : Number(grant.expires),
+      grant.scope == "ops" ? opsEnd(grant.expires) : grant.expires == null ? null : Number(grant.expires),
       oauth?.client ?? null,
       oauth?.redirectUri ?? null,
       oauth?.challenge ?? null,

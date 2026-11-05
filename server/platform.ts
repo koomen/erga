@@ -125,6 +125,12 @@ export interface Platform {
     target: "production" | "staging" | null;
     /** The release this server runs (the commit), or null where no deploy named one. */
     version: string | null;
+    /**
+     * Where the pipeline deployed it: the Cloudflare account, the Worker, the database, the app's address and the pages'
+     * (deploy/pipeline/account.ts, deployFacts), as JSON; null where no deploy said (local development). GET /api/ops
+     * answers it, to an admin's ops token only.
+     */
+    facts: unknown;
     /** Erga's own targets, as deploy/targets.json names them: each one's host (erga.dev) and Worker. */
     targets: Record<"production" | "staging", { host: string; worker: string }>;
   };

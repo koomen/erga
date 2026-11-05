@@ -14,6 +14,8 @@
 //                                  (curl -F), whose multipart body isn't an operation's JSON arguments
 //   POST /api/auth/request         an agent asks for a token: a link for its person to approve
 //   POST /api/auth/poll            ... and collects the token once they have
+//   GET  /api/ops                  an admin's ops token only: {version, target, host, deploy}, what a deploy from a
+//                                  machine needs to deploy this server again (the CLI: deploy/cli/ops.ts)
 //   /tokens/...                    a person's tokens: approve or deny an agent's request; make one, for the
 //                                  Settings dialog (server/identity/tokens-page.ts)
 //
@@ -147,6 +149,7 @@ export const serverApi: Route = Effect.gen(function* () {
     );
   }
   if (path == "/api/auth/poll" && method == "POST") return yield* pollForToken(platform);
+  if (path == "/api/ops" && (method == "GET" || method == "HEAD")) return yield* opsFacts(platform, request, url);
   if (path == "/api/publish" && method == "POST") {
     if (!ctx) return unauthorized(origin, !!request.headers.get("authorization"));
     return yield* publish(ctx).pipe(
@@ -333,7 +336,11 @@ const askForToken = Effect.fnUntraced(function* (platform: Platform, origin: str
   const asked = yield* body(TokenAsk);
   const b = asked._tag == "Some" ? asked.value : {};
   const scope = b.scope ?? "documents";
-  if (!SCOPES.includes(scope as Scope)) return failure(`scope must be "document" (one document: give doc), "documents" or "admin".`, 400);
+  if (!SCOPES.includes(scope as Scope))
+    return failure(
+      `scope must be "document" (one document: give doc), "documents", "admin" or "ops" (the server's deploy facts, GET /api/ops).`,
+      400
+    );
   const expires = expiryOf(b.expires);
   if (expires == "bad") return failure("expires must be a time (ISO 8601, e.g. 2026-12-31T00:00:00Z), a date, or left out for a token that lasts until it's revoked.", 400);
   const made = yield* Effect.tryPromise({
@@ -366,6 +373,21 @@ const pollForToken = Effect.fnUntraced(function* (platform: Platform) {
   if (r.status == "pending") return json({ ok: false, status: "pending", error: "Not approved yet: ask again in a couple of seconds." }, 202);
   if (r.status == "gone") return json({ ok: false, status: "gone", error: `That request expired (they last ${REQUEST_MINUTES} minutes), was denied, or its token was already collected: ask again.` }, 410);
   return json({ ok: true, status: "approved", token: r.token, login: r.login });
+});
+
+// ---------------------------------------------------------------- the ops token's facts
+
+/**
+ * GET /api/ops, with an admin's ops token (it signs no one in, so it's checked here): the release this server runs,
+ * its target, the host it was asked at, and the deploy facts the pipeline gave it (null where none did).
+ */
+const opsFacts = Effect.fnUntraced(function* (platform: Platform, request: Request, url: URL) {
+  const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1];
+  const token = bearer ? yield* call(() => platform.tokens.verify(bearer)) : null;
+  const admin = token?.scope == "ops" && (yield* call(() => platform.directory.users.isAdmin({ login: token.login })));
+  if (!admin) return failure("This needs an admin's ops token (Authorization: Bearer erga_...).", 401);
+  const { version, target, facts } = platform.deploy;
+  return json({ version, target, host: url.host, deploy: facts ?? null });
 });
 
 // ---------------------------------------------------------------- MCP's instructions

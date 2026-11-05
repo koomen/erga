@@ -149,6 +149,12 @@ export const AGENT_ACTIONS: AgentAction[] = [
     exempt: "the page's own check, not a person's action",
   },
   {
+    route: "GET /api/ops",
+    domain: "none",
+    action: "The CLI reads the server's deploy facts (the commit it runs, its Cloudflare account, Worker, database, domains)",
+    exempt: "the CLI's, with an ops token: not a person's action, and no agent's token reads it",
+  },
+  {
     route: "GET /api/deploys/version",
     domain: "none",
     action: "The release this server runs",

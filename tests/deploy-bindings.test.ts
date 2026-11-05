@@ -53,6 +53,18 @@ describe("the app Worker's bindings", () => {
     expect(meta.find((b) => b.name == "AI")).toEqual({ type: "ai", name: "AI" });
   });
 
+  test("the Worker gets its own deploy facts (ERGA_DEPLOY), which GET /api/ops answers: the target's account, Worker, database and addresses", () => {
+    const target = targetFor("staging", { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT });
+    const facts = JSON.parse(stagingMeta(release).find((b) => b.name == "ERGA_DEPLOY").text);
+    expect(facts).toEqual({
+      account: FLEET_ACCOUNT,
+      worker: target.workerName,
+      database: target.databaseName,
+      app: target.app,
+      pages: target.pages,
+    });
+  });
+
   test("a kind the release says the pipeline must make, which this one can't: refused before any step, nothing changed", async () => {
     // A newer release's code would make a KV namespace for each target: it leaves the binding out of its own metadata.
     const rel: Release = {

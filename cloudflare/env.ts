@@ -76,6 +76,12 @@ export interface Env {
   DEPLOY_TARGET?: string;
   /** The release this server runs (the commit, 12 characters; the pipeline sets it). GET /api/deploys/version answers it. */
   ERGA_VERSION?: string;
+  /**
+   * The facts a deploy from a machine needs to deploy this server again, as JSON (the pipeline sets it:
+   * deploy/pipeline/account.ts `deployFacts`): the Cloudflare account, the Worker, the database, the app's address and
+   * the pages'. GET /api/ops (server/api.ts) answers it, to an admin's ops token only.
+   */
+  ERGA_DEPLOY?: string;
   /** A secret, the same on production and staging: production's read-only snapshot endpoint takes it, and staging's import. */
   SNAPSHOT_TOKEN?: string;
   /** "1" on staging: the server takes snapshots in (never on production). */
