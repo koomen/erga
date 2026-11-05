@@ -149,6 +149,14 @@ export function checkNewName(path: string, type: "page" | "folder" | "file"): vo
 export const parentOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 /** A path's last name ("a/b/c.html" → "c.html"). */
 export const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+
+/** A page's name made readable, from its file: "spring-migration.html" is "Spring migration". */
+export function readable(path: string, folderTitle?: string): string {
+  const stem = baseName(path).replace(/\.html?$/i, "");
+  const word = stem.toLowerCase() == "index" ? (parentOf(path) ? baseName(parentOf(path)) : folderTitle || "Home") : stem;
+  const spaced = word.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+  return spaced ? spaced[0].toUpperCase() + spaced.slice(1) : word;
+}
 /** A name in a folder ("" is the top). */
 export const joinPath = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
 /** A path as an address has it: each name encoded. */

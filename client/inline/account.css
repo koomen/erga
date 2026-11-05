@@ -28,6 +28,8 @@
 .erga-account-who b { display: block; color: var(--acc-fg); font-weight: 600; font-size: 14px; }
 .erga-account-menu a { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 7px; color: var(--acc-fg); text-decoration: none; font-size: 14px; white-space: nowrap; }
 .erga-account-menu a:hover, .erga-account-menu a:focus-visible { background: var(--acc-hover); outline: none; }
+/* Go to…'s key (client/common/quick-search.ts), quiet at the right. */
+.erga-account-menu kbd { margin-left: auto; padding-left: 16px; color: var(--acc-soft); font: inherit; font-size: 12px; }
 /* Sign in: the editor's primary button (client/style.css, .share-primary). */
 .erga-account-menu .erga-account-sign-in { justify-content: center; margin: 2px; padding: 8px 14px; font-weight: 600; color: #fff; background: #3b7cf0; border-radius: 7px; }
 .erga-account-menu .erga-account-sign-in:hover, .erga-account-menu .erga-account-sign-in:focus-visible { background: #2f6ad8; }

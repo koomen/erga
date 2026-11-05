@@ -49,7 +49,13 @@ test("your avatar, far right of the editor's controls with your GitHub picture (
   expect(await menu()).toEqual({
     hidden: false,
     expanded: "true",
-    links: ["Documents /docs", "Settings #settings", "Admin settings /admin", "Sign out /auth/logout"],
+    links: [
+      `Go to…${process.platform == "darwin" ? "⌘K" : "Ctrl K"} #go`,
+      "Documents /docs",
+      "Settings #settings",
+      "Admin settings /admin",
+      "Sign out /auth/logout",
+    ],
   });
   // Stays open: the same after the frames that follow the click (the old harness looked again 600 ms later; a pause has no place in the gate).
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))));
@@ -65,9 +71,27 @@ test("its owner adds someone, sees them listed with their role and picture, and 
   await page.route(/^https:\/\/avatars\.githubusercontent\.com\//, (r) => r.fulfill({ contentType: "image/png", body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64") }));
   await editing(page);
   await clickOn(page, "#btn-share");
-  await until(() => page.evaluate(() => !document.getElementById("sharing")!.hidden && !!document.querySelector("#sharing-list li")), 5000, "the Share button opens who has the document");
-  await page.evaluate(() => { const f = document.getElementById("sharing-add") as HTMLFormElement; (f.elements.namedItem("login") as HTMLInputElement).value = "ada"; (f.elements.namedItem("role") as HTMLSelectElement).value = "viewer"; f.requestSubmit(); });
-  await until(() => page.evaluate(() => [...document.querySelectorAll("#sharing-list li")].some((li) => li.querySelector(".who")!.textContent!.startsWith("ada") && li.querySelector("select")?.value == "viewer")), 5000, "adding someone lists them, with their role");
+  await until(
+    () => page.evaluate(() => !document.getElementById("sharing")!.hidden && !!document.querySelector("#sharing-list li")),
+    5000,
+    "the Share button opens who has the document"
+  );
+  await page.evaluate(() => {
+    const f = document.getElementById("sharing-add") as HTMLFormElement;
+    (f.elements.namedItem("who") as HTMLInputElement).value = "ada";
+    (f.elements.namedItem("role") as HTMLSelectElement).value = "viewer";
+    f.requestSubmit();
+  });
+  await until(
+    () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll("#sharing-list li")].some(
+          (li) => li.querySelector(".who")!.textContent!.startsWith("ada") && li.querySelector("select")?.value == "viewer"
+        )
+      ),
+    5000,
+    "adding someone lists them, with their role"
+  );
   // Each person shows their own picture, as the header's avatar does: the owner GitHub's, by id; ada, with no account, none.
   expect(
     await page.evaluate(() =>
