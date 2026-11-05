@@ -87,8 +87,12 @@ export async function askOpsToken(
 }
 
 /** The instance's deploy facts, with its ops token (an error if the token doesn't work: expired, revoked, not an admin's). */
-export async function readOps(origin: string, token: string): Promise<OpsFacts> {
-  const r = await fetch(`${origin}/api/ops`, { headers: { Authorization: `Bearer ${token}` } });
+export async function readOps(
+  origin: string,
+  token: string,
+  site: (url: string, init?: RequestInit) => Promise<Response> = fetch
+): Promise<OpsFacts> {
+  const r = await site(`${origin}/api/ops`, { headers: { Authorization: `Bearer ${token}` } });
   if (!r.ok) throw await failed(r, `${origin} refused the ops token`);
   return Schema.decodeUnknownSync(OpsFacts)(await r.json());
 }
