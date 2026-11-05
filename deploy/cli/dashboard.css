@@ -92,6 +92,9 @@ main.admin-main { flex: 1; min-width: 0; max-width: 1120px; margin: 0 auto; padd
 #source-pane .env-commit { font: 11.5px var(--font-mono); color: var(--chrome); }
 #source-pane .env-log { margin-left: auto; height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg-strong); font: 550 12px var(--font-text); white-space: nowrap; cursor: pointer; }
 #source-pane .env-log:hover { background: color-mix(in srgb, var(--chrome) 10%, transparent); }
+#source-pane a.env-log { display: inline-flex; align-items: center; text-decoration: none; }
+#source-pane .env-run + .env-log { margin-left: 0; }
+#source-pane .env-note { margin-top: -4px; padding-left: 15px; font-size: 12px; color: var(--soft); }
 #source-pane .env-log[hidden] { display: none; }
 #source-pane .env-retry { margin-left: auto; height: 22px; padding: 0 8px; border: 1px solid var(--bad); border-radius: 6px; background: var(--bg); color: var(--bad); font: 550 12px var(--font-text); cursor: pointer; }
 #source-pane .env-retry + .env-log { margin-left: 0; }

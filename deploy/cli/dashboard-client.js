@@ -1,5 +1,5 @@
-// The dashboard page's script (deploy/cli/dashboard-page.ts serves it inline): it reads the page again every 20 seconds
-// (GET /view), unless a dialog is open; it opens a run's log (GET /api/log); and its buttons start `bun erga` commands
+// The dashboard page's script (deploy/cli/dashboard-page.ts serves it inline): it reads the page again (GET /view) when the
+// server says (X-Erga-Poll: 5 seconds during a deploy, else 30), also while a dialog is open; it opens a run's log (GET /api/log); and its buttons start `bun erga` commands
 // (POST /api/action, with this run's token), whose output it shows live in the log's dialog (GET /api/job).
 (() => {
   const token = document.querySelector('meta[name="erga-token"]').content;
@@ -23,21 +23,28 @@
       return j;
     });
 
-  const anyOpen = () => !!document.querySelector("dialog[open]") || !!document.querySelector("[data-armed]");
+  // The dialogs are outside #live, so it changes also while one is open (the log of a promote, say). Only a button in
+  // #live that waits for its second click keeps it as it is.
+  const armed = () => !!live.querySelector("[data-armed]");
+  let timer = 0;
   async function refresh(fresh) {
-    if (anyOpen() && !fresh) return;
+    clearTimeout(timer);
+    let next = 30000;
     try {
       const r = await fetch("/view" + (fresh ? "?fresh=1" : ""));
       if (!r.ok) throw new Error(r.statusText);
+      next = Number(r.headers.get("X-Erga-Poll")) || next;
       const html = await r.text();
-      if (!anyOpen() || fresh) live.innerHTML = html;
+      if (!armed() || fresh) live.innerHTML = html;
     } catch {
       const st = document.querySelector("#status-head");
       if (st) st.textContent = "Status: the dashboard command stopped";
     }
+    clearTimeout(timer);
+    timer = setTimeout(() => refresh(false), next);
   }
-  setInterval(() => refresh(false), 20000);
-  if (!$("repo")) refresh(false);
+  if ($("repo")) timer = setTimeout(() => refresh(false), 5000);
+  else refresh(false);
 
   // Two clicks: the first arms the button and says what the second does.
   function secondClick(b, armed) {
