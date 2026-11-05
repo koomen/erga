@@ -72,8 +72,8 @@ function serverCard(s: AuthStatus, o: { editable: boolean; session: Session; on:
     ? `<form class="configure" method="post" action="${esc(link("/admin/auth", o.session))}">
       <p class="lede">${s.check.state == "working" ? `Replace with another app's values. They wait for a test sign-in before anyone else uses them.` : `Paste the app's values. ${name} checks them before sign-in uses them.`}</p>
       <input type="hidden" name="provider" value="${provider}">
-      <label>Client ID<input class="input" name="clientId" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${provider == "google" ? "1234…apps.googleusercontent.com" : "Ov23li…"}" required></label>
-      <label>Client secret<input class="input" type="password" name="secret" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste the secret" required></label>
+      <label>Client ID<input class="input" name="clientId" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" placeholder="${provider == "google" ? "1234…apps.googleusercontent.com" : "Ov23li…"}" required></label>
+      <label>Client secret<input class="input" type="password" name="secret" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" placeholder="Paste the secret" required></label>
       <div class="row"><button class="pill save">Save</button>${s.page ? `<button type="button" class="pill clear">Clear</button>` : ""}</div>
     </form>`
     : "";

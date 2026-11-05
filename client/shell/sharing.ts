@@ -141,7 +141,7 @@ export function mountSharing(shell: Shell) {
       renderSharing(last);
       tellSharing("");
     } else tellSharing("Loading…");
-    (sharingAdd.elements.namedItem("login") as HTMLInputElement).focus();
+    (sharingAdd.elements.namedItem("who") as HTMLInputElement).focus();
     reread();
   }
   shareBtn.addEventListener("click", () => {
@@ -149,7 +149,7 @@ export function mountSharing(shell: Shell) {
   });
   sharingAdd.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const input = sharingAdd.elements.namedItem("login") as HTMLInputElement;
+    const input = sharingAdd.elements.namedItem("who") as HTMLInputElement;
     const login = input.value.trim().replace(/^@/, "");
     if (login && (await changeSharing(login, (sharingAdd.elements.namedItem("role") as HTMLSelectElement).value))) input.value = "";
   });

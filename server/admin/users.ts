@@ -75,7 +75,7 @@ export async function usersPage(platform: Platform, session: Session) {
   <section aria-labelledby="page-head">
     <form class="add-user">
       <select name="provider" aria-label="Provider"><option value="github">GitHub</option><option value="google">Google</option></select>
-      <input class="input" name="handle" placeholder="a GitHub login" aria-label="The GitHub login or Google email" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <input class="input" name="handle" placeholder="a GitHub login" aria-label="The GitHub login or Google email" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" required>
       <select name="role" aria-label="Role">${USER_ROLES.map((r) => `<option value="${r}"${r == "write" ? " selected" : ""}>${esc(ROLE_LABEL[r])}</option>`).join("")}</select>
       <button class="new">Add user</button>
     </form>

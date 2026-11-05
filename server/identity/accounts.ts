@@ -228,7 +228,7 @@ function usernamePage(v: Vouched, value: string, error: string | null, taken?: s
   const body = `${taken ? `${takenNote(taken)}</p><p>` : ""}Welcome. You signed in with ${esc(label(v.provider))} as <b>${esc(v.handle)}</b>. Choose a username for your Erga account: it is in the address of each of your documents (/<i>username</i>/…).</p>
 <form method="post" action="/auth/username" class="username" novalidate>
   <label for="username">Username</label>
-  <p class="row"><input class="input" id="username" name="username" value="${esc(value)}" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="39" required autofocus>
+  <p class="row"><input class="input" id="username" name="username" value="${esc(value)}" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" maxlength="39" required autofocus>
   <button class="new" type="submit">Make my account</button></p>
   <p class="hint${error ? " error" : ""}" role="status" id="username-hint">${error ? esc(error) : "Lowercase letters, digits and dashes."}</p>
 </form>

@@ -42,7 +42,7 @@ function valueInput(e: Shown, never: boolean): string {
     const list = Array.isArray(e.value) ? (e.value as string[]) : [];
     return `<div class="picker">
         <ul class="chips" aria-label="${esc(e.key)}">${list.map((l) => chip(l, locked)).join("")}</ul>
-        ${locked ? "" : `<input class="input pick" list="user-logins" placeholder="Add a user" aria-label="Add a user to ${esc(e.key)}" autocomplete="off" autocapitalize="off" spellcheck="false">`}
+        ${locked ? "" : `<input class="input pick" list="user-logins" placeholder="Add a user" aria-label="Add a user to ${esc(e.key)}" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false">`}
         <input type="hidden" ${attrs} data-kind="users" value="${esc(JSON.stringify(list))}">
       </div>`;
   }

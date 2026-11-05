@@ -66,9 +66,15 @@ test("the owner's card: one line for each person and for the link, Copy link at 
   const card = await ed.eval<{ rows: number[]; cut: boolean; label: string; placeholder: string; viewers: boolean }>(`(() => {
     const rows = [...document.querySelectorAll("#sharing-list li, .sharing-anyone")].map((r) => Math.round(r.getBoundingClientRect().height));
     const who = document.querySelector(".sharing-anyone .who");
-    return { rows, cut: who.scrollWidth > who.clientWidth, label: document.querySelector("label[for=sharing-anyone]").textContent, placeholder: document.querySelector("#sharing-add input[name=login]").placeholder, viewers: !!document.getElementById("viewers-agent") };
+    return { rows, cut: who.scrollWidth > who.clientWidth, label: document.querySelector("label[for=sharing-anyone]").textContent, placeholder: document.querySelector("#sharing-add input[name=who]").placeholder, viewers: !!document.getElementById("viewers-agent") };
   })()`);
   expect(card).toMatchObject({ cut: false, placeholder: "Username", viewers: false });
+  // A login to share with, not a sign-in field: password managers leave it alone (1Password offered to fill it).
+  expect(
+    await ed.eval<string[]>(
+      `["autocomplete", "data-1p-ignore", "data-lpignore", "data-bwignore"].map((a) => document.querySelector("#sharing-add input[name=who]").getAttribute(a))`
+    )
+  ).toEqual(["off", "", "true", ""]);
   expect(["Link", "Anyone with the link"]).toContain(card.label);
   // One line each, at the desktop's width: no row taller than its 32 px.
   for (const h of card.rows) expect(h).toBeLessThanOrEqual(32);

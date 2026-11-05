@@ -89,7 +89,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
 <dialog id="share" aria-labelledby="share-title" data-me="${esc(session.login.toLowerCase())}">
   <h2 id="share-title">Share</h2>
   <form class="add">
-    <div class="field"><input name="login" placeholder="A GitHub login" aria-label="GitHub login to share with" autocomplete="off" autocapitalize="off" spellcheck="false" required></div>
+    <div class="field"><input name="who" placeholder="A GitHub login" aria-label="GitHub login to share with" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" required></div>
     <select name="role" aria-label="Their role"><option value="editor">Can edit</option><option value="viewer">Can view</option></select>
     <button class="primary">Add</button>
   </form>

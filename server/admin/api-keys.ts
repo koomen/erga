@@ -37,7 +37,7 @@ export function credentialRow(c: CredentialEntry, session: Session, place: numbe
   return `  <li class="provider" data-live="apikey:${esc(c.name)}" data-sort="${place}" data-name="${esc(c.name)}" data-label="${esc(c.label)}" data-env="${esc(c.env)}"${c.fallback ? ` data-fallback="1"` : ""}>
     <div class="about"><label class="key" for="${id}">${esc(c.service)}</label><p class="state">${state}</p></div>
     <form class="value" method="post" action="${esc(link("/admin/credentials", session))}">
-      <input class="input secret" type="password" name="value" id="${id}" aria-label="${esc(c.label)}" placeholder="${c.set ? "Paste a new key" : "Paste the key"}" autocomplete="off" autocapitalize="off" spellcheck="false"${c.canStore ? "" : ` disabled title="This server has no FACTORY_KEY, so it can't store a key."`}>
+      <input class="input secret" type="password" name="value" id="${id}" aria-label="${esc(c.label)}" placeholder="${c.set ? "Paste a new key" : "Paste the key"}" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false"${c.canStore ? "" : ` disabled title="This server has no FACTORY_KEY, so it can't store a key."`}>
       <button class="pill save" disabled>${c.set ? "Replace" : "Save"}</button>${c.set ? `<button type="button" class="pill clear">Clear</button>` : ""}
     </form>
     ${models}
