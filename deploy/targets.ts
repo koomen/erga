@@ -70,9 +70,6 @@ export const ACCOUNT: string = data.account;
 /** The bootstrap admins: the same on every target. */
 export const ADMINS: string = data.admins;
 
-/** Erga's repository on GitHub (owner/name): /api/repo and /git on Erga's own targets read it (SOURCE_REPO). */
-export const REPOSITORY: string = data.repository;
-
 /**
  * The targets themselves are in targets.json (staging's GITHUB_CLIENT_ID is
  * its own GitHub OAuth app's: homepage https://staging.erga.dev, callback

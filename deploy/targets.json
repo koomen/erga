@@ -1,7 +1,6 @@
 {
   "account": "c24e663b6f522eb02c60b6ce88ec4493",
   "admins": "koomen,dsiroker",
-  "repository": "koomen/erga",
   "targets": {
     "production": {
       "name": "production",

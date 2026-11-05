@@ -142,9 +142,6 @@ Found a new trap? Write it here, in the same change.
 - A passing local test, even one that fakes staging, is not proof. Run the
   real flow on staging, end to end, before you say a fix works. If you need
   an admin credential you don't have, say so.
-- `/api/repo` (server/repo-github.ts) reads GitHub's API for `SOURCE_REPO`. GitHub answers only for a public
-  repository: while koomen/erga is private, the homepage's `/source` page shows an error. The sign-in app's
-  client id and secret raise GitHub's limit to 5,000 reads an hour; the edge cache keeps most reads from GitHub.
 - A document's object runs the old code until it restarts, minutes after a
   deploy if tabs keep it busy. The Worker calls its methods directly
   (`cloudflare/objects/document-stub.ts`). A deploy that adds a method of

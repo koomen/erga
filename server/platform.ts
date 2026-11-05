@@ -69,7 +69,7 @@ export type LiveRows = (platform: Platform, session: Session, keys: string[], or
 
 /**
  * What the app needs from the platform it runs on. The layers above server/ add the parts that are theirs, each
- * where it is defined (a `declare module` of this file): repo-api.ts adds `repo`; agents/ adds `agentSettings`
+ * where it is defined (a `declare module` of this file): agents/ adds `agentSettings`
  * (agents/models.ts) and `adminAgent`
  * (agents/person/sessions.ts). cloudflare/platform.ts builds the whole of it.
  */

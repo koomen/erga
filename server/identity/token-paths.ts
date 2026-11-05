@@ -4,7 +4,7 @@
 import { RESERVED, ID, OWNER } from "../directory/index.ts";
 
 /** The app's own first path segments that RESERVED doesn't list: never a document's owner here. */
-const APP_SEGMENTS = new Set(["deploy", "git", "source"]);
+const APP_SEGMENTS = new Set(["deploy"]);
 
 /**
  * A path in reach of a token without the admin scope on staging: the server's API and MCP for agents, the

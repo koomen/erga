@@ -36,7 +36,7 @@ import { Cloudflare, type Fetch } from "./pipeline/cloudflare-api";
 import { loadRelease, type Release } from "./pipeline/release-format";
 import { machineCredential } from "./local-credential";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare } from "../dev/mock-cloudflare";
-import { ACCOUNT, isTargetName, PRODUCTION, REPOSITORY, TARGETS, type TargetName } from "./targets";
+import { ACCOUNT, isTargetName, PRODUCTION, TARGETS, type TargetName } from "./targets";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: ROOT }).stdout.toString().trim();
@@ -49,7 +49,7 @@ export interface DeployEnv {
 
 /**
  * One of Erga's own targets as the pipeline deploys it: the Worker's account, its secrets kept from version to version
- * (set once, by hand), the GitHub repository that /api/repo and /git read (SOURCE_REPO), and, for staging,
+ * (set once, by hand), and, for staging,
  * production's data copied in when it has no copy yet, or with `fresh`.
  */
 export function targetFor(name: TargetName, env: DeployEnv, fresh = false): Target {
@@ -61,7 +61,7 @@ export function targetFor(name: TargetName, env: DeployEnv, fresh = false): Targ
     label: spec.name, accountId, workerName: spec.worker, databaseName: spec.database,
     app: { kind: "domain", zoneName: spec.zone, hostname: spec.host },
     pages: { kind: "zone", zoneName: spec.pages.zone, domain: spec.pages.domain },
-    vars: { ...spec.vars, DEPLOY_TARGET: spec.name, SNAPSHOT_IMPORT: from ? "1" : "", SOURCE_REPO: REPOSITORY },
+    vars: { ...spec.vars, DEPLOY_TARGET: spec.name, SNAPSHOT_IMPORT: from ? "1" : "" },
     secrets: {},
     keepSecrets: true,
     checkVersion: true,

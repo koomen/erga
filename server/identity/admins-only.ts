@@ -5,8 +5,7 @@
 // setting turns this off) lets a request in only with admin power: an
 // admin's signed-in session, or an admin-scope token (tokens.ts;
 // Users.actsAsAdmin). Anyone else gets a page (signed out: sign in; signed in:
-// admins only, with a link to production) or a JSON 403, and Git a 401 that
-// asks for a token. This is the one guard, at the app, before every route; production and a fork's servers
+// admins only, with a link to production) or a JSON 403. This is the one guard, at the app, before every route; production and a fork's servers
 // never run it.
 //
 // What gets in without an admin, and why (each one checks its own credential):
@@ -41,9 +40,6 @@
 //                                   no Authorization header, which answers only the 401 that starts the sign-in. The
 //                                   person's own step, /oauth/authorize, is not exempt: it needs an admin, signed in
 //   GET /llms.txt                   a few fixed lines that point to /mcp (no data)
-//   GET /api/repo[/...]             Erga's old repository, read-only (server/repo-api.ts): the same source anyone
-//                                   may read from production. It checks the setting public_source itself: off, it
-//                                   answers only an admin
 //   the API, MCP and documents' own routes with an admin's token of another scope (document, documents)
 //                                   an admin shares a document with an outside agent (the editor's Share card) and it
 //                                   must work here as on production: /mcp, /api/publish,
@@ -51,14 +47,14 @@
 //                                   nothing else. The token's person must be an admin at each request, as
 //                                   for the pages origin. Past this guard the token's
 //                                   own scope decides, as on production: no admin
-//                                   power, so no /admin, settings, users, credentials or Git
+//                                   power, so no /admin, settings, users or credentials
 //
 //   a document's socket, or a file put into it, with an edit key
 //                                   the page's editor sends them from the pages origin, with no cookie; the key
 //                                   (documents/edit-key.ts) names its person, who must be an admin at each request
 //
 // Everything else needs an admin: documents and their sockets, /docs, the homepage and the homepage, /new,
-// /tokens, the APIs and MCP, Git's redirect (anonymous reads too), and the documents' pages origin
+// /tokens, the APIs and MCP, and the documents' pages origin
 // (*.erga-pages-staging.dev). That origin has no cookies: on this server its tokens name the admin they were made for
 // (server/documents/pages-origin.ts, pagesToken's `by`), and a file is served only while that person is still an admin. A token without a name
 // (made before this guard, or by another server) is refused.
@@ -93,15 +89,7 @@ function exempt(request: Request, base: Platform, url: URL): boolean {
   const token = request.headers.has("authorization");
   if (path == "/mcp") return !token && method == "POST";
   if (path == "/llms.txt") return method == "GET" || method == "HEAD";
-  if (path == "/api/repo" || path.startsWith("/api/repo/")) return method == "GET" || method == "HEAD";
   return false;
-}
-
-/** The secret a Git client sends: HTTP Basic's password, or a Bearer token. */
-function gitSecret(auth: string): string | null {
-  const basic = /^Basic\s+(\S+)$/i.exec(auth)?.[1];
-  if (basic) { try { const d = atob(basic); return d.slice(d.indexOf(":") + 1); } catch { return null; } }
-  return /^Bearer\s+(\S+)$/i.exec(auth)?.[1] ?? null;
 }
 
 /**
@@ -133,15 +121,11 @@ async function refusal(request: Request, base: Platform, url: URL) {
     return text("Staging is for Erga's admins only.", 403, { "Cache-Control": "no-store" });
   }
 
-  // The Git endpoint takes only a token (no cookie, and so not local development's DEV_LOGIN either), as HTTP Basic's
-  // password: read as a Bearer token, as everywhere else.
-  const git = url.pathname == "/git/erga.git" || url.pathname.startsWith("/git/erga.git/");
-  const secret = git ? gitSecret(request.headers.get("authorization") ?? "") : null;
-  const session = git && !secret ? null : await base.sessionOf(git ? new Request(url, { headers: { authorization: `Bearer ${secret}` } }) : request);
+  const session = await base.sessionOf(request);
   if (session && (await users.actsAsAdmin(whoOf(session)))) return null;
   // An admin's token of another scope: the API, MCP and documents' routes only (the exemption above), then its own scope.
   const adminsToken = !!session?.agent && (await users.isAdmin(whoOf(session)));
-  if (adminsToken && !git && tokenPath(url.pathname)) return null;
+  if (adminsToken && tokenPath(url.pathname)) return null;
 
   const signedIn = !!session && !session.agent;
   const why = !session
@@ -149,9 +133,6 @@ async function refusal(request: Request, base: Platform, url: URL) {
     : adminsToken
       ? "Staging is for Erga's admins only, with admin power: this token has no admin scope, so it reaches only the API, MCP and documents here. Make one with the admin scope in Settings (/docs#settings)."
     : "Staging is for Erga's admins only.";
-  if (git) {
-    return text(`${why}\n`, session ? 403 : 401, session ? {} : { "WWW-Authenticate": 'Basic realm="Erga", charset="UTF-8"' });
-  }
   if (!wantsPage(request, url)) return json({ error: why, adminsOnly: true }, 403);
   const productionHost = base.deploy.targets.production.host,
     production = `https://${productionHost}`;

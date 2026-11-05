@@ -72,7 +72,6 @@ describe("staging", () => {
     expect(b.PAGES_DOMAIN.text).toBe("erga-pages-staging.dev");
     expect(b.ERGA_VERSION.text).toBe(release.version);
     expect(b.ERGA_DEPLOYED).toBeUndefined();
-    expect(b.SOURCE_REPO).toEqual({ type: "plain_text", name: "SOURCE_REPO", text: "koomen/erga" });
     expect(b.ARTIFACTS).toBeUndefined();
     expect(b.ADMINS.text).toBe("koomen,dsiroker");
     expect(mock.state.secrets["erga-staging"].SESSION_SECRET).toBe(stagingSecrets.SESSION_SECRET);

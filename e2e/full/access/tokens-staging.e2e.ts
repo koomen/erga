@@ -28,7 +28,6 @@ const ADMINS = (doc: { id: string; address: string }) =>
     ["GET", "/new"],
     ["POST", "/api/tools/deploy_homepage"],
     ["GET", doc.address],
-    ["GET", "/git/erga.git/info/refs?service=git-upload-pack"],
 ] as const;
 
 test("on staging an admin's document token reads and edits its document (API, MCP, its routes), and nothing else; the share token, its documents", async () => {

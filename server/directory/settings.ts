@@ -120,12 +120,6 @@ export const SETTINGS = {
     default: false,
     parse: boolean,
   }),
-  public_source: setting<boolean>({
-    label: "Public source",
-    description: "Anyone can read Erga's source at /source and /api/repo. Off: only admins can.",
-    default: true,
-    parse: boolean,
-  }),
   feedback_repository: setting<string>({
     label: "Feedback's repository",
     description:
