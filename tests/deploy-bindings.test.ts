@@ -53,7 +53,7 @@ describe("the app Worker's bindings", () => {
     expect(meta.find((b) => b.name == "AI")).toEqual({ type: "ai", name: "AI" });
   });
 
-  test("the Worker gets its own deploy facts (ERGA_DEPLOY), which GET /api/ops answers: the target's account, Worker, database and addresses", () => {
+  test("the Worker gets its own deploy facts (ERGA_DEPLOY), which GET /api/ops answers: the target's account, Worker, database, addresses and plain settings", () => {
     const target = targetFor("staging", { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT });
     const facts = JSON.parse(stagingMeta(release).find((b) => b.name == "ERGA_DEPLOY").text);
     expect(facts).toEqual({
@@ -62,6 +62,7 @@ describe("the app Worker's bindings", () => {
       database: target.databaseName,
       app: target.app,
       pages: target.pages,
+      vars: target.vars,
     });
   });
 

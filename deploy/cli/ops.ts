@@ -4,14 +4,39 @@
 
 import * as Schema from "effect/Schema";
 
-/** Where a deploy finds the instance: the pipeline's own names for it (deploy/pipeline/account.ts, deployFacts). */
-const DeployFacts = Schema.Struct({
+/** The app's address: its workers.dev address, or a hostname on one of the account's zones (deploy/pipeline/pipeline.ts, Target). */
+const App = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("workers.dev") }),
+  Schema.Struct({
+    kind: Schema.Literal("domain"),
+    zoneId: Schema.optionalKey(Schema.String),
+    zoneName: Schema.String,
+    hostname: Schema.String,
+  }),
+]);
+/** Where documents' pages run: the shared workers.dev host, or a domain of their own (Target's pages). */
+const Pages = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("shared") }),
+  Schema.Struct({
+    kind: Schema.Literal("zone"),
+    zoneId: Schema.optionalKey(Schema.String),
+    zoneName: Schema.String,
+    domain: Schema.optionalKey(Schema.String),
+  }),
+]);
+
+/**
+ * Where a deploy finds the instance: the pipeline's own names for it, and the Worker's plain settings as the pipeline
+ * sent them (deploy/pipeline/account.ts, deployFacts).
+ */
+export const DeployFacts = Schema.Struct({
   account: Schema.String,
   worker: Schema.String,
   database: Schema.String,
   subdomain: Schema.optionalKey(Schema.String),
-  app: Schema.Unknown,
-  pages: Schema.Unknown,
+  app: App,
+  pages: Pages,
+  vars: Schema.Record(Schema.String, Schema.String),
 });
 
 /** What GET /api/ops answers: the commit the instance runs, its target, its host, and its deploy facts (null locally). */

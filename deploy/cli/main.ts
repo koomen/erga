@@ -10,6 +10,9 @@
 //   bun erga promote                    main to staging's head (production deploys): only when Pete asks
 //   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
 //   bun erga rollback <staging|production> [--yes]            the Worker version from before the last deploy
+//   bun erga register <host> [--staging-of <host>]            signs in to an instance as an admin, in the browser, and
+//                                       adds it to .erga/config.json: its deploy facts, its plain settings, an ops token
+//   bun erga login <host>               a new ops token for a registered instance, when its token runs out
 //   bun erga own <command>              your own Erga on your own domain: fork, deploy, checklist (bun erga own help)
 
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -277,6 +280,59 @@ async function rollback(name: string | undefined, yes: boolean) {
   say("NOTE  The next push to its branch deploys forward again.");
 }
 
+// ------------------------------------------------------------------ register and login
+
+/** An instance's host and address, from a host or a URL. */
+const instanceOf = async (arg: string | undefined, usage: string) => {
+  if (!arg) return fail(`Name the instance: ${usage}.`);
+  const { originOf } = await import("./config");
+  const origin = originOf(arg);
+  return { origin, host: new URL(origin).host };
+};
+
+/** Asks the instance for an ops token, which an admin approves in the browser, and reads its facts with it. */
+async function signInTo(origin: string) {
+  const { askOpsToken, readOps } = await import("./ops");
+  say(`Ask ${origin} for an ops token (an admin only, 90 days at most).`);
+  const { token, login } = await askOpsToken(origin, { say: (line) => say(`      ${line}`) });
+  pass(`${login} approved the ops token.`);
+  return { token, facts: await readOps(origin, token) };
+}
+
+async function register(arg: string | undefined, stagingOf: string | undefined) {
+  const { host, origin } = await instanceOf(arg, "bun erga register <host> [--staging-of <host>]");
+  const { configPath, entryOf, ergaDir, originOf, readConfig, stagingRefusal, withEntry, writeConfig } = await import("./config");
+  const dir = ergaDir();
+  const primary = stagingOf ? new URL(originOf(stagingOf)).host : entryOf(readConfig(dir), host)?.stagingOf;
+  const no = primary ? stagingRefusal(readConfig(dir), host, primary) : null;
+  if (no) fail(no);
+  const { token, facts } = await signInTo(origin);
+  if (!facts.deploy)
+    fail(
+      `${host} gave no deploy facts: no deploy from the pipeline set them.`,
+      `Deploy ${host} with this commit or a later one, then register again.`
+    );
+  // Read the file again: another terminal can have changed it while the admin approved.
+  writeConfig(dir, withEntry(readConfig(dir), { host, ...(primary ? { stagingOf: primary } : {}), ...facts.deploy!, token }));
+  pass(`${host} is registered in ${configPath(dir)}${primary ? `, as a staging instance of ${primary}` : ""}.`);
+  say(
+    `      Worker ${facts.deploy!.worker}, database ${facts.deploy!.database}, account ${facts.deploy!.account}, ${Object.keys(facts.deploy!.vars).length} plain settings. It runs ${facts.version ?? "no known commit"}.`
+  );
+}
+
+async function login(arg: string | undefined) {
+  const { host, origin } = await instanceOf(arg, "bun erga login <host>");
+  const { configPath, entryOf, ergaDir, readConfig, withEntry, writeConfig } = await import("./config");
+  const dir = ergaDir();
+  if (!entryOf(readConfig(dir), host)) fail(`${host} has no entry in ${configPath(dir)}.`, `bun erga register ${host}`);
+  const { token } = await signInTo(origin);
+  const entry =
+    entryOf(readConfig(dir), host) ??
+    fail(`${host}'s entry left ${configPath(dir)} while the admin approved.`, `bun erga register ${host}`);
+  writeConfig(dir, withEntry(readConfig(dir), { ...entry, token }));
+  pass(`${host} has a new ops token in ${configPath(dir)}.`);
+}
+
 // ------------------------------------------------------------------ the commands
 
 export async function main(argv: string[]) {
@@ -286,7 +342,7 @@ export async function main(argv: string[]) {
     const i = rest.indexOf(f);
     return i >= 0 ? rest[i + 1] : undefined;
   };
-  const plain = rest.filter((x, i) => !x.startsWith("-") && !["-m", "--port"].includes(rest[i - 1] ?? ""));
+  const plain = rest.filter((x, i) => !x.startsWith("-") && !["-m", "--port", "--staging-of"].includes(rest[i - 1] ?? ""));
   switch (cmd) {
     case "skill":
       return say(readFileSync(join(ROOT, "deploy/cli/SKILL.md"), "utf8"));
@@ -308,6 +364,11 @@ export async function main(argv: string[]) {
       return release(plain[0], flag("--dry-run"));
     case "rollback":
       return rollback(plain[0], flag("--yes"));
+    case "register":
+      // The server's or the file's error, in its own words.
+      return register(plain[0], opt("--staging-of")).catch((e: Error) => fail(e.message));
+    case "login":
+      return login(plain[0]).catch((e: Error) => fail(e.message));
     case "own": {
       const { ownMain } = await import("../own/cli");
       return ownMain(rest);
