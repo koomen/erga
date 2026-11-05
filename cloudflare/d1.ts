@@ -6,21 +6,58 @@ import { githubAccounts, Tokens } from "../server/identity/index.ts";
 import { forgetDecisions } from "../server/documents/index.ts";
 
 import type { Env } from "./env";
-import { counted } from "./timing";
+import { counted, type D1Took, slowQueryLine } from "./timing";
 import { documentOf } from "./objects/document-stub";
 
-/** The database as Sql, each call counted for the request's Server-Timing. */
+/** Runs one call to D1, logging it if it's slow (slowQueryLine), whether it answers or fails. */
+async function watched<R>(sql: string, call: () => Promise<R>, metaOf: (r: R) => D1Took): Promise<R> {
+  const started = Date.now();
+  let meta: D1Took | undefined;
+  try {
+    const r = await call();
+    meta = metaOf(r);
+    return r;
+  } finally {
+    const line = slowQueryLine(Date.now() - started, sql, meta);
+    if (line) console.log(line);
+  }
+}
+
+/** The database as Sql, each call counted for the request's Server-Timing, and logged when slow. */
 export const sqlOn = (db: D1Database): Sql => {
   const statement = (q: string, params: Param[]) => db.prepare(q).bind(...params);
   return {
-    all: <T>(q: string, ...params: Param[]) => counted("db", async () => (await statement(q, params).all<T>()).results),
+    all: <T>(q: string, ...params: Param[]) =>
+      counted(
+        "db",
+        async () =>
+          (
+            await watched(
+              q,
+              () => statement(q, params).all<T>(),
+              (r) => r.meta
+            )
+          ).results
+      ),
     run: (q, ...params) =>
       counted("db", async () => {
-        await statement(q, params).run();
+        await watched(
+          q,
+          () => statement(q, params).run(),
+          (r) => r.meta
+        );
       }),
     batch: (statements) =>
       counted("db", async () => {
-        await db.batch(statements.map(([q, ...params]) => statement(q, params)));
+        const sql = `batch of ${statements.length}: ${statements.map(([q]) => q.replace(/\s+/g, " ").trim().slice(0, 60)).join("; ")}`;
+        await watched(
+          sql,
+          () => db.batch(statements.map(([q, ...params]) => statement(q, params))),
+          (r) => ({
+            duration: r.reduce((n, x) => n + x.meta.duration, 0),
+            total_attempts: Math.max(1, ...r.map((x) => x.meta.total_attempts ?? 1)),
+          })
+        );
       }),
   };
 };

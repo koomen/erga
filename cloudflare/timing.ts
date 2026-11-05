@@ -38,5 +38,27 @@ export async function counted<T>(kind: "db" | "doc", call: () => Promise<T>): Pr
   try {
     if (latency) await Effect.runPromise(Effect.sleep(Duration.millis(latency)));
     return await call();
-  } finally { if (t) t[kind == "db" ? "dbMs" : "docMs"] += Date.now() - started; }
+  } finally {
+    if (t) t[kind == "db" ? "dbMs" : "docMs"] += Date.now() - started;
+  }
+}
+
+/** A query slower than this is logged: D1 answers in tens of milliseconds, and its stalls of seconds hold up every page. */
+export const SLOW_QUERY_MS = 500;
+
+/** What D1 says of a call: how long the SQL took in the database, and how many times D1 tried it. */
+export interface D1Took {
+  duration?: number;
+  total_attempts?: number;
+}
+
+/**
+ * The log line for a slow query (null: not slow): how long it took here, how long D1 says the SQL took (the rest is
+ * the trip and D1's queue), its attempts, and the SQL with no parameters (they may be secrets or tokens).
+ */
+export function slowQueryLine(ms: number, sql: string, took?: D1Took): string | null {
+  if (ms < SLOW_QUERY_MS) return null;
+  const inD1 = typeof took?.duration == "number" ? `, sql ${Math.round(took.duration * 10) / 10}ms` : "";
+  const attempts = took?.total_attempts && took.total_attempts > 1 ? `, ${took.total_attempts} attempts` : "";
+  return `slow d1 query: ${ms}ms${inD1}${attempts}: ${sql.replace(/\s+/g, " ").trim().slice(0, 200)}`;
 }
