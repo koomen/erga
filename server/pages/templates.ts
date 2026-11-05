@@ -49,7 +49,7 @@ export const TEMPLATES: Template[] = [
 export const templateById = (id: string | null | undefined): Template | undefined => TEMPLATES.find((t) => t.id == id);
 
 
-const PLUS = `<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.1538) translate(-12 -12)" stroke-width="1.3867"><path d="M12 5.5v13M5.5 12h13"/></g></svg>`;
+export const PLUS = `<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.1538) translate(-12 -12)" stroke-width="1.3867"><path d="M12 5.5v13M5.5 12h13"/></g></svg>`;
 
 /**
  * The + button: `cls` gives it the look of the controls it sits with (the viewer's erga-view-button, the editor's icon-btn,

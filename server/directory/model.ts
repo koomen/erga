@@ -28,9 +28,11 @@ export interface DocRow {
   created: number;
   /** When a file last changed; null if never. */
   modified: number | null;
-  /** When it goes if nobody edits it; null once someone has. */
+  /** When it goes if nobody edits it; null once someone has. A scratch one goes then, edited or not. */
   expires: number | null;
   test: boolean;
+  /** A scratch document: off its owner's list, and deleted at `expires` until someone saves it. */
+  scratch: boolean;
   /** A document (one page) or a project (pages); null if its row has none. */
   kind: DocKind | null;
 }
@@ -96,6 +98,7 @@ export const RESERVED = new Set([
   "d",
   "docs",
   "new",
+  "scratch",
   "auth",
   "tokens",
   "api",
@@ -133,6 +136,7 @@ export interface NewDoc {
   modified?: number | null;
   expires?: number | null;
   test?: boolean;
+  scratch?: boolean;
   /** A role for anyone signed in who has the link, from the start (local development's documents on disk). */
   everyone?: Grant;
   /** A document (one page) or a project (pages); left for its object to decide as it opens, if not given. */

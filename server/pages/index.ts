@@ -18,6 +18,7 @@ export {
 export { docsPage, docsRows } from "./docs.ts";
 export { readerPage, readerVersion } from "./reader.ts";
 export { startPage } from "./start.ts";
+export { scratchLine, scratchNote } from "./scratch.ts";
 export { hasAgent } from "./agent.ts";
 export { editButton, RESTORE_KEY, VIEW_STYLE, viewerPage } from "./viewer.ts";
 export { AGENT_ICON, barsHtml, confirmAction, page, pageBars } from "./bars.ts";

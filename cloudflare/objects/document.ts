@@ -127,9 +127,12 @@ export class DocumentObject extends DurableObject<Env> {
     id: string,
     files: Record<string, FileData>,
     index: string,
-    opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind }
+    opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind; scratch?: boolean }
   ): Promise<boolean> {
     return run(this.document.create(owner, id, files, index, opts));
+  }
+  keep(): Promise<boolean> {
+    return run(this.document.keep());
   }
   link(owner: string, id: string, index: string, disk: OnDisk): Promise<NamedRow> {
     return run(this.document.link(owner, id, index, disk));

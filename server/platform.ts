@@ -165,9 +165,16 @@ export interface Platform {
     /**
      * Makes the host of a document already in the directory, from a
      * template's files; false if it already has one. Unless someone edits
-     * it, it goes at `expires`.
+     * it, it goes at `expires`; a scratch one goes then, edited or not.
      */
-    create(doc: Route, files: Record<string, FileData>, index: string, opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind }): Promise<boolean>;
+    create(
+      doc: Route,
+      files: Record<string, FileData>,
+      index: string,
+      opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind; scratch?: boolean }
+    ): Promise<boolean>;
+    /** A scratch document saved: its host keeps it. False if it has no host. */
+    keep(doc: Route): Promise<boolean>;
     /**
      * Files arriving whole into an existing document (a publish): written,
      * and merged into its room as edits; `remove` deletes files; `by`: who, as a version records it (byLine).

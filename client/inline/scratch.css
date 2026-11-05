@@ -1,0 +1,21 @@
+/* A scratch document's note (server/pages/scratch.ts): low on the right, over the page, in the viewer and the editor; room on its left for the agent's circle. */
+.erga-scratch { position: fixed; z-index: 30; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom));
+  display: flex; align-items: center; gap: 10px; max-width: min(480px, calc(100vw - 92px)); box-sizing: border-box; padding: 7px 7px 7px 14px;
+  border-radius: 14px; font: 400 13px/1.35 Inter, system-ui, sans-serif; color: #3f3f46;
+  background: rgba(255, 255, 255, 0.82); backdrop-filter: blur(14px) saturate(1.6); -webkit-backdrop-filter: blur(14px) saturate(1.6);
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 6px 20px rgba(0, 0, 0, 0.12); }
+.erga-scratch p { margin: 0; }
+.erga-scratch b { font-weight: 600; color: #18181b; }
+.erga-scratch small { display: block; color: #b45309; }
+.erga-scratch small:empty { display: none; }
+.erga-scratch button { flex: none; height: 30px; padding: 0 14px; border: 0; border-radius: 9px; font: 500 13px/1 Inter, system-ui, sans-serif;
+  color: #fff; background: #2563eb; cursor: pointer; }
+.erga-scratch button:hover:not(:disabled) { background: #1d4ed8; }
+.erga-scratch button:disabled { opacity: 0.6; cursor: default; }
+.erga-scratch button:focus-visible { outline: 2px solid #3b7cf0; outline-offset: 2px; }
+html.erga-full .erga-scratch { display: none; }
+@media (prefers-color-scheme: dark) {
+  .erga-scratch { color: #d4d4d8; background: rgba(32, 32, 36, 0.82); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.14), 0 6px 20px rgba(0, 0, 0, 0.4); }
+  .erga-scratch b { color: #fafafa; }
+  .erga-scratch small { color: #fbbf24; }
+}

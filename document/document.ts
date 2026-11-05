@@ -75,6 +75,8 @@ export interface DocumentInfo {
   uncut?: boolean;
   /** A document (one page) or a project (pages). */
   kind: DocKind;
+  /** A scratch document: it goes at its alarm, edited or not, until someone saves it (keep). */
+  scratch?: true;
 }
 
 /** A document that's a file or folder on disk (local development): where it is, its address there, and whether it's a single file. */
@@ -170,7 +172,8 @@ const HOUR = 60 * 60 * 1000;
  * test document) stays, one open somewhere waits an hour more, so it isn't
  * pulled from under someone about to type, and any other goes.
  */
-function afterUnedited(doc: { modified?: number; test?: boolean }, open: boolean, now: number): "keep" | "delete" | number {
+function afterUnedited(doc: { modified?: number; test?: boolean; scratch?: true }, open: boolean, now: number): "keep" | "delete" | number {
+  if (doc.scratch && !doc.test) return "delete";
   if (doc.modified || doc.test) return "keep";
   return open ? now + HOUR : "delete";
 }
@@ -353,14 +356,14 @@ export class Document {
    * Creates the document, whose row the app has just added to the
    * directory, from a template's files; false if it already exists. Unless
    * someone edits it, it's deleted at `expires` (the delete_docs_after_hours setting
-   * after it's made, or sooner when local development asks, to test it).
+   * after it's made, or sooner when local development asks, to test it). A scratch one goes then, edited or not.
    */
   create(
     owner: string,
     id: string,
     files: Record<string, FileData>,
     index: string,
-    opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind }
+    opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind; scratch?: boolean }
   ): Effect.Effect<boolean, StoreError> {
     const self = this;
     return Effect.gen(function* () {
@@ -379,7 +382,16 @@ export class Document {
       for (let i = 0; i < entries.length; i += 128) yield* io(() => self.storage.put(Object.fromEntries(entries.slice(i, i + 128))));
       // A project if asked, or if its files have more than one page; else a document.
       const kind = opts.kind ?? kindOf(Object.keys(files));
-      const info: DocumentInfo = { id, owner: owner.toLowerCase(), index, created: Date.now(), kind, ...(opts.modified ? { modified: opts.modified } : {}), ...(opts.test ? { test: true } : {}) };
+      const info: DocumentInfo = {
+        id,
+        owner: owner.toLowerCase(),
+        index,
+        created: Date.now(),
+        kind,
+        ...(opts.modified ? { modified: opts.modified } : {}),
+        ...(opts.test ? { test: true } : {}),
+        ...(opts.scratch ? { scratch: true as const } : {}),
+      };
       yield* io(() => self.saveInfo(info));
       if (!info.test && opts.expires != null) yield* io(() => self.storage.setAlarm(opts.expires!));
       // Its first version: the files it starts from.
@@ -463,6 +475,21 @@ export class Document {
     });
   }
 
+  /** A scratch document saved (save_document): it stays, as an edited one does. False if there's no such document. */
+  keep(): Effect.Effect<boolean, StoreError> {
+    return io(async () => {
+      const info = await this.readInfo();
+      if (!info) return false;
+      if (!info.scratch) return true;
+      delete info.scratch;
+      info.modified ??= Date.now();
+      await this.saveInfo(info);
+      await this.storage.deleteAlarm();
+      this.kept = true;
+      return true;
+    });
+  }
+
   /** Deletes the document (the app has asked the directory who may): everyone on it is disconnected. */
   delete(): Effect.Effect<boolean, StoreError> {
     return io(async () => {
@@ -499,6 +526,8 @@ export class Document {
    * The alarm: its unedited time is up, so a document nobody has edited goes.
    * One open somewhere waits an hour more, so it isn't pulled from under
    * someone about to type. If delete_docs_after_hours is now never, it stays.
+   * A scratch document goes at once, edited or not, open or not: its page said when (it stays too, if the setting is
+   * now never).
    */
   wake(): Effect.Effect<void, StoreError> {
     const self = this;
@@ -517,7 +546,7 @@ export class Document {
         yield* Effect.promise(() => self.directory.setExpires(info.id, next).catch(forgot));
         return;
       }
-      self.deps.log(`deleting ${info.owner}/${info.id}: never edited`);
+      self.deps.log(`deleting ${info.owner}/${info.id}: ${info.scratch ? "scratch, not saved" : "never edited"}`);
       yield* io(() => self.destroy(info));
     });
   }
@@ -603,7 +632,10 @@ export class Document {
     if (!info) return;
     info.modified = Date.now();
     const writes = [this.saveInfo(info)];
-    if (!info.test && !this.kept) { this.kept = true; writes.push(this.storage.deleteAlarm()); }
+    if (!info.test && !info.scratch && !this.kept) {
+      this.kept = true;
+      writes.push(this.storage.deleteAlarm());
+    }
     await Promise.all(writes);
     // At most every DIRECTORY_EVERY_MS, however fast the edits come; the last always lands.
     this.sync ??= throttle(() => this.syncDirectory().catch((e) => this.deps.log(`couldn't update ${info.id}'s row: ${e}`)), DIRECTORY_EVERY_MS);

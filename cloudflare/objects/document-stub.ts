@@ -14,6 +14,7 @@ import type { Env } from "../env";
 /** The object's methods the Worker calls. */
 type Call =
   | "create"
+  | "keep"
   | "link"
   | "publish"
   | "paths"

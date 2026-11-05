@@ -5,7 +5,8 @@ import { asset, assetScripts } from "./assets.ts";
 import { appPage, ICON, link, withEdit } from "./chrome.ts";
 import { homeButton, pageBars } from "./bars.ts";
 import { esc } from "../../shared/html.ts";
-import { newDocButton } from "./templates.ts";
+import { newDocButton, PLUS } from "./templates.ts";
+import { scratchLine } from "./scratch.ts";
 import { inlineScript, inlineStyle } from "./inline.ts";
 import { plural } from "../../shared/time.ts";
 import { addressOf, HOME_ADDRESS, HOME_OWNER } from "../../document/names.ts";
@@ -76,7 +77,10 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
     `${pageBars(session, [{ label: "Documents" }], { docs: homeButton(link(HOME_ADDRESS, session)) })}<main>
   <header>
     <div><h1>Documents</h1><p class="sub" id="docs-count"${docs.length ? "" : " hidden"}>${count}</p></div>
-    ${newDocButton("pill", "New")}
+    <div class="make">
+      <div class="make-buttons">${newDocButton("pill", "New")}<a class="pill scratch" href="${esc(link("/scratch", session))}" draggable="false">${PLUS}Scratch</a></div>
+      <p class="scratch-note">${scratchLine(hours)}</p>
+    </div>
   </header>
   <div class="labels" aria-hidden="true"${docs.length ? "" : " hidden"}><span>Name</span><span>Edited</span><span></span></div>
   <ol class="rows" data-live-kind="doc" data-live-view="docs" data-live-at="${now}"${docs.length ? "" : " hidden"}>\n${rows}\n  </ol>
