@@ -90,8 +90,9 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
 }
 
 /**
- * What the server answers an admin's ops token (GET /api/ops) of where it is deployed: the target's own names, so a
- * deploy from a machine can deploy it again with no list of targets in the code. Never a secret.
+ * What the server answers an admin's ops token (GET /api/ops) of where it is deployed: the target's own names and its
+ * plain settings (vars), so a deploy from a machine can deploy it again with no list of targets in the code. Never a
+ * secret: the secrets stay on the Worker.
  */
 export const deployFacts = (t: Target) => ({
   account: t.accountId,
@@ -100,6 +101,7 @@ export const deployFacts = (t: Target) => ({
   ...(t.subdomain ? { subdomain: t.subdomain } : {}),
   app: t.app,
   pages: t.pages,
+  vars: t.vars,
 });
 
 /**

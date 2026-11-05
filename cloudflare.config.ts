@@ -131,6 +131,8 @@ export default defineConfig(({ mode }) => ({
         ERGA_VERSION_MAX_MS: bindings.text(process.env.ERGA_VERSION_MAX_MS ?? ""),
         // How long a document stays open with nothing done before it closes and its object may sleep (tests shorten it).
         ERGA_ROOM_IDLE_MS: bindings.text(process.env.ERGA_ROOM_IDLE_MS ?? ""),
+        // The deploy facts a deploy would set (deploy/pipeline/account.ts, deployFacts): tests of `bun erga register`.
+        ERGA_DEPLOY: bindings.text(process.env.ERGA_DEPLOY ?? ""),
         // e2e/bench/run.ts --latency: each call to the database or a document waits this long first.
         ERGA_REMOTE_LATENCY_MS: bindings.text(process.env.ERGA_REMOTE_LATENCY_MS ?? ""),
 

@@ -48,6 +48,11 @@ and `main`. There are no pull requests.
 - `bun erga rollback <staging|production>`: the Worker version from before
   the last deploy, in seconds. Only when Pete asks. The next deploy goes
   forward again.
+- `bun erga register <host> [--staging-of <host>]`: signs in to an instance
+  as an admin (Pete approves in the browser), and writes its deploy facts,
+  its plain settings and an ops token into `.erga/config.json` in the main
+  clone. Only when Pete asks. Nothing reads the file yet.
+- `bun erga login <host>`: a new ops token for a registered instance.
 - `bun erga own ...`: a person's own Erga on their own domain (`bun erga own skill`).
 
 ## The rules
