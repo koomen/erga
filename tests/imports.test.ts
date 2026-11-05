@@ -5,7 +5,7 @@
 //                     in this layer too: it needs no browser, and the document's object runs it for agents.
 //   2. document/      shared/. It gets the directory and the agents through DocumentDeps.
 //   3. server/'s areas (directory, identity, documents, pages, home, admin, operations) and its other files but app.ts and
-//                     api.ts: platform.ts, http.ts, security.ts, live.ts, health.ts, repo-api.ts. directory/ never
+//                     api.ts: platform.ts, http.ts, security.ts, live.ts, health.ts. directory/ never
 //                     imports identity/; documents/ and admin/ never import operations/.
 //   4. agents/        each person's agent and the tools
 //   5. server/app.ts and server/api.ts: the route table, and the HTTP API for outside agents
@@ -138,7 +138,7 @@ test("the rules catch what they are for", () => {
     ["agents/tools", "server/api"],
     ["server/identity/settings", "deploy/targets"],
     ["cloudflare/objects/document", "dev/disk-storage"],
-    ["server/repo-api", "deploy/pipeline/pipeline"],
+    ["server/health", "deploy/pipeline/pipeline"],
     ["server/app", "cloudflare:workers"],
     ["client/shell/main", "document/host"],
     ["libs/text/api/rules", "libs/text/ui/core"],
@@ -152,7 +152,7 @@ test("the rules catch what they are for", () => {
     ["libs/text/ui/edit", "libs/text/api/rules", false],
     ["agents/document/tools", "libs/text/api/rules", false],
     ["client/shell/main", "libs/text/ui/editor", false],
-    ["cloudflare/platform", "server/repo-api", true],
+    ["cloudflare/platform", "server/health", true],
     ["cloudflare/platform", "deploy/targets", false],
     ["tests/room.test", "cloudflare/objects/document", false],
   ] as const;

@@ -42,8 +42,6 @@ const SECRET = "a secret: pasted or made only on the page, never in a conversati
 const PANEL = "the agent panel itself (the conversation, its model, stop, undo, redo)";
 const STREAM = "the page's live updates (server-sent events)";
 const SIGN_IN = "signing in: the person in their own browser, before any agent acts for them";
-const SOURCE =
-  "Erga's source, read-only and public: not a change to the server (an agent reads Erga's source on GitHub, github.com/koomen/erga)";
 
 export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ /admin: settings, change log, users, API keys
@@ -107,32 +105,6 @@ export const AGENT_ACTIONS: AgentAction[] = [
   },
   { route: "POST /api/agent/keys", domain: "none", action: "Add or replace your own API key (Settings, Agent)", exempt: SECRET },
 
-  // ------------------------------------------------------------ Erga's source: the homepage's page /source, over the repository API
-  // (server/repo-api.ts), which reads the repository on GitHub (server/repo-github.ts).
-  {
-    route: "GET /source",
-    domain: "none",
-    action: "Read Erga's source: its files, README and recent commits (the homepage's source page, for anyone)",
-    exempt: SOURCE,
-  },
-  {
-    route: "GET /source/<branch>/<path>",
-    domain: "none",
-    action: "Read a folder or a file of Erga's source (the homepage's source page, for anyone)",
-    exempt: SOURCE,
-  },
-  {
-    route: "GET /api/repo",
-    domain: "none",
-    action: "Read Erga's repository: its branches, recent commits and tags (the repository API, for any page)",
-    exempt: SOURCE,
-  },
-  {
-    route: "GET /api/repo/tree/<ref>/<path>",
-    domain: "none",
-    action: "Read a folder or a file of Erga's source (the repository API, for any page)",
-    exempt: SOURCE,
-  },
   { route: "GET /api/health", domain: "none", action: "The app's health check", exempt: "the deploy pipeline's, after each deploy" },
   { route: "GET /api/news", domain: "none", action: "An open page's live updates", exempt: STREAM },
   { route: "GET /api/news/rows", domain: "none", action: "The rows an open page shows, after they changed", exempt: STREAM },

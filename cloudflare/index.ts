@@ -8,13 +8,11 @@
 //
 //   /api/deploys/version, /api/health, /api/snapshot/...   what the deploy pipeline asks of this server, and staging's
 //                                                          snapshot endpoints (deploy-routes.ts)
-//   /git, /git/...             Erga's old Git address: a redirect to the repository on GitHub (SOURCE_REPO), where the
-//                              server has one; "not found" elsewhere. Old clones of https://erga.dev/git/erga.git use it.
 //   /__erga/...                the dev server's (dev.ts)
 
 import * as Effect from "effect/Effect";
 import { app } from "../server/app.ts";
-import { json, NO_STORE, redirect, respond } from "../server/http.ts";
+import { respond } from "../server/http.ts";
 import { deploysRoutes, isDeploysPath } from "./deploy-routes";
 import { devRoutes } from "./dev";
 import type { Env } from "./env";
@@ -38,18 +36,11 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-/** The routes outside the app (server/app.ts, Outside): the deploys', Git's redirect, the dev server's. */
+/** The routes outside the app (server/app.ts, Outside): the deploys', the dev server's. */
 const outside = (env: Env) => (url: URL) =>
   Effect.gen(function* () {
     const path = url.pathname;
     if (isDeploysPath(path)) return yield* deploysRoutes(env);
-    if (path == "/git" || path.startsWith("/git/")) {
-      const source = env.SOURCE_REPO?.trim();
-      if (!source) return json({ error: "This server has no Git repository." }, 404);
-      // A Git client follows the redirect of its first request (info/refs) and carries on at the new address.
-      const there = `https://github.com/${source}.git${path.replace(/^\/git(\/erga\.git)?/, "")}${url.search}`;
-      return redirect(there, 301, NO_STORE);
-    }
     return yield* devRoutes(env);
   });
 

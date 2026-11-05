@@ -183,8 +183,8 @@ async function homeRoot(request: Request, platform: Platform): Promise<Response 
   return homeFileAt(request, platform, url, rel);
 }
 
-/** The current deploy's file `rel`, as it is (an HTML page with window.ergaLLM); null if the deploy has none. `own`: a page with nothing of the site's in it. */
-async function homeFileAt(request: Request, platform: Platform, url: URL, rel: string, own = false): Promise<Response | null> {
+/** The current deploy's file `rel`, as it is (an HTML page with window.ergaLLM); null if the deploy has none. */
+async function homeFileAt(request: Request, platform: Platform, url: URL, rel: string): Promise<Response | null> {
   const live = await livePage(platform, url);
   if (!live || !live.page.files.includes(rel)) return null;
   const file = await platform.home.file(live.page.gen, rel);
@@ -195,31 +195,9 @@ async function homeFileAt(request: Request, platform: Platform, url: URL, rel: s
     "X-Content-Type-Options": "nosniff",
     ...AUTHORS_POLICY,
   };
-  if (own) headers[OWN_ACCOUNT] = "1";
   // An HTML page gets the homepage's model (window.ergaLLM), as the homepage's own page does.
   const body = /^text\/html/i.test(file.type)
     ? withHomeLlm(new TextDecoder().decode(file.bytes), live.page.docId, await pageToken(platform.secret, live.page.docId, Date.now()))
     : (file.bytes as BodyInit);
   return new Response(request.method == "HEAD" ? null : body, { headers });
 }
-
-/**
- * The homepage's pages with an address of their own, for people to read and share: /source is source.html, and so is
- * every path under it (/source/main/server/app.ts), which the page reads to know what to show. Each name is in RESERVED
- * (server/directory/model.ts), so no account or document can take its address.
- */
-export const HOME_PAGES: readonly string[] = ["source"];
-
-/** The homepage's page that answers `path`, as its file's name; null for a path that isn't one's. */
-export const homePageOf = (path: string): string | null => {
-  const name = /^\/([^/]+)(?:\/|$)/.exec(path)?.[1];
-  return name && HOME_PAGES.includes(name) ? `${name}.html` : null;
-};
-
-/** One of HOME_PAGES at its address, from the current deploy; null if the deploy doesn't have it. */
-export const serveHomePage = Effect.flatMap(ctx, ({ request, platform, url }) =>
-  Effect.map(
-    call(() => homeFileAt(request, platform, url, homePageOf(url.pathname) ?? "", true)),
-    (r) => r && fromWeb(r)
-  )
-);

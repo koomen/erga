@@ -20,7 +20,7 @@ export interface HealthReport { ok: boolean; version: string | null; target: str
 export async function health(p: Platform): Promise<HealthReport> {
   const checks: Record<string, HealthCheck> = {
     db: await timed(async () => {
-      await p.directory.config.get("public_source");
+      await p.directory.config.get("public_sharing");
     }),
     documents: await timed(async () => {
       const id = await p.directory.homeId();

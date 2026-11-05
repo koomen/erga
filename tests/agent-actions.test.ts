@@ -86,7 +86,6 @@ test("the route tables are read: the known routes are found", () => {
   const found = every();
   for (const r of [
     "POST /api/agent/model",
-    "GET /api/repo/tree/<ref>/<path>",
     "POST /admin/auth do=save",
     "GET /d/<id>/api/doc",
     "PUT /api/files/<path>",

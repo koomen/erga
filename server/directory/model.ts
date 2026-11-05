@@ -120,8 +120,6 @@ export const RESERVED = new Set([
   "about",
   "share",
   "members",
-  // The homepage's pages with an address of their own (server/home/serve.ts, HOME_PAGES).
-  "source",
 ]);
 
 /** A new document's row. Its slug starts from `slug` (else its title), with -2, -3... if that's taken; `slugSet` fixes it there. */
