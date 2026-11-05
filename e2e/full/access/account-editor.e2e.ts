@@ -54,6 +54,7 @@ test("your avatar, far right of the editor's controls with your GitHub picture (
       "Documents /docs",
       "Settings #settings",
       "Admin settings /admin",
+      "Send feedback #feedback",
       "Sign out /auth/logout",
     ],
   });

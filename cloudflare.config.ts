@@ -110,6 +110,8 @@ export default defineConfig(({ mode }) => ({
       // ("staging" on erga-staging; empty on a fork's server). Locally: ERGA_DEPLOY_TARGET.
       DEPLOY_TARGET: bindings.text(mode == "development" ? (process.env.ERGA_DEPLOY_TARGET ?? "") : PROD.name),
       ...optionalSecret(mode, "GITHUB_CLIENT_SECRET"),
+      // Opens an issue in Erga's repository for each feedback (server/feedback.ts). Locally the pretend GitHub takes its own.
+      ...optionalSecret(mode, "GITHUB_ISSUES_TOKEN"),
       SESSION_SECRET: bindings.secret(),
       ANTHROPIC_API_KEY: bindings.secret(),
       // Local development only (vite dev reads them from .dev.vars); erga.dev never has them.

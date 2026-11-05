@@ -6,6 +6,7 @@
 import { ADMIN_OPERATIONS } from "./admin.ts";
 import { DOCUMENT_OPERATIONS } from "./documents.ts";
 import { EDITOR_OPERATIONS } from "./editor.ts";
+import { FEEDBACK_OPERATIONS } from "./feedback.ts";
 import { HOME_OPERATIONS } from "./home.ts";
 import type { Operation } from "./operation.ts";
 
@@ -25,4 +26,10 @@ export {
 export { addFile, cleanFilePath, PAGE_RULES } from "./documents.ts";
 
 /** Every operation. Add one here and the front end's API, every agent, REST and MCP have it. */
-export const OPERATIONS: Operation[] = [...DOCUMENT_OPERATIONS, ...EDITOR_OPERATIONS, ...ADMIN_OPERATIONS, ...HOME_OPERATIONS];
+export const OPERATIONS: Operation[] = [
+  ...DOCUMENT_OPERATIONS,
+  ...EDITOR_OPERATIONS,
+  ...ADMIN_OPERATIONS,
+  ...HOME_OPERATIONS,
+  ...FEEDBACK_OPERATIONS,
+];

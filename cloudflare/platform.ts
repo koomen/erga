@@ -17,6 +17,7 @@ import type { Env } from "./env";
 import { counted } from "./timing";
 import { isAdminsOnly, isTargetName, TARGETS } from "../deploy/targets";
 import { githubRepository } from "../server/repo-github";
+import { githubIssues } from "../server/feedback";
 import { agentSettingsFrom } from "../agents/models";
 import { documentOf } from "./objects/document-stub";
 import { blobsOf } from "./blobs";
@@ -117,6 +118,13 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
   // Erga's repository on GitHub, read-only (erga.dev, staging.erga.dev: SOURCE_REPO): /api/repo reads it. Absent elsewhere.
   const source = env.SOURCE_REPO?.trim();
   const repo = source ? githubRepository(source, { clientId: env.GITHUB_CLIENT_ID, secret: env.GITHUB_CLIENT_SECRET }) : undefined;
+  // Feedback's issues (server/feedback.ts), with GITHUB_ISSUES_TOKEN, in the setting feedback_repository. Locally (the
+  // tests): on the pretend GitHub (dev/github-mock.ts), which takes its own token (ISSUES_TOKEN).
+  const pretend = standIn(settings.githubOrigin);
+  const issuesToken = env.GITHUB_ISSUES_TOKEN?.trim() || (pretend ? "github_pat_mock_issues" : "");
+  const issues = issuesToken
+    ? githubIssues({ api: pretend ? `${pretend}/api` : "https://api.github.com", web: pretend ?? "https://github.com", token: issuesToken })
+    : undefined;
   const p: Platform = {
     directory,
     sessionOf: (request) => sessionOf(p, request),
@@ -148,6 +156,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     news: env.NEWS.getByName("news"),
     personAgent: (login: string) => env.AGENTS.getByName(login),
     ...(repo ? { repo } : {}),
+    ...(issues ? { issues } : {}),
     agentSettings: (login?: string) => agentSettingsFrom(env, env.DB ? directoryOf(env) : null, login),
     edge: {
       cache: edgeCache(),

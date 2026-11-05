@@ -84,6 +84,7 @@ test("the deploy's own secrets only as set or not", async () => {
     ["SESSION_SECRET", true],
     ["FACTORY_KEY", false],
     ["GITHUB_CLIENT_SECRET", true],
+    ["GITHUB_ISSUES_TOKEN", false],
     ["SNAPSHOT_TOKEN", false],
   ]);
   expect(deployed.find((d) => d.env == "FACTORY_KEY")!.standIn).toBe(true);
@@ -135,7 +136,7 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   expect(html).toContain(`<option value="server" selected>Server will provide keys</option>`);
   for (const key of ["agent_keys", "agent_models_off"])
     expect(await (await fetch(`${origin}/admin`)).text()).not.toContain(`data-key="${key}"`);
-  for (const env of ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET", "SNAPSHOT_TOKEN"])
+  for (const env of ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET", "GITHUB_ISSUES_TOKEN", "SNAPSHOT_TOKEN"])
     expect(html).toContain(`data-env="${env}"`);
   expect(html).not.toContain("DEPLOY_HOOK_SECRET");
   expect(html).toContain(`href="/admin/api-keys" aria-current="page"`);

@@ -24,6 +24,7 @@ test("on /docs, your avatar in the upper right opens your menu; Escape closes it
     "Documents",
     "Settings",
     "Admin settings",
+    "Send feedback",
     "Sign out",
   ]);
   await page.keyboard.press("Escape");

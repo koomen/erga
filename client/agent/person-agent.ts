@@ -554,23 +554,29 @@ window.ergaAgentPanel = {
   files: att,
 };
 
-// Settings (client/agent/settings-dialog.ts): a dialog on any page, loaded the first time it's asked for. The account
-// menu's Settings, and any link to "#settings", open it; so does an address that ends with #settings. A key saved or
-// removed there gives the agent other models: the panel reads them again.
-const settings = () => {
-  if (location.hash == "#settings") history.replaceState(history.state, "", location.pathname + location.search);
-  void import("./settings-dialog").then((m) => m.openSettings());
+// Settings (client/agent/settings-dialog.ts) and Send feedback (client/agent/feedback-dialog.ts): dialogs on any page,
+// each loaded the first time it's asked for. The account menu's Settings and Send feedback, and any link to
+// "#settings" or "#feedback", open them; so does an address that ends with one. A key saved or removed in Settings
+// gives the agent other models: the panel reads them again.
+const DIALOGS: Record<string, () => void> = {
+  "#settings": () => void import("./settings-dialog").then((m) => m.openSettings()),
+  "#feedback": () => void import("./feedback-dialog").then((m) => m.openFeedback()),
+};
+const openDialog = (hash: string) => {
+  if (location.hash == hash) history.replaceState(history.state, "", location.pathname + location.search);
+  DIALOGS[hash]();
 };
 document.addEventListener(
   "click",
   (e) => {
     const a = (e.target as Element | null)?.closest?.("a[href]");
-    if (!a || new URL((a as HTMLAnchorElement).href, location.href).hash != "#settings" || e.metaKey || e.ctrlKey) return;
+    const hash = a && new URL((a as HTMLAnchorElement).href, location.href).hash;
+    if (!hash || !DIALOGS[hash] || e.metaKey || e.ctrlKey) return;
     e.preventDefault();
-    settings();
+    openDialog(hash);
   },
   true
 );
-window.addEventListener("hashchange", () => location.hash == "#settings" && settings());
-if (location.hash == "#settings") settings();
+window.addEventListener("hashchange", () => DIALOGS[location.hash] && openDialog(location.hash));
+if (DIALOGS[location.hash]) openDialog(location.hash);
 window.addEventListener("erga:agent-keys", () => void load(0, true));

@@ -17,6 +17,10 @@ export default function accountMenu(): void {
     btn.setAttribute("aria-expanded", String(open));
   };
   quickLink(menu.querySelector(".erga-account-go"), () => show(false));
+  // A link in the menu that opens a dialog on this page (Settings, Send feedback) leaves the menu closed behind it.
+  menu.addEventListener("click", (e) => {
+    if ((e.target as Element).closest("a")) show(false);
+  });
   btn.addEventListener("click", () => {
     show(!!menu.hidden);
     if (!menu.hidden) menu.querySelector("a")?.focus({ preventScroll: true });

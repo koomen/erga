@@ -142,7 +142,7 @@ export function mountPeople(shell: Shell) {
     if (!e.composedPath().includes(people)) stackPeople();
   });
   // Your avatar opens a small menu: who you are, Go to… (the quick search), Documents, Settings,
-  // Admin settings if you're an admin, Sign out (the same as every other page's upper
+  // Admin settings if you're an admin, Send feedback, Sign out (the same as every other page's upper
   // right, server/pages/account-menu.ts). The app says which links (meta erga-account).
   const account = $("account");
   const accountLinks = (() => {
@@ -151,6 +151,7 @@ export function mountPeople(shell: Shell) {
         docs?: string;
         settings?: string;
         admin?: string;
+        feedback?: string;
         signOut?: string;
       };
     } catch {
@@ -180,6 +181,7 @@ export function mountPeople(shell: Shell) {
     set("account-docs", shell.me.user.startsWith("test-") ? undefined : accountLinks!.docs);
     set("account-settings", shell.me.user.startsWith("test-") ? undefined : accountLinks!.settings);
     set("account-admin", accountLinks!.admin);
+    set("account-feedback", shell.me.user.startsWith("test-") ? undefined : accountLinks!.feedback);
     set("account-out", accountLinks!.signOut);
   }
   /** Clicking a participant scrolls the source view to their caret (the page's editor shows theirs where it is). */

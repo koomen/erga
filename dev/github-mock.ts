@@ -4,7 +4,9 @@
 //   GET  /login/oauth/authorize              GitHub's sign-in page: Authorize goes back to the app's callback with a code
 //   POST /login/oauth/access_token           the code for the person's token (the app's client id and secret checked)
 //   /api/...                                 api.github.com: a person's profile (/users/<login>), the person (/user),
-//                                            their organizations (/user/memberships/orgs)
+//                                            their organizations (/user/memberships/orgs), and a repository's issues:
+//                                            POST /repos/<o>/<r>/issues opens one (with ISSUES_TOKEN), GET lists them
+//   GET  /<o>/<r>/issues/<n>                 an issue's page
 //
 // Everything it was asked is in `state`, which the tests read.
 
@@ -34,7 +36,20 @@ export interface MockGithubOptions {
 export interface MockGithubState {
   /** The tokens minted for people. */
   tokens: { token: string; kind: "user"; login?: string }[];
+  /** The issues opened, by repository ("owner/name"). */
+  issues: Record<string, MockIssue[]>;
 }
+export interface MockIssue {
+  number: number;
+  title: string;
+  body: string;
+  labels: { name: string }[];
+}
+
+/** The token the pretend GitHub takes to open an issue (cloudflare/platform.ts gives it locally). */
+export const ISSUES_TOKEN = "github_pat_mock_issues";
+/** An issue whose text has this, GitHub fails to open (a 502), for the tests of a failure. */
+export const ISSUE_FAILS = "[github fails]";
 
 /** When the pretend GitHub's rate limit resets (x-ratelimit-reset, in seconds): 2030-01-01 12:34 UTC. */
 const RESET = Date.UTC(2030, 0, 1, 12, 34) / 1000;
@@ -65,7 +80,7 @@ export function mockGithub(opts: MockGithubOptions) {
     }
   };
   let nextId = 1000;
-  const state: MockGithubState = { tokens: [] };
+  const state: MockGithubState = { tokens: [], issues: {} };
   const codes = new Map<string, string>();
   const tokenOf = (request: Request) => /^(?:Bearer|token)\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? null;
   const userToken = (request: Request) => {
@@ -74,6 +89,7 @@ export function mockGithub(opts: MockGithubOptions) {
   };
 
   async function handle(request: Request): Promise<Response | null> {
+    let m: RegExpExecArray | null;
     const url = new URL(request.url);
     if (!url.pathname.startsWith(`${base}/`)) return null;
     const path = url.pathname.slice(base.length);
@@ -111,10 +127,18 @@ export function mockGithub(opts: MockGithubOptions) {
       return json({ access_token: token, token_type: "bearer", scope: "", expires_in: 28800 });
     }
 
+    // ---- github.com: an issue's page
+    if ((m = /^\/([^/]+\/[^/]+)\/issues\/(\d+)$/.exec(path)) && request.method == "GET") {
+      const issue = state.issues[decodeURIComponent(m[1])]?.find((i) => i.number == Number(m![2]));
+      if (!issue) return html("<h1>Not found</h1>", 404);
+      return html(
+        `<h1>${esc(issue.title)} <span style="color:#888">#${issue.number}</span></h1><p>${issue.labels.map((l) => `<span class="btn">${esc(l.name)}</span>`).join(" ")}</p><pre style="white-space:pre-wrap">${esc(issue.body)}</pre>`
+      );
+    }
+
     // ---- api.github.com
     if (!path.startsWith("/api/")) return json({ message: "Not Found" }, 404);
     const p = path.slice(4);
-    let m: RegExpExecArray | null;
     // A person's public profile, for a GitHub account's access rule: every login is a person (its id a number made from
     // the login, the same each time), but no-such-* ones, which GitHub doesn't know. A rate-limited-* one answers as
     // GitHub does when a server's IP used up its 60 lookups an hour, unless the app's client id and secret come with it.
@@ -128,6 +152,20 @@ export function mockGithub(opts: MockGithubOptions) {
           { status: 403, headers: { "x-ratelimit-limit": "60", "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(RESET) } }
         );
       return json({ login, id: mockGithubId(login), type: "User" });
+    }
+    // A repository's issues: opened only with ISSUES_TOKEN, as GitHub opens them only with a token that may.
+    if ((m = /^\/repos\/([^/]+\/[^/]+)\/issues$/.exec(p))) {
+      const repo = decodeURIComponent(m[1]);
+      const issues = (state.issues[repo] ??= []);
+      if (request.method == "GET") return json(issues);
+      if (request.method != "POST") return json({ message: "Not Found" }, 404);
+      if (tokenOf(request) != ISSUES_TOKEN) return json({ message: "Bad credentials" }, 401);
+      const b = (await request.json().catch(() => ({}))) as { title?: string; body?: string; labels?: string[] };
+      if (!b.title) return json({ message: "Validation Failed" }, 422);
+      if (`${b.title}\n${b.body}`.includes(ISSUE_FAILS)) return json({ message: "Server Error" }, 502);
+      const issue = { number: issues.length + 1, title: b.title, body: b.body ?? "", labels: (b.labels ?? []).map((name) => ({ name })) };
+      issues.push(issue);
+      return json(issue, 201);
     }
     const me = userToken(request);
     if (!me) return json({ message: "Bad credentials" }, 401);

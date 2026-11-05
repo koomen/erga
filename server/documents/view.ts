@@ -298,6 +298,7 @@ const accountMeta = (session: Session, admin: boolean) => {
     docs: link("/docs", session),
     settings: "#settings",
     ...(admin ? { admin: link("/admin", session) } : {}),
+    feedback: "#feedback",
     signOut: "/auth/logout",
   };
   return `<meta name="erga-account" content="${esc(JSON.stringify(links))}">`;
