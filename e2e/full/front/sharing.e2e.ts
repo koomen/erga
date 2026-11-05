@@ -96,7 +96,9 @@ test("the share dialog on /docs, in a browser, adds people, sets anyone-with-the
   await page.evaluate(`document.querySelector('li a[href="${address}?edit"]').closest('li').querySelector('button.share').click()`);
   const people = () => page.evaluate(`document.querySelectorAll('#share .people li').length`);
   await expect.poll(people).toBe(1);
-  await page.evaluate(`(() => { const f = document.querySelector('#share form.add'); f.elements.login.value = "Bo"; f.elements.role.value = "viewer"; f.requestSubmit(); })()`);
+  await page.evaluate(
+    `(() => { const f = document.querySelector('#share form.add'); f.elements.who.value = "Bo"; f.elements.role.value = "viewer"; f.requestSubmit(); })()`
+  );
   await expect.poll(people).toBe(2);
   await page.evaluate(
     `(() => { const s = document.getElementById("share-anyone"); s.value = "editor"; s.dispatchEvent(new Event("change")); })()`
