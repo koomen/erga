@@ -77,12 +77,13 @@ export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-f
  * pages' is their <h1>), and the quick actions: New document, the page's own (`actions`), Documents (`docs` puts
  * another button in its place: Documents itself has Home page there), then who you are. Share with an agent is on every page, before
  * Documents (`share`: a page's own, as the admin pages' with its admin token). The account corner goes in `corner`, or where the
- * Worker puts it (ACCOUNT_SLOT: withAccount). Your agent comes with them (server/pages/agent.ts).
+ * Worker puts it (ACCOUNT_SLOT: withAccount). Your agent comes with them (server/pages/agent.ts), except where
+ * `agent` is false: a page where the person grants access (/tokens/approve), which the agent must not see or act on.
  */
 export function pageBars(
   session: Session | null,
   trail: Crumb[],
-  o: { here?: string; actions?: string; share?: string; docs?: string; corner?: string } = {}
+  o: { here?: string; actions?: string; share?: string; docs?: string; corner?: string; agent?: false } = {}
 ): string {
   const here = o.here ?? "span";
   const steps = trail
@@ -95,7 +96,7 @@ export function pageBars(
   const mine = !!session && !session.agent;
   const at = (path: string) => link(path, session);
   const actions = `${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${o.share ?? AGENT_SHARE_BUTTON}${mine ? (o.docs ?? docsButton(at("/docs"))) : ""}`;
-  return `<script>${PAGE_TONE}</script>${crumbsBar(session, "", steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${agentPanel(session)}`;
+  return `<script>${PAGE_TONE}</script>${crumbsBar(session, "", steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${o.agent === false ? "" : agentPanel(session)}`;
 }
 
 /**

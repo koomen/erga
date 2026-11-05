@@ -182,13 +182,13 @@ ${may ? `<p class="notice error">${esc(may)}</p>` : ""}
 <form method="post" action="/tokens/approve"><input type="hidden" name="code" value="${esc(code)}">${choice}<div class="buttons">${may ? "" : `<button class="new" name="answer" value="approve">Approve</button>`}<button class="deny" name="answer" value="deny">Deny</button></div></form></section>`;
 }
 
-/** /tokens/approve: the request's card, or what became of it. */
+/** /tokens/approve: the request's card, or what became of it. No agent here: the person alone approves or denies. */
 async function approvePage(session: Session, body: string) {
   return html(
     appPage(
       "Approve an agent",
       inlineStyle("tokens"),
-      `${pageBars(session, [{ label: "Approve an agent" }])}<main>
+      `${pageBars(session, [{ label: "Approve an agent" }], { agent: false })}<main>
   <header><div><h1>Approve an agent</h1></div></header>
   ${body}
 </main>`
