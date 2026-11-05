@@ -88,7 +88,9 @@ and `main`. There are no pull requests.
   the D1 migrations, the static files, the Worker, the addresses, the
   health check. A deploy sends no secret: the Workers keep their own.
 - Staging runs on a frozen copy of production's data. Only
-  `bun deploy/run.ts staging --fresh`, from a machine, copies it again.
+  `bun erga deploy <commit> <staging host> --fresh` copies it again, with
+  the primary's `SNAPSHOT_TOKEN` (in `.erga/secrets.json` under the
+  primary's host, or in the environment).
 - A rollback never changes the database: migrations only add.
 
 ## Run it locally

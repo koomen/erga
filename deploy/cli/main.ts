@@ -11,7 +11,8 @@
 //                                       instance, then the push of staging
 //   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
 //   bun erga deploy [<commit>] <host> [--no-tests]            deploys a registered instance from this machine; a primary
-//                                       with no commit takes the commit its staging instances run, and main moves to it
+//                                       with no commit takes the commit its staging instances run, and main moves to it;
+//                                       --fresh: a staging instance gets a new copy of its primary's data
 //   bun erga rollback <host> [--yes]    a registered instance's Worker version from before its last deploy
 //   bun erga register <host> [--staging-of <host>]            signs in to an instance as an admin, in the browser, and
 //                                       adds it to .erga/config.json: its deploy facts, its plain settings, an ops token
@@ -177,13 +178,12 @@ function release(asked: string | undefined, dry: boolean) {
 const hostOf = async (arg: string) => new URL((await import("./config")).originOf(arg)).host;
 
 async function deploy(args: string[], noTests: boolean, fresh: boolean) {
-  if (fresh) fail("--fresh comes later (plan to-do 7).", "bun deploy/run.ts staging --fresh copies production's data afresh.");
-  if (!args.length || args.length > 2) fail("Name the instance: bun erga deploy [<commit>] <host> [--no-tests].");
+  if (!args.length || args.length > 2) fail("Name the instance: bun erga deploy [<commit>] <host> [--no-tests] [--fresh].");
   const [commit, host] = args.length == 2 ? [args[0], await hostOf(args[1])] : [undefined, await hostOf(args[0])];
   const { ergaDir } = await import("./config");
   const { deployInstance } = await import("./deploy");
-  const command = ["bun erga deploy", ...args, ...(noTests ? ["--no-tests"] : [])].join(" ");
-  const sha = await deployInstance({ dir: ergaDir(), host, commit, noTests, command }).catch((e: Error) => fail(e.message));
+  const command = ["bun erga deploy", ...args, ...(noTests ? ["--no-tests"] : []), ...(fresh ? ["--fresh"] : [])].join(" ");
+  const sha = await deployInstance({ dir: ergaDir(), host, commit, noTests, fresh, command }).catch((e: Error) => fail(e.message));
   pass(`${host} runs ${sha.slice(0, 12)}, healthy.`);
 }
 
