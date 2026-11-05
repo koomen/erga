@@ -1,4 +1,5 @@
-// The pretend Cloudflare's D1 (dev/mock-cloudflare.ts): the few statements the deploy runs, and D1's export and import.
+// The pretend Cloudflare's D1 (dev/mock-cloudflare.ts): the few statements the deploy and `bun erga setup` run, and
+// D1's export and import.
 
 import type { MockState } from "./mock-cloudflare";
 
@@ -41,10 +42,17 @@ export function d1Query(
     db.rows = (db.rows ?? []).filter((r) => !CRED.test(r));
     return [];
   }
-  const put = /^INSERT INTO credentials \(([^)]+)\) VALUES \(\?/.exec(sql);
+  // The first admin, as `bun erga setup` looks for one.
+  if (/^SELECT login FROM users WHERE role = 'admin'/i.test(sql.trim()))
+    return (db.rows ?? [])
+      .map((r) => /^INSERT INTO users \(login, name, role, created\) VALUES \('([^']+)', '[^']*', 'admin'/.exec(r)?.[1])
+      .filter(Boolean)
+      .map((login) => ({ login }));
+  // A row with its values as parameters (?1, ?2, ...: each once, in order), kept as the export writes it.
+  const put = /^INSERT INTO (credentials|users|server_config) \(([^)]+)\) VALUES \(\?/.exec(sql);
   if (put) {
     const lit = (v: unknown) => (v == null ? "NULL" : typeof v == "number" ? String(v) : `'${String(v).replace(/'/g, "''")}'`);
-    (db.rows ??= []).push(`INSERT INTO credentials (${put[1]}) VALUES (${(params ?? []).map(lit).join(", ")});`);
+    (db.rows ??= []).push(`INSERT INTO ${put[1]} (${put[2]}) VALUES (${(params ?? []).map(lit).join(", ")});`);
     return [];
   }
   // A statement batch is all or nothing: a CREATE TABLE of one that's there fails the lot, as SQLite would.

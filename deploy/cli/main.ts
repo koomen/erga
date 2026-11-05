@@ -17,7 +17,8 @@
 //   bun erga register <host> [--staging-of <host>]            signs in to an instance as an admin, in the browser, and
 //                                       adds it to .erga/config.json: its deploy facts, its plain settings, an ops token
 //   bun erga login <host>               a new ops token for a registered instance, when its token runs out
-//   bun erga own <command>              your own Erga on your own domain: fork, deploy, checklist (bun erga own help)
+//   bun erga setup <host>               a new instance: the answers, the first deploy, the first admin, the ops token
+//                                       (bun erga setup skill; bun erga setup help)
 
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -286,9 +287,9 @@ export async function main(argv: string[]) {
       return register(plain[0], opt("--staging-of")).catch((e: Error) => fail(e.message));
     case "login":
       return login(plain[0]).catch((e: Error) => fail(e.message));
-    case "own": {
-      const { ownMain } = await import("../own/cli");
-      return ownMain(rest);
+    case "setup": {
+      const { setupMain } = await import("../own/cli");
+      return setupMain(rest);
     }
     case undefined:
     case "help":

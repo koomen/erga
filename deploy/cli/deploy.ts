@@ -348,11 +348,15 @@ export interface DeployOptions {
   test?: (sha: string, log: (line: string) => void) => Promise<boolean>;
   /** The clone whose commits deploy, and whose origin's main a primary moves (default: this one). */
   clone?: string;
+  /** `bun erga setup`'s first deploy only: the secrets the Worker doesn't hold yet, and a new workers.dev subdomain. */
+  secrets?: Record<string, string>;
+  createSubdomain?: boolean;
 }
 
-const mocked = () => process.env.ERGA_DEPLOY_MOCK == "1";
+export const mocked = () => process.env.ERGA_DEPLOY_MOCK == "1";
 
-async function netOf(o: { net?: Fetch; token?: string }) {
+/** The Cloudflare API and the servers, with this machine's credential; under ERGA_DEPLOY_MOCK, a new mock Cloudflare. */
+export async function netOf(o: { net?: Fetch; token?: string }) {
   if (mocked()) {
     const { mockCloudflare } = await import("../../dev/mock-cloudflare");
     return {
@@ -376,7 +380,10 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     throw new Error(`${o.host} is a staging instance: name the commit (bun erga deploy <commit> ${o.host}).`);
   if (o.fresh && !entry.stagingOf)
     throw new Error(`${o.host} is a primary: --fresh is only for a staging instance, which copies its primary's data.`);
-  let target = entryTarget(config, entry);
+  // setup's first deploy: its secrets, one time, and a new workers.dev subdomain. A copy's target keeps them.
+  const own = { ...(o.secrets ? { secrets: o.secrets } : {}), ...(o.createSubdomain ? { createSubdomain: true } : {}) };
+  let target: Target = { ...entryTarget(config, entry), ...own };
+  const sent = Object.keys(target.secrets);
   const wrong = guardTarget(target);
   if (wrong) throw new Error(wrong);
   const { net, token, quick } = await netOf(o);
@@ -395,13 +402,13 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       sha = commitOf(chosen.version, clone);
       log(`The staging instances of ${o.host} run ${chosen.version}, healthy: that commit deploys.`);
     }
-    job.note({ commit: sha });
+    job.note({ commit: sha, ...(sent.length ? { secrets: sent } : {}) });
     // A primary: main must have the commit, or move forward to it. Checked before the build, so a deploy never leaves main behind.
     const main = entry.stagingOf ? null : mocked() && !o.clone ? "mock" : mainMove(clone, sha);
     // Before the tests and the build: a copy that needs a token it does not have stops here.
     const copying = entry.stagingOf ? await copyTarget(o.dir, config, entry, cf, !!o.fresh) : null;
     if (copying) {
-      target = copying;
+      target = { ...copying, ...own };
       job.note({ copy: o.fresh ? "fresh" : "no copy yet" });
     }
 
@@ -422,7 +429,9 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     log(
       `  account ${target.accountId}, Worker ${target.workerName}, database ${target.databaseName}${!entry.stagingOf ? "" : copying ? ` (a new copy of ${entry.stagingOf}'s database and documents: ${o.fresh ? "--fresh" : "it has no copy yet"})` : ` (its copy of ${entry.stagingOf}'s data kept)`}`
     );
-    log(`  https://${targetHost(target)}, documents' pages on ${targetPagesShown(target)}; no secret sent`);
+    log(
+      `  https://${targetHost(target)}, documents' pages on ${targetPagesShown(target)}; ${sent.length ? `the secrets sent: ${sent.join(", ")}` : "no secret sent"}`
+    );
     const { buildHere } = await import("../run");
     const release = await buildHere(sha, log, mocked());
     const carry: Carry = {};

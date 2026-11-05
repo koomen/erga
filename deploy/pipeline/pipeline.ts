@@ -9,8 +9,8 @@
 // cloudflare.config.ts, its static assets and the migrations). Its output is
 // a live server, each step reported as it goes. Its callers:
 //
-//   - a deploy from a machine: a registered instance (`bun erga deploy`, deploy/cli/deploy.ts), Erga's own targets
-//     (deploy/run.ts), and `bun erga own deploy` (deploy/own/cli.ts).
+//   - a deploy from a machine: a registered instance (`bun erga deploy` and `bun erga setup`, deploy/cli/deploy.ts), and
+//     Erga's own targets (deploy/run.ts).
 //
 // Staging runs on a copy of production's data, frozen: a deploy keeps it,
 // and copies afresh only when asked (deploy/run.ts staging --fresh) or when
@@ -95,7 +95,7 @@ export interface Deployed { url: string; pages: string; database: string; worker
 /**
  * Where a deploy goes: everything the pipeline needs to know about it, in
  * any account. deploy/run.ts makes production's and staging's from
- * deploy/targets.ts (targetFor); `bun erga own` makes a fork's (deploy/own/plan.ts, ownTarget).
+ * deploy/targets.ts (targetFor); `bun erga setup` makes a new instance's (deploy/own/plan.ts, ownTarget).
  */
 export interface Target {
   /** What to call it in the log ("staging", or the account's name). */
@@ -121,7 +121,7 @@ export interface Target {
   vars: Record<string, string>;
   /** Secrets set with this upload. */
   secrets: Record<string, string>;
-  /** Keep the Worker's other secrets from its last version (set once, by hand or by `bun erga own`), as `cf deploy` does. */
+  /** Keep the Worker's other secrets from its last version (set once, by hand or by `bun erga setup`), as `cf deploy` does. */
   keepSecrets?: boolean;
   /** Service bindings, by binding name: the Worker, and its entrypoint if not the default. */
   services?: Record<string, string | { service: string; entrypoint?: string }>;
@@ -256,7 +256,7 @@ export function guardTarget(t: Target): string | null {
 /**
  * The deploy pipeline: puts `release` on `target`, step by step, reporting
  * each as it starts and ends. The one pipeline for every deploy, each from a machine
- * (`bun erga deploy`, deploy/run.ts, `bun erga own`).
+ * (`bun erga deploy`, `bun erga setup`, deploy/run.ts).
  * Every step is safe to run again. `carry` gets what each step leaves (the restore point: a rollback goes back to it).
  */
 export async function runPipeline(

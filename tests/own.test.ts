@@ -1,4 +1,4 @@
-// bun erga own (deploy/own/plan.ts): the answers, the names, and the steps it decides from what it saw.
+// bun erga setup (deploy/own/plan.ts): the answers, the names, the entries, and the steps it decides from what it saw.
 import { expect, test } from "bun:test";
 import {
   answersProblem,
@@ -8,6 +8,7 @@ import {
   namesOf,
   nextStep,
   parseAnswer,
+  setupEntry,
   steps,
   varsOf,
 } from "../deploy/own/plan";
@@ -17,7 +18,6 @@ const facts = (over: Partial<Facts> = {}): Facts => ({
   bun: "1.3.14",
   origin: "https://github.com/koomen/erga.git",
   installed: true,
-  dirty: false,
   head: "abcdef1234567890",
   login: { ok: true, accounts: [{ id: "a".repeat(32), name: "Mine" }] },
   account: "a".repeat(32),
@@ -33,6 +33,9 @@ test("the answers are read as the person types them, and a bad one says why", ()
   expect(parseAnswer("staging", "no")).toEqual({ value: "" });
   expect(parseAnswer("providers", "Google, github")).toEqual({ value: ["github", "google"] });
   expect(parseAnswer("host", "Erga.Example.com")).toEqual({ value: "erga.example.com" });
+  expect(parseAnswer("feedback", "https://github.com/ada/erga/")).toEqual({ value: "ada/erga" });
+  expect(parseAnswer("feedback", "no")).toEqual({ value: "" });
+  expect("problem" in parseAnswer("feedback", "not a repo")).toBe(true);
   expect("problem" in parseAnswer("host", "not a host")).toBe(true);
   expect(answersProblem({ ...answers, host: "erga.other.org" }, ["example.com"])).toContain("isn't on a domain");
   expect(answersProblem({ ...answers, pages: "example.com" }, ["example.com"])).toContain("different domain");
@@ -65,7 +68,7 @@ test("the steps go in order, each with who does it, and the next one is the firs
   const ready = steps(
     answers,
     facts({
-      secrets: ["GITHUB_CLIENT_SECRET"],
+      secrets: ["erga.example.com:GITHUB_CLIENT_SECRET"],
       targets: {
         production: {
           worker: "missing",
@@ -73,7 +76,7 @@ test("the steps go in order, each with who does it, and the next one is the firs
           version: null,
           health: null,
           signIn: null,
-          adminIn: null,
+          registered: false,
           rule: null,
           held: null,
         },
@@ -81,11 +84,15 @@ test("the steps go in order, each with who does it, and the next one is the firs
     }),
     { ids }
   );
-  expect(nextStep(ready)).toMatchObject({ id: "deploy-production", who: "agent", next: "Run: bun erga own deploy production" });
+  expect(nextStep(ready)).toMatchObject({
+    id: "deploy-production",
+    who: "agent",
+    next: expect.stringContaining("Run: bun erga setup erga.example.com "),
+  });
   const taken = steps(
     answers,
     facts({
-      secrets: ["GITHUB_CLIENT_SECRET"],
+      secrets: ["erga.example.com:GITHUB_CLIENT_SECRET"],
       targets: {
         production: {
           worker: "missing",
@@ -93,7 +100,7 @@ test("the steps go in order, each with who does it, and the next one is the firs
           version: null,
           health: null,
           signIn: null,
-          adminIn: null,
+          registered: false,
           rule: null,
           held: null,
         },
@@ -105,7 +112,7 @@ test("the steps go in order, each with who does it, and the next one is the firs
   const up = steps(
     answers,
     facts({
-      secrets: ["GITHUB_CLIENT_SECRET"],
+      secrets: ["erga.example.com:GITHUB_CLIENT_SECRET"],
       targets: {
         production: {
           worker: "ours",
@@ -113,7 +120,7 @@ test("the steps go in order, each with who does it, and the next one is the firs
           version: "abcdef123456",
           health: "ok",
           signIn: "ok",
-          adminIn: false,
+          registered: false,
           rule: null,
           held: null,
         },
@@ -121,7 +128,8 @@ test("the steps go in order, each with who does it, and the next one is the firs
     }),
     { ids }
   );
-  expect(nextStep(up)).toMatchObject({ id: "admin-production", who: "person" });
+  // Deployed and healthy: the admin signs in and approves the ops token, which registers the server.
+  expect(nextStep(up)).toMatchObject({ id: "register-production", who: "person" });
   // A new machine has no secrets file: the app's secret on the server's Worker is enough, and a deploy keeps it.
   const held = { secrets: ["GITHUB_CLIENT_SECRET", "SESSION_SECRET", "FACTORY_KEY"], vars: { GITHUB_CLIENT_ID: "Iv1.x" } };
   const elsewhere = steps(
@@ -134,7 +142,7 @@ test("the steps go in order, each with who does it, and the next one is the firs
           version: "0123456789ab",
           health: "ok",
           signIn: "ok",
-          adminIn: true,
+          registered: true,
           rule: null,
           held,
         },
@@ -143,6 +151,27 @@ test("the steps go in order, each with who does it, and the next one is the firs
     { ids }
   );
   expect(nextStep(elsewhere)).toMatchObject({ id: "deploy-production", who: "agent" });
+});
+
+test("the entries come from the answers alone: the names, the plain settings, the primary of a staging server, no token", () => {
+  const o = { account: "a".repeat(32), zones: ["example.com"], subdomain: "me", ids: { github: "Iv1.x" } };
+  const a = { ...answers, staging: "erga-staging.example.com" };
+  expect(setupEntry(a, "production", o)).toEqual({
+    host: "erga.example.com",
+    account: "a".repeat(32),
+    worker: "erga-example-com",
+    database: "erga-example-com",
+    subdomain: "me",
+    app: { kind: "domain", zoneName: "example.com", hostname: "erga.example.com" },
+    pages: { kind: "shared" },
+    vars: varsOf(a, o.ids),
+    token: "",
+  });
+  expect(setupEntry(a, "staging", o)).toMatchObject({
+    host: "erga-staging.example.com",
+    stagingOf: "erga.example.com",
+    worker: "erga-staging-example-com",
+  });
 });
 
 test("the GitHub App's manifest has every server's callback, and no permissions", () => {

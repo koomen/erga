@@ -1,6 +1,7 @@
-// The local checklist page (`bun erga own start`): where the deploy is, who does each step and how, live checks, the
-// person's own forms (the decisions, the sign-in apps: secrets typed here, never in the agent's chat), and a chat
-// with the agent (.erga/inbox.jsonl; the agent reads it with `bun erga own inbox --wait` and answers with `bun erga own say`).
+// The local checklist page (`bun erga setup <host> start`): where the setup is, who does each step and how, live checks,
+// the person's own forms (the decisions, the sign-in apps: secrets typed here, never in the agent's chat), and a chat
+// with the agent (.erga/inbox.jsonl; the agent reads it with `bun erga setup <host> inbox --wait` and answers with
+// `bun erga setup <host> say`).
 // It listens on 127.0.0.1 only, and takes a POST only from its own origin.
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -8,7 +9,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { esc } from "../../shared/html";
 import { githubManifest, PRESETS, QUESTIONS } from "./plan";
-import { addMessage, answersOf, DIR, loadOwn, loadSecrets, messages, saveOwn, saveSecrets } from "./store";
+import { addMessage, answersOf, DIR, loadOwn, messages, putSecret, saveOwn } from "./store";
 import { setAnswers, status } from "./cli";
 
 const json = (v: unknown, s = 200) =>
@@ -74,12 +75,10 @@ export async function startPage(wanted: number, open: boolean) {
         const { id, secret } = (await req.json()) as { id?: string; secret?: string };
         if (!id?.trim().endsWith(".apps.googleusercontent.com") || !secret?.trim())
           return json({ problems: ["The client id ends with .apps.googleusercontent.com, and the secret is needed too."] });
-        const own = loadOwn(),
-          s = loadSecrets();
+        const own = loadOwn();
         own.google = { clientId: id.trim() };
-        s.GOOGLE_CLIENT_SECRET = secret.trim();
         saveOwn(own);
-        saveSecrets(s);
+        putSecret(answersOf(own).host, "GOOGLE_CLIENT_SECRET", secret.trim());
         cached = null;
         return json({ problems: [] });
       }
@@ -108,7 +107,7 @@ export async function startPage(wanted: number, open: boolean) {
           return new Response("This answer isn't for a request from this page. Start again from the checklist.", { status: 400 });
         const r = await fetch(`https://api.github.com/app-manifests/${code}/conversions`, {
           method: "POST",
-          headers: { Accept: "application/vnd.github+json", "User-Agent": "erga-own" },
+          headers: { Accept: "application/vnd.github+json", "User-Agent": "erga-setup" },
         });
         const app = (await r.json().catch(() => null)) as {
           client_id?: string;
@@ -122,12 +121,10 @@ export async function startPage(wanted: number, open: boolean) {
             `GitHub didn't give the app's values: ${esc(app?.message ?? String(r.status))}. Start again from the checklist.`,
             { status: 502 }
           );
-        const own = loadOwn(),
-          s = loadSecrets();
+        const own = loadOwn();
         own.github = { clientId: app.client_id, slug: app.slug, url: app.html_url };
-        s.GITHUB_CLIENT_SECRET = app.client_secret;
         saveOwn(own);
-        saveSecrets(s);
+        putSecret(answersOf(own).host, "GITHUB_CLIENT_SECRET", app.client_secret);
         cached = null;
         addMessage("agent", `The GitHub App ${app.slug} is made, and its values are stored. Tell me to go on, and I'll deploy.`);
         return Response.redirect(`${url.origin}/#github`, 303);
@@ -155,7 +152,7 @@ const QUESTION_FIELDS = QUESTIONS.map((q) => {
 }).join("");
 
 const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Your Erga: deploy</title>
+<title>Your Erga: setup</title>
 <style>
 :root{--bg:#fbfaf7;--fg:#1d1c1a;--muted:#77736b;--line:#ddd8ce;--card:#fff;--ok:#2e9b5b;--okbg:#e3f4ea;--warn:#b7801a;--bad:#cf4b3f;--accent:#2f6fde;--zebra:#f2efe8}
 @media (prefers-color-scheme:dark){:root{--bg:#17171a;--fg:#ecebe7;--muted:#9a978f;--line:#3a3a40;--card:#212126;--ok:#5cc489;--okbg:#18301f;--warn:#e0b04a;--bad:#ef7a6e;--accent:#6b9cff;--zebra:#1d1d22}}
@@ -194,13 +191,13 @@ code{font:12.5px ui-monospace,Menlo,monospace;background:var(--zebra);padding:1p
 <div class="card hidden" id="github"><h2>GitHub sign-in</h2><p>One click makes a GitHub App for sign-in, with the right addresses. GitHub then sends its values back to this page. Nothing to copy.</p>
 <div id="ghmake"><p><a class="btn" href="/github/new">Create the GitHub App</a></p><small>For an organization's app: <a href="#" id="orgapp">make it under an organization</a>.</small></div><p id="ghdone" class="hidden"></p></div>
 <div class="card hidden" id="google"><h2>Google sign-in</h2><ol id="gsteps"></ol><form id="gform"><label><b>Client ID</b><input name="id" autocomplete="off"></label><label><b>Client secret</b><input name="secret" type="password" autocomplete="off"><small>It goes to .erga/secrets.json on this machine, and to your server. Never paste it in the chat.</small></label><button>Save</button><div class="problems" id="gprob"></div></form></div>
-<div class="card" id="chat"><h2>Your agent</h2><div class="log" id="log"></div><form id="say"><textarea name="text" rows="2" placeholder="A message to your coding agent"></textarea><button>Send</button></form><small>Your agent reads these with <code>bun erga own inbox</code>. Your terminal works too.</small></div>
+<div class="card" id="chat"><h2>Your agent</h2><div class="log" id="log"></div><form id="say"><textarea name="text" rows="2" placeholder="A message to your coding agent"></textarea><button>Send</button></form><small>Your agent reads these with <code>bun erga setup &lt;host&gt; inbox</code>. Your terminal works too.</small></div>
 </aside></div>
 <script>
 const $=(s)=>document.querySelector(s);
 const post=(u,b)=>fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)}).then(r=>r.json());
 const h=(s)=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const code=(s)=>h(s).replace(/(bun erga own [^,;.)]+|bunx? [a-z][^,;.)]+|https?:\\/\\/[^\\s,;)]+)/g,"<code>$1</code>");
+const code=(s)=>h(s).replace(/(bun erga [^,;.)]+|bunx? [a-z][^,;.)]+|https?:\\/\\/[^\\s,;)]+)/g,"<code>$1</code>");
 let filled=false;
 async function refresh(fresh){
   const s=await fetch("/api/status"+(fresh?"?fresh":"")).then(r=>r.json());
