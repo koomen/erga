@@ -37,9 +37,7 @@ function serverCard(s: AuthStatus, o: { editable: boolean; session: Session; on:
     ? ""
     : s.inUse.source == "page"
       ? `<p class="note deploy-note">${s.deploy.clientId ? `The deploy has client ID <code>${esc(s.deploy.clientId)}</code>${s.deploy.secretSet ? "" : ", with no secret"}.` : "The deploy has no client ID."} Clear goes back to the deploy's values${deployHas ? `; sign-in also falls back to them if these stop working` : ""}.</p>`
-      : deployHas
-        ? `<p class="note deploy-note">If values saved here stop working, sign-in falls back to the deploy's values.</p>`
-        : "";
+      : "";
   const devNote = s.dev
     ? `<p class="note">Local development signs everyone in without ${name}, so these values are not used here.</p>`
     : "";
