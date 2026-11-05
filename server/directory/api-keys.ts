@@ -92,6 +92,13 @@ export const DEPLOY_SECRETS = [
     why: "A wrong value stops every sign-in, the admin's too: the Authentication page checks values with GitHub before it uses them.",
   },
   {
+    env: "GITHUB_ISSUES_TOKEN",
+    service: "GitHub",
+    description:
+      "Opens an issue for each feedback people send, in the repository of the setting Feedback's repository. A fine-grained token with only Issues: read and write on that repository.",
+    why: "It writes to a repository on GitHub.",
+  },
+  {
     env: "SNAPSHOT_TOKEN",
     service: "Erga",
     description: "Lets staging copy production's documents.",

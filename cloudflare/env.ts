@@ -82,6 +82,8 @@ export interface Env {
   SNAPSHOT_IMPORT?: string;
   /** Erga's repository on GitHub (owner/name), on erga.dev and staging: /api/repo reads it, and /git redirects to it. */
   SOURCE_REPO?: string;
+  /** A Worker secret: a GitHub token that may open issues in SOURCE_REPO, for the feedback people send (server/feedback.ts). */
+  GITHUB_ISSUES_TOKEN?: string;
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */
   DEV_LOGIN?: string;
 

@@ -57,6 +57,12 @@ export const AGENT_ACTIONS: AgentAction[] = [
     tool: "people",
   },
   { route: "GET /admin/api-keys", domain: "admin", action: "Read the API keys' status (API keys)", tool: "settings" },
+  {
+    route: "GET /admin/feedback",
+    domain: "admin",
+    action: "Read the feedback people sent, with each one's issue (Feedback)",
+    tool: "feedback",
+  },
   { route: "POST /admin/credentials", domain: "admin", action: "Set or replace an API key (API keys)", exempt: SECRET },
   {
     route: "GET /admin/auth",

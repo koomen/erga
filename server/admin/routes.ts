@@ -9,6 +9,7 @@
 //                              add one (before their first sign-in too), remove one
 //   /admin/access              the Access page: the group rules (everybody, a Google Workspace, a GitHub organization: No
 //                              access, Can authenticate or Can create and edit content), and whether users can share content publicly
+//   /admin/feedback            the Feedback page: what people sent with Send feedback, newest first, each with its GitHub issue
 //   /admin/api-keys            the API keys page: every key Erga needs from the services it calls
 //   /admin/auth                the Authentication page: how people sign in on this server (GitHub, Google)
 //   GET /admin/auth/status     the same as JSON {here, google, providers} (server/identity/apps.ts, AuthStatus: never a secret), with live checks
@@ -52,6 +53,7 @@ import { authPage } from "./auth.ts";
 import { usersPage } from "./users.ts";
 import { accessPage } from "./access.ts";
 import { changesPage } from "./changes.ts";
+import { feedbackPage } from "./feedback.ts";
 
 /** /admin and its POSTs. */
 export const adminRoutes = Effect.gen(function* () {
@@ -70,6 +72,7 @@ export const adminRoutes = Effect.gen(function* () {
       return yield* call(() => changesPage(platform, session!, Number.isInteger(before) && before > 0 ? before : undefined));
     }
     if (url.pathname == "/admin/api-keys") return yield* call(() => apiKeysPage(platform, session!));
+    if (url.pathname == "/admin/feedback") return yield* call(() => feedbackPage(platform, session!));
     if (url.pathname == "/admin/auth" || url.pathname == "/admin/auth/status") {
       const status = yield* call(() => authOps(platform, url.origin).status(who!));
       return url.pathname == "/admin/auth" ? authPage(session!, status) : json(status);

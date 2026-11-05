@@ -1,7 +1,7 @@
 // Who you are, in the upper right of every page erga.dev serves: your
 // avatar (your picture, shared/avatars.ts, or your initial on your colour if
 // you have none or it doesn't load), which opens a small menu (your name, Go to… with its key ⌘K, Documents, Settings,
-// Admin settings for admins, Sign out); or, signed out, a person in a circle whose
+// Admin settings for admins, Send feedback, Sign out); or, signed out, a person in a circle whose
 // menu has only Sign in (to the sign-in page, coming back to the same page).
 //
 // The Worker adds it to each of the site's HTML pages (`withAccount`,
@@ -77,6 +77,7 @@ export function accountMarkup(account: Account | null, here: string): string {
 <a href="${esc(link("/docs", s))}">Documents</a>
 <a href="#settings">Settings</a>
 ${account.admin ? `<a href="${esc(link("/admin", s))}">Admin settings</a>` : ""}
+<a href="#feedback">Send feedback</a>
 <a href="/auth/logout">Sign out</a>
 </div>
 </div>`;

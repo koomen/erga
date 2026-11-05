@@ -126,6 +126,18 @@ export const SETTINGS = {
     default: true,
     parse: boolean,
   }),
+  feedback_repository: setting<string>({
+    label: "Feedback's repository",
+    description:
+      "The GitHub repository (owner/name) where Send feedback opens an issue, without the sender's name. Empty: no issues; the Feedback page keeps the feedback.",
+    default: "",
+    parse: (v) => {
+      const repo = (v === null ? "" : text(200)(v)).replace(/^https:\/\/github\.com\//, "").replace(/\/+$/, "");
+      if (repo && !/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(repo))
+        throw new ConfigError({ message: "must be a GitHub repository: owner/name" });
+      return repo;
+    },
+  }),
   agent_keys: setting<"server" | "own">({
     label: "Whose keys the agents use",
     description:
