@@ -242,8 +242,9 @@ export class Directory {
     // they view it at /.
     if (doc.owner == HOME_OWNER) return (await this.users.actsAsAdmin(who)) ? "editor" : "viewer";
     if (role != "owner" && role != "editor") return role;
-    if ((await this.homeId()) != doc.id) return role;
-    return (await this.users.actsAsAdmin(who)) ? role : "viewer";
+    // Both at once, so a stall of the database counts once (actsAsAdmin reads the user `decide` reads anyway).
+    const [home, admin] = await Promise.all([this.homeId(), this.users.actsAsAdmin(who)]);
+    return home != doc.id || admin ? role : "viewer";
   }
 
   async get(id: string): Promise<DocRow | null> {
@@ -604,9 +605,12 @@ export class Directory {
     // The owner as the permissions say: a host's copy of its owner is the one it was made with, and the homepage
     // project's adoption (adoptHome) changes the owner only here, so its host still names the admin who had it.
     const owner = permissions.find((p) => p.role == "owner")?.login ?? doc.owner;
-    const role = await this.homeLimit(who, { id: doc.id, owner }, best);
-    // The access rules: someone without write opens their documents, and those shared with them, as a viewer.
-    return (role == "owner" || role == "editor") && !(await this.mayWrite(login)) ? "viewer" : role;
+    // The access rules: someone without write opens their documents, and those shared with them, as a viewer. Asked
+    // with the homepage's limit, not after it, so a stall of the database counts once; only where homeLimit can
+    // answer owner or editor (an admin's session edits the homepage project).
+    const writes = best == "owner" || best == "editor" || (owner == HOME_OWNER && who.admin == true);
+    const [role, mayWrite] = await Promise.all([this.homeLimit(who, { id: doc.id, owner }, best), writes ? this.mayWrite(login) : true]);
+    return (role == "owner" || role == "editor") && !mayWrite ? "viewer" : role;
   }
 
   // ------------------------------------------------------------ the access rules (server/directory/access.ts)
@@ -618,8 +622,10 @@ export class Directory {
     if (user.role == "admin") return "write";
     const had = this.known.get(user.login);
     if (had && had.version == this.rules.version && Date.now() - had.at < 10_000) return had.access;
-    const version = this.rules.version,
-      access = higher(user.access ?? "none", await this.rules.accessFor(await this.factsOf(user.login)));
+    const version = this.rules.version;
+    // The rules (remembered a few seconds) are read with the account's identities, not after them.
+    const [facts] = await Promise.all([this.factsOf(user.login), this.rules.all()]);
+    const access = higher(user.access ?? "none", await this.rules.accessFor(facts));
     if (this.known.size > 10_000) this.known.clear();
     this.known.set(user.login, { access, at: Date.now(), version });
     return access;
