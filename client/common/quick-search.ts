@@ -1,9 +1,12 @@
 // The quick search: ⌘K (Ctrl+K off a Mac) on every page of the site for someone signed in, the editor's too, and from inside a
-// document's frame (it says so: client/inline/reader.ts, the editor's bridge). A pane to find a document you may open
-// (list_documents) or a page of Erga itself you may use (whoami's pages: the admin sections only for an admin), by typing
-// part of its name; ↑ ↓ choose, Enter opens (⌘Enter in a new tab), Esc closes. One pane per page: the first script to
-// install it owns window.ergaQuickSearch, and the editor's shell calls that.
+// document's frame (it says so: client/inline/reader.ts, the editor's bridge). A pane to find a page of the project you're
+// in (ls), a document you may open (list_documents: a scratch document isn't on it) or a page of Erga itself you may use
+// (whoami's pages: the admin sections only for an admin), by typing part of its name; ↑ ↓ choose, Enter opens (⌘Enter in
+// a new tab), Esc closes. One pane per page: the first script to install it owns window.ergaQuickSearch, and the editor's
+// shell calls that. The account menus' "Go to…" opens it too (quickLink), with the key beside it.
+// It opens at once: with the list it read last, read again behind each time it opens, and filtered here.
 
+import { readable } from "../../document/pages";
 import { esc } from "../../shared/html";
 import { runTool } from "./tools";
 
@@ -51,11 +54,27 @@ export function match(all: Found[], query: string): Found[] {
     .map((x) => x.f);
 }
 
+const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+
+/** An account menu's "Go to…" (`a`, with a <kbd> for the key): it shows this system's key, and a click opens the pane after `close` closes the menu. */
+export function quickLink(a: HTMLElement | null | undefined, close: () => void): void {
+  if (!a) return;
+  const kbd = a.querySelector("kbd");
+  if (kbd) kbd.textContent = mac ? "⌘K" : "Ctrl K";
+  a.addEventListener("click", (e) => {
+    e.preventDefault();
+    close();
+    window.ergaQuickSearch?.();
+  });
+}
+
 /** ⌘K on this page, and the document frame's message for it (`fromFrame`: whether a message came from the frame). */
 export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () => false): void {
   if (window.ergaQuickSearch) return;
   let root: HTMLElement | null = null;
-  let entries: Promise<Found[]> | null = null;
+  // The list as it was read last (shown at once), and the read under way.
+  let entries: Found[] | null = null;
+  let reading: Promise<void> | null = null;
   let shown: Found[] = [];
   let at = 0;
   // In local development the page's ?user= says who is signed in: the pages it opens keep it.
@@ -64,17 +83,32 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
   const href = (path: string) =>
     path.startsWith("#") || !user ? path : `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(user)}`;
 
-  const load = () =>
-    (entries ??= Promise.all([
+  // On a document's page: the document (its project's pages come first).
+  const doc = document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')?.content;
+  type Ls = { title?: string; kind?: string; index?: string; entries?: { type: string; path: string; title?: string; address?: string }[] };
+  const read = () =>
+    (reading ??= Promise.all([
+      doc ? runTool<Ls>("ls", { document: doc }).catch(() => null) : null,
       runTool<{ title: string; address: string }[]>("list_documents").catch(() => []),
       runTool<{ pages?: { group: string; label: string; path: string }[] }>("whoami").then(
         (w) => w.pages ?? [],
         () => []
       ),
-    ]).then(([docs, pages]) => [
-      ...docs.map((d) => ({ group: "Documents", label: d.title || d.address, path: d.address, hint: d.address })),
-      ...pages.map((p) => ({ ...p, hint: p.path })),
-    ]));
+    ]).then(([ls, docs, pages]) => {
+      reading = null;
+      const project = ls?.kind == "project" ? ls : null;
+      entries = [
+        ...(project?.entries ?? [])
+          .filter((e) => e.type == "page" && e.address)
+          // Its home page first, then as its tree has them.
+          .sort((a, b) => Number(b.path == project!.index) - Number(a.path == project!.index))
+          .map((e) => ({ group: `Pages of ${project!.title}`, label: e.title || readable(e.path), path: e.address!, hint: e.address })),
+        ...docs.map((d) => ({ group: "Documents", label: d.title || d.address, path: d.address, hint: d.address })),
+        ...pages.map((p) => ({ ...p, hint: p.path })),
+      ];
+      if (root && !root.hidden) void render(root.querySelector("input")!.value, true);
+    }));
+  const load = async () => entries ?? (await read(), entries ?? []);
 
   function build(): HTMLElement {
     const style = document.createElement("style");
@@ -112,20 +146,22 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
     return el;
   }
 
-  async function render(query: string) {
+  /** `keep`: the list was read again: the row chosen stays chosen, if it's still there. */
+  async function render(query: string, keep = false) {
     const list = root!.querySelector("ul")!;
     const all = await load();
     if (root!.querySelector("input")!.value != query) return;
+    const was = keep ? shown[at]?.path : undefined;
     shown = match(all, query).slice(0, 30);
-    at = 0;
+    at = Math.max(0, was ? shown.findIndex((f) => f.path == was) : 0);
     let html = "",
       group = "";
     shown.forEach((f, i) => {
       if (f.group != group) html += `<li class="erga-qs-group" role="presentation">${esc((group = f.group))}</li>`;
-      html += `<li class="erga-qs-item" role="option" id="erga-qs-${i}" data-i="${i}" aria-selected="${i == 0}"><b>${esc(f.label)}</b>${f.hint ? `<span>${esc(f.hint)}</span>` : ""}</li>`;
+      html += `<li class="erga-qs-item" role="option" id="erga-qs-${i}" data-i="${i}" aria-selected="${i == at}"><b>${esc(f.label)}</b>${f.hint ? `<span>${esc(f.hint)}</span>` : ""}</li>`;
     });
     list.innerHTML = html || '<li class="erga-qs-empty">Nothing found.</li>';
-    if (shown.length) pick(0);
+    if (shown.length) pick(at);
   }
 
   function pick(i: number) {
@@ -154,13 +190,14 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
       root.hidden = false;
       input.value = "";
       void render("");
+      // (The first time, render's own read is this one.)
+      if (entries) void read();
     }
     input.focus();
     // From a key in the document's frame, the focus goes back there as that key ends: take it after.
     setTimeout(() => input.focus());
   }
 
-  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   window.ergaQuickSearch = open;
   addEventListener(
     "keydown",

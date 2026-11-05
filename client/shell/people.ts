@@ -3,6 +3,7 @@
 import type { Presence } from "../../libs/text/ui/collab";
 import { $, type Shell } from "./shell";
 import { safeAvatar } from "../../shared/avatars";
+import { quickLink } from "../common/quick-search";
 
 export function mountPeople(shell: Shell) {
 
@@ -140,7 +141,7 @@ export function mountPeople(shell: Shell) {
   document.addEventListener("pointerdown", (e) => {
     if (!e.composedPath().includes(people)) stackPeople();
   });
-  // Your avatar opens a small menu: who you are, Documents, Settings,
+  // Your avatar opens a small menu: who you are, Go to… (the quick search), Documents, Settings,
   // Admin settings if you're an admin, Sign out (the same as every other page's upper
   // right, server/pages/account-menu.ts). The app says which links (meta erga-account).
   const account = $("account");
@@ -156,6 +157,7 @@ export function mountPeople(shell: Shell) {
       return null;
     }
   })();
+  quickLink($("account-go"), () => toggleAccount(false));
   let accountBtn: HTMLElement | null = null;
   function accountButton(b: HTMLElement) {
     accountBtn = b;

@@ -6,7 +6,7 @@
 import { mountBars } from "../common/bars";
 import { imgFallback } from "../common/img-fallback";
 import { newDocPicker } from "../common/new-doc";
-import { installQuickSearch } from "../common/quick-search";
+import { installQuickSearch, quickLink } from "../common/quick-search";
 
 export default function homeControls(): void {
   const host = document.currentScript!.previousElementSibling as HTMLElement;
@@ -66,6 +66,7 @@ export default function homeControls(): void {
       menu.hidden = !open;
       btn.setAttribute("aria-expanded", String(open));
     };
+    quickLink(menu.querySelector(".erga-account-go"), () => show(false));
     btn.addEventListener("click", () => {
       show(!!menu.hidden);
       if (!menu.hidden) menu.querySelector("a")?.focus({ preventScroll: true });

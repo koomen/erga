@@ -3,7 +3,7 @@
 
 import { fastClick } from "../common/fast-click";
 import { imgFallback } from "../common/img-fallback";
-import { installQuickSearch } from "../common/quick-search";
+import { installQuickSearch, quickLink } from "../common/quick-search";
 
 export default function accountMenu(): void {
   const root = document.currentScript!.previousElementSibling!.previousElementSibling!,
@@ -16,6 +16,7 @@ export default function accountMenu(): void {
     menu.hidden = !open;
     btn.setAttribute("aria-expanded", String(open));
   };
+  quickLink(menu.querySelector(".erga-account-go"), () => show(false));
   btn.addEventListener("click", () => {
     show(!!menu.hidden);
     if (!menu.hidden) menu.querySelector("a")?.focus({ preventScroll: true });

@@ -1,9 +1,11 @@
-// ⌘K, the quick search (client/common/quick-search.ts): on every page for someone signed in, it finds documents and
-// Erga's own pages, the admin ones only for an admin. In a document it opens from inside the page too, and the editor's
-// link moved to ⌘⇧K.
+// ⌘K, the quick search (client/common/quick-search.ts): on every page for someone signed in, it finds the pages of the
+// project you're in, documents and Erga's own pages, the admin ones only for an admin. In a document it opens from inside
+// the page too, and the editor's link moved to ⌘⇧K. The avatar's menu has it too: Go to…, with the key.
 import type { Page } from "playwright-core";
 import { expect, servers, test } from "../../helpers/fixtures";
 import { openEditor } from "../../helpers/editor";
+import { runTool } from "../../helpers/tools";
+import { clickOn } from "./access";
 import { openViewer } from "../viewer/viewer";
 
 await servers.main();
@@ -79,4 +81,72 @@ test("in a document, ⌘K opens it from inside the page, viewing and editing; in
   await page.mouse.click(650, 500);
   await page.keyboard.press("ControlOrMeta+k");
   await expect.poll(async () => (await pane(page))?.groups).toContain("Pages");
+});
+
+/** A new document of the dev server's person, made as the pages make one: its address. */
+async function made(root: string, args: Record<string, unknown>): Promise<string> {
+  const r = await runTool<{ address: string }>(root, "create_document", args);
+  expect(r.error ?? "").toBe("");
+  return r.result!.address;
+}
+
+test("in a project, Go to… in the avatar's menu shows the key and opens it, the project's pages first; typing and Enter open a page", async ({
+  tab,
+}) => {
+  const page = tab.page,
+    root = (await servers.main()).root;
+  const at = await made(root, {
+    title: "Quick project",
+    kind: "project",
+    files: { "index.html": "<h1>Home</h1>", "plans/roadmap.html": "<title>Road map</title><h1>Road map</h1>" },
+  });
+  await openViewer(page, root + at);
+  await clickOn(page, "[data-erga-account] button");
+  expect(await page.evaluate(() => document.querySelector(".erga-account-go")?.textContent)).toBe(
+    `Go to…${process.platform == "darwin" ? "⌘K" : "Ctrl K"}`
+  );
+  await page.screenshot({ path: ".e2e/shots/quick-search-menu.png" });
+  await clickOn(page, ".erga-account-go");
+  await expect.poll(async () => (await pane(page))?.groups[0]).toBe("Pages of Quick project");
+  expect(await page.evaluate(() => document.querySelector<HTMLElement>(".erga-account-menu")!.hidden), "the menu closed").toBe(true);
+  expect((await pane(page))!.rows.slice(0, 2)).toEqual([`Home${at}`, `Road map${at}/plans/roadmap`]);
+  await page.screenshot({ path: ".e2e/shots/quick-search-project.png" });
+  await page.keyboard.type("road");
+  await expect.poll(async () => (await pane(page))?.rows).toEqual([`Road map${at}/plans/roadmap`]);
+  await page.keyboard.press("Enter");
+  await page.waitForURL(`${root}${at}/plans/roadmap`);
+  expect(tab.errors).toEqual([]);
+});
+
+test("in the editor, ⌘K finds a document made since it last opened, never a scratch one; Enter opens it; the editor's Go to… opens it too", async ({
+  tab,
+}) => {
+  const root = (await servers.main()).root;
+  const ed = await openEditor(tab, await servers.main(), "page");
+  const page = tab.page;
+  const at = await ed.charAt("h1", 2);
+  await ed.click(at.x, at.y);
+  await ed.press("ControlOrMeta+k");
+  await expect.poll(async () => (await pane(page))?.groups).toContain("Documents");
+  await page.keyboard.press("Escape");
+  await expect.poll(() => pane(page)).toBeNull();
+  // Made while the editor is open: the next ⌘K reads the list again.
+  const fresh = await made(root, { title: "Zebra crossing notes" });
+  const scratch = await made(root, { title: "Zebra scratch", scratch: true });
+  await ed.press("ControlOrMeta+k");
+  await page.keyboard.type("zebra");
+  await expect.poll(async () => (await pane(page))?.rows).toEqual([`Zebra crossing notes${fresh}`]);
+  expect((await pane(page))!.rows.join(" ")).not.toContain(scratch);
+  await page.screenshot({ path: ".e2e/shots/quick-search-editor.png" });
+  // The editor keeps its text: none of the keys reached it.
+  expect(await ed.source()).not.toContain("zebra");
+  await page.keyboard.press("Enter");
+  await page.waitForURL(`${root}${fresh}`);
+  // The editor's own avatar menu (client/editor.html, #account).
+  const ed2 = await openEditor(tab, await servers.main(), "page");
+  await ed2.loaded();
+  await clickOn(page, "#me .avatar");
+  await clickOn(page, "#account-go");
+  await expect.poll(async () => (await pane(page))?.groups).toContain("Documents");
+  expect(await page.evaluate(() => document.getElementById("account")!.hidden), "the menu closed").toBe(true);
 });

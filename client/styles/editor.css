@@ -189,6 +189,8 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
 .account-who span:empty { display: none; }
 .account a { display: block; padding: 6px 10px; border-radius: 7px; color: var(--fg); text-decoration: none; white-space: nowrap; }
 .account a[hidden] { display: none; }
+.account #account-go { display: flex; }
+.account kbd { margin-left: auto; padding-left: 16px; color: var(--soft); font: inherit; font-size: 12px; }
 .account a:hover, .account a:focus-visible { background: color-mix(in srgb, var(--chrome) 14%, transparent); outline: none; }
 @media (pointer: coarse) { .account a { padding: 10px 12px; } }
 .avatar.me[aria-expanded="true"]::before { display: none; }

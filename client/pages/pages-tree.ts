@@ -26,7 +26,7 @@
 // it (or goes up), Home and End, Enter opens a page or a folder, F2 renames,
 // Delete deletes, and Shift-F10 (or the context-menu key) opens a row's menu.
 
-import { baseName, encodePath, joinPath, pageUrl, parentOf, slugify } from "../../document/pages";
+import { baseName, encodePath, joinPath, pageUrl, parentOf, readable, slugify } from "../../document/pages";
 import { runTool } from "../common/tools";
 import { ICONS, STYLE } from "./pages-tree-style";
 
@@ -113,14 +113,6 @@ export const fileName = (typed: string, type: EntryType) => {
   const slug = slugify(name, PAGE_NAME_MAX);
   return type == "page" ? (slug ? `${slug}.html` : "") : typed.trim();
 };
-
-/** A page's name made readable, from its file: "spring-migration.html" is "Spring migration". */
-export function readable(path: string, folderTitle?: string): string {
-  const stem = baseName(path).replace(PAGE_EXT, "");
-  const word = stem.toLowerCase() == "index" ? (parentOf(path) ? baseName(parentOf(path)) : folderTitle || "Home") : stem;
-  const spaced = word.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
-  return spaced ? spaced[0].toUpperCase() + spaced.slice(1) : word;
-}
 
 /** Whether an entry shows: in a project, all of them; in a document, only its page. */
 export function shows(n: { type: EntryType; path: string }, kind: DocKind = "project"): boolean {
