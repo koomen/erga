@@ -1,19 +1,23 @@
-// Where your own Erga's settings and secrets are on this machine: .erga/ in the checkout, which git ignores.
+// Where `bun erga setup` keeps its answers and the new servers' secrets on this machine: .erga/ in the main clone
+// (deploy/cli/config.ts, ergaDir), which git ignores. Each worktree of the clone uses the same folder.
 //
-//   .erga/own.json        the person's answers, the account, the sign-in apps' public ids (no secret)
-//   .erga/secrets.json    mode 600: each server's SESSION_SECRET and FACTORY_KEY, the sign-in apps' secrets, the
-//                         agent's admin tokens. Never printed: `bun erga own status` names the keys only.
+//   .erga/setup.json      the person's answers for the setup in progress, the account, the sign-in apps' public ids
+//   .erga/secrets.json    mode 600: by host, the secrets `bun erga setup` gave that server's Worker one time
+//                         (SESSION_SECRET, FACTORY_KEY, the sign-in apps' secrets, SNAPSHOT_TOKEN under a primary with
+//                         a staging server), and the agent's admin token (ADMIN_TOKEN). Never printed: status names the
+//                         keys only.
 //   .erga/inbox.jsonl     the checklist page's conversation: the person's messages and the agent's answers
 //
-// A person who loses .erga/ keeps a working server: the secrets stay on the Workers. Only `bun erga own token` and a new
-// server need them; keep a copy of secrets.json in a password manager.
+// A person who loses .erga/ keeps a working server: the secrets stay on the Workers. Only `bun erga setup <host> token`
+// and a new server need them; keep a copy of secrets.json in a password manager.
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Answers, defaultAnswers, type TargetName } from "./plan";
+import { ergaDir } from "../cli/config";
+import { type Answers, defaultAnswers } from "./plan";
 
 export const ROOT = new URL("../..", import.meta.url).pathname;
-export const DIR = join(ROOT, ".erga");
+export const DIR = ergaDir(ROOT);
 
 export interface Own {
   answers: Answers | null;
@@ -23,42 +27,42 @@ export interface Own {
   google: { clientId: string } | null;
 }
 
-export interface Secrets {
-  GITHUB_CLIENT_SECRET?: string;
-  GOOGLE_CLIENT_SECRET?: string;
-  /** Each server's own: made at random before its first deploy. */
-  servers?: Partial<Record<TargetName, { SESSION_SECRET: string; FACTORY_KEY: string }>>;
-  /** The agent's admin token on each server (bun erga own token). */
-  tokens?: Partial<Record<TargetName, string>>;
-}
+/** By host: that server's secrets, by name. */
+export type Secrets = Record<string, Record<string, string>>;
 
-const read = <T>(name: string, empty: T): T => {
+const read = <T>(name: string, empty: T, dir = DIR): T => {
   try {
-    return { ...empty, ...JSON.parse(readFileSync(join(DIR, name), "utf8")) };
+    return { ...empty, ...JSON.parse(readFileSync(join(dir, name), "utf8")) };
   } catch {
     return empty;
   }
 };
-const write = (name: string, value: unknown, secret = false) => {
-  mkdirSync(DIR, { recursive: true, mode: 0o700 });
-  const path = join(DIR, name);
+const write = (name: string, value: unknown, secret = false, dir = DIR) => {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const path = join(dir, name);
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: secret ? 0o600 : 0o644 });
   if (secret) chmodSync(path, 0o600);
 };
 
-export const loadOwn = (): Own => read<Own>("own.json", { answers: null, account: null, github: null, google: null });
-export const saveOwn = (o: Own) => write("own.json", o);
-export const loadSecrets = (): Secrets => read<Secrets>("secrets.json", {});
-export const saveSecrets = (s: Secrets) => write("secrets.json", s, true);
+export const loadOwn = (): Own => read<Own>("setup.json", { answers: null, account: null, github: null, google: null });
+export const saveOwn = (o: Own) => write("setup.json", o);
+export const loadSecrets = (dir = DIR): Secrets => read<Secrets>("secrets.json", {}, dir);
+export const saveSecrets = (s: Secrets, dir = DIR) => write("secrets.json", s, true, dir);
+/** Sets one secret of `host` in the secrets file. */
+export function putSecret(host: string, name: string, value: string, dir = DIR) {
+  const s = loadSecrets(dir);
+  s[host] = { ...s[host], [name]: value };
+  saveSecrets(s, dir);
+}
 export const answersOf = (o: Own, admin = ""): Answers => ({ ...defaultAnswers(admin), ...(o.answers ?? {}) });
 
-/** The names of the secrets the file holds, for status: never their values. */
-export function secretNames(s: Secrets): string[] {
-  const out: string[] = (["GITHUB_CLIENT_SECRET", "GOOGLE_CLIENT_SECRET"] as const).filter((k) => !!s[k]?.trim());
-  for (const [t, v] of Object.entries(s.servers ?? {})) if (v?.SESSION_SECRET) out.push(`${t}:SESSION_SECRET`, `${t}:FACTORY_KEY`);
-  for (const [t, v] of Object.entries(s.tokens ?? {})) if (v) out.push(`${t}:token`);
-  return out;
-}
+/** The names of the secrets the file holds, as host:NAME, for status: never their values. */
+export const secretNames = (s: Secrets): string[] =>
+  Object.entries(s).flatMap(([host, v]) =>
+    Object.keys(v ?? {})
+      .filter((k) => v[k]?.trim())
+      .map((k) => `${host}:${k}`)
+  );
 
 /** Reads KEY=value lines (a .env file), for --from-file: the values go to secrets.json, never to the output. */
 export function readEnvFile(path: string): Record<string, string> {

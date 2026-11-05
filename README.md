@@ -19,17 +19,16 @@ Try it at [erga.dev](https://erga.dev).
 
 ## Run your own Erga
 
-Erga runs on your own Cloudflare account and domain. You need Bun, git, the
-GitHub CLI (`gh auth login`) and a Cloudflare account on the Workers Paid plan.
+Erga runs on your own Cloudflare account and domain. You need Bun, git, a
+GitHub account and a Cloudflare account on the Workers Paid plan.
 
     git clone https://github.com/koomen/erga.git && cd erga && bun install
-    bun erga own fork      # your fork on GitHub becomes origin
-    bun erga own start     # a checklist page on your machine shows each step, live
+    bun erga setup erga.example.com start   # a checklist page on your machine shows each step, live
 
-Or give your coding agent this prompt in an empty folder: "Deploy my own Erga
-from https://github.com/koomen/erga. Clone it, run `bun install`, then follow
-`bun erga own skill`." Every deploy runs on your machine: `bun erga own update`
-brings in Erga's new changes, and `bun erga own deploy` deploys them.
+Or give your coding agent this prompt in an empty folder: "Set up my own Erga
+from https://github.com/koomen/erga at <your address>. Clone it, run
+`bun install`, then follow `bun erga setup skill`." Every deploy runs on your
+machine, from your clone: `git pull`, then `bun erga deploy <commit> <host>`.
 
 ## Develop
 

@@ -56,8 +56,10 @@ const Polled = Schema.Struct({
   error: Schema.optionalKey(Schema.String),
 });
 
-const post = (url: string, body: object) =>
-  fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+type Site = (url: string, init?: RequestInit) => Promise<Response>;
+
+const post = (url: string, body: object, site: Site = fetch) =>
+  site(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 /** The server's error in its own words, or the status. */
 const failed = async (r: Response, what: string) =>
@@ -69,16 +71,16 @@ const failed = async (r: Response, what: string) =>
  */
 export async function askOpsToken(
   origin: string,
-  o: { label?: string; say?: (line: string) => void } = {}
+  o: { label?: string; say?: (line: string) => void; site?: Site } = {}
 ): Promise<{ token: string; login: string }> {
-  const r = await post(`${origin}/api/auth/request`, { label: o.label ?? "bun erga", scope: "ops" });
+  const r = await post(`${origin}/api/auth/request`, { label: o.label ?? "bun erga", scope: "ops" }, o.site);
   if (!r.ok) throw await failed(r, `${origin} gave no sign-in`);
   const asked = Schema.decodeUnknownSync(Asked)(await r.json());
   (o.say ?? console.log)(`Open ${asked.approve_url} as an admin, and approve it.`);
   const until = Date.now() + asked.expires_in * 1000;
   while (Date.now() < until) {
     await new Promise((done) => setTimeout(done, asked.interval * 1000));
-    const p = await post(`${origin}/api/auth/poll`, { code: asked.code });
+    const p = await post(`${origin}/api/auth/poll`, { code: asked.code }, o.site);
     const got = Schema.decodeUnknownSync(Polled)(await p.json());
     if (got.status == "approved" && got.token && got.login) return { token: got.token, login: got.login };
     if (got.status != "pending") throw new Error(`No ops token: ${got.error ?? got.status}`);
@@ -87,11 +89,7 @@ export async function askOpsToken(
 }
 
 /** The instance's deploy facts, with its ops token (an error if the token doesn't work: expired, revoked, not an admin's). */
-export async function readOps(
-  origin: string,
-  token: string,
-  site: (url: string, init?: RequestInit) => Promise<Response> = fetch
-): Promise<OpsFacts> {
+export async function readOps(origin: string, token: string, site: Site = fetch): Promise<OpsFacts> {
   const r = await site(`${origin}/api/ops`, { headers: { Authorization: `Bearer ${token}` } });
   if (!r.ok) throw await failed(r, `${origin} refused the ops token`);
   return Schema.decodeUnknownSync(OpsFacts)(await r.json());

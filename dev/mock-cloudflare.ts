@@ -441,6 +441,12 @@ export function mockCloudflare(
     const own = await opts.sites?.(req, name);
     if (own) return own;
     const text = (n: string) => (s.metadata.bindings ?? []).find((b: any) => b.name == n && b.type == "plain_text")?.text as string | undefined;
+    // Sign-in sends a person to GitHub with the Worker's app, as the real server does.
+    if (url.pathname == "/auth/github")
+      return Response.redirect(
+        `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(text("GITHUB_CLIENT_ID") ?? "")}&redirect_uri=${encodeURIComponent(`https://${host}/auth/github/callback`)}`,
+        302
+      );
     if (url.pathname == "/logo.png") return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "Content-Type": "image/png" } });
     if (url.pathname == "/api/deploys/version") return Response.json({ version: text("ERGA_VERSION") ?? null, target: text("DEPLOY_TARGET") || null });
     // The app's health check: healthy, unless a test says this release isn't (state.unhealthy).

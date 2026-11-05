@@ -221,7 +221,7 @@ Found a new trap? Write it here, in the same change.
   by the CSS highlight `erga-unshown`. A test that reads the page's text sees all of it at once. A page in the background
   shows it at once, unplayed. No change from elsewhere gets a highlight (Pete's decision): only the caret shows it.
 - A machine that asks for a new hostname a moment before its DNS record exists keeps "no such host" for up to
-  30 minutes (macOS caches the negative answer). `bun erga own` (deploy/own/facts.ts, `site`) looks up its servers'
+  30 minutes (macOS caches the negative answer). `bun erga setup` (deploy/own/facts.ts, `site`) looks up its servers'
   names with Cloudflare's DNS over HTTPS for that reason; use `site` for any check of a new address.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.

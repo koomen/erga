@@ -1,11 +1,14 @@
-// Your own Erga: what the person decides, the names that follow from it, and the steps from a clone to a server
-// that answers. Pure: no network, no files (deploy/own/facts.ts observes; deploy/own/cli.ts acts). `bun erga own skill` is the
-// manual; `bun erga own status` prints these steps, and the local checklist page (deploy/own/page.ts) shows them.
+// A new Erga instance (`bun erga setup <host>`): what the person decides, the names that follow from it, and the steps
+// from a clone to a registered instance. Pure: no network, no files (deploy/own/facts.ts observes; deploy/own/cli.ts
+// acts). `bun erga setup skill` is the manual; `bun erga setup <host> status` prints these steps, and the local checklist
+// page (deploy/own/page.ts) shows them.
 
+import type { Entry } from "../cli/config";
+import { deployFacts } from "../pipeline/account";
 import type { Target } from "../pipeline/pipeline";
 import { ACCOUNT, PRODUCTION } from "../targets";
 
-/** The person's decisions, asked all at once (`bun erga own ask`), with these defaults. No secret is ever in here. */
+/** The person's decisions, asked all at once (`bun erga setup <host> ask`), with these defaults. No secret is ever in here. */
 export interface Answers {
   /** The production address: a hostname on a zone in the account ("erga.example.com"). */
   host: string;
@@ -21,6 +24,8 @@ export interface Answers {
   company: string;
   /** Documents' pages: "shared" (one workers.dev host) or a second zone of the account's, never the app's own. */
   pages: string;
+  /** The GitHub repository (owner/name) where feedback opens issues: the setting feedback_repository (empty: none). */
+  feedback: string;
 }
 
 export type PresetName = "website" | "company";
@@ -69,6 +74,11 @@ export const QUESTIONS: { key: keyof Answers; ask: string; help: string }[] = [
     ask: "Documents' pages",
     help: "shared (one workers.dev address: no domain needed) or a second domain on your account (never the app's).",
   },
+  {
+    key: "feedback",
+    ask: "Feedback's repository (owner/name, or no)",
+    help: "Send feedback opens a GitHub issue there, without the sender's name. Default: no. An admin can change it later.",
+  },
 ];
 
 export const defaultAnswers = (admin = ""): Answers => ({
@@ -79,6 +89,7 @@ export const defaultAnswers = (admin = ""): Answers => ({
   admin,
   company: "",
   pages: "shared",
+  feedback: "",
 });
 
 const HOST = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -122,12 +133,20 @@ export function parseAnswer(key: keyof Answers, raw: string): { value: Answers[k
         : HOST.test(v.toLowerCase())
           ? { value: v.toLowerCase() }
           : { problem: "Pages are shared, or a domain." };
+    case "feedback": {
+      const repo = v.replace(/^https:\/\/github\.com\//, "").replace(/\/+$/, "");
+      return off
+        ? { value: "" }
+        : /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(repo)
+          ? { value: repo }
+          : { problem: `"${v}" isn't a GitHub repository: owner/name, or no.` };
+    }
   }
 }
 
 /** What's still wrong with the answers as a whole (each one on its own is parsed already); null if nothing. */
 export function answersProblem(a: Answers, zones: string[]): string | null {
-  if (!a.host) return "Answer the questions first (bun erga own ask).";
+  if (!a.host) return "Answer the questions first (bun erga setup <host> ask).";
   if (!a.admin) return "Name the first admin: your GitHub login.";
   const zoneOf = (h: string) => zones.filter((z) => h == z || h.endsWith(`.${z}`)).sort((x, y) => y.length - x.length)[0] ?? null;
   for (const h of [a.host, a.staging].filter(Boolean))
@@ -153,6 +172,11 @@ export function namesOf(host: string): { worker: string; database: string; bucke
 }
 
 export type TargetName = "production" | "staging";
+/**
+ * The commit a new instance gets: origin's main, as this clone knows it (git fetch to update it). A primary's deploy moves
+ * main to its commit (deploy/cli/deploy.ts), so a setup from a feature branch never puts that branch on main.
+ */
+export const SETUP_COMMIT = "origin/main";
 export const hostOf = (a: Answers, t: TargetName) => (t == "production" ? a.host : a.staging);
 export const targetsOf = (a: Answers): TargetName[] => (a.staging ? ["production", "staging"] : ["production"]);
 export const callbackOf = (host: string, provider: "github" | "google") => `https://${host}/auth/${provider}/callback`;
@@ -170,8 +194,8 @@ export function varsOf(a: Answers, ids: { github?: string; google?: string }): R
 }
 
 /**
- * The pipeline's target for one of the person's servers: `bun erga own deploy` sends the secrets it has, and the Worker
- * keeps the ones it has (keepSecrets).
+ * The pipeline's target for one of the person's servers. It sends `secrets`, and the Worker keeps the ones it has
+ * (keepSecrets). `bun erga setup` deploys an entry (setupEntry) with `bun erga deploy`'s code.
  */
 export function ownTarget(
   a: Answers,
@@ -204,6 +228,23 @@ export function ownTarget(
   };
 }
 
+/**
+ * The entry of `.erga/config.json` for one of the setup's servers, from the answers alone: its names, its plain settings,
+ * and no token yet (the token comes at the end, when the admin approves it). A staging server names its primary.
+ */
+export function setupEntry(
+  a: Answers,
+  t: TargetName,
+  o: { account: string; zones: string[]; subdomain: string | null; ids: { github?: string; google?: string } }
+): Entry {
+  return {
+    host: hostOf(a, t),
+    ...(t == "staging" ? { stagingOf: a.host } : {}),
+    ...deployFacts(ownTarget(a, t, { ...o, secrets: {} })),
+    token: "",
+  };
+}
+
 // ------------------------------------------------------------------ the steps
 
 /** What the CLI observed (deploy/own/facts.ts): each field is a thing it looked at, or null if it couldn't look. */
@@ -212,8 +253,7 @@ export interface Facts {
   /** The checkout's origin, and whether node_modules matches the lockfile. */
   origin: string | null;
   installed: boolean;
-  /** Tracked files changed and not committed (a deploy builds a commit). */
-  dirty: boolean;
+  /** The commit setup deploys: origin's main, as this clone knows it (SETUP_COMMIT). */
   head: string | null;
   /** The cf CLI's login: its accounts, or why not. */
   login: { ok: true; accounts: { id: string; name: string }[] } | { ok: false; why: string };
@@ -222,30 +262,8 @@ export interface Facts {
   workersSubdomain: string | null;
   /** By target: what's there now. */
   targets: Partial<Record<TargetName, TargetFacts>>;
-  /** Which secrets the secrets file holds (names only). */
+  /** Which secrets the secrets file holds, as host:NAME (names only). */
   secrets: string[];
-  /** The person's fork on GitHub, as gh sees it (deploy/own/facts.ts, githubFacts). Absent: not looked at. */
-  github?: GitHubFacts;
-}
-
-/** The person's fork of Erga on GitHub, where `bun erga own update` brings Erga's new changes. */
-export interface GitHubFacts {
-  /** gh's login, or null: gh is missing or not logged in. */
-  login: string | null;
-  /** The checkout's origin on GitHub (owner/name), and the repository it is a fork of. */
-  repo: string | null;
-  parent: string | null;
-}
-
-/** Erga's own repository on GitHub, which a person forks. */
-export const UPSTREAM_REPO = "koomen/erga";
-
-/** Why forking failed, in words, from gh's error. */
-export function forkProblem(err: string): string {
-  if (/auth login|not logged|authentication/i.test(err)) return "gh is not logged in. The person runs: gh auth login";
-  if (/HTTP 404|Not Found|Could not resolve/i.test(err))
-    return `GitHub did not find ${UPSTREAM_REPO}, or this login cannot read it. Check that gh is logged in as the person (gh auth status).`;
-  return `gh repo fork failed: ${err.slice(0, 300)}`;
 }
 
 export interface TargetFacts {
@@ -258,8 +276,8 @@ export interface TargetFacts {
   health: "ok" | { bad: string } | null;
   /** Where /auth/github sends a person: GitHub with our client id and callback, or why not. */
   signIn: "ok" | { bad: string } | null;
-  /** The first admin has signed in (an identity is linked to their login). */
-  adminIn: boolean | null;
+  /** Its entry in .erga/config.json has an ops token: the admin approved it, and the instance is registered. */
+  registered: boolean;
   /** The company preset's access rule is there. */
   rule: boolean | null;
   /** What Erga's Worker holds now: its secrets' names, and its plain values (the sign-in apps' ids). Null: no Worker of ours. */
@@ -278,17 +296,19 @@ export interface Step {
   target?: TargetName;
 }
 
+/** The secret is in the secrets file under `host`, or on a server's Worker already: a deploy keeps a secret it doesn't send. */
+export const hasSecret = (f: Facts, host: string, key: string) =>
+  f.secrets.includes(`${host}:${key}`) || Object.values(f.targets).some((t) => t?.held?.secrets.includes(key));
+
 /**
  * Every step, in order, with its state from what was observed. The first step that isn't done is the next one; each
- * says who does it (the agent, or the person) and exactly how.
+ * says who does it (the agent, or the person) and exactly how. `bun erga setup <host>` runs the agent's steps by itself
+ * (the deploys, and the ops token) and stops at a step of the person's.
  */
-/** The secret is in the secrets file, or on a server's Worker already: a deploy keeps a secret it doesn't send. */
-export const hasSecret = (f: Facts, key: string) =>
-  f.secrets.includes(key) || Object.values(f.targets).some((t) => t?.held?.secrets.includes(key));
-
 export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { github?: string; google?: string } }): Step[] {
   const out: Step[] = [];
-  const page = o.port ? `http://localhost:${o.port}` : "the checklist page (bun erga own start)";
+  const cmd = `bun erga setup ${a?.host || "<host>"}`;
+  const page = o.port ? `http://localhost:${o.port}` : `the checklist page (${cmd} start)`;
   const add = (s: Omit<Step, "state"> & { ok: boolean | null; failed?: boolean }) => {
     const before = out.length && out.some((x) => x.state != "done");
     out.push({
@@ -317,7 +337,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
     detail: f.login.ok ? `${f.login.accounts.length} account(s)${f.account ? `; using ${f.account}` : ""}` : f.login.why,
     next: !f.login.ok
       ? "The agent runs `bunx cf auth login`: a browser opens; the person signs in to Cloudflare and clicks Allow."
-      : "Several accounts: the agent asks which one, then runs: bun erga own set account=<id>",
+      : `Several accounts: the agent asks which one, then runs: ${cmd} set account=<id>`,
   });
   const problem = a ? answersProblem(a, f.zones) : "Answer the questions first.";
   add({
@@ -326,17 +346,17 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
     who: "person",
     ok: !problem,
     detail: a && !problem ? summary(a) : (problem ?? ""),
-    next: `The agent asks all of them in one message (bun erga own ask shows them, with defaults), then records the answers with bun erga own set key=value ... The person can also answer on ${page}.`,
+    next: `The agent asks all of them in one message (${cmd} ask shows them, with defaults), then records the answers with ${cmd} set key=value ... The person can also answer on ${page}.`,
   });
   if (!a || problem) return out;
-  const ghSecret = hasSecret(f, "GITHUB_CLIENT_SECRET");
+  const ghSecret = hasSecret(f, a.host, "GITHUB_CLIENT_SECRET");
   add({
     id: "github",
     title: "GitHub sign-in app",
     who: "person",
     ok: !!o.ids.github && ghSecret,
     detail: o.ids.github ? `client id ${o.ids.github}${ghSecret ? ", secret stored" : ", no secret yet"}` : "none yet",
-    next: `On ${page}, the person clicks "Create the GitHub App", then "Create GitHub App" on GitHub. Erga stores its id and secret by itself. (Already have an app? bun erga own signin github --from-file <file with GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET>, and add the callback ${targetsOf(
+    next: `On ${page}, the person clicks "Create the GitHub App", then "Create GitHub App" on GitHub. Erga stores its id and secret by itself. (Already have an app? ${cmd} signin github --from-file <file with GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET>, and add the callback ${targetsOf(
       a
     )
       .map((t) => callbackOf(hostOf(a, t), "github"))
@@ -347,7 +367,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
       id: "google",
       title: "Google sign-in client",
       who: "person",
-      ok: !!o.ids.google && hasSecret(f, "GOOGLE_CLIENT_SECRET"),
+      ok: !!o.ids.google && hasSecret(f, a.host, "GOOGLE_CLIENT_SECRET"),
       detail: o.ids.google ? `client id ${o.ids.google}` : "none yet",
       next: `The person makes an OAuth client at https://console.cloud.google.com/auth/clients/create (type: Web application; authorized redirect URI${a.staging ? "s" : ""}: ${targetsOf(
         a
@@ -379,13 +399,11 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
         (!tf
           ? "not looked at"
           : tf.version
-            ? `release ${tf.version}${f.head && tf.version != f.head.slice(0, 12) ? ` (the checkout is at ${f.head.slice(0, 12)})` : ""}, health ${tf.health == "ok" ? "ok" : ((tf.health as { bad: string } | null)?.bad ?? "unknown")}`
+            ? `release ${tf.version}${f.head && tf.version != f.head.slice(0, 12) ? ` (origin/main is at ${f.head.slice(0, 12)})` : ""}, health ${tf.health == "ok" ? "ok" : ((tf.health as { bad: string } | null)?.bad ?? "unknown")}`
             : "not deployed yet"),
       next: clash
-        ? `The person decides: free ${host} or pick another address (bun erga own set host=...).`
-        : f.dirty
-          ? "Commit or stash the changed files first: a deploy builds a commit."
-          : `Run: bun erga own deploy ${t}`,
+        ? `The person decides: free ${host} or pick another address (${cmd} set host=...).`
+        : `Run: ${cmd} (it deploys, then writes the first admin${a.feedback ? " and the feedback repository" : ""} into the database).`,
     });
     add({
       id: `signin-${t}`,
@@ -399,19 +417,21 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
           : typeof tf?.signIn == "object" && tf.signIn
             ? tf.signIn.bad
             : "not checked",
-      next: `Run: bun erga own deploy ${t} (it sends the sign-in app's values), then bun erga own status.`,
-    });
-    add({
-      id: `admin-${t}`,
-      target: t,
-      title: `${a.admin} signs in to ${host}`,
-      who: "person",
-      ok: !!tf?.adminIn,
-      detail: tf?.adminIn ? "signed in" : "not yet",
-      next: `The person opens https://${host}/auth/sign-in and signs in with GitHub as ${a.admin} (GitHub asks to authorize the app once).`,
+      next: `Fix what the detail names (the app's callback URL, or its id), then: ${cmd}`,
     });
   }
-  forkStep(f, add);
+  for (const t of targetsOf(a)) {
+    const host = hostOf(a, t);
+    add({
+      id: `register-${t}`,
+      target: t,
+      title: `${a.admin} signs in to ${host}, and approves the ops token`,
+      who: "person",
+      ok: !!f.targets[t]?.registered,
+      detail: f.targets[t]?.registered ? "registered in .erga/config.json, with an ops token" : "no ops token yet",
+      next: `The agent runs ${cmd}: it prints a link. The person opens it, signs in with GitHub as ${a.admin}, and approves.`,
+    });
+  }
   if (a.preset == "company" && a.company)
     add({
       id: "rule",
@@ -419,33 +439,13 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
       who: "agent",
       ok: !!f.targets.production?.rule,
       detail: f.targets.production?.rule ? "the access rule is there" : "no rule yet",
-      next: "Run: bun erga own preset (it adds the access rule with your admin token).",
+      next: `Run: ${cmd} preset (it adds the access rule with your admin token).`,
     });
   return out;
 }
 
-/** After the first deploy: the person's fork on GitHub, where `bun erga own update` brings Erga's new changes. */
-function forkStep(f: Facts, add: (s: Omit<Step, "state"> & { ok: boolean | null; failed?: boolean }) => void) {
-  const g = f.github;
-  const own = !!g?.repo && g.repo.toLowerCase() != UPSTREAM_REPO;
-  add({
-    id: "fork",
-    title: "Your fork on GitHub",
-    who: "agent",
-    ok: own,
-    detail: !g
-      ? "not looked at"
-      : !g.login
-        ? "gh is not logged in"
-        : own
-          ? `${g.repo}${g.parent ? `, a fork of ${g.parent}` : ""}`
-          : `origin is ${g.repo ?? "not on GitHub"}`,
-    next: !g?.login ? "The person runs: gh auth login. Then: bun erga own fork" : "Run: bun erga own fork",
-  });
-}
-
 export const summary = (a: Answers) =>
-  `https://${a.host}${a.staging ? `, staging https://${a.staging}` : ", no staging"}; sign-in ${a.providers.join(" + ")}; preset ${a.preset}${a.company ? ` (${a.company})` : ""}; admin ${a.admin}; pages ${a.pages == "shared" ? "on one shared workers.dev address" : `on *.${a.pages}`}`;
+  `https://${a.host}${a.staging ? `, staging https://${a.staging}` : ", no staging"}; sign-in ${a.providers.join(" + ")}; preset ${a.preset}${a.company ? ` (${a.company})` : ""}; admin ${a.admin}; pages ${a.pages == "shared" ? "on one shared workers.dev address" : `on *.${a.pages}`}; feedback ${a.feedback ? `to ${a.feedback}` : "kept on the server"}`;
 
 /** The step to do now: the first that isn't done (null: all done). */
 export const nextStep = (s: Step[]) => s.find((x) => x.state != "done") ?? null;

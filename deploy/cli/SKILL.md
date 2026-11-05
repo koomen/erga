@@ -65,7 +65,9 @@ and `main`. There are no pull requests.
   its plain settings and an ops token into `.erga/config.json` in the main
   clone. Only when Pete asks.
 - `bun erga login <host>`: a new ops token for a registered instance.
-- `bun erga own ...`: a person's own Erga on their own domain (`bun erga own skill`).
+- `bun erga setup <host>`: a new instance. It writes its entry, deploys it the
+  first time with its secrets, writes the first admin, and registers it
+  (`bun erga setup skill`).
 
 ## The rules
 

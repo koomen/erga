@@ -1,50 +1,40 @@
-// What `bun erga own` observes before it decides anything: this machine, the person's Cloudflare account, and each
+// What `bun erga setup` observes before it decides anything: this machine, the person's Cloudflare account, and each
 // server as the world sees it. Each fact is what was seen, or null when it couldn't look (deploy/own/plan.ts decides).
+// Under ERGA_DEPLOY_MOCK=1, the account and the servers are a mock Cloudflare's (dev/mock-cloudflare.ts): nothing real.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { Cloudflare, findDatabase } from "../pipeline/pipeline";
+import { entryOf, readConfig } from "../cli/config";
+import { mocked, netOf } from "../cli/deploy";
+import { Cloudflare, type Fetch, findDatabase } from "../pipeline/pipeline";
 import { d1 } from "../pipeline/account";
 import { machineCredential } from "../local-credential";
-import { type Answers, type Facts, type GitHubFacts, hostOf, namesOf, type TargetFacts, type TargetName, targetsOf } from "./plan";
-import { loadSecrets, type Own, ROOT, secretNames } from "./store";
-
-
-/** gh's answer as JSON, or null (gh missing, not logged in, or no access). */
-export function gh<T>(...args: string[]): T | null {
-  const r = Bun.spawnSync(["gh", ...args], { cwd: ROOT, stdout: "pipe", stderr: "ignore" });
-  if (r.exitCode != 0) return null;
-  try {
-    return JSON.parse(r.stdout.toString()) as T;
-  } catch {
-    return null;
-  }
-}
-
-/** The checkout's origin on GitHub (owner/name), or null. */
-export const originRepo = (): string | null => {
-  const m = /github\.com[:/]([^/]+\/[^/]+?)(\.git)?$/.exec(git("remote", "get-url", "origin") ?? "");
-  return m ? m[1] : null;
-};
-
-/** The person's fork as gh sees it: its parent. */
-export function githubFacts(): GitHubFacts {
-  const login = gh<{ login: string }>("api", "user")?.login ?? null;
-  const repo = originRepo();
-  if (!login || !repo) return { login, repo, parent: null };
-  const view = gh<{ parent: { owner: { login: string }; name: string } | null }>("repo", "view", repo, "--json", "parent");
-  return { login, repo, parent: view?.parent ? `${view.parent.owner.login}/${view.parent.name}` : null };
-}
+import { type Answers, type Facts, hostOf, SETUP_COMMIT, namesOf, type TargetFacts, type TargetName, targetsOf } from "./plan";
+import { DIR, loadSecrets, type Own, ROOT, secretNames } from "./store";
 
 const git = (...args: string[]) => {
   const r = Bun.spawnSync(["git", ...args], { cwd: ROOT });
   return r.exitCode == 0 ? r.stdout.toString().trim() : null;
 };
 
-/** The Cloudflare API with this machine's login, or why there's none. */
-export function cloudflare(): { cf: Cloudflare } | { why: string } {
+export interface Connection {
+  cf: Cloudflare;
+  /** The servers (and the API): site below, or the mock's. */
+  net: Fetch;
+  token: string;
+}
+let connection: Connection | null = null;
+
+/** The Cloudflare API with this machine's login, or why there's none. One mock for the whole process, under ERGA_DEPLOY_MOCK. */
+export async function cloudflare(): Promise<Connection | { why: string }> {
+  if (connection) return connection;
+  if (mocked()) {
+    const m = await netOf({});
+    return (connection = { cf: new Cloudflare(m.token, m.net), net: m.net, token: m.token });
+  }
   const c = machineCredential();
-  return c ? { cf: new Cloudflare(c.token) } : { why: "Not logged in to Cloudflare: run `bunx cf auth login`." };
+  if (!c) return { why: "Not logged in to Cloudflare: run `bunx cf auth login`." };
+  return (connection = { cf: new Cloudflare(c.token), net: site, token: c.token });
 }
 
 /** Whether node_modules is what the lockfile says: bun's own check, with nothing written. */
@@ -86,14 +76,14 @@ export const site: typeof fetch = Object.assign(
 );
 
 /** Reads a site's JSON answer, or null. */
-async function getJson<T>(url: string): Promise<T | null> {
-  const r = await site(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+async function getJson<T>(net: Fetch, url: string): Promise<T | null> {
+  const r = await net(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
   return r?.ok ? ((await r.json().catch(() => null)) as T | null) : null;
 }
 
 /** Where /auth/github sends a person: GitHub, with this client id and this host's callback, or what's wrong. */
-export async function signInCheck(host: string, clientId: string | undefined): Promise<TargetFacts["signIn"]> {
-  const r = await site(`https://${host}/auth/github`, { redirect: "manual", signal: AbortSignal.timeout(8000) }).catch(() => null);
+export async function signInCheck(net: Fetch, host: string, clientId: string | undefined): Promise<TargetFacts["signIn"]> {
+  const r = await net(`https://${host}/auth/github`, { redirect: "manual", signal: AbortSignal.timeout(8000) }).catch(() => null);
   if (!r) return null;
   const to = r.headers.get("location") ?? "";
   if (r.status < 300 || r.status > 399 || !to.startsWith("https://github.com/login/oauth/authorize"))
@@ -105,15 +95,14 @@ export async function signInCheck(host: string, clientId: string | undefined): P
   return "ok";
 }
 
-/** One server: its Worker, its address, what it answers, and (with the database) whether the first admin signed in. */
+/** One server: its Worker, its address, what it answers, its entry, and (with the database) the company's access rule. */
 async function targetFacts(
-  cf: Cloudflare,
+  { cf, net }: Connection,
   account: string,
   zones: { id: string; name: string }[],
   a: Answers,
   t: TargetName,
-  own: Own,
-  head: string | null
+  own: Own
 ): Promise<TargetFacts> {
   const host = hostOf(a, t),
     n = namesOf(host),
@@ -152,26 +141,16 @@ async function targetFacts(
       : [];
     if (records.length) address = { taken: `DNS already has ${records.map((r) => `${r.type} ${r.content}`).join(", ")} for it` };
   }
-  const v = worker == "ours" ? await getJson<{ version?: string }>(`https://${host}/api/deploys/version`) : null;
+  const v = worker == "ours" ? await getJson<{ version?: string }>(net, `https://${host}/api/deploys/version`) : null;
   const h = v
-    ? await getJson<{ ok?: boolean; checks?: Record<string, { ok: boolean; error?: string }> }>(`https://${host}/api/health`)
+    ? await getJson<{ ok?: boolean; checks?: Record<string, { ok: boolean; error?: string }> }>(net, `https://${host}/api/health`)
     : null;
   const health: TargetFacts["health"] = !v ? null : h?.ok ? "ok" : { bad: h ? JSON.stringify(h.checks ?? h).slice(0, 200) : "no answer" };
-  const signIn = v ? await signInCheck(host, own.github?.clientId) : null;
-  let adminIn: boolean | null = null,
-    rule: boolean | null = null;
+  const signIn = v ? await signInCheck(net, host, own.github?.clientId) : null;
+  let rule: boolean | null = null;
   if (worker == "ours") {
     const db = await findDatabase(cf, acc, n.database).catch(() => null);
     if (db) {
-      const rows = await d1(
-        cf,
-        acc,
-        db,
-        "SELECT login FROM identities WHERE login = ?1 AND provider = 'github'",
-        [a.admin],
-        "look for the admin's sign-in"
-      ).catch(() => null);
-      adminIn = rows ? rows.length > 0 : null;
       if (a.preset == "company" && a.company) {
         const r = await d1(
           cf,
@@ -185,14 +164,13 @@ async function targetFacts(
       }
     }
   }
-  void head;
   return {
     worker,
     address,
     version: v?.version ?? null,
     health,
     signIn,
-    adminIn,
+    registered: !!entryOf(readConfig(DIR), host)?.token,
     rule,
     held: worker == "ours" ? await heldBy(cf, acc, n.worker) : null,
   };
@@ -214,15 +192,13 @@ async function heldBy(cf: Cloudflare, acc: string, worker: string): Promise<Targ
   };
 }
 
-/** Everything `bun erga own status` decides from. */
+/** Everything `bun erga setup <host> status` decides from. */
 export async function observe(own: Own, a: Answers | null): Promise<Facts & { zoneIds: { id: string; name: string }[] }> {
-  const head = git("rev-parse", "HEAD");
-  const dirty = !!git("status", "--porcelain", "--untracked-files=no");
+  const head = git("rev-parse", "--verify", "--quiet", `${SETUP_COMMIT}^{commit}`);
   const facts: Facts & { zoneIds: { id: string; name: string }[] } = {
     bun: Bun.version,
     origin: git("remote", "get-url", "origin"),
     installed: installed(),
-    dirty,
     head,
     login: { ok: false, why: "" },
     account: null,
@@ -231,9 +207,8 @@ export async function observe(own: Own, a: Answers | null): Promise<Facts & { zo
     workersSubdomain: null,
     targets: {},
     secrets: secretNames(loadSecrets()),
-    github: githubFacts(),
   };
-  const c = cloudflare();
+  const c = await cloudflare();
   if ("why" in c) {
     facts.login = { ok: false, why: c.why };
     return facts;
@@ -260,10 +235,6 @@ export async function observe(own: Own, a: Answers | null): Promise<Facts & { zo
         .call<{ subdomain: string }>("GET", `${acc}/workers/subdomain`, "read your workers.dev subdomain", undefined, { allow404: true })
         .catch(() => null)
     )?.subdomain ?? null;
-  if (a?.host) for (const t of targetsOf(a)) facts.targets[t] = await targetFacts(c.cf, facts.account, facts.zoneIds, a, t, own, head);
+  if (a?.host) for (const t of targetsOf(a)) facts.targets[t] = await targetFacts(c, facts.account, facts.zoneIds, a, t, own);
   return facts;
 }
-
-
-export const gitOf = git;
-export const readText = (p: string) => readFileSync(p, "utf8");

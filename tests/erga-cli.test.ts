@@ -1,6 +1,6 @@
 // `bun erga`'s decisions (deploy/cli/flow.ts): what merge and release refuse, the squashed commit's message,
 // the next version and the notes, a rollback's version, the pre-push hook, and the dashboard's state from gh's answers.
-// And the fork's part of `bun erga own` (deploy/own/plan.ts), and GitHub's workflow, which deploys nothing.
+// And GitHub's workflow, which deploys nothing.
 
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
@@ -17,7 +17,6 @@ import {
   stateOf,
   statusText,
 } from "../deploy/cli/flow";
-import { type Answers, defaultAnswers, type Facts, forkProblem, steps } from "../deploy/own/plan";
 
 const S = "5".repeat(40),
   M = "4".repeat(40);
@@ -120,44 +119,4 @@ test("the dashboard's state from gh's runs: each server's last run, and whether 
 
 test("GitHub runs nothing: the repository has no workflow", () => {
   expect(existsSync(new URL("../.github", import.meta.url))).toBe(false);
-});
-
-describe("a person's fork", () => {
-  const answers: Answers = { ...defaultAnswers("ada"), host: "erga.example.com", staging: "erga-staging.example.com" };
-  const account = "a".repeat(32);
-
-  test("a failed fork says why", () => {
-    expect(forkProblem("To get started with GitHub CLI, please run:  gh auth login")).toContain("gh auth login");
-    expect(forkProblem("HTTP 404: Not Found")).toContain("did not find koomen/erga");
-  });
-
-  test("after the first deploy: the fork is the last step", () => {
-    const live = {
-      worker: "ours",
-      address: "ours",
-      version: "abcdef123456",
-      health: "ok",
-      signIn: "ok",
-      adminIn: true,
-      rule: null,
-      held: null,
-    } as const;
-    const base: Facts = {
-      bun: "1.4.2",
-      origin: "https://github.com/koomen/erga.git",
-      installed: true,
-      dirty: false,
-      head: "abcdef1234567890",
-      login: { ok: true, accounts: [{ id: account, name: "Mine" }] },
-      account,
-      zones: ["example.com"],
-      workersSubdomain: "me",
-      targets: { production: live, staging: live },
-      secrets: ["GITHUB_CLIENT_SECRET"],
-    };
-    const next = (github: Facts["github"]) =>
-      steps(answers, { ...base, github }, { ids: { github: "Iv1.x" } }).find((s) => s.state != "done");
-    expect(next({ login: "ada", repo: "koomen/erga", parent: null })).toMatchObject({ id: "fork", next: "Run: bun erga own fork" });
-    expect(next({ login: "ada", repo: "ada/erga", parent: "koomen/erga" })).toBeUndefined();
-  });
 });
