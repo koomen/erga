@@ -11,9 +11,8 @@
 //   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
 //   bun erga rollback <staging|production> [--yes]            the Worker version from before the last deploy
 //   bun erga own <command>              your own Erga on your own domain: fork, deploy, checklist (bun erga own help)
-//   bun erga hooks                      installs the git hook that stops direct pushes to staging and main
 
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ACCOUNT, TARGETS } from "../targets";
@@ -278,21 +277,6 @@ async function rollback(name: string | undefined, yes: boolean) {
   say("NOTE  The next push to its branch deploys forward again.");
 }
 
-// ------------------------------------------------------------------ hooks
-
-/** Points git at deploy/cli/hooks (core.hooksPath): its pre-push stops pushes to staging and main that bun erga doesn't make. */
-function hooks(quiet: boolean) {
-  // Not a git checkout (a build's copy of the files, a tarball): nothing to do.
-  if (!git("rev-parse", "--git-dir").ok || !existsSync(join(ROOT, "deploy/cli/hooks/pre-push"))) return;
-  if (git("config", "--get", "core.hooksPath").out == "deploy/cli/hooks") {
-    if (!quiet) pass("The pre-push hook is on already (core.hooksPath = deploy/cli/hooks).");
-    return;
-  }
-  const r = git("config", "core.hooksPath", "deploy/cli/hooks");
-  if (!r.ok) return quiet ? undefined : fail(`git config failed: ${r.err}`);
-  if (!quiet) pass("The pre-push hook is on: a plain push to staging or main stops, and says to use bun erga.");
-}
-
 // ------------------------------------------------------------------ the commands
 
 export async function main(argv: string[]) {
@@ -328,8 +312,6 @@ export async function main(argv: string[]) {
       const { ownMain } = await import("../own/cli");
       return ownMain(rest);
     }
-    case "hooks":
-      return hooks(flag("--quiet"));
     case undefined:
     case "help":
     case "--help":
