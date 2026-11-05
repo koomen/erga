@@ -157,7 +157,7 @@ export default function docs(c: DocsConfig): void {
       adder.reset();
       tell("Loading…");
       share.showModal();
-      field("login").focus();
+      field("who").focus();
       try {
         render(await call());
         tell("");
@@ -167,8 +167,8 @@ export default function docs(c: DocsConfig): void {
     });
   adder.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const login = field("login").value.trim().replace(/^@/, "");
-    if (login && (await change(login, (adder.elements.namedItem("role") as HTMLSelectElement).value))) field("login").value = "";
+    const login = field("who").value.trim().replace(/^@/, "");
+    if (login && (await change(login, (adder.elements.namedItem("role") as HTMLSelectElement).value))) field("who").value = "";
   });
   anyone.addEventListener("change", () => change("*", anyone.value));
   share.querySelector(".copy")!.addEventListener("click", async () => {

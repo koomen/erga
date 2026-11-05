@@ -71,7 +71,7 @@ function make(): HTMLDialogElement {
 <p class="sub">A token lets an outside agent or a script (Claude Code, Codex, git) act as you, within its scope.</p>
 <div class="made" hidden></div><ul class="rows"></ul>
 <p class="more" hidden><span></span> <button type="button" class="pill">Show 10 more</button></p>
-<form class="make"><label>Name <input name="label" maxlength="80" placeholder="What it's for: Claude Code on my laptop" autocomplete="off"></label>
+<form class="make"><label>Name <input name="label" maxlength="80" placeholder="What it's for: Claude Code on my laptop" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore></label>
 <label>Scope <select name="scope"><option value="documents">All my documents</option><option value="document">One document</option></select></label>
 <label class="doc" hidden>Document <select name="doc"></select></label>
 <label>Expires <input type="date" name="expires" aria-label="Expiry date (optional)"></label>
@@ -112,7 +112,7 @@ async function keys() {
       (k) => `<li data-name="${esc(k.name)}"><div class="what"><b>${esc(k.label)}</b> <span class="state">${
         k.unreadable ? "Stored, but this server can't open it: paste it again." : k.set ? `Set · ends in …${esc(k.last4 ?? "")}` : "Not set"
       }</span></div>
-<form><input type="password" name="value" aria-label="${esc(k.label)}" placeholder="${k.set ? "Paste a new key" : "Paste your key"}" autocomplete="off" autocapitalize="off" spellcheck="false" required><button class="pill">${k.set ? "Replace" : "Save"}</button>${k.set ? `<button type="button" class="pill remove">Remove</button>` : ""}</form>
+<form><input type="password" name="value" aria-label="${esc(k.label)}" placeholder="${k.set ? "Paste a new key" : "Paste your key"}" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" required><button class="pill">${k.set ? "Replace" : "Save"}</button>${k.set ? `<button type="button" class="pill remove">Remove</button>` : ""}</form>
 <p class="hint" role="status"></p></li>`
     )
     .join("");
