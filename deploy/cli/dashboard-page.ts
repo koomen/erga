@@ -37,21 +37,26 @@ const label = (name: string) => name[0].toUpperCase() + name.slice(1);
 const sha7 = (sha: string | null | undefined) => (sha ?? "").slice(0, 7);
 /** A run's id, from its address (…/actions/runs/<id>). */
 export const runId = (r: Run | null) => (r ? (/\/runs\/(\d+)/.exec(r.url)?.[1] ?? "") : "");
-/** A run's state, in the old page's words. */
-function runState(r: Run): "deploying" | "deployed" | "failed" | "cancelled" {
-  if (r.status != "completed") return "deploying";
-  if (r.conclusion == "success") return "deployed";
-  return r.conclusion == "cancelled" ? "cancelled" : "failed";
+/** A server's deploy (flow.ts decides it), in the old page's words. */
+function deployState(d: Server["deploy"]): "deploying" | "deployed" | "failed" | "cancelled" {
+  if (!d || d.phase == "succeeded") return "deployed";
+  return d.phase == "queued" || d.phase == "running" ? "deploying" : d.phase;
 }
 /** Whether a server runs `sha` (its version is the commit's first 12 characters). */
 const runs = (v: Server, sha: string) => !!v.version && sha.startsWith(v.version);
 
 /** A server's state: its card's class and words. */
 function serverState(v: Server, now: number): { cls: string; what: string; tip: string } {
-  const r = v.run;
+  const r = v.run,
+    d = v.deploy;
   const when = r ? " · " + ago(r.at, now) : "";
-  if (r && runState(r) == "deploying") return { cls: "deploying", what: "deploying " + sha7(r.sha) + when, tip: r.status };
-  if (r && runState(r) == "failed")
+  if (r && d && deployState(d) == "deploying")
+    return {
+      cls: "deploying",
+      what: "deploying " + sha7(r.sha) + ": " + (d.job ? "job " + d.job : d.phase == "queued" ? "queued" : "in progress") + when,
+      tip: d.phase == "queued" ? "The run waits for a GitHub runner." : "The run is in progress" + (d.job ? ": job " + d.job + "." : "."),
+    };
+  if (r && d?.phase == "failed")
     return { cls: "failed", what: "deploy of " + sha7(r.sha) + " failed" + when, tip: "The run ended with " + r.conclusion + "." };
   if (v.healthy == null) return { cls: "", what: "no answer", tip: "https://" + v.host + " did not answer." };
   if (!v.healthy) return { cls: "failed", what: "unhealthy", tip: "GET /api/health did not answer ok." };
@@ -70,7 +75,14 @@ function envCard(v: Server, now: number): string {
       ? `<button class="env-retry" type="button" data-act="rerun" data-run="${id}" title="Runs the failed jobs of this run again">Retry</button>`
       : "";
   const log = id ? `<button class="env-log" type="button" data-log="${id}" data-server="${esc(v.name)}">Log</button>` : "";
-  return `<div class="env ${st.cls}" id="env-${esc(v.name)}"><div class="env-top"><b>${esc(label(v.name))}</b><a class="host" href="https://${esc(v.host)}" target="_blank" rel="noopener">${esc(v.host)}</a></div><span class="st" title="${esc(st.tip)}"><i></i><span>${esc(st.what)}</span></span><span class="env-more"><code class="env-commit">${esc(sha7(v.version))}</code>${retry}${log}</span></div>`;
+  const run =
+    v.run && st.cls != "deployed"
+      ? `<a class="env-log env-run" href="${esc(v.run.url)}" target="_blank" rel="noopener" title="The run on GitHub">Run</a>`
+      : "";
+  const note = v.deploy?.note
+    ? `<span class="env-note" title="GitHub's status lags: the server answers its version.">${esc(v.deploy.note)}</span>`
+    : "";
+  return `<div class="env ${st.cls}" id="env-${esc(v.name)}"><div class="env-top"><b>${esc(label(v.name))}</b><a class="host" href="https://${esc(v.host)}" target="_blank" rel="noopener">${esc(v.host)}</a></div><span class="st" title="${esc(st.tip)}"><i></i><span>${esc(st.what)}</span></span>${note}<span class="env-more"><code class="env-commit">${esc(sha7(v.version))}</code>${retry}${run}${log}</span></div>`;
 }
 
 function githubCard(s: State): string {
@@ -117,11 +129,18 @@ function deployCell(v: Server, c: Row, now: number): string {
   const r = v.run && v.run.sha == c.sha ? v.run : null;
   const live = runs(v, c.sha);
   if (!r && !live) return "";
-  const state = r ? runState(r) : "deployed";
+  const state = r ? deployState(v.deploy) : "deployed";
   const word = live ? "live" : state;
   const tip =
     (live ? "Live on " + v.host + ". " : "") +
-    (r ? "Its run: " + (r.conclusion || r.status) + " · " + sha7(r.sha) + "\nClick for its log." : "");
+    (r
+      ? "Its run: " +
+        (r.conclusion || r.status) +
+        " · " +
+        sha7(r.sha) +
+        (v.deploy?.note ? " (" + v.deploy.note + ")" : "") +
+        "\nClick for its log."
+      : "");
   const at = r ? short(r.at, now) : "";
   const cls = `dep ${state}${live ? " live" : ""}`;
   const inner = `<span class="w">${esc(word)}</span><span class="at">${esc(at)}</span>`;

@@ -4,7 +4,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { actionRefusal, type Job, serveDashboard } from "../deploy/cli/dashboard";
 import { liveHtml, pageHtml } from "../deploy/cli/dashboard-page";
-import { stateOf } from "../deploy/cli/flow";
+import { deployOf, pollDelay, stateOf } from "../deploy/cli/flow";
 
 const M = "a".repeat(40),
   S = "b".repeat(40);
@@ -86,6 +86,55 @@ test("the page, drawn from a fake state: the servers, the branches and the log, 
   expect(liveHtml(fakeState(20), NOW)).toContain("… 4 more commits only on staging …");
   // The page carries this run's token, and the script.
   expect(pageHtml({ token: "T0k", live: html, script: "/*s*/" })).toContain('<meta name="erga-token" content="T0k">');
+});
+
+test("a server's deploy: queued, the job that runs, the end; the server's own answer wins over GitHub's stale status", () => {
+  const url = "https://github.com/koomen/erga/actions/runs/41863840617";
+  const job = (name: string, status: string, conclusion = "") => ({ name, status, conclusion, url });
+  const run = (status: string, jobs: ReturnType<typeof job>[], conclusion = "") => ({
+    sha: M,
+    branch: "main",
+    status,
+    conclusion,
+    url,
+    at: NOW,
+    jobs,
+  });
+  const old = { version: "c".repeat(12), healthy: true };
+  expect(deployOf(null, "deploy", old)).toBeNull();
+  expect(deployOf(run("queued", [job("test", "queued")]), "deploy", old)).toEqual({ phase: "queued", job: null, url });
+  expect(deployOf(run("in_progress", [job("test", "completed", "success"), job("deploy", "in_progress")]), "deploy", old)).toEqual({
+    phase: "running",
+    job: "deploy",
+    url,
+  });
+  // Production's own job ended; erga.koomen.dev's job still runs: production is done.
+  const later = run("in_progress", [job("deploy", "completed", "success"), job("deploy-koomen", "in_progress")]);
+  expect(deployOf(later, "deploy", old)?.phase).toBe("succeeded");
+  expect(deployOf(later, null, old)).toMatchObject({ phase: "running", job: "deploy-koomen" });
+  expect(deployOf(run("completed", [], "failure"), "deploy", old)?.phase).toBe("failed");
+  // GitHub is degraded: the run and its jobs still say queued, but the server runs the run's commit and is healthy.
+  const stale = run("queued", [job("test", "queued"), job("deploy", "queued"), job("deploy-koomen", "queued")]);
+  const live = { version: M.slice(0, 12), healthy: true };
+  expect(deployOf(stale, "deploy", live)).toEqual({ phase: "succeeded", job: null, url, note: "GitHub still says queued" });
+  expect(deployOf(stale, "deploy", { ...live, healthy: false })?.phase).toBe("queued");
+
+  // The page: the card and the log's cell say live, in green, with the note; the dashboard reads every 30 seconds.
+  const s = fakeState();
+  s.servers[0] = { ...s.servers[0], run: stale, deploy: deployOf(stale, "deploy", live) };
+  const html = liveHtml(s, NOW);
+  expect(html).toContain('<div class="env deployed" id="env-production">');
+  expect(html).toContain('<span class="env-note"');
+  expect(html).not.toContain("dep deploying");
+  expect(html).toContain('class="dep deployed live"');
+  expect(pollDelay(s)).toBe(30_000);
+  // While the server does not run it yet: deploying, queued, with a link to the run, and a read every 5 seconds.
+  s.servers[0] = { ...s.servers[0], version: old.version, deploy: deployOf(stale, "deploy", old) };
+  const busy = liveHtml(s, NOW);
+  expect(busy).toContain('<div class="env deploying" id="env-production">');
+  expect(busy).toContain(`deploying ${M.slice(0, 7)}: queued`);
+  expect(busy).toContain(`href="${url}"`);
+  expect(pollDelay(s)).toBe(5_000);
 });
 
 test("an action needs this machine, this server's name, this page's origin and the run's token", () => {

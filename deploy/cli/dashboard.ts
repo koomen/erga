@@ -1,7 +1,8 @@
 // `bun erga dashboard`: the old Ops page on localhost (deploy/cli/dashboard-page.ts draws it): production, staging and
 // the other servers (the release each runs, its health, its branch's last run and its log), the feature branches (ahead
 // and behind staging, and whether each merges cleanly), and the log of staging and main. It reads GitHub with gh and the
-// servers over HTTPS (deploy/cli/observe.ts), at most every 15 seconds.
+// servers over HTTPS (deploy/cli/observe.ts), in a worker thread, while a page is open: every 5 seconds while a deploy
+// waits or runs, else every 30 (pollDelay, deploy/cli/flow.ts). /view tells the page when to ask again (X-Erga-Poll).
 //
 // Its buttons run `bun erga` itself (merge, promote, release, rollback), `gh run rerun` (Retry) and a delete of a
 // feature branch on GitHub, one at a time, and the page shows the output as it comes. It listens on 127.0.0.1 only.
@@ -11,9 +12,9 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { PROTECTED, type State } from "./flow";
+import { PROTECTED, pollDelay, type State } from "./flow";
 import { liveHtml, pageHtml } from "./dashboard-page";
-import { ROOT, readState, repoOf } from "./observe";
+import { ROOT, repoOf } from "./observe";
 
 /** What the page may ask for: each turns into one command (`argvOf`). */
 export type Action =
@@ -122,10 +123,26 @@ export interface DashboardOptions {
   repo?: string;
 }
 
+/** readState in a worker thread (deploy/cli/dashboard-reader.ts), one read at a time. */
+function workerRead(): () => Promise<State> {
+  let worker: Worker | null = null;
+  return () =>
+    new Promise((ok, no) => {
+      worker ??= new Worker(new URL("./dashboard-reader.ts", import.meta.url).href);
+      worker.onmessage = (e: MessageEvent<{ state?: State; error?: string }>) =>
+        e.data.state ? ok(e.data.state) : no(new Error(e.data.error ?? "The read failed."));
+      worker.onerror = (e) => {
+        worker = null;
+        no(new Error(e.message));
+      };
+      worker.postMessage(null);
+    });
+}
+
 /** The dashboard's server, on 127.0.0.1. */
 export function serveDashboard(o: DashboardOptions) {
   const token = o.token ?? randomBytes(24).toString("base64url");
-  const read = o.read ?? (() => readState());
+  const read = o.read ?? workerRead();
   const run = o.run ?? spawnJob;
   const repo = o.repo ?? repoOf() ?? "";
   const script = readFileSync(join(ROOT, "deploy/cli/dashboard-client.js"), "utf8");
@@ -143,7 +160,8 @@ export function serveDashboard(o: DashboardOptions) {
         pending = null;
       }));
   const state = async (fresh: boolean) => {
-    if (fresh || !cached || Date.now() - cached.at > 15_000) await refresh();
+    // A read is fresh for a bit less than the page waits between reads (pollDelay), so each of the page's reads is new.
+    if (fresh || !cached || Date.now() - cached.at > pollDelay(cached.value) - 2_000) await refresh();
     return cached!.value;
   };
   const jobs: Job[] = [];
@@ -161,7 +179,12 @@ export function serveDashboard(o: DashboardOptions) {
       if (![`localhost:${port}`, `127.0.0.1:${port}`].includes(req.headers.get("host") ?? ""))
         return new Response("Wrong host.", { status: 403 });
       if (url.pathname == "/") return html(pageHtml({ token, live: liveHtml(cached?.value ?? null), script }));
-      if (url.pathname == "/view") return html(liveHtml(await state(url.searchParams.has("fresh"))));
+      if (url.pathname == "/view") {
+        const s = await state(url.searchParams.has("fresh"));
+        const r = html(liveHtml(s));
+        r.headers.set("X-Erga-Poll", String(pollDelay(s)));
+        return r;
+      }
       if (url.pathname == "/api/state") return json(await state(false));
       if (FILES[url.pathname]) {
         const [path, type] = FILES[url.pathname];
@@ -267,7 +290,9 @@ function freePort(from: number): number {
 export async function startDashboard(wanted: number, open: boolean) {
   const { server } = serveDashboard({ port: freePort(wanted) });
   console.log(`PASS  The dashboard: http://localhost:${server.port}/`);
-  console.log("NOTE  Keep this command running. It reads GitHub and the servers each time the page asks, at most every 15 seconds.");
+  console.log(
+    "NOTE  Keep this command running. It reads GitHub and the servers while the page is open: every 5 seconds during a deploy, else every 30."
+  );
   console.log("NOTE  Its buttons run bun erga merge, promote, release and rollback. Use them only when Pete asks.");
   if (open) Bun.spawn(["open", `http://localhost:${server.port}/`]);
 }

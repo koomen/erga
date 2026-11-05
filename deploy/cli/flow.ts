@@ -166,12 +166,50 @@ export function previousVersion(
   return now && before ? { now, before } : null;
 }
 
+/**
+ * Where a server's deploy is: its run waits for a runner, runs (`job`: the job that runs now), or ended. `note`: what
+ * GitHub still says when the server already runs the run's commit (GitHub's status can lag; the server's answer wins).
+ */
+export interface Deploy {
+  phase: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  job: string | null;
+  url: string;
+  note?: string;
+}
+
+/** The workflow's job that deploys a server: `deploy` for production and staging; another server's is not known. */
+const deployJob = (server: string) => (server == "production" || server == "staging" ? "deploy" : null);
+
+/**
+ * A server's deploy, from its branch's last run, that run's jobs (when read) and the server's own answer. The server's
+ * own job decides once it ends. A healthy server that runs the run's commit is deployed, whatever GitHub still says.
+ */
+export function deployOf(run: Run | null, job: string | null, server: Pick<Server, "version" | "healthy">): Deploy | null {
+  if (!run) return null;
+  const ended = (conclusion: string): Deploy["phase"] =>
+    conclusion == "success" ? "succeeded" : conclusion == "cancelled" || conclusion == "skipped" ? "cancelled" : "failed";
+  const own = job ? run.jobs?.find((j) => j.name == job) : undefined;
+  if (own?.status == "completed") return { phase: ended(own.conclusion), job: null, url: run.url };
+  if (run.status == "completed") return { phase: ended(run.conclusion), job: null, url: run.url };
+  const now = run.jobs?.find((j) => j.status == "in_progress");
+  const phase = now || run.status == "in_progress" ? "running" : "queued";
+  if (server.healthy && !!server.version && run.sha.startsWith(server.version))
+    return { phase: "succeeded", job: null, url: run.url, note: `GitHub still says ${phase == "running" ? "in progress" : "queued"}` };
+  return { phase, job: now?.name ?? null, url: run.url };
+}
+
+/** How long the dashboard waits before it reads again: 5 seconds while a deploy waits or runs, else 30. */
+export function pollDelay(s: State | { error: string } | null): number {
+  if (!s || "error" in s) return 5_000;
+  return s.servers.some((v) => v.deploy?.phase == "queued" || v.deploy?.phase == "running") ? 5_000 : 30_000;
+}
+
 /** The dashboard's and `bun erga status`'s picture of the repository and its servers. */
 export interface State {
   repo: string;
   at: number;
   heads: { main: string | null; staging: string | null };
-  servers: (Server & { run: Run | null; current: boolean })[];
+  servers: (Server & { run: Run | null; deploy: Deploy | null; current: boolean })[];
   branches: Branch[];
   /** Commits on staging that main does not have (they go out at the next promote). */
   waiting: Commit[];
@@ -200,7 +238,7 @@ export function stateOf(o: {
     servers: o.servers.map((s) => {
       const head = s.branch == "main" ? o.heads.main : o.heads.staging;
       const run = o.runs.filter((r) => r.branch == s.branch).sort((a, b) => b.at - a.at)[0] ?? null;
-      return { ...s, run, current: !!head && s.version == head.slice(0, 12) };
+      return { ...s, run, deploy: deployOf(run, deployJob(s.name), s), current: !!head && s.version == head.slice(0, 12) };
     }),
     branches: [...o.branches].sort((a, b) => b.at - a.at),
     waiting: o.waiting,

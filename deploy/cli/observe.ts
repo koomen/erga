@@ -202,12 +202,17 @@ export const jobsOf = (repo: string, id: number): NonNullable<Run["jobs"]> =>
     "jobs"
   )?.jobs ?? [];
 
+let known: { repo: string; at: number; list: ReturnType<typeof serversOf> } | null = null;
+
 /** Everything the dashboard and `bun erga status` show. */
 export async function readState(o: { checkConflicts?: boolean } = {}): Promise<State> {
   const repo = repoOf();
   if (!repo) throw new Error("This checkout's origin is not a GitHub repository.");
   fetchOrigin();
-  const servers = await Promise.all(serversOf(repo).map(async (s) => ({ ...s, ...(await answerOf(s.host)) })));
+  // The servers change only with the repository's variables: the dashboard, which reads every few seconds, reads them
+  // again every 10 minutes.
+  if (!known || known.repo != repo || Date.now() - known.at > 600_000) known = { repo, at: Date.now(), list: serversOf(repo) };
+  const servers = await Promise.all(known.list.map(async (s) => ({ ...s, ...(await answerOf(s.host)) })));
   const runs = runsOf(repo);
   // The deploy jobs of each server's latest run: the dashboard links their logs.
   const latest = new Map<string, Run & { id: number }>();
