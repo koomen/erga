@@ -3,6 +3,7 @@
 // as one commit and deploys it to each staging instance, `deploy` deploys a primary and moves main, `release` tags main.
 // Every deploy runs on this machine: a push deploys nothing. `bun erga skill` is the agents' manual.
 //
+//   bun erga [--port N] [--no-open]     the ops page: the registered instances, the branches and the log, on localhost
 //   bun erga skill                      how an agent works in this repository (the workflow and its rules)
 //   bun erga start <branch>             a new feature branch from origin/staging, in this checkout
 //   bun erga status                     production, staging, the feature branches and the commits, as text
@@ -254,7 +255,8 @@ async function login(arg: string | undefined) {
 // ------------------------------------------------------------------ the commands
 
 export async function main(argv: string[]) {
-  const [cmd, ...rest] = argv;
+  // No command, or only the ops page's options: the ops page.
+  const [cmd, ...rest] = argv[0] == undefined || /^--(port|no-open)$/.test(argv[0]) ? ["", ...argv] : argv;
   const flag = (f: string) => rest.includes(f);
   const opt = (f: string) => {
     const i = rest.indexOf(f);
@@ -274,6 +276,13 @@ export async function main(argv: string[]) {
       const { startDashboard } = await import("./dashboard");
       return startDashboard(Number(opt("--port")) || 4748, flag("--open"));
     }
+    case "": {
+      const { startOpsPage } = await import("./ops-page");
+      const { ergaDir } = await import("./config");
+      const port = opt("--port");
+      startOpsPage({ dir: ergaDir(), cwd: process.cwd(), port: port == undefined ? undefined : Number(port), open: !flag("--no-open") });
+      return;
+    }
     case "merge":
       return merge(plain[0], opt("-m"));
     case "release":
@@ -291,7 +300,6 @@ export async function main(argv: string[]) {
       const { setupMain } = await import("../own/cli");
       return setupMain(rest);
     }
-    case undefined:
     case "help":
     case "--help":
     case "-h":
