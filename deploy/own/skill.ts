@@ -77,5 +77,5 @@ on it, a GitHub account with the GitHub CLI logged in (gh auth login), Bun
 - "hasn't answered yet": a new address can take minutes. Run
   bun erga own status again.
 - "GitHub would come back to ...": fix the app's callback URL on GitHub.
-- A bad deploy: bun erga rollback production puts back the version before.
+- A bad deploy: bun erga register <host> one time, then bun erga rollback <host> puts back the version before.
 `;

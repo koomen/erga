@@ -45,13 +45,23 @@ and `main`. There are no pull requests.
 - `bun erga status`: production, staging, the feature branches (ahead,
   behind, conflicts) and the commits that wait for promote.
 - `bun erga dashboard`: the same, as a live page on localhost.
-- `bun erga rollback <staging|production>`: the Worker version from before
-  the last deploy, in seconds. Only when Pete asks. The next deploy goes
-  forward again.
+- `bun erga deploy [<commit>] <host>`: deploys a registered instance from
+  this machine, with the facts in `.erga/config.json`. Only when Pete asks.
+  It asks no question. A staging instance needs a commit, and keeps its
+  copy of production's data. A primary with no commit takes the commit
+  that its staging instances run (they must agree and be healthy). It
+  deploys only a commit whose tests passed (`.erga/tests/<sha>`; `merge`
+  writes it), else it runs them first. It does not move `main`: `promote`
+  stays until GitHub stops deploying.
+- `bun erga rollback <host>`: a registered instance's Worker version from
+  before its last deploy, in seconds. Only when Pete asks. The next deploy
+  goes forward again.
+- A deploy or a rollback holds the lock `.erga/jobs/<host>.lock` and writes
+  its record in `.erga/jobs/`. A second one on the same instance stops.
 - `bun erga register <host> [--staging-of <host>]`: signs in to an instance
   as an admin (Pete approves in the browser), and writes its deploy facts,
   its plain settings and an ops token into `.erga/config.json` in the main
-  clone. Only when Pete asks. Nothing reads the file yet.
+  clone. Only when Pete asks.
 - `bun erga login <host>`: a new ops token for a registered instance.
 - `bun erga own ...`: a person's own Erga on their own domain (`bun erga own skill`).
 

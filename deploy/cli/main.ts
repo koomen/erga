@@ -9,7 +9,9 @@
 //   bun erga merge <branch> [-m text]   the branch onto staging as one commit: tests, push, wait for the deploy
 //   bun erga promote                    main to staging's head (production deploys): only when Pete asks
 //   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
-//   bun erga rollback <staging|production> [--yes]            the Worker version from before the last deploy
+//   bun erga deploy [<commit>] <host> [--no-tests]            deploys a registered instance from this machine; a primary
+//                                       with no commit takes the commit its staging instances run
+//   bun erga rollback <host> [--yes]    a registered instance's Worker version from before its last deploy
 //   bun erga register <host> [--staging-of <host>]            signs in to an instance as an admin, in the browser, and
 //                                       adds it to .erga/config.json: its deploy facts, its plain settings, an ops token
 //   bun erga login <host>               a new ops token for a registered instance, when its token runs out
@@ -18,13 +20,11 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ACCOUNT, TARGETS } from "../targets";
 import {
   latestTag,
   mergeRefusal,
   nextVersion,
   PROTECTED,
-  previousVersion,
   promoteRefusal,
   releaseNotes,
   releaseRefusal,
@@ -171,6 +171,9 @@ async function merge(branch: string | undefined, message: string | undefined, wa
       );
     }
     pass("bun run test: all passing.");
+    const { ergaDir } = await import("./config");
+    const { recordPass } = await import("./deploy");
+    recordPass(ergaDir(), sha, t.out);
     const p = at(["git", "push", "--quiet", "origin", "HEAD:refs/heads/staging"], { env: CLI_PUSH });
     if (!p.ok) fail(`The push to staging failed: ${p.err}`, "Staging moved while the tests ran: run bun erga merge again.");
     pass(`staging is at ${sha.slice(0, 12)}: ${text.split("\n")[0]}`);
@@ -237,47 +240,30 @@ function release(asked: string | undefined, dry: boolean) {
   pass(`${v.version} is released: ${r.out}`);
 }
 
-// ------------------------------------------------------------------ rollback
+// ------------------------------------------------------------------ deploy and rollback
 
-async function rollback(name: string | undefined, yes: boolean) {
-  if (name != "staging" && name != "production") return fail("Name the server: bun erga rollback <staging|production>.");
-  const { machineCredential } = await import("../local-credential");
-  const { Cloudflare, rollbackTo } = await import("../pipeline/pipeline");
-  const { answersOf, loadOwn } = await import("../own/store");
-  const { hostOf, namesOf } = await import("../own/plan");
-  // Your own Erga (.erga/own.json), else Erga's own servers (deploy/targets.json).
-  const own = loadOwn();
-  const a = own.answers ? answersOf(own) : null;
-  const host = a ? hostOf(a, name) : TARGETS[name].host;
-  if (!host) return fail(`This Erga has no ${name} server.`);
-  const worker = a ? namesOf(host).worker : TARGETS[name].worker;
-  const accountId = a ? (own.account ?? "") : ACCOUNT;
-  if (!accountId) fail("No Cloudflare account in .erga/own.json.", "bun erga own set account=<id>");
-  const cred = machineCredential() ?? fail("No Cloudflare credential on this machine.", "bunx cf auth login, or set CLOUDFLARE_API_TOKEN.");
-  const cf = new Cloudflare(cred.token);
-  const list = await cf.call<{ deployments: { created_on: string; versions: { version_id: string; percentage: number }[] }[] }>(
-    "GET",
-    `/accounts/${accountId}/workers/scripts/${worker}/deployments`,
-    `read ${worker}'s deployments`
-  );
-  const sorted = [...(list?.deployments ?? [])].sort((x, y) => Date.parse(y.created_on) - Date.parse(x.created_on));
-  const p = previousVersion(sorted);
-  if (!p) return fail(`${worker} has no deployment of another version to go back to.`);
-  const before = await answerOf(host);
-  say(`${name} (${worker}, https://${host}) runs release ${before.version ?? "?"}, Worker version ${p.now}.`);
-  say(`Rollback goes to the Worker version before it: ${p.before}. The database stays as it is.`);
-  if (!yes) {
-    const answer = prompt("Roll back now? [y/N]");
-    if (!/^y(es)?$/i.test(answer?.trim() ?? "")) fail("Not rolled back.");
-  }
-  await rollbackTo(cf, { accountId, workerName: worker }, p.before, `bun erga rollback ${name}`);
-  let after = await answerOf(host);
-  for (let i = 0; i < 6 && after.version == before.version; i++) {
-    await Bun.sleep(5000);
-    after = await answerOf(host);
-  }
-  pass(`${name} runs release ${after.version ?? "?"} now, health ${after.healthy ? "ok" : "FAIL"}.`);
-  say("NOTE  The next push to its branch deploys forward again.");
+/** A host from a host or a URL. */
+const hostOf = async (arg: string) => new URL((await import("./config")).originOf(arg)).host;
+
+async function deploy(args: string[], noTests: boolean, fresh: boolean) {
+  if (fresh) fail("--fresh comes later (plan to-do 7).", "bun deploy/run.ts staging --fresh copies production's data afresh.");
+  if (!args.length || args.length > 2) fail("Name the instance: bun erga deploy [<commit>] <host> [--no-tests].");
+  const [commit, host] = args.length == 2 ? [args[0], await hostOf(args[1])] : [undefined, await hostOf(args[0])];
+  const { ergaDir } = await import("./config");
+  const { deployInstance } = await import("./deploy");
+  const command = ["bun erga deploy", ...args, ...(noTests ? ["--no-tests"] : [])].join(" ");
+  const sha = await deployInstance({ dir: ergaDir(), host, commit, noTests, command }).catch((e: Error) => fail(e.message));
+  pass(`${host} runs ${sha.slice(0, 12)}, healthy.`);
+}
+
+async function rollback(arg: string | undefined, yes: boolean) {
+  if (!arg) return fail("Name the instance: bun erga rollback <host> [--yes].");
+  const { ergaDir } = await import("./config");
+  const { rollbackInstance } = await import("./deploy");
+  const host = await hostOf(arg);
+  const ask = yes ? undefined : (q: string) => /^y(es)?$/i.test(prompt(q)?.trim() ?? "");
+  await rollbackInstance({ dir: ergaDir(), host, ask }).catch((e: Error) => fail(e.message));
+  say("NOTE  The next deploy goes forward again.");
 }
 
 // ------------------------------------------------------------------ register and login
@@ -362,6 +348,8 @@ export async function main(argv: string[]) {
       return promote(!flag("--no-wait"));
     case "release":
       return release(plain[0], flag("--dry-run"));
+    case "deploy":
+      return deploy(plain, flag("--no-tests"), flag("--fresh"));
     case "rollback":
       return rollback(plain[0], flag("--yes"));
     case "register":
