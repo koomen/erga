@@ -2,12 +2,13 @@
 // settings, on D1, through D1's API. A batch is one transaction.
 
 import { Directory, parseDeployed, type Param, type Permission, type Sql } from "../server/directory/index.ts";
-import { githubAccounts, Tokens } from "../server/identity/index.ts";
+import { githubAccounts, signInApp, Tokens } from "../server/identity/index.ts";
 import { forgetDecisions } from "../server/documents/index.ts";
 
 import type { Env } from "./env";
 import { counted, type D1Took, slowQueryLine } from "./timing";
 import { documentOf } from "./objects/document-stub";
+import { platform } from "./platform";
 
 /** Runs one call to D1, logging it if it's slow (slowQueryLine), whether it answers or fails. */
 async function watched<R>(sql: string, call: () => Promise<R>, metaOf: (r: R) => D1Took): Promise<R> {
@@ -87,8 +88,11 @@ export function directoryOf(env: Env): Directory {
       ...(env.DEV_LOGIN?.trim() ? { local: true } : {}),
       // The deploy's defaults (an instance's preset: SERVER_DEFAULTS), and locally public_sharing on.
       defaults: { ...parseDeployed(env.SERVER_DEFAULTS), ...(env.DEV_LOGIN?.trim() ? { public_sharing: true } : {}) },
-      // A GitHub account added on the Users page: its id, from GitHub's public users API (locally, the pretend GitHub's).
-      github: githubAccounts((env.DEV_LOGIN && env.ERGA_GITHUB_ORIGIN?.trim().replace(/\/+$/, "")) || "https://github.com"),
+      // A GitHub account added on the Users page: its id, from GitHub's public users API (locally, the pretend GitHub's),
+      // asked as the sign-in app in use (the page's, else the deploy's).
+      github: githubAccounts((env.DEV_LOGIN && env.ERGA_GITHUB_ORIGIN?.trim().replace(/\/+$/, "")) || "https://github.com", () =>
+        signInApp(platform(env), "active")
+      ),
       changed,
       permissionsChanged,
       // An open page's rows follow every change (server/news/).

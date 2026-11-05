@@ -65,10 +65,12 @@ export function personHandle(provider: unknown, raw: unknown): { provider: SignI
     .trim()
     .toLowerCase() as SignInProvider;
   if (!SIGN_IN_PROVIDERS.includes(p)) throw new NotAllowed({ message: `"${provider}" isn't a provider: github or google.` });
-  const h = String(raw ?? "")
+  let h = String(raw ?? "")
     .trim()
     .toLowerCase()
     .replace(/^@/, "");
+  // A GitHub profile's URL, pasted: its login.
+  if (p == "github") h = h.replace(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/?#]+)\/?$/, "$1");
   if (!h) throw new NotAllowed({ message: p == "github" ? "Give the GitHub login." : "Give the Google account's email address." });
   if (p == "github" && !LOGIN.test(h)) throw new NotAllowed({ message: `"${h}" isn't a GitHub login.` });
   if (p == "google" && (!EMAIL.test(h) || h.endsWith("@users.noreply.github.com")))

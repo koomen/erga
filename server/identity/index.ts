@@ -14,7 +14,7 @@ export {
   startSignIn,
 } from "./sign-in.ts";
 export { devSignIn, usernameStep } from "./accounts.ts";
-export { authOps, providersOn } from "./settings.ts";
+export { authOps, providersOn, signInApp } from "./settings.ts";
 export { adminsOnlyGate } from "./admins-only.ts";
 export { isOAuthPath, oauthRoutes, resourceMetadataUrl } from "./oauth.ts";
 
