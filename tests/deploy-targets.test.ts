@@ -9,8 +9,6 @@
 // kept. The guards. The snapshot endpoints, the documents' bucket.
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { targetFor } from "../deploy/run";
-import { TARGETS } from "../deploy/targets";
 import { ALL_STEPS, guardTarget, runPipeline } from "../deploy/pipeline/pipeline";
 import { bucketName } from "../deploy/pipeline/account";
 import { Cloudflare } from "../deploy/pipeline/cloudflare-api";
@@ -21,7 +19,7 @@ import {
   prepareRelease,
   release,
   quick,
-  env,
+  primary,
   stagingSecrets,
   staging,
   afresh,
@@ -43,8 +41,8 @@ describe("staging", () => {
     const before = productionOf(mock.state);
     const { result, steps } = await deployTo(staging({ secrets: stagingSecrets }), mock);
     expect(steps.filter((s) => s.endsWith(":running")).map((s) => s.split(":")[0])).toEqual(ALL_STEPS.map((s) => s.id));
-    expect(result.url).toBe("https://staging.erga.dev");
-    expect(result.pages).toBe("*.erga-pages-staging.dev");
+    expect(result.url).toBe("https://staging.example.com");
+    expect(result.pages).toBe("*.example-pages-staging.com");
 
     // Its own database: a new one, with production's rows and migrations, then the migrations production hasn't had yet
     // (the mock's production stops at 0110_admin_keys.sql; staging runs ahead of it with the newer ones).
@@ -69,13 +67,13 @@ describe("staging", () => {
     expect(b.DOCUMENTS.script_name).toBeUndefined();
     expect(b.DEPLOY_TARGET.text).toBe("staging");
     expect(b.SNAPSHOT_IMPORT.text).toBe("1");
-    expect(b.PAGES_DOMAIN.text).toBe("erga-pages-staging.dev");
+    expect(b.PAGES_DOMAIN.text).toBe("example-pages-staging.com");
     expect(b.ERGA_VERSION.text).toBe(release.version);
     expect(b.ERGA_DEPLOYED).toBeUndefined();
     expect(b.ARTIFACTS).toBeUndefined();
     // No admin in the deploy; its primary's address, where staging reads the documents' images (as bun erga deploy sets it).
     expect(b.ADMINS).toBeUndefined();
-    expect(b.SNAPSHOT_FROM.text).toBe("https://erga.dev");
+    expect(b.SNAPSHOT_FROM.text).toBe("https://example.com");
     expect(mock.state.secrets["erga-staging"].SESSION_SECRET).toBe(stagingSecrets.SESSION_SECRET);
     expect(mock.state.secrets["erga-staging"].SESSION_SECRET).not.toBe(mock.state.secrets.erga.SESSION_SECRET);
     const meta = mock.state.scripts["erga-staging"].metadata;
@@ -84,14 +82,18 @@ describe("staging", () => {
     expect(Object.keys(meta.exports).sort()).toEqual(Object.entries(release.worker.exports!).filter(([, e]) => e.state != "deleted").map(([n]) => n).sort());
     expect(mock.state.scripts["erga-staging"].namespaces.sort()).toEqual(Object.keys(meta.exports).sort());
 
-    // Its addresses: staging.erga.dev, and documents' pages on a zone of their own (erga-pages-staging.dev: its Universal SSL covers them).
-    expect(mock.state.domains).toContainEqual({ hostname: "staging.erga.dev", service: "erga-staging", zone_id: "zone00000000000000000000000e7ga1" });
+    // Its addresses: staging.example.com, and documents' pages on a zone of their own (example-pages-staging.com: its Universal SSL covers them).
+    expect(mock.state.domains).toContainEqual({
+      hostname: "staging.example.com",
+      service: "erga-staging",
+      zone_id: "zone00000000000000000000000e7ga1",
+    });
     const pagesZone = "zone00000000000000000000000e7ga3";
-    expect(mock.state.routes[pagesZone]).toEqual([{ pattern: "*.erga-pages-staging.dev/*", script: "erga-staging" }]);
-    expect(mock.state.dns[pagesZone].map((r) => r.name)).toEqual(["*.erga-pages-staging.dev"]);
+    expect(mock.state.routes[pagesZone]).toEqual([{ pattern: "*.example-pages-staging.com/*", script: "erga-staging" }]);
+    expect(mock.state.dns[pagesZone].map((r) => r.name)).toEqual(["*.example-pages-staging.com"]);
     // Production's pages zone: nothing of staging's.
-    expect(mock.state.routes["zone00000000000000000000000e7ga2"]).toEqual([{ pattern: "*.erga-pages.dev/*", script: "erga" }]);
-    expect(mock.state.dns["zone00000000000000000000000e7ga2"].map((r) => r.name)).toEqual(["*.erga-pages.dev"]);
+    expect(mock.state.routes["zone00000000000000000000000e7ga2"]).toEqual([{ pattern: "*.example-pages.com/*", script: "erga" }]);
+    expect(mock.state.dns["zone00000000000000000000000e7ga2"].map((r) => r.name)).toEqual(["*.example-pages.com"]);
 
     // Production's documents, every key and alarm, in staging's Durable Objects.
     const ours = mock.state.docs["erga-staging"].docs, theirs = mock.state.docs.erga.docs;
@@ -180,7 +182,7 @@ describe("production", () => {
   test("its Worker replaced in place: the same database and domain, its secrets kept, its tombstone sent, no copying", async () => {
     const mock = mockCloudflare({ fleet: true });
     const secrets = { ...mock.state.secrets.erga };
-    const { steps } = await deployTo(targetFor("production", env()), mock);
+    const { steps } = await deployTo(primary(), mock);
     expect(steps.filter((s) => s.endsWith(":running")).map((s) => s.split(":")[0])).toEqual(["account", "database", "migrations", "assets", "worker", "address", "pages", "live"]);
     expect(steps).toContain("database:done using Erga's database from before (" + PROD_DB + ")");
     expect(mock.state.databases.length).toBe(1);
@@ -192,11 +194,13 @@ describe("production", () => {
     expect(b.DEPLOY_TARGET.text).toBe("production");
     expect(b.SNAPSHOT_IMPORT.text).toBe("");
     expect(b.SNAPSHOT_FROM).toBeUndefined();
-    expect(b.PAGES_DOMAIN.text).toBe("erga-pages.dev");
-    expect(b.GITHUB_CLIENT_ID.text).toBe(TARGETS.production.vars.GITHUB_CLIENT_ID);
+    expect(b.PAGES_DOMAIN.text).toBe("example-pages.com");
+    expect(b.GITHUB_CLIENT_ID.text).toBe("Ov23primary");
     expect(mock.state.scripts.erga.metadata.exports.DocList).toEqual({ type: "durable-object", state: "deleted" });
-    expect(mock.state.domains.filter((d) => d.hostname == "erga.dev")).toEqual([{ hostname: "erga.dev", service: "erga", zone_id: "zone00000000000000000000000e7ga1" }]);
-    expect(mock.state.routes["zone00000000000000000000000e7ga2"]).toEqual([{ pattern: "*.erga-pages.dev/*", script: "erga" }]);
+    expect(mock.state.domains.filter((d) => d.hostname == "example.com")).toEqual([
+      { hostname: "example.com", service: "erga", zone_id: "zone00000000000000000000000e7ga1" },
+    ]);
+    expect(mock.state.routes["zone00000000000000000000000e7ga2"]).toEqual([{ pattern: "*.example-pages.com/*", script: "erga" }]);
   });
 
   test("guards: nothing but production may use production's names, and a snapshot never goes into its source", () => {
@@ -204,15 +208,21 @@ describe("production", () => {
     expect(guardTarget(g)).toBeNull();
     expect(guardTarget({ ...g, workerName: "erga" })).toMatch(/replace production's Worker/);
     expect(guardTarget({ ...g, databaseName: "erga" })).toMatch(/production's database/);
-    expect(guardTarget({ ...g, app: { kind: "domain", zoneName: "erga.dev", hostname: "erga.dev" } })).toMatch(/production's address/);
-    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "erga-pages.dev" } })).toMatch(/production's address/);
-    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "erga-pages.dev", domain: "staging.erga-pages.dev" } })).toMatch(/under production's pages domain/);
-    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "erga-pages.dev", domain: "a.b.ERGA-PAGES.dev" } })).toMatch(/under production's pages domain/);
+    expect(guardTarget({ ...g, app: { kind: "domain", zoneName: "example.com", hostname: "example.com" } })).toMatch(
+      /production's address/
+    );
+    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "example-pages.com" } })).toMatch(/production's address/);
+    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "example-pages.com", domain: "staging.example-pages.com" } })).toMatch(
+      /under production's pages domain/
+    );
+    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "example-pages.com", domain: "a.b.EXAMPLE-PAGES.com" } })).toMatch(
+      /under production's pages domain/
+    );
     // Not under it: a name that only ends the same way.
-    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "my-erga-pages.dev" } })).toBeNull();
-    expect(g.pages).toEqual({ kind: "zone", zoneName: "erga-pages-staging.dev", domain: "erga-pages-staging.dev" });
+    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "my-example-pages.com" } })).toBeNull();
+    expect(g.pages).toEqual({ kind: "zone", zoneName: "example-pages-staging.com", domain: "example-pages-staging.com" });
     expect(guardTarget({ ...g, snapshot: { ...g.snapshot!, databaseName: "erga-staging" } })).toMatch(/can't go into the database it's copied from/);
-    expect(guardTarget({ ...targetFor("production", env()), snapshot: g.snapshot })).toMatch(/Production never takes a copy/);
+    expect(guardTarget({ ...primary(), snapshot: g.snapshot })).toMatch(/Production never takes a copy/);
     // A server /deploy made in someone else's account may be called erga: the guard is production's account's.
     expect(guardTarget({ ...g, snapshot: undefined, workerName: "erga", databaseName: "erga", accountId: "f".repeat(32) })).toBeNull();
   });

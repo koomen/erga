@@ -22,7 +22,6 @@ import { join, relative } from "node:path";
 import { findDatabase } from "../pipeline/pipeline";
 import { d1 } from "../pipeline/account";
 import { SETUP_SKILL } from "./skill";
-import { PRODUCTION } from "../targets";
 import { Tokens } from "../../server/identity/tokens";
 import type { Sql } from "../../server/directory/index";
 import { deployedSettings } from "../../server/directory/settings";
@@ -405,7 +404,6 @@ async function remove(t: TargetName, yes: boolean) {
       `This deletes ${t} (${host}): the Workers ${n.worker} and ${n.pagesWorker}, the database ${n.database} and the bucket ${n.bucket}, with every document on it.`,
       `Only if the person said yes: bun erga setup ${a.host} remove ${t} --yes`
     );
-  if (n.worker == PRODUCTION.worker || n.database == PRODUCTION.database) fail("Those are erga.dev's names.", "Never.");
   const { cf } = await connect();
   const acc = `/accounts/${own.account ?? (await cf.call<{ id: string }[]>("GET", "/accounts", "list your accounts"))?.[0]?.id}`;
   const step = async (what: string, f: () => Promise<unknown>) => {

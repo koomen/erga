@@ -3,7 +3,6 @@
 // as it is; one that needs a newer pipeline stops before it changes anything.
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { targetFor } from "../deploy/run";
 import { workerMetadata } from "../deploy/pipeline/account";
 import { bindingsProblem, releaseBindings } from "../deploy/pipeline/bindings";
 import type { Release } from "../deploy/pipeline/release-format";
@@ -15,7 +14,7 @@ quietConsole();
 beforeAll(prepareRelease, 120_000);
 
 const stagingMeta = (rel: Release) =>
-  workerMetadata(rel, targetFor("staging", { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT }), {
+  workerMetadata(rel, staging(), {
     dbId: "db",
     assetsJwt: "jwt",
     pagesHost: null,
@@ -54,7 +53,7 @@ describe("the app Worker's bindings", () => {
   });
 
   test("the Worker gets its own deploy facts (ERGA_DEPLOY), which GET /api/ops answers: the target's account, Worker, database, addresses and plain settings", () => {
-    const target = targetFor("staging", { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT });
+    const target = staging();
     const facts = JSON.parse(stagingMeta(release).find((b) => b.name == "ERGA_DEPLOY").text);
     expect(facts).toEqual({
       account: FLEET_ACCOUNT,

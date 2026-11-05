@@ -1,5 +1,5 @@
-// Building one checkout of Erga into a release, on the machine that deploys it (deploy/run.ts,
-// buildHere). A Worker can't run `bun install` or Vite, so this is the one part of a deploy
+// Building one checkout of Erga into a release, on the machine that deploys it (buildHere:
+// `bun erga deploy`). A Worker can't run `bun install` or Vite, so this is the one part of a deploy
 // that runs outside the Cloudflare API.
 //
 //   1. bun install --frozen-lockfile    (or the checkout's own node_modules, linked)
@@ -7,8 +7,35 @@
 //   3. bun run release                   (cf build: the Worker and its config, into .build/release/)
 //   4. pack .build/release/ as one bundle (bundle.ts reads it)
 
-import { readdirSync, readFileSync, existsSync, symlinkSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { unpackRelease } from "./bundle";
+import { loadRelease, type Release } from "./release-format";
+
+const ROOT = new URL("../..", import.meta.url).pathname;
+
+/** Builds `commit` of this clone in a scratch worktree: the release. Under the mock, the checkout's own .build/release/, stamped. */
+export async function buildHere(commit: string, log: Log, mock = false): Promise<Release> {
+  if (mock) {
+    const dir = join(ROOT, ".build/release");
+    if (!existsSync(join(dir, "release.json"))) throw new Error("no .build/release/: run bun run build and bun run release first");
+    const r = await loadRelease(async (p) => (existsSync(join(dir, p)) ? new Uint8Array(readFileSync(join(dir, p))) : null));
+    log(`build: (mock) .build/release/ as ${commit.slice(0, 12)}`);
+    return { ...r!, version: commit.slice(0, 12) };
+  }
+  const dir = mkdtempSync(join(tmpdir(), "erga-build-"));
+  rmSync(dir, { recursive: true, force: true });
+  const add = Bun.spawnSync(["git", "worktree", "add", "--detach", dir, commit], { cwd: ROOT });
+  if (add.exitCode != 0) throw new Error(`git worktree add failed: ${add.stderr.toString()}`);
+  try {
+    // This checkout's packages, linked (a commit whose lockfile differs needs `bun install` here first).
+    const bytes = await buildIn({ dir, commit, log: (l) => log(`build: ${l}`), nodeModules: existsSync(join(ROOT, "node_modules")) ? join(ROOT, "node_modules") : undefined });
+    return unpackRelease(bytes, commit.slice(0, 12));
+  } finally {
+    Bun.spawnSync(["git", "worktree", "remove", "--force", dir], { cwd: ROOT });
+  }
+}
 
 export type Log = (line: string) => void;
 /** Runs a command in `cwd`, each line it prints to `log`; throws if it fails. */

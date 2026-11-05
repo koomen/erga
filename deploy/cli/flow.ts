@@ -1,6 +1,6 @@
 // What `bun erga` decides: when a merge or a release must stop, the message of a squashed merge, the next
-// release's version and notes, a rollback's version, and the dashboard's state. Pure: no network, no git, no files
-// (deploy/cli/observe.ts reads GitHub and the servers; deploy/cli/main.ts acts).
+// release's version and notes, a rollback's version, and `bun erga status`'s text. Pure: no network, no git, no files
+// (deploy/cli/observe.ts reads git and the instances; deploy/cli/main.ts acts).
 
 /** The branches that `bun erga` moves: staging (merge) and main (a deploy of a primary). */
 export const PROTECTED = ["staging", "main"] as const;
@@ -14,26 +14,15 @@ export interface Commit {
   author?: string;
 }
 
-/** A server as GET /api/deploys/version and GET /api/health answer: its release (12 characters) and its health. */
-export interface Server {
-  name: string;
+/** A registered instance (.erga/config.json) as it answers now: the commit it runs (GET /api/ops) and its health. */
+export interface Instance {
   host: string;
-  /** The branch it deploys from. */
-  branch: string;
+  /** The primary of a staging instance. */
+  stagingOf?: string;
   version: string | null;
   healthy: boolean | null;
-}
-
-/** A workflow run of one commit, as `gh run list` gives it. */
-export interface Run {
-  sha: string;
-  branch: string;
-  status: string;
-  conclusion: string;
-  url: string;
-  at: number;
-  /** The deploy jobs' results, when they were read. */
-  jobs?: { name: string; status: string; conclusion: string; url: string }[];
+  /** Why it gave no commit. */
+  error?: string;
 }
 
 export interface Branch {
@@ -147,76 +136,34 @@ export function previousVersion(
  * Where a server's deploy is: its run waits for a runner, runs (`job`: the job that runs now), or ended. `note`: what
  * GitHub still says when the server already runs the run's commit (GitHub's status can lag; the server's answer wins).
  */
-export interface Deploy {
-  phase: "queued" | "running" | "succeeded" | "failed" | "cancelled";
-  job: string | null;
-  url: string;
-  note?: string;
-}
-
-/** The workflow's job that deploys a server: `deploy` for production and staging; another server's is not known. */
-const deployJob = (server: string) => (server == "production" || server == "staging" ? "deploy" : null);
-
-/**
- * A server's deploy, from its branch's last run, that run's jobs (when read) and the server's own answer. The server's
- * own job decides once it ends. A healthy server that runs the run's commit is deployed, whatever GitHub still says.
- */
-export function deployOf(run: Run | null, job: string | null, server: Pick<Server, "version" | "healthy">): Deploy | null {
-  if (!run) return null;
-  const ended = (conclusion: string): Deploy["phase"] =>
-    conclusion == "success" ? "succeeded" : conclusion == "cancelled" || conclusion == "skipped" ? "cancelled" : "failed";
-  const own = job ? run.jobs?.find((j) => j.name == job) : undefined;
-  if (own?.status == "completed") return { phase: ended(own.conclusion), job: null, url: run.url };
-  if (run.status == "completed") return { phase: ended(run.conclusion), job: null, url: run.url };
-  const now = run.jobs?.find((j) => j.status == "in_progress");
-  const phase = now || run.status == "in_progress" ? "running" : "queued";
-  if (server.healthy && !!server.version && run.sha.startsWith(server.version))
-    return { phase: "succeeded", job: null, url: run.url, note: `GitHub still says ${phase == "running" ? "in progress" : "queued"}` };
-  return { phase, job: now?.name ?? null, url: run.url };
-}
-
-/** How long the dashboard waits before it reads again: 5 seconds while a deploy waits or runs, else 30. */
-export function pollDelay(s: State | { error: string } | null): number {
-  if (!s || "error" in s) return 5_000;
-  return s.servers.some((v) => v.deploy?.phase == "queued" || v.deploy?.phase == "running") ? 5_000 : 30_000;
-}
-
-/** The dashboard's and `bun erga status`'s picture of the repository and its servers. */
+/** `bun erga status`'s picture: the clone as it is (no fetch), and each registered instance's answer. */
 export interface State {
-  repo: string;
-  at: number;
   heads: { main: string | null; staging: string | null };
-  servers: (Server & { run: Run | null; deploy: Deploy | null; current: boolean })[];
+  /** Each primary first, then its staging instances. */
+  instances: Instance[];
   branches: Branch[];
-  /** Commits on staging that main does not have (they go out at the next promote). */
+  /** Commits on staging that main does not have (a deploy of a primary takes them out). */
   waiting: Commit[];
   /** main's recent commits, and the release tag of each that has one. */
   log: (Commit & { tag?: string })[];
   latestRelease: string | null;
 }
 
-/** The state from what was read: each server with its branch's last run, and whether it runs its branch's head. */
+/** The state from what was read: the instances in the order of their primaries, and main's log with its tags. */
 export function stateOf(o: {
-  repo: string;
-  at: number;
   heads: State["heads"];
-  servers: Server[];
-  runs: Run[];
+  instances: Instance[];
   branches: Branch[];
   waiting: Commit[];
   log: Commit[];
   tags: { name: string; sha: string }[];
 }): State {
   const tagOf = new Map(o.tags.map((t) => [t.sha, t.name]));
+  const hosts = new Set(o.instances.map((i) => i.host));
+  const primaries = o.instances.filter((i) => !i.stagingOf || !hosts.has(i.stagingOf));
   return {
-    repo: o.repo,
-    at: o.at,
     heads: o.heads,
-    servers: o.servers.map((s) => {
-      const head = s.branch == "main" ? o.heads.main : o.heads.staging;
-      const run = o.runs.filter((r) => r.branch == s.branch).sort((a, b) => b.at - a.at)[0] ?? null;
-      return { ...s, run, deploy: deployOf(run, deployJob(s.name), s), current: !!head && s.version == head.slice(0, 12) };
-    }),
+    instances: primaries.flatMap((p) => [p, ...o.instances.filter((i) => i.stagingOf == p.host && i != p)]),
     branches: [...o.branches].sort((a, b) => b.at - a.at),
     waiting: o.waiting,
     log: o.log.map((c) => (tagOf.has(c.sha) ? { ...c, tag: tagOf.get(c.sha)! } : c)),
@@ -224,16 +171,25 @@ export function stateOf(o: {
   };
 }
 
-/** `bun erga status` as text. */
-export function statusText(s: State): string {
-  const out: string[] = [`${s.repo}: main ${s.heads.main?.slice(0, 12) ?? "?"}, staging ${s.heads.staging?.slice(0, 12) ?? "?"}`, ""];
-  out.push("Servers:");
-  for (const v of s.servers) {
-    const run = v.run ? `last run ${v.run.conclusion || v.run.status} (${v.run.url})` : "no run";
+/** Where an instance's commit is in the clone: a branch's head, else whether the clone has it at all. */
+function placeOf(version: string, s: State, has: (sha: string) => boolean): string {
+  const at = (["main", "staging"] as const).filter((b) => s.heads[b]?.startsWith(version));
+  if (at.length) return `origin/${at.join(" and origin/")}'s head`;
+  return has(version) ? "not a branch's head" : "a commit this clone does not have (git fetch)";
+}
+
+/** `bun erga status` as text. `has`: whether the clone has a commit. */
+export function statusText(s: State, has: (sha: string) => boolean = () => true): string {
+  const out: string[] = [
+    `main ${s.heads.main?.slice(0, 12) ?? "?"}, staging ${s.heads.staging?.slice(0, 12) ?? "?"} (as this clone knows them)`,
+    "",
+  ];
+  out.push("Instances (.erga/config.json):");
+  if (!s.instances.length) out.push("- none: bun erga register <host>");
+  for (const i of s.instances)
     out.push(
-      `- ${v.name} https://${v.host}: ${v.version ?? "no answer"}${v.current ? " (its branch's head)" : ` (not ${v.branch}'s head)`}, health ${v.healthy == null ? "unknown" : v.healthy ? "ok" : "FAIL"}; ${run}`
+      `${i.stagingOf ? "  - " : "- "}${i.host}${i.stagingOf ? ` (staging of ${i.stagingOf})` : ""}: ${i.version ? `runs ${i.version}, ${placeOf(i.version, s, has)}` : (i.error ?? "no answer")}; health ${i.healthy == null ? "unknown" : i.healthy ? "ok" : "FAIL"}`
     );
-  }
   out.push("", "Feature branches:");
   if (!s.branches.length) out.push("- none");
   for (const b of s.branches)

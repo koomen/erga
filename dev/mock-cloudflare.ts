@@ -11,7 +11,7 @@
 // /query, custom domains, Registrar's workflows. A request the real API
 // would refuse, it refuses.
 //
-// Only the tests use it (and deploy/run.ts with ERGA_DEPLOY_MOCK=1).
+// Only the tests use it (and `bun erga deploy` with ERGA_DEPLOY_MOCK=1).
 //
 // Tokens: any that starts with "mock-" is good; anything else is refused as
 // Cloudflare would. Some do more:
@@ -24,10 +24,10 @@
 //
 // Zones, custom domains and Registrar: dev/mock-cloudflare-zones.ts.
 //
-// With `fleet`, the account is Erga's own, as its deploys
-// see it: the zones erga.dev and erga-pages.dev, the
-// production Worker "erga" already there (deployed by cf deploy, on erga.dev
-// and *.erga-pages.dev) with its database "erga" (tables, rows and
+// With `fleet`, the account is an example primary's, as its deploys
+// see it: the zones example.com and example-pages.com, the
+// primary's Worker "erga" already there (on example.com
+// and *.example-pages.com) with its database "erga" (tables, rows and
 // migrations) and three documents in its Durable Objects. D1's export and import work on
 // it (the SQL as text), secrets are kept per Worker (keep_bindings, the
 // secrets API), and each Worker answers as the real one would where the
@@ -119,7 +119,7 @@ const jwt = (claims: Record<string, unknown>) => `${btoa(JSON.stringify({ alg: "
 const UPLOAD = (single: boolean) => jwt({ kind: "upload", ...(single ? { wrangler_single_asset_uploads: true } : {}) });
 const COMPLETE = jwt({ kind: "complete" });
 
-/** Erga's own account in the fleet mock (the deploy tests, and deploy/run.ts with ERGA_DEPLOY_MOCK). */
+/** The example account in the fleet mock (the deploy tests, and `bun erga deploy` with ERGA_DEPLOY_MOCK). */
 export const FLEET_ACCOUNT = ACCOUNT_ID;
 export const PROD_DB = "0b0d0b0d-0000-4000-8000-00000000e9a0";
 /** Production's SNAPSHOT_TOKEN in the fleet mock (the tests give staging the same). */
@@ -132,8 +132,6 @@ export function mockCloudflare(
     delayMs?: number;
     singleAssetUploads?: boolean;
     fleet?: boolean;
-    /** With fleet: staging's secrets already given (as its first deploy gives them). */
-    stagingSecrets?: boolean;
     onUpload?: (script: string, metadata: Record<string, any>) => void;
     /** A Worker's own answer, before the mock's (the tests route /api/deploys/... to the servers they run). */
     sites?: (req: Request, script: string) => Promise<Response | null> | Response | null;
@@ -171,12 +169,6 @@ export function mockCloudflare(
   // Secrets' values never go out with the state: only the tests read them, in this process.
   Object.defineProperty(state, "secrets", { value: {}, enumerable: false, writable: true });
   if (opts.fleet) seedFleet(state);
-  if (opts.fleet && opts.stagingSecrets)
-    state.secrets["erga-staging"] = {
-      SESSION_SECRET: "mock-staging-session-secret",
-      GITHUB_CLIENT_SECRET: "mock-staging-github-secret",
-      SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN,
-    };
   /** D1 exports ready to download, and imports uploaded, by URL. */
   const exportsAt = new Map<string, string>(), uploads = new Map<string, string>();
   const importing = new Map<string, string>();

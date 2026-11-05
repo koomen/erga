@@ -1,16 +1,17 @@
-// The pretend Cloudflare's fleet (dev/mock-cloudflare.ts, the `fleet` option): Erga's own account as its deploys see it.
+// The pretend Cloudflare's fleet (dev/mock-cloudflare.ts, the `fleet` option): an account with a primary instance and
+// room for its staging instance, as their deploys see it. Example names only: example.com, its pages on example-pages.com.
 
 import { memoryStore } from "../document/snapshot";
 import { ACCOUNT_ID, deployVersion, MOCK_SNAPSHOT_TOKEN, PROD_DB, PROD_DOCS, type MockState } from "./mock-cloudflare";
 
-/** Erga's own account: production as cf deploy left it (the fleet option). */
+/** The example account: the primary as its first deploy left it (the fleet option). */
 export function seedFleet(state: MockState) {
   state.account = { id: ACCOUNT_ID, name: "Erga" };
   state.subdomain = "erga";
   state.zones = [
-    { id: "zone00000000000000000000000e7ga1", name: "erga.dev", status: "active" },
-    { id: "zone00000000000000000000000e7ga2", name: "erga-pages.dev", status: "active" },
-    { id: "zone00000000000000000000000e7ga3", name: "erga-pages-staging.dev", status: "active" },
+    { id: "zone00000000000000000000000e7ga1", name: "example.com", status: "active" },
+    { id: "zone00000000000000000000000e7ga2", name: "example-pages.com", status: "active" },
+    { id: "zone00000000000000000000000e7ga3", name: "example-pages-staging.com", status: "active" },
   ];
   const tables = [
     "d1_migrations",
@@ -58,9 +59,9 @@ export function seedFleet(state: MockState) {
   };
   state.versions = { erga: 1 };
   deployVersion(state, "erga", state.scripts.erga);
-  state.domains.push({ hostname: "erga.dev", service: "erga", zone_id: state.zones[0].id });
-  state.routes[state.zones[1].id] = [{ pattern: "*.erga-pages.dev/*", script: "erga" }];
-  state.dns[state.zones[1].id] = [{ type: "AAAA", name: "*.erga-pages.dev", content: "100::", proxied: true }];
+  state.domains.push({ hostname: "example.com", service: "erga", zone_id: state.zones[0].id });
+  state.routes[state.zones[1].id] = [{ pattern: "*.example-pages.com/*", script: "erga" }];
+  state.dns[state.zones[1].id] = [{ type: "AAAA", name: "*.example-pages.com", content: "100::", proxied: true }];
   const docs = memoryStore();
   PROD_DOCS.forEach((id, i) =>
     docs.docs.set(id, {

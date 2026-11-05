@@ -6,8 +6,8 @@
 //   bun erga [--port N] [--no-open]     the ops page on localhost: the registered instances, setup, deploys, logs, history
 //   bun erga skill                      how an agent works in this repository (the workflow and its rules)
 //   bun erga start <branch>             a new feature branch from origin/staging, in this checkout
-//   bun erga status                     production, staging, the feature branches and the commits, as text
-//   bun erga dashboard [--port N]       the same, as a live page on localhost
+//   bun erga status                     each registered instance's commit and health, the feature branches and the
+//                                       commits, as text; it only reads (no fetch)
 //   bun erga merge <branch> [-m text]   the branch onto staging as one commit: tests, a deploy to each staging
 //                                       instance, then the push of staging
 //   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
@@ -269,12 +269,9 @@ export async function main(argv: string[]) {
     case "start":
       return start(plain[0]);
     case "status": {
-      const s = await readState();
-      return say(flag("--json") ? JSON.stringify(s, null, 2) : statusText(s));
-    }
-    case "dashboard": {
-      const { startDashboard } = await import("./dashboard");
-      return startDashboard(Number(opt("--port")) || 4748, flag("--open"));
+      const { ergaDir, readConfig } = await import("./config");
+      const s = await readState(readConfig(ergaDir()));
+      return say(flag("--json") ? JSON.stringify(s, null, 2) : statusText(s, (sha) => headOf(sha) != null));
     }
     case "": {
       const { startOpsPage } = await import("./ops-page");

@@ -6,7 +6,6 @@
 import type { Entry } from "../cli/config";
 import { deployFacts } from "../pipeline/account";
 import type { Target } from "../pipeline/pipeline";
-import { ACCOUNT, PRODUCTION } from "../targets";
 
 /** The person's decisions, asked all at once (`bun erga setup <host> ask`), with these defaults. No secret is ever in here. */
 export interface Answers {
@@ -59,7 +58,7 @@ export const QUESTIONS: { key: keyof Answers; ask: string; help: string }[] = [
   {
     key: "staging",
     ask: "Staging server (address, or no)",
-    help: "A second server for trying updates first, e.g. erga-staging.example.com. Default: no.",
+    help: "A second server for trying updates first, e.g. staging.example.com. Default: no.",
   },
   { key: "providers", ask: "Sign-in", help: "github, or github,google. The first admin signs in with GitHub." },
   { key: "preset", ask: "Server preset", help: `website (${PRESETS.website.summary}) or company (${PRESETS.company.summary})` },
@@ -223,8 +222,6 @@ export function ownTarget(
     secrets: o.secrets,
     keepSecrets: true,
     checkVersion: true,
-    // Erga's own erga.dev names stay out of reach, in Erga's own account.
-    guard: { ...PRODUCTION, accountId: ACCOUNT },
   };
 }
 

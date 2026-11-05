@@ -1,5 +1,5 @@
 // `bun erga`'s decisions (deploy/cli/flow.ts): what merge and release refuse, the squashed commit's message,
-// the next version and the notes, a rollback's version, the pre-push hook, and the dashboard's state from gh's answers.
+// the next version and the notes, a rollback's version, the pre-push hook, and `bun erga status`'s text from the instances' answers.
 // And GitHub's workflow, which deploys nothing.
 
 import { describe, expect, test } from "bun:test";
@@ -12,7 +12,6 @@ import {
   pushRefusal,
   releaseNotes,
   releaseRefusal,
-  type Run,
   squashMessage,
   stateOf,
   statusText,
@@ -20,16 +19,6 @@ import {
 
 const S = "5".repeat(40),
   M = "4".repeat(40);
-const run = (over: Partial<Run> = {}): Run => ({
-  sha: S,
-  branch: "staging",
-  status: "completed",
-  conclusion: "success",
-  url: "https://github.com/koomen/erga/actions/runs/1",
-  at: 1,
-  ...over,
-});
-const staging = { name: "staging", host: "staging.erga.dev", branch: "staging", version: S.slice(0, 12), healthy: true };
 
 describe("merge", () => {
   test("refuses staging and main, a branch GitHub lacks, an empty branch and a conflict", () => {
@@ -87,16 +76,15 @@ test("the pre-push hook stops a plain push to staging or main, and lets bun erga
   expect(pushRefusal("refs/tags/v0.1.0", false)).toBeNull();
 });
 
-test("the dashboard's state from gh's runs: each server's last run, and whether it runs its branch's head", () => {
+test("bun erga status: each primary with its staging instances, where each one's commit is, and the branches", () => {
   const s = stateOf({
-    repo: "koomen/erga",
-    at: 0,
     heads: { main: M, staging: S },
-    servers: [
-      { name: "production", host: "erga.dev", branch: "main", version: M.slice(0, 12), healthy: true },
-      { ...staging, version: "111111111111" },
+    instances: [
+      { host: "next.example.com", stagingOf: "example.com", version: S.slice(0, 12), healthy: true },
+      { host: "other.example.org", version: null, healthy: null, error: "refuses its ops token: bun erga login other.example.org" },
+      { host: "example.com", version: M.slice(0, 12), healthy: true },
+      { host: "old.example.com", stagingOf: "example.com", version: "111111111111", healthy: false },
     ],
-    runs: [run({ at: 5, conclusion: "failure" }), run({ at: 9, sha: S }), run({ branch: "main", sha: M, at: 3 })],
     branches: [
       { name: "old", sha: "1", ahead: 1, behind: 4, conflicts: [], at: 1, subject: "Old" },
       { name: "new", sha: "2", ahead: 2, behind: 0, conflicts: ["x.ts"], at: 2, subject: "New" },
@@ -105,16 +93,18 @@ test("the dashboard's state from gh's runs: each server's last run, and whether 
     log: [{ sha: M, subject: "On main" }],
     tags: [{ name: "v0.1.0", sha: M }],
   });
-  expect(s.servers.map((v) => [v.name, v.current, v.run?.at])).toEqual([
-    ["production", true, 3],
-    ["staging", false, 9],
-  ]);
+  expect(s.instances.map((i) => i.host)).toEqual(["other.example.org", "example.com", "next.example.com", "old.example.com"]);
   expect(s.branches.map((b) => b.name)).toEqual(["new", "old"]);
-  expect(s.log[0].tag).toBe("v0.1.0");
   expect(s.latestRelease).toBe("v0.1.0");
-  const text = statusText(s);
+  const text = statusText(s, (sha) => sha != "111111111111");
+  expect(text).toContain("- other.example.org: refuses its ops token: bun erga login other.example.org; health unknown");
+  expect(text).toContain(`- example.com: runs ${M.slice(0, 12)}, origin/main's head; health ok`);
+  expect(text).toContain(`  - next.example.com (staging of example.com): runs ${S.slice(0, 12)}, origin/staging's head; health ok`);
+  expect(text).toContain(
+    "  - old.example.com (staging of example.com): runs 111111111111, a commit this clone does not have (git fetch); health FAIL"
+  );
   expect(text).toContain("new: 2 ahead, 0 behind staging; conflicts in x.ts");
-  expect(text).toContain("staging https://staging.erga.dev: 111111111111 (not staging's head)");
+  expect(text).toContain("- 4444444 [v0.1.0] On main");
 });
 
 test("GitHub runs nothing: the repository has no workflow", () => {
