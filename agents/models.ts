@@ -125,32 +125,40 @@ export interface KeySource {
  */
 export async function agentSettingsFrom(env: object, dir: KeySource | null, login?: string): Promise<AgentSettings> {
   const vars = env as Record<string, unknown>;
-  let unreadable = false;
-  const server: Keys = {};
-  for (const p of PROVIDERS) {
-    const stored = dir
-      ? await dir.credentials.opened(p).catch((e: unknown) => {
-          console.log(
-            `couldn't read the stored ${CREDENTIALS[p].label}, so the Worker secret stands: ${e instanceof Error ? e.message : e}`
-          );
-        return { key: null, unreadable: false };
-      })
-      : { key: null, unreadable: false };
-    if (p == "anthropic" && stored.unreadable) unreadable = true;
-    const key = stored.key ?? (typeof vars[CREDENTIALS[p].env] == "string" ? (vars[CREDENTIALS[p].env] as string) : "");
-    if (key) server[p] = Redacted.make(key);
-  }
-  const own: Keys = {};
-  const theirs =
-    dir && login
-      ? await dir.personKeys
-          .opened(login)
-          .catch((e: unknown) => (console.log(`couldn't read ${login}'s own keys: ${e instanceof Error ? e.message : e}`), {}))
-      : {};
-  for (const [p, key] of Object.entries(theirs) as [Provider, string][]) if (key) own[p] = Redacted.make(key);
   const chosen = await Effect.runPromise(modelFrom(ConfigProvider.fromUnknown(env)));
   if ("missing" in chosen) return chosen;
-  const [keys, turnedOff] = dir ? await Promise.all([dir.config.get("agent_keys"), dir.config.get("agent_models_off")]) : [];
+  // One read at a time would add up each stall of the database; these reads don't depend on each other.
+  const none = { key: null, unreadable: false };
+  const [stored, theirs, keys, turnedOff] = await Promise.all([
+    Promise.all(
+      PROVIDERS.map((p) =>
+        dir
+          ? dir.credentials.opened(p).catch((e: unknown) => {
+              console.log(
+                `couldn't read the stored ${CREDENTIALS[p].label}, so the Worker secret stands: ${e instanceof Error ? e.message : e}`
+              );
+              return none;
+            })
+          : none
+      )
+    ),
+    dir && login
+      ? dir.personKeys
+          .opened(login)
+          .catch((e: unknown) => (console.log(`couldn't read ${login}'s own keys: ${e instanceof Error ? e.message : e}`), {}))
+      : {},
+    dir?.config.get("agent_keys"),
+    dir?.config.get("agent_models_off"),
+  ]);
+  const server: Keys = {};
+  let unreadable = false;
+  PROVIDERS.forEach((p, i) => {
+    if (p == "anthropic" && stored[i].unreadable) unreadable = true;
+    const key = stored[i].key ?? (typeof vars[CREDENTIALS[p].env] == "string" ? (vars[CREDENTIALS[p].env] as string) : "");
+    if (key) server[p] = Redacted.make(key);
+  });
+  const own: Keys = {};
+  for (const [p, key] of Object.entries(theirs) as [Provider, string][]) if (key) own[p] = Redacted.make(key);
   const mode = keys == "own" ? "own" : "server",
     off = Array.isArray(turnedOff) ? turnedOff.filter((m): m is string => typeof m == "string") : [];
   const cfg: AgentConfig = { own, server, mode, off, model: chosen.model, effort: chosen.model == "script" ? "medium" : chosen.effort };

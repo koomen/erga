@@ -6,7 +6,7 @@
 import { afterAll, expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
 import { Directory } from "../server/directory/index.ts";
-import { agentSettingsFrom, keyFor, usable, type AgentConfig } from "../agents/models.ts";
+import { agentSettingsFrom, keyFor, usable, type AgentConfig, type KeySource } from "../agents/models.ts";
 import { agentApi } from "../agents/person/sessions.ts";
 import { OPERATIONS, runOperation } from "../server/operations/index.ts";
 import type { Platform, Session } from "../server/platform.ts";
@@ -89,6 +89,23 @@ test("the agent's settings: only that person's own keys, and the admin's choices
     "deepseek-v4-pro",
   ]);
   expect(await agentSettingsFrom(env, dir, "ada")).toMatchObject({ missing: expect.stringContaining("bring their own API key") });
+});
+
+test("the agent's settings: the database reads start together, so their stalls don't add up", async () => {
+  const started: string[] = [];
+  let go = () => {};
+  const gate = new Promise<void>((r) => (go = r));
+  const read = <T>(name: string, value: T) => (started.push(name), gate.then(() => value));
+  const source: KeySource = {
+    credentials: { opened: (p) => read(p, { key: null, unreadable: false }) },
+    personKeys: { opened: () => read("own", {}) },
+    config: { get: (k) => read(k, k == "agent_keys" ? "server" : []) },
+  };
+  const settings = agentSettingsFrom({ ANTHROPIC_API_KEY: "sk-ant-api03-" + "s".repeat(80) }, source, "bob");
+  await new Promise((r) => setTimeout(r, 0));
+  expect(started.sort()).toEqual(["agent_keys", "agent_models_off", "anthropic", "google", "openai", "openrouter", "own"]);
+  go();
+  expect(usable((await settings) as AgentConfig).map((u) => u.choice)).toEqual(["opus-fast", "opus", "sonnet", "haiku"]);
 });
 
 test("the operations: the person's own list and remove; an agent never sees a key", async () => {

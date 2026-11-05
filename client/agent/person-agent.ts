@@ -3,7 +3,8 @@
 // agent-chat.ts), talking to the person's own agent in their PersonAgent object (agents/person/agent.ts,
 // agents/person/sessions.ts):
 //
-//   GET  /api/agent              the state: on or off (and why), the model, the conversation so far
+//   GET  /api/agent              the state: on or off (and why), the model, the conversation so far (?fresh: the
+//                                settings read now, after a key changed; else they may be up to 5 s old)
 //   POST /api/agent              { text, context }: a message; context is the page note (the page open, what is selected)
 //   POST /api/agent/abort|reset|model
 //   /api/agent/events            { type: "agent", ev } for this person's agent (a WebSocket)
@@ -294,7 +295,7 @@ function renderModel(m: AgentState | null) {
 
 // Events heard: one that comes while load() asks for the conversation may be newer than its answer, so load() asks again (up to 5 times).
 let heard = 0, down = 0, downTimer = 0;
-async function load(tries = 0): Promise<void> {
+async function load(tries = 0, fresh = false): Promise<void> {
   const was = heard;
   clearTimeout(downTimer);
   // The conversation from where the server keeps it, whether the agent is on or not.
@@ -302,7 +303,7 @@ async function load(tries = 0): Promise<void> {
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null) as Promise<{ log?: Log } | null>;
   let again = false;
-  const a = (await call("/api/agent")
+  const a = (await call(fresh ? "/api/agent?fresh" : "/api/agent")
     .then(
       async (r) => {
         again = transient(r);
@@ -325,7 +326,7 @@ async function load(tries = 0): Promise<void> {
   if (!a.enabled && again && down < 8) { downTimer = window.setTimeout(() => load(), backoff(down++)); return; }
   down = 0;
   const l = (await kept)?.log ?? a.log;
-  if (heard != was && tries < 5) return load(tries + 1);
+  if (heard != was && tries < 5) return load(tries + 1, fresh);
   off = a.enabled ? null : `The agent is off: ${a.reason ?? "the server did not start it"}.`;
   // The editor's buttons that ask the agent (the toast's fix: client/shell/toast.ts) follow its state.
   window.dispatchEvent(new Event("erga:agent-state"));
@@ -572,4 +573,4 @@ document.addEventListener(
 );
 window.addEventListener("hashchange", () => location.hash == "#settings" && settings());
 if (location.hash == "#settings") settings();
-window.addEventListener("erga:agent-keys", () => void load());
+window.addEventListener("erga:agent-keys", () => void load(0, true));

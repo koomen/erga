@@ -135,6 +135,32 @@ test("write: someone with read opens their documents and those shared with them 
   expect(await dir.access({ login: "kit" }, (await dir.get("aaaaaaaa"))!)).toBe("owner");
 });
 
+test("a document's access asks the database a few things at once, so a stall counts once, not once per read", async () => {
+  const sql = memory(),
+    dir = new Directory(sql, { admins: ["koomen"] });
+  await everybody(dir, "read");
+  await joined(dir, "kit", google("g-kit", "kit@example.com"));
+  await dir.users.setUserRole(ADMIN, "kit", "write");
+  await dir.add({ id: "aaaaaaaa", owner: "kit", title: "Plan", created: 1, expires: null });
+  // A second server on the same database, so nothing is remembered yet; each read waits a moment, as D1's do.
+  let open = 0,
+    most = 0;
+  const slow = {
+    ...sql,
+    all: async <T>(q: string, ...p: Parameters<typeof sql.all>[1][]) => {
+      most = Math.max(most, ++open);
+      await new Promise((r) => setTimeout(r, 5));
+      open--;
+      return sql.all<T>(q, ...p);
+    },
+  };
+  const cold = new Directory(slow, { admins: ["koomen"] });
+  expect(await cold.decide({ login: "kit" }, { id: "aaaaaaaa", owner: "kit", test: false }, [{ login: "kit", role: "owner" }])).toBe(
+    "owner"
+  );
+  expect(most).toBeGreaterThanOrEqual(2);
+});
+
 test("the rules' own rules: admins only; groups only; everybody's stays; values checked; a removed user's role goes", async () => {
   const dir = fresh();
   await expect(dir.rules.add({ login: "bo" }, { kind: "workspace", value: "example.com", access: "read" })).rejects.toThrow("Only an admin");

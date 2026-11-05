@@ -25,8 +25,8 @@ export class PersonAgent extends DurableObject<Env> implements PersonAgentObject
     watch: () => void this.watch(),
   });
 
-  agentState(login: string, origin: string, name?: string) {
-    return this.agents.agentState(login, origin, name);
+  agentState(login: string, origin: string, name?: string, fresh?: boolean) {
+    return this.agents.agentState(login, origin, name, fresh);
   }
   agentPrompt(login: string, origin: string, text: string, context: string | null, attached?: unknown, doc?: string | null, name?: string) {
     return this.agents.agentPrompt(login, origin, text, context, attached, doc, name);

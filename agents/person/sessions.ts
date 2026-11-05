@@ -30,7 +30,7 @@ import { restoredLog } from "../checkpoint.ts";
 import { agentTools, toolsFor } from "../tools.ts";
 import { callDocument, type Caller } from "../../server/operations/index.ts";
 import type { Route as DocRoute } from "../../server/directory/index.ts";
-import { isModelChoice } from "../models.ts";
+import { isModelChoice, type AgentSettings } from "../models.ts";
 import { emptyLog, type Log } from "../../shared/agent-log.ts";
 import { checkAttachments } from "../../shared/attach.ts";
 import { VIA } from "../../shared/attribution.ts";
@@ -40,6 +40,8 @@ import * as Effect from "effect/Effect";
 import { Base64 } from "effect/encoding";
 import * as Result from "effect/Result";
 import { storeBlob, type BlobStore } from "../../document/blobs.ts";
+import * as Cache from "effect/Cache";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import { call, ctx, fromWeb, json, type Route } from "../../server/http.ts";
@@ -66,6 +68,9 @@ export interface PersonAgentsDeps {
   blobs?: BlobStore;
 }
 
+/** How long the panel's state may use the agent settings read before: a few polls of the panel. */
+const SETTINGS_KEPT = "5 seconds";
+
 export class PersonAgents {
   /** The event streams open, each with the person it's for. */
   private clients = new Map<WritableStreamDefaultWriter<Uint8Array>, string>();
@@ -75,10 +80,22 @@ export class PersonAgents {
   private beat: Fiber.Fiber<void> | null = null;
   /** Each person's conversation, kept step by step (agents/checkpoint.ts), scope "you:<login>". */
   private chats: ChatTables;
+  /**
+   * Each person's agent settings, as last read. The panel asks for the agent's state every few seconds, and each
+   * read is several rows of the database: a state asked within SETTINGS_KEPT of the last read uses it. A turn reads
+   * them again. A failed read isn't kept.
+   */
+  private settings: Cache.Cache<string, AgentSettings, unknown>;
 
   constructor(private deps: PersonAgentsDeps) {
     deps.sql.exec(`CREATE TABLE IF NOT EXISTS agent_prefs (login TEXT PRIMARY KEY, prefs TEXT NOT NULL, updated INTEGER NOT NULL)`);
     this.chats = new ChatTables(deps.sql);
+    this.settings = Effect.runSync(
+      Cache.makeWith((login: string) => Effect.tryPromise({ try: () => deps.platform.agentSettings(login), catch: (e) => e }), {
+        capacity: 64,
+        timeToLive: (exit) => (Exit.isSuccess(exit) ? SETTINGS_KEPT : 0),
+      })
+    );
   }
 
   private get platform() { return this.deps.platform; }
@@ -86,16 +103,24 @@ export class PersonAgents {
   /**
    * The person's session, made the first time; the origin is the latest the page sent. An admin's has the admin's
    * tools and prompt (as they are when it starts; each tool call checks again: Users.mustAdmin).
-   * The settings are read each time (each turn, each time the panel opens), so a key an admin stores, replaces or clears reaches it.
+   * The settings are read again at each turn, so a key an admin stores, replaces or clears reaches its next turn. The
+   * panel's state (`kept`) may use the settings read up to SETTINGS_KEPT before.
    */
   private async session(
     login: string,
     origin: string,
-    name?: string
+    name?: string,
+    kept = false
   ): Promise<{ agent: AgentSession; origin: string; here: string | null } | string> {
-    const cfg = await this.platform.agentSettings(login).catch((e: unknown) => ({
-      missing: `the agent's settings couldn't be read (${e instanceof Error ? e.message : String(e)}); try again in a moment`,
-    }));
+    const cfg = await Effect.runPromise(
+      (kept ? Cache.get : Cache.refresh)(this.settings, login).pipe(
+        Effect.catch((e) =>
+          Effect.succeed({
+            missing: `the agent's settings couldn't be read (${e instanceof Error ? e.message : String(e)}); try again in a moment`,
+          })
+        )
+      )
+    );
     if ("missing" in cfg) return cfg.missing;
     let s = this.agents.get(login);
     if (s) { s.origin = origin; s.agent.configure(cfg); return s; }
@@ -147,8 +172,9 @@ export class PersonAgents {
     return s;
   }
 
-  async agentState(login: string, origin: string, name?: string) {
-    const s = await this.session(login, origin, name);
+  /** The panel's state: with the settings read up to SETTINGS_KEPT before, unless `fresh` (a key just changed). */
+  async agentState(login: string, origin: string, name?: string, fresh = false) {
+    const s = await this.session(login, origin, name, !fresh);
     if (typeof s == "string") return { enabled: false as const, reason: s };
     return { enabled: true as const, ...modelState(s.agent), log: s.agent.log() };
   }
@@ -364,7 +390,7 @@ const agentRoutes = (origin: string): Route =>
     path = url.pathname.replace(/\/$/, ""),
     m = request.method;
   if (path == "/api/agent") {
-    if (m == "GET") return json(yield* call(() => h.agentState(me.login, url.origin, me.name)));
+    if (m == "GET") return json(yield* call(() => h.agentState(me.login, url.origin, me.name, url.searchParams.has("fresh"))));
     if (m == "POST") {
       const b = yield* body(request, Prompt, {});
       const r = yield* call(() =>
