@@ -76,7 +76,7 @@ test("rules: a Workspace with write, a GitHub organization with read, everybody'
   expect((await page.goto(`${root}/new`))?.status()).toBe(403);
 });
 
-test("users: added by provider account before their first sign-in, with one role; an admin by the deploy is one already", async ({
+test("users: added by provider account before their first sign-in, with one role; the dev server's admin (DEV_LOGIN) is one already", async ({
   tab,
 }) => {
   const page = tab.page,
@@ -99,7 +99,7 @@ test("users: added by provider account before their first sign-in, with one role
   // A GitHub login GitHub doesn't know: refused, in place.
   await add("github", `no-such-${id}`, "read");
   await until(async () => (await hint())?.includes("GitHub has no account"), 5000, "an unknown login refused");
-  // The deploy's admin: already an admin, said, not refused.
+  // The dev server's admin (DEV_LOGIN): already an admin, said, not refused.
   await add("github", "tester", "read");
   await until(async () => (await hint()) == "tester is already an admin.", 5000, "tester is already an admin");
   // Ann's first sign-in, with that email verified: her account, with that role (no new documents).

@@ -1,6 +1,6 @@
 // Who may use the server, and who runs it: the users table,
 // behind the directory's `Sql`, so the tests run it on
-// bun:sqlite as D1 runs it on erga.dev.
+// bun:sqlite as D1 runs it on a deployed server.
 //
 // Each account has a row in users, and one role (the Users page): "Admin",
 // who may see and change the server's settings and its users, and may write;
@@ -8,11 +8,11 @@
 // "Can authenticate" (read), or none of its own, where only the group rules
 // (server/directory/access.ts) let it in. A person an admin added before
 // their first sign-in waits in people.ts. The server always keeps an
-// admin: nobody may demote or remove the last one. The first admins come from the
-// deploy: the logins in the ADMINS binding (cloudflare.config.ts; locally,
-// DEV_LOGIN too) are always admins and may always sign in, and get their row
-// the first time they do. They can't be demoted or removed here (take them
-// out of ADMINS and deploy); every other admin is a row, made by an admin.
+// admin: nobody may demote or remove the last one. Every admin is a row: a new
+// server's first one is written into its database when it is set up, and an admin
+// makes the others. No deploy names an admin. Only locally, DEV_LOGIN is always
+// an admin and may always sign in (a bootstrap admin), and gets their row the first
+// time they do; they can't be demoted or removed here.
 //
 // Reads that every request makes (whether someone may still sign in, whether
 // they're an admin) are remembered for a few seconds, so a document's many
@@ -54,10 +54,10 @@ export interface User {
   role: ServerRole;
   /** Their own access besides admin (users.access): write, read, or null (only the group rules decide). */
   access: "write" | "read" | null;
-  /** Listed in ADMINS: always an admin, and can't be demoted or removed here. */
+  /** The dev server's DEV_LOGIN (local development only): always an admin, and can't be demoted or removed here. */
   bootstrap: boolean;
   created: number;
-  /** The admin who added them; null for those who came in through ADMINS. */
+  /** The admin who added them; null for those who came in by themselves (DEV_LOGIN, a server's first admin). */
   addedBy: string | null;
   /** How `addedBy` added them, when not in person: "their admin agent", "a shared agent (label)". */
   addedVia?: string | null;
@@ -125,12 +125,12 @@ export class Users {
   pagesChanged: (keys: string[]) => Promise<void> = async () => {};
   private seenAt = new Map<string, number>();
 
-  /** `admins`: the bootstrap admins (the ADMINS binding), always admins and always allowed in. */
+  /** `admins`: the bootstrap admins (locally, DEV_LOGIN), always admins and always allowed in. */
   constructor(private sql: Sql, admins: Iterable<string> = []) {
     this.admins = new Set([...admins].map((a) => a.trim().toLowerCase()).filter(Boolean));
   }
 
-  /** Whether `login` is one of the deploy's bootstrap admins. */
+  /** Whether `login` is a bootstrap admin (locally, DEV_LOGIN). */
   isBootstrapAdmin(login: string): boolean {
     return this.admins.has(login.toLowerCase());
   }
@@ -257,7 +257,7 @@ export class Users {
     if (!LOGIN.test(login)) throw new NotAllowed({ message: `"${login}" isn't a GitHub login.` });
     const role = opts.role ?? "user";
     if (role != "admin" && this.isBootstrapAdmin(login))
-      throw new NotAllowed({ message: `${login} is an admin by the deploy (ADMINS): change it there.` });
+      throw new NotAllowed({ message: `${login} is the dev server's own admin (DEV_LOGIN): they stay one.` });
     const had = await this.get(login),
       at = Date.now();
     await this.sql.batch([
@@ -291,7 +291,7 @@ export class Users {
     if (!user) throw new NotAllowed({ message: `${login} isn't a user: add them first.` });
     if (role == "admin" && user.role == "admin") return user;
     if (role != "admin" && user.bootstrap)
-      throw new NotAllowed({ message: `${login} is an admin by the deploy (ADMINS): change it there.` });
+      throw new NotAllowed({ message: `${login} is the dev server's own admin (DEV_LOGIN): they stay one.` });
     if (role != "admin" && user.role == "admin") await this.mustKeepAnAdmin(by, login);
     const access = role == "admin" ? user.access : role == "none" ? null : role;
     await this.sql.batch([
@@ -311,7 +311,7 @@ export class Users {
     await this.mustAdmin(by);
     login = login.toLowerCase();
     if (role != "admin" && this.isBootstrapAdmin(login))
-      throw new NotAllowed({ message: `${login} is an admin by the deploy (ADMINS): change it there.` });
+      throw new NotAllowed({ message: `${login} is the dev server's own admin (DEV_LOGIN): they stay one.` });
     const user = await this.get(login);
     if (!user) throw new NotAllowed({ message: `${login} isn't a user: add them first.` });
     if (role != "admin" && user.role == "admin") await this.mustKeepAnAdmin(by, login);
@@ -326,13 +326,18 @@ export class Users {
   async remove(by: Actor, login: string): Promise<void> {
     await this.mustAdmin(by);
     login = login.toLowerCase();
-    if (this.isBootstrapAdmin(login))
-      throw new NotAllowed({ message: `${login} is an admin by the deploy (ADMINS): take them out there.` });
+    if (this.isBootstrapAdmin(login)) throw new NotAllowed({ message: `${login} is the dev server's own admin (DEV_LOGIN): they stay.` });
     if ((await this.get(login))?.role == "admin") await this.mustKeepAnAdmin(by, login);
     await this.sql.batch([["DELETE FROM users WHERE login = ?1", login], this.logged(by, Date.now(), { login, event: "removed" })]);
     this.known.delete(login);
     this.accessChanged();
     await this.pagesChanged([`user:${login}`]);
+  }
+
+  /** The server's first admin (the oldest admin row), or null if it has none: the homepage's owner on a deployed server. */
+  async firstAdmin(): Promise<string | null> {
+    const [row] = await this.sql.all<{ login: string }>("SELECT login FROM users WHERE role = 'admin' ORDER BY created, login LIMIT 1");
+    return row?.login ?? null;
   }
 
   /** Throws NotAllowed if `login` is the server's last admin (bootstrap admins count, signed in or not). */

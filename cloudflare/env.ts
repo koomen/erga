@@ -34,12 +34,6 @@ export interface Env {
   /** The editor's own files (client/editor.html as editor.html, page.js, client/style.css, fonts). */
   ASSETS: Fetcher;
   /**
-   * The bootstrap admins, GitHub logins, comma-separated: always admins and
-   * always allowed to sign in. Everyone else who may sign in is a
-   * row in the users table, added by an admin.
-   */
-  ADMINS: string;
-  /**
    * The server settings the deploy fixes, a JSON object by key
    * (deploy/locked-settings.ts and ERGA_SERVER_CONFIG, via cloudflare.config.ts):
    * locked, so admins see them but can't change them.
@@ -62,18 +56,19 @@ export interface Env {
   ANTHROPIC_API_KEY: string;
   /**
    * Where documents' pages run: one origin each under this domain
-   * (<id>-<owner>.<PAGES_DOMAIN>, a wildcard route), production's pages domain (deploy/targets.json) when
-   * unset; or PAGES_HOST, one host they all share (a server on workers.dev,
+   * (<id>-<owner>.<PAGES_DOMAIN>, a wildcard route); or PAGES_HOST, one host they all share (a server on workers.dev,
    * which has no wildcards; deploy/pipeline/pipeline.ts sets one or the other).
    */
   PAGES_DOMAIN?: string;
   PAGES_HOST?: string;
   /**
-   * Which of Erga's own deploy targets this server is:
-   * "production" on erga.dev, "staging" on staging.erga.dev, empty on any
-   * other (a fork's server, local development unless ERGA_DEPLOY_TARGET).
+   * Which deploy target this server is, as its deploy says: "production" on a primary, "staging" on a staging
+   * instance (for admins only: server/identity/admins-only.ts), empty on any other (local development unless
+   * ERGA_DEPLOY_TARGET).
    */
   DEPLOY_TARGET?: string;
+  /** A staging instance's primary, https://<host> (the deploy sets it): its blobs come from there, and its admins-only page links to it. */
+  SNAPSHOT_FROM?: string;
   /** The release this server runs (the commit, 12 characters; the pipeline sets it). GET /api/deploys/version answers it. */
   ERGA_VERSION?: string;
   /**
@@ -91,11 +86,11 @@ export interface Env {
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */
   DEV_LOGIN?: string;
 
-  /** "script" for the test suite's scripted agent; unset on erga.dev. */
+  /** "script" for the test suite's scripted agent; unset on a deployed server. */
   ERGA_AGENT_MODEL?: string;
   /** Local development only: what the dev server proves itself with to link files on disk. */
   ERGA_LINK_SECRET?: string;
-  /** Local development only: a wait before every call to the database or a document, standing in for erga.dev's distances (e2e/bench/run.ts --latency; cloudflare/timing.ts). */
+  /** Local development only: a wait before every call to the database or a document, standing in for a deployed server's distances (e2e/bench/run.ts --latency; cloudflare/timing.ts). */
   ERGA_REMOTE_LATENCY_MS?: string;
   /** Local development only (the tests): a stand-in for github.com that sign-in's live check asks. */
   ERGA_GITHUB_ORIGIN?: string;

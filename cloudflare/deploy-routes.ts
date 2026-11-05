@@ -8,7 +8,6 @@
 
 import * as Effect from "effect/Effect";
 import { snapshotRoutes } from "../document/snapshot";
-import { PRODUCTION } from "../deploy/targets";
 import { health } from "../server/health";
 import type { Env } from "./env";
 import { documentOf } from "./objects/document-stub";
@@ -34,7 +33,7 @@ export const deploysRoutes = (env: Env) =>
   if (blob) return fromWeb(blob);
   if (path.startsWith("/api/snapshot/")) {
     // Never into production, whatever its settings say.
-    const production = env.DEPLOY_TARGET == "production" || url.hostname == PRODUCTION.host;
+    const production = env.DEPLOY_TARGET?.trim() == "production";
     const answer = yield* call(() =>
       snapshotRoutes(request, {
       token: env.SNAPSHOT_TOKEN,

@@ -37,7 +37,7 @@
 // secrets only, so they answer only the person, in their browser: JSON, or
 // { error } with the message the directory gave, from this site's pages only.
 // An agent token (Session.agent) never gets in, even an admin's. A setting the deploy locks is shown, read-only,
-// and so is a bootstrap admin (ADMINS), who can't be demoted or removed here,
+// and so is the dev server's DEV_LOGIN (a bootstrap admin), who can't be demoted or removed here,
 // and the last admin, who can't be demoted or removed at all.
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

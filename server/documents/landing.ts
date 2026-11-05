@@ -96,7 +96,10 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
   const run = (async () => {
     const config = platform.directory.config;
     const project = platform.landing;
-    if (config.isLocked("landing_document") || !project?.owner) return null;
+    if (config.isLocked("landing_document") || !project) return null;
+    // Locally DEV_LOGIN; on a deployed server its first admin (none yet: no homepage).
+    const owner = (project.owner ?? (await platform.directory.users.firstAdmin()))?.toLowerCase();
+    if (!owner) return null;
     const index = project.files["index.html"] != null ? "index.html" : null;
     if (!index) return null;
     // Read afresh (settings are remembered a few seconds): another isolate may have seeded it just now.
@@ -113,7 +116,6 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
     const stored = await config.stored("landing_document");
     const there = await live(stored);
     if (there) return there;
-    const owner = project.owner.toLowerCase();
     let made: DocRow | null = null;
     for (let tries = 0; !made && tries < 5; tries++) {
       const id = newDocId();

@@ -52,7 +52,9 @@ test("a preset sets defaults the server takes, and locks nothing", () => {
   const vars = varsOf({ ...answers, preset: "company" }, { github: "Iv1.x" });
   expect(vars.SERVER_CONFIG).toBe("{}");
   expect(parseDeployed(vars.SERVER_DEFAULTS)).toEqual({ public_sharing: false, delete_docs_after_hours: null });
-  expect(vars).toMatchObject({ ADMINS: "ada", GITHUB_CLIENT_ID: "Iv1.x", DEPLOY_TARGET: "" });
+  expect(vars).toMatchObject({ GITHUB_CLIENT_ID: "Iv1.x", DEPLOY_TARGET: "" });
+  // No admin in the deploy: bun erga own writes the first admin into the database (firstAdmin).
+  expect(vars.ADMINS).toBeUndefined();
 });
 
 test("the steps go in order, each with who does it, and the next one is the first not done", () => {

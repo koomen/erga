@@ -252,6 +252,7 @@ async function deploy(t: TargetName) {
     pass(
       `${t} answers at ${done.url}, release ${commit.slice(0, 12)}, healthy. Pages: ${done.pages}. (${Math.round((Date.now() - started) / 1000)} s)`
     );
+    await firstAdmin(t, a.admin);
   } catch (e) {
     const restore = (carry as { restore?: { versionId: string | null } }).restore?.versionId;
     if (e instanceof Unhealthy && restore) {
@@ -272,6 +273,23 @@ async function deploy(t: TargetName) {
   if (check == "ok") pass(`Sign-in: https://${hostOf(a, t)}/auth/github goes to GitHub with your app.`);
   else say(`FAIL  Sign-in: ${check && typeof check == "object" ? check.bad : "no answer"}`);
   say(`NEXT  (person) Open https://${hostOf(a, t)}/auth/sign-in and sign in with GitHub as ${a.admin}. Then: bun erga own status`);
+}
+
+/**
+ * The first admin, as a users row: written into the database only while it has no admin. No deploy names an admin,
+ * and a deploy never changes the admins an admin made.
+ */
+async function firstAdmin(t: TargetName, admin: string) {
+  const { sql } = await sqlOf(t);
+  const [had] = await sql.all<{ n: number }>("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'");
+  if (Number(had?.n ?? 0) > 0) return;
+  const login = admin.trim().toLowerCase();
+  await sql.run(
+    "INSERT INTO users (login, name, role, created) VALUES (?1, ?1, 'admin', ?2) ON CONFLICT (login) DO UPDATE SET role = 'admin'",
+    login,
+    Date.now()
+  );
+  pass(`${login} is the first admin of ${t}.`);
 }
 
 /** The server's database as the token code's Sql, over Cloudflare's D1 API. */
@@ -320,7 +338,7 @@ async function token(t: TargetName) {
   s.tokens = { ...s.tokens, [t]: made.token };
   saveSecrets(s);
   const r = await api(t, "GET", "/api/tools");
-  if (!r.ok) fail(`The token doesn't work on ${host}: ${r.status}.`, `Is ${a.admin} in ADMINS? bun erga own status`);
+  if (!r.ok) fail(`The token doesn't work on ${host}: ${r.status}.`, `Is ${a.admin} an admin there? bun erga own status`);
   pass(
     `An admin token for ${a.admin} on ${host}, for 30 days, is in .erga/secrets.json (tokens.${t}; not shown). Revoke it on https://${host}/settings.`
   );

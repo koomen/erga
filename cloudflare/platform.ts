@@ -15,7 +15,6 @@ import { sessionOf } from "../server/identity/index.ts";
 import { directoryOf, factoryKey, tokensOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
-import { isAdminsOnly, isTargetName, TARGETS } from "../deploy/targets";
 import { githubIssues } from "../server/feedback";
 import { agentSettingsFrom } from "../agents/models";
 import { documentOf } from "./objects/document-stub";
@@ -57,17 +56,11 @@ const origin = (name: string) => text(name).pipe(Config.map((v) => v.replace(/\/
 
 /** The Worker's settings that are plain text (its vars and secrets), as the Platform takes them. */
 const SETTINGS = Config.all({
-  /** The bootstrap admins: a comma-separated list of logins. */
-  admins: text("ADMINS").pipe(
-    Config.map((v) =>
-      v
-        .split(",")
-        .map((l) => l.trim().toLowerCase())
-        .filter((l) => OWNER.test(l))
-    )
-  ),
   devLogin: text("DEV_LOGIN"),
   target: text("DEPLOY_TARGET"),
+  /** Staging: its primary's origin (https://<host>), whose documents and images it copies. */
+  snapshotFrom: origin("SNAPSHOT_FROM"),
+  pagesDomain: text("PAGES_DOMAIN"),
   version: text("ERGA_VERSION"),
   /** Where the pipeline deployed this server (ERGA_DEPLOY, JSON: deploy/pipeline/account.ts deployFacts), or null. */
   deployFacts: text("ERGA_DEPLOY").pipe(Config.map((v): unknown => Result.getOrNull(Result.try(() => (v ? JSON.parse(v) : null))))),
@@ -83,15 +76,11 @@ const SETTINGS = Config.all({
 /** The Worker's settings, read from its bindings. */
 const settingsOf = (env: Env) => Effect.runSync(SETTINGS.parse(ConfigProvider.fromUnknown(env)));
 
-/** Whose the homepage is when the server makes it: locally DEV_LOGIN, else the first of ADMINS; the rest of ADMINS may edit it. */
-const landingOf = ({ admins, devLogin }: { admins: string[]; devLogin: string }): NonNullable<Platform["landing"]> => {
+/** Whose the homepage is when the server makes it: locally DEV_LOGIN, else (null) the server's first admin. */
+const landingOf = ({ devLogin }: { devLogin: string }): NonNullable<Platform["landing"]> => {
   const dev = devLogin.toLowerCase();
-  const owner = dev && OWNER.test(dev) ? dev : admins[0] ?? null;
-  return { files: LANDING, owner };
+  return { files: LANDING, owner: dev && OWNER.test(dev) ? dev : null };
 };
-
-/** Where documents' pages run: an origin each under PAGES_DOMAIN (production's pages domain when unset: deploy/targets.json), or the one PAGES_HOST. */
-const pagesDomainOf = (env: Env) => env.PAGES_DOMAIN?.trim() || TARGETS.production.pages.domain;
 
 /**
  * The app on Cloudflare: people sign in with GitHub, the
@@ -131,16 +120,18 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     assets: (request) => env.ASSETS.fetch(request),
     dev: (url) => isDev(env, url),
     // Locally (vite dev) each document's page runs on <id>-<owner>.localhost, which browsers send to this machine.
-    pagesDomain: (url) => (local(url) ? "localhost" : pagesDomainOf(env)),
+    // Elsewhere an origin each under PAGES_DOMAIN, or the one PAGES_HOST: the deploy sets one of them.
+    pagesDomain: (url) => (local(url) || !settings.pagesDomain ? "localhost" : settings.pagesDomain),
     pagesShared: (url) => (local(url) ? null : settings.pagesHost || null),
     secret: env.SESSION_SECRET,
-    adminsOnly: isAdminsOnly(env.DEPLOY_TARGET),
+    // Staging runs on a copy of its primary's data: for admins only (server/identity/admins-only.ts).
+    adminsOnly: target == "staging",
     tokens: tokensOf(env),
     deploy: {
-      target: isTargetName(target) ? target : null,
+      target: target == "production" || target == "staging" ? target : null,
       version: settings.version || null,
       facts: settings.deployFacts,
-      targets: TARGETS,
+      primary: settings.snapshotFrom || null,
     },
     signIn: {
       app: settings.githubApp,

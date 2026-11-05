@@ -60,7 +60,13 @@ export function targetFor(name: TargetName, env: DeployEnv, fresh = false): Targ
     label: spec.name, accountId, workerName: spec.worker, databaseName: spec.database,
     app: { kind: "domain", zoneName: spec.zone, hostname: spec.host },
     pages: { kind: "zone", zoneName: spec.pages.zone, domain: spec.pages.domain },
-    vars: { ...spec.vars, DEPLOY_TARGET: spec.name, SNAPSHOT_IMPORT: from ? "1" : "" },
+    // Staging: SNAPSHOT_FROM, its primary's address (its images come from there), as bun erga deploy sets it.
+    vars: {
+      ...spec.vars,
+      DEPLOY_TARGET: spec.name,
+      SNAPSHOT_IMPORT: from ? "1" : "",
+      ...(from ? { SNAPSHOT_FROM: `https://${from.host}` } : {}),
+    },
     secrets: {},
     keepSecrets: true,
     checkVersion: true,

@@ -215,7 +215,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
         rules: rules.map(ruleOf),
         suggestions,
         publicSharing,
-        note: "Access is the highest of a person's role and every group rule that matches them; none: they can't sign in. waiting: added, not signed in yet (use its person id). bootstrap: an admin by the deploy, fixed. Tell the person the labels (roleLabel, accessLabel).",
+        note: "Access is the highest of a person's role and every group rule that matches them; none: they can't sign in. waiting: added, not signed in yet (use its person id). bootstrap: the dev server's own admin (DEV_LOGIN), fixed. Tell the person the labels (roleLabel, accessLabel).",
       };
     },
   },

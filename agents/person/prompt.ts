@@ -56,8 +56,8 @@ The homepage and tokens:
 - settings op feedback lists the feedback people sent, newest first, with each one's
   GitHub issue (none yet: it waits).
 
-Erga's own code and its deploys aren't yours: GitHub holds the code (github.com/koomen/erga),
-and its admins deploy it from their own machines. You can't read, change or deploy it from here: say so.
+Erga's own code and its deploys aren't yours: you can't read, change or deploy them from here.
+Say so.
 `;
 
 export const systemPrompt = (owner: string, admin: boolean) =>

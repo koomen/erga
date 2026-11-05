@@ -5,10 +5,9 @@
 //
 // Staging runs on a copy of production's documents, but not of its bucket:
 // a blob staging doesn't have is read from production's (its read-only
-// snapshot endpoint, GET /api/snapshot/blob/<sha-256>, behind SNAPSHOT_TOKEN),
+// snapshot endpoint at SNAPSHOT_FROM, GET /api/snapshot/blob/<sha-256>, behind SNAPSHOT_TOKEN),
 // and kept in staging's own bucket from then on.
 
-import { PRODUCTION } from "../deploy/targets";
 import type { BlobBody, BlobStore } from "../document/blobs";
 import type { Env } from "./env";
 import { snapshotRefused } from "../document/snapshot";
@@ -16,7 +15,7 @@ import { snapshotRefused } from "../document/snapshot";
 /** The edge keeps a whole blob up to this size (the Cache API takes up to 512 MB). */
 const CACHE_MAX = 512 * 1024 * 1024;
 /** The cache's key for a blob: a URL of its own, never a page's. */
-const cacheKey = (hash: string) => `https://blobs.erga.dev/${hash}`;
+const cacheKey = (hash: string) => `https://blobs.invalid/${hash}`;
 
 const key = (hash: string) => `blobs/${hash}`;
 
@@ -25,14 +24,21 @@ const key = (hash: string) => `blobs/${hash}`;
  * `background`: work after the answer (the
  * cache's copy of a blob); without it nothing is cached.
  */
-export function blobsOf(env: Pick<Env, "FILES" | "SNAPSHOT_IMPORT" | "SNAPSHOT_TOKEN" | "DEPLOY_TARGET">, background?: (work: Promise<unknown>) => void): BlobStore | undefined {
+export function blobsOf(
+  env: Pick<Env, "FILES" | "SNAPSHOT_IMPORT" | "SNAPSHOT_TOKEN" | "SNAPSHOT_FROM" | "DEPLOY_TARGET">,
+  background?: (work: Promise<unknown>) => void
+): BlobStore | undefined {
   const bucket = env.FILES;
   if (!bucket) return undefined;
   const cache = background && typeof caches != "undefined" ? (caches as unknown as { default: Cache }).default : null;
   // Staging: what its copy of production's documents needs from production's bucket.
-  const fromProduction = env.SNAPSHOT_IMPORT == "1" && env.DEPLOY_TARGET != "production" && (env.SNAPSHOT_TOKEN?.trim().length ?? 0) >= 32
+  const primary = env.SNAPSHOT_FROM?.trim().replace(/\/+$/, "");
+  const fromProduction =
+    primary && env.SNAPSHOT_IMPORT == "1" && env.DEPLOY_TARGET != "production" && (env.SNAPSHOT_TOKEN?.trim().length ?? 0) >= 32
     ? async (hash: string): Promise<boolean> => {
-      const r = await fetch(`https://${PRODUCTION.host}/api/snapshot/blob/${hash}`, { headers: { Authorization: `Bearer ${env.SNAPSHOT_TOKEN!.trim()}` } }).catch(() => null);
+        const r = await fetch(`${primary}/api/snapshot/blob/${hash}`, {
+          headers: { Authorization: `Bearer ${env.SNAPSHOT_TOKEN!.trim()}` },
+        }).catch(() => null);
       const size = Number(r?.headers.get("content-length"));
       if (!r?.ok || !r.body || !Number.isInteger(size)) { await r?.body?.cancel(); return false; }
       await put(hash, r.body, size);

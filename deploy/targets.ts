@@ -53,12 +53,6 @@ export interface TargetSpec {
   vars: Record<string, string>;
   /** Copy another target's data in (staging: production's): on a first deploy, and on a deploy with a fresh copy. */
   snapshotFrom?: TargetName;
-  /**
-   * Only Erga's admins may use this target's server (staging, which runs on a copy of production's data): every request
-   * needs an admin's session or admin-scope token, with the few exemptions server/identity/admins-only.ts lists. The server
-   * knows from DEPLOY_TARGET, which the pipeline sets on each deploy, so no setting turns it off.
-   */
-  adminsOnly?: boolean;
 }
 
 
@@ -67,31 +61,21 @@ import data from "./targets.json";
 /** The Cloudflare account every target is in (32 hex digits). */
 export const ACCOUNT: string = data.account;
 
-/** The bootstrap admins: the same on every target. */
-export const ADMINS: string = data.admins;
-
 /**
  * The targets themselves are in targets.json (staging's GITHUB_CLIENT_ID is
  * its own GitHub OAuth app's: homepage https://staging.erga.dev, callback
  * https://staging.erga.dev/auth/github/callback).
- * Staging is for admins only (`adminsOnly`), and its admins sign in with that
+ * Staging is for admins only (DEPLOY_TARGET=staging: server/identity/admins-only.ts), and its admins sign in with that
  * app, not production's: until someone makes it (on GitHub, by hand: GitHub
  * has no API for OAuth apps), puts its Client ID here and sets its secret
  * (`bunx cf workers secrets update GITHUB_CLIENT_SECRET --name erga-staging`),
- * or pastes both on production's Authentication page (/admin/auth, which
- * sets staging's through staging's server: server/identity/settings.ts),
+ * or pastes both on staging's own Authentication page (/admin/auth),
  * /auth/github on staging shows a page saying so.
- * Every target gets ADMINS.
+ * No target names an admin: each server's admins are rows in its database.
  */
-export const TARGETS = Object.fromEntries(Object.entries(data.targets).map(([name, t]) => [name, { ...t, vars: { ADMINS, ...t.vars } }])) as unknown as Record<TargetName, TargetSpec>;
+export const TARGETS = data.targets as unknown as Record<TargetName, TargetSpec>;
 
 export const isTargetName = (s: string): s is TargetName => s in TARGETS;
-
-/** Whether a server whose DEPLOY_TARGET is this is for Erga's admins only (`adminsOnly`: staging; server/identity/admins-only.ts). */
-export const isAdminsOnly = (deployTarget: string | undefined): boolean => {
-  const name = deployTarget?.trim() ?? "";
-  return Object.prototype.hasOwnProperty.call(TARGETS, name) && TARGETS[name as TargetName].adminsOnly == true;
-};
 
 /**
  * Names nothing but production may use: a deploy to another target that

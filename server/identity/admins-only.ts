@@ -1,11 +1,11 @@
-// Staging is for Erga's admins only. staging.erga.dev runs on a copy of
-// production's data (frozen: only a deploy with a fresh copy replaces it),
-// so a server whose deploy target says `adminsOnly`
-// (deploy/targets.json, Platform.adminsOnly; the pipeline sets DEPLOY_TARGET on each deploy, so no
+// Staging is for Erga's admins only. A staging instance runs on a copy of
+// its primary's data (frozen: only a deploy with a fresh copy replaces it),
+// so a server whose deploy says DEPLOY_TARGET=staging
+// (Platform.adminsOnly; each deploy of a staging instance sets it, so no
 // setting turns this off) lets a request in only with admin power: an
 // admin's signed-in session, or an admin-scope token (tokens.ts;
 // Users.actsAsAdmin). Anyone else gets a page (signed out: sign in; signed in:
-// admins only, with a link to production) or a JSON 403. This is the one guard, at the app, before every route; production and a fork's servers
+// admins only, with a link to its primary) or a JSON 403. This is the one guard, at the app, before every route; production and a fork's servers
 // never run it.
 //
 // What gets in without an admin, and why (each one checks its own credential):
@@ -55,7 +55,7 @@
 //
 // Everything else needs an admin: documents and their sockets, /docs, the homepage and the homepage, /new,
 // /tokens, the APIs and MCP, and the documents' pages origin
-// (*.erga-pages-staging.dev). That origin has no cookies: on this server its tokens name the admin they were made for
+// (*.<staging's pages domain>). That origin has no cookies: on this server its tokens name the admin they were made for
 // (server/documents/pages-origin.ts, pagesToken's `by`), and a file is served only while that person is still an admin. A token without a name
 // (made before this guard, or by another server) is refused.
 
@@ -134,17 +134,18 @@ async function refusal(request: Request, base: Platform, url: URL) {
       ? "Staging is for Erga's admins only, with admin power: this token has no admin scope, so it reaches only the API, MCP and documents here. Make one with the admin scope in Settings (/docs#settings)."
     : "Staging is for Erga's admins only.";
   if (!wantsPage(request, url)) return json({ error: why, adminsOnly: true }, 403);
-  const productionHost = base.deploy.targets.production.host,
-    production = `https://${productionHost}`;
+  // The primary this server copies (SNAPSHOT_FROM, from the deploy), where the deploy named it.
+  const primary = base.deploy.primary && URL.canParse(base.deploy.primary) ? new URL(base.deploy.primary) : null;
+  const itself = primary ? ` Erga itself is at <a href="${esc(primary.origin)}">${esc(primary.host)}</a>.` : "";
   return signedIn
     ? page(
         "Staging is for Erga's admins only",
-        `This is staging, a test copy of Erga for its admins, and <b>${esc(session!.login)}</b> isn't one. Erga itself is at <a href="${production}">${productionHost}</a>. <a href="/auth/logout">Sign out</a>`,
+        `This is staging, a test copy of Erga for its admins, and <b>${esc(session!.login)}</b> isn't one.${itself} <a href="/auth/logout">Sign out</a>`,
         403
       )
     : page(
         "Staging is for admins: sign in",
-        `This is staging, a test copy of Erga for its admins. Admins sign in with staging's own GitHub app, or Google's where it is on. Erga itself is at <a href="${production}">${productionHost}</a>.</p><p><a class="new sign-in" href="/auth/sign-in?next=${esc(encodeURIComponent(safeNext(url.pathname + url.search)))}">Sign in</a>`,
+        `This is staging, a test copy of Erga for its admins. Admins sign in with staging's own GitHub app, or Google's where it is on.${itself}</p><p><a class="new sign-in" href="/auth/sign-in?next=${esc(encodeURIComponent(safeNext(url.pathname + url.search)))}">Sign in</a>`,
         403
       );
 }

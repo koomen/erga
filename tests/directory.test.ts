@@ -167,7 +167,7 @@ test("users: who may sign in, bootstrap admins and server roles", async () => {
 });
 
 test("users: the server always keeps an admin", async () => {
-  // No bootstrap admins (ADMINS empty): the admins are rows, and the last one stays.
+  // No bootstrap admin (a deployed server): the admins are rows, and the last one stays.
   const sql = memory(), { users } = fresh({}, sql);
   await sql.run("INSERT INTO users (login, name, role, created) VALUES ('ada', 'Ada', 'admin', 1)");
   await users.signedIn("bo", "Bo", { create: true });

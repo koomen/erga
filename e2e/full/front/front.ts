@@ -27,7 +27,7 @@ export const freshLogin = (prefix = "w") => `${prefix}${Date.now().toString(36)}
 
 const sessionCookie = (r: Response) => r.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c));
 
-/** Signs in as `login` (none: the dev server's DEV_LOGIN, "tester", an admin by the deploy) with a session cookie. */
+/** Signs in as `login` (none: the dev server's DEV_LOGIN, "tester", an admin by DEV_LOGIN) with a session cookie. */
 export async function signIn(s: Server, login: string | null, next = "/docs") {
   const r = await fetch(`${s.root}/auth/github?${login ? `as=${login}&` : ""}next=${encodeURIComponent(next)}`, { redirect: "manual" });
   const cookie = sessionCookie(r);

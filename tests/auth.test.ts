@@ -28,7 +28,6 @@ import { testedSignIn } from "../server/identity/settings";
 import type { Platform } from "../server/platform";
 import type { Directory } from "../server/directory/index.ts";
 import { quietConsole } from "./helpers/quiet.ts";
-import { TARGETS } from "../deploy/targets";
 import { respond } from "../server/http.ts";
 
 quietConsole();
@@ -166,7 +165,6 @@ test("the status: what's in use and where from, never a secret, the URLs GitHub 
     origin: "https://staging.erga.dev",
     target: "staging",
     dev: false,
-    worker: "erga-staging",
     pagePlace: "on this server's page",
   });
   expect(none.check.state).toBe("not_set_up");
@@ -177,8 +175,7 @@ test("the status: what's in use and where from, never a secret, the URLs GitHub 
     "https://github.com/settings/applications/new",
     "https://staging.erga.dev/auth/github/callback",
     "on this server's page",
-    "targets.staging.vars.GITHUB_CLIENT_ID",
-    "--name erga-staging",
+    "GITHUB_CLIENT_ID as a text binding",
   ])
     expect(steps).toContain(s);
   await saveApp(c, "staging", GOOD, { login: "koomen" });
@@ -207,7 +204,7 @@ function serverOn(own: Platform["own"]): Platform {
   return {
     secret: "s", dev: () => false,
     signIn: { app: GOOD, github: "https://github.com", devLogin: null, encryptionKey: "factory-key" },
-    deploy: { target: "production", version: null, targets: TARGETS },
+    deploy: { target: "production", version: null, primary: null },
     own,
     directory: { config: { record: async () => {} } } as unknown as Directory,
   } as unknown as Platform;
