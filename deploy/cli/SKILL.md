@@ -46,6 +46,9 @@ and `main`. There are no pull requests.
 - `bun erga status`: production, staging, the feature branches (ahead,
   behind, conflicts) and the commits on staging that are not on main.
 - `bun erga dashboard`: the same, as a live page on localhost.
+- `bun erga`: the ops page on localhost. It lists the instances of `.erga/config.json`,
+  each primary with its staging instances, the feature branches, the log with "live" at each
+  instance's commit, and the job that runs. It only reads, and never fetches.
 - `bun erga deploy [<commit>] <host>`: deploys a registered instance from
   this machine, with the facts in `.erga/config.json`. Only when Pete asks.
   It asks no question. A staging instance needs a commit, and keeps its
