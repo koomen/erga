@@ -35,9 +35,11 @@ export const hasAgent = (session: Session | null) => !!session && !session.agent
 
 /**
  * The agent for `session`'s person, or nothing: its markup, opened or closed and with the conversation as they left it
- * before it paints (data-person: whose it was), and its script.
+ * before it paints (data-person: whose it was), and its script. The server's browser rendering for view_page
+ * (Session.view) gets the panel, which the viewer and the editor place, but not its script: never the person's
+ * conversation.
  */
 export const agentPanel = (session: Session | null) =>
   session && hasAgent(session)
-    ? `<aside id="agent" class="agent" aria-label="Agent" data-person="${esc(session.login)}">${PANEL}${inlineScript("agent-toggle")}${scriptTag("agent.js")}`
+    ? `<aside id="agent" class="agent" aria-label="Agent" data-person="${esc(session.login)}">${PANEL}${inlineScript("agent-toggle")}${session.view ? "" : scriptTag("agent.js")}`
     : "";

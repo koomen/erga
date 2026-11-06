@@ -1,13 +1,13 @@
 // The agent's look at the page (view_page, eval_in_page), in the page itself: the server's browser (cloudflare/render.ts)
-// opens the page and runs this in it (client/inline/page-render.ts). It waits for the page's fonts and images, shows a
-// step, holds the page's animations at a time while the browser takes its picture, measures the part to take, runs an
-// expression, and says which fonts the text rendered in. The browser draws the picture itself.
+// opens the page in Erga's viewer and runs this in the page's frame (client/inline/page-render.ts). It waits for the
+// page's fonts and images, shows a step, holds the page's animations at a time while the browser takes its picture,
+// measures the part to take, runs an expression, and says which fonts the text rendered in. The browser draws the
+// picture itself, of the whole window: the viewer's bars over the page too.
 
 import { evaluateIn } from "./evaluate";
 import type { Clip, PageRender, RenderedFont, StepShown } from "../../shared/agent-log";
 import type {} from "../../libs/steps/ui/steps";
 import { sleep } from "../../shared/time";
-import { topRoom } from "../common/top-room";
 
 const MAX_SHOT = 4000;
 const LOAD_WAIT = 5000;
@@ -17,8 +17,6 @@ const STEPS_WAIT = 3000;
 /** The page's render tools, for the server's browser. */
 export function pageRender(win: Window & typeof globalThis): PageRender {
   const d = win.document;
-  // The room a scrolling page keeps at its top for the bars, as the person's view has it (client/common/top-room.ts).
-  topRoom(d).update();
   // The steps library's bar and list are the person's controls, not the page: the pictures leave them out.
   for (const el of d.querySelectorAll<HTMLElement>("erga-steps")) el.style.display = "none";
   let clock = animationClock(d);
@@ -26,6 +24,19 @@ export function pageRender(win: Window & typeof globalThis): PageRender {
   let from = 0;
   return {
     settle: () => settle(d, Date.now() + LOAD_WAIT),
+    need(selector, fullPage) {
+      if (!selector && !fullPage) return 0;
+      const full = Math.min(MAX_SHOT, Math.max(d.documentElement.scrollHeight, d.body?.scrollHeight ?? 0));
+      if (full <= win.innerHeight) return 0;
+      if (!selector) return full;
+      let r: DOMRect | undefined;
+      try {
+        r = d.querySelector(selector)?.getBoundingClientRect();
+      } catch {
+        return 0;
+      }
+      return !r || (r.top >= 0 && r.bottom <= win.innerHeight) ? 0 : full;
+    },
     async step(spec) {
       const s = await goToStep(win, spec, Date.now() + STEPS_WAIT);
       clock = animationClock(d);
@@ -54,9 +65,11 @@ export function pageRender(win: Window & typeof globalThis): PageRender {
   };
 }
 
-/** The part of the page a picture takes: the screenful (no clip), the whole page (up to MAX_SHOT tall), or one element. */
+/**
+ * The part of the window a picture takes: all of it (no clip: the screenful, or the whole page in a window made as tall
+ * as the page, up to MAX_SHOT), or one element, in the window's coordinates.
+ */
 function measure(d: Document, selector: string | null, fullPage: boolean): { clip?: Clip; note?: string; error?: string } {
-  const w = d.defaultView!;
   if (selector) {
     let el: Element | null = null;
     try {
@@ -70,16 +83,13 @@ function measure(d: Document, selector: string | null, fullPage: boolean): { cli
       return { error: `${selector} has no size (${Math.round(r.width)}×${Math.round(r.height)}); it may not have rendered` };
     const height = Math.min(MAX_SHOT, Math.ceil(r.height));
     return {
-      clip: { x: Math.max(0, r.left + w.scrollX), y: Math.max(0, r.top + w.scrollY), width: Math.ceil(r.width), height },
+      clip: { x: Math.max(0, r.left), y: Math.max(0, r.top), width: Math.ceil(r.width), height },
       ...(r.height > MAX_SHOT ? { note: `${selector} is ${Math.round(r.height)}px tall; this shows the top ${MAX_SHOT}px.` } : {}),
     };
   }
   if (!fullPage) return {};
   const full = Math.max(d.documentElement.scrollHeight, d.body?.scrollHeight ?? 0);
-  return {
-    clip: { x: 0, y: 0, width: d.documentElement.clientWidth || w.innerWidth, height: Math.min(MAX_SHOT, full) },
-    ...(full > MAX_SHOT ? { note: `The page is ${full}px tall; this shows the top ${MAX_SHOT}px.` } : {}),
-  };
+  return full > MAX_SHOT ? { note: `The page is ${full}px tall; this shows the top ${MAX_SHOT}px.` } : {};
 }
 
 /**

@@ -50,6 +50,8 @@ const HOLD_MS = 30_000;
 export function browsers(binding: BrowserBinding) {
   let open: Promise<Browser> | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  /** Each connection's browser contexts, one for each person: their cookies apart, their cache kept between renders. */
+  const contexts = new WeakMap<Browser, Map<string, Promise<string>>>();
   const start = async (): Promise<{ browser: Browser; how: "connected" | "launched" }> => {
     const idle = (await sessions(binding).catch(() => [])).find((s) => !s.connectionId);
     if (idle) {
@@ -67,6 +69,21 @@ export function browsers(binding: BrowserBinding) {
       open = started.then((s) => s.browser);
       open.catch(() => (open = null));
       return started;
+    },
+    /**
+     * The person's browser context on this connection (made the first time): it holds their view cookie, apart from
+     * anyone else's, and the files a render loaded, for the next. It goes with the connection (disposeOnDetach).
+     */
+    context(browser: Browser, person: string): Promise<string> {
+      let mine = contexts.get(browser);
+      if (!mine) contexts.set(browser, (mine = new Map()));
+      let id = mine.get(person);
+      if (!id) {
+        const made = browser.newContext();
+        made.catch(() => mine.delete(person));
+        mine.set(person, (id = made));
+      }
+      return id;
     },
     /** A render is done: the connection goes after HOLD_MS with no other (the session stays, for the next to connect to). */
     done() {

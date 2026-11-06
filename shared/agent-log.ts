@@ -114,6 +114,10 @@ export interface ViewRequest {
   evaluate?: string;
   /** How long evaluate waits for its result, in ms (EVAL_TIMEOUT). */
   timeout?: number;
+  /** evaluate runs in the viewer's own window (the shell around the page's frame), not in the page. */
+  shell?: boolean;
+  /** The page opened in the editor (?edit), not in the viewer. */
+  editor?: boolean;
   /**
    * A presentation's steps to show (libs/steps/api/steps.ts, stepSpec): each its number ("3.2"), or a hash ("#3.2") the
    * render opens at. One picture each, in order, from one render; eval_in_page takes one.
@@ -181,6 +185,9 @@ export interface ViewResult {
   value?: string;
   /** The page rendered (its file). */
   page?: string;
+  /** Where it was shown: in the viewer or in the editor; and whether the viewer had its bars. */
+  shown?: "viewer" | "editor";
+  bars?: boolean;
   /** eval_in_page's step: its index, its number as the steps' list shows it, how many there are, and its label. */
   step?: StepShown;
   /** `preview`: the page the edits went to, in the copy, and how many there were. */
@@ -206,7 +213,12 @@ export interface PageRender {
   settle(): Promise<string[]>;
   /** Shows a step (a number, or a hash), and starts the clock again from it. */
   step(spec: string): Promise<StepShown | { note: string } | string>;
-  /** Waits until `t` ms on the clock, holds the animations at `t`, and answers the part to take: the screenful (no clip), the page, or an element. */
+  /**
+   * The window's height a picture of the whole page, or of an element not all in view, needs: the page's height (at
+   * most MAX_SHOT); 0 when the window as it is shows it.
+   */
+  need(selector: string | null, fullPage: boolean): number;
+  /** Waits until `t` ms on the clock, holds the animations at `t`, and answers the part to take: the window (no clip) or an element, in the window's coordinates. */
   hold(t: number, selector: string | null, fullPage: boolean): Promise<{ at: number; clip?: Clip; note?: string; error?: string }>;
   /** Lets the animations run again after a picture; the time it took is left out of the clock. */
   release(): void;

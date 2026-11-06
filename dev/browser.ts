@@ -30,6 +30,9 @@ export async function localBrowser(): Promise<string> {
           "--remote-debugging-address=127.0.0.1",
           // A page on <id>-<owner>.localhost may load what the tests serve on 127.0.0.1 (another site's font, say).
           "--disable-features=LocalNetworkAccessChecks",
+          // The viewer's frame on the pages origin in a process of its own, as a desktop Chrome has it (headless shell
+          // doesn't by default): view_page reaches it as its own target (cloudflare/render.ts).
+          "--site-per-process",
         ],
       });
       return { browser, port };

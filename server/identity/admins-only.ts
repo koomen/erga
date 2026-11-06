@@ -53,6 +53,11 @@
 //                                   own scope decides, as on production: no admin
 //                                   power, so no /admin, settings, users or credentials
 //
+//   a document's viewer and API with a view cookie (session.ts, viewCookie)
+//                                   the server's browser renders a page in the viewer for an admin's agent
+//                                   (view_page); the cookie signs in only on that document's paths, with no admin
+//                                   power. Its person must be an admin at each request
+//
 //   a document's socket, or a file put into it, with an edit key
 //                                   the page's editor sends them from the pages origin, with no cookie; the key
 //                                   (documents/edit-key.ts) names its person, who must be an admin at each request
@@ -136,6 +141,8 @@ async function refusal(request: Request, base: Platform, url: URL) {
 
   const session = await base.sessionOf(request);
   if (session && (await users.actsAsAdmin(whoOf(session)))) return null;
+  // A view cookie: it signs in only on its document's paths (session.ts), so this is that document, for an admin.
+  if (session?.view && (await users.isAdmin(whoOf(session)))) return null;
   // An admin's token of another scope: the API, MCP and documents' routes only (the exemption above), then its own scope.
   const adminsToken = !!session?.agent && (await users.isAdmin(whoOf(session)));
   if (adminsToken && tokenPath(url.pathname)) return null;

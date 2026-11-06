@@ -1,6 +1,6 @@
-// view_page, as an agent calls it: the server's browser renders the page as a reader sees it. It waits for the fonts
-// and draws them (not a fallback), and says which fonts rendered, at what size and in which mode. Several places in
-// one call: one picture each. Other sizes and modes: view-page-modes.e2e.ts.
+// view_page, as an agent calls it: the server's browser renders the page in Erga's viewer, as its person sees it. It
+// waits for the fonts and draws them (not a fallback), and says which fonts rendered, at what size and in which mode.
+// Several places in one call: one picture each. Other sizes and modes: view-page-modes.e2e.ts.
 import { expect, servers, test } from "../../helpers/fixtures";
 import { CAPTURES, differ, expectColour, fontSite, openFonts as open, SCRIPT_LIGHT, SLOW_MS, WHITE } from "./view-page";
 
@@ -27,7 +27,7 @@ test(
     expect(all.text).toMatch(/^- Localface: 1 element \(h2\)$/m);
     expect(all.text).toMatch(/\(the page asked for Missingface, which didn't load or isn't installed\): 1 element \(p\)/);
     await expectColour(ed, all.images[0], 600, 30, WHITE);
-    await expectColour(ed, all.images[0], 1270, 10, SCRIPT_LIGHT);
+    await expectColour(ed, all.images[0], 1277, 3, SCRIPT_LIGHT);
   }
 );
 

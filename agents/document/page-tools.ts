@@ -110,6 +110,11 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>, live:
           })
         ),
         frame: FRAME,
+        shell: Schema.optionalKey(
+          Schema.Boolean.annotate({
+            description: "In Erga's viewer around the page (its window; the page is in iframe#frame), not in the page.",
+          })
+        ),
         ...RENDER,
         timeout: Schema.optionalKey(Schema.Finite),
         step: Schema.optionalKey(Schema.Union([Schema.String, Schema.Finite]).annotate({ description: STEP_WORDS })),
@@ -118,11 +123,13 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>, live:
       }),
       execute: async (
         _id,
-        p: { expression: string; live?: boolean; frame?: string; timeout?: number; step?: StepArg } & RenderArgs & TimeArgs & PreviewArgs
+        p: { expression: string; live?: boolean; frame?: string; shell?: boolean; timeout?: number; step?: StepArg } & RenderArgs &
+          TimeArgs &
+          PreviewArgs
       ) => {
         if (!p.expression?.trim()) throw new Error("Give an expression to run.");
         if (p.live) {
-          const fresh = ["width", "height", "color_scheme", "step", "at_ms", "frames", "edits", "path"].filter(
+          const fresh = ["width", "height", "color_scheme", "editor", "shell", "step", "at_ms", "frames", "edits", "path"].filter(
             (k) => (p as Record<string, unknown>)[k] != null
           );
           if (fresh.length) throw new Error(`${fresh.join(", ")} apply to a fresh copy only, not with live.`);
@@ -134,6 +141,7 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>, live:
         if (p.frame != null) throw new Error("frame applies to the live page only: give live: true with it.");
         const v = await view({
           evaluate: p.expression,
+          ...(p.shell ? { shell: true } : {}),
           timeout: p.timeout,
           ...renderReq(p),
           ...(p.step != null ? { steps: [stepSpec(p.step)] } : {}),
@@ -280,9 +288,17 @@ const RENDER = {
   width: Schema.optionalKey(Schema.Finite),
   height: Schema.optionalKey(Schema.Finite),
   color_scheme: Schema.optionalKey(Schema.Literals(["light", "dark"])),
+  editor: Schema.optionalKey(
+    Schema.Boolean.annotate({ description: "Opened in the editor (?edit), with its controls, not in the viewer." })
+  ),
 };
-type RenderArgs = { width?: number; height?: number; color_scheme?: ColorScheme };
-const renderReq = (p: RenderArgs) => ({ width: p.width, height: p.height, colorScheme: p.color_scheme });
+type RenderArgs = { width?: number; height?: number; color_scheme?: ColorScheme; editor?: boolean };
+const renderReq = (p: RenderArgs) => ({
+  width: p.width,
+  height: p.height,
+  colorScheme: p.color_scheme,
+  ...(p.editor ? { editor: true } : {}),
+});
 
 type StepArg = string | number;
 const STEP_WORDS = 'A presentation step to show first, e.g. "3.2".';
@@ -347,6 +363,10 @@ export function describeView(v: ViewResult, fullPage?: boolean): string {
           .map((n, i) => `${n.replace(/^At/, "at")}, ${shots[i].width}×${shots[i].height}px`)
           .join("; ")}.`,
   ];
+  if (v.shown)
+    lines.push(
+      `Shown as its person sees it, in Erga's ${v.shown}${v.shown == "viewer" && !v.bars ? " (its bars are off for readers)" : ""}.`
+    );
   if (v.viewport || v.colorScheme)
     lines.push(
       `Rendered${v.viewport ? ` in a ${v.viewport.width}×${v.viewport.height}px window` : ""}${v.colorScheme ? `${v.viewport ? "," : ""} in ${v.colorScheme} mode` : ""}.`

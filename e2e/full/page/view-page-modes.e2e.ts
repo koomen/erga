@@ -19,7 +19,7 @@ test(
     const dark = await tool("view_page", { color_scheme: "dark" });
     expect(dark.text).toContain("in dark mode");
     await expectColour(ed, dark.images[0], 600, 30, DARK);
-    await expectColour(ed, dark.images[0], 1270, 10, SCRIPT_DARK);
+    await expectColour(ed, dark.images[0], 1277, 3, SCRIPT_DARK);
   }
 );
 
@@ -58,7 +58,7 @@ test(
     expect(await ed.eval<string>(`ergaPage.agentContext()`)).toContain("dark mode");
     const light = await tool("view_page", {});
     await expectColour(ed, light.images[0], 600, 30, WHITE);
-    await expectColour(ed, light.images[0], 1270, 10, SCRIPT_LIGHT);
+    await expectColour(ed, light.images[0], 1277, 3, SCRIPT_LIGHT);
     const dark = await tool("view_page", { color_scheme: "dark" });
     await expectColour(ed, dark.images[0], 600, 30, DARK);
   }

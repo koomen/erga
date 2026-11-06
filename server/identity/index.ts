@@ -2,7 +2,7 @@
 // with GitHub and its settings, the other of Erga's servers. The rest of the
 // app imports identity through this file.
 
-export { actingAdmin, sessionOf, sign, unsign } from "./session.ts";
+export { actingAdmin, SESSION_COOKIE, sessionOf, sign, unsign, viewCookie } from "./session.ts";
 export {
   chooseSignIn,
   finishGoogleSignIn,
@@ -20,7 +20,7 @@ export { HOME_ERGA, homeDomainSignIn, homePass, homeVisitor } from "./home-pass.
 export { isOAuthPath, oauthRoutes, resourceMetadataUrl } from "./oauth.ts";
 
 export { expiryOf, tokensRoutes } from "./tokens-page.ts";
-export { cookies, setCookie } from "./cookies.ts";
+export { cookieName, cookies, setCookie } from "./cookies.ts";
 
 export { REQUEST_MINUTES, SCOPES, ScopeError, Tokens, type AgentToken, type Scope } from "./tokens.ts";
 export {
