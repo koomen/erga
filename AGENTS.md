@@ -101,6 +101,16 @@ to production and moves `main`. `bun erga skill` tells the rest.
 9. **Source files stay under about 32 KB; 48 KB is the cap**, because read
    tools stop near 50 KB. When you touch a file over the cap, split it along
    a real seam and take it off the list in `tests/file-size.test.ts`.
+10. **State that changes over time is an explicit state machine.** An
+    implicit one, its state spread across flags, booleans, timers and
+    callbacks, gave the bugs of the editor, the agent's turn, the sockets and
+    the document's room. The explicit form: one state value, a union of
+    named states; a union of events; and one pure function (`step`, `next`)
+    that takes both and gives the new state and the effects to do. A thin
+    owner keeps the value and does the IO; a timer's end or an answer is an
+    event back in. A unit test drives the function apart from IO. Examples:
+    `agents/turn.ts` (`tests/agent-turn.test.ts`) and
+    `client/shell/editor-state.ts` (`tests/editor-state.test.ts`).
 
 These are the changes most likely to be helpfully added; don't:
 
