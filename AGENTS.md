@@ -179,8 +179,8 @@ Found a new trap? Write it here, in the same change.
   loads the frame again takes the address from `ergaFrames.src()`, never a copy made at load.
 - The frame has its own history. Back after a link in the frame loads the frame's old address
   again, with its `?erga-edit` if the editor was on then, and that page asks for the editor by
-  itself. Only the shell decides "editing" (`client/shell/page-frame.ts`: `active`); the frame's
-  address never does.
+  itself. Only the shell decides "editing" (`client/shell/editor-state.ts`: one state, one `step`); the
+  frame's address never does.
 - `/` sends anyone signed in to /docs (server/app.ts), and the dev server signs in every request
   without a cookie as DEV_LOGIN. A test of the served homepage opens it signed out: `front(server)`
   or `openHome(page, root)`, or the cookie `signedOut(server)` (e2e/full/home/home.ts). The cookie's

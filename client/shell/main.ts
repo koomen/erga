@@ -19,7 +19,8 @@ import { restoredFor } from "../live/restore";
 import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type ZoomBy } from "../common/zoom";
 import { fastClick } from "../common/fast-click";
 import { mountLayout } from "../agent/layout";
-import { BASE, $, editing, isMac, store, type Shell } from "./shell";
+import { BASE, $, isMac, store, type Shell } from "./shell";
+import { mountEditor } from "./editor";
 import { mountNaming } from "./naming";
 import { mountRoom } from "./room";
 import { mountPeople } from "./people";
@@ -77,13 +78,14 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
 
   /** The parts of the shell, and what they share: filled in below, as each is ready. */
   const shell = {
-    mode: "text",
     sourceView: null,
     source: null,
     docSettings: null,
     docName: null,
     docKind: "project",
   } as Partial<Shell> as Shell;
+  /** Editing (shell.editor: once it's mounted). */
+  const editing = () => shell.editor.state.editing;
 
   // ---------------------------------------------------------------- load
 
@@ -101,8 +103,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // events. Its first message says who this tab is and what the document is called (the hello), then comes the room's
   // whole text. Presence, connection news and events before the shell is set up are picked up once it is (`started`).
   let started = false;
-  /** Asks for a fresh edit key if the editor has none that holds (set below, once the page's frame is). */
-  let renewKey = () => {};
   const pending: SocketEvent[] = [];
   const early = window.ergaSocket,
     start =
@@ -141,7 +141,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     },
     onStatus: (connected) => {
       if (started) shell.room.connectionChanged(connected);
-      if (connected) renewKey();
+      // (A key asked for again, if the last request had no answer.)
+      if (started && connected) shell.editor.send({ type: "online" });
     },
     // The room lost the history this tab holds: the page loads again, and this tab's edits go in as edits (collab.ts, adopt).
     onStale: () => location.reload(),
@@ -264,7 +265,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // Someone edits the source (the lock: document/room.ts): the source view gives way to the page, which says so and is
   // read-only meanwhile (libs/text/ui/frame.ts).
   roomInfo(collab.doc).observe(() => {
-    if (roomInfo(collab.doc).get("lock") && shell.mode != "text") shell.views.setMode("text");
+    if (roomInfo(collab.doc).get("lock") && shell.editor.state.view != "text") shell.views.setMode("text");
   });
 
   /**
@@ -293,6 +294,12 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     currentSelection,
     currentState,
   });
+  // Editing, as the viewer says (client/inline/viewer-edit-boot.ts: it tells setEditing from now on), and full screen.
+  shell.editor = mountEditor(
+    shell,
+    document.body.classList.contains("erga-editing"),
+    document.documentElement.classList.contains("erga-full")
+  );
   shell.naming = mountNaming(shell);
   shell.room = mountRoom(shell);
   shell.people = mountPeople(shell);
@@ -314,10 +321,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     frame,
     origin: pagesOrigin,
     files: pagesUrl,
-    edit: async () => {
-      const key = await editKey();
-      return key != null ? { doc: `${location.origin}${BASE}`, key, me, path: shell.pagePath, tab } : null;
-    },
+    told: () => shell.editor.state.told,
+    edit: (key) => ({ doc: `${location.origin}${BASE}`, key, me, path: shell.pagePath, tab }),
     onKey: (keys) => {
       appShortcut(keys, true);
     },
@@ -355,43 +360,12 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     onZoom: (by) => zoomPage(by),
     onZooms: () => syncZoom(),
   }));
-  // The page's editor opens its socket with an edit key (server/documents/edit-key.ts), which this tab asks for and
-  // gives it, and again before it ends: a key is checked only as a socket opens (the editor's next, if it reconnects).
-  // With no connection, the last key this tab had (it may have expired: then the editor waits for the next, which this
-  // tab asks for once the room is back), so the editor starts offline too.
-  const KEY = `erga:edit-key:${BASE}${as}`;
-  let key = ((): { key: string; expires: number } | null => {
-    try {
-      return JSON.parse(sessionStorage.getItem(KEY) ?? "null");
-    } catch {
-      return null;
-    }
-  })();
-  async function editKey(): Promise<string | null> {
-    if (key && key.expires - Date.now() > 5 * 60_000) return key.key;
-    const r = await fetch(api("/api/key"), { method: "POST" }).catch(() => null);
-    const got = r?.ok ? ((await r.json().catch(() => null)) as { key?: unknown; expires?: unknown } | null) : null;
-    if (typeof got?.key != "string" || typeof got.expires != "number") return key?.key ?? (r ? null : "");
-    key = { key: got.key, expires: got.expires };
-    try {
-      sessionStorage.setItem(KEY, JSON.stringify(key));
-    } catch {
-      /* private mode */
-    }
-    return key.key;
-  }
-  setInterval(() => {
-    if (key && key.expires - Date.now() <= 5 * 60_000) page.renew();
-  }, 60_000);
-  // Back online after the editor started with no key (or an old one): a fresh one, for its next socket.
-  renewKey = () => {
-    if (!key || key.expires - Date.now() <= 5 * 60_000) page.renew();
-  };
   // This page and its files, kept in this browser for a reload with no connection (client/common/offline.ts).
   void keepOffline(location.href);
   rememberOrigin(pagesOrigin);
+  // The page's editor starts, if it should (its edit key: client/shell/editor.ts).
+  shell.editor.send({ type: "tick" });
   if (editing()) {
-    page.start();
     // The page has the focus, for its editor (nothing else in the tab has it yet).
     if (!document.activeElement || document.activeElement == document.body) page.focus();
   }
@@ -492,8 +466,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       // (Its box had the focus: the caret goes back to the text.)
       else if (!$("sharing").hidden) {
         shell.sharing.toggleSharing(false);
-        if (shell.mode == "text") page.focus();
-      } else if (shell.mode != "text") shell.views.setMode("text");
+        if (shell.editor.state.view == "text") page.focus();
+      } else if (shell.editor.state.view != "text") shell.views.setMode("text");
       // Nothing else to close: the controls fade (in the page, the editor takes the focus off the text itself).
       else shell.chrome.hideChrome();
       return true;
@@ -515,11 +489,9 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // Full screen (client/inline/viewer-full.ts) is for showing the page, not editing it: the page, not its source, and the
   // editor in it stops, so the page's own keys work (a deck's arrows); it starts again after.
   addEventListener("erga-full", (e) => {
-    if (!editing()) return;
-    if ((e as CustomEvent<{ on: boolean }>).detail.on) {
-      if (shell.mode != "text") shell.views.setMode("text");
-      page.stop();
-    } else if (shell.mode == "text") page.start();
+    const on = (e as CustomEvent<{ on: boolean }>).detail.on;
+    if (on && shell.editor.state.view != "text") shell.views.setMode("text");
+    shell.editor.send({ type: "full", on });
   });
 
   for (const b of document.querySelectorAll(".chrome button")) b.addEventListener("mousedown", (e) => e.preventDefault());
@@ -538,14 +510,13 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // it's the page's, viewing and editing alike (server/pages/agent.ts).
   function setEditing(on: boolean) {
     syncZoom(on);
+    // The editor in the page starts or stops (on the way out the page stays as it was).
+    shell.editor.send({ type: "editing", on });
     if (on) {
-      // The editor in the page (it stopped on the way out: the page stays as it was).
-      page.start();
       page.focus();
       return;
     }
-    if (shell.mode != "text") shell.views.setMode("text");
-    page.stop();
+    if (shell.editor.state.view != "text") shell.views.setMode("text");
     shell.chrome.closeCards();
     shell.chrome.toggleQuick(false);
     shell.chrome.showChrome();
@@ -567,8 +538,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       "editor",
       (): EditorKept => ({
         path: shell.pagePath,
-        scroll: shell.mode == "text" ? page.scrollY : 0,
-        mode: shell.mode,
+        scroll: shell.editor.state.view == "text" ? page.scrollY : 0,
+        mode: shell.editor.state.view,
         pages: !$("pages").hidden,
         settings: !!shell.docSettings?.isOpen(),
         help: !$("help").hidden,
@@ -578,7 +549,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       { everyReload: true }
     );
     l.keep("shell", (): ShellKept | null => {
-      if (!editing() || shell.mode != "text") return null;
+        if (!editing() || shell.editor.state.view != "text") return null;
       const root = document.documentElement;
       return {
         width: innerWidth, height: innerHeight,
@@ -617,7 +588,10 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   async function swapTo(path: string, push: boolean) {
     if (path == shell.pagePath) return;
     // The page's source view gives the text back to the page first (the new page opens on the page itself).
-    if (shell.mode != "text") { shell.views.setMode("text"); await shell.views.switched(); }
+    if (shell.editor.state.view != "text") {
+      shell.views.setMode("text");
+      await shell.views.switched();
+    }
     const text = collab.setPath(path);
     if (text == null) { goTo(addressOf(path)); return; }
     page.load(path);
