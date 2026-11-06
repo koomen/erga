@@ -19,6 +19,7 @@ import { githubIssues } from "../server/feedback";
 import { agentSettingsFrom } from "../agents/models";
 import { documentOf } from "./objects/document-stub";
 import { blobsOf } from "./blobs";
+import { kvCache, type EdgeCache } from "./kv-cache";
 import { BLOB_HEADER, serveBlob } from "../document/blobs";
 
 
@@ -107,8 +108,9 @@ const landingOf = ({ devLogin }: { devLogin: string }): NonNullable<Platform["la
  * named by its id.
  */
 const local = (url: URL) => url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1";
-/** The edge's cache (the Cache API), where the runtime has one. */
-const edgeCache = (): Platform["edge"]["cache"] => {
+/** The edge's cache: the Cache API, where the runtime has one, or the KV namespace a host binds in its place (kv-cache.ts). */
+export const edgeCache = (env: Pick<Env, "EDGE_CACHE">): EdgeCache | null => {
+  if (env.EDGE_CACHE) return kvCache(env.EDGE_CACHE);
   const caches = (globalThis as unknown as { caches?: { default?: Cache } }).caches?.default;
   if (!caches) return null;
   return { match: (key) => caches.match(key), put: (key, response) => caches.put(key, response), delete: (key) => caches.delete(key) };
@@ -169,7 +171,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     ...(issues ? { issues } : {}),
     agentSettings: (login?: string) => agentSettingsFrom(env, env.DB ? directoryOf(env) : null, login),
     edge: {
-      cache: edgeCache(),
+      cache: edgeCache(env),
       background: (work) => { if (ctx) ctx.waitUntil(work); else work.catch(() => {}); },
       homeRecheckMs: settings.homeRecheckMs,
     },
@@ -205,7 +207,11 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       fetch: async (doc, request) => {
         const answer = await counted("doc", () => host(doc).fetch(request));
         if (!answer.headers.has(BLOB_HEADER)) return answer;
-        return (await Effect.runPromise(serveBlob(answer, request, blobsOf(env, (w) => p.edge.background(w)) ?? null))) ?? answer;
+        return (
+          (await Effect.runPromise(
+            serveBlob(answer, request, blobsOf(env, { cache: edgeCache(env), background: p.edge.background }) ?? null)
+          )) ?? answer
+        );
       },
       view: (id, who, opts) => counted("doc", () => documentOf(env, id).view(who, opts)),
     },

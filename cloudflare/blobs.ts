@@ -9,6 +9,7 @@
 // and kept in staging's own bucket from then on.
 
 import type { BlobBody, BlobStore } from "../document/blobs";
+import type { EdgeCache } from "./kv-cache";
 import type { Env } from "./env";
 import { snapshotRefused } from "../document/snapshot";
 
@@ -21,16 +22,17 @@ const key = (hash: string) => `blobs/${hash}`;
 
 /**
  * The blob store on `env.FILES`, or undefined where it isn't bound.
- * `background`: work after the answer (the
+ * `edge`: the edge's cache (platform.ts) and work after the answer (the
  * cache's copy of a blob); without it nothing is cached.
  */
 export function blobsOf(
   env: Pick<Env, "FILES" | "SNAPSHOT_IMPORT" | "SNAPSHOT_TOKEN" | "SNAPSHOT_FROM" | "DEPLOY_TARGET">,
-  background?: (work: Promise<unknown>) => void
+  edge?: { cache: EdgeCache | null; background: (work: Promise<unknown>) => void }
 ): BlobStore | undefined {
   const bucket = env.FILES;
   if (!bucket) return undefined;
-  const cache = background && typeof caches != "undefined" ? (caches as unknown as { default: Cache }).default : null;
+  const cache = edge?.cache ?? null;
+  const background = edge?.background;
   // Staging: what its copy of production's documents needs from production's bucket.
   const primary = env.SNAPSHOT_FROM?.trim().replace(/\/+$/, "");
   const fromProduction =

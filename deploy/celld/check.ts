@@ -1,6 +1,6 @@
 // Checks an Erga server feature by feature, as its people and agents use it: the editor in a browser (live editing
 // between two tabs, offline and back), then the tools API (versions, files, a page's own API, view_page), the
-// homepage signed out, and the person's agent. Each line says what it saw: ok, or what failed.
+// homepage signed out, the edge's caches (each second request a hit), and the person's agent. Each line says what it saw: ok, or what failed.
 //
 //   SESSION_SECRET=... bun deploy/celld/check.ts <origin> [login]
 //
@@ -161,6 +161,29 @@ await check("files (blobs)", async () => {
   return "wrote a PNG and read it back";
 });
 
+await check("blob cache (the edge's cache)", async () => {
+  // The document's page is on the pages origin, at a token the viewer's frame names: dot.png is beside it.
+  const viewer = await (await fetch(`${root}${document}`, { headers })).text();
+  const base = /https:\/\/[^"'\s]+\/t\/[^/"'\s]+\//.exec(viewer)?.[0];
+  if (!base) throw new Error("no pages address in the viewer");
+  const from = async () => {
+    const r = await fetch(`${base}dot.png`);
+    await r.arrayBuffer();
+    if (!r.ok) throw new Error(`dot.png: ${r.status}`);
+    return r.headers.get("server-timing") ?? "";
+  };
+  const first = await from();
+  const second = await until(
+    async () => {
+      const t = await from();
+      return t.includes("edge's cache") && t;
+    },
+    10_000,
+    "a hit"
+  );
+  return `first: ${first}; second: ${second}`;
+});
+
 await check("page's own API (Worker Loader)", async () => {
   const made = await tool<{ address: string }>("documents", {
     op: "create_document",
@@ -190,7 +213,34 @@ await check("homepage, signed out", async () => {
   const r = await fetch(`${root}/`, { redirect: "manual" });
   const text = await r.text();
   if (r.status != 200 || !text.includes("<html")) throw new Error(`${r.status} ${text.slice(0, 120)}`);
-  return `${r.status}, ${text.length} bytes`;
+  return `${r.status}, ${text.length} bytes, ${r.headers.get("server-timing")}`;
+});
+
+await check("homepage's files (CloudFront)", async () => {
+  // A file the homepage loads that a shared cache may keep for good (/_home-files/, the editor's hashed files).
+  const html = await (await fetch(`${root}/`, { redirect: "manual" })).text();
+  const files = [...new Set([...html.matchAll(/\/?(_home-files|_erga)\/[^"')\s]+/g)].map((m) => `/${m[0].replace(/^\//, "")}`))];
+  if (!files.length) throw new Error("no file of its own in the homepage");
+  const seen: string[] = [];
+  // One of each kind: the homepage's own, and the editor's.
+  for (const file of ["/_home-files/", "/_erga/"].flatMap((kind) => files.find((f) => f.startsWith(kind)) ?? [])) {
+    const get = async () => {
+      const r = await fetch(root + file);
+      await r.arrayBuffer();
+      return `${r.status} ${r.headers.get("x-cache") ?? "no x-cache"}`;
+    };
+    const first = await get();
+    const second = await until(
+      async () => {
+        const s = await get();
+        return s.includes("Hit") && s;
+      },
+      10_000,
+      `a hit for ${file}`
+    );
+    seen.push(`${file}: ${first}, then ${second}`);
+  }
+  return seen.join("; ");
 });
 
 await check("page LLM (window.ergaLLM)", async () => {

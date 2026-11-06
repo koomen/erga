@@ -5,7 +5,8 @@
 //   bun deploy/celld/aws.ts up      makes what's missing, then builds and deploys this checkout
 //   bun deploy/celld/aws.ts down    removes it all, then lists what still has the tag
 //
-// The addresses are <ip>.sslip.io names (sslip.io answers a name with the IP in it): no DNS change.
+// The machine's names are <ip>.sslip.io names (sslip.io answers a name with the IP in it): no DNS change. People use
+// the two CloudFront names in front of them (cdn.ts).
 // Settings the Worker keeps as secrets come from Parameter Store, /erga-celld/<NAME>: SESSION_SECRET and FACTORY_KEY are
 // made the first time; set others (GITHUB_CLIENT_SECRET) with `aws ssm put-parameter --type SecureString --key-id
 // alias/erga-celld`. Only the machine reads them, at each deploy. celld has no secret store: it keeps them as plain vars
@@ -18,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { makeRelease } from "../release.ts";
 import { celldProject } from "./project.ts";
+import { caddyfile, cdnDown, cdnLeft, cdnUp } from "./cdn.ts";
 
 const PROFILE = process.env.AWS_PROFILE ?? "labs";
 const REGION = process.env.AWS_REGION ?? "us-west-2";
@@ -302,7 +304,9 @@ async function up() {
   await aws("ec2", "wait", "instance-running", "--instance-ids", instance);
   const ip: string = (await machine())!.PublicIpAddress!;
   const dashed = ip.replaceAll(".", "-");
-  const app = `https://erga-${dashed}.sslip.io`;
+  const origins = { app: `erga-${dashed}.sslip.io`, pages: `pages-${dashed}.sslip.io` };
+  const cdn = await cdnUp(aws, origins, print);
+  const app = `https://${cdn.app}`;
 
   // 5. The secrets, made once: SESSION_SECRET signs the sessions, FACTORY_KEY encrypts the API keys an admin enters.
   for (const name of ["SESSION_SECRET", "FACTORY_KEY"]) {
@@ -329,7 +333,7 @@ async function up() {
   await $`bun run build`.cwd(ROOT).quiet();
   const index = await makeRelease();
   // (No secrets: the machine adds them at its deploy.)
-  const project = await celldProject({ PAGES_HOST: `pages-${dashed}.sslip.io`, ERGA_VERSION: index.version });
+  const project = await celldProject({ PAGES_HOST: cdn.pages, ERGA_VERSION: index.version });
   // (Outside .build/: the next release would serve it as a static asset, with the vars in it.)
   const tgz = join(mkdtempSync(join(tmpdir(), "erga-celld-")), "release.tgz");
   // (No macOS extended attributes: GNU tar on the machine warns of each.)
@@ -347,6 +351,14 @@ async function up() {
     if (i > 60) throw new Error(`the machine ${instance} doesn't answer SSM`);
     await Bun.sleep(5000);
   }
+  // Caddy passes on CloudFront's X-Erga-Host as X-Forwarded-Host (cdn.ts).
+  await onMachine(
+    instance,
+    `cloud-init status --wait >/dev/null
+cat > /etc/caddy/Caddyfile <<'EOF'
+${caddyfile(origins, cdn)}EOF
+HOME=/var/lib/caddy caddy reload --config /etc/caddy/Caddyfile`
+  );
   const out = await onMachine(
     instance,
     `set -euo pipefail
@@ -372,6 +384,7 @@ curl -fsS localhost:8080/api/health`
 }
 
 async function down() {
+  await cdnDown(aws, print);
   const m = await machine();
   if (m) {
     await aws("ec2", "terminate-instances", "--instance-ids", m.InstanceId);
@@ -420,6 +433,7 @@ async function down() {
     still.push(arn);
   }
   if (await maybe(aws("iam", "get-role", "--role-name", NAME))) still.push(`the role ${NAME}`);
+  still.push(...(await cdnLeft(aws)));
   print(still.length ? `still tagged ${TAG.key}=${TAG.value}:\n  ${still.join("\n  ")}` : `nothing tagged ${TAG.key}=${TAG.value} is left`);
 }
 
