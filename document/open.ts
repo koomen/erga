@@ -60,8 +60,6 @@ export interface RoomHost {
   readInfo(): Promise<DocumentInfo | null>;
   /** Keeps the title and address the directory answered. */
   rememberName(name: DocName): Promise<DocName>;
-  /** Who the files arriving whole now are by (uploads.ts). */
-  publisher(): string | null;
   /** An agent's write of bytes (uploads.ts). */
   putFile(path: string, bytes: Uint8Array, by: string): Promise<{ kind: "text" | "file"; replaced: boolean }>;
   kind(): DocKind;
@@ -145,7 +143,7 @@ export async function openRoom(h: RoomHost): Promise<Opened> {
   room.doc.on("afterTransaction", (tr: Y.Transaction) => {
     if (!touchesFiles(room.doc, tr)) return;
     const a = authorOf(room.doc, tr);
-    h.edited(a ? (a.kind == "disk" ? (info.disk ? "on disk" : (h.publisher() ?? "files published")) : editorOf(a)) : null);
+    h.edited(a ? (a.kind == "disk" ? (info.disk ? "on disk" : (room.by ?? "files published")) : editorOf(a)) : null);
   });
   // Its name from its record once the directory has said it; a rename goes to the directory, and what it answers is kept.
   const named = namingFor(deps.directory, info.id, () => titleOf(room.text(info.index) ?? ""));

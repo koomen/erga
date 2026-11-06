@@ -63,23 +63,7 @@ export interface UploadsHost {
 }
 
 export class Uploads {
-  /** Who the files arriving whole now are by (publish), for the version. */
-  publisher: string | null = null;
-
   constructor(private host: UploadsHost) {}
-
-  /** Runs `work` with the files that arrive meanwhile by `by`. */
-  private as<A, E, R>(by: string | null, work: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> {
-    return Effect.suspend(() => {
-      this.publisher = by;
-      return Effect.ensuring(
-        work,
-        Effect.sync(() => {
-          this.publisher = null;
-        })
-      );
-    });
-  }
 
   /**
    * Files arriving whole (a publish, from the server's API): each written and
@@ -96,15 +80,12 @@ export class Uploads {
       Effect.gen(function* () {
         const opened = yield* io(() => self.host.room());
         if (!opened) return yield* new NoSuchDocument({ message: "There's no such document." });
-        return yield* self.as(
-          by ?? null,
-          io(() => self.publishNow(opened, files, remove))
-        );
+        return yield* io(() => self.publishNow(opened, files, remove, by ?? null));
       })
     );
   }
 
-  private async publishNow(opened: Opened, files: Record<string, FileData>, remove: string[]): Promise<Published> {
+  private async publishNow(opened: Opened, files: Record<string, FileData>, remove: string[], by: string | null): Promise<Published> {
     const info = (await this.host.info())!;
     const out = { written: [] as string[], removed: [] as string[], refused: [] as { path: string; why: string }[] };
     // Edits not yet written land first, so a published file replaces what's there now rather than merging with it.
@@ -134,7 +115,7 @@ export class Uploads {
         }
       }
       if (text != null && isTextPath(path) && (!blobs || text.length <= TEXT_MAX)) {
-        const r = await Effect.runPromise(opened.room.push(path, text));
+        const r = await Effect.runPromise(opened.room.push(path, text, null, by));
         if (r.ok) out.written.push(path);
         else out.refused.push({ path, why: r.reason ?? "refused" });
         continue;
@@ -158,7 +139,7 @@ export class Uploads {
           }
           ref = { hash: data.hash, size: kept.size, at: data.at };
         } else ref = await Effect.runPromise(storeBlob(blobs, typeof data == "string" ? new TextEncoder().encode(data) : data));
-        await Effect.runPromise(opened.room.putBlob(path, ref));
+        await Effect.runPromise(opened.room.putBlob(path, ref, by));
         out.written.push(path);
         continue;
       }
@@ -167,7 +148,7 @@ export class Uploads {
         continue;
       }
       await this.host.deps.storage.put(FILE + path, typeof data == "string" ? new TextEncoder().encode(data) : data);
-      await Effect.runPromise(opened.room.fileChanged(path));
+      await Effect.runPromise(opened.room.fileChanged(path, by));
       out.written.push(path);
     }
     for (const path of remove) {
@@ -179,7 +160,7 @@ export class Uploads {
         out.refused.push({ path, why: "files on disk aren't deleted this way" });
         continue;
       }
-      if (await Effect.runPromise(opened.room.removeOne(path))) out.removed.push(path);
+      if (await Effect.runPromise(opened.room.removeOne(path, by))) out.removed.push(path);
     }
     // In the history now, with the files (an image's bytes went straight to storage).
     if (out.written.length || out.removed.length) await Promise.all([Effect.runPromise(opened.room.flush), this.host.touch()]);
@@ -260,7 +241,7 @@ export class Uploads {
         yield* Effect.tryPromise({ try: () => blobs.put(given, request.body ?? new Uint8Array(), size), catch: why });
       }
       const ref: BlobRef = { hash: given, size, at: Date.now() };
-      yield* self.as(by, opened.room.putBlob(path, ref));
+      yield* opened.room.putBlob(path, ref, by);
       return { ok: true, path, kind: "file", size, hash: ref.hash, replaced: check.replaced };
     });
   }
@@ -332,7 +313,7 @@ export class Uploads {
     if (path == info.index)
       return { ok: false, status: 409, error: `${path} is the document's page, which is text: it can't be replaced by a file that isn't.` };
     const ref = await Effect.runPromise(storeBlob(blobs, bytes));
-    await Effect.runPromise(this.as(by, opened.room.putBlob(path, ref)));
+    await Effect.runPromise(opened.room.putBlob(path, ref, by));
     return { ok: true, kind: "file", hash: ref.hash };
   }
 

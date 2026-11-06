@@ -257,3 +257,43 @@ test("an unedited document edited while its alarm reads the setting stays; one a
   expect((await storage().getAlarm())! - Date.now()).toBeGreaterThan(59 * 60_000);
   await storage().deleteAlarm();
 });
+
+test("a call while the document is deleted finds no document, and opens nothing again", async () => {
+  const { dir, make, storage } = setup();
+  await dir.add({ id: "del12345", owner: "ada", title: "Del", created: Date.now(), expires: null });
+  const doc = make();
+  await doc.create("ada", "del12345", { "index.html": "<h1>Del</h1>" }, "index.html", { expires: null, modified: Date.now() });
+  await doc.publish({ "index.html": "<h1>Del, edited</h1>" }, [], "ada");
+  // Storage is slow to empty; a publish comes meanwhile.
+  const s = storage();
+  const deleteAll = s.deleteAll.bind(s);
+  s.deleteAll = async () => {
+    await sleep(40);
+    await deleteAll();
+  };
+  const deleted = doc.delete();
+  await sleep(10);
+  const late = doc.publish({ "index.html": "<h1>Back</h1>" }, [], "ada").then(
+    () => "published",
+    (e: { message?: string }) => e.message
+  );
+  expect(await deleted).toBe(true);
+  expect(await late).toBe("There's no such document.");
+  await sleep(60);
+  expect(storage().data.size).toBe(0);
+  expect(await doc.index()).toBeNull();
+});
+
+test("two publishes at once: each file's edit is by its own publisher", async () => {
+  const { dir, make } = setup();
+  await dir.add({ id: "two12345", owner: "ada", title: "Two", created: Date.now(), expires: null });
+  const doc = make();
+  await doc.create("ada", "two12345", { "index.html": "<h1>Two</h1>", "a.css": "a{}", "b.css": "b{}" }, "index.html", {
+    expires: null,
+    modified: Date.now(),
+  });
+  await Promise.all([doc.publish({ "a.css": "a{color:red}" }, [], "ada"), doc.publish({ "b.css": "b{color:red}" }, [], "bob")]);
+  await sleep(150);
+  const state = (await doc.versionsState())!;
+  expect(state.current.authors).toEqual(["ada", "bob"]);
+});

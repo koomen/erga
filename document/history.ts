@@ -5,8 +5,10 @@
 
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import type { Author } from "./content.ts";
+import { nextCut, type CutEvent, type Cuts } from "./cuts.ts";
 import type { DocumentDeps, DocumentInfo, FileData } from "./document.ts";
 import { later, stop } from "./later.ts";
 import type { Opened } from "./open.ts";
@@ -43,17 +45,9 @@ export interface HistoryHost {
 export class History {
   /** Its versions, in the document's own storage. */
   versions: Versions;
-  /**
-   * Edits not yet in a version: since when, by whom, and the timers that cut
-   * one (see `noteEdit` for the rule).
-   */
-  private pending = {
-    dirty: false,
-    since: 0,
-    authors: new Set<string>(),
-    idle: null as Fiber.Fiber<void> | null,
-    max: null as Fiber.Fiber<void> | null,
-  };
+  /** Edits not yet in a version, and the cut under way (cuts.ts); the timers that cut one (see `noteEdit` for the rule). */
+  private cuts: Cuts = { is: "clean" };
+  private timers = { idle: null as Fiber.Fiber<void> | null, max: null as Fiber.Fiber<void> | null };
   /** Cuts, one at a time. */
   cutting: Promise<unknown> = Promise.resolve();
 
@@ -68,14 +62,47 @@ export class History {
     return this.host.deps.timing.maxMs;
   }
 
-  /** Storage was emptied or replaced: its versions are read from it again. */
+  /** Storage was emptied or replaced: its versions are read from it again, and nothing is pending. */
   forget(): void {
     this.versions = new Versions(kvOf(this.host.deps.storage), Date.now, this.host.deps.blobs);
+    this.reset();
   }
 
-  /** Whether it has edits no version holds yet. */
+  /** Nothing is pending: the document is going (or its storage is replaced). */
+  reset(): void {
+    void this.step({ on: "reset" });
+  }
+
+  /** Whether it has edits no version holds yet (or a cut under way). */
   get dirty(): boolean {
-    return this.pending.dirty;
+    return this.cuts.is != "clean";
+  }
+
+  /** Takes a step (cuts.ts) and does what it says; done once what it notes in storage is noted. */
+  private step(e: CutEvent): Promise<void> {
+    const { cuts, effects } = nextCut(this.cuts, e);
+    this.cuts = cuts;
+    const t = this.timers;
+    const notes: Promise<void>[] = [];
+    for (const f of effects) {
+      if (f == "uncut" || f == "clean") notes.push(this.markUncut(f == "uncut"));
+      else if (f == "stop") {
+        if (t.idle) stop(t.idle);
+        if (t.max) stop(t.max);
+        t.idle = t.max = null;
+      } else {
+        if (t[f]) stop(t[f]);
+        t[f] = later(
+          f == "idle" ? this.idleMs : this.maxMs,
+          () => {
+            t[f] = null;
+            void this.cutSoon(f == "idle" ? "idle" : "burst");
+          },
+          () => (this.agentWorking() ? this.idleMs : 0)
+        );
+      }
+    }
+    return Promise.all(notes).then(() => {});
   }
 
   /**
@@ -94,32 +121,9 @@ export class History {
    * A cut that finds nothing changed since the latest version makes none.
    */
   noteEdit(author: string | null): void {
-    const p = this.pending;
-    p.dirty = true;
     this.host.activity();
-    if (author) p.authors.add(author);
-    if (!p.since) {
-      p.since = Date.now();
-      // Stored, so a document stopped before it cut the version cuts it as it opens again.
-      void this.markUncut(true);
-      p.max = later(
-        this.maxMs,
-        () => {
-          p.max = null;
-          void this.cutSoon("burst");
-        },
-        () => (this.agentWorking() ? this.idleMs : 0)
-      );
-    }
-    if (p.idle) stop(p.idle);
-    p.idle = later(
-      this.idleMs,
-      () => {
-        p.idle = null;
-        void this.cutSoon("idle");
-      },
-      () => (this.agentWorking() ? this.idleMs : 0)
-    );
+    // The first of a burst is noted in storage, so a document stopped before it cut the version cuts it as it opens again.
+    void this.step({ on: "edit", author });
   }
 
   /** Notes in its record whether it has edits no version holds yet (only when that changes). */
@@ -144,15 +148,6 @@ export class History {
     return false;
   }
 
-  clearPending(): { authors: string[]; dirty: boolean } {
-    const p = this.pending;
-    if (p.idle) stop(p.idle);
-    if (p.max) stop(p.max);
-    const out = { authors: [...p.authors], dirty: p.dirty };
-    this.pending = { dirty: false, since: 0, authors: new Set(), idle: null, max: null };
-    return out;
-  }
-
   /** Cuts a version of what the document holds now (after any cut under way); the new version, or null if nothing changed. */
   cutSoon(reason: string, as?: { authors: string[]; description: string }): Promise<StoredVersion | null> {
     const run = this.cutting.then(() => Effect.runPromise(this.cutVersion(as)));
@@ -168,12 +163,16 @@ export class History {
       const opened = self.host.opened();
       const info = yield* Effect.promise(() => self.host.info());
       if (!opened || !info) return null;
-      const { authors } = self.clearPending();
-      const entries = yield* Effect.promise(() => opened.entries());
-      const first = (yield* self.versions.head) == 0;
-      const description = as?.description ?? (first ? "First version" : null);
-      const r = yield* self.versions.cut(entries, info.index, as?.authors ?? authors, description, opened.room.folderPaths());
-      if (!self.pending.dirty) yield* Effect.promise(() => self.markUncut(false));
+      yield* Effect.promise(() => self.step({ on: "cut" }));
+      const c = self.cuts as Extract<Cuts, { is: "cutting" }>;
+      const authors = as?.authors ?? [...(c.taken ?? [])];
+      // Its edits stay pending until the version is stored: a cut that fails gives them back.
+      const r = yield* Effect.gen(function* () {
+        const entries = yield* Effect.promise(() => opened.entries());
+        const first = (yield* self.versions.head) == 0;
+        const description = as?.description ?? (first ? "First version" : null);
+        return yield* self.versions.cut(entries, info.index, authors, description, opened.room.folderPaths());
+      }).pipe(Effect.onExit((exit) => Effect.promise(() => self.step({ on: "cut-ended", ok: Exit.isSuccess(exit) }))));
       // At a version, a long log becomes a snapshot: the next open reads less.
       yield* opened.room.settle;
       if (!r) return null;
@@ -217,7 +216,7 @@ export class History {
       const before = opts.before != null ? versionNumber(opts.before) : null;
       const { versions, total } = yield* self.versions.list({ before, limit: opts.limit });
       const latest = (yield* self.versions.latest)!;
-      return { current: publicVersion(latest), versions: versions.map(publicVersion), total, pending: self.pending.dirty };
+      return { current: publicVersion(latest), versions: versions.map(publicVersion), total, pending: self.dirty };
     });
   }
 

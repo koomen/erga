@@ -96,7 +96,11 @@ export class DocumentView {
     this.news();
     if (!this.kept) return;
     this.kept = false;
-    void this.o.storage.delete(VIEW).catch((e) => this.o.log(`couldn't forget the view: ${e}`));
+    // Not forgotten: the next change tries again.
+    void this.o.storage.delete(VIEW).catch((e) => {
+      this.kept = true;
+      this.o.log(`couldn't forget the view: ${e}`);
+    });
   }
 
   /**
