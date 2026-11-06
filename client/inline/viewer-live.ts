@@ -8,7 +8,9 @@
 import { backoff, live } from "../live/client";
 import { PING, PONG } from "../../shared/room-socket";
 
-export default function viewerLive(base: string, ver: string): void {
+export default function viewerLive(base: string): void {
+  // (The version is in a meta, not an argument: the page's build is its scripts, server/live.ts.)
+  const ver = document.querySelector<HTMLMetaElement>('meta[name="erga-ver"]')!.content;
   let shown = ver,
     wanted = ver,
     y = 0,

@@ -8,7 +8,9 @@ import type { mountTree, TreeHandle } from "../pages/pages-tree";
 
 type Initial = Parameters<typeof mountTree>[1]["initial"];
 
-export default function viewerTree(script: string, id: string, base: string, title: string, query: string): void {
+export default function viewerTree(script: string, id: string, base: string, query: string): void {
+  // (The title is in a meta, not an argument: it follows the first heading, and the page's build is its scripts.)
+  const title = document.querySelector<HTMLMetaElement>('meta[name="erga-title"]')?.content ?? "";
   const button = document.querySelector<HTMLButtonElement>(".erga-tree-btn");
   const card = document.getElementById("erga-tree");
   if (!button || !card) return;
