@@ -9,6 +9,8 @@ export const WORKER_PATH = "/erga-sw.js";
 export const CLEAR_PATH = "/erga-clear";
 /** The IndexedDB database of the replicas this origin keeps (libs/text/ui/kept.ts). */
 export const KEPT_DB = "erga-replicas";
+/** The "signed out" mark (an empty IndexedDB database): while it is there, nothing more goes into this origin's copies. */
+export const SIGNED_OUT = "erga-signed-out";
 /** Where the app's origin lists the pages origins that keep copies (localStorage): sign-out clears each. */
 export const ORIGINS_KEY = "erga:offline-origins";
 

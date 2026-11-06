@@ -7,6 +7,7 @@
 
 import { headIn, pageAgain } from "../../../shared/page-html";
 import { KEPT_AT, keptAddress, OFFLINE_CACHE, PAGE_HEADER } from "../../../shared/offline";
+import { keepWrite } from "../../../client/common/offline";
 
 /** Keeps this page in the copy, made from `text()` each time it changes (`changed`). `shell`: the viewer's origin. */
 export function keepPage(shell: string, text: () => string) {
@@ -34,11 +35,9 @@ export function keepPage(shell: string, text: () => string) {
       "Referrer-Policy": "no-referrer",
       [KEPT_AT]: String(Date.now()),
     };
-    try {
-      await (await caches.open(OFFLINE_CACHE)).put(at, new Response(page, { headers }));
-    } catch {
-      last = "";
-    }
+    // (Not after sign-out: client/common/offline.ts.)
+    const write = async () => (await caches.open(OFFLINE_CACHE)).put(at, new Response(page, { headers }));
+    if (!(await keepWrite(write, () => caches.delete(OFFLINE_CACHE)).catch(() => false))) last = "";
   };
   /** Puts the page in (again, if the text changed meanwhile): resolves once it's in. */
   const changed = (): Promise<void> => {

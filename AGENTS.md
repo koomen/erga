@@ -236,9 +236,11 @@ Found a new trap? Write it here, in the same change.
   (`e2e/smoke/editor.e2e.ts`) is the first to load a frame through the worker.
 - In the frame, a `setTimeout` can wait for seconds in a tab that isn't in front. Code that must run soon after an
   edit there (the replica kept in IndexedDB, the page in the copy) runs at once, and joins what comes meanwhile.
-- An unregistered service worker still answers the pages it controls until they go: sign-out tells Erga's worker
-  to keep nothing more (`erga-forget`, client/common/offline.ts) before it deletes the copy, else the next page puts
-  it back.
+- An unregistered service worker still answers the pages it controls until they go, and another tab's editor still
+  writes after a sign-out. Sign-out first sets a "signed out" mark in the origin's IndexedDB, and each writer reads
+  it before and after each write (client/common/offline.ts, `keepWrite`). A new writer goes through `keepWrite`, and a
+  read of the copy uses `caches.match`, never `caches.open`: it makes the copy again. The mark is not in Cache Storage:
+  a read there waits behind the copy's large writes, and the editor's start waited seconds for it.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 
