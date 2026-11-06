@@ -1,13 +1,30 @@
 // `bun erga`: the ops page, a local server on 127.0.0.1 and the page it serves (deploy/cli/ops-view.ts draws it). It
-// only reads: .erga/config.json and .erga/jobs/ in the main clone, which it watches (a change reaches the page at once,
+// reads .erga/config.json and .erga/jobs/ in the main clone, which it watches (a change reaches the page at once,
 // through /api/events), the clone's git as it is (no fetch), and each instance's commit and health, with its ops token:
-// every 30 seconds, and every 5 while a job runs. Every command works without it.
+// every 30 seconds, and every 5 while a job runs. Every command works without it. Its Merge and Deploy buttons run
+// `bun erga merge` and `bun erga deploy` (POST /api/merge, /api/deploy) in a process of their own, as a terminal does:
+// the same code, locks and job records. A merge's tests take minutes, and this server must answer while they run.
 
 import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Entry, originOf, readConfig } from "./config";
 import { readOps } from "./ops";
-import { type Answer, type Branch, type Commit, type Facts, type Git, type JobRecord, jobOf, pageHtml, viewHtml } from "./ops-view";
+import {
+  type Answer,
+  type Branch,
+  busyWith,
+  type Commit,
+  chosenOf,
+  deployOf,
+  type Facts,
+  type Git,
+  groupsOf,
+  type JobRecord,
+  jobOf,
+  mergeBlock,
+  pageHtml,
+  viewHtml,
+} from "./ops-view";
 
 const ROOT = new URL("../..", import.meta.url).pathname;
 
@@ -122,6 +139,27 @@ function setupHost(dir: string): string {
   }
 }
 
+/** A command that the page started: its process, and its end with its output. */
+export interface Run {
+  pid: number;
+  done: Promise<{ code: number; out: string }>;
+}
+
+/** `bun erga <args>` in a process of its own, in the clone; its job record says the page started it. */
+const runCli =
+  (cwd: string) =>
+  (args: string[]): Run => {
+    const p = Bun.spawn([process.execPath, join(ROOT, "deploy/cli/main.ts"), ...args], {
+      cwd,
+      env: { ...process.env, ERGA_JOB_FROM: "page" },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]).then(([o, e]) => `${o}\n${e}`);
+    return { pid: p.pid, done: Promise.all([p.exited, out]).then(([code, text]) => ({ code, out: text })) };
+  };
+
 export interface OpsPageOptions {
   /** .erga/ in the main clone. */
   dir: string;
@@ -130,6 +168,8 @@ export interface OpsPageOptions {
   port: number;
   /** askInstance, or a fake in the tests. */
   ask?: (e: Entry) => Promise<Answer>;
+  /** Runs `bun erga <args>` for the Merge and Deploy buttons (default: the CLI, in a process of its own), or a fake. */
+  run?: (args: string[]) => Run;
 }
 
 const FILES: Record<string, [string, string]> = {
@@ -140,8 +180,17 @@ const FILES: Record<string, [string, string]> = {
 /** The ops page's server, on 127.0.0.1. */
 export function serveOpsPage(o: OpsPageOptions) {
   const ask = o.ask ?? askInstance;
+  const run = o.run ?? runCli(o.cwd);
   const script = readFileSync(join(ROOT, "deploy/cli/ops-page.js"), "utf8");
-  const facts: Facts = { config: { instances: [] }, answers: {}, git: { error: "Reading git…" }, jobs: [], setup: "" };
+  const facts: Facts = {
+    config: { instances: [] },
+    answers: {},
+    git: { error: "Reading git…" },
+    jobs: [],
+    setup: "",
+    starting: "",
+    failed: "",
+  };
   let refs = "";
   let asked = 0;
   let sent = "";
@@ -241,6 +290,54 @@ export function serveOpsPage(o: OpsPageOptions) {
     send(": still here\n\n");
   }, 5_000);
 
+  /** Starts `bun erga <args>`, unless a job runs: the result is the page's answer. */
+  const start = (args: string[]) => {
+    const busy = busyWith(facts);
+    if (busy) return Response.json({ error: `Another job runs: ${busy}. Wait for it to end.` }, { status: 409 });
+    const command = `bun erga ${args[0]} ${args[1]}`;
+    let r: Run;
+    try {
+      r = run(args);
+    } catch (e) {
+      return Response.json({ error: `${command} did not start: ${(e as Error).message}` }, { status: 500 });
+    }
+    facts.starting = command;
+    facts.failed = "";
+    changed();
+    void r.done.then(({ code, out }) => {
+      facts.starting = "";
+      readFiles();
+      // A command that stopped before its job record (a lock, a missing credential): its own words, here.
+      if (code != 0 && !facts.jobs.some((j) => j.id.endsWith(`-${r.pid}`)))
+        facts.failed = `${command} stopped: ${out.trim().split("\n").slice(-4).join(" ") || `exit ${code}`}`;
+      changed();
+      void askAll();
+    });
+    return Response.json({ ok: true, command }, { status: 202 });
+  };
+  /** POST /api/merge {branch, message} and /api/deploy {host, sha}: what the buttons show, checked again here. */
+  const act = async (req: Request, what: string) => {
+    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    const no = (error: string) => Response.json({ error }, { status: 409 });
+    if ("error" in facts.git) return no(facts.git.error);
+    if (what == "merge") {
+      const b = facts.git.branches.find((x) => x.name == body.branch);
+      const message = typeof body.message == "string" ? body.message.trim() : "";
+      if (!b) return no(`There is no branch ${String(body.branch)} in this clone.`);
+      const block = mergeBlock(b, facts.git.base, "");
+      if (block) return no(block);
+      if (!message) return no("Write the message of the commit on staging.");
+      return start(["merge", b.name, "-m", message]);
+    }
+    const g = "error" in facts.config ? null : chosenOf(groupsOf(facts.config), String(body.host));
+    const dep = g && g.primary.host == body.host ? deployOf(g, { ...facts, git: facts.git }) : null;
+    if (!g || !dep) return no(`${String(body.host)} is not behind its staging instances now.`);
+    if (dep.commit.sha != body.sha)
+      return no(`Staging runs ${dep.commit.sha.slice(0, 12)} now, not ${String(body.sha).slice(0, 12)}. Look again, and deploy again.`);
+    if (dep.block) return no(dep.block);
+    return start(["deploy", g.primary.host]);
+  };
+
   const html = (body: string) =>
     new Response(body, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
   const server = Bun.serve({
@@ -252,12 +349,13 @@ export function serveOpsPage(o: OpsPageOptions) {
       // Only this machine's browser, by this server's name: another site can't reach it through DNS rebinding.
       const names = [`localhost:${srv.port}`, `127.0.0.1:${srv.port}`];
       if (!names.includes(req.headers.get("host") ?? "")) return new Response("Wrong host.", { status: 403 });
-      // A POST only from this page (the Setup tab's forms): no other site.
+      // A POST only from this page (the Setup tab's forms, Merge and Deploy): no other site.
       if (req.method != "GET" && !names.some((n) => req.headers.get("origin") == `http://${n}`))
         return new Response("Wrong origin.", { status: 403 });
       // The Setup tab: the checklist of `bun erga setup` (deploy/own/page.ts), loaded only when it is used.
       if (url.pathname == "/setup.js" || url.pathname.startsWith("/setup/"))
         return import("../own/page").then((p) => p.setupRoute(req, url));
+      if (req.method == "POST" && (url.pathname == "/api/merge" || url.pathname == "/api/deploy")) return act(req, url.pathname.slice(5));
       if (url.pathname == "/") return html(pageHtml(viewHtml(facts, ""), script));
       if (url.pathname == "/view") return html(viewHtml(facts, url.searchParams.get("hash") ?? ""));
       if (url.pathname == "/api/events") {

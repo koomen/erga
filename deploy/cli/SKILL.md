@@ -49,8 +49,11 @@ and `main`. There are no pull requests.
 - `bun erga`: the ops page on localhost. It lists the instances of `.erga/config.json`,
   each primary with its staging instances, the feature branches, the log with "live" at each
   instance's commit, and the job that runs. Its tabs: Setup (the checklist of `bun erga setup`), Deploys,
-  Logs (a job's output, live) and History (the jobs). It only reads, and never fetches. A new job
-  on another primary's instance switches the page to that primary.
+  Logs (a job's output, live) and History (the jobs). It never fetches. A new job
+  on another primary's instance switches the page to that primary. Each feature branch has a Merge
+  button (`bun erga merge <branch> -m <text>`), and production's column has a Deploy button at
+  staging's commit when production is behind it (`bun erga deploy <primary>`). They run the same
+  commands, with the same locks, and only one job at a time. Only when Pete asks.
 - `bun erga deploy [<commit>] <host>`: deploys a registered instance from
   this machine, with the facts in `.erga/config.json`. Only when Pete asks.
   It asks no question. A staging instance needs a commit, and keeps its
