@@ -49,18 +49,6 @@ export function mergeRefusal(o: { branch: string; exists: boolean; ahead: number
   return null;
 }
 
-/** The most words in a commit message: one line, no body (AGENTS.md). */
-export const MESSAGE_WORDS = 10;
-
-/** Why a commit message is not one line of at most ten words, or null. */
-export function messageRefusal(text: string): string | null {
-  const t = text.trim();
-  if (!t) return "Write the message of the commit on staging.";
-  if (t.includes("\n")) return "A commit message is one line, with no body.";
-  const words = t.split(/\s+/).length;
-  return words > MESSAGE_WORDS ? `The message has ${words} words. A commit message has ${MESSAGE_WORDS} words at most.` : null;
-}
-
 /** The message of the one commit a merge puts on staging: `-m`, else the first commit's subject; the co-authors once, at the end. */
 export function squashMessage(commits: Commit[], given?: string): string {
   const trailers = new Set<string>();
