@@ -15,14 +15,36 @@ to Erga's code: `project.ts` only turns the release into a celld project.
 | Blobs (FILES) | R2 | celld's R2: the S3 bucket, under `fleet/r2/` |
 | The editor's files (ASSETS) | Static assets | celld's static assets: the S3 bucket, cached on the disk |
 | A page's own API (LOADER) | Worker Loader | celld's Dynamic Workers |
-| HTTPS | Cloudflare's edge | Caddy on the machine (Let's Encrypt) |
+| HTTPS | Cloudflare's edge | CloudFront (`cdn.ts`), then Caddy on the machine (Let's Encrypt) |
 | view_page's browser (BROWSER) | Browser Rendering | none |
-| The Cache API | Cloudflare's cache | none: celld's cache always misses |
+| HTTP caching of files kept for good (`/_home-files/`, the editor's hashed files) | Workers' own cache code | CloudFront, as each response's Cache-Control lets it |
+| The Cache API (the homepage's copy, blobs, viewer decisions) | Cloudflare's cache | celld's KV, namespace EDGE_CACHE (`cloudflare/kv-cache.ts`): celld's own Cache API always misses |
 | Secrets (SESSION_SECRET, FACTORY_KEY) | Worker secrets | Parameter Store; the machine adds them at each deploy, and the bucket keeps them encrypted with a KMS key that only the machine may use |
 
-The addresses are sslip.io names, so no DNS change is necessary:
-`https://erga-<ip with dashes>.sslip.io` (the app) and
-`https://pages-<ip with dashes>.sslip.io` (the documents' pages, PAGES_HOST).
+People use two CloudFront names, `https://<id>.cloudfront.net`: one for the app, one for the documents' pages
+(PAGES_HOST). Behind them, the machine has sslip.io names, so no DNS change is necessary:
+`erga-<ip with dashes>.sslip.io` and `pages-<ip with dashes>.sslip.io`. CloudFront sends the machine's name as
+Host and its own as X-Erga-Host; Caddy passes that on as X-Forwarded-Host, so the Worker sees the CloudFront name.
+The machine's names still answer directly, without the CDN.
+
+### The edge cache
+
+The Worker's code is the same on both hosts. Only the platform layer differs: where the celld project binds
+EDGE_CACHE, `cloudflare/platform.ts` uses that KV namespace in place of `caches.default`. It keeps a response for its
+max-age (at least 60 s, at most a week), whole, when it is at most 1 MiB (a larger KV value is in the bucket, no
+faster than R2), and never a range. All isolates and nodes share it, and it outlives a restart.
+
+What `check.ts` and a restart showed on EC2 (2026-11-06), each second request a hit:
+
+- The homepage's copy: after `systemctl restart celld`, the first `/` came from the KV copy (`home;desc="cache"`,
+  7 ms in the Worker), not from the home object. Before this change, a new isolate always asked the home object.
+- A blob: the second GET said `blob from the edge's cache`. The same PNG, written again in a later run, was a hit on
+  its first GET.
+- The homepage's files and the editor's: the first GET through CloudFront said `Miss from cloudfront`, the second
+  `Hit from cloudfront`.
+
+CloudFront keeps a response only when its Cache-Control lets a shared cache keep it; with none, it keeps nothing. No
+cookie or header is in its key. Everything else, WebSockets too, goes through to Caddy.
 
 ## Cost (us-west-2, each month)
 
@@ -33,8 +55,11 @@ The addresses are sslip.io names, so no DNS change is necessary:
 | Public IPv4 address | $3.65 |
 | S3 (a few GB, few requests) | under $1 |
 | KMS key (S3 Bucket Keys keep its requests few) | $1 |
+| CloudFront (two distributions; free tier: 1 TB out, 10 million requests) | $0 |
+| KV writes of the edge cache (S3 requests; at most one each 5 s of traffic) | under $3 |
 
-Total: about $19 each month. Every resource has the tag `erga=aws-provider`.
+Total: about $19 each month. Every resource has the tag `erga=aws-provider`, but for CloudFront's cache policy
+(`erga-celld-origin-cache-control`, which takes no tag): `down` removes it by its name.
 
 ## Deploy, check, remove
 
@@ -73,6 +98,11 @@ To turn on the agents, an admin pastes the Anthropic key on
 ## Limits
 
 - view_page and eval_in_page: no browser. They say so.
+- `up` waits for CloudFront each time it makes or changes a distribution: a few minutes. `down` waits for it to
+  turn each one off before it deletes it: a few minutes more.
+- The edge cache's KV namespace is one celld cell: its writes run one at a time, and each goes to S3. A blob over
+  1 MiB, and a range of any blob, still come from the bucket each time.
+- CloudFront's names are random (`<id>.cloudfront.net`). A name of our own needs a certificate in ACM.
 - Sign-in with GitHub or Google needs an OAuth app for the test address. The
   check signs its own session cookie with the server's SESSION_SECRET.
 - A secret set in Parameter Store reaches the Worker only at the next `up`.

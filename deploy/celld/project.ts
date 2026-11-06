@@ -6,6 +6,8 @@
 // celld takes one JavaScript module, so the build's modules become one (Bun.build). The settings the release leaves
 // to the deploy (PAGES_HOST, ...) are plain vars here. celld has no secrets: the machine adds them as vars at its
 // deploy, and the bucket keeps them encrypted with a key only the machine may use (aws.ts). Cloudflare's Browser Rendering (BROWSER) has no celld binding: view_page says so.
+// celld's Cache API keeps nothing, so the project binds a KV namespace, EDGE_CACHE, that the Worker's platform uses in
+// its place (cloudflare/kv-cache.ts).
 
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -80,6 +82,7 @@ export async function celldProject(settings: Record<string, string>): Promise<st
     d1_databases: d1,
     r2_buckets: r2,
     worker_loaders: loaders,
+    kv_namespaces: [{ binding: "EDGE_CACHE", id: "edge-cache" }],
     vars: { ...vars, ...settings },
   };
   writeFileSync(join(PROJECT, "wrangler.json"), JSON.stringify(config, null, 2));
