@@ -66,6 +66,7 @@ export const BAND = "calc(max(12px, env(safe-area-inset-top)) + 46px)";
  * its top and bottom, as the viewer's frame makes it (server/pages/viewer.ts, HOST_SCRIPT's still).
  */
 const STILL = `<style>html { overscroll-behavior: none; } html:root:root { padding-top: ${BAND} !important; scroll-padding-top: ${BAND}; }</style>`;
+const STILL_NO_BARS = `<style>html { overscroll-behavior: none; }</style>`;
 
 /** A URL in the page, if it names one of the document's files: where that file is served in this deploy. */
 function fileUrl(value: string, base: URL, files: Set<string>, prefix: string): string | null {
@@ -113,6 +114,8 @@ export async function renderHome(opts: {
   gen: string;
   title: string;
   doc: string;
+  /** Erga's bars on top (site.json): the page starts below their band. */
+  bars?: boolean;
 }): Promise<RenderedHome> {
   const { index, gen } = opts;
   if (!/\.html?$/i.test(index)) throw new Error(`The homepage's page is ${index}: only an HTML page can be served directly, so / shows it in the viewer.`);
@@ -137,7 +140,7 @@ export async function renderHome(opts: {
   const title = tabTitle(headOf(source), opts.title);
   // And first, window.ergaLLM, the page's model, before any script of its own (client/inline/home-llm.ts), with the slot
   // for its page token, which serve.ts fills for each visitor (withToken).
-  const extra = `${VIEWPORT}<script>${inlineCall("home-llm", opts.doc, TOKEN_SLOT)}</script>${STILL}${titled ? "" : `<title>${esc(title)}</title>`}`;
+  const extra = `${VIEWPORT}<script>${inlineCall("home-llm", opts.doc, TOKEN_SLOT)}</script>${opts.bars == false ? STILL_NO_BARS : STILL}${titled ? "" : `<title>${esc(title)}</title>`}`;
   let css = "", titleDone = false;
   const rewriter = new HTMLRewriter()
     .on("base[href]", {

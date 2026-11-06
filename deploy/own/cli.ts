@@ -2,9 +2,11 @@
 // says what it saw, PASS or FAIL, and the next step. The person decides; the agent runs these.
 //
 //   bun erga setup skill                       the agent's manual: the steps, the rules, what to do when one fails
-//   bun erga setup <host> [--no-tests]         every step, then the agent's next ones: the first deploy of each server
+//   bun erga setup <host> [--no-tests] [--home <domain>]
+//                                              every step, then the agent's next ones: the first deploy of each server
 //                                              (the entries, the secrets one time, the first admin), then the ops token
-//                                              that the admin approves; it stops at a step of the person's
+//                                              that the admin approves; it stops at a step of the person's. --home: the
+//                                              production server serves the homepage's site on that domain too
 //   bun erga setup <host> status [--json]      every step, done or not, and the next one (who does it, and how)
 //   bun erga setup <host> ask                  the person's questions, with the defaults, to ask in one message
 //   bun erga setup <host> set key=value ...    records answers (staging, providers, preset, admin, company, pages,
@@ -186,7 +188,7 @@ const connect = async (): Promise<Connection> => {
 type Status = Awaited<ReturnType<typeof status>>;
 
 /** The first deploy of `t`: the entries, the secrets the Worker doesn't hold, the deploy, the first admin and feedback's repository. */
-async function deployStep({ own, answers: a, facts: f }: Status, t: TargetName, noTests: boolean) {
+async function deployStep({ own, answers: a, facts: f }: Status, t: TargetName, noTests: boolean, home: string | undefined) {
   if (!a || !f.account) return;
   try {
     deployedSettings(PRESETS[a.preset].defaults);
@@ -211,6 +213,7 @@ async function deployStep({ own, answers: a, facts: f }: Status, t: TargetName, 
         net: c.net,
         token: c.token,
         noTests,
+        ...(home ? { home } : {}),
         print: (l) => say(`  ${l.slice(0, 200)}`),
       },
       t
@@ -245,20 +248,22 @@ async function registerStep({ answers: a }: Status, t: TargetName) {
  * `bun erga setup <host>`: every step, then the agent's next ones (a first deploy, an ops token), until a step of the
  * person's or the end. A step that is still not done after its run stops it.
  */
-async function run(noTests: boolean) {
+async function run(noTests: boolean, home: string | undefined) {
   let ran = "";
   for (;;) {
     const s = await status();
     printStatus(s);
     const n = s.next;
     if (!n) {
+      // Deployed before: --home goes with the next deploy.
+      if (home && !ran) say(`NOTE  The first deploy is done. bun erga deploy ${s.answers?.host} --home ${home} puts the homepage there.`);
       say(
         `NEXT  A new commit: bun erga deploy <commit> ${s.answers?.host}${s.answers?.staging ? ` (and ${s.answers.staging} first)` : ""}.`
       );
       return;
     }
     if (n.id == ran) fail(`${n.title} is still not done: ${n.detail}`, n.next);
-    if (n.id.startsWith("deploy-") && n.state == "todo") await deployStep(s, n.target!, noTests);
+    if (n.id.startsWith("deploy-") && n.state == "todo") await deployStep(s, n.target!, noTests, home);
     else if (n.id.startsWith("register-") && n.state == "todo") await registerStep(s, n.target!);
     else return;
     ran = n.id;
@@ -456,7 +461,12 @@ const usage = (code: number): never => {
 };
 
 /** `bun erga setup <host> [<command> ...]`, or `bun erga setup skill`. */
-export async function setupMain(argv: string[]) {
+export async function setupMain(all: string[]) {
+  // --home <domain> goes with the first deploy, whatever its place.
+  const at = all.indexOf("--home");
+  const homeDomain = at >= 0 ? all[at + 1] : undefined;
+  if (at >= 0 && !homeDomain) fail("--home needs a domain.", "bun erga setup <host> --home example.com");
+  const argv = at >= 0 ? all.filter((_, i) => i != at && i != at + 1) : all;
   const [first, cmd, ...rest] = argv;
   if (first == "skill") return say(SETUP_SKILL);
   if (!first || first == "help" || first == "--help" || first == "-h") return usage(0);
@@ -475,7 +485,7 @@ export async function setupMain(argv: string[]) {
     switch (cmd) {
       case undefined:
       case "--no-tests":
-        await run(flag("--no-tests"));
+        await run(flag("--no-tests"), homeDomain);
         break;
       case "status": {
         const s = await status();

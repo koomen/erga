@@ -34,6 +34,8 @@ export interface Setup {
   test?: DeployOptions["test"];
   /** The commit to deploy (default: SETUP_COMMIT, origin's main). */
   commit?: string;
+  /** --home: the homepage's own domain, for the primary (deployInstance's home). */
+  home?: string;
 }
 
 /**
@@ -49,7 +51,8 @@ export function writeEntries(o: Setup): Config {
       throw new Error(
         `${want.host} is registered already, with the Worker ${had.worker} and the database ${had.database}. Setup makes a new instance: deploy this one with bun erga deploy ${want.host}.`
       );
-    config = withEntry(config, { ...want, token: had?.token ?? "" });
+    // The homepage's domain is the server's (a deploy with --home set it): the entry keeps its copy.
+    config = withEntry(config, { ...want, ...(had?.home ? { home: had.home } : {}), token: had?.token ?? "" });
   }
   writeConfig(o.dir, config);
   return config;
@@ -111,6 +114,7 @@ export async function firstDeploy(o: Setup, t: TargetName): Promise<string> {
     print,
     secrets: secretsFor(o.dir, o.answers, t, held),
     createSubdomain: !!entry.subdomain && !o.subdomain,
+    ...(o.home && t == "production" ? { home: o.home } : {}),
   });
   await firstRows(cf, acc, entry.worker, o.answers, print);
   return sha;

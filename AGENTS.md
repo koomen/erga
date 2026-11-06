@@ -186,6 +186,10 @@ Found a new trap? Write it here, in the same change.
   without a cookie as DEV_LOGIN. A test of the served homepage opens it signed out: `front(server)`
   or `openHome(page, root)`, or the cookie `signedOut(server)` (e2e/full/home/home.ts). The cookie's
   name ends with the port. The homepage project's own page is `/_home`.
+- The homepage can have a domain of its own (the deploy facts' `home`, from `bun erga deploy <host> --home <domain>`).
+  Then that host gets only the site's files (server/home/serve.ts, `serveHomeDomain`), and the Erga domain's `/` is the
+  small Sign in page. A test gives its server `ERGA_DEPLOY={"home":"home.localhost"}` (e2e/full/home/domain.e2e.ts). The
+  browser reaches home.localhost; Node's and Bun's fetch can't, so send the Host header with `node:http`.
 - The homepage project's row has the owner `-home` (document/names.ts), which no account can be.
   Build a document's address with `addressOf`, never `/${owner}/${slug}`: its address is `/_home`.
   A document's host keeps the owner it was made with, and nothing tells it of a new one. An access rule
