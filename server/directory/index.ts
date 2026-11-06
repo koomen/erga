@@ -12,6 +12,7 @@ export * from "./directory.ts";
 export * from "./feedback.ts";
 export * from "./model.ts";
 export * from "./page-llm.ts";
+export * from "./page-llm-call.ts";
 export * from "./identities.ts";
 export * from "./people.ts";
 export * from "./settings.ts";

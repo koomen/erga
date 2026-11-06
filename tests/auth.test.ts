@@ -25,6 +25,7 @@ import {
 import type { SignInChange } from "../server/directory/index.ts";
 import { startSignIn } from "../server/identity/sign-in";
 import { testedSignIn } from "../server/identity/settings";
+import { testEnded, type PendingTest } from "../server/identity/app-test";
 import type { Platform } from "../server/platform";
 import type { Directory } from "../server/directory/index.ts";
 import { quietConsole } from "./helpers/quiet.ts";
@@ -226,9 +227,12 @@ test("sign-in uses the page's values over the deploy's, and ?app=pending tests t
   expect(test.searchParams.get("state")).toStartWith("p.");
   expect(test.searchParams.get("redirect_uri")).toBe("https://erga.dev/auth/github/callback");
   // A test that worked for someone who isn't an admin changes nothing, and says why; an admin's puts them in use.
-  expect(await testedSignIn(env, OTHER.clientId, { ok: true, login: "bo", admin: false })).toBe(false);
+  expect(await testedSignIn(env, OTHER.clientId, { kind: "in", login: "bo", admin: false })).toBe(false);
   expect((await apps.read("github")).pending?.test?.error).toContain("only an admin's sign-in");
-  expect(await testedSignIn(env, OTHER.clientId, { ok: true, login: "koomen", admin: true })).toBe(true);
+  // The end of a test of other values (they changed meanwhile) notes nothing.
+  expect(await testedSignIn(env, GOOD.clientId, { kind: "in", login: "koomen", admin: true })).toBe(false);
+  expect((await apps.read("github")).pending?.clientId).toBe(OTHER.clientId);
+  expect(await testedSignIn(env, OTHER.clientId, { kind: "in", login: "koomen", admin: true })).toBe(true);
   expect((await go()).searchParams.get("client_id")).toBe(OTHER.clientId);
   // A server whose own storage can't be read signs in with the deploy's values.
   const broken = serverOn({
@@ -243,4 +247,29 @@ test("sign-in uses the page's values over the deploy's, and ?app=pending tests t
       "client_id"
     )
   ).toBe(GOOD.clientId);
+});
+
+test("a test sign-in's end: an admin's puts the values in use; every other end notes why; a test of other values notes nothing", () => {
+  const waiting: PendingTest = { state: "waiting", clientId: OTHER.clientId };
+  const end = (e: Parameters<typeof testEnded>[1]["end"], clientId = OTHER.clientId) => testEnded(waiting, { clientId, end: e, at: 7 });
+  expect(end({ kind: "in", login: "koomen", admin: true })).toEqual({
+    next: { state: "none" },
+    effect: { do: "promote", login: "koomen" },
+  });
+  const notes = [
+    end({ kind: "in", login: "bo", admin: false }),
+    end({ kind: "new", handle: "cy@example.com" }),
+    end({ kind: "refused", who: "dee" }),
+    end({ kind: "provider", error: "GitHub refused the sign-in: bad." }),
+  ].map((r) => (r.effect.do == "note" && r.next.state == "waiting" && r.next.test == r.effect.result ? r.effect.result : null));
+  expect(notes.map((r) => [r?.by, r?.error])).toEqual([
+    ["bo", "bo signed in, but only an admin's sign-in puts new values in use."],
+    ["cy@example.com", "cy@example.com has no account here: only an admin's sign-in puts new values in use."],
+    ["dee", "dee may not sign in here: only an admin's sign-in puts new values in use."],
+    [undefined, "GitHub refused the sign-in: bad."],
+  ]);
+  expect(end({ kind: "in", login: "koomen", admin: true }, GOOD.clientId)).toEqual({ next: waiting, effect: { do: "stale" } });
+  expect(testEnded({ state: "none" }, { clientId: OTHER.clientId, end: { kind: "new", handle: "x" }, at: 7 }).effect).toEqual({
+    do: "stale",
+  });
 });

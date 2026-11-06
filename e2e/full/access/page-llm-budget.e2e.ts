@@ -133,3 +133,27 @@ test("the guest switch: off, every signed-out visitor gets sign_in, where the ow
   await page.goto(doc.address);
   expect(await ask(page, '@script [{"text": "Hello, Ada."}]')).toEqual({ text: "Hello, Ada." });
 });
+
+test("a switch flipped twice during its save: the server ends with the last value shown", async ({ tab }) => {
+  const page = tab.page;
+  const s = await tab.own({ env: { ERGA_AGENT_MODEL: "script" } });
+  await page.goto(`${s.root}/admin`);
+  const guests = page.locator("#set-page_llm_guests");
+  expect(await guests.isChecked()).toBe(true);
+  // A slow network: each save takes a moment, so the second flip comes during the first save.
+  const saves: string[] = [];
+  await page.route("**/api/tools/set_setting*", async (route) => {
+    saves.push(route.request().postData() ?? "");
+    await new Promise((r) => setTimeout(r, 400));
+    await route.continue();
+  });
+  await guests.click();
+  await guests.click();
+  expect(await guests.isChecked()).toBe(true);
+  // The second save goes once the first ended (the server has false then), and puts back true.
+  await expect.poll(() => saves.length).toBe(2);
+  await expect.poll(() => setting(s, "page_llm_guests")).toBe(true);
+  await expect.poll(() => page.locator('li.setting[data-key="page_llm_guests"] .hint').innerText()).toBe("Saved.");
+  await page.reload();
+  expect(await page.locator("#set-page_llm_guests").isChecked()).toBe(true);
+});

@@ -813,15 +813,14 @@ export class Directory {
 
   /**
    * What a document's readers (who can't edit it) get in the viewer, as its owner set it (setReaderOption): their own
-   * agent, which a document shared with anyone with the link ("*") never gives, and Erga's bars.
+   * agent, which a document shared with anyone with the link ("*") never has (server/operations/readers.ts), and Erga's bars.
    */
   async readerOptions(id: string): Promise<{ agent: boolean; bars: boolean }> {
-    const [row] = await this.sql.all<{ agent: number; bars: number; open: number }>(
-      "SELECT d.reader_agent AS agent, d.reader_bars AS bars, EXISTS (SELECT 1 FROM permissions p WHERE p.doc_id = d.id AND p.login = ?2) AS open FROM documents d WHERE d.id = ?1",
-      id,
-      ANYONE
+    const [row] = await this.sql.all<{ agent: number; bars: number }>(
+      "SELECT reader_agent AS agent, reader_bars AS bars FROM documents WHERE id = ?1",
+      id
     );
-    return { agent: !!row?.agent && !row.open, bars: !row || !!row.bars };
+    return { agent: !!row?.agent, bars: !row || !!row.bars };
   }
 
   /** Turns one of the readers' options on or off (share_document checks who may). */

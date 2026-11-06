@@ -5,6 +5,7 @@
 // admin's spend limit (the setting page_llm_daily_usd), from an estimate of their cost (PAGE_LLM_PRICES).
 
 import type { Sql } from "./model.ts";
+import { countedTokens, type CallState, type Tokens } from "./page-llm-call.ts";
 
 /**
  * The limits. A call answers at most MAX_TOKENS tokens (the page asks for fewer, or gets this many), and sends at most
@@ -72,8 +73,10 @@ export interface PageLlmToday extends PageLlmDayUse {
   docs: (PageLlmDayUse & { docId: string })[];
 }
 
-/** Why no call may start under the daily spend limit (US dollars; 0: pages' models are off), or null (decides only). */
-export const overBudget = (cost: number, limit: number): "off" | "limit" | null => (limit <= 0 ? "off" : cost >= limit ? "limit" : null);
+/** costOf in SQL, for a row of page_llm_use: the prices are this file's constants. */
+const COST_SQL = `(CASE model ${Object.entries(PAGE_LLM_PRICES)
+  .map(([m, p]) => `WHEN '${m}' THEN input_tokens * ${p.input} + output_tokens * ${p.output}`)
+  .join(" ")} ELSE input_tokens * ${HIGHEST.input} + output_tokens * ${HIGHEST.output} END) / 1000000.0`;
 
 /** How long the log keeps a call. */
 const KEEP_MS = 30 * 86_400_000;
@@ -168,25 +171,50 @@ export class PageLlm {
     return { ...total, since, docs: byCost };
   }
 
-  /** A call starts: its row, with no tokens yet, so calls at the same moment count too. Answers the row's id. */
-  async start(call: { login: string; docId: string; model: string; now: number }): Promise<string> {
+  /**
+   * A call starts, if today's cost (every call's: those that run count their reservation) is under the daily spend
+   * limit `budget`: its row, with the tokens it reserved, in one statement, so calls at the same moment can't all pass.
+   * Answers the row's id, or null (the limit).
+   */
+  async start(call: {
+    login: string;
+    docId: string;
+    model: string;
+    now: number;
+    reserved: Tokens;
+    budget: number;
+  }): Promise<string | null> {
     const id = crypto.randomUUID();
     await this.sql.batch([
       ["DELETE FROM page_llm_use WHERE at < ?1", call.now - KEEP_MS],
       [
-        "INSERT INTO page_llm_use (id, login, doc_id, model, at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        `INSERT INTO page_llm_use (id, login, doc_id, model, at, input_tokens, output_tokens, state)
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'started'
+         WHERE (SELECT COALESCE(SUM(${COST_SQL}), 0) FROM page_llm_use WHERE at >= ?8) < ?9`,
         id,
         call.login.toLowerCase(),
         call.docId,
         call.model,
         call.now,
+        call.reserved.input,
+        call.reserved.output,
+        dayStart(call.now),
+        call.budget,
       ],
     ]);
-    return id;
+    const [row] = await this.sql.all<{ id: string }>("SELECT id FROM page_llm_use WHERE id = ?1", id);
+    return row ? id : null;
   }
 
-  /** A call ended: the tokens it used. */
-  async finish(id: string, tokens: { input: number; output: number }): Promise<void> {
-    await this.sql.run("UPDATE page_llm_use SET input_tokens = ?2, output_tokens = ?3 WHERE id = ?1", id, tokens.input, tokens.output);
+  /** A call's new state (callStep), and the tokens it counts. Only a started call changes. */
+  async write(id: string, s: CallState): Promise<void> {
+    const t = countedTokens(s);
+    await this.sql.run(
+      "UPDATE page_llm_use SET state = ?2, input_tokens = ?3, output_tokens = ?4 WHERE id = ?1 AND state = 'started'",
+      id,
+      s.state,
+      t.input,
+      t.output
+    );
   }
 }

@@ -37,6 +37,7 @@ import { cookies, withCookie } from "./cookies.ts";
 import { noteOf, readOnce, seeOther } from "./flash.ts";
 import { sign, unsign } from "./session.ts";
 import { clearState, signIn } from "./sign-in.ts";
+import type { TestEnd } from "./app-test.ts";
 
 const JOIN = "erga_join";
 const JOIN_SECONDS = 30 * 60;
@@ -69,6 +70,7 @@ export async function resolve(dir: Directory, v: Vouched, o: { join: boolean; cr
     // Its verified email now, for the domain rules, first: the read rule may depend on it.
     await identities.used(v);
     await identities.refreshEmails(known.login, v);
+    await dir.people.signedIn(v);
     dir.forgetAccess(known.login);
     users.forget(known.login);
     const user = await users.signedIn(known.login, v.name, { create: o.create });
@@ -97,24 +99,33 @@ export async function resolve(dir: Directory, v: Vouched, o: { join: boolean; cr
 
 /**
  * A provider vouched for someone: sign them in to their account, or on to the username step, or say why not.
- * `after`: what runs once they're in (a test sign-in's result), with their account's login.
+ * `tested`: a test sign-in's result (app-test.ts), at each end. `after`: what runs once they're in, with their login.
  */
 export const vouchedSignIn = Effect.fnUntraced(function* (
   platform: Platform,
   request: Request,
   v: Vouched,
   next: string,
-  o: { onlyAdmins?: boolean },
+  o: { onlyAdmins?: boolean; tested?: (end: TestEnd) => Promise<unknown> },
   after?: (login: string) => Promise<void>
 ) {
+  const tested = (end: TestEnd) => (o.tested ? call(() => o.tested!(end)) : Effect.void);
   const url = new URL(request.url);
   const dev = platform.dev(url);
   const join = !o.onlyAdmins && (yield* call(() => mayJoin(platform, url, v)));
   const outcome = yield* call(() => resolve(platform.directory, v, { join, create: dev, onlyAdmins: o.onlyAdmins }));
-  if (outcome.kind == "refused") return outcome.taken ? takenPage(v, outcome.taken) : yield* refusedPage(platform, v, outcome.login);
-  if (outcome.kind == "new") return yield* toUsernameStep(platform, request, v, next, outcome.taken);
+  if (outcome.kind == "refused") {
+    yield* tested({ kind: "refused", who: outcome.login ?? v.handle });
+    return outcome.taken ? takenPage(v, outcome.taken) : yield* refusedPage(platform, v, outcome.login);
+  }
+  if (outcome.kind == "new") {
+    yield* tested({ kind: "new", handle: v.handle });
+    return yield* toUsernameStep(platform, request, v, next, outcome.taken);
+  }
+  const admin = yield* call(() => platform.directory.users.isAdmin(outcome.login));
+  yield* tested({ kind: "in", login: outcome.login, admin });
   // A provider that's off signs in only admins (their test sign-in, from /admin/auth).
-  if (o.onlyAdmins && !(yield* call(() => platform.directory.users.isAdmin(outcome.login))))
+  if (o.onlyAdmins && !admin)
     return page(
       `${label(v.provider)} sign-in is off`,
       `This server doesn't take sign-in with ${esc(label(v.provider))}. <a href="/auth/sign-in?next=${encodeURIComponent(safeNext(next))}">Sign in another way</a>.`,
