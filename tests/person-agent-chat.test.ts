@@ -1,11 +1,10 @@
 // What a person's agent object keeps of their agent conversation, and the agent going on with it
 // (agents/person/agent.ts, `stored`): the transcript and the model's messages, kept step by step
-// (agents/checkpoint.ts), a run cut off in the middle and resumed; and the panel's prefs.
+// (agents/checkpoint.ts), a run cut off in the middle and resumed.
 
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
-import { panelPrefs } from "../agents/person/panel";
 import { startAgent } from "../agents/person/agent";
 import { ChatTables, tableStore } from "../agents/chat-store";
 import { restoredLog, STOPPED, STOPPED_SHOWN, type ChatStore, type StoredChat } from "../agents/checkpoint";
@@ -109,9 +108,3 @@ test("a stored transcript shows text that streamed after the last checkpoint as 
   expect(back.items[1]).toMatchObject({ kind: "tool", status: "error", detail: STOPPED_SHOWN });
 });
 
-test("the panel's prefs keep only what's valid", () => {
-  expect(panelPrefs({ open: false, side: "right", width: 512.4 })).toEqual({ open: false, side: "right", width: 512 });
-  expect(panelPrefs({ open: "yes", side: "up", width: "wide" })).toEqual({});
-  expect(panelPrefs(null)).toEqual({});
-  expect(panelPrefs({ width: 1e9 }).width).toBe(4000);
-});

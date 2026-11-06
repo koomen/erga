@@ -89,8 +89,6 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /api/agent/events", domain: "none", action: "Your agent's live updates", exempt: STREAM },
   { route: "GET /api/agent/conversation", domain: "none", action: "Your agent's conversation, kept", exempt: PANEL },
   { route: "DELETE /api/agent/conversation", domain: "none", action: "A new conversation with your agent", exempt: PANEL },
-  { route: "GET /api/agent/prefs", domain: "none", action: "Your agent's panel, as you left it", exempt: PANEL },
-  { route: "PUT /api/agent/prefs", domain: "none", action: "Keep your agent's panel layout", exempt: PANEL },
   {
     route: "GET /api/llm",
     domain: "none",

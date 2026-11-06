@@ -10,8 +10,8 @@ import type { FileRef } from "./attach";
 import type { TextEdit } from "./text-edits";
 
 export type LogItem =
-  /** `files`: what was attached, as the log shows it. */
-  | { kind: "user"; text: string; files?: FileRef[] }
+  /** `files`: what was attached, as the log shows it; `id`: the sending tab's own id for it (client/agent/sends.ts). */
+  | { kind: "user"; text: string; files?: FileRef[]; id?: string }
   | { kind: "assistant"; text: string }
   | { kind: "thinking"; text: string }
   | {
@@ -27,7 +27,7 @@ export type LogItem =
   | { kind: "error"; text: string };
 
 export type LogEvent =
-  | { t: "user"; text: string; files?: FileRef[] }
+  | { t: "user"; text: string; files?: FileRef[]; id?: string }
   | { t: "text"; delta: string }
   | { t: "thinking"; delta: string }
   | {
@@ -55,7 +55,9 @@ export function reduce(log: Log, ev: LogEvent): number {
   const items = log.items;
   const last = items[items.length - 1];
   switch (ev.t) {
-    case "user": items.push(ev.files?.length ? { kind: "user", text: ev.text, files: ev.files } : { kind: "user", text: ev.text }); return items.length - 1;
+    case "user":
+      items.push({ kind: "user", text: ev.text, ...(ev.files?.length ? { files: ev.files } : {}), ...(ev.id ? { id: ev.id } : {}) });
+      return items.length - 1;
     case "text":
       if (last?.kind == "assistant") { last.text += ev.delta; return items.length - 1; }
       items.push({ kind: "assistant", text: ev.delta });

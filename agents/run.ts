@@ -107,8 +107,11 @@ export interface AgentLoop {
   /** The settings now: the next model call uses them. */
   configure(cfg: AgentConfig | null): void;
   setModel(choice: ModelChoice): boolean;
-  /** A message, with any files attached; while a run goes on it steers it (agents/turn.ts). */
-  prompt(text: string, context: string | null, files: Attachment[]): void;
+  /**
+   * A message, with any files attached; while a run goes on it steers it (agents/turn.ts).
+   * `id` is the sending tab's id for it: the transcript's copy carries it.
+   */
+  prompt(text: string, context: string | null, files: Attachment[], id?: string): void;
   /** Stop: the run ends after the tool call that runs now; the messages sent before it are never answered. */
   abort(): void;
   /** Forgets the conversation, once the run ended. */
@@ -492,8 +495,8 @@ export function startLoop(opts: LoopOptions): AgentLoop {
       choice = next;
       return true;
     },
-    prompt(text, context, files) {
-      emit(files.length ? { t: "user", text, files: fileRefs(files) } : { t: "user", text });
+    prompt(text, context, files, id) {
+      emit({ t: "user", text, ...(files.length ? { files: fileRefs(files) } : {}), ...(id ? { id } : {}) });
       const s = side;
       if (!s || !cfg) {
         emit({ t: "error", text: "The agent is off." });
