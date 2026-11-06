@@ -30,7 +30,7 @@
 // deploy rolls out) waits longer each time.
 
 import { RESTORE_KEY, restored, type Saved } from "./restore";
-import type { Live } from "./client";
+import type { ConnectionState, Live } from "./client";
 import { ASSET_PREFIX, stemOf } from "../../shared/assets";
 
 declare global {
@@ -52,21 +52,28 @@ const keepers = new Map<string, { save: () => unknown; everyReload: boolean }>()
 const holds: (() => string | null)[] = [];
 const flushes: (() => Promise<boolean>)[] = [];
 let lastActivity = 0, pointerHeld = false, composing = false;
-const connections = new Map<string, { up: boolean; since: number; wasUp: boolean; note?: string }>();
+const connections = new Map<string, { state: ConnectionState; since: number; wasUp: boolean; note?: string }>();
 
 const api: Live = {
   keep(name, save, opts) { keepers.set(name, { save, everyReload: !!opts?.everyReload }); },
   hold(why) { holds.push(why); },
   flush(fn) { flushes.push(fn); },
   activity() { lastActivity = now(); },
-  connection(name, up, note) {
-    if (up == null) { connections.delete(name); showNote(); return; }
+  connection(name, state, note) {
+    if (state == null) {
+      connections.delete(name);
+      showNote();
+      return;
+    }
     const c = connections.get(name);
-    if (c && c.up == up) return;
+    if (c && c.state == state) return;
     // A connection first heard of as down was up before (only a page that connected reports a loss).
-    connections.set(name, { up, since: now(), wasUp: c ? c.up : !up, note });
+    connections.set(name, { state, since: now(), wasUp: c ? c.state == "up" : state != "up", note });
     // Back after being down: the server may be a new one. (The first connection is no news.)
-    if (up && c && !c.up) { check("reconnected"); recheckSoon(); }
+    if (state == "up" && c && c.state == "down") {
+      check("reconnected");
+      recheckSoon();
+    }
     showNote();
   },
   check: (why) => check(why),
@@ -81,16 +88,17 @@ addEventListener("compositionend", () => { composing = false; lastActivity = now
 // ------------------------------------------------------------------ the note
 
 // One quiet line at the foot of the window while a connection is down: after a few seconds (a restart passes unseen), at once when
-// the browser itself says it's offline. It says what the connection asked it to (the editor's room: that the edits sync
+// the browser itself says it's offline. A connection that is gone (its document was deleted) says so at once, and stays. It says what the connection asked it to (the editor's room: that the edits sync
 // later), and goes when every connection is back. In the editor's colours where the page has them (client/style.css,
 // client/styles/editor.css).
 const NOTE_AFTER_MS = 4000;
 let note: HTMLElement | null = null, noteTimer = 0;
 function showNote() {
   clearTimeout(noteTimer);
-  const down = [...connections.values()].filter((c) => !c.up && c.wasUp);
+  const gone = [...connections.values()].filter((c) => c.state == "gone");
+  const down = gone.length ? gone : [...connections.values()].filter((c) => c.state == "down" && c.wasUp);
   if (!down.length) { note?.remove(); note = null; return; }
-  const left = navigator.onLine ? Math.min(...down.map((c) => c.since)) + NOTE_AFTER_MS - now() : 0;
+  const left = navigator.onLine && !gone.length ? Math.min(...down.map((c) => c.since)) + NOTE_AFTER_MS - now() : 0;
   if (left > 0) { noteTimer = window.setTimeout(showNote, left); return; }
   if (!note) {
     note = document.createElement("div");

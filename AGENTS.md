@@ -241,6 +241,9 @@ Found a new trap? Write it here, in the same change.
   it before and after each write (client/common/offline.ts, `keepWrite`). A new writer goes through `keepWrite`, and a
   read of the copy uses `caches.match`, never `caches.open`: it makes the copy again. The mark is not in Cache Storage:
   a read there waits behind the copy's large writes, and the editor's start waited seconds for it.
+- On the dev server, a close that a document's object makes outside a socket's own event (`closeAll` as the document is
+  deleted: 4404) did not reach a viewer's socket (`?watch=view`): the browser's socket stayed open. A test of what a page
+  does on such a close closes the socket itself (`routeWebSocket`, e2e/full/viewer/live-viewer.e2e.ts).
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 

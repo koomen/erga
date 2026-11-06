@@ -83,3 +83,28 @@ test("a reader who followed a link to another page sees an agent's change to tha
   expect(new URL(tabPage.url()).pathname).toBe(`${address}/second`);
   expect(await tabPage.evaluate<boolean>(`window.sameViewer`)).toBe(true);
 });
+
+test("a reader's open page whose document is deleted says so, not that it reconnects", async ({ tab }) => {
+  const p = await person(await servers.script());
+  const id = await p.make();
+  await p.share(id, "Ada", "viewer");
+  const tabPage = tab.page;
+  // The viewer's sockets, through the test: the dev server doesn't pass on the close the document makes as it's deleted
+  // (Document.destroy: 4404) to a watcher's socket, so the test closes it as the server does.
+  const routes: { close(o: { code: number; reason: string }): Promise<void> }[] = [];
+  await tabPage.routeWebSocket(/watch=view/, (ws) => {
+    ws.connectToServer();
+    routes.push(ws);
+  });
+  await tabPage.goto(`${p.base}${(await p.nameOf(id)).address}?user=Ada`);
+  await until(async () => routes.length == 1, 10_000, "the viewer's socket");
+  expect((await p.tool("delete_document", { document: id })).status).toBe(200);
+  await routes[0].close({ code: 4404, reason: "document deleted" });
+  const note = () => tabPage.evaluate<string | null>(`document.querySelector(".erga-live-note")?.textContent ?? null`);
+  await expect.poll(note, { timeout: 10_000 }).toBe("This document was deleted.");
+  // Longer than the first wait to reconnect (at most 0.625 s): no socket again.
+  const at = Date.now();
+  await until(async () => Date.now() > at + 1500, 5000, "a while");
+  expect(routes.length, "no new socket").toBe(1);
+  expect(await note()).toBe("This document was deleted.");
+});

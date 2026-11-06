@@ -345,11 +345,11 @@ function connect() {
   const ws = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${asUser("/api/agent/events")}`);
   ws.onopen = () => {
     tries = 0;
-    live((l) => l.connection("agent", true));
+    live((l) => l.connection("agent", "up"));
     load();
   };
   ws.onclose = () => {
-    live((l) => l.connection("agent", false));
+    live((l) => l.connection("agent", "down"));
     setTimeout(connect, backoff(tries++));
   };
   ws.onmessage = (e) => {

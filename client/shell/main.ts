@@ -139,10 +139,10 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     onPresence: () => {
       if (started) shell.people.presenceChanged();
     },
-    onStatus: (connected) => {
-      if (started) shell.room.connectionChanged(connected);
+    onStatus: (status) => {
+      if (started) shell.room.connectionChanged(status);
       // (A key asked for again, if the last request had no answer.)
-      if (started && connected) shell.editor.send({ type: "online" });
+      if (started && status == "up") shell.editor.send({ type: "online" });
     },
     // The room lost the history this tab holds: the page loads again, and this tab's edits go in as edits (collab.ts, adopt).
     onStale: () => location.reload(),
@@ -623,7 +623,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
 
   started = true;
   shell.people.presenceChanged();
-  shell.room.connectionChanged(collab.connected);
+  shell.room.connectionChanged(collab.status);
   // What came on the socket while the shell was being set up (its hello, the agent's state), in order.
   for (const m of pending.splice(0)) shell.room.socketEvent(m);
   window.ergaPage = {

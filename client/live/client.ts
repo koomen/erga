@@ -3,6 +3,8 @@
 // page the Worker didn't make, a test's page), so each call waits for it in
 // a queue it takes on as it starts.
 
+export type ConnectionState = "up" | "down" | "gone";
+
 export interface Live {
   /**
    * Keeps `save()`'s answer for the reloaded page (restore.ts reads it back, by name). `everyReload`: for a reload by hand
@@ -16,10 +18,11 @@ export interface Live {
   /** The person used the page in a way the top window can't hear (keys in a frame). */
   activity(): void;
   /**
-   * A live connection (a WebSocket, an event stream) is up or down; null: it's gone (its page left). `note`: what the
-   * corner says while it's down (else "Reconnecting…").
+   * A live connection (a WebSocket, an event stream) is up, down (it comes back by itself), or gone (it never comes
+   * back: its document was deleted); null: its page left. `note`: what the corner says while it's down (else
+   * "Reconnecting…"), or gone (at once).
    */
-  connection(name: string, up: boolean | null, note?: string): void;
+  connection(name: string, state: ConnectionState | null, note?: string): void;
   /** Asks the server whether this page's code is still current (a request failed oddly, a connection came back). */
   check(why: string): void;
 }

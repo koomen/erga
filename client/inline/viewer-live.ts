@@ -3,10 +3,12 @@
 // (<base>/api/room?watch=view: it never joins the room), which says the version viewers see now as it opens and as it
 // changes (Document.tellView, at most every 2 s). A version other than the one shown loads the page again in its frame,
 // where it was scrolled to (?erga-y: the reader puts it back there). Not while the editor is open in this page, nor in
-// a hidden tab: it catches up when it shows. A dropped socket comes back by itself, and hears the version first.
+// a hidden tab: it catches up when it shows. A dropped socket comes back by itself, and hears the version first. A
+// deleted document (4404), or one no longer theirs (4403), never comes back, and the page says so (view-phase.ts).
 
 import { backoff, live } from "../live/client";
-import { PING, PONG } from "../../shared/room-socket";
+import { viewStep, type ViewEvent, type ViewPhase } from "../common/view-phase";
+import { DELETED_NOTE, PING, PONG } from "../../shared/room-socket";
 
 export default function viewerLive(base: string): void {
   // (The version is in a meta, not an argument: the page's build is its scripts, server/live.ts.)
@@ -15,10 +17,11 @@ export default function viewerLive(base: string): void {
     wanted = ver,
     y = 0,
     last = 0,
-    tries = 0,
     heard = 0,
     timer: ReturnType<typeof setTimeout> | undefined,
-    socket: WebSocket | null = null;
+    socket: WebSocket | null = null,
+    phase: ViewPhase = { at: "connecting", tries: 0 },
+    retry: ReturnType<typeof setTimeout> | undefined;
   // Where the reader is scrolled to, as the page in the frame tells (server/pages/reader.ts).
   addEventListener("message", (e) => {
     if (window.ergaFrames.from(e) && e.data?.type == "erga-scroll") y = Number(e.data.y) || 0;
@@ -39,6 +42,24 @@ export default function viewerLive(base: string): void {
     f.src = window.ergaFrames.src() + (y > 0 ? "?erga-y=" + y : "") + location.hash;
   }
   document.addEventListener("visibilitychange", show);
+  /** An event of the socket's: its new phase, and what that asks for. */
+  function go(e: ViewEvent) {
+    const next = viewStep(phase, e);
+    phase = next.phase;
+    if (phase.at != "backoff") clearTimeout(retry);
+    for (const f of next.effects) {
+      if (f.do == "connect") connect();
+      else if (f.do == "retry") retry = setTimeout(() => go({ type: "timer" }), backoff(f.tries));
+      else
+        live((l) =>
+          l.connection(
+            "view",
+            f.state,
+            f.why == "deleted" ? DELETED_NOTE : f.why ? "This document is no longer shared with you." : undefined
+          )
+        );
+    }
+  }
   function connect() {
     const user = new URLSearchParams(location.search).get("user");
     const ws = new WebSocket(
@@ -51,8 +72,7 @@ export default function viewerLive(base: string): void {
     socket = ws;
     heard = Date.now();
     ws.onopen = () => {
-      tries = 0;
-      live((l) => l.connection("view", true));
+      if (socket == ws) go({ type: "opened" });
     };
     ws.onmessage = (e) => {
       heard = Date.now();
@@ -70,10 +90,7 @@ export default function viewerLive(base: string): void {
     ws.onclose = (e) => {
       if (socket != ws) return;
       socket = null;
-      live((l) => l.connection("view", false));
-      // Deleted, or no longer theirs to open: nothing more to show.
-      if (e.code == 4404 || e.code == 4403) return;
-      setTimeout(connect, backoff(tries++));
+      go({ type: "closed", code: e.code });
     };
   }
   connect();

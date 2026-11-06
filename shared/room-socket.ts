@@ -14,6 +14,9 @@ import { Encoder, Decoder } from "./yjs-protocol.ts";
 /** A text frame a tab sends to see that its idle socket is alive; the host answers PONG (the Durable Object without waking: setWebSocketAutoResponse). */
 export const PING = "ping", PONG = "pong";
 
+/** What a page says once its document's socket closed with 4404: the document was deleted, and it never comes back. */
+export const DELETED_NOTE = "This document was deleted.";
+
 /** GET /api/start's answer: the hello (JSON), then the room's state (a Yjs update). */
 export function encodeStart(hello: unknown, state: Uint8Array): Uint8Array {
   const e = new Encoder();
