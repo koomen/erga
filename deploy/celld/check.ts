@@ -1,5 +1,6 @@
 // Checks an Erga server feature by feature, as its people and agents use it: the editor in a browser (live editing
-// between two tabs, offline and back), then the tools API (versions, files, a page's own API, view_page), the
+// between two tabs, offline and back, each document on a pages origin of its own, a page that opens again offline from
+// Erga's service worker), then the tools API (versions, files, a page's own API, view_page), the
 // homepage signed out, the edge's caches (each second request a hit), and the person's agent. Each line says what it saw: ok, or what failed.
 //
 //   SESSION_SECRET=... bun deploy/celld/check.ts <origin> [login]
@@ -75,6 +76,8 @@ await check("health", async () => {
 });
 
 let address = "";
+/** What the first check typed in the document. */
+let typed = "";
 const browser = await chromium.launch();
 try {
   const context = await browser.newContext({ viewport: { width: 1100, height: 800 } });
@@ -102,7 +105,7 @@ try {
     const a = await openEditor(await tabOf(), fresh, "", { allowErrors: true });
     address = a.address;
     const b = await openEditor(await tabOf(), opened(address), "", { allowErrors: true });
-    const words = `Typed in tab A at ${new Date().toISOString()}`;
+    const words = (typed = `Typed in tab A at ${new Date().toISOString()}`);
     await a.clickEnd("[data-erga-text]:not(.erga-locked)");
     await a.type(` ${words}`);
     await until(async () => (await b.visible()).includes(words), 10_000, "tab B to show tab A's words");
@@ -140,6 +143,40 @@ try {
     const again = await openEditor(await tabOf(), opened(address), "", { allowErrors: true });
     await until(async () => (await again.visible()).includes(words), 10_000, "a new tab to show the offline words");
     return "the words typed offline reached the server";
+  });
+
+  await check("a pages origin for each document", async () => {
+    const one = await openEditor(await tabOf(), opened(address), "", { allowErrors: true });
+    const two = await openEditor(await tabOf(), fresh, "", { allowErrors: true });
+    const [a, b] = [await one.frame<string>("location.origin"), await two.frame<string>("location.origin")];
+    if (a == b || new URL(a).host == url.host) throw new Error(`the pages are on ${a} and ${b}`);
+    return `${a} and ${b}`;
+  });
+
+  await check("offline copy of a page (Erga's service worker)", async () => {
+    const tab = await tabOf();
+    const ed = await openEditor(tab, opened(address), "", { allowErrors: true });
+    const active = `navigator.serviceWorker.getRegistration("/").then((r) => !!r?.active)`;
+    await until(() => ed.frame<boolean>(active), 20_000, "the worker on the page's origin");
+    await until(() => ed.eval<boolean>(active), 20_000, "the worker on the app's origin");
+    const kept = `caches.open("erga-offline-v1").then((c) => c.match(location.href.replace(/[?#].*$/, "") + "?edit=&erga-page=")).then((r) => !!r)`;
+    await until(() => ed.eval<boolean>(kept), 20_000, "the shell in the copy");
+    const origin = await ed.frame<string>("location.origin");
+    await context.setOffline(true);
+    try {
+      await tab.page.reload();
+      await until(() => ed.eval<boolean>("!!window.ergaPage"), 20_000, "the shell, offline");
+      await until(
+        () => ed.frame<boolean>(`!!window.ergaFrame?.page && document.querySelectorAll("[data-erga-text]").length > 0`),
+        20_000,
+        "the editor on the page, offline"
+      );
+      const again = await ed.frame<string>("document.body.innerText");
+      if (!again.includes(typed)) throw new Error(`offline, the page shows: ${again.slice(0, 120)}`);
+    } finally {
+      await context.setOffline(false);
+    }
+    return `the worker on ${origin}; offline, a reload showed the page and its editor`;
   });
 } finally {
   await browser.close();

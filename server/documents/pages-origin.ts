@@ -59,6 +59,20 @@ export function pagesHost(url: URL, platform: Platform): { owner: string; id: st
   return m && OWNER.test(m[2]) && ID.test(m[1]) ? { owner: m[2], id: m[1] } : null;
 }
 
+/**
+ * Where a host says whether it is a document's own pages origin: the question a TLS server asks before it gets a
+ * certificate for a new name (Caddy's on-demand TLS on celld, deploy/celld/cdn.ts). Any host answers it.
+ */
+export const HOST_PATH = "/erga-host";
+
+/** Whether the request's host is the pages origin of a document that exists: never a shared pages host, nor the app's. */
+export async function isDocumentsHost(url: URL, platform: Platform): Promise<boolean> {
+  if (platform.pagesShared?.(url) == url.hostname) return false;
+  const doc = pagesHost(url, platform);
+  const route = doc && (await platform.directory.route(doc.id));
+  return !!route && route.owner == doc.owner.toLowerCase();
+}
+
 /** The signing key, imported once per secret (per isolate): every file of a document's page checks its token. */
 const hmacKeys = new Map<string, Promise<CryptoKey>>();
 

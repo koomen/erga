@@ -116,6 +116,12 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/agent/keys", domain: "none", action: "Add or replace your own API key (Settings, Agent)", exempt: SECRET },
 
   { route: "GET /api/health", domain: "none", action: "The app's health check", exempt: "the deploy pipeline's, after each deploy" },
+  {
+    route: "GET /erga-host",
+    domain: "none",
+    action: "Whether a host is a document's pages origin",
+    exempt: "the TLS server's, before it gets a certificate for a new name",
+  },
   { route: "GET /api/news", domain: "none", action: "An open page's live updates", exempt: STREAM },
   { route: "GET /api/news/rows", domain: "none", action: "The rows an open page shows, after they changed", exempt: STREAM },
   {

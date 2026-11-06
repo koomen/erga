@@ -39,6 +39,8 @@
 //   /erga/<name>/editor.js     an editing library (erga/text), at its one address: its newest build, which a page imports
 //   /erga-sw.js                Erga's service worker (pages/worker.ts), here and on a document's own pages origin: the
 //                              editor opens with no connection. The only service worker a pages origin takes
+//   GET /erga-host             204 if the host is a document's own pages origin, else 404: the TLS server's question
+//                              before it gets a certificate for a new name (celld's Caddy: deploy/celld/cdn.ts)
 //   /api/llm                   a document's page calls a model as its signed-in visitor (agents/page-llm.ts)
 //   /api/news, /api/news/rows  live pages: an open page's socket, and the rows it asks for when they change
 //   GET /api/release           which of them this release has: open pages follow a redeploy with it,
@@ -55,7 +57,7 @@ import { adminGate, isAdminPath } from "./admin/index.ts";
 import { agentApi, isAgentPath } from "../agents/person/sessions.ts";
 import { HOME_LLM_PATH, homeDomainLlmApi, isPageLlmPath, pageLlmApi } from "../agents/page-llm.ts";
 import { serverApi } from "./api.ts";
-import { adoptLanding, documentRoutes, ergaAddress, isPagesSite, workerHere } from "./documents/index.ts";
+import { adoptLanding, documentRoutes, ergaAddress, HOST_PATH, isDocumentsHost, isPagesSite, workerHere } from "./documents/index.ts";
 import { serveHome, serveHomeDomain, serveHomeFile, serveHomeSite } from "./home/index.ts";
 import {
   adminsOnlyGate,
@@ -158,6 +160,8 @@ const route = (url: URL, outside: Outside): Route =>
     // shared pages host, where the origin isn't one document's.
     if (path == WORKER_PATH && (request.method == "GET" || request.method == "HEAD"))
       return workerHere(url, p) ? serveWorker() : text("Not found", 404);
+    if (path == HOST_PATH && request.method == "GET")
+      return (yield* call(() => isDocumentsHost(url, p))) ? fromWeb(new Response(null, { status: 204 })) : text("No such document", 404);
     // A pages origin's page that deletes its offline copies: sign-out frames it (client/inline/sign-out.ts).
     if (path == CLEAR_PATH && request.method == "GET" && isPagesSite(url, p)) return serveClear();
     // A document's pages origin serves its page and files, and nothing of this site's.

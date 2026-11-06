@@ -6,7 +6,8 @@
 //   bun deploy/celld/aws.ts down    removes it all, then lists what still has the tag
 //
 // The machine's names are <ip>.sslip.io names (sslip.io answers a name with the IP in it): no DNS change. People use
-// the two CloudFront names in front of them (cdn.ts).
+// the app at the CloudFront name in front of it (cdn.ts), and each document's page at its own name under the machine's
+// pages domain, <id>-<owner>.pages-<ip>.sslip.io, straight to Caddy.
 // Settings the Worker keeps as secrets come from Parameter Store, /erga-celld/<NAME>: SESSION_SECRET and FACTORY_KEY are
 // made the first time; set others (GITHUB_CLIENT_SECRET) with `aws ssm put-parameter --type SecureString --key-id
 // alias/erga-celld`. Only the machine reads them, at each deploy. celld has no secret store: it keeps them as plain vars
@@ -101,7 +102,7 @@ T=$(curl -fsS -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 60" http://169.25
 IP=$(curl -fsS -H "X-aws-ec2-metadata-token: $T" http://169.254.169.254/latest/meta-data/public-ipv4)
 mkdir -p /etc/caddy /var/lib/caddy
 cat > /etc/caddy/Caddyfile <<EOF
-erga-\${IP//./-}.sslip.io, pages-\${IP//./-}.sslip.io {
+erga-\${IP//./-}.sslip.io {
   reverse_proxy 127.0.0.1:8080
 }
 EOF
@@ -349,9 +350,9 @@ async function up() {
   await aws("ec2", "wait", "instance-running", "--instance-ids", instance);
   const ip: string = (await machine())!.PublicIpAddress!;
   const dashed = ip.replaceAll(".", "-");
-  const origins = { app: `erga-${dashed}.sslip.io`, pages: `pages-${dashed}.sslip.io` };
-  const cdn = await cdnUp(aws, origins, print);
-  const app = `https://${cdn.app}`;
+  const names = { app: `erga-${dashed}.sslip.io`, pages: `pages-${dashed}.sslip.io` };
+  const cdn = await cdnUp(aws, names.app, print);
+  const app = `https://${cdn}`;
 
   // 5. The secrets, made once: SESSION_SECRET signs the sessions, FACTORY_KEY encrypts the API keys an admin enters.
   for (const name of ["SESSION_SECRET", "FACTORY_KEY"]) {
@@ -380,7 +381,7 @@ async function up() {
   // (No secrets: the machine adds them at its deploy.)
   const project = await celldProject({
     ERGA_CHROME: `http://${CHROME_DEVTOOLS}`,
-    PAGES_HOST: cdn.pages,
+    PAGES_DOMAIN: names.pages,
     ERGA_VERSION: index.version,
   });
   // (Outside .build/: the next release would serve it as a static asset, with the vars in it.)
@@ -400,12 +401,12 @@ async function up() {
     if (i > 60) throw new Error(`the machine ${instance} doesn't answer SSM`);
     await Bun.sleep(5000);
   }
-  // Caddy passes on CloudFront's X-Erga-Host as X-Forwarded-Host (cdn.ts).
+  // Caddy passes on CloudFront's X-Erga-Host as X-Forwarded-Host, and gets each pages origin's certificate at its first visit (cdn.ts).
   await onMachine(
     instance,
     `cloud-init status --wait >/dev/null
 cat > /etc/caddy/Caddyfile <<'EOF'
-${caddyfile(origins, cdn)}EOF
+${caddyfile(names, cdn)}EOF
 HOME=/var/lib/caddy caddy reload --config /etc/caddy/Caddyfile`
   );
   print(`chrome: ${(await onMachine(instance, chromeSetup())).trim()}`);
