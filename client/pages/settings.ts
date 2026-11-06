@@ -32,7 +32,7 @@
 import { ago, clock, RECENT, type Version, type Versions } from "./versions";
 import { runTool } from "../common/tools";
 import { esc } from "../../shared/html";
-import { MODELS, PAGE_LLM_MODELS } from "../../shared/models";
+import { isModelChoice, MODELS, PROVIDER_LABEL } from "../../shared/models";
 import { openPageHead } from "./page-head";
 import { headUrl, tabTitle, type PageHead } from "../../shared/page-head";
 
@@ -61,7 +61,13 @@ interface Tree {
   title?: string;
 }
 /** ls's access, as far as Readers need it (the readers' options, for anyone who may edit it). */
-type Access = { readerAgent: boolean; readerBars: boolean; pageLlm: { on: boolean; model: string }; anyoneWithLink: boolean };
+type Access = {
+  readerAgent: boolean;
+  readerBars: boolean;
+  /** models: the ones the owner may choose now (Claude's, and OpenAI's where the server has a key). */
+  pageLlm: { on: boolean; model: string; models: string[] };
+  anyoneWithLink: boolean;
+};
 interface Doc extends Tree {
   homepage?: Home;
   access?: Access;
@@ -205,6 +211,20 @@ span.ds-page-icon { background: color-mix(in srgb, var(--chrome) 35%, transparen
 `;
 
 
+/** The page model menu's options, under their providers' names. */
+function modelOptions(models: string[]): string {
+  const known = models.filter(isModelChoice);
+  return [...new Set(known.map((m) => MODELS[m].provider))]
+    .map(
+      (p) =>
+        `<optgroup label="${PROVIDER_LABEL[p]}">${known
+          .filter((m) => MODELS[m].provider == p)
+          .map((m) => `<option value="${m}">${MODELS[m].label}</option>`)
+          .join("")}</optgroup>`
+    )
+    .join("");
+}
+
 function mount(host: SettingsHost): Settings {
   if (!document.getElementById("ds-style")) document.head.append(Object.assign(document.createElement("style"), { id: "ds-style", textContent: CSS }));
 
@@ -233,7 +253,7 @@ function mount(host: SettingsHost): Settings {
         <label class="ds-check" id="ds-bars"><input type="checkbox" id="ds-bars-on">Show the Erga header bar</label>
         <label class="ds-check" id="ds-agent-label"><input type="checkbox" id="ds-agent-on">Viewers can use the Erga agent</label>
         <label class="ds-check" id="ds-llm" data-tip="The page's script can ask this model for each viewer (window.ergaLLM). The server pays, with an hourly limit."><input type="checkbox" id="ds-llm-on">Viewers have access to the LLM API</label>
-        <select class="ds-llm-model" id="ds-llm-model" aria-label="The model">${PAGE_LLM_MODELS.map((m) => `<option value="${m}">${MODELS[m].label}</option>`).join("")}</select>
+        <select class="ds-llm-model" id="ds-llm-model" aria-label="The model"></select>
       </div>
       <p class="ds-error" id="ds-agent-error" role="alert"></p>
     </section>
@@ -429,7 +449,11 @@ function mount(host: SettingsHost): Settings {
     barsOn.checked = access.readerBars;
     barsOn.disabled = agentBusy;
     llmOn.checked = access.pageLlm.on;
-    llmModel.value = access.pageLlm.model;
+    // The choices, and the model chosen now even when the server's keys no longer run it.
+    const { model, models } = access.pageLlm;
+    const shown = models.includes(model) ? models : [model, ...models];
+    if ([...llmModel.options].map((o) => o.value).join() != shown.join()) llmModel.innerHTML = modelOptions(shown);
+    llmModel.value = model;
     llmOn.disabled = llmModel.disabled = agentBusy;
     agentOn.disabled = access.anyoneWithLink || agentBusy;
     tip($("ds-agent-label"), access.anyoneWithLink ? "Anyone with the link can open it, so viewers have no agent here." : "");
@@ -449,9 +473,8 @@ function mount(host: SettingsHost): Settings {
   }
   agentOn.addEventListener("change", () => setReader({ reader_agent: agentOn.checked }));
   barsOn.addEventListener("change", () => setReader({ reader_bars: barsOn.checked }));
-  const setLlm = () => setReader({ page_llm: llmOn.checked, page_llm_model: llmModel.value });
-  llmOn.addEventListener("change", setLlm);
-  llmModel.addEventListener("change", setLlm);
+  llmOn.addEventListener("change", () => setReader({ page_llm: llmOn.checked }));
+  llmModel.addEventListener("change", () => setReader({ page_llm_model: llmModel.value }));
 
   /** Edit on a version: a copy of it becomes the current version (the previous current one stays a version). */
   let restoring: string | null = null;

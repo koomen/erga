@@ -18,6 +18,7 @@ import {
   DEFAULT_MODEL,
   fitModel,
   MODELS,
+  pageLlmChoices,
   PROVIDERS,
   usableModels,
   type KeySetup,
@@ -200,16 +201,18 @@ export function languageModel(cfg: AgentConfig, choice: ModelChoice | null): Lay
 }
 
 /**
- * The model a document's page calls as its visitor (agents/page-llm.ts): Claude with the server's key, answering at most
- * `maxTokens`, with no thinking and no tools; or the scripted model. Null: the server's keys don't run `choice` now.
+ * The model a document's page calls as its visitor (agents/page-llm.ts), with the server's key, answering at most
+ * `maxTokens`, with no thinking and no tools: Claude on Effect AI's Anthropic provider, OpenAI's models through Pi; or the
+ * scripted model. Null: the server's keys don't run `choice` for pages now.
  */
 export function pageModel(cfg: AgentConfig, choice: ModelChoice, maxTokens: number): Layer.Layer<LanguageModel.LanguageModel> | null {
   if (isScript(cfg)) return scriptModel(MODELS[choice].label);
-  const u = usable(cfg).find((x) => x.choice == choice && x.key == "server");
-  const apiKey = u && cfg.server[u.provider];
-  if (!apiKey || MODELS[choice].provider != "anthropic") return null;
+  const m = MODELS[choice];
+  const apiKey = pageLlmChoices({ ...keySetup(cfg), own: [] }).includes(choice) ? cfg.server[m.provider] : undefined;
+  if (!apiKey) return null;
+  if (m.provider == "openai") return piLanguageModel({ provider: m.provider, id: m.id, apiKey, effort: null, maxTokens });
   const config = { max_tokens: maxTokens, structuredOutputs: false } as unknown as AnthropicConfig;
-  return AnthropicLanguageModel.layer({ model: MODELS[choice].id, config }).pipe(
+  return AnthropicLanguageModel.layer({ model: m.id, config }).pipe(
     Layer.provide(AnthropicClient.layer({ apiKey })),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(Layer.succeed(FetchHttpClient.Fetch, ((input, init) => globalThis.fetch(input, init)) as typeof fetch))

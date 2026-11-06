@@ -34,6 +34,8 @@ test("the models a person can use, for each key setup", () => {
   expect(names({ server: ["google"], own: ["openai"] })).toEqual([
     "gpt-6.1-sol:own",
     "gpt-6-astra:own",
+    "gpt-6.1-terra:own",
+    "gpt-6-luna:own",
     "gemini-4-argon:server",
     "gemini-3.8-flash:server",
   ]);
