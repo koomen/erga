@@ -23,25 +23,8 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  latestTag,
-  nextVersion,
-  PROTECTED,
-  releaseNotes,
-  releaseRefusal,
-  statusText,
-} from "./flow";
-import {
-  commitsOf,
-  fetchOrigin,
-  git,
-  headOf,
-  readState,
-  repoOf,
-  ROOT,
-  sh,
-  tagsOf,
-} from "./observe";
+import { latestTag, messageRefusal, nextVersion, PROTECTED, releaseNotes, releaseRefusal, statusText } from "./flow";
+import { commitsOf, fetchOrigin, git, headOf, readState, repoOf, ROOT, sh, tagsOf } from "./observe";
 
 const say = (s = "") => console.log(s);
 const pass = (s: string) => say(`PASS  ${s}`);
@@ -86,6 +69,8 @@ function start(name: string | undefined) {
 async function merge(branch: string | undefined, message: string | undefined) {
   needRepo();
   if (!branch) fail("Name the branch: bun erga merge <branch>.");
+  const long = message === undefined ? null : messageRefusal(message);
+  if (long) fail(long, `Write a shorter one: bun erga merge ${branch} -m "<ten words at most>"`);
   const { ergaDir } = await import("./config");
   const { mergeBranch } = await import("./merge");
   await mergeBranch({ dir: ergaDir(), branch: branch!, message }).catch((e: Error) => fail(e.message));

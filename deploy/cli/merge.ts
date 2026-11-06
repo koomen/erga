@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readConfig } from "./config";
 import { deployStaging, recordPass, startJob, takeLock } from "./deploy";
-import { mergeRefusal, squashMessage } from "./flow";
+import { mergeRefusal, messageRefusal, squashMessage } from "./flow";
 import { commitsOf, conflictsOf, fetchOrigin, git, headOf, sh } from "./observe";
 
 /** Merges `branch` onto staging. The result: the commit on staging. An error says what stopped it, and what to do next. */
@@ -31,7 +31,9 @@ export async function mergeBranch(o: { dir: string; branch: string; message?: st
     const conflicts = exists && ahead ? conflictsOf("origin/staging", `origin/${name}`) : [];
     const no = mergeRefusal({ branch: name, exists, ahead, conflicts });
     if (no) stop(no);
-    const text = squashMessage(name, commitsOf("--no-merges", `origin/staging..origin/${name}`), o.message);
+    const text = squashMessage(commitsOf("--no-merges", `origin/staging..origin/${name}`), o.message);
+    const long = messageRefusal(text.split("\n\n")[0]);
+    if (long) stop(long, `Write one: bun erga merge ${name} -m "<ten words at most>"`);
     log(`Merge ${name} (${ahead} commit${ahead == 1 ? "" : "s"}) onto staging ${headOf("origin/staging")?.slice(0, 12)} as one commit:`);
     log(`      ${text.split("\n")[0]}`);
 
