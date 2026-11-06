@@ -9,6 +9,7 @@
 // and a web Response from code that still makes one (a Durable Object's
 // answer, a WebSocket's upgrade), passed through as it is.
 
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -94,9 +95,19 @@ export const call = <A>(f: () => PromiseLike<A>) => Effect.promise(f);
 /** What most routes start with: the web Request, its URL, and the Platform. */
 export const ctx = Effect.all({ request: webRequest, url: requestUrl, platform });
 
-/** A route's answer to a web Request on a Platform: the Worker's fetch handler (cloudflare/index.ts) and the tests run routes so. */
+/**
+ * A route's answer to a web Request on a Platform: the Worker's fetch handler (cloudflare/index.ts) and the tests run routes so.
+ * A failure or a defect left gives an empty 500: the log says what it was, and where.
+ */
 export const respond = <E>(route: Route<E>, request: Request, p: Platform): Promise<Response> =>
-  HttpEffect.toWebHandlerWith<CurrentPlatform, Needs>(Context.make(CurrentPlatform, p))(route)(request);
+  HttpEffect.toWebHandlerWith<CurrentPlatform, Needs>(Context.make(CurrentPlatform, p))(
+    Effect.tapCause(route, (cause) =>
+      Effect.sync(() => {
+        if (!Cause.hasInterruptsOnly(cause))
+          console.error(`erga: ${request.method} ${new URL(request.url).pathname} failed: ${Cause.pretty(cause)}`);
+      })
+    )
+  )(request);
 
 /** Runs an Effect of the app's on a web Request and a Platform (a test's way to call one route's part). */
 export const runOn = <A, E>(effect: Effect.Effect<A, E, Needs>, request: Request, p: Platform): Promise<A> =>

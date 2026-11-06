@@ -11,18 +11,15 @@
 //
 // _redirects and site.json are the site's settings, never served. These functions only decide: serve.ts serves.
 
+import * as Schema from "effect/Schema";
+
 /** A rule of _redirects. */
-export interface Redirect {
-  from: string;
-  to: string;
-  status: number;
-}
+const Redirect = Schema.Struct({ from: Schema.String, to: Schema.String, status: Schema.Number });
+type Redirect = typeof Redirect.Type;
 
 /** What a deploy reads of the site's settings (kept with the snapshot: deploys.ts). */
-export interface Site {
-  bars: boolean;
-  redirects: Redirect[];
-}
+export const Site = Schema.Struct({ bars: Schema.Boolean, redirects: Schema.Array(Redirect) });
+export type Site = typeof Site.Type;
 
 export const REDIRECTS = "_redirects",
   SITE_JSON = "site.json",
