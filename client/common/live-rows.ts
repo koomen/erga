@@ -7,9 +7,11 @@
 // menu or a half-typed field elsewhere stay as they are, and a row whose field has the focus waits until it hasn't.
 //
 // A hidden tab waits until it shows. A dropped socket comes back by itself and says the last version it heard, so it
-// hears what changed meanwhile. One ask at a time, so a later answer is never older than one before it.
+// hears what changed meanwhile. One ask at a time, so a later answer is never older than one before it. The socket's
+// phase (news-phase.ts) owns its reconnect timer: once the last list stops, no socket opens.
 
 import { backoff, live } from "../live/client";
+import { newsStep, type NewsEvent, type NewsPhase } from "./news-phase";
 import { PING, PONG } from "../../shared/room-socket";
 
 type Row = { html: string; sort: number | string } | null;
@@ -29,8 +31,30 @@ const pending = new Set<string>();
 const own = new Set<string>();
 let since = 0,
   socket: WebSocket | null = null,
-  tries = 0,
+  phase: NewsPhase = { at: "stopped" },
+  retry: ReturnType<typeof setTimeout> | undefined,
   heard = 0;
+
+/** An event of the socket's: its new phase, and what that asks for. */
+function go(e: NewsEvent): void {
+  const next = newsStep(phase, e);
+  phase = next.phase;
+  if (phase.at != "backoff") clearTimeout(retry);
+  for (const f of next.effects) {
+    if (f.do == "connect") connect();
+    else if (f.do == "up") {
+      socket?.send(JSON.stringify({ since }));
+      live((l) => l.connection("news", "up"));
+    } else if (f.do == "down") live((l) => l.connection("news", "down"));
+    else if (f.do == "retry") retry = setTimeout(() => go({ type: "timer" }), backoff(f.tries));
+    else {
+      const ws = socket;
+      socket = null;
+      ws?.close();
+      live((l) => l.connection("news", null));
+    }
+  }
+}
 
 /** The page's ?user= (local development: who is signed in), for its asks. */
 const user = () => new URLSearchParams(location.search).get("user");
@@ -45,7 +69,7 @@ export function liveList(el: HTMLElement, o: LiveList, signal?: AbortSignal): vo
     if (!lists.size) stop?.();
   });
   if (lists.size > 1) return;
-  connect();
+  go({ type: "start" });
   // An idle socket can die without a close: a ping now and then, and one with no answer for a while is closed.
   const ping = setInterval(() => {
     if (!socket || socket.readyState != WebSocket.OPEN) return;
@@ -60,10 +84,7 @@ export function liveList(el: HTMLElement, o: LiveList, signal?: AbortSignal): vo
     stop = null;
     clearInterval(ping);
     document.removeEventListener("visibilitychange", shown);
-    const ws = socket;
-    socket = null;
-    ws?.close();
-    live((l) => l.connection("news", null));
+    go({ type: "stop" });
   };
 }
 
@@ -77,9 +98,7 @@ function connect() {
   socket = ws;
   heard = Date.now();
   ws.onopen = () => {
-    tries = 0;
-    ws.send(JSON.stringify({ since }));
-    live((l) => l.connection("news", true));
+    if (socket == ws) go({ type: "opened" });
   };
   ws.onmessage = (e) => {
     heard = Date.now();
@@ -99,10 +118,9 @@ function connect() {
     ask();
   };
   ws.onclose = () => {
-    if (socket != ws || !lists.size) return;
+    if (socket != ws) return;
     socket = null;
-    live((l) => l.connection("news", false));
-    setTimeout(connect, backoff(tries++));
+    go({ type: "closed" });
   };
 }
 

@@ -55,6 +55,7 @@ import { decodeStart, PING, PONG } from "../../../shared/room-socket";
 import { base64, fromBase64 } from "../../../shared/bytes";
 import { sleep } from "../../../shared/time";
 import { claimKept, keepReplica, readKept, type Keeper, type Kept } from "./kept";
+import { roomStep, statusOf, type RoomEffect, type RoomEvent, type RoomPhase, type RoomStatus } from "./room-phase";
 import type { Peer } from "./types";
 
 /** Someone in the room, from awareness. */
@@ -83,7 +84,8 @@ export interface CollabOptions {
   onFiles: (paths: string[]) => void;
   /** Who's here, or what they're doing, changed. */
   onPresence: () => void;
-  onStatus: (connected: boolean) => void;
+  /** The socket is up, down (it comes back by itself), or gone (the document was deleted: it never comes back). */
+  onStatus: (status: RoomStatus) => void;
   /**
    * The room refused this tab: it holds a history from before the host lost its state, and merging it would double the
    * document. Load the page again: with `keep`, this tab's edits go in as edits of the files' text (adopt).
@@ -119,17 +121,16 @@ export class Collab {
   private me: Author | null = null;
   private path = "";
   private ws: WebSocket | null = null;
-  /** The socket is open; and the room and this tab have each other's state since it opened. */
-  private open = false;
-  private syncedNow = false;
+  /** The socket's phase (room-phase.ts), and the timer of its backoff: cleared each time the phase leaves backoff. */
+  private phase: RoomPhase = { at: "connecting", tries: 0 };
+  private timer = 0;
+  /** The listeners on the window, until this leaves the room. */
+  private readonly listening = new AbortController();
   /** The history this tab holds (once it's synced), which it names on every reconnect. */
   private epoch = "";
-  /** Refused (a stale history): no reconnecting. */
-  private stopped = false;
   /** The start's answer is in (or failed: then the socket's sync brings the state), and the history it was of. */
   private haveState = false;
   private startEpoch: string | null = null;
-  private tries = 0;
   private pinger = 0;
   private answered = true;
   private gotHello!: (h: Hello) => void;
@@ -184,11 +185,16 @@ export class Collab {
     this.awareness.on("update", ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }, origin: unknown) => {
       if (origin !== this) this.sendAwareness([...added, ...updated, ...removed]);
     });
-    addEventListener("pagehide", () => removeAwarenessStates(this.awareness, [this.doc.clientID], "window unload"));
+    const signal = this.listening.signal;
+    addEventListener("pagehide", () => removeAwarenessStates(this.awareness, [this.doc.clientID], "window unload"), { signal });
     // The browser lost its network: the socket is dead, though it can't say so yet.
-    addEventListener("offline", () => {
-      if (this.open) this.drop();
-    });
+    addEventListener(
+      "offline",
+      () => {
+        if (this.connected) this.drop();
+      },
+      { signal }
+    );
     files(this.doc).observeDeep((events) => this.filesChanged(events));
     assets(this.doc).observe((e) => { if (this.live) opts.onFiles([...e.keysChanged]); });
     // The page's socket, if it opened one (and it's not closed); else one of its own.
@@ -260,7 +266,7 @@ export class Collab {
    * after it, if this tab changed meanwhile). Not while the room holds a lock, when it drops other tabs' edits.
    */
   private askAck(): void {
-    if (!this.confirmed || !this.open || !this.replied) return;
+    if (!this.confirmed || !this.connected || !this.replied) return;
     if (this.acks.some((a) => a)) {
       this.ackAgain = true;
       return;
@@ -277,7 +283,8 @@ export class Collab {
    */
   private offlineStart(): void {
     const k = this.kept;
-    if (!k || this.stateIn || !this.haveState || !this.failed || this.open || this.stopped) return;
+    const at = this.phase.at;
+    if (!k || this.stateIn || !this.haveState || !this.failed || (at != "connecting" && at != "backoff")) return;
     this.stateIn = true;
     this.keptIn = true;
     Y.applyUpdate(this.doc, k.update, "kept");
@@ -293,7 +300,7 @@ export class Collab {
 
   /** What the room has that this tab doesn't (and, in the answer to the room's own step 1, the other way): once it has a state, on each socket. */
   private askForChanges(unconfirmed: Uint8Array | null = null): void {
-    if (!this.open || !this.haveState) return;
+    if (!this.connected || !this.haveState) return;
     this.acks.push(unconfirmed);
     const e = new Encoder();
     e.writeUint(MSG_SYNC);
@@ -302,7 +309,14 @@ export class Collab {
   }
 
   /** Whether the socket is open now. */
-  get connected(): boolean { return this.open; }
+  get connected(): boolean {
+    return statusOf(this.phase) == "up";
+  }
+
+  /** What the page shows of the socket: up, down, or gone. */
+  get status(): RoomStatus {
+    return statusOf(this.phase);
+  }
 
   /** The page this replica edits ("" before it joins). */
   get pagePath(): string {
@@ -348,18 +362,63 @@ export class Collab {
 
   /** Leaves the room for good: the socket closes, and this replica's presence goes with it. */
   close(): void {
-    this.stopped = true;
+    this.listening.abort();
     void this.keeping?.stop();
     this.keeping = null;
-    clearInterval(this.pinger);
     removeAwarenessStates(this.awareness, [this.doc.clientID], "left");
-    const ws = this.ws;
-    this.ws = null;
-    this.open = false;
-    try {
-      ws?.close();
-    } catch {
-      /* gone */
+    this.go({ type: "close" });
+  }
+
+  /** An event of the socket's: its new phase, and what that asks for (room-phase.ts). */
+  private go(e: RoomEvent): void {
+    const { phase, effects } = roomStep(this.phase, e);
+    this.phase = phase;
+    if (phase.at != "backoff") clearTimeout(this.timer);
+    for (const f of effects) this.effect(f);
+  }
+
+  private effect(f: RoomEffect): void {
+    switch (f.do) {
+      case "connect":
+        return this.connect();
+      case "up":
+        this.askForChanges();
+        if (this.awareness.getLocalState()) this.sendAwareness([this.doc.clientID]);
+        this.answered = true;
+        clearInterval(this.pinger);
+        this.pinger = window.setInterval(() => this.ping(), PING_EVERY);
+        return;
+      case "status":
+        // (Gone before its hello: there's nothing to open.)
+        if (f.status == "gone") this.noHello(new Error("the document was deleted"));
+        return this.opts.onStatus(f.status);
+      case "retry":
+        if (!this.stateIn) {
+          this.failed = true;
+          this.offlineStart();
+        }
+        this.timer = window.setTimeout(() => this.go({ type: "timer" }), f.after);
+        return;
+      case "shut": {
+        const ws = this.ws;
+        this.ws = null;
+        clearInterval(this.pinger);
+        if (ws) ws.onclose = ws.onmessage = ws.onopen = null;
+        try {
+          ws?.close();
+        } catch {
+          /* gone */
+        }
+        return;
+      }
+      case "stale":
+        return this.stale();
+      // Its person may no longer open it: the page opens again, and says so.
+      case "reload":
+        return location.reload();
+      // (Never in: no such document, or not theirs to open. One that was in keeps trying.)
+      case "refused":
+        return this.noHello(new Error("the host refused the connection"));
     }
   }
 
@@ -374,70 +433,39 @@ export class Collab {
     if (early && !adopted) early.close();
     ws.binaryType = "arraybuffer";
     this.ws = ws;
-    ws.onmessage = (e) => { if (this.ws == ws) this.receive(e.data); };
-    ws.onopen = () => { if (this.ws == ws) this.opened(); };
-    ws.onclose = (e) => { if (this.ws == ws) this.closed(e.code); };
+    ws.onmessage = (e) => {
+      if (this.ws == ws) this.receive(e.data);
+    };
+    ws.onopen = () => {
+      if (this.ws == ws) this.go({ type: "opened" });
+    };
+    ws.onclose = (e) => {
+      if (this.ws == ws) this.closed(e.code);
+    };
     ws.onerror = () => {};
     // What came before this script did, in order (nothing new can come in between: each message is a task of its own).
     for (const data of ws.early?.splice(0) ?? []) this.receive(data);
-    if (ws.readyState == WebSocket.OPEN) this.opened();
-  }
-
-  private opened(): void {
-    if (this.open) return;
-    this.open = true;
-    this.tries = 0;
-    this.askForChanges();
-    if (this.awareness.getLocalState()) this.sendAwareness([this.doc.clientID]);
-    this.answered = true;
-    clearInterval(this.pinger);
-    this.pinger = window.setInterval(() => this.ping(), PING_EVERY);
-    this.opts.onStatus(true);
+    if (ws.readyState == WebSocket.OPEN) this.go({ type: "opened" });
   }
 
   /** The socket went (or was given up on): presence of everyone else goes with it, and a new one opens a little later. */
   private closed(code: number): void {
     this.ws = null;
     clearInterval(this.pinger);
-    const was = this.open;
-    this.open = false;
-    this.syncedNow = false;
     removeAwarenessStates(
       this.awareness,
       [...this.awareness.getStates().keys()].filter((c) => c != this.doc.clientID),
       this
     );
-    if (was) this.opts.onStatus(false);
     this.acks = [];
     this.replied = this.ackAgain = false;
-    if (code == 4409) {
-      this.stale();
-      return;
-    }
-    // Its person may no longer open it: the page opens again, and says so. (4408, a role changed: it joins again below, as they may now.)
-    if (code == 4403) {
-      this.stopped = true;
-      location.reload();
-      return;
-    }
-    if (this.stopped) return;
-    if (!this.stateIn) {
-      this.failed = true;
-      this.offlineStart();
-    }
-    // (Never in: no such document, or not theirs to open. One that was in keeps trying.)
-    if (!was && !this.greeted && !this.live && !this.stateIn && this.tries >= 2) {
-      this.stopped = true;
-      this.noHello(new Error("the host refused the connection"));
-      return;
-    }
-    setTimeout(() => this.connect(), Math.min(2500, 100 * 2 ** this.tries++));
+    this.go({ type: "closed", code, known: this.greeted || this.live || this.stateIn });
   }
 
   /** An idle socket that no longer answers (a laptop woken from sleep, a network that changed) is closed, and opens again. */
   private ping(): void {
     const ws = this.ws;
-    if (!ws || !this.open) return;
+    if (!ws || !this.connected) return;
     if (!this.answered) {
       this.drop();
       return;
@@ -452,7 +480,6 @@ export class Collab {
    * loads in its place puts its edits in (adopt).
    */
   private stale(): void {
-    this.stopped = true;
     const keeping = this.keeping;
     this.keeping = null;
     void (keeping?.stop() ?? Promise.resolve()).then(() => this.opts.onStale());
@@ -491,8 +518,7 @@ export class Collab {
         // A socket on another history than the one this tab started from (the room lost its own in between): never merged.
         const epoch = (msg as Hello).epoch;
         if (this.startEpoch && epoch && epoch != this.startEpoch) {
-          this.ws?.close();
-          this.stale();
+          this.go({ type: "stale" });
           return;
         }
         this.greeted = true;
@@ -521,8 +547,8 @@ export class Collab {
           }
           if (this.ackAgain) this.askAck();
         }
-        if (kind == SYNC_STEP2 && !this.syncedNow) {
-          this.syncedNow = true;
+        if (kind == SYNC_STEP2 && this.phase.at == "open") {
+          this.go({ type: "synced" });
           this.stateIn = true;
           void this.mergeKept(roomInfo(this.doc).get("epoch")).then(() => this.gotSynced());
         }
@@ -704,10 +730,10 @@ export class Collab {
   async flushed(): Promise<boolean> {
     for (let i = 0; i < 60; i++) {
       const ws = this.ws;
-      if (!this.open || !this.syncedNow || !ws) return false;
+      if (this.phase.at != "synced" || !ws) return false;
       if (ws.bufferedAmount == 0) {
         await sleep(150);
-        return this.open;
+        return this.connected;
       }
       await sleep(50);
     }
