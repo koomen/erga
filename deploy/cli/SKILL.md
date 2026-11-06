@@ -12,7 +12,8 @@ and `main`. There are no pull requests.
 
    Any name but `staging` and `main`. In a worktree of your own, run a real
    `bun install --frozen-lockfile` first.
-2. Commit. Before each push, run the tests and gate the push on the log:
+2. Commit. A commit message is one line of ten words at most, with no
+   body. Before each push, run the tests and gate the push on the log:
 
        bun run test > test.log 2>&1; grep -q "^all passing" test.log && git push origin HEAD:<branch>
 
@@ -24,6 +25,10 @@ and `main`. There are no pull requests.
 4. When Pete asks, merge the branch into staging:
 
        bun erga merge <branch> [-m "message"]
+
+   The message tells what the whole task does, in one line of ten words
+   at most. Without `-m`, it is the subject of the branch's first commit.
+   `merge` refuses a longer message.
 
    It squashes the branch into one commit, runs the tests on that commit,
    deploys it from this machine to each registered staging instance, then

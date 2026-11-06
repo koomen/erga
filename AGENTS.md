@@ -28,6 +28,8 @@ this way:
    that gives the fewest conflicts, and fixes each conflict as it comes.
 5. Each merge is one squashed commit (`bun erga merge <branch> -m`). Its
    message tells what the whole task does, not the branch's steps.
+   Every commit message is one line of ten words at most, with no body.
+   `bun erga merge` refuses a longer message.
 6. When a task's commit is on production (`bun erga deploy erga.dev`), the
    manager retires the task's agent. Until then, the agent stays: it knows its task
    if the merge or staging shows a problem.
@@ -228,7 +230,7 @@ Found a new trap? Write it here, in the same change.
 
 ## Summaries
 
-Every summary of finished work (your final reply, a long commit message) is
+Every summary of finished work (your final reply) is
 written in **ASD-STE100**, Simplified Technical English. The user reads it
 cold, and must understand it on one read. The rules
 that matter most:

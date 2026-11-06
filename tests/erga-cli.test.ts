@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import {
   latestTag,
   mergeRefusal,
+  messageRefusal,
   nextVersion,
   previousVersion,
   pushRefusal,
@@ -30,16 +31,23 @@ describe("merge", () => {
     expect(mergeRefusal({ branch: "x", exists: true, ahead: 2, conflicts: [] })).toBeNull();
   });
 
-  test("the one commit's message: -m, the one commit's own, or a list; the co-authors once, at the end", () => {
+  test("the one commit's message: -m or the first commit's subject, no body; the co-authors once", () => {
     const co = "Co-Authored-By: Claude <noreply@anthropic.com>";
-    const one = [{ sha: "a", subject: "Fix the list", body: `Why it broke.\n\n${co}` }];
-    expect(squashMessage("fix", one)).toBe(`Fix the list\n\nWhy it broke.\n\n${co}`);
     const two = [
       { sha: "b", subject: "Second", body: co },
-      { sha: "a", subject: "First", body: co },
+      { sha: "a", subject: "First", body: `Why it broke.\n\n${co}` },
     ];
-    expect(squashMessage("feat", two)).toBe(`Merge feat: First\n\n- First\n- Second\n\n${co}`);
-    expect(squashMessage("feat", two, "The feature")).toBe(`The feature\n\n${co}`);
+    expect(squashMessage(two)).toBe(`First\n\n${co}`);
+    expect(squashMessage(two, "The feature")).toBe(`The feature\n\n${co}`);
+  });
+
+  test("refuses a message of more than ten words, or more than one line", () => {
+    expect(messageRefusal("one two three four five six seven eight nine ten")).toBeNull();
+    expect(messageRefusal("one two three four five six seven eight nine ten eleven")).toBe(
+      "The message has 11 words. A commit message has 10 words at most."
+    );
+    expect(messageRefusal("A subject\n\nA body")).toContain("one line");
+    expect(messageRefusal("  ")).toContain("Write the message");
   });
 });
 

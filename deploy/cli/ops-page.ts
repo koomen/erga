@@ -8,6 +8,7 @@
 import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Entry, originOf, readConfig } from "./config";
+import { messageRefusal } from "./flow";
 import { readOps } from "./ops";
 import {
   type Answer,
@@ -326,7 +327,8 @@ export function serveOpsPage(o: OpsPageOptions) {
       if (!b) return no(`There is no branch ${String(body.branch)} in this clone.`);
       const block = mergeBlock(b, facts.git.base, "");
       if (block) return no(block);
-      if (!message) return no("Write the message of the commit on staging.");
+      const long = messageRefusal(message);
+      if (long) return no(long);
       return start(["merge", b.name, "-m", message]);
     }
     const g = "error" in facts.config ? null : chosenOf(groupsOf(facts.config), String(body.host));

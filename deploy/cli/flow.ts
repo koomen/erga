@@ -49,36 +49,24 @@ export function mergeRefusal(o: { branch: string; exists: boolean; ahead: number
   return null;
 }
 
-/** The message of the one commit a merge puts on staging: `-m`, else the branch's one commit's, else a list of them. */
-export function squashMessage(branch: string, commits: Commit[], given?: string): string {
+/** The most words in a commit message: one line, no body (AGENTS.md). */
+export const MESSAGE_WORDS = 10;
+
+/** Why a commit message is not one line of at most ten words, or null. */
+export function messageRefusal(text: string): string | null {
+  const t = text.trim();
+  if (!t) return "Write the message of the commit on staging.";
+  if (t.includes("\n")) return "A commit message is one line, with no body.";
+  const words = t.split(/\s+/).length;
+  return words > MESSAGE_WORDS ? `The message has ${words} words. A commit message has ${MESSAGE_WORDS} words at most.` : null;
+}
+
+/** The message of the one commit a merge puts on staging: `-m`, else the first commit's subject; the co-authors once, at the end. */
+export function squashMessage(commits: Commit[], given?: string): string {
   const trailers = new Set<string>();
-  const strip = (body = "") =>
-    body
-      .split("\n")
-      .filter((l) => {
-        if (/^Co-Authored-By:/i.test(l.trim())) {
-          trailers.add(l.trim());
-          return false;
-        }
-        return true;
-      })
-      .join("\n")
-      .trim();
-  let text: string;
-  if (given?.trim()) {
-    for (const c of commits) strip(c.body);
-    text = given.trim();
-  } else if (commits.length == 1) {
-    const body = strip(commits[0].body);
-    text = body ? `${commits[0].subject}\n\n${body}` : commits[0].subject;
-  } else {
-    // Oldest first, as they were made.
-    for (const c of commits) strip(c.body);
-    text = `Merge ${branch}: ${commits.at(-1)?.subject ?? ""}\n\n${[...commits]
-      .reverse()
-      .map((c) => `- ${c.subject}`)
-      .join("\n")}`;
-  }
+  for (const c of commits) for (const l of (c.body ?? "").split("\n")) if (/^Co-Authored-By:/i.test(l.trim())) trailers.add(l.trim());
+  // Newest first: the oldest commit usually names the task.
+  const text = given?.trim() || (commits.at(-1)?.subject ?? "");
   return trailers.size ? `${text}\n\n${[...trailers].join("\n")}` : text;
 }
 
