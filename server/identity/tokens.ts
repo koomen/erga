@@ -34,9 +34,10 @@
 
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Schema from "effect/Schema";
-import type { Directory, Sql } from "../directory/index.ts";
+import type { Directory, Param, Sql } from "../directory/index.ts";
 import { changeLogEntry } from "../../shared/attribution";
 import { base64url, randomString, randomToken, sha256, sha256Hex } from "../../shared/bytes.ts";
+import { type Status, type Step, step } from "./token-request.ts";
 
 /** A token as its person's list shows it (never the token itself). */
 export interface AgentToken {
@@ -132,6 +133,33 @@ const fromRow = (r: Row): AgentToken => ({
   expires: r.expires == null ? null : Number(r.expires),
   created: Number(r.created),
   lastUsed: r.last_used == null ? null : Number(r.last_used),
+});
+
+/** A request for a token: its row in token_requests. */
+interface RequestRow {
+  code_hash: string;
+  status: Status;
+  label: string;
+  expires: number;
+  login: string | null;
+  token_id: string | null;
+  scope: string;
+  doc_id: string | null;
+  token_expires: number | null;
+  oauth_client: string | null;
+  redirect_uri: string | null;
+  code_challenge: string | null;
+  oauth_state: string | null;
+}
+const REQUEST_COLUMNS =
+  "code_hash, status, label, expires, login, token_id, scope, doc_id, token_expires, oauth_client, redirect_uri, code_challenge, oauth_state";
+const stateOf = (r: RequestRow) => ({ status: r.status, expired: Number(r.expires) < Date.now() });
+/** What a waiting request asks for (`docId` as the agent named it), when it lapses, and where an OAuth request's person goes back. */
+const askedOf = (r: RequestRow) => ({
+  label: r.label,
+  expires: Number(r.expires),
+  grant: { scope: scopeOf(r.scope), docId: r.doc_id ?? null, expires: r.token_expires == null ? null : Number(r.token_expires) },
+  oauth: r.redirect_uri ? { redirectUri: r.redirect_uri, state: r.oauth_state ?? null } : null,
 });
 
 export class Tokens {
@@ -315,13 +343,16 @@ export class Tokens {
       throw new ScopeError({ message: "The expiry must be in the future." });
     const now = Date.now();
 
-    await this.sql.run("DELETE FROM token_requests WHERE expires < ?1", now);
+    for (const r of await this.sql.all<RequestRow>(`SELECT ${REQUEST_COLUMNS} FROM token_requests WHERE expires < ?1`, now)) {
+      const s = step(stateOf(r), "lapse");
+      if (s) await this.move(r, s);
+    }
     const code = "ergareq_" + randomToken(24);
     const userCode = `${randomString(4, CODE_ALPHABET)}-${randomString(4, CODE_ALPHABET)}`;
     const expires = now + REQUEST_MINUTES * 60 * 1000;
     const clipped = clipLabel(label, "An agent");
     await this.sql.run(
-      "INSERT INTO token_requests (code_hash, user_code, label, created, expires, login, token_id, scope, doc_id, token_expires, oauth_client, redirect_uri, code_challenge, oauth_state) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+      "INSERT INTO token_requests (code_hash, user_code, label, created, expires, login, token_id, scope, doc_id, token_expires, oauth_client, redirect_uri, code_challenge, oauth_state, status) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'waiting')",
       await sha256Hex(code),
       userCode,
       clipped,
@@ -339,36 +370,44 @@ export class Tokens {
     return { code, userCode, label: clipped, expires };
   }
 
+  /** The request a user code names, if there is one. */
+  private async byUserCode(userCode: string): Promise<RequestRow | undefined> {
+    const [row] = await this.sql.all<RequestRow>(
+      `SELECT ${REQUEST_COLUMNS} FROM token_requests WHERE user_code = ?1`,
+      normalCode(userCode)
+    );
+    return row;
+  }
+
+  /**
+   * Writes a step of the request's machine (token-request.ts) to its row, guarded by the status it was read with,
+   * and does the step's revoke. False if another change came first: then this one does nothing.
+   * `set`: other columns to write with it.
+   */
+  private async move(r: RequestRow, s: Step, set: Record<string, Param> = {}): Promise<boolean> {
+    const cols = Object.keys(set);
+    const changed =
+      s.to == "gone"
+        ? await this.sql.all("DELETE FROM token_requests WHERE code_hash = ?1 AND status = ?2 RETURNING 1", r.code_hash, r.status)
+        : await this.sql.all(
+            `UPDATE token_requests SET status = ?3${cols.map((c, i) => `, ${c} = ?${i + 4}`).join("")} WHERE code_hash = ?1 AND status = ?2 RETURNING 1`,
+            r.code_hash,
+            r.status,
+            s.to,
+            ...Object.values(set)
+          );
+    if (changed.length != 1) return false;
+    if (s.effect == "revoke" && r.login && r.token_id) await this.drop(r.login, "id = ?2", r.token_id);
+    return true;
+  }
+
   /**
    * A request still waiting for someone to approve it: what it asks for (`docId` as the agent named it), when it
    * lapses, and for an OAuth request, where its person goes back.
    */
   async pending(userCode: string): Promise<{ label: string; expires: number; grant: Required<Grant>; oauth: OAuthBack | null } | null> {
-    const [row] = await this.sql.all<{
-      label: string;
-      expires: number;
-      scope: string;
-      doc_id: string | null;
-      token_expires: number | null;
-      redirect_uri: string | null;
-      oauth_state: string | null;
-    }>(
-      "SELECT label, expires, scope, doc_id, token_expires, redirect_uri, oauth_state FROM token_requests WHERE user_code = ?1 AND login IS NULL AND expires >= ?2",
-      normalCode(userCode),
-      Date.now()
-    );
-    return row
-      ? {
-          label: row.label,
-          expires: Number(row.expires),
-          grant: {
-            scope: scopeOf(row.scope),
-            docId: row.doc_id ?? null,
-            expires: row.token_expires == null ? null : Number(row.token_expires),
-          },
-          oauth: row.redirect_uri ? { redirectUri: row.redirect_uri, state: row.oauth_state ?? null } : null,
-        }
-      : null;
+    const row = await this.byUserCode(userCode);
+    return row && step(stateOf(row), "approve") ? askedOf(row) : null;
   }
 
   /**
@@ -376,31 +415,32 @@ export class Tokens {
    * (check: ScopeError if they can't have it), for the agent to collect.
    * `documentsOnly` gives a request for admin scope the documents scope instead: the person's choice on the card.
    * For an OAuth request, also its authorization code (good for CODE_MINUTES), to send its person back with.
-   * Null if there's no such request waiting.
+   * Null if there's no such request waiting. Of two approvals at once, one mints the token; the other's goes again.
    */
   async approve(
     userCode: string,
     who: Who,
     documentsOnly = false
   ): Promise<{ info: AgentToken; oauth: (OAuthBack & { code: string }) | null } | null> {
-    const waiting = await this.pending(userCode);
-    if (!waiting) return null;
+    const row = await this.byUserCode(userCode);
+    const s = row && step(stateOf(row), "approve");
+    if (!row || !s) return null;
+    const waiting = askedOf(row);
     const grant = documentsOnly && waiting.grant.scope == "admin" ? { ...waiting.grant, scope: "documents" as const } : waiting.grant;
     const { info } = await this.mint(who, waiting.label, grant);
-    if (!waiting.oauth) {
-      await this.sql.run("UPDATE token_requests SET login = ?2, token_id = ?3 WHERE user_code = ?1 AND login IS NULL", normalCode(userCode), info.login, info.id);
-      return { info, oauth: null };
+    const code = waiting.oauth ? "ergacode_" + randomToken(24) : null;
+    const won = await this.move(row, s, {
+      login: info.login,
+      token_id: info.id,
+      // The time to collect it: the agent's next poll, or the OAuth code's trade.
+      expires: Date.now() + (code ? CODE_MINUTES : REQUEST_MINUTES) * 60 * 1000,
+      ...(code ? { code_hash: await sha256Hex(code) } : {}),
+    });
+    if (!won) {
+      await this.drop(info.login, "id = ?2", info.id);
+      return null;
     }
-    const code = "ergacode_" + randomToken(24);
-    await this.sql.run(
-      "UPDATE token_requests SET login = ?2, token_id = ?3, code_hash = ?4, expires = ?5 WHERE user_code = ?1 AND login IS NULL",
-      normalCode(userCode),
-      info.login,
-      info.id,
-      await sha256Hex(code),
-      Date.now() + CODE_MINUTES * 60 * 1000
-    );
-    return { info, oauth: { ...waiting.oauth, code } };
+    return { info, oauth: code && waiting.oauth ? { ...waiting.oauth, code } : null };
   }
 
   /**
@@ -408,10 +448,31 @@ export class Tokens {
    * Null if there's no such request waiting.
    */
   async deny(userCode: string): Promise<{ oauth: OAuthBack | null } | null> {
-    const waiting = await this.pending(userCode);
-    if (!waiting) return null;
-    await this.sql.run("DELETE FROM token_requests WHERE user_code = ?1 AND login IS NULL", normalCode(userCode));
-    return { oauth: waiting.oauth };
+    const row = await this.byUserCode(userCode);
+    const s = row && step(stateOf(row), "deny");
+    if (!row || !s || !(await this.move(row, s))) return null;
+    return { oauth: askedOf(row).oauth };
+  }
+
+  /**
+   * An approved request's token, collected with `hash` (its poll code's, or its OAuth code's): "ready" once, "pending"
+   * while it waits for its person, "gone" if it lapsed (its token revoked), was denied, or was collected.
+   */
+  private async take(
+    hash: string,
+    oauth: boolean
+  ): Promise<{ status: "pending" | "gone" } | { status: "ready"; row: RequestRow; token: Row }> {
+    const [row] = await this.sql.all<RequestRow>(
+      `SELECT ${REQUEST_COLUMNS} FROM token_requests WHERE code_hash = ?1 AND redirect_uri IS ${oauth ? "NOT NULL" : "NULL"}`,
+      hash
+    );
+    if (!row) return { status: "gone" };
+    const s = step(stateOf(row), "collect");
+    if (!s) return { status: "pending" };
+    if (!(await this.move(row, s)) || s.effect != "hand_over") return { status: "gone" };
+    // Revoked before it was collected: nothing to hand over.
+    const [token] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE id = ?1`, row.token_id);
+    return token ? { status: "ready", row, token } : { status: "gone" };
   }
 
   /**
@@ -420,46 +481,23 @@ export class Tokens {
    * challenge. Null for anything else. A code tried is used up, right or wrong.
    */
   async exchange(code: string, client: string, redirectUri: string, verifier: string): Promise<{ token: string; info: AgentToken } | null> {
-    const hash = await sha256Hex(code);
-    const [row] = await this.sql.all<{
-      expires: number;
-      token_id: string | null;
-      oauth_client: string;
-      redirect_uri: string;
-      code_challenge: string;
-    }>(
-      "SELECT expires, token_id, oauth_client, redirect_uri, code_challenge FROM token_requests WHERE code_hash = ?1 AND redirect_uri IS NOT NULL AND login IS NOT NULL",
-      hash
-    );
-    if (!row) return null;
-    await this.sql.run("DELETE FROM token_requests WHERE code_hash = ?1", hash);
-    if (!row.token_id || Number(row.expires) < Date.now() || row.oauth_client != client || row.redirect_uri != redirectUri) return null;
-    if (!(await pkceMatches(verifier, row.code_challenge))) return null;
-    // Revoked before it was collected: nothing to hand over.
-    const [token] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE id = ?1`, row.token_id);
-    return token ? { token: await this.tokenFor(token.id), info: fromRow(token) } : null;
+    const got = await this.take(await sha256Hex(code), true);
+    // A waiting request's code is not an authorization code.
+    if (got.status != "ready") return null;
+    const { row, token } = got;
+    if (row.oauth_client != client || row.redirect_uri != redirectUri || !(await pkceMatches(verifier, row.code_challenge ?? ""))) {
+      // Used up, and nobody can have its token now.
+      await this.drop(token.login, "id = ?2", token.id);
+      return null;
+    }
+    return { token: await this.tokenFor(token.id), info: fromRow(token) };
   }
 
-  /** The agent polls: its token once approved (handed over once), "pending" until then, "gone" if it expired or was collected. */
+  /** The agent polls: its token once approved (handed over once), "pending" until then, "gone" if it expired, was denied or was collected. */
   async collect(code: string): Promise<{ status: "pending" } | { status: "gone" } | { status: "ready"; token: string; login: string }> {
-    const hash = await sha256Hex(code);
     // Not an OAuth request's code: that one is traded only with its PKCE verifier (exchange).
-    const [row] = await this.sql.all<{ expires: number; login: string | null; token_id: string | null }>(
-      "SELECT expires, login, token_id FROM token_requests WHERE code_hash = ?1 AND redirect_uri IS NULL",
-      hash
-    );
-    if (!row) return { status: "gone" };
-    if (row.token_id && row.login) {
-      await this.sql.run("DELETE FROM token_requests WHERE code_hash = ?1", hash);
-      // Revoked before it was collected: nothing to hand over.
-      const [still] = await this.sql.all<{ id: string }>("SELECT id FROM agent_tokens WHERE id = ?1", row.token_id);
-      return still ? { status: "ready", token: await this.tokenFor(row.token_id), login: row.login } : { status: "gone" };
-    }
-    if (Number(row.expires) < Date.now()) {
-      await this.sql.run("DELETE FROM token_requests WHERE code_hash = ?1", hash);
-      return { status: "gone" };
-    }
-    return { status: "pending" };
+    const got = await this.take(await sha256Hex(code), false);
+    return got.status == "ready" ? { status: "ready", token: await this.tokenFor(got.token.id), login: got.token.login } : got;
   }
 }
 
