@@ -15,11 +15,8 @@ import {
   type Branch,
   busyWith,
   type Commit,
-  chosenOf,
-  deployOf,
   type Facts,
   type Git,
-  groupsOf,
   type JobRecord,
   jobOf,
   mergeBlock,
@@ -295,7 +292,7 @@ export function serveOpsPage(o: OpsPageOptions) {
   const start = (args: string[]) => {
     const busy = busyWith(facts);
     if (busy) return Response.json({ error: `Another job runs: ${busy}. Wait for it to end.` }, { status: 409 });
-    const command = `bun erga ${args[0]} ${args[1]}`;
+    const command = `bun erga ${args[0]} ${args[1]}${args[0] == "deploy" ? ` ${args[2]}` : ""}`;
     let r: Run;
     try {
       r = run(args);
@@ -331,13 +328,14 @@ export function serveOpsPage(o: OpsPageOptions) {
       if (long) return no(long);
       return start(["merge", b.name, "-m", message]);
     }
-    const g = "error" in facts.config ? null : chosenOf(groupsOf(facts.config), String(body.host));
-    const dep = g && g.primary.host == body.host ? deployOf(g, { ...facts, git: facts.git }) : null;
-    if (!g || !dep) return no(`${String(body.host)} is not behind its staging instances now.`);
-    if (dep.commit.sha != body.sha)
-      return no(`Staging runs ${dep.commit.sha.slice(0, 12)} now, not ${String(body.sha).slice(0, 12)}. Look again, and deploy again.`);
-    if (dep.block) return no(dep.block);
-    return start(["deploy", g.primary.host]);
+    // A row's Deploy: a commit of the log, to an instance that does not run it now.
+    const e = "error" in facts.config ? null : facts.config.instances.find((x) => x.host == body.host);
+    const c = facts.git.log.find((x) => x.sha == body.sha);
+    if (!e) return no(`${String(body.host)} has no entry in .erga/config.json.`);
+    if (!c) return no(`This clone's log has no commit ${String(body.sha).slice(0, 12)}.`);
+    const v = facts.answers[e.host]?.version;
+    if (v && c.sha.startsWith(v)) return no(`${e.host} runs ${v} already.`);
+    return start(["deploy", c.sha.slice(0, 12), e.host]);
   };
 
   const html = (body: string) =>

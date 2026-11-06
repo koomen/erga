@@ -212,8 +212,11 @@ function jobState(job: JobRecord, now: number): { cls: string; what: string } {
 }
 
 /** The job line: the job that runs on one of the group's instances, else the group's last job. */
-function jobLine(g: Group, mine: JobRecord[], now: number): string {
+function jobLine(g: Group, mine: JobRecord[], starting: string, now: number): string {
   const job = mine.find((j) => j.running) ?? mine[0];
+  // A command that this page started, before its job record shows.
+  if (starting && !job?.running)
+    return `<div class="job running"><i class="light"></i><code>${esc(starting)}</code><span>starts · from this page</span></div>`;
   if (!job) return `<div class="job none">No job yet. A deploy or a rollback of ${esc(g.primary.host)} shows here as it runs.</div>`;
   const st = jobState(job, now);
   return `<a class="job ${st.cls}" href="#${esc(g.primary.host)}/logs/${esc(job.id)}" title="${esc(st.what)}"><i class="light"></i><code>${esc(job.command)}</code><span>${esc(st.what)}</span></a>`;
@@ -293,26 +296,19 @@ const deployedAt = (jobs: JobRecord[], host: string, sha: string) =>
     .filter(Boolean)
     .sort((a, b) => b - a)[0];
 
-/**
- * The Deploy button: the commit that the primary's staging instances run, when the primary runs an older one; with why
- * it can't start now, or null. `bun erga deploy <primary>` takes that commit too (deploy.ts, stagingCommit).
- */
-export function deployOf(g: Group, f: Pick<Facts, "answers" | "jobs" | "starting"> & { git: Git }) {
-  const ours = g.staging.map((s) => f.answers[s.host]);
-  const v = ours[0]?.version;
-  const p = f.answers[g.primary.host]?.version;
-  if (!v || !p || ours.some((a) => a?.version != v)) return null;
-  const at = (x: string) => f.git.log.findIndex((c) => c.sha.startsWith(x));
-  const s = at(v);
-  if (s < 0 || at(p) <= s) return null;
-  const sick = g.staging.filter((e) => f.answers[e.host]?.healthy !== true).map((e) => e.host);
+/** Why a row's Deploy button can't start now, or null. */
+export const deployBlock = (f: Pick<Facts, "jobs" | "starting">) => {
   const busy = busyWith(f);
-  const block = sick.length
-    ? `Not healthy: ${sick.join(", ")}. Fix staging first.`
-    : busy
-      ? `Another job runs: ${busy}. Wait for it to end.`
-      : null;
-  return { commit: f.git.log[s], block };
+  return busy ? `Another job runs: ${busy}. Wait for it to end.` : null;
+};
+
+/** The Deploy button of a row, in an instance's column: `bun erga deploy <commit> <host>`, after its question. */
+function deployButton(e: Entry, primary: string, c: Commit, block: string | null): string {
+  const note = e.stagingOf
+    ? `It keeps its copy of ${primary}'s data.`
+    : "After a healthy deploy, main moves to it if main does not have it.";
+  const data = `data-deploy data-host="${esc(e.host)}" data-sha="${esc(c.sha)}" data-ask="${esc(`Deploy ${sha7(c.sha)} ${c.subject} to ${e.host}?`)}" data-note="${esc(note)}" aria-label="${esc(`Deploy ${sha7(c.sha)} to ${e.host}`)}"`;
+  return `<span class="deps here">${button("Deploy", data, block)}</span>`;
 }
 
 function log(g: Group, f: Facts & { git: Git }, now: number): string {
@@ -342,15 +338,13 @@ function log(g: Group, f: Facts & { git: Git }, now: number): string {
       return `<div class="head col" title="${esc(`${e.host}: ${st.what}`)}"><b>${e.stagingOf ? "staging" : "production"}</b><span class="host">${esc(e.host)}</span><span class="st"><i class="light ${st.cls}"></i>${esc(answer(e)?.error ? "no answer" : st.cls == "bad" ? "not healthy" : answer(e) ? "live" : "asking…")}</span></div>`;
     })
     .join("");
-  const dep = deployOf(g, f);
+  const block = deployBlock(f);
   const body = rows
     .map((c, i) => {
       const kind = isOn(i) ? "on" : "off";
       const marks = cols
         .map((e) => {
-          if (e == g.primary && dep?.commit == c)
-            return `<span class="deps">${button("Deploy", `data-deploy popovertarget="deploy-confirm"`, dep.block)}</span>`;
-          if (!runs(answer(e), c.sha)) return `<span class="deps"></span>`;
+          if (!runs(answer(e), c.sha)) return deployButton(e, g.primary.host, c, block);
           const at = deployedAt(f.jobs, e.host, c.sha);
           return `<span class="deps"><span class="dep live" data-host="${esc(e.host)}" title="${esc(`${e.host} runs this commit`)}"><span class="w">live</span><span class="at">${at ? short(at, now) : ""}</span></span></span>`;
         })
@@ -362,7 +356,7 @@ function log(g: Group, f: Facts & { git: Git }, now: number): string {
     <div class="legend"><span><i class="dot off"></i>not on ${esc(g.primary.host)} yet</span><span><i class="dot on"></i>on ${esc(g.primary.host)}</span></div>
     ${notes.map((n) => `<p class="note">${esc(n)}</p>`).join("")}
     <div class="grid" style="--cols: ${cols.length}"><div class="head"></div><div class="head">Commit</div><div class="head who"></div><div class="head sha"></div><div class="head time"></div>${head}${body || `<div class="none">No commits on origin/staging or origin/main in this clone.</div>`}</div>
-    ${dep ? `<div class="confirm" id="deploy-confirm" popover data-host="${esc(g.primary.host)}" data-sha="${esc(dep.commit.sha)}"><p>Deploy <code>${esc(sha7(dep.commit.sha))}</code> ${esc(dep.commit.subject)} to <b>${esc(g.primary.host)}</b>?</p><p class="soft">It is the commit staging runs. After a healthy deploy, main moves to it.</p><div class="acts"><button class="btn" type="button" data-go>Deploy to ${esc(g.primary.host)}</button><button class="btn quiet" type="button" popovertarget="deploy-confirm" popovertargetaction="hide">Cancel</button></div><p class="err" role="alert"></p></div>` : ""}
+    <div class="confirm" id="deploy-confirm" popover><p data-s="ask"></p><p class="soft" data-s="note"></p><div class="acts"><button class="btn" type="button" data-go>Deploy</button><button class="btn quiet" type="button" popovertarget="deploy-confirm" popovertargetaction="hide">Cancel</button></div><p class="err" role="alert"></p></div>
   </section>`;
 }
 
@@ -412,7 +406,7 @@ export function viewHtml(f: Facts, name: string, now = Date.now()): string {
           : "error" in f.git
             ? `<p class="note bad">${esc(f.git.error)}</p>`
             : branches(f.git, busyWith(f), now) + log(g, { ...f, git: f.git }, now);
-  return `${sidebar}<section class="main" data-primary="${esc(g.primary.host)}" data-tab="${tab}"${newest(groups, f.jobs)}><h2 class="title">${esc(g.primary.host)}</h2>${tabs}${jobLine(g, mine, now)}${f.failed ? `<p class="note bad failed">${esc(f.failed)}</p>` : ""}<div class="tab-body">${body}</div></section>`;
+  return `${sidebar}<section class="main" data-primary="${esc(g.primary.host)}" data-tab="${tab}"${newest(groups, f.jobs)}><h2 class="title">${esc(g.primary.host)}</h2>${tabs}${jobLine(g, mine, f.starting, now)}${f.failed ? `<p class="note bad failed">${esc(f.failed)}</p>` : ""}<div class="tab-body">${body}</div></section>`;
 }
 
 /** The whole page: Erga's bar, the live part, and the page's script. */

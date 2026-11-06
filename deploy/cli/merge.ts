@@ -7,17 +7,23 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readConfig } from "./config";
-import { deployStaging, recordPass, startJob, takeLock } from "./deploy";
+import { deployStaging, type From, recordPass, startJob, takeLock, testEnv } from "./deploy";
 import { mergeRefusal, messageRefusal, squashMessage } from "./flow";
 import { commitsOf, conflictsOf, fetchOrigin, git, headOf, sh } from "./observe";
 
 /** Merges `branch` onto staging. The result: the commit on staging. An error says what stopped it, and what to do next. */
-export async function mergeBranch(o: { dir: string; branch: string; message?: string; print?: (line: string) => void }): Promise<string> {
+export async function mergeBranch(o: {
+  dir: string;
+  branch: string;
+  message?: string;
+  from?: From;
+  print?: (line: string) => void;
+}): Promise<string> {
   const name = o.branch;
   const command = `bun erga merge ${name}`;
   const free = takeLock(o.dir, "staging", command);
   const host = readConfig(o.dir).instances.find((e) => e.stagingOf)?.host ?? "staging";
-  const job = startJob(o.dir, { command, host, print: o.print });
+  const job = startJob(o.dir, { command, host, from: o.from, print: o.print });
   const log = job.log;
   const stop = (what: string, next?: string): never => {
     throw new Error(next ? `${what} ${next}` : what);
@@ -45,7 +51,7 @@ export async function mergeBranch(o: { dir: string; branch: string; message?: st
       dir = "";
       stop(`git worktree add failed: ${add.err}`);
     }
-    const at = (cmd: string[], x: { input?: string } = {}) => sh(cmd, { cwd: dir, ...x });
+    const at = (cmd: string[], x: { input?: string; env?: Record<string, string | undefined> } = {}) => sh(cmd, { cwd: dir, ...x });
     const sq = at(["git", "merge", "--squash", `origin/${name}`]);
     if (!sq.ok) stop(`git merge --squash failed: ${sq.err || sq.out}`, `Rebase ${name} on origin/staging, push it, and merge again.`);
     const c = at(["git", "commit", "--quiet", "-F", "-"], { input: text });
@@ -53,10 +59,11 @@ export async function mergeBranch(o: { dir: string; branch: string; message?: st
     const sha = at(["git", "rev-parse", "HEAD"]).out;
     job.note({ commit: sha });
     log("      bun install --frozen-lockfile ...");
-    const i = at(["bun", "install", "--frozen-lockfile"]);
+    // The tests run with no ERGA_JOB_FROM: a test's own job records are a terminal's.
+    const i = at(["bun", "install", "--frozen-lockfile"], { env: testEnv() });
     if (!i.ok) stop(`bun install failed: ${i.err.slice(-600)}`);
     log(`      bun run test ... (the log: ${file})`);
-    const t = at(["bun", "run", "test"]);
+    const t = at(["bun", "run", "test"], { env: testEnv() });
     writeFileSync(file, `${t.out}\n${t.err}`);
     if (!/^all passing/m.test(t.out)) {
       for (const l of t.out.split("\n").slice(-30)) log(l);
@@ -67,7 +74,7 @@ export async function mergeBranch(o: { dir: string; branch: string; message?: st
     }
     log("PASS  bun run test: all passing.");
     recordPass(o.dir, sha, t.out);
-    const hosts = await deployStaging({ dir: o.dir, sha, command, print: log }).catch((e: Error) =>
+    const hosts = await deployStaging({ dir: o.dir, sha, command, from: o.from, print: log }).catch((e: Error) =>
       stop(e.message, `Fix it, then run bun erga merge ${name} again.`)
     );
     for (const h of hosts) log(`PASS  ${h} runs ${sha.slice(0, 12)}, healthy.`);

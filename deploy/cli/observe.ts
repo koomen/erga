@@ -9,13 +9,13 @@ import { readOps } from "./ops";
 export const ROOT = new URL("../..", import.meta.url).pathname;
 
 /** A command's result: its exit, and what it printed. */
-export function sh(cmd: string[], o: { cwd?: string; input?: string; env?: Record<string, string> } = {}) {
+export function sh(cmd: string[], o: { cwd?: string; input?: string; env?: Record<string, string | undefined> } = {}) {
   const r = Bun.spawnSync(cmd, {
     cwd: o.cwd ?? ROOT,
     stdin: o.input != null ? new TextEncoder().encode(o.input) : "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, ...o.env },
+    env: o.env ?? process.env,
   });
   return { ok: r.exitCode == 0, code: r.exitCode, out: r.stdout.toString().trim(), err: r.stderr.toString().trim() };
 }
