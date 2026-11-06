@@ -1,6 +1,7 @@
 // The sign-out page (server/identity/sign-in.ts, signOut): the session's cookie is gone already. Before it goes on, it
 // deletes every offline copy of the editor's in this browser: this origin's, and each pages origin's that the editor
-// used (client/common/offline.ts), in a frame of that origin's /erga-clear (they wait at most a few seconds).
+// used (client/common/offline.ts), in a frame of that origin's /erga-clear (they wait at most a few seconds). It also
+// deletes this tab's copy of the agent's panel (client/agent/person-agent.ts keeps it for the tab's next page).
 
 import { clearOffline } from "../common/offline";
 import { CLEAR_PATH, ORIGINS_KEY } from "../../shared/offline";
@@ -8,6 +9,7 @@ import { CLEAR_PATH, ORIGINS_KEY } from "../../shared/offline";
 export default function signOut(C: { to: string }): void {
   let origins: string[] = [];
   try {
+    sessionStorage.removeItem("erga:agent-panel");
     origins = (JSON.parse(localStorage.getItem(ORIGINS_KEY) ?? "[]") as unknown[]).filter(
       (o): o is string => typeof o == "string" && /^https?:\/\/[^/]+$/.test(o)
     );

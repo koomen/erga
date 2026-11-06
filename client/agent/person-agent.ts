@@ -368,6 +368,30 @@ function connect() {
 }
 load().then(connect);
 
+// The panel as this page leaves it, for the tab's next page: client/inline/agent-toggle.ts draws it there before the
+// page paints, so the conversation doesn't empty and come back from page to page.
+window.addEventListener("pagehide", () => {
+  const l = $("agent-log"),
+    model = $("agent-model");
+  const kept = {
+    person: $("agent").dataset.person,
+    log: talk.drawn(),
+    model: model.innerHTML,
+    choice: model.querySelector("select")?.value,
+    top: l.scrollTop,
+    bottom: l.scrollHeight - l.scrollTop - l.clientHeight <= 8,
+  };
+  try {
+    sessionStorage.setItem("erga:agent-panel", JSON.stringify(kept));
+  } catch {
+    try {
+      sessionStorage.removeItem("erga:agent-panel");
+    } catch {
+      /* private mode */
+    }
+  }
+});
+
 // A new release: the page reloads at a quiet moment and comes back as it was. The draft, the panel and
 // its layout are kept anyway; this keeps the files attached to the next message.
 interface Kept { files?: Attachment[] }
