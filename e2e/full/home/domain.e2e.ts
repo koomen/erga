@@ -4,6 +4,7 @@
 // home.localhost, which the browser sends to this machine.
 import { request } from "node:http";
 import { expect, servers, test } from "../../helpers/fixtures";
+import { openDocEditor } from "../versions/settings";
 import { adminToken, get, home, openHome, publish, redeploy, resetLanding, setLanding, signedOut } from "./home";
 
 const HOME = "home.localhost";
@@ -50,10 +51,10 @@ const onHome = (root: string, path: string) =>
 async function site() {
   const server = await own();
   const token = await adminToken(server);
-  const { id } = await publish(server, token, files, { title: "Site home" });
+  const { id, url } = await publish(server, token, files, { title: "Site home" });
   expect((await setLanding(server, id)).error).toBeUndefined();
   await expect.poll(async () => (await home(server, id)).deploy.state, { timeout: 10_000 }).toBe("deployed");
-  return { server, token, id };
+  return { server, token, id, url };
 }
 
 test("the site's own domain serves its files as they are, at clean addresses, and nothing of Erga's", async () => {
@@ -116,4 +117,17 @@ test("in a browser, the domain shows the deployed site with no bars; a deploy ch
       return p.locator("h1").textContent();
     })
     .toBe("Site home, edited");
+});
+
+test("the homepage's settings show its domain, a link that opens the site there", async ({ tab }) => {
+  const { server, url } = await site();
+  const page = tab.page;
+  const s = await openDocEditor(page, server, new URL(url).pathname);
+  await s.open();
+  await expect.poll(() => s.text("#ds-home-note")).toBe(`Homepage · ${HOME}`);
+  const href = await s.attr("#ds-home-domain", "href");
+  expect(href).toBe(`http://${HOME}:${new URL(server.root).port}/`);
+  const [site2] = await Promise.all([page.context().waitForEvent("page"), s.clickOn("#ds-home-domain")]);
+  await expect.poll(() => site2.locator("h1").textContent()).toBe("Site home");
+  await site2.close();
 });
