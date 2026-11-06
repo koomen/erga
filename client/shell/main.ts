@@ -153,11 +153,12 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   shell.docKind = first.tree.kind ?? "project";
   performance.mark("erga:hello");
 
-  // Which of the document's pages this is: the one the address named (the app says, erga-page),
-  // else the document's own. One room holds them all; this tab edits this one, and goes to another by its address.
-  // (Another page opened in place, while editing, changes it: swapPage.)
-  shell.pagePath = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || shell.info.path;
-  shell.info = { ...shell.info, path: shell.pagePath, name: shell.pagePath };
+  // Which of the document's pages the editor holds: the one the viewer shows (the meta erga-page, which
+  // client/inline/viewer-nav.ts owns), else the document's own. One room holds them all; this tab edits this one, and
+  // goes to another by its address. (Another page opened in place, while editing, changes it: swapPage.) The editor's
+  // replica (collab) keeps it from then on; shell.pagePath reads it there.
+  const firstPage = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || shell.info.path;
+  Object.defineProperty(shell, "pagePath", { get: () => collab.pagePath || firstPage });
   /** A page's address (the editor's, while editing), given its path in the document; the root page's for null. */
   const addressOf = (path: string | null) => {
     const doc = shell.docName?.address ?? document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? "";
@@ -249,7 +250,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
 
   // Into the room as who this tab is, and the document's text (on its way already, or here). Its presence is the page
   // editor's (frame.ts: its own replica), or the source view's while that's open (views.ts).
-  collab.join(me, info.path, null);
+  collab.join(me, firstPage, null);
   try {
     await collab.ready();
     performance.mark("erga:synced");
@@ -259,7 +260,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     window.ergaShell?.ready();
     return;
   }
-  document.title = document.documentElement.dataset.pageTitle || (info.docName?.title ?? info.name);
+  document.title = document.documentElement.dataset.pageTitle || (info.docName?.title ?? shell.pagePath);
   // Someone edits the source (the lock: document/room.ts): the source view gives way to the page, which says so and is
   // read-only meanwhile (libs/text/ui/frame.ts).
   roomInfo(collab.doc).observe(() => {
@@ -619,8 +620,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     if (shell.mode != "text") { shell.views.setMode("text"); await shell.views.switched(); }
     const text = collab.setPath(path);
     if (text == null) { goTo(addressOf(path)); return; }
-    shell.pagePath = path;
-    shell.info = { ...shell.info, path, name: path };
     page.load(path);
     // What was said of the last page was of it alone.
     shell.room.shownProblems.clear();
@@ -628,19 +627,20 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     shell.naming.togglePages(false);
     // The new page has the focus for its editor, unless the agent's box has it.
     if (!$("agent").contains(document.activeElement)) page.focus();
-    let meta = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]');
-    if (!meta) meta = document.head.appendChild(Object.assign(document.createElement("meta"), { name: "erga-page" }));
-    meta.content = path;
+    // A new entry in the history, then the page shown (viewer-nav.ts: the address and the entry follow).
+    if (push) window.history.pushState({ ...window.history.state, ergaPage: path }, "", addressOf(path));
+    window.ergaShowPage(path);
     shell.naming.tree()?.setCurrent(path);
     shell.naming.viewHref(shell.docName!.address);
-    if (push) window.history.pushState({ ...window.history.state, ergaPage: path }, "", addressOf(path));
     shell.people.queueCursor();
     shell.people.queuePeers();
   }
-  // Each entry in the history says which page it is (one the pencil adds, going in or out, is stamped as it comes).
+  // Each entry in the history says which page it is (the pencil's and the viewer's say it as they're made:
+  // viewer-edit-boot.ts, viewer-nav.ts). Viewing, the viewer follows Back and Forward alone.
   const stamp = () => { if (typeof window.history.state?.ergaPage != "string") window.history.replaceState({ ...window.history.state, ergaPage: shell.pagePath }, ""); };
   stamp();
   addEventListener("popstate", () => {
+    if (!editing()) return;
     const to = window.history.state?.ergaPage;
     if (typeof to == "string") { if (to != shell.pagePath && !swapPage(to, false)) location.reload(); return; }
     // An entry that doesn't say (made before this page loaded): this page, unless its address is another's.

@@ -158,7 +158,7 @@ export function mountNaming(shell: Shell) {
         label: "Pages",
         rootTitle: shell.docName!.title,
         titleOf: pageTitle,
-        current: shell.info!.path,
+        current: shell.pagePath,
         hasRelativeLinks,
         initial: kept(),
         onChange: keep,
