@@ -34,10 +34,10 @@ test("a job runs while it has no result and its process lives", () => {
 });
 
 test("the view: each primary with its staging instances, the job line, and live at each instance's commit", () => {
-  const config = { instances: [entry("erga.dev"), entry("erga.koomen.dev"), entry("staging.erga.dev", "erga.dev")] };
+  const config = { instances: [entry("erga.dev"), entry("erga.example.org"), entry("staging.erga.dev", "erga.dev")] };
   expect(groupsOf(config).map((g) => [g.primary.host, g.staging.map((s) => s.host)])).toEqual([
     ["erga.dev", ["staging.erga.dev"]],
-    ["erga.koomen.dev", []],
+    ["erga.example.org", []],
   ]);
   const log = ["3", "2", "1"].map((n, i) => ({ sha: n.repeat(40), subject: `Change ${n}`, author: "Pete", at: NOW - i * 3_600_000 }));
   const facts: Facts = {
@@ -45,7 +45,7 @@ test("the view: each primary with its staging instances, the job line, and live 
     answers: {
       "erga.dev": { version: "1".repeat(12), healthy: true },
       "staging.erga.dev": { version: "3".repeat(12), healthy: true },
-      "erga.koomen.dev": { version: "9".repeat(12), healthy: true },
+      "erga.example.org": { version: "9".repeat(12), healthy: true },
     },
     git: { log, branches: [], base: "staging", main: "1".repeat(40), elsewhere: { ["9".repeat(12)]: false } },
     jobs: [jobOf(line(start) + line({ commit: "1".repeat(40) }) + line({ result: "ok", ended: "2026-11-05T11:55:00.000Z" }), () => true)!],
@@ -64,13 +64,13 @@ test("the view: each primary with its staging instances, the job line, and live 
   expect(html).toContain('<div class="row off" data-sha="2');
   expect(html).toContain('<div class="row on" data-sha="1');
   // An instance that runs a commit the clone does not have: the page says so.
-  const other = viewHtml(facts, "erga.koomen.dev", NOW);
-  expect(other).toContain("erga.koomen.dev runs 999999999999, which this clone does not have. git fetch gets it.");
+  const other = viewHtml(facts, "erga.example.org", NOW);
+  expect(other).toContain("erga.example.org runs 999999999999, which this clone does not have. git fetch gets it.");
   expect(other).toContain("No job yet.");
 });
 
 test("Logs shows the job that runs, else the last one, or the one the hash names; History lists the group's jobs", () => {
-  const config = { instances: [entry("erga.dev"), entry("staging.erga.dev", "erga.dev"), entry("erga.koomen.dev")] };
+  const config = { instances: [entry("erga.dev"), entry("staging.erga.dev", "erga.dev"), entry("erga.example.org")] };
   const job = (id: string, host: string, started: string, more = "") =>
     jobOf(line({ ...start, command: `bun erga deploy ${host}`, host, started }) + line({ out: `out of ${id}` }) + more, () => true, id)!;
   const done = (ended: string) => line({ result: "ok", ended });
@@ -81,7 +81,7 @@ test("Logs shows the job that runs, else the last one, or the one the hash names
     jobs: [
       job("old", "erga.dev", "2026-11-05T10:00:00.000Z", done("2026-11-05T10:00:30.000Z")),
       job("runs", "staging.erga.dev", "2026-11-05T11:00:00.000Z"),
-      job("other", "erga.koomen.dev", "2026-11-05T11:30:00.000Z", done("2026-11-05T11:31:00.000Z")),
+      job("other", "erga.example.org", "2026-11-05T11:30:00.000Z", done("2026-11-05T11:31:00.000Z")),
     ],
     setup: "",
     starting: "",
@@ -93,7 +93,7 @@ test("Logs shows the job that runs, else the last one, or the one the hash names
   expect(logs).toContain('<a class="tab" role="tab" href="#erga.dev/logs" aria-selected="true">Logs</a>');
   expect(viewHtml(facts, "erga.dev/logs/old", NOW)).toContain('<section class="logs" data-job="old"');
   // The newest job of all, for the page's switch to its primary.
-  expect(logs).toContain('data-newest="other" data-newest-primary="erga.koomen.dev"');
+  expect(logs).toContain('data-newest="other" data-newest-primary="erga.example.org"');
   const history = viewHtml(facts, "erga.dev/history", NOW);
   expect([...history.matchAll(/class="h-row [^"]*" href="[^"]*" data-job="(\w+)"/g)].map((m) => m[1])).toEqual(["runs", "old"]);
   expect(history).toContain('<span class="h-took">30 s</span>');
