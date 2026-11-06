@@ -19,24 +19,29 @@ import { byLine, SYSTEM } from "../../shared/attribution.ts";
 import type { Directory, DocRow } from "../directory/index.ts";
 import { IDLE, renderHome, type DeployStatus } from "./render.ts";
 import { addressOf } from "../../document/names.ts";
-import { siteOf, type Site } from "./site.ts";
+import * as Schema from "effect/Schema";
+import { Site, siteOf } from "./site.ts";
 
-/** A deployed snapshot, as serve.ts serves it. */
-export interface LivePage {
-  gen: string;
-  docId: string;
+/**
+ * A deployed snapshot, as serve.ts serves it. The edge's cache keeps it across releases: serve.ts takes a copy of
+ * another shape (an older release's) as no copy at all.
+ */
+export const LivePage = Schema.Struct({
+  gen: Schema.String,
+  docId: Schema.String,
   /** The document's address when it was deployed (its Edit link: a later rename redirects). */
-  address: string;
+  address: Schema.String,
   /** The page, split where the controls go. */
-  before: string;
-  after: string;
+  before: Schema.String,
+  after: Schema.String,
   /** Every file it has, by path (the page among them, as it is in the document). */
-  files: string[];
+  files: Schema.Array(Schema.String),
   /** The site's settings, from its files (site.ts). */
-  site: Site;
-  at: number;
-  version: number | null;
-}
+  site: Site,
+  at: Schema.Number,
+  version: Schema.NullOr(Schema.Number),
+});
+export type LivePage = typeof LivePage.Type;
 
 /** What the rest of the app may ask the homepage's deploys (the Durable Object answers, by RPC). */
 export interface HomeObject {
@@ -112,10 +117,11 @@ export class HomeDeploys implements HomeObject {
     // A snapshot from a release before sites had settings: read them from its files once.
     if (this.live && !this.live.site) {
       const gen = this.live.gen;
-      this.live.site = await siteOf(async (path) => {
+      const site = await siteOf(async (path) => {
         const f = await this.file(gen, path);
         return f && new TextDecoder().decode(f.bytes);
       });
+      this.live = { ...this.live, site };
       await this.deps.storage.put(LIVE, this.live);
     }
     if (this.s.state == "deploying" && (await this.deps.alarm.get()) == null) await this.deps.alarm.set(Date.now());

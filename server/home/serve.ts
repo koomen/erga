@@ -11,7 +11,8 @@ import { call, ctx, fromWeb } from "../http.ts";
 import { roleMay } from "../directory/index.ts";
 import { accountOf, link, OWN_ACCOUNT, withEdit } from "../pages/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
-import type { LivePage } from "./deploys.ts";
+import * as Schema from "effect/Schema";
+import { LivePage } from "./deploys.ts";
 import { HOME_FILES, homeHeader, pageInter, withHomeLlm, withToken } from "./render.ts";
 import { pageToken } from "./llm-token.ts";
 import { actingAdmin } from "../identity/index.ts";
@@ -47,6 +48,8 @@ function refresh(platform: Platform, url: URL): Promise<LivePage | null> {
   })().finally(() => { refreshing = null; });
 }
 
+const isLivePage = Schema.is(LivePage);
+
 /** The snapshot to serve, and where it came from: this isolate, the edge's cache or the home object. */
 async function livePage(platform: Platform, url: URL): Promise<{ page: LivePage; from: string } | null> {
   const recheckMs = platform.edge.homeRecheckMs;
@@ -61,7 +64,9 @@ async function livePage(platform: Platform, url: URL): Promise<{ page: LivePage;
   const cached = await platform.edge.cache?.match(cacheKey(url)).catch(() => undefined);
   if (cached) {
     try {
-      const page = await cached.json() as LivePage;
+      const page: unknown = await cached.json();
+      // An older release's copy (another shape): ask the home object, whose own copy is current (deploys.ts, load).
+      if (!isLivePage(page)) throw new Error("an older shape");
       const checked = Number(cached.headers.get("x-checked")) || 0;
       if (!memo) memo = { page, checked };
       if (stale(checked)) later(refresh(platform, url));
