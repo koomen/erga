@@ -8,28 +8,33 @@ import { liveList, refresh } from "../common/live-rows";
 import times from "./times";
 
 export default function adminApiKeys(): void {
+  /**
+   * `li` as the page has it now: a live change can draw a row again while it saves (live-rows.ts keeps its status),
+   * and the answer goes to the new one.
+   */
+  const now = (li: HTMLElement) => list.querySelector<HTMLElement>(`:scope > [data-live="${CSS.escape(li.dataset.live!)}"]`) ?? li;
+  const hintOf = (li: HTMLElement) => now(li).querySelector(".hint")!;
   /** A key's row: Save, and Clear. */
   function wire(li: HTMLElement) {
     const form = li.querySelector("form")!,
       input = form.elements.namedItem("value") as HTMLInputElement,
       save = li.querySelector<HTMLButtonElement>(".save")!,
-      clear = li.querySelector(".clear"),
-      hint = li.querySelector(".hint")!;
+      clear = li.querySelector(".clear");
     if (input.disabled) return;
     input.addEventListener("input", () => {
       save.disabled = !input.value.trim();
-      say(hint, "");
+      say(hintOf(li), "");
     });
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      say(hint, "Saving…");
+      say(hintOf(li), "Saving…");
       try {
         await post(form.action, { name: li.dataset.name!, value: input.value });
         input.value = "";
         input.blur();
         refresh(li.dataset.live!);
       } catch (err) {
-        say(hint, (err as Error).message, true);
+        say(hintOf(li), (err as Error).message, true);
       }
     });
     clear?.addEventListener("click", async () => {
@@ -44,12 +49,12 @@ export default function adminApiKeys(): void {
         )
       )
         return;
-      say(hint, "Clearing…");
+      say(hintOf(li), "Clearing…");
       try {
         await runTool("clear_api_key", { name: li.dataset.name! });
         refresh(li.dataset.live!);
       } catch (err) {
-        say(hint, (err as Error).message, true);
+        say(hintOf(li), (err as Error).message, true);
       }
     });
   }
@@ -73,15 +78,19 @@ export default function adminApiKeys(): void {
   list.addEventListener("change", async (e) => {
     const box = e.target as HTMLInputElement;
     if (!box.matches(".models input[type=checkbox]")) return;
-    const hint = box.closest("li")!.querySelector(".hint")!;
+    const li = box.closest("li")!;
     const off = [...list.querySelectorAll<HTMLInputElement>(".models input[type=checkbox]")].filter((b) => !b.checked).map((b) => b.value);
-    say(hint, "Saving…");
+    say(hintOf(li), "Saving…");
+    // The box as the page has it after the answer: a row drawn again meanwhile shows the setting from before the save.
+    const shown = () => now(li).querySelector<HTMLInputElement>(`.models input[value="${CSS.escape(box.value)}"]`) ?? box;
+    const wanted = box.checked;
     try {
       await runTool("set_setting", { key: "agent_models_off", value: off });
-      say(hint, "Saved.");
+      shown().checked = wanted;
+      say(hintOf(li), "Saved.");
     } catch (err) {
-      box.checked = !box.checked;
-      say(hint, (err as Error).message, true);
+      shown().checked = !wanted;
+      say(hintOf(li), (err as Error).message, true);
     }
   });
   for (const li of list.querySelectorAll<HTMLElement>(":scope > li.provider")) wire(li);
