@@ -68,11 +68,18 @@ export class ChatTables {
     });
   }
 
-  /** A run given up (nothing woke it for too long): it shows as stopped. */
+  /**
+   * A run given up (nothing woke it for too long), or stopped while no agent was live: it shows as stopped. The
+   * messages that waited go into the conversation, unanswered, as a Stop leaves them (agents/turn.ts).
+   */
   stop(scope: string): void {
     const s = this.load(scope);
     if (!s) return;
-    this.save(scope, { messages: { from: s.messages.length, items: [] }, log: { from: s.log.length, items: [] }, state: { ...s.state, running: false, queued: [], calls: {}, at: Date.now() } });
+    this.save(scope, {
+      messages: { from: s.messages.length, items: s.state.queued },
+      log: { from: s.log.length, items: [] },
+      state: { ...s.state, running: false, queued: [], calls: {}, at: Date.now() },
+    });
   }
 
   /** Items `from` on, each in its parts; whatever was there from `from` on goes. */
