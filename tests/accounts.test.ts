@@ -147,3 +147,14 @@ test("a Google account and a GitHub account with the same email are two accounts
   expect(await resolve(dir, google("g-w", "wes@new.example"), { join: false })).toEqual({ kind: "in", login: "wes" });
   expect(await dir.identities.emailsOf("wes")).toEqual(["wes@new.example"]);
 });
+
+test("a person who waits as an email an account verified later waits no more once that account signs in", async () => {
+  const dir = new Directory(memory(), { admins: ["koomen"] });
+  await dir.identities.createAccount("erin", google("g-5", "erin@a.example"), writes("erin"));
+  const { person } = await dir.addUser(ADMIN, { provider: "google", handle: "erin@b.example" }, "read");
+  expect(person).toBeDefined();
+  // Erin's Google account changes its email to the one the admin added, and signs in: her account, and no wait.
+  expect(await resolve(dir, google("g-5", "erin@b.example"), { join: false })).toEqual({ kind: "in", login: "erin" });
+  expect(await dir.people.list(ADMIN)).toEqual([]);
+  expect((await dir.users.get("erin"))?.role).toBe("user");
+});

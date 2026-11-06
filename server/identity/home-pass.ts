@@ -7,6 +7,8 @@
 //                                        signed in there: back to the own domain's /_erga/pass with a pass, a signed
 //                                        login a minute old at most; signed out: the provider's sign-in first, back here
 //   own   /_erga/pass?pass=&next=        the pass for the cookie `erga_visitor` (the login, signed, 30 days), on to `next`
+//   own   /_erga/sign-out                the cookie goes, on to the Erga domain's `/`: sign-out there comes here first
+//         (sign-in.ts, signOut), so a person signed out of Erga is signed out of the own domain too
 //
 // The pass goes only to the own domain (the deploy's, never one from the request), and `next` is only a path there.
 // The cookie is the own domain's alone, and opens nothing but the homepage's model there (agents/page-llm.ts,
@@ -34,6 +36,9 @@ function onHost(url: URL, host: string, path: string): string {
   to.hostname = host;
   return to.toString();
 }
+
+/** Where sign-out on the Erga domain goes on to: the own domain's sign-out, which ends its cookie too; or `/`. */
+export const afterSignOut = (p: Platform, url: URL) => (p.deploy.home ? onHost(url, p.deploy.home, "/_erga/sign-out") : "/");
 
 /** The person a signed value of `kind` names, if it's good and not older than `ms`. */
 async function signedLogin(p: Platform, kind: string, signed: string | null | undefined, ms: number): Promise<string | null> {
@@ -78,6 +83,14 @@ export const homeDomainSignIn = Effect.gen(function* () {
     const to = `/auth/home-pass?provider=${provider}&next=${encodeURIComponent(next)}`;
     return redirect(onHost(url, p.deploy.app, to), 302, { "Cache-Control": "no-store" });
   }
+  if (url.pathname == "/_erga/sign-out")
+    return withCookie(
+      redirect(p.deploy.app ? onHost(url, p.deploy.app, "/") : "/", 302, { "Cache-Control": "no-store" }),
+      request,
+      VISITOR,
+      "",
+      0
+    );
   if (url.pathname == "/_erga/pass") {
     const login = yield* call(() => signedLogin(p, "home-pass", url.searchParams.get("pass"), PASS_MS));
     if (!login) return text("This sign-in link is old or not good. Go back and sign in again.", 403, { "Cache-Control": "no-store" });

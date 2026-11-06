@@ -11,7 +11,8 @@
 //           matches from then on.
 //
 // Their first sign-in makes their account with that role (Identities.createAccount),
-// and the row goes: from then on they're a user (server/directory/users.ts).
+// and the row goes: from then on they're a user (server/directory/users.ts). A sign-in
+// of an account that has the provider account already ends the wait too (signedIn).
 
 import { changeLogEntry } from "../../shared/attribution.ts";
 import type { Sql, Statement } from "./model.ts";
@@ -120,6 +121,18 @@ export class People {
     if (!row) return null;
     await this.sql.run("UPDATE people SET subject = ?2 WHERE id = ?1 AND subject IS NULL", row.id, v.subject);
     return { ...fromRow(row), subject: v.subject };
+  }
+
+  /**
+   * Someone with an account signed in: a person who waits as their provider account (an email their account verified
+   * only later) waits no more. The row goes; the account keeps its own role. Answers the row's id, or null.
+   */
+  async signedIn(v: Vouched): Promise<number | null> {
+    const p = await this.match(v);
+    if (!p) return null;
+    await this.sql.run("DELETE FROM people WHERE id = ?1", p.id);
+    await this.users.pagesChanged([`person:${p.id}`]);
+    return p.id;
   }
 
   /** Adds a person, or changes the role of the one waiting for that account. Admins only; the directory decides first whether they're a user already. */

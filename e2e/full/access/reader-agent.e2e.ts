@@ -43,7 +43,9 @@ test("a reader gets their agent where the owner lets readers use theirs; the own
   expect(await hasAgent(page, address, reader), "a reader, after").toBe(true);
 });
 
-test("never on a document anyone with the link may open: the switch refuses, and is off while it is shared so", async ({ tab }) => {
+test("never on a document anyone with the link may open: the switch refuses, is off while it is shared so, and stays off after", async ({
+  tab,
+}) => {
   const page = tab.page;
   const root = (await servers.main()).root;
   const made = await newDoc(root);
@@ -65,7 +67,9 @@ test("never on a document anyone with the link may open: the switch refuses, and
   await clickOn(page, "#btn-settings");
   await page.locator("#ds-agent-on").waitFor();
   expect(await page.locator("#ds-agent-on").isDisabled()).toBe(true);
-  // Not shared with anyone any more: as the owner left it, on again.
+  // Not shared with anyone any more: the agent stays off until the owner turns it on again.
   expect((await asOwner(root, "share_document", { document: id, login: "*", role: "none" })).status).toBe(200);
+  expect(await hasAgent(page, address, reader)).toBe(false);
+  expect((await asOwner(root, "share_document", { document: id, reader_agent: true })).status).toBe(200);
   expect(await hasAgent(page, address, reader)).toBe(true);
 });

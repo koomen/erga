@@ -155,6 +155,52 @@ test("new values for the client wait for an admin's test sign-in with them, as G
   );
 });
 
+test("a test sign-in by someone refused, or with no account yet, notes why beside the values that wait", async () => {
+  const { platform, own, directory } = server();
+  await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", true);
+  const apps = new AuthApps(own, "factory-key", "");
+  const NEW = { clientId: "123456789012-newnewnewnewnew.apps.googleusercontent.com", secret: "GOCSPX-newnewnewnewnewnew" };
+  await apps.keep("google", "pending", NEW, { login: "koomen" });
+  google = mockGoogle({ clientId: NEW.clientId, clientSecret: NEW.secret, redirects: [`${ORIGIN}/auth/google/callback`], user: ADA });
+  // Ada may not sign in here (invite-only): the test has a result all the same.
+  expect((await signInWithGoogle(platform, "&app=pending")).status).toBe(403);
+  expect((await apps.read("google")).pending?.test).toMatchObject({
+    ok: false,
+    by: "ada@example.com",
+    error: expect.stringContaining("may not sign in here"),
+  });
+  // An admin added her: she has no account yet, and goes on to choose a username; the test notes that.
+  await directory.addUser({ login: "koomen", admin: true }, { provider: "google", handle: "ada@example.com" }, "write");
+  expect((await signInWithGoogle(platform, "&app=pending")).headers.get("location")).toBe("/auth/username");
+  expect((await apps.read("google")).pending?.test?.error).toContain("has no account here");
+  expect(await apps.values("google", "active")).toBeNull();
+});
+
+test("values that change during a test sign-in: its end tests nothing, and the new values have no result", async () => {
+  const { platform, own, directory } = server();
+  await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", true);
+  await directory.users.signedIn("koomen");
+  await directory.identities.link("koomen", { provider: "google", subject: "1001", handle: "k@example.com", name: null, emails: [] });
+  const apps = new AuthApps(own, "factory-key", "");
+  const NEW = { clientId: "123456789012-newnewnewnewnew.apps.googleusercontent.com", secret: "GOCSPX-newnewnewnewnewnew" };
+  const NEWER = { clientId: "123456789012-newernewernewer.apps.googleusercontent.com", secret: "GOCSPX-newernewernewernew" };
+  await apps.keep("google", "pending", NEW, { login: "koomen" });
+  google = mockGoogle({ clientId: NEW.clientId, clientSecret: NEW.secret, redirects: [`${ORIGIN}/auth/google/callback`], user: ADA });
+  const start = await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/docs&app=pending`), platform);
+  const atGoogle = await google.fetch(new Request(start.headers.get("location")!));
+  // Another admin saves other values while this test is at Google.
+  await apps.keep("google", "pending", NEWER, { login: "koomen" });
+  const back = await respond(
+    finishGoogleSignIn,
+    new Request(atGoogle.headers.get("location")!, { headers: { cookie: cookieOf(start) } }),
+    platform
+  );
+  expect(back.status).toBe(409);
+  expect(await back.text()).toContain("changed during this test sign-in");
+  expect((await apps.read("google")).pending).toMatchObject({ clientId: NEWER.clientId });
+  expect((await apps.read("google")).pending?.test).toBeUndefined();
+});
+
 test("a Google account's picture is Google's, kept at each sign-in; with none, no picture (never GitHub's)", async () => {
   const { platform, directory } = server();
   await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", true);

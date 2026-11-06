@@ -34,7 +34,16 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { LanguageModel, Prompt } from "effect/ai";
 import { call, ctx, json, type Route } from "../server/http.ts";
-import { overBudget, PAGE_LLM_LIMITS, roleMay, underLimit, type DocRow, type PageLlmWho } from "../server/directory/index.ts";
+import {
+  callStep,
+  PAGE_LLM_LIMITS,
+  reserve,
+  roleMay,
+  underLimit,
+  type CallState,
+  type DocRow,
+  type PageLlmWho,
+} from "../server/directory/index.ts";
 import { whoOf, type Platform, type Session } from "../server/platform.ts";
 import { homeVisitor, PROVIDERS, providersOn, type Provider } from "../server/identity/index.ts";
 import type { SignInChoice } from "../shared/sign-in.ts";
@@ -102,12 +111,16 @@ async function guestOf(request: Request): Promise<string> {
 const capped = (asked: number | undefined) =>
   Math.max(1, Math.min(PAGE_LLM_LIMITS.maxTokens, Math.floor(asked ?? PAGE_LLM_LIMITS.maxTokens)));
 
+/** The characters an ask sends: its system prompt and messages. */
+const charsOf = (a: Ask) => (a.system ?? "").length + a.messages.reduce((n, m) => n + m.content.length, 0);
+
 /** What's wrong with an ask's size, or null. */
 function tooBig(a: Ask): string | null {
   if (!a.messages.length || a.messages[a.messages.length - 1].role != "user") return "messages must end with the user's.";
   if (a.messages.length > PAGE_LLM_LIMITS.messages) return `At most ${PAGE_LLM_LIMITS.messages} messages.`;
-  const chars = (a.system ?? "").length + a.messages.reduce((n, m) => n + m.content.length, 0);
-  return chars > PAGE_LLM_LIMITS.inputChars ? `At most ${PAGE_LLM_LIMITS.inputChars} characters in the system prompt and messages.` : null;
+  return charsOf(a) > PAGE_LLM_LIMITS.inputChars
+    ? `At most ${PAGE_LLM_LIMITS.inputChars} characters in the system prompt and messages.`
+    : null;
 }
 
 /**
@@ -164,12 +177,11 @@ const pageLlm = (whoAsks: (p: Platform, request: Request) => Promise<Session | n
   const pageLlm = platform.directory.pageLlm,
     at = Date.now();
   const login = visitor ? visitor.login : yield* call(() => guestOf(request));
-  const [mine, guests, all, today, budget] = yield* call(() =>
+  const [mine, guests, all, budget] = yield* call(() =>
     Promise.all([
       pageLlm.used(at, login),
       guest ? pageLlm.usedByGuests(at) : null,
       pageLlm.used(at),
-      pageLlm.today(at),
       platform.directory.config.get("page_llm_daily_usd"),
     ])
   );
@@ -179,14 +191,14 @@ const pageLlm = (whoAsks: (p: Platform, request: Request) => Promise<Session | n
     return fail("limit", "This page's model reached its limit for this hour. Try again later, or sign in.", 429);
   if (!underLimit(all, PAGE_LLM_LIMITS.server))
     return fail("limit", "Pages' models reached this server's limit for this hour. Try again later.", 429);
-  const over = overBudget(today.cost, budget);
-  if (over == "off") return fail("off", "This server's admin turned pages' models off.");
-  if (over == "limit")
-    return fail("limit", "Pages' models reached this server's spend limit for today. Try again after midnight UTC.", 429);
+  if (budget <= 0) return fail("off", "This server's admin turned pages' models off.");
   const cfg = yield* call(() => platform.agentSettings());
   const layer = "missing" in cfg ? null : pageModel(cfg, now.model, capped(ask.max_tokens));
   if (!layer) return fail("off", `The server has no API key that runs ${MODELS[now.model].label} now.`);
-  const id = yield* call(() => pageLlm.start({ login, docId: now.doc.id, model: now.model, now: at }));
+  // The call reserves the most it can cost, under the day's spend limit (server/directory/page-llm-call.ts).
+  const reserved = reserve(charsOf(ask), capped(ask.max_tokens));
+  const id = yield* call(() => pageLlm.start({ login, docId: now.doc.id, model: now.model, now: at, reserved, budget }));
+  if (!id) return fail("limit", "Pages' models reached this server's spend limit for today. Try again after midnight UTC.", 429);
   const prompt = Prompt.make([
     ...(ask.system ? [{ role: "system" as const, content: ask.system }] : []),
     ...ask.messages.map((m) => ({ role: m.role, content: [{ type: "text" as const, text: m.content }] })),
@@ -205,12 +217,18 @@ const pageLlm = (whoAsks: (p: Platform, request: Request) => Promise<Session | n
     Effect.provide(layer),
     Effect.result
   );
+  const state: CallState = callStep(
+    { state: "started", reserved },
+    answer._tag == "Failure"
+      ? { type: "failed" }
+      : { type: "answered", used: { input: answer.success.input, output: answer.success.output } }
+  );
+  yield* call(() => pageLlm.write(id, state));
   if (answer._tag == "Failure") {
     console.log(`page model: ${login} on ${now.doc.id} (${now.model}) failed: ${modelError(answer.failure)}`);
     return fail("error", `The model failed: ${modelError(answer.failure)}`, 502);
   }
   const { text, input, output } = answer.success;
-  yield* call(() => pageLlm.finish(id, { input, output }));
   console.log(`page model: ${login} on ${now.doc.id} (${now.model}): ${input} in, ${output} out`);
   return json({ text });
   });

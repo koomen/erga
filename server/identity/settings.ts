@@ -24,6 +24,7 @@ import {
   statusOf,
 } from "./apps.ts";
 import type { Act } from "../../shared/attribution.ts";
+import { testEnded, type PendingTest, type TestEnd } from "./app-test.ts";
 import type { Platform } from "../platform.ts";
 
 /** The provider a call means when it names none. */
@@ -88,20 +89,26 @@ export async function signInApp(platform: SignInPlatform, which: "active" | "pen
 }
 
 /**
- * A test sign-in with the pending values ended: an admin's that worked puts them in use; anything
- * else leaves the values in use as they are, and the page says why.
+ * A test sign-in with the pending values `clientId` ended (app-test.ts): an admin's that worked puts them in use;
+ * any other end leaves the values in use as they are, and the page says why. True: the values are in use now.
  */
-export async function testedSignIn(platform: SignInPlatform, clientId: string, o: { ok: boolean; login?: string; admin?: boolean; error?: string }, provider: Provider = PROVIDER): Promise<boolean> {
+export async function testedSignIn(
+  platform: SignInPlatform,
+  clientId: string,
+  end: TestEnd,
+  provider: Provider = PROVIDER
+): Promise<boolean> {
   const c = contextOf(platform, provider);
-  const at = Date.now();
-  if (o.ok && o.admin && o.login) {
+  const { pending } = await c.apps.read(provider);
+  const now: PendingTest = pending ? { state: "waiting", clientId: pending.clientId, test: pending.test } : { state: "none" };
+  const { effect } = testEnded(now, { clientId, end, at: Date.now() });
+  if (effect.do == "promote") {
     if (!(await c.apps.promote(provider, clientId))) return false;
-    await c.log({ login: o.login }, { provider, target: targetOf(platform) ?? "", event: "tested", clientId });
+    await c.log({ login: effect.login }, { provider, target: targetOf(platform) ?? "", event: "tested", clientId });
     return true;
   }
-  const error = o.ok ? `${o.login ?? "Someone"} signed in, but only an admin's sign-in puts new values in use.` : o.error ?? `${PROVIDERS[provider].label} didn't sign them in.`;
   // Nothing changed, so the change log has no line for it: the page shows it beside the pending values.
-  await c.apps.noteTest(provider, clientId, { at, ok: false, by: o.login, error });
+  if (effect.do == "note") await c.apps.noteTest(provider, clientId, effect.result);
   return false;
 }
 

@@ -52,7 +52,10 @@ export default function adminSettings(c: SettingsConfig): void {
               : JSON.stringify(v)
             : v;
     };
-    const submit = async () => {
+    /** The row's hint: this one's, or the one of the row that took its place meanwhile (live-rows: a change heard). */
+    const hintNow = () => (li.isConnected ? hint : (document.querySelector(`[data-live="${CSS.escape(li.dataset.live!)}"] .hint`) ?? hint));
+    /** Sends the value shown; true once the server has it. */
+    const submit = async (): Promise<boolean> => {
       say(hint, "Saving…");
       try {
         const key = li.dataset.key!;
@@ -63,22 +66,36 @@ export default function adminSettings(c: SettingsConfig): void {
           throw new Error(`${key} needs a value as JSON (a number, true or false, "text" in quotes...).`);
         }
         await runTool("set_setting", { key, value });
-        say(hint, "Saved.");
-        refresh(li.dataset.live!);
+        say(hintNow(), "Saved.");
+        return true;
       } catch (err) {
-        say(hint, (err as Error).message, true);
-        if (input.type == "checkbox") {
-          input.checked = !input.checked;
-          li.querySelector(".state")!.textContent = input.checked ? "On" : "Off";
-        }
+        say(hintNow(), (err as Error).message, true);
+        return false;
       }
     };
-    const dirty = () => {
+    const shown = () => {
       if (input.type == "checkbox") li.querySelector(".state")!.textContent = input.checked ? "On" : "Off";
-      if (instant) {
-        if (state() != was) submit();
-        return;
+    };
+    // A switch or a choice: one save at a time. A change during a save sends the newest value after it, so the server
+    // ends with the last one shown; a refused one puts back the value the server has.
+    let saved = was,
+      saving = false;
+    const sync = async () => {
+      if (saving || state() == saved) return;
+      saving = true;
+      const sent = state();
+      if (await submit()) saved = sent;
+      else if (input.type == "checkbox") {
+        input.checked = saved == "true";
+        shown();
       }
+      saving = false;
+      if (state() != saved) return sync();
+      refresh(li.dataset.live!);
+    };
+    const dirty = () => {
+      shown();
+      if (instant) return void sync();
       save!.disabled = state() == was;
       say(hint, "");
     };
@@ -192,7 +209,7 @@ export default function adminSettings(c: SettingsConfig): void {
         input.value = d.address;
         find.value = d.title || d.address;
         open(false);
-        submit();
+        void sync();
       };
       find.addEventListener("input", () => {
         say(hint, "");
@@ -238,7 +255,10 @@ export default function adminSettings(c: SettingsConfig): void {
     });
     form.addEventListener("submit", (e) => {
       e.preventDefault();
-      if (!instant) submit();
+      if (!instant)
+        void submit().then((ok) => {
+          if (ok) void refresh(li.dataset.live!);
+        });
     });
     reset?.addEventListener("click", async () => {
       say(hint, "Saving…");

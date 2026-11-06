@@ -97,6 +97,13 @@ test("on its own domain, the site's pages have ergaLLM; a guest may call it, and
   const cookies = await p.context().cookies(origin(server));
   expect(cookies.map((c) => c.name)).toContain(`erga_visitor_${new URL(server.root).port}`);
   expect(cookies.find((c) => c.name.startsWith("erga_visitor"))).toMatchObject({ httpOnly: true, sameSite: "Lax" });
+
+  // Signing out of Erga signs out of the own domain too: its cookie goes, on the way back to Erga's /.
+  await p.goto(`${server.root}/auth/logout`);
+  await p.waitForURL(`${server.root}/`);
+  expect((await p.context().cookies(origin(server))).map((c) => c.name)).not.toContain(`erga_visitor_${new URL(server.root).port}`);
+  await p.goto(`${origin(server)}/essays/essay`);
+  expect(await p.evaluate(() => window.ergaLLM!.status())).toMatchObject({ on: true, signedIn: false });
 });
 
 test("on its own domain, /_erga/ is Erga's: the model for the homepage only, a pass that must be good, nothing else", async () => {

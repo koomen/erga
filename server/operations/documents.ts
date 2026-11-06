@@ -7,6 +7,7 @@
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Base64 } from "effect/encoding";
+import { readersStep, type Readers } from "./readers.ts";
 import { ANYONE, type DocRow, type Grant, newDocId, NO_WRITE, PAGE_LLM_WHO, type PageLlmWho } from "../directory/index.ts";
 import { forgetDecisions, makeDoc, startingFiles } from "../documents/index.ts";
 import { TEMPLATES, templateById } from "../pages/index.ts";
@@ -346,16 +347,20 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
           message: `The server has no API key that runs ${MODELS[asked].label} for pages.`,
           status: 409,
         });
-      if (login) {
-        await dir.share(caller.who, doc.id, login, args.role == "none" ? null : (args.role as Grant));
-      }
-      if (args.reader_agent === true && (await dir.permissions(doc.id)).some((p) => p.login == ANYONE))
-        throw new OperationError({
-          message:
-            "Anyone with the link can open this document, so readers can't use their agent on it. Stop sharing it with anyone first.",
-          status: 409,
-        });
-      if (args.reader_agent != null) await dir.setReaderOption(doc.id, "agent", args.reader_agent === true);
+      // Who reads it, and their agent: decided in full before any write (readers.ts).
+      const [permissions, options] = await Promise.all([dir.permissions(doc.id), dir.readerOptions(doc.id)]);
+      const readers: Readers = permissions.some((p) => p.login == ANYONE)
+        ? { state: "public" }
+        : { state: "private", agent: options.agent };
+      const step = readersStep(readers, {
+        anyone: login == ANYONE ? args.role != "none" : undefined,
+        agent: args.reader_agent == null ? undefined : args.reader_agent === true,
+      });
+      if ("refused" in step) throw new OperationError({ message: step.refused, status: 409 });
+      // The agent goes off before the document goes public, and comes on only after the rest.
+      if (step.agent === false) await dir.setReaderOption(doc.id, "agent", false);
+      if (login) await dir.share(caller.who, doc.id, login, args.role == "none" ? null : (args.role as Grant));
+      if (step.agent === true) await dir.setReaderOption(doc.id, "agent", true);
       if (args.reader_bars != null) await dir.setReaderOption(doc.id, "bars", args.reader_bars === true);
       if (llm) {
         const had = await dir.pageLlm.setting(doc.id);
