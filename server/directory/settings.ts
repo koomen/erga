@@ -120,6 +120,24 @@ export const SETTINGS = {
     default: false,
     parse: boolean,
   }),
+  page_llm_daily_usd: setting<number>({
+    label: "Pages' models: daily spend limit",
+    description:
+      "The most that all pages' model calls together may cost each day (UTC), in US dollars, as estimated from their tokens. Then each call gets \"limit\" until midnight UTC. 0: pages can't call a model.",
+    default: 5,
+    parse: (v) => {
+      if (typeof v != "number" || !Number.isFinite(v) || v < 0 || v > 100_000)
+        throw new ConfigError({ message: "must be a number of US dollars from 0 to 100000 (0: pages' models are off)" });
+      return Math.round(v * 100) / 100;
+    },
+  }),
+  page_llm_guests: setting<boolean>({
+    label: "Guests can call pages' models",
+    description:
+      "Someone who isn't signed in can call a page's model where its owner lets all viewers call it. Off: they must sign in first, on every page.",
+    default: true,
+    parse: boolean,
+  }),
   feedback_repository: setting<string>({
     label: "Feedback's repository",
     description:

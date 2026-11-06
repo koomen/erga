@@ -39,6 +39,7 @@ const platform = {
     },
     credentials: { list: async () => [] },
     find: async () => null,
+    pageLlm: { today: async () => ({ calls: 0, input: 0, output: 0, cost: 0, since: 0, docs: [] }) },
   },
 } as unknown as Platform;
 // The admin pages, on the stand-in.

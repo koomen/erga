@@ -1,5 +1,5 @@
 // /admin, the Settings page: each of the server's settings, with the control it's set with (client/inline/admin-settings.ts
-// saves it).
+// saves it), and under them pages' models today (./page-llm.ts).
 
 import { ACCESS_SETTINGS, AGENT_SETTINGS, type ConfigEntry, type Settings } from "../directory/index.ts";
 import { ICON, inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
@@ -7,6 +7,7 @@ import { esc } from "../../shared/html.ts";
 import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
+import { pageLlmSection, pageLlmUsage } from "./page-llm.ts";
 import { setAt, shown } from "./parts.ts";
 import { addressOf } from "../../document/names.ts";
 
@@ -62,14 +63,14 @@ function valueInput(e: Shown, never: boolean): string {
       <span class="amount"${off ? " hidden" : ""}><input class="input" type="number" step="1" min="1" ${attrs} data-kind="number-or-never" value="${esc(String(off ? e.default : e.value))}"${off ? "" : " required"}>${unit ? `<span class="unit">${unit}</span>` : ""}</span>`;
   }
   if (typeof e.default == "number")
-    return `<span class="amount"><input class="input" type="number" step="1" ${attrs} data-kind="number" value="${esc(String(e.value))}" required>${unit ? `<span class="unit">${unit}</span>` : ""}</span>`;
+    return `<span class="amount"><input class="input" type="number" step="${unit == "US$" ? "0.01" : "1"}" min="0" ${attrs} data-kind="number" value="${esc(String(e.value))}" required>${unit ? `<span class="unit">${unit}</span>` : ""}</span>`;
   if (typeof e.default == "string")
     return `<input class="input" ${attrs} data-kind="string" value="${esc(String(e.value))}" autocomplete="off" spellcheck="false">`;
   return `<input class="input mono" ${attrs} data-kind="json" value="${esc(JSON.stringify(e.value))}" autocomplete="off" spellcheck="false">`;
 }
 
 /** The unit of a number setting, from the end of its key: "_hours", "_mb", "_gb". */
-const unitOf = (key: string) => ({ hours: "hours", mb: "MB", gb: "GB" })[key.slice(key.lastIndexOf("_") + 1)] ?? "";
+const unitOf = (key: string) => ({ hours: "hours", mb: "MB", gb: "GB", usd: "US$" })[key.slice(key.lastIndexOf("_") + 1)] ?? "";
 
 /** How a setting is set: "switch", "choice" and "document" save as soon as they change; the rest have Save. */
 function controlOf(e: Shown): "switch" | "choice" | "users" | "document" | "typed" {
@@ -157,7 +158,11 @@ async function shownSettings(
 
 /** /admin: the server's settings. */
 export async function settingsPage(platform: Platform, session: Session) {
-  const [rows, users] = await Promise.all([shownSettings(platform, session), platform.directory.users.list(whoOf(session))]);
+  const [rows, users, use] = await Promise.all([
+    shownSettings(platform, session),
+    platform.directory.users.list(whoOf(session)),
+    pageLlmUsage(platform.directory),
+  ]);
   return adminPage({
     session,
     title: "Settings",
@@ -169,7 +174,7 @@ export async function settingsPage(platform: Platform, session: Session) {
 ${rows.map((r) => r.html).join("\n")}
     </ol>
     <datalist id="user-logins">${users.map((u) => `<option value="${esc(u.login)}">`).join("")}</datalist>
-  </section>
+  </section>${pageLlmSection(use, session)}
 <script>${TIMES_SCRIPT}${inlineCall("admin-settings", { chip: chip("LOGIN", false) })}</script>`,
   });
 }

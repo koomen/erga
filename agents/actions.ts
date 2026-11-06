@@ -45,7 +45,7 @@ const SIGN_IN = "signing in: the person in their own browser, before any agent a
 
 export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ /admin: settings, change log, users, API keys
-  { route: "GET /admin", domain: "admin", action: "Read the settings (Settings)", tool: "settings" },
+  { route: "GET /admin", domain: "admin", action: "Read the settings and pages' model use today (Settings)", tool: "settings" },
   { route: "GET /admin/changes", domain: "admin", action: "Read the change log (Change log)", tool: "settings" },
   { route: "GET /admin/users", domain: "admin", action: "Read the users (Users)", tool: "people" },
   {
