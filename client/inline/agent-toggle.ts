@@ -10,6 +10,35 @@ declare global {
   }
 }
 
+/** The key of the panel as the tab's last page left it (client/agent/person-agent.ts keeps it as that page goes). */
+const KEPT_PANEL = "erga:agent-panel";
+
+/**
+ * The panel as the tab's last page left it, drawn before this page paints: its conversation, its model and its scroll
+ * place, if it was this person's. The agent's script then loads the conversation, and draws only what changed.
+ */
+function drawAsLeft() {
+  try {
+    const kept = JSON.parse(sessionStorage.getItem(KEPT_PANEL) || "null") as {
+      person: string;
+      log: string;
+      model: string;
+      choice?: string;
+      top: number;
+      bottom: boolean;
+    } | null;
+    if (!kept || kept.person != document.getElementById("agent")!.dataset.person) return;
+    const log = document.getElementById("agent-log")!,
+      model = document.getElementById("agent-model")!;
+    log.innerHTML = kept.log;
+    model.innerHTML = kept.model;
+    if (kept.choice) model.querySelector("select")!.value = kept.choice;
+    log.scrollTop = kept.bottom ? log.scrollHeight : kept.top;
+  } catch {
+    /* private mode, or none kept */
+  }
+}
+
 export default function agentToggle(): void {
   const body = document.body,
     card = document.querySelector<HTMLElement>("#agent .agent-card")!,
@@ -43,6 +72,7 @@ export default function agentToggle(): void {
   // Its first state, with no motion (a page that opens with it open shows it open).
   body.classList.add("no-motion");
   set(!narrow.matches && settings().agent !== false);
+  drawAsLeft();
   requestAnimationFrame(() => requestAnimationFrame(() => body.classList.remove("no-motion")));
   // Collapsed with the mouse, focus goes back to the circle with no ring (Chrome would draw one, as focus comes from the
   // box); with the keyboard (Esc, ⌘J, Enter on the button), the ring shows. Tabbing away and back shows it again.

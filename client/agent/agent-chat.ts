@@ -31,8 +31,13 @@ export interface ChatOptions {
 export interface Chat {
   /** The transcript as drawn. */
   readonly log: Log;
-  /** Draws the whole log again (a tab that just loaded, a reset), at the bottom. */
+  /**
+   * Draws the whole log again (a tab that just loaded, a reset), at the bottom; a log already drawn the same (as the
+   * tab's last page left it) stays as it is, at its scroll place.
+   */
   render(): void;
+  /** The transcript's markup as drawn, without the messages on their way. */
+  drawn(): string;
   /** One event from the agent's host: the transcript and the log follow it. */
   apply(ev: LogEvent): void;
   /** Follow the output (on), or stop (reading back). */
@@ -95,8 +100,10 @@ export function chat(opts: ChatOptions): Chat {
   // kept pinned whenever the log's content changes size, not just when an
   // event arrives, so text that wraps later or a screenshot that loads after
   // its event doesn't leave it behind.
-  let following = true, lastScrollTop = 0;
   const atBottom = () => logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight <= 8;
+  // A log drawn as the last page left it, read back, stays read back.
+  let following = atBottom(),
+    lastScrollTop = logEl.scrollTop;
   function pin() {
     if (following) logEl.scrollTop = logEl.scrollHeight;
     else if (!atBottom()) jump.hidden = false;
@@ -122,8 +129,14 @@ export function chat(opts: ChatOptions): Chat {
   jump.addEventListener("click", () => follow(true));
 
   function render() {
+    const next = log.items.map((it, i) => renderItem(it, i));
+    const now = [...logEl.children] as HTMLElement[];
+    if (!loose.length && now.length == next.length && next.every((el, i) => el.isEqualNode(now[i]))) {
+      els = now;
+      return;
+    }
     logEl.textContent = "";
-    els = log.items.map((it, i) => renderItem(it, i));
+    els = next;
     // Messages on their way (or that weren't sent, with Try again) stay at the end: a reconnect mustn't lose them.
     logEl.append(...els, ...loose);
     follow(true);
@@ -183,5 +196,7 @@ export function chat(opts: ChatOptions): Chat {
     };
   }
 
-  return { log, render, apply, follow, pin, pending };
+  const drawn = () => els.map((el) => el.outerHTML).join("");
+
+  return { log, render, drawn, apply, follow, pin, pending };
 }
