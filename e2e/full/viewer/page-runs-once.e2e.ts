@@ -17,10 +17,17 @@ await servers.main();
 const FILES = ["page.js", "balls.js", "audio.m4a", "intro.m4a", "ran.txt"];
 const times = (n: number) => Object.fromEntries(FILES.map((f) => [f, n]));
 
-/** Counts, from now on, how many times any frame of the tab asks for each of FILES. (Routed: nothing comes from the cache, so each run of the page asks again.) */
+/**
+ * Counts, from now on, how many times any frame of the tab asks for each of FILES. (Routed: nothing comes from the
+ * cache, so each run of the page asks again.) Not Erga's service worker's own requests (its copy for offline): no run.
+ */
 function counting(page: Page) {
   const asked = new Map<string, number>();
-  page.context().on("request", (r) => { const f = FILES.find((n) => new URL(r.url()).pathname.endsWith("/" + n)); if (f) asked.set(f, (asked.get(f) ?? 0) + 1); });
+  page.context().on("request", (r) => {
+    if (r.serviceWorker()) return;
+    const f = FILES.find((n) => new URL(r.url()).pathname.endsWith("/" + n));
+    if (f) asked.set(f, (asked.get(f) ?? 0) + 1);
+  });
   return () => Object.fromEntries(FILES.map((f) => [f, asked.get(f) ?? 0]));
 }
 

@@ -85,6 +85,35 @@ export const GUARD_END = ["mouseup", "touchend", "touchcancel"];
 export const localLibraries = (html: string, shell: string) =>
   html.replace(/(<script\b[^>]*\bsrc\s*=\s*["']?)https:\/\/erga\.dev(\/erga\/[a-z]+\/editor\.js)/gi, `$1${shell}$2`);
 
+/** A document's page as its pages origin serves it: its text, with Erga's `head` first in its <head> (server/pages/reader.ts). */
+export const pageOf = (text: string, head: string, shell: string) => insertHead(localLibraries(text, shell), head);
+
+/**
+ * Erga's head of a page the pages origin made (what `pageOf` put first in its <head>): its scripts, each a <script
+ * data-erga> whose text holds no "</script" (inline.ts, jsonInScript). Null if it has none.
+ */
+export function headIn(served: string): string | null {
+  const head = /<head(\s[^>]*)?>/i.exec(served),
+    doctype = /^\uFEFF?\s*<!doctype[^>]*>/i.exec(served);
+  const at = head ? head.index + head[0].length : doctype ? doctype[0].length : 0;
+  return /^(?:<script\b[^>]*\bdata-erga\b[^>]*>[\s\S]*?<\/script>)+/i.exec(served.slice(at))?.[0] ?? null;
+}
+
+/**
+ * The page the pages origin makes from `text`, given Erga's `head` of a page it made from any text of the same document
+ * (headIn): the same head, with the new text's digest (the page's editor puts it in the browser's copy, for a reload
+ * offline: libs/text/ui/offline-page.ts). Null if the head names no text.
+ */
+export function pageAgain(head: string, text: string, shell: string): string | null {
+  const src = /"src":"[^"]*"/;
+  if (!src.test(head)) return null;
+  return pageOf(
+    text,
+    head.replace(src, () => `"src":${JSON.stringify(sourceDigest(text))}`),
+    shell
+  );
+}
+
 /** Whether a page brings its editor: it imports erga/text itself (<script src=".../erga/text/editor.js">), or has its own. */
 export const bringsEditor = (html: string) =>
   /<script\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]*\/erga\/text\/editor\.js\b/i.test(html) ||

@@ -31,6 +31,7 @@ import { mountViews } from "./views";
 import { mountPageRequests } from "./page-requests";
 import { awaitHello } from "./opening";
 import { editorContext } from "./agent-context";
+import { keepOffline, rememberOrigin } from "../common/offline";
 
 declare global {
   interface Window {
@@ -100,6 +101,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // events. Its first message says who this tab is and what the document is called (the hello), then comes the room's
   // whole text. Presence, connection news and events before the shell is set up are picked up once it is (`started`).
   let started = false;
+  /** Asks for a fresh edit key if the editor has none that holds (set below, once the page's frame is). */
+  let renewKey = () => {};
   const pending: SocketEvent[] = [];
   const early = window.ergaSocket,
     start =
@@ -123,6 +126,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       `${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${BASE}/api/room?${new URLSearchParams({ events: "1", ...(asked ? { user: asked } : {}), ...Object.fromEntries(q) })}`,
     start,
     early,
+    // (Kept in this browser, as this person: the document opens from it with no connection.)
+    keep: `${BASE}${as}`,
     onEvent: (msg) => { if (started) shell.room.socketEvent(msg); else pending.push(msg); },
     onRemote: (changes, author) => {
       shell.room.applyRemote(changes);
@@ -136,14 +141,10 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     },
     onStatus: (connected) => {
       if (started) shell.room.connectionChanged(connected);
+      if (connected) renewKey();
     },
-    onStale: () => {
-      const w = $("welcome");
-      w.hidden = false;
-      w.classList.add("blocking");
-      w.innerHTML = `<div><p>This page is out of date: the editor's host restarted without its saved history, so edits from this tab can't be merged safely.</p><p><button type="button" id="stale-reload">Reload</button></p></div>`;
-      $("stale-reload").addEventListener("click", () => location.reload());
-    },
+    // The room lost the history this tab holds: the page loads again, and this tab's edits go in as edits (collab.ts, adopt).
+    onStale: () => location.reload(),
   });
   // However long the room takes (opening.ts): a slow document isn't a missing one.
   const first = await awaitHello(collab.hello, missing);
@@ -314,7 +315,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     files: pagesUrl,
     edit: async () => {
       const key = await editKey();
-      return key ? { doc: `${location.origin}${BASE}`, key, me, path: shell.pagePath, tab } : null;
+      return key != null ? { doc: `${location.origin}${BASE}`, key, me, path: shell.pagePath, tab } : null;
     },
     onKey: (keys) => {
       appShortcut(keys, true);
@@ -355,18 +356,39 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   }));
   // The page's editor opens its socket with an edit key (server/documents/edit-key.ts), which this tab asks for and
   // gives it, and again before it ends: a key is checked only as a socket opens (the editor's next, if it reconnects).
-  let key: { key: string; expires: number } | null = null;
+  // With no connection, the last key this tab had (it may have expired: then the editor waits for the next, which this
+  // tab asks for once the room is back), so the editor starts offline too.
+  const KEY = `erga:edit-key:${BASE}${as}`;
+  let key = ((): { key: string; expires: number } | null => {
+    try {
+      return JSON.parse(sessionStorage.getItem(KEY) ?? "null");
+    } catch {
+      return null;
+    }
+  })();
   async function editKey(): Promise<string | null> {
     if (key && key.expires - Date.now() > 5 * 60_000) return key.key;
     const r = await fetch(api("/api/key"), { method: "POST" }).catch(() => null);
     const got = r?.ok ? ((await r.json().catch(() => null)) as { key?: unknown; expires?: unknown } | null) : null;
-    if (typeof got?.key != "string" || typeof got.expires != "number") return key?.key ?? null;
+    if (typeof got?.key != "string" || typeof got.expires != "number") return key?.key ?? (r ? null : "");
     key = { key: got.key, expires: got.expires };
+    try {
+      sessionStorage.setItem(KEY, JSON.stringify(key));
+    } catch {
+      /* private mode */
+    }
     return key.key;
   }
   setInterval(() => {
     if (key && key.expires - Date.now() <= 5 * 60_000) page.renew();
   }, 60_000);
+  // Back online after the editor started with no key (or an old one): a fresh one, for its next socket.
+  renewKey = () => {
+    if (!key || key.expires - Date.now() <= 5 * 60_000) page.renew();
+  };
+  // This page and its files, kept in this browser for a reload with no connection (client/common/offline.ts).
+  void keepOffline(location.href);
+  rememberOrigin(pagesOrigin);
   if (editing()) {
     page.start();
     // The page has the focus, for its editor (nothing else in the tab has it yet).

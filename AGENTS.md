@@ -229,6 +229,15 @@ Found a new trap? Write it here, in the same change.
 - A machine that asks for a new hostname a moment before its DNS record exists keeps "no such host" for up to
   30 minutes (macOS caches the negative answer). `bun erga setup` (deploy/own/facts.ts, `site`) looks up its servers'
   names with Cloudflare's DNS over HTTPS for that reason; use `site` for any check of a new address.
+- Erga's service worker (client/inline/offline-sw.ts) answers the frame's page on the pages origin. Its own fetch
+  doesn't say it's for a frame (Sec-Fetch-Dest), and the pages origin would answer with the file as it is, with no
+  reader script and no editor: the worker adds `x-erga-page` (shared/offline.ts). A test of the editor in a second tab
+  (`e2e/smoke/editor.e2e.ts`) is the first to load a frame through the worker.
+- In the frame, a `setTimeout` can wait for seconds in a tab that isn't in front. Code that must run soon after an
+  edit there (the replica kept in IndexedDB, the page in the copy) runs at once, and joins what comes meanwhile.
+- An unregistered service worker still answers the pages it controls until they go: sign-out tells Erga's worker
+  to keep nothing more (`erga-forget`, client/common/offline.ts) before it deletes the copy, else the next page puts
+  it back.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 

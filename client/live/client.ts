@@ -15,8 +15,11 @@ export interface Live {
   flush(fn: () => Promise<boolean>): void;
   /** The person used the page in a way the top window can't hear (keys in a frame). */
   activity(): void;
-  /** A live connection (a WebSocket, an event stream) is up or down; null: it's gone (its page left). */
-  connection(name: string, up: boolean | null): void;
+  /**
+   * A live connection (a WebSocket, an event stream) is up or down; null: it's gone (its page left). `note`: what the
+   * corner says while it's down (else "Reconnecting…").
+   */
+  connection(name: string, up: boolean | null, note?: string): void;
   /** Asks the server whether this page's code is still current (a request failed oddly, a connection came back). */
   check(why: string): void;
 }

@@ -33,6 +33,7 @@ export {
 } from "./account-menu.ts";
 export { NEW_DOC_STYLE, newDocMenu, type Template, templateById, TEMPLATES } from "./templates.ts";
 export { inlineCall, inlineScript, inlineStyle } from "./inline.ts";
+export { CLEAR_PATH, serveClear, serveWorker, WORKER_PATH } from "./worker.ts";
 export {
   asset,
   assetManifest,

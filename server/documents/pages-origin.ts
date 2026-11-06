@@ -16,6 +16,7 @@ import { forwarded } from "./routes.ts";
 import { sourceDigest } from "../../shared/page-html.ts";
 import { readerPage, readerVersion } from "../pages/index.ts";
 import { sameText } from "../../shared/bytes.ts";
+import { PAGE_HEADER } from "../../shared/offline.ts";
 
 const PAGES_LABEL = /^([a-z0-9]{8})-([a-z0-9-]{1,39})$/;
 
@@ -23,6 +24,14 @@ const DAY = 24 * 60 * 60, WEEK = 7 * DAY;
 
 /** Whether a request came to a document's pages origin (any of them), rather than the app's own. */
 export const isPagesSite = (url: URL, platform: Platform) => url.hostname.endsWith(`.${platform.pagesDomain(url)}`) || (!!platform.pagesShared?.(url) && url.hostname == platform.pagesShared(url));
+
+/**
+ * Whether this origin has Erga's service worker (server/pages/worker.ts): the app's own, and a document's own pages
+ * origin. Never a shared pages host (the setting pagesHost: one host for every document), where the copy and the
+ * replica the editor keeps would not be one document's.
+ */
+export const workerHere = (url: URL, platform: Pick<Platform, "pagesDomain" | "pagesShared">) =>
+  !(isPagesSite(url, platform as Platform) && platform.pagesShared?.(url) == url.hostname);
 
 /** The origin a document's page runs on. */
 export function pagesOrigin(owner: string, id: string, url: URL, platform: Platform): string {
@@ -138,8 +147,11 @@ async function pageFile(request: Request, url: URL, doc: { owner: string; id: st
   const claims = await readPagesClaims(platform.secret, token, doc.owner, doc.id);
   const shell = claims?.shell;
   if (!claims || !shell) return new Response("This link has expired: reload the page.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-  // A frame's document (Sec-Fetch-Dest says so: a page's own fetch of an HTML file gets the file as it is).
-  const page = request.method == "GET" && /^(iframe|frame|document)$/.test(request.headers.get("sec-fetch-dest") ?? "");
+  // A frame's document (Sec-Fetch-Dest says so: a page's own fetch of an HTML file gets the file as it is), or the page's
+  // editor asking for its page as the frame got it (libs/text/ui/offline-page.ts: for the browser's copy).
+  const page =
+    request.method == "GET" &&
+    (/^(iframe|frame|document)$/.test(request.headers.get("sec-fetch-dest") ?? "") || request.headers.get(PAGE_HEADER) == "1");
   // Its ETag is the file's with what goes in it (this code's version and the token's kind), so the browser's copy is
   // checked against the file's: the file's own (stripped of ours) goes to the document.
   const ours = `.${readerVersion()}${claims.edit ? "w" : ""}`;

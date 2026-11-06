@@ -20,6 +20,10 @@
 //                                   runWorkerFirst): they're served as they are, to anyone, with _headers' headers;
 //                                   so nothing but the client build's own output may ever go under /_erga/; and an
 //                                   editing library's address, /erga/<name>/editor.js, one line that imports its build
+//   GET /erga-sw.js                 Erga's service worker (server/pages/worker.ts), on the app's origin and the pages
+//                                   origin: code, public in its repository, holding no data; it fetches nothing itself
+//                                   that the guard doesn't check again; and GET /erga-clear on the pages origin, the
+//                                   page that deletes its offline copies at sign-out (it deletes only, and reads nothing)
 //   GET /api/deploys/version        the release and target, which the deploy pipeline waits on
 //   GET /api/health                 the health check the pipeline runs after (ok, the release, the checks: no data)
 //   GET /api/ops                    the deploy facts, for an admin's ops token only (server/api.ts checks
@@ -62,7 +66,7 @@
 
 import * as Effect from "effect/Effect";
 import { isPagesSite, keyedPerson, pagesHost, readPagesClaims } from "../documents/index.ts";
-import { isAssetPath, libraryOf, page, safeNext } from "../pages/index.ts";
+import { CLEAR_PATH, isAssetPath, libraryOf, page, safeNext, WORKER_PATH } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import { tokenPath } from "./token-paths.ts";
@@ -72,8 +76,17 @@ import { call, ctx, json, text } from "../http.ts";
 function exempt(request: Request, base: Platform, url: URL): boolean {
   const path = url.pathname;
   const method = request.method;
-  if (path == "/auth/sign-in" || path == "/auth/github" || path == "/auth/github/callback" || path == "/auth/google" || path == "/auth/google/callback" || path == "/auth/logout") return true;
-  if (isAssetPath(path) || path == "/logo.png" || libraryOf(path)) return method == "GET" || method == "HEAD";
+  if (
+    path == "/auth/sign-in" ||
+    path == "/auth/github" ||
+    path == "/auth/github/callback" ||
+    path == "/auth/google" ||
+    path == "/auth/google/callback" ||
+    path == "/auth/logout"
+  )
+    return true;
+  if (isAssetPath(path) || path == "/logo.png" || path == WORKER_PATH || path == CLEAR_PATH || libraryOf(path))
+    return method == "GET" || method == "HEAD";
   if (path == "/api/deploys/version" || path == "/api/health" || path == "/api/ops") return method == "GET" || method == "HEAD";
   if (path == "/api/auth/request" || path == "/api/auth/poll") return method == "POST";
   if (path.startsWith("/api/snapshot/")) return true;
