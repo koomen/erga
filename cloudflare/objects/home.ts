@@ -26,7 +26,7 @@ export class Home extends DurableObject<Env> implements HomeObject {
       delete: (keys) => this.ctx.storage.delete(keys as string[]),
       list: async (prefix) => [...(await this.ctx.storage.list({ prefix })).keys()],
     },
-    alarm: { get: () => this.ctx.storage.getAlarm(), set: (at) => this.ctx.storage.setAlarm(at), delete: () => this.ctx.storage.deleteAlarm() },
+    alarm: { set: (at) => this.ctx.storage.setAlarm(at), delete: () => this.ctx.storage.deleteAlarm() },
     directory: directoryOf(this.env),
     current: (docId) => currentFiles(this.env, docId),
     notify: (docId) => documentOf(this.env, docId).notify({ type: "home" }),
