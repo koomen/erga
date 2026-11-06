@@ -1,13 +1,14 @@
 // `bun erga`: the ops page, a local server on 127.0.0.1 and the page it serves (deploy/cli/ops-view.ts draws it). It
 // reads .erga/config.json and .erga/jobs/ in the main clone, which it watches (a change reaches the page at once,
-// through /api/events), the clone's git as it is (no fetch), and each instance's commit and health, with its ops token:
-// every 30 seconds, and every 5 while a job runs. Every command works without it. Its Merge and Deploy buttons run
+// through /api/events), the clone's git as it is (no fetch), GitHub's branch list (git ls-remote: a branch it deleted
+// is left out) and each instance's commit and health, with its ops token: every 30 seconds, and every 5 while a job runs. Every command works without it. Its Merge and Deploy buttons run
 // `bun erga merge` and `bun erga deploy` (POST /api/merge, /api/deploy) in a process of their own, as a terminal does:
 // the same code, locks and job records. A merge's tests take minutes, and this server must answer while they run.
 
 import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Entry, originOf, readConfig } from "./config";
+import { githubHeads, rememberedBranches } from "./observe";
 import { readOps } from "./ops";
 import {
   type Answer,
@@ -60,8 +61,11 @@ const git = (cwd: string, ...args: string[]) => {
 /** The origin's branches in the clone, with their commits: the key that says when to read git again. */
 const refsOf = (cwd: string) => git(cwd, "for-each-ref", "refs/remotes/origin", "--format=%(objectname) %(refname:short)").out;
 
-/** The clone's log and feature branches, as they are: no fetch. */
-export function readGit(cwd: string, versions: string[]): Git {
+/**
+ * The clone's log and feature branches, as they are: no fetch. `live`: the branches GitHub has now (githubHeads); a
+ * branch that GitHub deleted is left out. Null: GitHub did not answer, and the list is as the clone remembers it.
+ */
+export function readGit(cwd: string, versions: string[], live: Set<string> | null): Git {
   const has = (ref: string) => git(cwd, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`).ok;
   const heads = ["origin/staging", "origin/main"].filter(has);
   const base = heads[0] ?? "HEAD";
@@ -74,30 +78,19 @@ export function readGit(cwd: string, versions: string[]): Git {
       const [sha, subject, at, author] = l.split("\x1f");
       return { sha, subject, at: Number(at) * 1000, author };
     });
-  const branches: Branch[] = git(
-    cwd,
-    "for-each-ref",
-    "refs/remotes/origin",
-    "--format=%(refname:short)%1f%(objectname)%1f%(committerdate:unix)%1f%(subject)%1f%(authorname)"
-  )
-    .out.split("\n")
-    .filter(Boolean)
-    .map((l) => l.split("\x1f"))
-    .map(([ref, sha, at, subject, author]) => ({ name: ref.replace(/^origin\//, ""), sha, at: Number(at) * 1000, subject, author }))
-    .filter((b) => !["HEAD", "origin", "staging", "main"].includes(b.name))
-    .map((b) => {
-      const [behind, ahead] = git(cwd, "rev-list", "--left-right", "--count", `${base}...origin/${b.name}`).out.split(/\s+/).map(Number);
-      let conflicts: string[] = [];
-      if (ahead) {
-        // git merge-tree writes nothing to the clone. Exit 1: the conflicted files follow the tree's line.
-        const m = git(cwd, "merge-tree", "--write-tree", "--name-only", "--no-messages", base, `origin/${b.name}`);
-        if (m.code == 1) conflicts = [...new Set(m.out.split("\n").slice(1).filter(Boolean))];
-      }
-      return { ...b, ahead: ahead || 0, behind: behind || 0, conflicts };
-    });
+  const branches: Branch[] = rememberedBranches(cwd, live).map((b) => {
+    const [behind, ahead] = git(cwd, "rev-list", "--left-right", "--count", `${base}...origin/${b.name}`).out.split(/\s+/).map(Number);
+    let conflicts: string[] = [];
+    if (ahead) {
+      // git merge-tree writes nothing to the clone. Exit 1: the conflicted files follow the tree's line.
+      const m = git(cwd, "merge-tree", "--write-tree", "--name-only", "--no-messages", base, `origin/${b.name}`);
+      if (m.code == 1) conflicts = [...new Set(m.out.split("\n").slice(1).filter(Boolean))];
+    }
+    return { ...b, ahead: ahead || 0, behind: behind || 0, conflicts };
+  });
   const elsewhere: Record<string, boolean> = {};
   for (const v of versions) if (!log.some((c) => c.sha.startsWith(v))) elsewhere[v] = has(v);
-  return { log, branches, base: base.replace(/^origin\//, ""), main, elsewhere };
+  return { log, branches, github: live != null, base: base.replace(/^origin\//, ""), main, elsewhere };
 }
 
 /** Each job record in .erga/jobs/, newest last (the file names start with the time). */
@@ -180,6 +173,9 @@ export function serveOpsPage(o: OpsPageOptions) {
     run: { at: "idle" },
   };
   let refs = "";
+  /** The branches GitHub had at the last ask (null: no answer), and their key. */
+  let live: Set<string> | null = null;
+  let liveKey = "";
   let asked = 0;
   let sent = "";
   const clients = new Set<ReadableStreamDefaultController<string>>();
@@ -213,23 +209,38 @@ export function serveOpsPage(o: OpsPageOptions) {
     facts.jobs = readJobs(o.dir);
     facts.setup = setupHost(o.dir);
   };
+  /** Reads git, once GitHub has answered (or not) the first time: the page shows no branch that GitHub deleted. */
   const readClone = () => {
+    if (!liveKey) return;
     try {
-      facts.git = readGit(o.cwd, versions());
+      facts.git = readGit(o.cwd, versions(), live);
     } catch (e) {
       facts.git = { error: `git: ${(e as Error).message}` };
     }
   };
-  /** Asks each instance (only the new ones, with `fresh`), then reads git again if an instance runs a new commit. */
+  /** Asks GitHub for its branches; reads git again when they changed. */
+  const askGitHub = async () => {
+    live = await githubHeads(o.cwd);
+    const key = live ? [...live].sort().join() : "no answer";
+    if (key != liveKey) {
+      liveKey = key;
+      readClone();
+    }
+  };
+  /**
+   * Asks each instance (only the new ones, with `fresh`), then reads git again if an instance runs a new commit. Without
+   * `fresh` (the poll), it asks GitHub for its branches too.
+   */
   const askAll = async (fresh = false) => {
     const before = versions().join();
-    await Promise.all(
-      entries()
+    await Promise.all([
+      fresh ? null : askGitHub(),
+      ...entries()
         .filter((e) => !fresh || !facts.answers[e.host])
         .map(async (e) => {
           facts.answers[e.host] = await ask(e).catch((err: Error) => ({ version: null, healthy: null, error: err.message }));
-        })
-    );
+        }),
+    ]);
     if (versions().join() != before) readClone();
     changed();
   };
@@ -253,12 +264,11 @@ export function serveOpsPage(o: OpsPageOptions) {
   };
 
   readFiles();
-  readClone();
   refs = refsOf(o.cwd);
   watchDir();
   void askAll();
   asked = Date.now();
-  // Each 5 seconds: git's refs (a fetch in a terminal), the jobs' processes, and the instances when it is time.
+  // Each 5 seconds: git's refs (a fetch in a terminal), the jobs' processes, and GitHub and the instances when it is time.
   const tick = setInterval(() => {
     if (!watcher) {
       watchDir();
@@ -360,7 +370,8 @@ export function serveOpsPage(o: OpsPageOptions) {
           start(c) {
             me = c;
             clients.add(c);
-            c.enqueue(": open\n\n");
+            // A page that loaded before a change (git waits for GitHub's first answer) draws once it listens.
+            c.enqueue("data: change\n\n");
           },
           cancel() {
             clients.delete(me);

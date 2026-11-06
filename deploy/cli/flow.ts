@@ -118,6 +118,8 @@ export interface State {
   /** Each primary first, then its staging instances. */
   instances: Instance[];
   branches: Branch[];
+  /** GitHub answered with its branches (git ls-remote); false: `branches` is as the clone last saw them. */
+  github: boolean;
   /** Commits on staging that main does not have (a deploy of a primary takes them out). */
   waiting: Commit[];
   /** main's recent commits, and the release tag of each that has one. */
@@ -130,6 +132,7 @@ export function stateOf(o: {
   heads: State["heads"];
   instances: Instance[];
   branches: Branch[];
+  github: boolean;
   waiting: Commit[];
   log: Commit[];
   tags: { name: string; sha: string }[];
@@ -141,6 +144,7 @@ export function stateOf(o: {
     heads: o.heads,
     instances: primaries.flatMap((p) => [p, ...o.instances.filter((i) => i.stagingOf == p.host && i != p)]),
     branches: [...o.branches].sort((a, b) => b.at - a.at),
+    github: o.github,
     waiting: o.waiting,
     log: o.log.map((c) => (tagOf.has(c.sha) ? { ...c, tag: tagOf.get(c.sha)! } : c)),
     latestRelease: latestTag(o.tags.map((t) => t.name)),
@@ -167,6 +171,7 @@ export function statusText(s: State, has: (sha: string) => boolean = () => true)
       `${i.stagingOf ? "  - " : "- "}${i.host}${i.stagingOf ? ` (staging of ${i.stagingOf})` : ""}: ${i.version ? `runs ${i.version}, ${placeOf(i.version, s, has)}` : (i.error ?? "no answer")}; health ${i.healthy == null ? "unknown" : i.healthy ? "ok" : "FAIL"}`
     );
   out.push("", "Feature branches:");
+  if (!s.github) out.push("(GitHub did not answer git ls-remote: the list is as this clone last saw it, deleted branches too.)");
   if (!s.branches.length) out.push("- none");
   for (const b of s.branches)
     out.push(
