@@ -120,8 +120,8 @@ export function frameScripts(shell: string): NonNullable<ReaderConfig["editor"]>
 }
 
 /**
- * A hashed file, as the Worker serves it when it runs first (local development; on Cloudflare the files are served
- * without it, with _headers'): kept for a year, loadable from a document's own origin; a missing one never kept.
+ * A hashed file, as the Worker serves it (it runs first for every path: cloudflare.config.ts): kept for a year, loadable
+ * from a document's own origin; a missing one never kept, whatever headers the static assets gave it (the build's _headers).
  */
 export const serveAsset = Effect.gen(function* () {
   const { request, platform } = yield* ctx;

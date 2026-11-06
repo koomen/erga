@@ -78,7 +78,7 @@ test("a library's address imports its newest build, asked for again each time, f
   expect(r.headers.get("content-type")).toMatch(/^text\/javascript/);
 });
 
-test("served by the Worker (local development), a hashed file is kept a year and any origin may load it; a missing one is never kept", async () => {
+test("served by the Worker, a hashed file is kept a year and any origin may load it; a missing one is never kept", async () => {
   const platform = { assets: async (r: Request) => new URL(r.url).pathname == "/_erga/main-aaaa1111.js" ? new Response("export {}", { headers: { "Content-Type": "text/javascript" } }) : new Response("Not found", { status: 404 }) } as unknown as Platform;
   const ok = await respond(serveAsset, new Request("https://erga.test/_erga/main-aaaa1111.js"), platform);
   expect(ok.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
@@ -88,7 +88,7 @@ test("served by the Worker (local development), a hashed file is kept a year and
   const missing = await respond(serveAsset, new Request("https://erga.test/_erga/main-zzzz0000.js"), platform);
   expect(missing.status).toBe(404);
   expect(missing.headers.get("cache-control")).toBe("no-store");
-  // Cloudflare's own serving gives the same headers (the build's _headers).
+  // The static assets' own headers are the same (the build's _headers), for what Cloudflare serves from them.
   expect(HEADERS).toStartWith(`${ASSET_PREFIX}*\n`);
   for (const h of ["Cache-Control: public, max-age=31536000, immutable", "Access-Control-Allow-Origin: *"]) expect(HEADERS).toContain(h);
 });

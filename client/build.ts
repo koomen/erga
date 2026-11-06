@@ -25,7 +25,7 @@
 //   manifest.json      each file's address by its name, the chunks each script needs first, their integrity
 //                      hashes and the typeface's @font-face rules (shared/assets.ts): the Worker reads it and
 //                      names the files in the pages it makes (server/pages/assets.ts). Not served.
-//   _headers           the hashed files' headers, for Cloudflare's static serving (the deploy sends it as the
+//   _headers           the hashed files' headers, on Cloudflare's static assets (the Worker sets them again: serveAsset; the deploy sends it as the
 //                      Worker's assets config: deploy/pipeline/pipeline.ts)
 //   logo.png           Erga's logo (assets/logo/logo.png), public at /logo.png: a square 512 px PNG for
 //                      places that want one (an OAuth client's logo)

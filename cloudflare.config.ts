@@ -33,16 +33,13 @@ export default defineConfig(({ mode }) => ({
     // pages (<id>-<owner>.<pages domain>, with a proxied wildcard DNS record and the zone's Universal SSL certificate).
     // Logs and exceptions, queryable afterwards (cf observability telemetry query).
     observability: { enabled: true, logs: { enabled: true, invocationLogs: true } },
-    // The Worker decides everything (view mode at /, documents under
-    // /<owner>/<id>) and asks for the editor's files when it needs them; but for
-    // the editor's hashed files (/_erga/..., client/build.ts), which Cloudflare
-    // serves as they are, with the headers of the build's _headers (a year in the
-    // browser's cache, and to any origin): they are public code, which staging's
-    // admins-only guard lets anyone have too (server/identity/admins-only.ts). In
-    // local development the Worker runs first for them as well, and adds the same
-    // headers (server/pages/assets.ts).
-    // (/_erga/ is shared/assets.ts's ASSET_PREFIX, written out: the dev server can't load a module this file imports into the Worker too.)
-    assets: { htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: mode == "development" ? true : ["/*", "!/_erga/*"] },
+    // The Worker runs first for every path, and decides everything (view mode at /, documents under /<owner>/<id>),
+    // the editor's hashed files (/_erga/..., client/build.ts) too: it serves them from the static assets with a year in
+    // the browser's cache, to any origin, and a missing one with no-store (server/pages/assets.ts, serveAsset). They are
+    // public code, which staging's admins-only guard lets anyone have (server/identity/admins-only.ts). Not the static
+    // assets alone for /_erga/*: their 404 carried the year-long header (the build's _headers), and the homepage's own
+    // domain answers its /_erga/ routes in the Worker (server/app.ts).
+    assets: { htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: true },
     exports: {
       // Each document (cloudflare/objects/document.ts), named by its id.
       DocumentObject: exports.durableObject({ storage: "sqlite" }),
