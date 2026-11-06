@@ -7,8 +7,12 @@
 // The pages that register it (client/common/offline.ts) ask it to keep what they loaded before it was theirs, and the
 // page's editor puts the page made from its own text in the copy (libs/text/ui/offline-page.ts): an edit made offline
 // is in the page that a reload offline opens.
+//
+// After sign-out it keeps nothing, and answers from the network alone: it reads the "signed out" mark before each
+// write, so a restart of the worker doesn't forget it (client/common/offline.ts, keepWrite).
 
 import { KEPT_AT, keptAddress, OFFLINE_CACHE, PAGE_HEADER } from "../../shared/offline";
+import { keepWrite } from "../common/offline";
 
 /** What this script uses of the worker's scope. */
 interface Scope {
@@ -28,12 +32,11 @@ const KEEP_MS = 14 * 24 * 3600_000;
 
 export default function offlineWorker(): void {
   const sw = self as unknown as Scope;
-  let pruned = 0,
-    off = false;
+  let pruned = 0;
 
   /** How a request is answered: null, by the network alone. */
   function kind(r: Request): "page" | "built" | "file" | null {
-    if (off || r.method != "GET" || r.headers.has("range") || r.headers.has("x-erga-check")) return null;
+    if (r.method != "GET" || r.headers.has("range") || r.headers.has("x-erga-check")) return null;
     const u = new URL(r.url);
     if (u.origin == location.origin && /^\/(api|auth|mcp|oauth|tokens|__erga)(\/|$)|^\/erga-sw\.js$/.test(u.pathname)) return null;
     if (r.mode == "navigate") return "page";
@@ -45,9 +48,10 @@ export default function offlineWorker(): void {
     if (res.status != 200 || res.redirected || res.type == "opaque") return;
     const headers = new Headers(res.headers);
     headers.set(KEPT_AT, String(Date.now()));
-    const copy = await caches.open(OFFLINE_CACHE);
-    await copy.put(key, new Response(await res.blob(), { status: 200, statusText: res.statusText, headers }));
-    if (Date.now() - pruned > 3600_000) await prune();
+    const body = await res.blob();
+    const put = async () =>
+      (await caches.open(OFFLINE_CACHE)).put(key, new Response(body, { status: 200, statusText: res.statusText, headers }));
+    if ((await keepWrite(put, () => caches.delete(OFFLINE_CACHE))) && Date.now() - pruned > 3600_000) await prune();
   }
 
   /** Forgets the copies that no good answer renewed for a while. */
@@ -73,9 +77,10 @@ export default function offlineWorker(): void {
 
   async function answer(r: Request, how: "page" | "built" | "file", e: Ev): Promise<Response> {
     const key = how == "page" ? keptAddress(r.url) : r.url;
-    const copy = await caches.open(OFFLINE_CACHE);
+    // (A read never makes the copy again: caches.open would, after sign-out.)
+    const kept = () => caches.match(key, { cacheName: OFFLINE_CACHE });
     if (how == "built" || !navigator.onLine) {
-      const hit = await copy.match(key);
+      const hit = await kept();
       if (hit) return hit;
     }
     try {
@@ -83,7 +88,7 @@ export default function offlineWorker(): void {
       e.waitUntil(keep(key, res.clone()).catch(() => {}));
       return res;
     } catch (err) {
-      const hit = await copy.match(key);
+      const hit = await kept();
       if (hit) return hit;
       throw err;
     }
@@ -98,9 +103,7 @@ export default function offlineWorker(): void {
   // A page asks it to keep what it loaded before the worker was its own: its address (`page`), and its files.
   sw.addEventListener("message", (e) => {
     const d = e.data;
-    // Sign-out (client/common/offline.ts): it keeps nothing more, for the pages it still serves until they go.
-    if (d?.type == "erga-forget") off = true;
-    if (d?.type != "erga-keep" || off) return;
+    if (d?.type != "erga-keep") return;
     const urls = Array.isArray(d.urls) ? d.urls.filter((u): u is string => typeof u == "string").slice(0, 200) : [];
     const page = typeof d.page == "string" ? d.page : null;
     const one = async (url: string, isPage: boolean) => {
@@ -108,7 +111,7 @@ export default function offlineWorker(): void {
       if (!isPage && !kind(r)) return;
       if (isPage && new URL(url).origin != location.origin) return;
       const key = isPage ? keptAddress(url) : url;
-      if (!isPage && (await (await caches.open(OFFLINE_CACHE)).match(key))) return;
+      if (!isPage && (await caches.match(key, { cacheName: OFFLINE_CACHE }))) return;
       await keep(key, await fetch(r));
     };
     e.waitUntil(Promise.all([...(page ? [one(page, true)] : []), ...urls.map((u) => one(u, false))].map((p) => p.catch(() => {}))));

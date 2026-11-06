@@ -8,10 +8,12 @@
 // replica can't merge into it, and its files' text goes in as edits instead, against that base (collab.ts, `adopt`).
 //
 // One database per origin: the viewer's (erga.dev) keeps the shell's replica, a document's pages origin its page's.
-// Sign-out deletes it (client/common/offline.ts, clearOffline).
+// Sign-out deletes it, and nothing opens it again until the next sign-in (client/common/offline.ts, keepWrite).
 
 import * as Y from "yjs";
 import { KEPT_DB } from "../../../shared/offline";
+import { deleteKept, keepWrite } from "../../../client/common/offline";
+import { type Keeping, keepStep } from "./keeper-state";
 
 /** What the browser keeps of a replica: the room's history it is of (its epoch), and everything in it. */
 export interface Kept {
@@ -64,11 +66,19 @@ const result = <T>(r: IDBRequest<T>) =>
 
 type Room = { name: string; epoch: string; extra?: unknown; base?: Record<string, string>; at: number };
 
+/** `f` on the database, while signed in (else, or if it fails: null). */
+async function withDb<T>(f: (d: IDBDatabase) => Promise<T>): Promise<T | null> {
+  let got: T | null = null;
+  await keepWrite(async () => {
+    const d = await db();
+    if (d) got = await f(d).catch(() => null);
+  }, deleteKept);
+  return got;
+}
+
 /** The replica kept under `name`, its updates merged into one (and kept so), or null. */
-export async function readKept(name: string): Promise<Kept | null> {
-  const d = await db();
-  if (!d) return null;
-  try {
+export function readKept(name: string): Promise<Kept | null> {
+  return withDb(async (d) => {
     const tx = d.transaction([ROOMS, UPDATES], "readwrite");
     const rooms = tx.objectStore(ROOMS),
       updates = tx.objectStore(UPDATES);
@@ -83,9 +93,7 @@ export async function readKept(name: string): Promise<Kept | null> {
     }
     await done(tx);
     return { epoch: room.epoch, update, extra: room.extra, base: room.base };
-  } catch {
-    return null;
-  }
+  });
 }
 
 /**
@@ -93,18 +101,14 @@ export async function readKept(name: string): Promise<Kept | null> {
  * that asks after gets false): whether this tab has it.
  */
 export async function claimKept(name: string, epoch: string): Promise<boolean> {
-  const d = await db();
-  if (!d) return false;
-  try {
+  return !!(await withDb(async (d) => {
     const tx = d.transaction([ROOMS, UPDATES], "readwrite");
     const room = (await result(tx.objectStore(ROOMS).get(name))) as Room | undefined;
     if (room?.epoch != epoch) return (await done(tx)) && false;
     tx.objectStore(ROOMS).delete(name);
     for (const k of await result(tx.objectStore(UPDATES).index("name").getAllKeys(name))) tx.objectStore(UPDATES).delete(k);
     return await done(tx);
-  } catch {
-    return false;
-  }
+  }));
 }
 
 /** What keeps a replica: `base` writes the room's text of each file; `stop` ends it (`save`: with what waits). */
@@ -114,34 +118,36 @@ export interface Keeper {
 }
 
 /**
- * Keeps `doc` under `name` from now on: its whole state now, then each update as it comes. A replica of another history
- * kept there before is replaced.
+ * Keeps `doc` under `name` from now on, as a replica of history `epoch`: its whole state now, then each update as it
+ * comes. A replica of another history kept there before is replaced; if another replaces this one, it stops
+ * (keeper-state.ts).
  */
 export function keepReplica(name: string, doc: Y.Doc, epoch: string, extra?: unknown): Keeper {
   let pending: Uint8Array[] = [Y.encodeStateAsUpdate(doc)],
     base: Record<string, string> | null = null,
-    fresh = true,
+    state: Keeping = "fresh",
     going: Promise<void> | null = null;
   const write = async () => {
     const parts = pending,
       texts = base;
     pending = [];
     base = null;
-    const d = await db();
-    if (!d) return;
-    try {
+    await withDb(async (d) => {
       const tx = d.transaction([ROOMS, UPDATES], "readwrite");
       const rooms = tx.objectStore(ROOMS),
         updates = tx.objectStore(UPDATES);
       const was = (await result(rooms.get(name))) as Room | undefined;
-      if (fresh && was && was.epoch != epoch) for (const k of await result(updates.index("name").getAllKeys(name))) updates.delete(k);
-      if (fresh || texts) rooms.put({ name, epoch, extra, base: texts ?? (was?.epoch == epoch ? was.base : undefined), at: Date.now() });
-      fresh = false;
-      if (parts.length) updates.add({ name, update: parts.length == 1 ? parts[0] : Y.mergeUpdates(parts) });
-      await done(tx);
-    } catch {
-      /* storage full or off: the replica stays in this tab only */
-    }
+      const step = keepStep(state, epoch, was?.epoch ?? null, !!texts);
+      for (const effect of step.effects) {
+        if (effect == "clear") for (const k of await result(updates.index("name").getAllKeys(name))) updates.delete(k);
+        if (effect == "record")
+          rooms.put({ name, epoch, extra, base: texts ?? (was?.epoch == epoch ? was.base : undefined), at: Date.now() });
+        if (effect == "add" && parts.length) updates.add({ name, update: parts.length == 1 ? parts[0] : Y.mergeUpdates(parts) });
+      }
+      // (Storage full or off: the replica stays in this tab only.)
+      if (await done(tx)) state = step.state;
+    });
+    if (state == "refused") stopKeeping();
   };
   /** What waits goes in (no timer: a frame's can wait long), and what comes meanwhile right after. */
   const flush = (): Promise<void> =>
@@ -155,11 +161,18 @@ export function keepReplica(name: string, doc: Y.Doc, epoch: string, extra?: unk
   };
   // (The tab going away: what waits goes now; IndexedDB finishes a transaction it has begun.)
   const away = () => void flush();
+  const stopKeeping = () => {
+    doc.off("update", onUpdate);
+    removeEventListener("pagehide", away);
+    pending = [];
+    base = null;
+  };
   doc.on("update", onUpdate);
   addEventListener("pagehide", away);
   void flush();
   return {
     base(texts) {
+      if (state == "refused") return;
       base = texts;
       void flush();
     },

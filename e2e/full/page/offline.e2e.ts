@@ -229,3 +229,45 @@ test("sign-out deletes every offline copy in this browser: the app's origin's an
   const probe = ed.page.frames().find((f) => f.url().startsWith(pages))!;
   expect(await probe.evaluate(KEPT), "the pages origin").toEqual(none);
 });
+
+test("sign-out in another tab: this tab types on, and keeps nothing more in either origin", {
+  timeout: 60_000,
+}, async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "multi");
+  await workersIn(ed);
+  await ed.clickEnd("main p");
+  await ed.type(" Milk.");
+  const all = { copy: true, replicas: true, worker: true };
+  await expect.poll(() => ed.frame(KEPT)).toEqual(all);
+  await expect.poll(() => ed.eval(KEPT)).toEqual(all);
+
+  // Tab B signs out.
+  const b = await tab.page.context().newPage();
+  await b.goto(`${new URL(ed.address).origin}/auth/logout`);
+  await until(
+    () => b.evaluate(() => location.pathname == "/" && document.readyState == "complete").catch(() => false),
+    15_000,
+    "tab B signed out"
+  );
+  await b.close();
+  const none = { copy: false, replicas: false, worker: false };
+  expect(await ed.eval(KEPT), "the app's origin, after sign-out").toEqual(none);
+  expect(await ed.frame(KEPT), "the pages origin, after sign-out").toEqual(none);
+
+  // Tab A types: the edit reaches the room, and nothing goes into this browser's storage again.
+  await ed.clickEnd("main p");
+  await ed.type(" Eggs.");
+  await until(() => ed.disk().includes(" Milk. Eggs.</p>"), DISK_MS, "the edit on disk");
+  await until(async () => (await ed.source()).includes("Eggs."), 10_000, "the shell's replica has the edit");
+  expect({ app: await ed.eval(KEPT), pages: await ed.frame(KEPT) }, "each origin keeps nothing").toEqual({ app: none, pages: none });
+
+  // Signed in again (with no cookie, the dev server signs a request in): the page keeps again, in both origins.
+  await ed.page.context().clearCookies();
+  await ed.page.reload();
+  await ed.loaded();
+  await workersIn(ed);
+  await ed.clickEnd("main p");
+  await ed.type(" Bread.");
+  await expect.poll(() => ed.frame(KEPT)).toEqual(all);
+  await expect.poll(() => ed.eval(KEPT)).toEqual(all);
+});
