@@ -19,6 +19,7 @@ import { byLine, SYSTEM } from "../../shared/attribution.ts";
 import type { Directory, DocRow } from "../directory/index.ts";
 import { IDLE, renderHome, type DeployStatus } from "./render.ts";
 import { addressOf } from "../../document/names.ts";
+import { siteOf, type Site } from "./site.ts";
 
 /** A deployed snapshot, as serve.ts serves it. */
 export interface LivePage {
@@ -31,6 +32,8 @@ export interface LivePage {
   after: string;
   /** Every file it has, by path (the page among them, as it is in the document). */
   files: string[];
+  /** The site's settings, from its files (site.ts). */
+  site: Site;
   at: number;
   version: number | null;
 }
@@ -106,6 +109,15 @@ export class HomeDeploys implements HomeObject {
   async load(): Promise<void> {
     this.s = (await this.deps.storage.get<State>(STATE)) ?? this.s;
     this.live = (await this.deps.storage.get<LivePage>(LIVE)) ?? null;
+    // A snapshot from a release before sites had settings: read them from its files once.
+    if (this.live && !this.live.site) {
+      const gen = this.live.gen;
+      this.live.site = await siteOf(async (path) => {
+        const f = await this.file(gen, path);
+        return f && new TextDecoder().decode(f.bytes);
+      });
+      await this.deps.storage.put(LIVE, this.live);
+    }
     if (this.s.state == "deploying" && (await this.deps.alarm.get()) == null) await this.deps.alarm.set(Date.now());
   }
 
@@ -262,7 +274,12 @@ export class HomeDeploys implements HomeObject {
       throw new Error("This test page asks for its deploy to fail.");
     }
     const gen = `${Date.now().toString(36)}${Array.from(crypto.getRandomValues(new Uint8Array(3)), (b) => b.toString(36)).join("")}`;
-    const rendered = await renderHome({ index: now.index, files: now.files, gen, title: doc.title, doc: doc.id });
+    const text = (path: string) => {
+      const f = now.files[path];
+      return f == null ? null : typeof f == "string" ? f : new TextDecoder().decode(f);
+    };
+    const site = await siteOf(async (path) => text(path));
+    const rendered = await renderHome({ index: now.index, files: now.files, gen, title: doc.title, doc: doc.id, bars: site.bars });
     const encoder = new TextEncoder();
     const entries = Object.entries(now.files).map(([path, data]) => [`${FILE}${gen}:${path}`, typeof data == "string" ? encoder.encode(data) : data] as const);
     for (let i = 0; i < entries.length; i += 64) await this.deps.storage.put(Object.fromEntries(entries.slice(i, i + 64)));
@@ -277,6 +294,7 @@ export class HomeDeploys implements HomeObject {
       before: rendered.before,
       after: rendered.after,
       files: Object.keys(now.files),
+      site,
       at: Date.now(),
       version: now.version,
     };

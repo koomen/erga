@@ -13,7 +13,8 @@
 //   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
 //   bun erga deploy [<commit>] <host> [--no-tests]            deploys a registered instance from this machine; a primary
 //                                       with no commit takes the commit its staging instances run, and main moves to it;
-//                                       --fresh: a staging instance gets a new copy of its primary's data
+//                                       --fresh: a staging instance gets a new copy of its primary's data;
+//                                       --home <domain>: a primary serves its homepage on that domain from now on
 //   bun erga rollback <host> [--yes]    a registered instance's Worker version from before its last deploy
 //   bun erga register <host> [--staging-of <host>]            signs in to an instance as an admin, in the browser, and
 //                                       adds it to .erga/config.json: its deploy facts, its plain settings, an ops token
@@ -110,13 +111,22 @@ function release(asked: string | undefined, dry: boolean) {
 /** A host from a host or a URL. */
 const hostOf = async (arg: string) => new URL((await import("./config")).originOf(arg)).host;
 
-async function deploy(args: string[], noTests: boolean, fresh: boolean) {
-  if (!args.length || args.length > 2) fail("Name the instance: bun erga deploy [<commit>] <host> [--no-tests] [--fresh].");
+async function deploy(args: string[], noTests: boolean, fresh: boolean, home: string | undefined) {
+  if (!args.length || args.length > 2)
+    fail("Name the instance: bun erga deploy [<commit>] <host> [--no-tests] [--fresh] [--home <domain>].");
   const [commit, host] = args.length == 2 ? [args[0], await hostOf(args[1])] : [undefined, await hostOf(args[0])];
   const { ergaDir } = await import("./config");
   const { deployInstance } = await import("./deploy");
-  const command = ["bun erga deploy", ...args, ...(noTests ? ["--no-tests"] : []), ...(fresh ? ["--fresh"] : [])].join(" ");
-  const sha = await deployInstance({ dir: ergaDir(), host, commit, noTests, fresh, command }).catch((e: Error) => fail(e.message));
+  const command = [
+    "bun erga deploy",
+    ...args,
+    ...(noTests ? ["--no-tests"] : []),
+    ...(fresh ? ["--fresh"] : []),
+    ...(home ? ["--home", home] : []),
+  ].join(" ");
+  const sha = await deployInstance({ dir: ergaDir(), host, commit, noTests, fresh, command, ...(home ? { home } : {}) }).catch((e: Error) =>
+    fail(e.message)
+  );
   pass(`${host} runs ${sha.slice(0, 12)}, healthy.`);
 }
 
@@ -193,7 +203,7 @@ export async function main(argv: string[]) {
     const i = rest.indexOf(f);
     return i >= 0 ? rest[i + 1] : undefined;
   };
-  const plain = rest.filter((x, i) => !x.startsWith("-") && !["-m", "--port", "--staging-of"].includes(rest[i - 1] ?? ""));
+  const plain = rest.filter((x, i) => !x.startsWith("-") && !["-m", "--port", "--staging-of", "--home"].includes(rest[i - 1] ?? ""));
   switch (cmd) {
     case "skill":
       return say(readFileSync(join(ROOT, "deploy/cli/SKILL.md"), "utf8"));
@@ -216,7 +226,7 @@ export async function main(argv: string[]) {
     case "release":
       return release(plain[0], flag("--dry-run"));
     case "deploy":
-      return deploy(plain, flag("--no-tests"), flag("--fresh"));
+      return deploy(plain, flag("--no-tests"), flag("--fresh"), opt("--home"));
     case "rollback":
       return rollback(plain[0], flag("--yes"));
     case "register":

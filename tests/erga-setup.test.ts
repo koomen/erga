@@ -156,3 +156,27 @@ test("setup ends with register's token: the admin approves it, and the entry get
     server.stop(true);
   }
 });
+
+test("setup --home: the production server serves the homepage on that domain; its staging server never does", async () => {
+  const mock = mockCloudflare();
+  mock.state.zones.push({ id: "zone00000000000000000000000ada01", name: "ada-example.org", status: "active" });
+  const answers = { ...defaultAnswers("ada"), host: "erga.ada-example.com", staging: "erga-staging.ada-example.com" };
+  const o: Setup = {
+    dir,
+    answers,
+    account: ACCOUNT_ID,
+    zones: mock.state.zones.map((z) => z.name),
+    subdomain: mock.state.subdomain,
+    ids: { github: "Iv1.ada" },
+    net: mock.fetch,
+    token: "mock-machine-token",
+    print: () => {},
+    commit: "HEAD",
+    home: "ada-example.org",
+  };
+  await firstDeploy(o, "production");
+  await firstDeploy(o, "staging");
+  expect(JSON.parse(bindingsOf(mock.state, "erga-ada-example-com").ERGA_DEPLOY.text).home).toBe("ada-example.org");
+  expect(JSON.parse(bindingsOf(mock.state, "erga-staging-ada-example-com").ERGA_DEPLOY.text).home).toBeUndefined();
+  expect(mock.state.domains).toContainEqual(expect.objectContaining({ hostname: "ada-example.org", service: "erga-ada-example-com" }));
+}, 120_000);

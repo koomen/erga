@@ -133,6 +133,11 @@ export interface Platform {
     facts: unknown;
     /** A staging server's primary: the origin it copies documents and images from (SNAPSHOT_FROM), or null. */
     primary: string | null;
+    /**
+     * The homepage's own domain (the deploy facts' home: `bun erga deploy <host> --home <domain>` sets it), or null: the
+     * homepage is on this server's own domain.
+     */
+    home: string | null;
   };
   /** Sign-in's fixed values, from the deploy. */
   signIn: {

@@ -116,6 +116,11 @@ export interface Target {
    * <name>-pages.<subdomain>.workers.dev (workers.dev has no wildcards).
    */
   pages: { kind: "shared" } | { kind: "zone"; zoneId?: string; zoneName: string; domain?: string };
+  /**
+   * The homepage's own domain (server/home/site.ts), a hostname on one of the account's zones: the same Worker serves the
+   * homepage's site there, and nothing else. A primary's only.
+   */
+  home?: string;
   /** Text bindings over the build's (cloudflare.config.ts as `cf build` wrote it). */
   vars: Record<string, string>;
   /** Secrets set with this upload. */
@@ -233,6 +238,10 @@ export function guardTarget(t: Target): string | null {
   const g = t.guard;
   const host = t.app.kind == "domain" ? t.app.hostname.toLowerCase() : null;
   const pages = t.pages.kind == "zone" ? (t.pages.domain ?? t.pages.zoneName).toLowerCase() : null;
+  const home = t.home?.toLowerCase();
+  if (home && !t.production) return `This deploy (${t.label}) would put the homepage on ${home}: only a primary serves a homepage domain.`;
+  if (home && (home == host || home == pages || (pages && home.endsWith(`.${pages}`))))
+    return `The homepage's domain (${home}) is the app's address or under its documents' pages: give it a domain of its own.`;
   if (g && !t.production) {
     if (host == g.host || pages == g.pages) return `This deploy (${t.label}) would put a server on production's address (${host == g.host ? g.host : `*.${g.pages}`}). It stops here: production is deployed only as production.`;
     // Pages under production's (*.x.example-pages.com): a route on production's pages zone, which only production uses.
@@ -448,31 +457,63 @@ export async function runPipeline(
       return `${target.workerName}, release ${rel.version}`;
     },
 
-    // Its address.
+    // Its address, and the homepage's domain if it has one.
     async address() {
+      /** Puts the Worker on `hostname` (a custom domain on one of the account's zones), unless it's there already. */
+      const put = async (hostname: string, zoneId: string) => {
+        const there = await cf
+          .call<{ hostname: string; service: string }[]>(
+            "GET",
+            `${acc}/workers/domains?hostname=${encodeURIComponent(hostname)}`,
+            `read ${hostname}'s custom domain`
+          )
+          .catch(() => null);
+        const mine = there?.find((d) => d.hostname == hostname);
+        if (mine && mine.service != target.workerName)
+          throw new DeployError({
+            message: `${hostname} is already the address of another Worker (${mine.service}). Remove it there, or pick another address.`,
+          });
+        if (!mine)
+          await cf.call("PUT", `${acc}/workers/domains`, `put it on ${hostname} (a custom domain)`, {
+            hostname,
+            service: target.workerName,
+            zone_id: zoneId,
+          });
+        return mine ? "already its address" : "new";
+      };
+      let said = `https://${host}`;
       if (target.app.kind == "workers.dev") {
         await cf.call("POST", `${acc}/workers/scripts/${target.workerName}/subdomain`, "turn on its workers.dev address", { enabled: true, previews_enabled: false });
       } else {
         const app = target.app;
-        const zoneId = app.zoneId ?? (await zoneIdOf(cf, target.accountId, app.zoneName));
         // There already (Erga's own targets: the setup made it), nothing to change. The address itself says so: it
         // answers as this target (a deploy token can't read the account's custom domains: Cloudflare has no per-zone
         // read for them).
+        let answers = false;
         if (target.checkVersion && target.vars.DEPLOY_TARGET) {
           const r = await site(`https://${app.hostname}/api/deploys/version`).catch(() => null);
-          const said = r?.ok ? ((await r.json().catch(() => null)) as { target?: string } | null)?.target : null;
-          if (said == target.vars.DEPLOY_TARGET) return `https://${host} (already its address)`;
+          answers =
+            (r?.ok ? ((await r.json().catch(() => null)) as { target?: string } | null)?.target : null) == target.vars.DEPLOY_TARGET;
         }
-        const there = await cf.call<{ hostname: string; service: string }[]>("GET", `${acc}/workers/domains?hostname=${encodeURIComponent(app.hostname)}`, `read ${app.hostname}'s custom domain`).catch(() => null);
-        const mine = there?.find((d) => d.hostname == app.hostname);
-        if (mine && mine.service != target.workerName)
-          throw new DeployError({
-            message: `${app.hostname} is already the address of another Worker (${mine.service}). Remove it there, or pick another address.`,
-          });
-        if (mine) return `https://${host} (already its address)`;
-        await cf.call("PUT", `${acc}/workers/domains`, `put it on ${target.app.hostname} (a custom domain)`, { hostname: target.app.hostname, service: target.workerName, zone_id: zoneId });
+        if (
+          answers ||
+          (await put(app.hostname, app.zoneId ?? (await zoneIdOf(cf, target.accountId, app.zoneName)))) == "already its address"
+        )
+          said += " (already its address)";
       }
-      return `https://${host}`;
+      if (target.home) {
+        const home = target.home.toLowerCase();
+        const zones =
+          (await cf.call<{ id: string; name: string }[]>("GET", `/zones?account.id=${target.accountId}&per_page=50`, "list your zones")) ??
+          [];
+        const zone = zones.filter((z) => home == z.name || home.endsWith(`.${z.name}`)).sort((x, y) => y.name.length - x.name.length)[0];
+        if (!zone)
+          throw new DeployError({
+            message: `${home} is on none of this Cloudflare account's zones (${zones.map((z) => z.name).join(", ") || "none"}). The homepage's domain must be: add its zone to the account first.`,
+          });
+        said += `; the homepage on https://${home}${(await put(home, zone.id)) == "new" ? "" : " (already its address)"}`;
+      }
+      return said;
     },
 
     // Documents' pages: a wildcard on their own zone, or the shared workers.dev host (a small Worker handing every request to the app).

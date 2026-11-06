@@ -101,6 +101,7 @@ export const deployFacts = (t: Target) => ({
   ...(t.subdomain ? { subdomain: t.subdomain } : {}),
   app: t.app,
   pages: t.pages,
+  ...(t.home ? { home: t.home } : {}),
   vars: t.vars,
 });
 

@@ -46,7 +46,7 @@ import {
   targetSharedPagesHost,
   Unhealthy,
 } from "../pipeline/pipeline";
-import { type Config, type Entry, entryOf, originOf, readConfig, secretsPath, snapshotTokenOf } from "./config";
+import { type Config, type Entry, entryOf, originOf, readConfig, secretsPath, snapshotTokenOf, withEntry, writeConfig } from "./config";
 import { previousVersion } from "./flow";
 import { readOps } from "./ops";
 
@@ -70,6 +70,7 @@ const namesOf = (e: Entry) => ({
   ...(e.subdomain ? { subdomain: e.subdomain } : {}),
   app: e.app,
   pages: e.pages,
+  ...(e.home ? { home: e.home } : {}),
 });
 
 /**
@@ -354,7 +355,15 @@ export interface DeployOptions {
   /** `bun erga setup`'s first deploy only: the secrets the Worker doesn't hold yet, and a new workers.dev subdomain. */
   secrets?: Record<string, string>;
   createSubdomain?: boolean;
+  /** --home: the homepage's own domain, a hostname on one of the account's zones. The server keeps it after. */
+  home?: string;
 }
+
+/** Why `home` can't be the homepage's domain, or null. */
+export const homeRefusal = (home: string) =>
+  /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(home)
+    ? null
+    : `--home ${home}: give a domain name, e.g. example.com.`;
 
 export const mocked = () => process.env.ERGA_DEPLOY_MOCK == "1";
 
@@ -384,14 +393,22 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   if (o.fresh && !entry.stagingOf)
     throw new Error(`${o.host} is a primary: --fresh is only for a staging instance, which copies its primary's data.`);
   // setup's first deploy: its secrets, one time, and a new workers.dev subdomain. A copy's target keeps them.
-  const own = { ...(o.secrets ? { secrets: o.secrets } : {}), ...(o.createSubdomain ? { createSubdomain: true } : {}) };
+  const own = {
+    ...(o.secrets ? { secrets: o.secrets } : {}),
+    ...(o.createSubdomain ? { createSubdomain: true } : {}),
+    ...(o.home ? { home: o.home.toLowerCase() } : {}),
+  };
+  const badHome = o.home ? homeRefusal(o.home.toLowerCase()) : null;
+  if (badHome) throw new Error(badHome);
   let target: Target = { ...entryTarget(config, entry), ...own };
   const sent = Object.keys(target.secrets);
   const wrong = guardTarget(target);
   if (wrong) throw new Error(wrong);
   const { net, token, quick } = await netOf(o);
   const cf = new Cloudflare(token, net);
-  const command = o.command ?? `bun erga deploy ${o.commit ? `${o.commit} ` : ""}${o.host}${o.fresh ? " --fresh" : ""}`;
+  const command =
+    o.command ??
+    `bun erga deploy ${o.commit ? `${o.commit} ` : ""}${o.host}${o.fresh ? " --fresh" : ""}${o.home ? ` --home ${o.home}` : ""}`;
   const free = takeLock(o.dir, o.host, command);
   const job = startJob(o.dir, { command, host: o.host, print: o.print });
   const log = job.log;
@@ -455,6 +472,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       throw e instanceof DeployError ? new Error(e.message) : e;
     }
     log(`Deployed ${sha.slice(0, 12)} to https://${targetHost(target)}: healthy.`);
+    await copyFacts(o.dir, o.host, net, log);
     if (main == "forward") {
       try {
         pushTo({ clone: o.clone, print: log }, sha, "main");
@@ -473,6 +491,23 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     throw e;
   } finally {
     free();
+  }
+}
+
+/**
+ * The entry's copy of the deploy facts, read again from the server (GET /api/ops), which keeps them: a deploy may have
+ * changed them (--home). Without a working ops token, the entry stays as it was, and the log says so.
+ */
+async function copyFacts(dir: string, host: string, net: Fetch, log: (line: string) => void) {
+  const entry = entryOf(readConfig(dir), host);
+  if (!entry?.token) return log(`NOTE  ${host} has no ops token: its entry keeps its facts as they were (bun erga login ${host}).`);
+  try {
+    const facts = await readOps(originOf(host), entry.token, net);
+    if (!facts.deploy) return;
+    const { home: _, ...was } = entry;
+    writeConfig(dir, withEntry(readConfig(dir), { ...was, ...facts.deploy, token: entry.token }));
+  } catch (e) {
+    log(`NOTE  ${host}'s entry keeps its facts as they were: ${(e as Error).message}`);
   }
 }
 

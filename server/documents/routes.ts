@@ -205,6 +205,27 @@ export async function keyedPerson(platform: Platform, request: Request, url: URL
   return doc ? readEditKey(platform.secret, key, doc.owner, doc.id) : null;
 }
 
+/** The pages documentRoutes answers by name, whatever the homepage has. */
+const ERGA_PAGES = /^\/(new|scratch|docs|admin|_home|d)(\/|$)/;
+
+/**
+ * Whether an address is Erga's, not the homepage site's (Erga's paths win, server/home/site.ts): one of the pages
+ * above, or a document's address that has a document. `notFound`: what documentRoutes says of it is "There's nothing
+ * here", which the site's own 404 page may say instead.
+ */
+export function ergaAddress(
+  platform: Pick<Platform, "directory">,
+  path: string
+): { named: boolean; notFound: boolean; taken: () => Promise<boolean> } {
+  const [, first, second] = /^\/([^/]+)\/([^/]+)/.exec(path) ?? [];
+  const document = !!first && (first == "d" || OWNER.test(first));
+  return {
+    named: ERGA_PAGES.test(path),
+    notFound: !document,
+    taken: async () => document && !!(await documentRoute(platform, first, second)),
+  };
+}
+
 /**
  * How to reach the document at /<first>/<second>, for the requests under
  * it. By id it's remembered (an id is never another of the owner's slugs,

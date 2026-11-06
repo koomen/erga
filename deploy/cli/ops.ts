@@ -36,6 +36,8 @@ export const DeployFacts = Schema.Struct({
   subdomain: Schema.optionalKey(Schema.String),
   app: App,
   pages: Pages,
+  /** The homepage's own domain, if it has one (Target's home). */
+  home: Schema.optionalKey(Schema.String),
   vars: Schema.Record(Schema.String, Schema.String),
 });
 

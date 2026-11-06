@@ -441,6 +441,14 @@ export function mockCloudflare(
       );
     if (url.pathname == "/logo.png") return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "Content-Type": "image/png" } });
     if (url.pathname == "/api/deploys/version") return Response.json({ version: text("ERGA_VERSION") ?? null, target: text("DEPLOY_TARGET") || null });
+    // The deploy facts, as the app answers an ops token (any, here).
+    if (url.pathname == "/api/ops")
+      return Response.json({
+        version: text("ERGA_VERSION") ?? null,
+        target: text("DEPLOY_TARGET") || null,
+        host,
+        deploy: JSON.parse(text("ERGA_DEPLOY") || "null"),
+      });
     // The app's health check: healthy, unless a test says this release isn't (state.unhealthy).
     if (url.pathname == "/api/health") {
       const version = text("ERGA_VERSION") ?? null;

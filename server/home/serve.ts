@@ -15,6 +15,7 @@ import type { LivePage } from "./deploys.ts";
 import { HOME_FILES, homeHeader, pageInter, withHomeLlm, withToken } from "./render.ts";
 import { pageToken } from "./llm-token.ts";
 import { actingAdmin } from "../identity/index.ts";
+import { fileOf, NOT_FOUND, redirectOf } from "./site.ts";
 
 /** The snapshot as this isolate last had it, and when it last asked whether it's still current. */
 let memo: { page: LivePage; checked: number } | null = null;
@@ -93,7 +94,10 @@ async function homePage(request: Request, platform: Platform): Promise<Response 
     return null;
   }
   const { page, from } = live;
-  const controls = (async () => {
+  // site.json may turn the bars off: then nobody gets them (someone signed in never sees /).
+  const controls = !page.site.bars
+    ? Promise.resolve("")
+    : (async () => {
     const session = await platform.sessionOf(request);
     const who = session && whoOf(session);
     const dir = platform.directory;
@@ -165,29 +169,49 @@ async function homeFile(request: Request, platform: Platform): Promise<Response>
 const AUTHORS_POLICY = { "Content-Security-Policy": "frame-ancestors 'self'" };
 
 /**
- * A path at the root that may be one of the homepage's own files (a link to
- * its other pages, a file its script fetches by a relative URL): the current
- * deploy's, if it has it. Null otherwise (the path is the app's).
+ * Any other address of the homepage's site (site.ts): a rule of its _redirects, one of its files at its clean address,
+ * or, with `notFound`, its 404.html. Null when the site has nothing there, or when `taken` says the address is Erga's
+ * (Erga's paths win): the app answers it. On the Erga domain, its HTML pages get window.ergaLLM, as / does.
  */
-export const serveHomeRoot = Effect.flatMap(ctx, ({ request, platform }) =>
-  Effect.map(
-    call(() => homeRoot(request, platform)),
-    (r) => r && fromWeb(r)
-  )
-);
+export const serveHomeSite = (o: { notFound: boolean; taken: () => Promise<boolean> }) =>
+  Effect.flatMap(ctx, ({ request, platform }) =>
+    Effect.map(
+      call(() => siteAnswer(request, platform, o)),
+      (r) => r && fromWeb(r)
+    )
+  );
 
-async function homeRoot(request: Request, platform: Platform): Promise<Response | null> {
+/** How the site answers: on the Erga domain (`taken`: whether an address is Erga's), or on its own (`direct`). */
+type Where = { notFound: boolean; taken?: () => Promise<boolean>; direct?: boolean };
+
+async function siteAnswer(request: Request, platform: Platform, o: Where): Promise<Response | null> {
   const url = new URL(request.url);
-  let rel: string;
-  try { rel = decodeURIComponent(url.pathname.slice(1)); } catch { return null; }
-  return homeFileAt(request, platform, url, rel);
+  const live = await livePage(platform, url);
+  if (!live) return null;
+  const page = live.page;
+  const files = new Set(page.files);
+  const has = (p: string) => files.has(p);
+  const redirect = redirectOf(page.site, url.pathname, url.search);
+  const found = redirect ? null : fileOf(has, url.pathname);
+  if ((redirect || found) && o.taken && (await o.taken())) return null;
+  if (redirect) return new Response(null, { status: redirect.status, headers: { Location: redirect.to, "Cache-Control": "no-cache" } });
+  if (found && "slash" in found)
+    return new Response(null, { status: 301, headers: { Location: found.slash + url.search, "Cache-Control": "no-cache" } });
+  if (found) return siteFile(request, platform, page, found.file, 200, !!o.direct);
+  if (o.notFound && has(NOT_FOUND)) return siteFile(request, platform, page, NOT_FOUND, 404, !!o.direct);
+  return null;
 }
 
-/** The current deploy's file `rel`, as it is (an HTML page with window.ergaLLM); null if the deploy has none. */
-async function homeFileAt(request: Request, platform: Platform, url: URL, rel: string): Promise<Response | null> {
-  const live = await livePage(platform, url);
-  if (!live || !live.page.files.includes(rel)) return null;
-  const file = await platform.home.file(live.page.gen, rel);
+/** One of the snapshot's files, as it is (on the Erga domain, an HTML page with window.ergaLLM); null if the deploy lost it. */
+async function siteFile(
+  request: Request,
+  platform: Platform,
+  page: LivePage,
+  rel: string,
+  status: number,
+  direct: boolean
+): Promise<Response | null> {
+  const file = await platform.home.file(page.gen, rel);
   if (!file) return null;
   const headers: Record<string, string> = {
     "Content-Type": file.type,
@@ -196,8 +220,37 @@ async function homeFileAt(request: Request, platform: Platform, url: URL, rel: s
     ...AUTHORS_POLICY,
   };
   // An HTML page gets the homepage's model (window.ergaLLM), as the homepage's own page does.
-  const body = /^text\/html/i.test(file.type)
-    ? withHomeLlm(new TextDecoder().decode(file.bytes), live.page.docId, await pageToken(platform.secret, live.page.docId, Date.now()))
+  const body =
+    !direct && /^text\/html/i.test(file.type)
+      ? withHomeLlm(new TextDecoder().decode(file.bytes), page.docId, await pageToken(platform.secret, page.docId, Date.now()))
     : (file.bytes as BodyInit);
-  return new Response(request.method == "HEAD" ? null : body, { headers });
+  return new Response(request.method == "HEAD" ? null : body, { status, headers });
+}
+
+/**
+ * Every request on the homepage's own domain (Platform's deploy.home): the deployed snapshot's files as they are, at
+ * their clean addresses, with its redirects and its 404 page. No bars, no pencil, no viewer, no frame, and nothing of
+ * Erga's: people edit the site on the Erga domain, and a deploy there changes what this domain serves.
+ */
+export const serveHomeDomain = Effect.flatMap(ctx, ({ request, platform }) =>
+  Effect.map(
+    call(() => homeDomain(request, platform)),
+    fromWeb
+  )
+);
+
+async function homeDomain(request: Request, platform: Platform): Promise<Response> {
+  const plain = (text: string, status: number) =>
+    new Response(request.method == "HEAD" ? null : text, {
+      status,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache", ...AUTHORS_POLICY },
+    });
+  if (request.method != "GET" && request.method != "HEAD") return plain("Not allowed", 405);
+  const answer = await siteAnswer(request, platform, { notFound: true, direct: true });
+  if (answer) return answer;
+  if (!(await livePage(platform, new URL(request.url)))) {
+    platform.edge.background(platform.home.ensure().catch((e) => console.log(`couldn't start the homepage's deploy: ${e}`)));
+    return plain("This site isn't deployed yet.", 503);
+  }
+  return plain("Not found", 404);
 }

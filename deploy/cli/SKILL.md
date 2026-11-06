@@ -67,7 +67,10 @@ and `main`. There are no pull requests.
   deploys only a commit whose tests passed (`.erga/tests/<sha>`; `merge`
   writes it), else it runs them first; `--no-tests` skips them. After a healthy deploy of a
   primary, `main` moves forward to the commit and the CLI pushes it. A
-  primary does not deploy a commit apart from `main`.
+  primary does not deploy a commit apart from `main`. `--home <domain>`
+  (a primary only, a name on one of its account's zones) serves the
+  homepage's site on that domain from then on. The server keeps it, and
+  the CLI copies it into the entry after the deploy: never edit it there.
 - `bun erga rollback <host>`: a registered instance's Worker version from
   before its last deploy, in seconds. Only when Pete asks. The next deploy
   goes forward again.

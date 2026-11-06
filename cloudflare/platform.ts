@@ -76,6 +76,12 @@ const SETTINGS = Config.all({
 /** The Worker's settings, read from its bindings. */
 const settingsOf = (env: Env) => Effect.runSync(SETTINGS.parse(ConfigProvider.fromUnknown(env)));
 
+/** The homepage's own domain in the deploy facts, or null. */
+const homeOf = (facts: unknown): string | null => {
+  const home = facts && typeof facts == "object" ? (facts as { home?: unknown }).home : null;
+  return typeof home == "string" && home ? home.toLowerCase() : null;
+};
+
 /** Whose the homepage is when the server makes it: locally DEV_LOGIN, else (null) the server's first admin. */
 const landingOf = ({ devLogin }: { devLogin: string }): NonNullable<Platform["landing"]> => {
   const dev = devLogin.toLowerCase();
@@ -132,6 +138,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       version: settings.version || null,
       facts: settings.deployFacts,
       primary: settings.snapshotFrom || null,
+      home: homeOf(settings.deployFacts),
     },
     signIn: {
       app: settings.githubApp,
