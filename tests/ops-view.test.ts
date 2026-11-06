@@ -338,6 +338,10 @@ test("while its job runs, a button says so with a spinner: Merging… on its bra
   expect(rowOf(deploying, "2")).toContain(`aria-busy="true" disabled>${SPIN}Deploying…</button>`);
   expect(deploying.match(/class="spin"/g)?.length).toBe(1);
   expect(deploying).toContain(`${SPIN}Deploying…`);
+  // The instance answers the new commit before the job ends: the cell still says Deploying…, not live.
+  const answered = viewHtml(deploys({ starting: `bun erga deploy ${"2".repeat(12)} staging.erga.dev` }, "2"), "erga.dev", NOW);
+  expect(rowOf(answered, "2")).toContain(`${SPIN}Deploying…`);
+  expect(rowOf(answered, "2")).not.toContain("live");
   // The job ends: the buttons are as before.
   const done = jobOf(line({ ...start, command: "bun erga merge clean" }) + line({ result: "ok", ended: start.started }), () => true)!;
   const after = viewHtml(deploys({ jobs: [done] }), "erga.dev", NOW);

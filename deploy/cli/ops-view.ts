@@ -354,7 +354,8 @@ function log(g: Group, f: Facts & { git: Git }, now: number): string {
       const kind = isOn(i) ? "on" : "off";
       const marks = cols
         .map((e) => {
-          if (!runs(answer(e), c.sha)) return deployButton(e, g.primary.host, c, busy);
+          // Its own deploy stays "Deploying…" until the job ends, even when the instance answers the new commit before.
+          if (!runs(answer(e), c.sha) || deploys(busy, c.sha, e.host)) return deployButton(e, g.primary.host, c, busy);
           const at = deployedAt(f.jobs, e.host, c.sha);
           return `<span class="deps"><span class="dep live" data-host="${esc(e.host)}" title="${esc(`${e.host} runs this commit`)}"><span class="w">live</span><span class="at">${at ? short(at, now) : ""}</span></span></span>`;
         })
@@ -420,8 +421,8 @@ export function viewHtml(f: Facts, name: string, now = Date.now()): string {
 }
 
 /** The whole page: Erga's bar, the live part, and the page's script. */
-export function pageHtml(live: string, script: string): string {
-  return `<!doctype html><html lang="en" class="page-light page-white"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+export function pageHtml(live: string, script: string, code: string): string {
+  return `<!doctype html><html lang="en" class="page-light page-white"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="ops-code" content="${esc(code)}">
 <title>Ops · Erga</title>${FAVICON_LINK}
 <link rel="stylesheet" href="/fonts/inter.css"><link rel="stylesheet" href="/bars.css"><link rel="stylesheet" href="/ops-page.css">
 <script>(function(){var m=matchMedia("(prefers-color-scheme: dark)");function t(){var d=m.matches,c=document.documentElement.classList;c.toggle("page-dark",d);c.toggle("page-light",!d);c.toggle("page-white",!d)}t();m.addEventListener("change",t)})()</script>

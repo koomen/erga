@@ -1,7 +1,8 @@
 // `bun erga` (deploy/cli/ops-page.ts) as Pete runs it, in a clone with a config file and a job record: the page shows
 // the primary with its staging instance, the job that runs, and "live" at the commit each instance answers. An entry
 // that another terminal adds to the file shows at once, with no reload. A row's Deploy button shows only in the cell
-// under the mouse, or in the cell whose button has the focus.
+// under the mouse, or in the cell whose button has the focus. After a click, "Deploying…" or "Merging…" stays shown
+// until its job ends (fake jobs: fake-jobs.ts), and a tab that loaded older styles reloads.
 import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -67,11 +68,11 @@ test("the ops page shows the config's instances, the job that runs and the live 
   const config = (instances: unknown[]) => writeFileSync(join(dir, ".erga/config.json"), JSON.stringify({ instances }));
   mkdirSync(join(dir, ".erga/jobs"), { recursive: true });
   config([entry(primary), entry(staging, { stagingOf: primary })]);
-  const command = `bun erga deploy ${sha("origin/staging").slice(0, 8)} ${staging}`;
+  const command = `bun erga deploy ${sha("origin/staging").slice(0, 8)} ${primary}`;
   const job = join(dir, ".erga/jobs/2026-11-05T10-00-00-000Z-localhost-1.jsonl");
   writeFileSync(
     job,
-    `${JSON.stringify({ command, host: staging, from: "terminal", pid: process.pid, started: "2026-11-05T10:00:00.000Z" })}\n`
+    `${JSON.stringify({ command, host: primary, from: "terminal", pid: process.pid, started: "2026-11-05T10:00:00.000Z" })}\n`
   );
   const { cli, url } = await opsPage(dir);
   try {
@@ -166,6 +167,77 @@ test("a job that another process starts: the page switches to its primary and sh
     await shows(".logs .log", "Rolled back: healthy.");
   } finally {
     job?.kill();
+    cli.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("after a click, Deploying… and Merging… stay shown, with no hover and through a draw, until the job ends; an old tab reloads", async ({
+  tab,
+}) => {
+  const { page } = tab;
+  const { dir, sha } = clone();
+  const entry = (host: string, more = {}) => ({ host, ...FACTS, token: "erga_ops_test", ...more });
+  mkdirSync(join(dir, ".erga/jobs"), { recursive: true });
+  writeFileSync(
+    join(dir, ".erga/config.json"),
+    JSON.stringify({ instances: [entry("127.0.0.1:9"), entry("localhost:9", { stagingOf: "127.0.0.1:9" })] })
+  );
+  // The page with fake jobs: each runs until the file `end` says how it ends.
+  const cli = spawn("bun", [new URL("./fake-jobs.ts", import.meta.url).pathname, dir]);
+  const url = await new Promise<string>((done, fail) => {
+    let out = "";
+    cli.stdout.on("data", (c) => {
+      out += c;
+      const m = /The ops page: (\S+)/.exec(out);
+      if (m) done(m[1]);
+    });
+    cli.on("close", () => fail(new Error(`the page stopped: ${out}`)));
+  });
+  const end = (result: "ok" | "failed") => writeFileSync(join(dir, "end"), result);
+  /** Waits until the page draws again: its old content is gone. */
+  const drawn = async () => {
+    await page.evaluate(() => document.querySelector("#ops .main")?.setAttribute("data-old", ""));
+    await expect.poll(() => page.locator("#ops .main[data-old]").count()).toBe(0);
+  };
+  try {
+    await page.goto(url);
+    const row = page.locator(`.row[data-sha="${sha("origin/staging~1")}"]`);
+    const cell = row.locator('.deps.here:has([data-host="localhost:9"])');
+    /** The cell's button: its text, and whether it shows. */
+    const state = () =>
+      cell.evaluate((c) => `${c.querySelector("button")?.textContent}:${getComputedStyle(c.querySelector(".tip")!).opacity}`);
+    await cell.hover();
+    await cell.locator("button").click();
+    await page.click('#deploy-confirm [data-go]:has-text("Deploy to localhost:9")');
+    await page.mouse.move(0, 0);
+    await expect.poll(state).toBe("Deploying…:1");
+    await drawn();
+    expect(await state()).toBe("Deploying…:1");
+    // The job fails: the cell shows Deploy again, on hover only.
+    end("failed");
+    await expect.poll(state).toBe("Deploy:0");
+
+    // Merge: its form, then Merging… until the job ends.
+    const merge = page.locator('.feature[data-branch="a-feature"]');
+    await merge.locator("[data-merge]").click();
+    await merge.locator(".f-merge button:not([data-cancel])").click();
+    await page.mouse.move(0, 0);
+    const label = () => merge.locator(".f-top [data-merge]").textContent();
+    await expect.poll(label).toBe("Merging…");
+    await drawn();
+    expect(await label()).toBe("Merging…");
+    end("ok");
+    await expect.poll(label).toBe("Merge");
+
+    // A tab that loaded other styles (bun erga ran again, after a pull) reloads at its next draw, and has the new ones.
+    await page.evaluate(() => {
+      document.querySelector('meta[name="ops-code"]')?.setAttribute("content", "old");
+      (window as unknown as { before: boolean }).before = true;
+    });
+    await page.evaluate(() => (location.hash = "#127.0.0.1:9/history"));
+    await expect.poll(() => page.evaluate(() => (window as unknown as { before?: boolean }).before ?? false)).toBe(false);
+  } finally {
     cli.kill();
     rmSync(dir, { recursive: true, force: true });
   }

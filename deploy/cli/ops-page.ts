@@ -336,8 +336,16 @@ export function serveOpsPage(o: OpsPageOptions) {
     return start(["deploy", c.sha.slice(0, 12), e.host]);
   };
 
-  const html = (body: string) =>
-    new Response(body, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  const html = (body: string, more = {}) =>
+    new Response(body, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...more } });
+  /** The page's own code (its script and styles): a tab that loaded other code reloads (ops-page.js, draw). */
+  const code = () =>
+    Bun.hash(
+      script +
+        Object.values(FILES)
+          .map(([path]) => readFileSync(join(ROOT, path), "utf8"))
+          .join("")
+    ).toString(36);
   const server = Bun.serve({
     port: o.port,
     hostname: "127.0.0.1",
@@ -354,8 +362,8 @@ export function serveOpsPage(o: OpsPageOptions) {
       if (url.pathname == "/setup.js" || url.pathname.startsWith("/setup/"))
         return import("../own/page").then((p) => p.setupRoute(req, url));
       if (req.method == "POST" && (url.pathname == "/api/merge" || url.pathname == "/api/deploy")) return act(req, url.pathname.slice(5));
-      if (url.pathname == "/") return html(pageHtml(viewHtml(facts, ""), script));
-      if (url.pathname == "/view") return html(viewHtml(facts, url.searchParams.get("hash") ?? ""));
+      if (url.pathname == "/") return html(pageHtml(viewHtml(facts, ""), script, code()));
+      if (url.pathname == "/view") return html(viewHtml(facts, url.searchParams.get("hash") ?? ""), { "X-Ops-Code": code() });
       if (url.pathname == "/api/events") {
         let me: ReadableStreamDefaultController<string>;
         const stream = new ReadableStream<string>({
