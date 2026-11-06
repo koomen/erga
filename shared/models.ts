@@ -33,6 +33,8 @@ export const MODELS = {
   haiku: { provider: "anthropic", id: "claude-haiku-5-5", label: "Haiku 5.5" },
   "gpt-6.1-sol": { provider: "openai", id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
   "gpt-6-astra": { provider: "openai", id: "gpt-6-astra", label: "GPT-6 Astra" },
+  "gpt-6.1-terra": { provider: "openai", id: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
+  "gpt-6-luna": { provider: "openai", id: "gpt-6-luna", label: "GPT-6 Luna" },
   "gemini-4-argon": { provider: "google", id: "gemini-4-argon", label: "Gemini 4 Argon" },
   "gemini-3.8-flash": { provider: "google", id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
   grok: { provider: "openrouter", id: "~x-ai/grok-latest", label: "Grok" },
@@ -85,8 +87,15 @@ export function fitModel(k: KeySetup, wanted: ModelChoice | null): ModelChoice |
 
 /**
  * The models a document's page may call as its visitor (window.ergaLLM: agents/page-llm.ts), with the server's keys:
- * Anthropic's, which take a cap on the tokens they answer. Its owner chooses one (share_document page_llm); Haiku at first.
+ * Anthropic's and OpenAI's, which take a cap on the tokens they answer. Its owner chooses one (share_document page_llm); Haiku at first.
  */
-export const PAGE_LLM_MODELS = (Object.keys(MODELS) as ModelChoice[]).filter((m) => MODELS[m].provider == "anthropic");
+const PAGE_LLM_PROVIDERS: readonly Provider[] = ["anthropic", "openai"];
+export const PAGE_LLM_MODELS = (Object.keys(MODELS) as ModelChoice[]).filter((m) => PAGE_LLM_PROVIDERS.includes(MODELS[m].provider));
 export const DEFAULT_PAGE_LLM_MODEL: ModelChoice = "haiku";
 export const isPageLlmModel = (s: string): s is ModelChoice => (PAGE_LLM_MODELS as string[]).includes(s);
+
+/** The page models the owner may choose now: Claude's always, and the others where the server's keys run them. */
+export function pageLlmChoices(k: KeySetup): ModelChoice[] {
+  const server = usableModels({ ...k, own: [] }).map((u) => u.choice);
+  return PAGE_LLM_MODELS.filter((m) => MODELS[m].provider == "anthropic" || server.includes(m));
+}

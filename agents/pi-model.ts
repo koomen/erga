@@ -178,12 +178,13 @@ const LEVELS: Record<string, ThinkingLevel> = { low: "low", medium: "medium", hi
 const failed = (method: string, description: string) =>
   AiError.make({ module: "pi", method, reason: new AiError.UnknownError({ description }) });
 
-/** The model `id` of Pi's `provider`, called with `apiKey`, as Effect AI's LanguageModel. */
+/** The model `id` of Pi's `provider`, called with `apiKey`, as Effect AI's LanguageModel; effort null: no reasoning. */
 export function piLanguageModel(o: {
   provider: string;
   id: string;
   apiKey: Redacted.Redacted<string>;
-  effort: string;
+  effort: string | null;
+  maxTokens?: number;
 }): Layer.Layer<LanguageModel.LanguageModel> {
   const stream = (options: LanguageModel.ProviderOptions): Stream.Stream<Part, AiError.AiError> =>
     Stream.unwrap(
@@ -197,7 +198,8 @@ export function piLanguageModel(o: {
           env: {},
           signal: ctl.signal,
           fetch: ((input, init) => globalThis.fetch(input, init)) as typeof fetch,
-          ...(model.reasoning ? { reasoning: LEVELS[o.effort] ?? "medium" } : {}),
+          ...(model.reasoning && o.effort ? { reasoning: LEVELS[o.effort] ?? "medium" } : {}),
+          ...(o.maxTokens ? { maxTokens: o.maxTokens } : {}),
         });
         const meta = { provider: model.provider, api: model.api, model: model.id };
         return Stream.fromAsyncIterable(events, (e) => failed("streamText", e instanceof Error ? e.message : String(e))).pipe(

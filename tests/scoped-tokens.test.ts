@@ -26,6 +26,7 @@ async function server() {
   for (const [id, owner] of [["oneoneon", "ada"], ["twotwotw", "ada"], ["threethr", "bo"]]) await dir.add({ id, owner, title: id, created: 1, expires: null });
   const tokens = new Tokens(sql, "secret-".repeat(6), dir);
   const platform = {
+    agentSettings: async () => ({ missing: "no API key" }),
     directory: dir,
     tokens,
     sessionOf: (request: Request) => sessionOf(platform, request),

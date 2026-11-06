@@ -28,7 +28,15 @@ import {
 } from "./operation.ts";
 import { sitePages } from "./pages.ts";
 import { addressOf } from "../../document/names.ts";
-import { DEFAULT_PAGE_LLM_MODEL, isPageLlmModel, PAGE_LLM_MODELS } from "../../shared/models.ts";
+import {
+  DEFAULT_PAGE_LLM_MODEL,
+  isPageLlmModel,
+  MODELS,
+  PAGE_LLM_MODELS,
+  pageLlmChoices,
+  PROVIDERS,
+  type ModelChoice,
+} from "../../shared/models.ts";
 
 /** Files as a caller gives them: by path, each text or base64. */
 const FILES = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Struct({ base64: Schema.String })])).annotate({
@@ -306,7 +314,11 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       reader_agent: bool("Readers may ask their agent."),
       reader_bars: bool("Readers see Erga's bars over it."),
       page_llm: bool("Its script may call a model (window.ergaLLM)."),
-      page_llm_model: Schema.optionalKey(Schema.Literals(PAGE_LLM_MODELS)),
+      page_llm_model: Schema.optionalKey(
+        Schema.Literals(PAGE_LLM_MODELS).annotate({
+          description: "OpenAI's only where the server has an OpenAI key (ls: access.pageLlm.models).",
+        })
+      ),
     }),
     run: async (args, caller) => {
       const { dir } = caller;
@@ -322,6 +334,12 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         });
       if (!login != !args.role)
         throw new OperationError({ message: "Give a login and its role (editor, viewer or none) together.", status: 400 });
+      const asked = args.page_llm_model as ModelChoice | undefined;
+      if (asked != null && !(await pageLlmModels(caller)).includes(asked))
+        throw new OperationError({
+          message: `The server has no API key that runs ${MODELS[asked].label} for pages.`,
+          status: 409,
+        });
       if (login) {
         await dir.share(caller.who, doc.id, login, args.role == "none" ? null : (args.role as Grant));
       }
@@ -403,14 +421,31 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
   },
 ];
 
+/** The page models the owner may choose now: Claude's, and the others the server's keys run (pageLlmChoices). */
+async function pageLlmModels(caller: Caller): Promise<ModelChoice[]> {
+  const cfg = await caller.platform?.agentSettings();
+  const server = cfg && !("missing" in cfg) ? PROVIDERS.filter((p) => cfg.server[p]) : [];
+  return pageLlmChoices({
+    own: [],
+    server,
+    mode: cfg && !("missing" in cfg) ? cfg.mode : "server",
+    off: cfg && !("missing" in cfg) ? cfg.off : [],
+  });
+}
+
 /** The readers' options, which anyone who may edit the document may see and change, and whether anyone with the link may open it. */
 export async function readersOf(caller: Caller, doc: DocRow) {
   const { dir } = caller;
-  const [permissions, readers, llm] = await Promise.all([dir.permissions(doc.id), dir.readerOptions(doc.id), dir.pageLlm.setting(doc.id)]);
+  const [permissions, readers, llm, models] = await Promise.all([
+    dir.permissions(doc.id),
+    dir.readerOptions(doc.id),
+    dir.pageLlm.setting(doc.id),
+    pageLlmModels(caller),
+  ]);
   return {
     readerAgent: readers.agent,
     readerBars: readers.bars,
-    pageLlm: { on: llm.on, model: llm.model ?? DEFAULT_PAGE_LLM_MODEL },
+    pageLlm: { on: llm.on, model: llm.model ?? DEFAULT_PAGE_LLM_MODEL, models },
     anyoneWithLink: permissions.some((p) => p.login == ANYONE),
   };
 }

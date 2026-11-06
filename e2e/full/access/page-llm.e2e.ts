@@ -64,7 +64,7 @@ test("off at first; the owner turns it on in Document settings, and the page's s
   await page.locator("#ds-llm-on").click();
   await expect
     .poll(async () => (await asOwner(root, "ls", { document: made.id })).body.result?.access?.pageLlm)
-    .toEqual({ on: true, model: "haiku" });
+    .toMatchObject({ on: true, model: "haiku" });
   await page.goto(address);
   expect(await status(page)).toEqual({ on: true, model: "Haiku 5.5", signedIn: true });
   expect(await ask(page, '@script [{"text": "Hello from the model."}]')).toEqual({ text: "Hello from the model." });

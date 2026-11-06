@@ -21,6 +21,7 @@ async function world() {
   await s.dir.share({ login: "ada" }, "doc12345", "bo", "viewer");
   const call = <A>(f: Parameters<typeof s.doc.self.call<A>>[0]) => Effect.runPromise(s.doc.self.call(f));
   const platform = {
+    agentSettings: async () => ({ missing: "no API key" }),
     directory: s.dir,
     docs: {
       tree: () => call((c) => c.tree()),
