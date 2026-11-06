@@ -6,7 +6,7 @@ import { pageUrl, slugify, titleOf } from "../../document/pages";
 import { live } from "../live/client";
 import { runTool } from "../common/tools";
 import type { mountTree, TreeHandle } from "../pages/pages-tree";
-import { BASE, $, editing, type Shell } from "./shell";
+import { BASE, $, type Shell } from "./shell";
 
 /** pages-tree.ts, once imported (a chunk of its own: pages-tree.js). */
 type TreeModule = { mountTree: typeof mountTree };
@@ -181,7 +181,7 @@ export function mountNaming(shell: Shell) {
     }
     prepareTree().catch(() => {});
   };
-  if (editing()) (window.requestIdleCallback ?? setTimeout)(ready);
+  if (shell.editor.state.editing) (window.requestIdleCallback ?? setTimeout)(ready);
   titleBtn.addEventListener("pointerenter", ready);
   titleBtn.addEventListener("focus", ready);
   titleBtn.addEventListener("pointerdown", ready);
@@ -230,7 +230,8 @@ export function mountNaming(shell: Shell) {
   // ?pages opens it straight away (a link to "this document's pages"), as does following this page to where it moved
   // while it was open (goTo): it stays open across the move.
   const reopen = (() => { try { const v = sessionStorage.getItem("erga:pages-open"); sessionStorage.removeItem("erga:pages-open"); return v == BASE; } catch { return false; } })();
-  if ((reopen || new URLSearchParams(location.search).has("pages")) && editing()) requestAnimationFrame(() => togglePages(true));
+  if ((reopen || new URLSearchParams(location.search).has("pages")) && shell.editor.state.editing)
+    requestAnimationFrame(() => togglePages(true));
   pagesCard.addEventListener("keydown", (e) => { if (e.key == "Escape" && !e.defaultPrevented) { e.preventDefault(); togglePages(false); titleBtn.focus(); } });
   return { showName, viewHref, toggleNaming, togglePages, applyKind, tree: () => tree };
 }

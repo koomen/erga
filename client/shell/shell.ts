@@ -5,6 +5,7 @@
 import type { EditorSelection, EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { PageFrame } from "./page-frame";
+import type { Editor } from "./editor";
 import type { Collab } from "../../libs/text/ui/collab";
 import type { Author } from "../../document/content";
 import type { DocInfo, DocName } from "../../document/api";
@@ -37,15 +38,6 @@ export const store = {
   json(key: string) { try { return JSON.parse(store.get(key) || "null"); } catch { return null; } },
 };
 
-/**
- * The page this runs in is the document's page, viewing or editing: the editor runs either way once loaded, its
- * controls shown only while editing (main.ts, setEditing).
- */
-export const editing = () => document.body.classList.contains("erga-editing");
-
-/** The page itself, or the file's source (its HTML). */
-export type Mode = "text" | "html";
-
 export interface Shell {
   collab: Collab;
   /** Who this tab is, as the host attributes edits and the agent. */
@@ -64,7 +56,12 @@ export interface Shell {
   /** Which of the document's pages this tab edits (its replica's: collab.pagePath). */
   readonly pagePath: string;
   page: PageFrame;
-  mode: Mode;
+  /**
+   * Editing or viewing, the page or its source, full screen, the edit key: what the page's editor does (editor-state.ts).
+   * The page this runs in is the document's page, viewing or editing: the shell runs either way once loaded, its
+   * controls shown only while editing (main.ts, setEditing).
+   */
+  editor: Editor;
   sourceView: EditorView | null;
   /** The source view's code, once loaded. */
   source: typeof import("./source-view") | null;

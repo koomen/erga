@@ -3,7 +3,8 @@
 import { EditorSelection, EditorState, Transaction, type ChangeSet } from "@codemirror/state";
 import { changesBetween } from "../../document/merge";
 import { live } from "../live/client";
-import { $, type Mode, type Shell } from "./shell";
+import { $, type Shell } from "./shell";
+import type { Mode } from "./editor-state";
 
 export function mountViews(shell: Shell) {
   // The source view edits this tab's replica of the room, as the page's editor edits its own: both land in the same
@@ -28,15 +29,15 @@ export function mountViews(shell: Shell) {
   };
 
   // The page's editor stops while the source view is open (the page shows the file's last state), and starts again from
-  // the room's text after. The source view's state, kept for the next time it opens (its undo history, brought to the
-  // room's text then). A switch asked for meanwhile waits its turn.
+  // the room's text after, if it should then (editor-state.ts decides). The source view's state, kept for the next time
+  // it opens (its undo history, brought to the room's text then). A switch asked for meanwhile waits its turn.
   let kept: EditorState | null = null;
   let switching: Promise<void> = Promise.resolve();
   function setMode(next: Mode) {
     switching = switching.then(() => switchMode(next));
   }
   async function switchMode(next: Mode) {
-    if (next == shell.mode) return;
+    if (next == shell.editor.state.view) return;
     if (next != "text") {
       let code: typeof import("./source-view");
       try {
@@ -57,8 +58,7 @@ export function mountViews(shell: Shell) {
       state = (state ?? EditorState.create({ doc: text, extensions: code.sourceExtensions(sourceHooks) })).update({
         selection: EditorSelection.single(at(sel.anchor), at(sel.head)),
       }).state;
-      shell.page.stop();
-      shell.mode = next;
+      shell.editor.send({ type: "view", view: next });
       shell.sourceView = code.openSource($("source"), state);
       // This tab's caret is the source view's while it's open.
       shell.collab.present();
@@ -70,16 +70,16 @@ export function mountViews(shell: Shell) {
       shell.sourceView?.destroy();
       shell.sourceView = null;
       shell.collab.leave();
-      shell.mode = next;
       $("source").hidden = true;
       document.body.classList.remove("source");
-      shell.page.start();
+      shell.editor.send({ type: "view", view: next });
       shell.page.focus();
     }
     shell.people.queuePeers();
   }
   /** ⌘⇧P: between the page and the file's own source. */
-  const toggleSource = (force?: boolean) => setMode((typeof force == "boolean" ? force : shell.mode == "text") ? "html" : "text");
+  const toggleSource = (force?: boolean) =>
+    setMode((typeof force == "boolean" ? force : shell.editor.state.view == "text") ? "html" : "text");
   return { setMode, toggleSource, switched: () => switching };
 }
 

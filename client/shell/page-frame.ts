@@ -5,6 +5,7 @@
 // Everything that comes from the page is checked: the page itself could have sent it.
 
 import type { EditMode } from "../../libs/text/ui/mode";
+import type { Word } from "./editor-state";
 import type { Keys } from "../common/app-keys";
 import { clampZoom, type ZoomBy } from "../common/zoom";
 import type { RawProblem } from "./problems";
@@ -18,8 +19,10 @@ export interface PageFrameConfig {
   origin: string;
   /** The address of the document's files there (with the token that opens them): another of its pages is at its path under it. */
   files: string;
-  /** What "edit" says now: where the document is, a key that holds, who this tab is, the page and this tab's mark. */
-  edit: () => Promise<EditWord | null>;
+  /** What the page was told last (editor-state.ts decides it): it's told again when it loads again. */
+  told: () => Word;
+  /** What "edit" says now, with `key`: where the document is, who this tab is, the page and this tab's mark. */
+  edit: (key: string) => EditWord;
   onKey: (keys: Keys) => void;
   /** A press on the page. */
   onPress: () => void;
@@ -38,7 +41,7 @@ export interface PageFrameConfig {
 export function mountPageFrame(c: PageFrameConfig) {
   const frame = c.frame;
   /** In the editor: the page in the frame runs the editor. */
-  let active = false;
+  const active = () => c.told().mode == "edit";
   /** The level the page is drawn at (zoom.ts). */
   let zoom = 1;
   /** The page zooms itself (window.ergaZoom), so the viewer's zoom goes to it, not to the frame. */
@@ -57,19 +60,18 @@ export function mountPageFrame(c: PageFrameConfig) {
     frame.contentWindow?.postMessage(m, c.origin);
   };
 
-  /** Tells the page edit (with what it needs) or view. */
-  async function say(): Promise<void> {
-    if (!active) {
+  /** Tells the page what it was told last: edit (with what it needs) or view. */
+  function say(): void {
+    const told = c.told();
+    if (told.mode == "view") {
       post({ type: "erga-mode", mode: "view" } satisfies EditMode);
       return;
     }
-    const word = await c.edit();
-    if (!word || !active) return;
     const { __ergaTimescale: timescale, __ergaCheck: check } = globalThis as { __ergaTimescale?: number; __ergaCheck?: boolean };
     post({
       type: "erga-mode",
       mode: "edit",
-      ...word,
+      ...c.edit(told.key),
       zoom,
       ...(timescale ? { timescale } : {}),
       ...(check ? { check } : {}),
@@ -83,9 +85,9 @@ export function mountPageFrame(c: PageFrameConfig) {
     // A page in the frame (again: it loaded again, or went to another page): the editor in it, if in the editor.
     if (m.type == "erga-hello") {
       zoomsItself = false;
-      if (active) void say();
+      if (active()) say();
       // (The frame had the focus: the page that came in it has it, for its editor.)
-      if (active && document.activeElement == frame) frame.focus();
+      if (active() && document.activeElement == frame) frame.focus();
       return;
     }
     if (m.type == "erga-scroll" && num(m.y)) scrollY = Math.max(0, m.y);
@@ -112,7 +114,7 @@ export function mountPageFrame(c: PageFrameConfig) {
       else if (p.kind == "notice" && s("message", 500) && s("fix", 2000))
         c.onProblem({ kind: "notice", message: s("message", 500)!, fix: s("fix", 2000)! }, m.base);
     }
-    if (!active) return;
+    if (!active()) return;
     switch (m.type) {
       case "erga-key": {
         const k = m.keys as Record<string, unknown> | undefined;
@@ -145,21 +147,12 @@ export function mountPageFrame(c: PageFrameConfig) {
   });
 
   return {
-    /** Into the editor: the page in the frame loads it (client/inline/reader.ts), and it opens its own socket. */
-    start() {
-      active = true;
-      void say();
-    },
-    /** Out of the editor: the editor in the page stops (the page stays as it is, and the editor keeps its state). */
-    stop() {
-      if (!active) return;
-      active = false;
-      void say();
-    },
-    /** In the editor, the word again: a new key for the editor's next socket (it's checked as a socket opens). */
-    renew() {
-      if (active) void say();
-    },
+    /**
+     * Tells the page what it was told last, as it changed. Edit: the page in the frame loads the editor
+     * (client/inline/reader.ts), which opens its own socket; again, a new key for its next socket (it's checked as a socket
+     * opens). View: the editor in the page stops (the page stays as it is, and the editor keeps its state).
+     */
+    say,
     /**
      * Another of the document's pages, in place of this one (the viewer went to it without a reload): the frame goes to
      * it (its address under the document's files, in place of this one's: no new entry in the tab's history), whose
@@ -198,7 +191,7 @@ export function mountPageFrame(c: PageFrameConfig) {
       root.classList.toggle("erga-zoomed", z != 1);
       void frame.offsetWidth;
       frame.style.transition = "";
-      if (active) void say();
+      if (active()) say();
     },
   };
 }
