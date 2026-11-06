@@ -28,7 +28,6 @@ and `main`. There are no pull requests.
 
    The message tells what the whole task does, in one line of ten words
    at most. Without `-m`, it is the subject of the branch's first commit.
-   `merge` refuses a longer message.
 
    It squashes the branch into one commit, runs the tests on that commit,
    deploys it from this machine to each registered staging instance, then

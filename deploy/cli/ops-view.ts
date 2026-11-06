@@ -270,6 +270,17 @@ export function mergeBlock(b: Branch, base: string, busy: string): string | null
 const button = (label: string, attrs: string, block: string | null = null) =>
   `<span class="tip"${block ? ` title="${esc(block)}"` : ""}><button class="btn" type="button" ${attrs}${block ? " disabled" : ""}>${label}</button></span>`;
 
+/** A button's label while its own job runs: a small spinner, and the word. */
+const running = (word: string) => `<i class="spin" aria-hidden="true"></i>${word}…`;
+const MERGING = "It merges now. The job line and Logs show its output.";
+const DEPLOYING = "It deploys now. The job line and Logs show its output.";
+
+/** Whether `busy` (the command that runs) deploys commit `sha` to `host`: `bun erga deploy <commit> <host>`. */
+const deploys = (busy: string, sha: string, host: string) => {
+  const m = /^bun erga deploy (\S+) (\S+)$/.exec(busy);
+  return !!m && m[1].length >= 7 && sha.startsWith(m[1]) && m[2] == host;
+};
+
 function branches(git: Git, busy: string, now: number): string {
   const list = git.branches.length
     ? git.branches
@@ -279,7 +290,10 @@ function branches(git: Git, busy: string, now: number): string {
             : b.conflicts.length
               ? `<span class="f-state bad" title="${esc(b.conflicts.join(", "))}">Conflicts in ${plural(b.conflicts.length, "file")}: ${esc(b.conflicts.join(", "))}</span>`
               : `<span class="f-state ok">Merges cleanly</span>`;
-          const merge = button("Merge", `data-merge="${esc(b.name)}"`, mergeBlock(b, git.base, busy));
+          const merge =
+            busy == `bun erga merge ${b.name}`
+              ? button(running("Merging"), `data-merge="${esc(b.name)}" aria-busy="true"`, MERGING)
+              : button("Merge", `data-merge="${esc(b.name)}"`, mergeBlock(b, git.base, busy));
           const form = `<form class="f-merge" data-branch="${esc(b.name)}" hidden><input name="message" value="${esc(b.subject)}" aria-label="The message of the commit on ${esc(git.base)}" autocomplete="off"><button class="btn">Merge</button><button class="btn quiet" type="button" data-cancel>Cancel</button><span class="err" role="alert"></span></form>`;
           return `<li class="feature" data-branch="${esc(b.name)}"><div class="f-top"><code class="f-name">${esc(b.name)}</code><span class="f-count">${plural(b.ahead, "commit")} ahead · ${b.behind} behind ${esc(git.base)}</span>${state}${merge}</div><div class="f-last"><span class="f-subject">${esc(b.subject)}</span> · ${esc(b.author)} · ${esc(timeAgo(b.at, now))} · <code>${esc(sha7(b.sha))}</code></div>${form}</li>`;
         })
@@ -296,19 +310,15 @@ const deployedAt = (jobs: JobRecord[], host: string, sha: string) =>
     .filter(Boolean)
     .sort((a, b) => b - a)[0];
 
-/** Why a row's Deploy button can't start now, or null. */
-export const deployBlock = (f: Pick<Facts, "jobs" | "starting">) => {
-  const busy = busyWith(f);
-  return busy ? `Another job runs: ${busy}. Wait for it to end.` : null;
-};
-
 /** The Deploy button of a row, in an instance's column: `bun erga deploy <commit> <host>`, after its question. */
-function deployButton(e: Entry, primary: string, c: Commit, block: string | null): string {
+function deployButton(e: Entry, primary: string, c: Commit, busy: string): string {
   const note = e.stagingOf
     ? `It keeps its copy of ${primary}'s data.`
     : "After a healthy deploy, main moves to it if main does not have it.";
   const data = `data-deploy data-host="${esc(e.host)}" data-sha="${esc(c.sha)}" data-ask="${esc(`Deploy ${sha7(c.sha)} ${c.subject} to ${e.host}?`)}" data-note="${esc(note)}" aria-label="${esc(`Deploy ${sha7(c.sha)} to ${e.host}`)}"`;
-  return `<span class="deps here">${button("Deploy", data, block)}</span>`;
+  if (deploys(busy, c.sha, e.host))
+    return `<span class="deps here busy">${button(running("Deploying"), `${data} aria-busy="true"`, DEPLOYING)}</span>`;
+  return `<span class="deps here">${button("Deploy", data, busy ? `Another job runs: ${busy}. Wait for it to end.` : null)}</span>`;
 }
 
 function log(g: Group, f: Facts & { git: Git }, now: number): string {
@@ -338,13 +348,13 @@ function log(g: Group, f: Facts & { git: Git }, now: number): string {
       return `<div class="head col" title="${esc(`${e.host}: ${st.what}`)}"><b>${e.stagingOf ? "staging" : "production"}</b><span class="host">${esc(e.host)}</span><span class="st"><i class="light ${st.cls}"></i>${esc(answer(e)?.error ? "no answer" : st.cls == "bad" ? "not healthy" : answer(e) ? "live" : "asking…")}</span></div>`;
     })
     .join("");
-  const block = deployBlock(f);
+  const busy = busyWith(f);
   const body = rows
     .map((c, i) => {
       const kind = isOn(i) ? "on" : "off";
       const marks = cols
         .map((e) => {
-          if (!runs(answer(e), c.sha)) return deployButton(e, g.primary.host, c, block);
+          if (!runs(answer(e), c.sha)) return deployButton(e, g.primary.host, c, busy);
           const at = deployedAt(f.jobs, e.host, c.sha);
           return `<span class="deps"><span class="dep live" data-host="${esc(e.host)}" title="${esc(`${e.host} runs this commit`)}"><span class="w">live</span><span class="at">${at ? short(at, now) : ""}</span></span></span>`;
         })

@@ -7,7 +7,6 @@ import { existsSync } from "node:fs";
 import {
   latestTag,
   mergeRefusal,
-  messageRefusal,
   nextVersion,
   previousVersion,
   pushRefusal,
@@ -41,13 +40,10 @@ describe("merge", () => {
     expect(squashMessage(two, "The feature")).toBe(`The feature\n\n${co}`);
   });
 
-  test("refuses a message of more than ten words, or more than one line", () => {
-    expect(messageRefusal("one two three four five six seven eight nine ten")).toBeNull();
-    expect(messageRefusal("one two three four five six seven eight nine ten eleven")).toBe(
-      "The message has 11 words. A commit message has 10 words at most."
-    );
-    expect(messageRefusal("A subject\n\nA body")).toContain("one line");
-    expect(messageRefusal("  ")).toContain("Write the message");
+  test("takes a message of any length: a long subject merges as it is", () => {
+    const long = "one two three four five six seven eight nine ten eleven twelve";
+    expect(squashMessage([{ sha: "a", subject: long }])).toBe(long);
+    expect(squashMessage([{ sha: "a", subject: "First" }], long)).toBe(long);
   });
 });
 

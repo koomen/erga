@@ -201,7 +201,7 @@ test("Merge: a button on each feature branch, with a field for the message; disa
     tip: "Another job runs: bun erga deploy erga.dev. Wait for it to end.",
     disabled: true,
   });
-  expect(mergeOf(viewHtml(deploys({ starting: "bun erga merge clean" }), "erga.dev", NOW), "clean")?.disabled).toBe(true);
+  expect(mergeOf(viewHtml(deploys({ starting: "bun erga merge clash" }), "erga.dev", NOW), "clean")?.disabled).toBe(true);
 });
 
 /** The row of a commit, in the view's HTML. */
@@ -270,8 +270,10 @@ test("the page's server: Merge and Deploy start their `bun erga` command, one jo
     expect((await post("/api/merge", { branch: "a-feature", message: "A feature" }, "https://evil.example")).status).toBe(403);
     expect((await post("/api/merge", { branch: "nope", message: "x" })).status).toBe(409);
     expect((await post("/api/merge", { branch: "a-feature", message: " " })).status).toBe(409);
-    expect((await post("/api/merge", { branch: "a-feature", message: "A feature, all of it" })).status).toBe(202);
-    expect(runs).toEqual([["merge", "a-feature", "-m", "A feature, all of it"]]);
+    // A message of any length: here, eleven words, as a prefilled subject can be.
+    const long = "A feature, all of it, with more words than ten here";
+    expect((await post("/api/merge", { branch: "a-feature", message: long })).status).toBe(202);
+    expect(runs).toEqual([["merge", "a-feature", "-m", long]]);
     // While it runs: no second job, and the buttons say why.
     const busy = await post("/api/deploy", { host: "erga.dev", sha: git("rev-parse", "HEAD~1") });
     expect(busy.status).toBe(409);
@@ -315,4 +317,30 @@ test("the tests that a merge or a deploy runs get no ERGA_JOB_FROM, so their own
     if (page == undefined) delete process.env.ERGA_JOB_FROM;
     else process.env.ERGA_JOB_FROM = page;
   }
+});
+
+test("while its job runs, a button says so with a spinner: Merging… on its branch, Deploying… in its cell", () => {
+  const SPIN = '<i class="spin" aria-hidden="true"></i>';
+  // The page started the merge, and then its job record runs: the branch's button says Merging…, disabled.
+  const merging = `<span class="tip" title="It merges now. The job line and Logs show its output."><button class="btn" type="button" data-merge="clean" aria-busy="true" disabled>${SPIN}Merging…</button></span>`;
+  expect(viewHtml(deploys({ starting: "bun erga merge clean" }), "erga.dev", NOW)).toContain(merging);
+  const record = jobOf(line({ ...start, command: "bun erga merge clean", host: "staging.erga.dev" }), () => true)!;
+  const html = viewHtml(deploys({ jobs: [record] }), "erga.dev", NOW);
+  expect(html).toContain(merging);
+  // The other buttons wait, and say why; no other button spins.
+  expect(mergeOf(html, "clash")?.disabled).toBe(true);
+  expect(html.match(/class="spin"/g)?.length).toBe(1);
+  // A deploy: only its cell says Deploying…, and it stays shown with no hover.
+  const deploying = viewHtml(deploys({ starting: `bun erga deploy ${"2".repeat(12)} staging.erga.dev` }), "erga.dev", NOW);
+  expect(rowOf(deploying, "2")).toContain(
+    `<span class="deps here busy"><span class="tip" title="It deploys now. The job line and Logs show its output."><button class="btn" type="button" data-deploy data-host="staging.erga.dev"`
+  );
+  expect(rowOf(deploying, "2")).toContain(`aria-busy="true" disabled>${SPIN}Deploying…</button>`);
+  expect(deploying.match(/class="spin"/g)?.length).toBe(1);
+  expect(deploying).toContain(`${SPIN}Deploying…`);
+  // The job ends: the buttons are as before.
+  const done = jobOf(line({ ...start, command: "bun erga merge clean" }) + line({ result: "ok", ended: start.started }), () => true)!;
+  const after = viewHtml(deploys({ jobs: [done] }), "erga.dev", NOW);
+  expect(after).not.toContain("spin");
+  expect(mergeOf(after, "clean")).toEqual({ tip: "", disabled: false });
 });

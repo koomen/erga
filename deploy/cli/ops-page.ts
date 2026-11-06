@@ -8,7 +8,6 @@
 import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Entry, originOf, readConfig } from "./config";
-import { messageRefusal } from "./flow";
 import { readOps } from "./ops";
 import {
   type Answer,
@@ -324,8 +323,7 @@ export function serveOpsPage(o: OpsPageOptions) {
       if (!b) return no(`There is no branch ${String(body.branch)} in this clone.`);
       const block = mergeBlock(b, facts.git.base, "");
       if (block) return no(block);
-      const long = messageRefusal(message);
-      if (long) return no(long);
+      if (!message) return no("Write the message of the commit on staging.");
       return start(["merge", b.name, "-m", message]);
     }
     // A row's Deploy: a commit of the log, to an instance that does not run it now.

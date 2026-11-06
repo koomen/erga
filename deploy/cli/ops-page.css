@@ -226,3 +226,11 @@ a.h-row:hover > * { background: color-mix(in srgb, var(--chrome) 8%, transparent
 .s-msg { max-width: 92%; padding: 6px 10px; border-radius: 10px; white-space: pre-wrap; background: var(--code-bg); align-self: flex-start; }
 .s-msg.person { align-self: flex-end; background: var(--fg-strong); color: var(--bg); }
 .s-card [hidden], .s-wrap [hidden] { display: none; }
+
+/* A button whose job runs: "Merging…" or "Deploying…", with a small spinner; its cell stays shown. */
+.spin { display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px; border: 1.5px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; border-right-color: currentColor; opacity: .5; } }
+.btn[aria-busy="true"]:disabled { cursor: progress; color: var(--soft); }
+.deps.here.busy .tip { opacity: 1; }
