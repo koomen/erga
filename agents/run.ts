@@ -5,11 +5,12 @@
 // run itself on Effect AI: the model streams its turn (text and thinking go
 // to the transcript as they come), the loop runs the turn's tool calls one
 // by one, and goes on until the model answers with no calls and no message
-// waits. A message sent while a run goes on steers it: the model has it at
-// its next turn. The agent adds its own through `LoopHooks`: what a tool call is about.
+// waits. The turn's state (idle, running, stopping, resuming) and what a message, Stop or a restart does to it
+// are in agents/turn.ts; this file does the effects it answers. The agent adds its own through `LoopHooks`: what a
+// tool call is about.
 //
 // The sessions are the Promise edge (the person's object calls them: agents/person/sessions.ts); a run is a fiber,
-// so `abort` interrupts it.
+// so Stop interrupts it, after the tool call that runs (a tool call is never cut in the middle).
 
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -31,6 +32,7 @@ import {
   type StoredChat,
   type ToolResultMessage,
 } from "./checkpoint";
+import { IDLE, next, type Turn, type TurnEffect, type TurnEvent } from "./turn";
 import { fit, isModelChoice, languageModel, messagesFor, modelError, MODELS, usable, type AgentConfig, type ModelChoice } from "./models";
 import type { Usable } from "../shared/models";
 
@@ -105,16 +107,13 @@ export interface AgentLoop {
   /** The settings now: the next model call uses them. */
   configure(cfg: AgentConfig | null): void;
   setModel(choice: ModelChoice): boolean;
-  /**
-   * A message, with any files attached; while a run goes on it steers it.
-   * `refresh` runs before a new run starts (the tools and prompt as they are
-   * now); a message sent meanwhile steers that run too.
-   */
-  prompt(text: string, context: string | null, files: Attachment[], refresh?: (side: ModelSide) => Promise<void>): void;
+  /** A message, with any files attached; while a run goes on it steers it (agents/turn.ts). */
+  prompt(text: string, context: string | null, files: Attachment[]): void;
+  /** Stop: the run ends after the tool call that runs now; the messages sent before it are never answered. */
   abort(): void;
-  /** Forgets the conversation; `then` runs before the transcript says so. */
-  reset(then?: () => void): Promise<void>;
-  /** Goes on with a run that a restart cut off, from its last checkpoint (the first call only). Answers whether a run goes on. */
+  /** Forgets the conversation, once the run ended. */
+  reset(): Promise<void>;
+  /** Goes on with a run that a restart cut off, from its last checkpoint (only while idle). Answers whether a run goes on. */
   resume(): Promise<boolean>;
 }
 
@@ -126,6 +125,9 @@ export function toolMessage(id: string, name: string, out: ToolOutput, isFailure
   );
   return { role: "tool", content: [{ type: "tool-result", id, name, isFailure, result: text, modelOutput, providerExecuted: false }] };
 }
+
+/** A call that never began because the person stopped the run: what the model hears. */
+const NOT_RUN = "The person stopped the run before this call began. It did not run.";
 
 /** A failure's words as the model reads them. */
 const failure = (text: string): ToolOutput => ({ content: [{ type: "text", text }] });
@@ -209,12 +211,15 @@ export function startLoop(opts: LoopOptions): AgentLoop {
   let choice: ModelChoice | null = cfg ? fit(cfg, kept) : null;
   let side: ModelSide | null = null;
   let messages: ChatMessage[] = stored?.messages ?? [];
+  /** The turn's state (agents/turn.ts). */
+  let now: Turn = IDLE;
   /** Messages sent while a run goes on: the model has them at its next turn. */
   const steering: ChatMessage[] = [];
+  /** Messages sent after Stop, before the run ended: they start the next run. */
+  const held: ChatMessage[] = [];
   let run: Fiber.Fiber<void> | null = null;
-  /** A new run's tools are being looked up (`refresh`): a message sent now steers it. */
-  let starting = false;
-  let resumed = false;
+  /** Who waits for a new conversation (`reset`). */
+  const resets: (() => void)[] = [];
 
   const log = stored ? restoredLog(stored) : emptyLog();
   const listeners = new Set<(ev: LogEvent) => void>();
@@ -259,7 +264,10 @@ export function startLoop(opts: LoopOptions): AgentLoop {
     });
   };
 
-  /** Runs one tool call: marked as begun first, its arguments checked against its schema, its result kept. */
+  /**
+   * Runs one tool call: marked as begun first, its arguments checked against its schema, its result kept. Stop never
+   * cuts it: what it changes lands before the run says it stopped, and the model hears its result.
+   */
   const runCall = (call: { id: string; name: string; params: unknown }) =>
     Effect.gen(function* () {
       toolStarted(call.id, call.name, call.params);
@@ -283,7 +291,7 @@ export function startLoop(opts: LoopOptions): AgentLoop {
         })
       );
       toolEnded(call.id, call.name, out, isError);
-    });
+    }).pipe(Effect.uninterruptible);
 
   /** The calls of the last turn that have no result yet. */
   const open = () => {
@@ -355,12 +363,11 @@ export function startLoop(opts: LoopOptions): AgentLoop {
       if (!calls && !steering.length) return;
     }
   }).pipe(
-    // Stopped: each call of the turn that has no result gets one, so the messages stay whole for the next run.
+    // Stopped: each call of the turn that never began gets a result, so the messages stay whole for the next run.
     Effect.onInterrupt(() =>
-      Effect.promise(async () => {
+      Effect.sync(() => {
         for (const call of open()) {
-          const message = toolMessage(call.id, call.name, failure("The person stopped this before it finished."), true);
-          messages = [...messages, message];
+          messages = [...messages, toolMessage(call.id, call.name, failure(NOT_RUN), true)];
           toolEnded(call.id, call.name, failure("Stopped."), true);
         }
       })
@@ -371,6 +378,7 @@ export function startLoop(opts: LoopOptions): AgentLoop {
         hooks.busy?.(false);
         emit({ t: "busy", busy: false });
         await checkpoints.ended();
+        step({ e: "ended", steered: steering.length > 0, held: held.length > 0 });
       })
     )
   );
@@ -395,14 +403,52 @@ export function startLoop(opts: LoopOptions): AgentLoop {
     return true;
   };
 
-  /** Starts a run unless one goes on. */
-  const go = () => {
-    if (run) return;
-    run = Effect.runFork(runLoop);
+  /** The turn takes an event (agents/turn.ts), and its effects happen here; `message` is the person's, for a prompt. */
+  const step = (ev: TurnEvent, message?: ChatMessage) => {
+    const [t, effects] = next(now, ev);
+    now = t;
+    for (const fx of effects) effect(fx, message);
   };
-  const stop = async () => {
-    const r = run;
-    if (r) await Effect.runPromise(Fiber.interrupt(r));
+  const effect = (fx: TurnEffect, message?: ChatMessage) => {
+    switch (fx) {
+      case "steer":
+        if (message) steering.push(message);
+        return;
+      case "hold":
+        if (message) held.push(message);
+        return;
+      case "start":
+        run = Effect.runFork(runLoop);
+        return;
+      case "unqueue":
+        void checkpoints.unqueue(steering);
+        return;
+      case "interrupt":
+        if (run) Effect.runFork(Fiber.interrupt(run));
+        return;
+      case "settle":
+        for (const m of steering.splice(0)) {
+          messages = [...messages, m];
+          void checkpoints.took(m);
+        }
+        void checkpoints.ended();
+        return;
+      case "release":
+        steering.push(...held.splice(0));
+        return;
+      case "clear": {
+        steering.length = 0;
+        held.length = 0;
+        paths.clear();
+        messages = [];
+        const cleared = checkpoints.clear();
+        emit({ t: "reset" });
+        void cleared.then(() => {
+          for (const done of resets.splice(0)) done();
+        });
+        return;
+      }
+    }
   };
 
   return {
@@ -446,7 +492,7 @@ export function startLoop(opts: LoopOptions): AgentLoop {
       choice = next;
       return true;
     },
-    prompt(text, context, files, refresh) {
+    prompt(text, context, files) {
       emit(files.length ? { t: "user", text, files: fileRefs(files) } : { t: "user", text });
       const s = side;
       if (!s || !cfg) {
@@ -459,60 +505,55 @@ export function startLoop(opts: LoopOptions): AgentLoop {
       };
       // Kept until the model has it: a restart before then doesn't lose it.
       checkpoints.queue(message);
-      steering.push(message);
-      if (run || starting) return;
-      if (!refresh) return go();
-      starting = true;
-      refresh(s)
-        .catch((e: unknown) => emit({ t: "error", text: e instanceof Error ? e.message : String(e) }))
-        .finally(() => {
-          starting = false;
-          go();
-        });
+      step({ e: "prompt" }, message);
     },
-    abort: () => void stop(),
-    async reset(then) {
-      await stop();
-      steering.length = 0;
-      paths.clear();
-      messages = [];
-      await checkpoints.clear();
-      then?.();
-      emit({ t: "reset" });
+    abort: () => step({ e: "stop" }),
+    reset() {
+      return new Promise<void>((done) => {
+        resets.push(done);
+        step({ e: "reset" });
+      });
     },
     async resume() {
-      if (resumed) return false;
-      resumed = true;
+      step({ e: "resume" });
+      if (now.at != "resuming") return false;
       const state = checkpoints.current;
-      if (!state.running && !state.queued.length) return false;
-      if (!side || !cfg) {
+      /** A run was going (or a message waited) when the restart cut it off. */
+      const cut = state.running || state.queued.length > 0;
+      let going = false;
+      if (!cut && !open().length) {
+        // Nothing to go on with.
+      } else if (!side || !cfg) {
         // A run that can't go on (the agent is off now) ends here.
         await checkpoints.drop();
-        emit({ t: "error", text: CUT });
-        emit({ t: "busy", busy: false });
-        return false;
-      }
-      // The last turn's calls: a result kept is used, a call that began and didn't finish is not run again (the model
-      // hears that it stopped, and checks), a call that never began runs with the run.
-      for (const call of open()) {
-        const known = state.calls[call.id];
-        if (known?.result) messages = [...messages, known.result];
-        else if (known) {
-          messages = [...messages, toolMessage(call.id, call.name, failure(STOPPED), true)];
-          toolEnded(call.id, call.name, failure(STOPPED_SHOWN), true);
+        if (cut) emit({ t: "error", text: CUT });
+      } else {
+        // The last turn's calls: a result kept is used, a call that began and didn't finish is not run again (the
+        // model hears that it stopped, and checks). A call that never began runs with the run; with no run (the
+        // person stopped it), it gets a result that says so.
+        for (const call of open()) {
+          const known = state.calls[call.id];
+          if (known?.result) messages = [...messages, known.result];
+          else if (known) {
+            messages = [...messages, toolMessage(call.id, call.name, failure(STOPPED), true)];
+            toolEnded(call.id, call.name, failure(STOPPED_SHOWN), true);
+          } else if (!cut) {
+            messages = [...messages, toolMessage(call.id, call.name, failure(NOT_RUN), true)];
+            toolEnded(call.id, call.name, failure("Stopped."), true);
+          }
         }
+        // What the person sent that the model hadn't had: it has it now, in order.
+        const queued = [...state.queued];
+        messages = [...messages, ...queued];
+        const end = messages[messages.length - 1];
+        going = cut && !!end && (end.role != "assistant" || open().length > 0);
+        await checkpoints.resumed(going, queued);
       }
-      // What the person sent that the model hadn't had: it has it now, in order.
-      messages = [...messages, ...state.queued];
-      const end = messages[messages.length - 1];
-      const going = !!end && (end.role != "assistant" || open().length > 0);
-      await checkpoints.resumed(going);
-      if (!going) {
-        emit({ t: "busy", busy: false });
-        return false;
-      }
-      go();
-      return true;
+      step({ e: "resumed", going, steered: steering.length > 0, held: held.length > 0 });
+      // `step` changed `now`.
+      const after: Turn = now as Turn;
+      if (after.at != "running" && log.busy) emit({ t: "busy", busy: false });
+      return after.at == "running";
     },
   };
 }

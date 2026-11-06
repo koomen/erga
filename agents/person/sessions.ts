@@ -229,8 +229,10 @@ export class PersonAgents {
   async clearConversation(login: string): Promise<Log> {
     const s = this.agents.get(login);
     if (s) await s.agent.reset();
-    else this.event({ type: "agent", ev: { t: "reset" } }, login);
-    this.chats.clear(`you:${login}`);
+    else {
+      this.chats.clear(`you:${login}`);
+      this.event({ type: "agent", ev: { t: "reset" } }, login);
+    }
     return emptyLog();
   }
 
@@ -250,6 +252,11 @@ export class PersonAgents {
     const s = this.agents.get(login);
     if (!s) {
       if (op == "reset") await this.clearConversation(login);
+      // A run kept from before a restart, that no agent goes on with yet: Stop ends it, and the alarm wakes nothing.
+      if (op == "abort" && this.chats.running().some((r) => r.scope == `you:${login}`)) {
+        this.chats.stop(`you:${login}`);
+        this.event({ type: "agent", ev: { t: "busy", busy: false } }, login);
+      }
       return { ok: op != "model", reason: "the agent hasn't started" };
     }
     if (op == "abort") s.agent.abort();

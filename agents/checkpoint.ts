@@ -174,6 +174,16 @@ export class Checkpoints {
     await this.step();
   }
 
+  /**
+   * Stop (agents/turn.ts): the messages sent before it are no longer waiting (the turn puts them in the messages,
+   * unanswered), so a restart doesn't answer them. A run goes on after a restart only for messages sent after Stop.
+   */
+  unqueue(messages: readonly ChatMessage[]): Promise<void> {
+    this.state.queued = this.state.queued.filter((m) => !messages.includes(m));
+    this.state.running = this.state.queued.length > 0;
+    return this.save();
+  }
+
   /** The run ended (done, stopped or failed): it goes on only for messages still waiting. */
   ended(): Promise<void> {
     this.state.running = this.state.queued.length > 0;
@@ -194,11 +204,11 @@ export class Checkpoints {
     await this.save();
   }
 
-  /** Clears the calls of a turn whose results are all in the messages, and the queue (`resume` put it in the messages). */
-  async resumed(running: boolean): Promise<void> {
+  /** Clears the calls of a turn whose results are all in the messages, and the messages `resume` put in the messages (`taken`). */
+  async resumed(running: boolean, taken: readonly ChatMessage[]): Promise<void> {
     this.state.calls = {};
-    this.state.queued = [];
-    this.state.running = running;
+    this.state.queued = this.state.queued.filter((m) => !taken.includes(m));
+    this.state.running = running || this.state.queued.length > 0;
     await this.save();
   }
 
@@ -234,7 +244,9 @@ export class Checkpoints {
     this.savedMessages = 0;
     this.savedLog = 0;
     this.logFrom = Infinity;
-    this.lastState = "";
+    // As `change` would see the empty conversation: nothing to save until something changes.
+    this.state.model = this.o.model();
+    this.lastState = JSON.stringify({ ...this.state, at: 0 });
     const store = this.store;
     if (!store) return;
     this.chain = this.chain.then(() => store.clear()).catch((e: unknown) => console.log(`couldn't clear the agent's conversation: ${e instanceof Error ? e.message : e}`));
