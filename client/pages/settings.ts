@@ -14,7 +14,7 @@
 //     can't edit it, see Erga's header bar (share_document's reader_bars; on at first), and whether they may use the
 //     Erga agent on it (reader_agent). The agent is off, and not to be turned on, while anyone with the link may open
 //     it. And whether its page may call a model as its visitor, and which (page_llm, page_llm_model: window.ergaLLM).
-//   - Homepage, only on the homepage: one line, with how its deploy is going and Deploy (admins), which is blue when
+//   - Homepage, only on the homepage: one line, with its own domain (a link) when it has one, with how its deploy is going and Deploy (admins), which is blue when
 //     the document is newer than the live page. Nothing deploys by itself. The homepage is chosen on /admin
 //     (the landing_document setting), never here.
 //   - Versions: the latest ten, each with its number, the model's five-word
@@ -43,7 +43,13 @@ export interface Deploy {
   error: string | null;
 }
 /** ls's homepage: on the homepage only. */
-export interface Home { isHome: boolean; canDeploy: boolean; /** An admin acting through a token without the admin scope. */ locked?: boolean; deploy: Deploy }
+export interface Home {
+  isHome: boolean;
+  canDeploy: boolean /** An admin acting through a token without the admin scope. */;
+  locked?: boolean /** Its own domain, or null. */;
+  domain?: string | null;
+  deploy: Deploy;
+}
 export type DocKind = "document" | "project";
 /** ls's answer, as far as this panel reads it. */
 interface Tree {
@@ -172,6 +178,8 @@ span.ds-page-icon { background: color-mix(in srgb, var(--chrome) 35%, transparen
 .ds-deploy { display: flex; align-items: center; gap: 10px; }
 .ds-deploy > svg { flex: none; align-self: flex-start; margin-top: 1px; width: 16px; height: 16px; fill: none; stroke: var(--caret); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .ds-home-text { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.4; color: var(--soft); }
+.ds-home-text a { font-weight: 500; color: var(--caret); text-decoration: none; }
+.ds-home-text a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .ds-home-text b { display: block; font: 600 13px/1.35 var(--font-text); color: var(--fg-strong, var(--fg)); }
 .ds-status span { white-space: nowrap; }
 .ds-dot { display: inline-block; margin-right: 6px; vertical-align: 0; width: 8px; height: 8px; border-radius: 50%; }
@@ -525,6 +533,10 @@ function mount(host: SettingsHost): Settings {
     homeSec.hidden = !home?.isHome;
     if (!home || !home.isHome) return;
     const d = home.deploy;
+    // Its own domain, a link that opens it there (with this server's port, locally).
+    const site = home.domain ? `${location.protocol}//${home.domain}${location.port ? `:${location.port}` : ""}/` : "";
+    $("ds-home-note").innerHTML =
+      `Homepage${site ? ` · <a id="ds-home-domain" href="${esc(site)}" target="_blank" rel="noopener">${esc(home.domain!)}</a>` : ""}`;
     // Each part keeps its words together, and the line wraps only between them.
     const at = d.at
       ? `<span>Deployed ${esc(clock(d.at))}</span>${d.version != null ? ` <span>· version ${d.version}</span>` : ""}`

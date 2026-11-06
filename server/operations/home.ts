@@ -10,13 +10,21 @@ import { type Caller, type Operation, OperationError, platformOf } from "./opera
 
 /**
  * The homepage's state, for ls, if `doc` is the homepage (else null): how its deploy goes, whether the caller may
- * redeploy it (canDeploy: admin power), and locked: an admin acting without admin power (a token without the admin scope).
+ * redeploy it (canDeploy: admin power), locked: an admin acting without admin power (a token without the admin scope), and
+ * domain: the homepage's own domain (the deploy facts' home), or null on this server's own domain.
  */
 export async function homepageOf(caller: Caller, doc: DocRow) {
   const { dir, who } = caller;
   if (doc.test || (await dir.homeId()) != doc.id) return null;
   const [admin, unlocked] = await Promise.all([dir.users.isAdmin(who), dir.users.actsAsAdmin(who)]);
-  return { isHome: true, canDeploy: unlocked, locked: admin && !unlocked, deploy: await platformOf(caller).home.status() };
+  const platform = platformOf(caller);
+  return {
+    isHome: true,
+    canDeploy: unlocked,
+    locked: admin && !unlocked,
+    domain: platform.deploy.home,
+    deploy: await platform.home.status(),
+  };
 }
 
 /** How long deploy_homepage waits for the homepage's deploy to end (it usually takes well under a second). */
