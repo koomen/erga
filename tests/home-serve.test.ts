@@ -5,8 +5,8 @@
 import { expect, spyOn, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import { requestUrl, respond, text } from "../server/http.ts";
-import { serveHome, serveHomeSite } from "../server/home/index.ts";
-import type { LivePage } from "../server/home/deploys.ts";
+import { forgetHome, serveHome, serveHomeSite } from "../server/home/index.ts";
+import type { LivePage } from "../server/home/snapshot.ts";
 import type { Platform } from "../server/platform.ts";
 
 const page: LivePage = {
@@ -50,6 +50,11 @@ function platform(): Platform {
   } as unknown as Platform;
 }
 
+async function until(ok: () => boolean) {
+  for (let i = 0; i < 200 && !ok(); i++) await new Promise((r) => setTimeout(r, 5));
+  expect(ok()).toBe(true);
+}
+
 const site = serveHomeSite({ notFound: false, taken: async () => false });
 // As server/app.ts routes them: / is the homepage, any other address may be the site's.
 const route = Effect.gen(function* () {
@@ -77,4 +82,36 @@ test("a route's defect is logged, with its path", async () => {
   } finally {
     errors.mockRestore();
   }
+});
+
+test("an older shape from the home object itself (a release in between) doesn't break /", async () => {
+  const p = platform();
+  // Nothing in this isolate or at the edge: the home object's answer is the only copy, and it's an older release's.
+  await forgetHome(p, new URL("https://erga.test/"));
+  (p.edge as { cache: unknown }).cache = undefined;
+  (p.home as { page: unknown }).page = async () => ({ same: false, page: old });
+  const home = await respond(route, new Request("https://erga.test/"), p);
+  expect(home.status).not.toBe(500);
+});
+
+test("a deploy that forgets the snapshot while this isolate asks the home object doesn't break /", async () => {
+  const p = platform();
+  (p.edge as { homeRecheckMs: number }).homeRecheckMs = 0;
+  (p.edge as { cache: unknown }).cache = undefined;
+  await forgetHome(p, new URL("https://erga.test/"));
+  expect((await respond(route, new Request("https://erga.test/"), p)).status).toBe(200);
+  // The next / asks with the generation it has; a deploy through this isolate forgets it before the answer comes.
+  let answer!: () => void;
+  const asked = p.home.page;
+  (p.home as { page: unknown }).page = async (known?: string | null) => {
+    await new Promise<void>((done) => {
+      answer = done;
+    });
+    return asked(known);
+  };
+  const second = respond(route, new Request("https://erga.test/"), p);
+  await until(() => !!answer);
+  await forgetHome(p, new URL("https://erga.test/"));
+  answer();
+  expect((await second).status).toBe(200);
 });

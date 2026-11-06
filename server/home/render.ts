@@ -47,8 +47,6 @@ export interface DeployStatus {
   by?: string | null;
 }
 
-export const IDLE: DeployStatus = { state: "idle", at: null, version: null, error: null };
-
 /** The page as deployed, split where the controls go (they differ for each person). */
 export interface RenderedHome { before: string; after: string }
 

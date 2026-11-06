@@ -4,5 +4,5 @@
 
 export { HomeDeploys, type HomeObject } from "./deploys.ts";
 export { pageToken, PAGE_TOKEN_MS, tokenOk } from "./llm-token.ts";
-export { HOME_FILES, homeHeader, IDLE, renderHome } from "./render.ts";
+export { HOME_FILES, homeHeader, renderHome } from "./render.ts";
 export { forgetHome, serveHome, serveHomeDomain, serveHomeFile, serveHomeSite } from "./serve.ts";

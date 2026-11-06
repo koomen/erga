@@ -11,15 +11,14 @@ import { call, ctx, fromWeb } from "../http.ts";
 import { roleMay } from "../directory/index.ts";
 import { accountOf, link, OWN_ACCOUNT, withEdit } from "../pages/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
-import * as Schema from "effect/Schema";
-import { LivePage } from "./deploys.ts";
+import { type Copy, decide, isLivePage, type LivePage, settle } from "./snapshot.ts";
 import { HOME_FILES, homeHeader, pageInter, withHomeLlm, withToken } from "./render.ts";
 import { pageToken } from "./llm-token.ts";
 import { actingAdmin } from "../identity/index.ts";
 import { fileOf, NOT_FOUND, redirectOf } from "./site.ts";
 
 /** The snapshot as this isolate last had it, and when it last asked whether it's still current. */
-let memo: { page: LivePage; checked: number } | null = null;
+let memo: Copy | null = null;
 let refreshing: Promise<LivePage | null> | null = null;
 
 const cacheKey = (url: URL) => `${url.origin}${HOME_FILES}page`;
@@ -33,45 +32,49 @@ export async function forgetHome(platform: Platform, url: URL): Promise<void> {
 /** Asks the home object for the snapshot (only what's changed), and remembers it here and in the edge's cache. */
 function refresh(platform: Platform, url: URL): Promise<LivePage | null> {
   return refreshing ??= (async () => {
-    const answer = await platform.home.page(memo?.page.gen ?? null);
+    const known = memo?.page ?? null;
+    const copy = settle(known, await platform.home.page(known?.gen ?? null), Date.now());
     const cache = platform.edge.cache;
-    if (!answer) {
-      memo = null;
-      await cache?.delete(cacheKey(url)).catch(() => false);
-      return null;
-    }
-    const page = answer.same ? memo!.page : answer.page;
-    const checked = Date.now();
-    memo = { page, checked };
-    await cache?.put(cacheKey(url), new Response(JSON.stringify(page), { headers: { "Content-Type": "application/json", "Cache-Control": "max-age=86400", "x-checked": String(checked) } })).catch(() => {});
-    return page;
+    if (copy == "keep") return memo?.page ?? null;
+    memo = copy;
+    if (!copy) await cache?.delete(cacheKey(url)).catch(() => false);
+    else
+      await cache
+        ?.put(
+          cacheKey(url),
+          new Response(JSON.stringify(copy.page), {
+            headers: { "Content-Type": "application/json", "Cache-Control": "max-age=86400", "x-checked": String(copy.checked) },
+          })
+        )
+        .catch(() => {});
+    return copy?.page ?? null;
   })().finally(() => { refreshing = null; });
 }
 
-const isLivePage = Schema.is(LivePage);
+/** The edge's copy, if it has one of this release's shape. */
+async function cached(platform: Platform, url: URL): Promise<Copy | null> {
+  try {
+    const hit = await platform.edge.cache?.match(cacheKey(url));
+    if (!hit) return null;
+    const page: unknown = await hit.json();
+    return isLivePage(page) ? { page, checked: Number(hit.headers.get("x-checked")) || 0 } : null;
+  } catch {
+    return null;
+  }
+}
 
-/** The snapshot to serve, and where it came from: this isolate, the edge's cache or the home object. */
+/** The snapshot to serve, and where it came from: this isolate, the edge's cache or the home object (snapshot.ts, decide). */
 async function livePage(platform: Platform, url: URL): Promise<{ page: LivePage; from: string } | null> {
   const recheckMs = platform.edge.homeRecheckMs;
-  // 0 (local development, tests): nothing remembered, every / asks the home object.
-  if (recheckMs == 0) { const page = await refresh(platform, url); return page && { page, from: "home" }; }
-  const stale = (checked: number) => Date.now() - checked >= recheckMs;
-  const later = (p: Promise<unknown>) => platform.edge.background(p.catch((e) => console.log(`couldn't check the homepage: ${e}`)));
-  if (memo) {
-    if (stale(memo.checked)) later(refresh(platform, url));
-    return { page: memo.page, from: "memory" };
-  }
-  const cached = await platform.edge.cache?.match(cacheKey(url)).catch(() => undefined);
-  if (cached) {
-    try {
-      const page: unknown = await cached.json();
-      // An older release's copy (another shape): ask the home object, whose own copy is current (deploys.ts, load).
-      if (!isLivePage(page)) throw new Error("an older shape");
-      const checked = Number(cached.headers.get("x-checked")) || 0;
-      if (!memo) memo = { page, checked };
-      if (stale(checked)) later(refresh(platform, url));
-      return { page, from: "cache" };
-    } catch { /* unreadable: ask */ }
+  let cache: Copy | null | undefined;
+  let d = decide(memo, cache, Date.now(), recheckMs);
+  if (d.do == "cache") d = decide(memo, (cache = await cached(platform, url)), Date.now(), recheckMs);
+  if (d.do == "serve") {
+    const { copy } = d;
+    if (d.refresh) platform.edge.background(refresh(platform, url).catch((e) => console.log(`couldn't check the homepage: ${e}`)));
+    if (copy == memo) return { page: copy.page, from: "memory" };
+    memo = copy;
+    return { page: copy.page, from: "cache" };
   }
   const page = await refresh(platform, url);
   return page && { page, from: "home" };
