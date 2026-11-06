@@ -436,7 +436,25 @@ export default function reader(C: ReaderConfig): void {
   }
   let band: string | null = null,
     canvasSaid = "",
-    hash: string | null = null;
+    hash: string | null = null,
+    push = false;
+  // The page's place (its #hash) behaves as at the top of the tab: a new place (location.hash =, a link to "#x",
+  // pushState of a hash) is a new entry in the tab's history (viewer-nav.ts), and never one in the frame's, so Back
+  // goes through the page's places. replaceState stays a replace.
+  const doc = (u: string | URL) => new URL(String(u), location.href).href.split("#")[0];
+  history.pushState = function (state: unknown, title: string, url?: string | URL | null) {
+    if (url == null || doc(url) != doc(location.href)) return History.prototype.pushState.call(this, state, title, url);
+    History.prototype.replaceState.call(this, state, title, url);
+    push = true;
+  };
+  type Navigate = Event & { navigationType: string; hashChange: boolean; destination: { url: string } };
+  (window as Window & { navigation?: EventTarget }).navigation?.addEventListener("navigate", (ev) => {
+    const e = ev as Navigate;
+    if (e.navigationType != "push" || !e.hashChange || !e.cancelable) return;
+    e.preventDefault();
+    push = true;
+    location.replace(e.destination.url);
+  });
   (function watch() {
     try {
       keepRoom();
@@ -459,8 +477,9 @@ export default function reader(C: ReaderConfig): void {
       // The page's place in its own address (#3: agents/document/PROMPT.md, rule 11), for the tab's address.
       if (location.hash != hash) {
         hash = location.hash;
-        tell({ type: "erga-hash", hash });
+        tell({ type: "erga-hash", hash, push });
       }
+      push = false;
     } catch {}
     requestAnimationFrame(watch);
   })();
@@ -521,6 +540,14 @@ export default function reader(C: ReaderConfig): void {
     else if (type == "erga-room" && typeof e.data.px == "number" && e.data.px >= 0 && e.data.px <= 400) {
       room.room = e.data.px;
       dirty();
+    }
+    // The tab's address got another hash (typed, Back, a link): the page's place follows, and the page gets its
+    // hashchange. location.replace adds no entry to the frame's history, and `hash` keeps the frame from saying it back.
+    else if (type == "erga-hash" && typeof e.data.hash == "string" && /^(#.{0,999})?$/s.test(e.data.hash)) {
+      if (location.hash != e.data.hash) {
+        hash = e.data.hash;
+        location.replace(e.data.hash || "#");
+      }
     }
     // The document's public address, for the links in a copy: on the viewer's origin, as the token names it.
     else if (type == "erga-address" && typeof e.data.address == "string" && e.data.address.indexOf(C.shell + "/") == 0)

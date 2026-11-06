@@ -54,13 +54,18 @@ export default function viewerNav(): void {
     } else if (link && erga) link.replaceWith(erga.cloneNode());
   });
   // The page's place in its own address (#3: agents/document/PROMPT.md, rule 11): the tab's address keeps it too, so a
-  // reload, or the link in another tab, opens the page there (viewer-frame-src.ts gives it to the frame).
+  // reload, or the link in another tab, opens the page there (viewer-frame-src.ts gives it to the frame as it loads).
   addEventListener("message", (e) => {
     if (!ergaFrames.from(e) || e.data?.type != "erga-hash") return;
     const hash = e.data.hash;
     if (typeof hash != "string" || (hash && hash[0] != "#") || hash.length > 1000 || hash == location.hash) return;
-    history.replaceState(history.state, "", location.pathname + location.search + hash);
+    // As the page changed it: a new place is a new entry (reader.ts, push), so Back goes to the page's last place.
+    const url = location.pathname + location.search + hash;
+    if (e.data.push === true) history.pushState(history.state, "", url);
+    else history.replaceState(history.state, "", url);
   });
+  // And back: the tab's hash changed by itself (typed in the address bar, Back, a link to it), so the page goes there.
+  addEventListener("hashchange", () => ergaFrames.send({ type: "erga-hash", hash: location.hash }));
   // The page's script says it is up (reader.ts): it learns the document's public address, for the links in a copy.
   addEventListener("message", (e) => {
     if (!ergaFrames.from(e) || e.data?.type != "erga-hello") return;
