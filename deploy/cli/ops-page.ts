@@ -22,18 +22,10 @@ import {
   pageHtml,
   viewHtml,
 } from "./ops-view";
+import { alive } from "./pid";
+import { type JobState, stepRun } from "./job-state";
 
 const ROOT = new URL("../..", import.meta.url).pathname;
-
-/** A job's process lives (deploy/cli/deploy.ts reads its locks the same way). */
-const alive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as { code?: string }).code == "EPERM";
-  }
-};
 
 /** What an instance answers now: the commit it runs (with its ops token) and its health. */
 export async function askInstance(e: Entry): Promise<Answer> {
@@ -185,8 +177,7 @@ export function serveOpsPage(o: OpsPageOptions) {
     git: { error: "Reading git…" },
     jobs: [],
     setup: "",
-    starting: "",
-    failed: "",
+    run: { at: "idle" },
   };
   let refs = "";
   let asked = 0;
@@ -279,7 +270,7 @@ export function serveOpsPage(o: OpsPageOptions) {
       readClone();
     }
     facts.jobs = readJobs(o.dir);
-    const due = facts.jobs.some((j) => j.running) ? 5_000 : 30_000;
+    const due = facts.jobs.some((j) => j.phase == "running") ? 5_000 : 30_000;
     if (Date.now() - asked >= due - 500) {
       asked = Date.now();
       void askAll();
@@ -288,7 +279,7 @@ export function serveOpsPage(o: OpsPageOptions) {
   }, 5_000);
 
   /** Starts `bun erga <args>`, unless a job runs: the result is the page's answer. */
-  const start = (args: string[]) => {
+  const start = (args: string[], job: JobState) => {
     const busy = busyWith(facts);
     if (busy) return Response.json({ error: `Another job runs: ${busy}. Wait for it to end.` }, { status: 409 });
     const command = `bun erga ${args[0]} ${args[1]}${args[0] == "deploy" ? ` ${args[2]}` : ""}`;
@@ -298,15 +289,13 @@ export function serveOpsPage(o: OpsPageOptions) {
     } catch (e) {
       return Response.json({ error: `${command} did not start: ${(e as Error).message}` }, { status: 500 });
     }
-    facts.starting = command;
-    facts.failed = "";
+    facts.run = stepRun(facts.run, { type: "start", command, job });
     changed();
     void r.done.then(({ code, out }) => {
-      facts.starting = "";
       readFiles();
       // A command that stopped before its job record (a lock, a missing credential): its own words, here.
-      if (code != 0 && !facts.jobs.some((j) => j.id.endsWith(`-${r.pid}`)))
-        facts.failed = `${command} stopped: ${out.trim().split("\n").slice(-4).join(" ") || `exit ${code}`}`;
+      const recorded = facts.jobs.some((j) => j.id.endsWith(`-${r.pid}`));
+      facts.run = stepRun(facts.run, { type: "exit", code, out, recorded });
       changed();
       void askAll();
     });
@@ -324,7 +313,8 @@ export function serveOpsPage(o: OpsPageOptions) {
       const block = mergeBlock(b, facts.git.base, "");
       if (block) return no(block);
       if (!message) return no("Write the message of the commit on staging.");
-      return start(["merge", b.name, "-m", message]);
+      const host = entries().find((x) => x.stagingOf)?.host ?? "staging";
+      return start(["merge", b.name, "-m", message], { kind: "merge", host, commit: null, branch: b.name, phase: "starting" });
     }
     // A row's Deploy: a commit of the log, to an instance that does not run it now.
     const e = "error" in facts.config ? null : facts.config.instances.find((x) => x.host == body.host);
@@ -333,7 +323,7 @@ export function serveOpsPage(o: OpsPageOptions) {
     if (!c) return no(`This clone's log has no commit ${String(body.sha).slice(0, 12)}.`);
     const v = facts.answers[e.host]?.version;
     if (v && c.sha.startsWith(v)) return no(`${e.host} runs ${v} already.`);
-    return start(["deploy", c.sha.slice(0, 12), e.host]);
+    return start(["deploy", c.sha.slice(0, 12), e.host], { kind: "deploy", host: e.host, commit: c.sha, branch: null, phase: "starting" });
   };
 
   const html = (body: string, more = {}) =>

@@ -158,6 +158,19 @@ describe("bun erga deploy", () => {
     expect(await deployInstance({ dir, host: "example.com", commit: "HEAD", net: mock.fetch, print: () => {} })).toBe(HEAD);
     expect(bindingsOf(mock.state, "erga").ERGA_VERSION.text).toBe(HEAD.slice(0, 12));
     expect(bindingsOf(mock.state, "erga").SNAPSHOT_FROM).toBeUndefined();
+
+    // A job killed with its lock, and its pid given to another process later (here, this one): the lock names the
+    // process by its pid and its start time, so it is free.
+    writeFileSync(
+      lockPath(dir, "example.com"),
+      JSON.stringify({ pid: process.pid, pidStart: "Thu Jan  1 00:00:00 1970", command: "bun erga deploy x example.com", started: "then" })
+    );
+    expect(await deployInstance({ dir, host: "example.com", commit: "HEAD", net: mock.fetch, print: () => {} })).toBe(HEAD);
+    // A lock and a job record name this process with its start time.
+    const held = takeLock(dir, "example.com", "bun erga deploy main example.com");
+    expect(JSON.parse(readFileSync(lockPath(dir, "example.com"), "utf8")).pidStart).toMatch(/\d\d:\d\d:\d\d/);
+    held();
+    expect(records().at(-1)?.[0].pidStart).toMatch(/\d\d:\d\d:\d\d/);
   }, 60_000);
 
   test("the tests' gate: a commit with no pass runs them, and a failure stops before the build; --no-tests is in the record", async () => {
@@ -388,6 +401,37 @@ describe("the branches move only after a healthy deploy", () => {
       );
       expect(mock.state.calls.length).toBe(calls);
       expect(remote("main")).toBe(c2);
+
+      // A primary with no commit takes its staging instance's commit only when staging on origin has it. A merge whose
+      // push of staging failed leaves the instance on a commit after staging: main must not move to it.
+      run("git", "checkout", "-q", "--detach", c2);
+      const unpushed = commit("C4: deployed to staging, but staging's push failed");
+      let runs = c2;
+      const server = Bun.serve({
+        port: 0,
+        fetch: (req) => {
+          const path = new URL(req.url).pathname;
+          if (path == "/api/ops") return Response.json({ version: runs.slice(0, 12), target: "staging", host: "x", deploy: null });
+          return Response.json({ ok: true });
+        },
+      });
+      try {
+        const fake = `127.0.0.1:${server.port}`;
+        fresh(primary, { ...staging, host: fake });
+        writeFileSync(passPath(dir, c2), "all passing\n");
+        writeFileSync(passPath(dir, unpushed), "all passing\n");
+        const net: typeof mock.fetch = (input, init) => (String(input).includes(fake) ? fetch(input, init) : mock.fetch(input, init));
+        expect(await deployInstance({ dir, host: "example.com", clone, net, print })).toBe(c2);
+        runs = unpushed;
+        const before = mock.state.calls.length;
+        await expect(deployInstance({ dir, host: "example.com", clone, net, print })).rejects.toThrow(
+          `The staging instances run ${unpushed.slice(0, 12)}, but staging on origin (${c2.slice(0, 12)}) does not have it`
+        );
+        expect(mock.state.calls.length).toBe(before);
+        expect([remote("staging"), remote("main")]).toEqual([c2, c2]);
+      } finally {
+        server.stop(true);
+      }
     } finally {
       process.env.PATH = PATH;
       rmSync(tmp, { recursive: true, force: true });

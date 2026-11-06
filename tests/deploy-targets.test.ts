@@ -10,7 +10,7 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { ALL_STEPS, guardTarget, runPipeline } from "../deploy/pipeline/pipeline";
-import { bucketName } from "../deploy/pipeline/account";
+import { bucketName, ownCredentials } from "../deploy/pipeline/account";
 import { Cloudflare } from "../deploy/pipeline/cloudflare-api";
 import type { Release } from "../deploy/pipeline/release-format";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare, PROD_DB, PROD_DOCS } from "../dev/mock-cloudflare";
@@ -329,4 +329,29 @@ describe("documents' files: an R2 bucket of each target's own", () => {
     expect(made()).toBe(before);
     expect(bucketName({ workerName: "erga" }, "FILES")).toBe("erga-files");
   });
+});
+
+test("a new copy gets the server's own API keys in one batch: the old ones go, and its own come, all or nothing", async () => {
+  const sent: { path: string; body: unknown }[] = [];
+  const own = {
+    anthropic: [{ name: "anthropic", iv: "i", data: "d", last4: "1234", updated: 1 }],
+    people: [{ login: "ada", name: "openai", iv: "i", data: "d", last4: "9", updated: 2 }],
+  };
+  const cf = {
+    call: async (_m: string, path: string, _what: string, body: { sql?: string }) => {
+      sent.push({ path, body });
+      return [
+        { results: body.sql == "SELECT * FROM credentials" ? own.anthropic : body.sql == "SELECT * FROM person_keys" ? own.people : [] },
+      ];
+    },
+  } as unknown as Cloudflare;
+  expect(await ownCredentials(cf, "/accounts/a", "old", "new")).toBe("its own API keys kept (anthropic); 1 of its people's own keys kept");
+  const writes = sent.filter((s) => s.path.includes("/new/"));
+  expect(writes.length).toBe(1);
+  expect((writes[0].body as { batch: { sql: string }[] }).batch.map((q) => q.sql.split(" (")[0])).toEqual([
+    "DELETE FROM credentials",
+    "INSERT INTO credentials",
+    "DELETE FROM person_keys",
+    "INSERT INTO person_keys",
+  ]);
 });
