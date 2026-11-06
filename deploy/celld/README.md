@@ -16,7 +16,7 @@ to Erga's code: `project.ts` only turns the release into a celld project.
 | The editor's files (ASSETS) | Static assets | celld's static assets: the S3 bucket, cached on the disk |
 | A page's own API (LOADER) | Worker Loader | celld's Dynamic Workers |
 | HTTPS | Cloudflare's edge | CloudFront (`cdn.ts`), then Caddy on the machine (Let's Encrypt) |
-| view_page's browser (BROWSER) | Browser Rendering | none |
+| view_page's browser (BROWSER) | Browser Rendering | headless Chrome on the same machine (`ERGA_CHROME`), on the loopback only |
 | HTTP caching of files kept for good (`/_home-files/`, the editor's hashed files) | Workers' own cache code | CloudFront, as each response's Cache-Control lets it |
 | The Cache API (the homepage's copy, blobs, viewer decisions) | Cloudflare's cache | celld's KV, namespace EDGE_CACHE (`cloudflare/kv-cache.ts`): celld's own Cache API always misses |
 | Secrets (SESSION_SECRET, FACTORY_KEY) | Worker secrets | Parameter Store; the machine adds them at each deploy, and the bucket keeps them encrypted with a KMS key that only the machine may use |
@@ -97,11 +97,16 @@ To turn on the agents, an admin pastes the Anthropic key on
 
 ## Limits
 
-- view_page and eval_in_page: no browser. They say so.
 - `up` waits for CloudFront each time it makes or changes a distribution: a few minutes. `down` waits for it to
   turn each one off before it deletes it: a few minutes more.
 - The edge cache's KV namespace is one celld cell: its writes run one at a time, and each goes to S3. A blob over
   1 MiB, and a range of any blob, still come from the bucket each time.
+- view_page and eval_in_page use one headless Chrome on the machine (Playwright's
+  ARM64 build, 153). It shares the 2 GB: after renders of two documents, Chrome
+  used 265 MB and the machine had 630 MB free. systemd stops Chrome at 900 MB
+  and starts it again, so a large page can't stop celld. A render took 2.2 to
+  2.5 s the first time, and 1.2 to 1.4 s after. Chrome opens the app at its
+  public address, as a person does.
 - CloudFront's names are random (`<id>.cloudfront.net`). A name of our own needs a certificate in ACM.
 - Sign-in with GitHub or Google needs an OAuth app for the test address. The
   check signs its own session cookie with the server's SESSION_SECRET.
@@ -117,3 +122,8 @@ To turn on the agents, an admin pastes the Anthropic key on
 - A deploy reaches the machine about 10 s after `celld deploy`. An editor that
   opens in those seconds can fail to load; a reload fixes it.
 - `bun erga` has no celld target: `up` is the deploy.
+- All documents share one pages host (PAGES_HOST). Cloudflare gives each
+  document its own host. A shared host has no service worker, so the editor
+  cannot open a page again offline. The editor's console shows one 404 for
+  `/erga-sw.js`. A host for each document needs a certificate for each one
+  (Caddy's on-demand TLS).

@@ -35,6 +35,10 @@ const CADDY = {
   sha512:
     "9e5e76d7888542924de2c25353ae87c5f77e2a22c5b1198633cae13688922282e05383d142599205c88d8d80eee5e967d291214d7abce4835329a191b20dd6e0",
 };
+/** Playwright's build of Chrome's headless shell for Linux ARM64 (Chrome for Testing has none): the tests' Chromium. */
+const CHROME = { revision: "1243", sha256: "3a2bc2c354fb66615ee329c2ab13cd1312b40294798bea04c5dc0053caa6b881" };
+/** Where the Worker finds the machine's Chrome (ERGA_CHROME, cloudflare/browser.ts): on the loopback only. */
+const CHROME_DEVTOOLS = "127.0.0.1:9222";
 const ROOT = resolve(import.meta.dir, "../..");
 const print = (line: string) => console.log(`- ${line}`);
 
@@ -129,6 +133,47 @@ async function onMachine(instance: string, script: string, timeoutS = 600): Prom
     return r.StandardOutputContent;
   }
 }
+
+/**
+ * Chrome on the machine, for view_page: its libraries and fonts, the build (checked), and its service. It installs
+ * only a version that isn't there. MemoryMax keeps a page that grows from taking celld's memory: the kernel stops
+ * Chrome, and systemd starts it again.
+ */
+const chromeSetup = () => {
+  const dir = `/opt/chrome-${CHROME.revision}`;
+  const [host, port] = CHROME_DEVTOOLS.split(":");
+  return `set -euo pipefail
+cloud-init status --wait >/dev/null
+if [ ! -x ${dir}/chrome-linux/headless_shell ]; then
+  dnf install -y -q unzip atk at-spi2-atk libX11 libXcomposite libXdamage libXext libXfixes libXrandr mesa-libgbm libxcb \\
+    libxkbcommon alsa-lib nss cups-libs pango cairo libdrm google-noto-sans-fonts google-noto-serif-fonts \\
+    google-noto-sans-mono-fonts dejavu-sans-fonts >/dev/null
+  curl -fsSL -o /tmp/chrome.zip https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/${CHROME.revision}/chromium-headless-shell-linux-arm64.zip
+  echo "${CHROME.sha256}  /tmp/chrome.zip" | sha256sum -c
+  rm -rf ${dir}.new && mkdir -p ${dir}.new && unzip -q /tmp/chrome.zip -d ${dir}.new && rm /tmp/chrome.zip && mv ${dir}.new ${dir}
+fi
+useradd --system --home /var/lib/chrome --create-home chrome || true
+cat > /etc/systemd/system/chrome.service <<EOF
+[Unit]
+Description=Headless Chrome for view_page (Erga)
+After=network-online.target
+[Service]
+User=chrome
+ExecStart=${dir}/chrome-linux/headless_shell --remote-debugging-address=${host} --remote-debugging-port=${port} --user-data-dir=/var/lib/chrome/profile --site-per-process --no-first-run --disable-gpu about:blank
+MemoryMax=900M
+OOMScoreAdjust=500
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable chrome 2>/dev/null
+systemctl restart chrome
+for i in $(seq 1 30); do curl -fsS http://${CHROME_DEVTOOLS}/json/version >/dev/null 2>&1 && break; sleep 1; done
+curl -fsS http://${CHROME_DEVTOOLS}/json/version | grep -o '"Browser": "[^"]*"'
+`;
+};
 
 async function up() {
   // 1. The bucket: celld's state under fleet/, the releases under releases/.
@@ -333,7 +378,11 @@ async function up() {
   await $`bun run build`.cwd(ROOT).quiet();
   const index = await makeRelease();
   // (No secrets: the machine adds them at its deploy.)
-  const project = await celldProject({ PAGES_HOST: cdn.pages, ERGA_VERSION: index.version });
+  const project = await celldProject({
+    ERGA_CHROME: `http://${CHROME_DEVTOOLS}`,
+    PAGES_HOST: cdn.pages,
+    ERGA_VERSION: index.version,
+  });
   // (Outside .build/: the next release would serve it as a static asset, with the vars in it.)
   const tgz = join(mkdtempSync(join(tmpdir(), "erga-celld-")), "release.tgz");
   // (No macOS extended attributes: GNU tar on the machine warns of each.)
@@ -359,6 +408,7 @@ cat > /etc/caddy/Caddyfile <<'EOF'
 ${caddyfile(origins, cdn)}EOF
 HOME=/var/lib/caddy caddy reload --config /etc/caddy/Caddyfile`
   );
+  print(`chrome: ${(await onMachine(instance, chromeSetup())).trim()}`);
   const out = await onMachine(
     instance,
     `set -euo pipefail
