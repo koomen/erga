@@ -53,18 +53,19 @@ const failed = (error: string, code: LlmCode = "error"): LlmAnswer => ({ ok: fal
 /**
  * One op for document `doc`, on the app's own site, with the visitor's cookie: the route's answer. Signed out, a call
  * (or "sign-in") shows the sign-in dialog, whose choices come back to `back` (the page's address). `token`: the
- * homepage's page token, which lets a visitor signed out call its model (server/home/llm-token.ts).
+ * homepage's page token, which lets a visitor signed out call its model (server/home/llm-token.ts). `base`: where
+ * Erga's paths are on this site ("/_erga" on the homepage's own domain, server/identity/home-pass.ts).
  */
-export async function llmFetch(doc: string, o: LlmOp, back: string, token?: string): Promise<LlmAnswer> {
+export async function llmFetch(doc: string, o: LlmOp, back: string, token?: string, base = ""): Promise<LlmAnswer> {
   if (o.op == "sign-in") {
-    const s = await route(doc, { op: "status" });
+    const s = await route(doc, { op: "status" }, undefined, base);
     const providers = s.ok && (s.result as { providers?: SignInChoice[] }).providers;
-    if (providers) showSignIn(providers, back);
+    if (providers) showSignIn(providers, back, base);
     return { ok: true, result: null };
   }
-  const a = await route(doc, o, token);
+  const a = await route(doc, o, token, base);
   if (!a.ok) {
-    if (a.code == "sign_in") showSignIn(a.providers ?? [], back);
+    if (a.code == "sign_in") showSignIn(a.providers ?? [], back, base);
     return failed(a.error, a.code);
   }
   if (o.op != "status") return a;
@@ -76,15 +77,18 @@ export async function llmFetch(doc: string, o: LlmOp, back: string, token?: stri
 async function route(
   doc: string,
   o: Exclude<LlmOp, { op: "sign-in" }>,
-  token?: string
+  token?: string,
+  base = ""
 ): Promise<LlmAnswer & { providers?: SignInChoice[] }> {
   // (Local development's ?user=, the person this tab is.)
   const user = new URLSearchParams(location.search).get("user");
   const as = user ? "user=" + encodeURIComponent(user) : "";
   const r =
     o.op == "status"
-      ? await fetch("/api/llm?document=" + encodeURIComponent(doc) + (as ? "&" + as : ""), { credentials: "same-origin" }).catch(() => null)
-      : await fetch("/api/llm" + (as ? "?" + as : ""), {
+      ? await fetch(base + "/api/llm?document=" + encodeURIComponent(doc) + (as ? "&" + as : ""), { credentials: "same-origin" }).catch(
+          () => null
+        )
+      : await fetch(base + "/api/llm" + (as ? "?" + as : ""), {
           method: "POST",
           credentials: "same-origin",
           headers: { "Content-Type": "application/json" },

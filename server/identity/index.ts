@@ -16,6 +16,7 @@ export {
 export { devSignIn, usernameStep } from "./accounts.ts";
 export { authOps, providersOn, signInApp } from "./settings.ts";
 export { adminsOnlyGate } from "./admins-only.ts";
+export { HOME_ERGA, homeDomainSignIn, homePass, homeVisitor } from "./home-pass.ts";
 export { isOAuthPath, oauthRoutes, resourceMetadataUrl } from "./oauth.ts";
 
 export { expiryOf, tokensRoutes } from "./tokens-page.ts";

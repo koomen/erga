@@ -202,10 +202,11 @@ export const withToken = (before: string, token: string) => before.replace(JSON.
 
 /**
  * Another HTML page of the homepage's (served as it is at its own path: serve.ts), with window.ergaLLM for document
- * `doc` and its page `token` before any script of its own, as the homepage's own page has it (renderHome).
+ * `doc` and its page `token` before any script of its own, as the homepage's own page has it (renderHome). `base`:
+ * where Erga's paths are ("/_erga" on the homepage's own domain).
  */
-export function withHomeLlm(html: string, doc: string, token: string): string {
-  const script = `<script>${inlineCall("home-llm", doc, token)}</script>`;
+export function withHomeLlm(html: string, doc: string, token: string, base = ""): string {
+  const script = `<script>${inlineCall("home-llm", doc, token, base)}</script>`;
   const head = /<head(\s[^>]*)?>/i.exec(html);
   const at = head ? head.index + head[0].length : /^\s*(<!doctype[^>]*>)?/i.exec(html)![0].length;
   return html.slice(0, at) + script + html.slice(at);

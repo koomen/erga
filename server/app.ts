@@ -21,6 +21,7 @@
 //                              values that wait on /admin/auth
 //   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
+//   /auth/home-pass            the homepage's own domain's sign-in, through here (server/identity/home-pass.ts)
 //   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent; /llms.txt points agents to /mcp
 //   /.well-known/oauth-..., /oauth/...
 //                              MCP's sign-in: an agent's app gets a token through its person's browser (server/identity/oauth.ts)
@@ -52,13 +53,16 @@
 import * as Effect from "effect/Effect";
 import { adminGate, isAdminPath } from "./admin/index.ts";
 import { agentApi, isAgentPath } from "../agents/person/sessions.ts";
-import { isPageLlmPath, pageLlmApi } from "../agents/page-llm.ts";
+import { HOME_LLM_PATH, homeDomainLlmApi, isPageLlmPath, pageLlmApi } from "../agents/page-llm.ts";
 import { serverApi } from "./api.ts";
 import { adoptLanding, documentRoutes, ergaAddress, isPagesSite, workerHere } from "./documents/index.ts";
 import { serveHome, serveHomeDomain, serveHomeFile, serveHomeSite } from "./home/index.ts";
 import {
   adminsOnlyGate,
   chooseSignIn,
+  HOME_ERGA,
+  homeDomainSignIn,
+  homePass,
   devSignIn,
   finishGoogleSignIn,
   finishSignIn,
@@ -104,7 +108,14 @@ export const app = (outside: Outside): Route =>
     const url = new URL(request.url);
     // The homepage's own domain is the site's alone: its files as they are, and nothing of Erga's. (On staging, as every
     // origin, for admins only; but a staging server never has one: deploy/pipeline/pipeline.ts, guardTarget.)
-    if (p.deploy.home && url.hostname == p.deploy.home) return (yield* adminsOnlyGate) ?? (yield* serveHomeDomain);
+    // Under /_erga/ only, Erga's: its pages' model (window.ergaLLM) and signing in for it (identity/home-pass.ts).
+    if (p.deploy.home && url.hostname == p.deploy.home) {
+      const refused = yield* adminsOnlyGate;
+      if (refused) return refused;
+      if (!url.pathname.startsWith(HOME_ERGA)) return yield* serveHomeDomain;
+      if (url.pathname == HOME_LLM_PATH) return yield* homeDomainLlmApi;
+      return (yield* homeDomainSignIn) ?? text("Not found", 404);
+    }
     // The editor's files' addresses, for the pages below to name (pages/assets.ts).
     if (!isAsset(url.pathname)) yield* call(() => loadAssets(p, url));
     const answer = yield* route(url, outside);
@@ -164,6 +175,7 @@ const route = (url: URL, outside: Outside): Route =>
     if (path == "/auth/logout") return yield* signOut;
     if (path == "/auth/username") return yield* usernameStep;
     if (path == "/auth/dev") return yield* devSignIn;
+    if (path == "/auth/home-pass") return yield* homePass;
     // The editor's own files: its code, styles and typeface, and its page, which a document's page adds to itself to go into the editor.
     if (assets) return isAssetPath(path) ? yield* serveAsset : fromWeb(yield* call(() => p.assets(request)));
     // Erga's editing libraries, each at its one address, its newest build (a document's page imports it).

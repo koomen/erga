@@ -10,12 +10,12 @@ export interface SignInChoice {
   label: string;
 }
 
-/** The buttons, each to the provider's sign-in and back to `next`. */
-export const providerButtons = (choices: SignInChoice[], next: string) =>
+/** The buttons, each to the provider's sign-in and back to `next`; `base`: where Erga's paths are ("/_erga" on the homepage's own domain). */
+export const providerButtons = (choices: SignInChoice[], next: string, base = "") =>
   choices
     .map(
       (c) =>
-        `<a class="provider ${c.id}" href="/auth/${c.id}?next=${encodeURIComponent(next)}">${LOGOS[c.id]}<span>Continue with ${esc(c.label)}</span></a>`
+        `<a class="provider ${c.id}" href="${base}/auth/${c.id}?next=${encodeURIComponent(next)}">${LOGOS[c.id]}<span>Continue with ${esc(c.label)}</span></a>`
     )
     .join("");
 
