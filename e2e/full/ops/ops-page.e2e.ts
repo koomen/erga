@@ -1,8 +1,9 @@
 // `bun erga` (deploy/cli/ops-page.ts) as Pete runs it, in a clone with a config file and a job record: the page shows
 // the primary with its staging instance, the job that runs, and "live" at the commit each instance answers. An entry
-// that another terminal adds to the file shows at once, with no reload.
+// that another terminal adds to the file shows at once, with no reload. A row's Deploy button shows only in the cell
+// under the mouse, or in the cell whose button has the focus.
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,8 +68,9 @@ test("the ops page shows the config's instances, the job that runs and the live 
   mkdirSync(join(dir, ".erga/jobs"), { recursive: true });
   config([entry(primary), entry(staging, { stagingOf: primary })]);
   const command = `bun erga deploy ${sha("origin/staging").slice(0, 8)} ${staging}`;
+  const job = join(dir, ".erga/jobs/2026-11-05T10-00-00-000Z-localhost-1.jsonl");
   writeFileSync(
-    join(dir, ".erga/jobs/2026-11-05T10-00-00-000Z-localhost-1.jsonl"),
+    job,
     `${JSON.stringify({ command, host: staging, from: "terminal", pid: process.pid, started: "2026-11-05T10:00:00.000Z" })}\n`
   );
   const { cli, url } = await opsPage(dir);
@@ -86,6 +88,25 @@ test("the ops page shows the config's instances, the job that runs and the live 
     // "live" at the commit each instance answers, in its column.
     await shows(`.row[data-sha="${sha("origin/staging")}"] .dep.live[data-host="${staging}"]`, "live");
     await shows(`.row[data-sha="${sha("origin/main")}"] .dep.live[data-host="${primary}"]`, "live");
+
+    // A row's Deploy shows only in the cell under the mouse, or the cell whose button has the focus.
+    const row = page.locator(`.row[data-sha="${sha("origin/staging~1")}"]`);
+    const shown = () =>
+      row
+        .locator(".deps.here .tip")
+        .evaluateAll((tips) => tips.map((t) => `${t.querySelector("button")?.dataset.host}:${getComputedStyle(t).opacity}`));
+    await expect.poll(shown).toEqual([`${staging}:0`, `${primary}:0`]);
+    await row.locator(".deps.here").first().hover();
+    await expect.poll(shown).toEqual([`${staging}:1`, `${primary}:0`]);
+    await row.locator(".deps.here").last().hover();
+    await expect.poll(shown).toEqual([`${staging}:0`, `${primary}:1`]);
+    // The job ends: the buttons take the focus again (a disabled one can't).
+    appendFileSync(job, `${JSON.stringify({ result: "ok", ended: "2026-11-05T10:01:00.000Z" })}\n`);
+    await expect.poll(() => row.locator(`[data-deploy][data-host="${staging}"]`).isEnabled()).toBe(true);
+    await page.mouse.move(0, 0);
+    await row.locator(`[data-deploy][data-host="${staging}"]`).focus();
+    await expect.poll(shown).toEqual([`${staging}:1`, `${primary}:0`]);
+    await page.locator("body").focus();
 
     // Another terminal registers a second primary: the page shows it, with no reload.
     await page.evaluate(() => ((window as unknown as { before: boolean }).before = true));
