@@ -137,10 +137,9 @@ test("desktop: a reader and someone signed out have the bars too, with the butto
     expect(Object.keys(out.parts)).toEqual(["left", "right", "brand", "new", "full", "agent", "me"]);
     expect(out.parts.me).toEqual(owner.me);
     expect(out.parts.brand).toEqual(owner.brand);
-    expect(await page.evaluate(() => [...document.querySelectorAll(".erga-crumbs > *")].map((e) => e.textContent!.trim()))).toEqual([
-      "Erga",
-      "A light page with content at the top",
-    ]);
+    expect(
+      await page.evaluate(() => [...document.querySelectorAll(".erga-crumbs > :not(.erga-sep)")].map((e) => e.textContent!.trim()))
+    ).toEqual(["Erga", "A light page with content at the top"]);
   } finally {
     await page.context().clearCookies({ name: `erga_signed_out_${port}` });
   }

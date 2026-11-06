@@ -74,7 +74,9 @@ body.source :is(#frame, .erga-canvas) { visibility: hidden; }
   color: var(--fg-strong, var(--fg)); font: 650 15px/1 var(--font-text); letter-spacing: -0.02em; transition: opacity 150ms ease;
 }
 .nav-brand:hover { opacity: 0.7; }
-.nav-brand:has(~ :not([hidden]))::after { content: "›"; margin: 0 -6px 0 10px; color: var(--chrome); opacity: 0.55; font: 400 13.5px/1 var(--font-text); letter-spacing: normal; }
+/* Each caret (.erga-sep: client/inline/bars.css) shows only where a step after it shows. */
+.chrome-nav .erga-sep { font-family: var(--font-text); }
+.nav-brand + .erga-sep:not(:has(~ :is(.nav-back, .nav-title):not([hidden]))), .nav-back + .erga-sep:is(.nav-back[hidden] + *, :has(+ .nav-title[hidden])) { display: none; }
 .nav-back {
   display: flex; flex: none; align-items: center; height: 34px; padding: 0 10px; border-radius: 8px;
   color: var(--soft); font: 500 13.5px/1 var(--font-text); text-decoration: none;
@@ -168,7 +170,7 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
 @media (max-width: 759.98px) {
   body.quick-open .chrome-top .people { opacity: 0; pointer-events: none; }
   body:not(.quick-open) .chrome-nav.tight { justify-content: flex-start; }
-  body:not(.quick-open) .chrome-nav.tight .nav-back { display: none; }
+  body:not(.quick-open) .chrome-nav.tight :is(.nav-back, .nav-back + .erga-sep) { display: none; }
   body:not(.quick-open) .chrome-nav.tight .nav-title { flex: 0 1 auto; }
 }
 @media (prefers-reduced-motion: reduce) { .people > * { transition: none; } }
@@ -218,7 +220,6 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
    box); click it for the document's pages (the card below it), whose first row, the document
    itself, has the pencil that renames it or changes its address (the naming card). */
 /* The arrow sits midway between the two words' ink: the right side has the title's padding too, so its margins differ. */
-.nav-back:has(+ .nav-title:not([hidden]))::after { content: "›"; margin: 0 -6px 0 12px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
 .nav-title {
   display: flex; align-items: center; height: 34px; min-width: 0; max-width: min(42vw, 420px, var(--room, 420px)); padding: 0 8px; border: 0; border-radius: 8px;
   background: transparent; color: var(--fg); font: 500 13.5px/1 var(--font-text); cursor: pointer;

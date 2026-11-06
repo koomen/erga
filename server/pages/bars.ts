@@ -30,12 +30,15 @@ export const homeButton = (href: string) =>
 /** The bars' look (client/inline/bars.css). */
 export const BARS_STYLE = `<style>${inlineStyle("bars")}</style>`;
 
+/** The caret between two steps: outside both, so a step's hover, focus ring and click are its word's alone. */
+const SEP = `<span class="erga-sep" aria-hidden="true">›</span>`;
+
 /**
- * The breadcrumbs' bar: the wordmark, then each step (`steps`, made already). The wordmark goes to your documents at
- * `home` (someone signed out: to its homepage).
+ * The breadcrumbs' bar: the wordmark, then each step (`steps`, made already), a caret before each. The wordmark goes
+ * to your documents at `home` (someone signed out: to its homepage).
  */
-const crumbsBar = (session: Session | null, home: string, steps: string) =>
-  `<nav class="erga-crumbs erga-bar erga-bar-l" aria-label="Breadcrumbs"><a class="erga-brand" href="${esc(link(`${home}${session ? "/docs" : "/"}`, session))}" draggable="false"><span>${WORDMARK}</span></a>${steps}</nav>`;
+const crumbsBar = (session: Session | null, home: string, steps: string[]) =>
+  `<nav class="erga-crumbs erga-bar erga-bar-l" aria-label="Breadcrumbs"><a class="erga-brand" href="${esc(link(`${home}${session ? "/docs" : "/"}`, session))}" draggable="false"><span>${WORDMARK}</span></a>${steps.map((s) => SEP + s).join("")}</nav>`;
 
 /** The buttons' bar: the quick actions (on a phone, they open out of the avatar), then who you are (`corner`). */
 const buttonsBar = (actions: string, corner: string) =>
@@ -62,7 +65,7 @@ export function barsHtml(o: {
   const crumb = tree
     ? `<button type="button" class="erga-here erga-tree-btn" aria-expanded="false" aria-controls="erga-tree" aria-label="${esc(o.title ?? "")}: its pages"><span>${esc(o.title ?? "")}</span><svg class="erga-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></button>`
     : `<span class="erga-here" aria-current="page"><span>${esc(o.title ?? "")}</span></span>`;
-  const steps = o.title == null ? "" : `${mine ? `<a class="erga-crumb" href="${esc(link("/docs", s))}">Documents</a>` : ""}${crumb}`;
+  const steps = o.title == null ? [] : [...(mine ? [`<a class="erga-crumb" href="${esc(link("/docs", s))}">Documents</a>`] : []), crumb];
   const card = tree ? `<div id="erga-tree" class="erga-tree-card" role="dialog" aria-label="Pages" hidden></div>` : "";
   const actions = `${newDocButton("erga-view-button")}${o.full ? FULL_BUTTON : ""}${o.edit}${AGENT_SHARE_BUTTON}${mine ? docsButton(link("/docs", s)) : ""}`;
   return `${s?.agent ? "" : crumbsBar(s, "", steps)}${card}${buttonsBar(actions, o.corner)}`;
@@ -91,8 +94,7 @@ export function pageBars(
       c.href
         ? `<a class="erga-crumb" href="${esc(link(c.href, session))}">${esc(c.label)}</a>`
         : `<${here} class="erga-here" aria-current="page"><span>${esc(c.label)}</span></${here}>`
-    )
-    .join("");
+  );
   const mine = !!session && !session.agent;
   const at = (path: string) => link(path, session);
   const actions = `${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${o.share ?? AGENT_SHARE_BUTTON}${mine ? (o.docs ?? docsButton(at("/docs"))) : ""}`;
