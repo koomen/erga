@@ -56,8 +56,8 @@ and `main`. There are no pull requests.
   instance's commit, and the job that runs. Its tabs: Setup (the checklist of `bun erga setup`), Deploys,
   Logs (a job's output, live) and History (the jobs). It never fetches. A new job
   on another primary's instance switches the page to that primary. Each feature branch has a Merge
-  button (`bun erga merge <branch> -m <text>`), and production's column has a Deploy button at
-  staging's commit when production is behind it (`bun erga deploy <primary>`). They run the same
+  button (`bun erga merge <branch> -m <text>`). A commit row shows a Deploy button on hover in each
+  column whose instance does not run it (`bun erga deploy <commit> <host>`). They run the same
   commands, with the same locks, and only one job at a time. Only when Pete asks.
 - `bun erga deploy [<commit>] <host>`: deploys a registered instance from
   this machine, with the facts in `.erga/config.json`. Only when Pete asks.

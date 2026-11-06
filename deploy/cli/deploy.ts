@@ -166,14 +166,22 @@ export interface Job {
 }
 
 /** A job's record, .erga/jobs/<when>-<host>.jsonl: its start, its output as it comes, and its result, one JSON per line. */
-export function startJob(dir: string, o: { command: string; host: string; print?: (line: string) => void }): Job {
+/** Where a job's command was typed: a terminal, or the ops page (ops-page.ts runs the CLI with ERGA_JOB_FROM=page). */
+export type From = "terminal" | "page";
+
+/** This process's environment without ERGA_JOB_FROM: for the tests a merge or a deploy runs, which are no job of the page. */
+export const testEnv = () => {
+  const env = { ...process.env };
+  delete env.ERGA_JOB_FROM;
+  return env;
+};
+
+export function startJob(dir: string, o: { command: string; host: string; from?: From; print?: (line: string) => void }): Job {
   mkdirSync(jobsDir(dir), { recursive: true });
   const started = new Date().toISOString();
   const path = join(jobsDir(dir), `${started.replace(/[:.]/g, "-")}-${o.host.replace(/[^\w.-]/g, "_")}-${process.pid}.jsonl`);
   const add = (x: Record<string, unknown>) => appendFileSync(path, `${JSON.stringify(x)}\n`, { mode: 0o600 });
-  // ERGA_JOB_FROM=page: the ops page started the command (ops-page.ts), and its History says so.
-  const from = process.env.ERGA_JOB_FROM == "page" ? "page" : "terminal";
-  add({ command: o.command, host: o.host, from, pid: process.pid, started });
+  add({ command: o.command, host: o.host, from: o.from ?? "terminal", pid: process.pid, started });
   const print = o.print ?? console.log;
   return {
     path,
@@ -205,7 +213,7 @@ export async function testCommit(dir: string, sha: string, log: (line: string) =
   const add = git("worktree", "add", "--quiet", "--detach", at, sha);
   if (!add.ok) throw new Error(`git worktree add failed: ${add.err}`);
   try {
-    const run = (cmd: string[]) => Bun.spawnSync(cmd, { cwd: at, stdout: "pipe", stderr: "pipe" });
+    const run = (cmd: string[]) => Bun.spawnSync(cmd, { cwd: at, env: testEnv(), stdout: "pipe", stderr: "pipe" });
     log("tests: bun install --frozen-lockfile ...");
     const i = run(["bun", "install", "--frozen-lockfile"]);
     if (i.exitCode != 0) throw new Error(`bun install failed: ${i.stderr.toString().slice(-600)}`);
@@ -344,6 +352,8 @@ export interface DeployOptions {
   noTests?: boolean;
   /** The command as typed, for the lock and the job record. */
   command?: string;
+  /** Where the command was typed, for the job record (default: a terminal). */
+  from?: From;
   /** The Cloudflare API and the servers (the mock's, under ERGA_DEPLOY_MOCK). */
   net?: Fetch;
   token?: string;
@@ -410,7 +420,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     o.command ??
     `bun erga deploy ${o.commit ? `${o.commit} ` : ""}${o.host}${o.fresh ? " --fresh" : ""}${o.home ? ` --home ${o.home}` : ""}`;
   const free = takeLock(o.dir, o.host, command);
-  const job = startJob(o.dir, { command, host: o.host, print: o.print });
+  const job = startJob(o.dir, { command, host: o.host, from: o.from, print: o.print });
   const log = job.log;
   const clone = o.clone ?? ROOT;
   try {
@@ -519,7 +529,7 @@ async function copyFacts(dir: string, host: string, net: Fetch, log: (line: stri
  * it says so, and only moves staging. The result: the hosts it deployed.
  */
 export async function deployStaging(
-  o: Pick<DeployOptions, "dir" | "net" | "token" | "print" | "clone" | "command"> & { sha: string }
+  o: Pick<DeployOptions, "dir" | "net" | "token" | "print" | "clone" | "command" | "from"> & { sha: string }
 ): Promise<string[]> {
   const clone = o.clone ?? ROOT;
   const print = o.print ?? console.log;

@@ -35,6 +35,9 @@ const fail = (s: string, next?: string): never => {
   process.exit(1);
 };
 
+/** Where this command was typed: ERGA_JOB_FROM=page when the ops page runs it (ops-page.ts), else a terminal. */
+const fromOf = () => (process.env.ERGA_JOB_FROM == "page" ? "page" : "terminal");
+
 const needRepo = () => repoOf() ?? fail("This checkout's origin is not a GitHub repository.", "git remote -v");
 
 function help(code = 0): never {
@@ -74,7 +77,7 @@ async function merge(branch: string | undefined, message: string | undefined) {
   if (long) fail(long, `Write a shorter one: bun erga merge ${branch} -m "<ten words at most>"`);
   const { ergaDir } = await import("./config");
   const { mergeBranch } = await import("./merge");
-  await mergeBranch({ dir: ergaDir(), branch: branch!, message }).catch((e: Error) => fail(e.message));
+  await mergeBranch({ dir: ergaDir(), branch: branch!, message, from: fromOf() }).catch((e: Error) => fail(e.message));
 }
 
 // ------------------------------------------------------------------ release
@@ -124,9 +127,16 @@ async function deploy(args: string[], noTests: boolean, fresh: boolean, home: st
     ...(fresh ? ["--fresh"] : []),
     ...(home ? ["--home", home] : []),
   ].join(" ");
-  const sha = await deployInstance({ dir: ergaDir(), host, commit, noTests, fresh, command, ...(home ? { home } : {}) }).catch((e: Error) =>
-    fail(e.message)
-  );
+  const sha = await deployInstance({
+    dir: ergaDir(),
+    host,
+    commit,
+    noTests,
+    fresh,
+    command,
+    from: fromOf(),
+    ...(home ? { home } : {}),
+  }).catch((e: Error) => fail(e.message));
   pass(`${host} runs ${sha.slice(0, 12)}, healthy.`);
 }
 

@@ -90,9 +90,18 @@ describe("bun erga deploy", () => {
     const secrets = { ...mock.state.secrets["erga-staging"] };
     fresh(primary, staging);
     const lines: string[] = [];
-    expect(await deployInstance({ dir, host: "staging.example.com", commit: "HEAD", net: mock.fetch, print: (l) => lines.push(l) })).toBe(
-      HEAD
-    );
+    // The ops page's variable, as a merge started from the page had it: the job record still says "terminal",
+    // because only the CLI's command line reads it (deploy/cli/main.ts).
+    const page = process.env.ERGA_JOB_FROM;
+    process.env.ERGA_JOB_FROM = "page";
+    try {
+      expect(await deployInstance({ dir, host: "staging.example.com", commit: "HEAD", net: mock.fetch, print: (l) => lines.push(l) })).toBe(
+        HEAD
+      );
+    } finally {
+      if (page == undefined) delete process.env.ERGA_JOB_FROM;
+      else process.env.ERGA_JOB_FROM = page;
+    }
 
     const b = bindingsOf(mock.state, "erga-staging");
     expect(b.ERGA_VERSION.text).toBe(HEAD.slice(0, 12));

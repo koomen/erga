@@ -4,8 +4,10 @@
 // A job's log that was scrolled to its end stays at its end. The Setup tab's checklist (deploy/own/page.ts: /setup.js
 // and /setup/panel) is made once and kept when the page draws again, so its forms keep what the person types. When the
 // server stops, it says so; when it runs again, the page follows. Merge opens a field for the commit's message under its
-// branch, and Deploy a question: each starts its job (POST /api/merge, /api/deploy) and shows the Logs tab. An open field
-// or question stays open, with what the person typed, when the page draws again.
+// branch. A commit row shows a Deploy button in each instance's column on hover or focus, which asks a question
+// first (the instance and the commit). Each starts its job (POST /api/merge, /api/deploy); the page stays on its tab,
+// and the job line shows the job as it runs. An open field or question stays open, with what the person typed, when the
+// page draws again.
 (() => {
   const ops = document.getElementById("ops");
   const gone = document.getElementById("gone");
@@ -36,7 +38,7 @@
       value: input?.value,
       focus: input && document.activeElement == input ? [input.selectionStart, input.selectionEnd] : null,
       err: form?.querySelector(".err").textContent,
-      deploy: ask?.matches(":popover-open") ? ask.dataset.sha : null,
+      deploy: ask?.matches(":popover-open") ? { ...ask.dataset } : null,
       deployErr: ask?.querySelector(".err").textContent,
     };
   }
@@ -52,11 +54,18 @@
         input.setSelectionRange(...o.focus);
       }
     }
+    if (o.deploy) question(o.deploy, o.deployErr);
+  }
+  /** The deploy question for a row's button (its data: host, sha, ask, note). */
+  function question(d, err = "") {
     const ask = ops.querySelector("#deploy-confirm");
-    if (ask && o.deploy == ask.dataset.sha) {
-      ask.querySelector(".err").textContent = o.deployErr;
-      ask.showPopover();
-    }
+    if (!ask) return;
+    Object.assign(ask.dataset, d);
+    ask.querySelector('[data-s="ask"]').textContent = d.ask;
+    ask.querySelector('[data-s="note"]').textContent = d.note;
+    ask.querySelector("[data-go]").textContent = `Deploy to ${d.host}`;
+    ask.querySelector(".err").textContent = err;
+    ask.showPopover();
   }
   async function draw() {
     const n = ++asked;
@@ -82,7 +91,7 @@
       }
     } catch {}
   }
-  /** Starts a job; on success the page shows its output, else `err` says why. */
+  /** Starts a job; the page stays on its tab, and the job line shows the job. Else `err` says why. */
   async function act(path, body, err) {
     err.textContent = "";
     try {
@@ -92,7 +101,6 @@
         err.textContent = answer.error ?? `HTTP ${r.status}`;
         return false;
       }
-      location.hash = `${main()?.dataset.primary ?? ""}/logs`;
       draw();
       return true;
     } catch {
@@ -114,6 +122,11 @@
       return;
     }
     if (e.target.closest("[data-cancel]")) return hide(e.target.closest(".f-merge"));
+    const deploy = e.target.closest("[data-deploy]");
+    if (deploy) {
+      const { host, sha, ask, note } = deploy.dataset;
+      return question({ host, sha, ask, note });
+    }
     const go = e.target.closest("[data-go]");
     if (go) {
       const ask = go.closest("#deploy-confirm");

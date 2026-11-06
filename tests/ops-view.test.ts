@@ -204,24 +204,29 @@ test("Merge: a button on each feature branch, with a field for the message; disa
   expect(mergeOf(viewHtml(deploys({ starting: "bun erga merge clean" }), "erga.dev", NOW), "clean")?.disabled).toBe(true);
 });
 
-test("Deploy: in production's column, on the row of staging's commit, only when production is behind it", () => {
+/** The row of a commit, in the view's HTML. */
+const rowOf = (html: string, n: string) =>
+  new RegExp(`<div class="row \\w+" data-sha="${n.repeat(40)}">.*?</div>(?=<div class="row|</div>)`).exec(html)?.[0] ?? "";
+
+test("Deploy: each commit row has a button in each instance's column, except where that instance runs the commit", () => {
   const html = viewHtml(deploys(), "erga.dev", NOW);
-  // Staging's live mark, then the button in production's column: the same row.
-  expect(html).toMatch(
-    /data-sha="3{40}">.*data-host="staging.erga.dev".*<button class="btn" type="button" data-deploy popovertarget="deploy-confirm">Deploy<\/button>.*<\/div><div class="row off" data-sha="2/
+  const hosts = (n: string) => [...rowOf(html, n).matchAll(/data-deploy data-host="([^"]+)"/g)].map((m) => m[1]);
+  expect(hosts("3")).toEqual(["erga.dev"]);
+  expect(hosts("2")).toEqual(["staging.erga.dev", "erga.dev"]);
+  expect(hosts("1")).toEqual(["staging.erga.dev"]);
+  // Its question names the host and the commit; the page shows it on hover or focus (ops-page.css, .deps.here).
+  expect(rowOf(html, "2")).toContain(
+    `<span class="deps here"><span class="tip"><button class="btn" type="button" data-deploy data-host="staging.erga.dev" data-sha="${"2".repeat(40)}" data-ask="Deploy 2222222 Change 2 to staging.erga.dev?"`
   );
-  // The question names the host and the commit.
-  expect(html).toContain('<div class="confirm" id="deploy-confirm" popover data-host="erga.dev" data-sha="' + "3".repeat(40) + '">');
-  expect(html).toContain("<p>Deploy <code>3333333</code> Change 3 to <b>erga.dev</b>?</p>");
-  // Production runs staging's commit, or a newer one: no button.
-  expect(viewHtml(deploys({}, "3", "3"), "erga.dev", NOW)).not.toContain("data-deploy");
-  expect(viewHtml(deploys({}, "2", "3"), "erga.dev", NOW)).not.toContain("data-deploy");
-  // Staging not healthy: the button is there, disabled, and says why.
-  const sick = deploys();
-  sick.answers["staging.erga.dev"].healthy = false;
-  expect(viewHtml(sick, "erga.dev", NOW)).toContain(
-    '<span class="tip" title="Not healthy: staging.erga.dev. Fix staging first."><button class="btn" type="button" data-deploy popovertarget="deploy-confirm" disabled>'
+  expect(html).toContain('<div class="confirm" id="deploy-confirm" popover>');
+  // The old button of a production that is behind is gone: no row has more than its two columns.
+  expect(html.match(/data-deploy /g)?.length).toBe(4);
+  // While a job runs, each is disabled and says why.
+  const busy = viewHtml(deploys({ starting: "bun erga merge clean" }), "erga.dev", NOW);
+  expect(busy).toContain(
+    '<span class="tip" title="Another job runs: bun erga merge clean. Wait for it to end."><button class="btn" type="button" data-deploy'
   );
+  expect(busy.match(/data-deploy [^>]* disabled>/g)?.length).toBe(4);
 });
 
 test("the page's server: Merge and Deploy start their `bun erga` command, one job at a time, only from the page", async () => {
@@ -259,7 +264,7 @@ test("the page's server: Merge and Deploy start their `bun erga` command, one jo
     fetch(`${at}${path}`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const view = async () => (await fetch(`${at}/view?hash=erga.dev`)).text();
   try {
-    for (let i = 0; i < 100 && !(await view()).includes("data-deploy"); i++) await Bun.sleep(20);
+    for (let i = 0; i < 100 && !(await view()).includes("dep live"); i++) await Bun.sleep(20);
     expect(await view()).toContain('data-merge="a-feature">Merge');
     expect((await post("/api/merge", { branch: "a-feature", message: "A feature" }, "https://evil.example")).status).toBe(403);
     expect((await post("/api/merge", { branch: "nope", message: "x" })).status).toBe(409);
@@ -271,17 +276,42 @@ test("the page's server: Merge and Deploy start their `bun erga` command, one jo
     expect(busy.status).toBe(409);
     expect(((await busy.json()) as { error: string }).error).toBe("Another job runs: bun erga merge a-feature. Wait for it to end.");
     expect(await view()).toContain('title="Another job runs: bun erga merge a-feature. Wait for it to end."');
+    // The Deploys tab's job line shows it before its job record does.
+    expect(await view()).toContain('data-tab="deploys"');
+    expect(await view()).toContain(
+      '<div class="job running"><i class="light"></i><code>bun erga merge a-feature</code><span>starts · from this page</span></div>'
+    );
     // It stops before its job record: the page shows its last words.
     end({ code: 1, out: "FAIL  staging.lock is locked\n" });
     for (let i = 0; i < 100 && (await view()).includes("Another job runs"); i++) await Bun.sleep(20);
     expect(await view()).toContain('<p class="note bad failed">bun erga merge a-feature stopped: FAIL  staging.lock is locked</p>');
-    // Deploy: only staging's commit, as the button showed it.
+    // Deploy: a commit of the log, to an instance that does not run it.
     expect((await post("/api/deploy", { host: "erga.dev", sha: git("rev-parse", "HEAD") })).status).toBe(409);
+    expect((await post("/api/deploy", { host: "erga.dev", sha: git("rev-parse", "HEAD~2") })).status).toBe(409);
+    expect((await post("/api/deploy", { host: "nope.dev", sha: git("rev-parse", "HEAD~1") })).status).toBe(409);
     expect((await post("/api/deploy", { host: "erga.dev", sha: git("rev-parse", "HEAD~1") })).status).toBe(202);
-    expect(runs.at(-1)).toEqual(["deploy", "erga.dev"]);
+    expect(runs.at(-1)).toEqual(["deploy", git("rev-parse", "HEAD~1").slice(0, 12), "erga.dev"]);
+    end({ code: 0, out: "" });
+    for (let i = 0; i < 100 && (await view()).includes("Another job runs"); i++) await Bun.sleep(20);
+    expect((await post("/api/deploy", { host: "staging.erga.dev", sha: git("rev-parse", "HEAD~2") })).status).toBe(202);
+    expect(runs.at(-1)).toEqual(["deploy", git("rev-parse", "HEAD~2").slice(0, 12), "staging.erga.dev"]);
   } finally {
     end({ code: 0, out: "" });
     page.stop();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the tests that a merge or a deploy runs get no ERGA_JOB_FROM, so their own job records say a terminal", async () => {
+  const { testEnv } = await import("../deploy/cli/deploy");
+  const { sh } = await import("../deploy/cli/observe");
+  const page = process.env.ERGA_JOB_FROM;
+  process.env.ERGA_JOB_FROM = "page";
+  try {
+    expect(sh(["sh", "-c", 'echo "${ERGA_JOB_FROM:-none}"'], { env: testEnv() }).out).toBe("none");
+    expect(sh(["sh", "-c", 'echo "${ERGA_JOB_FROM:-none}"']).out).toBe("page");
+  } finally {
+    if (page == undefined) delete process.env.ERGA_JOB_FROM;
+    else process.env.ERGA_JOB_FROM = page;
   }
 });

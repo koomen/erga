@@ -100,6 +100,9 @@ a.job:hover { border-color: var(--chrome); }
 .tip { display: inline-flex; }
 .deps .tip, .deps .btn { width: 100%; }
 .deps .btn { height: 22px; padding: 0 6px; font-size: 12px; line-height: 22px; }
+/* A row's Deploy buttons show on hover, or when one has the keyboard's focus. */
+.deps.here .tip { opacity: 0; }
+.row:hover .deps.here .tip, .row:focus-within .deps.here .tip { opacity: 1; }
 .confirm { width: min(440px, calc(100vw - 32px)); margin: auto; padding: 16px 18px; border: 1px solid var(--rule); border-radius: 12px; background: var(--bg);
   color: var(--fg); font-size: 14px; box-shadow: 0 12px 40px rgb(0 0 0 / 18%); }
 .confirm::backdrop { background: rgb(0 0 0 / 18%); }
