@@ -170,7 +170,9 @@ export function startJob(dir: string, o: { command: string; host: string; print?
   const started = new Date().toISOString();
   const path = join(jobsDir(dir), `${started.replace(/[:.]/g, "-")}-${o.host.replace(/[^\w.-]/g, "_")}-${process.pid}.jsonl`);
   const add = (x: Record<string, unknown>) => appendFileSync(path, `${JSON.stringify(x)}\n`, { mode: 0o600 });
-  add({ command: o.command, host: o.host, from: "terminal", pid: process.pid, started });
+  // ERGA_JOB_FROM=page: the ops page started the command (ops-page.ts), and its History says so.
+  const from = process.env.ERGA_JOB_FROM == "page" ? "page" : "terminal";
+  add({ command: o.command, host: o.host, from, pid: process.pid, started });
   const print = o.print ?? console.log;
   return {
     path,

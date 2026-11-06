@@ -21,22 +21,18 @@
 //   bun erga setup <host>               a new instance: the answers, the first deploy, the first admin, the ops token
 //                                       (bun erga setup skill; bun erga setup help)
 
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   latestTag,
-  mergeRefusal,
   nextVersion,
   PROTECTED,
   releaseNotes,
   releaseRefusal,
-  squashMessage,
   statusText,
 } from "./flow";
 import {
   commitsOf,
-  conflictsOf,
   fetchOrigin,
   git,
   headOf,
@@ -89,60 +85,10 @@ function start(name: string | undefined) {
 
 async function merge(branch: string | undefined, message: string | undefined) {
   needRepo();
-  const f = fetchOrigin();
-  if (!f.ok) fail(`git fetch failed: ${f.err}`);
-  const name = branch ?? "";
-  const exists = !!name && !!headOf(`origin/${name}`);
-  const ahead = exists ? Number(git("rev-list", "--count", `origin/staging..origin/${name}`).out) : 0;
-  const conflicts = exists && ahead ? conflictsOf("origin/staging", `origin/${name}`) : [];
-  const no = mergeRefusal({ branch: name, exists, ahead, conflicts });
-  if (no) fail(no);
-  const text = squashMessage(name, commitsOf("--no-merges", `origin/staging..origin/${name}`), message);
-  say(`Merge ${name} (${ahead} commit${ahead == 1 ? "" : "s"}) onto staging ${headOf("origin/staging")?.slice(0, 12)} as one commit:`);
-  say(`      ${text.split("\n")[0]}`);
-
-  // A worktree of its own, so this checkout stays as it is.
-  const dir = mkdtempSync(join(tmpdir(), "erga-merge-"));
-  const log = `${dir}.log`;
-  const add = git("worktree", "add", "--quiet", "--detach", dir, "origin/staging");
-  if (!add.ok) fail(`git worktree add failed: ${add.err}`);
-  try {
-    const at = (cmd: string[], o: { input?: string; env?: Record<string, string> } = {}) => sh(cmd, { cwd: dir, ...o });
-    const sq = at(["git", "merge", "--squash", `origin/${name}`]);
-    if (!sq.ok) fail(`git merge --squash failed: ${sq.err || sq.out}`, `Rebase ${name} on origin/staging, push it, and merge again.`);
-    const c = at(["git", "commit", "--quiet", "-F", "-"], { input: text });
-    if (!c.ok) fail(`git commit failed: ${c.err || c.out}`);
-    const sha = at(["git", "rev-parse", "HEAD"]).out;
-    say("      bun install --frozen-lockfile ...");
-    const i = at(["bun", "install", "--frozen-lockfile"]);
-    if (!i.ok) fail(`bun install failed: ${i.err.slice(-600)}`);
-    say(`      bun run test ... (the log: ${log})`);
-    const t = at(["bun", "run", "test"]);
-    writeFileSync(log, `${t.out}\n${t.err}`);
-    if (!/^all passing/m.test(t.out)) {
-      say(t.out.split("\n").slice(-30).join("\n"));
-      fail(
-        `bun run test did not end with "all passing" on the merged commit. The log: ${log}`,
-        `Fix it on ${name}, push it, and merge again.`
-      );
-    }
-    pass("bun run test: all passing.");
-    const { ergaDir } = await import("./config");
-    const { deployStaging, recordPass } = await import("./deploy");
-    recordPass(ergaDir(), sha, t.out);
-    const hosts = await deployStaging({ dir: ergaDir(), sha, command: `bun erga merge ${name}` }).catch((e: Error) =>
-      fail(e.message, `Fix it, then run bun erga merge ${name} again.`)
-    );
-    for (const h of hosts) pass(`${h} runs ${sha.slice(0, 12)}, healthy.`);
-    pass(`Merged ${name} as ${sha.slice(0, 12)}: ${text.split("\n")[0]}`);
-    const d = git("push", "--quiet", "origin", "--delete", name);
-    if (d.ok) pass(`The branch ${name} is deleted on GitHub.`);
-    else say(`NOTE  The branch ${name} is still on GitHub: ${d.err}`);
-    if (git("rev-parse", "--verify", "--quiet", `refs/heads/${name}`).ok)
-      say(`NOTE  The local branch ${name} is still here. Delete it when you are done with it: git branch -D ${name}`);
-  } finally {
-    git("worktree", "remove", "--force", dir);
-  }
+  if (!branch) fail("Name the branch: bun erga merge <branch>.");
+  const { ergaDir } = await import("./config");
+  const { mergeBranch } = await import("./merge");
+  await mergeBranch({ dir: ergaDir(), branch: branch!, message }).catch((e: Error) => fail(e.message));
 }
 
 // ------------------------------------------------------------------ release
