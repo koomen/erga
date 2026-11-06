@@ -6,7 +6,7 @@ import { expect, test } from "bun:test";
 import * as Y from "yjs";
 import { Awareness } from "../shared/yjs-protocol";
 import * as Layer from "effect/Layer";
-import { FileStore, Room, StateStore, joinLocal } from "../document/room";
+import { FileStore, Room, StateStore, StoreError, joinLocal } from "../document/room";
 import * as Effect from "effect/Effect";
 import { YjsWorkspace, type Cursor, type WorkspaceError } from "../agents/document/workspace";
 import { authorOf, files, introduce, roomInfo, type Author } from "../document/content";
@@ -268,4 +268,36 @@ test("the lock for source edits: only its holder's edits land; everyone sees who
     expect(files(room.doc).get("index.html")!.toString()).toBe("<h1>Notes</h1>\n<p>One</p>\n<p>Ada's</p>\n");
     expect(agent.text().toString()).toBe(ada.text().toString());
   });
+});
+
+test("a write that fails is tried again, later each time, until it lands; then storage has everything", async () => {
+  const data = new Map([["index.html", new TextEncoder().encode("<p>one</p>")]]);
+  let failing = true;
+  let tries = 0;
+  const write = (p: string, text: string) => {
+    tries++;
+    if (failing) return Effect.fail(new StoreError({ message: "storage is down" }));
+    data.set(p, new TextEncoder().encode(text));
+    return Effect.void;
+  };
+  const store = Layer.succeed(FileStore, {
+    list: Effect.sync(() => [...data.keys()]),
+    read: (p) => Effect.sync(() => data.get(p) ?? null),
+    write: (p, text) => Effect.suspend(() => write(p, text)),
+  });
+  const check = async (room: Room) => {
+    const a = await peer(room, person("Ada"));
+    a.text().insert(3, "just ");
+    await new Promise((r) => setTimeout(r, 320));
+    // Every 10 ms, it would be some 30 tries; doubling each time, 5.
+    expect(tries).toBeGreaterThanOrEqual(3);
+    expect(tries).toBeLessThanOrEqual(6);
+    expect(room.saved).toBe(false);
+    failing = false;
+    await Effect.runPromise(room.flush);
+    expect(room.saved).toBe(true);
+    expect(new TextDecoder().decode(data.get("index.html"))).toBe("<p>just one</p>");
+  };
+  const run = Effect.flatMap(Room.make({ writeDelay: 10, fileDelay: 0 }), (room) => Effect.promise(() => check(room)));
+  await Effect.runPromise(Effect.scoped(run).pipe(Effect.provide(StateStore.none.pipe(Layer.provideMerge(store)))));
 });

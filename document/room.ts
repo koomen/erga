@@ -63,6 +63,7 @@ import { rebase } from "./merge";
 import { applyChanges, assets, files, folders, introduce, isTextPath, roomInfo, stamp, type Author } from "./content";
 import { TEXT_MAX, type BlobRef } from "./blobs";
 import { parentOf } from "./pages";
+import { NOTHING, nextWrites, retryIn, type Commit as Planned, type WriteEvent, type Writes } from "./writes";
 
 /** Storage failed: a file couldn't be listed, read or written. */
 export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", { message: Schema.String }) {}
@@ -183,13 +184,8 @@ export class Room {
   readonly awareness: Awareness;
   /** Each text file as storage last had it: the base for merging edits made there. */
   private stored = new Map<string, string>();
-  /** Files edited since the last write. */
-  private dirty = new Set<string>();
-  /** Files whose text storage doesn't have yet (written lazily), and since when. */
-  private unwritten = new Set<string>();
-  private unwrittenSince = 0;
-  /** Files deleted in the room that storage may still have. */
-  private removals = new Set<string>();
+  /** What it must still write of each file (writes.ts). */
+  private writes: Writes = NOTHING;
   /** The Yjs updates made since the last write, for the journal. */
   private unsaved: Uint8Array[] = [];
   /** Open while there are edits to write: the writer waits on it. */
@@ -254,14 +250,30 @@ export class Room {
       // The writer: once there's something to write, wait out the delay
       // (edits made meanwhile ride along), then write it; files not yet
       // written wake it when they're due.
-      yield* Effect.forkScoped(Effect.forever(Effect.gen(function* () {
-        if (room.unwritten.size) yield* Effect.raceFirst(room.pending.await, Effect.sleep(Math.max(0, room.unwrittenSince + room.fileDelay - Date.now())));
-        else yield* room.pending.await;
-        yield* Effect.sleep(room.writeDelay);
-        yield* Semaphore.withPermit(room.turn, room.write(false));
-      })));
-      // Closing: everything not yet written goes to storage.
-      yield* Effect.addFinalizer(() => room.flush.pipe(Effect.andThen(Effect.sync(() => room.awareness.destroy()))));
+      yield* Effect.forkScoped(
+        Effect.forever(
+          Effect.gen(function* () {
+            const due = room.waitingDue();
+            if (due != null) yield* Effect.raceFirst(room.pending.await, Effect.sleep(due));
+            else yield* room.pending.await;
+            // After a commit that failed, longer each time.
+            yield* Effect.sleep(retryIn(room.writes, room.writeDelay));
+            yield* Semaphore.withPermit(room.turn, room.write(false));
+          })
+        )
+      );
+      // Closing: everything not yet written goes to storage, and the lock's timer stops.
+      yield* Effect.addFinalizer(() =>
+        room.flush.pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              if (room.locked) clearTimeout(room.locked.timer);
+              room.locked = null;
+              room.awareness.destroy();
+            })
+          )
+        )
+      );
       return room;
     });
   }
@@ -295,12 +307,13 @@ export class Room {
       if (!roomInfo(self.doc).get("epoch")) self.act(() => roomInfo(self.doc).set("epoch", crypto.randomUUID()));
       if (!reconcile) {
         const behind = new Set(unwritten);
-        for (const [path, t] of files(self.doc)) {
-          if (behind.has(path)) self.unwritten.add(path);
-          else self.stored.set(path, t.toString());
-        }
+        for (const [path, t] of files(self.doc)) if (!behind.has(path)) self.stored.set(path, t.toString());
         // Due at once: storage has an older text of these.
-        if (self.unwritten.size) { self.unwrittenSince = 1; self.pending.openUnsafe(); }
+        const waiting = [...files(self.doc).keys()].filter((path) => behind.has(path));
+        if (waiting.length) {
+          self.step({ on: "waiting", paths: waiting });
+          self.pending.openUnsafe();
+        }
         return;
       }
       const paths = new Set(yield* self.store.list);
@@ -455,16 +468,63 @@ export class Room {
   }
 
   private noteDirty(tr: Y.Transaction): void {
+    const edited: string[] = [];
     for (const [type, keys] of tr.changed) {
-      if (type === (files(this.doc) as Y.AbstractType<any>)) { for (const k of keys) if (k) this.dirty.add(k); }
-      else { const path = pathOf(type); if (path != null) this.dirty.add(path); }
+      if (type === (files(this.doc) as Y.AbstractType<any>)) {
+        for (const k of keys) if (k) edited.push(k);
+      } else {
+        const path = pathOf(type);
+        if (path != null) edited.push(path);
+      }
     }
-    if (this.dirty.size) this.pending.openUnsafe();
+    if (edited.length) this.markDirty(...edited);
   }
 
-  private markDirty(path: string): void {
-    this.dirty.add(path);
+  private markDirty(...paths: string[]): void {
+    this.step({ on: "edited", paths });
     this.pending.openUnsafe();
+  }
+
+  private step(e: WriteEvent): Planned | undefined {
+    const t = nextWrites(this.writes, e);
+    this.writes = t.writes;
+    return t.commit;
+  }
+
+  /** In how many ms the files that wait are due; null if none waits. */
+  private waitingDue(): number | null {
+    if (![...this.writes.paths.values()].includes("waiting")) return null;
+    return Math.max(0, this.writes.since + this.fileDelay - Date.now());
+  }
+
+  /** Whether storage has everything the room holds: nothing waits to be written. */
+  get saved(): boolean {
+    return this.writes.paths.size == 0 && this.unsaved.length == 0;
+  }
+
+  /**
+   * Who the room's own edits in this turn of the queue are by (a publish's `by`: the files arriving whole), for the
+   * version; null: nobody named.
+   */
+  get by(): string | null {
+    return this.actor;
+  }
+  private actor: string | null = null;
+
+  /** Runs `work` in one turn of the queue, its edits by `by`: one turn at a time, so two publishes never mix. */
+  private inTurn<A, E>(by: string | null, work: Effect.Effect<A, E>): Effect.Effect<A, E> {
+    return Semaphore.withPermit(
+      this.turn,
+      Effect.suspend(() => {
+        this.actor = by;
+        return Effect.ensuring(
+          work,
+          Effect.sync(() => {
+            this.actor = null;
+          })
+        );
+      })
+    );
   }
 
   /** Writes everything: the journal, and every file whose text storage doesn't have yet. */
@@ -481,42 +541,42 @@ export class Room {
   private write(all: boolean): Effect.Effect<void> {
     return Effect.suspend(() => {
       this.pending.closeUnsafe();
-      const now = Date.now();
-      // Files edited now start to wait, unless others already do (they're written together).
-      if (this.dirty.size && !this.unwritten.size) this.unwrittenSince = now;
-      for (const path of this.dirty) this.unwritten.add(path);
-      this.dirty.clear();
-      const due = all || now - this.unwrittenSince >= this.fileDelay;
-      const write: [string, string][] = [], remove = new Set(this.removals), later: string[] = [];
-      for (const path of this.unwritten) {
-        const text = this.text(path);
-        // Deleted in the room by a participant (an agent's undo taking back a file it made): storage follows.
-        if (text == null) { if (!assets(this.doc).has(path)) remove.add(path); continue; }
-        if (text == this.stored.get(path)) continue;
-        if (due) { write.push([path, text]); remove.delete(path); } else later.push(path);
-      }
+      const before = this.writes;
+      const c = this.step({
+        on: "write",
+        now: Date.now(),
+        all,
+        fileDelay: this.fileDelay,
+        look: (path) => {
+          const text = this.text(path);
+          // Deleted in the room by a participant (an agent's undo taking back a file it made): storage follows.
+          if (text == null) return assets(this.doc).has(path) ? "asset" : "gone";
+          return text == this.stored.get(path) ? "same" : "text";
+        },
+      })!;
       const updates = this.unsaved;
-      if (!updates.length && !write.length && !remove.size && later.length == this.unwritten.size) return Effect.void;
+      if (!updates.length && !c.write.length && !c.remove.length && c.later.length == before.paths.size) return Effect.void;
       this.unsaved = [];
-      const removals = [...this.removals];
-      this.removals.clear();
       const update = updates.length == 0 ? null : updates.length == 1 ? updates[0] : Y.mergeUpdates(updates);
-      const wasUnwritten = [...this.unwritten];
-      this.unwritten = new Set(later);
-      // Due `fileDelay` after the first of them waited.
-      if (!later.length) this.unwrittenSince = 0;
-      return this.state.commit({ update, write, remove: [...remove], unwritten: later }).pipe(
+      const write = c.write.map((path) => [path, this.text(path)!] as [string, string]);
+      return this.state.commit({ update, write, remove: c.remove, unwritten: c.later }).pipe(
         Effect.map(() => {
+          this.step({ on: "committed" });
           for (const [path, text] of write) this.stored.set(path, text);
-          for (const path of remove) this.stored.delete(path);
+          for (const path of c.remove) this.stored.delete(path);
         }),
-        Effect.andThen(Effect.catch(this.state.compact(() => Y.encodeStateAsUpdate(this.doc), "log"), (e) => Effect.sync(() => this.log(`  could not compact the room's history: ${e.message}`)))),
-        Effect.catch((e) => Effect.sync(() => {
-          // Tried again with the next write: nothing is lost.
+        Effect.andThen(
+          Effect.catch(
+            this.state.compact(() => Y.encodeStateAsUpdate(this.doc), "log"),
+            (e) => Effect.sync(() => this.log(`  could not compact the room's history: ${e.message}`))
+          )
+        ),
+        Effect.catch((e) =>
+          Effect.sync(() => {
+            // Tried again with the next write, a little later each time: nothing is lost.
           this.log(`  could not write the room's edits: ${e.message}`);
           this.unsaved = [...updates, ...this.unsaved];
-          for (const path of wasUnwritten) this.unwritten.add(path);
-          for (const path of removals) this.removals.add(path);
+          this.step({ on: "failed", commit: c });
           this.pending.openUnsafe();
         })),
       );
@@ -548,8 +608,11 @@ export class Room {
    * ours, merge it in: the change from the last version both sides agreed on
    * is rebased over the room's edits since, so nobody's work is lost.
    */
-  fileChanged(path: string): Effect.Effect<void, StoreError> {
-    return Semaphore.withPermit(this.turn, Effect.map(this.store.read(path), (bytes) => this.take(path, bytes)));
+  fileChanged(path: string, by: string | null = null): Effect.Effect<void, StoreError> {
+    return this.inTurn(
+      by,
+      Effect.map(this.store.read(path), (bytes) => this.take(path, bytes))
+    );
   }
 
   /**
@@ -558,11 +621,14 @@ export class Room {
    * etag from `etag`), it's refused if storage has moved on since, so a
    * file based on an old version can't undo newer edits.
    */
-  push(path: string, text: string, ifMatch: string | null = null): Effect.Effect<PushResult, StoreError> {
+  push(path: string, text: string, ifMatch: string | null = null, by: string | null = null): Effect.Effect<PushResult, StoreError> {
     const self = this;
-    return Semaphore.withPermit(this.turn, Effect.gen(function* () {
-      // Big text arriving whole is a blob (D5): only an edit makes a text that big.
-      if (!isTextPath(path) || new TextEncoder().encode(text).length > TEXT_MAX) return { ok: false, etag: null, reason: "binary" } as const;
+    return this.inTurn(
+      by,
+      Effect.gen(function* () {
+        // Big text arriving whole is a blob (D5): only an edit makes a text that big.
+        if (!isTextPath(path) || new TextEncoder().encode(text).length > TEXT_MAX)
+          return { ok: false, etag: null, reason: "binary" } as const;
       const before = yield* self.store.read(path);
       const current = before ? digest(before) : null;
       if (ifMatch != null && ifMatch != current) return { ok: false, etag: current, reason: "stale" } as const;
@@ -587,8 +653,7 @@ export class Room {
     if (assets(this.doc).has(path)) this.act(() => assets(this.doc).delete(path));
     this.take(path, new TextEncoder().encode(text));
     this.stored.delete(path);
-    this.removals.delete(path);
-    this.dirty.add(path);
+    this.step({ on: "edited", paths: [path] });
   }
 
   /** Takes storage's version of a file into the room (inside the queue). */
@@ -726,9 +791,11 @@ export class Room {
   }
 
   /** Deletes one file (a publish that removes it); nothing if the room has no such file. */
-  removeOne(path: string): Effect.Effect<boolean> {
-    return Semaphore.withPermit(this.turn, Effect.suspend(() => {
-      if (!files(this.doc).has(path) && !assets(this.doc).has(path)) return Effect.succeed(false);
+  removeOne(path: string, by: string | null = null): Effect.Effect<boolean> {
+    return this.inTurn(
+      by,
+      Effect.suspend(() => {
+        if (!files(this.doc).has(path) && !assets(this.doc).has(path)) return Effect.succeed(false);
       this.removeFile(path);
       return Effect.as(this.write(true), true);
     }));
@@ -741,14 +808,16 @@ export class Room {
    * once. A text file at the path is replaced: a file changes kind only so,
    * replaced whole, never while someone edits it.
    */
-  putBlob(path: string, ref: BlobRef): Effect.Effect<void, StoreError> {
+  putBlob(path: string, ref: BlobRef, by: string | null = null): Effect.Effect<void, StoreError> {
     const self = this;
-    return Semaphore.withPermit(this.turn, Effect.gen(function* () {
-      if (!self.store.putBlob) return yield* Effect.fail(new StoreError({ message: "this document keeps no files but text" }));
+    return this.inTurn(
+      by,
+      Effect.gen(function* () {
+        if (!self.store.putBlob) return yield* Effect.fail(new StoreError({ message: "this document keeps no files but text" }));
       // A text there goes first (its stored copy with it), then the blob takes its place.
       if (files(self.doc).has(path)) { self.removeFile(path); yield* self.write(true); }
       yield* self.store.putBlob(path, ref);
-      self.removals.delete(path);
+      self.step({ on: "stored", path });
       if (assets(self.doc).get(path) != ref.hash) self.act(() => assets(self.doc).set(path, ref.hash));
       yield* self.write(true);
     }));
@@ -757,9 +826,7 @@ export class Room {
   /** Takes a file out of the room; storage deletes it with the next write. */
   private removeFile(path: string): void {
     this.stored.delete(path);
-    this.dirty.delete(path);
-    this.unwritten.delete(path);
-    this.removals.add(path);
+    this.step({ on: "removed", path });
     this.act(() => {
       files(this.doc).delete(path);
       assets(this.doc).delete(path);
@@ -807,7 +874,7 @@ export class Room {
       const ref = self.store.ref ? yield* self.store.ref(from) : null;
       if (ref && self.store.copy) {
         if (!(yield* self.store.copy(from, to))) return;
-        self.removals.delete(to);
+        self.step({ on: "stored", path: to });
         return self.act(() => assets(self.doc).set(to, assets(self.doc).get(from) ?? ref.hash));
       }
       const bytes = yield* self.store.read(from);

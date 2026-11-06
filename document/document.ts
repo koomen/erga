@@ -59,6 +59,7 @@ import { later } from "./later.ts";
 import { History } from "./history.ts";
 import { expiryOf, expiryStep, type ExpiryEffect, type ExpiryEvent } from "./expiry.ts";
 import { openRoom, type Opened } from "./open.ts";
+import { next, type Phase, type PhaseEvent } from "./phase.ts";
 import { isText, Uploads, type Published } from "./uploads.ts";
 
 /**
@@ -169,9 +170,8 @@ export type FileData = string | Uint8Array | BlobRef;
 const { file: FILE, ref: REF, meta: INFO } = KEYS;
 
 export class Document {
-  private open: Promise<Opened | null> | null = null;
-  /** The document once it's open (`open` resolved). */
-  private opened: Opened | null = null;
+  /** Its room: closed, opening, open, closing or destroying (phase.ts). */
+  private phase: Phase<Opened> = { is: "closed" };
   private sync: (() => void) | null = null;
   private readonly storage: Storage;
   /** Its versions: the edits no version holds yet, the cuts, and the reads and restores (history.ts). */
@@ -190,8 +190,6 @@ export class Document {
   private info: DocumentInfo | null | undefined = undefined;
   /** The changes of its record under way, one after another (updateInfo). */
   private infoWrites: Promise<unknown> = Promise.resolve();
-  /** The room closing (idle): opening it again waits for its last writes. */
-  private closing: Promise<void> = Promise.resolve();
   /** Requests and calls under way: the document doesn't close under them. */
   private busy = 0;
   private lastActive = 0;
@@ -226,7 +224,7 @@ export class Document {
       storage: this.storage,
       log: deps.log,
       isOpen: () => !!this.opened,
-      closing: () => this.closing,
+      closing: () => this.settled(),
       doc: () =>
         Effect.map(
           io(() => this.room()),
@@ -312,14 +310,46 @@ export class Document {
     this.history.forget();
   }
 
-  /** The document, opened if it isn't (null if there's no such document). */
+  private step(e: PhaseEvent<Opened>) {
+    const t = next(this.phase, e);
+    this.phase = t.phase;
+    return t.do;
+  }
+
+  /** The room while it's open; null in any other phase (opens nothing). */
+  private get opened(): Opened | null {
+    return this.phase.is == "open" ? this.phase.opened : null;
+  }
+
+  /** The room once a load under way ends; null if it isn't open or opening (opens nothing). */
+  private async current(): Promise<Opened | null> {
+    const p = this.phase;
+    return p.is == "open" ? p.opened : p.is == "opening" ? p.load.catch(() => null) : null;
+  }
+
+  /** Once a room closing (or going) has written its last edits: storage then has them. */
+  private settled(): Promise<void> {
+    const p = this.phase;
+    return p.is == "closing" || p.is == "destroying" ? p.done.catch(() => {}) : Promise.resolve();
+  }
+
+  /**
+   * The document, opened if it isn't (null if there's no such document, or it is going). One that failed to open
+   * (storage failed) throws, and is tried again with the next request.
+   */
   private async room(): Promise<Opened | null> {
-    const open = (this.open ??= this.load());
-    // One that failed to open (storage failed) is tried again with the next request.
-    const opened = await open.catch((e) => { if (this.open === open) this.open = null; throw e; });
-    if (!opened) { if (this.open === open) this.open = null; }
-    else this.activity();
-    return opened;
+    for (;;) {
+      const d = this.step({ on: "use" })!;
+      if (d.do == "use") {
+        this.activity();
+        return d.opened;
+      }
+      if (d.do == "refuse") return null;
+      if (d.do == "load") this.step({ on: "load", load: this.load() });
+      else if (d.do == "await") {
+        if (!(await d.load)) return null;
+      } else if (d.do == "wait") await d.done.catch(() => {});
+    }
   }
 
   /** Runs `work` with the document held open: it doesn't close for being idle meanwhile. */
@@ -363,20 +393,24 @@ export class Document {
     await this.history.cutting;
     const opened = this.opened;
     if (!opened || this.info?.disk || this.idleTimer) return;
-    const wait = this.lastActive + ms - Date.now();
-    if (wait > 0 || this.busy > 0 || this.history.dirty || this.history.agentWorking()) {
+    const idle = () => this.lastActive + ms <= Date.now() && this.busy == 0 && !this.history.dirty && !this.history.agentWorking();
+    // Its room writes everything first: while a write fails, it stays open (its room tries again), so nothing is lost.
+    if (idle()) await Effect.runPromise(opened.room.flush);
+    if (this.opened !== opened || this.idleTimer) return;
+    if (!idle() || !opened.room.saved) {
+      const wait = this.lastActive + ms - Date.now();
       this.idleTimer = later(wait > 0 ? wait : Math.min(ms, 1000), () => {
         this.idleTimer = null;
         void this.closeIfIdle();
       });
       return;
     }
-    this.open = null;
-    this.opened = null;
     this.editing = 0;
     this.deps.tabs.detach?.();
-    this.closing = opened.close().catch((e) => this.deps.log(`couldn't close the room: ${e}`));
-    await this.closing;
+    const done = opened.close().catch((e) => this.deps.log(`couldn't close the room: ${e}`));
+    this.step({ on: "closing", done });
+    await done;
+    this.step({ on: "closed" });
   }
 
   /** Whether the document is open now (its room loaded). */
@@ -497,10 +531,7 @@ export class Document {
     return io(async () => {
       const info = await this.readInfo();
       const opened = info && (await this.room());
-      if (!info || !opened) {
-        if (!opened) this.open = null;
-        return null;
-      }
+      if (!info || !opened) return null;
       // Text as text, a blob as its ref.
       const files: Record<string, FileData> = {};
       for (const [path, data] of await opened.entries())
@@ -562,17 +593,10 @@ export class Document {
   private async destroy(info: DocumentInfo): Promise<void> {
     // One on disk writes what it holds there first, while the dev server is still connected.
     if (info.disk && this.opened) await Effect.runPromise(this.opened.room.flush);
-    this.deps.tabs.closeAll(4404, "document deleted");
-    this.history.clearPending();
-    // The room writes what it holds as it closes, so it closes before storage is cleared.
-    const opened = await this.open;
-    this.open = null;
-    this.opened = null;
-    await opened?.close();
-    await this.closing;
-    await this.storage.deleteAlarm();
-    await this.storage.deleteAll();
-    this.forgetStorage();
+    await this.shutDown(4404, "document deleted", async () => {
+      await this.storage.deleteAlarm();
+      await this.storage.deleteAll();
+    });
     await this.directory.remove(info.id);
     // If it was the homepage, its snapshot goes too (the next / makes another).
     await this.deps.home.forget(info.id).catch((e) => this.deps.log(`couldn't tell the homepage: ${e}`));
@@ -592,7 +616,7 @@ export class Document {
       pageTitle: text != null ? titleOf(text) : null,
     });
     if (r) await this.rememberName(nameOf(r.doc));
-    if (r?.renamed) (await this.open)?.renamed(nameOf(r.doc));
+    if (r?.renamed) (await this.current())?.renamed(nameOf(r.doc));
   }
 
   /**
@@ -625,7 +649,7 @@ export class Document {
       const bytes = await this.deps.disk.storage(info.disk.only ? info.index : null).get<Uint8Array>(FILE + info.index);
       return bytes ? new TextDecoder().decode(bytes) : null;
     }
-    await this.closing;
+    await this.settled();
     const bytes = await this.storage.get<Uint8Array>(FILE + info.index);
     return bytes ? new TextDecoder().decode(bytes) : null;
   }
@@ -657,7 +681,7 @@ export class Document {
   /** A file on disk changed (the dev server says which): the room takes it; closed, the page's title comes from disk. */
   diskChanged(path: string): Effect.Effect<void, StoreError> {
     return Effect.flatMap(
-      io(async () => this.open && (await this.open)),
+      io(() => this.current()),
       (o) =>
         o
           ? o.room.fileChanged(path)
@@ -673,7 +697,7 @@ export class Document {
    */
   diskConnected(): Effect.Effect<void, StoreError> {
     return io(async () => {
-      const open = this.open && (await this.open);
+      const open = await this.current();
       await (open ? open.catchUp() : this.syncDirectory(true));
     });
   }
@@ -681,7 +705,7 @@ export class Document {
   /** Writes what the room holds (before the dev server goes). */
   flush(): Effect.Effect<void, StoreError> {
     return Effect.flatMap(
-      io(async () => this.open && (await this.open)),
+      io(() => this.current()),
       (o) => (o ? o.room.flush : Effect.void)
     );
   }
@@ -714,38 +738,60 @@ export class Document {
    * later part (`append`) is only written in.
    */
   importStorage(snap: DocSnapshot): Effect.Effect<void, StoreError> {
-    return io(async () => {
-      await this.closeForSnapshot();
-      if (!snap.append) {
-        await this.storage.deleteAlarm();
-        await this.storage.deleteAll();
-      }
-      const entries = Object.fromEntries(snap.entries.map(([k, e]) => [k, decodeValue(e)]));
-      const keys = Object.keys(entries);
-      for (let i = 0; i < keys.length; i += 100)
-        await this.storage.put(Object.fromEntries(keys.slice(i, i + 100).map((k) => [k, entries[k]])));
-      if (snap.alarm != null) await this.storage.setAlarm(snap.alarm);
-      this.forgetStorage();
-    });
+    return io(() =>
+      this.shutDown(1012, "document replaced by a snapshot", async () => {
+        if (!snap.append) {
+          await this.storage.deleteAlarm();
+          await this.storage.deleteAll();
+        }
+        const entries = Object.fromEntries(snap.entries.map(([k, e]) => [k, decodeValue(e)]));
+        const keys = Object.keys(entries);
+        for (let i = 0; i < keys.length; i += 100)
+          await this.storage.put(Object.fromEntries(keys.slice(i, i + 100).map((k) => [k, entries[k]])));
+        if (snap.alarm != null) await this.storage.setAlarm(snap.alarm);
+      })
+    );
   }
 
   /** Empties it (staging only: a document production no longer has). The directory row is already gone with the old database. */
   wipeStorage(): Effect.Effect<void, StoreError> {
-    return io(async () => {
-      await this.closeForSnapshot();
-      await this.storage.deleteAlarm();
-      await this.storage.deleteAll();
-      this.forgetStorage();
-    });
+    return io(() =>
+      this.shutDown(1012, "document replaced by a snapshot", async () => {
+        await this.storage.deleteAlarm();
+        await this.storage.deleteAll();
+      })
+    );
   }
 
-  private async closeForSnapshot(): Promise<void> {
-    this.deps.tabs.closeAll(1012, "document replaced by a snapshot");
-    const opened = await this.open?.catch(() => null);
-    this.open = null;
-    this.opened = null;
-    await opened?.close().catch(() => {});
-    await this.closing;
+  /**
+   * Closes the room for good while `work` changes its storage under it (a delete, a snapshot): every tab is
+   * disconnected, and a call meanwhile finds no document. The room writes what it holds as it closes, so it closes
+   * before `work` starts; what was read of storage is forgotten after it.
+   */
+  private async shutDown(code: number, reason: string, work: () => Promise<void>): Promise<void> {
+    for (;;) {
+      const d = this.step({ on: "destroy" })!;
+      if (d.do == "wait") {
+        await d.done.catch(() => {});
+        continue;
+      }
+      if (d.do != "teardown") return;
+      this.deps.tabs.closeAll(code, reason);
+      this.history.reset();
+      const done = (async () => {
+        const opened = await d.room;
+        await opened?.close().catch((e) => this.deps.log(`couldn't close the room: ${e}`));
+        await work();
+        this.forgetStorage();
+      })();
+      this.step({ on: "destroying", done });
+      try {
+        await done;
+      } finally {
+        this.step({ on: "destroyed" });
+      }
+      return;
+    }
   }
 
   /**
@@ -763,8 +809,8 @@ export class Document {
       return Effect.runPromise(this.hold(io(() => this.uploads.upload(request))));
     // Someone viewing it: its files straight from storage while the room isn't open, without opening it
     // (once a room closing a moment ago has written them).
-    await this.closing;
-    const stored = this.opened || this.open ? null : await this.storedFile(request);
+    await this.settled();
+    const stored = this.phase.is == "open" || this.phase.is == "opening" ? null : await this.storedFile(request);
     if (stored) return stored;
     const self = this;
     return Effect.runPromise(
@@ -944,12 +990,16 @@ export class Document {
     return this.history.currentFiles();
   }
 
-  /** Opens the room on this document's storage (open.ts), for as long as the document lives. */
+  /** Opens the room on this document's storage (open.ts), for as long as the document lives: `room` starts it. */
   private async load(): Promise<Opened | null> {
-    // Closed for being idle a moment ago: its last writes land first.
-    await this.closing;
-    const info = await this.readInfo();
-    if (!info) return null;
+    const info = await this.readInfo().catch((e) => {
+      this.step({ on: "loaded", opened: null });
+      throw e;
+    });
+    if (!info) {
+      this.step({ on: "loaded", opened: null });
+      return null;
+    }
     const opened = await openRoom({
       deps: this.deps,
       info,
@@ -959,7 +1009,6 @@ export class Document {
       touch: () => this.touch(),
       readInfo: () => this.readInfo(),
       rememberName: (name) => this.rememberName(name),
-      publisher: () => this.uploads.publisher,
       putFile: (path, bytes, by) => this.uploads.putFile(path, bytes, by),
       kind: () => this.info?.kind ?? "project",
       setKind: (kind) => this.setKind(kind),
@@ -967,8 +1016,13 @@ export class Document {
         this.views.changed();
         this.history.noteEdit(author);
       },
+    }).catch((e) => {
+      this.step({ on: "loaded", opened: null });
+      throw e;
     });
-    this.opened = opened;
+    this.step({ on: "loaded", opened });
+    // Deleted meanwhile: its teardown closes it.
+    if (this.opened !== opened) return opened;
     // A version of what it holds, if it stopped with edits no version has (or there's none yet).
     if (info.uncut || (await Effect.runPromise(this.history.versions.head)) == 0) void this.history.cutSoon("open");
     // Tabs connected while it was closed join it now.
