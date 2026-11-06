@@ -363,7 +363,10 @@ async function render(
     // The page follows each change while it's open: for someone signed in in their browser, who may open its room.
     ...(session && !session.agent ? { live: d.ver } : {}),
     ...(session && !session.agent && d.kind == "project" ? { project: address } : {}),
-    ...(canEdit && d.scratch ? { scratch: { expires: d.scratch.expires, save: canShare } } : {}),
+    // A scratch document, for its owner: Save, with how long an unsaved one stays (the setting; none if this one stays).
+    ...(canShare && d.scratch
+      ? { scratch: { hours: d.scratch.expires == null ? null : await platform.directory.config.get("delete_docs_after_hours") } }
+      : {}),
   });
   const before = shell.before,
     after = shell.after;

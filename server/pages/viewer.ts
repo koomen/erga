@@ -18,7 +18,7 @@ import { agentPanel } from "./agent.ts";
 import { esc } from "../../shared/html.ts";
 import { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX } from "./reader.ts";
 import { NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
-import { scratchNote } from "./scratch.ts";
+import { scratchSave } from "./scratch.ts";
 
 
 /** The viewer's pencil (Edit, the editor at `href`), blue while editing: also the homepage's. */
@@ -125,8 +125,8 @@ export function viewerPage(o: {
   live?: string;
   /** A project's address, for someone signed in: its crumb opens its tree (client/inline/viewer-tree.ts). */
   project?: string;
-  /** A scratch document, for whoever may edit it: when it goes (null: never), and whether they may save it (its owner). */
-  scratch?: { expires: number | null; save: boolean };
+  /** A scratch document, for its owner, who may save it: unsaved, it goes `hours` after it's made (null: never). */
+  scratch?: { hours: number | null };
 }): { before: string; after: string } {
   // Opened with ?edit, for whoever may edit: the page is the editor's from its first moment (editingHead, EDITING_BODY),
   // the page in the frame starts on its half of the editor at once (frameSrc), and the editor's files are fetched as the
@@ -152,7 +152,7 @@ ${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(sessio
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
   const bars = barsHtml({ session, title: o.landing ? null : o.title, project: !!o.project, full: true, edit: o.edit, corner: o.corner });
   const after = `
-${bars}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchNote(o.docId, o.scratch.expires, o.scratch.save) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<script>${inlineCall("viewer-live", `/d/${o.docId}`, o.live)}</script>` : ""}${o.project && session && !o.landing ? `<script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, o.title, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
+${bars}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<script>${inlineCall("viewer-live", `/d/${o.docId}`, o.live)}</script>` : ""}${o.project && session && !o.landing ? `<script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, o.title, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
 `;
   return { before, after };
 }
