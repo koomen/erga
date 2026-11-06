@@ -33,7 +33,7 @@ export interface HistoryHost {
   /** The document, opened if it isn't (null if there's no such document). */
   room(): Promise<Opened | null>;
   info(): Promise<DocumentInfo | null>;
-  saveInfo(info: DocumentInfo): Promise<void>;
+  updateInfo(change: (info: DocumentInfo | null) => DocumentInfo | null): Promise<DocumentInfo | null>;
   /** Something happened: the document stays open a while longer. */
   activity(): void;
   /** Files arriving whole (uploads.ts): what a restore writes. */
@@ -124,10 +124,13 @@ export class History {
 
   /** Notes in its record whether it has edits no version holds yet (only when that changes). */
   private async markUncut(uncut: boolean): Promise<void> {
-    const info = await this.host.info();
-    if (!info || !!info.uncut == uncut) return;
-    const { uncut: _, ...rest } = info;
-    await this.host.saveInfo(uncut ? { ...rest, uncut } : rest).catch((e) => this.host.deps.log(`couldn't note the edits: ${e}`));
+    await this.host
+      .updateInfo((info) => {
+        if (!info || !!info.uncut == uncut) return info;
+        const { uncut: _, ...rest } = info;
+        return uncut ? { ...rest, uncut } : rest;
+      })
+      .catch((e) => this.host.deps.log(`couldn't note the edits: ${e}`));
   }
 
   /** Whether any agent in the room is in the middle of a turn (its busy flag, on awareness). */

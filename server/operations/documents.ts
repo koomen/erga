@@ -266,8 +266,8 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         throw new OperationError({ message: "Only its owner can save a scratch document.", status: 403 });
       if (!doc.scratch) throw new OperationError({ message: "That document is saved already: it isn't a scratch document.", status: 409 });
       const platform = platformOf(caller);
+      // The document writes its own row as it keeps itself.
       await platform.docs.keep(doc);
-      await caller.dir.keep(doc.id);
       forgetDecisions(doc.id);
       // Its address was its id: now it follows the title (the one given, one set before, or the first heading's now).
       const given = optString(args.title, "title")?.trim();

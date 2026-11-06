@@ -3,6 +3,7 @@
 // publish (a version cut once edits pause), restored, deleted when unedited.
 
 import { expect, test } from "bun:test";
+import * as Effect from "effect/Effect";
 import { Document, type DocumentDeps } from "../document/document";
 import { KEYS, MemoryStorage } from "../document/storage";
 import { Directory } from "../server/directory/index.ts";
@@ -198,3 +199,61 @@ test("a document stored before publishing went (its record names a published ver
   expect((await again.currentFiles())!.version.n).toBe(2);
 });
 
+
+/** The setting's read waits for `open()`: what happens meanwhile lands while the alarm waits for D1. */
+function slowSetting(dir: Directory) {
+  const get = dir.config.get.bind(dir.config);
+  let open!: () => void;
+  const gate = new Promise<void>((r) => (open = r));
+  let asked!: () => void;
+  const reading = new Promise<void>((r) => (asked = r));
+  dir.config.get = (async (key: Parameters<typeof get>[0]) => {
+    asked();
+    await gate;
+    return get(key);
+  }) as typeof dir.config.get;
+  return { reading, open };
+}
+
+test("a scratch document saved while its alarm reads the setting stays, saved", async () => {
+  const { dir, make } = setup();
+  await dir.add({ id: "save1234", owner: "ada", title: "Scratch", created: Date.now(), expires: null, scratch: true });
+  const doc = make();
+  await doc.create("ada", "save1234", { "index.html": "<h1>Scratch</h1>" }, "index.html", { expires: null, scratch: true });
+  const setting = slowSetting(dir);
+  const woke = doc.wake();
+  await setting.reading;
+  expect(await doc.keep()).toBe(true);
+  setting.open();
+  await woke;
+  expect(await doc.index()).toBe("index.html");
+  expect(await dir.get("save1234")).toMatchObject({ scratch: false, expires: null });
+});
+
+test("an unedited document edited while its alarm reads the setting stays; one an agent works on waits an hour", async () => {
+  const { dir, make, storage } = setup();
+  await dir.add({ id: "edit1234", owner: "ada", title: "Edit", created: Date.now(), expires: null });
+  const edited = make();
+  await edited.create("ada", "edit1234", { "index.html": "<h1>Edit</h1>" }, "index.html", { expires: null });
+  const setting = slowSetting(dir);
+  const woke = edited.wake();
+  await setting.reading;
+  await edited.publish({ "index.html": "<h1>Edited</h1>" }, [], "ada");
+  setting.open();
+  await woke;
+  expect(await edited.index()).toBe("index.html");
+  expect(await dir.get("edit1234")).not.toBeNull();
+
+  // An agent's call with no socket (tabs: 0): the alarm comes in the middle of it.
+  await dir.add({ id: "agent123", owner: "ada", title: "Agent", created: Date.now(), expires: null });
+  const busy = make();
+  await busy.create("ada", "agent123", { "index.html": "<h1>Agent</h1>" }, "index.html", { expires: null });
+  let done!: () => void;
+  const call = Effect.runPromise(busy.self.hold(Effect.promise(() => new Promise<void>((r) => (done = r)))));
+  await busy.wake();
+  done();
+  await call;
+  expect(await busy.index()).toBe("index.html");
+  expect((await storage().getAlarm())! - Date.now()).toBeGreaterThan(59 * 60_000);
+  await storage().deleteAlarm();
+});

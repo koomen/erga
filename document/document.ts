@@ -57,6 +57,7 @@ import { cleanRel, kindOf, titleOf, type DocKind } from "./pages.ts";
 import { throttle } from "../shared/time.ts";
 import { later } from "./later.ts";
 import { History } from "./history.ts";
+import { expiryOf, expiryStep, type ExpiryEffect, type ExpiryEvent } from "./expiry.ts";
 import { openRoom, type Opened } from "./open.ts";
 import { isText, Uploads, type Published } from "./uploads.ts";
 
@@ -105,6 +106,8 @@ export interface DocumentDirectory extends NamesDirectory {
   edited(id: string, at: { modified: number | null; pageTitle: string | null }): Promise<{ doc: NamedRow; renamed: boolean } | null>;
   setKind(id: string, kind: DocKind): Promise<void>;
   setExpires(id: string, expires: number | null): Promise<void>;
+  /** A scratch document saved: on its owner's list, and kept. */
+  keep(id: string): Promise<void>;
   remove(id: string): Promise<void>;
   decide(
     who: Asker | null,
@@ -165,19 +168,6 @@ export type FileData = string | Uint8Array | BlobRef;
 
 const { file: FILE, ref: REF, meta: INFO } = KEYS;
 
-const HOUR = 60 * 60 * 1000;
-
-/**
- * When a document's unedited time is up: one that's been edited (or is a
- * test document) stays, one open somewhere waits an hour more, so it isn't
- * pulled from under someone about to type, and any other goes.
- */
-function afterUnedited(doc: { modified?: number; test?: boolean; scratch?: true }, open: boolean, now: number): "keep" | "delete" | number {
-  if (doc.scratch && !doc.test) return "delete";
-  if (doc.modified || doc.test) return "keep";
-  return open ? now + HOUR : "delete";
-}
-
 export class Document {
   private open: Promise<Opened | null> | null = null;
   /** The document once it's open (`open` resolved). */
@@ -198,8 +188,8 @@ export class Document {
   private views: DocumentView;
   /** What the document is, as storage has it (read once; undefined: not read yet, null: no document). */
   private info: DocumentInfo | null | undefined = undefined;
-  /** Whether the unedited document's alarm is known to be gone (an edited one never goes). */
-  private kept = false;
+  /** The changes of its record under way, one after another (updateInfo). */
+  private infoWrites: Promise<unknown> = Promise.resolve();
   /** The room closing (idle): opening it again waits for its last writes. */
   private closing: Promise<void> = Promise.resolve();
   /** Requests and calls under way: the document doesn't close under them. */
@@ -214,7 +204,7 @@ export class Document {
       opened: () => this.opened,
       room: () => this.room(),
       info: () => this.readInfo(),
-      saveInfo: (info) => this.saveInfo(info),
+      updateInfo: (change) => this.updateInfo(change),
       activity: () => this.activity(),
       publish: (files, remove, by) => this.uploads.publish(files, remove, by),
     });
@@ -261,15 +251,62 @@ export class Document {
     return this.info;
   }
 
-  private saveInfo(info: DocumentInfo): Promise<void> {
-    this.info = info;
-    return this.storage.put(INFO, info);
+  /**
+   * The one way to change its record: `change` gets the latest one (null: no document) and returns the next (null: it
+   * goes; the same object: no write). One change at a time, each after the last; the cached record changes only once
+   * the write is done, and `change` must not edit what it gets.
+   */
+  private updateInfo(change: (info: DocumentInfo | null) => DocumentInfo | null): Promise<DocumentInfo | null> {
+    const write = this.infoWrites.then(async () => {
+      const info = await this.readInfo();
+      const next = change(info);
+      if (next === info) return info;
+      await (next ? this.storage.put(INFO, next) : this.storage.delete(INFO));
+      this.info = next;
+      return next;
+    });
+    this.infoWrites = write.catch(() => {});
+    return write;
+  }
+
+  /**
+   * Its expiry after `event` (expiry.ts): the record changes first, then the effects run. False if there's no such
+   * document. `edit` changes the record too, in the same write (an edit's time).
+   */
+  private async expire(event: ExpiryEvent, edit: (info: DocumentInfo) => DocumentInfo = (i) => i): Promise<boolean> {
+    const seen: { info?: DocumentInfo; effects: ExpiryEffect[] } = { effects: [] };
+    await this.updateInfo((info) => {
+      if (!info) return null;
+      const step = expiryStep(expiryOf(info), event);
+      seen.info = info;
+      seen.effects = step.effects;
+      if (step.state == "deleted") return null;
+      const next = edit(info);
+      if (step.state != "kept" || !next.scratch) return next;
+      const { scratch: _, ...saved } = next;
+      return { ...saved, modified: saved.modified ?? Date.now() };
+    });
+    const { info, effects } = seen;
+    if (!info) return false;
+    const forgot = (e: unknown) => this.deps.log(`couldn't update ${info.id}'s row: ${e}`);
+    for (const effect of effects) {
+      if (effect.type == "deleteAlarm") await this.storage.deleteAlarm();
+      else if (effect.type == "alarmAt") {
+        await this.storage.setAlarm(effect.at);
+        await this.directory.setExpires(info.id, effect.at).catch(forgot);
+      } else if (effect.type == "neverExpires") await this.directory.setExpires(info.id, null).catch(forgot);
+      else if (effect.type == "saved") await this.directory.keep(info.id);
+      else {
+        this.deps.log(`deleting ${info.owner}/${info.id}: ${effect.why}`);
+        await this.destroy(info);
+      }
+    }
+    return true;
   }
 
   /** Storage was emptied or replaced: what was read of it is forgotten. */
   private forgetStorage(): void {
     this.info = undefined;
-    this.kept = false;
     this.access.forget();
     this.views.forget();
     this.history.forget();
@@ -392,7 +429,7 @@ export class Document {
         ...(opts.test ? { test: true } : {}),
         ...(opts.scratch ? { scratch: true as const } : {}),
       };
-      yield* io(() => self.saveInfo(info));
+      yield* io(() => self.updateInfo(() => info));
       if (!info.test && opts.expires != null) yield* io(() => self.storage.setAlarm(opts.expires!));
       // Its first version: the files it starts from.
       const first = new Map(Object.entries(files).map(([path, data]) => [path, typeof data == "string" ? encoder.encode(data) : data]));
@@ -412,9 +449,8 @@ export class Document {
    */
   link(owner: string, id: string, index: string, disk: OnDisk): Effect.Effect<NamedRow, StoreError> {
     return io(async () => {
-      const info = await this.readInfo();
       // A single file is a document; a folder a project (it may hold pages).
-      await this.saveInfo(
+      await this.updateInfo((info) =>
         info
           ? { ...info, index, disk }
           : { id, owner: owner.toLowerCase(), index, created: Date.now(), disk, kind: disk.only ? "document" : "project" }
@@ -431,10 +467,8 @@ export class Document {
    */
   setKind(kind: DocKind): Effect.Effect<void, StoreError> {
     return io(async () => {
-      const info = await this.readInfo();
-      if (!info || info.kind == kind) return;
-      await this.saveInfo({ ...info, kind });
-      await this.directory.setKind(info.id, kind);
+      const info = await this.updateInfo((info) => (info && info.kind != kind ? { ...info, kind } : info));
+      if (info) await this.directory.setKind(info.id, kind);
     });
   }
 
@@ -475,29 +509,17 @@ export class Document {
     });
   }
 
-  /** A scratch document saved (save_document): it stays, as an edited one does. False if there's no such document. */
+  /**
+   * A scratch document saved (save_document): it stays, as an edited one does, and its row says so (again, if the
+   * row missed it the first time). False if there's no such document.
+   */
   keep(): Effect.Effect<boolean, StoreError> {
-    return io(async () => {
-      const info = await this.readInfo();
-      if (!info) return false;
-      if (!info.scratch) return true;
-      delete info.scratch;
-      info.modified ??= Date.now();
-      await this.saveInfo(info);
-      await this.storage.deleteAlarm();
-      this.kept = true;
-      return true;
-    });
+    return io(() => this.expire({ type: "save" }));
   }
 
   /** Deletes the document (the app has asked the directory who may): everyone on it is disconnected. */
   delete(): Effect.Effect<boolean, StoreError> {
-    return io(async () => {
-      const info = await this.readInfo();
-      if (!info) return false;
-      await this.destroy(info);
-      return true;
-    });
+    return io(() => this.expire({ type: "delete" }));
   }
 
   /**
@@ -523,31 +545,17 @@ export class Document {
   }
 
   /**
-   * The alarm: its unedited time is up, so a document nobody has edited goes.
-   * One open somewhere waits an hour more, so it isn't pulled from under
-   * someone about to type. If delete_docs_after_hours is now never, it stays.
-   * A scratch document goes at once, edited or not, open or not: its page said when (it stays too, if the setting is
-   * now never).
+   * The alarm: its unedited time is up (expiry.ts decides what then). The setting is read first, so the decision
+   * comes after the last wait, from the record as it is then: a save or a first edit meanwhile counts.
    */
   wake(): Effect.Effect<void, StoreError> {
     const self = this;
     return Effect.gen(function* () {
       const info = yield* io(() => self.readInfo());
-      if (!info) return;
-      const next = afterUnedited(info, self.deps.tabs.count() > 0, Date.now());
-      if (next == "keep") return;
-      const forgot = (e: unknown) => self.deps.log(`couldn't update ${info.id}'s row: ${e}`);
-      if ((yield* io(() => self.directory.config.get("delete_docs_after_hours"))) == null) {
-        yield* Effect.promise(() => self.directory.setExpires(info.id, null).catch(forgot));
-        return;
-      }
-      if (next != "delete") {
-        yield* io(() => self.storage.setAlarm(next));
-        yield* Effect.promise(() => self.directory.setExpires(info.id, next).catch(forgot));
-        return;
-      }
-      self.deps.log(`deleting ${info.owner}/${info.id}: ${info.scratch ? "scratch, not saved" : "never edited"}`);
-      yield* io(() => self.destroy(info));
+      // A kept one stays kept: no need to ask the directory.
+      if (!info || expiryOf(info) == "kept") return;
+      const setting = yield* io(() => self.directory.config.get("delete_docs_after_hours"));
+      yield* io(() => self.expire({ type: "alarm", now: Date.now(), tabs: self.deps.tabs.count(), busy: self.busy, setting }));
     });
   }
 
@@ -594,7 +602,7 @@ export class Document {
    */
   private async rememberName(name: DocName): Promise<DocName> {
     const info = await this.readInfo();
-    if (info && JSON.stringify(info.name) != JSON.stringify(name)) await this.saveInfo({ ...info, name });
+    await this.updateInfo((info) => (info && JSON.stringify(info.name) != JSON.stringify(name) ? { ...info, name } : info));
     return name;
   }
 
@@ -628,17 +636,13 @@ export class Document {
    * files, when the room writes them), and its alarm deleted once.
    */
   private async touch(): Promise<void> {
-    const info = await this.readInfo();
-    if (!info) return;
-    info.modified = Date.now();
-    const writes = [this.saveInfo(info)];
-    if (!info.test && !info.scratch && !this.kept) {
-      this.kept = true;
-      writes.push(this.storage.deleteAlarm());
-    }
-    await Promise.all(writes);
+    const modified = Date.now();
+    if (!(await this.expire({ type: "edit" }, (info) => ({ ...info, modified })))) return;
     // At most every DIRECTORY_EVERY_MS, however fast the edits come; the last always lands.
-    this.sync ??= throttle(() => this.syncDirectory().catch((e) => this.deps.log(`couldn't update ${info.id}'s row: ${e}`)), DIRECTORY_EVERY_MS);
+    this.sync ??= throttle(
+      () => this.syncDirectory().catch((e) => this.deps.log(`couldn't update ${this.info?.id}'s row: ${e}`)),
+      DIRECTORY_EVERY_MS
+    );
     this.sync();
   }
 
