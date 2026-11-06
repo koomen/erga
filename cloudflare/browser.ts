@@ -4,6 +4,7 @@
 
 import { connect, launch, sessions, type Browser, type BrowserBinding } from "./cdp";
 import type { Env } from "./env";
+import { step, type Hold, type HoldEvent } from "./browser-hold";
 
 /** How long Cloudflare keeps a browser session with no activity, in ms (its most). */
 const KEEP_ALIVE = 600_000;
@@ -38,17 +39,20 @@ function localChrome(origin: string, secret: string): BrowserBinding {
   };
 }
 
-/** How long a Durable Object keeps its connection after a render: a burst of renders reuses it, then the session is free for others. */
+/** How long a Durable Object keeps its connection after its last render: a burst of renders reuses it, then the session is free for others. */
 const HOLD_MS = 30_000;
 
 /**
- * One Durable Object's browser: a connection to a session, kept between renders for HOLD_MS. (A connection belongs to
- * the object that opened it: another object in the same isolate can't use it.) `use` answers a browser to render in,
- * and how it came: this object's, still connected; a session another left idle; or a new session, kept alive by
- * Cloudflare for KEEP_ALIVE after its last use.
+ * One Durable Object's browser: a connection to a session, kept HOLD_MS after the last render in flight (the machine in
+ * cloudflare/browser-hold.ts). (A connection belongs to the object that opened it: another object in the same isolate
+ * can't use it.) `use` answers a browser to render in, and how it came: this object's, still connected; a session
+ * another left idle; or a new session, kept alive by Cloudflare for KEEP_ALIVE after its last use. Each `use` has
+ * one `done`, whatever the render did.
  */
 export function browsers(binding: BrowserBinding) {
-  let open: Promise<Browser> | null = null;
+  let state: Hold<Browser> = { at: "none", n: 0 };
+  /** The connection on its way, while `starting`. */
+  let starting: Promise<{ browser: Browser; how: "connected" | "launched" }> | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   /** Each connection's browser contexts, one for each person: their cookies apart, their cache kept between renders. */
   const contexts = new WeakMap<Browser, Map<string, Promise<string>>>();
@@ -60,15 +64,25 @@ export function browsers(binding: BrowserBinding) {
     }
     return { browser: await launch(binding, KEEP_ALIVE), how: "launched" };
   };
+  const fire = (e: HoldEvent<Browser>) => {
+    const [next, effects] = step(state, e);
+    state = next;
+    for (const f of effects)
+      if (f.do == "start") {
+        starting = start();
+        starting.then(
+          (s) => fire({ type: "started", browser: s.browser }),
+          () => fire({ type: "failed" })
+        );
+      } else if (f.do == "arm") timer = setTimeout(() => fire({ type: "timer" }), HOLD_MS);
+      else if (f.do == "disarm") clearTimeout(timer);
+      else f.browser.disconnect();
+  };
   return {
-    async use(): Promise<{ browser: Browser; how: "reused" | "connected" | "launched" }> {
-      clearTimeout(timer);
-      const kept = open && (await open.catch(() => null));
-      if (kept?.connected) return { browser: kept, how: "reused" };
-      const started = start();
-      open = started.then((s) => s.browser);
-      open.catch(() => (open = null));
-      return started;
+    use(): Promise<{ browser: Browser; how: "reused" | "connected" | "launched" }> {
+      const kept = state.at == "in use" || state.at == "held" ? state.browser : null;
+      fire({ type: "use", alive: !!kept?.connected });
+      return state.at == "in use" ? Promise.resolve({ browser: state.browser, how: "reused" }) : starting!;
     },
     /**
      * The person's browser context on this connection (made the first time): it holds their view cookie, apart from
@@ -85,14 +99,7 @@ export function browsers(binding: BrowserBinding) {
       }
       return id;
     },
-    /** A render is done: the connection goes after HOLD_MS with no other (the session stays, for the next to connect to). */
-    done() {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        const was = open;
-        open = null;
-        void was?.then((b) => b.disconnect()).catch(() => {});
-      }, HOLD_MS);
-    },
+    /** A render is done: the connection goes HOLD_MS after the last render in flight (the session stays, for the next to connect to). */
+    done: () => fire({ type: "done" }),
   };
 }

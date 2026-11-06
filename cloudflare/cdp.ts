@@ -87,10 +87,18 @@ export class Browser {
 
   async newPage(context?: string): Promise<Page> {
     const { targetId } = await this.send("Target.createTarget", { url: "about:blank", ...(context ? { browserContextId: context } : {}) });
-    const { sessionId } = await this.send("Target.attachToTarget", { targetId, flatten: true });
+    const { sessionId } = await this.send("Target.attachToTarget", { targetId, flatten: true }).catch(async (e) => {
+      await this.send("Target.closeTarget", { targetId }).catch(() => {});
+      throw e;
+    });
     const page = new Page(this, targetId, sessionId);
-    await Promise.all(["Page.enable", "Runtime.enable", "Log.enable"].map((m) => page.send(m)));
-    await page.send("Page.setLifecycleEventsEnabled", { enabled: true });
+    try {
+      await Promise.all(["Page.enable", "Runtime.enable", "Log.enable"].map((m) => page.send(m)));
+      await page.send("Page.setLifecycleEventsEnabled", { enabled: true });
+    } catch (e) {
+      await page.close().catch(() => {});
+      throw e;
+    }
     return page;
   }
 

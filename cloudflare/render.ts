@@ -39,6 +39,8 @@ const EDITOR_MS = 8_000;
 const MAX_WINDOW = 4200;
 /** The longest a render takes: then the page closes, even one whose script never yields (while (true)). */
 const RENDER_MS = 60_000;
+/** The longest the browser may take to close a page. */
+const CLOSE_MS = 5_000;
 
 type Job = RenderJob & { owner: string; id: string };
 
@@ -81,28 +83,41 @@ async function render(env: Env, mine: ReturnType<typeof browsers>, job: Job): Pr
   };
   let how = "none";
   let opened = 0;
-  try {
+  // Each step, from the connection to the page's close, is in the RENDER_MS limit: a step that never answers (the
+  // browser's socket, a script that never yields) can't keep the render, and its connection, in use for ever.
+  let page: Page | null = null;
+  let over = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<ViewResult>((done) => {
+    timer = setTimeout(
+      () => done({ errors: [], error: `The render took more than ${RENDER_MS / 1000} s: the page's script may never yield.` }),
+      RENDER_MS
+    );
+  });
+  const work = async () => {
     const b = await mine.use();
     how = b.how;
     opened = Date.now();
     const context = await mine.context(b.browser, job.by);
     await b.browser.send("Storage.setCookies", { cookies: [place.cookie], browserContextId: context });
-    const page = await b.browser.newPage(context);
-    try {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const late = new Promise<ViewResult>((done) => {
-        timer = setTimeout(
-          () => done({ errors: [], error: `The render took more than ${RENDER_MS / 1000} s: the page's script may never yield.` }),
-          RENDER_MS
-        );
-      });
-      return await Promise.race([renderIn(page, place, job), late]).finally(() => clearTimeout(timer));
-    } finally {
-      await page.close().catch(() => {});
+    const made = await b.browser.newPage(context);
+    if (over) {
+      await closed(made);
+      throw new Error("The render was over before its page opened.");
     }
+    page = made;
+    return renderIn(made, place, job);
+  };
+  try {
+    const doing = work();
+    doing.catch(() => {}); // after the limit, its error goes nowhere
+    return await Promise.race([doing, late]);
   } catch (e) {
     return { errors: [], error: `The server's browser couldn't render the page: ${(e as Error).message}` };
   } finally {
+    over = true;
+    clearTimeout(timer);
+    if (page) await closed(page);
     mine.done();
     const end = Date.now();
     console.log(
@@ -119,6 +134,9 @@ async function render(env: Env, mine: ReturnType<typeof browsers>, job: Job): Pr
     );
   }
 }
+
+/** Closes a page; the render goes on after CLOSE_MS without an answer. */
+const closed = (page: Page) => Promise.race([page.close().catch(() => {}), new Promise((r) => setTimeout(r, CLOSE_MS))]);
 
 /** Where code runs: the viewer's window, or the page's frame. */
 type Runner = <T>(expression: string) => Promise<T>;

@@ -14,8 +14,9 @@
     // A library's API needs no browser: the document's object runs it for agents.
     "libs/*/api",
     "cloudflare.config.ts",
-    // A test of a Worker file: bun:test's types alone, with the Workers' own.
+    // Tests of Worker files: bun:test's types alone, with the Workers' own.
     "node_modules/bun-types/test.d.ts",
-    "tests/document-host.test.ts"
+    "tests/document-host.test.ts",
+    "tests/render-browser.test.ts"
   ]
 }
