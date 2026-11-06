@@ -43,11 +43,11 @@ test("the answers are read as the person types them, and a bad one says why", ()
 });
 
 test("the names come from the address, so they never take erga.dev's own (erga)", () => {
-  expect(namesOf("erga.koomen.dev")).toEqual({
-    worker: "erga-koomen-dev",
-    database: "erga-koomen-dev",
-    bucket: "erga-koomen-dev-files",
-    pagesWorker: "erga-koomen-dev-pages",
+  expect(namesOf("erga.example.org")).toEqual({
+    worker: "erga-example-org",
+    database: "erga-example-org",
+    bucket: "erga-example-org-files",
+    pagesWorker: "erga-example-org-pages",
   });
 });
 
