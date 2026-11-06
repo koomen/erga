@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hash switch</title>
+<style>
+  body { background: #fff; font: 16px system-ui; margin: 40px; }
+  .switch button { font: inherit; padding: 6px 16px; }
+  .switch button[aria-pressed="true"] { background: #135; color: #fff; }
+  .aws, .host-aws .cf { display: none; }
+  .host-aws .aws { display: block; }
+</style>
+</head>
+<body>
+<h1>Hash switch</h1>
+<p><a id="to-aws" href="#aws">See AWS</a> <button type="button" id="push-aws">AWS, as a new place</button> <button type="button" id="push-cf">Cloudflare, as a new place</button></p>
+<figure id="arch">
+  <div class="switch" role="group" aria-label="Provider"><button type="button" data-host="cf" aria-pressed="true">Cloudflare</button><button type="button" data-host="aws" aria-pressed="false">AWS</button></div>
+  <div id="arch-grid">
+    <p class="cf">Durable Objects</p>
+    <p class="aws">ECS tasks</p>
+  </div>
+</figure>
+<script>
+  (() => {
+    const fig = document.getElementById("arch");
+    const grid = document.getElementById("arch-grid");
+    const buttons = fig.querySelectorAll(".switch button");
+    const fromHash = () => (location.hash == "#aws" ? "aws" : "cf");
+    const show = (host) => {
+      grid.classList.toggle("host-aws", host == "aws");
+      for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.host == host));
+    };
+    show(fromHash());
+    addEventListener("hashchange", () => show(fromHash()));
+    for (const b of buttons)
+      b.addEventListener("click", () => {
+        const hash = b.dataset.host == "aws" ? "#aws" : "#cloudflare";
+        if (location.hash != hash) history.replaceState(null, "", hash);
+        show(b.dataset.host);
+      });
+    for (const host of ["aws", "cf"])
+      document.getElementById("push-" + host).addEventListener("click", () => {
+        history.pushState(null, "", host == "aws" ? "#aws" : "#cloudflare");
+        show(host);
+      });
+  })();
+</script>
+</body>
+</html>
