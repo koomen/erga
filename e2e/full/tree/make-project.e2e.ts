@@ -71,7 +71,9 @@ test("Document or Project in the settings: the breadcrumb's caret follows the ki
   await openSettings(page);
   await until(() => js(page, `!!document.querySelector('#ds-kind [data-kind="document"][aria-checked="true"]:not([aria-disabled])')`), 5000, "the settings show Document");
   expect(await js(page, `document.getElementById("ds-home").hidden`)).toBe(true);
-  expect(await js(page, `document.getElementById("ds-kind-explain").textContent`)).toBe("One page, with its files beside it. A project has more pages.");
+  expect(await js(page, `document.querySelector('#ds-kind [data-kind="document"]').dataset.tip`)).toBe(
+    "A document is one page, with its files beside it."
+  );
   expect(await js(page, `[...document.querySelectorAll("#pages .et-add")].map((b) => b.textContent)`)).not.toContain("Make a project");
 
   // Project: the caret shows at once here, and in the other tab with no reload; the title opens the pages.
@@ -86,11 +88,17 @@ test("Document or Project in the settings: the breadcrumb's caret follows the ki
     .then((v) => expect(v).toBe("New page,New folder"));
   await page.keyboard.press("Escape");
 
-  // A second page (from elsewhere): Document can't be chosen, and the settings say why.
+  // A second page (from elsewhere): Document can't be chosen, and its tip says why.
   expect((await treeOp({ op: "new_page", path: "about" })).status).toBe(200);
   await openSettings(page);
-  await until(() => js(page, `document.querySelector('#ds-kind [data-kind="document"]').getAttribute("aria-disabled") == "true"`), 5000, "Document is off with two pages");
-  expect(await js(page, `document.getElementById("ds-kind-explain").textContent`)).toBe("It has 2 pages, and a document has one. Delete the others first.");
+  await until(
+    () => js(page, `document.querySelector('#ds-kind [data-kind="document"]').getAttribute("aria-disabled") == "true"`),
+    5000,
+    "Document is off with two pages"
+  );
+  expect(await js(page, `document.querySelector('#ds-kind [data-kind="document"]').dataset.tip`)).toBe(
+    "A document has one page. This project has 2: delete the others first."
+  );
 
   // One page again: Document, and the caret goes at once.
   expect((await treeOp({ op: "delete", path: "about.html" })).status).toBe(200);

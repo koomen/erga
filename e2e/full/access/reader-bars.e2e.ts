@@ -1,5 +1,5 @@
 // Readers' bars (Document settings): someone who views a document and can't edit it sees Erga's bars over it, until its
-// owner unticks "Readers see Erga's bars". Then the page fills the window, from its top. Editors always see the bars.
+// owner unticks "Show the Erga header bar". Then the page fills the window, from its top. Editors always see the bars.
 import { expect, servers, test, until, type Page } from "../../helpers/fixtures";
 import { clickOn, newDoc, unique } from "./access";
 

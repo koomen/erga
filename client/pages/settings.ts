@@ -4,19 +4,18 @@
 // as it mounts, keeps it fresh from the event channel (and again behind as the pointer comes
 // to the gear), so a click opens it whole on the next frame, and nothing pops in after.
 //
-// Readers always see the document as it is now. It holds, top to bottom:
-//   - Kind: Document (one page, and files beside it) or Project (pages, each
-//     with its own address), a switch (set_kind). A project with more than one page says, in place, why
-//     it can't be a document yet.
-//   - Page: the page shown now, with its tab's title, and Details, which opens its details (client/pages/page-head.ts:
-//     its title, description, icon and link picture, in its <head>).
-//   - Readers, for anyone who may edit it (their state from ls's access): whether the people who view it, and can't edit
-//     it, see Erga's bars over it (share_document's reader_bars; on at first), and whether they may use their own agent
-//     on it (reader_agent). The agent is off, and not to be turned on, while anyone with the link may open it. And
-//     whether its page may call a model as its visitor, and which (page_llm, page_llm_model: window.ergaLLM).
-//   - Homepage, only on the homepage: a note that says so, how its deploy is
-//     going, a line when the document is newer than the live page, and Deploy
-//     (admins). Nothing deploys by itself. The homepage is chosen on /admin
+// Readers always see the document as it is now. No line of help anywhere: what needs a word has a hover tip
+// (data-tip, which tip() sets). It holds, top to bottom:
+//   - Document (one page, and files beside it) or Project (pages, each with its own address), a switch (set_kind).
+//     A project with more than one page can't be a document yet: its tip says why.
+//   - Page details: the page shown now, with its icon, title and description, and Edit, which opens its details
+//     (client/pages/page-head.ts: its title, description, icon and link picture, in its <head>).
+//   - Viewer settings, for anyone who may edit it (their state from ls's access): whether the people who view it, and
+//     can't edit it, see Erga's header bar (share_document's reader_bars; on at first), and whether they may use the
+//     Erga agent on it (reader_agent). The agent is off, and not to be turned on, while anyone with the link may open
+//     it. And whether its page may call a model as its visitor, and which (page_llm, page_llm_model: window.ergaLLM).
+//   - Homepage, only on the homepage: one line, with how its deploy is going and Deploy (admins), which is blue when
+//     the document is newer than the live page. Nothing deploys by itself. The homepage is chosen on /admin
 //     (the landing_document setting), never here.
 //   - Versions: the latest ten, each with its number, the model's five-word
 //     description (a quiet placeholder until it arrives), when and who; the
@@ -35,7 +34,7 @@ import { runTool } from "../common/tools";
 import { esc } from "../../shared/html";
 import { MODELS, PAGE_LLM_MODELS } from "../../shared/models";
 import { openPageHead } from "./page-head";
-import { tabTitle, type PageHead } from "../../shared/page-head";
+import { headUrl, tabTitle, type PageHead } from "../../shared/page-head";
 
 export interface Deploy {
   state: "idle" | "deploying" | "deployed" | "failed";
@@ -102,8 +101,17 @@ const CSS = `
 .ds h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 6px; font: 600 12px/1.3 var(--font-text); color: var(--soft); text-transform: uppercase; letter-spacing: 0.04em; }
 .ds h3 small { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--chrome); }
 .ds-n { flex: none; font: 600 12px/1.3 var(--font-mono); color: var(--soft); font-feature-settings: "tnum"; }
-.ds-explain { margin: 6px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--soft); }
-.ds-explain:empty, .ds-error:empty { display: none; }
+.ds-error:empty { display: none; }
+/* A hover tip: plain text in a small card, under the control, inside the panel. */
+.ds [data-tip] { position: relative; }
+.ds [data-tip]::after {
+  content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 5; width: max-content; max-width: 250px;
+  padding: 6px 9px; border-radius: 7px; border: 1px solid var(--panel-border); background: var(--bg); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  font: 400 12px/1.4 var(--font-text); color: var(--soft); text-align: left; white-space: normal; text-transform: none; letter-spacing: 0;
+  opacity: 0; pointer-events: none; transition: opacity 80ms ease 250ms;
+}
+.ds :is(.ds-btn, [data-kind="project"])[data-tip]::after { left: auto; right: 0; }
+@media (hover: hover) { .ds [data-tip]:hover::after { opacity: 1; } }
 .ds-error { margin: 8px 0 0; padding: 7px 10px; border-radius: 8px; font-size: 12.5px; line-height: 1.45; color: #b42318; background: color-mix(in srgb, #d0453a 10%, transparent); }
 html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-desc-none { color: var(--chrome); font-style: italic; }
@@ -137,33 +145,44 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-kind button:hover { color: var(--fg); }
 .ds-kind button[aria-checked="true"] { background: var(--bg); color: var(--fg-strong, var(--fg)); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
 .ds-kind button:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
-.ds-kind button[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
-.ds-kind button[aria-disabled="true"]:hover { color: var(--soft); }
-/* Page: the tab as it shows, and Details. */
-.ds-page-row { display: flex; align-items: center; gap: 10px; }
-.ds-page-row h3 { margin: 0; }
-.ds-page-tab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--fg-strong, var(--fg)); }
-/* Readers: two switches, for the owner. */
+/* (Never opacity on a control with a tip: its tip would fade too.) */
+.ds-kind button[aria-disabled="true"] { color: color-mix(in srgb, var(--soft) 50%, transparent); cursor: not-allowed; }
+.ds-kind button[aria-disabled="true"]:hover { color: color-mix(in srgb, var(--soft) 50%, transparent); }
+/* Page details: the icon and the title on one line, the description under them, and Edit. */
+.ds-page-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center; margin-top: 8px; }
+.ds-page-title { display: flex; align-items: center; gap: 8px; min-width: 0; font: 600 13px/1.35 var(--font-text); color: var(--fg-strong, var(--fg)); }
+.ds-page-title span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-page-icon { flex: none; width: 16px; height: 16px; border-radius: 3px; object-fit: contain; }
+span.ds-page-icon { background: color-mix(in srgb, var(--chrome) 35%, transparent); }
+.ds-page-desc { grid-column: 1; margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--soft); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ds-page-desc:empty { display: none; }
+.ds-page-row .ds-btn { grid-column: 2; grid-row: 1 / span 2; }
+/* Viewer settings: three switches and the model, for anyone who may edit it. */
+.ds-checks { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin-top: 10px; }
 .ds-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); cursor: pointer; }
 .ds-check input { margin: 0; width: 15px; height: 15px; accent-color: var(--caret); cursor: inherit; }
-.ds-check:has(input:disabled) { opacity: 0.55; cursor: default; }
-.ds-explain + .ds-check { margin-top: 12px; }
-.ds-llm-model { margin: 6px 0 0 23px; font: inherit; font-size: 13px; }
-/* The homepage: a note, only on the homepage. */
-.ds-home-note { display: flex; align-items: center; gap: 8px; margin: 0; font: 600 13.5px/1.3 var(--font-text); color: var(--fg-strong, var(--fg)); }
-.ds-home-note svg { flex: none; width: 16px; height: 16px; fill: none; stroke: var(--caret); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.ds-deploy { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 9px 10px 9px 11px; border-radius: 9px; background: var(--code-bg); }
-.ds-status { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 12.5px; line-height: 1.4; color: var(--fg); }
-.ds-status span { min-width: 0; }
-.ds-status b { font-weight: 600; }
-.ds-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--chrome); }
-.ds-dot.deployed { background: #22a06b; }
+.ds-check:has(input:disabled) { color: var(--chrome); cursor: default; }
+.ds-check input:disabled { opacity: 0.55; }
+.ds-llm-model { margin: -2px 0 0 23px; min-width: 150px; height: 28px; padding: 0 26px 0 9px; border: 1px solid var(--rule); border-radius: 7px; color: var(--fg); font: 12.5px var(--font-text); cursor: pointer;
+  appearance: none; -webkit-appearance: none; background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1a9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E") no-repeat right 7px center / 13px; }
+.ds-llm-model:hover:not(:disabled) { border-color: color-mix(in srgb, var(--chrome) 55%, var(--rule)); }
+.ds-llm-model:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+.ds-llm-model:disabled { opacity: 0.55; cursor: default; }
+/* The homepage, only on the homepage: one line, and Deploy. */
+.ds-deploy { display: flex; align-items: center; gap: 10px; }
+.ds-deploy > svg { flex: none; align-self: flex-start; margin-top: 1px; width: 16px; height: 16px; fill: none; stroke: var(--caret); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.ds-home-text { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.4; color: var(--soft); }
+.ds-home-text b { display: block; font: 600 13px/1.35 var(--font-text); color: var(--fg-strong, var(--fg)); }
+.ds-status span { white-space: nowrap; }
+.ds-dot { display: inline-block; margin-right: 6px; vertical-align: 0; width: 8px; height: 8px; border-radius: 50%; }
 .ds-dot.failed { background: #d0453a; }
-.ds-dot.deploying { width: 10px; height: 10px; background: transparent; border: 1.6px solid color-mix(in srgb, var(--caret) 25%, transparent); border-top-color: var(--caret); box-sizing: border-box; animation: agent-spin 0.8s linear infinite; }
+.ds-dot.deploying { vertical-align: -1px; width: 10px; height: 10px; background: transparent; border: 1.6px solid color-mix(in srgb, var(--caret) 25%, transparent); border-top-color: var(--caret); box-sizing: border-box; animation: agent-spin 0.8s linear infinite; }
 .ds-btn { flex: none; font: 600 12.5px var(--font-text); border-radius: 7px; padding: 6px 11px; cursor: pointer; border: 1px solid var(--panel-border); background: var(--bg); color: var(--fg); white-space: nowrap; }
 .ds-btn:hover { border-color: color-mix(in srgb, var(--chrome) 45%, var(--panel-border)); }
 .ds-btn:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
-.ds-btn[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.ds-btn[aria-disabled="true"] { color: var(--chrome); cursor: default; }
+.ds-btn.newer { border-color: var(--caret); background: var(--caret); color: #fff; }
+.ds-btn.newer:hover { border-color: var(--caret); background: color-mix(in srgb, var(--caret) 88%, #000); }
 .ds-quiet { font: 500 12px var(--font-text); color: var(--soft); background: none; border: 0; padding: 4px 2px; cursor: pointer; text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 0.2em; }
 .ds-quiet:hover { color: var(--fg); }
 @media (max-width: 520px) {
@@ -189,37 +208,33 @@ function mount(host: SettingsHost): Settings {
   pop.setAttribute("aria-labelledby", "ds-title");
   pop.innerHTML = `<div class="ds-sheet-grip" aria-hidden="true"></div>
     <h2 id="ds-title">Document settings</h2>
-    <section class="ds-kind-sec" aria-labelledby="ds-kind-title">
-      <h3 id="ds-kind-title">Kind</h3>
-      <div class="ds-kind" id="ds-kind" role="radiogroup" aria-labelledby="ds-kind-title" aria-describedby="ds-kind-explain">
+    <section class="ds-kind-sec">
+      <div class="ds-kind" id="ds-kind" role="radiogroup" aria-label="Kind">
         <button type="button" role="radio" data-kind="document" aria-checked="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/></svg>Document</button>
         <button type="button" role="radio" data-kind="project" aria-checked="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2h8.5A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></svg>Project</button>
       </div>
-      <p class="ds-explain" id="ds-kind-explain"></p>
       <p class="ds-error" id="ds-kind-error" role="alert"></p>
     </section>
     <section class="ds-page" id="ds-page" hidden aria-labelledby="ds-page-title">
-      <div class="ds-page-row"><h3 id="ds-page-title">Page</h3><span class="ds-page-tab" id="ds-page-tab"></span><button type="button" class="ds-btn" id="ds-page-edit" title="Its title, description, icon and link picture">Details…</button></div>
+      <h3 id="ds-page-title">Page details</h3>
+      <div class="ds-page-row"><div class="ds-page-title" id="ds-page-tab"></div><p class="ds-page-desc" id="ds-page-desc"></p><button type="button" class="ds-btn" id="ds-page-edit" aria-label="Edit the page's details">Edit</button></div>
     </section>
     <section class="ds-agent" id="ds-agent" hidden aria-labelledby="ds-agent-title">
-      <h3 id="ds-agent-title">Readers</h3>
-      <label class="ds-check"><input type="checkbox" id="ds-bars-on">Readers see Erga's bars</label>
-      <p class="ds-explain">People who can't edit it see the page alone when this is off, as a site of its own.</p>
-      <label class="ds-check"><input type="checkbox" id="ds-agent-on" aria-describedby="ds-agent-explain">Readers can use their agent here</label>
-      <p class="ds-explain" id="ds-agent-explain"></p>
-      <label class="ds-check"><input type="checkbox" id="ds-llm-on">The page can call a model for its visitors</label>
-      <select class="ds-llm-model" id="ds-llm-model" aria-label="The page's model">${PAGE_LLM_MODELS.map((m) => `<option value="${m}">${MODELS[m].label}</option>`).join("")}</select>
-      <p class="ds-explain">Its script's window.ergaLLM asks the model as the visitor, who signs in first. The server's keys pay, with an hour's limit for each visitor.</p>
+      <h3 id="ds-agent-title">Viewer settings</h3>
+      <div class="ds-checks">
+        <label class="ds-check" id="ds-bars"><input type="checkbox" id="ds-bars-on">Show the Erga header bar</label>
+        <label class="ds-check" id="ds-agent-label"><input type="checkbox" id="ds-agent-on">Viewers can use the Erga agent</label>
+        <label class="ds-check" id="ds-llm" data-tip="The page's script can ask this model for each viewer (window.ergaLLM). The server pays, with an hourly limit."><input type="checkbox" id="ds-llm-on">Viewers have access to the LLM API</label>
+        <select class="ds-llm-model" id="ds-llm-model" aria-label="The model">${PAGE_LLM_MODELS.map((m) => `<option value="${m}">${MODELS[m].label}</option>`).join("")}</select>
+      </div>
       <p class="ds-error" id="ds-agent-error" role="alert"></p>
     </section>
     <section class="ds-home" id="ds-home" hidden aria-labelledby="ds-home-note">
-      <p class="ds-home-note" id="ds-home-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 11 12 4l8.5 7"/><path d="M6 9.5V20h12V9.5"/></svg>This is the homepage</p>
-      <p class="ds-explain">The site's homepage shows this document as it was at its last deploy.</p>
       <div class="ds-deploy" id="ds-deploy">
-        <div class="ds-status" id="ds-status" role="status" aria-live="polite"></div>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 11 12 4l8.5 7"/><path d="M6 9.5V20h12V9.5"/></svg>
+        <div class="ds-home-text"><b id="ds-home-note">Homepage</b><span class="ds-status" id="ds-status" role="status" aria-live="polite"></span></div>
         <button type="button" class="ds-btn" id="ds-redeploy">Deploy</button>
       </div>
-      <p class="ds-explain" id="ds-home-newer"></p>
       <p class="ds-error" id="ds-home-error" role="alert"></p>
     </section>
     <section class="ds-history" aria-labelledby="ds-history-title">
@@ -236,23 +251,30 @@ function mount(host: SettingsHost): Settings {
     footText = $("ds-foot-text"),
     olderBtn = $("ds-older"),
     histError = $("ds-hist-error");
-  const homeSec = $("ds-home"),
-    homeNewer = $("ds-home-newer");
+  const homeSec = $("ds-home");
   const statusEl = $("ds-status"),
     redeploy = $("ds-redeploy"),
     homeError = $("ds-home-error");
   const kindBox = $("ds-kind"),
-    kindExplain = $("ds-kind-explain"),
     kindError = $("ds-kind-error");
   const agentSec = $("ds-agent"),
     agentOn = $<HTMLInputElement>("ds-agent-on"),
-    agentExplain = $("ds-agent-explain"),
     agentError = $("ds-agent-error"),
     barsOn = $<HTMLInputElement>("ds-bars-on"),
     llmOn = $<HTMLInputElement>("ds-llm-on"),
     llmModel = $<HTMLSelectElement>("ds-llm-model");
 
-  // ------------------------------------------------------------ the server
+  /** A hover tip ("" removes it): the same words for a screen reader. */
+  const tip = (el: Element, text: string) => {
+    if (text) {
+      el.setAttribute("data-tip", text);
+      el.setAttribute("aria-description", text);
+    } else {
+      el.removeAttribute("data-tip");
+      el.removeAttribute("aria-description");
+    }
+  };
+  tip($("ds-llm"), $("ds-llm").dataset.tip!);
 
   // ------------------------------------------------------------ state
 
@@ -366,9 +388,11 @@ function mount(host: SettingsHost): Settings {
     const p = shownPage();
     pageSec.hidden = !p;
     if (!p) return;
-    const tab = $("ds-page-tab");
-    tab.textContent = tabTitle(p.head ?? {}, tree?.title ?? "");
-    tab.title = `${p.path}: the tab's title`;
+    const head = p.head ?? {};
+    const icon = head.icon ? headUrl(head.icon, p.path, meta("erga-pages") || `${location.origin}/`) : null;
+    $("ds-page-tab").innerHTML =
+      `${icon ? `<img class="ds-page-icon" alt="" src="${esc(icon)}">` : `<span class="ds-page-icon"></span>`}<span>${esc(tabTitle(head, tree?.title ?? ""))}</span>`;
+    $("ds-page-desc").textContent = head.description ?? "";
   }
   $("ds-page-edit").addEventListener("click", () => {
     const p = shownPage();
@@ -400,9 +424,7 @@ function mount(host: SettingsHost): Settings {
     llmModel.value = access.pageLlm.model;
     llmOn.disabled = llmModel.disabled = agentBusy;
     agentOn.disabled = access.anyoneWithLink || agentBusy;
-    agentExplain.textContent = access.anyoneWithLink
-      ? "Anyone with the link can open it, so readers have no agent here. Editors always have theirs."
-      : "People you share it with as viewers can ask their own agent about it. Their agent can read it, never change it.";
+    tip($("ds-agent-label"), access.anyoneWithLink ? "Anyone with the link can open it, so viewers have no agent here." : "");
   }
   /** One of the switches (share_document's options): the server's answer says what holds now. */
   async function setReader(options: Record<string, boolean | string>) {
@@ -503,24 +525,36 @@ function mount(host: SettingsHost): Settings {
     homeSec.hidden = !home?.isHome;
     if (!home || !home.isHome) return;
     const d = home.deploy;
-    const live = d.version != null ? ` · version ${d.version}` : "";
-    const last = d.at ? `Last deployed ${esc(clock(d.at))}${live}.` : "Not deployed yet.";
-    const line = d.state == "deploying" ? `<b>Deploying…</b>`
-      : d.state == "failed" ? `<span><b>Failed:</b> ${esc(d.error || "the deploy didn't finish.")} ${d.at ? last : ""}</span>`
-      : d.at ? `<span><b>Deployed</b> at ${esc(clock(d.at))}${live}</span>` : `<span>Not deployed yet</span>`;
-    statusEl.innerHTML = `<span class="ds-dot ${d.state}" aria-hidden="true"></span>${line}`;
+    // Each part keeps its words together, and the line wraps only between them.
+    const at = d.at
+      ? `<span>Deployed ${esc(clock(d.at))}</span>${d.version != null ? ` <span>· version ${d.version}</span>` : ""}`
+      : `<span>Not deployed yet</span>`;
+    statusEl.innerHTML =
+      d.state == "deploying"
+        ? `<span class="ds-dot deploying" aria-hidden="true"></span>Deploying…`
+        : d.state == "failed"
+          ? `<span class="ds-dot failed" aria-hidden="true"></span>Failed: ${esc(d.error || "the deploy didn't finish.")} ${d.at ? at : ""}`
+          : at;
     // Redeploy is an admin's: others see how the deploy goes, and no button.
     redeploy.hidden = !host.admin;
     const can = home.canDeploy && d.state != "deploying" && !homeBusy;
-    if (can) { redeploy.removeAttribute("aria-disabled"); redeploy.title = "Deploy the document as it is now"; }
-    else { redeploy.setAttribute("aria-disabled", "true"); redeploy.title = home.locked ? "This token has no admin power." : "A deploy is running."; }
-    redeploy.textContent = d.state == "deploying" ? "Deploying…" : "Deploy";
-    // The document has versions the live page hasn't: one plain line.
+    // The document has versions the live page hasn't: Deploy is blue, and its tip says so.
     const now = data?.current.n;
-    homeNewer.textContent =
-      d.state != "deploying" && now != null && d.version != null && now > d.version
-        ? `The document is at version ${now}: the live page is older.`
-        : "";
+    const newer = d.state != "deploying" && now != null && d.version != null && now > d.version;
+    redeploy.classList.toggle("newer", newer && can);
+    if (can) redeploy.removeAttribute("aria-disabled");
+    else redeploy.setAttribute("aria-disabled", "true");
+    tip(
+      redeploy,
+      !can
+        ? home.locked
+          ? "This token has no admin power."
+          : "A deploy is running."
+        : newer
+          ? `The document is at version ${now}: the live page is older.`
+          : "Deploy the document as it is now."
+    );
+    redeploy.textContent = d.state == "deploying" ? "Deploying…" : "Deploy";
   }
 
   /** Document or Project: the kind now, whether you may switch, and why a project can't be a document yet. */
@@ -529,17 +563,25 @@ function mount(host: SettingsHost): Settings {
     const canEdit = tree?.canEdit ?? false;
     const pages = (tree?.entries ?? []).filter((e) => e.type == "page");
     // A document has one page: a project with more can't be one until the others go (nothing is deleted for you).
-    const blocked = kind == "project" && pages.length > 1 ? `It has ${pages.length} pages, and a document has one. Delete the others first.` : null;
+    const blocked =
+      kind == "project" && pages.length > 1 ? `A document has one page. This project has ${pages.length}: delete the others first.` : null;
+    const only = tree && !canEdit ? " Only its editors can change this." : "";
     for (const b of kindBox.querySelectorAll<HTMLElement>("[data-kind]")) {
       const on = b.dataset.kind == kind;
       b.setAttribute("aria-checked", String(on));
       b.tabIndex = on ? 0 : -1;
       const off = !canEdit || !!kindBusy || (b.dataset.kind == "document" && !on && !!blocked);
       if (off) b.setAttribute("aria-disabled", "true"); else b.removeAttribute("aria-disabled");
+      const doc = b.dataset.kind == "document";
+      tip(
+        b,
+        (doc && blocked
+          ? blocked
+          : doc
+            ? "A document is one page, with its files beside it."
+            : "A project has pages, each with its own address.") + only
+      );
     }
-    kindExplain.textContent = blocked ?? (kind == "project" ? "Pages, each with its own address. The title, top left, opens them."
-      : "One page, with its files beside it. A project has more pages.");
-    if (tree && !canEdit) kindExplain.textContent += " Only its editors can change this.";
   }
   async function switchKind(want: DocKind) {
     const now = tree?.kind ?? host.kind();

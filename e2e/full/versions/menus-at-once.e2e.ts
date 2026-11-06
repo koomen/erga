@@ -1,5 +1,5 @@
 // Every menu in the bars opens fully drawn: what it shows on the first frame it is visible is what it shows a second
-// later (nothing pops in: "This is the homepage", the versions, the people it is shared with, a project's pages).
+// later (nothing pops in: the homepage's line, the versions, the people it is shared with, a project's pages).
 import type { Page } from "playwright-core";
 import { expect, servers, settle, test, until } from "../../helpers/fixtures";
 import { runTool } from "../../helpers/tools";
@@ -117,7 +117,7 @@ test("the editor's settings open fully drawn on the homepage: the note, the depl
     )
     .toBe(true);
   const looks = await firstFrame(tab.page, "#btn-settings", "#doc-settings", "settings-home");
-  expect(looks.first.text).toContain("This is the homepage");
+  expect(looks.first.text).toContain("Homepage Deployed");
   expect(looks.first.text).toContain("v3");
   same(looks);
 });

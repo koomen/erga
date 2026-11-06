@@ -1,5 +1,5 @@
 // Readers' agents (Document settings): someone a document is shared with as a viewer has no agent in its viewer, until its
-// owner ticks "Readers can use their agent here". Never on a document anyone with the link may open. Editors always have theirs.
+// owner ticks "Viewers can use the Erga agent". Never on a document anyone with the link may open. Editors always have theirs.
 import { expect, servers, test, until, type Page } from "../../helpers/fixtures";
 import { clickOn, newDoc, unique } from "./access";
 
