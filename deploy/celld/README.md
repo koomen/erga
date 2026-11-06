@@ -15,17 +15,57 @@ to Erga's code: `project.ts` only turns the release into a celld project.
 | Blobs (FILES) | R2 | celld's R2: the S3 bucket, under `fleet/r2/` |
 | The editor's files (ASSETS) | Static assets | celld's static assets: the S3 bucket, cached on the disk |
 | A page's own API (LOADER) | Worker Loader | celld's Dynamic Workers |
-| HTTPS | Cloudflare's edge | CloudFront (`cdn.ts`), then Caddy on the machine (Let's Encrypt) |
+| HTTPS | Cloudflare's edge | The app: CloudFront (`cdn.ts`), then Caddy on the machine (Let's Encrypt). The pages: Caddy only |
+| Each document's pages origin, `<id>-<owner>.<pages domain>` | A Worker route and a wildcard DNS record | A name under the machine's sslip.io name; Caddy gets a certificate for it at its first visit (on-demand TLS) |
 | view_page's browser (BROWSER) | Browser Rendering | headless Chrome on the same machine (`ERGA_CHROME`), on the loopback only |
 | HTTP caching of files kept for good (`/_home-files/`, the editor's hashed files) | Workers' own cache code | CloudFront, as each response's Cache-Control lets it |
 | The Cache API (the homepage's copy, blobs, viewer decisions) | Cloudflare's cache | celld's KV, namespace EDGE_CACHE (`cloudflare/kv-cache.ts`): celld's own Cache API always misses |
 | Secrets (SESSION_SECRET, FACTORY_KEY) | Worker secrets | Parameter Store; the machine adds them at each deploy, and the bucket keeps them encrypted with a KMS key that only the machine may use |
 
-People use two CloudFront names, `https://<id>.cloudfront.net`: one for the app, one for the documents' pages
-(PAGES_HOST). Behind them, the machine has sslip.io names, so no DNS change is necessary:
-`erga-<ip with dashes>.sslip.io` and `pages-<ip with dashes>.sslip.io`. CloudFront sends the machine's name as
-Host and its own as X-Erga-Host; Caddy passes that on as X-Forwarded-Host, so the Worker sees the CloudFront name.
-The machine's names still answer directly, without the CDN.
+People use the app at a CloudFront name, `https://<id>.cloudfront.net`. Behind it, the machine has an sslip.io name, so
+no DNS change is necessary: `erga-<ip with dashes>.sslip.io`. CloudFront sends the machine's name as Host and its own
+as X-Erga-Host; Caddy passes that on as X-Forwarded-Host, so the Worker sees the CloudFront name. The machine's name
+still answers directly, without the CDN.
+
+### Each document's pages origin
+
+As on Cloudflare, each document's page has an origin of its own (PAGES_DOMAIN):
+`https://<id>-<owner>.pages-<ip with dashes>.sslip.io`. sslip.io sends each of these names to the machine. So Erga's
+service worker works on a document's page, and the editor opens the page again offline.
+
+1. A browser opens a new name. Caddy asks the Worker, on the loopback, whether the name is a document's
+   (`GET /erga-host` as that host: 204 or 404).
+2. Only for a real document, Caddy gets a certificate for that one name from Let's Encrypt. This takes a few seconds,
+   one time for each document. Caddy keeps the certificate on the machine's disk and renews it.
+3. A name that is not a document's gets no certificate, and the browser shows a TLS error.
+
+CloudFront is not in front of the pages. CloudFront takes a name like `*.pages-....sslip.io` only with a wildcard
+certificate in ACM, and ACM issues that only to the owner of the domain's DNS. The owner of sslip.io is not us.
+CloudFront's own names (`<id>.cloudfront.net`) are one for each distribution, not one for each document. Without
+CloudFront, a page's files come from Caddy. The browser still keeps them (ETag), and blobs still come from the edge
+cache (KV).
+
+What `check.ts` showed on EC2 (2026-11-06):
+
+- Two documents opened on two origins: `https://re93nq48-koomen.pages-184-34-110-28.sslip.io` and
+  `https://tj43mabk-koomen.pages-184-34-110-28.sslip.io`.
+- Erga's service worker became active on the first page's origin. Offline, a reload showed the page and its editor.
+- Caddy got a Let's Encrypt certificate for each of the two names: 3.4 s and 3.8 s. A name that is not a document's got
+  no certificate (`tlsv1 alert internal error`).
+- The scan of the bucket found 811 files: 8 hold a secret, all 8 encrypted with the KMS key, 0 plain.
+
+Let's Encrypt's limits, and what they mean for many documents:
+
+- Let's Encrypt counts all sslip.io names as one domain: sslip.io is not on the Public Suffix List. sslip.io has a
+  larger limit, 50,000 new certificates each week, but all sslip.io users in the world share it. When they use it up,
+  a document opened for the first time gets no certificate until the limit refills (hours). The documents opened
+  before keep their certificates.
+- Each account can ask for 300 new certificates each 3 hours: 300 new documents opened in 3 hours, at most.
+- Renewals do not count against these limits.
+- Each certificate is in the public Certificate Transparency logs. So the logs show each opened document's id and its
+  owner's login. The id alone does not open the document: its page needs a signed token.
+- For many documents, use a domain of our own. Then one wildcard certificate (DNS-01) covers all pages origins, with
+  no limit and nothing in the logs, and CloudFront can be in front of the pages too.
 
 ### The edge cache
 
@@ -55,7 +95,8 @@ cookie or header is in its key. Everything else, WebSockets too, goes through to
 | Public IPv4 address | $3.65 |
 | S3 (a few GB, few requests) | under $1 |
 | KMS key (S3 Bucket Keys keep its requests few) | $1 |
-| CloudFront (two distributions; free tier: 1 TB out, 10 million requests) | $0 |
+| CloudFront (one distribution, for the app; free tier: 1 TB out, 10 million requests) | $0 |
+| Certificates for the pages origins (Let's Encrypt, on the machine's disk) | $0 |
 | KV writes of the edge cache (S3 requests; at most one each 5 s of traffic) | under $3 |
 
 Total: about $19 each month. Every resource has the tag `erga=aws-provider`, but for CloudFront's cache policy
@@ -122,8 +163,9 @@ To turn on the agents, an admin pastes the Anthropic key on
 - A deploy reaches the machine about 10 s after `celld deploy`. An editor that
   opens in those seconds can fail to load; a reload fixes it.
 - `bun erga` has no celld target: `up` is the deploy.
-- All documents share one pages host (PAGES_HOST). Cloudflare gives each
-  document its own host. A shared host has no service worker, so the editor
-  cannot open a page again offline. The editor's console shows one 404 for
-  `/erga-sw.js`. A host for each document needs a certificate for each one
-  (Caddy's on-demand TLS).
+- The first visit to a document's page waits for its certificate: a few seconds. See "Each document's pages origin"
+  for Let's Encrypt's limits.
+- sslip.io gives a name the first IP address in it, from the left. An owner whose login has four numbers in a row
+  (`a-10-0-0-1`) gets a pages name that goes to that address, not to the machine: that owner's pages do not open.
+- A new machine has a new IP address, so each pages origin has a new name: the browsers' offline copies of the old
+  names are not used again.
