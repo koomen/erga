@@ -1,23 +1,17 @@
-// Scratch documents (/scratch, server/documents/make.ts): the documents page's line about them, and the note on a scratch
-// document's page, with the time it has left and, for its owner, Save (client/inline/scratch.ts).
+// Scratch documents (/scratch, server/documents/make.ts): the tip of + Scratch on the documents page, and Save on a
+// scratch document's page, for its owner (client/inline/scratch.ts). Both tips have the card of client/inline/scratch.css.
 
 import { inlineCall, inlineStyle } from "./inline.ts";
 
-/**
- * The documents page's line, beside + Scratch. A scratch document goes `hours` after it's made (the setting
- * delete_docs_after_hours, as unedited documents do); null: never.
- */
-export const scratchLine = (hours: number | null) =>
-  hours == null
-    ? "A scratch document is not on your list, and is never deleted."
-    : `A scratch document is not saved, and goes away after ${hours} ${hours == 1 ? "hour" : "hours"}.`;
+/** Unsaved, a scratch document goes `hours` after it's made (the setting delete_docs_after_hours). */
+const deleted = (hours: number) => `Unsaved scratch docs are deleted in ${hours}h`;
 
-/** The note on a scratch document's page: `expires`, when it goes (null: never); `save`, whether this person may save it (its owner). */
-export const scratchNote = (doc: string, expires: number | null, save: boolean) =>
-  `<aside id="erga-scratch" class="erga-scratch" aria-label="Scratch document"><p>${
-    expires == null
-      ? "<b>A scratch document</b> is not on your list, and is never deleted."
-      : `<b>A scratch document</b> is not saved, and goes away <span id="erga-scratch-left"></span>.`
-  }<small id="erga-scratch-said" role="status"></small></p>${
-    save ? `<button type="button" id="erga-scratch-save">Save</button>` : ""
-  }</aside><style>${inlineStyle("scratch")}</style><script>${inlineCall("scratch", doc, expires)}</script>`;
+/** Save's tip: `hours`, as deleted; null: never deleted, and the tip says nothing of it. */
+export const scratchTip = (hours: number | null) => `Save to your documents list.${hours == null ? "" : ` ${deleted(hours)}`}`;
+
+/** The tip of + Scratch on the documents page: the words of Save's tip about deletion; `hours` as scratchTip. */
+export const scratchMakeTip = (hours: number | null) => (hours == null ? "Not on your documents list until you save it" : deleted(hours));
+
+/** Save on a scratch document's page, for its owner, in the quick actions: `hours`, as scratchTip. */
+export const scratchSave = (doc: string, hours: number | null) =>
+  `<style>${inlineStyle("scratch")}</style><script>${inlineCall("scratch", doc, scratchTip(hours))}</script>`;

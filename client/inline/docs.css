@@ -68,5 +68,6 @@
   @media (prefers-color-scheme: dark) { :root .erga-new-menu { --nm-bg: #1f1f23; --nm-fg: #ececf1; --nm-soft: #8f8f99; --nm-ring: #2f2f35; --nm-hover: rgba(161, 161, 169, .16); } }
   .make { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
   .make-buttons { display: flex; gap: 8px; }
-  .pill.scratch { text-decoration: none; }
-  .scratch-note { margin: 0; max-width: 17rem; font-size: 12px; line-height: 1.35; text-align: right; color: var(--soft); }
+  .pill.scratch { position: relative; text-decoration: none; }
+  /* Its tip (client/inline/scratch.css) opens to the left: the button is at the page's right. */
+  .pill.scratch::after { left: auto; right: 0; }

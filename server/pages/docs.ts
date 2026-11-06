@@ -6,7 +6,7 @@ import { appPage, ICON, link, withEdit } from "./chrome.ts";
 import { homeButton, pageBars } from "./bars.ts";
 import { esc } from "../../shared/html.ts";
 import { newDocButton, PLUS } from "./templates.ts";
-import { scratchLine } from "./scratch.ts";
+import { scratchMakeTip } from "./scratch.ts";
 import { inlineScript, inlineStyle } from "./inline.ts";
 import { plural } from "../../shared/time.ts";
 import { addressOf, HOME_ADDRESS, HOME_OWNER } from "../../document/names.ts";
@@ -73,13 +73,12 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   const count = plural(docs.length, "document");
   return appPage(
     "Documents",
-    inlineStyle("docs"),
+    inlineStyle("docs") + inlineStyle("scratch"),
     `${pageBars(session, [{ label: "Documents" }], { docs: homeButton(link(HOME_ADDRESS, session)) })}<main>
   <header>
     <div><h1>Documents</h1><p class="sub" id="docs-count"${docs.length ? "" : " hidden"}>${count}</p></div>
     <div class="make">
-      <div class="make-buttons">${newDocButton("pill", "New")}<a class="pill scratch" href="${esc(link("/scratch", session))}" draggable="false">${PLUS}Scratch</a></div>
-      <p class="scratch-note">${scratchLine(hours)}</p>
+      <div class="make-buttons">${newDocButton("pill", "New")}<a class="pill scratch erga-scratch-tip" href="${esc(link("/scratch", session))}" draggable="false" data-tip="${esc(scratchMakeTip(hours))}" aria-description="${esc(scratchMakeTip(hours))}">${PLUS}Scratch</a></div>
     </div>
   </header>
   <div class="labels" aria-hidden="true"${docs.length ? "" : " hidden"}><span>Name</span><span>Edited</span><span></span></div>

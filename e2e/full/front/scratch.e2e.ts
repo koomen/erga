@@ -1,5 +1,5 @@
 // Scratch documents (/scratch): + Scratch on Documents makes one and opens it in the editor at a random address; it
-// isn't on the list, its page says when it goes, and Save makes it a saved document. Unsaved, it goes on time, edited or
+// isn't on the list, an orange Save leads its quick actions (its tip says when it goes, as the tip of + Scratch does), and Save makes it a saved document. Unsaved, it goes on time, edited or
 // not. Signed out, /scratch signs in first; another site's link asks first. An agent does the same with its tools.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -14,7 +14,7 @@ await servers.script();
 
 const SHOTS = join(ROOT, ".e2e/shots/scratch");
 
-test("+ Scratch makes a scratch document, off the list, whose page says when it goes; Save keeps it, at the address of its heading", async ({
+test("+ Scratch, whose tip says when a scratch document goes, makes one, off the list, with an orange Save first in its quick actions, whose tip says the same; Save keeps it, at the address of its heading", async ({
   tab,
 }) => {
   const p = await person(await servers.script());
@@ -22,16 +22,52 @@ test("+ Scratch makes a scratch document, off the list, whose page says when it 
   mkdirSync(SHOTS, { recursive: true });
   await page.setViewportSize({ width: 1200, height: 760 });
   await page.goto(`${p.base}/auth/github?as=${p.login}&next=/docs`);
-  expect(await page.locator(".scratch-note").innerText()).toBe("A scratch document is not saved, and goes away after 24 hours.");
+  // No line under the buttons: + Scratch says when a scratch document goes in its tip, on hover or focus, with Save's card and words.
+  const make = page.locator("a.pill.scratch");
+  expect(await page.locator(".scratch-note").count()).toBe(0);
+  const tipOf = (b: typeof make) =>
+    b.evaluate((b) => {
+      const s = getComputedStyle(b, "::after");
+      return { text: s.content, shown: s.opacity, card: [s.backgroundColor, s.borderRadius, s.fontSize, s.boxShadow].join(" ") };
+    });
+  const deleted = '"Unsaved scratch docs are deleted in 24h"';
+  expect(await make.getAttribute("aria-description")).toBe("Unsaved scratch docs are deleted in 24h");
+  expect((await tipOf(make)).shown).toBe("0");
   await page.screenshot({ path: join(SHOTS, "docs.png") });
+  await make.hover();
+  await expect.poll(async () => (await tipOf(make)).shown).toBe("1");
+  const made = await tipOf(make);
+  expect(made.text).toBe(deleted);
+  await page.screenshot({ path: join(SHOTS, "docs-tip.png") });
+  await page.mouse.move(600, 500);
+  await expect.poll(async () => (await tipOf(make)).shown).toBe("0");
+  await page.keyboard.press("Tab");
+  await make.focus();
+  await expect.poll(async () => (await tipOf(make)).shown).toBe("1");
 
-  await page.click("a.pill.scratch");
+  await make.click();
   await page.waitForURL(new RegExp(`/${p.login}/[a-z0-9]{8}\\?edit$`));
   const id = new URL(page.url()).pathname.split("/")[2];
   const ed = editor(page, { address: `${p.base}/${p.login}/${id}`, dir: "", file: "" });
   await ed.loaded();
-  const note = page.locator("#erga-scratch");
-  await expect.poll(() => note.innerText()).toContain("A scratch document is not saved, and goes away in 24 hours.");
+  // No note over the page: Save is the first of the editor's quick actions, orange, and its tip shows on hover.
+  expect(await page.locator("#erga-scratch").count()).toBe(0);
+  const save = page.locator("#quick .erga-scratch-save");
+  await expect.poll(() => save.isVisible()).toBe(true);
+  expect(await save.innerText()).toBe("Save");
+  expect(await page.locator("#quick .quick-inner > *:visible").first().getAttribute("class")).toBe("erga-scratch-save");
+  expect(await save.evaluate((b) => getComputedStyle(b).backgroundColor)).toBe("rgb(234, 88, 12)");
+  const tip = () =>
+    save.evaluate((b) => {
+      const s = getComputedStyle(b, "::after");
+      return { text: s.content, shown: s.opacity };
+    });
+  expect((await tip()).shown).toBe("0");
+  await save.hover();
+  await expect.poll(tip).toEqual({ text: `"Save to your documents list. ${deleted.slice(1)}`, shown: "1" });
+  expect((await tipOf(save)).card).toBe(made.card);
+  await page.screenshot({ path: join(SHOTS, "tip.png") });
+  await page.mouse.move(600, 500);
   // Not on the person's list, nor their agent's.
   expect(await p.docs()).not.toContain(id);
   expect(((await p.tool("list_documents")).result as { id: string }[]).map((d) => d.id)).not.toContain(id);
@@ -47,8 +83,8 @@ test("+ Scratch makes a scratch document, off the list, whose page says when it 
   `);
   await settle(page);
   await page.screenshot({ path: join(SHOTS, "scratch.png") });
-  await page.click("#erga-scratch-save");
-  await expect.poll(() => note.count()).toBe(0);
+  await save.click();
+  await expect.poll(() => page.locator(".erga-scratch-save").count()).toBe(0);
   await expect.poll(() => new URL(page.url()).pathname).toBe(`/${p.login}/groceries`);
   expect(new URL(page.url()).search).toBe("?edit");
   await page.screenshot({ path: join(SHOTS, "saved.png") });
@@ -57,10 +93,37 @@ test("+ Scratch makes a scratch document, off the list, whose page says when it 
   expect(listed?.expires).toBeUndefined();
   expect(p.row(id, await p.docs())).toContain(`href="/${p.login}/groceries?edit"`);
 
-  // Opened again, it is a saved document: no note.
+  // Opened again, it is a saved document: no Save.
   await page.goto(`${p.base}/${p.login}/groceries`);
   await settle(page);
-  expect(await page.locator("#erga-scratch").count()).toBe(0);
+  expect(await page.locator(".erga-scratch-save").count()).toBe(0);
+});
+
+test("viewed, a scratch document has Save first in the viewer's quick actions; the pencil's editor has it too, and Save there keeps it", async ({
+  tab,
+}) => {
+  const p = await person(await servers.script());
+  const page = tab.page;
+  await page.setViewportSize({ width: 1200, height: 760 });
+  await page.goto(`${p.base}/auth/github?as=${p.login}&next=/docs`);
+  const at = ((await p.get("/scratch")).headers.get("location") ?? "").replace(/\?edit$/, "");
+  const id = at.split("/")[2];
+  await page.goto(`${p.base}${at}`);
+  const view = page.locator(".erga-view-buttons .erga-scratch-save");
+  await expect.poll(() => view.isVisible()).toBe(true);
+  expect(await page.locator(".erga-view-buttons .quick-inner > *").first().getAttribute("class")).toBe("erga-scratch-save");
+  await view.hover();
+  await expect.poll(() => view.evaluate((b) => getComputedStyle(b, "::after").opacity)).toBe("1");
+  await page.screenshot({ path: join(SHOTS, "viewer.png") });
+
+  await page.locator(".erga-edit-button").click();
+  const ed = editor(page, { address: `${p.base}${at}`, dir: "", file: "" });
+  await ed.loaded();
+  const save = page.locator("#quick .erga-scratch-save");
+  await expect.poll(() => save.isVisible()).toBe(true);
+  await save.click();
+  await expect.poll(() => page.locator(".erga-scratch-save").count()).toBe(0);
+  await until(async () => p.row(id, await p.docs()) != "(not listed)", 5000, "the saved document is on the list");
 });
 
 test("an unsaved scratch document goes on time, edited or not; a saved one stays", async () => {
@@ -140,18 +203,18 @@ test("scratch documents follow delete_docs_after_hours: one made while it is 7 g
   };
   await resetting(s, "delete_docs_after_hours", async () => {
     expect((await a.call("set_setting", { key: "delete_docs_after_hours", value: 7 })).status).toBe(200);
-    expect(await p.docs()).toContain("A scratch document is not saved, and goes away after 7 hours.");
+    expect(await p.docs()).toContain(`data-tip="Unsaved scratch docs are deleted in 7h"`);
     expect(await madeFor()).toBe(7);
-    expect((await scratch()).page).toContain('id="erga-scratch-left"');
+    expect((await scratch()).page).toContain("Unsaved scratch docs are deleted in 7h");
 
     expect((await a.call("set_setting", { key: "delete_docs_after_hours", value: null })).status).toBe(200);
     const docs = await p.docs();
-    expect(docs).toContain("A scratch document is not on your list, and is never deleted.");
-    expect(docs).not.toContain("goes away after");
+    expect(docs).toContain(`data-tip="Not on your documents list until you save it"`);
+    expect(docs).not.toContain("Unsaved scratch docs are deleted");
     expect(await madeFor()).toBe(null);
     const never = await scratch();
-    expect(never.page).toContain("<b>A scratch document</b> is not on your list, and is never deleted.");
-    expect(never.page).not.toContain('id="erga-scratch-left"');
+    expect(never.page).toContain("Save to your documents list.");
+    expect(never.page).not.toContain("Unsaved scratch docs are deleted");
     expect(p.row(never.id, docs)).toBe("(not listed)");
   });
 });

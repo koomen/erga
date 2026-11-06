@@ -1,38 +1,56 @@
-// A scratch document's note (server/pages/scratch.ts), on its page in the viewer and the editor alike: how long it has
-// left, counted down each minute (none if it is never deleted), and Save (its owner's), which keeps it (save_document). Saved, the note goes, and the
-// address bar takes the document's new address (the editor follows a rename by itself; the viewer doesn't).
+// A scratch document's Save (server/pages/scratch.ts), for its owner: an orange button at the start of the quick actions, in
+// the viewer's bar and the editor's (its controls' template, and the controls if they are made already). Its tip says what
+// it does (`tip`). A click keeps the document (save_document); saved, both buttons go, and the address bar takes the
+// document's new address (the editor follows a rename by itself; the viewer doesn't). An error shows in the tip.
 
-export default function scratch(doc: string, expires: number | null): void {
-  const note = document.getElementById("erga-scratch");
-  const left = document.getElementById("erga-scratch-left");
-  if (!note) return;
-  const show = () => {
-    if (!left || expires == null) return;
-    const min = Math.ceil((expires - Date.now()) / 60000);
-    const hours = Math.round(min / 60);
-    left.textContent =
-      min <= 0 ? "in a moment" : min < 60 ? `in ${min} minute${min == 1 ? "" : "s"}` : `in ${hours} hour${hours == 1 ? "" : "s"}`;
+export default function scratch(doc: string, tip: string): void {
+  const make = () => {
+    const b = Object.assign(document.createElement("button"), { type: "button", className: "erga-scratch-save", textContent: "Save" });
+    b.dataset.tip = tip;
+    b.setAttribute("aria-description", tip);
+    return b;
   };
-  show();
-  const timer = expires == null ? 0 : setInterval(show, 30_000);
-  const save = document.getElementById("erga-scratch-save") as HTMLButtonElement | null;
-  save?.addEventListener("click", async () => {
-    save.disabled = true;
-    const said = document.getElementById("erga-scratch-said")!;
-    said.textContent = "Saving…";
+  const add = (root: ParentNode | null | undefined, bar: string) => root?.querySelector(`${bar} .quick-inner`)?.prepend(make());
+  add(document, ".erga-view-buttons");
+  add((document.getElementById("erga-shell") as HTMLTemplateElement | null)?.content, "#quick");
+  add(document.getElementById("erga-editor"), "#quick");
+  // (One listener for all: the editor's controls are made from the template later, and a copy has no listeners.)
+  document.addEventListener("click", (e) => (e.target as Element | null)?.closest?.(".erga-scratch-save") && save());
+  const all = () => [
+    ...document.querySelectorAll<HTMLButtonElement>(".erga-scratch-save"),
+    ...((document.getElementById("erga-shell") as HTMLTemplateElement | null)?.content.querySelectorAll<HTMLButtonElement>(
+      ".erga-scratch-save"
+    ) ?? []),
+  ];
+  const show = (text: string, failed: boolean) =>
+    all().forEach((b) => {
+      b.dataset.tip = text;
+      b.classList.toggle("failed", failed);
+    });
+  let busy = false;
+  async function save() {
+    if (busy) return;
+    busy = true;
+    all().forEach((b) => {
+      b.disabled = true;
+      b.textContent = "Saving…";
+    });
     const r = await fetch("/api/tools/save_document", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ document: doc }),
     }).catch(() => null);
     const body = r ? await r.json().catch(() => ({})) : {};
+    busy = false;
     if (!r?.ok || body.ok === false) {
-      said.textContent = body.error || "Couldn't reach the server: try again.";
-      save.disabled = false;
+      all().forEach((b) => {
+        b.disabled = false;
+        b.textContent = "Save";
+      });
+      show(body.error || "Couldn't reach the server: try again.", true);
       return;
     }
-    clearInterval(timer);
-    note.remove();
+    all().forEach((b) => b.remove());
     const address = body.result?.saved?.address;
     const meta = document.querySelector<HTMLMetaElement>('meta[name="erga-address"]');
     if (typeof address == "string" && meta && !document.body.classList.contains("erga-editing")) {
@@ -40,5 +58,5 @@ export default function scratch(doc: string, expires: number | null): void {
       const here = ergaPageAddress();
       if (location.pathname != here) history.replaceState(history.state, "", here + location.search + location.hash);
     }
-  });
+  }
 }
