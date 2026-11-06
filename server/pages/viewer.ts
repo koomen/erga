@@ -121,7 +121,10 @@ export function viewerPage(o: {
   edit: string;
   /** Who you are (server/pages/account-menu.ts, accountHtml): at the right of the buttons' bar. */
   corner: string;
-  /** The version the page shows, for someone signed in: it follows each change (client/inline/viewer-live.ts). */
+  /**
+   * The version the page shows, for someone signed in: it follows each change (client/inline/viewer-live.ts). In a meta,
+   * never in a script: the page's build (server/live.ts) is its scripts, and one that changed reloads an open editor.
+   */
   live?: string;
   /** A project's address, for someone signed in: its crumb opens its tree (client/inline/viewer-tree.ts). */
   project?: string;
@@ -152,7 +155,7 @@ ${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(sessio
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
   const bars = barsHtml({ session, title: o.landing ? null : o.title, project: !!o.project, full: true, edit: o.edit, corner: o.corner });
   const after = `
-${bars}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<script>${inlineCall("viewer-live", `/d/${o.docId}`, o.live)}</script>` : ""}${o.project && session && !o.landing ? `<script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, o.title, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
+${bars}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}"><script>${inlineCall("viewer-live", `/d/${o.docId}`)}</script>` : ""}${o.project && session && !o.landing ? `<meta name="erga-title" content="${esc(o.title)}"><script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
 `;
   return { before, after };
 }
