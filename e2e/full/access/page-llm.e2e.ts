@@ -43,7 +43,7 @@ const asOwner = (root: string, name: string, args: Record<string, unknown>) =>
     body: JSON.stringify(args),
   }).then(async (r) => ({
     status: r.status,
-    body: (await r.json()) as { result?: { access?: { pageLlm?: { on: boolean; model: string } } } },
+    body: (await r.json()) as { result?: { access?: { pageLlm?: { on: boolean; model: string; who: string } } } },
   }));
 
 test("off at first; the owner turns it on in Document settings, and the page's script gets the model's text", async ({ tab }) => {
@@ -61,10 +61,18 @@ test("off at first; the owner turns it on in Document settings, and the page's s
   await page.locator("#ds-llm-on").waitFor();
   expect(await page.locator("#ds-llm-on").isChecked()).toBe(false);
   expect(await page.locator("#ds-llm-model").inputValue()).toBe("haiku");
+  // Who may call it: only while it's on; signed-in viewers, as it starts.
+  expect(await page.locator("#ds-llm-who").isVisible()).toBe(false);
   await page.locator("#ds-llm-on").click();
   await expect
     .poll(async () => (await asOwner(root, "ls", { document: made.id })).body.result?.access?.pageLlm)
-    .toMatchObject({ on: true, model: "haiku" });
+    .toMatchObject({ on: true, model: "haiku", who: "signed_in" });
+  await expect.poll(() => page.locator("#ds-llm-who").isVisible()).toBe(true);
+  expect(await page.locator("#ds-llm-who").inputValue()).toBe("signed_in");
+  await page.locator("#ds-llm-who").selectOption("all");
+  await expect
+    .poll(async () => (await asOwner(root, "ls", { document: made.id })).body.result?.access?.pageLlm)
+    .toMatchObject({ on: true, model: "haiku", who: "all" });
   await page.goto(address);
   expect(await status(page)).toEqual({ on: true, model: "Haiku 5.5", signedIn: true });
   expect(await ask(page, '@script [{"text": "Hello from the model."}]')).toEqual({ text: "Hello from the model." });
@@ -118,6 +126,27 @@ test("signed out: sign_in, and the viewer shows one sign-in dialog, which comes 
   const signIn = page.waitForRequest((r) => r.isNavigationRequest() && new URL(r.url()).pathname == "/auth/github");
   await page.locator("erga-sign-in a.provider.github").click();
   expect(new URL((await signIn).url()).searchParams.get("next")).toBe(path + "#part");
+});
+
+test("all viewers: someone signed out may call the model of a document anyone may open; signed-in viewers only: sign_in", async ({
+  tab,
+}) => {
+  const page = tab.page;
+  const root = (await servers.script()).root;
+  const made = await newDoc(root);
+  const path = new URL(root + made.at).pathname;
+  expect((await asOwner(root, "share_document", { document: made.id, page_llm: true, page_llm_who: "all" })).status).toBe(200);
+  expect((await asOwner(root, "share_document", { document: made.id, login: "*", role: "viewer" })).status).toBe(200);
+  const url = new URL(root);
+  await page.context().addCookies([{ name: `erga_signed_out_${url.port}`, value: "1", domain: url.hostname, path: "/" }]);
+  await page.goto(root + path);
+  expect(await status(page)).toEqual({ on: true, model: "Haiku 5.5", signedIn: false });
+  expect(await ask(page, '@script [{"text": "Hello, guest."}]')).toEqual({ text: "Hello, guest." });
+  expect((await signInState(page)).open).toBeFalsy();
+  // Signed-in viewers only: the same call gets sign_in, and the dialog.
+  expect((await asOwner(root, "share_document", { document: made.id, page_llm_who: "signed_in" })).status).toBe(200);
+  expect((await ask(page, "Hi")).code).toBe("sign_in");
+  await expect.poll(async () => (await signInState(page)).open).toBe(true);
 });
 
 test("a visitor over the hour's limit gets limit", async ({ tab }) => {

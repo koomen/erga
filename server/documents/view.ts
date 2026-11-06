@@ -48,6 +48,9 @@ import {
   withEdit,
 } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
+import { pageToken } from "../home/index.ts";
+
+const HALF_HOUR = 1_800_000;
 import { sha256 } from "../../shared/bytes.ts";
 import { addressOf, HOME_OWNER } from "../../document/names.ts";
 
@@ -340,7 +343,13 @@ async function render(
   // (signed in, with a role here), and Erga's bars over the page.
   const reader = canEdit ? { agent: true, bars: true } : await dir.readerOptions(d.id);
   const agent = hasAgent(session) && (canEdit || (roleMay(d.role, "open") && reader.agent));
-  const meta = `<meta name="erga-address" content="${esc(address)}"><meta name="erga-page" content="${esc(d.file)}"><meta name="erga-pages" content="${esc(files)}">` + (canEdit && session
+  // Someone signed out: the page's token, for its model where the owner lets all viewers call it (agents/page-llm.ts).
+  // Made at the start of a half hour, so the page, and its ETag, stay the same for a while.
+  const llmToken = session ? "" : await pageToken(platform.secret, d.id, Math.floor(Date.now() / HALF_HOUR) * HALF_HOUR);
+  const meta =
+    `<meta name="erga-address" content="${esc(address)}"><meta name="erga-page" content="${esc(d.file)}"><meta name="erga-pages" content="${esc(files)}">` +
+    (llmToken ? `<meta name="erga-llm-token" content="${esc(llmToken)}">` : "") +
+    (canEdit && session
       ? `<meta name="erga-base" content="/d/${d.id}">${canShare ? `<meta name="erga-share" content="owner">` : ""}${accountMeta(session, admin && !session.agent)}`
     : "");
   const shell = viewerPage({

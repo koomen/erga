@@ -7,7 +7,7 @@
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Base64 } from "effect/encoding";
-import { ANYONE, type DocRow, type Grant, newDocId, NO_WRITE } from "../directory/index.ts";
+import { ANYONE, type DocRow, type Grant, newDocId, NO_WRITE, PAGE_LLM_WHO, type PageLlmWho } from "../directory/index.ts";
 import { forgetDecisions, makeDoc, startingFiles } from "../documents/index.ts";
 import { TEMPLATES, templateById } from "../pages/index.ts";
 import type { FileData } from "../../document/document.ts";
@@ -319,6 +319,11 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
           description: "OpenAI's only where the server has an OpenAI key (ls: access.pageLlm.models).",
         })
       ),
+      page_llm_who: Schema.optionalKey(
+        Schema.Literals(PAGE_LLM_WHO).annotate({
+          description: "Who may call it: signed_in viewers, or all (signed out too, with a smaller limit).",
+        })
+      ),
     }),
     run: async (args, caller) => {
       const { dir } = caller;
@@ -327,9 +332,10 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         .replace(/^@/, "");
       // Roles are the owner's; the readers' options, anyone's who may edit it.
       const doc = await findDocument(caller, args.document, login ? "share" : "edit");
-      if (!login && args.reader_agent == null && args.reader_bars == null && args.page_llm == null && args.page_llm_model == null)
+      const llm = args.page_llm != null || args.page_llm_model != null || args.page_llm_who != null;
+      if (!login && args.reader_agent == null && args.reader_bars == null && !llm)
         throw new OperationError({
-          message: "Give a login and a role, reader_agent, reader_bars, page_llm or page_llm_model.",
+          message: "Give a login and a role, reader_agent, reader_bars, page_llm, page_llm_model or page_llm_who.",
           status: 400,
         });
       if (!login != !args.role)
@@ -351,10 +357,11 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         });
       if (args.reader_agent != null) await dir.setReaderOption(doc.id, "agent", args.reader_agent === true);
       if (args.reader_bars != null) await dir.setReaderOption(doc.id, "bars", args.reader_bars === true);
-      if (args.page_llm != null || args.page_llm_model != null) {
+      if (llm) {
         const had = await dir.pageLlm.setting(doc.id);
         const model = args.page_llm_model ?? (had.model && isPageLlmModel(had.model) ? had.model : DEFAULT_PAGE_LLM_MODEL);
-        await dir.pageLlm.set(doc.id, args.page_llm == null ? had.on : args.page_llm === true, String(model));
+        const on = args.page_llm == null ? had.on : args.page_llm === true;
+        await dir.pageLlm.set(doc.id, { on, model: String(model), who: (args.page_llm_who as PageLlmWho | undefined) ?? had.who });
       }
       const owner = !!login || (await dir.may(caller.who, "share", doc));
       return { document: described(doc, caller), ...(owner ? await accessOf(caller, doc) : await readersOf(caller, doc)) };
@@ -445,7 +452,7 @@ export async function readersOf(caller: Caller, doc: DocRow) {
   return {
     readerAgent: readers.agent,
     readerBars: readers.bars,
-    pageLlm: { on: llm.on, model: llm.model ?? DEFAULT_PAGE_LLM_MODEL, models },
+    pageLlm: { on: llm.on, model: llm.model ?? DEFAULT_PAGE_LLM_MODEL, models, who: llm.who },
     anyoneWithLink: permissions.some((p) => p.login == ANYONE),
   };
 }

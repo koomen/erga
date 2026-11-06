@@ -13,7 +13,8 @@
 //   - Viewer settings, for anyone who may edit it (their state from ls's access): whether the people who view it, and
 //     can't edit it, see Erga's header bar (share_document's reader_bars; on at first), and whether they may use the
 //     Erga agent on it (reader_agent). The agent is off, and not to be turned on, while anyone with the link may open
-//     it. And whether its page may call a model as its visitor, and which (page_llm, page_llm_model: window.ergaLLM).
+//     it. And whether its page may call a model as its visitor, which, and for whom: signed-in viewers or all of them
+//     (page_llm, page_llm_model, page_llm_who: window.ergaLLM).
 //   - Homepage, only on the homepage: one line, with its own domain (a link) when it has one, with how its deploy is going and Deploy (admins), which is blue when
 //     the document is newer than the live page. Nothing deploys by itself. The homepage is chosen on /admin
 //     (the landing_document setting), never here.
@@ -65,7 +66,7 @@ type Access = {
   readerAgent: boolean;
   readerBars: boolean;
   /** models: the ones the owner may choose now (Claude's, and OpenAI's where the server has a key). */
-  pageLlm: { on: boolean; model: string; models: string[] };
+  pageLlm: { on: boolean; model: string; models: string[]; who: "signed_in" | "all" };
   anyoneWithLink: boolean;
 };
 interface Doc extends Tree {
@@ -175,11 +176,13 @@ span.ds-page-icon { background: color-mix(in srgb, var(--chrome) 35%, transparen
 .ds-check input { margin: 0; width: 15px; height: 15px; accent-color: var(--caret); cursor: inherit; }
 .ds-check:has(input:disabled) { color: var(--chrome); cursor: default; }
 .ds-check input:disabled { opacity: 0.55; }
-.ds-llm-model { margin: -2px 0 0 23px; min-width: 150px; height: 28px; padding: 0 26px 0 9px; border: 1px solid var(--rule); border-radius: 7px; color: var(--fg); font: 12.5px var(--font-text); cursor: pointer;
+.ds-llm-opts { display: flex; flex-wrap: wrap; gap: 8px; margin: -2px 0 0 23px; }
+.ds-llm-model { min-width: 150px; height: 28px; padding: 0 26px 0 9px; border: 1px solid var(--rule); border-radius: 7px; color: var(--fg); font: 12.5px var(--font-text); cursor: pointer;
   appearance: none; -webkit-appearance: none; background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1a9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E") no-repeat right 7px center / 13px; }
 .ds-llm-model:hover:not(:disabled) { border-color: color-mix(in srgb, var(--chrome) 55%, var(--rule)); }
 .ds-llm-model:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 .ds-llm-model:disabled { opacity: 0.55; cursor: default; }
+.ds-llm-model[hidden] { display: none; }
 /* The homepage, only on the homepage: one line, and Deploy. */
 .ds-deploy { display: flex; align-items: center; gap: 10px; }
 .ds-deploy > svg { flex: none; align-self: flex-start; margin-top: 1px; width: 16px; height: 16px; fill: none; stroke: var(--caret); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -253,7 +256,10 @@ function mount(host: SettingsHost): Settings {
         <label class="ds-check" id="ds-bars"><input type="checkbox" id="ds-bars-on">Show the Erga header bar</label>
         <label class="ds-check" id="ds-agent-label"><input type="checkbox" id="ds-agent-on">Viewers can use the Erga agent</label>
         <label class="ds-check" id="ds-llm" data-tip="The page's script can ask this model for each viewer (window.ergaLLM). The server pays, with an hourly limit."><input type="checkbox" id="ds-llm-on">Viewers have access to the LLM API</label>
-        <select class="ds-llm-model" id="ds-llm-model" aria-label="The model"></select>
+        <div class="ds-llm-opts">
+          <select class="ds-llm-model" id="ds-llm-who" aria-label="Who may use it" hidden><option value="signed_in">Signed-in viewers</option><option value="all">All viewers</option></select>
+          <select class="ds-llm-model" id="ds-llm-model" aria-label="The model"></select>
+        </div>
       </div>
       <p class="ds-error" id="ds-agent-error" role="alert"></p>
     </section>
@@ -290,7 +296,8 @@ function mount(host: SettingsHost): Settings {
     agentError = $("ds-agent-error"),
     barsOn = $<HTMLInputElement>("ds-bars-on"),
     llmOn = $<HTMLInputElement>("ds-llm-on"),
-    llmModel = $<HTMLSelectElement>("ds-llm-model");
+    llmModel = $<HTMLSelectElement>("ds-llm-model"),
+    llmWho = $<HTMLSelectElement>("ds-llm-who");
 
   /** A hover tip ("" removes it): the same words for a screen reader. */
   const tip = (el: Element, text: string) => {
@@ -454,7 +461,10 @@ function mount(host: SettingsHost): Settings {
     const shown = models.includes(model) ? models : [model, ...models];
     if ([...llmModel.options].map((o) => o.value).join() != shown.join()) llmModel.innerHTML = modelOptions(shown);
     llmModel.value = model;
-    llmOn.disabled = llmModel.disabled = agentBusy;
+    llmWho.value = access.pageLlm.who;
+    // Who may call it: only while it's on.
+    llmWho.hidden = !access.pageLlm.on;
+    llmOn.disabled = llmModel.disabled = llmWho.disabled = agentBusy;
     agentOn.disabled = access.anyoneWithLink || agentBusy;
     tip($("ds-agent-label"), access.anyoneWithLink ? "Anyone with the link can open it, so viewers have no agent here." : "");
   }
@@ -473,8 +483,10 @@ function mount(host: SettingsHost): Settings {
   }
   agentOn.addEventListener("change", () => setReader({ reader_agent: agentOn.checked }));
   barsOn.addEventListener("change", () => setReader({ reader_bars: barsOn.checked }));
+  // Each sends only its own change: a model the server's keys no longer run stays chosen (share_document refuses it).
   llmOn.addEventListener("change", () => setReader({ page_llm: llmOn.checked }));
   llmModel.addEventListener("change", () => setReader({ page_llm_model: llmModel.value }));
+  llmWho.addEventListener("change", () => setReader({ page_llm_who: llmWho.value }));
 
   /** Edit on a version: a copy of it becomes the current version (the previous current one stays a version). */
   let restoring: string | null = null;

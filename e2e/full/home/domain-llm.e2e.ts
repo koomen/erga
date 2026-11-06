@@ -35,7 +35,7 @@ async function site() {
   const { id } = await publish(server, await adminToken(server), files, { title: "Home" });
   expect((await setLanding(server, id)).error).toBeUndefined();
   await expect.poll(async () => (await home(server, id)).deploy.state, { timeout: 10_000 }).toBe("deployed");
-  expect((await runTool(server.root, "share_document", { document: id, page_llm: true })).error).toBeUndefined();
+  expect((await runTool(server.root, "share_document", { document: id, page_llm: true, page_llm_who: "all" })).error).toBeUndefined();
   return { server, id };
 }
 
@@ -155,4 +155,18 @@ test("on its own domain, /_erga/ is Erga's: the model for the homepage only, a p
   const session = (await get(server, `/api/llm?document=${id}`).then((r) => r.json())) as { signedIn: boolean };
   expect(session.signedIn).toBe(true);
   expect(JSON.parse((await onHome(server, `/_erga/api/llm?document=${id}`)).text)).toMatchObject({ signedIn: false });
+});
+
+test("on its own domain, a homepage for signed-in viewers only asks a guest to sign in, there", async ({ tab }) => {
+  const { server, id } = await site();
+  expect((await runTool(server.root, "share_document", { document: id, page_llm_who: "signed_in" })).error).toBeUndefined();
+  const p = tab.page;
+  await p.goto(`${origin(server)}/essays/essay`);
+  expect(await p.evaluate(() => window.ergaLLM!.status())).toMatchObject({ on: true, signedIn: false });
+  expect((await ask(p, "Hi")).code).toBe("sign_in");
+  const button = p.locator("erga-sign-in .provider").first();
+  await expect.poll(() => button.isVisible()).toBe(true);
+  expect(await button.getAttribute("href")).toMatch(/^\/_erga\/auth\/\w+\?next=%2Fessays%2Fessay$/);
+  await Promise.all([p.waitForURL(`${origin(server)}/essays/essay`), button.click()]);
+  expect(await ask(p, '@script [{"text": "Hello, signed in."}]')).toEqual({ text: "Hello, signed in." });
 });

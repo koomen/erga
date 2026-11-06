@@ -1,5 +1,5 @@
-// A document's page may call a model as its signed-in visitor (the homepage's, a signed-out one too) (window.ergaLLM: agents/page-llm.ts has the route): its
-// owner's setting (on or off, and the model: share_document page_llm), the log of each call (page_llm_use,
+// A document's page may call a model as its visitor (window.ergaLLM: agents/page-llm.ts has the route): its owner's
+// setting (on or off, the model, and who: signed-in viewers or all: share_document page_llm), the log of each call (page_llm_use,
 // server/migrations/0320_page_llm.sql), and the limits that log is counted against. The calls spend the server's model
 // keys, so each visitor, and the whole server, has a limit for each hour.
 
@@ -17,7 +17,7 @@ export const PAGE_LLM_LIMITS = {
   messages: 40,
   hour: 3_600_000,
   visitor: { requests: 30, tokens: 60_000 },
-  /** A signed-out visitor of the homepage's project, by IP address (agents/page-llm.ts): a few runs of its demos. */
+  /** A signed-out visitor, by IP address, where the owner lets all viewers call it (agents/page-llm.ts): a few runs of a demo. */
   guest: { requests: 20, tokens: 30_000 },
   /** All of them together: a part of `server`, so they never use up what the signed-in visitors have. */
   guests: { requests: 600, tokens: 1_000_000 },
@@ -27,10 +27,15 @@ export const PAGE_LLM_LIMITS = {
 /** How long the log keeps a call. */
 const KEEP_MS = 30 * 86_400_000;
 
-/** A document's setting: on or off, and the model (a key of shared/models.ts's MODELS); null: none chosen yet. */
+/** Who may call a page's model: its signed-in viewers, or all of them (someone signed out too, with the guest limit). */
+export const PAGE_LLM_WHO = ["signed_in", "all"] as const;
+export type PageLlmWho = (typeof PAGE_LLM_WHO)[number];
+
+/** A document's setting: on or off, the model (a key of shared/models.ts's MODELS; null: none chosen yet), and who. */
 export interface PageLlmSetting {
   on: boolean;
   model: string | null;
+  who: PageLlmWho;
 }
 
 /** Use in the last hour: calls and tokens. */
@@ -47,16 +52,22 @@ export class PageLlm {
 
   /** A document's setting (off for a document that isn't there). */
   async setting(docId: string): Promise<PageLlmSetting> {
-    const [row] = await this.sql.all<{ on: number; model: string | null }>(
-      'SELECT page_llm AS "on", page_llm_model AS model FROM documents WHERE id = ?1',
+    const [row] = await this.sql.all<{ on: number; model: string | null; guests: number }>(
+      'SELECT page_llm AS "on", page_llm_model AS model, page_llm_guests AS guests FROM documents WHERE id = ?1',
       docId
     );
-    return { on: !!row?.on, model: row?.model ?? null };
+    return { on: !!row?.on, model: row?.model ?? null, who: row?.guests ? "all" : "signed_in" };
   }
 
   /** Sets it (share_document page_llm checks who may, and the model). */
-  async set(docId: string, on: boolean, model: string): Promise<void> {
-    await this.sql.run("UPDATE documents SET page_llm = ?2, page_llm_model = ?3 WHERE id = ?1", docId, on ? 1 : 0, model);
+  async set(docId: string, s: { on: boolean; model: string; who: PageLlmWho }): Promise<void> {
+    await this.sql.run(
+      "UPDATE documents SET page_llm = ?2, page_llm_model = ?3, page_llm_guests = ?4 WHERE id = ?1",
+      docId,
+      s.on ? 1 : 0,
+      s.model,
+      s.who == "all" ? 1 : 0
+    );
   }
 
   /** The use in the hour before `now`: one visitor's, or the whole server's (no login). */

@@ -80,7 +80,7 @@ ${owner}'s). The page note says which document and page are open, if any: "this"
   with scratch makes a scratch document (/scratch: off the list, deleted as unedited ones are);
   save_document keeps one. Any editor may use
   share_document to let a document's readers use their own agent on it, show or hide
-  Erga's bars over it for them, and let its page call a model as its visitor (page_llm).
+  Erga's bars over it for them, and let its page call a model as its visitor (page_llm; page_llm_who: signed-in viewers or all).
   whoami says who you act for, and lists the pages of this Erga (not documents) they may
   open, as the quick search (⌘K) finds them. send_feedback sends feedback about Erga, in
   ${owner}'s words, only when they ask: it becomes a GitHub issue without their name.
