@@ -80,8 +80,13 @@ export class Browser {
     return () => this.listeners.delete(f);
   }
 
-  async newPage(): Promise<Page> {
-    const { targetId } = await this.send("Target.createTarget", { url: "about:blank" });
+  /** A browser context of its own (cookies, storage, cache), gone with this connection. */
+  async newContext(): Promise<string> {
+    return (await this.send("Target.createBrowserContext", { disposeOnDetach: true })).browserContextId;
+  }
+
+  async newPage(context?: string): Promise<Page> {
+    const { targetId } = await this.send("Target.createTarget", { url: "about:blank", ...(context ? { browserContextId: context } : {}) });
     const { sessionId } = await this.send("Target.attachToTarget", { targetId, flatten: true });
     const page = new Page(this, targetId, sessionId);
     await Promise.all(["Page.enable", "Runtime.enable", "Log.enable"].map((m) => page.send(m)));
@@ -115,6 +120,8 @@ export class Page {
   /** The loads that are done (their loaderId), and the one goto waits for. */
   private loads = new Set<string>();
   private waiting: { loader: string; done: () => void } | null = null;
+  /** Its listeners on the browser's connection, which outlives the page: close (or detach) removes them. */
+  private offs: (() => void)[] = [];
 
   constructor(
     private readonly browser: Browser,
@@ -133,11 +140,35 @@ export class Page {
     return this.browser.send(method, params, this.session);
   }
 
-  /** Each of this page's events, until the answer is called. */
+  /** Each of this page's events, until the answer is called (or the page closes). */
   on(f: (method: string, params: Params) => void): () => void {
-    return this.browser.on((method, params, session) => {
+    const off = this.browser.on((method, params, session) => {
       if (session == this.session) f(method, params);
     });
+    this.offs.push(off);
+    return off;
+  }
+
+  /** Stops hearing the page's events. */
+  detach(): void {
+    for (const off of this.offs.splice(0)) off();
+  }
+
+  /**
+   * Each frame of the page on another site (its own target, its own process): `f` gets it as a Page, before its
+   * scripts run (it starts paused, and goes on once `f` is done). Another kind of target (a worker) just goes on.
+   */
+  async onFrames(f: (frame: Page, url: string) => Promise<void>): Promise<void> {
+    this.on((method, p) => {
+      if (method != "Target.attachedToTarget") return;
+      const child = new Page(this.browser, p.targetInfo.targetId, p.sessionId);
+      void (async () => {
+        if (p.targetInfo.type == "iframe") await f(child, p.targetInfo.url).catch(() => {});
+        else child.detach();
+        await child.send("Runtime.runIfWaitingForDebugger").catch(() => {});
+      })();
+    });
+    await this.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
   }
 
   /** The page's uncaught errors, and its console's messages and log entries (their level, their text). */
@@ -184,9 +215,18 @@ export class Page {
     }
   }
 
-  /** An expression's value (a promise's, once it settles), as JSON brings it. Throws what the expression threw. */
-  async evaluate<T = unknown>(expression: string): Promise<T> {
-    const r = await this.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true, userGesture: true });
+  /**
+   * An expression's value (a promise's, once it settles), as JSON brings it; in the page's main world, or in the
+   * execution context `context` (a frame's, in the same process). Throws what the expression threw.
+   */
+  async evaluate<T = unknown>(expression: string, context?: number): Promise<T> {
+    const r = await this.send("Runtime.evaluate", {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+      userGesture: true,
+      ...(context != null ? { contextId: context } : {}),
+    });
     if (r.exceptionDetails) throw new Error(exceptionMessage(r.exceptionDetails));
     return r.result.value as T;
   }
@@ -213,6 +253,7 @@ export class Page {
   }
 
   async close(): Promise<void> {
+    this.detach();
     await this.browser.send("Target.closeTarget", { targetId: this.targetId });
   }
 }

@@ -29,8 +29,13 @@ export interface Session {
    * needs it, and Users.isAdmin must say yes too (Users.mustAdmin).
    */
   admin?: boolean;
-  /** Signed in with a document token: this one document (its id), and no other. */
+  /** Signed in with a document token or a view cookie: this one document (its id), and no other. */
   onlyDoc?: string;
+  /**
+   * The server's browser, rendering the document's page in the viewer for an agent (view_page: identity/session.ts,
+   * viewCookie): the person on one document, with no admin power and no agent of theirs.
+   */
+  view?: boolean;
   /** Their picture (users.avatar, shared/avatars.ts), read with their row at each request; absent: none. */
   avatar?: string;
 }

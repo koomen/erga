@@ -10,6 +10,10 @@
 //     name with an expiry, signed with HMAC-SHA256 (the platform's secret), so
 //     the server trusts it without a session store. Only users may sign in
 //     (users.ts), and a session lasts only while its person still is one;
+//   - else a view cookie (viewCookie): the session the server's browser holds while it renders a document's page in
+//     the viewer for an agent (view_page, cloudflare/render.ts). It names the person and one document, holds for a few
+//     minutes, and signs them in only on that document's own paths (its viewer and its API), never with admin power
+//     and never with their agent (Session.view). Anywhere else it signs in nobody, not even the dev login;
 //   - in local development, someone always: the person a tab names (?user=Ada,
 //     carried along in its links), else whoever this browser signed in as,
 //     else the dev login, unless the browser signed out.
@@ -68,30 +72,59 @@ async function findSession(platform: Platform, request: Request): Promise<Sessio
   const users = platform.directory.users;
   const dev = platform.dev(url);
   const as = dev ? url.searchParams.get("user")?.trim().slice(0, 40) : null;
-  const session = as ? { login: loginOf(as), name: as, as }
-    : (await cookieSession(platform, request, dev)) ?? (dev && !cookies(request).has(SIGNED_OUT) ? { login: platform.signIn.devLogin!, name: platform.signIn.devLogin! } : null);
+  const cookie = as ? null : await cookieSession(platform, request, dev, url);
+  if (cookie == "refused") return null;
+  const session: Session | null = as
+    ? { login: loginOf(as), name: as, as }
+    : (cookie ?? (dev && !cookies(request).has(SIGNED_OUT) ? { login: platform.signIn.devLogin!, name: platform.signIn.devLogin! } : null));
   // Locally everyone may sign in, and gets a user's row the first time (last seen, the next). The read rule may say no.
   const user = session ? await users.signedIn(session.login, dev ? session.name : null, { create: dev }) : null;
   if (session && !user) return null;
-  // A signed-in browser session comes with admin power: Users.isAdmin decides whether that's any.
-  if (session) session.admin = true;
+  // A signed-in browser session comes with admin power: Users.isAdmin decides whether that's any. A view cookie's never.
+  if (session && !session.view) session.admin = true;
   // Their picture, from their row (the cookie never carries it): an old cookie shows the new picture too.
   if (session && user?.avatar) session.avatar = user.avatar;
   return session;
 }
 
-/** Whoever the session cookie names, if it's valid and unexpired. */
-async function cookieSession(platform: Platform, request: Request, dev: boolean): Promise<Session | null> {
+/**
+ * Whoever the session cookie names, if it's valid and unexpired; "refused" for a view cookie away from its document's
+ * paths (or expired), which signs in nobody.
+ */
+async function cookieSession(platform: Platform, request: Request, dev: boolean, url: URL): Promise<Session | null | "refused"> {
   const users = platform.directory.users;
   const raw = cookies(request).get(SESSION_COOKIE);
   const value = raw && await unsign(platform.secret, raw);
   if (!value) return null;
   try {
-    const s = JSON.parse(Result.getOrThrow(Base64Url.decodeString(value))) as Session & { exp: number };
-    if (typeof s.login != "string" || !(s.exp > Date.now() / 1000)) return null;
+    const s = JSON.parse(Result.getOrThrow(Base64Url.decodeString(value))) as Session & { exp: number; doc?: unknown };
+    const doc = typeof s.doc == "string" ? s.doc : null;
+    if (typeof s.login != "string" || !(s.exp > Date.now() / 1000)) return doc == null ? null : "refused";
+    if (doc != null && !(await onDocument(platform, url.pathname, doc))) return "refused";
     // Locally, someone with no row yet gets one (findSession); anyone with one passes the access rules, as on a server.
-    return (dev && !(await users.get(s.login))) || (await users.allowed(s.login)) ? { login: s.login, name: s.name } : null;
+    if (!((dev && !(await users.get(s.login))) || (await users.allowed(s.login)))) return null;
+    return doc == null ? { login: s.login, name: s.name } : { login: s.login, name: s.name, onlyDoc: doc, view: true };
   } catch { return null; }
+}
+
+/** How long a view cookie holds, in seconds: one render, with room to spare. */
+const VIEW_SECONDS = 300;
+
+/** A view cookie's value (see the top of this file): `login` on the document `doc` (its id), for VIEW_SECONDS from `now`. */
+export const viewCookie = (secret: string, login: string, doc: string, now = Date.now()) =>
+  sign(secret, Base64Url.encode(JSON.stringify({ login, name: login, doc, exp: Math.floor(now / 1000) + VIEW_SECONDS })));
+
+/**
+ * Whether `path` is one of the document `doc`'s own: its viewer and API at /d/<doc>/..., at its address, or at /_home;
+ * or the operations (/api/tools/...), which reach only that document for a session with onlyDoc (operations/operation.ts).
+ */
+async function onDocument(platform: Platform, path: string, doc: string): Promise<boolean> {
+  if (path.startsWith("/api/tools/")) return true;
+  const [, first, second] = /^\/([^/]+)(?:\/([^/]+))?/.exec(path) ?? [];
+  if (!first) return false;
+  if (first == "d") return second == doc;
+  const ref = first == "_home" ? "/_home" : second ? `/${first}/${second}` : null;
+  return !!ref && (await platform.directory.find(ref))?.id == doc;
 }
 
 /** The person an agent token stands for, within the token's scope; null for a token that isn't good. */
