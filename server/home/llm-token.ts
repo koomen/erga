@@ -1,7 +1,7 @@
-// The homepage's page token: each HTML page of the homepage's project, as served (serve.ts), carries one for its
-// window.ergaLLM (client/inline/home-llm.ts), and a signed-out call to the homepage's model must send it
-// (agents/page-llm.ts). It is the document's id and the time it was made, signed with the server's secret, good for
-// an hour; a reload makes a new one. It stops a copy of the call on another site or in a script that never opens the
+// The page token: each HTML page of the homepage's project, as served (serve.ts), carries one for its window.ergaLLM
+// (client/inline/home-llm.ts), and so does the viewer for someone signed out (server/documents/view.ts); a signed-out
+// call to a page's model must send it (agents/page-llm.ts). It is the document's id and the time it was made, signed
+// with the server's secret, good for an hour; a reload makes a new one. It stops a copy of the call on another site or in a script that never opens the
 // page; a script that opens the page first gets one, and the per-IP limit is for that.
 
 import { sign, unsign } from "../identity/index.ts";

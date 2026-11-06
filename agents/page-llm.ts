@@ -1,4 +1,4 @@
-// A document's page calls a model as its signed-in visitor, where its owner turned it on (share_document page_llm): the page's
+// A document's page calls a model as its visitor, where its owner turned it on (share_document page_llm): the page's
 // script has window.ergaLLM (client/inline/reader.ts), which asks the viewer around it (client/inline/viewer-llm.ts),
 // which calls this with the visitor's session. The homepage, on this site itself, calls it directly (server/home/).
 //
@@ -16,9 +16,10 @@
 // visitor's cookie, for the one document they show. Each call is logged, and counted against the visitor's limits and
 // the whole server's (server/directory/page-llm.ts, PAGE_LLM_LIMITS); max_tokens is capped here.
 //
-// The homepage's project is the one exception: anyone may read it, so a signed-out visitor may call its model too, where
-// page_llm is on, from one of its pages only: the request must come from this site (Origin, and Sec-Fetch-Site when the
-// browser sends it) and carry the page's token (server/home/llm-token.ts: `token`, an hour old at most). Such a
+// Where the owner lets all viewers call it (page_llm_who "all"), a signed-out visitor may too, on a page anyone may open
+// (the homepage's project, or a document shared with anyone), from the page only: the request must come from this site
+// (Origin, and Sec-Fetch-Site when the browser sends it) and carry the page's token (server/home/llm-token.ts: `token`,
+// an hour old at most; the homepage's pages and the viewer carry one). Such a
 // visitor is counted by their IP address (a hash of it), with the smaller limit `guest`, and all of them together
 // with `guests`, so they never use up what the signed-in visitors have.
 //
@@ -31,7 +32,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { LanguageModel, Prompt } from "effect/ai";
 import { call, ctx, json, type Route } from "../server/http.ts";
-import { PAGE_LLM_LIMITS, roleMay, underLimit, type DocRow } from "../server/directory/index.ts";
+import { PAGE_LLM_LIMITS, roleMay, underLimit, type DocRow, type PageLlmWho } from "../server/directory/index.ts";
 import { whoOf, type Platform, type Session } from "../server/platform.ts";
 import { homeVisitor, PROVIDERS, providersOn, type Provider } from "../server/identity/index.ts";
 import type { SignInChoice } from "../shared/sign-in.ts";
@@ -67,8 +68,12 @@ async function signInChoices(p: Platform): Promise<SignInChoice[]> {
 /** The visitor, in person: agents' tokens have no model here. */
 const visitorOf = (s: Session | null) => (s && !s.agent ? s : null);
 
-/** What the page may call for `docId` now, as `session` (null: signed out): the model, or why not. */
-async function decide(p: Platform, docId: string, session: Session | null): Promise<{ doc: DocRow; model: ModelChoice } | { off: string }> {
+/** What the page may call for `docId` now, as `session` (null: signed out): the model and who may call it, or why not (`unseen`: they may not open it). */
+async function decide(
+  p: Platform,
+  docId: string,
+  session: Session | null
+): Promise<{ doc: DocRow; model: ModelChoice; who: PageLlmWho } | { off: string; unseen?: true }> {
   const dir = p.directory;
   const doc = await dir.get(docId);
   const setting = doc ? await dir.pageLlm.setting(doc.id) : null;
@@ -76,11 +81,11 @@ async function decide(p: Platform, docId: string, session: Session | null): Prom
   const seen = session
     ? roleMay(await dir.access(whoOf(session), doc), "open")
     : (await dir.homeId()) == doc.id || (await dir.isPublic(doc.id));
-  if (!seen) return { off: "The owner of this page didn't let it call a model." };
+  if (!seen) return { off: "The owner of this page didn't let it call a model.", unseen: true };
   const model = setting.model && isPageLlmModel(setting.model) ? setting.model : DEFAULT_PAGE_LLM_MODEL;
   const cfg = await p.agentSettings();
   if ("missing" in cfg || !pageModel(cfg, model, 1)) return { off: `The server has no API key that runs ${MODELS[model].label} now.` };
-  return { doc, model };
+  return { doc, model, who: setting.who };
 }
 
 /** Who a signed-out visitor is counted as: "ip:" and a hash of their IP address (the log never keeps the address). */
@@ -134,21 +139,22 @@ const pageLlm = (whoAsks: (p: Platform, request: Request) => Promise<Session | n
   );
   if (!ask) return fail("error", "The body must be { document, system?, messages: [{ role, content }], max_tokens? }.");
   if (!(yield* allowed(ask.document))) return fail("off", "This site's pages call only its own model.");
-  // Signed out: only the homepage's model, as a guest (its IP address), from one of its pages (their token).
-  const guest = !visitor && (yield* call(() => platform.directory.homeId())) == ask.document;
-  if (!visitor && !guest)
+  const now = yield* call(() => decide(platform, ask.document, visitor));
+  // Signed out: a guest (their IP address), only where the owner lets all viewers call it and anyone may open the page,
+  // from the page itself (its token).
+  const guest = !visitor;
+  if (guest && ("off" in now ? now.unseen : now.who != "all"))
     return json(
       { error: "Sign in to use this page's model.", code: "sign_in", providers: yield* call(() => signInChoices(platform)) },
       401
     );
+  if ("off" in now) return fail("off", now.off);
   if (guest) {
     const site = request.headers.get("sec-fetch-site");
     if (site != null && site != "same-origin") return fail("error", "Forbidden", 403);
     if (!(yield* call(() => tokenOk(platform.secret, ask.token, ask.document, Date.now()))))
       return fail("error", "Reload this page to use its model.", 403);
   }
-  const now = yield* call(() => decide(platform, ask.document, visitor));
-  if ("off" in now) return fail("off", now.off);
   const wrong = tooBig(ask);
   if (wrong) return fail("error", wrong);
   const pageLlm = platform.directory.pageLlm,

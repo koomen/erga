@@ -21,7 +21,7 @@ async function homeWithEssay(server: Server, on: boolean) {
   const { id } = await publish(server, await adminToken(server), files, { title: "Home with an essay" });
   expect((await setLanding(server, id)).error).toBeUndefined();
   await expect.poll(async () => (await front(server)).html.includes("Home with an essay")).toBe(true);
-  expect((await runTool(server.root, "share_document", { document: id, page_llm: on })).error).toBeUndefined();
+  expect((await runTool(server.root, "share_document", { document: id, page_llm: on, page_llm_who: "all" })).error).toBeUndefined();
   return id;
 }
 
@@ -84,11 +84,18 @@ test("signed out, the homepage's model refuses a call from elsewhere, without it
   expect(await call(server, { document: id }, ip)).toMatchObject({ status: 403, error: "Reload this page to use its model." });
   expect((await call(server, { document: id, token: token!.replace(/\.[\w-]+$/, ".AAAA") }, ip)).status).toBe(403);
   expect((await call(server, { document: id, token: `home-llm:${id}:${Date.now() - 7_200_000}.AAAA` }, ip)).status).toBe(403);
-  // Another document's model: signed out, never.
+  // Signed-in viewers only (share_document page_llm_who): sign_in, even from the page.
+  expect((await runTool(server.root, "share_document", { document: id, page_llm_who: "signed_in" })).error).toBeUndefined();
+  expect(await call(server, { document: id, token }, ip)).toMatchObject({ status: 401, code: "sign_in" });
+  expect((await runTool(server.root, "share_document", { document: id, page_llm_who: "all" })).error).toBeUndefined();
+  // Another document's model: signed out, only where it's shared with anyone and open to all viewers.
   const other = await publish(server, await adminToken(server), { "index.html": "<h1>Other</h1>" });
   expect((await runTool(server.root, "share_document", { document: other.id, page_llm: true })).error).toBeUndefined();
   expect((await runTool(server.root, "share_document", { document: other.id, login: "*", role: "viewer" })).error).toBeUndefined();
   expect(await call(server, { document: other.id, token }, ip)).toMatchObject({ status: 401, code: "sign_in" });
+  // Open to all viewers: still not with the homepage's token, which is for its own document.
+  expect((await runTool(server.root, "share_document", { document: other.id, page_llm_who: "all" })).error).toBeUndefined();
+  expect(await call(server, { document: other.id, token }, ip)).toMatchObject({ status: 403, error: "Reload this page to use its model." });
   // One answer that used the visitor's whole hour (PAGE_LLM_LIMITS.guest.tokens: 30,000); then "limit".
   const long = { document: id, token, messages: [{ role: "user", content: '@script [{"text": "Long.", "tokens": 30000}]' }] };
   expect(await call(server, long, ip)).toEqual({ status: 200, text: "Long." });
