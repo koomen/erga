@@ -3,13 +3,14 @@
 // used (client/common/offline.ts), in a frame of that origin's /erga-clear (they wait at most a few seconds). It also
 // deletes this tab's copy of the agent's panel (client/agent/person-agent.ts keeps it for the tab's next page).
 
+import { savePanel } from "../common/agent-panel";
 import { clearOffline } from "../common/offline";
 import { CLEAR_PATH, ORIGINS_KEY } from "../../shared/offline";
 
 export default function signOut(C: { to: string }): void {
   let origins: string[] = [];
+  savePanel({ drawn: null });
   try {
-    sessionStorage.removeItem("erga:agent-panel");
     origins = (JSON.parse(localStorage.getItem(ORIGINS_KEY) ?? "[]") as unknown[]).filter(
       (o): o is string => typeof o == "string" && /^https?:\/\/[^/]+$/.test(o)
     );

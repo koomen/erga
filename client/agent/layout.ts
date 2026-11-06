@@ -172,14 +172,20 @@ export function mountGrip(parent: HTMLElement, o: GripOptions): Grip {
     const startX = e.clientX;
     body.classList.add("layout-resizing");
     const move = (m: PointerEvent) => o.set(resizedTo(s.width, m.clientX - startX, s.side, AGENT_MIN, o.max()));
+    // Up or cancelled, the drag ends once: both listeners go (a cancel's left behind would end each later drag again).
     const end = () => {
-      grip.removeEventListener("pointermove", move);
+      for (const [type, f] of [
+        ["pointermove", move],
+        ["pointerup", end],
+        ["pointercancel", end],
+      ] as const)
+        grip.removeEventListener(type, f);
       body.classList.remove("layout-resizing");
       o.done();
     };
     grip.addEventListener("pointermove", move);
-    grip.addEventListener("pointerup", end, { once: true });
-    grip.addEventListener("pointercancel", end, { once: true });
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
   });
   grip.addEventListener("dblclick", () => { o.set(AGENT_DEFAULT); o.done(); });
   return {

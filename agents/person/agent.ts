@@ -37,8 +37,8 @@ export interface AgentSession {
   log(): Log;
   /** The model's messages so far. */
   messages(): readonly ChatMessage[];
-  /** A message, with any files attached. */
-  prompt(text: string, context: string | null, files?: Attachment[]): void;
+  /** A message, with any files attached; `id` is the sending tab's id for it (the transcript's copy carries it). */
+  prompt(text: string, context: string | null, files?: Attachment[], id?: string): void;
   abort(): void;
   reset(): Promise<void>;
   subscribe(listener: (ev: LogEvent) => void): () => void;
@@ -110,7 +110,7 @@ export function startAgent(opts: {
     configure: loop.configure,
     log: () => loop.log,
     messages: () => loop.messages,
-    prompt: (text, context, files = []) => loop.prompt(text, context, files),
+    prompt: (text, context, files = [], id) => loop.prompt(text, context, files, id),
     abort: loop.abort,
     reset: () => loop.reset(),
     subscribe: loop.subscribe,

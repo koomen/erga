@@ -16,12 +16,14 @@
 import { chat } from "./agent-chat";
 import { fileRefs, type Attachment } from "../../shared/attach";
 import { attachments } from "./attach-ui";
+import { canSend, type SendPath } from "./send-gate";
 import type { Log, LogEvent } from "../../shared/agent-log";
 import { backoff, live, transient } from "../live/client";
 import { restoredFor } from "../live/restore";
 import { sleep } from "../../shared/time";
 import { agentPrompt } from "../common/agent-prompt";
 import { showCopied } from "../common/copied";
+import { panelStep, savePanel, type PanelPhase } from "../common/agent-panel";
 
 interface AgentState {
   enabled: boolean;
@@ -83,11 +85,32 @@ const talk = chat({
 });
 const log = talk.log;
 let off: string | null = "Connecting to the agent…";
-/** The live voice session (voice mode, below), or null when it's off. `sent` counts the session's results already sent, of `results` heard so far. */
-let voice: { rec: Recognition; before: string; sent: number; results: number; heard: string; partial: boolean; timer: number } | null = null;
+/**
+ * The live voice session (voice mode, below), or null when it's off. `sent` counts the session's results already sent, of
+ * `results` heard so far; `due`: a pause came while the message couldn't go (a file still read), so it goes once it can.
+ */
+let voice: {
+  rec: Recognition;
+  before: string;
+  sent: number;
+  results: number;
+  heard: string;
+  partial: boolean;
+  timer: number;
+  due: boolean;
+} | null = null;
 let hintTimer = 0;
 // Files to go with the next message: dropped on the panel, pasted, or picked.
-const att = attachments({ pane: $("agent"), form: $("agent-form"), input, hint: (t) => showHint(t), changed: () => renderBusy() });
+const att = attachments({
+  pane: $("agent"),
+  form: $("agent-form"),
+  input,
+  hint: (t) => showHint(t),
+  changed: () => {
+    renderBusy();
+    if (voice?.due) voiceSend();
+  },
+});
 
 function showHint(text: string, sticky = false) {
   clearTimeout(hintTimer);
@@ -102,14 +125,10 @@ function hideHint() {
   hint.hidden = true;
   hint.classList.remove("sticky");
 }
-/** Why Send can't send right now, or null if it can. Never a silent no. */
-function blocker(): string | null {
-  if (off) return off;
-  if (voice) return "Voice mode is on: what you say is sent when you pause.";
-  if (att.reading) return "Reading the attached files…";
-  if (!log.busy && !input.value.trim() && !att.files.length) return "Type a message to send it.";
-  return null;
-}
+/** Why a message can't go by this path now (send-gate.ts), or null if it can. */
+const gate = (path: SendPath, text: string) => canSend(path, { off, voice: !!voice, reading: att.reading, text, files: att.files.length });
+/** Why Send can't send right now, or null if it can. */
+const blocker = () => gate("box", input.value);
 function renderBusy() {
   // In voice mode the button can't send, so while the agent works it's Stop.
   const stop = log.busy && (!!voice || (!input.value.trim() && !att.files.length && !att.reading));
@@ -189,16 +208,22 @@ function context(): string | null {
   return `Open: ${trail || document.title} (${location.pathname}).${doc ? ` The document ${doc}${page ? `, its file ${page}` : ""}${editing ? ", in the editor" : ""}.` : ""}${editing ? `\n${editing}` : ""}`;
 }
 
-async function ask(text: string, ctx: string | null, files: Attachment[] = []) {
-  const sent = talk.pending(text, fileRefs(files));
+/** Sends a message, with the tab's own id for it (sends.ts): Try again sends it again with the same id. */
+function ask(text: string, ctx: string | null, files: Attachment[] = []) {
+  const id = crypto.randomUUID();
+  const post = () => void postMessage(id, { text, context: ctx, files, doc: DOC, id }, files.length > 0);
+  talk.pending(id, text, fileRefs(files), post);
+  post();
+}
+async function postMessage(id: string, body: object, withFiles: boolean) {
   // While the server restarts (a redeploy) it doesn't answer, or its gateway says so: the message waits and goes once it's back.
   let res: Response | Error = new Error("not sent");
   for (let i = 0, until = Date.now() + 45_000; ; i++) {
     res = await call("/api/agent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, context: ctx, files, doc: DOC }),
-      signal: AbortSignal.timeout(files.length ? 60_000 : 15_000),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(withFiles ? 60_000 : 15_000),
     }).catch((e: Error) => e);
     if (res instanceof Response ? res.ok || !transient(res) : res.name == "TimeoutError" || !transient(res)) break;
     if (Date.now() + backoff(i) > until) break;
@@ -206,7 +231,7 @@ async function ask(text: string, ctx: string | null, files: Attachment[] = []) {
   }
   if (!(res instanceof Response) || !res.ok) {
     const reason = res instanceof Response ? ((await res.json().catch(() => null)) as { reason?: string; error?: string } | null)?.reason ?? `the server answered ${res.status}` : res.name == "TimeoutError" ? "the server didn't answer in time" : "the server didn't answer";
-    sent.fail(reason, () => ask(text, ctx, files));
+    talk.failed(id, reason);
   }
   renderBusy();
 }
@@ -293,6 +318,8 @@ function renderModel(m: AgentState | null) {
   el.append(sel);
 }
 
+/** The conversation in the panel: as the tab's last page left it, until load() reads it. */
+let phase: PanelPhase = "as-left";
 // Events heard: one that comes while load() asks for the conversation may be newer than its answer, so load() asks again (up to 5 times).
 let heard = 0, down = 0, downTimer = 0;
 async function load(tries = 0, fresh = false): Promise<void> {
@@ -333,6 +360,7 @@ async function load(tries = 0, fresh = false): Promise<void> {
   renderModel(a);
   if (l) { log.items = l.items; log.busy = l.busy; log.undoable = l.undoable; }
   talk.render();
+  phase = panelStep(phase, { t: "loaded" }).state;
   renderBusy();
 }
 
@@ -369,27 +397,23 @@ function connect() {
 load().then(connect);
 
 // The panel as this page leaves it, for the tab's next page: client/inline/agent-toggle.ts draws it there before the
-// page paints, so the conversation doesn't empty and come back from page to page.
+// page paints, so the conversation doesn't empty and come back from page to page. Until this page has loaded the
+// conversation, its panel shows the tab's copy, which stays as it is (client/common/agent-panel.ts).
 window.addEventListener("pagehide", () => {
   const l = $("agent-log"),
     model = $("agent-model");
-  const kept = {
-    person: $("agent").dataset.person,
-    log: talk.drawn(),
-    model: model.innerHTML,
-    choice: model.querySelector("select")?.value,
-    top: l.scrollTop,
-    bottom: l.scrollHeight - l.scrollTop - l.clientHeight <= 8,
-  };
-  try {
-    sessionStorage.setItem("erga:agent-panel", JSON.stringify(kept));
-  } catch {
-    try {
-      sessionStorage.removeItem("erga:agent-panel");
-    } catch {
-      /* private mode */
-    }
-  }
+  const { save } = panelStep(phase, {
+    t: "leave",
+    drawn: {
+      person: $("agent").dataset.person ?? "",
+      log: talk.drawn(),
+      model: model.innerHTML,
+      choice: model.querySelector("select")?.value,
+      top: l.scrollTop,
+      bottom: l.scrollHeight - l.scrollTop - l.clientHeight <= 8,
+    },
+  });
+  if (save) savePanel({ drawn: save });
 });
 
 // A new release: the page reloads at a quiet moment and comes back as it was. The draft, the panel and
@@ -473,7 +497,7 @@ function listenVoice(before: string) {
   rec.continuous = true;
   rec.interimResults = true;
   rec.lang = navigator.language;
-  const v = (voice = { rec, before, sent: 0, results: 0, heard: "", partial: false, timer: 0 });
+  const v = (voice = { rec, before, sent: 0, results: 0, heard: "", partial: false, timer: 0, due: false });
   rec.onresult = (e) => {
     if (voice != v) return;
     let heard = "", partial = false;
@@ -485,6 +509,7 @@ function listenVoice(before: string) {
     input.value = (v.before + " " + heard).trim();
     sizeInput();
     clearTimeout(v.timer);
+    v.due = false;
     v.timer = window.setTimeout(voiceSend, PAUSE_MS * ((window as unknown as { ergaTimescale?: number }).ergaTimescale ?? 1));
   };
   rec.onerror = (e) => {
@@ -495,7 +520,11 @@ function listenVoice(before: string) {
     // "no-speech" and "aborted": the session ends and onend starts another.
   };
   // Recognition ends on its own (silence, a time limit); keep listening.
-  rec.onend = () => { if (voice == v) listenVoice((v.before + " " + v.heard).trim()); };
+  rec.onend = () => {
+    if (voice != v) return;
+    listenVoice((v.before + " " + v.heard).trim());
+    if (voice) voice.due = v.due;
+  };
   try { rec.start(); } catch { stopVoice(); }
 }
 function voiceSend() {
@@ -503,10 +532,13 @@ function voiceSend() {
   if (!v) return;
   const text = (v.before + " " + v.heard).trim();
   if (!text) return;
-  if (off) {
-    showHint(off, true);
+  // Kept in the box until it can go: the agent back on, the files read (then it goes by itself).
+  const why = gate("voice", text);
+  v.due = !!why;
+  if (why) {
+    showHint(why, why == off);
     return;
-  } // kept in the box until the agent's back
+  }
   v.before = "";
   v.heard = "";
   input.value = "";
@@ -514,7 +546,7 @@ function voiceSend() {
   const files = att.files;
   att.clear();
   sizeInput();
-  void ask(text, context(), files);
+  ask(text, context(), files);
   // Words sent before they were final would come back final: start afresh.
   if (v.partial) { v.partial = false; v.rec.abort(); }
   else v.sent = v.results;
@@ -563,7 +595,9 @@ declare global {
 window.ergaAgentPanel = {
   ask: (text, ctx) => {
     window.ergaAgent?.show(true);
-    void ask(text, ctx ?? context());
+    const why = gate("editor", text);
+    if (why) showHint(why, why == off);
+    else ask(text, ctx ?? context());
   },
   get off() {
     return off;

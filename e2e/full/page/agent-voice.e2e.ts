@@ -16,7 +16,23 @@ async function voice(tab: Tab) {
     w.SpeechRecognition = class extends EventTarget { running = false; onend?: () => void; start() { this.running = true; w.__recs.push(this); } stop() { this.abort(); } abort() { if (!this.running) return; this.running = false; setTimeout(() => this.onend?.()); } };
     w.__hear = (...rs: [string, boolean][]) => w.__recs.at(-1).onresult({ results: rs.map(([t, f]) => Object.assign([{ transcript: t }], { isFinal: f })) });
     const f = window.fetch;
-    window.fetch = ((url: RequestInfo, init?: RequestInit) => String(url).split("?")[0].endsWith("/api/agent") && init?.method == "POST" ? (w.__sent.push(JSON.parse(String(init.body)).text), Promise.resolve(new Response("{}"))) : f(url, init)) as typeof fetch;
+    w.__sentFiles = [];
+    window.fetch = ((url: RequestInfo, init?: RequestInit) =>
+      String(url).split("?")[0].endsWith("/api/agent") && init?.method == "POST"
+        ? (w.__sent.push(JSON.parse(String(init.body)).text),
+          w.__sentFiles.push(JSON.parse(String(init.body)).files.map((f: { name: string }) => f.name)),
+          Promise.resolve(new Response("{}")))
+        : f(url, init)) as typeof fetch;
+    // A text file is read only when the test says so (__read()): until then it shows "Reading…".
+    const text = File.prototype.text;
+    let held: (() => void)[] = [];
+    File.prototype.text = function () {
+      return new Promise<void>((r) => held.push(r)).then(() => text.call(this));
+    };
+    w.__read = () => {
+      for (const r of held) r();
+      held = [];
+    };
   });
   const ed = await openEditor(tab, await servers.agent(), "page");
   await ed.openAgent();
@@ -62,4 +78,19 @@ test("leaving voice mode keeps what wasn't sent in the box, to edit; collapsing 
   await ed.press("ControlOrMeta+j");
   await expect.poll(async () => (await st()).on).toBe("false");
   expect(await ed.eval<boolean>(`!__recs.at(-1).running`)).toBe(true);
+});
+
+test("a pause while an attached file is still being read keeps the words; they go with the file once it's read", async ({ tab }) => {
+  const { ed, st } = await voice(tab);
+  await ed.eval(`document.getElementById("agent-voice").click()`);
+  await ed.eval(
+    `(() => { const dt = new DataTransfer(); dt.items.add(new File(["a,b\\n1,2\\n"], "data.csv", { type: "text/csv" })); document.getElementById("agent-input").dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })); })()`
+  );
+  await expect.poll(() => ed.eval<number>(`document.querySelectorAll(".agent-attachments .file-chip.reading").length`)).toBe(1);
+  await ed.eval(`__hear(["what does this show", true])`);
+  await expect.poll(() => ed.eval<string>(`document.getElementById("agent-hint").textContent`)).toMatch(/Reading the attached files/);
+  expect(await st()).toMatchObject({ sent: [], input: "what does this show" });
+  await ed.eval(`__read()`);
+  await expect.poll(async () => (await st()).sent).toEqual(["what does this show"]);
+  expect(await ed.eval<string[][]>(`__sentFiles`)).toEqual([["data.csv"]]);
 });

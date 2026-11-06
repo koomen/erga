@@ -3,12 +3,13 @@
 // It renders the transcript into the panel's log, keeps it
 // following the agent's output as a terminal does, and shows a message the
 // moment it's sent, dimmed until the agent's host echoes it back (or with
-// "Not sent" and a way to try again). The styles are style.css's (.agent-log,
-// .msg-*), so both panels look the same.
+// "Not sent" and a way to try again): sends.ts has each message's states. The
+// styles are style.css's (.agent-log, .msg-*), so both panels look the same.
 
 import { emptyLog, reduce, type Log, type LogEvent, type LogItem } from "../../shared/agent-log";
 import type { FileRef } from "../../shared/attach";
 import { fileChip } from "./attach-ui";
+import { sendStep, type SendEvent, type SendState } from "./sends";
 import { esc } from "../../shared/html";
 
 const inline = (s: string) =>
@@ -44,8 +45,13 @@ export interface Chat {
   follow(on: boolean): void;
   /** Keeps the log at the bottom while following. */
   pin(): void;
-  /** A message just sent (with what's attached): shown dimmed until the host echoes it; `fail` says it wasn't sent, with Try again. */
-  pending(text: string, files?: FileRef[]): { fail(reason: string, retry: () => void): void };
+  /**
+   * A message just sent (with what's attached), with the tab's id for it: shown dimmed until the transcript has a
+   * message with that id. `resend` sends it again, with the same id (Try again).
+   */
+  pending(id: string, text: string, files: FileRef[] | undefined, resend: () => void): void;
+  /** The message `id` wasn't sent: it says so, with Try again. */
+  failed(id: string, reason: string): void;
 }
 
 export function chat(opts: ChatOptions): Chat {
@@ -131,32 +137,58 @@ export function chat(opts: ChatOptions): Chat {
   function render() {
     const next = log.items.map((it, i) => renderItem(it, i));
     const now = [...logEl.children] as HTMLElement[];
-    if (!loose.length && now.length == next.length && next.every((el, i) => el.isEqualNode(now[i]))) {
+    // A message on its way that the transcript has now (its echo came while the socket was down) is done.
+    for (const it of log.items) if (it.kind == "user" && it.id) step(it.id, { t: "echo" });
+    if (!sends.size && now.length == next.length && next.every((el, i) => el.isEqualNode(now[i]))) {
       els = now;
       return;
     }
     logEl.textContent = "";
     els = next;
     // Messages on their way (or that weren't sent, with Try again) stay at the end: a reconnect mustn't lose them.
-    logEl.append(...els, ...loose);
+    logEl.append(...els, ...[...sends.values()].map((m) => m.el));
     follow(true);
   }
 
   // A message shows in the log the moment it's sent, dimmed until the host
-  // echoes it back as the conversation's (which replaces it).
-  const sends: { text: string; el: HTMLElement }[] = [];
-  /** The dimmed and the failed messages, not part of the transcript. */
-  let loose: HTMLElement[] = [];
-  const drop = (el: HTMLElement) => { loose = loose.filter((x) => x != el); el.remove(); };
+  // echoes it back as the conversation's (which replaces it). Each is in one
+  // state (sends.ts), by the tab's id for it; the transcript's copy has the id.
+  const sends = new Map<string, { state: SendState; el: HTMLElement; resend: () => void }>();
+  function step(id: string, ev: SendEvent) {
+    const m = sends.get(id);
+    if (!m) return;
+    const { state, effect } = sendStep(m.state, ev);
+    m.state = state;
+    if (state == "echoed" || state == "dropped") sends.delete(id);
+    if (effect?.t == "remove") m.el.remove();
+    else if (effect?.t == "show-failed") {
+      m.el.classList.replace("pending", "failed");
+      const note = document.createElement("span");
+      note.className = "send-failed";
+      note.textContent = `Not sent: ${effect.reason}. `;
+      const again = Object.assign(document.createElement("button"), { type: "button", textContent: "Try again" });
+      again.addEventListener("click", () => step(id, { t: "retry" }));
+      note.append(again);
+      m.el.append(note);
+      pin();
+    } else if (effect?.t == "resend") {
+      m.el.querySelector(".send-failed")?.remove();
+      m.el.classList.replace("failed", "pending");
+      logEl.append(m.el);
+      follow(true);
+      m.resend();
+    }
+  }
   function apply(ev: LogEvent) {
     // The host's copy of a message sent from this tab takes the place of the dimmed one.
-    if (ev.t == "user") {
-      const i = sends.findIndex((p) => p.text == ev.text);
-      if (i >= 0) { drop(sends[i].el); sends.splice(i, 1); }
-    }
+    if (ev.t == "user" && ev.id) step(ev.id, { t: "echo" });
     const before = log.items.length;
     const i = reduce(log, ev);
-    if (ev.t == "reset") { for (const el of loose) if (el.classList.contains("failed")) drop(el); render(); return; }
+    if (ev.t == "reset") {
+      for (const id of [...sends.keys()]) step(id, { t: "reset" });
+      render();
+      return;
+    }
     if (i >= 0) {
       const el = renderItem(log.items[i], i);
       if (i < before) { els[i].replaceWith(el); els[i] = el; }
@@ -169,34 +201,17 @@ export function chat(opts: ChatOptions): Chat {
     pin();
   }
 
-  function pending(text: string, files?: FileRef[]) {
+  function pending(id: string, text: string, files: FileRef[] | undefined, resend: () => void) {
     const el = document.createElement("div");
     el.className = "msg-user pending";
     userMessage(el, text, files);
     logEl.append(el);
-    loose.push(el);
-    const p = { text, el };
-    sends.push(p);
+    sends.set(id, { state: "pending", el, resend });
     // Asking something means you want to see the answer.
     follow(true);
-    return {
-      fail(reason: string, retry: () => void) {
-        const at = sends.indexOf(p);
-        if (at >= 0) sends.splice(at, 1);
-        el.classList.replace("pending", "failed");
-        const note = document.createElement("span");
-        note.className = "send-failed";
-        note.textContent = `Not sent: ${reason}. `;
-        const again = Object.assign(document.createElement("button"), { type: "button", textContent: "Try again" });
-        again.addEventListener("click", () => { drop(el); retry(); });
-        note.append(again);
-        el.append(note);
-        pin();
-      },
-    };
   }
 
   const drawn = () => els.map((el) => el.outerHTML).join("");
 
-  return { log, render, drawn, apply, follow, pin, pending };
+  return { log, render, drawn, apply, follow, pin, pending, failed: (id, reason) => step(id, { t: "fail", reason }) };
 }

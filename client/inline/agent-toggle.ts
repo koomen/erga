@@ -1,6 +1,8 @@
-// The agent's circle and panel (server/pages/agent.ts), after them: open as the person left it (erga:settings:v1, as in
-// the editor), but closed on a phone, before the page paints; then its button, the round one, Esc in the panel and ⌘J
+// The agent's circle and panel (server/pages/agent.ts), after them: open as the person left it (client/common/agent-panel.ts),
+// but closed on a phone, before the page paints; then its button, the round one, Esc in the panel and ⌘J
 // open and close it. It grows out of its circle and shrinks back into it (client/style.css, .agent).
+
+import { restorePanel, savePanel, type Drawn } from "../common/agent-panel";
 
 declare global {
   interface Window {
@@ -10,23 +12,12 @@ declare global {
   }
 }
 
-/** The key of the panel as the tab's last page left it (client/agent/person-agent.ts keeps it as that page goes). */
-const KEPT_PANEL = "erga:agent-panel";
-
 /**
  * The panel as the tab's last page left it, drawn before this page paints: its conversation, its model and its scroll
  * place, if it was this person's. The agent's script then loads the conversation, and draws only what changed.
  */
-function drawAsLeft() {
+function drawAsLeft(kept: Drawn | null) {
   try {
-    const kept = JSON.parse(sessionStorage.getItem(KEPT_PANEL) || "null") as {
-      person: string;
-      log: string;
-      model: string;
-      choice?: string;
-      top: number;
-      bottom: boolean;
-    } | null;
     if (!kept || kept.person != document.getElementById("agent")!.dataset.person) return;
     const log = document.getElementById("agent-log")!,
       model = document.getElementById("agent-model")!;
@@ -35,7 +26,7 @@ function drawAsLeft() {
     if (kept.choice) model.querySelector("select")!.value = kept.choice;
     log.scrollTop = kept.bottom ? log.scrollHeight : kept.top;
   } catch {
-    /* private mode, or none kept */
+    /* a copy from an older page */
   }
 }
 
@@ -44,13 +35,6 @@ export default function agentToggle(): void {
     card = document.querySelector<HTMLElement>("#agent .agent-card")!,
     fab = document.getElementById("agent-fab")!;
   const narrow = matchMedia("(max-width: 759.98px)");
-  const settings = (): Record<string, unknown> => {
-    try {
-      return JSON.parse(localStorage.getItem("erga:settings:v1") || "{}") ?? {};
-    } catch {
-      return {};
-    }
-  };
   const set = (open: boolean) => {
     body.classList.toggle("agent-open", open);
     card.inert = !open;
@@ -59,9 +43,7 @@ export default function agentToggle(): void {
   const show = (open: boolean) => {
     set(open);
     if (!narrow.matches) {
-      try {
-        localStorage.setItem("erga:settings:v1", JSON.stringify({ ...settings(), agent: open }));
-      } catch {}
+      savePanel({ open });
       // The page and the bars slide over to make room, or back (the editor's layout keeps up by itself, once it runs).
       window.ergaLayoutEarly?.();
     }
@@ -71,8 +53,9 @@ export default function agentToggle(): void {
   window.ergaAgent = { show, open: () => body.classList.contains("agent-open") };
   // Its first state, with no motion (a page that opens with it open shows it open).
   body.classList.add("no-motion");
-  set(!narrow.matches && settings().agent !== false);
-  drawAsLeft();
+  const kept = restorePanel();
+  set(!narrow.matches && kept.open);
+  drawAsLeft(kept.drawn);
   requestAnimationFrame(() => requestAnimationFrame(() => body.classList.remove("no-motion")));
   // Collapsed with the mouse, focus goes back to the circle with no ring (Chrome would draw one, as focus comes from the
   // box); with the keyboard (Esc, ⌘J, Enter on the button), the ring shows. Tabbing away and back shows it again.

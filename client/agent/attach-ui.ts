@@ -94,10 +94,12 @@ export function fileChip(f: FileRef, remove?: () => void): HTMLElement {
 
 export function attachments(o: AttachOptions): Attachments {
   const { pane, form, input } = o;
-  // In the order they were added; a slot with no file yet is still being read.
-  let slots: { file?: Attachment }[] = [];
-  const files = () => slots.flatMap((s) => s.file ? [s.file] : []);
-  const reading = () => slots.filter((s) => !s.file).length;
+  // In the order they were added: each is still being read, or read and ready to go. A message goes only when none is
+  // being read (send-gate.ts), so clear() never drops one.
+  type Slot = { state: "reading" } | { state: "ready"; file: Attachment };
+  let slots: Slot[] = [];
+  const files = () => slots.flatMap((s) => (s.state == "ready" ? [s.file] : []));
+  const reading = () => slots.filter((s) => s.state == "reading").length;
 
   const tray = document.createElement("div");
   tray.className = "agent-attachments";
@@ -116,7 +118,16 @@ export function attachments(o: AttachOptions): Attachments {
     tray.textContent = "";
     tray.hidden = !slots.length;
     for (const s of slots) {
-      if (s.file) { tray.append(fileChip(fileRefs([s.file])[0], () => { slots = slots.filter((x) => x != s); render(); input.focus(); })); continue; }
+      if (s.state == "ready") {
+        tray.append(
+          fileChip(fileRefs([s.file])[0], () => {
+            slots = slots.filter((x) => x != s);
+            render();
+            input.focus();
+          })
+        );
+        continue;
+      }
       const r = document.createElement("span");
       r.className = "file-chip reading";
       r.textContent = "Reading…";
@@ -137,20 +148,24 @@ export function attachments(o: AttachOptions): Attachments {
       todo.push(new File([file], name, { type: file.type }));
     }
     if (why.length) o.hint(why.join(" "));
-    const mine = todo.map(() => ({} as { file?: Attachment }));
+    const mine = todo.map((): Slot => ({ state: "reading" }));
     slots.push(...mine);
     render();
     await Promise.all(todo.map(async (file, i) => {
       const c = classify(file.name, file.type)!;
+      const slot = mine[i];
       try {
-        if (c.kind == "image") mine[i].file = { name: file.name, kind: "image", size: file.size, ...await readImage(file, c.mimeType) };
+        let read: Attachment;
+        if (c.kind == "image") read = { name: file.name, kind: "image", size: file.size, ...(await readImage(file, c.mimeType)) };
         else {
           const text = await file.text();
           if (text.includes("\u0000")) throw new Error("it isn't text");
-          mine[i].file = { name: file.name, kind: "text", mimeType: c.mimeType, data: text, size: file.size };
+          read = { name: file.name, kind: "text", mimeType: c.mimeType, data: text, size: file.size };
         }
+        const ready: Slot = { state: "ready", file: read };
+        slots = slots.map((x) => (x == slot ? ready : x));
       } catch (e) {
-        slots = slots.filter((x) => x != mine[i]);
+        slots = slots.filter((x) => x != slot);
         o.hint(`“${file.name}” can't be attached: ${e instanceof Error ? e.message : String(e)}.`);
       }
       render();
@@ -200,7 +215,7 @@ export function attachments(o: AttachOptions): Attachments {
     add,
     restore(list) {
       const ok = list.filter((f) => f && typeof f.name == "string" && (f.kind == "image" || f.kind == "text") && typeof f.data == "string").slice(0, MAX_FILES - slots.length);
-      slots.push(...ok.map((file) => ({ file })));
+      slots.push(...ok.map((file): Slot => ({ state: "ready", file })));
       render();
     },
   };

@@ -28,8 +28,17 @@ export class PersonAgent extends DurableObject<Env> implements PersonAgentObject
   agentState(login: string, origin: string, name?: string, fresh?: boolean) {
     return this.agents.agentState(login, origin, name, fresh);
   }
-  agentPrompt(login: string, origin: string, text: string, context: string | null, attached?: unknown, doc?: string | null, name?: string) {
-    return this.agents.agentPrompt(login, origin, text, context, attached, doc, name);
+  agentPrompt(
+    login: string,
+    origin: string,
+    text: string,
+    context: string | null,
+    attached?: unknown,
+    doc?: string | null,
+    name?: string,
+    id?: string
+  ) {
+    return this.agents.agentPrompt(login, origin, text, context, attached, doc, name, id);
   }
   agentControl(login: string, op: "abort" | "reset" | "model", model?: string) {
     return this.agents.agentControl(login, op, model);
@@ -39,12 +48,6 @@ export class PersonAgent extends DurableObject<Env> implements PersonAgentObject
   }
   clearConversation(login: string) {
     return this.agents.clearConversation(login);
-  }
-  agentPrefs(login: string) {
-    return this.agents.agentPrefs(login);
-  }
-  setAgentPrefs(login: string, body: unknown) {
-    return this.agents.setAgentPrefs(login, body);
   }
   /** The panel's events: a WebSocket (Upgrade: websocket), else server-sent events. */
   async fetch(request: Request): Promise<Response> {

@@ -1,12 +1,14 @@
-// Each person's agent, kept in their own object (PersonAgent, named by their login): the session, its conversation and
-// panel layout, and the event stream their pages listen on. The panel is client/agent/person-agent.ts, on every page.
+// Each person's agent, kept in their own object (PersonAgent, named by their login): the session, its conversation
+// and the event stream their pages listen on. The panel is client/agent/person-agent.ts, on every page.
 // This is the logic (PersonAgents) and the routes; the Durable Object (cloudflare/objects/person-agent.ts) gives it its
 // SQLite and forwards the calls.
 //
 //   GET    /api/agent                 { enabled, reason?, model, models, choice, log }
-//   POST   /api/agent                 { text, context, files?, doc? }: a message (it steers a turn that is running);
+//   POST   /api/agent                 { text, context, files?, doc?, id? }: a message (it steers a turn that is running);
 //                                     context is the page note (the page open, what is selected there), doc the id
-//                                     of the document open, for the document tools that name none
+//                                     of the document open, for the document tools that name none, id the tab's own
+//                                     id for the message: its copy in the transcript carries it, and a second
+//                                     message with the same id (Try again, after the first got there) is not sent again
 //   POST   /api/agent/abort|reset     stops the turn; starts a new conversation
 //   POST   /api/agent/model           { model }: one of the models the person can use (shared/models.ts), from the next turn
 //   GET    /api/agent/events          a WebSocket (Upgrade: websocket, as the panel asks) or server-sent events, to that
@@ -16,15 +18,12 @@
 //   POST   /api/agent/keys            { name, value }: the person's own API key for a provider (Settings, Agent), in place of
 //                                     the one there was; a secret, so set only here (whoami, revoke
 //                                     list and remove them). The answer has its last four characters, never the key.
-//   GET    /api/agent/prefs           { open?, side?, width? }: their panel, as they left it
-//   PUT    /api/agent/prefs           { open?, side?, width? }: changes what's given
 //
 // The panel is the person's, in a browser: no token reaches it. An outside agent with a token
 // ("Authorization: Bearer erga_...", server/identity) calls the same tools itself (MCP, POST /api/tools/<name>,
 // server/api.ts).
 
 import { startAgent, type AgentSession } from "./agent.ts";
-import { panelPrefs, type PanelPrefs } from "./panel.ts";
 import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
 import { restoredLog } from "../checkpoint.ts";
 import { agentTools, toolsFor } from "../tools.ts";
@@ -88,7 +87,6 @@ export class PersonAgents {
   private settings: Cache.Cache<string, AgentSettings, unknown>;
 
   constructor(private deps: PersonAgentsDeps) {
-    deps.sql.exec(`CREATE TABLE IF NOT EXISTS agent_prefs (login TEXT PRIMARY KEY, prefs TEXT NOT NULL, updated INTEGER NOT NULL)`);
     this.chats = new ChatTables(deps.sql);
     this.settings = Effect.runSync(
       Cache.makeWith((login: string) => Effect.tryPromise({ try: () => deps.platform.agentSettings(login), catch: (e) => e }), {
@@ -187,10 +185,13 @@ export class PersonAgents {
     context: string | null,
     attached?: unknown,
     doc?: string | null,
-    name?: string
+    name?: string,
+    id?: string
   ): Promise<{ ok: boolean; reason?: string }> {
     const s = await this.session(login, origin, name);
     if (typeof s == "string") return { ok: false, reason: `the agent is off: ${s}` };
+    // Sent again (Try again, after an answer that came too late): the transcript has it already.
+    if (id && s.agent.log().items.some((i) => i.kind == "user" && i.id == id)) return { ok: true };
     const files = checkAttachments(attached);
     if (typeof files == "string") return { ok: false, reason: files };
     if (!text.trim() && !files.length) return { ok: false, reason: "say something" };
@@ -203,7 +204,7 @@ export class PersonAgents {
           if (Result.isSuccess(bytes)) f.blob = (await Effect.runPromise(storeBlob(blobs, bytes.success))).hash;
         }
     s.here = typeof doc == "string" && /^[a-z0-9-]{1,64}$/.test(doc) ? doc : null;
-    s.agent.prompt(text.slice(0, 20000), context ? context.slice(0, 4000) : null, files);
+    s.agent.prompt(text.slice(0, 20000), context ? context.slice(0, 4000) : null, files, id);
     return { ok: true };
   }
 
@@ -234,18 +235,6 @@ export class PersonAgents {
       this.event({ type: "agent", ev: { t: "reset" } }, login);
     }
     return emptyLog();
-  }
-
-  async agentPrefs(login: string): Promise<PanelPrefs> {
-    const r = this.deps.sql.exec<{ prefs: string }>("SELECT prefs FROM agent_prefs WHERE login = ?", login)[0];
-    try { return panelPrefs(JSON.parse(r?.prefs ?? "{}")); } catch { return {}; }
-  }
-
-  /** Changes what's given (open, side, width), keeps the rest. */
-  async setAgentPrefs(login: string, body: unknown): Promise<PanelPrefs> {
-    const prefs = { ...(await this.agentPrefs(login)), ...panelPrefs(body) };
-    this.deps.sql.exec("INSERT OR REPLACE INTO agent_prefs (login, prefs, updated) VALUES (?, ?, ?)", login, JSON.stringify(prefs), Date.now());
-    return prefs;
   }
 
   async agentControl(login: string, op: "abort" | "reset" | "model", model?: string) {
@@ -331,7 +320,7 @@ export class PersonAgents {
 /** What the routes ask of a person's agent (their Durable Object answers, by RPC, forwarding to a PersonAgents). */
 export type PersonAgentObject = Pick<
   PersonAgents,
-  "agentState" | "agentPrompt" | "agentControl" | "conversation" | "clearConversation" | "agentPrefs" | "setAgentPrefs" | "fetch"
+  "agentState" | "agentPrompt" | "agentControl" | "conversation" | "clearConversation" | "fetch"
 >;
 
 declare module "../../server/platform.ts" {
@@ -353,12 +342,13 @@ const personOf = (platform: Platform, request: Request) =>
 
 export const isAgentPath = (path: string) => path == "/api/agent" || path.startsWith("/api/agent/");
 
-/** The bodies the panel sends: a message, a model, its preferences (panel.ts checks those). */
+/** The bodies the panel sends: a message, a model. */
 const Prompt = Schema.Struct({
   text: Schema.optionalKey(Schema.Unknown),
   context: Schema.optionalKey(Schema.Unknown),
   files: Schema.optionalKey(Schema.Unknown),
   doc: Schema.optionalKey(Schema.Unknown),
+  id: Schema.optionalKey(Schema.Unknown),
 });
 const ModelBody = Schema.Struct({ model: Schema.optionalKey(Schema.String) });
 const KeyBody = Schema.Struct({ name: Schema.optionalKey(Schema.String), value: Schema.optionalKey(Schema.String) });
@@ -408,7 +398,8 @@ const agentRoutes = (origin: string): Route =>
           typeof b.context == "string" ? b.context : null,
           b.files,
           typeof b.doc == "string" ? b.doc : null,
-          me.name
+          me.name,
+          typeof b.id == "string" && /^[\w-]{1,64}$/.test(b.id) ? b.id : undefined
         )
       );
       return json(r, r.ok ? 200 : 409);
@@ -439,13 +430,6 @@ const agentRoutes = (origin: string): Route =>
       Effect.map((key) => json({ ok: true, key })),
       Effect.catch((error) => Effect.succeed(json({ ok: false, error }, 400)))
     );
-  }
-  if (path == "/api/agent/prefs") {
-    if (m == "GET") return json(yield* call(() => h.agentPrefs(me.login)));
-    if (m == "PUT") {
-      const prefs = yield* body(request, Schema.Unknown, {});
-      return json(yield* call(() => h.setAgentPrefs(me.login, prefs)));
-    }
   }
   return json({ error: "Not found" }, 404);
 });
