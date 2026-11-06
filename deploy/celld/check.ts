@@ -8,6 +8,9 @@
 // The tools get a documents token made with it, as on the Settings page, which ends the next day.
 
 import * as Base64Url from "effect/encoding/Base64Url";
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { cookieName, SESSION_COOKIE, sign } from "../../server/identity/index.ts";
 import { openEditor } from "../../e2e/helpers/editor";
@@ -204,9 +207,15 @@ await check("page's own API (Worker Loader)", async () => {
   return "the deck's api.js ran in a Dynamic Worker: add_slide added a slide";
 });
 
-await check("view_page (Browser Rendering)", async () => {
-  const r = await tool<any>("page", { op: "view_page", document });
-  return JSON.stringify(r).slice(0, 120);
+await check("view_page (the server's browser)", async () => {
+  const r = JSON.stringify(await tool<unknown>("page", { op: "view_page", document }));
+  // The first PNG in the answer, wherever the tool puts it.
+  const png = Buffer.from(/iVBORw0KGgo[A-Za-z0-9+/=]+/.exec(r)?.[0] ?? "", "base64");
+  if (png.length < 2000) throw new Error(`no picture: ${r.slice(0, 160)}`);
+  const [width, height] = [png.readUInt32BE(16), png.readUInt32BE(20)];
+  const file = join(tmpdir(), "erga-celld-view_page.png");
+  writeFileSync(file, png);
+  return `a ${width}x${height} PNG of ${Math.round(png.length / 1024)} KB, in ${file}`;
 });
 
 await check("homepage, signed out", async () => {

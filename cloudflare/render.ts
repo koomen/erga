@@ -25,7 +25,7 @@ import {
 import { sourceDigest } from "../shared/page-html";
 import { pagesOrigin, readPagesClaims } from "../server/documents/index";
 import { cookieName, SESSION_COOKIE, viewCookie } from "../server/identity/index";
-import { inlineCall, readerPage } from "../server/pages/index";
+import { inlineCall, loadAssets, readerPage } from "../server/pages/index";
 import { browserBinding, browsers } from "./browser";
 import type { Page } from "./cdp";
 import type { Env } from "./env";
@@ -65,6 +65,8 @@ async function render(env: Env, mine: ReturnType<typeof browsers>, job: Job): Pr
   const t0 = Date.now();
   const p = platform(env);
   const app = new URL(job.origin);
+  // The editor's files' addresses, for the frame's page (readerPage): this object's isolate may not be the Worker's.
+  await loadAssets(p, app);
   const rest = pageAddress(job.path);
   const place: Place = {
     app,

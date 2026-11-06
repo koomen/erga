@@ -5,7 +5,8 @@
 //
 // celld takes one JavaScript module, so the build's modules become one (Bun.build). The settings the release leaves
 // to the deploy (PAGES_HOST, ...) are plain vars here. celld has no secrets: the machine adds them as vars at its
-// deploy, and the bucket keeps them encrypted with a key only the machine may use (aws.ts). Cloudflare's Browser Rendering (BROWSER) has no celld binding: view_page says so.
+// deploy, and the bucket keeps them encrypted with a key only the machine may use (aws.ts). Browser Rendering (BROWSER)
+// has no celld binding: aws.ts sets ERGA_CHROME, a Chrome on the machine.
 // celld's Cache API keeps nothing, so the project binds a KV namespace, EDGE_CACHE, that the Worker's platform uses in
 // its place (cloudflare/kv-cache.ts).
 

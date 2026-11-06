@@ -98,6 +98,8 @@ export interface Env {
   ERGA_GITHUB_ORIGIN?: string;
   /** Local development only: a stand-in for Google's sign-in endpoints. */
   ERGA_GOOGLE_ORIGIN?: string;
+  /** On celld (deploy/celld/aws.ts): the DevTools address of a headless Chrome on the same machine, for view_page (cloudflare/browser.ts). */
+  ERGA_CHROME?: string;
   /** Local development only: the dev server's address, where its own headless Chrome is (cloudflare/browser.ts). */
   ERGA_DEV_ORIGIN?: string;
   /** Local development only: how often the Worker checks for a newer homepage deploy (5 seconds by default; tests shorten it). */
