@@ -103,6 +103,18 @@ export const AGENT_ACTIONS: AgentAction[] = [
     action: "A document's page calls a model as its visitor (window.ergaLLM.ask)",
     exempt: "the page's own script, as its visitor; an agent has a model of its own",
   },
+  {
+    route: "GET /_erga/api/llm",
+    domain: "none",
+    action: "Whether the homepage's page may call its model, on the homepage's own domain (window.ergaLLM.status)",
+    exempt: "the page's own script, as its visitor; an agent has a model of its own",
+  },
+  {
+    route: "POST /_erga/api/llm",
+    domain: "none",
+    action: "The homepage's page calls its model, on the homepage's own domain (window.ergaLLM.ask)",
+    exempt: "the page's own script, as its visitor; an agent has a model of its own",
+  },
   { route: "POST /api/agent/keys", domain: "none", action: "Add or replace your own API key (Settings, Agent)", exempt: SECRET },
 
   { route: "GET /api/health", domain: "none", action: "The app's health check", exempt: "the deploy pipeline's, after each deploy" },
@@ -311,6 +323,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ signing in (server/identity/accounts.ts)
   { route: "GET /auth/username", domain: "none", action: "A new account's first sign-in: choose a username", exempt: SIGN_IN },
   { route: "POST /auth/username", domain: "none", action: "A new account's first sign-in: make the account under the username", exempt: SIGN_IN },
+  { route: "GET /auth/home-pass", domain: "none", action: "Sign in on the homepage's own domain, through this one", exempt: SIGN_IN },
   { route: "GET /auth/dev", domain: "none", action: "Local development's pretend provider signs someone in", exempt: "the dev server's" },
 
   // ------------------------------------------------------------ local development

@@ -190,6 +190,8 @@ Found a new trap? Write it here, in the same change.
   Then that host gets only the site's files (server/home/serve.ts, `serveHomeDomain`), and the Erga domain's `/` is the
   small Sign in page. A test gives its server `ERGA_DEPLOY={"home":"home.localhost"}` (e2e/full/home/domain.e2e.ts). The
   browser reaches home.localhost; Node's and Bun's fetch can't, so send the Host header with `node:http`.
+  On that domain, Erga has only `/_erga/` (server/app.ts): the pages' model and its sign-in, a round trip through the Erga
+  domain (server/identity/home-pass.ts) that needs the facts' `app`. The Erga domain's session never counts there.
 - The homepage project's row has the owner `-home` (document/names.ts), which no account can be.
   Build a document's address with `addressOf`, never `/${owner}/${slug}`: its address is `/_home`.
   A document's host keeps the owner it was made with, and nothing tells it of a new one. An access rule

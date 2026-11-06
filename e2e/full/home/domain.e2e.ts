@@ -1,5 +1,6 @@
 // The homepage on a domain of its own (the deploy facts' home: `bun erga deploy <host> --home <domain>`). There, the
-// deployed site's files as they are: no bars, no pencil, no viewer, no frame, nothing of Erga's. On the Erga domain,
+// deployed site's files as they are: no bars, no pencil, no viewer, no frame; of Erga's, only window.ergaLLM in its
+// HTML pages (domain-llm.e2e.ts). On the Erga domain,
 // / is a small page with Sign in and no link to the site, and the site's files are not served. Here the domain is
 // home.localhost, which the browser sends to this machine.
 import { request } from "node:http";
@@ -38,7 +39,8 @@ const onHome = (root: string, path: string) =>
         done({
           status: r.statusCode ?? 0,
           location: r.headers.location ?? null,
-          text,
+          // (Without the page model's script, which each HTML page gets first.)
+          text: text.replace(/<script>\(\(\)=>[^]*?<\/script>/, ""),
           csp: (r.headers["content-security-policy"] as string) ?? null,
         })
       );
@@ -57,7 +59,7 @@ async function site() {
   return { server, token, id, url };
 }
 
-test("the site's own domain serves its files as they are, at clean addresses, and nothing of Erga's", async () => {
+test("the site's own domain serves its files as they are, at clean addresses, and no page of Erga's", async () => {
   const { server } = await site();
   const at = (path: string) => onHome(server.root, path);
   const front = await at("/");
@@ -71,7 +73,6 @@ test("the site's own domain serves its files as they are, at clean addresses, an
   expect(await at("/docs")).toMatchObject({ status: 200, text: files["docs.html"] });
   for (const path of ["/api/health", "/_home", "/auth/sign-in", "/mcp"])
     expect(await at(path), path).toMatchObject({ status: 404, text: files["404.html"] });
-  expect((await at("/about")).text).not.toContain("ergaLLM");
 });
 
 test("on the Erga domain, / is a page with Sign in and no link to the site; the site's files are not there", async ({ tab }) => {

@@ -171,7 +171,7 @@ const AUTHORS_POLICY = { "Content-Security-Policy": "frame-ancestors 'self'" };
 /**
  * Any other address of the homepage's site (site.ts): a rule of its _redirects, one of its files at its clean address,
  * or, with `notFound`, its 404.html. Null when the site has nothing there, or when `taken` says the address is Erga's
- * (Erga's paths win): the app answers it. On the Erga domain, its HTML pages get window.ergaLLM, as / does.
+ * (Erga's paths win): the app answers it. Its HTML pages get window.ergaLLM, as / does.
  */
 export const serveHomeSite = (o: { notFound: boolean; taken: () => Promise<boolean> }) =>
   Effect.flatMap(ctx, ({ request, platform }) =>
@@ -202,7 +202,7 @@ async function siteAnswer(request: Request, platform: Platform, o: Where): Promi
   return null;
 }
 
-/** One of the snapshot's files, as it is (on the Erga domain, an HTML page with window.ergaLLM); null if the deploy lost it. */
+/** One of the snapshot's files, as it is (an HTML page with window.ergaLLM); null if the deploy lost it. */
 async function siteFile(
   request: Request,
   platform: Platform,
@@ -219,18 +219,24 @@ async function siteFile(
     "X-Content-Type-Options": "nosniff",
     ...AUTHORS_POLICY,
   };
-  // An HTML page gets the homepage's model (window.ergaLLM), as the homepage's own page does.
-  const body =
-    !direct && /^text\/html/i.test(file.type)
-      ? withHomeLlm(new TextDecoder().decode(file.bytes), page.docId, await pageToken(platform.secret, page.docId, Date.now()))
+  // An HTML page gets the homepage's model (window.ergaLLM), as the homepage's own page does; on its own domain, at
+  // that domain's /_erga/ (agents/page-llm.ts, homeDomainLlmApi).
+  const body = /^text\/html/i.test(file.type)
+    ? withHomeLlm(
+        new TextDecoder().decode(file.bytes),
+        page.docId,
+        await pageToken(platform.secret, page.docId, Date.now()),
+        direct ? "/_erga" : ""
+      )
     : (file.bytes as BodyInit);
   return new Response(request.method == "HEAD" ? null : body, { status, headers });
 }
 
 /**
  * Every request on the homepage's own domain (Platform's deploy.home): the deployed snapshot's files as they are, at
- * their clean addresses, with its redirects and its 404 page. No bars, no pencil, no viewer, no frame, and nothing of
- * Erga's: people edit the site on the Erga domain, and a deploy there changes what this domain serves.
+ * their clean addresses, with its redirects and its 404 page. No bars, no pencil, no viewer, no frame: people edit the
+ * site on the Erga domain, and a deploy there changes what this domain serves. Of Erga's, only window.ergaLLM in its
+ * HTML pages, and its paths under /_erga/ (server/app.ts).
  */
 export const serveHomeDomain = Effect.flatMap(ctx, ({ request, platform }) =>
   Effect.map(

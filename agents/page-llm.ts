@@ -9,6 +9,8 @@
 //                                 { text }; or { error, code }: "sign_in" (401), "off" (403), "limit" (429), "error".
 //                                 "sign_in" has providers: [{ id, label }], the sign-in providers that are on, for the
 //                                 sign-in dialog (client/common/sign-in-dialog.ts)
+//   GET  /_erga/api/llm, POST /_erga/api/llm
+//                                 the same, on the homepage's own domain, for the homepage's document only
 //
 // The pages origin never gets the session or a key: only this site's own pages may call this (their Origin), with the
 // visitor's cookie, for the one document they show. Each call is logged, and counted against the visitor's limits and
@@ -19,6 +21,10 @@
 // browser sends it) and carry the page's token (server/home/llm-token.ts: `token`, an hour old at most). Such a
 // visitor is counted by their IP address (a hash of it), with the smaller limit `guest`, and all of them together
 // with `guests`, so they never use up what the signed-in visitors have.
+//
+// On the homepage's own domain (Platform's deploy.home), its pages call /_erga/api/llm there, with the same rules,
+// for the homepage's document only. The visitor there is the own domain's cookie (server/identity/home-pass.ts),
+// never the Erga domain's session.
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -27,13 +33,16 @@ import { LanguageModel, Prompt } from "effect/ai";
 import { call, ctx, json, type Route } from "../server/http.ts";
 import { PAGE_LLM_LIMITS, roleMay, underLimit, type DocRow } from "../server/directory/index.ts";
 import { whoOf, type Platform, type Session } from "../server/platform.ts";
-import { PROVIDERS, providersOn, type Provider } from "../server/identity/index.ts";
+import { homeVisitor, PROVIDERS, providersOn, type Provider } from "../server/identity/index.ts";
 import type { SignInChoice } from "../shared/sign-in.ts";
 import { tokenOk } from "../server/home/index.ts";
 import { DEFAULT_PAGE_LLM_MODEL, isPageLlmModel, MODELS, type ModelChoice } from "../shared/models.ts";
 import { modelError, pageModel } from "./models.ts";
 
 export const isPageLlmPath = (path: string) => path == "/api/llm";
+
+/** The page model's path on the homepage's own domain. */
+export const HOME_LLM_PATH = "/_erga/api/llm";
 
 const Message = Schema.Struct({ role: Schema.Literals(["user", "assistant"]), content: Schema.String });
 const Ask = Schema.Struct({
@@ -93,7 +102,12 @@ function tooBig(a: Ask): string | null {
   return chars > PAGE_LLM_LIMITS.inputChars ? `At most ${PAGE_LLM_LIMITS.inputChars} characters in the system prompt and messages.` : null;
 }
 
-export const pageLlmApi: Route = Effect.gen(function* () {
+/**
+ * The route, with the visitor from `whoAsks`; `home`: on the homepage's own domain, where only the homepage's
+ * document may call its model.
+ */
+const pageLlm = (whoAsks: (p: Platform, request: Request) => Promise<Session | null>, home: boolean): Route =>
+  Effect.gen(function* () {
   const { request, url, platform } = yield* ctx;
   // Only this site's own pages, with the visitor's cookie: never a token, never another origin (the pages origin is one).
   if (/^Bearer\s/i.test(request.headers.get("authorization") ?? ""))
@@ -101,10 +115,15 @@ export const pageLlmApi: Route = Effect.gen(function* () {
   // (A same-origin GET sends no Origin; another site's can't read the answer, which has no CORS.)
   const from = request.headers.get("origin");
   if (from != url.origin && !(request.method == "GET" && from == null)) return fail("error", "Forbidden", 403);
-  const visitor = visitorOf(yield* call(() => platform.sessionOf(request)));
+  const visitor = visitorOf(yield* call(() => whoAsks(platform, request)));
+  // On the own domain, the homepage's model alone.
+  const allowed = (id: string) =>
+    home ? call(() => platform.directory.homeId()).pipe(Effect.map((h) => h == id)) : Effect.succeed(true);
   if (request.method == "GET") {
     const id = url.searchParams.get("document") ?? "";
-    const now = yield* call(() => decide(platform, id, visitor));
+    const now = (yield* allowed(id))
+      ? yield* call(() => decide(platform, id, visitor))
+      : { off: "This site's pages call only its own model." };
     const providers = visitor ? {} : { providers: yield* call(() => signInChoices(platform)) };
     return json({ on: "model" in now, model: "model" in now ? MODELS[now.model].label : null, signedIn: !!visitor, ...providers });
   }
@@ -114,6 +133,7 @@ export const pageLlmApi: Route = Effect.gen(function* () {
     Effect.orElseSucceed(() => null)
   );
   if (!ask) return fail("error", "The body must be { document, system?, messages: [{ role, content }], max_tokens? }.");
+  if (!(yield* allowed(ask.document))) return fail("off", "This site's pages call only its own model.");
   // Signed out: only the homepage's model, as a guest (its IP address), from one of its pages (their token).
   const guest = !visitor && (yield* call(() => platform.directory.homeId())) == ask.document;
   if (!visitor && !guest)
@@ -173,4 +193,10 @@ export const pageLlmApi: Route = Effect.gen(function* () {
   yield* call(() => pageLlm.finish(id, { input, output }));
   console.log(`page model: ${login} on ${now.doc.id} (${now.model}): ${input} in, ${output} out`);
   return json({ text });
-});
+  });
+
+/** /api/llm, on the app's domain: the visitor is the session. */
+export const pageLlmApi = pageLlm((p, request) => p.sessionOf(request), false);
+
+/** /_erga/api/llm, on the homepage's own domain: the visitor is that domain's cookie (server/identity/home-pass.ts). */
+export const homeDomainLlmApi = pageLlm(homeVisitor, true);

@@ -82,6 +82,19 @@ const homeOf = (facts: unknown): string | null => {
   return typeof home == "string" && home ? home.toLowerCase() : null;
 };
 
+/** The app's host in the deploy facts (deploy/pipeline/account.ts, deployFacts: its domain, or its workers.dev address), or null. */
+const appOf = (facts: unknown): string | null => {
+  const f = (facts && typeof facts == "object" ? facts : {}) as {
+    app?: { kind?: string; hostname?: unknown };
+    worker?: unknown;
+    subdomain?: unknown;
+  };
+  if (f.app?.kind == "domain" && typeof f.app.hostname == "string") return f.app.hostname.toLowerCase();
+  if (f.app?.kind == "workers.dev" && typeof f.worker == "string" && typeof f.subdomain == "string")
+    return `${f.worker}.${f.subdomain}.workers.dev`;
+  return null;
+};
+
 /** Whose the homepage is when the server makes it: locally DEV_LOGIN, else (null) the server's first admin. */
 const landingOf = ({ devLogin }: { devLogin: string }): NonNullable<Platform["landing"]> => {
   const dev = devLogin.toLowerCase();
@@ -139,6 +152,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       facts: settings.deployFacts,
       primary: settings.snapshotFrom || null,
       home: homeOf(settings.deployFacts),
+      app: appOf(settings.deployFacts),
     },
     signIn: {
       app: settings.githubApp,

@@ -138,6 +138,8 @@ export interface Platform {
      * homepage is on this server's own domain.
      */
     home: string | null;
+    /** The app's own host in the deploy facts (app), or null: where the homepage's own domain sends a visitor to sign in. */
+    app: string | null;
   };
   /** Sign-in's fixed values, from the deploy. */
   signIn: {

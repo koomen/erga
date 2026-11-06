@@ -25,8 +25,8 @@ p { margin: 0 0 14px; color: var(--soft); }
 .providers { max-width: none; }
 ${PROVIDER_CSS}`;
 
-/** Shows the dialog with `choices`, each back to `next`; while it's open, nothing. */
-export function showSignIn(choices: SignInChoice[], next: string): void {
+/** Shows the dialog with `choices`, each back to `next` (`base`: where Erga's paths are); while it's open, nothing. */
+export function showSignIn(choices: SignInChoice[], next: string, base = ""): void {
   let host = document.querySelector<HTMLElement>("erga-sign-in");
   if (!host) {
     host = document.createElement("erga-sign-in");
@@ -50,7 +50,7 @@ export function showSignIn(choices: SignInChoice[], next: string): void {
   const dialog = host.shadowRoot!.querySelector("dialog")!;
   if (dialog.open) return;
   host.shadowRoot!.querySelector(".providers")!.innerHTML = choices.length
-    ? providerButtons(choices, next)
+    ? providerButtons(choices, next, base)
     : "<p>No sign-in is on here.</p>";
   dialog.showModal();
 }
