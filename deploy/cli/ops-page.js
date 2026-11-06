@@ -4,7 +4,7 @@
 // A job's log that was scrolled to its end stays at its end. The Setup tab's checklist (deploy/own/page.ts: /setup.js
 // and /setup/panel) is made once and kept when the page draws again, so its forms keep what the person types. When the
 // server stops, it says so; when it runs again, the page follows. Merge opens a field for the commit's message under its
-// branch. A commit row shows a Deploy button in each instance's column on hover or focus, which asks a question
+// branch. A commit row's cell shows a Deploy button in an instance's column on hover or focus, which asks a question
 // first (the instance and the commit). Each starts its job (POST /api/merge, /api/deploy); the page stays on its tab,
 // and the job line shows the job as it runs. An open field or question stays open, with what the person typed, when the
 // page draws again.
