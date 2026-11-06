@@ -12,7 +12,7 @@ import { runPipeline, STEPS, type Target } from "../deploy/pipeline/pipeline";
 import { loadRelease, type Release } from "../deploy/pipeline/release-format";
 import { mockCloudflare } from "../dev/mock-cloudflare";
 import { HEADERS } from "../client/build.ts";
-import { ASSET_PREFIX, type AssetManifest } from "../shared/assets.ts";
+import type { AssetManifest } from "../shared/assets.ts";
 import { pagesHost, pagesOrigin, pagesToken } from "../server/documents/index.ts";
 import type { Platform } from "../server/platform";
 import { quietConsole } from "./helpers/quiet.ts";
@@ -129,8 +129,15 @@ describe("deploying", () => {
     expect(worker.metadata.keep_bindings).toBeUndefined();
     expect(worker.metadata.migrations).toBeUndefined();
     expect(worker.tags).toEqual(["erga-deploy"]);
-    // The Worker runs first for everything but the hashed files, which Cloudflare serves with the build's headers.
-    expect(worker.metadata.assets.config).toEqual({ html_handling: "none", not_found_handling: "none", run_worker_first: ["/*", `!${ASSET_PREFIX}*`], _headers: HEADERS });
+    // The Worker runs first for every path, the hashed files too (server/pages/assets.ts, serveAsset): the homepage's own
+    // domain answers its /_erga/ routes (server/app.ts), and a hashed file that isn't there gets a 404 that no browser keeps.
+    // (Excluded, /_erga/* went to the static assets alone: a 404 there carried the build's year-long cache header.)
+    expect(worker.metadata.assets.config).toEqual({
+      html_handling: "none",
+      not_found_handling: "none",
+      run_worker_first: true,
+      _headers: HEADERS,
+    });
     expect(worker.metadata.compatibility_flags).toContain("nodejs_compat");
 
     expect(state.scripts["erga-pages"].workersDev).toBe(true);

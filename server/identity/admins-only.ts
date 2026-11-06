@@ -16,9 +16,9 @@
 //   the editor's static files       /_erga/... (its code, styles, typeface and page, each named by its content's hash)
 //                                   and /logo.png: the app's own code, public in its repository, holding no data; the
 //                                   sign-in page and an admin's frame on the pages origin load them without a session.
-//                                   On Cloudflare the Worker doesn't even run for /_erga/... (cloudflare.config.ts
-//                                   runWorkerFirst): they're served as they are, to anyone, with _headers' headers;
-//                                   so nothing but the client build's own output may ever go under /_erga/; and an
+//                                   The Worker serves them from the static assets (server/pages/assets.ts,
+//                                   serveAsset), to anyone; so nothing but the client build's own output may ever go
+//                                   under /_erga/ on the app's domain; and an
 //                                   editing library's address, /erga/<name>/editor.js, one line that imports its build
 //   GET /erga-sw.js                 Erga's service worker (server/pages/worker.ts), on the app's origin and the pages
 //                                   origin: code, public in its repository, holding no data; it fetches nothing itself
