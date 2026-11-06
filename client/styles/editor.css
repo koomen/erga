@@ -37,6 +37,8 @@ html.page-dark body:not(.source) :is(.agent, .ds-menu, .help) {
   --shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
   color-scheme: dark;
 }
+/* The note while the room can't be reached (client/live/live.ts): on a dark page, the dark theme's. */
+html.page-dark body:not(.source) .erga-live-note { --soft: #8f8f99; --panel-bg: rgba(32, 32, 36, 0.94); --panel-border: #2f2f35; }
 /* (The controls' tones on the page's colour are client/inline/bars.css's.) */
 /* (Your avatar's ring, which parts it from the others', is the page's colour.) */
 html:is(.page-light, .page-dark) body:not(.source) .chrome { --bg: var(--band); }

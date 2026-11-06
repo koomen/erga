@@ -36,6 +36,8 @@
 //   /_erga/...                 the editor's own files, each named by its content's hash (static assets, client/build.ts:
 //                              on Cloudflare served without the Worker, kept for a year); /logo.png, Erga's logo
 //   /erga/<name>/editor.js     an editing library (erga/text), at its one address: its newest build, which a page imports
+//   /erga-sw.js                Erga's service worker (pages/worker.ts), here and on a document's own pages origin: the
+//                              editor opens with no connection. The only service worker a pages origin takes
 //   /api/llm                   a document's page calls a model as its signed-in visitor (agents/page-llm.ts)
 //   /api/news, /api/news/rows  live pages: an open page's socket, and the rows it asks for when they change
 //   GET /api/release           which of them this release has: open pages follow a redeploy with it,
@@ -52,7 +54,7 @@ import { adminGate, isAdminPath } from "./admin/index.ts";
 import { agentApi, isAgentPath } from "../agents/person/sessions.ts";
 import { isPageLlmPath, pageLlmApi } from "../agents/page-llm.ts";
 import { serverApi } from "./api.ts";
-import { adoptLanding, documentRoutes, ergaAddress, isPagesSite } from "./documents/index.ts";
+import { adoptLanding, documentRoutes, ergaAddress, isPagesSite, workerHere } from "./documents/index.ts";
 import { serveHome, serveHomeDomain, serveHomeFile, serveHomeSite } from "./home/index.ts";
 import {
   adminsOnlyGate,
@@ -80,7 +82,11 @@ import {
   loadAssets,
   OWN_ACCOUNT,
   serveAsset,
+  serveWorker,
+  serveClear,
+  CLEAR_PATH,
   withAccount,
+  WORKER_PATH,
 } from "./pages/index.ts";
 import { whoOf } from "./platform.ts";
 import { withSecurity } from "./security.ts";
@@ -137,9 +143,15 @@ const route = (url: URL, outside: Outside): Route =>
     // admin-scope token, but for the exemptions server/identity/admins-only.ts lists and explains.
     const refused = yield* adminsOnlyGate;
     if (refused) return refused;
+    // Erga's service worker (pages/worker.ts), on the app's origin and on a document's own pages origin: never on a
+    // shared pages host, where the origin isn't one document's.
+    if (path == WORKER_PATH && (request.method == "GET" || request.method == "HEAD"))
+      return workerHere(url, p) ? serveWorker() : text("Not found", 404);
+    // A pages origin's page that deletes its offline copies: sign-out frames it (client/inline/sign-out.ts).
+    if (path == CLEAR_PATH && request.method == "GET" && isPagesSite(url, p)) return serveClear();
     // A document's pages origin serves its page and files, and nothing of this site's.
-    // No service workers there: one would outlive the page that registered it, in the browser of whoever viewed it, and
-    // answer for the document's files after its authors had changed them.
+    // No service worker of a document's there: one would outlive the page that registered it, in the browser of whoever
+    // viewed it, and answer for the document's files after its authors had changed them. Only Erga's own, above.
     if (isPagesSite(url, p) && request.headers.get("service-worker") == "script")
       return text("A document's page can't register a service worker.", 403);
     // (Not the editor's files: the page loads them from the app's origin, one address for every document: pages/reader.ts.)

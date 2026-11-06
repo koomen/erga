@@ -52,19 +52,19 @@ const keepers = new Map<string, { save: () => unknown; everyReload: boolean }>()
 const holds: (() => string | null)[] = [];
 const flushes: (() => Promise<boolean>)[] = [];
 let lastActivity = 0, pointerHeld = false, composing = false;
-const connections = new Map<string, { up: boolean; since: number; wasUp: boolean }>();
+const connections = new Map<string, { up: boolean; since: number; wasUp: boolean; note?: string }>();
 
 const api: Live = {
   keep(name, save, opts) { keepers.set(name, { save, everyReload: !!opts?.everyReload }); },
   hold(why) { holds.push(why); },
   flush(fn) { flushes.push(fn); },
   activity() { lastActivity = now(); },
-  connection(name, up) {
+  connection(name, up, note) {
     if (up == null) { connections.delete(name); showNote(); return; }
     const c = connections.get(name);
     if (c && c.up == up) return;
     // A connection first heard of as down was up before (only a page that connected reports a loss).
-    connections.set(name, { up, since: now(), wasUp: c ? c.up : !up });
+    connections.set(name, { up, since: now(), wasUp: c ? c.up : !up, note });
     // Back after being down: the server may be a new one. (The first connection is no news.)
     if (up && c && !c.up) { check("reconnected"); recheckSoon(); }
     showNote();
@@ -80,24 +80,31 @@ addEventListener("compositionend", () => { composing = false; lastActivity = now
 
 // ------------------------------------------------------------------ the note
 
+// One quiet line at the foot of the window while a connection is down: after a few seconds (a restart passes unseen), at once when
+// the browser itself says it's offline. It says what the connection asked it to (the editor's room: that the edits sync
+// later), and goes when every connection is back. In the editor's colours where the page has them (client/style.css,
+// client/styles/editor.css).
 const NOTE_AFTER_MS = 4000;
 let note: HTMLElement | null = null, noteTimer = 0;
 function showNote() {
   clearTimeout(noteTimer);
   const down = [...connections.values()].filter((c) => !c.up && c.wasUp);
   if (!down.length) { note?.remove(); note = null; return; }
-  const left = Math.min(...down.map((c) => c.since)) + NOTE_AFTER_MS - now();
+  const left = navigator.onLine ? Math.min(...down.map((c) => c.since)) + NOTE_AFTER_MS - now() : 0;
   if (left > 0) { noteTimer = window.setTimeout(showNote, left); return; }
-  if (note) return;
-  note = document.createElement("div");
-  note.className = "erga-live-note";
-  note.setAttribute("role", "status");
-  note.textContent = "Reconnecting…";
-  note.style.cssText = "position:fixed;left:max(12px,env(safe-area-inset-left));bottom:max(12px,env(safe-area-inset-bottom));z-index:2147483646;"
-    + "font:500 12px/1.2 Inter,ui-sans-serif,system-ui,sans-serif;color:#6b6b73;background:rgba(255,255,255,.92);padding:6px 10px;border-radius:999px;"
-    + "box-shadow:0 0 0 1px rgba(0,0,0,.06),0 2px 8px rgba(0,0,0,.08);pointer-events:none";
-  document.body.append(note);
+  if (!note) {
+    note = document.createElement("div");
+    note.className = "erga-live-note";
+    note.setAttribute("role", "status");
+    note.style.cssText =
+      "position:fixed;left:50%;transform:translateX(-50%);bottom:max(12px,env(safe-area-inset-bottom));z-index:2147483646;white-space:nowrap;" +
+      "font:500 12px/1.2 Inter,ui-sans-serif,system-ui,sans-serif;color:var(--soft,#6b6b73);background:var(--panel-bg,rgba(255,255,255,.92));" +
+      "padding:6px 10px;border-radius:999px;box-shadow:0 0 0 1px var(--panel-border,rgba(0,0,0,.06)),0 2px 8px rgba(0,0,0,.08);pointer-events:none";
+    document.body.append(note);
+  }
+  note.textContent = down.find((c) => c.note)?.note ?? "Reconnecting…";
 }
+for (const type of ["online", "offline"]) addEventListener(type, () => showNote());
 
 // ------------------------------------------------------------------ is this page current?
 

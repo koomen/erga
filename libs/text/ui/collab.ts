@@ -29,6 +29,7 @@ import {
   writeSyncStep1,
   writeUpdate,
   readSyncMessage,
+  SYNC_STEP1,
   SYNC_STEP2,
   applyAwarenessUpdate,
   removeAwarenessStates,
@@ -49,10 +50,11 @@ import {
   stateVector,
   type Author,
 } from "../../../document/content";
-import { changesBetween } from "../../../document/merge";
+import { changesBetween, rebase } from "../../../document/merge";
 import { decodeStart, PING, PONG } from "../../../shared/room-socket";
 import { base64, fromBase64 } from "../../../shared/bytes";
 import { sleep } from "../../../shared/time";
+import { claimKept, keepReplica, readKept, type Keeper, type Kept } from "./kept";
 import type { Peer } from "./types";
 
 /** Someone in the room, from awareness. */
@@ -83,8 +85,8 @@ export interface CollabOptions {
   onPresence: () => void;
   onStatus: (connected: boolean) => void;
   /**
-   * The room refused this tab: it holds a history from before the host lost
-   * its state, and merging would double the document. Reload.
+   * The room refused this tab: it holds a history from before the host lost its state, and merging it would double the
+   * document. Load the page again: with `keep`, this tab's edits go in as edits of the files' text (adopt).
    */
   onStale: () => void;
   /** The socket's address, with its query (`q`: the replica's own, as its epoch). */
@@ -93,6 +95,11 @@ export interface CollabOptions {
   start?: Promise<ArrayBuffer | null>;
   /** The socket the page opened as it parsed, if it did (it's taken over, with what came on it before). */
   early?: EarlySocket;
+  /**
+   * The name this replica is kept under in this browser (kept.ts): it opens from there when the room can't be reached,
+   * and what it held that the room hadn't (a tab closed offline) goes to the room once it can.
+   */
+  keep?: string;
 }
 
 /** The message types, as the room sends them (document/room.ts). */
@@ -134,8 +141,29 @@ export class Collab {
   private synced = new Promise<void>((r) => (this.gotSynced = r));
   /** Set once the first sync is done; until then everything arriving is the initial state. */
   private live = false;
+  /** The replica this browser kept (read as this starts), whether it went in yet, and what stops keeping it. */
+  private kept: Kept | null = null;
+  private keptIn = false;
+  private keeping: Keeper | null = null;
+  /** The room's whole state came (the start's, or the socket's sync); the socket failed at least once before it did. */
+  private stateIn = false;
+  private failed = false;
+  /**
+   * With `keep`: the room's state as the room confirmed it (what it sent, and this tab's edits it has answered for), the
+   * base of this tab's edits if the room loses its history (adopt). A sync step 1 this tab sends is answered in order,
+   * after everything sent before it: each answer confirms what this tab had sent when it asked (`acks`, oldest first;
+   * null: nothing of its own yet). `replied`: this tab has answered the room's step 1 on this socket, so it has sent all
+   * it holds.
+   */
+  private readonly confirmed: Y.Doc | null;
+  private acks: (Uint8Array | null)[] = [];
+  private replied = false;
+  private ackAgain = false;
+  /** The host's last hello, kept with the replica. */
+  private lastHello: Hello | null = null;
 
   constructor(private opts: CollabOptions) {
+    this.confirmed = opts.keep ? new Y.Doc() : null;
     this.hello.catch(() => {});
     this.awareness.on("change", ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }) => {
       // This tab's own cursor moving is no news to it.
@@ -143,7 +171,11 @@ export class Collab {
     });
     // What changes here goes to the room: this tab's edits and its presence (not what came from the room).
     this.doc.on("update", (update: Uint8Array, origin: unknown) => {
-      if (origin === this) return;
+      if (origin === this) {
+        if (this.confirmed) Y.applyUpdate(this.confirmed, update);
+        return;
+      }
+      queueMicrotask(() => this.askAck());
       const e = new Encoder();
       e.writeUint(MSG_SYNC);
       writeUpdate(e, update);
@@ -153,6 +185,10 @@ export class Collab {
       if (origin !== this) this.sendAwareness([...added, ...updated, ...removed]);
     });
     addEventListener("pagehide", () => removeAwarenessStates(this.awareness, [this.doc.clientID], "window unload"));
+    // The browser lost its network: the socket is dead, though it can't say so yet.
+    addEventListener("offline", () => {
+      if (this.open) this.drop();
+    });
     files(this.doc).observeDeep((events) => this.filesChanged(events));
     assets(this.doc).observe((e) => { if (this.live) opts.onFiles([...e.keysChanged]); });
     // The page's socket, if it opened one (and it's not closed); else one of its own.
@@ -162,23 +198,103 @@ export class Collab {
 
   /** The start's answer: the hello, and the room's state, which this tab holds from now on. */
   private async start(answer: Promise<ArrayBuffer | null>): Promise<void> {
-    const bytes = await answer;
+    const [bytes, kept] = await Promise.all([answer, this.opts.keep ? readKept(this.opts.keep) : null]);
+    this.kept = kept;
     let got: { hello: Hello; state: Uint8Array } | null = null;
     try { if (bytes) got = decodeStart<Hello>(new Uint8Array(bytes)); } catch (e) { console.warn("the editor's start didn't decode", e); }
     if (got) {
       Y.applyUpdate(this.doc, got.state, this);
+      this.stateIn = true;
       this.startEpoch = got.hello.epoch;
+      await this.mergeKept(got.hello.epoch);
       this.greeted = true;
+      this.lastHello = got.hello;
       this.gotHello(got.hello);
       this.gotSynced();
     }
     this.haveState = true;
     this.askForChanges();
+    this.offlineStart();
+  }
+
+  /**
+   * What this browser kept of the replica, into it, once the room's state is in: as it is, if it's of the same history
+   * (`epoch`); else its files' text, as edits (adopt).
+   */
+  private async mergeKept(epoch: string | undefined): Promise<void> {
+    const k = this.kept;
+    if (this.keptIn || !k) return;
+    this.keptIn = true;
+    if (k.epoch == epoch) Y.applyUpdate(this.doc, k.update, "kept");
+    else await this.adopt(k);
+  }
+
+  /**
+   * A replica of a history the room lost (it started anew from its files: a new epoch), which can't merge into it: its
+   * edits go in as edits of the files' text instead, made against the text the room last had (`base`), as the room
+   * takes an edit made on disk (document/merge.ts, rebase). One tab takes it (claimKept), so they go in once.
+   */
+  private async adopt(k: Kept): Promise<void> {
+    if (!k.base || !this.opts.keep || !(await claimKept(this.opts.keep, k.epoch))) return;
+    const was = new Y.Doc();
+    Y.applyUpdate(was, k.update);
+    this.doc.transact(() => {
+      for (const [path, text] of files(was)) {
+        const base = k.base![path],
+          ours = text.toString(),
+          t = files(this.doc).get(path);
+        if (base == null || ours == base || !t) continue;
+        applyChanges(t, rebase(base, t.toString(), ours));
+      }
+    }, "kept");
+    was.destroy();
+  }
+
+  /** Each file's text as the room confirmed it: what this browser keeps beside the replica (`base`). */
+  private confirmedTexts(): Record<string, string> {
+    return Object.fromEntries([...files(this.confirmed!)].map(([p, t]) => [p, t.toString()]));
+  }
+
+  /**
+   * Asks the room to confirm what this tab has sent: a sync step 1, which it answers in order. One at a time (another
+   * after it, if this tab changed meanwhile). Not while the room holds a lock, when it drops other tabs' edits.
+   */
+  private askAck(): void {
+    if (!this.confirmed || !this.open || !this.replied) return;
+    if (this.acks.some((a) => a)) {
+      this.ackAgain = true;
+      return;
+    }
+    this.ackAgain = false;
+    const unconfirmed = Y.encodeStateAsUpdate(this.doc, Y.encodeStateVector(this.confirmed));
+    if (roomInfo(this.doc).get("lock")) return;
+    this.askForChanges(unconfirmed);
+  }
+
+  /**
+   * No room to sync with (the start brought nothing, and the socket failed before it synced): the replica opens from
+   * what this browser kept, and syncs once the socket opens.
+   */
+  private offlineStart(): void {
+    const k = this.kept;
+    if (!k || this.stateIn || !this.haveState || !this.failed || this.open || this.stopped) return;
+    this.stateIn = true;
+    this.keptIn = true;
+    Y.applyUpdate(this.doc, k.update, "kept");
+    this.startEpoch = k.epoch;
+    const hello = k.extra as Hello | undefined;
+    if (hello?.epoch == k.epoch) {
+      this.greeted = true;
+      this.lastHello = hello;
+      this.gotHello(hello);
+    }
+    this.gotSynced();
   }
 
   /** What the room has that this tab doesn't (and, in the answer to the room's own step 1, the other way): once it has a state, on each socket. */
-  private askForChanges(): void {
+  private askForChanges(unconfirmed: Uint8Array | null = null): void {
     if (!this.open || !this.haveState) return;
+    this.acks.push(unconfirmed);
     const e = new Encoder();
     e.writeUint(MSG_SYNC);
     writeSyncStep1(e, this.doc);
@@ -211,6 +327,10 @@ export class Collab {
     this.epoch = roomInfo(this.doc).get("epoch") ?? "";
     this.live = true;
     this.bind();
+    if (this.opts.keep && this.epoch && !this.keeping) {
+      this.keeping = keepReplica(this.opts.keep, this.doc, this.epoch, this.lastHello ?? undefined);
+      if (this.confirmed && files(this.confirmed).size) this.keeping.base(this.confirmedTexts());
+    }
     if (!this.text) throw new Error(`${this.path} isn't in the room`);
     return this.text.toString();
   }
@@ -224,6 +344,8 @@ export class Collab {
   /** Leaves the room for good: the socket closes, and this replica's presence goes with it. */
   close(): void {
     this.stopped = true;
+    void this.keeping?.stop();
+    this.keeping = null;
     clearInterval(this.pinger);
     removeAwarenessStates(this.awareness, [this.doc.clientID], "left");
     const ws = this.ws;
@@ -281,7 +403,12 @@ export class Collab {
       this
     );
     if (was) this.opts.onStatus(false);
-    if (code == 4409) { this.stopped = true; this.opts.onStale(); return; }
+    this.acks = [];
+    this.replied = this.ackAgain = false;
+    if (code == 4409) {
+      this.stale();
+      return;
+    }
     // Its person may no longer open it: the page opens again, and says so. (4408, a role changed: it joins again below, as they may now.)
     if (code == 4403) {
       this.stopped = true;
@@ -289,8 +416,12 @@ export class Collab {
       return;
     }
     if (this.stopped) return;
+    if (!this.stateIn) {
+      this.failed = true;
+      this.offlineStart();
+    }
     // (Never in: no such document, or not theirs to open. One that was in keeps trying.)
-    if (!was && !this.greeted && !this.live && this.tries >= 2) {
+    if (!was && !this.greeted && !this.live && !this.stateIn && this.tries >= 2) {
       this.stopped = true;
       this.noHello(new Error("the host refused the connection"));
       return;
@@ -303,14 +434,35 @@ export class Collab {
     const ws = this.ws;
     if (!ws || !this.open) return;
     if (!this.answered) {
-      ws.onclose = ws.onmessage = ws.onopen = null;
-      try { ws.close(); } catch { /* gone */ }
-      this.closed(1006);
+      this.drop();
       return;
     }
     this.answered = false;
     this.send(PING);
     setTimeout(() => { if (this.ws == ws && !this.answered) this.ping(); }, PONG_WITHIN);
+  }
+
+  /**
+   * The room refused this replica's history (it lost its own). What this browser keeps of it stays, whole: the page that
+   * loads in its place puts its edits in (adopt).
+   */
+  private stale(): void {
+    this.stopped = true;
+    const keeping = this.keeping;
+    this.keeping = null;
+    void (keeping?.stop() ?? Promise.resolve()).then(() => this.opts.onStale());
+  }
+
+  /**
+   * The socket is given up for dead at once (its close can't finish without a network: it would stay open meanwhile),
+   * and a new one opens a little later.
+   */
+  private drop(): void {
+    const ws = this.ws;
+    if (!ws) return;
+    ws.onclose = ws.onmessage = ws.onopen = null;
+    try { ws.close(); } catch { /* gone */ }
+    this.closed(1006);
   }
 
   private send(m: Uint8Array | string): void {
@@ -333,8 +485,13 @@ export class Collab {
       if (msg?.type == "hello") {
         // A socket on another history than the one this tab started from (the room lost its own in between): never merged.
         const epoch = (msg as Hello).epoch;
-        if (this.startEpoch && epoch && epoch != this.startEpoch) { this.stopped = true; this.ws?.close(); this.opts.onStale(); return; }
+        if (this.startEpoch && epoch && epoch != this.startEpoch) {
+          this.ws?.close();
+          this.stale();
+          return;
+        }
         this.greeted = true;
+        this.lastHello = msg as Hello;
         this.gotHello(msg as Hello);
       }
       this.opts.onEvent(msg);
@@ -347,9 +504,22 @@ export class Collab {
         reply.writeUint(MSG_SYNC);
         const kind = readSyncMessage(decoder, reply, this.doc, this);
         if (reply.length > 1) this.send(reply.toBytes());
+        // The room's step 1, answered: this tab has sent it all it holds. A step 2 answers this tab's oldest step 1.
+        if (kind == SYNC_STEP1) {
+          this.replied = true;
+          this.askAck();
+        } else if (kind == SYNC_STEP2) {
+          const sent = this.acks.shift();
+          if (sent && this.confirmed) {
+            Y.applyUpdate(this.confirmed, sent);
+            this.keeping?.base(this.confirmedTexts());
+          }
+          if (this.ackAgain) this.askAck();
+        }
         if (kind == SYNC_STEP2 && !this.syncedNow) {
           this.syncedNow = true;
-          this.gotSynced();
+          this.stateIn = true;
+          void this.mergeKept(roomInfo(this.doc).get("epoch")).then(() => this.gotSynced());
         }
         return;
       }

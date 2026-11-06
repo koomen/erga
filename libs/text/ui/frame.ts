@@ -28,6 +28,8 @@ import { sourceDigest } from "../../../shared/page-html";
 import { sleep } from "../../../shared/time";
 import { isAppShortcut } from "../../../client/common/app-keys";
 import { placeOf } from "../../../client/common/link-target";
+import { keepOffline } from "../../../client/common/offline";
+import { keepPage } from "./offline-page";
 // (window.__ergaReader: the page's first script, which loads this one.)
 import type {} from "../../../client/common/reader-api";
 
@@ -166,9 +168,14 @@ const typingAgent = (a: Author | null): TypingAgent | null => (a?.kind == "agent
 async function start() {
   performance.mark("erga:init");
   const m = mode!;
+  // Erga's worker on this origin, for a reload offline (only an origin of this document's own has it: never a shared host).
+  const offline = keepOffline(null);
   // Once the page has loaded (its scripts have built what they build on load).
   if (document.readyState != "complete") await new Promise((r) => addEventListener("load", r, { once: true }));
+  // (The replica is kept in this browser only on an origin that holds nothing but this document.)
+  const own = await offline;
   if (mode != m || collab) return;
+  if (own) pageCopy ??= keepPage(SHELL, () => collab?.current() ?? "");
   const room = `${m.doc.replace(/^http/, "ws")}/api/room`;
   const c = (collab = new Collab({
     // (Only the room: the person's events, the agent's asks among them, are the viewer's to hear.)
@@ -189,6 +196,7 @@ async function start() {
     onPresence: () => queuePeers(),
     onStatus: () => {},
     onStale: () => location.reload(),
+    ...(own ? { keep: m.doc } : {}),
   }));
   c.join(m.me, m.path, { tab: m.tab });
   let text: string;
@@ -221,6 +229,9 @@ async function start() {
   follow();
 }
 
+/** This page in the browser's copy, made from the replica's text after each change (offline-page.ts), on an origin of its own. */
+let pageCopy: ReturnType<typeof keepPage> | null = null;
+
 /** What says the page is read-only while someone edits its source (the lock), and takes it off. */
 let lockNote: (() => void) | null = null;
 
@@ -251,6 +262,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
     }
   }
   let focus = !!back?.focus;
+  void pageCopy?.changed();
   holding?.();
   holding = null;
   page = new PageEditor({
@@ -267,6 +279,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
       if (u.docChanged || u.selectionSet) queueCursor();
       // A presentation's pictures of its steps are out of date once its text changes (libs/steps).
       if (u.docChanged) {
+        void pageCopy?.changed();
         dispatchEvent(new Event("ergaedit"));
         queueDark();
       }
@@ -433,6 +446,8 @@ function reload(view: { pos: number; top: number } | null) {
   setTimeout(async () => {
     // It loads again once the room has its edits (else it would come made from the text before them, and load again).
     await Promise.race([collab?.flushed(), sleep(3000)]);
+    // (Offline, the page comes from the browser's copy: made from this text.)
+    await pageCopy?.now();
     if (page) carry((leaving = { path, state: stateJSON(page.state), view, held: page.takeHeld(), focus: document.hasFocus() }));
     const y = Math.round(scrollY);
     // With the page's place in its own address (#3: agents/document/PROMPT.md, rule 11). (A reload: going to the same

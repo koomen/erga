@@ -16,12 +16,13 @@
 //   /auth/google[?next=][&app=pending]   off to Google, the same way
 //   /auth/google/callback                Google's answer: a code, traded for who they are (their sub, their email
 //                                        and whether Google verified it, their Workspace: hd, their picture)
-//   /auth/logout                         signs out (another site's link to it asks first)
+//   /auth/logout                         signs out (another site's link to it asks first), and deletes the editor's
+//                                        offline copies in this browser
 
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import { HttpServerResponse } from "effect/http";
-import { confirmAction, fromElsewhere, page, safeNext } from "../pages/index.ts";
+import { confirmAction, fromElsewhere, inlineScript, page, safeNext } from "../pages/index.ts";
 import type { Platform, Session } from "../platform.ts";
 import { call, ctx, redirect, type Route } from "../http.ts";
 import { cookies, withCookie } from "./cookies.ts";
@@ -394,7 +395,14 @@ export const finishGoogleSignIn: Route = Effect.gen(function* () {
 /** /auth/logout (another site's link to it asks first) */
 export const signOut: Route = Effect.map(ctx, ({ platform, request, url }) => {
   if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) return confirmAction("Sign out", "Sign out of Erga", "/auth/logout");
-  const out = withCookie(redirect("/"), request, SESSION_COOKIE, "", 0);
+  // A page, not a redirect: it deletes the editor's offline copies in this browser first, then goes on (client/inline/sign-out.ts).
+  const out = withCookie(
+    page("Signing out", `<p>Signing out…</p>${inlineScript("sign-out", { to: "/" })}`, 200),
+    request,
+    SESSION_COOKIE,
+    "",
+    0
+  );
   // Locally someone is always signed in (the dev login), unless the browser signs out: then nobody, as on erga.dev.
   return platform.dev(url) ? withCookie(out, request, SIGNED_OUT, "1", 30 * DAY) : out;
 });

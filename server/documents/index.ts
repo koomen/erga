@@ -7,4 +7,4 @@ export { forwarded, forwardedAs, documentRoutes, ergaAddress, keyedPerson } from
 export { forgetDecisions } from "./view.ts";
 export { adoptLanding, landingDocument } from "./landing.ts";
 export { makeDoc, startingFiles } from "./make.ts";
-export { isPagesSite, pagesHost, pagesOrigin, pagesToken, readPagesClaims, readPagesToken } from "./pages-origin.ts";
+export { isPagesSite, pagesHost, pagesOrigin, pagesToken, readPagesClaims, readPagesToken, workerHere } from "./pages-origin.ts";

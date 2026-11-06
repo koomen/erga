@@ -90,9 +90,15 @@ async function attack(page: Page, click: () => Promise<void>, editing: boolean) 
   expect(page.url(), "the tab's address").toBe(here);
   expect(String(loot.topNav)).toMatch(/^blocked/);
   expect(loot.openTop, "window.open to _top").not.toBe("[object Window]");
-  // No service worker on the pages origin.
+  // No service worker of the page's on the pages origin: for an editor, only Erga's own (client/inline/offline-sw.ts),
+  // for a reader none.
   expect(String(loot.worker)).toMatch(/^refused/);
-  expect(await docFrame(page).evaluate(() => navigator.serviceWorker.getRegistrations().then((r) => r.length))).toBe(0);
+  const workers = await docFrame(page).evaluate(() =>
+    navigator.serviceWorker
+      .getRegistrations()
+      .then((rs) => rs.map((r) => new URL((r.active ?? r.installing ?? r.waiting)!.scriptURL).pathname))
+  );
+  expect(workers).toEqual(editing ? ["/erga-sw.js"] : []);
   return loot;
 }
 

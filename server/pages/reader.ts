@@ -13,7 +13,7 @@
 // coming from the page). It sends nothing secret, and to the viewer's origin only. The page's origin holds nothing but
 // this one document: that's the boundary (PAGE_SANDBOX).
 
-import { bringsEditor, insertHead, localLibraries, type ReaderConfig } from "../../shared/page-html.ts";
+import { bringsEditor, pageOf, type ReaderConfig } from "../../shared/page-html.ts";
 import { asset, frameScripts } from "./assets.ts";
 import { inlineCall } from "./inline.ts";
 import { jsonInScript } from "../../shared/html.ts";
@@ -70,7 +70,7 @@ export function readerPage(html: string, o: { shell: string; prefix: string; src
     (editor
       ? `<script data-erga>${PROBLEM_WATCH}</script><script data-erga>${LIVE_WATCH}</script><script data-erga>${TEXT_GUARD}</script><script data-erga>${EDITING_API}</script>`
       : "");
-  return insertHead(localLibraries(html, o.shell), head);
+  return pageOf(html, head, o.shell);
 }
 
 /** The version of what the pages origin puts in a page: this script's and the editor's build's (frame.js's address names it). */

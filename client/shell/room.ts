@@ -7,36 +7,25 @@ import type { DocName, Hello } from "../../document/api";
 import type { LogEvent } from "../../shared/agent-log";
 import type { LiveRequest } from "../../shared/live-page";
 import { live } from "../live/client";
-import { ms } from "../../libs/text/ui/timescale";
-import { $, type Shell } from "./shell";
+import type { Shell } from "./shell";
 import { esc } from "../../shared/html";
+
+/** What the note says while the room can't be reached. */
+export const OFFLINE_NOTE = "Offline. Your edits will sync when you reconnect.";
 
 export function mountRoom(shell: Shell) {
 
-  const status = $("status");
-  let statusTimer = 0;
-  function setStatus(text: string, kind?: string) {
-    clearTimeout(statusTimer);
-    status.textContent = text;
-    status.className = "status show" + (kind ? " " + kind : "");
-    if (kind != "error") statusTimer = window.setTimeout(() => status.classList.remove("show"), ms(1600));
-  }
-  // The room writes files to disk as edits land; there's nothing to save
-  // here. Without a connection, edits stay in this tab and sync on return.
-  // A short break (the server restarting, a redeploy) passes unseen: the room
-  // reconnects by itself and live.js shows a quiet "Reconnecting…" if it
-  // takes a few seconds. Only a long one says more.
-  let connected = true, offlineTimer = 0, saidOffline = false;
-  const OFFLINE_NOTE_MS = 20_000;
+  // The room writes files to disk as edits land; there's nothing to save here. Without a connection, edits stay in this
+  // tab and in this browser (collab.ts, `keep`), and sync on return. A short break (the server restarting, a redeploy)
+  // passes unseen: the room reconnects by itself. A longer one, or the browser offline, shows one quiet line (live.ts's
+  // note), which goes when the room is back.
+  let connected = true;
   function connectionChanged(now: boolean) {
     // (The body's erga-listening class: this tab hears its agent, and open_page counts it. Set by the hello: socketEvent.)
     if (!now) document.body.classList.remove("erga-listening");
     if (now == connected) return;
     connected = now;
-    live((l) => l.connection("room", now));
-    clearTimeout(offlineTimer);
-    if (!now) offlineTimer = window.setTimeout(() => { saidOffline = true; setStatus("Offline: your edits are kept in this tab and sync when the host is back", "error"); }, OFFLINE_NOTE_MS);
-    else if (saidOffline) { saidOffline = false; setStatus("Back online; edits synced"); }
+    live((l) => l.connection("room", now, OFFLINE_NOTE));
   }
 
   /**
