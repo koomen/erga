@@ -304,6 +304,11 @@ export class Collab {
   /** Whether the socket is open now. */
   get connected(): boolean { return this.open; }
 
+  /** The page this replica edits ("" before it joins). */
+  get pagePath(): string {
+    return this.path;
+  }
+
   /**
    * Who this replica is and which page it edits (once the hello has said). With `presence` (null: none yet), its
    * presence goes to the room from now on, with those fields too.

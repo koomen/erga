@@ -75,7 +75,7 @@ export function mountRoom(shell: Shell) {
     else if (msg.type == "access") shell.sharing?.accessChanged();
     else if (msg.type == "tree") { shell.naming.applyKind(msg.kind); treeChanged(msg); shell.docSettings?.event("tree"); }
     // Your agent (or an external one, as you) opened another page: go there (open_page).
-    else if (msg.type == "open" && msg.path && msg.path != shell.info!.path) shell.openPage(msg.path);
+    else if (msg.type == "open" && msg.path && msg.path != shell.pagePath) shell.openPage(msg.path);
   }
 
   // The document's file tree changed (anyone's doing: document/pages.ts). Whatever shows the tree hears it as an

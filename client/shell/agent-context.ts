@@ -5,8 +5,8 @@ import type { Shell } from "./shell";
 
 /** Where the user is in the document, so "this" and "here" mean something to the agent. */
 export function editorContext(shell: Shell): string {
-  const at = shell.addressOf(shell.info!.path).replace(/[?#].*$/, "");
-  return `The user has the page ${shell.info!.path} open (${at}).\n${viewContext(shell)}\n${caretContext(shell)}`;
+  const at = shell.addressOf(shell.pagePath).replace(/[?#].*$/, "");
+  return `The user has the page ${shell.pagePath} open (${at}).\n${viewContext(shell)}\n${caretContext(shell)}`;
 }
 /** How the user sees the page: the size and mode to give view_page to see it as they do. */
 function viewContext(shell: Shell): string {
@@ -21,9 +21,9 @@ function caretContext(shell: Shell): string {
   if (!sel.empty) {
     const endLine = s.doc.lineAt(sel.to).number;
     const text = s.sliceDoc(sel.from, sel.to);
-    return `The user has selected lines ${line.number}-${endLine} of ${shell.info!.name}:\n${text.length > 4000 ? text.slice(0, 4000) + "\n[...]" : text}`;
+    return `The user has selected lines ${line.number}-${endLine} of ${shell.pagePath}:\n${text.length > 4000 ? text.slice(0, 4000) + "\n[...]" : text}`;
   }
   const text = line.text.length > 400 ? line.text.slice(0, 400) + "[...]" : line.text;
-  return `The user's caret is on line ${line.number} of ${shell.info!.name}: ${text}`;
+  return `The user's caret is on line ${line.number} of ${shell.pagePath}: ${text}`;
 }
 

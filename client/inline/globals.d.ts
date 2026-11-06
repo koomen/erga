@@ -27,6 +27,8 @@ declare var ergaEditAddress: () => boolean;
 declare var ergaWithEdit: (path: string, on: boolean) => string;
 /** The address of the page shown now: the document's, and its page's. */
 declare var ergaPageAddress: () => string;
+/** Shows `path` as the page shown (the meta erga-page, its one owner): the address and its entry follow (viewer-nav.ts). */
+declare var ergaShowPage: (path: string) => void;
 /** Sets the band's colour, or the one remembered for document `id`, and the controls' tone to suit; answers the tone. */
 declare var ergaBand: (id: string, color?: string) => string;
 /** The document's socket, opening (or open). */

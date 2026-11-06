@@ -61,8 +61,8 @@ export interface Shell {
   /** A document (one page) or a project (pages), as the host last said. */
   docKind: "document" | "project";
   docName: DocName | null;
-  /** Which of the document's pages this tab edits. */
-  pagePath: string;
+  /** Which of the document's pages this tab edits (its replica's: collab.pagePath). */
+  readonly pagePath: string;
   page: PageFrame;
   mode: Mode;
   sourceView: EditorView | null;

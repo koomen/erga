@@ -11,17 +11,10 @@ export default function viewerNav(): void {
     return s ? "/" + s.split("/").map(encodeURIComponent).join("/") : "";
   };
   window.ergaPageAddress = () => meta("erga-address")!.content + (meta("erga-page") ? suffix(meta("erga-page")!.content) : "");
-  addEventListener("message", (e) => {
-    if (!ergaFrames.from(e) || e.data?.type != "erga-nav") return;
-    // A page's path in the document; "" for the document's own.
-    const path = e.data.path;
-    if (
-      typeof path != "string" ||
-      (path && !/\.html$/i.test(path)) ||
-      path.length > 1000 ||
-      (path && path.split("/").some((p) => !p || p == ".." || p.startsWith(".")))
-    )
-      return;
+  // The page shown has one owner, the meta erga-page; the rest follows it here: the address, its entry in the history
+  // (ergaPage: which page the entry is for, client/inline/viewer-edit-boot.ts and client/shell/main.ts read it), and the
+  // pencil's link. The editor, opening another page in place, says so here too (client/shell/main.ts, swapTo).
+  window.ergaShowPage = (path) => {
     let m = meta("erga-page");
     if (!m) {
       m = document.head.appendChild(document.createElement("meta"));
@@ -33,8 +26,21 @@ export default function viewerNav(): void {
     // Viewing at the homepage's address (/), its first page stays there.
     if (location.pathname == "/" && !suffix(path)) return;
     const here = ergaPageAddress();
-    if (location.pathname != here) history.replaceState(history.state, "", here + location.search + location.hash);
+    history.replaceState({ ...history.state, ergaPage: path || undefined }, "", here + location.search + location.hash);
     document.querySelector(".erga-view-buttons a[aria-pressed]")?.setAttribute("href", ergaWithEdit(here, true));
+  };
+  addEventListener("message", (e) => {
+    if (!ergaFrames.from(e) || e.data?.type != "erga-nav") return;
+    // A page's path in the document; "" for the document's own.
+    const path = e.data.path;
+    if (
+      typeof path != "string" ||
+      (path && !/\.html$/i.test(path)) ||
+      path.length > 1000 ||
+      (path && path.split("/").some((p) => !p || p == ".." || p.startsWith(".")))
+    )
+      return;
+    ergaShowPage(path);
   });
   // The page's head (reader.ts): the tab's title is the page's own <title>, else the document's (erga-title); its icon is
   // the page's, else Erga's (the one the page came with).
