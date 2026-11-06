@@ -14,7 +14,9 @@
 //
 // The pages origin never gets the session or a key: only this site's own pages may call this (their Origin), with the
 // visitor's cookie, for the one document they show. Each call is logged, and counted against the visitor's limits and
-// the whole server's (server/directory/page-llm.ts, PAGE_LLM_LIMITS); max_tokens is capped here.
+// the whole server's (server/directory/page-llm.ts, PAGE_LLM_LIMITS); max_tokens is capped here. All the calls of a day
+// (UTC) together stop at the admin's spend limit (page_llm_daily_usd: "limit"; 0: "off"), and the admin's switch
+// page_llm_guests off gives every signed-out visitor "sign_in", whatever the document's setting says.
 //
 // Where the owner lets all viewers call it (page_llm_who "all"), a signed-out visitor may too, on a page anyone may open
 // (the homepage's project, or a document shared with anyone), from the page only: the request must come from this site
@@ -32,7 +34,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { LanguageModel, Prompt } from "effect/ai";
 import { call, ctx, json, type Route } from "../server/http.ts";
-import { PAGE_LLM_LIMITS, roleMay, underLimit, type DocRow, type PageLlmWho } from "../server/directory/index.ts";
+import { overBudget, PAGE_LLM_LIMITS, roleMay, underLimit, type DocRow, type PageLlmWho } from "../server/directory/index.ts";
 import { whoOf, type Platform, type Session } from "../server/platform.ts";
 import { homeVisitor, PROVIDERS, providersOn, type Provider } from "../server/identity/index.ts";
 import type { SignInChoice } from "../shared/sign-in.ts";
@@ -82,6 +84,7 @@ async function decide(
     ? roleMay(await dir.access(whoOf(session), doc), "open")
     : (await dir.homeId()) == doc.id || (await dir.isPublic(doc.id));
   if (!seen) return { off: "The owner of this page didn't let it call a model.", unseen: true };
+  if ((await dir.config.get("page_llm_daily_usd")) <= 0) return { off: "This server's admin turned pages' models off." };
   const model = setting.model && isPageLlmModel(setting.model) ? setting.model : DEFAULT_PAGE_LLM_MODEL;
   const cfg = await p.agentSettings();
   if ("missing" in cfg || !pageModel(cfg, model, 1)) return { off: `The server has no API key that runs ${MODELS[model].label} now.` };
@@ -143,7 +146,8 @@ const pageLlm = (whoAsks: (p: Platform, request: Request) => Promise<Session | n
   // Signed out: a guest (their IP address), only where the owner lets all viewers call it and anyone may open the page,
   // from the page itself (its token).
   const guest = !visitor;
-  if (guest && ("off" in now ? now.unseen : now.who != "all"))
+  const guestsOn = yield* call(() => platform.directory.config.get("page_llm_guests"));
+  if (guest && (!guestsOn || ("off" in now ? now.unseen : now.who != "all")))
     return json(
       { error: "Sign in to use this page's model.", code: "sign_in", providers: yield* call(() => signInChoices(platform)) },
       401
@@ -160,8 +164,14 @@ const pageLlm = (whoAsks: (p: Platform, request: Request) => Promise<Session | n
   const pageLlm = platform.directory.pageLlm,
     at = Date.now();
   const login = visitor ? visitor.login : yield* call(() => guestOf(request));
-  const [mine, guests, all] = yield* call(() =>
-    Promise.all([pageLlm.used(at, login), guest ? pageLlm.usedByGuests(at) : null, pageLlm.used(at)])
+  const [mine, guests, all, today, budget] = yield* call(() =>
+    Promise.all([
+      pageLlm.used(at, login),
+      guest ? pageLlm.usedByGuests(at) : null,
+      pageLlm.used(at),
+      pageLlm.today(at),
+      platform.directory.config.get("page_llm_daily_usd"),
+    ])
   );
   if (!underLimit(mine, visitor ? PAGE_LLM_LIMITS.visitor : PAGE_LLM_LIMITS.guest))
     return fail("limit", "You reached this hour's limit for pages' models. Try again later.", 429);
@@ -169,6 +179,10 @@ const pageLlm = (whoAsks: (p: Platform, request: Request) => Promise<Session | n
     return fail("limit", "This page's model reached its limit for this hour. Try again later, or sign in.", 429);
   if (!underLimit(all, PAGE_LLM_LIMITS.server))
     return fail("limit", "Pages' models reached this server's limit for this hour. Try again later.", 429);
+  const over = overBudget(today.cost, budget);
+  if (over == "off") return fail("off", "This server's admin turned pages' models off.");
+  if (over == "limit")
+    return fail("limit", "Pages' models reached this server's spend limit for today. Try again after midnight UTC.", 429);
   const cfg = yield* call(() => platform.agentSettings());
   const layer = "missing" in cfg ? null : pageModel(cfg, now.model, capped(ask.max_tokens));
   if (!layer) return fail("off", `The server has no API key that runs ${MODELS[now.model].label} now.`);

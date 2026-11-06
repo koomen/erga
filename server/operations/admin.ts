@@ -17,6 +17,7 @@ import {
   type UserRole,
 } from "../directory/index.ts";
 import type { AuthOps, AuthStatus } from "../identity/index.ts";
+import { pageLlmUsage } from "../admin/index.ts";
 import { type Caller, iso, LOGIN, type Operation, OperationError } from "./operation.ts";
 
 const PROVIDER = Schema.Literals(["github", "google"]).annotate({ description: "github or google" });
@@ -24,6 +25,9 @@ const ACCESS = Schema.Literals(["none", "read", "write"]).annotate({
   description: "none ('No access'), read ('Can authenticate') or write ('Can create and edit content')",
 });
 const PERSON = Schema.Int.annotate({ description: "For someone who hasn't signed in yet: their person id (people)" });
+
+/** US dollars to a tenth of a cent. */
+const round = (usd: number) => Math.round(usd * 1000) / 1000;
 
 /** An argument an action needs: its value, or a 400 that says which. */
 function need<T>(args: Record<string, unknown>, key: string, action: unknown): T {
@@ -39,7 +43,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
     label: "Read the server's settings",
     activity: "reading the server's settings",
     admin: true,
-    description: "The server's settings and API keys, or the settings' change log (changes).",
+    description: "The server's settings, API keys and pages' model use today, or the settings' change log (changes).",
     parameters: Schema.Struct({
       changes: Schema.optionalKey(
         Schema.Boolean.annotate({
@@ -60,9 +64,27 @@ export const ADMIN_OPERATIONS: Operation[] = [
           changes: versions.map((v) => ({ n: v.n, at: iso(v.at), by: v.by, ...(v.via ? { via: v.via } : {}), changes: v.changes })),
         };
       }
-      const [settings, keys] = await Promise.all([dir.config.list(who), dir.credentials.list(who)]);
+      const [settings, keys, use] = await Promise.all([dir.config.list(who), dir.credentials.list(who), pageLlmUsage(dir)]);
       return {
         settings: settings.map(entryOf),
+        pageModelsToday: {
+          since: iso(use.since),
+          calls: use.calls,
+          inputTokens: use.input,
+          outputTokens: use.output,
+          costUsd: round(use.cost),
+          limitUsd: use.limit,
+          limitUsed: `${Math.round(use.used * 100)}%`,
+          costliest: use.docs.map((d) => ({
+            document: d.address ?? d.id,
+            ...(d.title ? { title: d.title } : {}),
+            calls: d.calls,
+            inputTokens: d.input,
+            outputTokens: d.output,
+            costUsd: round(d.cost),
+          })),
+          note: "Pages' model calls since midnight UTC; the cost is an estimate from their tokens.",
+        },
         apiKeys: keys.map((c) => ({
           name: c.name,
           label: c.label,

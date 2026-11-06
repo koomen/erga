@@ -8,5 +8,6 @@ export { accessRows } from "./access.ts";
 export { apiKeysRows } from "./api-keys.ts";
 export { authRows } from "./auth.ts";
 export { changesRows } from "./changes.ts";
+export { pageLlmUsage } from "./page-llm.ts";
 export { settingsRows } from "./settings.ts";
 export { usersRows } from "./users.ts";
