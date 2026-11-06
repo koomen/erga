@@ -93,6 +93,7 @@ test("bun erga status: each primary with its staging instances, where each one's
       { name: "old", sha: "1", ahead: 1, behind: 4, conflicts: [], at: 1, subject: "Old" },
       { name: "new", sha: "2", ahead: 2, behind: 0, conflicts: ["x.ts"], at: 2, subject: "New" },
     ],
+    github: true,
     waiting: [{ sha: S, subject: "On staging" }],
     log: [{ sha: M, subject: "On main" }],
     tags: [{ name: "v0.1.0", sha: M }],

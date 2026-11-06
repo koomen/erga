@@ -48,7 +48,7 @@ test("the view: each primary with its staging instances, the job line, and live 
       "staging.erga.dev": { version: "3".repeat(12), healthy: true },
       "erga.example.org": { version: "9".repeat(12), healthy: true },
     },
-    git: { log, branches: [], base: "staging", main: "1".repeat(40), elsewhere: { ["9".repeat(12)]: false } },
+    git: { log, branches: [], github: true, base: "staging", main: "1".repeat(40), elsewhere: { ["9".repeat(12)]: false } },
     jobs: [jobOf(line(start) + line({ commit: "1".repeat(40) }) + line({ result: "ok", ended: "2026-11-05T11:55:00.000Z" }), () => true)!],
     setup: "",
     run: { at: "idle" },
@@ -169,6 +169,7 @@ const deploys = (more: Partial<Facts> = {}, staging = "3", production = "1"): Fa
   git: {
     log: commits,
     branches: [branch("clean"), branch("clash", { conflicts: ["a.ts"] }), branch("done", { ahead: 0 })],
+    github: true,
     base: "staging",
     main: "1".repeat(40),
     elsewhere: {},

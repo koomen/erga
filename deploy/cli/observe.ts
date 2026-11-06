@@ -61,36 +61,64 @@ export function commitsOf(...range: string[]): Commit[] {
 }
 
 /** The files where `branch` conflicts with `onto` (git merge-tree: nothing is written to the checkout). */
-export function conflictsOf(onto: string, branch: string): string[] {
-  const r = git("merge-tree", "--write-tree", "--name-only", "--no-messages", onto, branch);
+export function conflictsOf(onto: string, branch: string, cwd = ROOT): string[] {
+  const r = sh(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", onto, branch], { cwd });
   if (r.code == 0) return [];
   // Exit 1: conflicts. The first line is the tree; the conflicted files follow.
   const files = r.out.split("\n").slice(1).filter(Boolean);
   return files.length ? [...new Set(files)] : [`(git merge-tree failed: ${r.err || r.code})`];
 }
 
-/** The feature branches on GitHub: each with its place against staging. */
-export function branchesOf(check = true): Branch[] {
-  const r = git(
-    "for-each-ref",
-    "refs/remotes/origin",
-    "--format=%(refname:short)%1f%(objectname)%1f%(committerdate:unix)%1f%(subject)%1f%(authorname)"
-  );
-  return r.out
-    .split("\n")
+/**
+ * The branches that GitHub has now (git ls-remote: a read; it changes nothing in the clone), or null when it does not
+ * answer. A merge deletes its branch on GitHub, and the clone remembers it until a fetch with --prune.
+ */
+export async function githubHeads(cwd = ROOT): Promise<Set<string> | null> {
+  try {
+    const p = Bun.spawn(["git", "ls-remote", "--heads", "origin"], {
+      cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+      timeout: 10_000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+    const out = await new Response(p.stdout).text();
+    if ((await p.exited) != 0) return null;
+    return new Set(out.split("\n").flatMap((l) => /\trefs\/heads\/(.+)$/.exec(l)?.[1] ?? []));
+  } catch {
+    // The clone went away (a test's), or git is not there.
+    return null;
+  }
+}
+
+/** The origin's branches that the clone remembers, less those that GitHub no longer has (`live`; null: no answer). */
+export function rememberedBranches(cwd: string, live: Set<string> | null) {
+  return sh(
+    [
+      "git",
+      "for-each-ref",
+      "refs/remotes/origin",
+      "--format=%(refname:short)%1f%(objectname)%1f%(committerdate:unix)%1f%(subject)%1f%(authorname)",
+    ],
+    { cwd }
+  )
+    .out.split("\n")
     .filter(Boolean)
     .map((l) => l.split("\x1f"))
     .map(([ref, sha, at, subject, author]) => ({ name: ref.replace(/^origin\//, ""), sha, at: Number(at) * 1000, subject, author }))
     .filter((b) => b.name != "HEAD" && b.name != "origin" && !(PROTECTED as readonly string[]).includes(b.name))
-    .map((b) => {
-      const [behind, ahead] = git("rev-list", "--left-right", "--count", `origin/staging...origin/${b.name}`).out.split(/\s+/).map(Number);
-      return {
-        ...b,
-        ahead: ahead || 0,
-        behind: behind || 0,
-        conflicts: check && ahead ? conflictsOf("origin/staging", `origin/${b.name}`) : check ? [] : null,
-      };
-    });
+    .filter((b) => !live || live.has(b.name));
+}
+
+/** The feature branches on GitHub: each with its place against staging. */
+export function branchesOf(live: Set<string> | null, cwd = ROOT): Branch[] {
+  return rememberedBranches(cwd, live).map((b) => {
+    const [behind, ahead] = sh(["git", "rev-list", "--left-right", "--count", `origin/staging...origin/${b.name}`], { cwd })
+      .out.split(/\s+/)
+      .map(Number);
+    return { ...b, ahead: ahead || 0, behind: behind || 0, conflicts: ahead ? conflictsOf("origin/staging", `origin/${b.name}`, cwd) : [] };
+  });
 }
 
 /** The release tags, each with its commit. */
@@ -124,12 +152,14 @@ export function instancesOf(config: Config, site: typeof fetch = fetch): Promise
   );
 }
 
-/** Everything `bun erga status` shows. It only reads: no fetch, so the branches are as this clone last saw them. */
+/** Everything `bun erga status` shows. It only reads: no fetch; GitHub's branch list leaves out the ones it deleted. */
 export async function readState(config: Config, site?: typeof fetch): Promise<State> {
+  const live = await githubHeads();
   return stateOf({
+    github: live != null,
     heads: { main: headOf("origin/main"), staging: headOf("origin/staging") },
     instances: await instancesOf(config, site),
-    branches: branchesOf(),
+    branches: branchesOf(live),
     waiting: commitsOf("origin/main..origin/staging"),
     log: commitsOf("-n", "20", "origin/main"),
     tags: tagsOf(),

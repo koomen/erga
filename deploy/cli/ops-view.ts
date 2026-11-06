@@ -51,6 +51,8 @@ export interface Git {
   /** origin/staging's and origin/main's commits, newest first. */
   log: Commit[];
   branches: Branch[];
+  /** GitHub answered with its branches (git ls-remote); false: `branches` is as the clone last saw them. */
+  github: boolean;
   /** The branch the feature branches are counted against. */
   base: string;
   main: string | null;
@@ -278,7 +280,10 @@ function branches(git: Git, active: JobState[], busy: string, now: number): stri
         })
         .join("")
     : `<li class="feature none">No feature branches in this clone.</li>`;
-  return `<section class="box" aria-labelledby="features-head"><h3 id="features-head">Feature branches</h3><ul class="features">${list}</ul></section>`;
+  const note = git.github
+    ? ""
+    : `<p class="note">GitHub did not answer <code>git ls-remote</code>: this list is as the clone last saw it, and can show branches that GitHub deleted.</p>`;
+  return `<section class="box" aria-labelledby="features-head"><h3 id="features-head">Feature branches</h3>${note}<ul class="features">${list}</ul></section>`;
 }
 
 /** The time of the last good deploy of `sha` to `host`, from the job records. */

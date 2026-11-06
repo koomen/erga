@@ -49,11 +49,14 @@ and `main`. There are no pull requests.
 
 - `bun erga status`: each instance in `.erga/config.json` with its commit
   and health, the feature branches (ahead, behind, conflicts) and the
-  commits on staging that are not on main. It only reads: no fetch.
+  commits on staging that are not on main. It only reads: no fetch. It asks
+  GitHub for its branches (`git ls-remote`) and leaves out a branch that a
+  merge deleted; offline, it lists the clone's branches, with a note.
 - `bun erga`: the ops page on localhost. It lists the instances of `.erga/config.json`,
   each primary with its staging instances, the feature branches, the log with "live" at each
   instance's commit, and the job that runs. Its tabs: Setup (the checklist of `bun erga setup`), Deploys,
-  Logs (a job's output, live) and History (the jobs). It never fetches. A new job
+  Logs (a job's output, live) and History (the jobs). It never fetches; like
+  `status`, it asks GitHub for its branches, at each poll of the instances. A new job
   on another primary's instance switches the page to that primary. Each feature branch has a Merge
   button (`bun erga merge <branch> -m <text>`). A commit row shows a Deploy button on hover in each
   column whose instance does not run it (`bun erga deploy <commit> <host>`). They run the same
