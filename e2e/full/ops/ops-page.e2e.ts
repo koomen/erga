@@ -70,9 +70,11 @@ test("the ops page shows the config's instances, the job that runs and the live 
   config([entry(primary), entry(staging, { stagingOf: primary })]);
   const command = `bun erga deploy ${sha("origin/staging").slice(0, 8)} ${primary}`;
   const job = join(dir, ".erga/jobs/2026-11-05T10-00-00-000Z-localhost-1.jsonl");
+  // The record names this process with its start time, as the CLI's do (deploy/cli/pid.ts).
+  const pidStart = execFileSync("ps", ["-o", "lstart=", "-p", String(process.pid)], { encoding: "utf8" }).trim();
   writeFileSync(
     job,
-    `${JSON.stringify({ command, host: primary, from: "terminal", pid: process.pid, started: "2026-11-05T10:00:00.000Z" })}\n`
+    `${JSON.stringify({ command, host: primary, from: "terminal", pid: process.pid, pidStart, started: "2026-11-05T10:00:00.000Z" })}\n`
   );
   const { cli, url } = await opsPage(dir);
   try {

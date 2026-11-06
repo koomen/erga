@@ -290,7 +290,18 @@ export function mockCloudflare(
         const q = /^\/d1\/database\/([^/]+)\/query$/.exec(rest);
         const db = q && state.databases.find((d) => d.uuid == q[1]);
         if (m == "POST" && db) {
-          try { return ok([{ success: true, results: d1Query(db, (await body()) as { sql: string; params?: unknown[] }), meta: { served_by_primary: true } }]); } catch (e) {
+          const query = (await body()) as { sql: string; params?: unknown[] } | { batch: { sql: string; params?: unknown[] }[] };
+          // A batch is all or nothing: a statement that fails puts the database back as it was.
+          const was = { rows: db.rows && [...db.rows], tables: [...db.tables], migrations: [...db.migrations] };
+          try {
+            const results = ("batch" in query ? query.batch : [query]).map((one) => ({
+              success: true,
+              results: d1Query(db, one),
+              meta: { served_by_primary: true },
+            }));
+            return ok(results);
+          } catch (e) {
+            Object.assign(db, was);
             if (e instanceof D1Error) return fail(400, 7500, e.message);
             throw e;
           }

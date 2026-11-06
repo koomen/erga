@@ -49,6 +49,7 @@ import {
 import { type Config, type Entry, entryOf, originOf, readConfig, secretsPath, snapshotTokenOf, withEntry, writeConfig } from "./config";
 import { previousVersion } from "./flow";
 import { readOps } from "./ops";
+import { alive, ownStart } from "./pid";
 
 const ROOT = new URL("../..", import.meta.url).pathname;
 /** git in a clone. `push`: as `bun erga`, which the pre-push hook lets through (deploy/cli/pre-push.ts). */
@@ -108,18 +109,11 @@ export const lockPath = (dir: string, host: string) => join(jobsDir(dir), `${hos
 
 interface Held {
   pid: number;
+  /** The process's start time (pid.ts): with the pid, it names the process, even after the system reuses the pid. */
+  pidStart: string | null;
   command: string;
   started: string;
 }
-
-const alive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as { code?: string }).code == "EPERM";
-  }
-};
 
 const heldBy = (path: string): Held | null => {
   try {
@@ -129,14 +123,14 @@ const heldBy = (path: string): Held | null => {
   }
 };
 
-/** Takes the instance's lock, or throws which job holds it. A lock of a process that stopped is free. The result frees it. */
+/** Takes the instance's lock, or throws which job holds it. A lock of a process that stopped (or of its reused pid) is free. The result frees it. */
 export function takeLock(dir: string, host: string, command: string): () => void {
   mkdirSync(jobsDir(dir), { recursive: true });
   const path = lockPath(dir, host);
   for (let tries = 0; tries < 3; tries++) {
     try {
       const fd = openSync(path, "wx", 0o600);
-      writeSync(fd, JSON.stringify({ pid: process.pid, command, started: new Date().toISOString() } satisfies Held));
+      writeSync(fd, JSON.stringify({ pid: process.pid, pidStart: ownStart(), command, started: new Date().toISOString() } satisfies Held));
       closeSync(fd);
       return () => {
         if (heldBy(path)?.pid == process.pid) rmSync(path, { force: true });
@@ -147,7 +141,7 @@ export function takeLock(dir: string, host: string, command: string): () => void
     const held = heldBy(path);
     // A lock with no text yet: another process makes it now.
     const young = !held && existsSync(path) && Date.now() - statSync(path).mtimeMs < 5000;
-    if ((held && alive(held.pid)) || young)
+    if ((held && alive(held.pid, held.pidStart)) || young)
       throw new Error(
         `${host} is locked: ${held ? `${held.command} (process ${held.pid}) runs since ${held.started}` : "a job starts on it now"}. Wait for it to end (the lock: ${path}).`
       );
@@ -181,7 +175,7 @@ export function startJob(dir: string, o: { command: string; host: string; from?:
   const started = new Date().toISOString();
   const path = join(jobsDir(dir), `${started.replace(/[:.]/g, "-")}-${o.host.replace(/[^\w.-]/g, "_")}-${process.pid}.jsonl`);
   const add = (x: Record<string, unknown>) => appendFileSync(path, `${JSON.stringify(x)}\n`, { mode: 0o600 });
-  add({ command: o.command, host: o.host, from: o.from ?? "terminal", pid: process.pid, started });
+  add({ command: o.command, host: o.host, from: o.from ?? "terminal", pid: process.pid, pidStart: ownStart(), started });
   const print = o.print ?? console.log;
   return {
     path,
@@ -304,6 +298,23 @@ export function mainMove(clone: string, sha: string): "has" | "forward" {
   if (isAncestor(clone, main, sha)) return "forward";
   throw new Error(
     `${sha.slice(0, 12)} is not on main, and main (${main.slice(0, 12)}) has commits that it does not have. A primary deploys only a commit of main, or one after main's head.`
+  );
+}
+
+/**
+ * Throws unless staging on origin has `sha`. A merge deploys its commit to the staging instances before it pushes staging:
+ * when that push fails, they run a commit that staging lacks, and a primary must not take it from them (main would leave
+ * staging).
+ */
+function onStaging(clone: string, sha: string) {
+  const staging = remoteHead(clone, "staging");
+  if (staging) {
+    const f = gitIn(clone, ["fetch", "--quiet", "origin", "staging"]);
+    if (!f.ok) throw new Error(`git fetch origin staging failed: ${f.err}`);
+    if (isAncestor(clone, sha, staging)) return;
+  }
+  throw new Error(
+    `The staging instances run ${sha.slice(0, 12)}, but staging on origin${staging ? ` (${staging.slice(0, 12)})` : ""} does not have it: its merge did not end. Merge it again, or name the commit.`
   );
 }
 
@@ -430,6 +441,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       const chosen = stagingCommit(o.host, await stagingAnswers(config, o.host, net));
       if ("problem" in chosen) throw new Error(chosen.problem);
       sha = commitOf(chosen.version, clone);
+      if (!mocked() || o.clone) onStaging(clone, sha);
       log(`The staging instances of ${o.host} run ${chosen.version}, healthy: that commit deploys.`);
     }
     job.note({ commit: sha, ...(sent.length ? { secrets: sent } : {}) });

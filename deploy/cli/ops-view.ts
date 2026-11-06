@@ -8,6 +8,7 @@ import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo";
 import { esc } from "../../shared/html";
 import { plural, timeAgo } from "../../shared/time";
 import type { Config, Entry } from "./config";
+import { type Alive, activeJobs, deploysTo, type JobState, jobState, type Line, type Run } from "./job-state";
 
 /** What an instance answered last: the commit it runs and its health, or why it gave none. */
 export interface Answer {
@@ -16,22 +17,17 @@ export interface Answer {
   error?: string;
 }
 
-/** A job's record in .erga/jobs/ (deploy/cli/deploy.ts, startJob), as the page reads it. */
-export interface JobRecord {
+/** A job's record in .erga/jobs/ (deploy/cli/deploy.ts, startJob), as the page reads it: its state, and what it says. */
+export interface JobRecord extends JobState {
   /** Its file's name, without .jsonl. */
   id: string;
   command: string;
-  host: string;
   from: string;
   started: string;
-  commit?: string;
-  result?: "ok" | "failed";
   error?: string;
   ended?: string;
   /** Its output, as it came (the last OUT_LINES lines). */
   out: string[];
-  /** No result yet, and its process lives. */
-  running: boolean;
 }
 
 const OUT_LINES = 2000;
@@ -69,47 +65,36 @@ export interface Facts {
   jobs: JobRecord[];
   /** The host of the setup in progress (.erga/setup.json, `bun erga setup <host>`), or "". */
   setup: string;
-  /** The command that this page started and that runs still, or "". */
-  starting: string;
-  /** Why the last command this page started stopped before it wrote its job record, or "". */
-  failed: string;
+  /** The command that this page started (job-state.ts, stepRun). */
+  run: Run;
 }
 
 /** A job record from its file's lines, or null if it has no start line. */
-export function jobOf(text: string, alive: (pid: number) => boolean, id = ""): JobRecord | null {
+export function jobOf(text: string, alive: Alive, id = ""): JobRecord | null {
   const lines = text
     .split("\n")
     .filter(Boolean)
     .map((l) => {
       try {
-        return JSON.parse(l) as Record<string, unknown>;
+        return JSON.parse(l) as Line;
       } catch {
         return {};
       }
     });
+  const state = jobState(lines, alive);
+  if (!state) return null;
   const head = lines[0];
-  if (typeof head?.command != "string" || typeof head.host != "string") return null;
-  const job: JobRecord = {
+  const end = lines.find((l) => l.result == "ok" || l.result == "failed");
+  return {
+    ...state,
     id,
-    command: head.command,
-    host: head.host,
+    command: String(head.command),
     from: typeof head.from == "string" ? head.from : "terminal",
     started: String(head.started ?? ""),
-    out: [],
-    running: false,
+    ...(end ? { ended: String(end.ended ?? "") } : {}),
+    ...(typeof end?.error == "string" ? { error: end.error } : {}),
+    out: lines.flatMap((l) => (typeof l.out == "string" ? [l.out] : [])).slice(-OUT_LINES),
   };
-  for (const l of lines.slice(1)) {
-    if (typeof l.out == "string") job.out.push(l.out);
-    if (typeof l.commit == "string") job.commit = l.commit;
-    if (l.result == "ok" || l.result == "failed") {
-      job.result = l.result as "ok" | "failed";
-      job.ended = String(l.ended ?? "");
-      if (typeof l.error == "string") job.error = l.error;
-    }
-  }
-  job.out = job.out.slice(-OUT_LINES);
-  job.running = !job.result && typeof head.pid == "number" && alive(head.pid);
-  return job;
 }
 
 export interface Group {
@@ -198,33 +183,34 @@ const jobsOf = (g: Group, jobs: JobRecord[]) => {
 };
 
 /** A job's light (its class) and its state in words: "done 5 minutes ago · from a terminal". */
-function jobState(job: JobRecord, now: number): { cls: string; what: string } {
+function jobLook(job: JobRecord, now: number): { cls: string; what: string } {
   const from = `from ${job.from == "page" ? "this page" : `a ${job.from}`}`;
   const end = Date.parse(job.ended ?? "") || Date.parse(job.started) || now;
-  const what = job.running
-    ? from
-    : job.result == "ok"
-      ? `done ${timeAgo(end, now)} · ${from}`
-      : job.result == "failed"
-        ? `failed ${timeAgo(end, now)}${job.error ? `: ${job.error}` : ""} · ${from}`
-        : `stopped · ${from}`;
-  return { cls: job.running ? "running" : (job.result ?? "stopped"), what };
+  const what =
+    job.phase == "running"
+      ? from
+      : job.phase == "ok"
+        ? `done ${timeAgo(end, now)} · ${from}`
+        : job.phase == "failed"
+          ? `failed ${timeAgo(end, now)}${job.error ? `: ${job.error}` : ""} · ${from}`
+          : `stopped · ${from}`;
+  return { cls: job.phase, what };
 }
 
 /** The job line: the job that runs on one of the group's instances, else the group's last job. */
-function jobLine(g: Group, mine: JobRecord[], starting: string, now: number): string {
-  const job = mine.find((j) => j.running) ?? mine[0];
+function jobLine(g: Group, mine: JobRecord[], run: Run, now: number): string {
+  const job = mine.find((j) => j.phase == "running") ?? mine[0];
   // A command that this page started, before its job record shows.
-  if (starting && !job?.running)
-    return `<div class="job running"><i class="light"></i><code>${esc(starting)}</code><span>starts · from this page</span></div>`;
+  if (run.at == "starting" && job?.phase != "running")
+    return `<div class="job running"><i class="light"></i><code>${esc(run.command)}</code><span>starts · from this page</span></div>`;
   if (!job) return `<div class="job none">No job yet. A deploy or a rollback of ${esc(g.primary.host)} shows here as it runs.</div>`;
-  const st = jobState(job, now);
+  const st = jobLook(job, now);
   return `<a class="job ${st.cls}" href="#${esc(g.primary.host)}/logs/${esc(job.id)}" title="${esc(st.what)}"><i class="light"></i><code>${esc(job.command)}</code><span>${esc(st.what)}</span></a>`;
 }
 
 /** "45 s", "3 min 5 s", "1 h 2 min". */
 const took = (job: JobRecord, now: number) => {
-  const end = job.running ? now : Date.parse(job.ended ?? "");
+  const end = job.phase == "running" ? now : Date.parse(job.ended ?? "");
   const s = Math.round((end - Date.parse(job.started)) / 1000);
   if (!Number.isFinite(s) || s < 0) return "";
   if (s < 60) return `${s} s`;
@@ -233,12 +219,12 @@ const took = (job: JobRecord, now: number) => {
 
 /** Logs: the output of the job that the hash names, else of the job that runs, else of the last one. */
 function logs(g: Group, mine: JobRecord[], id: string, now: number): string {
-  const job = mine.find((j) => j.id == id) ?? mine.find((j) => j.running) ?? mine[0];
+  const job = mine.find((j) => j.id == id) ?? mine.find((j) => j.phase == "running") ?? mine[0];
   if (!job) return `<p class="note">No job yet. The output of a deploy or a rollback of ${esc(g.primary.host)} shows here as it runs.</p>`;
-  const st = jobState(job, now);
+  const st = jobLook(job, now);
   const lines = job.out.map((l) => `<span>${esc(l)}</span>`).join("\n");
   const end = job.error ? `\n<span class="bad">${esc(job.error)}</span>` : "";
-  return `<section class="logs" data-job="${esc(job.id)}" aria-label="The job's output"><div class="log-head"><code>${esc(job.command)}</code><span class="when">${esc(new Date(Date.parse(job.started) || now).toLocaleString())}</span><span class="state ${st.cls}">${esc(job.running ? "runs" : st.cls == "ok" ? "done" : st.cls)}${took(job, now) ? ` · ${took(job, now)}` : ""}</span></div><pre class="log">${lines || (job.running ? "<span>No output yet.</span>" : "<span>No output.</span>")}${end}</pre></section>`;
+  return `<section class="logs" data-job="${esc(job.id)}" aria-label="The job's output"><div class="log-head"><code>${esc(job.command)}</code><span class="when">${esc(new Date(Date.parse(job.started) || now).toLocaleString())}</span><span class="state ${st.cls}">${esc(job.phase == "running" ? "runs" : st.cls == "ok" ? "done" : st.cls)}${took(job, now) ? ` · ${took(job, now)}` : ""}</span></div><pre class="log">${lines || (job.phase == "running" ? "<span>No output yet.</span>" : "<span>No output.</span>")}${end}</pre></section>`;
 }
 
 /** History: the jobs of the primary and its staging instances, newest first. */
@@ -247,8 +233,8 @@ function history(g: Group, mine: JobRecord[], now: number): string {
     return `<p class="note">No job yet. Each deploy and rollback of ${esc(g.primary.host)} and its staging instances shows here.</p>`;
   const rows = mine
     .map((j) => {
-      const st = jobState(j, now);
-      const result = j.running ? "runs" : j.result == "ok" ? "done" : j.result == "failed" ? "failed" : "stopped";
+      const st = jobLook(j, now);
+      const result = j.phase == "running" ? "runs" : j.phase == "ok" ? "done" : j.phase;
       return `<a class="h-row ${st.cls}" href="#${esc(g.primary.host)}/logs/${esc(j.id)}" data-job="${esc(j.id)}"><span class="h-state"><i class="light"></i>${result}</span><code class="h-cmd" title="${esc(j.error ?? j.command)}">${esc(j.command)}</code><span class="h-host">${esc(j.host)}</span><span class="h-from">${esc(j.from == "page" ? "this page" : j.from)}</span><time datetime="${esc(j.started)}" title="${esc(j.started)}">${esc(timeAgo(Date.parse(j.started) || now, now))}</time><span class="h-took">${esc(took(j, now))}</span></a>`;
     })
     .join("");
@@ -256,7 +242,7 @@ function history(g: Group, mine: JobRecord[], now: number): string {
 }
 
 /** The command of the job that runs (or that this page starts), or "": while one runs, the page starts no other. */
-export const busyWith = (f: Pick<Facts, "jobs" | "starting">) => f.jobs.find((j) => j.running)?.command ?? f.starting;
+export const busyWith = (f: Pick<Facts, "jobs" | "run">) => activeJobs(f.jobs, f.run)[0]?.command ?? "";
 
 /** Why the branch can't merge now, or null. */
 export function mergeBlock(b: Branch, base: string, busy: string): string | null {
@@ -275,13 +261,7 @@ const running = (word: string) => `<i class="spin" aria-hidden="true"></i>${word
 const MERGING = "It merges now. The job line and Logs show its output.";
 const DEPLOYING = "It deploys now. The job line and Logs show its output.";
 
-/** Whether `busy` (the command that runs) deploys commit `sha` to `host`: `bun erga deploy <commit> <host>`. */
-const deploys = (busy: string, sha: string, host: string) => {
-  const m = /^bun erga deploy (\S+) (\S+)$/.exec(busy);
-  return !!m && m[1].length >= 7 && sha.startsWith(m[1]) && m[2] == host;
-};
-
-function branches(git: Git, busy: string, now: number): string {
+function branches(git: Git, active: JobState[], busy: string, now: number): string {
   const list = git.branches.length
     ? git.branches
         .map((b) => {
@@ -290,8 +270,7 @@ function branches(git: Git, busy: string, now: number): string {
             : b.conflicts.length
               ? `<span class="f-state bad" title="${esc(b.conflicts.join(", "))}">Conflicts in ${plural(b.conflicts.length, "file")}: ${esc(b.conflicts.join(", "))}</span>`
               : `<span class="f-state ok">Merges cleanly</span>`;
-          const merge =
-            busy == `bun erga merge ${b.name}`
+          const merge = active.some((j) => j.kind == "merge" && j.branch == b.name)
               ? button(running("Merging"), `data-merge="${esc(b.name)}" aria-busy="true"`, MERGING)
               : button("Merge", `data-merge="${esc(b.name)}"`, mergeBlock(b, git.base, busy));
           const form = `<form class="f-merge" data-branch="${esc(b.name)}" hidden><input name="message" value="${esc(b.subject)}" aria-label="The message of the commit on ${esc(git.base)}" autocomplete="off"><button class="btn">Merge</button><button class="btn quiet" type="button" data-cancel>Cancel</button><span class="err" role="alert"></span></form>`;
@@ -305,19 +284,18 @@ function branches(git: Git, busy: string, now: number): string {
 /** The time of the last good deploy of `sha` to `host`, from the job records. */
 const deployedAt = (jobs: JobRecord[], host: string, sha: string) =>
   jobs
-    .filter((j) => j.host == host && j.result == "ok" && j.commit && j.commit.startsWith(sha.slice(0, 12)))
+    .filter((j) => j.host == host && j.phase == "ok" && j.commit && j.commit.startsWith(sha.slice(0, 12)))
     .map((j) => Date.parse(j.ended ?? ""))
     .filter(Boolean)
     .sort((a, b) => b - a)[0];
 
 /** The Deploy button of a row, in an instance's column: `bun erga deploy <commit> <host>`, after its question. */
-function deployButton(e: Entry, primary: string, c: Commit, busy: string): string {
+function deployButton(e: Entry, primary: string, c: Commit, busy: string, deploying: boolean): string {
   const note = e.stagingOf
     ? `It keeps its copy of ${primary}'s data.`
     : "After a healthy deploy, main moves to it if main does not have it.";
   const data = `data-deploy data-host="${esc(e.host)}" data-sha="${esc(c.sha)}" data-ask="${esc(`Deploy ${sha7(c.sha)} ${c.subject} to ${e.host}?`)}" data-note="${esc(note)}" aria-label="${esc(`Deploy ${sha7(c.sha)} to ${e.host}`)}"`;
-  if (deploys(busy, c.sha, e.host))
-    return `<span class="deps here busy">${button(running("Deploying"), `${data} aria-busy="true"`, DEPLOYING)}</span>`;
+  if (deploying) return `<span class="deps here busy">${button(running("Deploying"), `${data} aria-busy="true"`, DEPLOYING)}</span>`;
   return `<span class="deps here">${button("Deploy", data, busy ? `Another job runs: ${busy}. Wait for it to end.` : null)}</span>`;
 }
 
@@ -348,14 +326,16 @@ function log(g: Group, f: Facts & { git: Git }, now: number): string {
       return `<div class="head col" title="${esc(`${e.host}: ${st.what}`)}"><b>${e.stagingOf ? "staging" : "production"}</b><span class="host">${esc(e.host)}</span><span class="st"><i class="light ${st.cls}"></i>${esc(answer(e)?.error ? "no answer" : st.cls == "bad" ? "not healthy" : answer(e) ? "live" : "asking…")}</span></div>`;
     })
     .join("");
-  const busy = busyWith(f);
+  const active = activeJobs(f.jobs, f.run);
+  const busy = active[0]?.command ?? "";
   const body = rows
     .map((c, i) => {
       const kind = isOn(i) ? "on" : "off";
       const marks = cols
         .map((e) => {
           // Its own deploy stays "Deploying…" until the job ends, even when the instance answers the new commit before.
-          if (!runs(answer(e), c.sha) || deploys(busy, c.sha, e.host)) return deployButton(e, g.primary.host, c, busy);
+          const deploying = active.some((j) => deploysTo(j, c.sha, e.host, !!e.stagingOf));
+          if (!runs(answer(e), c.sha) || deploying) return deployButton(e, g.primary.host, c, busy, deploying);
           const at = deployedAt(f.jobs, e.host, c.sha);
           return `<span class="deps"><span class="dep live" data-host="${esc(e.host)}" title="${esc(`${e.host} runs this commit`)}"><span class="w">live</span><span class="at">${at ? short(at, now) : ""}</span></span></span>`;
         })
@@ -416,8 +396,8 @@ export function viewHtml(f: Facts, name: string, now = Date.now()): string {
           ? setupTab(g, f.setup)
           : "error" in f.git
             ? `<p class="note bad">${esc(f.git.error)}</p>`
-            : branches(f.git, busyWith(f), now) + log(g, { ...f, git: f.git }, now);
-  return `${sidebar}<section class="main" data-primary="${esc(g.primary.host)}" data-tab="${tab}"${newest(groups, f.jobs)}><h2 class="title">${esc(g.primary.host)}</h2>${tabs}${jobLine(g, mine, f.starting, now)}${f.failed ? `<p class="note bad failed">${esc(f.failed)}</p>` : ""}<div class="tab-body">${body}</div></section>`;
+            : branches(f.git, activeJobs(f.jobs, f.run), busyWith(f), now) + log(g, { ...f, git: f.git }, now);
+  return `${sidebar}<section class="main" data-primary="${esc(g.primary.host)}" data-tab="${tab}"${newest(groups, f.jobs)}><h2 class="title">${esc(g.primary.host)}</h2>${tabs}${jobLine(g, mine, f.run, now)}${f.run.at == "failed" ? `<p class="note bad failed">${esc(f.run.why)}</p>` : ""}<div class="tab-body">${body}</div></section>`;
 }
 
 /** The whole page: Erga's bar, the live part, and the page's script. */

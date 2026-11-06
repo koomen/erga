@@ -4,6 +4,7 @@
 
 import { expect, test } from "bun:test";
 import type { Entry } from "../deploy/cli/config";
+import { type Run, stepRun } from "../deploy/cli/job-state";
 import { type Branch, type Facts, groupsOf, jobOf, viewHtml } from "../deploy/cli/ops-view";
 
 const NOW = Date.parse("2026-11-05T12:00:00Z");
@@ -22,14 +23,14 @@ const line = (x: object) => `${JSON.stringify(x)}\n`;
 const start = { command: "bun erga deploy erga.dev", host: "erga.dev", from: "terminal", pid: 7, started: "2026-11-05T11:00:00.000Z" };
 
 test("a job runs while it has no result and its process lives", () => {
-  expect(jobOf(line(start), () => true)?.running).toBe(true);
+  expect(jobOf(line(start), () => true)?.phase).toBe("running");
   // Its process stopped with no result: it does not run.
-  expect(jobOf(line(start), () => false)?.running).toBe(false);
+  expect(jobOf(line(start), () => false)?.phase).toBe("stopped");
   const ended = jobOf(
     line(start) + line({ commit: "c".repeat(40) }) + line({ result: "failed", error: "health", ended: "2026-11-05T11:01:00.000Z" }),
     () => true
   );
-  expect(ended).toMatchObject({ running: false, result: "failed", error: "health", commit: "c".repeat(40) });
+  expect(ended).toMatchObject({ phase: "failed", error: "health", commit: "c".repeat(40) });
   expect(jobOf("not json\n", () => true)).toBeNull();
 });
 
@@ -50,8 +51,7 @@ test("the view: each primary with its staging instances, the job line, and live 
     git: { log, branches: [], base: "staging", main: "1".repeat(40), elsewhere: { ["9".repeat(12)]: false } },
     jobs: [jobOf(line(start) + line({ commit: "1".repeat(40) }) + line({ result: "ok", ended: "2026-11-05T11:55:00.000Z" }), () => true)!],
     setup: "",
-    starting: "",
-    failed: "",
+    run: { at: "idle" },
   };
   const html = viewHtml(facts, "staging.erga.dev", NOW);
   // A staging instance's name chooses its primary.
@@ -84,8 +84,7 @@ test("Logs shows the job that runs, else the last one, or the one the hash names
       job("other", "erga.example.org", "2026-11-05T11:30:00.000Z", done("2026-11-05T11:31:00.000Z")),
     ],
     setup: "",
-    starting: "",
-    failed: "",
+    run: { at: "idle" },
   };
   const logs = viewHtml(facts, "erga.dev/logs", NOW);
   expect(logs).toContain('<section class="logs" data-job="runs"');
@@ -110,8 +109,7 @@ test("Setup: the setup's host shows before it has an entry, and opens on its che
     git: { error: "no git" },
     jobs: [],
     setup: "new.example.com",
-    starting: "",
-    failed: "",
+    run: { at: "idle" },
   };
   expect(groupsOf(config, facts.setup).map((g) => [g.primary.host, g.primary.token])).toEqual([
     ["erga.dev", "t"],
@@ -177,10 +175,28 @@ const deploys = (more: Partial<Facts> = {}, staging = "3", production = "1"): Fa
   },
   jobs: [],
   setup: "",
-  starting: "",
-  failed: "",
+  run: { at: "idle" },
   ...more,
 });
+/** The page's own command as it starts: a merge of a branch, or a deploy of commit n...n to staging.erga.dev. */
+const starts = (kind: "merge" | "deploy", what: string): Run =>
+  kind == "merge"
+    ? stepRun(
+        { at: "idle" },
+        {
+          type: "start",
+          command: `bun erga merge ${what}`,
+          job: { kind, host: "staging.erga.dev", commit: null, branch: what, phase: "starting" },
+        }
+      )
+    : stepRun(
+        { at: "idle" },
+        {
+          type: "start",
+          command: `bun erga deploy ${what.repeat(12)} staging.erga.dev`,
+          job: { kind, host: "staging.erga.dev", commit: what.repeat(40), branch: null, phase: "starting" },
+        }
+      );
 /** The Merge button of a branch: its tip, and whether it is disabled. */
 const mergeOf = (html: string, name: string) => {
   const m = new RegExp(`<span class="tip"(?: title="([^"]*)")?><button class="btn" type="button" data-merge="${name}"( disabled)?>`).exec(
@@ -201,7 +217,7 @@ test("Merge: a button on each feature branch, with a field for the message; disa
     tip: "Another job runs: bun erga deploy erga.dev. Wait for it to end.",
     disabled: true,
   });
-  expect(mergeOf(viewHtml(deploys({ starting: "bun erga merge clash" }), "erga.dev", NOW), "clean")?.disabled).toBe(true);
+  expect(mergeOf(viewHtml(deploys({ run: starts("merge", "clash") }), "erga.dev", NOW), "clean")?.disabled).toBe(true);
 });
 
 /** The row of a commit, in the view's HTML. */
@@ -223,7 +239,7 @@ test("Deploy: each commit row has a button in each instance's column, except whe
   // The old button of a production that is behind is gone: no row has more than its two columns.
   expect(html.match(/data-deploy /g)?.length).toBe(4);
   // While a job runs, each is disabled and says why.
-  const busy = viewHtml(deploys({ starting: "bun erga merge clean" }), "erga.dev", NOW);
+  const busy = viewHtml(deploys({ run: starts("merge", "clean") }), "erga.dev", NOW);
   expect(busy).toContain(
     '<span class="tip" title="Another job runs: bun erga merge clean. Wait for it to end."><button class="btn" type="button" data-deploy'
   );
@@ -323,7 +339,7 @@ test("while its job runs, a button says so with a spinner: Merging… on its bra
   const SPIN = '<i class="spin" aria-hidden="true"></i>';
   // The page started the merge, and then its job record runs: the branch's button says Merging…, disabled.
   const merging = `<span class="tip" title="It merges now. The job line and Logs show its output."><button class="btn" type="button" data-merge="clean" aria-busy="true" disabled>${SPIN}Merging…</button></span>`;
-  expect(viewHtml(deploys({ starting: "bun erga merge clean" }), "erga.dev", NOW)).toContain(merging);
+  expect(viewHtml(deploys({ run: starts("merge", "clean") }), "erga.dev", NOW)).toContain(merging);
   const record = jobOf(line({ ...start, command: "bun erga merge clean", host: "staging.erga.dev" }), () => true)!;
   const html = viewHtml(deploys({ jobs: [record] }), "erga.dev", NOW);
   expect(html).toContain(merging);
@@ -331,7 +347,7 @@ test("while its job runs, a button says so with a spinner: Merging… on its bra
   expect(mergeOf(html, "clash")?.disabled).toBe(true);
   expect(html.match(/class="spin"/g)?.length).toBe(1);
   // A deploy: only its cell says Deploying…, and it stays shown with no hover.
-  const deploying = viewHtml(deploys({ starting: `bun erga deploy ${"2".repeat(12)} staging.erga.dev` }), "erga.dev", NOW);
+  const deploying = viewHtml(deploys({ run: starts("deploy", "2") }), "erga.dev", NOW);
   expect(rowOf(deploying, "2")).toContain(
     `<span class="deps here busy"><span class="tip" title="It deploys now. The job line and Logs show its output."><button class="btn" type="button" data-deploy data-host="staging.erga.dev"`
   );
@@ -339,7 +355,7 @@ test("while its job runs, a button says so with a spinner: Merging… on its bra
   expect(deploying.match(/class="spin"/g)?.length).toBe(1);
   expect(deploying).toContain(`${SPIN}Deploying…`);
   // The instance answers the new commit before the job ends: the cell still says Deploying…, not live.
-  const answered = viewHtml(deploys({ starting: `bun erga deploy ${"2".repeat(12)} staging.erga.dev` }, "2"), "erga.dev", NOW);
+  const answered = viewHtml(deploys({ run: starts("deploy", "2") }, "2"), "erga.dev", NOW);
   expect(rowOf(answered, "2")).toContain(`${SPIN}Deploying…`);
   expect(rowOf(answered, "2")).not.toContain("live");
   // The job ends: the buttons are as before.
@@ -347,4 +363,42 @@ test("while its job runs, a button says so with a spinner: Merging… on its bra
   const after = viewHtml(deploys({ jobs: [done] }), "erga.dev", NOW);
   expect(after).not.toContain("spin");
   expect(mergeOf(after, "clean")).toEqual({ tip: "", disabled: false });
+});
+
+test("a terminal's deploy says Deploying… in its cell, from its record's host and commit, whatever its flags", () => {
+  const SPIN = '<i class="spin" aria-hidden="true"></i>';
+  const two = "2".repeat(40);
+  // Each command that main.ts builds, for a deploy of commit 2 that staging (or production) already answers.
+  for (const [command, host] of [
+    [`bun erga deploy ${two.slice(0, 12)} staging.erga.dev --no-tests`, "staging.erga.dev"],
+    [`bun erga deploy ${two.slice(0, 12)} staging.erga.dev --fresh`, "staging.erga.dev"],
+    ["bun erga deploy erga.dev", "erga.dev"],
+    ["bun erga deploy main erga.dev", "erga.dev"],
+    [`bun erga deploy ${two.slice(0, 12)} https://staging.erga.dev`, "staging.erga.dev"],
+  ]) {
+    const record = jobOf(line({ ...start, command, host }) + line({ commit: two }), () => true)!;
+    const html = viewHtml(deploys({ jobs: [record] }, "2", "2"), "erga.dev", NOW);
+    const cell = new RegExp(`<span class="deps here busy">[^]*?data-host="${host}" data-sha="${two}"[^]*?${SPIN}Deploying…`);
+    expect(rowOf(html, "2"), command).toMatch(cell);
+    expect(html.match(/class="spin"/g)?.length, command).toBe(1);
+  }
+  // Before its record names the commit, no cell says Deploying…; every button waits.
+  const early = jobOf(line({ ...start, command: "bun erga deploy erga.dev", host: "erga.dev" }), () => true)!;
+  const html = viewHtml(deploys({ jobs: [early] }), "erga.dev", NOW);
+  expect(html).not.toContain("spin");
+  expect(html.match(/data-deploy [^>]* disabled>/g)?.length).toBe(4);
+});
+
+test("a merge: staging's cell says Deploying… until the merge ends, after the push of staging, not live", () => {
+  const SPIN = '<i class="spin" aria-hidden="true"></i>';
+  const two = "2".repeat(40);
+  const merge = line({ ...start, command: "bun erga merge clean", host: "staging.erga.dev" }) + line({ commit: two });
+  // Staging answers the merged commit while the merge still runs (its deploy record ended; staging is not pushed yet).
+  const deploy = merge + line({ result: "ok", ended: start.started });
+  const html = viewHtml(deploys({ jobs: [jobOf(merge, () => true)!, jobOf(deploy, () => true)!] }, "2"), "erga.dev", NOW);
+  expect(rowOf(html, "2")).toMatch(new RegExp(`data-host="staging.erga.dev" data-sha="${two}"[^]*?${SPIN}Deploying…`));
+  expect(rowOf(html, "2")).not.toContain("live");
+  // The merge ends: live.
+  const ended = viewHtml(deploys({ jobs: [jobOf(deploy, () => true)!] }, "2"), "erga.dev", NOW);
+  expect(rowOf(ended, "2")).toContain("live");
 });

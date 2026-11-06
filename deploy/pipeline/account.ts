@@ -530,28 +530,48 @@ const claimsOf = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Record(
  */
 export async function ownCredentials(cf: Cloudflare, acc: string, from: string | null, to: string): Promise<string> {
   const rows = from ? (await d1(cf, acc, from, "SELECT * FROM credentials", [], "read the API keys this server stored")) ?? [] : [];
-  await d1(cf, acc, to, "DELETE FROM credentials", [], "remove the other server's API keys from the copy");
-  for (const r of rows) {
-    const cols = Object.keys(r).filter((c) => /^\w+$/.test(c));
-    await d1(cf, acc, to, `INSERT INTO credentials (${cols.join(", ")}) VALUES (${cols.map((_, i) => `?${i + 1}`).join(", ")})`, cols.map((c) => r[c] as string | number | null), `keep the API key ${String(r.name)}`);
-  }
   // Each person's own keys too (server/migrations/0290_person_keys.sql): production's people's keys never stay in the
   // copy, and the copy it was on keeps its own (none if its copy is older than the table).
   const theirs = from
     ? ((await d1(cf, acc, from, "SELECT * FROM person_keys", [], "read the people's own API keys this server stored").catch(() => null)) ??
       [])
     : [];
-  await d1(cf, acc, to, "DELETE FROM person_keys", [], "remove the other server's people's API keys from the copy");
-  for (const r of theirs)
-    await d1(
-      cf,
-      acc,
-      to,
-      "INSERT INTO person_keys (login, name, iv, data, last4, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-      ["login", "name", "iv", "data", "last4", "updated"].map((c) => r[c] as string | number | null),
-      "keep a person's own API key"
-    );
+  const values = (r: Record<string, unknown>, cols: string[]) => cols.map((c) => r[c] as string | number | null);
+  const KEY_COLS = ["login", "name", "iv", "data", "last4", "updated"];
+  // One batch, all or nothing: a failure never leaves the copy with no keys at all.
+  await d1Batch(
+    cf,
+    acc,
+    to,
+    [
+      { sql: "DELETE FROM credentials", params: [] },
+      ...rows.map((r) => {
+        const cols = Object.keys(r).filter((c) => /^\w+$/.test(c));
+        return {
+          sql: `INSERT INTO credentials (${cols.join(", ")}) VALUES (${cols.map((_, i) => `?${i + 1}`).join(", ")})`,
+          params: values(r, cols),
+        };
+      }),
+      { sql: "DELETE FROM person_keys", params: [] },
+      ...theirs.map((r) => ({
+        sql: `INSERT INTO person_keys (${KEY_COLS.join(", ")}) VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+        params: values(r, KEY_COLS),
+      })),
+    ],
+    "put this server's own API keys, and its people's, in the copy"
+  );
   return `${rows.length ? `its own API keys kept (${rows.map((r) => String(r.name)).join(", ")})` : "no API keys of its own to keep"}; ${theirs.length} of its people's own keys kept`;
+}
+
+/** Several statements on a D1 database in one request (the API's batch), all or nothing. */
+export async function d1Batch(
+  cf: Cloudflare,
+  acc: string,
+  db: string,
+  batch: { sql: string; params: (string | number | null)[] }[],
+  what: string
+): Promise<void> {
+  await cf.call("POST", `${acc}/d1/database/${db}/query`, what, { batch });
 }
 
 export async function d1(
