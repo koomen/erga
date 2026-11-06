@@ -1,4 +1,4 @@
-// A page's details (Document settings, Page, Details): its title, description, icon and link picture, in its <head>.
+// A page's details (Document settings, Page details, Edit): its title, description, icon and link picture, in its <head>.
 // The owner types them in the dialog and saves; the page's source has the tags, the viewer's tab shows the title and
 // icon, and a link's preview reads the description (the viewer's own head, since the page is in a frame).
 import { expect, servers, test, until } from "../../helpers/fixtures";
@@ -49,6 +49,13 @@ test("the owner sets the page's title, description and icon in Page details; the
   await expect
     .poll(() => page.evaluate(() => document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href ?? ""))
     .toMatch(/\/logo\.png$/);
+  // Page details in the settings show them, with Edit.
+  await clickOn(page, "#btn-settings");
+  await expect.poll(() => page.locator("#ds-page-tab").textContent()).toBe("Pete's <Page>");
+  expect(await page.locator("#ds-page-desc").textContent()).toBe("Everything about the page.");
+  await expect.poll(() => page.evaluate(() => document.querySelector<HTMLImageElement>("#ds-page-tab img")?.naturalWidth ?? 0)).toBe(1);
+  expect(await page.locator("#ds-page-edit").textContent()).toBe("Edit");
+  await page.keyboard.press("Escape");
   // A reader's (or a link preview's) first response has them in the viewer's own head.
   const html = await (await fetch(root + made.at.replace(/[?&]edit=?$/, ""))).text();
   expect(html).toContain("<title>Pete&#39;s &lt;Page&gt;</title>");
