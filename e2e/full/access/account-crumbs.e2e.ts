@@ -13,11 +13,18 @@ const crumbs = (page: Page) => page.evaluate(() => {
   const docs = document.querySelector("#nav-back span")!, title = document.getElementById("doc-title-text")!;
   const ctx = document.createElement("canvas").getContext("2d")!; ctx.font = getComputedStyle(title).font;
   const t = base(title);
-  const nb = document.getElementById("nav-back")!;
-  const ink = (el: Element, text: string, pseudo?: string) => { const cs = getComputedStyle(el, pseudo); ctx.font = cs.fontWeight + " " + cs.fontSize + " " + cs.fontFamily; return ctx.measureText(text); };
-  const d = ink(docs, docs.textContent!), a = ink(nb, "›", "::after"), ti = ink(title, title.textContent!);
-  const dr = docs.getBoundingClientRect(), tr = title.getBoundingClientRect();
-  const arrow = dr.right + (parseFloat(getComputedStyle(nb).columnGap) || 0) + parseFloat(getComputedStyle(nb, "::after").marginLeft);
+  const sep = document.getElementById("nav-back")!.nextElementSibling!;
+  const ink = (el: Element, text: string, pseudo?: string) => {
+    const cs = getComputedStyle(el, pseudo);
+    ctx.font = cs.fontWeight + " " + cs.fontSize + " " + cs.fontFamily;
+    return ctx.measureText(text);
+  };
+  const d = ink(docs, docs.textContent!),
+    a = ink(sep, "›"),
+    ti = ink(title, title.textContent!);
+  const dr = docs.getBoundingClientRect(),
+    tr = title.getBoundingClientRect();
+  const arrow = sep.getBoundingClientRect().left + parseFloat(getComputedStyle(sep).paddingLeft);
   const gapL = arrow - a.actualBoundingBoxLeft - (dr.left + d.actualBoundingBoxRight), gapR = tr.left - ti.actualBoundingBoxLeft - (arrow + a.actualBoundingBoxRight);
   return { gapL, gapR, docs: base(docs), title: t, room: title.getBoundingClientRect().bottom - t, descent: ctx.measureText(title.textContent!).actualBoundingBoxDescent,
     scrollH: title.scrollHeight, clientH: title.clientHeight, ellipsis: title.scrollWidth > title.clientWidth };

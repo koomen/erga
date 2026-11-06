@@ -233,7 +233,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     if (body.classList.contains("quick-open")) return;
     if (!phone.matches || back.hidden) return void nav.classList.remove("tight");
     const tight = nav.classList.contains("tight");
-    if (!tight) backWidth = back.offsetWidth;
+    if (!tight) backWidth = back.offsetWidth + (back.nextElementSibling as HTMLElement).offsetWidth;
     const parts = [...nav.children].reduce((w, el) => w + (el as HTMLElement).offsetWidth, 0) + 16 + (tight ? backWidth : 0);
     nav.classList.toggle("tight", parts > barEdge(top, $("people")) - nav.getBoundingClientRect().left - 8);
   }

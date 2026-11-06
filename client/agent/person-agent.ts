@@ -178,7 +178,7 @@ function noKeyLinks() {
 
 /** The page note: what the person has open (the breadcrumbs, the document's address; in the editor, the selection), so "this" means something. */
 function context(): string | null {
-  const trail = [...document.querySelectorAll(".erga-crumbs > :not(.erga-brand)")]
+  const trail = [...document.querySelectorAll(".erga-crumbs > :not(.erga-brand, .erga-sep)")]
     .map((e) => e.textContent?.trim())
     .filter(Boolean)
     .join(" › ");
