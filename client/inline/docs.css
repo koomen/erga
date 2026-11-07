@@ -75,8 +75,8 @@
   /* Find as you type (client/common/find-rows.ts): a row that doesn't match hides, and its pages with it. */
   .find { width: 220px; }
   .find[hidden], ol.rows > li.miss, ol.rows > li.miss + li.sub { display: none; }
-  .none { margin: 0; padding: 14px 0; font-size: 14px; color: var(--soft); }
-  .none[hidden] { display: none; }
+  #docs-none { margin: 0; padding: 14px 0; font-size: 14px; color: var(--soft); }
+  #docs-none[hidden] { display: none; }
   @media (max-width: 520px) { .find { width: 0; flex: 1; } .make, .make-buttons { width: 100%; } header { flex-wrap: wrap; } }
   .pill.scratch { position: relative; text-decoration: none; }
   /* Its tip (client/inline/scratch.css) opens to the left: the button is at the page's right. */
