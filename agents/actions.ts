@@ -176,6 +176,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
 
   // ------------------------------------------------------------ the documents list (/docs, server/documents/make.ts)
   { route: "GET /docs", domain: "document", action: "Read your documents (Documents)", tool: "list_documents" },
+  { route: "GET /docs/archived", domain: "document", action: "Read your archived documents (Archived)", tool: "list_documents" },
   {
     route: "GET /new",
     domain: "document",

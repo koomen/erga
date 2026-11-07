@@ -16,7 +16,8 @@ import { call, ctx, fromWeb, json, text } from "../http.ts";
 
 /** Each live list's rows, by its data-live-view: the page's own (each checks who may see them, as its page does). */
 const VIEWS: Record<string, LiveRows> = {
-  docs: docsRows,
+  docs: docsRows(false),
+  "docs-archived": docsRows(true),
   users: usersRows,
   settings: settingsRows,
   access: accessRows,

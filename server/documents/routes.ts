@@ -8,7 +8,8 @@
 //   /new                       a blank document for you, in the editor (signs you in first); /new?template=<id> one from
 //                              a template; /new?from=landing a copy
 //                              of the homepage's, /new?from=<id> of another you may open (the viewer's Clone)
-//   /docs                      your documents, latest edit first (delete and share are operations: POST /api/tools/<name>)
+//   /docs                      your documents, latest edit first (archive, delete and share are operations: POST /api/tools/<name>)
+//   /docs/archived             the documents you archived, the same rows (unarchive is an operation too)
 //   /admin                     the server's settings and users, for admins (each change an operation: POST /api/tools/<name>)
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with; for people not signed in, a
 //                              document shared with anyone with the link while the server lets people share publicly): its canonical address;
@@ -65,7 +66,7 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   if (path == "/") return yield* viewLanding;
   if (path == "/new") return yield* newDoc;
   if (path == "/scratch") return yield* scratchDoc;
-  if (path == "/docs") return yield* listDocs;
+  if (path == "/docs" || path == "/docs/archived") return yield* listDocs;
   if (isAdminPath(path)) return yield* adminRoutes;
 
   // The homepage project's address, /_home[/<page>], is its row's /<HOME_OWNER>/<HOME_SLUG> (document/names.ts).

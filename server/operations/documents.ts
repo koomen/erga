@@ -138,6 +138,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     parameters: Schema.Struct({
       query: Schema.optionalKey(Schema.String),
       all: bool("Everyone's (admins)."),
+      archived: bool("Only those you archived (archive_document); else none of them."),
       limit: Schema.optionalKey(Schema.Int),
     }),
     run: async (args, caller) => {
@@ -146,10 +147,10 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       if (args.all === true) {
         if (!(await dir.users.actsAsAdmin(who)))
           throw new OperationError({ message: "Only an admin with admin power can list everyone's documents (all).", status: 403 });
-        return await dir.search(who, query, Number(args.limit) || 20);
+        return await dir.lists.search(who, query, Number(args.limit) || 20);
       }
       const q = query.trim().toLowerCase();
-      return (await platformOf(caller).docs.list(who.login.toLowerCase()))
+      return (await platformOf(caller).docs.list(who.login.toLowerCase(), { archived: args.archived === true }))
         .map((d) => ({
           id: d.id,
           title: d.title,
@@ -302,6 +303,23 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       return { deleted: described(doc, caller) };
     },
   },
+  ...([true, false] as const).map(
+    (archived): Operation => ({
+      name: archived ? "archive_document" : "unarchive_document",
+      label: archived ? "Archive a document" : "Unarchive a document",
+      activity: archived ? "archiving a document" : "unarchiving a document",
+      ui: archived ? "Documents (/docs): Archive" : "Archived documents (/docs/archived): Unarchive",
+      description: archived
+        ? "Moves a document off your list into your archive (/docs/archived), for you only."
+        : "Moves a document from your archive (/docs/archived) back onto your list.",
+      parameters: Schema.Struct({ document: DOCUMENT }),
+      run: async (args, caller) => {
+        const doc = await findDocument(caller, args.document, "open");
+        await caller.dir.lists.archive(doc.id, caller.who.login, archived);
+        return { [archived ? "archived" : "unarchived"]: described(doc, caller) };
+      },
+    })
+  ),
   {
     name: "share_document",
     label: "Share the document",

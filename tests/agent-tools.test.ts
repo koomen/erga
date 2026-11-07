@@ -215,7 +215,7 @@ function platformOf(dir: Directory) {
       create: async (doc: { id: string }) => { made.push(doc.id); return true; },
       delete: async () => false,
       snapshot: async () => ({ files: { "index.html": "<h1>Copied</h1>" }, index: "index.html" }),
-      list: async (owner: string) => (await dir.list(owner)).map((d) => ({ ...d, modified: d.modified ?? d.created })),
+      list: async (owner: string) => (await dir.lists.list(owner)).map((d) => ({ ...d, modified: d.modified ?? d.created })),
     },
   } as unknown as Platform;
   return { platform, made };

@@ -223,7 +223,7 @@ export interface Platform {
     /** Deletes a document (its host takes it out of the directory too); false if it had no host. */
     delete(doc: Route): Promise<boolean>;
     /** `owner`'s documents, most recently changed first; with `ids`, only those of them. */
-    list(owner: string, ids?: readonly string[]): Promise<Listed[]>;
+    list(owner: string, o?: { ids?: readonly string[]; archived?: boolean }): Promise<Listed[]>;
     /** Hands a request to the document's host, its path already the one inside the document. */
     fetch(doc: Route, request: Request): Promise<Response>;
     /**

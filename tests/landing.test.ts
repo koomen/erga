@@ -92,8 +92,8 @@ test("a fresh database: the first requests make one landing document, even from 
   expect(await p.directory.may({ login: "ada" }, "edit", doc)).toBe(false);
   expect(await p.directory.may({ login: "ada" }, "open", doc)).toBe(true);
   // It's on every admin's list, and only theirs; its address is /_home and stays so.
-  expect((await p.directory.list("second")).map((d) => d.id)).toEqual([doc.id]);
-  expect(await p.directory.list("ada")).toEqual([]);
+  expect((await p.directory.lists.list("second")).map((d) => d.id)).toEqual([doc.id]);
+  expect(await p.directory.lists.list("ada")).toEqual([]);
   expect(await p.directory.rename(doc.id, { slug: "other" }, null).catch((e) => e.message)).toContain("/_home");
   // Asked again, it's the same one.
   expect((await landingDocument(platformOn(sql, hosts)))?.id).toBe(doc.id);

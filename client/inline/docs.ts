@@ -1,5 +1,6 @@
 // The documents list's script (/docs, server/pages/docs.ts): times in the reader's own language and zone, the New
-// document picker, a question before deleting, the share dialog, and each document's pages beneath its row.
+// document picker, a question before deleting, Archive (Unarchive on /docs/archived), the share dialog, and each
+// document's pages beneath its row.
 
 import { fastClick } from "../common/fast-click";
 import { findRows } from "../common/find-rows";
@@ -55,6 +56,22 @@ export default function docs(c: DocsConfig): void {
         row.remove();
         counted();
       } catch (err) {
+        alert((err as Error).message);
+      }
+    });
+  }
+  /** A row's Archive or Unarchive: the operation (archive_document, unarchive_document), as an agent's is; the row goes at once. */
+  function wireArchive(b: HTMLButtonElement) {
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      try {
+        await runTool(b.dataset.op!, { document: b.dataset.id });
+        const row = b.closest("li")!;
+        removing(row);
+        row.remove();
+        counted();
+      } catch (err) {
+        b.disabled = false;
         alert((err as Error).message);
       }
     });
@@ -363,8 +380,10 @@ export default function docs(c: DocsConfig): void {
   function wire(row: HTMLElement) {
     const f = row.querySelector<HTMLFormElement>("form[data-title]"),
       s = row.querySelector<HTMLElement>("button.share"),
-      t = row.querySelector<HTMLElement>("button.twist");
+      t = row.querySelector<HTMLElement>("button.twist"),
+      a = row.querySelector<HTMLButtonElement>("button.archive");
     if (f) wireDelete(f);
+    if (a) wireArchive(a);
     if (s) wireShare(s);
     if (t) wireTwist(t);
   }
