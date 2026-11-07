@@ -1,5 +1,5 @@
 // Find on Documents (/docs): each key typed in the box hides the rows whose title and address don't match, at once,
-// in the browser; Escape clears it; a row that comes in live while the box holds words obeys them too.
+// in the browser, on /docs and on /docs/archived; Escape clears it; a row that comes in live while the box holds words obeys them too.
 import { join } from "node:path";
 import { ROOT } from "../../helpers/env";
 import { expect, test } from "../../helpers/fixtures";
@@ -112,4 +112,38 @@ test("Find stays fast with many rows: a key filters 2000 rows in well under a fr
       `[...document.querySelectorAll("ol.rows > li[data-live]")].filter((r) => r.checkVisibility()).map((r) => r.innerText.split("\\n")[0]).join()`
     )
   ).toBe("Copy 1999");
+});
+
+test("/docs/archived has the same Find: it filters the archived rows, a row archived meanwhile obeys it, Escape clears it", async ({
+  tab,
+}) => {
+  const p = await person(await servers.script());
+  const agent = tools(p.base, await p.token("Find test agent"));
+  for (const title of ["Old minutes", "Old budget", "Garden"]) {
+    const d = (await agent.call("create_document", { title })).data as { id: string };
+    await agent.call("documents", { op: "archive_document", document: d.id });
+  }
+  const page = tab.page;
+  tab.strict = true;
+  await page.goto(`${p.base}/auth/github?as=${p.login}&next=/docs/archived`);
+  const shown = () =>
+    page.evaluate<string>(
+      `[document.getElementById("docs-count"), ...document.querySelectorAll("ol.rows > li[data-live] .title"), document.getElementById("docs-none")].filter((e) => e.checkVisibility()).map((e) => e.innerText).join(" | ")`
+    );
+  await expect.poll(shown).toBe("3 documents | Garden | Old budget | Old minutes");
+  await page.locator("input.find").click();
+  await page.keyboard.type("old b");
+  expect(await shown()).toBe("1 of 3 documents | Old budget");
+  // A live row: one more archived while the filter is on, that doesn't match, stays hidden.
+  const d = (await agent.call("create_document", { title: "Trip" })).data as { id: string };
+  await agent.call("documents", { op: "archive_document", document: d.id });
+  await expect.poll(shown).toBe("1 of 4 documents | Old budget");
+  await page.keyboard.type("zz");
+  expect(await shown()).toBe("0 of 4 documents | No documents match “old bzz”.");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Backspace");
+  await page.locator("li:has-text('Old budget')").hover();
+  await page.screenshot({ path: join(ROOT, ".e2e/shots/find-archived.png") });
+  await page.keyboard.press("Escape");
+  expect(await shown()).toBe("4 documents | Trip | Garden | Old budget | Old minutes");
 });
