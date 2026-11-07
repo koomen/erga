@@ -186,16 +186,17 @@ export interface MakeOptions {
 
 /** A new document's id: 8 letters and digits, none easily mistaken for another. */
 
-/** /docs: the signed-in person's documents, most recently edited first. */
+/** /docs: the signed-in person's documents, most recently edited first; /docs/archived: those they archived. */
 export const listDocs = Effect.gen(function* () {
-  const { request, platform } = yield* ctx;
+  const { request, url, platform } = yield* ctx;
+  const archived = url.pathname == "/docs/archived";
   const session = yield* call(() => platform.sessionOf(request));
-  if (!session) return signInFirst("/docs");
+  if (!session) return signInFirst(url.pathname);
   if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't list others.", 403);
   const [docs, hours] = yield* call(() =>
-    Promise.all([platform.docs.list(session.login), platform.directory.config.get("delete_docs_after_hours")])
+    Promise.all([platform.docs.list(session.login, { archived }), platform.directory.config.get("delete_docs_after_hours")])
   );
-  return html(docsPage(session, docs, Date.now(), hours), 200, NO_STORE);
+  return html(docsPage(session, docs, Date.now(), hours, archived), 200, NO_STORE);
 });
 
 /**

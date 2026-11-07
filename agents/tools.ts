@@ -108,13 +108,15 @@ export const KINDS: readonly {
 }[] = [
   {
     name: "documents",
-    description: "Lists, makes, renames, shares and deletes documents; sends feedback.",
+    description: "Lists, makes, renames, shares, archives and deletes documents; sends feedback.",
     ops: [
       "list_documents",
       "create_document",
       "save_document",
       "rename_document",
       "share_document",
+      "archive_document",
+      "unarchive_document",
       "delete_document",
       "whoami",
       "revoke",

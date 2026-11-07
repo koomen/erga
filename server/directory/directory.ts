@@ -51,6 +51,7 @@ import { type Actor, NotAllowed, type User, type UserRole, Users } from "./users
 import { Credentials, PersonKeys } from "./api-keys.ts";
 import { PageLlm } from "./page-llm.ts";
 import { Feedback } from "./feedback.ts";
+import { Lists } from "./lists.ts";
 import { Identities, type Vouched, workspaceOf } from "./identities.ts";
 import { isDocKind, SLUG_MAX, slugify, type DocKind } from "../../document/pages.ts";
 import { addressOf, HOME_OWNER, HOME_SLUG, NameError, UNTITLED } from "../../document/names.ts";
@@ -60,6 +61,7 @@ import {
   ANYONE,
   type DocFound,
   type DocRow,
+  fromRow,
   ID,
   idShaped,
   NO_PUBLIC,
@@ -70,6 +72,7 @@ import {
   type Permission,
   RESERVED,
   type Route,
+  type Row,
   type Sql,
   type Statement,
   type Who,
@@ -86,34 +89,6 @@ export const roleMay = (role: Role | null, action: Action): boolean => role != n
 export const TITLE_MAX = 200;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-interface Row {
-  id: string;
-  owner: string;
-  slug: string;
-  title: string;
-  title_set: number;
-  slug_set: number;
-  created: number;
-  modified: number | null;
-  expires: number | null;
-  test: number;
-  scratch?: number;
-  kind?: string | null;
-}
-const fromRow = (r: Row): DocRow => ({
-  id: r.id,
-  owner: r.owner,
-  slug: r.slug,
-  title: r.title,
-  titleSet: !!r.title_set,
-  slugSet: !!r.slug_set,
-  created: Number(r.created),
-  modified: r.modified == null ? null : Number(r.modified),
-  expires: r.expires == null ? null : Number(r.expires),
-  test: !!r.test,
-  scratch: !!r.scratch,
-  kind: isDocKind(r.kind) ? r.kind : null,
-});
 const unique = (e: unknown) => /UNIQUE constraint failed|SQLITE_CONSTRAINT/i.test(String((e as Error)?.message ?? e));
 
 export class Directory {
@@ -137,6 +112,8 @@ export class Directory {
   readonly rules: AccessRules;
   /** The people an admin added before their first sign-in (the Users page). */
   readonly people: People;
+  /** A person's lists of documents (/docs, /docs/archived), and an admin's search of everyone's. */
+  readonly lists: Lists;
   /** GitHub's public users API, for a GitHub account added by its login. */
   private readonly github: GithubLookup | null;
 
@@ -176,6 +153,7 @@ export class Directory {
     this.identities = new Identities(sql, this.users);
     this.rules = new AccessRules(sql, this.users);
     this.people = new People(sql, this.users);
+    this.lists = new Lists(sql, this.users, (news) => this.publish(news));
     this.github = opts.github ?? null;
     // A user's role and the group rules decide who may sign in (Users.allowed, Users.signedIn): read or write.
     this.users.gate = async (user) => (await this.accessOf(user)) != "none";
@@ -581,64 +559,6 @@ export class Directory {
     // Nobody may do anything with it now: whatever was decided about it goes.
     await this.tell(id, []);
     await this.docChanged(id, had);
-  }
-
-  /**
-   * The documents someone has a permission of their own on (test and scratch documents
-   * aside), most recently edited first, with their role and how many
-   * permissions besides the owner's each has (`shared`; "*" counts as one). With `ids`, only those of them.
-   */
-  async list(login: string, ids?: readonly string[]): Promise<(DocRow & { role: Role; shared: number })[]> {
-    const only = ids ? ids.filter((id) => ID.test(id)) : null;
-    if (only && !only.length) return [];
-    const rows = await this.sql.all<Row & { role: Role; shared: number }>(
-      `SELECT d.*, p.role, (SELECT COUNT(*) FROM permissions q WHERE q.doc_id = d.id AND q.role != 'owner') AS shared
-       FROM permissions p JOIN documents d ON d.id = p.doc_id
-       WHERE p.login = ?1 AND d.test = 0 AND d.scratch = 0${only ? ` AND d.id IN (${only.map((_, i) => `?${i + 2}`).join(", ")})` : ""}
-       ORDER BY COALESCE(d.modified, d.created) DESC`,
-      login.toLowerCase(),
-      ...(only ?? [])
-    );
-    const listed = rows.map((r) => ({ ...fromRow(r), role: r.role, shared: Number(r.shared) }));
-    // An admin's list has the homepage project too, to edit (homeLimit).
-    if (listed.some((d) => d.owner == HOME_OWNER) || !(await this.users.isAdmin(login))) return listed;
-    const [home] = await this.sql.all<Row>(
-      `SELECT * FROM documents WHERE owner = ?1${only ? ` AND id IN (${only.map((_, i) => `?${i + 2}`).join(", ")})` : ""}`,
-      HOME_OWNER,
-      ...(only ?? [])
-    );
-    if (!home) return listed;
-    const row = { ...fromRow(home), role: "editor" as Role, shared: 0 };
-    const at = listed.findIndex((d) => (d.modified ?? d.created) < (row.modified ?? row.created));
-    return at < 0 ? [...listed, row] : [...listed.slice(0, at), row, ...listed.slice(at)];
-  }
-
-  /**
-   * The server's documents and projects (test ones aside) whose title, owner,
-   * address (/<owner>/<slug>, or a URL with it) or id has `query` in it, most
-   * recently edited first, at most `limit`; with no query, the most recent.
-   * For an admin choosing one (the homepage, the landing_document setting):
-   * admins only, since it names everyone's documents.
-   */
-  async search(by: Actor, query: string, limit = 20): Promise<DocFound[]> {
-    await this.users.mustAdmin(by);
-    let q = query.trim();
-    try {
-      if (/^https?:\/\//i.test(q)) q = new URL(q).pathname;
-    } catch {
-      /* searched as typed */
-    }
-    q = q.replace(/^\/+|\/+$/g, "").toLowerCase();
-    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    const rows = await this.sql.all<Row>(
-      `SELECT * FROM documents WHERE test = 0 AND scratch = 0 AND (?1 = '' OR LOWER(title) LIKE ?2 ESCAPE '\\' OR owner LIKE ?2 ESCAPE '\\'
-         OR (owner || '/' || slug) LIKE ?2 ESCAPE '\\' OR id = ?1)
-       ORDER BY COALESCE(modified, created) DESC LIMIT ?3`,
-      q,
-      like,
-      Math.max(1, Math.min(100, Math.floor(limit)))
-    );
-    return rows.map(fromRow).map((d) => ({ id: d.id, title: d.title, owner: d.owner, address: addressOf(d), kind: d.kind ?? "document" }));
   }
 
   /** The role someone's own permission gives them ("*" for anyone's), not counting anyone's. */

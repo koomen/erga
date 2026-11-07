@@ -68,7 +68,7 @@ test("the list, removal and who may", async () => {
   const dir = fresh();
   await dir.add(doc("aaaaaaaa", "One"));
   await dir.add(doc("tttttttt", "Test", { test: true }));
-  expect((await dir.list("ada")).map((d) => d.id)).toEqual(["aaaaaaaa"]);
+  expect((await dir.lists.list("ada")).map((d) => d.id)).toEqual(["aaaaaaaa"]);
   const one = (await dir.get("aaaaaaaa"))!;
   // The owner may do anything; nobody else anything, until it's shared.
   for (const action of ["open", "edit", "rename", "delete", "share"] as const) expect(await dir.may({ login: "ada" }, action, one)).toBe(true);
@@ -76,7 +76,27 @@ test("the list, removal and who may", async () => {
   expect(await dir.may(null, "open", one)).toBe(false);
   await dir.remove("aaaaaaaa");
   expect(await dir.get("aaaaaaaa")).toBeNull();
-  expect(await dir.list("ada")).toEqual([]);
+  expect(await dir.lists.list("ada")).toEqual([]);
+});
+
+test("the archive is each person's own: off their list, on their archived list, and back", async () => {
+  const dir = fresh({ admins: ["root"] });
+  await dir.users.add({ login: "root", admin: true }, "bo");
+  await dir.add(doc("aaaaaaaa", "One"));
+  await dir.add(doc("bbbbbbbb", "Two"));
+  await dir.share({ login: "ada" }, "aaaaaaaa", "bo", "viewer");
+  const ids = async (login: string, archived = false) => (await dir.lists.list(login, { archived })).map((d) => d.id).sort();
+  await dir.lists.archive("aaaaaaaa", "Ada", true);
+  expect([await ids("ada"), await ids("ada", true)]).toEqual([["bbbbbbbb"], ["aaaaaaaa"]]);
+  // Bo's list keeps it: Ada's archive is hers.
+  expect([await ids("bo"), await ids("bo", true)]).toEqual([["aaaaaaaa"], []]);
+  // A live list asks for rows by id: an archived one is off /docs and on /docs/archived.
+  expect((await dir.lists.list("ada", { ids: ["aaaaaaaa"] })).length).toBe(0);
+  expect((await dir.lists.list("ada", { ids: ["aaaaaaaa"], archived: true })).length).toBe(1);
+  await dir.lists.archive("aaaaaaaa", "ada", false);
+  expect([await ids("ada"), await ids("ada", true)]).toEqual([["aaaaaaaa", "bbbbbbbb"], []]);
+  // Only a document on your list, by your own permission.
+  await expect(dir.lists.archive("aaaaaaaa", "cy", true)).rejects.toBeInstanceOf(NotAllowed);
 });
 
 test("sharing: editors, viewers and anyone with the link", async () => {
@@ -93,9 +113,9 @@ test("sharing: editors, viewers and anyone with the link", async () => {
   expect(await can("cy")).toEqual([true, false, false, false, false]);
   expect(await dir.access({ login: "dee" }, one)).toBeNull();
   // Shared documents are on the list of whoever they're shared with, with their role.
-  expect((await dir.list("bo")).map((d) => [d.id, d.role])).toEqual([["aaaaaaaa", "editor"]]);
+  expect((await dir.lists.list("bo")).map((d) => [d.id, d.role])).toEqual([["aaaaaaaa", "editor"]]);
   // And each listed document says how many it's shared with, besides its owner.
-  expect((await dir.list("ada")).map((d) => d.shared)).toEqual([2]);
+  expect((await dir.lists.list("ada")).map((d) => d.shared)).toEqual([2]);
   // Only the owner may share, and the owner's own permission can't change.
   await expect(dir.share({ login: "bo" }, one.id, "dee", "editor")).rejects.toBeInstanceOf(NotAllowed);
   await expect(dir.share({ login: "ada" }, one.id, "ada", "viewer")).rejects.toBeInstanceOf(NotAllowed);
@@ -376,7 +396,7 @@ test("search: an admin finds any of the server's documents and projects by title
   await dir.add(doc("bbbbbbbb", "Garden notes", { owner: "bo", modified: 30, kind: "project" }));
   await dir.add(doc("cccccccc", "100% done_now", { owner: "bo", modified: 20 }));
   await dir.add(doc("tttttttt", "Garden test", { test: true }));
-  const ids = async (q: string) => (await dir.search(ada, q)).map((d) => d.id);
+  const ids = async (q: string) => (await dir.lists.search(ada, q)).map((d) => d.id);
   // Nothing typed: the most recently edited first; never a test document.
   expect(await ids("")).toEqual(["bbbbbbbb", "cccccccc", "aaaaaaaa"]);
   // By title (any case), owner, address (or a URL with it) and id.
@@ -388,13 +408,13 @@ test("search: an admin finds any of the server's documents and projects by title
   // % and _ are only themselves.
   expect(await ids("0% d")).toEqual(["cccccccc"]);
   expect(await ids("e_n")).toEqual(["cccccccc"]);
-  expect(await dir.search(ada, "garden")).toEqual([
+  expect(await dir.lists.search(ada, "garden")).toEqual([
     { id: "bbbbbbbb", title: "Garden notes", owner: "bo", address: "/bo/garden-notes", kind: "project" },
   ]);
-  expect((await dir.search(ada, "", 1)).length).toBe(1);
+  expect((await dir.lists.search(ada, "", 1)).length).toBe(1);
   // Admins only: a user, or an admin without admin power (a documents token), may not.
-  await expect(dir.search({ login: "bo" }, "")).rejects.toThrow(NotAllowed);
-  await expect(dir.search({ login: "ada" }, "")).rejects.toThrow(NotAllowed);
+  await expect(dir.lists.search({ login: "bo" }, "")).rejects.toThrow(NotAllowed);
+  await expect(dir.lists.search({ login: "ada" }, "")).rejects.toThrow(NotAllowed);
 });
 
 test("the homepage: only admins may edit it while it is one", async () => {

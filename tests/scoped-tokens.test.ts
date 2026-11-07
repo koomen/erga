@@ -31,7 +31,7 @@ async function server() {
     tokens,
     sessionOf: (request: Request) => sessionOf(platform, request),
     dev: () => false,
-    docs: { list: async (login: string) => (await dir.list(login)).map((d) => ({ ...d, modified: d.created })) },
+    docs: { list: async (login: string) => (await dir.lists.list(login)).map((d) => ({ ...d, modified: d.created })) },
   } as unknown as Platform;
   /** Calls one of the server API's tools with a token: its status and body. */
   const call = async (token: string, tool: string, args: Record<string, unknown> = {}) => {

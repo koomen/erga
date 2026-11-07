@@ -1,7 +1,7 @@
 // The directory's words: a document's row and its address's parts, who asks (Who) and what they may do, a
 // permission, and the shapes of an owner and an id. Directory (directory.ts) keeps them in the database.
 
-import type { DocKind } from "../../document/pages.ts";
+import { isDocKind, type DocKind } from "../../document/pages.ts";
 import type { Role } from "../../document/access.ts";
 import { randomString } from "../../shared/bytes.ts";
 
@@ -156,3 +156,33 @@ export const idShaped = (s: string) => ID.test(s);
 export const ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 /** A new document's id: 8 characters of ALPHABET. */
 export const newDocId = () => randomString(8, ALPHABET);
+
+/** A document's row as the database has it. */
+export interface Row {
+  id: string;
+  owner: string;
+  slug: string;
+  title: string;
+  title_set: number;
+  slug_set: number;
+  created: number;
+  modified: number | null;
+  expires: number | null;
+  test: number;
+  scratch?: number;
+  kind?: string | null;
+}
+export const fromRow = (r: Row): DocRow => ({
+  id: r.id,
+  owner: r.owner,
+  slug: r.slug,
+  title: r.title,
+  titleSet: !!r.title_set,
+  slugSet: !!r.slug_set,
+  created: Number(r.created),
+  modified: r.modified == null ? null : Number(r.modified),
+  expires: r.expires == null ? null : Number(r.expires),
+  test: !!r.test,
+  scratch: !!r.scratch,
+  kind: isDocKind(r.kind) ? r.kind : null,
+});

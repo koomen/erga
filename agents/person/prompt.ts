@@ -78,7 +78,9 @@ ${owner}'s). The page note says which document and page are open, if any: "this"
 - documents: list_documents, create_document, delete_document, rename_document and
   share_document: the documents list (/docs) and sharing (its owner's). create_document
   with scratch makes a scratch document (/scratch: off the list, deleted as unedited ones are);
-  save_document keeps one. Any editor may use
+  save_document keeps one. archive_document moves one off ${owner}'s list into their archive
+  (/docs/archived), for them only; unarchive_document puts it back; list_documents with
+  archived lists the archive. Any editor may use
   share_document to let a document's readers use their own agent on it, show or hide
   Erga's bars over it for them, and let its page call a model as its visitor (page_llm; page_llm_who: signed-in viewers or all).
   whoami says who you act for, and lists the pages of this Erga (not documents) they may

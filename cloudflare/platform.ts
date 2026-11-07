@@ -191,9 +191,9 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       files: (doc) => counted("doc", () => host(doc).fileList()),
       rename: (doc, person, patch) => counted("doc", () => host(doc).rename(person, patch)),
       delete: (doc) => counted("doc", () => host(doc).delete()),
-      list: async (owner, ids) => {
+      list: async (owner, o) => {
         return Promise.all(
-          (await directory.list(owner, ids)).map(async (d) => {
+          (await directory.lists.list(owner, o)).map(async (d) => {
           // In local development a document may be on disk: only it knows where.
           const path = env.ERGA_LINK_SECRET ? await documentOf(env, d.id).diskPath().catch(() => null) : null;
           return {
