@@ -68,6 +68,12 @@
   @media (prefers-color-scheme: dark) { :root .erga-new-menu { --nm-bg: #1f1f23; --nm-fg: #ececf1; --nm-soft: #8f8f99; --nm-ring: #2f2f35; --nm-hover: rgba(161, 161, 169, .16); } }
   .make { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
   .make-buttons { display: flex; gap: 8px; }
+  /* Find as you type (client/common/find-rows.ts): a row that doesn't match hides, and its pages with it. */
+  .find { width: 220px; }
+  .find[hidden], ol.rows > li.miss, ol.rows > li.miss + li.sub { display: none; }
+  .none { margin: 0; padding: 14px 0; font-size: 14px; color: var(--soft); }
+  .none[hidden] { display: none; }
+  @media (max-width: 520px) { .find { width: 0; flex: 1; } .make, .make-buttons { width: 100%; } header { flex-wrap: wrap; } }
   .pill.scratch { position: relative; text-decoration: none; }
   /* Its tip (client/inline/scratch.css) opens to the left: the button is at the page's right. */
   .pill.scratch::after { left: auto; right: 0; }
