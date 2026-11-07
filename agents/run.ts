@@ -65,6 +65,8 @@ export interface LoopHooks {
   busy?(on: boolean): void;
   /** The model changed by itself: the one it was on can't be used now (its key went, or the admin turned it off). */
   modelChanged?(): void;
+  /** A model turn's tokens, and whether the person's own key ran it (else the server's). */
+  used?(tokens: { input: number; output: number; own: boolean }): void;
 }
 
 export interface LoopOptions {
@@ -330,6 +332,11 @@ export function startLoop(opts: LoopOptions): AgentLoop {
         // A defect too (a bug, a provider's surprise): the person sees what went wrong, and the run ends.
         Effect.catchCause((cause) => Effect.fail(modelError(Cause.squash(cause))))
       );
+      const finish = parts.find((p) => p.type == "finish");
+      if (finish && choice) {
+        const own = usable(c).find((u) => u.choice == choice)?.key == "own";
+        hooks.used?.({ input: finish.usage.inputTokens.total ?? 0, output: finish.usage.outputTokens.total ?? 0, own });
+      }
       const answer = encodeMessages(Prompt.fromResponseParts(parts)).content.filter((m) => m.role == "assistant");
       messages = [...messages, ...answer];
       yield* Effect.promise(() => checkpoints.answered());

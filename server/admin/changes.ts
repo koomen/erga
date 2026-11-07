@@ -138,7 +138,7 @@ function changeRow(
   </li>`;
 }
 
-/** These versions' rows, newest first: each setting that names a document shows it by its address now, as /admin does. */
+/** These versions' rows, newest first: each setting that names a document shows it by its address now, as /admin/settings does. */
 async function changeRows(platform: Platform, versions: SettingsVersion[]): Promise<{ n: number; html: string }[]> {
   const settings = platform.directory.config.settings as Settings;
   const ids = new Set(

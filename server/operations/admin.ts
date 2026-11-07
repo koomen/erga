@@ -1,4 +1,4 @@
-// The server's own settings and people, on the admin pages (/admin): the settings, the API keys and the change log
+// The server's own settings and people, on the admin pages (/admin/settings): the settings, the API keys and the change log
 // (read; a key is cleared here, and set only on the page), how people sign in (read, switch, clear: an app's values are
 // set only on the page), the users, and the access rules. Each needs admin power (`admin`), and the directory checks
 // who's asking itself (Users.mustAdmin). Reads stay apart from changes: an app may allow the reads with no prompt.
@@ -17,7 +17,7 @@ import {
   type UserRole,
 } from "../directory/index.ts";
 import type { AuthOps, AuthStatus } from "../identity/index.ts";
-import { pageLlmUsage } from "../admin/index.ts";
+import { ACTIVE_DAYS, analytics, analyticsList, isSpan, pageLlmUsage, SPANS } from "../admin/index.ts";
 import { type Caller, iso, LOGIN, type Operation, OperationError } from "./operation.ts";
 
 const PROVIDER = Schema.Literals(["github", "google"]).annotate({ description: "github or google" });
@@ -39,7 +39,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
   // ------------------------------------------------------------ the server's settings and API keys (admins)
   {
     name: "settings",
-    ui: "Settings (/admin), API keys (/admin/api-keys) and Change log (/admin/changes)",
+    ui: "Settings (/admin/settings), API keys (/admin/api-keys) and Change log (/admin/changes)",
     label: "Read the server's settings",
     activity: "reading the server's settings",
     admin: true,
@@ -108,7 +108,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
   },
   {
     name: "set_setting",
-    ui: "Settings (/admin): change a setting, or Reset to the default",
+    ui: "Settings (/admin/settings): change a setting, or Reset to the default",
     label: "Change a server setting",
     activity: "changing a server setting",
     admin: true,
@@ -238,6 +238,38 @@ export const ADMIN_OPERATIONS: Operation[] = [
         suggestions,
         publicSharing,
         note: "Access is the highest of a person's role and every group rule that matches them; none: they can't sign in. waiting: added, not signed in yet (use its person id). bootstrap: the dev server's own admin (DEV_LOGIN), fixed. Tell the person the labels (roleLabel, accessLabel).",
+      };
+    },
+  },
+  {
+    name: "analytics",
+    ui: "Analytics (/admin): the charts of each day (7, 30 or 90 days), and Load more under each list",
+    label: "Read the analytics",
+    activity: "reading the analytics",
+    admin: true,
+    description: "Each day's active people, document views and edits, and models' tokens; the most active and newest users.",
+    parameters: Schema.Struct({
+      days: Schema.optionalKey(Schema.Literals(SPANS).annotate({ description: "How many days up to today (UTC): 7, 30 (default) or 90" })),
+      list: Schema.optionalKey(
+        Schema.Literals(["active", "newest"]).annotate({
+          description: `Only this list's next people: active (the most edits and views in the last ${ACTIVE_DAYS} days) or newest (the accounts made last)`,
+        })
+      ),
+      offset: Schema.optionalKey(Schema.Int.annotate({ description: "With list: how many to skip (default 0)" })),
+      limit: Schema.optionalKey(Schema.Int.annotate({ description: "With list: how many (default 10, at most 50)" })),
+    }),
+    run: async (args, { dir, who }) => {
+      if (args.list === "active" || args.list === "newest")
+        return analyticsList(
+          dir,
+          who,
+          args.list,
+          Math.max(0, Number(args.offset) || 0),
+          Math.min(50, Math.max(1, Number(args.limit) || 10))
+        );
+      return {
+        ...(await analytics(dir, who, isSpan(args.days) ? args.days : 30)),
+        note: "Days are UTC. Active: opened a document, edited one (a version: a burst of edits), or used a model (their agent, a page's model). Tokens: input and output of every model, by the server's keys or the person's own. Each list's more: true means list with an offset gives the next.",
       };
     },
   },

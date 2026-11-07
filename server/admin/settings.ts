@@ -125,7 +125,7 @@ export function settingRow(e: Shown, session: Session, never: boolean, place: nu
   </li>`;
 }
 
-/** The settings /admin shows, in its order, each with what its row needs: the document it names; whether it takes never. */
+/** The settings /admin/settings shows, in its order, each with what its row needs: the document it names; whether it takes never. */
 async function shownSettings(
   platform: Platform,
   session: Session,
@@ -179,7 +179,7 @@ ${rows.map((r) => r.html).join("\n")}
   });
 }
 
-/** The rows of /admin that `keys` name ("setting:<key>"), as they are now, for an open page (server/news/). */
+/** The rows of /admin/settings that `keys` name ("setting:<key>"), as they are now, for an open page (server/news/). */
 export const settingsRows: LiveRows = async (platform, session, keys) => {
   const out: Record<string, LiveRow> = Object.fromEntries(keys.map((k) => [k, null]));
   for (const r of await shownSettings(platform, session, true))

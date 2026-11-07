@@ -10,7 +10,7 @@
 //                              of the homepage's, /new?from=<id> of another you may open (the viewer's Clone)
 //   /docs                      your documents, latest edit first (archive, delete and share are operations: POST /api/tools/<name>)
 //   /docs/archived             the documents you archived, the same rows (unarchive is an operation too)
-//   /admin                     the server's settings and users, for admins (each change an operation: POST /api/tools/<name>)
+//   /admin                     the server's analytics, settings and users, for admins (each change an operation: POST /api/tools/<name>)
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with; for people not signed in, a
 //                              document shared with anyone with the link while the server lets people share publicly): its canonical address;
 //                              Clone, and Edit for those who may edit it

@@ -32,7 +32,7 @@ export async function startPage(platform: Platform, session: Session | null) {
   <header><h1>Erga</h1></header>
   <p>Pages you edit where they're rendered, together with your agents.</p>
   <div class="actions">${actions}</div>
-  ${admin ? `<p class="hint">There's no homepage: the deploy locks <code>landing_document</code> to a document that isn't there, or the server has no admin yet to make the repo's demo page for. Choose one of your documents as <code>landing_document</code> on <a href="${esc(link("/admin", session))}">the admin page</a>.</p>` : ""}
+  ${admin ? `<p class="hint">There's no homepage: the deploy locks <code>landing_document</code> to a document that isn't there, or the server has no admin yet to make the repo's demo page for. Choose one of your documents as <code>landing_document</code> on <a href="${esc(link("/admin/settings", session))}">the admin page</a>.</p>` : ""}
 </main>`
     ),
     200,

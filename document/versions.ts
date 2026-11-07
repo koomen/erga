@@ -353,7 +353,11 @@ const DESCRIBE_SYSTEM =
  * can't (no answer, a refusal, an error), and the caller uses the fallback.
  * One retry, and 30 seconds for each try.
  */
-export function describeChange(apiKey: string, changes: Changes): Effect.Effect<string | null> {
+export function describeChange(
+  apiKey: string,
+  changes: Changes,
+  used: (input: number, output: number) => void = () => {}
+): Effect.Effect<string | null> {
   const files = [
     changes.changed.length ? `Changed: ${changes.changed.join(", ")}` : "",
     changes.added.length ? `Added: ${changes.added.join(", ")}` : "",
@@ -373,6 +377,7 @@ export function describeChange(apiKey: string, changes: Changes): Effect.Effect<
   }).pipe(
     Effect.timeout("30 seconds"),
     Effect.retry(Schedule.recurs(1)),
+    Effect.tap((r) => Effect.sync(() => used(r.usage.inputTokens.total ?? 0, r.usage.outputTokens.total ?? 0))),
     Effect.map((r) => (r.finishReason == "content-filter" ? null : cleanDescription(r.text))),
     Effect.provide(model),
     Effect.catch((e) => Effect.as(Effect.log(`couldn't describe a version: ${e.message}`), null))

@@ -151,6 +151,11 @@ export class PersonAgents {
       stored: this.chats.load(scope),
       meta: { origin, name: state.name },
       modelChanged: () => this.event({ type: "model", ...modelState(agent) }, login),
+      // Its tokens, in the day's counts (the Analytics page), by whose key.
+      used: (t) =>
+        void this.platform.directory.activity
+          .add(login, t.own ? { "in:own": t.input, "out:own": t.output } : { "in:server": t.input, "out:server": t.output })
+          .catch((e: unknown) => console.log(`couldn't count ${login}'s tokens: ${e}`)),
     });
     // Its turn done: each document it worked in hears so at once (its presence ends, and the turn is one version there).
     agent.subscribe((ev) => {

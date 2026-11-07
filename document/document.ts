@@ -117,6 +117,8 @@ export interface DocumentDirectory extends NamesDirectory {
   ): Promise<Role | null>;
   permissions(id: string): Promise<{ login: string; role: Role }[]>;
   homeId(): Promise<string | null>;
+  /** What people did each day (server/directory/activity.ts): a version's edits, by each author. */
+  activity: { add(login: string | null, counts: { edit?: number; "in:server"?: number; "out:server"?: number }): Promise<void> };
   /** The settings it reads: delete_docs_after_hours (null: never), and the limits max_file_mb and max_project_gb (numbers). */
   config: { get(key: "delete_docs_after_hours" | "max_file_mb" | "max_project_gb"): Promise<number | null> };
 }

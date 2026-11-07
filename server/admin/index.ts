@@ -5,6 +5,7 @@
 export { ADMIN_PAGES, adminGate, isAdminPath } from "./layout.ts";
 export { adminRoutes } from "./routes.ts";
 export { accessRows } from "./access.ts";
+export { ACTIVE_DAYS, analytics, analyticsList, isSpan, SPANS } from "./analytics.ts";
 export { apiKeysRows } from "./api-keys.ts";
 export { authRows } from "./auth.ts";
 export { changesRows } from "./changes.ts";

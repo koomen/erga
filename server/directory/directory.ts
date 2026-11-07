@@ -51,6 +51,7 @@ import { type Actor, NotAllowed, type User, type UserRole, Users } from "./users
 import { Credentials, PersonKeys } from "./api-keys.ts";
 import { PageLlm } from "./page-llm.ts";
 import { Feedback } from "./feedback.ts";
+import { Activity } from "./activity.ts";
 import { Lists } from "./lists.ts";
 import { Identities, type Vouched, workspaceOf } from "./identities.ts";
 import { isDocKind, SLUG_MAX, slugify, type DocKind } from "../../document/pages.ts";
@@ -115,6 +116,8 @@ export class Directory {
   readonly pageLlm: PageLlm;
   /** The feedback people sent, and the GitHub issue of each. */
   readonly feedback: Feedback;
+  /** What people did each day: the Analytics page (/admin). */
+  readonly activity: Activity;
   /** How each account signs in (its GitHub and Google identities), and usernames. */
   readonly identities: Identities;
   /** Who may use the server, by group: the access rules (the Access page). */
@@ -172,6 +175,7 @@ export class Directory {
     this.personKeys = new PersonKeys(sql, opts.credentialSecret ?? null);
     this.pageLlm = new PageLlm(sql);
     this.feedback = new Feedback(sql, this.users);
+    this.activity = new Activity(sql, this.users);
     this.config = new ServerConfig(sql, this.users, {
       locked: opts.locked,
       defaults: opts.defaults,

@@ -128,14 +128,14 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   expect(log).toContain(`<span class="key">API key</span> <code>ANTHROPIC_API_KEY</code> set`);
   expect(log).not.toContain(ANTHROPIC.slice(0, 20));
   // The keys have their own page now: Settings has none of them; every key and deploy secret is on API keys.
-  expect(await (await fetch(`${origin}/admin`)).text()).not.toContain('li class="provider"');
+  expect(await (await fetch(`${origin}/admin/settings`)).text()).not.toContain('li class="provider"');
   expect(html).toContain(`data-name="anthropic"`);
   for (const name of ["openai", "google", "openrouter"]) expect(html).toContain(`data-name="${name}"`);
   expect(html).not.toContain(`data-name="cloudflare_deploy"`);
   // Whose keys the agents use is set here (the list at the top), not on Settings.
   expect(html).toContain(`<option value="server" selected>Server will provide keys</option>`);
   for (const key of ["agent_keys", "agent_models_off"])
-    expect(await (await fetch(`${origin}/admin`)).text()).not.toContain(`data-key="${key}"`);
+    expect(await (await fetch(`${origin}/admin/settings`)).text()).not.toContain(`data-key="${key}"`);
   for (const env of ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET", "GITHUB_ISSUES_TOKEN", "SNAPSHOT_TOKEN"])
     expect(html).toContain(`data-env="${env}"`);
   expect(html).not.toContain("DEPLOY_HOOK_SECRET");

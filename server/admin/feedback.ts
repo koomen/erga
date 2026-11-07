@@ -37,7 +37,7 @@ export async function feedbackPage(platform: Platform, session: Session) {
   const where = repo
     ? `Each one becomes an issue in ${esc(repo)} on GitHub, without the sender's name.`
     : issues
-      ? `This server opens no issues: the setting Feedback's repository is empty (<a href="/admin">Settings</a>). The feedback waits here.`
+      ? `This server opens no issues: the setting Feedback's repository is empty (<a href="/admin/settings">Settings</a>). The feedback waits here.`
       : "This server opens no issues: it has no GITHUB_ISSUES_TOKEN. The feedback waits here.";
   return adminPage({
     session,

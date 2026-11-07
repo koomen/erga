@@ -54,7 +54,7 @@ export interface Env {
   GOOGLE_CLIENT_SECRET?: string;
   /** Signs session cookies. */
   SESSION_SECRET: string;
-  /** The Anthropic key, a Worker secret: the fallback while an admin has stored none on /admin (server/directory/api-keys.ts; read by agents/models.ts). */
+  /** The Anthropic key, a Worker secret: the fallback while an admin has stored none on /admin/api-keys (server/directory/api-keys.ts; read by agents/models.ts). */
   ANTHROPIC_API_KEY: string;
   /**
    * Where documents' pages run: one origin each under this domain

@@ -30,7 +30,7 @@ test("Users, Settings and the Change log follow an agent's changes as they're ma
   expect(await page.evaluate<string>(`document.querySelector("ol.users").dataset.mark`)).toBe("same");
 
   // A setting, changed by the agent: its row shows the new value.
-  await page.goto(`${s.root}/admin?user=tester`);
+  await page.goto(`${s.root}/admin/settings?user=tester`);
   await resetting(s, "delete_docs_after_hours", async () => {
     await a.call("set_setting", { key: "delete_docs_after_hours", value: 7 });
     await expect
