@@ -169,7 +169,9 @@ export async function findDocument(caller: Caller, ref: unknown, action: Action)
           ? "Only its owner can delete a document."
           : action == "share"
             ? "Only its owner can share a document, or see who it's shared with."
-            : `You can't ${action} that document.`,
+            : action == "comment"
+              ? "You can't see or add comments on that document."
+              : `You can't ${action} that document.`,
       status: 403,
     });
   }

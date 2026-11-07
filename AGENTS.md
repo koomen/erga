@@ -254,6 +254,9 @@ Found a new trap? Write it here, in the same change.
 - On the dev server, a close that a document's object makes outside a socket's own event (`closeAll` as the document is
   deleted: 4404) did not reach a viewer's socket (`?watch=view`): the browser's socket stayed open. A test of what a page
   does on such a close closes the socket itself (`routeWebSocket`, e2e/full/viewer/live-viewer.e2e.ts).
+- A document's comments are SQL tables in its Durable Object (document/comments.ts), apart from its key-value storage.
+  `deleteAll` drops them too, so each call makes them again if they're gone. Staging's copy of a document
+  (document/snapshot.ts) copies only the key-value storage: its comments are not in the copy.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 

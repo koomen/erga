@@ -81,7 +81,16 @@ import {
 
 
 const RANK: Record<Role, number> = { viewer: 1, editor: 2, owner: 3 };
-const ALLOWS: Record<Action, Role> = { open: "viewer", edit: "editor", rename: "editor", delete: "owner", share: "owner" };
+// "comment": see, add and reply to comments, and resolve one's own threads. The least role that may: the one place a
+// commenter role (between viewer and editor) plugs in. Viewers see no comments.
+const ALLOWS: Record<Action, Role> = {
+  open: "viewer",
+  comment: "editor",
+  edit: "editor",
+  rename: "editor",
+  delete: "owner",
+  share: "owner",
+};
 
 /** Whether a role (from `Directory.access`) allows an action: what `may` decides, for a caller that already has the role. */
 export const roleMay = (role: Role | null, action: Action): boolean => role != null && RANK[role] >= RANK[ALLOWS[action]];

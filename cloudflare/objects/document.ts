@@ -30,6 +30,7 @@ import { documentAgents } from "../../agents/document/session";
 import { sandboxOf } from "../sandbox";
 import { VIA } from "../../shared/attribution";
 import type { RestoreResult, VersionsState } from "../../document/versions";
+import { CommentTables, type CommentAnswer, type CommentCall } from "../../document/comments";
 import type { DocSnapshot, Page } from "../../document/snapshot";
 import { directoryOf } from "../d1";
 import { forgetDecisions } from "../../server/documents/index.ts";
@@ -65,6 +66,12 @@ export class DocumentObject extends DurableObject<Env> {
     flush: () => run(Effect.sleep(Duration.millis(100)).pipe(Effect.andThen(this.document.flush()))),
   });
   private document = new Document(this.deps());
+  /** Its comments, in this object's SQLite (document/comments.ts). */
+  private commentTables = new CommentTables({
+    exec: <T>(query: string, ...params: (string | number | null | ArrayBuffer)[]) =>
+      this.ctx.storage.sql.exec(query, ...params).toArray() as T[],
+    transaction: <R>(f: () => R) => this.ctx.storage.transactionSync(f),
+  });
   /** The tabs' sockets, joined to the document whenever it's open. */
   private tabs = new Tabs<WebSocket>({
     document: () => this.document,
@@ -214,6 +221,10 @@ export class DocumentObject extends DurableObject<Env> {
     await run(this.document.setPermissions(list));
     // The open tabs: one whose person may no longer do what it does closes; the rest hear it.
     await this.tabs.permissionsChanged((who) => run(this.document.roleOf(who)));
+  }
+  /** Its comments: a list, or a change (server/operations/comments.ts checked what the person may do). */
+  async comments(call: CommentCall): Promise<CommentAnswer> {
+    return this.commentTables.run(call);
   }
   /** A viewer's page in one call (Document.view): what they may do, which file, the version, its text. */
   view(who: Who | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null> {

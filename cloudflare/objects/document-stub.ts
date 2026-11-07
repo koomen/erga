@@ -36,7 +36,8 @@ type Call =
   | "fileList"
   | "rename"
   | "setPermissions"
-  | "view";
+  | "view"
+  | "comments";
 
 /** A document's object as its callers see it (Cloudflare's own stub type loses the shape of a union answer). */
 export type DocumentHost = { [K in Call]: DocumentObject[K] extends (...a: infer A) => infer R ? (...a: A) => Promise<Awaited<R>> : never } & {
