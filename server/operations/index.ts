@@ -4,6 +4,7 @@
 // and operations/ imports documents/.
 
 import { ADMIN_OPERATIONS } from "./admin.ts";
+import { COMMENT_OPERATIONS } from "./comments.ts";
 import { DOCUMENT_OPERATIONS } from "./documents.ts";
 import { EDITOR_OPERATIONS } from "./editor.ts";
 import { FEEDBACK_OPERATIONS } from "./feedback.ts";
@@ -29,6 +30,7 @@ export { addFile, cleanFilePath, PAGE_RULES } from "./documents.ts";
 export const OPERATIONS: Operation[] = [
   ...DOCUMENT_OPERATIONS,
   ...EDITOR_OPERATIONS,
+  ...COMMENT_OPERATIONS,
   ...ADMIN_OPERATIONS,
   ...HOME_OPERATIONS,
   ...FEEDBACK_OPERATIONS,

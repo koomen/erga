@@ -131,8 +131,8 @@ export const KINDS: readonly {
   },
   {
     name: "read",
-    description: "Reads a document: a file, its files, a search, its versions.",
-    ops: ["read", "ls", "grep", "versions", "document_api"],
+    description: "Reads a document: a file, its files, a search, its versions, its comments.",
+    ops: ["read", "ls", "grep", "versions", "document_api", "comments"],
     fields: {
       path: 'A file, folder or page; read takes a glob too ("*.html"), to read many files at once.',
       limit: "How many lines or versions.",
@@ -140,8 +140,8 @@ export const KINDS: readonly {
   },
   {
     name: "edit",
-    description: "Changes a document: a file's text, files, pages, a version.",
-    ops: ["edit", "write", "call_edit", "set_head", "new", "mv", "cp", "rm", "set_kind", "restore_version"],
+    description: "Changes a document: a file's text, files, pages, a version, a comment.",
+    ops: ["edit", "write", "call_edit", "set_head", "new", "mv", "cp", "rm", "set_kind", "restore_version", "comment"],
     fields: {
       path: 'A file, folder or page; edit takes a glob too ("**/*.html"), to change many files at once.',
       from: 'A file or folder ("." for all, with cp).',
