@@ -9,8 +9,8 @@ import * as Schema from "effect/Schema";
 import type { Storage } from "./storage.ts";
 import { VIA } from "../shared/attribution.ts";
 
-/** A person's role in a document: whoever made it owns it; others are given editor or viewer. */
-export type Role = "owner" | "editor" | "viewer";
+/** A person's role in a document: whoever made it owns it; others are given editor, commenter or viewer. */
+export type Role = "owner" | "editor" | "commenter" | "viewer";
 
 /** Someone asking, as the app said (x-erga-who): the directory's Who, which the document only passes on to the directory's rule. */
 export interface Asker {
@@ -60,7 +60,13 @@ export interface PersonRole {
 
 /** What a role lets someone do with the document's files and its agent (x-erga-access): edit, view, or nothing. */
 export const accessOf = (role: Role | null): "edit" | "view" | null =>
-  role == "owner" || role == "editor" ? "edit" : role == "viewer" ? "view" : null;
+  role == "owner" || role == "editor" ? "edit" : role == "commenter" || role == "viewer" ? "view" : null;
+
+/** Whether a role sees the document's comments, adds them and replies: a commenter, an editor, the owner. A viewer sees none. */
+export const mayComment = (role: Role | null): boolean => role == "commenter" || role == "editor" || role == "owner";
+
+/** Whether a role resolves or reopens any thread: an editor, the owner. A commenter resolves only their own. */
+export const mayResolveAny = (role: Role | null): boolean => role == "editor" || role == "owner";
 
 /** Where the copy of the permissions is kept in the document's storage. */
 const PERMS = "perms";

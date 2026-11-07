@@ -41,7 +41,7 @@ export function docRow(session: Session, d: Listed, now: number, hours: number |
     d.owner == HOME_OWNER
       ? `<span class="note" title="This site's homepage, at /: every admin may edit it">Homepage</span>`
       : !mine
-        ? `<span class="note" title="Shared with you by ${esc(d.owner)}">${esc(d.owner)} · ${d.role == "editor" ? "can edit" : "view only"}</span>`
+        ? `<span class="note" title="Shared with you by ${esc(d.owner)}">${esc(d.owner)} · ${d.role == "editor" ? "can edit" : d.role == "commenter" ? "can comment" : "view only"}</span>`
         : d.path != null
           ? `<span class="note" title="${esc(d.path)}">On disk</span>`
           : left != null
@@ -53,7 +53,7 @@ export function docRow(session: Session, d: Listed, now: number, hours: number |
   // A project's row opens to its pages (the chevron); a document has one page, so its row has none (one from
   // before kinds that hasn't opened since has it, as before).
   const twist = d.kind == "document" ? `<span class="twist none" aria-hidden="true"></span>`
-      : `<button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="${esc(addressOf(d))}" data-title="${esc(d.title)}"${d.role == "viewer" ? "" : " data-edit"}>${ICON.chevron}</button>`;
+      : `<button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="${esc(addressOf(d))}" data-title="${esc(d.title)}"${d.role == "owner" || d.role == "editor" ? " data-edit" : ""}>${ICON.chevron}</button>`;
   // Archive (Unarchive on /docs/archived): each person's own, on their permission; the homepage has none of theirs.
   const [op, tip] = archived ? ["unarchive_document", "Unarchive"] : ["archive_document", "Archive"];
   const archive =
@@ -104,14 +104,14 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   <h2 id="share-title">Share</h2>
   <form class="add">
     <div class="field"><input name="who" placeholder="A GitHub login" aria-label="GitHub login to share with" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" required></div>
-    <select name="role" aria-label="Their role"><option value="editor">Can edit</option><option value="viewer">Can view</option></select>
+    <select name="role" aria-label="Their role"><option value="editor">Can edit</option><option value="commenter">Can comment</option><option value="viewer">Can view</option></select>
     <button class="primary">Add</button>
   </form>
   <ul class="people" aria-label="People with access"></ul>
   <div class="anyone">
     <span class="face" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.6 5.4 3.6 8.5s-1.1 5.9-3.6 8.5c-2.5-2.6-3.6-5.4-3.6-8.5s1.1-5.9 3.6-8.5Z"/></svg></span>
     <label class="who" for="share-anyone">Anyone with the link<small id="share-anyone-note">Signed in or not, as viewers</small></label>
-    <select id="share-anyone"><option value="none">No access</option><option value="viewer">Can view</option><option value="editor">Can edit</option></select>
+    <select id="share-anyone"><option value="none">No access</option><option value="viewer">Can view</option><option value="commenter">Can comment</option><option value="editor">Can edit</option></select>
   </div>
   <p class="hint" id="share-hint" role="status"></p>
   <div class="buttons"><button type="button" class="copy">Copy link</button><button type="button" class="primary done">Done</button></div>

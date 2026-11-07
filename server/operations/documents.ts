@@ -329,7 +329,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     parameters: Schema.Struct({
       document: DOCUMENT,
       login: Schema.optionalKey(str('A GitHub login, or "*" for anyone with the link.')),
-      role: Schema.optionalKey(Schema.Literals(["editor", "viewer", "none"]).annotate({ description: "none stops sharing." })),
+      role: Schema.optionalKey(Schema.Literals(["editor", "commenter", "viewer", "none"]).annotate({ description: "none stops sharing." })),
       reader_agent: bool("Readers may ask their agent."),
       reader_bars: bool("Readers see Erga's bars over it."),
       page_llm: bool("Its script may call a model (window.ergaLLM)."),

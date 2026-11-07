@@ -50,7 +50,8 @@ export interface DocFound {
 }
 
 /** A role that can be given to someone (a document's owner is who made it, and stays so). */
-export type Grant = "editor" | "viewer";
+export const GRANTS = ["editor", "commenter", "viewer"] as const;
+export type Grant = (typeof GRANTS)[number];
 export type Action = "open" | "comment" | "edit" | "rename" | "delete" | "share";
 /** Someone asking to do something: a login (lowercase). */
 export interface Who {

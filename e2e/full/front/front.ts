@@ -64,7 +64,7 @@ export async function person(s: Server, login = freshLogin()) {
       return name.id;
     },
     /** Shares a document (as its owner, or `as` someone) with someone ("*": anyone with the link); role "none" stops sharing it. */
-    async share(id: string, who: string, role: "editor" | "viewer" | "none", as?: string) {
+    async share(id: string, who: string, role: "editor" | "commenter" | "viewer" | "none", as?: string) {
       const r = await runTool<{ permissions: { login: string; role: string }[] }>(
         base,
         "share_document",

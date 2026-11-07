@@ -104,3 +104,25 @@ for (const [what, button, expected] of [
     await clickOn(ed, "#btn-share");
     expect(await ed.eval<string>(`document.querySelector(${JSON.stringify(button)}).textContent`)).toBe(what);
   });
+
+test("the card offers Can comment: the owner adds a commenter with it, and their line shows it; the link offers it too", async ({
+  tab,
+}) => {
+  const ed = await openEditor(tab, await servers.main(), "noedit");
+  await clickOn(ed, "#btn-share");
+  await expect.poll(() => ed.eval<number>(`document.querySelectorAll("#sharing-list li").length`)).toBe(1);
+  const labels = (s: string) => ed.eval<string[]>(`[...document.querySelector(${JSON.stringify(s)}).options].map((o) => o.textContent)`);
+  expect(await labels("#sharing-add select[name=role]")).toEqual(["Can edit", "Can comment", "Can view"]);
+  expect(await labels("#sharing-anyone")).toEqual(["No access", "Can view", "Can comment", "Can edit"]);
+  await clickOn(ed, "#sharing-add input[name=who]");
+  await ed.page.keyboard.type("Ada");
+  await ed.page.locator("#sharing-add select[name=role]").selectOption({ label: "Can comment" });
+  await ed.page.locator("#sharing-add input[name=who]").press("Enter");
+  await expect
+    .poll(() =>
+      ed.eval<string | null>(
+        `document.querySelector("#sharing-list select[aria-label='Role for ada']")?.selectedOptions[0].textContent ?? null`
+      )
+    )
+    .toBe("Can comment");
+});
