@@ -70,7 +70,7 @@ test("Send feedback in the account menu: type, Send, thanks; the issue on GitHub
   expect(JSON.stringify(issue)).not.toMatch(/tester|\/docs/);
 
   // The admins' Feedback page: the text, when, the page, the issue's link.
-  await page.goto(`${root}/admin`);
+  await page.goto(`${root}/admin/settings`);
   // The repository is a setting on the Settings page.
   const setting = await page.evaluate(() => {
     const row = [...document.querySelectorAll<HTMLElement>("[data-key]")].find((r) => r.dataset.key == "feedback_repository");

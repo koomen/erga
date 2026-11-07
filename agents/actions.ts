@@ -45,7 +45,13 @@ const SIGN_IN = "signing in: the person in their own browser, before any agent a
 
 export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ /admin: settings, change log, users, API keys
-  { route: "GET /admin", domain: "admin", action: "Read the settings and pages' model use today (Settings)", tool: "settings" },
+  {
+    route: "GET /admin",
+    domain: "admin",
+    action: "Read each day's activity, the most active and newest users (Analytics)",
+    tool: "analytics",
+  },
+  { route: "GET /admin/settings", domain: "admin", action: "Read the settings and pages' model use today (Settings)", tool: "settings" },
   { route: "GET /admin/changes", domain: "admin", action: "Read the change log (Change log)", tool: "settings" },
   { route: "GET /admin/users", domain: "admin", action: "Read the users (Users)", tool: "people" },
   {
@@ -161,7 +167,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
     exempt: "server to server (staging's blob store, cloudflare/blobs.ts)",
   },
 
-  // (The homepage's status and its deploy are operations: server/operations/home.ts. /admin's landing_document setting
+  // (The homepage's status and its deploy are operations: server/operations/home.ts. /admin/settings' landing_document setting
   // chooses it.)
 
   // ------------------------------------------------------------ Settings (the dialog, on every page): the person's tokens

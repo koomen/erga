@@ -22,7 +22,7 @@ import type { Usable } from "../../shared/models";
 import type { Attachment } from "../../shared/attach";
 import type { Log, LogEvent } from "../../shared/agent-log";
 import type { ChatMessage, ChatStore, StoredChat } from "../checkpoint";
-import { startLoop, type AgentTool } from "../run";
+import { startLoop, type AgentTool, type LoopHooks } from "../run";
 import { systemPrompt } from "./prompt";
 import { type Access, ACCESS_LABEL, ROLE_LABEL, type UserRole } from "../../server/directory/index.ts";
 
@@ -85,6 +85,8 @@ export function startAgent(opts: {
   meta?: Record<string, string>;
   /** The model changed by itself (the one it was on can't be used now): the person's menus follow. */
   modelChanged?: () => void;
+  /** A model turn's tokens, and whether the person's own key ran it. */
+  used?: LoopHooks["used"];
 }): AgentSession {
   const { owner } = opts;
   const loop = startLoop({
@@ -93,7 +95,7 @@ export function startAgent(opts: {
     store: opts.store ?? null,
     meta: { login: owner, ...opts.meta },
     tag: "page",
-    hooks: { about, modelChanged: () => opts.modelChanged?.() },
+    hooks: { about, modelChanged: () => opts.modelChanged?.(), used: opts.used },
   });
   loop.start(opts.cfg, systemPrompt(owner, opts.admin), opts.tools);
   return {

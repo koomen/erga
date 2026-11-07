@@ -168,8 +168,8 @@ export const KINDS: readonly {
   },
   {
     name: "people",
-    description: "The server's users, their roles and the group rules (admins).",
-    ops: ["people", "set_user", "set_access"],
+    description: "The server's users, their roles, the group rules and the analytics (admins).",
+    ops: ["people", "analytics", "set_user", "set_access"],
   },
 ];
 

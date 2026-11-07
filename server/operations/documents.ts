@@ -133,7 +133,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     label: "List documents",
     activity: "listing the documents",
     wide: true,
-    ui: "Documents (/docs): the list; Settings (/admin): the Homepage picker (an admin's search of everyone's)",
+    ui: "Documents (/docs): the list; Settings (/admin/settings): the Homepage picker (an admin's search of everyone's)",
     description: "Your documents and those shared with you, newest first.",
     parameters: Schema.Struct({
       query: Schema.optionalKey(Schema.String),

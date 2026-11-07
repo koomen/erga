@@ -1,4 +1,4 @@
-// The homepage in the settings: one line only on the homepage (chosen on /admin), and Deploy, blue when the live page is older.
+// The homepage in the settings: one line only on the homepage (chosen on /admin/settings), and Deploy, blue when the live page is older.
 // These change which document is the server's homepage (landing_document): each puts it back after.
 import { expect, servers, SHORT, test } from "../../helpers/fixtures";
 import { setLanding, signedOut } from "../home/home";
@@ -18,7 +18,7 @@ const front = async () => {
   return (await fetch(`${root}/`, { headers: signedOut({ root }) })).text();
 };
 
-test("the homepage shows only on the homepage: one line, no switch; it comes when /admin makes it the homepage, deployed at once", async ({
+test("the homepage shows only on the homepage: one line, no switch; it comes when /admin/settings makes it the homepage, deployed at once", async ({
   tab,
 }) => {
   const server = await servers.short();

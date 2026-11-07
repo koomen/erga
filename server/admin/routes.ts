@@ -2,7 +2,8 @@
 // admins, for admins only. Everyone else gets "not found": they
 // can't see the page, nor that there is one.
 //
-//   /admin                     the Settings page
+//   /admin                     the Analytics page: what people did each day (?days=7, 30 or 90), the most active and the newest people
+//   /admin/settings            the Settings page
 //   /admin/changes             the Change log: the settings' versions, factory tasks added and merged, and production deploys, newest first; ?before=n for older ones
 //   /admin/users               the Users page: the specific people, each a GitHub or Google account with one role (Admin, Can
 //                              create and edit content, Can authenticate), the deploy role as a switch, when they joined and last came;
@@ -48,6 +49,7 @@ import { authOps, AuthError, ScopeError, type Provider } from "../identity/index
 import type { Who } from "../directory/index.ts";
 import { call, ctx, Field, form, json, plainJson, redirect } from "../http.ts";
 import { settingsPage } from "./settings.ts";
+import { analyticsPage, isSpan } from "./analytics.ts";
 import { apiKeysPage } from "./api-keys.ts";
 import { authPage } from "./auth.ts";
 import { usersPage } from "./users.ts";
@@ -79,7 +81,11 @@ export const adminRoutes = Effect.gen(function* () {
     }
     if (url.pathname == "/admin/access") return yield* call(() => accessPage(platform, session!));
     if (url.pathname == "/admin/users") return yield* call(() => usersPage(platform, session!));
-    if (url.pathname == "/admin") return yield* call(() => settingsPage(platform, session!));
+    if (url.pathname == "/admin/settings") return yield* call(() => settingsPage(platform, session!));
+    if (url.pathname == "/admin") {
+      const days = Number(url.searchParams.get("days") ?? 30);
+      return yield* call(() => analyticsPage(platform, session!, isSpan(days) ? days : 30));
+    }
     return notFound();
   }
   if (request.method != "POST") return notFound();

@@ -4,7 +4,8 @@
 // keys, so each visitor, and the whole server, has a limit for each hour; and all the calls of a day (UTC) together have the
 // admin's spend limit (the setting page_llm_daily_usd), from an estimate of their cost (PAGE_LLM_PRICES).
 
-import type { Sql } from "./model.ts";
+import type { Sql, Statement } from "./model.ts";
+import { ADD_COUNT, DAY_MS } from "./activity.ts";
 import { countedTokens, type CallState, type Tokens } from "./page-llm-call.ts";
 
 /**
@@ -209,12 +210,27 @@ export class PageLlm {
   /** A call's new state (callStep), and the tokens it counts. Only a started call changes. */
   async write(id: string, s: CallState): Promise<void> {
     const t = countedTokens(s);
-    await this.sql.run(
-      "UPDATE page_llm_use SET state = ?2, input_tokens = ?3, output_tokens = ?4 WHERE id = ?1 AND state = 'started'",
+    // The tokens a finished call used, in the day's counts (activity.ts), once: only while its row is still started (a
+    // failed call's reservation counts against the limits, not here). A visitor who isn't a user is nobody's.
+    const used = s.state == "finished" ? s.used : { input: 0, output: 0 };
+    const count = (metric: string, n: number): Statement => [
+      `INSERT INTO activity_days (day, login, metric, n)
+       SELECT at / ${DAY_MS}, CASE WHEN login IN (SELECT login FROM users) THEN login ELSE '' END, ?2, ?3
+       FROM page_llm_use WHERE id = ?1 AND state = 'started' AND ?3 > 0 ${ADD_COUNT}`,
       id,
-      s.state,
-      t.input,
-      t.output
-    );
+      metric,
+      n,
+    ];
+    await this.sql.batch([
+      count("in:server", used.input),
+      count("out:server", used.output),
+      [
+        "UPDATE page_llm_use SET state = ?2, input_tokens = ?3, output_tokens = ?4 WHERE id = ?1 AND state = 'started'",
+        id,
+        s.state,
+        t.input,
+        t.output,
+      ],
+    ]);
   }
 }

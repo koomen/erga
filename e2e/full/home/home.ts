@@ -44,10 +44,12 @@ export const docOf = (html: string) => frameOf(html)?.[1] ?? /<erga-controls dat
 /** Edit's address on a page, if it has Edit. */
 export const editOf = (html: string) => /href="([^"?]+)\?edit"/.exec(html)?.[1] ?? null;
 
-/** The landing_document setting as /admin shows it (the document's address). */
-export const landingSetting = async (server: Server) => (await (await get(server, "/admin")).text()).match(/data-key="landing_document"[\s\S]*?name="value"[^>]*value="([^"]*)"/)?.[1] ?? "";
+/** The landing_document setting as /admin/settings shows it (the document's address). */
+export const landingSetting = async (server: Server) =>
+  (await (await get(server, "/admin/settings")).text()).match(/data-key="landing_document"[\s\S]*?name="value"[^>]*value="([^"]*)"/)?.[1] ??
+  "";
 
-/** Makes a document the homepage, as an admin does on /admin (landing_document): the setting's answer, or its error. */
+/** Makes a document the homepage, as an admin does on /admin/settings (landing_document): the setting's answer, or its error. */
 export const setLanding = async (server: Server, id: string) => {
   const r = await runTool<{ value: unknown }>(server.root, "set_setting", { key: "landing_document", value: id });
   return { entry: r.result, error: r.error };

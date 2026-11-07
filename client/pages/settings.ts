@@ -16,7 +16,7 @@
 //     it. And whether its page may call a model as its visitor, which, and for whom: signed-in viewers or all of them
 //     (page_llm, page_llm_model, page_llm_who: window.ergaLLM).
 //   - Homepage, only on the homepage: one line, with its own domain (a link) when it has one, with how its deploy is going and Deploy (admins), which is blue when
-//     the document is newer than the live page. Nothing deploys by itself. The homepage is chosen on /admin
+//     the document is newer than the live page. Nothing deploys by itself. The homepage is chosen on /admin/settings
 //     (the landing_document setting), never here.
 //   - Versions: the latest ten, each with its number, the model's five-word
 //     description (a quiet placeholder until it arrives), when and who; the

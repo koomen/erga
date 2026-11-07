@@ -1,6 +1,6 @@
 // The homepage: whether a document is the homepage and how its deploy goes (ls answers it, and the editor's settings
 // show it on the homepage), and its deploy again now (Deploy there; admins only: the deploy_homepage operation). The
-// homepage itself is chosen on /admin (the landing_document setting), never from the document.
+// homepage itself is chosen on /admin/settings (the landing_document setting), never from the document.
 
 import * as Schema from "effect/Schema";
 import type { DocRow } from "../directory/index.ts";

@@ -7,6 +7,7 @@
 // this file.
 
 export * from "./access.ts";
+export * from "./activity.ts";
 export * from "./api-keys.ts";
 export * from "./directory.ts";
 export * from "./feedback.ts";

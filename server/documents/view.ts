@@ -393,6 +393,11 @@ async function render(
     HttpServerResponse.empty({ status, headers: { "Content-Type": "text/html; charset=utf-8", ...headers } });
   // live.js asking whether the page's code changed: the build alone.
   if (request.headers.get(CHECK_HEADER) == "build") return empty(204);
+  // A view of the document, in the day's counts (server/directory/activity.ts), after the answer; never a prefetch.
+  if (!landing && request.method == "GET" && !request.headers.get("sec-purpose")?.includes("prefetch"))
+    platform.edge.background(
+      dir.activity.add(session?.login ?? null, { view: 1 }).catch((e) => console.log(`couldn't count a view: ${e}`))
+    );
   const live = `<meta name="erga-build" content="${build}">${scriptTag("live.js")}`;
   const body = before + after + live + "\n</body>\n</html>";
   const etag = `"${await digestOf(body)}"`;

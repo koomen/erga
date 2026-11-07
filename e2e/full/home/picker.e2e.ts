@@ -1,4 +1,4 @@
-// The Homepage setting on /admin (landing_document): a box that finds any of the server's documents and projects
+// The Homepage setting on /admin/settings (landing_document): a box that finds any of the server's documents and projects
 // as you type (the operation list_documents, with all), each with its owner, address and kind; choosing one saves it, and Reset puts the
 // repo's demo page back.
 import { expect, servers, test } from "../../helpers/fixtures";
@@ -22,7 +22,7 @@ test("the Homepage picker finds a document by its title as you type; choosing it
     { title }
   );
   await page.setViewportSize({ width: 1400, height: 900 });
-  await page.goto(`${server.root}/admin`);
+  await page.goto(`${server.root}/admin/settings`);
   const row = 'li.setting[data-key="landing_document"]';
   const text = (sel: string) => page.locator(`${row} ${sel}`).first().textContent();
   expect(await text("label.key")).toBe("Homepage");

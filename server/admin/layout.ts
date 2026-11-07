@@ -1,8 +1,8 @@
-// The layout every admin page shares (/admin, /admin/changes, /admin/users, /admin/access,
+// The layout every admin page shares (/admin, /admin/settings, /admin/changes, /admin/users, /admin/access,
 // /admin/api-keys, /admin/auth): the bars of every page (server/pages/bars.ts: Erga › Admin › the page upper
 // left; upper right the quick actions, with Share with an agent, whose menu is admin-share.js, built from
 // client/admin/admin-share.ts), the person's agent in the lower left (server/pages/agent.ts, as on every page),
-// and, on the left, a sidebar that links to Settings, API keys, Authentication, Access, Change log, Users and Feedback.
+// and, on the left, a sidebar that links to Analytics, Settings, API keys, Authentication, Access, Change log, Users and Feedback.
 //
 // The sidebar collapses to a rail of icons and expands again, with an animation, and this browser remembers which
 // (localStorage "erga:admin-sidebar"), set before the sidebar paints, so it doesn't jump. On a phone it is a row of
@@ -25,13 +25,19 @@ import { esc } from "../../shared/html.ts";
 import type { Platform, Session } from "../platform.ts";
 import { actingAdmin } from "../identity/index.ts";
 
-export type AdminSection = "settings" | "keys" | "auth" | "access" | "changes" | "users" | "feedback";
+export type AdminSection = "analytics" | "settings" | "keys" | "auth" | "access" | "changes" | "users" | "feedback";
 
 const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }[] = [
   {
+    key: "analytics",
+    label: "Analytics",
+    path: "/admin",
+    icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16"/><path d="M7 16v-4M12 16V7M17 16v-6"/></svg>`,
+  },
+  {
     key: "settings",
     label: "Settings",
-    path: "/admin",
+    path: "/admin/settings",
     icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>`,
   },
   {

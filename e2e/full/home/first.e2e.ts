@@ -23,7 +23,7 @@ test("on a fresh server the first / is the viewer and starts the first deploy; t
   expect(status.deploy.at).toBeTruthy();
 });
 
-test("a landing_document the deploy locks can't be changed on /admin", OWN_SERVER, async ({ tab }) => {
+test("a landing_document the deploy locks can't be changed on /admin/settings", OWN_SERVER, async ({ tab }) => {
   const server = await tab.own({ env: { ERGA_SERVER_CONFIG: JSON.stringify({ landing_document: null }) } });
   const made = await publish(server, await adminToken(server), { "index.html": "<h1>Mine</h1>" });
   expect(made.id).toMatch(/^[a-z0-9]{8}$/);

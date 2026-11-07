@@ -1,6 +1,6 @@
 // Pages' models today (agents/page-llm.ts): the calls since midnight UTC, their tokens and estimated cost, in total and
 // for the costliest documents, and how much of the daily spend limit (page_llm_daily_usd) they used. The Settings page
-// (/admin) shows it under the settings, and the operation `settings` gives it to an admin's agent.
+// (/admin/settings) shows it under the settings, and the operation `settings` gives it to an admin's agent.
 
 import { addressOf } from "../../document/names.ts";
 import { esc } from "../../shared/html.ts";

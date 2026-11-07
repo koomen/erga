@@ -216,9 +216,9 @@ ol.users .avatar.waiting { background: transparent; border: 1.5px dashed var(--r
 .changes .who { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .changes .who .by { color: var(--fg-strong); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .changes .who .via { flex: none; font-size: 11.5px; color: var(--soft); border: 1px solid var(--rule); border-radius: 999px; padding: 0 7px; white-space: nowrap; }
-:is(.changes, ol.users) .avatar { position: relative; flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; overflow: hidden;
+:is(.changes, ol.users, ol.people-rows) .avatar { position: relative; flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; overflow: hidden;
   background: var(--c, var(--chrome)); color: #fff; font: 600 12.5px var(--font-text); }
-:is(.changes, ol.users) .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+:is(.changes, ol.users, ol.people-rows) .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .changes .avatar.system { background: color-mix(in srgb, var(--chrome) 25%, transparent); color: var(--soft); }
 .changes .what { list-style: none; margin: 0; padding: 3px 0 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .changes .what > li { overflow-wrap: anywhere; color: var(--fg); }
@@ -248,7 +248,7 @@ ol.users .avatar.waiting { background: transparent; border: 1.5px dashed var(--r
 .feedback .issue { font-weight: 600; color: var(--link); }
 .changes-more { margin: 12px 4px 0; font-size: 13px; color: var(--soft); }
 
-/* Pages' models today (/admin): the part of the daily spend limit used, the totals, and the costliest documents. */
+/* Pages' models today (/admin/settings): the part of the daily spend limit used, the totals, and the costliest documents. */
 .llm-use .spend { height: 8px; margin: 12px 0 0; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--chrome) 16%, transparent); }
 .llm-use .spend .bar { display: block; height: 100%; border-radius: inherit; background: var(--caret); }
 .llm-use .spend .bar.full { background: var(--bad); }
@@ -283,4 +283,51 @@ ol.users .avatar.waiting { background: transparent; border: 1.5px dashed var(--r
   .server form.configure { grid-template-columns: 1fr; }
   .use-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .use-docs :is(th, td):nth-child(3), .use-docs :is(th, td):nth-child(4) { display: none; }
+}
+
+/* The Analytics page (/admin): the days shown, four charts (a bar for each day), and two lists of people. The series'
+   colours are the first two of one validated categorical palette, each stepped for its surface. */
+:root { --series-1: #2a78d6; --series-2: #eb6834; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --series-1: #3987e5; --series-2: #d95926; } }
+:root[data-theme="dark"] { --series-1: #3987e5; --series-2: #d95926; }
+.range { display: inline-flex; gap: 2px; margin: 0 0 20px; padding: 2px; border: 1px solid var(--rule); border-radius: 10px; }
+.range a { padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 500; color: var(--soft); text-decoration: none; white-space: nowrap; }
+.range a:hover { color: var(--fg-strong); }
+.range a[aria-current="page"] { color: var(--fg-strong); background: color-mix(in srgb, var(--chrome) 16%, transparent); }
+.range a:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+main.admin-main > .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 0 0 40px; }
+.chart { min-width: 0; padding: 16px 16px 14px; border: 1px solid var(--rule); border-radius: 12px; }
+.chart .sub-head { font-size: 13px; font-weight: 500; color: var(--soft); }
+.chart .big { margin: 4px 0 0; font-size: 26px; line-height: 1.2; font-weight: 650; letter-spacing: -0.01em; color: var(--fg-strong); font-feature-settings: "tnum"; }
+.chart .line { margin: 2px 0 8px; font-size: 12.5px; line-height: 1.45; color: var(--soft); }
+.chart .plot { position: relative; padding-top: 16px; }
+.chart svg { display: block; width: 100%; height: 120px; overflow: visible; }
+.chart .y-max { position: absolute; top: 0; right: 0; font-size: 11px; color: var(--soft); font-feature-settings: "tnum"; }
+.chart rect.s1, .legend .key.s1 { fill: var(--series-1); background: var(--series-1); }
+.chart rect.s2, .legend .key.s2 { fill: var(--series-2); background: var(--series-2); }
+.chart rect.hit { fill: transparent; }
+.chart g:hover rect.hit { fill: color-mix(in srgb, var(--chrome) 14%, transparent); }
+.chart line { stroke: var(--rule); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+.chart line.grid { stroke-dasharray: 2 3; }
+.chart .no-data { position: absolute; inset: 16px 0 0; display: grid; place-items: center; margin: 0; font-size: 12.5px; color: var(--soft); }
+.chart .x-axis { display: flex; justify-content: space-between; margin: 6px 0 0; font-size: 11.5px; color: var(--soft); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 0 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--fg); }
+.legend strong { font-weight: 600; color: var(--fg-strong); font-feature-settings: "tnum"; }
+.legend .key { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 3px; vertical-align: -1px; }
+ol.people-rows { margin: 0; padding: 0; list-style: none; border-bottom: 1px solid var(--rule); }
+ol.people-rows > li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; column-gap: 10px; padding: 10px 4px; border-top: 1px solid var(--rule); }
+ol.people-rows .name { min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
+ol.people-rows .title { flex: none; font-size: 14px; font-weight: 600; color: var(--fg-strong); }
+ol.people-rows .note { min-width: 0; font-size: 13px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+ol.people-rows .facts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px 14px; font-size: 12.5px; color: var(--fg); font-feature-settings: "tnum"; white-space: nowrap; }
+ol.people-rows .facts .soft, ol.people-rows .facts time { color: var(--soft); }
+.people-list .none { margin: 12px 4px 0; font-size: 13px; color: var(--soft); }
+.more-row { display: flex; align-items: center; gap: 12px; margin: 12px 0 0; }
+.more-row .more[hidden] { display: none; }
+.more-row .hint { font-size: 13px; color: var(--soft); }
+.more-row .hint.error { color: var(--bad); }
+@media (max-width: 640px) {
+  main.admin-main > .charts { grid-template-columns: minmax(0, 1fr); }
+  ol.people-rows > li { grid-template-columns: 28px minmax(0, 1fr); row-gap: 4px; }
+  ol.people-rows .facts { grid-column: 2; justify-content: flex-start; }
 }

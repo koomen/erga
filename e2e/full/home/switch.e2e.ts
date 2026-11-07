@@ -21,7 +21,7 @@ const page = (text: string, extra = "") => `<!doctype html>
 </body></html>`;
 const files = { "index.html": page("Second home"), "style.css": "h1 { color: rgb(1, 2, 3) !important; }", "img/dot.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#123"/></svg>`, "data.json": `{"ok":"yes"}` };
 
-/** A second document of DEV_LOGIN's (published with an admin token), made the homepage on /admin (landing_document). */
+/** A second document of DEV_LOGIN's (published with an admin token), made the homepage on /admin/settings (landing_document). */
 async function secondHome() {
   const server = await servers.short();
   const landing = await fresh(server);

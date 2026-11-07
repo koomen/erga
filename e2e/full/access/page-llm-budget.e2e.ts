@@ -1,4 +1,4 @@
-// The admin's limits on pages' models (agents/page-llm.ts), on the Settings page (/admin): the daily spend limit in US
+// The admin's limits on pages' models (agents/page-llm.ts), on the Settings page (/admin/settings): the daily spend limit in US
 // dollars (page_llm_daily_usd), which stops every page's call at today's estimated cost and turns them off at 0, with
 // the view of today's use under the settings; and the switch "Guests can call pages' models" (page_llm_guests), which
 // gives every signed-out visitor sign_in. Each test has a server of its own: the settings and the day's use are the
@@ -54,7 +54,7 @@ test("the daily spend limit stops pages' calls at today's estimated cost; the vi
   const doc = await llmDoc(s);
 
   // The admin page: the limit, $5 at first, and no calls yet.
-  await page.goto(`${s.root}/admin`);
+  await page.goto(`${s.root}/admin/settings`);
   const row = page.locator('li.setting[data-key="page_llm_daily_usd"]');
   expect(await row.locator(".key").innerText()).toBe("Pages' models: daily spend limit");
   expect(await row.locator("input[name=value]").inputValue()).toBe("5");
@@ -74,7 +74,7 @@ test("the daily spend limit stops pages' calls at today's estimated cost; the vi
   expect(stopped.message).toContain("spend limit for today");
 
   // The view: one call, its tokens and cost, all of the limit, and the document.
-  await page.goto(`${s.root}/admin`);
+  await page.goto(`${s.root}/admin/settings`);
   const shown = await usage(page);
   expect(shown).toContain("$0.010 of $0.01 today (100%)");
   expect(shown).toContain("Pages' calls stop until midnight UTC.");
@@ -118,7 +118,7 @@ test("the guest switch: off, every signed-out visitor gets sign_in, where the ow
 
   // The admin turns the switch off, on /admin.
   await page.context().clearCookies();
-  await page.goto(`${s.root}/admin`);
+  await page.goto(`${s.root}/admin/settings`);
   const guests = page.locator("#set-page_llm_guests");
   expect(await page.locator('li.setting[data-key="page_llm_guests"] .key').innerText()).toBe("Guests can call pages' models");
   expect(await guests.isChecked()).toBe(true);
@@ -137,7 +137,7 @@ test("the guest switch: off, every signed-out visitor gets sign_in, where the ow
 test("a switch flipped twice during its save: the server ends with the last value shown", async ({ tab }) => {
   const page = tab.page;
   const s = await tab.own({ env: { ERGA_AGENT_MODEL: "script" } });
-  await page.goto(`${s.root}/admin`);
+  await page.goto(`${s.root}/admin/settings`);
   const guests = page.locator("#set-page_llm_guests");
   expect(await guests.isChecked()).toBe(true);
   // A slow network: each save takes a moment, so the second flip comes during the first save.

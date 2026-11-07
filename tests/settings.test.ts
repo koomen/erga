@@ -53,7 +53,7 @@ const server = Bun.serve({
 afterAll(() => server.stop(true));
 
 test("a users setting is a picker: chips for its users, no typed list; the line says when and who set it", async () => {
-  const html = await (await fetch(`http://localhost:${server.port}/admin`)).text();
+  const html = await (await fetch(`http://localhost:${server.port}/admin/settings`)).text();
   expect(html).toContain(`<li class="chip" data-login="alice">alice<button type="button" class="unpick"`);
   expect(html).toContain(`<datalist id="user-logins"><option value="alice"><option value="bob"><option value="carol"></datalist>`);
   expect(html).toContain(`Set 2026-10-05 14:03 UTC by bob`);

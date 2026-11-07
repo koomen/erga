@@ -177,9 +177,18 @@ export class History {
       yield* opened.room.settle;
       if (!r) return null;
       opened.broadcast({ type: "versions" });
+      self.countEdits(authors);
       if (r.previous && !as) self.host.deps.background(Effect.runPromise(self.describe(r.version, r.previous, info)));
       return r.version;
     });
+  }
+
+  /** A version's edits, one for each of its authors that's a person ("koomen", "koomen, via their agent"), in the day's counts. */
+  private countEdits(authors: readonly string[]): void {
+    const logins = new Set(authors.map((a) => a.split(", via ")[0]).filter((a) => /^[a-z0-9][a-z0-9-]*$/.test(a)));
+    const dir = this.host.deps.directory;
+    for (const login of logins)
+      this.host.deps.background(dir.activity.add(login, { edit: 1 }).catch((e) => this.host.deps.log(`couldn't count an edit: ${e}`)));
   }
 
   /** Writes a version's description in the background: the model's five words, or the fallback. Never in the way of editing. */
@@ -189,7 +198,12 @@ export class History {
       const changes = yield* self.versions.changes(previous, version);
       // The agent's key, as it is now (an admin may have stored one since the document opened).
       const key = info.test ? "" : yield* Effect.promise(() => self.host.deps.agents.descriptionKey());
-      const text = (key ? yield* describeChange(key, changes) : null) ?? fallbackDescription(changes);
+      // Its tokens are the server's key's, and nobody's in the day's counts.
+      const used = (input: number, output: number) =>
+        self.host.deps.background(
+          self.host.deps.directory.activity.add(null, { "in:server": input, "out:server": output }).catch(() => {})
+        );
+      const text = (key ? yield* describeChange(key, changes, used) : null) ?? fallbackDescription(changes);
       yield* self.versions.describe(version.n, text);
       self.host.opened()?.broadcast({ type: "versions" });
     }).pipe(
