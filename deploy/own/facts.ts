@@ -205,9 +205,15 @@ export async function observe(own: Own, a: Answers | null): Promise<Facts & { zo
     zones: [],
     zoneIds: [],
     workersSubdomain: null,
+    stack: null,
     targets: {},
     secrets: secretNames(loadSecrets()),
   };
+  if (a?.provider == "aws") {
+    const { observeAws } = await import("../aws/setup");
+    await observeAws(DIR, a, own.applied ?? {}, facts, site, own.github?.clientId);
+    return facts;
+  }
   const c = await cloudflare();
   if ("why" in c) {
     facts.login = { ok: false, why: c.why };

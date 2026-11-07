@@ -1,7 +1,7 @@
 // What `bun erga` reads: git (the checkout's view of GitHub), and each registered instance's GET /api/ops (with its ops
 // token) and GET /api/health. Each call says what it saw; nothing here decides (flow.ts).
 
-import { type Config, originOf } from "./config";
+import { type Config, entryOrigin } from "./config";
 import { healthOf } from "./deploy";
 import { type Branch, type Commit, type Instance, PROTECTED, type State, stateOf } from "./flow";
 import { readOps } from "./ops";
@@ -136,7 +136,7 @@ export function instancesOf(config: Config, site: typeof fetch = fetch): Promise
   const get = (url: string | URL | Request, init?: RequestInit) => site(url, { ...init, signal: AbortSignal.timeout(8000) });
   return Promise.all(
     config.instances.map(async (e) => {
-      const origin = originOf(e.host);
+      const origin = entryOrigin(e);
       const [ops, healthy] = await Promise.all([
         readOps(origin, e.token, get).then(
           (f) => ({ version: f.version }),

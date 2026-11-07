@@ -26,10 +26,10 @@ const Pages = Schema.Union([
 ]);
 
 /**
- * Where a deploy finds the instance: the pipeline's own names for it, and the Worker's plain settings as the pipeline
- * sent them (deploy/pipeline/account.ts, deployFacts).
+ * Where a deploy finds an instance on Cloudflare: the pipeline's own names for it, and the Worker's plain settings as
+ * the pipeline sent them (deploy/pipeline/account.ts, deployFacts).
  */
-export const DeployFacts = Schema.Struct({
+export const CloudflareFacts = Schema.Struct({
   account: Schema.String,
   worker: Schema.String,
   database: Schema.String,
@@ -40,6 +40,32 @@ export const DeployFacts = Schema.Struct({
   home: Schema.optionalKey(Schema.String),
   vars: Schema.Record(Schema.String, Schema.String),
 });
+
+/**
+ * Where a deploy finds an instance on AWS: its stack and what the stack made (deploy/aws/deploy.ts, awsFacts), and the
+ * Worker's plain settings.
+ */
+export const AwsFacts = Schema.Struct({
+  aws: Schema.Struct({
+    account: Schema.String,
+    region: Schema.String,
+    stack: Schema.String,
+    bucket: Schema.String,
+    machine: Schema.String,
+    /** The app's host: its domain, or its CloudFront name. */
+    app: Schema.String,
+    /** Documents' pages: one shared CloudFront name, or an origin each under a domain. */
+    pages: Schema.Union([
+      Schema.Struct({ kind: Schema.Literal("shared"), host: Schema.String }),
+      Schema.Struct({ kind: Schema.Literal("domain"), domain: Schema.String }),
+    ]),
+  }),
+  vars: Schema.Record(Schema.String, Schema.String),
+});
+export type AwsFacts = typeof AwsFacts.Type;
+
+export const DeployFacts = Schema.Union([CloudflareFacts, AwsFacts]);
+export type DeployFacts = typeof DeployFacts.Type;
 
 /** What GET /api/ops answers: the commit the instance runs, its target, its host, and its deploy facts (null locally). */
 const OpsFacts = Schema.Struct({

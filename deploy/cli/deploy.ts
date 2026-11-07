@@ -46,7 +46,20 @@ import {
   targetSharedPagesHost,
   Unhealthy,
 } from "../pipeline/pipeline";
-import { type Config, type Entry, entryOf, originOf, readConfig, secretsPath, snapshotTokenOf, withEntry, writeConfig } from "./config";
+import {
+  type CloudflareEntry,
+  type Config,
+  type Entry,
+  entryOf,
+  entryOrigin,
+  isAws,
+  originOf,
+  readConfig,
+  secretsPath,
+  snapshotTokenOf,
+  withEntry,
+  writeConfig,
+} from "./config";
 import { previousVersion } from "./flow";
 import { readOps } from "./ops";
 import { alive, ownStart } from "./pid";
@@ -63,7 +76,7 @@ const git = (...args: string[]) => gitIn(ROOT, args);
 // ------------------------------------------------------------------ the target
 
 /** The pipeline's names of an entry, with no vars and no guard. */
-const namesOf = (e: Entry) => ({
+const namesOf = (e: CloudflareEntry) => ({
   label: e.host,
   accountId: e.account,
   workerName: e.worker,
@@ -79,13 +92,17 @@ const namesOf = (e: Entry) => ({
  * gets DEPLOY_TARGET=staging and SNAPSHOT_FROM over its vars, and may not touch its primary's names. It keeps its copy
  * of its primary's data, unless `copy` is given: then the pipeline copies the primary's database and documents.
  */
-export function entryTarget(config: Config, entry: Entry, copy?: { token: string; fresh: boolean }): Target {
+export function entryTarget(config: Config, entry: CloudflareEntry, copy?: { token: string; fresh: boolean }): Target {
   const own = { ...namesOf(entry), secrets: {}, keepSecrets: true, checkVersion: true };
   if (!entry.stagingOf) return { ...own, vars: { ...entry.vars }, production: true };
   const primary = entryOf(config, entry.stagingOf);
   if (!primary)
     throw new Error(
       `${entry.host} is a staging instance of ${entry.stagingOf}, which has no entry. Register it: bun erga register ${entry.stagingOf}`
+    );
+  if (isAws(primary))
+    throw new Error(
+      `${entry.host} is on Cloudflare, and its primary ${primary.host} is on AWS: a staging instance is on its primary's host.`
     );
   const p = namesOf(primary);
   return {
@@ -260,7 +277,7 @@ async function stagingAnswers(config: Config, primary: string, site: Fetch): Pro
     config.instances
       .filter((e) => e.stagingOf == primary)
       .map(async (e) => {
-        const origin = originOf(e.host);
+        const origin = entryOrigin(e);
         const [version, healthy] = await Promise.all([readOps(origin, e.token, site).then((f) => f.version), healthOf(origin, site)]);
         return { host: e.host, version, healthy };
       })
@@ -335,7 +352,7 @@ async function hasCopy(cf: Cloudflare, t: Target): Promise<boolean> {
 }
 
 /** The staging target with the copy of its primary's data, or null: it keeps its copy. It stops when the token is missing. */
-async function copyTarget(dir: string, config: Config, entry: Entry, cf: Cloudflare, fresh: boolean): Promise<Target | null> {
+async function copyTarget(dir: string, config: Config, entry: CloudflareEntry, cf: Cloudflare, fresh: boolean): Promise<Target | null> {
   const primary = entry.stagingOf!;
   if (!fresh && (await hasCopy(cf, entryTarget(config, entry)))) return null;
   const token = snapshotTokenOf(dir, primary);
@@ -378,6 +395,8 @@ export interface DeployOptions {
   createSubdomain?: boolean;
   /** --home: the homepage's own domain, a hostname on one of the account's zones. The server keeps it after. */
   home?: string;
+  /** AWS, `bun erga setup`'s first deploy only: SQL the machine runs once the release answers (the first admin). */
+  first?: string;
 }
 
 /** Why `home` can't be the homepage's domain, or null. */
@@ -413,6 +432,9 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     throw new Error(`${o.host} is a staging instance: name the commit (bun erga deploy <commit> ${o.host}).`);
   if (o.fresh && !entry.stagingOf)
     throw new Error(`${o.host} is a primary: --fresh is only for a staging instance, which copies its primary's data.`);
+  const aws = isAws(entry) ? entry : null;
+  if (aws && entry.stagingOf) throw new Error(`${o.host} is a staging instance on AWS: Erga has no staging on AWS yet.`);
+  if (aws && (o.home || o.createSubdomain)) throw new Error(`${o.host} is on AWS: --home is only for an instance on Cloudflare.`);
   // setup's first deploy: its secrets, one time, and a new workers.dev subdomain. A copy's target keeps them.
   const own = {
     ...(o.secrets ? { secrets: o.secrets } : {}),
@@ -421,11 +443,12 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   };
   const badHome = o.home ? homeRefusal(o.home.toLowerCase()) : null;
   if (badHome) throw new Error(badHome);
-  let target: Target = { ...entryTarget(config, entry), ...own };
-  const sent = Object.keys(target.secrets);
-  const wrong = guardTarget(target);
+  let target: Target | null = aws ? null : { ...entryTarget(config, entry as CloudflareEntry), ...own };
+  const sent = Object.keys(target?.secrets ?? {});
+  const wrong = target && guardTarget(target);
   if (wrong) throw new Error(wrong);
-  const { net, token, quick } = await netOf(o);
+  // On AWS: the servers only (the AWS CLI is this machine's own). On Cloudflare: its API too, with this machine's credential.
+  const { net, token, quick } = aws ? { net: o.net ?? globalThis.fetch.bind(globalThis), token: "", quick: {} } : await netOf(o);
   const cf = new Cloudflare(token, net);
   const command =
     o.command ??
@@ -448,7 +471,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     // A primary: main must have the commit, or move forward to it. Checked before the build, so a deploy never leaves main behind.
     const main = entry.stagingOf ? null : mocked() && !o.clone ? "mock" : mainMove(clone, sha);
     // Before the tests and the build: a copy that needs a token it does not have stops here.
-    const copying = entry.stagingOf ? await copyTarget(o.dir, config, entry, cf, !!o.fresh) : null;
+    const copying = target && entry.stagingOf ? await copyTarget(o.dir, config, entry as CloudflareEntry, cf, !!o.fresh) : null;
     if (copying) {
       target = { ...copying, ...own };
       job.note({ copy: o.fresh ? "fresh" : "no copy yet" });
@@ -467,33 +490,48 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       log(`The tests of ${sha.slice(0, 12)}: all passing.`);
     }
 
-    log(`Deploy ${sha.slice(0, 12)} to ${o.host}${mocked() ? " (the mock Cloudflare: nothing real)" : ""}:`);
-    log(
-      `  account ${target.accountId}, Worker ${target.workerName}, database ${target.databaseName}${!entry.stagingOf ? "" : copying ? ` (a new copy of ${entry.stagingOf}'s database and documents: ${o.fresh ? "--fresh" : "it has no copy yet"})` : ` (its copy of ${entry.stagingOf}'s data kept)`}`
-    );
-    log(
-      `  https://${targetHost(target)}, documents' pages on ${targetPagesShown(target)}; ${sent.length ? `the secrets sent: ${sent.join(", ")}` : "no secret sent"}`
-    );
     const { buildHere } = await import("../pipeline/build");
-    const release = await buildHere(sha, log, mocked());
-    const carry: Carry = {};
-    try {
-      await runPipeline(cf, release, target, {
-        site: net,
-        carry,
-        report: (id, status, detail) =>
-          log(`${ALL_STEPS.find((s) => s.id == id)?.title}${status == "running" ? "..." : `: ${status}${detail ? `, ${detail}` : ""}`}`),
-        ...quick,
-      });
-    } catch (e) {
-      const restore = carry.restore?.versionId;
-      if (e instanceof Unhealthy && restore) {
-        await rollbackTo(cf, target, restore, `bun erga deploy: ${sha.slice(0, 12)} was unhealthy`);
-        throw new Error(`${e.message} It is rolled back to the version before (${restore}).`);
+    if (aws) {
+      log(`Deploy ${sha.slice(0, 12)} to ${o.host} on AWS:`);
+      log(`  account ${aws.aws.account}, ${aws.aws.region}, stack ${aws.aws.stack}, machine ${aws.aws.machine}, bucket ${aws.aws.bucket}`);
+      log(
+        `  ${entryOrigin(aws)}, documents' pages on ${aws.aws.pages.kind == "domain" ? `*.${aws.aws.pages.domain}` : aws.aws.pages.host}`
+      );
+      const release = await buildHere(sha, log, mocked());
+      const { deployToAws } = await import("../aws/deploy");
+      await deployToAws(aws, release, log, o.first);
+      if (!(await healthOf(entryOrigin(aws), net)))
+        throw new Error(`${entryOrigin(aws)} runs ${sha.slice(0, 12)}, but its health check fails from here.`);
+      log(`Deployed ${sha.slice(0, 12)} to ${entryOrigin(aws)}: healthy.`);
+    } else {
+      const t = target!;
+      log(`Deploy ${sha.slice(0, 12)} to ${o.host}${mocked() ? " (the mock Cloudflare: nothing real)" : ""}:`);
+      log(
+        `  account ${t.accountId}, Worker ${t.workerName}, database ${t.databaseName}${!entry.stagingOf ? "" : copying ? ` (a new copy of ${entry.stagingOf}'s database and documents: ${o.fresh ? "--fresh" : "it has no copy yet"})` : ` (its copy of ${entry.stagingOf}'s data kept)`}`
+      );
+      log(
+        `  https://${targetHost(t)}, documents' pages on ${targetPagesShown(t)}; ${sent.length ? `the secrets sent: ${sent.join(", ")}` : "no secret sent"}`
+      );
+      const release = await buildHere(sha, log, mocked());
+      const carry: Carry = {};
+      try {
+        await runPipeline(cf, release, t, {
+          site: net,
+          carry,
+          report: (id, status, detail) =>
+            log(`${ALL_STEPS.find((s) => s.id == id)?.title}${status == "running" ? "..." : `: ${status}${detail ? `, ${detail}` : ""}`}`),
+          ...quick,
+        });
+      } catch (e) {
+        const restore = carry.restore?.versionId;
+        if (e instanceof Unhealthy && restore) {
+          await rollbackTo(cf, t, restore, `bun erga deploy: ${sha.slice(0, 12)} was unhealthy`);
+          throw new Error(`${e.message} It is rolled back to the version before (${restore}).`);
+        }
+        throw e instanceof DeployError ? new Error(e.message) : e;
       }
-      throw e instanceof DeployError ? new Error(e.message) : e;
+      log(`Deployed ${sha.slice(0, 12)} to https://${targetHost(t)}: healthy.`);
     }
-    log(`Deployed ${sha.slice(0, 12)} to https://${targetHost(target)}: healthy.`);
     await copyFacts(o.dir, o.host, net, log);
     if (main == "forward") {
       try {
@@ -524,10 +562,10 @@ async function copyFacts(dir: string, host: string, net: Fetch, log: (line: stri
   const entry = entryOf(readConfig(dir), host);
   if (!entry?.token) return log(`NOTE  ${host} has no ops token: its entry keeps its facts as they were (bun erga login ${host}).`);
   try {
-    const facts = await readOps(originOf(host), entry.token, net);
+    const facts = await readOps(entryOrigin(entry), entry.token, net);
     if (!facts.deploy) return;
-    const { home: _, ...was } = entry;
-    writeConfig(dir, withEntry(readConfig(dir), { ...was, ...facts.deploy, token: entry.token }));
+    const { home: _, ...was } = entry as CloudflareEntry;
+    writeConfig(dir, withEntry(readConfig(dir), { ...was, ...facts.deploy, token: entry.token } as Entry));
   } catch (e) {
     log(`NOTE  ${host}'s entry keeps its facts as they were: ${(e as Error).message}`);
   }
@@ -581,7 +619,8 @@ export async function rollbackInstance(o: RollbackOptions): Promise<string | nul
   const config = readConfig(o.dir);
   const entry = entryOf(config, o.host);
   if (!entry) throw new Error(`${o.host} has no entry in .erga/config.json. Register it first: bun erga register ${o.host}`);
-  const { net, token } = await netOf(o);
+  const aws = isAws(entry) ? entry : null;
+  const { net, token } = aws ? { net: o.net ?? globalThis.fetch.bind(globalThis), token: "" } : await netOf(o);
   const sleep = o.sleep ?? (mocked() ? async () => {} : Bun.sleep);
   const command = `bun erga rollback ${o.host}`;
   const free = takeLock(o.dir, o.host, command);
@@ -594,21 +633,30 @@ export async function rollbackInstance(o: RollbackOptions): Promise<string | nul
     return ((await r?.json().catch(() => null)) as { version?: string } | null)?.version ?? null;
   };
   try {
+    if (aws) {
+      const { rollbackAws } = await import("../aws/deploy");
+      const now = await rollbackAws(aws, job.log, o.ask);
+      const healthy = await healthOf(entryOrigin(aws), net);
+      job.log(`${o.host} runs release ${now} now, health ${healthy ? "ok" : "FAIL"}.`);
+      job.end(healthy ? "ok" : "failed", healthy ? undefined : "the health check fails after the rollback");
+      return now;
+    }
+    const e = entry as CloudflareEntry;
     const cf = new Cloudflare(token, net);
     const list = await cf.call<{ deployments: { created_on: string; versions: { version_id: string; percentage: number }[] }[] }>(
       "GET",
-      `/accounts/${entry.account}/workers/scripts/${entry.worker}/deployments`,
-      `read ${entry.worker}'s deployments`
+      `/accounts/${e.account}/workers/scripts/${e.worker}/deployments`,
+      `read ${e.worker}'s deployments`
     );
     const sorted = [...(list?.deployments ?? [])].sort((x, y) => Date.parse(y.created_on) - Date.parse(x.created_on));
     const p = previousVersion(sorted);
-    if (!p) throw new Error(`${entry.worker} has no deployment of another version to go back to.`);
-    const origin = entry.app.kind == "domain" ? `https://${entry.app.hostname}` : originOf(o.host);
+    if (!p) throw new Error(`${e.worker} has no deployment of another version to go back to.`);
+    const origin = e.app.kind == "domain" ? `https://${e.app.hostname}` : originOf(o.host);
     const before = await versionOf(origin);
-    job.log(`${o.host} (Worker ${entry.worker}) runs release ${before ?? "?"}, Worker version ${p.now}.`);
+    job.log(`${o.host} (Worker ${e.worker}) runs release ${before ?? "?"}, Worker version ${p.now}.`);
     job.log(`Rollback goes to the Worker version before it: ${p.before}. The database stays as it is.`);
     if (o.ask && !o.ask("Roll back now? [y/N]")) throw new Error("Not rolled back.");
-    await rollbackTo(cf, { accountId: entry.account, workerName: entry.worker }, p.before, command);
+    await rollbackTo(cf, { accountId: e.account, workerName: e.worker }, p.before, command);
     let after = await versionOf(origin);
     for (let i = 0; i < 6 && after == before; i++) {
       await sleep(5000);

@@ -1,5 +1,5 @@
 // The edge's cache (Platform["edge"]["cache"]) on a KV namespace, for a host whose Cache API keeps nothing: celld's
-// caches.default always misses (deploy/celld/README.md). The deploy binds EDGE_CACHE there; Cloudflare has no such
+// caches.default always misses (deploy/aws/README.md). The deploy binds EDGE_CACHE there; Cloudflare has no such
 // binding, and its own cache serves. One namespace serves every isolate and node, and keeps its copies over restarts.
 //
 // A copy is the response's bytes, with its status and headers as the value's metadata, for its max-age (KV's

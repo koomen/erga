@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readConfig, withEntry, writeConfig } from "../deploy/cli/config";
+import { type CloudflareEntry, readConfig, withEntry, writeConfig } from "../deploy/cli/config";
 import { passPath } from "../deploy/cli/deploy";
 import { firstDeploy, registerSetup, type Setup } from "../deploy/own/first";
 import { defaultAnswers } from "../deploy/own/plan";
@@ -67,7 +67,7 @@ test("from the answers to a healthy deploy: the entries, the secrets one time, t
   expect(await firstDeploy(o, "staging")).toBe(HEAD);
 
   // The entries: written from the answers, the staging one with its primary, no token yet.
-  expect(readConfig(dir).instances.map((e) => [e.host, e.stagingOf ?? null, e.worker, e.token])).toEqual([
+  expect(readConfig(dir).instances.map((e) => [e.host, e.stagingOf ?? null, (e as CloudflareEntry).worker, e.token])).toEqual([
     [HOST, null, "erga-ada-example-com", ""],
     [STAGING, HOST, "erga-staging-ada-example-com", ""],
   ]);

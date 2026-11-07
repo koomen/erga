@@ -9,7 +9,7 @@
 // 4. At the end, register's ops token: the admin signs in and approves it in the browser, and the entry gets it.
 
 import { randomBytes } from "node:crypto";
-import { type Config, entryOf, originOf, readConfig, withEntry, writeConfig } from "../cli/config";
+import { type CloudflareEntry, type Config, entryOf, entryOrigin, readConfig, withEntry, writeConfig } from "../cli/config";
 import { type DeployOptions, deployInstance } from "../cli/deploy";
 import { askOpsToken, readOps } from "../cli/ops";
 import { d1 } from "../pipeline/account";
@@ -46,7 +46,8 @@ export function writeEntries(o: Setup): Config {
   let config = readConfig(o.dir);
   for (const t of targetsOf(o.answers)) {
     const want = setupEntry(o.answers, t, o);
-    const had = entryOf(config, want.host);
+    const had = entryOf(config, want.host) as CloudflareEntry | null;
+    if (had && "aws" in had) throw new Error(`${want.host} is registered already, on AWS. Setup makes a new instance.`);
     if (had && (had.account != want.account || had.worker != want.worker || had.database != want.database))
       throw new Error(
         `${want.host} is registered already, with the Worker ${had.worker} and the database ${had.database}. Setup makes a new instance: deploy this one with bun erga deploy ${want.host}.`
@@ -88,7 +89,7 @@ export function secretsFor(dir: string, a: Answers, t: TargetName, held: string[
 /** The first deploy of `t`, then its first rows. The result: the commit it deployed. */
 export async function firstDeploy(o: Setup, t: TargetName): Promise<string> {
   const print = o.print ?? console.log;
-  const entry = entryOf(writeEntries(o), hostOf(o.answers, t))!;
+  const entry = entryOf(writeEntries(o), hostOf(o.answers, t)) as CloudflareEntry;
   const cf = new Cloudflare(o.token, o.net);
   const acc = `/accounts/${o.account}`;
   const held = (
@@ -165,7 +166,9 @@ export async function firstRows(cf: Cloudflare, acc: string, worker: string, a: 
  * the token and the instance's own deploy facts. The result: the admin's login.
  */
 export async function registerSetup(dir: string, host: string, o: { site?: Fetch; say?: (line: string) => void } = {}): Promise<string> {
-  const origin = originOf(host);
+  const known = entryOf(readConfig(dir), host);
+  if (!known) throw new Error(`${host} has no entry in .erga/config.json yet: its first deploy writes it.`);
+  const origin = entryOrigin(known);
   const { token, login } = await askOpsToken(origin, { label: "bun erga setup", say: o.say, site: o.site });
   const facts = await readOps(origin, token, o.site);
   // Read the file again: another terminal can have changed it while the admin approved.
