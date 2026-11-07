@@ -89,14 +89,14 @@
       <h2 id="sharing-title">Share with people</h2>
       <form id="sharing-add" class="share-grid sharing-add" autocomplete="off">
         <input name="who" class="naming-input" placeholder="Username" aria-label="Username to share with" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" required>
-        <select name="role" class="role" aria-label="Their role"><option value="editor">Can edit</option><option value="viewer">Can view</option></select>
+        <select name="role" class="role" aria-label="Their role"><option value="editor">Can edit</option><option value="commenter">Can comment</option><option value="viewer">Can view</option></select>
         <button type="submit">Add</button>
       </form>
       <ul id="sharing-list" class="sharing-list" aria-label="People with access"></ul>
       <div class="share-grid sharing-anyone">
         <span class="face anyone"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.6 5.4 3.6 8.5s-1.1 5.9-3.6 8.5c-2.5-2.6-3.6-5.4-3.6-8.5s1.1-5.9 3.6-8.5Z"/></svg></span>
         <span class="who"><label for="sharing-anyone">Anyone with the link</label><small id="sharing-hint"></small></span>
-        <select id="sharing-anyone" class="role"><option value="none">No access</option><option value="viewer">Can view</option><option value="editor">Can edit</option></select>
+        <select id="sharing-anyone" class="role"><option value="none">No access</option><option value="viewer">Can view</option><option value="commenter">Can comment</option><option value="editor">Can edit</option></select>
         <button type="button" id="sharing-copy" class="text-btn">Copy link</button>
       </div>
       <p id="sharing-status" class="share-status sharing-status" role="status" aria-live="polite"></p>

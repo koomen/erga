@@ -78,15 +78,16 @@ import {
   type Statement,
   type Who,
   type Grant,
+  GRANTS,
 } from "./model.ts";
 
 
-const RANK: Record<Role, number> = { viewer: 1, editor: 2, owner: 3 };
-// "comment": see, add and reply to comments, and resolve one's own threads. The least role that may: the one place a
-// commenter role (between viewer and editor) plugs in. Viewers see no comments.
+const RANK: Record<Role, number> = { viewer: 1, commenter: 2, editor: 3, owner: 4 };
+// "comment": see, add and reply to comments, and resolve one's own threads. The least role that may: a commenter,
+// between viewer and editor. Viewers see no comments.
 const ALLOWS: Record<Action, Role> = {
   open: "viewer",
-  comment: "editor",
+  comment: "commenter",
   edit: "editor",
   rename: "editor",
   delete: "owner",
@@ -240,7 +241,7 @@ export class Directory {
    * act as whoever views it, so everyone who may edit it must be an admin.
    */
   async homeBlocked(id: string): Promise<string | null> {
-    const editors = (await this.permissions(id)).filter((p) => p.role != "viewer");
+    const editors = (await this.permissions(id)).filter((p) => p.role == "owner" || p.role == "editor");
     const others: string[] = [];
     for (const p of editors) if (p.login == ANYONE || !(await this.users.isAdmin(p.login))) others.push(p.login == ANYONE ? "anyone with the link" : p.login);
     if (!others.length) return null;
@@ -312,7 +313,7 @@ export class Directory {
          UNION ALL SELECT d.*, 2 AS via FROM slug_history h JOIN documents d ON d.id = h.doc_id WHERE h.owner = ?1 AND h.slug = ?2
          ORDER BY via LIMIT 1`;
     const [row] = await this.sql.all<Row & { via: number; rank: number | null }>(
-      `SELECT x.*, (SELECT MAX(CASE p.role WHEN 'owner' THEN 3 WHEN 'editor' THEN 2 WHEN 'viewer' THEN 1 END)
+      `SELECT x.*, (SELECT MAX(CASE p.role WHEN 'owner' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 END)
          FROM permissions p WHERE p.doc_id = x.id AND p.login IN (?3, ?4)) AS rank
        FROM (${found}) x`,
       owner.toLowerCase(), owner == "d" ? segment : segment.toLowerCase(), who.login.toLowerCase(), ANYONE);
@@ -607,9 +608,9 @@ export class Directory {
     // The access rules: someone without write opens their documents, and those shared with them, as a viewer. Asked
     // with the homepage's limit, not after it, so a stall of the database counts once; only where homeLimit can
     // answer owner or editor (an admin's session edits the homepage project).
-    const writes = best == "owner" || best == "editor" || (owner == HOME_OWNER && who.admin == true);
+    const writes = best == "owner" || best == "editor" || best == "commenter" || (owner == HOME_OWNER && who.admin == true);
     const [role, mayWrite] = await Promise.all([this.homeLimit(who, { id: doc.id, owner }, best), writes ? this.mayWrite(login) : true]);
-    return (role == "owner" || role == "editor") && !mayWrite ? "viewer" : role;
+    return (role == "owner" || role == "editor" || role == "commenter") && !mayWrite ? "viewer" : role;
   }
 
   // ------------------------------------------------------------ the access rules (server/directory/access.ts)
@@ -787,8 +788,7 @@ export class Directory {
     if (login != ANYONE && !/^[a-z0-9][a-z0-9-]{0,38}$/.test(login))
       throw new NotAllowed({ message: `"${login}" isn't a login (or "*" for anyone with the link).` });
     if (login == doc.owner) throw new NotAllowed({ message: "The owner's own permission can't be changed." });
-    if (role != null && role != "editor" && role != "viewer")
-      throw new NotAllowed({ message: `"${role}" isn't a role: editor or viewer.` });
+    if (role != null && !GRANTS.includes(role)) throw new NotAllowed({ message: `"${role}" isn't a role: editor, commenter or viewer.` });
     // Anyone with the link: only while the server lets users share content publicly (the Access page). Stopping one
     // made before is always allowed.
     if (login == ANYONE && role != null && !(await this.config.get("public_sharing"))) throw new NotAllowed({ message: NO_PUBLIC });

@@ -73,7 +73,12 @@ export function mountSharing(shell: Shell) {
       else {
         const role = Object.assign(document.createElement("select"), { className: "role" });
         role.setAttribute("aria-label", `Role for ${p.login}`);
-        for (const [v, t] of [["editor", "Can edit"], ["viewer", "Can view"]]) role.append(new Option(t, v, false, v == p.role));
+        for (const [v, t] of [
+          ["editor", "Can edit"],
+          ["commenter", "Can comment"],
+          ["viewer", "Can view"],
+        ])
+          role.append(new Option(t, v, false, v == p.role));
         role.addEventListener("change", () => changeSharing(p.login, role.value));
         const x = Object.assign(document.createElement("button"), { type: "button", className: "remove", textContent: "×", title: `Stop sharing with ${p.login}` });
         x.setAttribute("aria-label", x.title);

@@ -32,6 +32,26 @@ test("the owner shares it with a viewer, who opens it and has it on their list, 
   expect((await p.share(id, "Bo", "editor", "Ada")).status).toBe(403);
 });
 
+test("the owner shares it with a commenter, who opens it, has it on their list as can comment, and can't publish to it, rename, delete or share it", async () => {
+  const p = await person(await servers.script());
+  const id = await p.make();
+  const shared = await p.share(id, "Ada", "commenter");
+  expect(shared.body.permissions?.map((x) => `${x.login}:${x.role}`)).toEqual([`${p.login}:owner`, "ada:commenter"]);
+  expect((await p.as("Ada", `/${p.login}/untitled`)).status).toBe(200);
+  expect((await p.as("Ada", `/d/${id}/doc/index.html`)).ok).toBe(true);
+  const list = await (await p.as("Ada", "/docs")).text();
+  expect(list).toContain(`${p.login} · can comment`);
+  expect(list).not.toContain(`value="${id}"`);
+  expect((await p.as("Ada", `/d/${id}/api/stored/index.html`, { method: "PUT", body: "<h1>Mine now</h1>" })).status).toBe(403);
+  expect((await p.tool("rename_document", { document: id, title: "Commenter's title" }, "Ada")).status).toBe(403);
+  expect((await p.tool("delete_document", { document: id }, "Ada")).status).toBe(403);
+  expect((await p.share(id, "Bo", "commenter", "Ada")).status).toBe(403);
+  // For anyone with the link too.
+  await p.share(id, "*", "commenter");
+  expect((await p.as("Dee", `/${p.login}/untitled`)).status).toBe(200);
+  expect((await p.as("Dee", `/d/${id}/api/stored/index.html`, { method: "PUT", body: "x" })).status).toBe(403);
+});
+
 test("in the room, a viewer sees every edit and theirs reach nobody, nor storage; made an editor, the same person's edits land, and they may publish", async () => {
   const p = await person(await servers.script());
   const id = await p.make();

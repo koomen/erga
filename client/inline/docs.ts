@@ -96,6 +96,7 @@ export default function docs(c: DocsConfig): void {
   };
   const ROLES = [
     ["editor", "Can edit"],
+    ["commenter", "Can comment"],
     ["viewer", "Can view"],
   ];
   const roleSelect = (role: string, label: string) => {
