@@ -2,6 +2,7 @@
 // document picker, a question before deleting, the share dialog, and each document's pages beneath its row.
 
 import { fastClick } from "../common/fast-click";
+import { findRows } from "../common/find-rows";
 import { liveList } from "../common/live-rows";
 import { runTool } from "../common/tools";
 import type { TreeHandle } from "../pages/pages-tree";
@@ -375,22 +376,32 @@ export default function docs(c: DocsConfig): void {
       trees.delete(id);
     }
   }
-  /** The count, the column labels and the empty list's words, as the rows are now. */
+  /** The count, the column labels, the empty list's words and the find box, as the rows and the words typed are now. */
   function counted() {
-    const n = list.querySelectorAll(":scope > li[data-live]").length;
+    const n = list.querySelectorAll(":scope > li[data-live]").length,
+      q = find.query(),
+      m = q ? list.querySelectorAll(":scope > li[data-live]:not(.miss)").length : n;
     const count = document.getElementById("docs-count")!;
-    count.textContent = n + (n == 1 ? " document" : " documents");
+    const of = (k: number) => k + (k == 1 ? " document" : " documents");
+    count.textContent = q ? `${m} of ${of(n)}` : of(n);
     count.hidden = list.hidden = !n;
-    document.querySelector<HTMLElement>(".labels")!.hidden = !n;
+    document.querySelector<HTMLElement>(".labels")!.hidden = !m;
     document.querySelector<HTMLElement>("p.empty")!.hidden = !!n;
+    const none = document.getElementById("docs-none")!;
+    none.hidden = !n || !!m;
+    none.textContent = `No documents match “${q}”.`;
+    findBox.hidden = !n && !q;
   }
   // Every row, and the rows that change while the page is open: whoever changes them (another tab, an agent, someone
-  // who shares one with you), the list follows (client/common/live-rows.ts).
+  // who shares one with you), the list follows (client/common/live-rows.ts). A row that comes in obeys the find box.
   const list = document.querySelector<HTMLElement>("ol.rows")!;
+  const findBox = document.querySelector<HTMLInputElement>("input.find")!;
+  const find = findRows(findBox, list, counted);
   for (const row of list.querySelectorAll<HTMLElement>(":scope > li[data-live]")) wire(row);
   liveList(list, {
     wire: (row) => {
       wire(row);
+      find.apply(row);
       times();
     },
     changed: counted,

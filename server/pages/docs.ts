@@ -78,9 +78,10 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   <header>
     <div><h1>Documents</h1><p class="sub" id="docs-count"${docs.length ? "" : " hidden"}>${count}</p></div>
     <div class="make">
-      <div class="make-buttons">${newDocButton("pill", "New")}<a class="pill scratch erga-scratch-tip" href="${esc(link("/scratch", session))}" draggable="false" data-tip="${esc(scratchMakeTip(hours))}" aria-description="${esc(scratchMakeTip(hours))}">${PLUS}Scratch</a></div>
+      <div class="make-buttons"><input type="search" class="input find" placeholder="Find" aria-label="Find documents by title or address" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false"${docs.length ? "" : " hidden"}>${newDocButton("pill", "New")}<a class="pill scratch erga-scratch-tip" href="${esc(link("/scratch", session))}" draggable="false" data-tip="${esc(scratchMakeTip(hours))}" aria-description="${esc(scratchMakeTip(hours))}">${PLUS}Scratch</a></div>
     </div>
   </header>
+  <p class="none" id="docs-none" role="status" hidden></p>
   <div class="labels" aria-hidden="true"${docs.length ? "" : " hidden"}><span>Name</span><span>Edited</span><span></span></div>
   <ol class="rows" data-live-kind="doc" data-live-view="docs" data-live-at="${now}"${docs.length ? "" : " hidden"}>\n${rows}\n  </ol>
   <p class="empty"${docs.length ? " hidden" : ""}>No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${plural(hours, "hour")} if you never edit it.`}</p>
