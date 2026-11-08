@@ -25,6 +25,8 @@ export interface Own {
   /** The sign-in apps' public values. */
   github: { clientId: string; slug?: string; url?: string } | null;
   google: { clientId: string } | null;
+  /** AWS: each template file's SHA-256 when its change set was applied (a change on disk shows as not applied). */
+  applied?: Record<string, string>;
 }
 
 /** By host: that server's secrets, by name. */

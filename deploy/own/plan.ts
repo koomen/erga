@@ -3,13 +3,18 @@
 // acts). `bun erga setup skill` is the manual; `bun erga setup <host> status` prints these steps, and the Setup tab of the
 // ops page (deploy/own/page.ts) shows them.
 
-import type { Entry } from "../cli/config";
+import type { CloudflareEntry } from "../cli/config";
 import { deployFacts } from "../pipeline/account";
 import type { Target } from "../pipeline/pipeline";
 
 /** The person's decisions, asked all at once (`bun erga setup <host> ask`), with these defaults. No secret is ever in here. */
 export interface Answers {
-  /** The production address: a hostname on a zone in the account ("erga.example.com"). */
+  /** Where the instance runs: the person's Cloudflare account, or their AWS account. */
+  provider: Provider;
+  /**
+   * The production address: a hostname on a zone in the account ("erga.example.com"). On AWS it may also be a short
+   * name ("erga"): then the app and the pages have CloudFront's own names, and no domain is needed.
+   */
   host: string;
   /** A staging server too, at its own address (empty: none). */
   staging: string;
@@ -25,9 +30,15 @@ export interface Answers {
   pages: string;
   /** The GitHub repository (owner/name) where feedback opens issues: the setting feedback_repository (empty: none). */
   feedback: string;
+  /** AWS: the AWS CLI's profile (the account; empty: the CLI's default), and the region. */
+  awsProfile: string;
+  awsRegion: string;
+  /** AWS: the machine's way out to the internet: a NAT machine, a NAT gateway, or "<vpc id>/<private subnet id>" of the person's own. */
+  egress: string;
 }
 
 export type PresetName = "website" | "company";
+export type Provider = "cloudflare" | "aws";
 
 /**
  * What each preset sets. `defaults` go to the server as SERVER_DEFAULTS: defaults that the admins can still change on
@@ -49,11 +60,16 @@ export const PRESETS: Record<PresetName, { title: string; summary: string; defau
   },
 };
 
-export const QUESTIONS: { key: keyof Answers; ask: string; help: string }[] = [
+export const QUESTIONS: { key: keyof Answers; ask: string; help: string; aws?: true }[] = [
+  {
+    key: "provider",
+    ask: "Host",
+    help: "cloudflare (your Cloudflare account, Workers Paid plan) or aws (your AWS account: one machine, its bucket, CloudFront in front).",
+  },
   {
     key: "host",
     ask: "Production address",
-    help: "A name on a domain that is on your Cloudflare account, e.g. erga.example.com. Nothing may use it yet.",
+    help: "A name on a domain of your account, e.g. erga.example.com (Cloudflare: a zone on the account; AWS: a Route 53 hosted zone). On AWS, a short name (erga) instead: the app gets CloudFront's own address, and no domain is needed. Nothing may use it yet.",
   },
   {
     key: "staging",
@@ -71,16 +87,30 @@ export const QUESTIONS: { key: keyof Answers; ask: string; help: string }[] = [
   {
     key: "pages",
     ask: "Documents' pages",
-    help: "shared (one workers.dev address: no domain needed) or a second domain on your account (never the app's).",
+    help: "shared (one address for all of them: workers.dev, or on AWS CloudFront's; no domain needed) or a second domain on your account (never the app's): each document gets an origin of its own. On AWS: shared with a short name, a domain with a domain.",
   },
   {
     key: "feedback",
     ask: "Feedback's repository (owner/name, or no)",
     help: "Send feedback opens a GitHub issue there, without the sender's name. Default: no. An admin can change it later.",
   },
+  {
+    key: "awsProfile",
+    ask: "AWS profile (aws only)",
+    help: "The AWS CLI's profile for the account (aws configure list-profiles). Empty: the CLI's default.",
+    aws: true,
+  },
+  { key: "awsRegion", ask: "AWS region (aws only)", help: "Where the machine and its bucket are, e.g. us-east-1 or eu-west-1.", aws: true },
+  {
+    key: "egress",
+    ask: "The machine's way out (aws only)",
+    help: "nat-instance (a small NAT machine, about $7 a month), nat-gateway (AWS's managed NAT, about $33 a month), or <vpc id>/<private subnet id> of a VPC of yours that has its own way out and an internet gateway. The machine never has a public address.",
+    aws: true,
+  },
 ];
 
 export const defaultAnswers = (admin = ""): Answers => ({
+  provider: "cloudflare",
   host: "",
   staging: "",
   providers: ["github"],
@@ -89,9 +119,16 @@ export const defaultAnswers = (admin = ""): Answers => ({
   company: "",
   pages: "shared",
   feedback: "",
+  awsProfile: "",
+  awsRegion: "us-east-1",
+  egress: "nat-instance",
 });
 
 const HOST = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+/** An AWS instance's short name, when it has no domain: CloudFront gives its addresses. */
+const NAME = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
+/** Whether the setup's host is a short name (no domain) rather than an address. */
+export const isName = (host: string) => NAME.test(host);
 const LOGIN = /^[a-z0-9](?:[a-z0-9-]{0,38})$/i;
 
 /** Reads one answer as the person typed it: the value, or why it isn't one. */
@@ -99,8 +136,20 @@ export function parseAnswer(key: keyof Answers, raw: string): { value: Answers[k
   const v = raw.trim();
   const off = /^(no|none|off|false|-)?$/i.test(v);
   switch (key) {
+    case "provider":
+      return v == "cloudflare" || v == "aws" ? { value: v } : { problem: "The host is cloudflare or aws." };
     case "host":
-      return HOST.test(v.toLowerCase()) ? { value: v.toLowerCase() } : { problem: `"${v}" isn't a hostname like erga.example.com.` };
+      return HOST.test(v.toLowerCase()) || NAME.test(v.toLowerCase())
+        ? { value: v.toLowerCase() }
+        : { problem: `"${v}" isn't a hostname like erga.example.com, or a short name like erga (AWS).` };
+    case "awsProfile":
+      return off || /^[\w.+@-]{1,64}$/.test(v) ? { value: off ? "" : v } : { problem: `"${v}" isn't an AWS CLI profile name.` };
+    case "awsRegion":
+      return /^[a-z]{2}(-[a-z]+)+-\d$/.test(v) ? { value: v } : { problem: `"${v}" isn't an AWS region like us-east-1.` };
+    case "egress":
+      return v == "nat-instance" || v == "nat-gateway" || /^vpc-[0-9a-f]+\/subnet-[0-9a-f]+$/.test(v)
+        ? { value: v }
+        : { problem: "The way out is nat-instance, nat-gateway, or <vpc id>/<subnet id> (vpc-.../subnet-...)." };
     case "staging":
       if (off) return { value: "" };
       return HOST.test(v.toLowerCase()) ? { value: v.toLowerCase() } : { problem: `"${v}" isn't a hostname, or "no".` };
@@ -147,13 +196,23 @@ export function parseAnswer(key: keyof Answers, raw: string): { value: Answers[k
 export function answersProblem(a: Answers, zones: string[]): string | null {
   if (!a.host) return "Answer the questions first (bun erga setup <host> ask).";
   if (!a.admin) return "Name the first admin: your GitHub login.";
+  if (a.provider == "aws") {
+    if (a.staging) return "Staging on AWS isn't there yet: answer staging=no.";
+    if (isName(a.host) != (a.pages == "shared"))
+      return isName(a.host)
+        ? "With a short name, the pages share CloudFront's own address: answer pages=shared, or give the app a domain."
+        : "With a domain for the app, the pages need a domain of their own too (pages=<domain>).";
+    if (isName(a.host)) return null;
+  } else if (isName(a.host))
+    return `${a.host} is a short name: on Cloudflare the app needs an address on a zone of the account (erga.example.com).`;
+  const account = a.provider == "aws" ? "Route 53 hosted zones of this AWS account" : "domains of this Cloudflare account";
   const zoneOf = (h: string) => zones.filter((z) => h == z || h.endsWith(`.${z}`)).sort((x, y) => y.length - x.length)[0] ?? null;
   for (const h of [a.host, a.staging].filter(Boolean))
     if (!zoneOf(h))
-      return `${h} isn't on a domain of this Cloudflare account (${zones.join(", ") || "it has none"}). Add the domain to Cloudflare first, or pick a name on one of these.`;
+      return `${h} isn't on one of the ${account} (${zones.join(", ") || "it has none"}). Add the domain first, or pick a name on one of these.`;
   if (a.staging && a.staging == a.host) return "Staging needs an address of its own.";
   if (a.pages != "shared") {
-    if (!zones.includes(a.pages)) return `${a.pages} isn't a domain of this account: pages need a whole zone of their own.`;
+    if (!zones.includes(a.pages)) return `${a.pages} isn't one of the ${account}: pages need a whole zone of their own.`;
     if ([a.host, a.staging].some((h) => h && zoneOf(h) == a.pages))
       return "Documents' pages need a different domain from the app's: a page's scripts must not share the app's site.";
   }
@@ -233,7 +292,7 @@ export function setupEntry(
   a: Answers,
   t: TargetName,
   o: { account: string; zones: string[]; subdomain: string | null; ids: { github?: string; google?: string } }
-): Entry {
+): CloudflareEntry {
   return {
     host: hostOf(a, t),
     ...(t == "staging" ? { stagingOf: a.host } : {}),
@@ -257,6 +316,8 @@ export interface Facts {
   account: string | null;
   zones: string[];
   workersSubdomain: string | null;
+  /** AWS: the production stack as AWS has it (null: not looked at), and whether the templates on disk are the ones applied. */
+  stack: { name: string; status: string | null; outputs: Record<string, string>; template: "none" | "new" | "changed" | "applied" } | null;
   /** By target: what's there now. */
   targets: Partial<Record<TargetName, TargetFacts>>;
   /** Which secrets the secrets file holds, as host:NAME (names only). */
@@ -293,6 +354,16 @@ export interface Step {
   target?: TargetName;
 }
 
+/** The stack's name of a setup's server on AWS: its name from its address (namesOf). */
+export const stackOf = (a: Answers, t: TargetName) => namesOf(hostOf(a, t)).worker;
+
+/** Where a setup's server answers: its address; on AWS with a short name, CloudFront's, known once the stack is made (else null). */
+export const addressOf = (a: Answers, t: TargetName, f: Pick<Facts, "stack">): string | null =>
+  a.provider == "aws" && isName(hostOf(a, t)) ? (f.stack?.outputs.AppHost ?? null) : hostOf(a, t);
+
+/** The address, or what stands in for it in a step's text until the stack gives it. */
+const shown = (a: Answers, t: TargetName, f: Pick<Facts, "stack">) => addressOf(a, t, f) ?? "<the app's CloudFront address>";
+
 /** The secret is in the secrets file under `host`, or on a server's Worker already: a deploy keeps a secret it doesn't send. */
 export const hasSecret = (f: Facts, host: string, key: string) =>
   f.secrets.includes(`${host}:${key}`) || Object.values(f.targets).some((t) => t?.held?.secrets.includes(key));
@@ -326,16 +397,26 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
     detail: f.bun ? `bun ${f.bun}${f.installed ? ", packages installed" : ""}` : "bun is missing",
     next: !f.bun ? "Install Bun 1.4 or newer: curl -fsSL https://bun.sh/install | bash" : "Run: bun install --frozen-lockfile",
   });
-  add({
-    id: "login",
-    title: "Log in to Cloudflare",
-    who: "person",
-    ok: f.login.ok && !!f.account,
-    detail: f.login.ok ? `${f.login.accounts.length} account(s)${f.account ? `; using ${f.account}` : ""}` : f.login.why,
-    next: !f.login.ok
-      ? "The agent runs `bunx cf auth login`: a browser opens; the person signs in to Cloudflare and clicks Allow."
-      : `Several accounts: the agent asks which one, then runs: ${cmd} set account=<id>`,
-  });
+  if (a?.provider == "aws")
+    add({
+      id: "login",
+      title: "Log in to AWS",
+      who: "person",
+      ok: f.login.ok && !!f.account,
+      detail: f.login.ok ? `account ${f.account} (${f.login.accounts[0]?.name}), region ${a.awsRegion}` : f.login.why,
+      next: `The person logs the AWS CLI in to their account (aws sso login${a.awsProfile ? ` --profile ${a.awsProfile}` : ""}, or keys with aws configure), and names the profile: ${cmd} set awsProfile=<profile> awsRegion=<region>.`,
+    });
+  else
+    add({
+      id: "login",
+      title: "Log in to Cloudflare",
+      who: "person",
+      ok: f.login.ok && !!f.account,
+      detail: f.login.ok ? `${f.login.accounts.length} account(s)${f.account ? `; using ${f.account}` : ""}` : f.login.why,
+      next: !f.login.ok
+        ? "The agent runs `bunx cf auth login`: a browser opens; the person signs in to Cloudflare and clicks Allow."
+        : `Several accounts: the agent asks which one, then runs: ${cmd} set account=<id>`,
+    });
   const problem = a ? answersProblem(a, f.zones) : "Answer the questions first.";
   add({
     id: "decide",
@@ -346,6 +427,20 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
     next: `The agent asks all of them in one message (${cmd} ask shows them, with defaults), then records the answers with ${cmd} set key=value ... The person can also answer on ${page}.`,
   });
   if (!a || problem) return out;
+  if (a.provider == "aws") {
+    const st = f.stack;
+    const done = !!st?.status && /_COMPLETE$/.test(st.status) && !/ROLLBACK|DELETE/.test(st.status) && st.template == "applied";
+    add({
+      id: "stack",
+      title: "The AWS infrastructure (CloudFormation)",
+      who: "person",
+      ok: done,
+      detail: !st
+        ? "not looked at"
+        : `stack ${st.name}: ${st.status ?? "not made yet"}${st.template == "changed" ? "; the template on disk changed since it was applied" : st.template == "new" ? "; the template is written, not applied" : ""}`,
+      next: `The agent runs ${cmd} stack: it writes the templates into .erga/aws/ (the first time) and shows AWS's change set: what it will make. The person reads them, and may change the template (then the agent runs ${cmd} stack again). After the person's yes: ${cmd} stack --yes. CloudFront takes 5 to 15 minutes.`,
+    });
+  }
   const ghSecret = hasSecret(f, a.host, "GITHUB_CLIENT_SECRET");
   add({
     id: "github",
@@ -356,7 +451,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
     next: `On ${page}, the person clicks "Create the GitHub App", then "Create GitHub App" on GitHub. Erga stores its id and secret by itself. (Already have an app? ${cmd} signin github --from-file <file with GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET>, and add the callback ${targetsOf(
       a
     )
-      .map((t) => callbackOf(hostOf(a, t), "github"))
+      .map((t) => callbackOf(shown(a, t, f), "github"))
       .join(" and ")} to it.)`,
   });
   if (a.providers.includes("google"))
@@ -369,13 +464,13 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
       next: `The person makes an OAuth client at https://console.cloud.google.com/auth/clients/create (type: Web application; authorized redirect URI${a.staging ? "s" : ""}: ${targetsOf(
         a
       )
-        .map((t) => callbackOf(hostOf(a, t), "google"))
+        .map((t) => callbackOf(shown(a, t, f), "google"))
         .join(", ")}), then types its id and secret on ${page} (never in the chat).`,
     });
   for (const t of targetsOf(a)) {
-    const host = hostOf(a, t),
+    const host = shown(a, t, f),
       tf = f.targets[t];
-    const n = namesOf(host);
+    const n = namesOf(hostOf(a, t));
     const live = !!tf && tf.health == "ok" && !!tf.version && tf.version == f.head?.slice(0, 12);
     const clash =
       tf &&
@@ -418,7 +513,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
     });
   }
   for (const t of targetsOf(a)) {
-    const host = hostOf(a, t);
+    const host = shown(a, t, f);
     add({
       id: `register-${t}`,
       target: t,
@@ -442,22 +537,27 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
 }
 
 export const summary = (a: Answers) =>
-  `https://${a.host}${a.staging ? `, staging https://${a.staging}` : ", no staging"}; sign-in ${a.providers.join(" + ")}; preset ${a.preset}${a.company ? ` (${a.company})` : ""}; admin ${a.admin}; pages ${a.pages == "shared" ? "on one shared workers.dev address" : `on *.${a.pages}`}; feedback ${a.feedback ? `to ${a.feedback}` : "kept on the server"}`;
+  `${a.provider == "aws" ? `on AWS (${a.awsProfile || "the default profile"}, ${a.awsRegion}, way out: ${a.egress}): ${isName(a.host) ? `${a.host}, at CloudFront's own address` : `https://${a.host}`}` : `https://${a.host}`}${a.staging ? `, staging https://${a.staging}` : ", no staging"}; sign-in ${a.providers.join(" + ")}; preset ${a.preset}${a.company ? ` (${a.company})` : ""}; admin ${a.admin}; pages ${a.pages == "shared" ? `on one shared ${a.provider == "aws" ? "CloudFront" : "workers.dev"} address` : `on *.${a.pages}`}; feedback ${a.feedback ? `to ${a.feedback}` : "kept on the server"}`;
 
 /** The step to do now: the first that isn't done (null: all done). */
 export const nextStep = (s: Step[]) => s.find((x) => x.state != "done") ?? null;
 
-/** The GitHub App's manifest (GitHub makes the app from it in one click): sign-in only, no permissions, every target's callback. */
-export function githubManifest(a: Answers, redirect: string): Record<string, unknown> {
+/**
+ * The GitHub App's manifest (GitHub makes the app from it in one click): sign-in only, no permissions, every target's
+ * callback. Null while the address isn't known (AWS with a short name, before the stack).
+ */
+export function githubManifest(a: Answers, f: Pick<Facts, "stack">, redirect: string): Record<string, unknown> | null {
+  const app = addressOf(a, "production", f);
+  if (!app || targetsOf(a).some((t) => !addressOf(a, t, f))) return null;
   return {
     name: `Erga ${a.host}`.slice(0, 34),
-    url: `https://${a.host}`,
+    url: `https://${app}`,
     redirect_url: redirect,
-    callback_urls: targetsOf(a).map((t) => callbackOf(hostOf(a, t), "github")),
-    description: `Sign-in for the Erga at https://${a.host}`,
+    callback_urls: targetsOf(a).map((t) => callbackOf(addressOf(a, t, f)!, "github")),
+    description: `Sign-in for the Erga at https://${app}`,
     public: false,
     request_oauth_on_install: false,
-    hook_attributes: { url: `https://${a.host}/`, active: false },
+    hook_attributes: { url: `https://${app}/`, active: false },
     default_permissions: {},
   };
 }

@@ -1,5 +1,5 @@
 // The server's browser, for view_page (cloudflare/render.ts): Cloudflare Browser Rendering (the BROWSER binding) on a
-// deployed server; on celld, a headless Chrome on the same machine (ERGA_CHROME, deploy/celld/aws.ts); in local
+// deployed server; on celld, a headless Chrome on the same machine (ERGA_CHROME, deploy/aws/machine.ts); in local
 // development, a headless Chrome the dev server starts on this computer (dev/browser.ts). The two Chromes are behind
 // the same interface as Cloudflare's. Its session stays open between renders (keep_alive), so a render after the first is fast.
 

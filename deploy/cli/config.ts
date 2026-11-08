@@ -6,16 +6,28 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { dirname, join } from "node:path";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { DeployFacts } from "./ops";
+import { AwsFacts, CloudflareFacts } from "./ops";
 
-/** One instance: its host, its primary if it is a staging instance, its deploy facts and vars, and its ops token. */
-const Entry = Schema.Struct({
+const Own = {
   host: Schema.String,
   stagingOf: Schema.optionalKey(Schema.String),
-  ...DeployFacts.fields,
   token: Schema.String,
-});
+};
+/**
+ * One instance: its host (its address on Cloudflare; on AWS, its name in setup), its primary if it is a staging
+ * instance, its deploy facts and vars, and its ops token. On AWS, also the AWS CLI's profile this machine reaches it with.
+ */
+const Entry = Schema.Union([
+  Schema.Struct({ ...Own, ...CloudflareFacts.fields }),
+  Schema.Struct({ ...Own, ...AwsFacts.fields, profile: Schema.optionalKey(Schema.String) }),
+]);
 export type Entry = typeof Entry.Type;
+export type CloudflareEntry = Extract<Entry, { worker: string }>;
+export type AwsEntry = Extract<Entry, { aws: unknown }>;
+export const isAws = (e: Entry): e is AwsEntry => "aws" in e;
+
+/** Where an instance answers: its app's address. */
+export const entryOrigin = (e: Entry) => (isAws(e) ? `https://${e.aws.app}` : originOf(e.host));
 
 const ConfigFile = Schema.Struct({ instances: Schema.Array(Entry) });
 export type Config = typeof ConfigFile.Type;

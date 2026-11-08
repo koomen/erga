@@ -23,6 +23,7 @@ const facts = (over: Partial<Facts> = {}): Facts => ({
   account: "a".repeat(32),
   zones: ["example.com", "pages.example"],
   workersSubdomain: "me",
+  stack: null,
   targets: {},
   secrets: [],
   ...over,
@@ -37,7 +38,7 @@ test("the answers are read as the person types them, and a bad one says why", ()
   expect(parseAnswer("feedback", "no")).toEqual({ value: "" });
   expect("problem" in parseAnswer("feedback", "not a repo")).toBe(true);
   expect("problem" in parseAnswer("host", "not a host")).toBe(true);
-  expect(answersProblem({ ...answers, host: "erga.other.org" }, ["example.com"])).toContain("isn't on a domain");
+  expect(answersProblem({ ...answers, host: "erga.other.org" }, ["example.com"])).toContain("isn't on one of the domains");
   expect(answersProblem({ ...answers, pages: "example.com" }, ["example.com"])).toContain("different domain");
   expect(answersProblem(answers, ["example.com"])).toBeNull();
 });
@@ -175,7 +176,7 @@ test("the entries come from the answers alone: the names, the plain settings, th
 });
 
 test("the GitHub App's manifest has every server's callback, and no permissions", () => {
-  const m = githubManifest({ ...answers, staging: "erga-staging.example.com" }, "http://localhost:4747/github/created");
+  const m = githubManifest({ ...answers, staging: "erga-staging.example.com" }, facts(), "http://localhost:4747/github/created")!;
   expect(m.callback_urls).toEqual([
     "https://erga.example.com/auth/github/callback",
     "https://erga-staging.example.com/auth/github/callback",

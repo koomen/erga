@@ -3,9 +3,9 @@
 // Erga's service worker), then the tools API (versions, files, a page's own API, view_page), the
 // homepage signed out, the edge's caches (each second request a hit), and the person's agent. Each line says what it saw: ok, or what failed.
 //
-//   SESSION_SECRET=... bun deploy/celld/check.ts <origin> [login]
+//   SESSION_SECRET=... bun deploy/aws/check.ts <origin> <login>
 //
-// The session cookie is signed here with the server's SESSION_SECRET, for `login` (koomen), who must be a user there.
+// The session cookie is signed here with the server's SESSION_SECRET, for `login`, who must be a user there.
 // The tools get a documents token made with it, as on the Settings page, which ends the next day.
 
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -17,10 +17,10 @@ import { cookieName, SESSION_COOKIE, sign } from "../../server/identity/index.ts
 import { openEditor } from "../../e2e/helpers/editor";
 import type { Server } from "../../e2e/helpers/server";
 
-const [origin, login = "koomen"] = process.argv.slice(2);
+const [origin, login] = process.argv.slice(2);
 const secret = process.env.SESSION_SECRET;
-if (!origin || !secret) {
-  console.error("usage: SESSION_SECRET=... bun deploy/celld/check.ts <origin> [login]");
+if (!origin || !login || !secret) {
+  console.error("usage: SESSION_SECRET=... bun deploy/aws/check.ts <origin> <login>");
   process.exit(2);
 }
 const root = origin.replace(/\/+$/, "");

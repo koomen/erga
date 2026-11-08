@@ -183,17 +183,20 @@ async function register(arg: string | undefined, stagingOf: string | undefined) 
   // Read the file again: another terminal can have changed it while the admin approved.
   writeConfig(dir, withEntry(readConfig(dir), { host, ...(primary ? { stagingOf: primary } : {}), ...facts.deploy!, token }));
   pass(`${host} is registered in ${configPath(dir)}${primary ? `, as a staging instance of ${primary}` : ""}.`);
-  say(
-    `      Worker ${facts.deploy!.worker}, database ${facts.deploy!.database}, account ${facts.deploy!.account}, ${Object.keys(facts.deploy!.vars).length} plain settings. It runs ${facts.version ?? "no known commit"}.`
-  );
+  const d = facts.deploy!;
+  const where =
+    "aws" in d
+      ? `AWS account ${d.aws.account}, ${d.aws.region}, stack ${d.aws.stack}`
+      : `Worker ${d.worker}, database ${d.database}, account ${d.account}`;
+  say(`      ${where}, ${Object.keys(d.vars).length} plain settings. It runs ${facts.version ?? "no known commit"}.`);
 }
 
 async function login(arg: string | undefined) {
-  const { host, origin } = await instanceOf(arg, "bun erga login <host>");
-  const { configPath, entryOf, ergaDir, readConfig, withEntry, writeConfig } = await import("./config");
+  const { host } = await instanceOf(arg, "bun erga login <host>");
+  const { configPath, entryOf, entryOrigin, ergaDir, readConfig, withEntry, writeConfig } = await import("./config");
   const dir = ergaDir();
-  if (!entryOf(readConfig(dir), host)) fail(`${host} has no entry in ${configPath(dir)}.`, `bun erga register ${host}`);
-  const { token } = await signInTo(origin);
+  const had = entryOf(readConfig(dir), host) ?? fail(`${host} has no entry in ${configPath(dir)}.`, `bun erga register ${host}`);
+  const { token } = await signInTo(entryOrigin(had));
   const entry =
     entryOf(readConfig(dir), host) ??
     fail(`${host}'s entry left ${configPath(dir)} while the admin approved.`, `bun erga register ${host}`);

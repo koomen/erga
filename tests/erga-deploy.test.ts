@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { type Entry, entryOf, readConfig, secretsPath, withEntry, writeConfig } from "../deploy/cli/config";
+import { type CloudflareEntry, type Entry, entryOf, readConfig, secretsPath, withEntry, writeConfig } from "../deploy/cli/config";
 import {
   deployInstance,
   deployStaging,
@@ -135,7 +135,7 @@ describe("bun erga deploy", () => {
       "name the commit"
     );
     const config = withEntry(withEntry({ instances: [] }, primary), { ...staging, worker: "erga" });
-    expect(guardTarget(entryTarget(config, config.instances[1]))).toContain("would replace production's Worker (erga)");
+    expect(guardTarget(entryTarget(config, config.instances[1] as CloudflareEntry))).toContain("would replace production's Worker (erga)");
     expect(entryTarget(config, primary).vars.SNAPSHOT_FROM).toBeUndefined();
   });
 
@@ -267,7 +267,7 @@ describe("bun erga deploy --home", () => {
     expect(mock.state.domains).toContainEqual(expect.objectContaining({ hostname: "example.org", service: "erga" }));
     expect(JSON.parse(bindingsOf(mock.state, "erga").ERGA_DEPLOY.text).home).toBe("example.org");
     expect(lines).toContainEqual(expect.stringContaining("the homepage on https://example.org"));
-    expect(entryOf(readConfig(dir), "example.com")?.home).toBe("example.org");
+    expect((entryOf(readConfig(dir), "example.com") as CloudflareEntry | null)?.home).toBe("example.org");
     expect(records().at(-1)?.[0].command).toBe("bun erga deploy HEAD example.com --home Example.org");
 
     // The next deploy keeps it, from the entry's copy.
