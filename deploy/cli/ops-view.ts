@@ -9,6 +9,7 @@ import { esc } from "../../shared/html";
 import { plural, timeAgo } from "../../shared/time";
 import type { Config, Entry } from "./config";
 import { type Alive, activeJobs, deploysTo, type JobState, jobState, type Line, type Run } from "./job-state";
+import { GITHUB, isStale, type Polls } from "./poll-state";
 
 /** What an instance answered last: the commit it runs and its health, or why it gave none. */
 export interface Answer {
@@ -46,16 +47,15 @@ export interface Branch extends Commit {
   conflicts: string[];
 }
 
-/** What the clone shows, as it is: no fetch. */
+/** What the clone shows, as the last fetch left it. */
 export interface Git {
   /** origin/staging's and origin/main's commits, newest first. */
   log: Commit[];
   branches: Branch[];
-  /** GitHub answered with its branches (git ls-remote); false: `branches` is as the clone last saw them. */
-  github: boolean;
   /** The branch the feature branches are counted against. */
   base: string;
   main: string | null;
+  staging: string | null;
   /** The instances' commits that are not in `log`, and whether the clone has each one. */
   elsewhere: Record<string, boolean>;
 }
@@ -69,6 +69,8 @@ export interface Facts {
   setup: string;
   /** The command that this page started (job-state.ts, stepRun). */
   run: Run;
+  /** The checks of GitHub and of each instance (poll-state.ts). */
+  polls: Polls;
 }
 
 /** A job record from its file's lines, or null if it has no start line. */
@@ -164,10 +166,15 @@ function stateOf(a: Answer | undefined): { cls: string; what: string } {
   return { cls: "ok", what: `runs ${a.version ?? "no known commit"}` };
 }
 
-function side(groups: Group[], chosen: Group | null, answers: Record<string, Answer>): string {
+function side(groups: Group[], chosen: Group | null, f: Facts, now: number): string {
   if (!groups.length) return `<p class="none">No instances.</p>`;
   const item = (e: Entry, cls: string) => {
-    const st = e.token ? stateOf(answers[e.host]) : { cls: "", what: "not registered yet: bun erga setup" };
+    const source = f.polls.sources[e.host];
+    const st = !e.token
+      ? { cls: "", what: "not registered yet: bun erga setup" }
+      : source && isStale(source, f.polls.period, now)
+        ? { cls: "stale", what: `stale: ${source.error ?? "no answer yet"}` }
+        : stateOf(f.answers[e.host]);
     return `<span class="${cls}" title="${esc(`${e.host}: ${st.what}`)}"><i class="light ${st.cls}"></i><span>${esc(e.host)}</span></span>`;
   };
   return `<ul class="primaries">${groups
@@ -280,10 +287,48 @@ function branches(git: Git, active: JobState[], busy: string, now: number): stri
         })
         .join("")
     : `<li class="feature none">No feature branches in this clone.</li>`;
-  const note = git.github
-    ? ""
-    : `<p class="note">GitHub did not answer <code>git ls-remote</code>: this list is as the clone last saw it, and can show branches that GitHub deleted.</p>`;
-  return `<section class="box" aria-labelledby="features-head"><h3 id="features-head">Feature branches</h3>${note}<ul class="features">${list}</ul></section>`;
+  return `<section class="box" aria-labelledby="features-head"><h3 id="features-head">Feature branches</h3><ul class="features">${list}</ul></section>`;
+}
+
+/** "12 s ago", then as timeAgo. */
+const ago = (t: number, now: number) => (now - t < 60_000 ? `${Math.max(0, Math.round((now - t) / 1000))} s ago` : timeAgo(t, now));
+
+/**
+ * Sources: what the page knows and from where. GitHub (the clone's fetch) and each instance of the group, each with
+ * its last check, what it answered, its error, and "stale" when it had no good answer for a few periods.
+ */
+function sources(g: Group, f: Facts, now: number): string {
+  const row = (name: string, label: string, said: string) => {
+    const s = f.polls.sources[name];
+    if (!s) return "";
+    const stale = isStale(s, f.polls.period, now);
+    const when =
+      s.at == "asking" && s.checked == null
+        ? "checking…"
+        : s.checked == null
+          ? "not checked yet"
+          : `checked ${ago(s.checked, now)}${s.at == "asking" ? " · checking…" : ""}`;
+    const cls = stale ? "stale" : s.error ? "bad" : s.checked != null ? "ok" : "";
+    const what = s.error
+      ? `<span class="s-err">${esc(s.error)}</span>${s.good ? ` · last good ${esc(ago(s.good, now))}` : ""}`
+      : s.checked != null
+        ? esc(said)
+        : "";
+    return `<li class="source ${cls}" data-source="${esc(name)}"><i class="light ${cls}"></i><b>${esc(label)}</b><span class="s-when" title="${esc(s.checked ? new Date(s.checked).toLocaleString() : "")}">${esc(when)}</span>${stale ? `<span class="s-stale">stale</span>` : ""}<span class="s-what">${what}</span></li>`;
+  };
+  const git = "error" in f.git ? null : f.git;
+  const heads = git
+    ? [git.staging && `staging ${sha7(git.staging)}`, git.main && `main ${sha7(git.main)}`].filter(Boolean).join(" · ")
+    : "";
+  const instance = (e: Entry) => {
+    const a = f.answers[e.host];
+    return row(
+      e.host,
+      e.host,
+      a ? `runs ${a.version ?? "no known commit"} · ${a.healthy == null ? "health unknown" : a.healthy ? "healthy" : "not healthy"}` : ""
+    );
+  };
+  return `<section class="box sources" aria-labelledby="sources-head"><h3 id="sources-head">Sources</h3><ul>${row(GITHUB, "GitHub", `git fetch: ${heads || "no staging or main"}`)}${[g.primary, ...g.staging].map(instance).join("")}</ul></section>`;
 }
 
 /** The time of the last good deploy of `sha` to `host`, from the job records. */
@@ -383,7 +428,7 @@ export function viewHtml(f: Facts, name: string, now = Date.now()): string {
   const [host = "", wanted = "", id = ""] = name.split("/");
   const groups = groupsOf(f.config, f.setup);
   const g = chosenOf(groups, host);
-  const sidebar = `<aside class="side" aria-label="Instances"><h2 class="side-head">Instances</h2>${side(groups, g, f.answers)}</aside>`;
+  const sidebar = `<aside class="side" aria-label="Instances"><h2 class="side-head">Instances</h2>${side(groups, g, f, now)}</aside>`;
   if (!g)
     return `${sidebar}<section class="main"><p class="note">No instance is registered in this clone's .erga/config.json. Add one: <code>bun erga register &lt;host&gt;</code></p></section>`;
   // A primary that setup has not registered yet opens on its Setup tab.
@@ -399,9 +444,10 @@ export function viewHtml(f: Facts, name: string, now = Date.now()): string {
         ? history(g, mine, now)
         : tab == "setup"
           ? setupTab(g, f.setup)
-          : "error" in f.git
-            ? `<p class="note bad">${esc(f.git.error)}</p>`
-            : branches(f.git, activeJobs(f.jobs, f.run), busyWith(f), now) + log(g, { ...f, git: f.git }, now);
+          : sources(g, f, now) +
+            ("error" in f.git
+              ? `<p class="note bad">${esc(f.git.error)}</p>`
+              : branches(f.git, activeJobs(f.jobs, f.run), busyWith(f), now) + log(g, { ...f, git: f.git }, now));
   return `${sidebar}<section class="main" data-primary="${esc(g.primary.host)}" data-tab="${tab}"${newest(groups, f.jobs)}><h2 class="title">${esc(g.primary.host)}</h2>${tabs}${jobLine(g, mine, f.run, now)}${f.run.at == "failed" ? `<p class="note bad failed">${esc(f.run.why)}</p>` : ""}<div class="tab-body">${body}</div></section>`;
 }
 
