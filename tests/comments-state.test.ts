@@ -24,15 +24,21 @@ function run(s: State, ...events: CommentEvent[]) {
   return { state: s, effects };
 }
 
-test("a new comment: Enter sends it once; its answer is the thread in use, and the focus goes back to the text", () => {
-  const { state, effects } = run(
+test("a new comment: Enter sends it once, and it shows at once, pending, its box empty; its answer is the thread in use", () => {
+  const sent = run(
     initial(),
     { type: "compose", anchor: ANCHOR },
     { type: "send", text: "  June is cheaper?  " },
-    { type: "send", text: "June is cheaper?" },
-    { type: "answered", action: "add", thread: thread("t1", "June is cheaper?") }
+    { type: "send", text: "x" }
   );
-  expect(effects).toEqual([{ do: "call", action: "add", anchor: ANCHOR, text: "June is cheaper?" }, { do: "focus" }]);
+  expect(sent.effects).toEqual([
+    { do: "cleared", card: "" },
+    { do: "call", action: "add", anchor: ANCHOR, text: "June is cheaper?" },
+  ]);
+  expect(sent.state.sending).toEqual({ "": "June is cheaper?" });
+  const { state, effects } = run(sent.state, { type: "answered", action: "add", thread: thread("t1", "June is cheaper?") });
+  expect(effects).toEqual([{ do: "focus" }]);
+  expect(state.sending).toEqual({});
   expect(state).toMatchObject({ draft: null, active: "t1", threads: [thread("t1", "June is cheaper?")] });
 });
 
@@ -44,18 +50,19 @@ test("Esc closes the new comment, then the thread in use; an empty one sends not
   expect(run(s, { type: "cancel" }).state.active).toBeNull();
 });
 
-test("a new comment that fails: it stays, to send again, and the reason shows", () => {
+test("a new comment that fails: its text goes back into its box, the reason beside it; sent again, the reason goes", () => {
   const { state, effects } = run(
     initial(),
     { type: "compose", anchor: ANCHOR },
     { type: "send", text: "x" },
-    { type: "failed", action: "add", message: "No." }
+    { type: "failed", action: "add", message: "No.", card: "" }
   );
-  expect(state.draft).toEqual({ anchor: ANCHOR, sending: false });
-  expect(effects.at(-1)).toEqual({ do: "explain", message: "No." });
+  expect(state).toMatchObject({ draft: { anchor: ANCHOR }, sending: {}, errors: { "": "No." } });
+  expect(effects.at(-1)).toEqual({ do: "restore", card: "", text: "x" });
+  expect(run(state, { type: "send", text: "x" }).state.errors).toEqual({});
 });
 
-test("a reply goes to its thread, and its box empties once it's in", () => {
+test("a reply goes to its thread: its box empties at once, and it's pending until the answer", () => {
   const s = run(initial(), { type: "listed", threads: [thread("t1", "a")] }).state;
   const { state, effects } = run(
     s,
@@ -63,10 +70,15 @@ test("a reply goes to its thread, and its box empties once it's in", () => {
     { type: "answered", action: "reply", thread: thread("t1", "a", "b") }
   );
   expect(effects).toEqual([
+    { do: "cleared", card: "t1" },
     { do: "call", action: "reply", thread: "t1", text: "b" },
-    { do: "cleared", thread: "t1" },
   ]);
   expect(state.threads[0].comments).toHaveLength(2);
+  expect(state.sending).toEqual({});
+  // Refused: back into its box, with the reason.
+  const refused = run(s, { type: "send", text: "b", thread: "t1" }, { type: "failed", action: "reply", message: "No.", card: "t1" });
+  expect(refused.effects.at(-1)).toEqual({ do: "restore", card: "t1", text: "b" });
+  expect(refused.state.errors).toEqual({ t1: "No." });
 });
 
 test("resolve: the thread goes, with Undo for a while; Undo reopens it; the timer's end takes Undo away", () => {

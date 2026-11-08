@@ -119,3 +119,93 @@ test("on a phone: the Comment button, a sheet at the bottom; a tap on a highligh
   await expect.poll(() => cards(ed)).toEqual(["T tester now Or five?"]);
   expect(await sheet()).toEqual([0, 0, 0]);
 });
+
+/**
+ * The new comment's box, as the page draws it: its height, its line's height, and how far from the line's middle the
+ * box's middle and the send button's middle are (px). The text starts at the box's top, after its padding.
+ */
+const box = (ed: Editor) =>
+  ed.comments<{ box: number; line: number; boxMid: number; goMid: number }>(`(() => {
+    const box = C.querySelector(".card.draft .reply"), area = box.querySelector("textarea"), go = box.querySelector(".go");
+    const s = getComputedStyle(area), lh = parseFloat(s.lineHeight);
+    const b = box.getBoundingClientRect(), a = area.getBoundingClientRect(), g = go.getBoundingClientRect();
+    const line = a.top + parseFloat(s.borderTopWidth) + parseFloat(s.paddingTop) + lh / 2;
+    return { box: Math.round(b.height), line: Math.round(lh), boxMid: Math.round(b.top + b.height / 2 - line), goMid: Math.round(g.top + g.height / 2 - line) };
+  })()`);
+
+for (const [where, width] of [
+  ["desktop", 1100],
+  ["phone", 390],
+] as const)
+  test(`${where}: the comment box is one line high, its line and ↑ in its middle; it grows as the text wraps`, async ({ tab }) => {
+    await tab.page.setViewportSize({ width, height: 760 });
+    const ed = await openEditor(tab, await servers.main(), "empty");
+    await ed.clickEnd("p");
+    await ed.idle();
+    await ed.type("Stay six nights in Lisbon.");
+    await ed.press("ArrowLeft");
+    for (let i = 0; i < 6; i++) await ed.press("Shift+ArrowLeft");
+    await ed.press("ControlOrMeta+Alt+m");
+    await ed.type("Or five?");
+    const one = (await box(ed))!;
+    // One line, with the box's padding and border (5 + 5 + 2) and the text's own (3 + 3): no more.
+    expect(one.box - one.line).toBeLessThanOrEqual(18);
+    expect(Math.abs(one.boxMid)).toBeLessThanOrEqual(1);
+    expect(Math.abs(one.goMid)).toBeLessThanOrEqual(1);
+    // Text that wraps: the box grows a line at a time.
+    await ed.type(" We could fly out on the Saturday instead, and come back on the Thursday after.");
+    await expect.poll(async () => (await box(ed))!.box).toBeGreaterThanOrEqual(one.box + one.line);
+  });
+
+/** The new comment's card, or a thread's: its pending text, whether its box waits, what's in the box, and its error. */
+const shape = (ed: Editor, sel: string) =>
+  ed.comments<{ pending: string[]; busy: boolean; box: string; error: string | null }>(`(() => {
+    const c = C.querySelector(${JSON.stringify(sel)}), area = c.querySelector("textarea");
+    return { pending: [...c.querySelectorAll(".msg.pending")].map((m) => m.textContent), busy: area.readOnly, box: area.value,
+      error: c.querySelector(".err")?.textContent ?? null };
+  })()`);
+
+test("send shows the comment at once, pending, its box empty and waiting; the answer makes it normal; an error puts it back", async ({
+  tab,
+}) => {
+  const ed = await openEditor(tab, await servers.main(), "empty");
+  // The server's answers to the comment op wait for the test (or the test answers itself with an error).
+  let release = () => {};
+  let refuse = false;
+  await tab.page.route("**/api/tools/comment?*", async (route) => {
+    if (route.request().method() != "POST") return route.continue();
+    // (The API's refusal as its body says it: a status of 4xx or 5xx would also put an error in the console.)
+    if (refuse) return route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":false,"error":"The server is busy."}' });
+    await new Promise<void>((r) => (release = r));
+    await route.continue();
+  });
+  await ed.clickEnd("p");
+  await ed.idle();
+  await ed.type("Stay six nights in Lisbon.");
+  await ed.press("ArrowLeft");
+  for (let i = 0; i < 6; i++) await ed.press("Shift+ArrowLeft");
+  await ed.press("ControlOrMeta+Alt+m");
+  await ed.type("Or five?");
+  await ed.press("Enter");
+  // Before the server answers.
+  await expect.poll(() => shape(ed, ".card.draft")).toEqual({ pending: ["Or five?"], busy: true, box: "", error: null });
+  release();
+  await expect.poll(() => cards(ed)).toEqual(["T tester now Or five?"]);
+  expect((await shape(ed, ".card.th[data-thread]"))!.pending).toEqual([]);
+
+  // A reply, the same.
+  await ed.clickIn("erga-comments", ".card.th textarea");
+  await ed.type("Or four.");
+  await ed.press("Enter");
+  await expect.poll(() => shape(ed, ".card.th[data-thread]")).toEqual({ pending: ["Or four."], busy: true, box: "", error: null });
+  release();
+  await expect.poll(() => cards(ed)).toEqual(["T tester now Or five? T tester now Or four."]);
+
+  // Refused: the text is back in its box, the reason in the card.
+  refuse = true;
+  await ed.type("Or three.");
+  await ed.press("Enter");
+  await expect
+    .poll(() => shape(ed, ".card.th[data-thread]"))
+    .toEqual({ pending: [], busy: false, box: "Or three.", error: "The server is busy." });
+});

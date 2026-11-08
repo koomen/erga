@@ -64,6 +64,11 @@ ${LOOK}
 .sp { flex: 1; }
 .msg { margin: 4px 0 10px 30px; font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg:last-child { margin-bottom: 0; }
+/* Sent, not answered yet. */
+.msg.pending { color: var(--soft); }
+.err { margin: 0 0 6px; color: #c2410c; font-size: 12.5px; }
+.c.dark .err { color: #f59a6a; }
+.reply.busy { opacity: 0.6; }
 button { border: 0; background: transparent; padding: 0; font: inherit; color: inherit; cursor: pointer; display: grid; place-items: center; flex: none; }
 button:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 svg { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
@@ -73,8 +78,10 @@ svg { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: 
 .reply { display: flex; align-items: flex-end; gap: 6px; margin: 2px 0 0; border: 1px solid var(--rule); border-radius: 9px; padding: 5px 5px 5px 10px; }
 .reply:focus-within { border-color: var(--caret); }
 .draft .reply { margin-top: 10px; }
-textarea { flex: 1; min-width: 0; border: 0; outline: none; resize: none; background: transparent; color: var(--fg); font: 13px/1.4 var(--font);
-  padding: 3px 0; margin: 0; height: 21px; max-height: 160px; }
+/* One line is as high as the send button (3 + 18 + 3 = 24), so the line and the button share a middle. Border-box: its
+   height is the scrollHeight that grow() sets, padding and all. */
+textarea { flex: 1; min-width: 0; border: 0; outline: none; resize: none; background: transparent; color: var(--fg); font: 13px/18px var(--font);
+  box-sizing: border-box; padding: 3px 0; margin: 0; height: 24px; max-height: 160px; }
 textarea::placeholder { color: var(--chrome); }
 .go { width: 24px; height: 24px; border-radius: 6px; background: var(--rule); color: var(--soft); }
 .reply.has .go { background: var(--caret); color: #fff; }
@@ -86,7 +93,7 @@ textarea::placeholder { color: var(--chrome); }
 .sheet { left: 0; right: 0; bottom: 0; width: auto; border-radius: 16px 16px 0 0; padding: 8px 14px 72px; }
 .grab { width: 36px; height: 4px; border-radius: 2px; background: var(--rule); margin: 0 auto 10px; }
 .th:not(.sheet) .grab { display: none; }
-@media (pointer: coarse) { textarea { font-size: 16px; height: 22px; } }
+@media (pointer: coarse) { textarea { font-size: 16px; line-height: 22px; padding: 1px 0; } }
 `;
 
 const ICON = {
@@ -139,10 +146,10 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
   function run(f: Effect) {
     if (f.do == "focus") page.focus();
     else if (f.do == "explain") o.explain(f.message);
-    else if (f.do == "cleared") {
-      const area = cards.get(f.thread)?.el.querySelector("textarea");
+    else if (f.do == "cleared" || f.do == "restore") {
+      const area = cards.get(f.card)?.el.querySelector("textarea");
       if (area) {
-        area.value = "";
+        area.value = f.do == "restore" ? f.text : "";
         grow(area);
       }
     } else if (f.do == "timer") {
@@ -158,10 +165,11 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
           : f.action == "reply"
             ? { action: "reply", thread: f.thread, text: f.text }
             : { action: f.action, thread: f.thread.id };
-      const thread = "thread" in f && typeof f.thread == "object" ? f.thread : undefined;
+      // What a failure is about: the card whose text it sent, or the thread it changed.
+      const about = f.action == "add" ? { card: "" } : f.action == "reply" ? { card: f.thread } : { thread: f.thread };
       o.call("comment", args).then(
         (r) => send({ type: "answered", action: f.action, thread: r.thread ?? null }),
-        (err: Error) => send({ type: "failed", action: f.action, message: err.message, ...(thread ? { thread } : {}) })
+        (err: Error) => send({ type: "failed", action: f.action, message: err.message, ...about })
       );
     }
   }
@@ -236,7 +244,7 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
       const on = t.id == state.active;
       if (narrow && !on) continue;
       want.add(t.id);
-      const el = card(t.id, JSON.stringify([t.comments, on]), () => threadHTML(t, on));
+      const el = card(t.id, JSON.stringify([t.comments, on, state.sending[t.id], state.errors[t.id]]), () => threadHTML(t, on));
       el.classList.toggle("dim", !on);
       el.classList.toggle("sheet", narrow);
       const top = ranges[0]?.getClientRects()[0]?.top ?? 0;
@@ -244,9 +252,8 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     }
     if (state.draft && (!narrow || !state.active)) {
       want.add("");
-      const el = card("", "draft", draftHTML);
+      const el = card("", JSON.stringify([state.sending[""], state.errors[""]]), draftHTML);
       el.classList.toggle("sheet", narrow);
-      el.classList.toggle("sending", state.draft.sending);
       const last = draftRanges.at(-1)?.getClientRects();
       const r = last?.[last.length - 1];
       if (!narrow && r) {
@@ -308,22 +315,36 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
   }
 
   const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
-  function whoHTML(login: string, via: string | undefined, at: string | null, resolve: boolean): string {
+  /** A comment's first line: who, how (an agent), when (as it shows), and ✓ to resolve its thread. */
+  function whoHTML(login: string, via: string | undefined, when: string | null, resolve: boolean): string {
     const p = o.person(login);
     return `<p class="who"><span class="a" style="background:${esc(p.color)}">${esc([...p.name][0]?.toUpperCase() ?? "?")}</span><span class="nm">${esc(p.name)}${
       via ? ` <span class="via">via ${esc(via)}</span>` : ""
-    }</span>${at ? `<span class="t">${esc(shortTime(at))}</span>` : ""}${
+    }</span>${when ? `<span class="t">${esc(when)}</span>` : ""}${
       resolve
         ? `<span class="sp"></span><button type="button" class="rs" data-act="resolve" aria-label="Resolve" title="Resolve">${svg(ICON.check)}</button>`
         : ""
     }</p>`;
   }
-  const replyHTML = (label: string) =>
-    `<div class="reply"><textarea rows="1" placeholder="${label}" aria-label="${label}"></textarea><button type="button" class="go" data-act="send" aria-label="Send (Enter)" title="Send  Enter">${svg(ICON.up)}</button></div>`;
+  /** A card's box: it waits while its text is on its way; the reason the server refused it shows above it. */
+  const replyHTML = (label: string, card: string) => {
+    const busy = card in state.sending,
+      error = state.errors[card];
+    return `${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}<div class="reply${busy ? " busy" : ""}"><textarea rows="1" placeholder="${label}" aria-label="${label}"${
+      busy ? ' readonly aria-disabled="true"' : ""
+    }></textarea><button type="button" class="go" data-act="send" aria-label="Send (Enter)" title="Send  Enter"${busy ? ' aria-disabled="true"' : ""}>${svg(ICON.up)}</button></div>`;
+  };
+  /** The text a card sent, as it shows until the server answers. */
+  const pendingHTML = (card: string, who: boolean) =>
+    card in state.sending
+      ? (who ? whoHTML(o.me, undefined, "sending…", false) : "") + `<p class="msg pending">${esc(state.sending[card])}</p>`
+      : "";
   const threadHTML = (t: Thread, on: boolean) =>
-    t.comments.map((c, i) => whoHTML(c.by, c.via, c.at, on && i == 0) + `<p class="msg">${esc(c.text)}</p>`).join("") +
-    (on ? replyHTML("Reply") : "");
-  const draftHTML = () => whoHTML(o.me, undefined, null, false) + replyHTML("Comment");
+    t.comments.map((c, i) => whoHTML(c.by, c.via, shortTime(c.at), on && i == 0) + `<p class="msg">${esc(c.text)}</p>`).join("") +
+    pendingHTML(t.id, true) +
+    (on ? replyHTML("Reply", t.id) : "");
+  const draftHTML = () =>
+    whoHTML(o.me, undefined, "" in state.sending ? "sending…" : null, false) + pendingHTML("", false) + replyHTML("Comment", "");
 
   function grow(area: HTMLTextAreaElement) {
     area.style.height = "";
