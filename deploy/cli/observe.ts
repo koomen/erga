@@ -38,8 +38,41 @@ export const repoOf = (): string | null => {
   return m ? m[1] : null;
 };
 
-/** Brings the checkout's view of GitHub up to date: branches (deleted ones too) and tags. */
-export const fetchOrigin = () => git("fetch", "--quiet", "--prune", "--tags", "--force", "origin");
+const FETCH = ["fetch", "--quiet", "--prune", "--tags", "--force", "origin"];
+
+/**
+ * Brings the checkout's view of GitHub up to date: branches (deleted ones too) and tags. Another fetch at the same
+ * moment (the ops page's, each 30 seconds, or another worktree's) can hold a ref's lock: it tries once more.
+ */
+export const fetchOrigin = () => {
+  const r = git(...FETCH);
+  if (r.ok || !/\.lock\b/.test(r.err)) return r;
+  Bun.sleepSync(1000);
+  return git(...FETCH);
+};
+
+/** fetchOrigin, for the ops page: it does not block, and stops after `timeout` ms. Null when it worked, else why not. */
+export async function fetchGitHub(cwd = ROOT, timeout = 30_000): Promise<string | null> {
+  try {
+    const p = Bun.spawn(["git", ...FETCH], {
+      cwd,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+      timeout,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+    const err = (await new Response(p.stderr).text()).trim();
+    const code = await p.exited;
+    if (code == 0) return null;
+    return p.signalCode
+      ? `git fetch took more than ${timeout / 1000} s`
+      : (err.split("\n").find((l) => /^(fatal|error):/i.test(l)) ?? err) || `git fetch: exit ${code}`;
+  } catch (e) {
+    // The clone went away (a test's), or git is not there.
+    return `git fetch: ${(e as Error).message}`;
+  }
+}
 
 export const headOf = (ref: string): string | null => {
   const r = git("rev-parse", "--verify", "--quiet", `${ref}^{commit}`);

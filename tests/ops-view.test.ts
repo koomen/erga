@@ -6,6 +6,7 @@ import { expect, test } from "bun:test";
 import type { Entry } from "../deploy/cli/config";
 import { type Run, stepRun } from "../deploy/cli/job-state";
 import { type Branch, type Facts, groupsOf, jobOf, viewHtml } from "../deploy/cli/ops-view";
+import { startPolls } from "../deploy/cli/poll-state";
 
 const NOW = Date.parse("2026-11-05T12:00:00Z");
 const entry = (host: string, stagingOf?: string): Entry => ({
@@ -48,10 +49,11 @@ test("the view: each primary with its staging instances, the job line, and live 
       "staging.erga.dev": { version: "3".repeat(12), healthy: true },
       "erga.example.org": { version: "9".repeat(12), healthy: true },
     },
-    git: { log, branches: [], github: true, base: "staging", main: "1".repeat(40), elsewhere: { ["9".repeat(12)]: false } },
+    git: { log, branches: [], base: "staging", main: "1".repeat(40), staging: "3".repeat(40), elsewhere: { ["9".repeat(12)]: false } },
     jobs: [jobOf(line(start) + line({ commit: "1".repeat(40) }) + line({ result: "ok", ended: "2026-11-05T11:55:00.000Z" }), () => true)!],
     setup: "",
     run: { at: "idle" },
+    polls: startPolls(30_000),
   };
   const html = viewHtml(facts, "staging.erga.dev", NOW);
   // A staging instance's name chooses its primary.
@@ -85,6 +87,7 @@ test("Logs shows the job that runs, else the last one, or the one the hash names
     ],
     setup: "",
     run: { at: "idle" },
+    polls: startPolls(30_000),
   };
   const logs = viewHtml(facts, "erga.dev/logs", NOW);
   expect(logs).toContain('<section class="logs" data-job="runs"');
@@ -110,6 +113,7 @@ test("Setup: the setup's host shows before it has an entry, and opens on its che
     jobs: [],
     setup: "new.example.com",
     run: { at: "idle" },
+    polls: startPolls(30_000),
   };
   expect(groupsOf(config, facts.setup).map((g) => [g.primary.host, g.primary.token])).toEqual([
     ["erga.dev", "t"],
@@ -169,14 +173,15 @@ const deploys = (more: Partial<Facts> = {}, staging = "3", production = "1"): Fa
   git: {
     log: commits,
     branches: [branch("clean"), branch("clash", { conflicts: ["a.ts"] }), branch("done", { ahead: 0 })],
-    github: true,
     base: "staging",
     main: "1".repeat(40),
+    staging: "3".repeat(40),
     elsewhere: {},
   },
   jobs: [],
   setup: "",
   run: { at: "idle" },
+  polls: startPolls(30_000),
   ...more,
 });
 /** The page's own command as it starts: a merge of a branch, or a deploy of commit n...n to staging.erga.dev. */
@@ -402,4 +407,42 @@ test("a merge: staging's cell says Deploying… until the merge ends, after the 
   // The merge ends: live.
   const ended = viewHtml(deploys({ jobs: [jobOf(deploy, () => true)!] }, "2"), "erga.dev", NOW);
   expect(rowOf(ended, "2")).toContain("live");
+});
+
+test("the page's server checks GitHub and each instance at start and on a page load, and shows each source", async () => {
+  const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { serveOpsPage } = await import("../deploy/cli/ops-page");
+  const dir = mkdtempSync(join(tmpdir(), "erga-ops-sources-"));
+  mkdirSync(join(dir, ".erga"));
+  writeFileSync(join(dir, ".erga/config.json"), JSON.stringify({ instances: [entry("erga.dev")] }));
+  const calls: string[] = [];
+  const page = serveOpsPage({
+    dir: join(dir, ".erga"),
+    cwd: dir,
+    port: 0,
+    fetch: async () => (calls.push("fetch"), "fatal: unable to access GitHub"),
+    ask: async () => (calls.push("ask"), { version: "1".repeat(12), healthy: true }),
+  });
+  const at = `http://127.0.0.1:${page.server.port}`;
+  const view = async () => (await fetch(`${at}/view?hash=erga.dev`)).text();
+  const until = async (ok: (html: string) => boolean) => {
+    for (let i = 0; i < 100 && !ok(await view()); i++) await Bun.sleep(20);
+    return view();
+  };
+  try {
+    const first = await until((h) => h.includes("healthy") && h.includes("unable to access"));
+    expect(first).toContain('<li class="source bad" data-source="github">');
+    expect(first).toMatch(/<li class="source ok" data-source="erga.dev">.*runs 111111111111 · healthy/);
+    expect(calls.sort()).toEqual(["ask", "fetch"]);
+    // A page load a moment later checks both again; /view (the page's redraws) does not.
+    await Bun.sleep(1100);
+    await fetch(`${at}/`);
+    await until(() => calls.length == 4);
+    expect(calls.sort()).toEqual(["ask", "ask", "fetch", "fetch"]);
+  } finally {
+    page.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
