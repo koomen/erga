@@ -224,7 +224,9 @@ export class DocumentObject extends DurableObject<Env> {
   }
   /** Its comments: a list, or a change (server/operations/comments.ts checked what the person may do). */
   async comments(call: CommentCall): Promise<CommentAnswer> {
-    return this.commentTables.run(call);
+    const answer = this.commentTables.run(call);
+    if (answer.ok && call.op != "list") this.tabs.commentsChanged();
+    return answer;
   }
   /** A viewer's page in one call (Document.view): what they may do, which file, the version, its text. */
   view(who: Who | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null> {
@@ -259,6 +261,7 @@ export class DocumentObject extends DurableObject<Env> {
       ...(askerFrom(request.headers) ? { who: askerFrom(request.headers)! } : {}),
       // A viewer's page (?watch=view, client/inline/viewer-live.ts): it hears what it shows change, and never joins the room.
       ...(url.searchParams.get("watch") == "view" ? { watch: true } : {}),
+      ...(url.searchParams.get("comments") == "1" ? { comments: true } : {}),
     };
     const [client, server] = Object.values(new WebSocketPair());
     // A tab holding another epoch's history is refused, never merged (on a socket of its own, closed at once).

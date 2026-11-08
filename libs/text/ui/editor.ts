@@ -43,6 +43,17 @@ export class PageEditor extends EditorInput {
     this.render();
   }
 
+  /** The selection now, in the source: the DOM's, which is ahead of the model until selectionchange fires. */
+  selectionNow(): { from: number; to: number } {
+    const { from, to } = this.currentSelection();
+    return { from, to };
+  }
+
+  /** DOM ranges over the page's text of source [from, to): the comments' highlights (comments.ts). */
+  textRanges(from: number, to: number): Range[] {
+    return this.doc && !this.rendering ? this.rangesIn(from, to) : [];
+  }
+
   /**
    * Applies changes made elsewhere (a collaborator, an agent, an edit on
    * disk) on top of the current document, with no highlight: an agent's new

@@ -525,6 +525,8 @@ export default function reader(C: ReaderConfig): void {
         zooms(true);
       }
     }
+    // The viewer's word on comments (libs/text/ui/frame.ts hears it too, once it's loaded): kept for the editor.
+    else if (type == "erga-comments") window.__ergaReader!.comments = e.data;
     // The viewer's zoom, for a page that zooms itself (window.ergaZoom): `by` times closer, or 0 for its own first view.
     else if (type == "erga-page-zoom" && typeof e.data.by == "number" && isFinite(e.data.by)) {
       const z = (window as Window & { ergaZoom?: unknown }).ergaZoom;

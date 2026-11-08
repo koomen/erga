@@ -1,5 +1,5 @@
-// The editor's own controls on the page: the style bar over a selection (bold, italic, code, link, clear formatting),
-// the link bar, and a note that says why something can't be done. They
+// The editor's own controls on the page: the style bar over a selection (bold, italic, code, link, clear formatting,
+// comment), the link bar, and a note that says why something can't be done. They
 // draw inside the page, in a shadow root of their own on its <html> (an erga- element: the editor's, which its walks
 // and its check pass by), with the editor's own look whatever the page's styles are; on a dark page, its dark look.
 // Their events stay theirs: the page's own handlers and the editor's below them never see them.
@@ -23,15 +23,18 @@ export interface ControlsPage {
   focus(): void;
 }
 
-/** The controls' look. */
-const STYLE = `
-:host { all: initial; }
-.c { --bg: #ffffff; --fg: #1c1c1f; --soft: #6b6b73; --chrome: #a1a1a9; --chrome-hover: #3f3f46; --rule: #e6e6ea;
+/** The controls' colours and font, light and dark (the comments' cards take them too: comments.ts). */
+export const LOOK = `.c { --bg: #ffffff; --fg: #1c1c1f; --soft: #6b6b73; --chrome: #a1a1a9; --chrome-hover: #3f3f46; --rule: #e6e6ea;
   --caret: #3b7cf0; --link: #2563c9; --panel-border: #e6e6ea; --shadow: 0 8px 30px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
   --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; --ease: cubic-bezier(0.65, 0, 0.35, 1); --morph-ms: 240ms;
   font: 13px/1 var(--font); color: var(--fg); color-scheme: light; }
 .c.dark { --bg: #18181b; --fg: #cacad2; --soft: #8f8f99; --chrome: #6c6c75; --chrome-hover: #d4d4da; --rule: #2c2c31;
-  --caret: #6aa1ff; --link: #7aa9ff; --panel-border: #2f2f35; --shadow: 0 10px 34px rgba(0, 0, 0, 0.45); color-scheme: dark; }
+  --caret: #6aa1ff; --link: #7aa9ff; --panel-border: #2f2f35; --shadow: 0 10px 34px rgba(0, 0, 0, 0.45); color-scheme: dark; }`;
+
+/** The controls' look. */
+const STYLE = `
+:host { all: initial; }
+${LOOK}
 .card { position: fixed; z-index: 2147483646; background: var(--bg); border: 1px solid var(--panel-border); box-shadow: var(--shadow); }
 .fmt { padding: 4px; border-radius: 10px; transform: translate(-50%, calc(-100% - 8px)); }
 .fmt.below { transform: translate(-50%, 8px); }
@@ -94,6 +97,8 @@ const ICON = {
   code: '<path d="m8.5 7.5-4.5 4.5 4.5 4.5M15.5 7.5l4.5 4.5-4.5 4.5"/>',
   link: '<path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/>',
   clear: '<path d="M5.5 5.5h11M11 5.5v13"/><path d="m15 14.5 5 5M20 14.5l-5 5"/>',
+  comment:
+    '<path d="M5.5 5h13A1.5 1.5 0 0 1 20 6.5v8.5a1.5 1.5 0 0 1-1.5 1.5H10l-4.25 3.25V16.5H5.5A1.5 1.5 0 0 1 4 15V6.5A1.5 1.5 0 0 1 5.5 5Z"/><path d="M12 8.25v5M9.5 10.75h5"/>',
   close: '<path d="M7 7l10 10M17 7 7 17"/>',
   open: '<path d="M14 5h5v5M19 5l-8 8"/><path d="M17 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h4"/>',
   unlink:
@@ -113,6 +118,8 @@ const HTML = `
       <button type="button" data-act="link" aria-label="Link (⌘⇧K)" title="Link  ⌘⇧K">${svg(ICON.link)}</button>
       <span class="sep" aria-hidden="true"></span>
       <button type="button" data-act="clear" aria-label="Clear formatting (⌘\\)" title="Clear formatting  ⌘\\">${svg(ICON.clear)}</button>
+      <span class="sep" aria-hidden="true"></span>
+      <button type="button" data-act="comment" aria-label="Comment (⌘⌥M)" title="Comment  ⌘⌥M">${svg(ICON.comment)}</button>
     </div>
     <div class="pane link" id="link" role="group" aria-label="Link" hidden>
       <div class="row">
@@ -138,7 +145,7 @@ const HTML = `
 <button type="button" class="card pill" id="refresh-pill" hidden></button>`;
 
 /** Events that stay in the controls: neither the page's own handlers nor the editor's see them. */
-const KEPT = [
+export const KEPT = [
   "pointerdown",
   "pointerup",
   "mousedown",
@@ -158,8 +165,11 @@ const KEPT = [
   "wheel",
 ];
 
-/** The controls, on the page in `win`: `place` says where links on it go (client/common/link-target.ts), `zoom` the shell's zoom. */
-export function mountControls(win: Window, page: ControlsPage, o: { place: () => Place | null; zoom: () => number }) {
+/**
+ * The controls, on the page in `win`: `place` says where links on it go (client/common/link-target.ts), `zoom` the
+ * shell's zoom, `comment` starts a comment on the selection (comments.ts).
+ */
+export function mountControls(win: Window, page: ControlsPage, o: { place: () => Place | null; zoom: () => number; comment: () => void }) {
   const doc = win.document;
   const host = doc.createElement("erga-controls");
   const root = host.attachShadow({ mode: "open" });
@@ -232,7 +242,7 @@ export function mountControls(win: Window, page: ControlsPage, o: { place: () =>
     // page's top: under them, a click on Bold is the shell's.
     const top = rect.top * z;
     const below = top < TOP_ROOM + (linking ? 114 : 46) || coarse.matches;
-    const half = (linking ? 300 : coarse.matches ? 220 : 200) / 2 + 10;
+    const half = (linking ? 300 : coarse.matches ? 290 : 240) / 2 + 10;
     const width = win.innerWidth * z;
     fmt.style.left = Math.max(half, Math.min(width - half, (rect.left + rect.width / 2) * z)) + "px";
     fmt.style.top = (below ? rect.bottom : rect.top) * z + "px";
@@ -307,6 +317,8 @@ export function mountControls(win: Window, page: ControlsPage, o: { place: () =>
       place(rect);
       const why = page.styleBlocker();
       for (const b of stylePane.querySelectorAll<HTMLButtonElement>("button")) {
+        // (A comment writes nothing into the text: it works where styles can't.)
+        if (b.dataset.act == "comment") continue;
         b.setAttribute("aria-disabled", String(!!why));
         b.dataset.why = why ?? "";
         if (b.dataset.style) b.setAttribute("aria-pressed", String(!why && page.hasStyle(b.dataset.style as InlineStyle)));
@@ -412,7 +424,10 @@ export function mountControls(win: Window, page: ControlsPage, o: { place: () =>
     if (b.dataset.style) done(page.toggleStyle(b.dataset.style as InlineStyle));
     else if (b.dataset.act == "link") openLink();
     else if (b.dataset.act == "clear") done(page.clearStyles());
-    else if (b.dataset.link == "close") closeLink();
+    else if (b.dataset.act == "comment") {
+      hide();
+      o.comment();
+    } else if (b.dataset.link == "close") closeLink();
     else if (b.dataset.link == "remove") applyLink({ url: "" });
     else if (b.dataset.link == "open") {
       const url = linkAddress(linkUrl.value),

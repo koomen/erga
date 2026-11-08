@@ -196,8 +196,31 @@ const keyed = (request: Request, rest: string) =>
   (rest == "/api/room" && request.headers.get("upgrade")?.toLowerCase() == "websocket") ||
   (rest.startsWith("/api/files/") && (request.method == "PUT" || request.method == "OPTIONS"));
 
+/** The comment ops a document's page calls with its edit key (server/api.ts): POST /api/tools/<op>?doc=<id>&key=<key>. */
+const KEYED_OPS = /^\/api\/tools\/(comment|comments)$/;
+
+/**
+ * A comment op from a document's page, on its pages origin (no cookie there): the document, the person its edit key
+ * names and who they are to it (null when the key is bad or old), and the page's origin, the only one it may come
+ * from. Null for any other request.
+ */
+export async function keyedOp(
+  platform: Platform,
+  url: URL
+): Promise<{ doc: Route; person: KeyPerson | null; who: Who | null; origin: string } | null> {
+  const id = url.searchParams.get("doc"),
+    key = url.searchParams.get("key");
+  if (!KEYED_OPS.test(url.pathname) || !id || !ID.test(id) || key == null) return null;
+  const doc = await platform.directory.route(id);
+  if (!doc) return null;
+  const person = await readEditKey(platform.secret, key, doc.owner, doc.id);
+  return { doc, person, who: person && keyWho(person, doc.id), origin: pagesOrigin(doc.owner, doc.id, url, platform) };
+}
+
 /** The person a request's edit key names (/<owner or d>/<doc>/api/... ?key=, what it opens), if it's good: for the staging guard. */
 export async function keyedPerson(platform: Platform, request: Request, url: URL): Promise<KeyPerson | null> {
+  const op = await keyedOp(platform, url);
+  if (op) return op.person;
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/api\/.*)$/.exec(url.pathname) ?? [];
   const key = url.searchParams.get("key");
   if (!first || !second || key == null || !keyed(request, rest)) return null;

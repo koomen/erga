@@ -4,9 +4,9 @@
 // the document's socket itself, from this origin, with the edit key (server/documents/edit-key.ts), holds its own
 // replica of the room (collab.ts), sends every edit there and applies everyone else's, shows where the others' carets
 // are and shows its own to them. It does everything that needs the page's DOM: typing, selections, marks and carets,
-// its own controls (controls.ts: the style bar, the link bar), files dropped on the page (uploads.ts), on the
-// page as it is, which the pages origin served from the text (shared/page-html.ts). It sends the viewer nothing. When
-// the viewer says "view", it stops, and the page carries on as it is.
+// its own controls (controls.ts: the style bar, the link bar), the comments (comments.ts), files dropped on the page
+// (uploads.ts), on the page as it is, which the pages origin served from the text (shared/page-html.ts). It sends the
+// viewer nothing. When the viewer says "view", it stops, and the page carries on as it is.
 
 import { EditorState, Transaction, type Extension } from "@codemirror/state";
 import { history, historyField } from "@codemirror/commands";
@@ -18,13 +18,14 @@ import { listenAsEditor } from "./text-guard";
 import { clampZoom } from "../../../client/common/zoom";
 import { Collab } from "./collab";
 import { mountControls, noteOnPage, type Controls } from "./controls";
+import { mountComments, type Comments } from "./comments";
 import { addFiles } from "./uploads";
 import { apiCode, runPageEdit, warm } from "./page-edits";
 import type { EditMode } from "./mode";
 import { step, type Editing, type FrameEvent, type State } from "./frame-state";
 import { changesBetween } from "../../../document/merge";
 import { baseName, encodePath } from "../../../document/pages";
-import { assets, files, roomInfo, type Author } from "../../../document/content";
+import { assets, authors, colorFor, files, roomInfo, type Author } from "../../../document/content";
 import { sourceDigest } from "../../../shared/page-html";
 import { sleep } from "../../../shared/time";
 import { isAppShortcut } from "../../../client/common/app-keys";
@@ -69,6 +70,9 @@ const editing = (): Editing | null => ("mode" in state ? state.mode : null);
 let collab: Collab | null = null;
 let page: PageEditor | null = null;
 let controls: Controls | null = null;
+let comments: Comments | null = null;
+/** The shell's word on comments (erga-comments: shown or hidden); the page's first script kept the last one. Shown by default. */
+let commentsShown = (window.__ergaReader?.comments as { show?: unknown } | undefined)?.show !== false;
 /** The editor's state as it stopped (undo history and all), for the way back in. */
 let kept: EditorState | null = null;
 /** Files dropped or pasted on the page on their way into the document's files: where they go in (mapped through the edits meanwhile). */
@@ -81,8 +85,12 @@ let unwatch: (() => void)[] = [];
 let zoom = 1;
 
 window.addEventListener("message", (e: MessageEvent) => {
-  if (e.source != window.parent || e.origin != SHELL || e.data?.type != "erga-mode") return;
-  setMode(e.data as EditMode);
+  if (e.source != window.parent || e.origin != SHELL) return;
+  if (e.data?.type == "erga-mode") setMode(e.data as EditMode);
+  else if (e.data?.type == "erga-comments") {
+    commentsShown = e.data.show !== false;
+    comments?.show(commentsShown);
+  }
 });
 
 /** The viewer says edit or view. Edit again: a new key (for the next socket), or another zoom. */
@@ -200,8 +208,11 @@ function join(run: number) {
   const room = `${m.doc.replace(/^http/, "ws")}/api/room`;
   const c = (collab = new Collab({
     // (Only the room: the person's events, the agent's asks among them, are the viewer's to hear.)
-    url: (q) => `${room}?${new URLSearchParams({ key: editing()?.key ?? m.key, ...Object.fromEntries(q) })}`,
-    onEvent: () => {},
+    // (comments=1: it hears that the document's comments changed, and reads them again: comments.ts.)
+    url: (q) => `${room}?${new URLSearchParams({ key: editing()?.key ?? m.key, comments: "1", ...Object.fromEntries(q) })}`,
+    onEvent: (msg) => {
+      if (msg.type == "comments") void comments?.refresh();
+    },
     onRemote: (changes, author) => {
       if (!page) return;
       page.applyExternal(changes, typingAgent(author));
@@ -323,11 +334,29 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
         queueMicrotask(() => {
           if (!page) return;
           unwatch.push(drawCaret(window as Window & typeof globalThis, () => zoom));
-          const made = mountControls(window, page, { place: () => placeOf(window, reader), zoom: () => zoom });
+          const made = mountControls(window, page, {
+            place: () => placeOf(window, reader),
+            zoom: () => zoom,
+            comment: () => comments?.compose(),
+          });
           controls = made;
           unwatch.push(() => {
             made.remove();
             if (controls == made) controls = null;
+          });
+          const drawn = mountComments(window, page, {
+            text: () => (collab ? (files(collab.doc).get(m.path) ?? null) : null),
+            person,
+            me: m.me.user,
+            call: commentOp,
+            explain: (message) => controls?.explain(message),
+            zoom: () => zoom,
+            shown: commentsShown,
+          });
+          comments = drawn;
+          unwatch.push(() => {
+            drawn.remove();
+            if (comments == drawn) comments = null;
           });
           watchPage();
           watchDark();
@@ -347,6 +376,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
           focus = false;
         });
       controls?.queue();
+      comments?.queue();
     },
     onKey: (e) => {
       const mod = isMac ? e.metaKey : e.ctrlKey;
@@ -355,10 +385,15 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
         controls?.openLink();
         return true;
       }
+      // A comment on the selection (⌘⌥M; the Option key changes e.key: the key's code).
+      if (mod && e.altKey && !e.shiftKey && (e.code == "KeyM" || e.key.toLowerCase() == "m")) {
+        comments?.compose();
+        return true;
+      }
       if (e.key == "Escape" && !mod) {
-        // (The link bar for the caret's link closes first: the caret stays in the link.)
+        // (The link bar for the caret's link closes first: the caret stays in the link. Then an open comment.)
         if (controls?.linking) controls.closeLink();
-        else page?.leaveText();
+        else if (!comments?.cancel()) page?.leaveText();
         return true;
       }
       // The viewer's own shortcuts: the page's first script passes them on (client/common/app-keys.ts).
@@ -413,6 +448,31 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
       return state.phase == "reloading";
     },
   };
+}
+
+/** Who a login is, for a comment: their name as the room knows it (each editor introduces themself), and their colour. */
+function person(login: string) {
+  const known = collab && [...authors(collab.doc).values()].find((a) => a.user == login && a.kind != "agent");
+  return { name: known?.name ?? login, color: colorFor(login) };
+}
+
+/**
+ * The comment ops, from the page (comments.ts): POST /api/tools/<op> on the viewer's origin with the edit key, which
+ * names the person (server/api.ts, keyedComment). On this page, of this document.
+ */
+async function commentOp(op: "comment" | "comments", args: Record<string, unknown>) {
+  const m = editing();
+  if (!m) throw new Error("The editor stopped.");
+  const url = new URL(m.doc),
+    id = url.pathname.split("/").pop()!;
+  const r = await fetch(`${url.origin}/api/tools/${op}?${new URLSearchParams({ doc: id, key: m.key })}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...args, document: id, page: m.path }),
+  }).catch(() => null);
+  const answer = (await r?.json().catch(() => null)) as { ok?: boolean; result?: unknown; error?: string } | null;
+  if (!answer?.ok) throw new Error(answer?.error ?? "The server didn't answer. Check the connection, and try again.");
+  return answer.result as Awaited<ReturnType<Parameters<typeof mountComments>[2]["call"]>>;
 }
 
 /**
@@ -575,7 +635,7 @@ function watchPage() {
       (e) => {
         collab?.activate();
         // A press on the editor's own controls (their shadow root's host) is not one on the page: it keeps the bar.
-        if ((e.target as Element | null)?.localName != "erga-controls") controls?.pressed();
+        if (!/^erga-(controls|comments)$/.test((e.target as Element | null)?.localName ?? "")) controls?.pressed();
       },
       true
     )
@@ -584,13 +644,13 @@ function watchPage() {
   // (Focusing or using this tab's page makes it the one its person is shown by: Collab.activate.)
   on(d, "keydown", () => collab?.activate(), true);
   on(win, "focus", () => collab?.activate(), true);
-  on(d, "scroll", () => controls?.queue(), { passive: true });
+  on(d, "scroll", () => (controls?.queue(), comments?.queue()), { passive: true });
   // The style bar follows selected text that moves another way: a scroll in an element, a pan of the page's own (moves.ts).
   watchMoves(d, win, () => {
     if (page && d.getSelection()?.isCollapsed === false) controls?.queue();
   });
   on(d, "selectionchange", () => controls?.queue());
-  on(win, "resize", () => controls?.queue());
+  on(win, "resize", () => (controls?.queue(), comments?.queue()));
 }
 
 // The page's background, for the controls' look (dark on a dark page): its root's, or its body's when the root has
@@ -606,7 +666,9 @@ function syncDark() {
   if (transparent(cs) && document.body) cs = getComputedStyle(document.body);
   const rgb = cs.backgroundColor.match(/[\d.]+/g)?.map(Number);
   const clear = !rgb || rgb.length < 3 || rgb[3] === 0;
-  controls.dark(!clear && (0.2126 * rgb![0] + 0.7152 * rgb![1] + 0.0722 * rgb![2]) / 255 < 0.45);
+  const dark = !clear && (0.2126 * rgb![0] + 0.7152 * rgb![1] + 0.0722 * rgb![2]) / 255 < 0.45;
+  controls.dark(dark);
+  comments?.dark(dark);
 }
 function queueDark() {
   if (darkQueued) return;
