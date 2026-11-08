@@ -6,6 +6,8 @@
 //   compose --send--> (add) --answered--> the new thread, in use
 //   send: the text shows in its card at once, pending, and its box empties and waits; on an error, the text goes back
 //   into the box, with the reason beside it (a card's key: its thread's id, "" for the new comment's)
+//   edit (✎, one's own comment) --> its text in a box, in its place --send--> (edit) pending --answered--> as edited
+//                                                           --cancel--> as it was
 //   resolve --> gone, with "Resolved · Undo" --undo--> (reopen) --answered--> back
 //                                            --expired--> the pill goes
 
@@ -18,6 +20,8 @@ export interface Comment {
   via?: string;
   text: string;
   at: string;
+  /** When it was last edited. */
+  edited_at?: string;
 }
 
 /** An open thread, as the server sends it. */
@@ -37,7 +41,9 @@ export interface State {
   active: string | null;
   /** The new comment being written, on this text. */
   draft: { anchor: AnchorJSON } | null;
-  /** The text each card sent, until the server answers: it shows in the card, pending. */
+  /** The comment open for editing, in its thread, and the text its box opens with. */
+  editing: { thread: string; comment: string; text: string } | null;
+  /** The text each card sent, until the server answers: it shows in the card, pending. (An edit's key: "e:" and its comment.) */
   sending: Record<string, string>;
   /** Each card's text the server refused, with its reason: the text is back in its box. */
   errors: Record<string, string>;
@@ -45,7 +51,7 @@ export interface State {
   resolved: { thread: Thread; n: number } | null;
 }
 
-export type Action = "add" | "reply" | "resolve" | "reopen";
+export type Action = "add" | "reply" | "edit" | "resolve" | "reopen";
 
 export type CommentEvent =
   | { type: "listed"; threads: Thread[] }
@@ -54,19 +60,23 @@ export type CommentEvent =
   | { type: "compose"; anchor: AnchorJSON }
   /** Esc: the new comment closes, or the thread in use. */
   | { type: "cancel" }
-  /** Enter: the new comment, or a reply to the thread in use. */
-  | { type: "send"; text: string; thread?: string }
+  /** Enter: the new comment, a reply to the thread in use, or the comment being edited (`comment`). */
+  | { type: "send"; text: string; thread?: string; comment?: string }
+  /** ✎ on one's own comment. */
+  | { type: "edit"; thread: string; comment: string }
   | { type: "activate"; id: string | null }
   | { type: "resolve"; id: string }
   | { type: "undo" }
   | { type: "expired"; n: number }
-  | { type: "answered"; action: Action; thread: Thread | null }
+  /** A call's answer; `card`: an edit's key. */
+  | { type: "answered"; action: Action; thread: Thread | null; card?: string }
   /** A call that failed: `card`, the card whose text it sent (add, reply); `thread`, the thread it changed (resolve, reopen). */
   | { type: "failed"; action: Action; message: string; card?: string; thread?: Thread };
 
 export type Effect =
   | { do: "call"; action: "add"; anchor: AnchorJSON; text: string }
   | { do: "call"; action: "reply"; thread: string; text: string }
+  | { do: "call"; action: "edit"; comment: string; text: string }
   | { do: "call"; action: "resolve" | "reopen"; thread: Thread }
   /** The undo's few seconds; their end is `expired` with this n. */
   | { do: "timer"; n: number }
@@ -83,10 +93,14 @@ export const initial = (shown = true): State => ({
   shown,
   active: null,
   draft: null,
+  editing: null,
   sending: {},
   errors: {},
   resolved: null,
 });
+
+/** The key of an edit's text in `sending` and `errors`. */
+export const editKey = (comment: string) => `e:${comment}`;
 
 /** `r` without `key`. */
 const without = (r: Record<string, string>, key: string) => {
@@ -104,18 +118,39 @@ export function step(s: State, e: CommentEvent): { state: State; effects: Effect
     case "listed": {
       // (The thread just resolved stays out, though the server's list came before its resolve.)
       const threads = e.threads.filter((t) => t.id != s.resolved?.thread.id);
-      return done({ ...s, threads, active: threads.some((t) => t.id == s.active) ? s.active : null });
+      const has = (id: string | undefined) => threads.some((t) => t.id == id);
+      return done({
+        ...s,
+        threads,
+        active: has(s.active ?? undefined) ? s.active : null,
+        editing: has(s.editing?.thread) ? s.editing : null,
+      });
     }
     case "show":
       return done({ ...s, shown: e.on, active: e.on ? s.active : null });
     case "compose":
       return done({ ...s, draft: { anchor: e.anchor }, sending: without(s.sending, ""), errors: without(s.errors, ""), active: null });
     case "cancel":
+      if (s.editing) {
+        const key = editKey(s.editing.comment);
+        if (key in s.sending) return done(s);
+        return done({ ...s, editing: null, errors: without(s.errors, key) });
+      }
       if (s.draft) return done({ ...s, draft: null, sending: without(s.sending, ""), errors: without(s.errors, "") }, [{ do: "focus" }]);
       if (s.active) return done({ ...s, active: null }, [{ do: "focus" }]);
       return done(s);
     case "send": {
       const text = e.text.trim();
+      if (e.comment) {
+        const key = editKey(e.comment),
+          was = s.threads.flatMap((t) => t.comments).find((c) => c.id == e.comment);
+        if (!text || key in s.sending || s.editing?.comment != e.comment) return done(s);
+        // Unchanged: it closes, as it was.
+        if (text == was?.text) return done({ ...s, editing: null, errors: without(s.errors, key) });
+        return done({ ...s, editing: { ...s.editing, text }, sending: { ...s.sending, [key]: text }, errors: without(s.errors, key) }, [
+          { do: "call", action: "edit", comment: e.comment, text },
+        ]);
+      }
       const card = e.thread ?? "";
       if (!text || card in s.sending || (!e.thread && !s.draft)) return done(s);
       const next = { ...s, sending: { ...s.sending, [card]: text }, errors: without(s.errors, card) };
@@ -124,14 +159,25 @@ export function step(s: State, e: CommentEvent): { state: State; effects: Effect
         : { do: "call", action: "add", anchor: s.draft!.anchor, text };
       return done(next, [{ do: "cleared", card }, call]);
     }
+    case "edit": {
+      const c = s.threads.find((t) => t.id == e.thread)?.comments.find((x) => x.id == e.comment);
+      if (!c || (s.editing && editKey(s.editing.comment) in s.sending)) return done(s);
+      return done({ ...s, active: e.thread, draft: null, editing: { thread: e.thread, comment: c.id, text: c.text } });
+    }
     case "activate":
-      return done({ ...s, active: e.id, draft: e.id ? null : s.draft });
+      return done({ ...s, active: e.id, draft: e.id ? null : s.draft, editing: s.editing?.thread == e.id ? s.editing : null });
     case "resolve": {
       const thread = s.threads.find((t) => t.id == e.id);
       if (!thread) return done(s);
       const n = (s.resolved?.n ?? 0) + 1;
       return done(
-        { ...s, threads: s.threads.filter((t) => t.id != e.id), active: s.active == e.id ? null : s.active, resolved: { thread, n } },
+        {
+          ...s,
+          threads: s.threads.filter((t) => t.id != e.id),
+          active: s.active == e.id ? null : s.active,
+          editing: s.editing?.thread == e.id ? null : s.editing,
+          resolved: { thread, n },
+        },
         [{ do: "call", action: "resolve", thread }, { do: "timer", n }, { do: "focus" }]
       );
     }
@@ -148,10 +194,14 @@ export function step(s: State, e: CommentEvent): { state: State; effects: Effect
       if (e.action == "add")
         return done({ ...s, threads, draft: null, sending: without(s.sending, ""), active: e.thread.id }, [{ do: "focus" }]);
       if (e.action == "reply") return done({ ...s, threads, sending: without(s.sending, e.thread.id) });
+      if (e.action == "edit" && e.card) return done({ ...s, threads, editing: null, sending: without(s.sending, e.card) });
       return done({ ...s, threads });
     }
     case "failed": {
       const explain: Effect = { do: "explain", message: e.message };
+      // An edit: its box opens again with the text it sent (`editing.text`), and the reason.
+      if (e.action == "edit" && e.card != null)
+        return done({ ...s, sending: without(s.sending, e.card), errors: { ...s.errors, [e.card]: e.message } });
       // A comment or a reply: its text goes back into its box, and the reason shows there.
       if ((e.action == "add" || e.action == "reply") && e.card != null) {
         const text = s.sending[e.card] ?? "";
