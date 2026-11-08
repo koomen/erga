@@ -36,7 +36,17 @@ import type { Asker, Role } from "./access.ts";
  * What a socket is, kept with it: read-only or not; `epoch`, the history the tab holds, once it has one; `events`,
  * whether it hears its person's events (and the document's details as it joins: Document.joinRoom).
  */
-export type Tab = { id: string; readOnly: boolean; epoch: string | null; person: Person; events: boolean; watch?: boolean; who?: Asker };
+export type Tab = {
+  id: string;
+  readOnly: boolean;
+  epoch: string | null;
+  person: Person;
+  events: boolean;
+  watch?: boolean;
+  who?: Asker;
+  /** It hears that the document's comments changed (?comments=1: the page's editor, libs/text/ui/comments.ts). */
+  comments?: boolean;
+};
 
 /** A socket call that may find it closed already: nothing to do then. */
 const quietly = (f: () => void) => void Result.try(f);
@@ -149,6 +159,12 @@ export class Tabs<S extends TabSocket> {
     for (const socket of this.o.sockets()) {
       if (this.o.tabOf(socket)?.events) quietly(() => socket.send(JSON.stringify(msg)));
     }
+  }
+
+  /** The document's comments changed: the tabs that hear it read them again. Opens nothing. */
+  commentsChanged(): void {
+    for (const socket of this.o.sockets())
+      if (this.o.tabOf(socket)?.comments) quietly(() => socket.send(JSON.stringify({ type: "comments" })));
   }
 
   private relay(from: S, id: string, data: Uint8Array): void {

@@ -257,6 +257,10 @@ Found a new trap? Write it here, in the same change.
 - A document's comments are SQL tables in its Durable Object (document/comments.ts), apart from its key-value storage.
   `deleteAll` drops them too, so each call makes them again if they're gone. Staging's copy of a document
   (document/snapshot.ts) copies only the key-value storage: its comments are not in the copy.
+- The page's editor has no cookie: it calls the comment ops on the app's origin with its edit key
+  (`POST /api/tools/comment?doc=<id>&key=<key>`, server/api.ts `fromPage`), and only the ops in `KEYED_OPS`
+  (server/documents/routes.ts). Its socket opens with `?comments=1` and hears `{ type: "comments" }` after each change
+  of the comments; it reads them again. The visible snapshot shows a comment's highlight as `{...}`.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 

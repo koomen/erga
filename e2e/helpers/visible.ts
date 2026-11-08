@@ -1,7 +1,8 @@
 // The visible snapshot: the page as a person sees it in the editor, as text, read off the rendered page (the layout and
 // the computed styles, not the source). One line for each line the page shows; a list item has its marker as the page
 // draws it ("•", "◦", "▪", "3.", "☐", "☑"), and one indent step (4 spaces) for each distinct left edge of the list
-// items on the page; a heading starts with "#"s for its level. "|" marks the caret, "[" and "]" a selection. An empty
+// items on the page; a heading starts with "#"s for its level. "|" marks the caret, "[" and "]" a selection, "{" and "}"
+// a comment's highlight (libs/text/ui/comments.ts: CSS highlights, drawn over the text). An empty
 // line stands for a gap between two lines of more than half a line (a paragraph's margin), so uneven spacing shows.
 //
 //   Groceries
@@ -23,9 +24,28 @@ function snapshot(): string {
   // Stand-ins for the caret and the selection's ends while the text collapses: control characters no page has.
   const CARET = "\x01",
     START = "\x02",
-    END = "\x03";
+    END = "\x03",
+    LIT = "\x04",
+    UNLIT = "\x05";
+  // The comments' highlights: where each starts and ends.
+  const lit = new Map<Node, { at: number; mark: string }[]>();
+  const registry = (CSS as unknown as { highlights?: Map<string, Set<Range>> }).highlights;
+  for (const name of ["erga-comment", "erga-comment-on"])
+    for (const r of registry?.get(name) ?? []) {
+      for (const [node, at, mark] of [
+        [r.startContainer, r.startOffset, LIT],
+        [r.endContainer, r.endOffset, UNLIT],
+      ] as const)
+        lit.set(node, [...(lit.get(node) ?? []), { at, mark }]);
+    }
+  const litAt = (node: Node, offset: number, mark: string) =>
+    (lit.get(node) ?? [])
+      .filter((m) => m.at == offset && m.mark == mark)
+      .map((m) => m.mark)
+      .join("");
   /** The marks to put at a point of the DOM (node, offset), if the selection starts or ends there. */
-  const at = (node: Node, offset: number) => {
+  const at = (node: Node, offset: number) => litAt(node, offset, UNLIT) + selectionAt(node, offset) + litAt(node, offset, LIT);
+  const selectionAt = (node: Node, offset: number) => {
     if (!range) return "";
     if (range.collapsed) return range.startContainer == node && range.startOffset == offset ? CARET : "";
     return (
@@ -52,7 +72,7 @@ function snapshot(): string {
   /** The nodes of the run that take room on the page. */
   let drawn: (Text | Element)[] = [];
   const flush = (owner: Element, force: boolean) => {
-    if (hasContent || /[\x01-\x03]/.test(run) || force) {
+    if (hasContent || /[\x01-\x05]/.test(run) || force) {
       let text = run.replace(/[ \t\r\f]*\n[ \t\r\f]*/g, "\n").replace(/[ \t\r\f]+/g, " ");
       text = text.replace(/^ +| +$/gm, "");
       // A <br> at the end of a block draws no line of its own (an empty block shows one empty line).
@@ -173,7 +193,7 @@ function snapshot(): string {
     }
     l.text.split("\n").forEach((t, i) => out.push(((i ? rest : first) + t).trimEnd()));
   });
-  return out.join("\n").replaceAll(CARET, "|").replaceAll(START, "[").replaceAll(END, "]");
+  return out.join("\n").replaceAll(CARET, "|").replaceAll(START, "[").replaceAll(END, "]").replaceAll(LIT, "{").replaceAll(UNLIT, "}");
 }
 
 /** The snapshot, as an expression to evaluate in the page's frame. */

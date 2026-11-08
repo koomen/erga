@@ -34,6 +34,7 @@ import { type Platform, type Session, whoOf } from "./platform";
 import { call, json, platform as currentPlatform, text, webRequest, type Route } from "./http.ts";
 import { allTools, jsonSchemaOf, runTool, toolsFor, type Tool } from "../agents/tools";
 import { addFile, type Caller, cleanFilePath, OperationError, PAGE_RULES } from "./operations/index.ts";
+import { keyedOp } from "./documents/index.ts";
 import type { ToolContent, ToolSpec } from "../document/agent";
 import {
   authOps,
@@ -63,7 +64,7 @@ const callerOf = (platform: Platform, session: Session, origin: string): ToolCon
 });
 
 /** The tools a caller may use. */
-const listed = (ctx: ToolContext) => call(() => toolsFor(ctx));
+const listed = (ctx: Caller) => call(() => toolsFor(ctx));
 const specOf = (t: Tool): ToolSpec => ({ name: t.name, description: t.description, parameters: jsonSchemaOf(t) });
 
 const refuse = (message: string, status = 400) => Effect.fail(new OperationError({ message, status }));
@@ -72,7 +73,7 @@ const refuse = (message: string, status = 400) => Effect.fail(new OperationError
  * Runs a tool by name, as the caller: one of the agents' tools, or an operation or document tool by its own name (the
  * pages call the operations so); its answer as it is. A failure the caller can act on is an OperationError; any other a 500's.
  */
-const runNamed = Effect.fnUntraced(function* (name: string, args: unknown, ctx: ToolContext) {
+const runNamed = Effect.fnUntraced(function* (name: string, args: unknown, ctx: Caller) {
   const tool = allTools().find((t) => t.name == name);
   if (!tool)
     return yield* refuse(`There's no tool named "${name}". The tools are: ${(yield* listed(ctx)).map((t) => t.name).join(", ")}.`, 404);
@@ -128,6 +129,9 @@ export const serverApi: Route = Effect.gen(function* () {
     });
   if (path == "/mcp") return yield* mcp(ctx, origin);
   if (path == "/api/auth/request" && method == "POST") return yield* askForToken(platform, origin);
+  // A comment op from a document's page, with its edit key: before the session, which the pages origin has none of.
+  const keyed = yield* call(() => keyedOp(platform, url));
+  if (keyed) return yield* fromPage(keyed, path, platform, origin);
   // The one API: the person's own pages (their session), and every agent (a token).
   if (path == "/api/tools" || path.startsWith("/api/tools/")) {
     if (!session) return request.headers.get("authorization") ? unauthorized(origin, true) : failure("Sign in first.", 401);
@@ -160,6 +164,44 @@ export const serverApi: Route = Effect.gen(function* () {
     );
   }
   return failure(`There's nothing at ${method} ${path}. Erga's MCP server is ${origin}/mcp.`, 404);
+});
+
+/**
+ * POST /api/tools/comment or /api/tools/comments, ?doc=<id>&key=<edit key>: the page's editor on its pages origin,
+ * which has no cookie (libs/text/ui/comments.ts). As the person the key names, on the key's document only, and only from
+ * that document's page; the operation decides what they may do, as for any caller.
+ */
+const fromPage = Effect.fnUntraced(function* (
+  keyed: NonNullable<Awaited<ReturnType<typeof keyedOp>>>,
+  path: string,
+  platform: Platform,
+  origin: string
+) {
+  const request = yield* webRequest;
+  if (request.headers.get("origin") != keyed.origin) return failure("Only this document's own page may do this.", 403);
+  const cors = { "Access-Control-Allow-Origin": keyed.origin, Vary: "Origin" };
+  if (request.method == "OPTIONS")
+    return HttpServerResponse.empty({
+      status: 204,
+      headers: {
+        ...cors,
+        "Access-Control-Allow-Methods": "POST",
+        "Access-Control-Allow-Headers": "content-type",
+        "Access-Control-Max-Age": "600",
+      },
+    });
+  if (request.method != "POST") return json({ ok: false, error: "POST it." }, 405, cors);
+  if (!keyed.person || !keyed.who) return json({ ok: false, error: "This key has expired: reload the page." }, 403, cors);
+  const args = yield* body(Schema.Record(Schema.String, Schema.Unknown));
+  const caller: Caller = { dir: platform.directory, who: keyed.who, name: keyed.person.name, origin, platform };
+  return yield* runNamed(
+    path.slice("/api/tools/".length),
+    { ...(args._tag == "Some" ? args.value : {}), document: keyed.doc.id },
+    caller
+  ).pipe(
+    Effect.map((result) => json({ ok: true, result }, 200, cors)),
+    Effect.catchTag("OperationError", (e) => Effect.succeed(json({ ok: false, error: e.message }, e.status, cors)))
+  );
 });
 
 /** The publish's fields that aren't files, in a multipart body. */

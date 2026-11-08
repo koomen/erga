@@ -15,6 +15,8 @@ declare global {
       placed?(): void;
       /** The viewer's last word on editing (erga-mode), which the editor reads as it loads, and hears after. */
       mode?: unknown;
+      /** The viewer's last word on comments (erga-comments: shown or hidden), for the editor as it loads. */
+      comments?: unknown;
       /** The page tools are here: they answer each ask, those that waited for them first. */
       tools?(answer: (ask: ToolAsk) => void): void;
     };

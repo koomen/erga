@@ -196,6 +196,28 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
      */
     controls: <T = any>(expr: string) =>
       ed.frame<T | null>(`(() => { const C = ${F}.querySelector("erga-controls")?.shadowRoot; return C ? (${expr}) : null; })()`),
+    /** In the comments' own cards on the page (libs/text/ui/comments.ts): `expr` with C, their shadow root; null before they're drawn. */
+    comments: <T = any>(expr: string) =>
+      ed.frame<T | null>(`(() => { const C = ${F}.querySelector("erga-comments")?.shadowRoot; return C ? (${expr}) : null; })()`),
+    /** Clicks the middle of an element in the shadow root of the editor's controls or comments on the page, once it shows, with the mouse. */
+    async clickIn(host: "erga-controls" | "erga-comments", selector: string) {
+      const r = await toTab(
+        await until(
+          () =>
+            ed.frame<{ x: number; y: number } | null>(
+              `(() => { const el = ${F}.querySelector("${host}")?.shadowRoot?.querySelector(${JSON.stringify(selector)}); const r = el?.getBoundingClientRect(); return r?.width ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null; })()`
+            ),
+          3000,
+          `${host}'s ${selector}`
+        ).then((at) => at!),
+        ["x"],
+        ["y"]
+      );
+      await ed.click(r.x, r.y);
+    },
+    /** A message from the shell to the page's frame, as the shell sends its words (erga-mode, erga-comments). */
+    toFrame: (msg: unknown) =>
+      page.evaluate((m) => (document.getElementById("frame") as HTMLIFrameElement).contentWindow!.postMessage(m, "*"), msg),
     textOf: (selector: string) => ed.frame<string>(`${F}.querySelector(${JSON.stringify(selector)}).textContent`),
     count: (selector: string) => ed.frame<number>(`${F}.querySelectorAll(${JSON.stringify(selector)}).length`),
     frameAt,
