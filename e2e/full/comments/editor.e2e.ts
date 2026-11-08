@@ -4,6 +4,8 @@
 import { expect, servers, test } from "../../helpers/fixtures";
 import { openEditor, type Editor } from "../../helpers/editor";
 import { runTool } from "../../helpers/tools";
+import { newToken } from "../../helpers/new-token";
+import { person } from "../versions/versions";
 
 await servers.main();
 
@@ -208,4 +210,85 @@ test("send shows the comment at once, pending, its box empty and waiting; the an
   await expect
     .poll(() => shape(ed, ".card.th[data-thread]"))
     .toEqual({ pending: [], busy: false, box: "Or three.", error: "The server is busy." });
+});
+
+test("edit one's own comment: ✎ opens it in its place, Enter saves at once (pending), Esc cancels; others' and agents' have no ✎", async ({
+  tab,
+}) => {
+  const server = await servers.main();
+  const ed = await openEditor(tab, server, "empty");
+  let release = () => {};
+  let refuse = false;
+  await tab.page.route("**/api/tools/comment?*", async (route) => {
+    if (route.request().method() != "POST" || !route.request().postData()?.includes('"edit"')) return route.continue();
+    if (refuse) return route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":false,"error":"The server is busy."}' });
+    await new Promise<void>((r) => (release = r));
+    await route.continue();
+  });
+  await ed.clickEnd("p");
+  await ed.idle();
+  await ed.type("Stay six nights in Lisbon.");
+  await ed.press("ArrowLeft");
+  for (let i = 0; i < 6; i++) await ed.press("Shift+ArrowLeft");
+  await ed.press("ControlOrMeta+Alt+m");
+  await ed.type("June is cheaper?");
+  await ed.press("Enter");
+  await expect.poll(() => cards(ed)).toEqual(["T tester now June is cheaper?"]);
+
+  // A reply by another person (a commenter), and one by the person's own agent (a token): they come in by themselves.
+  const id = (await ed.eval<string>(`document.querySelector('meta[name="erga-base"]').content`)).replace(/^\/d\//, "");
+  const thread = ((await runTool(server.root, "comments", { document: id })).result as { threads: { id: string }[] }).threads[0].id;
+  const cy = await person(server, "cy");
+  expect((await runTool(server.root, "share_document", { document: id, login: "cy", role: "commenter" })).error).toBeUndefined();
+  expect(
+    (await runTool(server.root, "comment", { document: id, action: "reply", thread, text: "Me too." }, { cookie: cy.cookie })).ok
+  ).toBe(true);
+  const token = (await newToken(server.root, { label: "Edit test" })).token;
+  expect((await runTool(server.root, "comment", { document: id, action: "reply", thread, text: "Noted." }, { token })).ok).toBe(true);
+  await expect
+    .poll(() => cards(ed))
+    .toEqual(["T tester now June is cheaper? C cy now Me too. T tester via a shared agent (Edit test) now Noted."]);
+  const pencils = () => ed.comments<number>(`C.querySelectorAll("[data-act=edit]").length`);
+  expect(await pencils()).toBe(1);
+  const editBox = () => ed.comments<string | null>(`C.querySelector("[data-box=edit]")?.value ?? null`);
+  const pending = () => ed.comments<string[]>(`[...C.querySelectorAll(".msg.pending")].map((m) => m.textContent)`);
+
+  // ✎: the text in a box in its place, the caret at its end. Enter: the new text shows at once, pending.
+  await ed.clickIn("erga-comments", "[data-act=edit]");
+  await expect.poll(editBox).toBe("June is cheaper?");
+  for (let i = 0; i < 16; i++) await ed.press("Backspace");
+  await ed.type("June, then.");
+  await ed.press("Enter");
+  await expect.poll(pending).toEqual(["June, then."]);
+  expect(await editBox()).toBeNull();
+  release();
+  await expect
+    .poll(() => cards(ed))
+    .toEqual(["T tester now · edited June, then. C cy now Me too. T tester via a shared agent (Edit test) now Noted."]);
+  expect(await pending()).toEqual([]);
+
+  // Esc: as it was, and nothing is sent.
+  await ed.clickIn("erga-comments", "[data-act=edit]");
+  await expect.poll(editBox).toBe("June, then.");
+  await ed.type(" Or July.");
+  await ed.press("Escape");
+  await expect.poll(editBox).toBeNull();
+  expect((await cards(ed))![0]).toContain("June, then. C cy");
+
+  // Refused: the box stays open with the text it sent, and the reason above it.
+  refuse = true;
+  await ed.clickIn("erga-comments", "[data-act=edit]");
+  await ed.type("!");
+  await ed.press("Enter");
+  await expect.poll(() => ed.comments<string | null>(`C.querySelector(".err")?.textContent ?? null`)).toBe("The server is busy.");
+  expect(await editBox()).toBe("June, then.!");
+  await ed.press("Escape");
+  await expect.poll(editBox).toBeNull();
+
+  // In the table: the new text, and when it was edited.
+  const [c] = (
+    (await runTool(server.root, "comments", { document: id })).result as { threads: { comments: { text: string; edited_at?: string }[] }[] }
+  ).threads[0].comments;
+  expect(c.text).toBe("June, then.");
+  expect(c.edited_at).toBeTruthy();
 });

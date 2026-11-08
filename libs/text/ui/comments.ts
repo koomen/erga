@@ -9,7 +9,7 @@
 
 import type * as Y from "yjs";
 import { anchorFromJSON, anchorOf, anchorToJSON, resolveAnchor, type Anchor } from "../api/anchors";
-import { initial, step, type CommentEvent, type Effect, type Thread } from "./comments-state";
+import { editKey, initial, step, type Comment, type CommentEvent, type Effect, type Thread } from "./comments-state";
 import { KEPT, LOOK } from "./controls";
 import { ms } from "./timescale";
 
@@ -69,6 +69,9 @@ ${LOOK}
 .err { margin: 0 0 6px; color: #c2410c; font-size: 12.5px; }
 .c.dark .err { color: #f59a6a; }
 .reply.busy { opacity: 0.6; }
+/* A comment open for editing: its box in its place, under its name. */
+.reply.edit { margin: 4px 0 10px 30px; }
+.err.edit { margin: 4px 0 0 30px; }
 button { border: 0; background: transparent; padding: 0; font: inherit; color: inherit; cursor: pointer; display: grid; place-items: center; flex: none; }
 button:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 svg { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
@@ -99,6 +102,7 @@ textarea::placeholder { color: var(--chrome); }
 const ICON = {
   check: '<path d="m5.5 12.5 4 4 9-9.5"/>',
   up: '<path d="M12 19V6M6.5 11.5 12 6l5.5 5.5"/>',
+  pen: '<path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/>',
 };
 const svg = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
 
@@ -164,11 +168,20 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
           ? { action: "add", anchor: f.anchor, text: f.text }
           : f.action == "reply"
             ? { action: "reply", thread: f.thread, text: f.text }
-            : { action: f.action, thread: f.thread.id };
+            : f.action == "edit"
+              ? { action: "edit", comment: f.comment, text: f.text }
+              : { action: f.action, thread: f.thread.id };
       // What a failure is about: the card whose text it sent, or the thread it changed.
-      const about = f.action == "add" ? { card: "" } : f.action == "reply" ? { card: f.thread } : { thread: f.thread };
+      const about =
+        f.action == "add"
+          ? { card: "" }
+          : f.action == "reply"
+            ? { card: f.thread }
+            : f.action == "edit"
+              ? { card: editKey(f.comment) }
+              : { thread: f.thread };
       o.call("comment", args).then(
-        (r) => send({ type: "answered", action: f.action, thread: r.thread ?? null }),
+        (r) => send({ type: "answered", action: f.action, thread: r.thread ?? null, ...("card" in about ? { card: about.card } : {}) }),
         (err: Error) => send({ type: "failed", action: f.action, message: err.message, ...about })
       );
     }
@@ -244,7 +257,8 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
       const on = t.id == state.active;
       if (narrow && !on) continue;
       want.add(t.id);
-      const el = card(t.id, JSON.stringify([t.comments, on, state.sending[t.id], state.errors[t.id]]), () => threadHTML(t, on));
+      const editing = state.editing?.thread == t.id ? state.editing : null;
+      const el = card(t.id, JSON.stringify([t.comments, on, state.sending, state.errors, editing]), () => threadHTML(t, on));
       el.classList.toggle("dim", !on);
       el.classList.toggle("sheet", narrow);
       const top = ranges[0]?.getClientRects()[0]?.top ?? 0;
@@ -292,45 +306,68 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
       else registry.delete(name);
   }
 
-  /** The card for `id`, made again when what it shows (`drawn`) changed; what's typed in its box stays. */
+  /**
+   * The card for `id`, made again when what it shows (`drawn`) changed; what's typed in each of its boxes (data-box:
+   * reply, edit) stays, and so does the focus. A box that's new takes the focus: the new comment's, and an edit's.
+   */
   function card(id: string, drawn: string, html: () => string): HTMLElement {
     const had = cards.get(id);
     if (had?.drawn == drawn) return had.el;
-    const area = had?.el.querySelector("textarea");
-    const typed = area?.value ?? "",
-      focused = !!area && root.activeElement == area;
+    const typed = new Map<string, string>();
+    let focused: string | null = null;
+    for (const a of had?.el.querySelectorAll("textarea") ?? []) {
+      typed.set(a.dataset.box!, a.value);
+      if (root.activeElement == a) focused = a.dataset.box!;
+    }
     const el = had?.el ?? doc.createElement("div");
     el.className = `card th${id ? "" : " draft"}`;
     if (id) el.dataset.thread = id;
     el.innerHTML = `<div class="grab" aria-hidden="true"></div>${html()}`;
     if (!had) box.append(el);
     cards.set(id, { el, drawn });
-    const next = el.querySelector("textarea");
-    if (next) {
-      next.value = typed;
-      grow(next);
-      if (focused || (!had && !id)) next.focus();
+    for (const a of el.querySelectorAll("textarea")) {
+      const name = a.dataset.box!,
+        isNew = !typed.has(name);
+      a.value = isNew ? (name == "edit" ? (state.editing?.text ?? "") : "") : typed.get(name)!;
+      grow(a);
+      if (focused == name || (isNew && (name == "edit" || (name == "reply" && !id && !had)))) {
+        a.focus();
+        a.setSelectionRange(a.value.length, a.value.length);
+      }
     }
     return el;
   }
 
   const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
-  /** A comment's first line: who, how (an agent), when (as it shows), and ✓ to resolve its thread. */
-  function whoHTML(login: string, via: string | undefined, when: string | null, resolve: boolean): string {
+  /**
+   * A comment's first line: who, how (an agent), when (as it shows), "· edited" (`edited`: when), ✎ to edit it
+   * (`edit`: the comment's id), and ✓ to resolve its thread.
+   */
+  function whoHTML(
+    login: string,
+    via: string | undefined,
+    when: string | null,
+    resolve: boolean,
+    more: { edited?: string; edit?: string } = {}
+  ): string {
     const p = o.person(login);
     return `<p class="who"><span class="a" style="background:${esc(p.color)}">${esc([...p.name][0]?.toUpperCase() ?? "?")}</span><span class="nm">${esc(p.name)}${
       via ? ` <span class="via">via ${esc(via)}</span>` : ""
     }</span>${when ? `<span class="t">${esc(when)}</span>` : ""}${
-      resolve
-        ? `<span class="sp"></span><button type="button" class="rs" data-act="resolve" aria-label="Resolve" title="Resolve">${svg(ICON.check)}</button>`
+      more.edited ? `<span class="t" title="Edited ${esc(new Date(more.edited).toLocaleString())}">· edited</span>` : ""
+    }${resolve || more.edit ? '<span class="sp"></span>' : ""}${
+      more.edit
+        ? `<button type="button" class="rs" data-act="edit" data-comment="${esc(more.edit)}" aria-label="Edit your comment" title="Edit">${svg(ICON.pen)}</button>`
         : ""
+    }${
+      resolve ? `<button type="button" class="rs" data-act="resolve" aria-label="Resolve" title="Resolve">${svg(ICON.check)}</button>` : ""
     }</p>`;
   }
   /** A card's box: it waits while its text is on its way; the reason the server refused it shows above it. */
   const replyHTML = (label: string, card: string) => {
     const busy = card in state.sending,
       error = state.errors[card];
-    return `${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}<div class="reply${busy ? " busy" : ""}"><textarea rows="1" placeholder="${label}" aria-label="${label}"${
+    return `${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}<div class="reply${busy ? " busy" : ""}"><textarea data-box="reply" rows="1" placeholder="${label}" aria-label="${label}"${
       busy ? ' readonly aria-disabled="true"' : ""
     }></textarea><button type="button" class="go" data-act="send" aria-label="Send (Enter)" title="Send  Enter"${busy ? ' aria-disabled="true"' : ""}>${svg(ICON.up)}</button></div>`;
   };
@@ -339,10 +376,25 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     card in state.sending
       ? (who ? whoHTML(o.me, undefined, "sending…", false) : "") + `<p class="msg pending">${esc(state.sending[card])}</p>`
       : "";
+  /** One comment: as it is, with ✎ on one's own (not an agent's); its edit's box; or its edit on its way, pending. */
+  function commentHTML(c: Comment, first: boolean, on: boolean) {
+    const key = editKey(c.id),
+      who = (edit: boolean) =>
+        whoHTML(c.by, c.via, shortTime(c.at), on && first, {
+          ...(c.edited_at ? { edited: c.edited_at } : {}),
+          ...(edit && c.by == o.me && !c.via ? { edit: c.id } : {}),
+        });
+    if (key in state.sending) return who(false) + `<p class="msg pending">${esc(state.sending[key])}</p>`;
+    if (state.editing?.comment == c.id)
+      return (
+        who(false) +
+        (state.errors[key] ? `<p class="err edit" role="alert">${esc(state.errors[key])}</p>` : "") +
+        `<div class="reply edit"><textarea data-box="edit" data-comment="${esc(c.id)}" rows="1" aria-label="Edit your comment"></textarea><button type="button" class="go" data-act="send" aria-label="Save (Enter)" title="Save  Enter">${svg(ICON.up)}</button></div>`
+      );
+    return who(true) + `<p class="msg">${esc(c.text)}</p>`;
+  }
   const threadHTML = (t: Thread, on: boolean) =>
-    t.comments.map((c, i) => whoHTML(c.by, c.via, shortTime(c.at), on && i == 0) + `<p class="msg">${esc(c.text)}</p>`).join("") +
-    pendingHTML(t.id, true) +
-    (on ? replyHTML("Reply", t.id) : "");
+    t.comments.map((c, i) => commentHTML(c, i == 0, on)).join("") + pendingHTML(t.id, true) + (on ? replyHTML("Reply", t.id) : "");
   const draftHTML = () =>
     whoHTML(o.me, undefined, "" in state.sending ? "sending…" : null, false) + pendingHTML("", false) + replyHTML("Comment", "");
 
@@ -364,9 +416,10 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     const id = threadOf(target);
     const act = (target.closest("button") as HTMLButtonElement | null)?.dataset.act;
     if (act == "resolve" && id) return send({ type: "resolve", id });
-    if (act == "send") return submit(target.closest(".card")!.querySelector("textarea")!);
+    if (act == "edit" && id) return send({ type: "edit", thread: id, comment: (target.closest("button") as HTMLElement).dataset.comment! });
+    if (act == "send") return submit(target.closest(".reply")!.querySelector("textarea")!);
     if (id && id != state.active) send({ type: "activate", id });
-    target.closest(".card")?.querySelector("textarea")?.focus();
+    if (!(target instanceof HTMLTextAreaElement)) target.closest(".card")?.querySelector<HTMLElement>("[data-box=reply]")?.focus();
   });
   box.addEventListener("input", (e) => {
     if (e.target instanceof HTMLTextAreaElement) grow(e.target);
@@ -382,8 +435,9 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     }
   });
   function submit(area: HTMLTextAreaElement) {
-    const id = threadOf(area);
-    send({ type: "send", text: area.value, ...(id ? { thread: id } : {}) });
+    const id = threadOf(area),
+      comment = area.dataset.comment;
+    send({ type: "send", text: area.value, ...(id ? { thread: id } : {}), ...(comment ? { comment } : {}) });
   }
 
   // A click on a highlight opens its thread; a click elsewhere on the page closes the one open. (Read from the click's

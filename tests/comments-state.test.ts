@@ -122,3 +122,22 @@ test("hidden: no thread in use; shown again, the threads are there", () => {
   expect(run(hidden, { type: "show", on: true }).state.threads).toHaveLength(1);
   expect(initial(false).shown).toBe(false);
 });
+
+test("edit: ✎ opens the comment's text; Enter sends it, pending; unchanged, it closes; refused, its box opens again with the reason", () => {
+  const s = run(initial(), { type: "listed", threads: [thread("t1", "a")] }, { type: "edit", thread: "t1", comment: "t1c0" }).state;
+  expect(s).toMatchObject({ active: "t1", editing: { thread: "t1", comment: "t1c0", text: "a" } });
+  expect(run(s, { type: "send", text: "a", thread: "t1", comment: "t1c0" })).toMatchObject({ state: { editing: null }, effects: [] });
+  expect(run(s, { type: "cancel" }).state.editing).toBeNull();
+
+  const sent = run(s, { type: "send", text: " b ", thread: "t1", comment: "t1c0" });
+  expect(sent.effects).toEqual([{ do: "call", action: "edit", comment: "t1c0", text: "b" }]);
+  expect(sent.state.sending).toEqual({ "e:t1c0": "b" });
+  // (Esc while it's on its way: nothing.)
+  expect(run(sent.state, { type: "cancel" }).state.editing).not.toBeNull();
+  const saved = run(sent.state, { type: "answered", action: "edit", thread: thread("t1", "b"), card: "e:t1c0" }).state;
+  expect(saved).toMatchObject({ editing: null, sending: {} });
+  expect(saved.threads[0].comments[0].text).toBe("b");
+
+  const refused = run(sent.state, { type: "failed", action: "edit", message: "No.", card: "e:t1c0" }).state;
+  expect(refused).toMatchObject({ editing: { comment: "t1c0", text: "b" }, sending: {}, errors: { "e:t1c0": "No." } });
+});
