@@ -7,7 +7,7 @@
 
 import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Entry, originOf, readConfig } from "./config";
+import { type Entry, entryOrigin, readConfig } from "./config";
 import { githubHeads, rememberedBranches } from "./observe";
 import { readOps } from "./ops";
 import {
@@ -30,7 +30,7 @@ const ROOT = new URL("../..", import.meta.url).pathname;
 
 /** What an instance answers now: the commit it runs (with its ops token) and its health. */
 export async function askInstance(e: Entry): Promise<Answer> {
-  const origin = originOf(e.host);
+  const origin = entryOrigin(e);
   const site = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
   const [ops, health] = await Promise.all([
     // An instance that setup has not registered yet has no token.

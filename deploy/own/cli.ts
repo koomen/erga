@@ -17,7 +17,10 @@
 //   bun erga setup <host> home <folder> [production|staging]        the folder's files become the homepage project (/_home)
 //   bun erga setup <host> preset [production|staging]               the preset's access rule (company)
 //   bun erga setup <host> inbox [--wait]       the person's new messages from the Setup tab; ... say "<text>" answers
+//   bun erga setup <host> stack [--yes]        AWS: writes the templates into .erga/aws/ (once), shows AWS's change sets;
+//                                              --yes (after the person's yes) applies them
 //   bun erga setup <host> remove <production|staging> --yes         deletes that server: its Workers, database and bucket
+//                                              (AWS: its stacks and secrets; the bucket stays, with the data)
 
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -42,7 +45,7 @@ import {
   type TargetName,
   targetsOf,
 } from "./plan";
-import { cloudflare, type Connection, observe, signInCheck } from "./facts";
+import { cloudflare, type Connection, observe, signInCheck, site } from "./facts";
 import { firstDeploy, registerSetup } from "./first";
 import { addMessage, answersOf, DIR, loadOwn, loadSecrets, messages, putSecret, readEnvFile, saveOwn, saveSecrets } from "./store";
 
@@ -188,13 +191,15 @@ const connect = async (): Promise<Connection> => {
 type Status = Awaited<ReturnType<typeof status>>;
 
 /** The first deploy of `t`: the entries, the secrets the Worker doesn't hold, the deploy, the first admin and feedback's repository. */
-async function deployStep({ own, answers: a, facts: f }: Status, t: TargetName, noTests: boolean, home: string | undefined) {
+async function deployStep(s: Status, t: TargetName, noTests: boolean, home: string | undefined) {
+  const { own, answers: a, facts: f } = s;
   if (!a || !f.account) return;
   try {
     deployedSettings(PRESETS[a.preset].defaults);
   } catch (e) {
     fail(`The preset's settings don't parse: ${(e as Error).message}`, "Report this to Erga.");
   }
+  if (a.provider == "aws") return deployStepAws(s, t, noTests, home);
   const c = await connect();
   const host = hostOf(a, t);
   say(`Deploy ${t}: https://${host} (Worker ${namesOf(host).worker}, database ${namesOf(host).database}, bucket ${namesOf(host).bucket}).`);
@@ -230,11 +235,69 @@ async function deployStep({ own, answers: a, facts: f }: Status, t: TargetName, 
   else say(`FAIL  Sign-in: ${check && typeof check == "object" ? check.bad : "no answer"}`);
 }
 
+/** The first deploy on AWS: the entry, the secrets into Parameter Store, the machine's programs, the deploy, the first admin. */
+async function deployStepAws({ own, answers: a, facts: f }: Status, t: TargetName, noTests: boolean, home: string | undefined) {
+  if (!a) return;
+  if (home) fail("--home is only for an instance on Cloudflare.", `bun erga setup ${a.host}`);
+  const { firstDeployAws } = await import("../aws/setup");
+  const { secretsFor } = await import("./first");
+  const started = Date.now();
+  say(`Deploy ${t} on AWS: stack ${f.stack?.name}, https://${f.stack?.outputs.AppHost}.`);
+  say(`  ${summary(a)}`);
+  const ids = { github: own.github?.clientId, google: own.google?.clientId };
+  try {
+    const sha = await firstDeployAws({
+      dir: DIR,
+      answers: a,
+      facts: f,
+      ids,
+      secrets: secretsFor(DIR, a, t, f.targets[t]?.held?.secrets ?? []),
+      net: site,
+      noTests,
+      print: (l) => say(`  ${l.slice(0, 200)}`),
+    });
+    pass(
+      `${t} answers at https://${f.stack?.outputs.AppHost}, release ${sha.slice(0, 12)}, healthy. (${Math.round((Date.now() - started) / 1000)} s)`
+    );
+  } catch (e) {
+    fail(
+      (e as Error).message,
+      `Fix what it names (the person decides anything about the account), then: bun erga setup ${a.host}. Every step is safe to run again.`
+    );
+  }
+  const host = f.stack!.outputs.AppHost;
+  const check = await signInCheck(site, host, ids.github);
+  if (check == "ok") pass(`Sign-in: https://${host}/auth/github goes to GitHub with your app.`);
+  else say(`FAIL  Sign-in: ${check && typeof check == "object" ? check.bad : "no answer"}`);
+}
+
+/** `stack [--yes]` (AWS): the templates, AWS's change sets, and with --yes (the person said yes) the stacks. */
+async function stack(yes: boolean) {
+  const own = loadOwn(),
+    a = answersOf(own);
+  if (a.provider != "aws")
+    fail("stack is for an instance on AWS.", `bun erga setup ${a.host} set provider=aws, or go on: bun erga setup ${a.host}`);
+  const { stackStep } = await import("../aws/setup");
+  const applied = { ...(own.applied ?? {}) };
+  let done = false;
+  try {
+    done = await stackStep(DIR, a, yes, applied, (l) => say(`  ${l}`));
+  } finally {
+    // What was applied stays recorded, even when a later stack failed.
+    saveOwn({ ...loadOwn(), applied });
+  }
+  if (done) pass("The stacks are made, as the templates say.");
+  else
+    say(
+      `NEXT  The person reads the templates in ${join(DIR, "aws")} and the change set above. They may change a template, then: bun erga setup ${a.host} stack. After their yes: bun erga setup ${a.host} stack --yes`
+    );
+}
+
 /** register's ops token for `t`: the admin signs in and approves it in the browser, and the entry gets it. */
 async function registerStep({ answers: a }: Status, t: TargetName) {
   if (!a) return;
   const host = hostOf(a, t);
-  const c = await connect();
+  const c = a.provider == "aws" ? { net: site } : await connect();
   say(`Register ${host}: ${a.admin} signs in with GitHub and approves an ops token (an admin only, 90 days at most).`);
   try {
     const login = await registerSetup(DIR, host, { site: c.net, say: (l) => say(`      ${l}`) });
@@ -298,6 +361,8 @@ async function sqlOf(t: TargetName): Promise<{ sql: Sql; host: string }> {
 
 async function token(t: TargetName) {
   const a = answersOf(loadOwn());
+  if (a.provider == "aws")
+    fail("An agent's admin token is only made this way on Cloudflare.", `Make one on the server's Settings page as ${a.admin}.`);
   const secret = loadSecrets()[hostOf(a, t)]?.SESSION_SECRET;
   if (!secret)
     fail(
@@ -402,6 +467,7 @@ async function inbox(wait: boolean) {
 async function remove(t: TargetName, yes: boolean) {
   const own = loadOwn(),
     a = answersOf(own);
+  if (a.provider == "aws") return removeAws(t, yes);
   const host = hostOf(a, t),
     n = namesOf(host);
   if (!yes)
@@ -440,6 +506,46 @@ async function remove(t: TargetName, yes: boolean) {
   delete s[host];
   saveSecrets(s);
   say(`NOTE  ${host}'s entry stays in .erga/config.json. Take it out by hand if the server is gone for good.`);
+}
+
+/** Deletes an AWS server's stacks and secrets. The bucket stays (the stack retains it): the documents are in it. */
+async function removeAws(t: TargetName, yes: boolean) {
+  const a = answersOf(loadOwn());
+  const { stackOf } = await import("./plan");
+  const { awsCli } = await import("../aws/cli");
+  const { whereOf } = await import("../aws/setup");
+  const { CERT_REGION, stackState } = await import("../aws/stack");
+  const { paramPath } = await import("../aws/template");
+  const name = stackOf(a, t),
+    where = whereOf(a);
+  if (!yes)
+    fail(
+      `This deletes ${t} (${a.host}) on AWS: the stack ${name} (the machine, CloudFront, the network, the key), its certificates and its secrets. The bucket stays, with the documents in it.`,
+      `Only if the person said yes: bun erga setup ${a.host} remove ${t} --yes`
+    );
+  const aws = awsCli(where);
+  const bucket = (await stackState(aws, name)).outputs.Bucket;
+  for (const [w, s] of [
+    [where, name],
+    [{ ...where, region: CERT_REGION }, `${name}-certs`],
+  ] as const) {
+    const cli = awsCli(w);
+    if (!(await stackState(cli, s)).status) continue;
+    await cli("cloudformation", "delete-stack", "--stack-name", s);
+    say(`  ${s}: AWS deletes it (CloudFront takes minutes)...`);
+    await cli("cloudformation", "wait", "stack-delete-complete", "--stack-name", s);
+    pass(`stack ${s} deleted`);
+  }
+  const params =
+    (await aws<{ Parameters: { Name: string }[] }>("ssm", "get-parameters-by-path", "--path", paramPath(name)).catch(() => null))
+      ?.Parameters ?? [];
+  for (const p of params) await aws("ssm", "delete-parameter", "--name", p.Name);
+  if (params.length) pass(`${params.length} secrets deleted from Parameter Store`);
+  if (bucket)
+    say(
+      `NOTE  The bucket ${bucket} stays, with the documents. Delete it by hand if they are gone for good: aws s3 rb s3://${bucket} --force`
+    );
+  say(`NOTE  ${a.host}'s entry stays in .erga/config.json. Take it out by hand if the server is gone for good.`);
 }
 
 const targetArg = (v: string | undefined): TargetName =>
@@ -538,6 +644,9 @@ export async function setupMain(all: string[]) {
         break;
       case "remove":
         await remove(targetArg(plain[0]), flag("--yes"));
+        break;
+      case "stack":
+        await stack(flag("--yes"));
         break;
       default:
         say(`No setup command ${cmd}.`);

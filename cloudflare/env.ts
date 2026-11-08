@@ -31,7 +31,7 @@ export interface Env {
   DB: D1Database;
   /** Documents' blobs, their files that aren't text (cloudflare/blobs.ts): the target's own bucket (FILES on erga is erga-files). */
   FILES?: R2Bucket;
-  /** The edge's cache where the host's Cache API keeps nothing (celld: deploy/celld/project.ts); unbound on Cloudflare. */
+  /** The edge's cache where the host's Cache API keeps nothing (celld: deploy/aws/project.ts); unbound on Cloudflare. */
   EDGE_CACHE?: KVNamespace;
   /** The editor's own files (client/editor.html as editor.html, page.js, client/style.css, fonts). */
   ASSETS: Fetcher;
@@ -98,7 +98,7 @@ export interface Env {
   ERGA_GITHUB_ORIGIN?: string;
   /** Local development only: a stand-in for Google's sign-in endpoints. */
   ERGA_GOOGLE_ORIGIN?: string;
-  /** On celld (deploy/celld/aws.ts): the DevTools address of a headless Chrome on the same machine, for view_page (cloudflare/browser.ts). */
+  /** On celld (deploy/aws/machine.ts): the DevTools address of a headless Chrome on the same machine, for view_page (cloudflare/browser.ts). */
   ERGA_CHROME?: string;
   /** Local development only: the dev server's address, where its own headless Chrome is (cloudflare/browser.ts). */
   ERGA_DEV_ORIGIN?: string;

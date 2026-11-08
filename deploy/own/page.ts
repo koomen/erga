@@ -77,7 +77,9 @@ export async function setupRoute(req: Request, url: URL): Promise<Response> {
     const action = org
       ? `https://github.com/organizations/${encodeURIComponent(org)}/settings/apps/new`
       : "https://github.com/settings/apps/new";
-    const manifest = JSON.stringify(githubManifest(a, `${url.origin}/setup/github/created`));
+    const made = githubManifest(a, (await status()).facts, `${url.origin}/setup/github/created`);
+    if (!made) return new Response("The app's address comes with the AWS stack: make the stack first.", { status: 409 });
+    const manifest = JSON.stringify(made);
     return new Response(
       `<!doctype html><meta charset="utf-8"><title>To GitHub</title><body style="font:15px system-ui;padding:24px">
 <form method="post" action="${action}?state=${state}"><input type="hidden" name="manifest" value="${esc(manifest)}"><p>Sending you to GitHub to make the app...</p><button>Go on</button></form>
@@ -148,7 +150,9 @@ const QUESTION_FIELDS = QUESTIONS.map((q) => {
           .join("")}</select>`
       : q.key == "providers"
         ? `<select name="providers"><option value="github">GitHub</option><option value="github,google">GitHub and Google</option></select>`
-        : `<input name="${q.key}" autocomplete="off">`;
+        : q.key == "provider"
+          ? `<select name="provider"><option value="cloudflare">Cloudflare</option><option value="aws">AWS</option></select>`
+          : `<input name="${q.key}" autocomplete="off">`;
   return `<label><b>${esc(q.ask)}</b>${input}<small>${esc(q.help)}</small></label>`;
 }).join("");
 
