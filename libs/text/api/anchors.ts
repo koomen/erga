@@ -37,6 +37,18 @@ export function anchorOf(text: Y.Text, from: number, to: number): Anchor | null 
   };
 }
 
+/**
+ * An anchor on `quote`, where it is in the text one time only: an agent names the text it comments on by its words.
+ * Else why not: it isn't in the text, or it is there more than one time.
+ */
+export function anchorOfQuote(text: Y.Text, quote: string): Anchor | { error: string } {
+  const s = text.toString(),
+    at = quote ? s.indexOf(quote) : -1;
+  if (at < 0) return { error: "isn't on the page" };
+  if (s.indexOf(quote, at + 1) >= 0) return { error: "is on the page more than one time: give a longer quote" };
+  return anchorOf(text, at, at + quote.length)!;
+}
+
 /** Where an anchor's text is now. */
 export function resolveAnchor(text: Y.Text, anchor: Anchor): Resolved {
   const s = text.toString(),

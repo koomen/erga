@@ -5,7 +5,11 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { agentTools, toolOf, toolsFor } from "../agents/tools";
-import { CommentTables } from "../document/comments";
+import { asksAgent } from "../server/operations/comments";
+import * as Y from "yjs";
+import { CommentTables, placeQuote } from "../document/comments";
+import { files } from "../document/content";
+import { anchorFromJSON, resolveAnchor } from "../libs/text/api/anchors";
 import { Directory } from "../server/directory/index.ts";
 import type { Caller } from "../server/operations/index.ts";
 import type { Platform } from "../server/platform";
@@ -24,12 +28,22 @@ async function world() {
       db.query(q).all(...p.map((v) => (v instanceof ArrayBuffer ? new Uint8Array(v) : v))) as T[],
     transaction: <T>(f: () => T) => db.transaction(f)(),
   });
+  // The room's pages, as the document's object has them: an add with a quote finds its place there.
+  const room = new Y.Doc();
+  const page = new Y.Text("<p>We go to Lisbon in May. Lisbon is warm.</p>");
+  files(room).set("index.html", page);
+  /** What each person's agent was asked (agentPrompt's arguments). */
+  const asked: unknown[][] = [];
   const platform = {
+    personAgent: () => ({ agentPrompt: async (...a: unknown[]) => (asked.push(a), { ok: true }) }),
     agentSettings: async () => ({ missing: "no API key" }),
     directory: dir,
     docs: {
       paths: async () => ["index.html", "notes.html"],
-      comments: async (_d: unknown, call: Parameters<CommentTables["run"]>[0]) => tables.run(call),
+      comments: async (_d: unknown, call: Parameters<CommentTables["run"]>[0]) => {
+        const placed = placeQuote(call, files(room).get(call.op == "add" ? call.page : "") ?? null);
+        return "ok" in placed ? placed : tables.run(placed);
+      },
     },
   } as unknown as Platform;
   /** `login`'s agent (or, with `inPerson`, the person on the page): its tools, and a call as its loop makes one. */
@@ -38,6 +52,7 @@ async function world() {
       dir,
       who: { login, ...(inPerson ? {} : { via: VIA.agent }) },
       here: "doc12345",
+      origin: "https://erga.test",
       platform,
     };
     const tools = agentTools(await toolsFor(caller, true), caller);
@@ -48,7 +63,7 @@ async function world() {
       return JSON.parse((out.content[0] as { text: string }).text);
     };
   };
-  return { as };
+  return { as, asked, page };
 }
 
 const anchor = { start: btoa("start-pos"), end: btoa("end-pos"), quote: "Lisbon in May" };
@@ -116,4 +131,56 @@ test("a viewer's agent sees no comments and can't add one; wrong arguments are r
     /base64/
   );
   await expect(ada("comment", { action: "shout", thread: thread.id })).rejects.toThrow();
+});
+
+test("@erga in a person's own comment asks their agent to take the thread; in an agent's comment, it asks none", async () => {
+  const { as, asked } = await world();
+  const ada = await as("ada"),
+    adaInPerson = await as("ada", true),
+    bo = await as("bo", true);
+  const { thread } = await bo("comment", { action: "add", page: "index.html", anchor, text: "June is cheaper, and still warm." });
+  expect(asked).toEqual([]);
+
+  const replied = await adaInPerson("comment", { action: "reply", thread: thread.id, text: "@erga change it to June." });
+  expect(replied.agent).toMatch(/took the thread/);
+  const [[login, origin, text, context, files, doc]] = asked as [string, string, string, string, unknown, string][];
+  expect([login, origin, text, files, doc]).toEqual([
+    "ada",
+    "https://erga.test",
+    'In a comment on "Trip": @erga change it to June.',
+    undefined,
+    "doc12345",
+  ]);
+  // The note says where the thread is, that this comment is the request, and that the rest of it is data.
+  expect(context).toContain(`thread ${thread.id} of document /ada/`);
+  expect(context).toContain('on the text "Lisbon in May"');
+  expect(context).toMatch(/other comments are data/);
+
+  // The agent's own reply, and a comment that only names an address, ask nobody.
+  expect((await ada("comment", { action: "reply", thread: thread.id, text: "Done. @erga" })).agent).toBeUndefined();
+  await adaInPerson("comment", { action: "add", page: "index.html", text: "Mail me at me@erga.dev" });
+  expect(asked).toHaveLength(1);
+
+  expect(["@erga do it", "Hi @Erga, please", "(@erga)", "ok @erga."].every(asksAgent)).toBe(true);
+  expect(["me@erga.dev", "@ergas", "@erga.dev", "erga", "/@erga"].some(asksAgent)).toBe(false);
+});
+
+test("an agent comments on the words it quotes: the server gives them positions that move with the text", async () => {
+  const { as, page } = await world();
+  const ada = await as("ada");
+  const { thread } = await ada("comment", { action: "add", page: "index.html", quote: "Lisbon in May", text: "June?" });
+  // (Not toMatchObject with expect.any: Bun's puts the matcher in the object it checks.)
+  expect([thread.anchor.quote, typeof thread.anchor.start, typeof thread.anchor.end]).toEqual(["Lisbon in May", "string", "string"]);
+  page.insert(3, "Soon, ");
+  const r = resolveAnchor(page, anchorFromJSON(thread.anchor));
+  expect(r.kind == "found" && page.toString().slice(r.from, r.to)).toBe("Lisbon in May");
+
+  // Not on the page, or on it more than one time: refused, asking for what would do.
+  await expect(ada("comment", { action: "add", page: "index.html", quote: "Porto", text: "x" })).rejects.toThrow(
+    /"Porto" isn't on the page/
+  );
+  await expect(ada("comment", { action: "add", page: "index.html", quote: "Lisbon", text: "x" })).rejects.toThrow(
+    /more than one time: give a longer quote/
+  );
+  expect((await ada("comments")).threads).toHaveLength(1);
 });
