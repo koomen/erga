@@ -4,6 +4,8 @@
 //
 //   listed: the server's open threads (after each change the document tells of: frame.ts)
 //   compose --send--> (add) --answered--> the new thread, in use
+//   send: the text shows in its card at once, pending, and its box empties and waits; on an error, the text goes back
+//   into the box, with the reason beside it (a card's key: its thread's id, "" for the new comment's)
 //   resolve --> gone, with "Resolved · Undo" --undo--> (reopen) --answered--> back
 //                                            --expired--> the pill goes
 
@@ -33,8 +35,12 @@ export interface State {
   shown: boolean;
   /** The thread in use: its highlight stronger, its card with Reply. */
   active: string | null;
-  /** The new comment being written, on this text; `sending` once Enter sent it. */
-  draft: { anchor: AnchorJSON; sending: boolean } | null;
+  /** The new comment being written, on this text. */
+  draft: { anchor: AnchorJSON } | null;
+  /** The text each card sent, until the server answers: it shows in the card, pending. */
+  sending: Record<string, string>;
+  /** Each card's text the server refused, with its reason: the text is back in its box. */
+  errors: Record<string, string>;
   /** The thread just resolved, while Undo can reopen it; `n` counts resolves, for the timer's end. */
   resolved: { thread: Thread; n: number } | null;
 }
@@ -55,7 +61,8 @@ export type CommentEvent =
   | { type: "undo" }
   | { type: "expired"; n: number }
   | { type: "answered"; action: Action; thread: Thread | null }
-  | { type: "failed"; action: Action; message: string; thread?: Thread };
+  /** A call that failed: `card`, the card whose text it sent (add, reply); `thread`, the thread it changed (resolve, reopen). */
+  | { type: "failed"; action: Action; message: string; card?: string; thread?: Thread };
 
 export type Effect =
   | { do: "call"; action: "add"; anchor: AnchorJSON; text: string }
@@ -66,10 +73,26 @@ export type Effect =
   | { do: "explain"; message: string }
   /** The focus back to the page's text. */
   | { do: "focus" }
-  /** The reply box of this thread empties: its reply is in. */
-  | { do: "cleared"; thread: string };
+  /** The box of this card empties: its text is on its way. */
+  | { do: "cleared"; card: string }
+  /** The text goes back into this card's box: the server refused it. */
+  | { do: "restore"; card: string; text: string };
 
-export const initial = (shown = true): State => ({ threads: [], shown, active: null, draft: null, resolved: null });
+export const initial = (shown = true): State => ({
+  threads: [],
+  shown,
+  active: null,
+  draft: null,
+  sending: {},
+  errors: {},
+  resolved: null,
+});
+
+/** `r` without `key`. */
+const without = (r: Record<string, string>, key: string) => {
+  const { [key]: _, ...rest } = r;
+  return rest;
+};
 
 /** Puts a thread in the list, in place of the one with its id. */
 const upsert = (threads: Thread[], t: Thread) =>
@@ -86,17 +109,20 @@ export function step(s: State, e: CommentEvent): { state: State; effects: Effect
     case "show":
       return done({ ...s, shown: e.on, active: e.on ? s.active : null });
     case "compose":
-      return done({ ...s, draft: { anchor: e.anchor, sending: false }, active: null });
+      return done({ ...s, draft: { anchor: e.anchor }, sending: without(s.sending, ""), errors: without(s.errors, ""), active: null });
     case "cancel":
-      if (s.draft) return done({ ...s, draft: null }, [{ do: "focus" }]);
+      if (s.draft) return done({ ...s, draft: null, sending: without(s.sending, ""), errors: without(s.errors, "") }, [{ do: "focus" }]);
       if (s.active) return done({ ...s, active: null }, [{ do: "focus" }]);
       return done(s);
     case "send": {
       const text = e.text.trim();
-      if (!text) return done(s);
-      if (e.thread) return done(s, [{ do: "call", action: "reply", thread: e.thread, text }]);
-      if (!s.draft || s.draft.sending) return done(s);
-      return done({ ...s, draft: { ...s.draft, sending: true } }, [{ do: "call", action: "add", anchor: s.draft.anchor, text }]);
+      const card = e.thread ?? "";
+      if (!text || card in s.sending || (!e.thread && !s.draft)) return done(s);
+      const next = { ...s, sending: { ...s.sending, [card]: text }, errors: without(s.errors, card) };
+      const call: Effect = e.thread
+        ? { do: "call", action: "reply", thread: e.thread, text }
+        : { do: "call", action: "add", anchor: s.draft!.anchor, text };
+      return done(next, [{ do: "cleared", card }, call]);
     }
     case "activate":
       return done({ ...s, active: e.id, draft: e.id ? null : s.draft });
@@ -119,13 +145,20 @@ export function step(s: State, e: CommentEvent): { state: State; effects: Effect
     case "answered": {
       if (e.action == "resolve" || !e.thread) return done(s);
       const threads = upsert(s.threads, e.thread);
-      if (e.action == "add") return done({ ...s, threads, draft: null, active: e.thread.id }, [{ do: "focus" }]);
-      if (e.action == "reply") return done({ ...s, threads }, [{ do: "cleared", thread: e.thread.id }]);
+      if (e.action == "add")
+        return done({ ...s, threads, draft: null, sending: without(s.sending, ""), active: e.thread.id }, [{ do: "focus" }]);
+      if (e.action == "reply") return done({ ...s, threads, sending: without(s.sending, e.thread.id) });
       return done({ ...s, threads });
     }
     case "failed": {
       const explain: Effect = { do: "explain", message: e.message };
-      if (e.action == "add") return done({ ...s, draft: s.draft && { ...s.draft, sending: false } }, [explain]);
+      // A comment or a reply: its text goes back into its box, and the reason shows there.
+      if ((e.action == "add" || e.action == "reply") && e.card != null) {
+        const text = s.sending[e.card] ?? "";
+        return done({ ...s, sending: without(s.sending, e.card), errors: { ...s.errors, [e.card]: e.message } }, [
+          { do: "restore", card: e.card, text },
+        ]);
+      }
       // A resolve that didn't happen: the thread comes back. A reopen that didn't: it goes again.
       if (e.action == "resolve" && e.thread)
         return done({ ...s, threads: upsert(s.threads, e.thread), resolved: s.resolved?.thread.id == e.thread.id ? null : s.resolved }, [
