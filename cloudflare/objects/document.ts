@@ -30,7 +30,7 @@ import { documentAgents } from "../../agents/document/session";
 import { sandboxOf } from "../sandbox";
 import { VIA } from "../../shared/attribution";
 import type { RestoreResult, VersionsState } from "../../document/versions";
-import { CommentTables, type CommentAnswer, type CommentCall } from "../../document/comments";
+import { CommentTables, placeQuote, type CommentAnswer, type CommentCall } from "../../document/comments";
 import type { DocSnapshot, Page } from "../../document/snapshot";
 import { directoryOf } from "../d1";
 import { forgetDecisions } from "../../server/documents/index.ts";
@@ -224,8 +224,11 @@ export class DocumentObject extends DurableObject<Env> {
   }
   /** Its comments: a list, or a change (server/operations/comments.ts checked what the person may do). */
   async comments(call: CommentCall): Promise<CommentAnswer> {
-    const answer = this.commentTables.run(call);
-    if (answer.ok && call.op != "list") this.tabs.commentsChanged();
+    // An agent's add names its text by a quote: the page's text in the room gives it positions.
+    const placed = call.op == "add" && call.quote != null ? placeQuote(call, await this.document.roomText(call.page)) : call;
+    if ("ok" in placed) return placed;
+    const answer = this.commentTables.run(placed);
+    if (answer.ok && placed.op != "list") this.tabs.commentsChanged();
     return answer;
   }
   /** A viewer's page in one call (Document.view): what they may do, which file, the version, its text. */

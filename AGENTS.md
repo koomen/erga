@@ -261,6 +261,8 @@ Found a new trap? Write it here, in the same change.
   (`POST /api/tools/comment?doc=<id>&key=<key>`, server/api.ts `fromPage`), and only the ops in `KEYED_OPS`
   (server/documents/routes.ts). Its socket opens with `?comments=1` and hears `{ type: "comments" }` after each change
   of the comments; it reads them again. The visible snapshot shows a comment's highlight as `{...}`.
+- In `bun test`, `toMatchObject` with `expect.any(...)` writes the matcher into the object it checks
+  (Bun 1.4.2): a later read of that field gets `{}`. Check the fields with `toEqual` on a list instead.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 

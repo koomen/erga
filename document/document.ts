@@ -508,6 +508,12 @@ export class Document {
     });
   }
 
+  /** A page's text in the room (opened if it isn't), or null: a comment's quote finds its place there. */
+  async roomText(path: string) {
+    const opened = await this.room();
+    return (opened && texts(opened.room.doc).get(path)) ?? null;
+  }
+
   /** Every file the document holds (the room's view: text files and others). */
   paths(): Effect.Effect<string[], StoreError> {
     return Effect.map(

@@ -8,7 +8,9 @@
 // A thread is open, resolved (it disappears; reopen brings it back) or hidden (its text was deleted). Its rows stay.
 // A Durable Object's deleteAll drops these tables too, so each call makes them again if they're gone.
 
+import type * as Y from "yjs";
 import { base64, fromBase64, randomToken } from "../shared/bytes.ts";
+import { anchorOfQuote, anchorToJSON } from "../libs/text/api/anchors.ts";
 
 /** A Durable Object's SQLite, as the tables need it (bun:sqlite stands in for the tests). */
 export interface CommentSql {
@@ -54,7 +56,7 @@ export interface Author {
 /** What a caller asks of the tables. The caller checked the person may comment; `own` limits a change to their own thread. */
 export type CommentCall =
   | { op: "list"; page?: string | null; all?: boolean }
-  | ({ op: "add"; page: string; anchor: Anchor | null; text: string } & Author)
+  | ({ op: "add"; page: string; anchor: Anchor | null; text: string; quote?: string } & Author)
   | ({ op: "reply"; thread: string; text: string } & Author)
   | { op: "resolve"; thread: string; by: string; own: boolean }
   | { op: "reopen"; thread: string; by: string; own: boolean }
@@ -94,6 +96,19 @@ const bytes = (v: ArrayBuffer | Uint8Array) => (v instanceof Uint8Array ? v : ne
 /** Bytes as SQLite takes a BLOB (a Durable Object's takes an ArrayBuffer). */
 const blob = (s: string): ArrayBuffer => fromBase64(s).buffer;
 
+/**
+ * An add that names its text by a quote (an agent's: it has no positions), with the anchor the page's text gives it;
+ * else why not, for the caller. `text`: the page's text in the room, null if there's no such page.
+ */
+export function placeQuote(call: CommentCall, text: Y.Text | null): CommentCall | CommentAnswer {
+  if (call.op != "add" || call.quote == null) return call;
+  if (!text) return no(404, `There's no page "${call.page}" in this document.`);
+  const a = anchorOfQuote(text, call.quote);
+  if ("error" in a) return no(a.error.startsWith("isn't") ? 404 : 409, `The quote "${call.quote.slice(0, 80)}" ${a.error}.`);
+  const { quote: _, ...rest } = call;
+  return { ...rest, anchor: anchorToJSON(a) };
+}
+
 export class CommentTables {
   constructor(private sql: CommentSql) {}
 
@@ -112,7 +127,7 @@ export class CommentTables {
     switch (call.op) {
       case "list": {
         const rows = this.sql.exec<ThreadRow>(
-          `SELECT * FROM comment_threads WHERE (?1 IS NULL OR page = ?1)${call.all ? "" : " AND resolved_at IS NULL AND hidden = 0"} ORDER BY created_at, id`,
+          `SELECT * FROM comment_threads WHERE (?1 IS NULL OR page = ?1)${call.all ? "" : " AND resolved_at IS NULL AND hidden = 0"} ORDER BY created_at, rowid`,
           call.page ?? null
         );
         return { ok: true, threads: rows.map((r) => this.threadOf(r)) };
