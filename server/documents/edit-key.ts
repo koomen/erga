@@ -6,11 +6,9 @@
 // admin edits the homepage project, which is nobody's), and only for this one document. The document decides what the
 // person may do (read or edit) as it does for any request: a share taken away holds for the next socket.
 
-import * as Base64Url from "effect/encoding/Base64Url";
-import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import type { Who } from "../directory/index.ts";
-import { hmac } from "./pages-origin.ts";
-import { sameText } from "../../shared/bytes.ts";
+import { signed } from "../signed.ts";
 
 /** How long a key holds, in seconds. */
 export const KEY_SECONDS = 15 * 60;
@@ -23,6 +21,19 @@ export interface KeyPerson {
   admin?: boolean;
 }
 
+/** An edit key's value (server/signed.ts): the document (d), and the person: login (l), name (n), picture (a), admin power (m). */
+const EditKey = signed(
+  "edit-key",
+  Schema.Struct({
+    d: Schema.String,
+    l: Schema.String,
+    n: Schema.String,
+    a: Schema.optionalKey(Schema.String),
+    m: Schema.optionalKey(Schema.Literal(1)),
+  }),
+  KEY_SECONDS
+);
+
 /** A key for `person` to open the socket of the document `id` (its owner `owner`), until `now` and KEY_SECONDS. */
 export async function editKey(
   secret: string,
@@ -31,40 +42,25 @@ export async function editKey(
   person: KeyPerson,
   now = Date.now()
 ): Promise<{ key: string; expires: number }> {
-  const e = Math.floor(now / 1000) + KEY_SECONDS;
-  const claims = Base64Url.encode(
-    new TextEncoder().encode(
-      JSON.stringify({
-        d: `${owner.toLowerCase()}/${id}`,
-        e,
-        l: person.login.toLowerCase(),
-        n: person.name,
-        ...(person.avatar ? { a: person.avatar } : {}),
-        ...(person.admin ? { m: 1 } : {}),
-      })
-    )
+  const key = await EditKey.seal(
+    secret,
+    {
+      d: `${owner.toLowerCase()}/${id}`,
+      l: person.login.toLowerCase(),
+      n: person.name,
+      ...(person.avatar ? { a: person.avatar } : {}),
+      ...(person.admin ? { m: 1 as const } : {}),
+    },
+    { now }
   );
-  // (Signed apart from a pages token: one is never the other.)
-  return { key: `${claims}.${await hmac(secret, `key.${claims}`)}`, expires: e * 1000 };
+  return { key, expires: (Math.floor(now / 1000) + KEY_SECONDS) * 1000 };
 }
 
 /** The person a good, current key for this document names, or null. */
 export async function readEditKey(secret: string, key: string, owner: string, id: string, now = Date.now()): Promise<KeyPerson | null> {
-  const [claims, mac, extra] = key.split(".");
-  if (!claims || !mac || extra != null || !sameText(mac, await hmac(secret, `key.${claims}`))) return null;
-  try {
-    const c = JSON.parse(Result.getOrThrow(Base64Url.decodeString(claims))) as Record<string, unknown>;
-    if (c.d != `${owner.toLowerCase()}/${id}` || !(Number(c.e) > now / 1000) || typeof c.l != "string" || typeof c.n != "string")
-      return null;
-    return {
-      login: c.l,
-      name: c.n,
-      ...(typeof c.a == "string" ? { avatar: c.a } : {}),
-      ...(c.m === 1 ? { admin: true } : {}),
-    };
-  } catch {
-    return null;
-  }
+  const c = await EditKey.open(secret, key, now);
+  if (!c || c.d != `${owner.toLowerCase()}/${id}`) return null;
+  return { login: c.l, name: c.n, ...(c.a != null ? { avatar: c.a } : {}), ...(c.m === 1 ? { admin: true } : {}) };
 }
 
 /** Who a key's person is, to the document: this one document, with admin power only if their session had it. */

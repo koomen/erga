@@ -10,7 +10,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { takeLock, testEnv } from "./deploy";
-import { ROOT, sh } from "./observe";
+import { sh } from "./observe";
+import { ROOT } from "../root";
 import { alive, ownStart } from "./pid";
 
 /** waiting: another run holds the lock. stopped: its process ended with no result (the page says so; no file has it). */

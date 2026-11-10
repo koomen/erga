@@ -1,21 +1,13 @@
 // Undo and redo in lists, as a person uses them: each undo takes back one step, and after a redo the caret is where the
 // step left it, so typing goes on there. From an empty page, with keys only, checked by what the page shows. Each
 // expected snapshot was checked by eye first, on `bun run look` screenshots with the same keys.
-import { knownBug, servers, test, type Tab } from "../../helpers/fixtures";
-import { openEditor } from "../../helpers/editor";
+import { servers, test, type Tab } from "../../helpers/fixtures";
+import { openEmpty } from "../../helpers/editor";
 
 await servers.main();
 
-/** An empty page in the editor, the caret in its one paragraph. */
-const empty = async (tab: Tab) => {
-  const ed = await openEditor(tab, await servers.main(), "empty");
-  await ed.clickEnd("p");
-  await ed.idle();
-  return ed;
-};
-
 test("Undo right after - makes a list gives back the - typed, as text", async ({ tab }) => {
-  const ed = await empty(tab);
+  const ed = await openEmpty(tab);
   await ed.type("- ");
   await ed.shows(`
     • |
@@ -27,7 +19,7 @@ test("Undo right after - makes a list gives back the - typed, as text", async ({
 });
 
 test("Redo after - and undo makes the list again, the caret in its item, and typing goes on there", async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await ed.type("- ");
     await ed.press("ControlOrMeta+z");
     await ed.press("ControlOrMeta+Shift+z");
@@ -42,7 +34,7 @@ test("Redo after - and undo makes the list again, the caret in its item, and typ
 );
 
 test("Redo of a Backspace that joins two items puts the caret at the join, and typing goes on there", async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await ed.type("- One");
     await ed.press("Enter");
     await ed.type("Two");
@@ -62,7 +54,7 @@ test("Redo of a Backspace that joins two items puts the caret at the join, and t
 );
 
 test("Redo of a Tab nests the item again, the caret stays in it, and typing goes on there", async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await ed.type("- One");
     await ed.press("Enter");
     await ed.type("Two");
@@ -82,7 +74,7 @@ test("Redo of a Tab nests the item again, the caret stays in it, and typing goes
 );
 
 test("Undo after Tab and Shift+Tab takes back the Shift+Tab only: the item is nested again", async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await ed.type("- One");
     await ed.press("Enter");
     await ed.type("Two");

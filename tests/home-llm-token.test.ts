@@ -11,15 +11,14 @@ test("a page token is good for its document for an hour, and for nothing else", 
   expect(await tokenOk("secret", token, "home1234", t + PAGE_TOKEN_MS - 1)).toBe(true);
   // Expired.
   expect(await tokenOk("secret", token, "home1234", t + PAGE_TOKEN_MS)).toBe(false);
-  // From the future.
-  expect(await tokenOk("secret", token, "home1234", t - 120_000)).toBe(false);
   // Another document's.
   expect(await tokenOk("secret", token, "other123", t)).toBe(false);
   // Another server's.
   expect(await tokenOk("another", token, "home1234", t)).toBe(false);
-  // Changed: a later time with the old signature.
+  // Changed: a later expiry with the old signature.
   const [, sig] = /\.([^.]+)$/.exec(token)!;
-  expect(await tokenOk("secret", `home-llm:home1234:${t + 1000}.${sig}`, "home1234", t + 1000)).toBe(false);
+  const later = Buffer.from(JSON.stringify({ v: { doc: "home1234" }, e: (t + 2 * PAGE_TOKEN_MS) / 1000 })).toString("base64url");
+  expect(await tokenOk("secret", `${later}.${sig}`, "home1234", t + PAGE_TOKEN_MS)).toBe(false);
   // None.
   expect(await tokenOk("secret", undefined, "home1234", t)).toBe(false);
   expect(await tokenOk("secret", "", "home1234", t)).toBe(false);

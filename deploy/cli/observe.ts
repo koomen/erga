@@ -5,8 +5,8 @@ import { type Config, entryOrigin } from "./config";
 import { healthOf } from "./deploy";
 import { type Branch, type Commit, type Instance, PROTECTED, type State, stateOf } from "./flow";
 import { readOps } from "./ops";
+import { ROOT } from "../root";
 
-export const ROOT = new URL("../..", import.meta.url).pathname;
 
 /** A command's result: its exit, and what it printed. */
 export function sh(cmd: string[], o: { cwd?: string; input?: string; env?: Record<string, string | undefined> } = {}) {
@@ -20,16 +20,6 @@ export function sh(cmd: string[], o: { cwd?: string; input?: string; env?: Recor
   return { ok: r.exitCode == 0, code: r.exitCode, out: r.stdout.toString().trim(), err: r.stderr.toString().trim() };
 }
 export const git = (...args: string[]) => sh(["git", ...args]);
-/** gh's JSON answer, or null. */
-export function ghJson<T>(...args: string[]): T | null {
-  const r = sh(["gh", ...args]);
-  if (!r.ok) return null;
-  try {
-    return JSON.parse(r.out) as T;
-  } catch {
-    return null;
-  }
-}
 
 /** The GitHub repository of `origin` (owner/name), or null. */
 export const repoOf = (): string | null => {

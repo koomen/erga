@@ -96,8 +96,8 @@ behavior, not five that check the same thing.
 
 Tests hold the other rules, and a failed one says what to do: the layers
 (`tests/imports.test.ts`), migrations that only add
-(`tests/migrations.test.ts`), a line in `agents/actions.ts` for each new
-route (`tests/agent-actions.test.ts`), source files under 48 KB
+(`tests/migrations.test.ts`), a row in its file's list for each new
+route (`shared/routes.ts`, `tests/agent-actions.test.ts`), source files under 48 KB
 (`tests/file-size.test.ts`), no fixed pause in a test
 (`tests/test-habits.test.ts`).
 

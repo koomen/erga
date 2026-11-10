@@ -1,5 +1,5 @@
 // Two tabs on one document, typing at once (the robustness hunt): what each tab shows, and that no key is lost.
-import { knownBug, servers, test, until, type Tab } from "../../helpers/fixtures";
+import { servers, test, until, type Tab } from "../../helpers/fixtures";
 import { editor, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();

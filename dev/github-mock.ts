@@ -181,4 +181,3 @@ export function mockGithub(opts: MockGithubOptions) {
 
   return { fetch: handle, state, user, app: opts.app };
 }
-export type MockGithub = ReturnType<typeof mockGithub>;

@@ -34,6 +34,7 @@
 
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Schema from "effect/Schema";
+import { mac } from "../signed.ts";
 import type { Directory, Param, Sql } from "../directory/index.ts";
 import { changeLogEntry } from "../../shared/attribution";
 import { base64url, randomString, randomToken, sha256, sha256Hex } from "../../shared/bytes.ts";
@@ -74,7 +75,9 @@ const NOT_A_SCOPE = (s: string) => `"${s}" isn't a scope: document, documents, a
 export interface Grant { scope: Scope; docId?: string | null; expires?: number | null }
 
 /** Why a token can't be made (a wrong scope, a document that isn't the person's to open): the message says so. */
-export class ScopeError extends Schema.TaggedError<ScopeError>()("ScopeError", { message: Schema.String }) {}
+export class ScopeError extends Schema.TaggedError<ScopeError>()("ScopeError", { message: Schema.String }) {
+  readonly status = 403;
+}
 
 /** An OAuth request's own parts (oauth.ts): the client, where its person goes back, its PKCE challenge (S256) and state. */
 export interface OAuthAsk {
@@ -172,8 +175,7 @@ export class Tokens {
 
   /** The token with this id: an HMAC of it with the server's secret. */
   private async tokenFor(id: string): Promise<string> {
-    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(`erga-agent-token:${this.secret}`), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-    return TOKEN_PREFIX + Base64Url.encode(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(id))));
+    return TOKEN_PREFIX + (await mac(`erga-agent-token:${this.secret}`, id));
   }
 
   /**

@@ -82,8 +82,18 @@ export interface Actor {
   via?: string;
 }
 
+// Each failure a call refuses with carries the HTTP status it answers (`status`): the words of its message can
+// change, and the status can't. An operation answers it (server/operations/operation.ts).
+
 /** What an admin-only call says to someone who isn't one, or a change it can't make (the message says why). */
-export class NotAllowed extends Schema.TaggedError<NotAllowed>()("NotAllowed", { message: Schema.String }) {}
+export class NotAllowed extends Schema.TaggedError<NotAllowed>()("NotAllowed", { message: Schema.String }) {
+  readonly status = 403;
+}
+
+/** There's no such thing: the user, or the document, that the call names. */
+export class NotFound extends Schema.TaggedError<NotFound>()("NotFound", { message: Schema.String }) {
+  readonly status = 404;
+}
 
 /** What an admin acting through a token without the admin scope is told, wherever they try. */
 export const LOCKED = "This token has no admin power: make a token with the admin scope at /tokens.";
@@ -288,7 +298,7 @@ export class Users {
     await this.mustAdmin(by);
     login = login.toLowerCase();
     const user = await this.get(login);
-    if (!user) throw new NotAllowed({ message: `${login} isn't a user: add them first.` });
+    if (!user) throw new NotFound({ message: `${login} isn't a user: add them first.` });
     if (role == "admin" && user.role == "admin") return user;
     if (role != "admin" && user.bootstrap)
       throw new NotAllowed({ message: `${login} is the dev server's own admin (DEV_LOGIN): they stay one.` });
@@ -313,7 +323,7 @@ export class Users {
     if (role != "admin" && this.isBootstrapAdmin(login))
       throw new NotAllowed({ message: `${login} is the dev server's own admin (DEV_LOGIN): they stay one.` });
     const user = await this.get(login);
-    if (!user) throw new NotAllowed({ message: `${login} isn't a user: add them first.` });
+    if (!user) throw new NotFound({ message: `${login} isn't a user: add them first.` });
     if (role != "admin" && user.role == "admin") await this.mustKeepAnAdmin(by, login);
     await this.sql.batch([["UPDATE users SET role = ?2 WHERE login = ?1", login, role], this.logged(by, Date.now(), { login, event: "role", role })]);
     this.known.delete(login);

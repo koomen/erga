@@ -3,21 +3,7 @@
 // This is the logic (PersonAgents) and the routes; the Durable Object (cloudflare/objects/person-agent.ts) gives it its
 // SQLite and forwards the calls.
 //
-//   GET    /api/agent                 { enabled, reason?, model, models, choice, log }
-//   POST   /api/agent                 { text, context, files?, doc?, id? }: a message (it steers a turn that is running);
-//                                     context is the page note (the page open, what is selected there), doc the id
-//                                     of the document open, for the document tools that name none, id the tab's own
-//                                     id for the message: its copy in the transcript carries it, and a second
-//                                     message with the same id (Try again, after the first got there) is not sent again
-//   POST   /api/agent/abort|reset     stops the turn; starts a new conversation
-//   POST   /api/agent/model           { model }: one of the models the person can use (shared/models.ts), from the next turn
-//   GET    /api/agent/events          a WebSocket (Upgrade: websocket, as the panel asks) or server-sent events, to that
-//                                     person's pages only: { type: "agent", ev }
-//   GET    /api/agent/conversation    { log: { items, busy, undoable } }: the conversation
-//   DELETE /api/agent/conversation    a new conversation (the "New conversation" button)
-//   POST   /api/agent/keys            { name, value }: the person's own API key for a provider (Settings, Agent), in place of
-//                                     the one there was; a secret, so set only here (whoami, revoke
-//                                     list and remove them). The answer has its last four characters, never the key.
+// The routes are ROUTES, below (/api/agent...).
 //
 // The panel is the person's, in a browser: no token reaches it. An outside agent with a token
 // ("Authorization: Bearer erga_...", server/identity) calls the same tools itself (MCP, POST /api/tools/<name>,
@@ -44,6 +30,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import { call, ctx, fromWeb, json, type Route } from "../../server/http.ts";
+import { PANEL, routeFor, SECRET, STREAM, type RouteRow } from "../../shared/routes.ts";
 
 const enc = new TextEncoder();
 
@@ -388,53 +375,124 @@ const agentRoutes = (origin: string): Route =>
   if (!me)
     return json({ error: "Sign in as yourself to talk to your agent." }, (yield* call(() => platform.sessionOf(request))) ? 403 : 401);
   if (request.method != "GET" && request.headers.get("origin") != origin) return json({ error: "Forbidden" }, 403);
-  const h = platform.personAgent(me.login),
-    path = url.pathname.replace(/\/$/, ""),
-    m = request.method;
-  if (path == "/api/agent") {
-    if (m == "GET") return json(yield* call(() => h.agentState(me.login, url.origin, me.name, url.searchParams.has("fresh"))));
-    if (m == "POST") {
-      const b = yield* body(request, Prompt, {});
-      const r = yield* call(() =>
-        h.agentPrompt(
-          me.login,
-          url.origin,
-          String(b.text ?? ""),
-          typeof b.context == "string" ? b.context : null,
-          b.files,
-          typeof b.doc == "string" ? b.doc : null,
-          me.name,
-          typeof b.id == "string" && /^[\w-]{1,64}$/.test(b.id) ? b.id : undefined
-        )
-      );
-      return json(r, r.ok ? 200 : 409);
-    }
-  }
-  const control = /^\/api\/agent\/(abort|reset|model)$/.exec(path)?.[1] as "abort" | "reset" | "model" | undefined;
-  if (control && m == "POST") {
-    const b = control == "model" ? yield* body(request, ModelBody, {}) : {};
-    const r = yield* call(() => h.agentControl(me.login, control, b.model));
-    return json(r, r.ok ? 200 : 409);
-  }
-  if (path == "/api/agent/events" && m == "GET") {
-    const headers = new Headers(request.headers);
-    headers.set("x-erga-login", me.login);
-    return fromWeb(yield* call(() => h.fetch(new Request(request.url, { headers }))));
-  }
-  if (path == "/api/agent/conversation") {
-    if (m == "GET") return json({ log: yield* call(() => h.conversation(me.login)) });
-    if (m == "DELETE") return json({ ok: true, log: yield* call(() => h.clearConversation(me.login)) });
-  }
-  if (path == "/api/agent/keys" && m == "POST") {
-    const b = yield* body(request, KeyBody, {});
-    // A key that isn't one (the wrong provider's, a plan token) is refused, saying why.
-    return yield* Effect.tryPromise({
-      try: () => platform.directory.personKeys.set({ login: me.login }, b.name ?? "", b.value ?? ""),
-      catch: (e) => (e instanceof Error ? e.message : String(e)),
-    }).pipe(
-      Effect.map((key) => json({ ok: true, key })),
-      Effect.catch((error) => Effect.succeed(json({ ok: false, error }, 400)))
-    );
-  }
-  return json({ error: "Not found" }, 404);
+  const found = routeFor(ROUTES, request.method, url.pathname.replace(/\/$/, ""));
+  if (!found) return json({ error: "Not found" }, 404);
+  return yield* found.route.run({ request, url, platform, me, h: platform.personAgent(me.login) });
 });
+
+/** The person who asks, checked, and their agent's object. */
+interface Asked {
+  readonly request: Request;
+  readonly url: URL;
+  readonly platform: Platform;
+  readonly me: { login: string; name: string };
+  readonly h: ReturnType<Platform["personAgent"]>;
+}
+
+/** Stops the turn, starts a new conversation, or switches the model ({ model }: one the person can use, from the next turn). */
+const control = (what: "abort" | "reset" | "model") => (a: Asked) =>
+  Effect.gen(function* () {
+    const b = what == "model" ? yield* body(a.request, ModelBody, {}) : {};
+    const r = yield* call(() => a.h.agentControl(a.me.login, what, b.model));
+    return json(r, r.ok ? 200 : 409);
+  });
+
+const PANEL_ROW = { domain: "none", exempt: PANEL } as const;
+
+/** The agent panel's routes. */
+export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
+  {
+    method: "GET",
+    path: "/api/agent",
+    // { enabled, reason?, model, models, choice, log }
+    run: (a) =>
+      call(() => a.h.agentState(a.me.login, a.url.origin, a.me.name, a.url.searchParams.has("fresh"))).pipe(
+        Effect.map((state) => json(state))
+      ),
+    action: "Your agent's panel",
+    ...PANEL_ROW,
+  },
+  {
+    method: "POST",
+    path: "/api/agent",
+    // { text, context, files?, doc?, id? }: a message (it steers a turn that is running). context is the page note (the
+    // page open, what is selected there), doc the id of the document open, for the document tools that name none, id
+    // the tab's own id for the message: its copy in the transcript carries it, and a second message with the same id
+    // (Try again, after the first got there) is not sent again.
+    run: (a) =>
+      Effect.gen(function* () {
+        const b = yield* body(a.request, Prompt, {});
+        const r = yield* call(() =>
+          a.h.agentPrompt(
+            a.me.login,
+            a.url.origin,
+            String(b.text ?? ""),
+            typeof b.context == "string" ? b.context : null,
+            b.files,
+            typeof b.doc == "string" ? b.doc : null,
+            a.me.name,
+            typeof b.id == "string" && /^[\w-]{1,64}$/.test(b.id) ? b.id : undefined
+          )
+        );
+        return json(r, r.ok ? 200 : 409);
+      }),
+    action: "A message to your agent",
+    ...PANEL_ROW,
+  },
+  { method: "POST", path: "/api/agent/abort", run: control("abort"), action: "Stop your agent", ...PANEL_ROW },
+  { method: "POST", path: "/api/agent/reset", run: control("reset"), action: "Start a new conversation with your agent", ...PANEL_ROW },
+  { method: "POST", path: "/api/agent/model", run: control("model"), action: "Switch your agent's model", ...PANEL_ROW },
+  {
+    method: "GET",
+    path: "/api/agent/events",
+    // A WebSocket (Upgrade: websocket, as the panel asks) or server-sent events, to that person's pages only: { type: "agent", ev }
+    run: (a) => {
+      const headers = new Headers(a.request.headers);
+      headers.set("x-erga-login", a.me.login);
+      return Effect.map(
+        call(() => a.h.fetch(new Request(a.request.url, { headers }))),
+        fromWeb
+      );
+    },
+    action: "Your agent's live updates",
+    domain: "none",
+    exempt: STREAM,
+  },
+  {
+    method: "GET",
+    path: "/api/agent/conversation",
+    // { log: { items, busy, undoable } }
+    run: (a) => call(() => a.h.conversation(a.me.login)).pipe(Effect.map((log) => json({ log }))),
+    action: "Your agent's conversation, kept",
+    ...PANEL_ROW,
+  },
+  {
+    method: "DELETE",
+    path: "/api/agent/conversation",
+    run: (a) => call(() => a.h.clearConversation(a.me.login)).pipe(Effect.map((log) => json({ ok: true, log }))),
+    action: "A new conversation with your agent",
+    ...PANEL_ROW,
+  },
+  {
+    method: "POST",
+    path: "/api/agent/keys",
+    // { name, value }: the person's own API key for a provider (Settings, Agent), in place of the one there was; a
+    // secret, so set only here (whoami, revoke list and remove them). The answer has its last four characters, never the key.
+    run: (a) =>
+      Effect.gen(function* () {
+        const b = yield* body(a.request, KeyBody, {});
+        // A key that isn't one (the wrong provider's, a plan token) is refused, saying why.
+        return yield* Effect.tryPromise({
+          try: () => a.platform.directory.personKeys.set({ login: a.me.login }, b.name ?? "", b.value ?? ""),
+          catch: (e) => (e instanceof Error ? e.message : String(e)),
+        }).pipe(
+          Effect.map((key) => json({ ok: true, key })),
+          Effect.catch((error) => Effect.succeed(json({ ok: false, error }, 400)))
+        );
+      }),
+    action: "Add or replace your own API key (Settings, Agent)",
+    domain: "none",
+    exempt: SECRET,
+  },
+];
+

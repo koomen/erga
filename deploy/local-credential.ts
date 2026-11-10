@@ -11,8 +11,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { ROOT } from "./root";
 
-const ROOT = new URL("..", import.meta.url).pathname;
 
 /** Where the cf CLI keeps its default login (plain JSON: oauth_token, expiration_time, scopes). */
 function cfLoginFile(): string {

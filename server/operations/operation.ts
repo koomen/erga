@@ -20,6 +20,7 @@ import {
   ID,
   LOCKED,
   NotAllowed,
+  NotFound,
   OWNER,
   type Action,
   type Route,
@@ -73,7 +74,7 @@ export interface Operation {
   readonly wide?: boolean;
   /** Checks its own arguments (files take more than their schema says): only the required ones are checked first. */
   readonly loose?: boolean;
-  /** Where a person does it in the UI ("Users: Add user"): agents/actions.ts's audit lists it. */
+  /** Where a person does it in the UI ("Users: Add user"): the audit lists it (tests/agent-actions.test.ts). */
   readonly ui: string;
   /** Its answer: text, JSON, or content items. Throws an OperationError (or NotAllowed, ConfigError) to act on. */
   run(args: Record<string, unknown>, caller: Caller): Promise<string | object | ToolContent[]>;
@@ -107,10 +108,15 @@ export async function runOperation(op: Operation, args: Record<string, unknown>,
     return await op.run(args, caller);
   } catch (e) {
     if (e instanceof OperationError) throw e;
-    if (e instanceof NotAllowed)
-      throw new OperationError({ message: e.message, status: /no such|isn't a user/i.test(e.message) ? 404 : 403 });
-    if (e instanceof ConfigError || e instanceof CredentialError || e instanceof AuthError)
-      throw new OperationError({ message: e.message, status: 400 });
+    // A refusal carries its status (server/directory/users.ts).
+    if (
+      e instanceof NotFound ||
+      e instanceof NotAllowed ||
+      e instanceof ConfigError ||
+      e instanceof CredentialError ||
+      e instanceof AuthError
+    )
+      throw new OperationError({ message: e.message, status: e.status });
     throw e;
   }
 }

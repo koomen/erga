@@ -9,7 +9,8 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { esc } from "../../shared/html";
 import { githubManifest, PRESETS, QUESTIONS } from "./plan";
-import { addMessage, answersOf, DIR, loadOwn, messages, putSecret, ROOT, saveOwn } from "./store";
+import { addMessage, answersOf, DIR, loadOwn, messages, putSecret, saveOwn } from "./store";
+import { ROOT } from "../root";
 import { setAnswers, status } from "./cli";
 
 const json = (v: unknown, s = 200) =>

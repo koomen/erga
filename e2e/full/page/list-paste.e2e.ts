@@ -1,21 +1,13 @@
 // Copy and paste of list items with the keys, as a person does it: the items go in as items, in the list where they
 // land. From an empty page, checked by what the page shows. Each expected snapshot was checked by eye first, on
 // `bun run look` screenshots with the same keys.
-import { knownBug, servers, test, type Tab } from "../../helpers/fixtures";
-import { openEditor } from "../../helpers/editor";
+import { servers, test, type Tab } from "../../helpers/fixtures";
+import { openEmpty } from "../../helpers/editor";
 
 await servers.main();
 
-/** An empty page in the editor, the caret in its one paragraph. */
-const empty = async (tab: Tab) => {
-  const ed = await openEditor(tab, await servers.main(), "empty");
-  await ed.clickEnd("p");
-  await ed.idle();
-  return ed;
-};
-
 test("Two bulleted items, copied into a new item of a numbered list, become its next two numbers", async ({ tab }) => {
-  const ed = await empty(tab);
+  const ed = await openEmpty(tab);
   await ed.type("1. Alpha");
   await ed.press("Enter");
   await ed.type("Beta");
@@ -44,7 +36,7 @@ test("Two bulleted items, copied into a new item of a numbered list, become its 
 });
 
 test("Deleting the paragraph between two bulleted lists makes them one list", async ({ tab }) => {
-  const ed = await empty(tab);
+  const ed = await openEmpty(tab);
   await ed.type("- One");
   await ed.press("Enter");
   await ed.press("Enter");
@@ -63,7 +55,7 @@ test("Deleting the paragraph between two bulleted lists makes them one list", as
 });
 
 test("Items pasted in the empty paragraph right above a bulleted list join that list", async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await ed.type("Intro");
     await ed.press("Enter");
     await ed.type("- One");

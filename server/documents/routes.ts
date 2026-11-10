@@ -21,11 +21,11 @@
 //                              for its editor; never with a slash added at the end
 //   /<owner>/<id>, /<owner>/<old slug>, /d/<id> (and pages under them)
 //                              redirect there
-//   POST /d/<id>/api/key       an edit key for the document's page (edit-key.ts): with it, the page opens the document's
-//                              socket and puts dropped files into its files, from the pages origin, as the person it names
 //   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets; the
 //                              editor uses this address, which never changes. Under any of the
 //                              addresses above it works too (older tabs and share links use them).
+//
+// The routes with a function here are ROUTES, below; the rest of a document's address is its host's (document/api.ts).
 //
 // Who may open, edit, rename, delete or share a document is the directory's
 // rule (`Directory.decide`, from the document's permissions). For a request to
@@ -56,6 +56,7 @@ import { editKey, type KeyPerson, keyWho, readEditKey } from "./edit-key.ts";
 import { viewAddress, viewLanding, viewPublic } from "./view.ts";
 import { OWN_ACCOUNT, page, signInFirst } from "../pages/index.ts";
 import { call, ctx, fromWeb, plainJson, text, type Route as HttpRoute } from "../http.ts";
+import { routeAt, routeFor, SECRET, type RouteRow } from "../../shared/routes.ts";
 
 /** The app's answer to a request, for any path (a page saying so when there's nothing there). */
 export const documentRoutes: HttpRoute = Effect.gen(function* () {
@@ -64,9 +65,8 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   const pages = pagesHost(url, platform);
   if (pages) return yield* pagesRoutes(pages);
   if (path == "/") return yield* viewLanding;
-  if (path == "/new") return yield* newDoc;
-  if (path == "/scratch") return yield* scratchDoc;
-  if (path == "/docs" || path == "/docs/archived") return yield* listDocs;
+  const list = routeAt(PAGES, path);
+  if (list) return yield* list.run;
   if (isAdminPath(path)) return yield* adminRoutes;
 
   // The homepage project's address, /_home[/<page>], is its row's /<HOME_OWNER>/<HOME_SLUG> (document/names.ts).
@@ -150,26 +150,8 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
     return fromWeb(new Response(answer.body, { status: answer.status, headers: out }));
   }
   if (!session) return text("Sign in first", 401);
-  // The edit key for the document's page (edit-key.ts): for whoever may open the document, asked by this site's own page.
-  if (rest == "/api/key" && request.method == "POST") {
-    const origin = request.headers.get("origin");
-    if (session.agent || (origin && origin != url.origin)) return text("Not allowed", 403);
-    const doc = yield* call(() => platform.directory.route(route.id));
-    if (!doc || !(yield* call(() => platform.directory.access(whoOf(session), doc)))) return text("Not allowed", 403);
-    const person = {
-      login: session.login,
-      name: session.name,
-      ...(session.avatar ? { avatar: session.avatar } : {}),
-      ...(whoOf(session).admin ? { admin: true } : {}),
-    };
-    return plainJson(yield* call(() => editKey(platform.secret, doc.owner, doc.id, person)), 200, { "Cache-Control": "no-store" });
-  }
-  // The share button's token is the app's, not the document's: for whoever may open the document.
-  if (rest == "/api/share" && request.method == "POST") {
-    const doc = yield* call(() => platform.directory.route(route.id));
-    if (!doc || !(yield* call(() => platform.directory.access(whoOf(session), doc)))) return text("Not allowed", 403);
-    return yield* shareToken(session);
-  }
+  const own = routeFor(ROUTES, request.method, `/d/${route.id}${rest}`);
+  if (own) return yield* own.route.run({ request, url, platform, session, id: route.id });
   // The document's sockets (its room, its events) are opened by this site's own pages: a page of another origin, even
   // of this site (another subdomain, which the session cookie reaches), may not open one as whoever's signed in.
   const origin = request.headers.get("origin");
@@ -190,6 +172,92 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
 });
 
 
+
+/** The pages of the documents list, and a new document. (Each function answers any method.) */
+export const PAGES: readonly RouteRow<HttpRoute>[] = [
+  // Latest edit first (archive, delete and share are operations: POST /api/tools/<name>).
+  { method: "GET", path: "/docs", run: listDocs, action: "Read your documents (Documents)", domain: "document", tool: "list_documents" },
+  {
+    method: "GET",
+    path: "/docs/archived",
+    run: listDocs,
+    action: "Read your archived documents (Archived)",
+    domain: "document",
+    tool: "list_documents",
+  },
+  // In the editor (signs you in first); ?template=<id> one from a template; ?from=landing a copy of the homepage's,
+  // ?from=<id> of another you may open (the viewer's Clone).
+  {
+    method: "GET",
+    path: "/new",
+    run: newDoc,
+    action: "Make a document: blank, from a template, or a copy (Documents, New; the viewer's Clone)",
+    domain: "document",
+    tool: "create_document",
+  },
+  {
+    method: "GET",
+    path: "/scratch",
+    run: scratchDoc,
+    action: "Make a scratch document: off the list, deleted after delete_docs_after_hours (Documents, + Scratch)",
+    domain: "document",
+    tool: "create_document",
+  },
+];
+
+/** Someone signed in, who asks for a document by its id. */
+interface Asked {
+  readonly request: Request;
+  readonly url: URL;
+  readonly platform: Platform;
+  readonly session: Session;
+  readonly id: string;
+}
+
+/** The document, for someone who may open it; else null. */
+const openable = ({ platform, session, id }: Asked) =>
+  call(async () => {
+    const doc = await platform.directory.route(id);
+    return doc && (await platform.directory.access(whoOf(session), doc)) ? doc : null;
+  });
+
+/** What the app answers under a document's address itself; the document's host answers the rest. */
+export const ROUTES: readonly RouteRow<(a: Asked) => HttpRoute>[] = [
+  {
+    method: "POST",
+    path: "/d/<id>/api/key",
+    // An edit key for the document's page (edit-key.ts): with it, the page opens the document's socket and puts dropped
+    // files into its files, from the pages origin, as the person it names. For whoever may open the document, asked by
+    // this site's own page.
+    run: (a) =>
+      Effect.gen(function* () {
+        const { request, url, platform, session } = a;
+        const origin = request.headers.get("origin");
+        if (session.agent || (origin && origin != url.origin)) return text("Not allowed", 403);
+        const doc = yield* openable(a);
+        if (!doc) return text("Not allowed", 403);
+        const person = {
+          login: session.login,
+          name: session.name,
+          ...(session.avatar ? { avatar: session.avatar } : {}),
+          ...(whoOf(session).admin ? { admin: true } : {}),
+        };
+        return plainJson(yield* call(() => editKey(platform.secret, doc.owner, doc.id, person)), 200, { "Cache-Control": "no-store" });
+      }),
+    action: "The edit key the page's editor opens its socket with, on the pages origin (editor)",
+    domain: "document",
+    exempt: `${SECRET}: a key that opens the document as the person, which only their own viewer holds`,
+  },
+  {
+    method: "POST",
+    path: "/d/<id>/api/share",
+    // The share button's token is the app's, not the document's: for whoever may open the document.
+    run: (a) => Effect.flatMap(openable(a), (doc) => (doc ? shareToken(a.session) : Effect.succeed(text("Not allowed", 403)))),
+    action: "The Share card's agent token, for another agent (editor, Share: Share with an agent)",
+    domain: "document",
+    exempt: SECRET,
+  },
+];
 
 /** What an edit key opens, from the document's page: its socket, and a file put into its files (and its preflight). */
 const keyed = (request: Request, rest: string) =>

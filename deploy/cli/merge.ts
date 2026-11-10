@@ -13,7 +13,8 @@ import { readConfig } from "./config";
 import { deployStaging, type From, recordPass, startJob, takeLock, testEnv } from "./deploy";
 import { type Merge, mergeRefusal, squashMessage } from "./flow";
 import { startFullRun } from "./full-run";
-import { commitsIn, fetchOrigin, ROOT, sh } from "./observe";
+import { commitsIn, fetchOrigin, sh } from "./observe";
+import { ROOT } from "../root";
 
 /** What a merge did: the commits on staging, in their order, and the branches that stay out, each with its reason. */
 export interface Merged {

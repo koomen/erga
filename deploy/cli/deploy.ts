@@ -63,8 +63,8 @@ import {
 import { previousVersion } from "./flow";
 import { readOps } from "./ops";
 import { alive, ownStart } from "./pid";
+import { ROOT } from "../root";
 
-const ROOT = new URL("../..", import.meta.url).pathname;
 /** git in a clone. `push`: as `bun erga`, which the pre-push hook lets through (deploy/cli/pre-push.ts). */
 const gitIn = (clone: string, args: string[], push = false) => {
   const env = push ? { ...process.env, ERGA_CLI_PUSH: "1" } : process.env;

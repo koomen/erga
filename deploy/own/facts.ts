@@ -10,7 +10,8 @@ import { Cloudflare, type Fetch, findDatabase } from "../pipeline/pipeline";
 import { d1 } from "../pipeline/account";
 import { machineCredential } from "../local-credential";
 import { type Answers, type Facts, hostOf, SETUP_COMMIT, namesOf, type TargetFacts, type TargetName, targetsOf } from "./plan";
-import { DIR, loadSecrets, type Own, ROOT, secretNames } from "./store";
+import { DIR, loadSecrets, type Own, secretNames } from "./store";
+import { ROOT } from "../root";
 
 const git = (...args: string[]) => {
   const r = Bun.spawnSync(["git", ...args], { cwd: ROOT });

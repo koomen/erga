@@ -8,9 +8,6 @@
 // is from (the person the app vouched for), and the WebSockets, which
 // it accepts its own way and hands to `room.connect`, `addTab` and `hello`.
 //
-//   PUT  /api/files/<path>   editors: one file, its bytes the body (any kind, any size up to the limits: a text file is
-//                            text, anything else a blob in R2), replacing one at that path (uploads.ts, upload)
-//
 // The document's tree, its files' list and its name are the operations' (server/operations/editor.ts), which reach
 // them through the Durable Object's calls (tree, treeOp, files, rename), not over HTTP.
 

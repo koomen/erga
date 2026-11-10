@@ -19,7 +19,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Frame, Page } from "playwright-core";
 import { ROOT } from "./env";
-import { expect, settle, until, type Server, type Tab } from "./fixtures";
+import { expect, servers, settle, until, type Server, type Tab } from "./fixtures";
 import { VISIBLE } from "./visible";
 
 /** A template literal's text without its first newline and its common indent. */
@@ -64,6 +64,14 @@ export interface OpenOptions {
 }
 
 export type Editor = Awaited<ReturnType<typeof openEditor>>;
+
+/** An empty page in the editor (e2e/fixtures/empty), the caret in its one paragraph. */
+export async function openEmpty(tab: Tab) {
+  const ed = await openEditor(tab, await servers.main(), "empty");
+  await ed.clickEnd("p");
+  await ed.idle();
+  return ed;
+}
 
 /** Opens a copy of e2e/fixtures/<fixture> in the editor, in the test's tab. */
 export async function openEditor(tab: Tab, server: Server, fixture: string, opts: OpenOptions = {}) {
