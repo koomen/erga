@@ -498,8 +498,9 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
 
   for (const b of document.querySelectorAll(".chrome button")) b.addEventListener("mousedown", (e) => e.preventDefault());
   // The controls act as the press starts (client/common/fast-click.ts): the top bar's, the title, the agent's open and
-  // close. The agent's undo and reset keep their click.
-  fastClick(document, `.chrome-top button, #doc-title, #agent-fab, #agent-close`);
+  // close. The agent's undo and reset keep their click. (The account corner's button, in the same bar, has its own:
+  // client/inline/account-menu.ts. Two would click it twice on one press, and its menu would open and close.)
+  fastClick(document, `.chrome-top button:not(.erga-account-btn), #doc-title, #agent-fab, #agent-close`);
   document.addEventListener("mousedown", (e) => {
     const at = e.target as Node;
     if (!$("help").hidden && !$("help").contains(at) && !$("btn-help").contains(at)) shell.chrome.toggleHelp(false);

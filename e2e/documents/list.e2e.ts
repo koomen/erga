@@ -565,15 +565,11 @@ journey("a person's documents", () => {
     expect(await page.locator(".erga-scratch-save").count()).toBe(0);
   });
 
-  // Known bug (since the bars are built once, commit 564d3584): in the viewer after a visit to the editor, a press on
-  // the avatar opens no menu, though the button gets the click. Before the editor, the same press opens it.
-  test(
-    "after the editor, the viewer's avatar opens its menu",
-    knownBug(async () => {
-      await clickOn(page, "[data-erga-account] button");
-      expect(await page.evaluate(() => document.querySelector<HTMLElement>(".erga-account-menu")!.hidden)).toBe(false);
-    })
-  );
+  // (The editor's fast click and the corner's own both took the press once: the menu opened and closed at once.)
+  test("after the editor, the viewer's avatar opens its menu", async () => {
+    await clickOn(page, "[data-erga-account] button");
+    expect(await page.evaluate(() => document.querySelector<HTMLElement>(".erga-account-menu")!.hidden)).toBe(false);
+  });
 
   test("a document that nobody edits is deleted on time, and leaves the list; one that is edited stays; one that someone has open stays for now", async () => {
     try {
