@@ -10,8 +10,9 @@
 //                                       the tests, and pushes this branch only when they end with "all passing"
 //   bun erga status                     each registered instance's commit and health, the feature branches and the
 //                                       commits, as text; it only reads (no fetch)
-//   bun erga merge <branch> [-m text]   the branch onto staging as one commit: tests, a deploy to each staging
-//                                       instance, then the push of staging
+//   bun erga merge <branch>... [-m text]
+//                                       each branch onto staging as one commit, then one test run, one deploy to
+//                                       each staging instance, and the push of staging; -m is for the branch before it
 //   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
 //   bun erga deploy [<commit>] <host> [--no-tests]            deploys a registered instance from this machine; a primary
 //                                       with no commit takes the commit its staging instances run, and main moves to it;
@@ -26,7 +27,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { latestTag, nextVersion, PROTECTED, releaseNotes, releaseRefusal, statusText } from "./flow";
+import { latestTag, mergeArgs, nextVersion, PROTECTED, releaseNotes, releaseRefusal, statusText } from "./flow";
 import { commitsOf, fetchOrigin, git, headOf, readState, repoOf, ROOT, sh, tagsOf } from "./observe";
 
 const say = (s = "") => console.log(s);
@@ -83,12 +84,15 @@ async function push() {
 
 // ------------------------------------------------------------------ merge
 
-async function merge(branch: string | undefined, message: string | undefined) {
+async function merge(args: string[]) {
   needRepo();
-  if (!branch) fail("Name the branch: bun erga merge <branch>.");
+  const merges = mergeArgs(args);
+  if (!merges.length) fail("Name the branch: bun erga merge <branch>.");
   const { ergaDir } = await import("./config");
-  const { mergeBranch } = await import("./merge");
-  await mergeBranch({ dir: ergaDir(), branch: branch!, message, from: fromOf() }).catch((e: Error) => fail(e.message));
+  const { mergeBranches } = await import("./merge");
+  const r = await mergeBranches({ dir: ergaDir(), merges, from: fromOf() }).catch((e: Error) => fail(e.message));
+  // Some branches merged, and some stay out: the output names them.
+  if (r.left.length) process.exit(1);
 }
 
 // ------------------------------------------------------------------ release
@@ -248,7 +252,7 @@ export async function main(argv: string[]) {
       return;
     }
     case "merge":
-      return merge(plain[0], opt("-m"));
+      return merge(rest);
     case "release":
       return release(plain[0], flag("--dry-run"));
     case "deploy":

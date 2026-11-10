@@ -80,8 +80,10 @@ export const headOf = (ref: string): string | null => {
 };
 
 /** Commits of a range (`git log` arguments), newest first. */
-export function commitsOf(...range: string[]): Commit[] {
-  const r = git("log", "--format=%H%x1f%s%x1f%ct%x1f%an%x1f%b%x1e", ...range);
+export const commitsOf = (...range: string[]): Commit[] => commitsIn(ROOT, ...range);
+/** The commits of a range, newest first, in the clone `cwd`. */
+export function commitsIn(cwd: string, ...range: string[]): Commit[] {
+  const r = sh(["git", "log", "--format=%H%x1f%s%x1f%ct%x1f%an%x1f%b%x1e", ...range], { cwd });
   if (!r.ok || !r.out) return [];
   return r.out
     .split("\x1e")

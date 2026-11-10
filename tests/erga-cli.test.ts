@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import {
   latestTag,
+  mergeArgs,
   mergeRefusal,
   nextVersion,
   previousVersion,
@@ -28,6 +29,12 @@ describe("merge", () => {
     expect(mergeRefusal({ branch: "x", exists: true, ahead: 0, conflicts: [] })).toContain("Nothing to merge");
     expect(mergeRefusal({ branch: "x", exists: true, ahead: 2, conflicts: ["a.ts", "b.ts"] })).toContain("a.ts, b.ts");
     expect(mergeRefusal({ branch: "x", exists: true, ahead: 2, conflicts: [] })).toBeNull();
+  });
+
+  test("takes a list of branches: -m is for the branch before it, or for the first", () => {
+    expect(mergeArgs(["a", "b", "-m", "B's task", "c"])).toEqual([{ branch: "a" }, { branch: "b", message: "B's task" }, { branch: "c" }]);
+    expect(mergeArgs(["-m", "A's task", "a"])).toEqual([{ branch: "a", message: "A's task" }]);
+    expect(mergeArgs([])).toEqual([]);
   });
 
   test("the one commit's message: -m or the first commit's subject, no body; the co-authors once", () => {

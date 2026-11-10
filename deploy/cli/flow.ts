@@ -37,6 +37,26 @@ export interface Branch {
   author?: string;
 }
 
+/** A branch that `bun erga merge` takes, and the message of its commit on staging (default: its first commit's subject). */
+export interface Merge {
+  branch: string;
+  message?: string;
+}
+
+/** `bun erga merge`'s arguments: each branch, with the `-m` text that follows it, or that comes before the first branch. */
+export function mergeArgs(args: string[]): Merge[] {
+  const out: Merge[] = [];
+  let first: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] == "-m") {
+      const message = args[++i];
+      if (out.length) out[out.length - 1].message = message;
+      else first = message;
+    } else if (!args[i].startsWith("-")) out.push(first && !out.length ? { branch: args[i], message: first } : { branch: args[i] });
+  }
+  return out;
+}
+
 /** Why `bun erga merge <branch>` must not go on, or null. */
 export function mergeRefusal(o: { branch: string; exists: boolean; ahead: number; conflicts: string[] }): string | null {
   if (!o.branch) return "Name the branch: bun erga merge <branch>.";
