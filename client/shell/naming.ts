@@ -106,14 +106,24 @@ export function mountNaming(shell: Shell) {
     if (titleIn.value.trim() != shell.docName.title) patch.title = titleIn.value.trim();
     if (slugTouched && slugIn.value.trim() != shell.docName.slug) patch.slug = slugIn.value.trim();
     if (!("title" in patch) && !("slug" in patch)) return toggleNaming(false);
-    sayNaming("Saving…");
-    const r = await runTool<DocName>("rename_document", { document: shell.docName.id, ...patch }).then(
+    // The new title shows at once, and the card closes; the address follows with the server's answer. (An empty title
+    // follows the page's heading: the server says which.)
+    const was = shell.docName,
+      typed = { title: titleIn.value, slug: slugIn.value, slugTouched };
+    if (patch.title) showName({ ...was, title: patch.title });
+    toggleNaming(false);
+    const r = await runTool<DocName>("rename_document", { document: was.id, ...patch }).then(
       (name) => ({ name }),
       (err: Error) => ({ error: err.message })
     );
-    if ("error" in r) return sayNaming(r.error ?? "Couldn't rename it.", true);
-    showName(r.name);
-    toggleNaming(false);
+    if ("name" in r) return showName(r.name);
+    // Refused: the old name is back, and the card says why, with what was typed.
+    showName(was);
+    toggleNaming(true);
+    titleIn.value = typed.title;
+    slugIn.value = typed.slug;
+    slugTouched = typed.slugTouched;
+    sayNaming(r.error ?? "Couldn't rename it.", true);
   });
 
 

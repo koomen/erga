@@ -53,7 +53,7 @@ import { listDocs, newDoc, scratchDoc, shareToken } from "./make.ts";
 import { adoptLanding, landingDocument } from "./landing.ts";
 import { pagesOrigin, pagesRoutes, pagesHost } from "./pages-origin.ts";
 import { editKey, type KeyPerson, keyWho, readEditKey } from "./edit-key.ts";
-import { viewAddress, viewLanding, viewPublic } from "./view.ts";
+import { locating, viewAddress, viewLanding, viewPublic } from "./view.ts";
 import { OWN_ACCOUNT, page, signInFirst } from "../pages/index.ts";
 import { call, ctx, fromWeb, plainJson, text, type Route as HttpRoute } from "../http.ts";
 import { routeAt, routeFor, SECRET, type RouteRow } from "../../shared/routes.ts";
@@ -81,17 +81,22 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(routed) ?? [];
   const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
   if (!first || (first != "d" && !OWNER.test(first))) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
+  // A document's page: its row is asked for while the session is found (view.ts, locating).
+  const viewing = !/^\/(api|doc)(\/|$)/.test(rest ?? "");
+  const located = viewing ? locating(platform, url, first, second) : null;
   const session = yield* call(() => platform.sessionOf(request));
 
   // A document's address is the document: /<owner>/<slug>, and /<page> after it for its other pages. Its editor
   // is the same page with ?edit. Sign in first, then the page, at its canonical address.
   // /api/... and /doc/... under it are the document's host (so no page or folder at its top may be called api or doc).
-  if (!/^\/(api|doc)(\/|$)/.test(rest ?? "")) {
+  if (viewing) {
     // Not signed in: a document shared publicly opens for them, to view (Directory.isPublic); any other, sign in first.
     if (!session)
-      return (yield* viewPublic(first, second, (rest ?? "").replace(/^\/+|\/+$/g, ""))) ?? signInFirst(path + url.search, "document");
+      return (
+        (yield* viewPublic(first, second, (rest ?? "").replace(/^\/+|\/+$/g, ""), located)) ?? signInFirst(path + url.search, "document")
+      );
     if (first == "d" && !ID.test(second)) return nothing();
-    return yield* viewAddress(session, first, second, (rest ?? "").replace(/^\/+|\/+$/g, ""));
+    return yield* viewAddress(session, first, second, (rest ?? "").replace(/^\/+|\/+$/g, ""), located);
   }
   // By id (the editor's address), the document's host is asked straight away: it says whether there's such a document.
   const route =
@@ -263,9 +268,13 @@ export const ROUTES: readonly RouteRow<(a: Asked) => HttpRoute>[] = [
   },
 ];
 
-/** What an edit key opens, from the document's page: its socket, and a file put into its files (and its preflight). */
+/**
+ * What an edit key opens, from the document's page: its socket, the room's text in one answer (the editor starts from
+ * it while the socket connects), and a file put into its files (and its preflight).
+ */
 const keyed = (request: Request, rest: string) =>
   (rest == "/api/room" && request.headers.get("upgrade")?.toLowerCase() == "websocket") ||
+  (rest == "/api/start" && request.method == "GET") ||
   (rest.startsWith("/api/files/") && (request.method == "PUT" || request.method == "OPTIONS"));
 
 /** The comment ops a document's page calls with its edit key (server/api.ts): POST /api/tools/<op>?doc=<id>&key=<key>. */

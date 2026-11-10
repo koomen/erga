@@ -41,6 +41,8 @@ declare global {
     /** The document's socket and start, as the page opened them while it parsed (server/pages/viewer.ts, ergaConnect). */
     ergaSocket?: EarlySocket;
     ergaStart?: Promise<ArrayBuffer | null>;
+    /** The edit key's answer, asked for with them (null: no answer). */
+    ergaKey?: Promise<Response | null>;
   }
 }
 /** What the editor keeps of itself across a reload for a new release. */

@@ -199,19 +199,21 @@ const gate = (path: SendPath, text: string) => canSend(path, { off, voice: !!voi
 const blocker = () => gate("box", input.value);
 function renderBusy() {
   busyChanged();
+  // At work: as the server says, or a message of this tab's on its way to it.
+  const busy = log.busy || talk.sending();
   // In voice mode the button can't send, so while the agent works it's Stop.
-  const stop = log.busy && (!!voice || (!input.value.trim() && !att.files.length && !att.reading));
+  const stop = busy && (!!voice || (!input.value.trim() && !att.files.length && !att.reading));
   const why = off ?? (stop ? null : blocker());
   send.textContent = stop ? "Stop" : "Send";
   send.classList.toggle("stop", stop);
   send.setAttribute("aria-disabled", String(!!why));
-  send.title = why ?? (stop ? "Stop the agent" : log.busy ? "Send (Enter); the agent will take it into account as it works" : "Send (Enter)");
-  $("agent-fab").classList.toggle("busy", log.busy);
+  send.title = why ?? (stop ? "Stop the agent" : busy ? "Send (Enter); the agent will take it into account as it works" : "Send (Enter)");
+  $("agent-fab").classList.toggle("busy", busy);
   input.placeholder = off
     ? "The agent is off"
     : voice
       ? "Listening… pause to send"
-      : log.busy
+      : busy
         ? "Add to what the agent is doing…"
         : "Ask the agent…";
   // (Drawn again only when it changed: the key field below it keeps what's typed.)
@@ -282,7 +284,10 @@ function ask(text: string, ctx: string | null, files: Attachment[] = []) {
   const id = crypto.randomUUID();
   const post = () => void postMessage(id, { text, context: ctx, files, doc: DOC, id }, files.length > 0);
   talk.pending(id, text, fileRefs(files), post);
+  begin();
   post();
+  // The agent shows at work from now, not from the server's first word of it.
+  renderBusy();
 }
 async function postMessage(id: string, body: object, withFiles: boolean) {
   // While the server restarts (a redeploy) it doesn't answer, or its gateway says so: the message waits and goes once it's back.
@@ -474,7 +479,29 @@ function connect() {
     }
   };
 }
-load().then(() => go({ type: "start" }));
+// The start. The socket's opening reads the conversation (`go`, "up"): what the agent did before the socket heard it.
+// With the panel closed, that is the one read, and it waits until the page has loaded and the browser is idle, or
+// until the panel opens: the page never waits for a panel nobody looks at. With the panel open, the conversation is
+// read at once too; the socket still waits for the idle browser, so the editor's own sockets connect first (a browser
+// opens its sockets to one host one at a time).
+let begun = false;
+function begin() {
+  if (begun) return;
+  begun = true;
+  go({ type: "start" });
+}
+if (document.body.classList.contains("agent-open")) void load();
+else
+  new MutationObserver((_, o) => {
+    if (!document.body.classList.contains("agent-open")) return;
+    o.disconnect();
+    begin();
+  }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+{
+  const idle = () => (window.requestIdleCallback ?? setTimeout)(begin);
+  if (document.readyState == "complete") idle();
+  else addEventListener("load", idle, { once: true });
+}
 
 // The panel as this page leaves it, for the tab's next page: client/inline/agent-toggle.ts draws it there before the
 // page paints, so the conversation doesn't empty and come back from page to page. Until this page has loaded the

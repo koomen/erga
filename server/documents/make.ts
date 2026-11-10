@@ -200,7 +200,9 @@ export const listDocs = Effect.gen(function* () {
       archived ? [] : platform.directory.requests.waiting(session.login),
     ])
   );
-  return html(docsPage(session, docs, Date.now(), hours, archived, asks), 200, NO_STORE);
+  // The browser keeps the list for Back, for this person only: it shows at once, and follows what changed since (its
+  // rows are live: server/news/). Any other visit asks the server again.
+  return html(docsPage(session, docs, Date.now(), hours, archived, asks), 200, { "Cache-Control": "private, no-cache", Vary: "Cookie" });
 });
 
 /**

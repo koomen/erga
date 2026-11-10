@@ -35,6 +35,8 @@ export interface DocRow {
   scratch: boolean;
   /** A document (one page) or a project (pages); null if its row has none. */
   kind: DocKind | null;
+  /** What its readers (who can't edit it) get in the viewer, as its owner set it: their own agent, and Erga's bars. */
+  readers: { agent: boolean; bars: boolean };
 }
 
 /** A document or project an admin's search finds (Directory.search). */
@@ -172,6 +174,8 @@ export interface Row {
   test: number;
   scratch?: number;
   kind?: string | null;
+  reader_agent?: number;
+  reader_bars?: number | null;
 }
 export const fromRow = (r: Row): DocRow => ({
   id: r.id,
@@ -186,4 +190,5 @@ export const fromRow = (r: Row): DocRow => ({
   test: !!r.test,
   scratch: !!r.scratch,
   kind: isDocKind(r.kind) ? r.kind : null,
+  readers: { agent: !!r.reader_agent, bars: r.reader_bars == null || !!r.reader_bars },
 });

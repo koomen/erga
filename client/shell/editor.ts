@@ -31,7 +31,10 @@ export function mountEditor(shell: Shell, editing: boolean, full: boolean) {
     if (effects.note == "started") shell.toast.flash("The editor started.", 2200);
   }
   async function ask() {
-    const r = await fetch(shell.api("/api/key"), { method: "POST" }).catch(() => null);
+    // The first one was asked for as the page connected (client/inline/viewer-editing-head.ts, ergaConnect).
+    const early = window.ergaKey;
+    window.ergaKey = undefined;
+    const r = await (early ?? fetch(shell.api("/api/key"), { method: "POST" }).catch(() => null));
     if (!r) return send({ type: "unreachable" });
     const got = r.ok ? ((await r.json().catch(() => null)) as { key?: unknown; expires?: unknown } | null) : null;
     if (typeof got?.key != "string" || typeof got.expires != "number") return send({ type: "refused" });

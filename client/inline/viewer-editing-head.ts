@@ -32,6 +32,15 @@ export default function viewerEditingHead(scripts: string[], restoreKey: string)
       (r) => (r.ok ? r.arrayBuffer() : null),
       () => null
     );
+    // The edit key for the page's editor (client/shell/editor.ts takes it over), asked for now too, not after the first
+    // sync: unless this tab holds one that lasts (the editor's RENEW_MS).
+    const q = user ? "?user=" + encodeURIComponent(user) : "";
+    let held: { expires?: number } | null = null;
+    try {
+      held = JSON.parse(sessionStorage.getItem("erga:edit-key:" + base.replace(/\/+$/, "") + q) || "null");
+    } catch {}
+    if (!(held && held.expires! - Date.now() > 300_000))
+      window.ergaKey = fetch(base + "/api/key" + q, { method: "POST" }).catch(() => null);
     const ws: WebSocket & { early?: (string | ArrayBuffer)[] } = new WebSocket(
       (location.protocol == "https:" ? "wss://" : "ws://") +
         location.host +

@@ -7,7 +7,6 @@
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as Base64 from "effect/encoding/Base64";
 import * as Result from "effect/Result";
 import { OWNER, type Route } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
@@ -28,22 +27,6 @@ const TEMPLATES: Record<string, Record<string, string>> = {};
 for (const [path, text] of Object.entries(import.meta.glob("../assets/templates/*/**", { query: "?raw", import: "default", eager: true }) as Record<string, string>)) {
   const [, name, rel] = /^\.\.\/assets\/templates\/([^/]+)\/(.+)$/.exec(path)!;
   (TEMPLATES[name] ??= {})[rel] = text;
-}
-
-/**
- * The repo's landing project, the homepage the server makes for
- * itself: its text files as they are, and its fonts
- * and images as bytes (Vite inlines them as data: URLs, decoded here).
- */
-const LANDING: Record<string, string | Uint8Array> = {};
-const landingFile = (path: string, file: string | Uint8Array) => {
-  const rel = path.replace(/^\.\.\/assets\/landing\//, "");
-  if (!rel.split("/").some((part) => part.startsWith("."))) LANDING[rel] = file;
-};
-// (Vite wants each glob written out.)
-for (const [path, text] of Object.entries(import.meta.glob(["../assets/landing/**", "!../assets/landing/**/*.{woff2,woff,ttf,otf,png,jpg,jpeg,gif,webp,avif,ico}"], { query: "?raw", import: "default", eager: true }) as Record<string, string>)) landingFile(path, text);
-for (const [path, url] of Object.entries(import.meta.glob("../assets/landing/**/*.{woff2,woff,ttf,otf,png,jpg,jpeg,gif,webp,avif,ico}", { query: "?inline", import: "default", eager: true }) as Record<string, string>)) {
-  landingFile(path, Result.getOrThrow(Base64.decode(url.slice(url.indexOf(",") + 1))));
 }
 
 /** A setting from the Worker's vars, trimmed: "" when it isn't set. */
@@ -99,7 +82,8 @@ const appOf = (facts: unknown): string | null => {
 /** Whose the homepage is when the server makes it: locally DEV_LOGIN, else (null) the server's first admin. */
 const landingOf = ({ devLogin }: { devLogin: string }): NonNullable<Platform["landing"]> => {
   const dev = devLogin.toLowerCase();
-  return { files: LANDING, owner: dev && OWNER.test(dev) ? dev : null };
+  // The project's files are large (its fonts), and only the making of the homepage needs them: they load then.
+  return { files: () => import("./landing-files.ts").then((m) => m.LANDING), owner: dev && OWNER.test(dev) ? dev : null };
 };
 
 /**

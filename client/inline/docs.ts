@@ -49,32 +49,35 @@ export default function docs(c: DocsConfig): void {
     f.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!confirm(q)) return;
-      try {
-        await runTool("delete_document", { document: (f.elements.namedItem("id") as HTMLInputElement).value });
-        const row = f.closest("li")!;
-        removing(row);
-        row.remove();
-        counted();
-      } catch (err) {
-        alert((err as Error).message);
-      }
+      await gone(f.closest("li")!, "delete_document", (f.elements.namedItem("id") as HTMLInputElement).value);
     });
+  }
+  /** The rows on their way out (their keys): hidden until the server answers, a row that changes meanwhile too. */
+  const going = new Set<string>();
+  const rowOf = (key: string) => list.querySelector<HTMLElement>(`:scope > li[data-live="${CSS.escape(key)}"]`);
+  /** Takes a row off the list at once, then runs its operation; if the server refuses, the row is back, and says why. */
+  async function gone(row: HTMLElement, op: string, id: string | undefined) {
+    const key = row.dataset.live!;
+    going.add(key);
+    row.hidden = true;
+    counted();
+    try {
+      await runTool(op, { document: id });
+      going.delete(key);
+      const now = rowOf(key);
+      if (now) removing(now);
+      now?.remove();
+    } catch (err) {
+      going.delete(key);
+      const now = rowOf(key);
+      if (now) now.hidden = false;
+      alert((err as Error).message);
+    }
+    counted();
   }
   /** A row's Archive or Unarchive: the operation (archive_document, unarchive_document), as an agent's is; the row goes at once. */
   function wireArchive(b: HTMLButtonElement) {
-    b.addEventListener("click", async () => {
-      b.disabled = true;
-      try {
-        await runTool(b.dataset.op!, { document: b.dataset.id });
-        const row = b.closest("li")!;
-        removing(row);
-        row.remove();
-        counted();
-      } catch (err) {
-        b.disabled = false;
-        alert((err as Error).message);
-      }
-    });
+    b.addEventListener("click", () => gone(b.closest("li")!, b.dataset.op!, b.dataset.id));
   }
   // Sharing: each change is saved as it's made (the operation share_document); the row follows, as any change does.
   const share = document.getElementById("share") as HTMLDialogElement,
@@ -383,6 +386,7 @@ export default function docs(c: DocsConfig): void {
       s = row.querySelector<HTMLElement>("button.share"),
       t = row.querySelector<HTMLElement>("button.twist"),
       a = row.querySelector<HTMLButtonElement>("button.archive");
+    if (going.has(row.dataset.live ?? "")) row.hidden = true;
     if (f) wireDelete(f);
     if (a) wireArchive(a);
     if (s) wireShare(s);
@@ -398,9 +402,9 @@ export default function docs(c: DocsConfig): void {
   }
   /** The count, the column labels, the empty list's words and the find box, as the rows and the words typed are now. */
   function counted() {
-    const n = list.querySelectorAll(":scope > li[data-live]").length,
+    const n = list.querySelectorAll(":scope > li[data-live]:not([hidden])").length,
       q = find.query(),
-      m = q ? list.querySelectorAll(":scope > li[data-live]:not(.miss)").length : n;
+      m = q ? list.querySelectorAll(":scope > li[data-live]:not(.miss, [hidden])").length : n;
     const count = document.getElementById("docs-count")!;
     const of = (k: number) => k + (k == 1 ? " document" : " documents");
     count.textContent = q ? `${m} of ${of(n)}` : of(n);

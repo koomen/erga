@@ -25,7 +25,6 @@ import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import { LanguageModel, Prompt } from "effect/ai";
 import { FetchHttpClient } from "effect/http";
-import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic";
 import { TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
 import { sha256Hex } from "../shared/bytes.ts";
 import { isTextPath } from "./content.ts";
@@ -365,10 +364,17 @@ export function describeChange(
   ]
     .filter(Boolean)
     .join("\n");
-  const model = AnthropicLanguageModel.layer({
-    model: DESCRIBE_MODEL,
-    config: { max_tokens: 2000, output_config: { effort: "low" } },
-  }).pipe(Layer.provide(AnthropicClient.layer({ apiKey: Redacted.make(apiKey) })), Layer.provide(FetchHttpClient.layer));
+  // The provider's code is large, and only a description needs it: it loads here, so the Worker starts without it.
+  const model = Layer.unwrap(
+    Effect.promise(() => import("@effect/ai-anthropic")).pipe(
+      Effect.map(({ AnthropicClient, AnthropicLanguageModel }) =>
+        AnthropicLanguageModel.layer({
+          model: DESCRIBE_MODEL,
+          config: { max_tokens: 2000, output_config: { effort: "low" } },
+        }).pipe(Layer.provide(AnthropicClient.layer({ apiKey: Redacted.make(apiKey) })), Layer.provide(FetchHttpClient.layer))
+      )
+    )
+  );
   return LanguageModel.generateText({
     prompt: Prompt.make([
       { role: "system", content: DESCRIBE_SYSTEM },

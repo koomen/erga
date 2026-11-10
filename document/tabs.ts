@@ -84,6 +84,33 @@ export class Tabs<S extends TabSocket> {
     return true;
   }
 
+  /**
+   * A viewer's page (a watcher) connects. On an open document it joins as any tab does. A closed document stays closed,
+   * with no room loaded for someone who only reads: the page hears the version kept with the files, and joins when
+   * the document opens (attachAll). `accept` makes the socket, once there is a document; null: there's none.
+   */
+  watch(tab: Tab, accept: () => S): Effect.Effect<S | null, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const document = self.o.document();
+      if (!document.isOpen()) {
+        const ver = yield* document.viewed();
+        if (ver == null) return null;
+        // (Still closed: with no version kept, working it out opened the document.)
+        if (!document.isOpen()) {
+          const socket = accept();
+          quietly(() => socket.send(JSON.stringify({ type: "view", ver })));
+          return socket;
+        }
+      }
+      const opened = yield* document.reopen();
+      if (!opened) return null;
+      const socket = accept();
+      self.join(socket, opened, tab);
+      return socket;
+    });
+  }
+
   /** The document opened (again): every socket joins it; one holding another history is closed (the tab reloads). */
   attachAll(opened: Opened): void {
     for (const socket of this.o.sockets()) {

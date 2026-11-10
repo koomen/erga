@@ -25,8 +25,10 @@ export default function viewerLayoutEarly(): void {
     const order: Item[] = l && Array.isArray(l.order) && l.order.length == 2 && items.every((i) => l.order.includes(i)) ? l.order : items;
     const kept = l && typeof l.agentWidth == "number" && Number.isFinite(l.agentWidth) ? clamp(Math.round(l.agentWidth), 300, 760) : 380;
     const right = order.indexOf("agent") > order.indexOf("doc");
+    // (Before the app's stylesheet is in, which defines --safe-l and --safe-r: the same values.)
     const probe = document.createElement("div");
-    probe.style.cssText = "position: fixed; visibility: hidden; padding-left: var(--safe-l, 0px); padding-right: var(--safe-r, 0px)";
+    probe.style.cssText =
+      "position: fixed; visibility: hidden; padding-left: var(--safe-l, env(safe-area-inset-left, 0px)); padding-right: var(--safe-r, env(safe-area-inset-right, 0px))";
     body.append(probe);
     const cs = getComputedStyle(probe),
       sl = parseFloat(cs.paddingLeft) || 0,

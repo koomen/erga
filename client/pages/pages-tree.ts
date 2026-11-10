@@ -279,7 +279,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   }
 
   /** A change, sent: the tree it answers, or the server's own words for why not (thrown). */
-  async function send(op: Record<string, string>): Promise<void> {
+  async function send(op: Record<string, string>, entries: Entry[] | null): Promise<void> {
     const { op: name, ...args } = op;
     // A new folder is new's path that ends with "/".
     if (name == "new_folder") args.path += "/";
@@ -294,14 +294,32 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     set(next, body.canEdit ?? canEdit, body.kind);
   }
 
-  /** Runs a change on a row, showing it busy; an error goes in the banner. */
+  /** The entries as a change leaves them, to show before the server answers. */
+  function ahead(list: Entry[], op: Record<string, string>): Entry[] {
+    const under = (p: string, dir: string) => p == dir || p.startsWith(dir + "/");
+    if (op.op == "delete") return list.filter((e) => !under(e.path, op.path));
+    if (op.op == "move") return list.map((e) => (under(e.path, op.from) ? { ...e, path: op.to + e.path.slice(op.from.length) } : e));
+    return [...list, { path: op.path, type: op.op == "new_folder" ? "folder" : "page" }];
+  }
+
+  /** Runs a change on a row. The tree shows its result at once; if the server refuses, the tree is as before, and the error goes in the banner. */
   async function change(path: string | null, op: Record<string, string>): Promise<boolean> {
     say(null);
-    busy = path;
+    const before = entries;
+    if (before) set(ahead(before, op), canEdit);
+    else busy = path;
     render();
-    try { await send(op); return true; }
-    catch (e) { say(plain(e)); return false; }
-    finally { busy = null; render(); }
+    try {
+      await send(op, before);
+      return true;
+    } catch (e) {
+      if (before) set(before, canEdit);
+      say(plain(e));
+      return false;
+    } finally {
+      busy = null;
+      render();
+    }
   }
 
   /** After the page you're on moved or went: follow it (or go to the home page). */

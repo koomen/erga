@@ -120,6 +120,11 @@ export const LABEL_MAX = 80;
 export const REQUEST_MINUTES = 15;
 /** last_used is written at most this often, so using a token isn't a write every time. */
 const TOUCH_MS = 5 * 60 * 1000;
+/**
+ * How long a token that was good stays good with no question to the database (as Users remembers a user). A token
+ * revoked on another copy of the server works that long at most; on this copy it stops at once.
+ */
+const REMEMBER_MS = 10_000;
 const ID_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 const CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
 
@@ -186,6 +191,9 @@ export class Tokens {
     private secret: string,
     private dir: Directory
   ) {}
+
+  /** The tokens that were good a moment ago, by their hash (verify). */
+  private good = new Map<string, { info: AgentToken; at: number }>();
 
   /** The token with this id: an HMAC of it with the server's secret. */
   private async tokenFor(id: string): Promise<string> {
@@ -258,6 +266,7 @@ export class Tokens {
 
   /** Their open /settings shows these tokens as they are now, or without them (server/news/). */
   private async changed(login: string, ids: string[]): Promise<void> {
+    this.good.clear();
     if (ids.length) await this.dir.publish(ids.map((id) => ({ key: `token:${id}`, to: [login] })));
   }
 
@@ -291,18 +300,24 @@ export class Tokens {
 
   async verify(token: string): Promise<AgentToken | null> {
     if (!token.startsWith(TOKEN_PREFIX) || token.length > 200) return null;
-    const [row] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE hash = ?1`, await sha256Hex(token));
+    const hash = await sha256Hex(token),
+      now = Date.now();
+    const had = this.good.get(hash);
+    if (had && now - had.at < REMEMBER_MS) return had.info.expires != null && had.info.expires <= now ? null : had.info;
+    const [row] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE hash = ?1`, hash);
     // The row must be this server's: a copy of another server's database (staging takes production's) holds
     // its tokens' hashes, but their tokens were made with that server's secret, not ours.
     if (!row || (await this.tokenFor(row.id)) != token) return null;
-    const now = Date.now();
     if (row.expires != null && Number(row.expires) <= now) return null;
 
     if (row.last_used == null || now - Number(row.last_used) > TOUCH_MS) {
       await this.sql.run("UPDATE agent_tokens SET last_used = ?2 WHERE id = ?1", row.id, now).catch(() => {});
       row.last_used = now;
     }
-    return fromRow(row);
+    const info = fromRow(row);
+    if (this.good.size > 10_000) this.good.clear();
+    this.good.set(hash, { info, at: now });
+    return info;
   }
 
   /**

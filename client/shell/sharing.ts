@@ -96,13 +96,22 @@ export function mountSharing(shell: Shell) {
     linkHint.textContent = !offered ? "only people added" : !publicSharing && anyone != "none" ? "they sign in first" : "";
     anyoneLabel.textContent = offered ? "Anyone with the link" : "Link";
   }
+  /** A change of the sharing: the list shows it at once; if the server refuses, the list is as before, and says why. */
   async function changeSharing(login: string, role: string): Promise<boolean> {
-    tellSharing("Saving…");
+    const before = last;
+    if (before) {
+      const others = before.permissions.filter((p) => p.login != login);
+      const at = before.permissions.findIndex((p) => p.login == login);
+      if (role != "none") others.splice(at < 0 ? others.length : at, 0, { login, role });
+      renderSharing({ ...before, permissions: others });
+    }
+    tellSharing(before ? "" : "Saving…");
     try {
       renderSharing((last = await shareCall({ login, role })));
       tellSharing("");
       return true;
     } catch (e) {
+      if (before) renderSharing(before);
       tellSharing((e as Error).message, true);
       return false;
     }

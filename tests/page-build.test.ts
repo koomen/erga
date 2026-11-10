@@ -7,7 +7,7 @@ import { pageBuild } from "../server/live.ts";
 import { viewerPage } from "../server/pages/viewer.ts";
 import type { Session } from "../server/platform.ts";
 
-const build = (title: string, live: string) => {
+const pageOf = (title: string, live: string, o: { editing: boolean; agent: boolean }) => {
   const { before, after } = viewerPage({
     title,
     head: {},
@@ -18,9 +18,9 @@ const build = (title: string, live: string) => {
     meta: "",
     session: { user: "ada", login: "ada" } as unknown as Session,
     editable: true,
-    agent: false,
+    agent: o.agent,
     bars: true,
-    editing: true,
+    editing: o.editing,
     landing: false,
     clone: "",
     edit: "",
@@ -28,9 +28,21 @@ const build = (title: string, live: string) => {
     live,
     project: "/ada/plans",
   });
-  return pageBuild(before + after);
+  return before + after;
 };
+const build = (title: string, live: string) => pageBuild(pageOf(title, live, { editing: true, agent: false }));
 
 test("a document's page keeps its build when its version and its title change", async () => {
   expect(await build("Plans", "l1")).toBe(await build("Plans for May", "l2"));
+});
+
+test("someone who may edit, reading: the document's frame starts before the editor's parts and the stylesheet", () => {
+  // A stylesheet in the HTML holds back the scripts after it, the frame's start too: a script puts it in.
+  const parts = (html: string) => [
+    html.indexOf('<template id="erga-shell">') > html.indexOf('<iframe id="frame"'),
+    /<link rel="stylesheet" href="[^"]*style/.test(html),
+  ];
+  expect(parts(pageOf("Plans", "l1", { editing: false, agent: true }))).toEqual([true, false]);
+  // Opened with ?edit, the editor's parts come first: its first frame has them.
+  expect(parts(pageOf("Plans", "l1", { editing: true, agent: true }))).toEqual([false, true]);
 });

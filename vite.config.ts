@@ -24,6 +24,8 @@ export default defineConfig({
   // The cache is the checkout's own, not node_modules/.vite: a worktree's node_modules may be a link to another checkout's.
   envDir: process.env.ERGA_ENV_DIR || undefined,
   cacheDir: process.env.ERGA_VITE_CACHE || ".cloudflare/vite",
+  // The deploy's build (cf build) minifies the Worker: a new copy of it reads all its code before its first answer.
+  build: { minify: true },
   // Only this machine: in development anyone who reaches the server is signed in (DEV_LOGIN).
   // Agents' scratch copies of this repo (its .claude/worktrees) are no part of it. Only this checkout's own
   // .claude: a checkout that is itself one of those worktrees still watches its own files.

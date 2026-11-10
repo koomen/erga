@@ -54,12 +54,16 @@ export interface Chat {
   pending(id: string, text: string, files: FileRef[] | undefined, resend: () => void): void;
   /** The message `id` wasn't sent: it says so, with Try again. */
   failed(id: string, reason: string): void;
+  /** A message is on its way: sent, and the transcript doesn't have it yet. */
+  sending(): boolean;
 }
 
 export function chat(opts: ChatOptions): Chat {
   const { logEl, jump, verbs } = opts;
   const log: Log = emptyLog();
   let els: HTMLElement[] = [];
+  /** The answers with more text since they were drawn (drawLater). */
+  const later = new Set<number>();
 
   /** A failed tool call that a later call on the same file got past is history, not an error. */
   const retried = (i: number) => {
@@ -148,6 +152,7 @@ export function chat(opts: ChatOptions): Chat {
   });
 
   function render() {
+    later.clear();
     const next = log.items.map((it, i) => renderItem(it, i));
     const now = [...logEl.children] as HTMLElement[];
     // A message on its way that the transcript has now (its echo came while the socket was down) is done.
@@ -192,6 +197,18 @@ export function chat(opts: ChatOptions): Chat {
       m.resend();
     }
   }
+  /** Draws item `i` again, or for the first time (`fresh`). */
+  function draw(i: number, fresh = false) {
+    const el = renderItem(log.items[i], i);
+    if (fresh) logEl.append(el);
+    else els[i].replaceWith(el);
+    els[i] = el;
+  }
+  function drawLater() {
+    for (const i of later) if (log.items[i] && els[i]) draw(i);
+    later.clear();
+    pin();
+  }
   function apply(ev: LogEvent) {
     // The host's copy of a message sent from this tab takes the place of the dimmed one.
     if (ev.t == "user" && ev.id) step(ev.id, { t: "echo" });
@@ -202,10 +219,14 @@ export function chat(opts: ChatOptions): Chat {
       render();
       return;
     }
-    if (i >= 0) {
-      const el = renderItem(log.items[i], i);
-      if (i < before) { els[i].replaceWith(el); els[i] = el; }
-      else { logEl.append(el); els[i] = el; }
+    if (i >= 0 && i < before && ev.t == "text" && !document.hidden) {
+      // More of an answer that is drawn already: each word comes as an event, and the answer is drawn whole. One draw
+      // for each screen frame, with all that came. (A hidden tab has no frames: there, at once.)
+      later.add(i);
+      if (later.size == 1) requestAnimationFrame(drawLater);
+    } else if (i >= 0) {
+      later.delete(i);
+      draw(i, i >= before);
     }
     // A success may turn earlier failures on the same file into retries.
     if (ev.t == "tool" && ev.status == "done") {
@@ -224,7 +245,20 @@ export function chat(opts: ChatOptions): Chat {
     follow(true);
   }
 
-  const drawn = () => els.map((el) => el.outerHTML).join("");
+  const drawn = () => {
+    if (later.size) drawLater();
+    return els.map((el) => el.outerHTML).join("");
+  };
 
-  return { log, render, drawn, apply, follow, pin, pending, failed: (id, reason) => step(id, { t: "fail", reason }) };
+  return {
+    log,
+    render,
+    drawn,
+    apply,
+    follow,
+    pin,
+    pending,
+    failed: (id, reason) => step(id, { t: "fail", reason }),
+    sending: () => [...sends.values()].some((m) => m.state == "pending"),
+  };
 }

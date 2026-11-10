@@ -10,10 +10,12 @@
 // document, their role, the file), by the address and who they are, for DECISION_MS (in
 // this isolate's memory and the edge's cache), when the document is quiet (no file changed
 // in the last minute: one being edited is asked each time). It's theirs alone: the key
-// names them. A change of permissions, or of a quiet document, reaches it within that time
+// names them (someone signed out, on a public document: nobody). A change of permissions,
+// of the readers' options, or of a quiet document, reaches it within that time
 // (this isolate forgets a change of permissions at once).
 //
-// So a second view in a short while asks neither the database nor the document. The page
+// So a second view in a short while asks neither the database nor the document. A first
+// one asks for the document's row while the session is found (`locating`), not after. The page
 // has an ETag (everything it says); the browser checks it each time (`private, no-cache`),
 // and an unchanged page is a 304.
 //
@@ -27,7 +29,7 @@ import { call, ctx, html, redirect } from "../http.ts";
 import { pageAddress } from "../../document/pages.ts";
 import type { ViewAnswer } from "../../document/view.ts";
 import type { PageHead } from "../../shared/page-head.ts";
-import { ID, OWNER, roleMay } from "../directory/index.ts";
+import { type DocRow, ID, OWNER, roleMay } from "../directory/index.ts";
 import type { Role } from "../../document/access.ts";
 import type { DocKind } from "../../document/pages.ts";
 import { BUILD_HEADER, CHECK_HEADER, pageBuild } from "../live.ts";
@@ -78,15 +80,22 @@ interface Decision {
   head?: PageHead;
   /** A scratch document: when it goes (null: never). */
   scratch?: { expires: number | null };
+  /** What its readers get, as its owner set it (DocRow.readers). */
+  readers: { agent: boolean; bars: boolean };
 }
 
 /** Decisions in this isolate: key -> when, and what. */
 const decisions = new Map<string, { at: number; d: Decision }>();
 /** Documents whose permissions changed, and when: a decision made before (here or kept at the edge) no longer holds. */
 const changed = new Map<string, number>();
+/** When every decision made before stopped holding (public sharing went on or off). */
+let allChanged = 0;
+/** Addresses with a decision kept here, and when: `locating` asks for no row that a kept decision makes needless. */
+const keptAt = new Map<string, number>();
 
 // (Keys on this site's own origin, at a path nothing serves: the edge's cache holds only its own zone's addresses.)
-const decisionKey = (url: URL, who: string) => `${url.origin}/_erga-cache/view${url.pathname}?who=${encodeURIComponent(who)}`;
+const addressKey = (url: URL) => `${url.origin}/_erga-cache/view${url.pathname}`;
+const decisionKey = (url: URL, who: string) => `${addressKey(url)}?who=${encodeURIComponent(who)}`;
 
 /** Who's asking, as a decision's key names them: everything Directory.decide looks at. */
 const whoKey = (session: Session | null) => (session ? JSON.stringify(whoOf(session)) : "");
@@ -97,7 +106,7 @@ async function keptDecision(platform: Platform, key: string): Promise<Decision |
   const hit = await platform.edge.cache?.match(key).catch(() => undefined);
   if (!hit) return null;
   const kept = (await hit.json().catch(() => null)) as { at: number; d: Decision } | null;
-  if (!kept || Date.now() - kept.at >= DECISION_MS || kept.at <= (changed.get(kept.d.id) ?? 0)) return null;
+  if (!kept || Date.now() - kept.at >= DECISION_MS || kept.at <= Math.max(allChanged, changed.get(kept.d.id) ?? 0)) return null;
   decisions.set(key, kept);
   return kept.d;
 }
@@ -106,12 +115,22 @@ function keepDecision(platform: Platform, key: string, d: Decision): void {
   const kept = { at: Date.now(), d };
   if (decisions.size > 5000) decisions.clear();
   decisions.set(key, kept);
+  if (keptAt.size > 5000) keptAt.clear();
+  keptAt.set(key.slice(0, key.indexOf("?who=")), kept.at);
   const cache = platform.edge.cache;
   if (cache) platform.edge.background(cache.put(key, Response.json(kept, { headers: { "Cache-Control": `max-age=${Math.ceil(DECISION_MS / 1000)}` } })).catch(() => {}));
 }
 
-/** This isolate forgets what it decided for a document (its permissions changed). */
-export function forgetDecisions(id: string): void {
+/**
+ * This isolate forgets what it decided for a document (its permissions or its readers' options changed); with no
+ * document, all it decided (public sharing went on or off).
+ */
+export function forgetDecisions(id?: string): void {
+  if (id == null) {
+    allChanged = Date.now();
+    decisions.clear();
+    return;
+  }
   if (changed.size > 5000) changed.clear();
   changed.set(id, Date.now());
   for (const [key, { d }] of decisions) if (d.id == id) decisions.delete(key);
@@ -147,12 +166,28 @@ const FILE = /(?:^|\/)[^/]+\.(?!html?$)[a-z0-9]+$/i;
 /** A page's address under its document's, as the address bar has it. */
 const suffix = (canonical: string) => (canonical ? `/${canonical.split("/").map(encodeURIComponent).join("/")}` : "");
 
+/** A document's row at /<owner>/<slug>, as Directory.locate finds it. */
+type Located = Awaited<ReturnType<Platform["directory"]["locate"]>>;
+
+/**
+ * The row of the document at /<first>/<second>, asked for now: the route finds the session meanwhile, so the two
+ * questions to the database don't wait for each other. Null where the view needs no row: an id (its host names
+ * it), or an address with a decision kept here a moment ago.
+ */
+export function locating(platform: Platform, url: URL, first: string, second: string): Promise<Located> | null {
+  if (first == "d" || !OWNER.test(first) || Date.now() - (keptAt.get(addressKey(url)) ?? 0) < DECISION_MS) return null;
+  const row = platform.directory.locate(first, second);
+  // Awaited by the view, or (a kept decision after all) by nobody.
+  row.catch(() => {});
+  return row;
+}
+
 /**
  * The viewer at /<first>/<second>[/<page>] (`first` an owner, or "d" with an id): the document's page for whoever
- * it's shared with, at its canonical address (other addresses redirect there).
+ * it's shared with, at its canonical address (other addresses redirect there). `located`: its row, asked for already.
  */
-export const viewAddress = (session: Session, first: string, second: string, wanted: string) =>
-  Effect.flatMap(ctx, ({ platform, request }) => call(() => address(platform, request, session, first, second, wanted)));
+export const viewAddress = (session: Session, first: string, second: string, wanted: string, located: Promise<Located> | null) =>
+  Effect.flatMap(ctx, ({ platform, request }) => call(() => address(platform, request, session, first, second, wanted, located)));
 
 async function address(
   platform: Platform,
@@ -160,7 +195,8 @@ async function address(
   session: Session,
   first: string,
   second: string,
-  wanted: string
+  wanted: string,
+  located: Promise<Located> | null
 ): Promise<HttpServerResponse.HttpServerResponse> {
   const url = new URL(request.url);
   const key = decisionKey(url, whoKey(session));
@@ -168,20 +204,12 @@ async function address(
   let answer: ViewAnswer | null = null;
   if (!d) {
     // The document at the address: by id straight from its host; by slug, the directory finds it.
-    let row: {
-      id: string;
-      owner: string;
-      slug: string;
-      title: string;
-      kind: DocKind | null;
-      scratch: boolean;
-      expires: number | null;
-    } | null = null;
+    let row: DocRow | null = null;
     if (first == "d") {
       if (!ID.test(second)) return nothing();
     } else {
       if (!OWNER.test(first)) return nothing();
-      row = (await platform.directory.locate(first, second))?.doc ?? null;
+      row = (await (located ?? platform.directory.locate(first, second)))?.doc ?? null;
       if (!row) return nothing();
     }
     const id = row?.id ?? second;
@@ -221,6 +249,8 @@ async function address(
       kind: row?.kind ?? null,
       head: answer.head,
       ...(row?.scratch ? { scratch: { expires: row.expires } } : {}),
+      // By id, the page only redirects to the document's address (below), where its row gives the readers' options.
+      readers: row?.readers ?? { agent: false, bars: true },
     };
     if (answer.quiet) keepDecision(platform, key, d);
   }
@@ -235,35 +265,43 @@ async function address(
  * while the server lets users share content publicly (Directory.isPublic), and the homepage project (/_home). They view it only. Null for any other: they
  * sign in first, as before.
  */
-export const viewPublic = (first: string, second: string, wanted: string) =>
-  Effect.flatMap(ctx, ({ platform, request }) => call(() => publicView(platform, request, first, second, wanted)));
+export const viewPublic = (first: string, second: string, wanted: string, located: Promise<Located> | null) =>
+  Effect.flatMap(ctx, ({ platform, request }) => call(() => publicView(platform, request, first, second, wanted, located)));
 
 async function publicView(
   platform: Platform,
   request: Request,
   first: string,
   second: string,
-  wanted: string
+  wanted: string,
+  located: Promise<Located> | null
 ): Promise<HttpServerResponse.HttpServerResponse | null> {
   const url = new URL(request.url);
   if (first == "d" || !OWNER.test(first)) return null;
-  const row = (await platform.directory.locate(first, second))?.doc ?? null;
-  // The homepage project is public, as the homepage is at /.
-  if (!row || (row.owner != HOME_OWNER && !(await platform.directory.isPublic(row.id)))) return null;
-  const answer = await platform.docs.view(row.id, null, { page: wanted, anyone: true });
-  if (!answer || answer.file == null || answer.ver == null) return null;
-  const d: Decision = {
-    id: row.id,
-    owner: row.owner,
-    slug: row.slug,
-    title: row.title,
-    role: "viewer",
-    ver: answer.ver,
-    file: answer.file,
-    canonical: answer.canonical ?? "",
-    shares: answer.shares,
-    head: answer.head,
-  };
+  // Kept as a signed-in person's is: a busy public document asks neither the database nor the document.
+  const key = decisionKey(url, "");
+  let d = await keptDecision(platform, key);
+  if (!d) {
+    const row = (await (located ?? platform.directory.locate(first, second)))?.doc ?? null;
+    // The homepage project is public, as the homepage is at /.
+    if (!row || (row.owner != HOME_OWNER && !(await platform.directory.isPublic(row.id)))) return null;
+    const answer = await platform.docs.view(row.id, null, { page: wanted, anyone: true });
+    if (!answer || answer.file == null || answer.ver == null) return null;
+    d = {
+      id: row.id,
+      owner: row.owner,
+      slug: row.slug,
+      title: row.title,
+      role: "viewer",
+      ver: answer.ver,
+      file: answer.file,
+      canonical: answer.canonical ?? "",
+      shares: answer.shares,
+      head: answer.head,
+      readers: row.readers,
+    };
+    if (answer.quiet) keepDecision(platform, key, d);
+  }
   const canonical = `${addressOf(d)}${suffix(d.canonical)}`;
   if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`))
     return redirect(canonical + url.search, 302, { "Cache-Control": "no-store" });
@@ -310,6 +348,7 @@ async function landingView(platform: Platform, request: Request, session: Sessio
       canonical: "",
       shares: answer.shares,
       head: answer.head,
+      readers: row.readers,
     };
     if (answer.quiet && key && row.id == home) keepDecision(platform, key, d);
   }
@@ -368,7 +407,7 @@ async function render(
   const canShare = canEdit && !!session && roleMay(d.role, "share");
   // What a reader gets, as the owner set it (share_document: reader_agent, reader_bars): an editor gets all of it. Their agent
   // (signed in, with a role here), and Erga's bars over the page.
-  const reader = canEdit ? { agent: true, bars: true } : await dir.readerOptions(d.id);
+  const reader = canEdit ? { agent: true, bars: true } : d.readers;
   const agent = hasAgent(session) && (canEdit || (roleMay(d.role, "open") && reader.agent));
   // Someone signed out: the page's token, for its model where the owner lets all viewers call it (agents/page-llm.ts).
   // Made at the start of a half hour, so the page, and its ETag, stay the same for a while.

@@ -302,28 +302,29 @@ export class Directory {
   /**
    * The document at /<owner>/<segment>, as `locate` finds it (or by id, given
    * `owner` "d"), and the role `who` has on it, as `access` decides: in one
-   * query, since a document's page needs both before it can answer.
+   * query, since a tool call needs both before it can answer.
    */
   async openAs(who: Who, owner: string, segment: string): Promise<{ doc: DocRow; role: Role | null } | null> {
-    // A document token's person has a role only on its document (access).
-    if (who.onlyDoc != null) {
-      const doc = owner == "d" ? await this.get(segment) : (await this.locate(owner, segment))?.doc ?? null;
-      return doc && { doc, role: await this.access(who, doc) };
-    }
     const found = owner == "d"
       ? "SELECT d.*, 0 AS via FROM documents d WHERE d.id = ?2"
       : `SELECT d.*, 0 AS via FROM documents d WHERE d.owner = ?1 AND d.slug = ?2
          UNION ALL SELECT d.*, 1 AS via FROM documents d WHERE d.owner = ?1 AND d.id = ?2
          UNION ALL SELECT d.*, 2 AS via FROM slug_history h JOIN documents d ON d.id = h.doc_id WHERE h.owner = ?1 AND h.slug = ?2
          ORDER BY via LIMIT 1`;
-    const [row] = await this.sql.all<Row & { via: number; rank: number | null }>(
-      `SELECT x.*, (SELECT MAX(CASE p.role WHEN 'owner' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 END)
-         FROM permissions p WHERE p.doc_id = x.id AND p.login IN (?3, ?4)) AS rank
+    const login = who.login.toLowerCase();
+    const [row] = await this.sql.all<Row & { own: Role | null; anyone: Role | null }>(
+      `SELECT x.*, (SELECT p.role FROM permissions p WHERE p.doc_id = x.id AND p.login = ?3) AS own,
+         (SELECT p.role FROM permissions p WHERE p.doc_id = x.id AND p.login = ?4) AS anyone
        FROM (${found}) x`,
-      owner.toLowerCase(), owner == "d" ? segment : segment.toLowerCase(), who.login.toLowerCase(), ANYONE);
+      owner.toLowerCase(),
+      owner == "d" ? segment : segment.toLowerCase(),
+      login,
+      ANYONE
+    );
     if (!row) return null;
-    const role = (Object.keys(RANK) as Role[]).find((r) => RANK[r] == Number(row.rank)) ?? null;
-    return { doc: fromRow(row), role: await this.homeLimit(who, row, role) };
+    const doc = fromRow(row);
+    const permissions = [...(row.own ? [{ login, role: row.own }] : []), ...(row.anyone ? [{ login: ANYONE, role: row.anyone }] : [])];
+    return { doc, role: await this.decide(who, doc, permissions) };
   }
 
   /**

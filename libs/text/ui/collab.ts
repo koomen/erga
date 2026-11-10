@@ -55,6 +55,7 @@ import { decodeStart, PING, PONG } from "../../../shared/room-socket";
 import { base64, fromBase64 } from "../../../shared/bytes";
 import { sleep } from "../../../shared/time";
 import { claimKept, keepReplica, readKept, type Keeper, type Kept } from "./kept";
+import { afterPause } from "./pause";
 import { socketStep, type PhaseEffect, type PhaseEvent, type SocketPhase } from "../../../shared/socket-phase";
 
 /** What the page shows of the socket. */
@@ -160,6 +161,8 @@ export class Collab {
   private kept: Kept | null = null;
   private keptIn = false;
   private keeping: Keeper | null = null;
+  /** Writes the confirmed texts beside the replica, once the typing pauses (pause.ts). */
+  private baseLater: ReturnType<typeof afterPause> | null = null;
   /** The room's whole state came (the start's, or the socket's sync); the socket failed at least once before it did. */
   private stateIn = false;
   private failed = false;
@@ -179,6 +182,7 @@ export class Collab {
 
   constructor(private opts: CollabOptions) {
     this.confirmed = opts.keep ? new Y.Doc() : null;
+    if (this.confirmed) this.baseLater = afterPause(() => this.keeping?.base(this.confirmedTexts()));
     this.hello.catch(() => {});
     this.awareness.on("change", ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }) => {
       // This tab's own cursor moving is no news to it.
@@ -377,6 +381,8 @@ export class Collab {
   /** Leaves the room for good: the socket closes, and this replica's presence goes with it. */
   close(): void {
     this.listening.abort();
+    this.baseLater?.now();
+    this.baseLater?.stop();
     void this.keeping?.stop();
     this.keeping = null;
     removeAwarenessStates(this.awareness, [this.doc.clientID], "left");
@@ -560,7 +566,8 @@ export class Collab {
           const sent = this.acks.shift();
           if (sent && this.confirmed) {
             Y.applyUpdate(this.confirmed, sent);
-            this.keeping?.base(this.confirmedTexts());
+            // (Every file's text: when the typing pauses, not at each answer.)
+            this.baseLater?.ask();
           }
           if (this.ackAgain) this.askAck();
         }
