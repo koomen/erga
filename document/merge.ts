@@ -3,7 +3,7 @@
 // (the page patches only the units it touches, the caret stays put, and undo
 // works), and merged with edits the editor hasn't saved yet.
 
-import { ChangeSet, type ChangeSpec } from "@codemirror/state";
+import { ChangeSet, MapMode, type ChangeSpec } from "@codemirror/state";
 import { diffWords } from "../shared/diff.ts";
 
 /** The changes that turn `a` into `b`, word by word. */
@@ -145,4 +145,43 @@ export function rebase(base: string, current: string, incoming: string): ChangeS
   const theirs = changesBetween(base, incoming);
   if (current == base) return theirs;
   return theirs.map(changesBetween(base, current));
+}
+
+/**
+ * `rebase` for a base that may be behind both texts: each has a change that the base has not, and a plain rebase makes
+ * that change two times. A replica of a history that the room lost goes in so (libs/text/ui/collab.ts, adopt): the
+ * room stored an edit, the replica's own or another's, and its history went before it confirmed the edit to the replica.
+ *
+ * What the two texts have in common is there one time: the base is asked only where they differ. The rebase is from
+ * `current` with, in the place of each stretch that differs, the base's text if one of them still has it (the other
+ * changed it), and else nothing (each text there was put in by the one that has it: it stays). But where `current`
+ * changed the base and `incoming` has there both more and less than it, they are two changes (two people's " lost"
+ * and " unsent" at one place, which share a space): all of it is one stretch, with the base's text, and both stay
+ * whole. With a base that is not behind, this is `rebase`.
+ */
+export function rebaseOnce(base: string, current: string, incoming: string): ChangeSet {
+  const back = changesBetween(current, base);
+  let differ: { from: number; to: number; insert: string; both?: boolean }[] = [];
+  changesBetween(current, incoming).iterChanges((from, to, _fb, _tb, text) => differ.push({ from, to, insert: text.toString() }));
+  back.iterChangedRanges((from, to) => {
+    const here = differ.filter((d) => d.from <= to && d.to >= from);
+    if (!here.some((d) => d.both || d.insert) || !here.some((d) => d.to > d.from)) return;
+    const all = { from: Math.min(from, here[0].from), to: Math.max(to, here[here.length - 1].to), insert: "", both: true };
+    differ = [...differ.filter((d) => d.to < all.from), all, ...differ.filter((d) => d.from > all.to)];
+  });
+  /** Whether a place is inside a stretch that `current` changed: the base has no text for a part of it. */
+  const inside = (at: number) => back.mapPos(at, 1, MapMode.TrackDel) == null;
+  let agreed = "",
+    at = 0;
+  for (const d of differ) {
+    const was = base.slice(back.mapPos(d.from, -1), back.mapPos(d.to, 1)),
+      theirs = current.slice(d.from, d.to);
+    // `current` still has the base's text: as it was, or with text of its own in it (then `incoming` deleted the base's).
+    let start = 0;
+    while (start < was.length && was[start] == theirs[start]) start++;
+    const kept = was.length <= theirs.length && theirs.endsWith(was.slice(start)) && !inside(d.from) && !inside(d.to);
+    agreed += current.slice(at, d.from) + (d.both || kept || was == d.insert ? was : "");
+    at = d.to;
+  }
+  return rebase(agreed + current.slice(at), current, incoming);
 }
