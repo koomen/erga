@@ -23,6 +23,14 @@ test("a branch's test is its merge's tree's record; with none it waits, and an o
   expect(testText({ at: "waiting", before: "failed" }, NOW)).toBe("Tests wait in the queue (the last run, failed, is stale)");
 });
 
+test("a run's line ends with its wall time: to its end, or to now while it runs", () => {
+  const run = runOf("t", { started: "2026-11-05T11:59:00.000Z", ended: "2026-11-05T11:59:24.400Z" });
+  expect(testText({ at: "passed", run }, NOW)).toBe("Tests passed in 24 s");
+  expect(testText({ at: "failed", run: { ...run, state: "failed", failed: ["x: breaks"] } }, NOW)).toBe("1 test failed in 24 s");
+  expect(testText({ at: "failed", run: { ...run, state: "failed" } }, NOW)).toBe("Tests failed in 24 s");
+  expect(testText({ at: "running", run: { ...run, state: "running", ended: undefined } }, NOW)).toBe("Tests run, 60 s");
+});
+
 test("the queue: one run at a time, the oldest branch first, and a tree with a record never runs again", () => {
   const wanted = [
     { branch: "new", tree: "t-new", at: 300 },

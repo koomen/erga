@@ -239,7 +239,7 @@ test("after a click, Deploying… and Merging… stay shown, with no hover and t
 
     // The failed branch: Merge is closed, and its row opens to the failed test; the list stays open through a draw.
     const broken = page.locator('.feature[data-branch="b-broken"]');
-    await expect.poll(() => broken.locator(".f-test").textContent()).toBe("1 test failed");
+    await expect.poll(() => broken.locator(".f-test").textContent()).toBe("1 test failed in 24 s");
     expect(await broken.locator("[data-merge]").isDisabled()).toBe(true);
     await broken.locator(".f-fails summary").click();
     await drawn();
@@ -248,7 +248,7 @@ test("after a click, Deploying… and Merging… stay shown, with no hover and t
 
     // Merge: its form, then Merging… until the job ends.
     const merge = page.locator('.feature[data-branch="a-feature"]');
-    expect(await merge.locator(".f-test").textContent()).toBe("Tests passed");
+    expect(await merge.locator(".f-test").textContent()).toBe("Tests passed in 24 s");
     await merge.locator("[data-merge]").click();
     await merge.locator(".f-merge button:not([data-cancel])").click();
     await page.mouse.move(0, 0);

@@ -13,7 +13,7 @@ export const runOf = (tree: string, more: Partial<TestRun> = {}): TestRun => ({
   what: "a test's commit",
   state: "passed",
   started: "2026-11-05T11:50:00.000Z",
-  ended: "2026-11-05T11:54:00.000Z",
+  ended: "2026-11-05T11:50:24.000Z",
   pid: 1,
   pidStart: null,
   failed: [],

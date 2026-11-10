@@ -44,7 +44,14 @@ export function testOf(b: { name: string; tree: string | null }, runs: TestRun[]
   return { at: "waiting", before: (old?.state as "passed" | "failed" | undefined) ?? null };
 }
 
-/** A test in one line: what the branch's row and `bun erga status` say. */
+/** The suite's target: a run over it shows its time in the warning colour (ops-view.ts). */
+export const TARGET_S = 60;
+
+/** A run's wall time in seconds, from its record: to its end, or to now while it runs. */
+export const secondsOf = (r: TestRun, now: number) =>
+  Math.max(0, Math.round(((r.ended ? Date.parse(r.ended) : now) - Date.parse(r.started)) / 1000));
+
+/** A test in one line, which ends with a run's time: what the branch's row and `bun erga status` say. */
 export function testText(t: Test, now: number): string {
   switch (t.at) {
     case "none":
@@ -52,11 +59,11 @@ export function testText(t: Test, now: number): string {
     case "waiting":
       return `Tests wait in the queue${t.before ? ` (the last run, ${t.before}, is stale)` : ""}`;
     case "running":
-      return `Tests run, ${Math.max(0, Math.round((now - Date.parse(t.run.started)) / 1000))} s`;
+      return `Tests run, ${secondsOf(t.run, now)} s`;
     case "passed":
-      return "Tests passed";
+      return `Tests passed in ${secondsOf(t.run, now)} s`;
     case "failed":
-      return t.run.failed.length ? `${plural(t.run.failed.length, "test")} failed` : "Tests failed";
+      return `${t.run.failed.length ? `${plural(t.run.failed.length, "test")} failed` : "Tests failed"} in ${secondsOf(t.run, now)} s`;
   }
 }
 
