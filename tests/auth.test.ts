@@ -192,7 +192,6 @@ test("checks are remembered for a minute by the values, but not when GitHub coul
   const answers: AppCheck["state"][] = ["unknown", "working"];
   const check = cachedCheck(async () => ({ state: answers[Math.min(asked++, 1)], summary: "", reasons: [], at: 0 }));
   expect((await check(GOOD)).state).toBe("unknown");
-  await Bun.sleep(1);
   expect((await check(GOOD)).state).toBe("working");
   expect((await check(GOOD)).state).toBe("working");
   expect(asked).toBe(2);

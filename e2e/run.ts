@@ -14,7 +14,7 @@
 // Telemetry is off (E2E_TELEMETRY_DISABLED: the CLI reads it before it reads the config).
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join, resolve } from "node:path";
 import { Glob } from "bun";
@@ -22,6 +22,7 @@ import { ergaDir } from "../deploy/cli/config";
 import { noteRun, takeTurn, type Turn } from "../dev/turn";
 import { runUnit } from "../dev/unit";
 import { budgets, overBudget } from "./budget";
+import { buildWorker } from "./helpers/worker-build";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const E2E = join(ROOT, "node_modules/.bin/e2e");
@@ -96,7 +97,7 @@ function browserTests(): Promise<Step> {
   return new Promise((done) => {
     const p = (browser = spawn(E2E, ["run", ...named, ...flags], {
       cwd: ROOT,
-      env: { ...env, ERGA_E2E: named.length ? "all" : "suite" },
+      env: { ...env, ERGA_E2E: named.length ? "all" : "suite", ...(workerBuild ? { ERGA_PREVIEW_ROOT: workerBuild } : {}) },
       stdio: "inherit",
       detached: true,
     }));
@@ -116,9 +117,11 @@ function sweep() {
 }
 
 let turn: Turn = { waitedMs: 0, free() {} };
+let workerBuild: string | null = null;
 const end = (code: number): never => {
   turn.free();
   sweep();
+  if (workerBuild) rmSync(workerBuild, { recursive: true, force: true });
   process.exit(code);
 };
 process.on("SIGINT", () => {
@@ -147,6 +150,9 @@ if (!built.ok) {
   end(1);
 }
 env.ERGA_BUILT = "1";
+// The Worker, built once for every test server (worker-build.ts): before the steps, which run at once, since
+// the deploy tests' release build writes the same folder.
+workerBuild = process.env.ERGA_TEST_SERVER == "dev" ? null : buildWorker();
 /** A static check: when it fails, the browser tests stop at once (the code is wrong before any test runs). */
 const fast = async (s: Promise<Step>) => {
   const r = await s;

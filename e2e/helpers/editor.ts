@@ -196,15 +196,21 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     write: (text: string) => writeFileSync(doc.file, text),
     /**
      * The document's text as the shell's replica of the room has it, once it has the page editor's (the editor's own
-     * replica sends its edits to the room, and the room to the shell).
+     * replica sends its edits to the room, and the room to the shell). The text returned is the one that was compared:
+     * after an undo the shell can be two edits behind and still equal the editor's, and a second read gave the text
+     * between.
      */
     async source(): Promise<string> {
       const shell = () => page.evaluate("ergaPage.collab.current()") as Promise<string>;
+      let same: string | null = null;
       await until(async () => {
         const mine = await ed.frame<string | null>("window.ergaFrame?.page ? ergaFrame.page.state.doc.toString() : null").catch(() => null);
-        return mine == null || mine == (await shell());
+        const theirs = await shell();
+        if (mine != null && mine != theirs) return false;
+        same = theirs;
+        return true;
       }, 3000).catch(() => {});
-      return shell();
+      return same ?? shell();
     },
     /**
      * In the editor's own controls on the page (libs/text/ui/controls.ts: the style bar, the link bar, the note):

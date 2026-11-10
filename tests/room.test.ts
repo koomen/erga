@@ -10,6 +10,7 @@ import { FileStore, Room, StateStore, StoreError, joinLocal } from "../document/
 import * as Effect from "effect/Effect";
 import { YjsWorkspace, type Cursor, type WorkspaceError } from "../agents/document/workspace";
 import { authorOf, files, introduce, roomInfo, type Author } from "../document/content";
+import { until } from "./helpers/until";
 
 /** Files in memory, as the room's storage (no saved state: each room starts afresh). */
 function memoryStore(init: Record<string, string>) {
@@ -195,8 +196,7 @@ test("the room writes an edit after its delay, and what's left when it closes", 
     a.text().insert(3, "just ");
     await tick();
     expect(m.writes).toEqual([]);
-    await new Promise((r) => setTimeout(r, 80));
-    expect(m.get("index.html")).toBe("<p>just one</p>");
+    await until(() => m.get("index.html") == "<p>just one</p>");
     a.text().insert(3, "not ");
     await tick();
   }, { writeDelay: 30 });
@@ -280,9 +280,9 @@ test("the lock for source edits: only its holder's edits land; everyone sees who
 test("a write that fails is tried again, later each time, until it lands; then storage has everything", async () => {
   const data = new Map([["index.html", new TextEncoder().encode("<p>one</p>")]]);
   let failing = true;
-  let tries = 0;
+  const tries: number[] = [];
   const write = (p: string, text: string) => {
-    tries++;
+    tries.push(Date.now());
     if (failing) return Effect.fail(new StoreError({ message: "storage is down" }));
     data.set(p, new TextEncoder().encode(text));
     return Effect.void;
@@ -295,10 +295,10 @@ test("a write that fails is tried again, later each time, until it lands; then s
   const check = async (room: Room) => {
     const a = await peer(room, person("Ada"));
     a.text().insert(3, "just ");
-    await new Promise((r) => setTimeout(r, 320));
-    // Every 10 ms, it would be some 30 tries; doubling each time, 5.
-    expect(tries).toBeGreaterThanOrEqual(3);
-    expect(tries).toBeLessThanOrEqual(6);
+    await until(() => tries.length >= 3);
+    // After 10 ms, then 20 more, then 40 more: twice as long each time (a timer is never early, but for its last millisecond).
+    expect(tries[1] - tries[0]).toBeGreaterThanOrEqual(19);
+    expect(tries[2] - tries[1]).toBeGreaterThanOrEqual(39);
     expect(room.saved).toBe(false);
     failing = false;
     await Effect.runPromise(room.flush);

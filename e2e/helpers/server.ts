@@ -14,13 +14,35 @@
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isRealKey } from "../../dev/agent-key";
 import { cleanEnv, ROOT } from "./env";
 
 /** Settings the Worker reads from .dev.vars; anything else in `env` goes to the server's environment. */
 const DEV_VARS = new Set(["DEV_LOGIN", "SESSION_SECRET", "ANTHROPIC_API_KEY", "ERGA_AGENT_MODEL", "GITHUB_CLIENT_SECRET"]);
+/**
+ * What a dev server's Worker reads from the server's environment as it starts (cloudflare.config.ts, `local`): each
+ * binding, and the variable it comes from. The tests' built Worker (worker-build.ts) reads them from .dev.vars.
+ */
+const LOCAL: Record<string, string> = {
+  GITHUB_CLIENT_ID: "ERGA_GITHUB_CLIENT_ID",
+  DEPLOY_TARGET: "ERGA_DEPLOY_TARGET",
+  ...Object.fromEntries(
+    [
+      "ERGA_WRITE_DELAY_MS",
+      "ERGA_RENDER_ALLOW",
+      "ERGA_HOME_RECHECK_MS",
+      "ERGA_VERSION_IDLE_MS",
+      "ERGA_VERSION_MAX_MS",
+      "ERGA_ROOM_IDLE_MS",
+      "ERGA_DEPLOY",
+      "ERGA_REMOTE_LATENCY_MS",
+    ].map((k) => [k, k])
+  ),
+};
 
 export interface ServerOptions {
   /** .dev.vars (DEV_VARS above) and the server's environment (the rest). */
@@ -39,6 +61,8 @@ export interface ServerOptions {
   latency?: string;
   /** It runs on after this process exits (bun run look --keep): its output goes to server.log in the scratch folder, and its owner stops it by its PID. */
   keep?: boolean;
+  /** A dev server (`vite dev`), as `bun start` runs it, not the tests' built Worker: for a check of the dev server itself. */
+  dev?: boolean;
 }
 
 export interface Server {
@@ -109,11 +133,37 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
   const state = opts.state ?? join(scratch, "state"), envDir = join(scratch, "env");
   mkdirSync(envDir);
   const vars: Record<string, string> = { DEV_LOGIN: "tester", SESSION_SECRET: crypto.randomUUID(), ...opts.env };
-  writeFileSync(join(envDir, ".dev.vars"), Object.entries(vars).filter(([k, v]) => DEV_VARS.has(k) && v).map(([k, v]) => `${k}=${v}\n`).join(""));
+  const plain = Object.fromEntries(Object.entries(opts.env ?? {}).filter(([k]) => !DEV_VARS.has(k)));
+  // The tests' built Worker (ERGA_PREVIEW_ROOT, worker-build.ts), unless the server needs what only a dev server
+  // reads as it starts: settings that the deploy fixes, or an environment of its own.
+  const preview = !!process.env.ERGA_PREVIEW_ROOT && !opts.dev && !opts.processEnv && !("ERGA_SERVER_CONFIG" in plain);
+  const linkSecret = randomBytes(24).toString("hex");
+  /** .dev.vars for a server at `root`: under `vite preview`, with all that the Worker would read from the environment. */
+  const writeVars = (root: string) => {
+    const all: Record<string, string> = Object.fromEntries(Object.entries(vars).filter(([k, v]) => DEV_VARS.has(k) && v));
+    if (preview) {
+      const env = cleanEnv(plain);
+      for (const [binding, from] of Object.entries(LOCAL)) all[binding] = env[from] ?? "";
+      Object.assign(all, {
+        ERGA_LINK_SECRET: linkSecret,
+        ERGA_DEV_ORIGIN: root,
+        ERGA_GITHUB_ORIGIN: plain.ERGA_GITHUB_ORIGIN ?? `${root}/__github`,
+        // (As dev/agent-key.ts: a placeholder counts as no key.)
+        ANTHROPIC_API_KEY: isRealKey(vars.ANTHROPIC_API_KEY) ? vars.ANTHROPIC_API_KEY.trim() : "",
+      });
+    }
+    writeFileSync(
+      join(envDir, ".dev.vars"),
+      Object.entries(all)
+        .map(([k, v]) => `${k}=${v}\n`)
+        .join("")
+    );
+  };
   const env = cleanEnv({
-    ...Object.fromEntries(Object.entries(opts.env ?? {}).filter(([k]) => !DEV_VARS.has(k))),
+    ...plain,
     ...(opts.latency ? { ERGA_DEV_LATENCY_MS: opts.latency } : {}),
     ...opts.processEnv,
+    ...(preview ? { ERGA_PREVIEW_ROOT: process.env.ERGA_PREVIEW_ROOT, ERGA_LINK_SECRET: linkSecret } : {}),
     ERGA_STATE_DIR: state, ERGA_ENV_DIR: envDir, ERGA_VITE_CACHE: join(scratch, "vite"), ERGA_INSPECTOR: "0", ERGA_BUILT: "1",
   });
   let proc: ChildProcess | null = null;
@@ -180,6 +230,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
     for (let attempt = 0; ; attempt++) {
       const at = fixed ?? await freePort();
       const root = `http://127.0.0.1:${at}`;
+      writeVars(root);
       output = "";
       const p = (proc = spawn("bun", [join(ROOT, "dev/start.ts"), ...(opts.open ? [opts.open] : []), "--port", String(at), "--no-open"], {
         cwd: ROOT,

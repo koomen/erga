@@ -13,18 +13,28 @@
 // and builds the editor's files and the release once for every dev server (ERGA_BUILT); the workers inherit it.
 
 import { spawnSync } from "node:child_process";
+import { rmSync } from "node:fs";
 import type { E2EConfig } from "e2e";
 import { testJobs } from "./e2e/helpers/cores";
 import { cleanEnv, hermetic, ROOT } from "./e2e/helpers/env";
 import { engine } from "./e2e/helpers/engine";
+import { buildWorker } from "./e2e/helpers/worker-build";
 
 process.env.E2E_TELEMETRY_DISABLED = "1";
 /** Each test's time limit (e2e/helpers/fixtures.ts gives it to every test that doesn't name its own). */
 process.env.ERGA_TEST_MS ||= "15000";
-if (hermetic() && !process.env.ERGA_BUILT) {
-  const r = spawnSync("bun", ["client/build.ts"], { cwd: ROOT, env: cleanEnv(), stdio: ["ignore", "ignore", "inherit"], timeout: 180_000 });
-  if (r.status != 0) throw new Error(`client/build.ts failed (${r.error?.message ?? `exit ${r.status}`})`);
-  process.env.ERGA_BUILT = "1";
+if (hermetic()) {
+  if (!process.env.ERGA_BUILT) {
+    const r = spawnSync("bun", ["client/build.ts"], { cwd: ROOT, env: cleanEnv(), stdio: ["ignore", "ignore", "inherit"], timeout: 180_000 });
+    if (r.status != 0) throw new Error(`client/build.ts failed (${r.error?.message ?? `exit ${r.status}`})`);
+    process.env.ERGA_BUILT = "1";
+  }
+  // The Worker, built once for every test server (e2e/helpers/worker-build.ts). ERGA_TEST_SERVER=dev: dev servers
+  // (`vite dev`, as `bun start`), to see whether a failure is the build's.
+  if (!process.env.ERGA_PREVIEW_ROOT && process.env.ERGA_TEST_SERVER != "dev") {
+    const root = (process.env.ERGA_PREVIEW_ROOT = buildWorker());
+    process.on("exit", () => rmSync(root, { recursive: true, force: true }));
+  }
 }
 
 const all = process.env.ERGA_E2E == "all";

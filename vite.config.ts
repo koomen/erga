@@ -17,6 +17,8 @@ const stateDir = resolve(process.env.ERGA_STATE_DIR || ".cloudflare/state");
 process.env.ERGA_LINK_SECRET ||= randomBytes(24).toString("hex");
 
 export default defineConfig({
+  // A test server runs the Worker that the tests built one time (vite preview): the build is under this folder.
+  root: process.env.ERGA_PREVIEW_ROOT || undefined,
   customLogger: quietLogger(),
   // The editor's own files, gathered by client/build.ts: they're the Worker's static assets.
   publicDir: process.env.ERGA_BUILD_DIR || ".build",

@@ -9,6 +9,7 @@ import type { Caller } from "../server/operations/index.ts";
 import type { Platform } from "../server/platform";
 import { VIA } from "../shared/attribution";
 import { setup } from "./helpers/files-fixture";
+import { until } from "./helpers/until";
 
 /** The files fixture's document, as the platform reaches it (the Durable Object's calls). */
 async function world() {
@@ -86,7 +87,7 @@ test("a person's agent renames the document open on their page, lists, makes, mo
   expect(await doc.paths()).toEqual(["index.html"]);
   // Versions: listed, read, and one brought back as the agent's person's.
   await doc.publish({ "index.html": "<h1>Changed</h1>" }, []);
-  await new Promise((r) => setTimeout(r, 120));
+  await until(async () => (await doc.versionsState())!.total > 1);
   const v = JSON.parse(await ask(tools, "versions"));
   expect(v.total).toBeGreaterThan(1);
   const r = JSON.parse(await ask(tools, "restore_version", { version: "v1", path: "index.html" }));

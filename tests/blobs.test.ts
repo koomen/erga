@@ -10,9 +10,16 @@ import { KEYS, MemoryStorage } from "../document/storage";
 import { Document } from "../document/document";
 import { promised } from "./helpers/promised";
 import { bytesOf, setup } from "./helpers/files-fixture";
-import { sleep } from "../shared/time";
+import { until } from "./helpers/until";
 import { files } from "../document/content";
 import type { Room } from "../document/room";
+
+/** The version that holds `path`: cut once the edits pause. */
+const versionWith = (doc: Awaited<ReturnType<typeof setup>>["doc"], path: string) =>
+  until(async () => {
+    const v = (await doc.version((await doc.versionsState())!.current.n))!;
+    return v.files.includes(path) ? v : null;
+  });
 
 test("an upload over 2 MB is a blob: only its ref in the object, served by hash with ranges, and in the versions by hash", async () => {
   const { doc, blobs, storage, get, put } = await setup();
@@ -44,9 +51,7 @@ test("an upload over 2 MB is a blob: only its ref in the object, served by hash 
   expect((await get("/doc/receipts/tax.pdf", { range: `bytes=${pdf.length}-` })).status).toBe(416);
 
   // A version has it by its hash, with no copy of its bytes in the object.
-  await sleep(150);
-  const v = (await doc.version((await doc.versionsState())!.current.n))!;
-  expect(v.files).toContain("receipts/tax.pdf");
+  const v = await versionWith(doc, "receipts/tax.pdf");
   expect(storage.data.has("blobs/" + hash)).toBe(false);
   expect(await doc.versionFile(v.n, "receipts/tax.pdf")).toEqual(pdf);
 });
@@ -59,9 +64,7 @@ test("a small upload is a blob too: only its ref in the object, and in the versi
   expect(storage.data.has(KEYS.file + "logo.png")).toBe(false);
   expect(storage.data.get(KEYS.ref + "logo.png")).toMatchObject({ hash });
   expect(new Uint8Array(await (await get("/doc/logo.png")).arrayBuffer())).toEqual(png);
-  await sleep(150);
-  const v = (await doc.version((await doc.versionsState())!.current.n))!;
-  expect(v.files).toContain("logo.png");
+  await versionWith(doc, "logo.png");
   expect(storage.data.has("blobs/" + hash)).toBe(false);
   expect(blobs.data.get(hash)).toEqual(png);
 });
@@ -145,8 +148,7 @@ test("a blob moves by its ref, is deleted with its file, and comes back with a r
   const { doc, storage, blobs, put, get } = await setup();
   const pdf = bytesOf(2_500_000, 5);
   await put("a.pdf", pdf);
-  await sleep(150);
-  const before = (await doc.versionsState())!.current.n;
+  const before = (await versionWith(doc, "a.pdf")).n;
   expect((await Effect.runPromise(doc.self.call((c) => c.treeOp({ op: "move", from: "a.pdf", to: "docs/b.pdf" }))))!.ok).toBe(true);
   expect(storage.data.has(KEYS.ref + "a.pdf")).toBe(false);
   expect(storage.data.get(KEYS.ref + "docs/b.pdf")).toMatchObject({ hash: await sha256Hex(pdf) });
