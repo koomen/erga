@@ -78,6 +78,8 @@ let comments: Comments | null = null;
 let commentsShown = (window.__ergaReader?.comments as { show?: unknown } | undefined)?.show !== false;
 /** The editor's state as it stopped (undo history and all), for the way back in. */
 let kept: EditorState | null = null;
+/** The page went full screen under the running editor (the viewer's erga-full; the editor stops for it): back in, the text is left. */
+let wasFull = false;
 /** Files dropped or pasted on the page on their way into the document's files: where they go in (mapped through the edits meanwhile). */
 const drops = new Set<{ at: number; point: { x: number; y: number } }>();
 /** The paths of the files this editor is putting into the document's files for a drop. */
@@ -90,6 +92,7 @@ let zoom = 1;
 window.addEventListener("message", (e: MessageEvent) => {
   if (e.source != window.parent || e.origin != SHELL) return;
   if (e.data?.type == "erga-mode") setMode(e.data as EditMode);
+  else if (e.data?.type == "erga-full") wasFull ||= e.data.on === true && !!page;
   else if (e.data?.type == "erga-comments") {
     commentsShown = e.data.show !== false;
     comments?.show(commentsShown);
@@ -373,7 +376,10 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
           }
           // The page takes the focus it has (the viewer gives the frame the focus as it goes into the editor), with the
           // caret in its text: it had the focus as it loaded again, or has it now, for the keys held meanwhile.
-          if (focus || document.hasFocus()) page.focus();
+          // (Not after full screen: the text is left, as after Escape, until a click on it.)
+          if (wasFull) page.leaveText();
+          else if (focus || document.hasFocus()) page.focus();
+          wasFull = false;
           // (The keys held meanwhile go in now, whether or not it has the focus yet.)
           page.hold(false);
           focus = false;

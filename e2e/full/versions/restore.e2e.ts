@@ -30,9 +30,17 @@ test("restoring a version: a new current version by the person, live in open edi
     expect(s.current.id).toBe(body.current.id);
     const v2 = (await tool("read", { version: "v2", path: "index.html" })).text;
     await expect.poll(() => ada.str()).toBe(v2);
-    await expect.poll(async () => (await viewer.get(`/d/${id}`, { redirect: "follow" })).text()).toContain("alpha");
-    expect(await (await viewer.get(`/d/${id}`, { redirect: "follow" })).text()).not.toContain("beta");
-  } finally { ada.disconnect(); }
+    // (One wait for both: "alpha" is in the page before the restore too.)
+    const page = async () => (await viewer.get(`/d/${id}`, { redirect: "follow" })).text();
+    await expect
+      .poll(async () => {
+        const t = await page();
+        return t.includes("alpha") && !t.includes("beta");
+      })
+      .toBe(true);
+  } finally {
+    ada.disconnect();
+  }
 });
 
 test("restore_version, by the agent, is attributed to the person via their agent", async () => {
@@ -46,7 +54,10 @@ test("restore_version, by the agent, is attributed to the person via their agent
   } finally { ada.disconnect(); }
 });
 
-test("restoring one file: the others stay, the answer has the new version, and an edit lands right after", async () => {
+// (More than a test's 15 s: it waits up to 15 s for the agent's turn to become a version.)
+test("restoring one file: the others stay, the answer has the new version, and an edit lands right after", {
+  timeout: 40_000,
+}, async () => {
   const { owner, id, ada, tool } = await setup();
   try {
     const before = (await owner.versions(id)).total;

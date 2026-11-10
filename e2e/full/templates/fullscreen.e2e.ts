@@ -158,6 +158,8 @@ test("editing: after full screen the text is left, as after Escape: typing edits
   await expect.poll(() => full(page)).toBe("page");
   await escape(page);
   await expect.poll(() => full(page)).toBe("");
+  // (The editor in the page stops for full screen and starts again after it: a click before it is back edits nothing.)
+  await expect.poll(() => ed.frame<boolean>("!!window.ergaFrame?.page")).toBe(true);
   expect(await ed.eval<boolean>(`document.activeElement?.id == "frame"`)).toBe(true);
   await ed.type("x");
   expect(await ed.source()).toBe(before);
