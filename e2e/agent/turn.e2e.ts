@@ -387,9 +387,15 @@ journey("a turn of the agent in the editor", () => {
     v = await st(`__hear(["make the title", false])`);
     expect(v).toMatchObject({ input: "make the title", sent: [] });
     // From here the pause that sends the words is a tenth of its time (the tests' timescale), so the step does not wait for it.
-    await ada.eval(`window.__ergaTimescale = 0.1; __hear(${BLUE})`);
+    // The panel's pause takes the timescale (it read another name before, so the pause was a whole second in the tests):
+    // the timer that it sets is for a tenth of its second. Read from the timers set, so the check costs no time.
+    await ada.eval(
+      `window.__ergaTimescale = 0.1; window.__timers = []; window.__setTimeout = window.setTimeout; window.setTimeout = (f, ms, ...a) => (window.__timers.push(ms), window.__setTimeout(f, ms, ...a)); __hear(${BLUE})`
+    );
     await expect.poll(async () => (await st()).sent.length).toBe(1);
     expect(await st()).toMatchObject({ sent: ["make the title blue"], input: "" });
+    const timers = await ada.eval<number[]>(`(window.setTimeout = window.__setTimeout, window.__timers)`);
+    expect([timers.includes(100), timers.includes(1000)], `the pause's timer, of ${timers.join(" ")}`).toEqual([true, false]);
 
     // The next words show alone. A pause sends them too, though they are not final yet; then a new session takes over.
     v = await st(`__hear(${BLUE}, [" and bigger", false])`);

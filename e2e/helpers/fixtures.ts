@@ -227,10 +227,17 @@ export const knownBug =
 /**
  * Takes out of `errors` (in place) what the browser logs for requests that failed because the server was down
  * ("Failed to load resource: net::ERR_CONNECTION_REFUSED", "WebSocket connection to ... failed"), which Playwright reports as console errors: a restart
- * (a server of the test's own, halted) means some. What's left is the page's own errors.
+ * (a server of the test's own, halted) means some. What's left is the page's own errors. The error's name depends on the
+ * instant: a request written to a kept socket that the killed server had closed is ERR_SOCKET_NOT_CONNECTED (one run
+ * in 5 of the suite on a busy machine had it, where the list did not).
  */
 export function withoutOutage(errors: string[]): string[] {
-  const left = errors.filter((e) => !/^console\.error: (Failed to load resource|WebSocket connection to '[^']*' failed)\b.*net::ERR_(CONNECTION_REFUSED|CONNECTION_RESET|INCOMPLETE_CHUNKED_ENCODING|EMPTY_RESPONSE|CONNECTION_CLOSED)\b/.test(e));
+  const left = errors.filter(
+    (e) =>
+      !/^console\.error: (Failed to load resource|WebSocket connection to '[^']*' failed)\b.*net::ERR_(CONNECTION_REFUSED|CONNECTION_RESET|INCOMPLETE_CHUNKED_ENCODING|EMPTY_RESPONSE|CONNECTION_CLOSED|SOCKET_NOT_CONNECTED|CONNECTION_ABORTED)\b/.test(
+        e
+      )
+  );
   errors.splice(0, errors.length, ...left);
   return errors;
 }
