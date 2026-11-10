@@ -12,12 +12,15 @@ import { ROOT } from "./helpers/env";
 import { descendants, startServer, type Server } from "./helpers/server";
 
 const HELP = `bun run look [--doc <fixture | file.html | folder>] [--out <file.png>] [--source] [--latency <ms>] [--keep | --stop] [step ...]
+bun run look --view [--doc ...] [--out <file.png>]     the document as a reader sees it, with no editor and no steps
+bun run look --path /docs [--out <file.png>]           a page of the server by its path, signed in
 
 Opens a copy of the document in the editor, clicks at the end of its first text block, runs the steps,
 then saves a screenshot and prints the page as a person sees it: "|" is the caret, "[" "]" a selection.
 
   --doc     a folder of e2e/fixtures (default: empty, one empty paragraph), or an HTML file or folder
   --out     where the screenshot goes (default: a new folder in .e2e/shots/ of this checkout)
+  --width   the window's width in px (default 1100; a phone: 390), and --height (default 800)
   --source  print the page's body as HTML too
   --latency a network's delay between the tab and the room, each way: 120, or a range 60-180 (ms);
             a server left running with --keep has the delay it started with
@@ -94,7 +97,10 @@ mkdirSync(shots, { recursive: true });
 const out = resolve(option("--out") ?? join(mkdtempSync(join(shots, "look-")), "page.png"));
 const latency = option("--latency");
 const keep = flag("--keep"),
-  source = flag("--source");
+  source = flag("--source"),
+  view = flag("--view");
+const pathArg = option("--path");
+const viewport = { width: Number(option("--width")) || 1100, height: Number(option("--height")) || 800 };
 const unknown = args.find((a) => a.startsWith("--"));
 if (unknown) {
   console.error(`unknown option ${unknown}\n\n${HELP}`);
@@ -144,13 +150,23 @@ const server = {
 const browser = await chromium.launch();
 let code = 0;
 try {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
+  const page = await browser.newPage({ viewport });
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   // And the page editor's check: where the page does not show its HTML (libs/text/ui/check.ts).
   page.on("console", (m) => {
     if (m.type() == "error" && m.text().includes("does not show its HTML")) errors.push(m.text());
   });
+  if (view || pathArg) {
+    // No editor: the page as it loads, once its requests and its fonts are done.
+    await page.goto(pathArg ? root + pathArg : (await server.fixture(docArg)).address);
+    await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+    for (const f of page.frames()) await f.evaluate(() => document.fonts.ready.then(() => null)).catch(() => {});
+    await page.screenshot({ path: out });
+    console.log(`screenshot: ${out}`);
+    if (errors.length) console.log(`page errors:\n${errors.join("\n")}`);
+    throw null;
+  }
   const tab = { page, errors, strict: false, own: () => Promise.reject(new Error("no server of its own")) };
   const ed = await openEditor(tab, server, docArg, { file: isDir ? undefined : basename(path) });
   await ed.clickEnd("[data-erga-text]:not(.erga-locked)");
@@ -177,8 +193,11 @@ try {
   console.log(`\nscreenshot: ${out}`);
   if (errors.length) console.log(`page errors:\n${errors.join("\n")}`);
 } catch (e) {
-  console.error((e as Error).message);
-  code = 1;
+  // null: the picture of --view or --path is done.
+  if (e) {
+    console.error((e as Error).message);
+    code = 1;
+  }
 } finally {
   await browser.close();
   stop?.();

@@ -37,7 +37,9 @@ const subjects = (sha: string) => run("git", "log", "--reverse", "--format=%s", 
 // The fakes: the tests fail where a file bad.txt is, and the deploy only notes its commit.
 let tests = 0;
 let deploys: string[] = [];
+let fulls: string[] = [];
 const fakes = {
+  full: (sha: string) => void fulls.push(sha),
   test: (at: string) => (tests++, existsSync(join(at, "bad.txt")) ? "1 fail\n" : "all passing\n"),
   deploy: async (sha: string) => (deploys.push(sha), ["staging.example.com"]),
 };
@@ -60,6 +62,7 @@ beforeEach(() => {
   run("git", "push", "-q", "origin", `${base}:refs/heads/staging`);
   tests = 0;
   deploys = [];
+  fulls = [];
 });
 afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 
@@ -79,6 +82,8 @@ test("many branches: one commit for each, one test run, one deploy", async () =>
   const tip = r.merged[2].sha;
   expect(subjects(tip)).toEqual(["a: its first commit", "B does its task", "c: its first commit"]);
   expect([tests, deploys]).toEqual([1, [tip]]);
+  // The whole suite starts one time, on the last commit.
+  expect(fulls).toEqual([tip]);
   // The deploy takes only a commit with a pass of its tests, and the merged branches leave GitHub.
   expect(existsSync(passPath(dir, tip))).toBe(true);
   expect(onOrigin()).toEqual(["staging"]);
@@ -116,6 +121,6 @@ test("no branch merges: nothing deploys, and the error says why", async () => {
   branch("bad", { "bad.txt": "bad\n" });
   await expect(merge("bad")).rejects.toThrow("Fix it on bad, push it, and merge again.");
   await expect(merge("nope")).rejects.toThrow("There is no branch nope on GitHub");
-  expect(deploys).toEqual([]);
+  expect([deploys, fulls]).toEqual([[], []]);
   expect(onOrigin()).toEqual(["bad", "staging"]);
 });

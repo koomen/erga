@@ -7,6 +7,9 @@
 // its own controls (controls.ts: the style bar, the link bar), the comments (comments.ts), files dropped on the page
 // (uploads.ts), on the page as it is, which the pages origin served from the text (shared/page-html.ts). It sends the
 // viewer nothing. When the viewer says "view", it stops, and the page carries on as it is.
+//
+// Trap: in the frame, a `setTimeout` can wait for seconds in a tab that isn't in front. Code that must run soon after
+// an edit here (the replica kept in IndexedDB, the page in the copy) runs at once, and joins what comes meanwhile.
 
 import { EditorState, Transaction, type Extension } from "@codemirror/state";
 import { history, historyField } from "@codemirror/commands";

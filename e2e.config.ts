@@ -2,7 +2,7 @@
 //. e2e/run.ts runs both, and picks which end-to-end tests with ERGA_E2E:
 //
 //   smoke (the default)   e2e/smoke: the editor's core, on one worker and one dev server, in about a minute
-//   full                  e2e/full: the whole suite, one worker per usable core (bun run test:full)
+//   full                  e2e/full: the whole suite, one worker for every 2 usable cores (bun run test:full)
 //   all                   both, for files named on the command line (bun run test:e2e e2e/full/page/)
 //
 // Each test is small and independent and makes its own data. e2e hands a worker a whole file at a time, so the files
@@ -30,8 +30,9 @@ if (hermetic() && !process.env.ERGA_BUILT) {
 
 const which = process.env.ERGA_E2E ?? "smoke";
 const TESTS = { smoke: ["e2e/smoke/**/*.e2e.ts"], full: ["e2e/full/**/*.e2e.ts"], all: ["e2e/**/*.e2e.ts"] }[which] ?? ["e2e/smoke/**/*.e2e.ts"];
-/** The smoke run: one worker, one dev server. Else one worker for each usable core; TEST_JOBS=n picks it. */
-const workers = which == "smoke" ? 1 : testJobs({ env: { TEST_JOBS: process.env.TEST_JOBS, TEST_CORES_PER_JOB: "1", TEST_MEM_PER_JOB_MB: process.env.TEST_MEM_PER_JOB_MB } }).jobs;
+/** The smoke run: one worker, one dev server. Else one worker for every 2 usable cores: a worker for each core was no
+ * faster (248 s and 247 s on 16 cores) and left nothing for the other worktrees' tests. TEST_JOBS=n picks it. */
+const workers = which == "smoke" ? 1 : testJobs().jobs;
 
 export default {
   projectId: "erga",

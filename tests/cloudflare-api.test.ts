@@ -67,7 +67,7 @@ test("a refusal still says Cloudflare's words; a refusal of another shape is lef
   expect(e?.message).toContain("Authentication error [code 10000]");
 });
 
-test("an answer with no upload token, or not Cloudflare's JSON, says what Cloudflare answered (AGENTS.md rule 5)", async () => {
+test("an answer with no upload token, or not Cloudflare's JSON, says what Cloudflare answered", async () => {
   const bytes = new TextEncoder().encode("hello");
   const page = cloudflare(new Response("<html>Please wait</html>", { status: 200 }));
   const a = await run(uploadAssets(page.cf, "/accounts/a", "w", { "/probe.txt": bytes }));

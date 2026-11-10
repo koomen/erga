@@ -5,6 +5,13 @@
 // usually not even on that. The files are at /_home-files/<gen>/<path>, cached for
 // good. Where there's no edge cache (workers.dev has none) the isolate's
 // memory serves alone.
+//
+// The homepage can have a domain of its own (the deploy facts' `home`, from `bun erga deploy <host> --home <domain>`).
+// Then that host gets only the site's files (serveHomeDomain), and the Erga domain's `/` is the small Sign in page. On
+// that domain, Erga has only `/_erga/` (server/app.ts): the pages' model and its sign-in, a round trip through the
+// Erga domain (server/identity/home-pass.ts) that needs the facts' `app`. The Erga domain's session never counts
+// there. A test gives its server `ERGA_DEPLOY={"home":"home.localhost"}` (e2e/full/home/domain.e2e.ts). The browser
+// reaches home.localhost; Node's and Bun's fetch can't, so send the Host header with `node:http`.
 
 import * as Effect from "effect/Effect";
 import { call, ctx, fromWeb } from "../http.ts";

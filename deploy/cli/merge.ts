@@ -3,7 +3,8 @@
 // staging instance, and the push of staging. A branch that conflicts stays out. When the tests fail on several
 // branches, they go one by one, each with its own test run, and a branch that fails stays out. It holds the lock
 // .erga/jobs/staging.lock, and writes its job record (deploy.ts, startJob) on the first staging instance, so the ops
-// page shows its output as it comes.
+// page shows its output as it comes. After the merge, the whole test suite starts on the merged commit, in the
+// background (full-run.ts).
 
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,6 +12,7 @@ import { join } from "node:path";
 import { readConfig } from "./config";
 import { deployStaging, type From, recordPass, startJob, takeLock, testEnv } from "./deploy";
 import { type Merge, mergeRefusal, squashMessage } from "./flow";
+import { startFullRun } from "./full-run";
 import { commitsIn, fetchOrigin, ROOT, sh } from "./observe";
 
 /** What a merge did: the commits on staging, in their order, and the branches that stay out, each with its reason. */
@@ -30,7 +32,7 @@ function installAndTest(dir: string): string {
 
 /**
  * Merges the branches onto staging, in their order. It throws when no branch merges: the error says what stopped it,
- * and what to do next. `clone`, `test` and `deploy` are for the tests: a clone of their own, and fakes.
+ * and what to do next. `clone`, `test`, `deploy` and `full` are for the tests: a clone of their own, and fakes.
  */
 export async function mergeBranches(o: {
   dir: string;
@@ -40,6 +42,7 @@ export async function mergeBranches(o: {
   clone?: string;
   test?: (dir: string) => string;
   deploy?: (sha: string) => Promise<string[]>;
+  full?: (sha: string) => void;
 }): Promise<Merged> {
   const names = o.merges.map((m) => m.branch).join(" ");
   const command = `bun erga merge ${names}`;
@@ -163,6 +166,11 @@ export async function mergeBranches(o: {
         log(`NOTE  The local branch ${branch} is still here. Delete it when you are done with it: git branch -D ${branch}`);
     }
     for (const l of result.left) log(`FAIL  ${l.branch} is not merged: ${l.why}`);
+    // Every end-to-end test, on the commit that staging runs now: in the background, and nothing waits for it.
+    (o.full ?? ((s: string) => startFullRun(clone, s)))(sha);
+    log(
+      `NOTE  The whole test suite runs on ${sha.slice(0, 12)} in the background. The ops page (bun erga) shows its result at the commit.`
+    );
     job.end("ok");
     return result;
   } catch (e) {

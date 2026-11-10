@@ -6,6 +6,14 @@
 // and the page in its frame, on the document's own origin; the page editor runs
 // in the page itself (frame.ts: its window has `ergaFrame`). Expressions for the
 // page are strings evaluated in the page's frame.
+//
+// Trap: the page's editor has its own socket and replica of the room (libs/text/ui/frame.ts), apart from the shell's.
+// An edit typed on the page reaches the shell's replica only through the room, a moment later. A test that reads the
+// shell's text waits for it (`ed.source()`); one that reads the editor's selection reads the frame's
+// (`ed.selection()`). The editor starts a round trip after the pencil: a test waits for `window.ergaFrame.page` before
+// it clicks. The editor's own controls are in a shadow root on the page: a test reaches them with `ed.controls`, never
+// in the shell's document. An agent's edit is in the page's text at once (its typing is only an effect,
+// libs/text/ui/marks.ts): a test that reads the page's text sees all of it.
 
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

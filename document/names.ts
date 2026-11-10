@@ -2,6 +2,10 @@
 // follows the page's first heading until someone sets it, and the slug the
 // title (server/directory/ keeps them, and decides a rename). The document's
 // host reads and changes its name through `Naming`, as one person.
+//
+// Trap: build a document's address with `addressOf`, never `/${owner}/${slug}`: the homepage project's is `/_home`. A
+// document's host keeps the owner it was made with, and nothing tells it of a new one: an access rule takes the owner
+// from the permissions (`Directory.decide`), never from the host's own copy.
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

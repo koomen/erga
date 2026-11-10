@@ -9,6 +9,10 @@
 //
 // Each render logs its time in the browser (Cloudflare bills Browser Rendering by the browser's time): one JSON line,
 // {"render": ...}.
+//
+// Trap: a browser connection belongs to the Durable Object that opened it. Another object in the same isolate gets
+// "Cannot perform I/O on behalf of a different Durable Object". Keep it in the object (`browsers`), never in a module
+// variable.
 
 import type { RenderJob } from "../document/agent";
 import { encodePath, pageAddress } from "../document/pages";

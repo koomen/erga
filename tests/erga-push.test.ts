@@ -2,7 +2,7 @@
 // and tests, and pushes the tested commit only when the tests end with "all passing"; else it says why and pushes nothing.
 
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { failureOf } from "../deploy/cli/flow";
@@ -98,6 +98,18 @@ test("a change that no commit has (the formatter's too) stops it before the test
   expect(c.onOrigin()).toBe("");
   expect(said).toContain("a.ts");
   expect(said).toContain("Commit");
+});
+
+test("a commit with a link to the installed packages stops it before the tests", () => {
+  const c = clone();
+  symlinkSync("../elsewhere/node_modules", join(c.root, "node_modules"));
+  sh(c.root, "git", "add", "-A");
+  sh(c.root, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "three");
+  const s = steps(PASSING);
+  const said = push(c.root, s.run);
+  expect(s.ran).not.toContain("bun e2e/run.ts");
+  expect(c.onOrigin()).toBe("");
+  expect(said).toContain("a link to the installed packages (node_modules)");
 });
 
 test("staging and main are not pushed, and no step runs", () => {

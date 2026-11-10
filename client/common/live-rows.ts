@@ -9,6 +9,9 @@
 // A hidden tab waits until it shows. A dropped socket comes back by itself and says the last version it heard, so it
 // hears what changed meanwhile. One ask at a time, so a later answer is never older than one before it. The socket's
 // phase (news-phase.ts) owns its reconnect timer: once the last list stops, no socket opens.
+//
+// Trap: a live list gets new rows after the page loaded, and a changed row is a new element. Attach a row's listeners
+// in its `wire(row)`, never in a loop over the rows at load: a row that comes later would have none.
 
 import { backoff, live } from "../live/client";
 import { newsStep, type NewsEvent, type NewsPhase } from "./news-phase";

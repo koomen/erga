@@ -3,6 +3,10 @@
 // on the page itself (not its source), out of full screen (there the page's own keys work: a deck's arrows). It opens its
 // socket with an edit key (server/documents/edit-key.ts), which the shell asks for, and again before it ends.
 // No IO here: client/shell/editor.ts does what `step` returns.
+//
+// Trap: the frame has its own history. Back after a link in the frame loads the frame's old address again, with its
+// `?erga-edit` if the editor was on then, and that page asks for the editor by itself. Only this state decides
+// "editing"; the frame's address never does.
 
 /** The page itself, or the file's source (its HTML). */
 export type Mode = "text" | "html";

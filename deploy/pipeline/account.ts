@@ -527,6 +527,7 @@ const claimsOf = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Record(
  * encrypted with its FACTORY_KEY, so they don't open here) go, and the rows of
  * the copy it was on (`from`; none on its first copy) come in. Without this,
  * each new copy would drop staging's Anthropic key, and its agents would stop. The same for each person's own keys.
+ * Trap: staging's database is a copy of production's. A new table that holds secrets needs the same here, in the same change.
  */
 export async function ownCredentials(cf: Cloudflare, acc: string, from: string | null, to: string): Promise<string> {
   const rows = from ? (await d1(cf, acc, from, "SELECT * FROM credentials", [], "read the API keys this server stored")) ?? [] : [];

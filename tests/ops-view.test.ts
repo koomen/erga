@@ -54,6 +54,9 @@ test("the view: each primary with its staging instances, the job line, and live 
     setup: "",
     run: { at: "idle" },
     polls: startPolls(),
+    full: [],
+    proofs: {},
+    loops: { merged: 0 },
   };
   const html = viewHtml(facts, "staging.erga.dev", NOW);
   // A staging instance's name chooses its primary.
@@ -88,6 +91,9 @@ test("Logs shows the job that runs, else the last one, or the one the hash names
     setup: "",
     run: { at: "idle" },
     polls: startPolls(),
+    full: [],
+    proofs: {},
+    loops: { merged: 0 },
   };
   const logs = viewHtml(facts, "erga.dev/logs", NOW);
   expect(logs).toContain('<section class="logs" data-job="runs"');
@@ -114,6 +120,9 @@ test("Setup: the setup's host shows before it has an entry, and opens on its che
     setup: "new.example.com",
     run: { at: "idle" },
     polls: startPolls(),
+    full: [],
+    proofs: {},
+    loops: { merged: 0 },
   };
   expect(groupsOf(config, facts.setup).map((g) => [g.primary.host, g.primary.token])).toEqual([
     ["erga.dev", "t"],
@@ -182,6 +191,9 @@ const deploys = (more: Partial<Facts> = {}, staging = "3", production = "1"): Fa
   setup: "",
   run: { at: "idle" },
   polls: startPolls(),
+  full: [],
+  proofs: {},
+  loops: { merged: 0 },
   ...more,
 });
 /** The page's own command as it starts: a merge of a branch, or a deploy of commit n...n to staging.erga.dev. */
@@ -443,4 +455,71 @@ test("the page's server checks GitHub and each instance at start, not on a page 
     page.stop();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the newest run of all the tests shows above the log with each failed test's name, and a mark at its commit", () => {
+  const run = {
+    sha: "3".repeat(40),
+    started: "2026-11-05T11:50:00.000Z",
+    pid: 1,
+    pidStart: null,
+    total: 841,
+    failed: [] as string[],
+    log: "/tmp/full.log",
+  };
+  const names = ["e2e/full/tree/docs-fast.e2e.ts: the list opens fast", "e2e/full/suite/robustness.e2e.ts: a restart keeps the text"];
+  const failed = viewHtml(
+    deploys({ full: [{ ...run, state: "failed", failed: names, ended: "2026-11-05T11:54:00.000Z" }] }),
+    "erga.dev",
+    NOW
+  );
+  expect(failed).toContain("2 tests of 841 failed on 3333333 in 4 minutes:");
+  for (const n of names) expect(failed).toContain(`<li>${n}</li>`);
+  expect(failed).toContain("/tmp/full.log");
+  // The mark is in the row of its commit, and in no other.
+  expect(
+    failed
+      .split('<div class="row')
+      .filter((r) => r.includes('class="full bad"'))
+      .map((r) => /data-sha="(\d)/.exec(r)?.[1])
+  ).toEqual(["3"]);
+  const passed = viewHtml(deploys({ full: [{ ...run, state: "passed", ended: "2026-11-05T11:54:00.000Z" }] }), "erga.dev", NOW);
+  expect(passed).toContain("All 841 tests passed on 3333333 in 4 minutes.");
+  expect(passed).toContain('<span class="full ok"');
+  expect(viewHtml(deploys({ full: [{ ...run, state: "running" }] }), "erga.dev", NOW)).toContain(
+    "All tests run on 3333333, since 10 minutes ago."
+  );
+  expect(viewHtml(deploys({ full: [{ ...run, state: "stopped" }] }), "erga.dev", NOW)).toContain("bun erga full 3333333");
+  expect(viewHtml(deploys(), "erga.dev", NOW)).not.toContain("tests-head");
+});
+
+test("a branch's proof is a link beside Merge: old when the branch has a newer commit, and named when there is none", () => {
+  const sha = (name: string) => /data-branch="(\w+)"/.exec(name);
+  const of = (html: string, name: string) => html.split('<li class="feature"').find((li) => sha(li)?.[1] == name) ?? "";
+  const clean = branch("clean");
+  const html = viewHtml(
+    deploys({
+      proofs: { clean: { sha: clean.sha, at: "2026-11-05T11:00:00.000Z" }, clash: { sha: "0".repeat(40), at: "2026-11-05T10:00:00.000Z" } },
+    }),
+    "erga.dev",
+    NOW
+  );
+  expect(of(html, "clean")).toContain('<a class="f-proof" href="/proof/clean/" target="_blank"');
+  expect(of(html, "clean")).toContain(">Proof</a>");
+  expect(of(html, "clash")).toContain(">Proof (old)</a>");
+  // A branch with nothing to merge needs no proof.
+  expect(of(viewHtml(deploys(), "erga.dev", NOW), "clean")).toContain("No proof");
+  expect(of(viewHtml(deploys(), "erga.dev", NOW), "done")).not.toContain("f-proof");
+});
+
+test("the week's loops show their medians above the log, and nothing when no loop merged", () => {
+  const html = viewHtml(
+    deploys({ loops: { merged: 22, work: 17.5, failed: 1, wait: 21.5, toStaging: 1, toProduction: 5.6 } }),
+    "erga.dev",
+    NOW
+  );
+  expect(html).toContain(
+    "22 tasks merged. Medians: work 17.5 min · failed test runs 1 · wait for the merge 21.5 min · merge to staging 1 min · staging to production 5.6 min."
+  );
+  expect(viewHtml(deploys(), "erga.dev", NOW)).not.toContain("loops-head");
 });

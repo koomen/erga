@@ -6,12 +6,13 @@ and `main`. There are no pull requests.
 
 ## The workflow
 
-1. Start a feature branch for each task, from staging:
+1. Start a feature branch for each task, in a work folder of its own:
 
        bun erga start <branch>
 
-   Any name but `staging` and `main`. In a worktree of your own, run a real
-   `bun install --frozen-lockfile` first.
+   Any name but `staging` and `main`. It gets the newest staging from
+   GitHub, makes the branch there, in the folder `worktrees/<branch>` of
+   the main clone, and installs the packages. Work in that folder.
 2. Commit. A commit message is one line of ten words at most, with no
    body. Then push with the one command, never with `git push`:
 
@@ -27,7 +28,19 @@ and `main`. There are no pull requests.
    never commits on GitHub that this checkout has not seen. Also run the
    e2e tests of the part you change (`bun run test:e2e e2e/full/page/`).
    The whole suite (`bun run test:full`) only when Pete asks.
-3. A push deploys nothing. Tell Pete the branch name and what it changes.
+3. A push deploys nothing. Make the branch's proof page, so that Pete sees
+   the change before the merge:
+
+       bun erga proof "<what changed, one sentence>" --look "--path /docs"
+
+   Each `--look` has the arguments of `bun run look` (`--path <path>`: a
+   page of the server; `--view --doc <fixture>`: a document as a reader
+   sees it; `--doc <fixture> <keys>`: the editor after those keys). It
+   takes each picture before the change and after it, at desktop width
+   and at phone width. A change with nothing to show names its tests:
+   `--no-picture "<the tests that prove it>"`. Look at the page yourself.
+   Then tell Pete the branch name, what it changes, and the proof's
+   address. The ops page has the link beside the branch's Merge button.
 4. When Pete asks, merge the branch into staging, or many branches in
    one run:
 
@@ -47,6 +60,10 @@ and `main`. There are no pull requests.
    with its own test run, and a branch that fails stays out. It names each
    branch that stays out, and then ends with exit code 1. It stops when no
    branch merges, and when a deploy fails: staging stays where it was.
+   After the merge, every end-to-end test runs on the merged commit, in
+   the background (about 4 minutes; nothing waits for it). The ops page
+   shows the result at the commit, with the name of each failed test.
+   A test that fails there is the merge's: repair it in a new task.
 5. `merge` reports each staging instance's commit and health. Check the
    change on https://staging.erga.dev before you say that it works.
    Staging is for admins only.
@@ -60,19 +77,34 @@ and `main`. There are no pull requests.
 
 ## The other commands
 
+- `bun erga loops [--days N]`: the time of each loop in the last 7 days.
+  One row for each branch: the minutes of work (start to first push), the
+  failed test runs, the minutes of wait for the merge, the minutes of the
+  merge to staging, and from there to production; then the medians. The
+  log is `.erga/loops.jsonl` (`bun erga start`, each `bun run test` and
+  `bun erga push` add a line) and the job records. The ops page shows
+  the week's medians.
+- `bun erga full [<commit>]`: every end-to-end test on a commit (default:
+  staging's head), in a scratch folder: what a merge starts in the
+  background. Its state is `.erga/full/<sha>.json`. One run at a time.
+- `bun erga clean [--yes]`: lists the work folders and the local branches
+  whose task is merged (the merge records in `.erga/jobs/`) and on
+  production, and removes them after a yes. One with a later commit, or
+  with a change that no commit has, stays. It also removes a scratch
+  folder that a crashed merge left.
 - `bun erga status`: each instance in `.erga/config.json` with its commit
   and health, the feature branches (ahead, behind, conflicts) and the
   commits on staging that are not on main. It only reads: no fetch. It asks
   GitHub for its branches (`git ls-remote`) and leaves out a branch that a
   merge deleted; offline, it lists the clone's branches, with a note.
 - `bun erga`: the ops page on localhost. It lists the instances of `.erga/config.json`,
-  each primary with its staging instances, the feature branches, the log with "live" at each
+  each primary with its staging instances, the feature branches, the newest run of all the tests, the log with "live" at each
   instance's commit, and the job that runs. Its tabs: Setup (the checklist of `bun erga setup`), Deploys,
   Logs (a job's output, live) and History (the jobs). It checks its sources, each on its own
   period, whatever happens: GitHub at most once a minute, with `git fetch --prune` in the main
   clone, and each instance's commit and health every 5 seconds. The Deploys tab's Sources box shows each source's
   last check, its answer or its error, and "stale" after three of its periods with no good answer. A new job
-  on another primary's instance switches the page to that primary. Each feature branch has a Merge
+  on another primary's instance switches the page to that primary. Each feature branch has a Proof link (`bun erga proof`) and a Merge
   button (`bun erga merge <branch> -m <text>`). A commit row shows a Deploy button on hover in each
   column whose instance does not run it (`bun erga deploy <commit> <host>`). They run the same
   commands, with the same locks, and only one job at a time. Only when Pete asks.
@@ -112,7 +144,8 @@ and `main`. There are no pull requests.
   never what you assumed.
 - When a deploy fails, read its output, or its job record in
   `.erga/jobs/`. A failed health check rolls the Worker back by itself.
-- AGENTS.md has the code's rules and traps.
+- AGENTS.md has the code's rules. A file's traps are in the comment at
+  its top.
 
 ## How a deploy runs
 

@@ -5,14 +5,25 @@
 //
 //   bun erga [--port N] [--no-open]     the ops page on localhost: the registered instances, setup, deploys, logs, history
 //   bun erga skill                      how an agent works in this repository (the workflow and its rules)
-//   bun erga start <branch>             a new feature branch from origin/staging, in this checkout
+//   bun erga start <branch>             a new feature branch from GitHub's newest staging, in a work folder of its
+//                                       own (worktrees/<branch> in the main clone), with its packages installed
+//   bun erga clean [--yes]              lists the work folders and local branches whose task is merged and on
+//                                       production, and removes them after a yes
 //   bun erga push                       before each push: formats the changed lines, builds the inline code's file, runs
 //                                       the tests, and pushes this branch only when they end with "all passing"
+//   bun erga proof "<sentence>" [--look "<bun run look arguments>"]... [--no-picture "<the tests that prove it>"]
+//                                       the branch's proof page, for Pete before the merge: what changed, a picture
+//                                       before and after at desktop and phone width, the tests' result, the files
+//   bun erga loops [--days N]           the time of each loop (default: the last 7 days): for each branch, the minutes
+//                                       of work, the failed test runs, the wait for the merge, the time to staging and
+//                                       to production; then the medians
 //   bun erga status                     each registered instance's commit and health, the feature branches and the
 //                                       commits, as text; it only reads (no fetch)
 //   bun erga merge <branch>... [-m text]
 //                                       each branch onto staging as one commit, then one test run, one deploy to
 //                                       each staging instance, and the push of staging; -m is for the branch before it
+//   bun erga full [<commit>]            every end-to-end test on a commit (default: staging's head), in a scratch
+//                                       folder; a merge starts it in the background, and the ops page shows its result
 //   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
 //   bun erga deploy [<commit>] <host> [--no-tests]            deploys a registered instance from this machine; a primary
 //                                       with no commit takes the commit its staging instances run, and main moves to it;
@@ -26,9 +37,9 @@
 //                                       (bun erga setup skill; bun erga setup help)
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { latestTag, mergeArgs, nextVersion, PROTECTED, releaseNotes, releaseRefusal, statusText } from "./flow";
-import { commitsOf, fetchOrigin, git, headOf, readState, repoOf, ROOT, sh, tagsOf } from "./observe";
+import { dirname, join } from "node:path";
+import { latestTag, mergeArgs, nextVersion, releaseNotes, releaseRefusal, statusText } from "./flow";
+import { commitsOf, fetchOrigin, headOf, readState, repoOf, ROOT, sh, tagsOf } from "./observe";
 
 const say = (s = "") => console.log(s);
 const pass = (s: string) => say(`PASS  ${s}`);
@@ -59,16 +70,27 @@ function help(code = 0): never {
 
 // ------------------------------------------------------------------ start
 
-function start(name: string | undefined) {
-  if (!name) fail("Name the branch: bun erga start <branch>.");
-  if ((PROTECTED as readonly string[]).includes(name!)) fail(`${name} is not a feature branch name.`, "Pick another name.");
-  if (!git("check-ref-format", "--branch", name!).ok) fail(`${name} is not a branch name git takes.`);
-  const f = git("fetch", "--quiet", "origin", "staging");
-  if (!f.ok) fail(`git fetch failed: ${f.err}`);
-  const r = git("switch", "-c", name!, "origin/staging");
-  if (!r.ok) fail(`git switch failed: ${r.err}`, "Commit or stash your changes first, or pick another name.");
-  pass(`${name} starts at staging's head ${headOf("origin/staging")?.slice(0, 12)}.`);
-  say(`NEXT  Commit, then push it: bun erga push. When Pete asks: bun erga merge ${name}`);
+async function start(name: string | undefined) {
+  const { ergaDir } = await import("./config");
+  const { startFolder } = await import("./folders");
+  const { logLoop } = await import("./loops");
+  try {
+    const dir = startFolder({ clone: dirname(ergaDir()), name, log: say });
+    logLoop(ergaDir(), { event: "start", at: new Date().toISOString(), branch: name! });
+    say(`NEXT  Work in ${dir}. Commit, then push: bun erga push. When Pete asks: bun erga merge ${name}`);
+  } catch (e) {
+    fail((e as Error).message);
+  }
+}
+
+// ------------------------------------------------------------------ clean
+
+async function clean(yes: boolean) {
+  const { ergaDir } = await import("./config");
+  const { cleanFolders } = await import("./folders");
+  const dir = ergaDir();
+  const ask = yes ? undefined : (q: string) => /^y(es)?$/i.test(prompt(q)?.trim() ?? "");
+  cleanFolders({ dir, clone: dirname(dir), cwd: process.cwd(), log: say, ask });
 }
 
 // ------------------------------------------------------------------ push
@@ -76,10 +98,46 @@ function start(name: string | undefined) {
 async function push() {
   const { pushBranch } = await import("./push");
   try {
-    pushBranch({ root: ROOT, log: say });
+    const sha = pushBranch({ root: ROOT, log: say });
+    const { ergaDir } = await import("./config");
+    const { logLoop } = await import("./loops");
+    logLoop(ergaDir(), { event: "push", at: new Date().toISOString(), branch: sh(["git", "symbolic-ref", "--short", "HEAD"]).out, sha });
   } catch (e) {
     fail((e as Error).message);
   }
+}
+
+// ------------------------------------------------------------------ proof
+
+async function proof(sentence: string | undefined, looks: string[], noPicture: string | undefined) {
+  const { ergaDir } = await import("./config");
+  const { makeProof, proofDir, proofName } = await import("./proof");
+  const dir = ergaDir();
+  try {
+    const p = makeProof({ dir, root: ROOT, sentence, looks, noPicture, log: say });
+    pass(`The proof of ${p.branch} at ${p.sha.slice(0, 12)}: ${join(proofDir(dir, p.branch), "index.html")}`);
+    let port = "4801";
+    try {
+      port = readFileSync(join(dir, "page.port"), "utf8").trim() || port;
+    } catch {}
+    say(
+      `NEXT  Look at it yourself. Then give Pete its address on the ops page (bun erga): http://127.0.0.1:${port}/proof/${proofName(p.branch)}/`
+    );
+  } catch (e) {
+    fail((e as Error).message);
+  }
+}
+
+// ------------------------------------------------------------------ loops
+
+async function loops(days: number) {
+  const { ergaDir, readConfig } = await import("./config");
+  const { loopsText, readLoops } = await import("./loops");
+  const dir = ergaDir();
+  const production = readConfig(dir)
+    .instances.filter((e) => !e.stagingOf)
+    .map((e) => e.host);
+  say(loopsText(readLoops(dir, production), Date.now() - days * 86_400_000, days));
 }
 
 // ------------------------------------------------------------------ merge
@@ -93,6 +151,20 @@ async function merge(args: string[]) {
   const r = await mergeBranches({ dir: ergaDir(), merges, from: fromOf() }).catch((e: Error) => fail(e.message));
   // Some branches merged, and some stay out: the output names them.
   if (r.left.length) process.exit(1);
+}
+
+// ------------------------------------------------------------------ full
+
+async function full(commit: string | undefined) {
+  const { ergaDir } = await import("./config");
+  const { fullRun } = await import("./full-run");
+  const dir = ergaDir();
+  const clone = dirname(dir);
+  // The name is read where the command is typed: HEAD is this folder's commit.
+  const sha = sh(["git", "rev-parse", "--verify", "--quiet", `${commit ?? "origin/staging"}^{commit}`], { cwd: process.cwd() }).out;
+  if (!sha) fail(`This clone has no commit ${commit ?? "origin/staging"}.`, "git fetch");
+  const r = await fullRun({ dir, clone, sha, log: say }).catch((e: Error) => fail(e.message));
+  if (r.state == "failed") process.exit(1);
 }
 
 // ------------------------------------------------------------------ release
@@ -231,12 +303,26 @@ export async function main(argv: string[]) {
     const i = rest.indexOf(f);
     return i >= 0 ? rest[i + 1] : undefined;
   };
-  const plain = rest.filter((x, i) => !x.startsWith("-") && !["-m", "--port", "--staging-of", "--home"].includes(rest[i - 1] ?? ""));
+  const plain = rest.filter(
+    (x, i) => !x.startsWith("-") && !["-m", "--port", "--staging-of", "--home", "--days"].includes(rest[i - 1] ?? "")
+  );
   switch (cmd) {
     case "skill":
       return say(readFileSync(join(ROOT, "deploy/cli/SKILL.md"), "utf8"));
     case "start":
       return start(plain[0]);
+    case "proof": {
+      const all = (f: string) => rest.flatMap((x, i) => (x == f && rest[i + 1] != undefined ? [rest[i + 1]] : []));
+      return proof(
+        rest.find((x, i) => !x.startsWith("--") && !["--look", "--no-picture"].includes(rest[i - 1] ?? "")),
+        all("--look"),
+        opt("--no-picture")
+      );
+    }
+    case "loops":
+      return loops(Number(opt("--days")) || 7);
+    case "clean":
+      return clean(flag("--yes"));
     case "push":
       return push();
     case "status": {
@@ -253,6 +339,8 @@ export async function main(argv: string[]) {
     }
     case "merge":
       return merge(rest);
+    case "full":
+      return full(plain[0]);
     case "release":
       return release(plain[0], flag("--dry-run"));
     case "deploy":

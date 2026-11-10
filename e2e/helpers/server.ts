@@ -8,6 +8,9 @@
 // Stopping kills the whole tree at once (dev/start.ts, Vite, workerd, and anything
 // left running under the scratch folder): tests don't
 // need the documents flushed to disk on the way out.
+//
+// Trap: test files share a dev server, so another file's new document reaches an open /docs page as a live row, and
+// the rows can change under a test. Read a row's place with `until`, not once.
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";

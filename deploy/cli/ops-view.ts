@@ -1,6 +1,6 @@
 // The ops page's view (`bun erga`, deploy/cli/ops-page.ts serves it): pure, the facts in and HTML out. On the left, the
 // primaries of .erga/config.json, each with its staging instances. On the right, the chosen primary's tabs, the job line
-// under them, and the chosen tab. Deploys: the feature branches, then the clone's log with a column for each of the
+// under them, and the chosen tab. Deploys: the feature branches, the newest run of all the tests, then the clone's log with a column for each of the
 // primary's instances and "live" at the commit it runs. Logs: a job's output. History: the jobs of the primary and its
 // staging instances. Setup: the checklist of `bun erga setup`.
 
@@ -8,6 +8,8 @@ import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo";
 import { esc } from "../../shared/html";
 import { plural, timeAgo } from "../../shared/time";
 import type { Config, Entry } from "./config";
+import type { FullRun } from "./full-run";
+import { type LoopStats, statsText } from "./loops";
 import { type Alive, activeJobs, deploysTo, type JobState, jobState, type Line, type Run } from "./job-state";
 import { GITHUB, isStale, type Polls } from "./poll-state";
 
@@ -71,6 +73,12 @@ export interface Facts {
   run: Run;
   /** The checks of GitHub and of each instance (poll-state.ts). */
   polls: Polls;
+  /** The runs of the whole test suite, one for each merge (full-run.ts), oldest first. */
+  full: FullRun[];
+  /** The medians of the loops merged in the last 7 days (loops.ts). */
+  loops: LoopStats;
+  /** Each branch's proof page (bun erga proof): the commit it shows, and when it was made. */
+  proofs: Record<string, { sha: string; at: string }>;
 }
 
 /** A job record from its file's lines, or null if it has no start line. */
@@ -270,7 +278,7 @@ const running = (word: string) => `<i class="spin" aria-hidden="true"></i>${word
 const MERGING = "It merges now. The job line and Logs show its output.";
 const DEPLOYING = "It deploys now. The job line and Logs show its output.";
 
-function branches(git: Git, active: JobState[], busy: string, now: number): string {
+function branches(git: Git, proofs: Facts["proofs"], active: JobState[], busy: string, now: number): string {
   const list = git.branches.length
     ? git.branches
         .map((b) => {
@@ -282,8 +290,15 @@ function branches(git: Git, active: JobState[], busy: string, now: number): stri
           const merge = active.some((j) => j.kind == "merge" && j.branch == b.name)
               ? button(running("Merging"), `data-merge="${esc(b.name)}" aria-busy="true"`, MERGING)
               : button("Merge", `data-merge="${esc(b.name)}"`, mergeBlock(b, git.base, busy));
+          // The proof page, to look at before the merge: old, when the branch got a commit after it.
+          const p = proofs[b.name];
+          const proof = !p
+            ? b.ahead
+              ? `<span class="f-proof none" title="The task's agent makes it: bun erga proof">No proof</span>`
+              : ""
+            : `<a class="f-proof${p.sha == b.sha ? "" : " old"}" href="/proof/${esc(encodeURIComponent(b.name.replaceAll("/", "~")))}/" target="_blank" title="${esc(p.sha == b.sha ? "Pictures of this commit, before and after" : `Made for ${sha7(p.sha)}: the branch has a newer commit`)}">${p.sha == b.sha ? "Proof" : "Proof (old)"}</a>`;
           const form = `<form class="f-merge" data-branch="${esc(b.name)}" hidden><input name="message" value="${esc(b.subject)}" aria-label="The message of the commit on ${esc(git.base)}" autocomplete="off"><button class="btn">Merge</button><button class="btn quiet" type="button" data-cancel>Cancel</button><span class="err" role="alert"></span></form>`;
-          return `<li class="feature" data-branch="${esc(b.name)}"><div class="f-top"><code class="f-name">${esc(b.name)}</code><span class="f-count">${plural(b.ahead, "commit")} ahead · ${b.behind} behind ${esc(git.base)}</span>${state}${merge}</div><div class="f-last"><span class="f-subject">${esc(b.subject)}</span> · ${esc(b.author)} · ${esc(timeAgo(b.at, now))} · <code>${esc(sha7(b.sha))}</code></div>${form}</li>`;
+          return `<li class="feature" data-branch="${esc(b.name)}"><div class="f-top"><code class="f-name">${esc(b.name)}</code><span class="f-count">${plural(b.ahead, "commit")} ahead · ${b.behind} behind ${esc(git.base)}</span>${state}${proof}${merge}</div><div class="f-last"><span class="f-subject">${esc(b.subject)}</span> · ${esc(b.author)} · ${esc(timeAgo(b.at, now))} · <code>${esc(sha7(b.sha))}</code></div>${form}</li>`;
         })
         .join("")
     : `<li class="feature none">No feature branches in this clone.</li>`;
@@ -349,6 +364,44 @@ function deployButton(e: Entry, primary: string, c: Commit, busy: string, deploy
   return `<span class="deps here">${button("Deploy", data, busy ? `Another job runs: ${busy}. Wait for it to end.` : null)}</span>`;
 }
 
+/** A full run in words: what the page says at its commit and in the Tests box. */
+function fullLook(r: FullRun, now: number): { cls: string; mark: string; what: string } {
+  const at = sha7(r.sha);
+  const mins = r.ended ? ` in ${plural(Math.max(1, Math.round((Date.parse(r.ended) - Date.parse(r.started)) / 60_000)), "minute")}` : "";
+  switch (r.state) {
+    case "passed":
+      return { cls: "ok", mark: "✓", what: `All ${r.total} tests passed on ${at}${mins}.` };
+    case "failed":
+      return r.failed.length
+        ? { cls: "bad", mark: `✗ ${r.failed.length}`, what: `${plural(r.failed.length, "test")} of ${r.total} failed on ${at}${mins}:` }
+        : { cls: "bad", mark: "✗", what: `The run on ${at} broke before a test result: ${r.note ?? "see its log"}` };
+    case "running":
+      return { cls: "run", mark: "…", what: `All tests run on ${at}, since ${ago(Date.parse(r.started), now)}.` };
+    case "waiting":
+      return { cls: "run", mark: "…", what: `The run on ${at} waits for another run to end.` };
+    case "skipped":
+      return { cls: "off", mark: "–", what: `The run on ${at} was skipped: ${r.note ?? "a newer commit has its own run"}.` };
+    case "stopped":
+      return { cls: "off", mark: "?", what: `The run on ${at} stopped with no result. Run it again: bun erga full ${at}` };
+  }
+}
+
+/** The week's loops: the medians of the tasks merged in the last 7 days (bun erga loops has each one). */
+const loops = (s: LoopStats) =>
+  s.merged
+    ? `<section class="box loops" aria-labelledby="loops-head"><h3 id="loops-head">Loops, last 7 days</h3><p class="what">${plural(s.merged, "task")} merged. Medians: ${esc(statsText(s))}. <code>bun erga loops</code> lists each one.</p></section>`
+    : "";
+
+/** The Tests box: the newest run of the whole suite, with the name of each failed test. */
+function tests(f: Facts, now: number): string {
+  const r = f.full.at(-1);
+  if (!r) return "";
+  const look = fullLook(r, now);
+  const names = r.state == "failed" && r.failed.length ? `<ul>${r.failed.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : "";
+  const log = r.state == "failed" ? `<p class="soft">Its log: <code>${esc(r.log)}</code></p>` : "";
+  return `<section class="box tests ${look.cls}" aria-labelledby="tests-head"><h3 id="tests-head">All tests, after each merge</h3><p class="what"><i class="light ${look.cls == "run" ? "wait" : look.cls}"></i>${esc(look.what)}</p>${names}${log}</section>`;
+}
+
 function log(g: Group, f: Facts & { git: Git }, now: number): string {
   const git = f.git;
   const cols = [...g.staging, g.primary];
@@ -378,6 +431,8 @@ function log(g: Group, f: Facts & { git: Git }, now: number): string {
     .join("");
   const active = activeJobs(f.jobs, f.run);
   const busy = active[0]?.command ?? "";
+  // The newest run of each commit.
+  const fullOf = new Map(f.full.map((r) => [r.sha, r]));
   const body = rows
     .map((c, i) => {
       const kind = isOn(i) ? "on" : "off";
@@ -390,7 +445,12 @@ function log(g: Group, f: Facts & { git: Git }, now: number): string {
           return `<span class="deps"><span class="dep live" data-host="${esc(e.host)}" title="${esc(`${e.host} runs this commit`)}"><span class="w">live</span><span class="at">${at ? short(at, now) : ""}</span></span></span>`;
         })
         .join("");
-      return `<div class="row ${kind}" data-sha="${esc(c.sha)}"><span class="rail${i ? " up" : ""}${i < rows.length - 1 ? " down" : ""} ${kind}"><i class="dot ${kind}"></i></span><span class="subj" title="${esc(c.subject)}">${esc(c.subject)}</span><span class="who">${esc(c.author)}</span><code class="sha">${esc(sha7(c.sha))}</code><time>${esc(timeAgo(c.at, now))}</time>${marks}</div>`;
+      const run = fullOf.get(c.sha);
+      const look = run && fullLook(run, now);
+      const full = look
+        ? `<span class="full ${look.cls}" title="${esc([look.what, ...(run.state == "failed" ? run.failed : [])].join("\n"))}">${esc(look.mark)}</span>`
+        : "";
+      return `<div class="row ${kind}" data-sha="${esc(c.sha)}"><span class="rail${i ? " up" : ""}${i < rows.length - 1 ? " down" : ""} ${kind}"><i class="dot ${kind}"></i></span><span class="subj" title="${esc(c.subject)}">${full}${esc(c.subject)}</span><span class="who">${esc(c.author)}</span><code class="sha">${esc(sha7(c.sha))}</code><time>${esc(timeAgo(c.at, now))}</time>${marks}</div>`;
     })
     .join("");
   return `<section class="commits" aria-label="Commits">
@@ -447,7 +507,10 @@ export function viewHtml(f: Facts, name: string, now = Date.now()): string {
           : sources(g, f, now) +
             ("error" in f.git
               ? `<p class="note bad">${esc(f.git.error)}</p>`
-              : branches(f.git, activeJobs(f.jobs, f.run), busyWith(f), now) + log(g, { ...f, git: f.git }, now));
+              : branches(f.git, f.proofs, activeJobs(f.jobs, f.run), busyWith(f), now) +
+                tests(f, now) +
+                loops(f.loops) +
+                log(g, { ...f, git: f.git }, now));
   return `${sidebar}<section class="main" data-primary="${esc(g.primary.host)}" data-tab="${tab}"${newest(groups, f.jobs)}><h2 class="title">${esc(g.primary.host)}</h2>${tabs}${jobLine(g, mine, f.run, now)}${f.run.at == "failed" ? `<p class="note bad failed">${esc(f.run.why)}</p>` : ""}<div class="tab-body">${body}</div></section>`;
 }
 
