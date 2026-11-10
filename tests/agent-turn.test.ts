@@ -219,9 +219,19 @@ test("the turn: a call that asks waits for Approve or Deny; a message or Stop co
   expect(walk(IDLE, [{ e: "prompt" }, asks, { e: "approve", id: "c1" }, ended()])).toEqual([
     "running steer start",
     "asking",
-    "running approve start",
+    "running start",
     "idle",
   ]);
+  // The approved call is in the state until it ran; no other call's run takes the approval away.
+  const [approved] = next({ at: "asking", id: "c1" }, { e: "approve", id: "c1" });
+  expect(approved).toEqual({ at: "running", approved: "c1" });
+  expect(next(approved, { e: "ran", id: "c0" })[0]).toEqual(approved);
+  expect(next(approved, { e: "prompt" })[0]).toEqual(approved);
+  expect(next(approved, { e: "ran", id: "c1" })).toEqual([{ at: "running" }, []]);
+  // A Stop, a Deny, a new question or a new conversation: nothing stays approved.
+  expect(next(approved, { e: "stop" })[0]).toEqual({ at: "stopping", reset: false });
+  expect(next(approved, { e: "ended", steered: false, held: false, asking: "c2" })[0]).toEqual({ at: "asking", id: "c2" });
+  expect(next({ at: "asking", id: "c1" }, { e: "deny", id: "c1" })[0]).toEqual({ at: "running" });
   expect(walk({ at: "asking", id: "c1" }, [{ e: "deny", id: "c1" }])).toEqual(["running deny start"]);
   // An answer to another call (an old question in another tab) does nothing.
   expect(

@@ -7,7 +7,8 @@
 //             middle of one. A message waits for the end, then starts a new run.
 //   asking    the run ended at a tool call that needs the person's Approve (an operation's `asks`: a delete, a share
 //             with anyone, an admin change). Approve runs the call and the run goes on; Deny, a new message or Stop
-//             closes it unrun (the model hears so). A restart closes it too: it is never approved by default.
+//             closes it unrun (the model hears so). A restart closes it too: it is never approved by default. The
+//             call that waits, and the call the person approved (until it ran), are in the state: nowhere else.
 //   resuming  a run that a restart cut off goes on from its last checkpoint (agents/checkpoint.ts). A message steers
 //             the run that follows; Stop or a new conversation waits for the resume to end.
 //
@@ -17,7 +18,8 @@
 
 export type Turn =
   | { readonly at: "idle" }
-  | { readonly at: "running" }
+  /** `approved`: the tool call the person approved, until it ran: the only call that runs without its question. */
+  | { readonly at: "running"; readonly approved?: string }
   | { readonly at: "stopping"; readonly reset: boolean }
   /** `id`: the tool call that waits for the person's answer. */
   | { readonly at: "asking"; readonly id: string }
@@ -36,6 +38,8 @@ export type TurnEvent =
   /** The person's answer to the call `id` that waits for it: run it, or not. */
   | { readonly e: "approve"; readonly id: string }
   | { readonly e: "deny"; readonly id: string }
+  /** The tool call `id` ran. */
+  | { readonly e: "ran"; readonly id: string }
   /**
    * The run ended (done, failed or stopped); whether messages steer it, or wait after a Stop. `asking`: it ended at
    * this tool call, which needs the person's Approve.
@@ -58,8 +62,6 @@ export type TurnEffect =
   | "release"
   /** The conversation is forgotten, with every message that waits. */
   | "clear"
-  /** The call that waited for the person's answer may run: the next run runs it. */
-  | "approve"
   /** The call that waited, and the turn's calls after it, get a result that says they did not run. */
   | "deny";
 
@@ -80,6 +82,8 @@ export function next(t: Turn, ev: TurnEvent): [Turn, TurnEffect[]] {
     case "running":
       if (ev.e == "prompt") return [t, ["steer"]];
       if (ev.e == "stop" || ev.e == "reset") return [{ at: "stopping", reset: ev.e == "reset" }, ["unqueue", "interrupt"]];
+      // The approved call ran: no call is approved now.
+      if (ev.e == "ran") return ev.id == t.approved ? [RUNNING, []] : [t, []];
       // A message that came as the run ended: a new run answers it.
       // A message that came before the question counts as the answer: no.
       if (ev.e == "ended" && ev.asking != null) return ev.steered ? [t, ["deny", "start"]] : [{ at: "asking", id: ev.asking }, []];
@@ -94,7 +98,7 @@ export function next(t: Turn, ev: TurnEvent): [Turn, TurnEffect[]] {
       }
       return [t, []];
     case "asking":
-      if (ev.e == "approve" && ev.id == t.id) return [RUNNING, ["approve", "start"]];
+      if (ev.e == "approve" && ev.id == t.id) return [{ at: "running", approved: t.id }, ["start"]];
       if (ev.e == "deny" && ev.id == t.id) return [RUNNING, ["deny", "start"]];
       if (ev.e == "prompt") return [RUNNING, ["deny", "steer", "start"]];
       if (ev.e == "stop") return [IDLE, ["deny"]];

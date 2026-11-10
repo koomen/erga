@@ -14,6 +14,7 @@
 
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -248,9 +249,6 @@ export function startLoop(opts: LoopOptions): AgentLoop {
   /** Messages sent after Stop, before the run ended: they start the next run. */
   const held: ChatMessage[] = [];
   let run: Fiber.Fiber<void> | null = null;
-  /** The call the run ended at, which waits for the person's Approve; and the one they approved, until it ran. */
-  let asked: string | null = null;
-  let approved: string | null = null;
   /** Who waits for a new conversation (`reset`). */
   const resets: (() => void)[] = [];
 
@@ -289,7 +287,7 @@ export function startLoop(opts: LoopOptions): AgentLoop {
   };
   /** What the person must approve before `call` runs, or null: its tool's `asks`, unless they approved it. */
   const question = (call: { id: string; name: string; params: unknown }): string | null => {
-    if (call.id == approved) return null;
+    if (now.at == "running" && now.approved == call.id) return null;
     const params = call.params && typeof call.params == "object" ? (call.params as Record<string, unknown>) : {};
     return side?.tools.find((t) => t.name == call.name)?.asks?.(params) ?? null;
   };
@@ -382,9 +380,11 @@ export function startLoop(opts: LoopOptions): AgentLoop {
       return answer.some((m) => typeof m.content != "string" && m.content.some((p) => p.type == "tool-call"));
     }) as Effect.Effect<boolean, string>;
 
-  /** A run: turns and their tool calls, until the model is done and no message waits. */
+  /**
+   * A run: turns and their tool calls, until the model is done and no message waits. Its answer: the call it ended at,
+   * which waits for the person's Approve (null: none).
+   */
   const runLoop = Effect.gen(function* () {
-    asked = null;
     let steps = 0;
     hooks.busy?.(true);
     emit({ t: "busy", busy: true });
@@ -394,12 +394,11 @@ export function startLoop(opts: LoopOptions): AgentLoop {
         const q = question(call);
         if (q != null) {
           // The run ends here, and the turn waits for the person's answer.
-          asked = call.id;
           emit({ t: "tool", id: call.id, ...shown(call.name, call.params), status: "asking", detail: q });
-          return;
+          return call.id;
         }
         yield* runCall(call);
-        if (call.id == approved) approved = null;
+        step({ e: "ran", id: call.id });
       }
       while (steering.length) {
         const m = steering.shift()!;
@@ -408,10 +407,10 @@ export function startLoop(opts: LoopOptions): AgentLoop {
       }
       const s = side,
         c = cfg;
-      if (!s || !c) return;
+      if (!s || !c) return null;
       // The model may not be usable now (its key went, the admin turned it off): never run it then.
       refit(c);
-      if (choice == null && c.model != "script") return;
+      if (choice == null && c.model != "script") return null;
       // The server's keys have limits: the steps of one run, and the person's day (the hook's).
       if (!ownKey(c)) {
         const over =
@@ -420,7 +419,7 @@ export function startLoop(opts: LoopOptions): AgentLoop {
             : yield* Effect.promise(() => (hooks.limit?.() ?? Promise.resolve(null)).catch(() => null));
         if (over) {
           emit({ t: "error", text: over });
-          return;
+          return null;
         }
       }
       const calls = yield* turn(s, c).pipe(
@@ -431,8 +430,8 @@ export function startLoop(opts: LoopOptions): AgentLoop {
           })
         )
       );
-      if (calls == null) return;
-      if (!calls && !steering.length) return;
+      if (calls == null) return null;
+      if (!calls && !steering.length) return null;
     }
   }).pipe(
     // Stopped: each call of the turn that never began gets a result, so the messages stay whole for the next run.
@@ -444,15 +443,17 @@ export function startLoop(opts: LoopOptions): AgentLoop {
         }
       })
     ),
-    Effect.ensuring(
+    Effect.onExit((exit) =>
       Effect.promise(async () => {
         run = null;
         hooks.busy?.(false);
         emit({ t: "busy", busy: false });
         await checkpoints.ended();
-        step({ e: "ended", steered: steering.length > 0, held: held.length > 0, ...(asked ? { asking: asked } : {}) });
+        const asking = Exit.isSuccess(exit) ? exit.value : null;
+        step({ e: "ended", steered: steering.length > 0, held: held.length > 0, ...(asking ? { asking } : {}) });
       })
-    )
+    ),
+    Effect.asVoid
   );
 
   /**
@@ -477,11 +478,13 @@ export function startLoop(opts: LoopOptions): AgentLoop {
 
   /** The turn takes an event (agents/turn.ts), and its effects happen here; `message` is the person's, for a prompt. */
   const step = (ev: TurnEvent, message?: ChatMessage) => {
+    // The call that waits for the person's answer, if the event closes one (a Deny).
+    const asked = now.at == "asking" ? now.id : ev.e == "ended" ? (ev.asking ?? null) : null;
     const [t, effects] = next(now, ev);
     now = t;
-    for (const fx of effects) effect(fx, message);
+    for (const fx of effects) effect(fx, message, asked);
   };
-  const effect = (fx: TurnEffect, message?: ChatMessage) => {
+  const effect = (fx: TurnEffect, message: ChatMessage | undefined, asked: string | null) => {
     switch (fx) {
       case "steer":
         if (message) steering.push(message);
@@ -508,21 +511,15 @@ export function startLoop(opts: LoopOptions): AgentLoop {
       case "release":
         steering.push(...held.splice(0));
         return;
-      case "approve":
-        approved = asked;
-        asked = null;
-        return;
       case "deny":
         for (const call of open()) {
           const first = call.id == asked;
           messages = [...messages, toolMessage(call.id, call.name, failure(first ? DENIED : AFTER_DENIED), true)];
           toolEnded(call.id, call.name, failure(first ? "Not approved." : "Not run."), true);
         }
-        asked = null;
         void checkpoints.ended();
         return;
       case "clear": {
-        asked = approved = null;
         steering.length = 0;
         held.length = 0;
         paths.clear();
