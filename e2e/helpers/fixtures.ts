@@ -42,7 +42,7 @@
 // on their order.
 
 import { surfaceOf, test as web } from "@e2e-dev/web";
-import { expect } from "e2e";
+import { describe, expect } from "e2e";
 import type { Page } from "playwright-core";
 import { engine } from "./engine";
 import { startServer, type Server, type ServerOptions } from "./server";
@@ -79,8 +79,21 @@ const once = <T extends Disposable>(key: string, make: () => Promise<T>) => (): 
  */
 export const SHORT = { idle: 1000, max: 8000 };
 
+/**
+ * The suite's one kind of server (servers.main): the scripted agent model (so the agent's UI is on, and a message plays
+ * the tool calls it lists), a short write delay, and short version timings (SHORT). One kind, so a worker starts one
+ * server and keeps it for all its files: a server start costs 3 s, and more on a busy machine.
+ */
+const ONE = {
+  ERGA_AGENT_MODEL: "script",
+  ERGA_WRITE_DELAY_MS: "50",
+  ERGA_VERSION_IDLE_MS: String(SHORT.idle),
+  ERGA_VERSION_MAX_MS: String(SHORT.max),
+  ERGA_HOME_RECHECK_MS: "0",
+};
+
 export const servers = {
-  main: once("main", () => startServer()),
+  main: once("main", () => startServer({ env: ONE })),
   agent: once("agent", () => startServer({ env: { ANTHROPIC_API_KEY: "sk-ant-test-not-used" } })),
   short: once("short", () => startServer({ env: {
     ERGA_AGENT_MODEL: "script", ERGA_WRITE_DELAY_MS: "50", ERGA_VERSION_IDLE_MS: String(SHORT.idle), ERGA_VERSION_MAX_MS: String(SHORT.max),
@@ -132,25 +145,46 @@ export interface Tab {
 /** What the page editor's check logs when the page does not show its HTML (libs/text/ui/render.ts, report). */
 const DRIFT = "the page does not show its HTML";
 
+/** A page's errors and refused requests, kept for as long as the page lives: a journey's steps share one page. */
+const heard = new WeakMap<Page, { errors: string[]; refused: string[]; strict: boolean }>();
+
 const extended = web.extend<{ tab: Tab }>({
   tab: async ({ browser }, use) => {
-    // The attempt's page exists once something has navigated it.
-    await browser.goto("about:blank");
-    const page = surfaceOf(engine)!.page() as unknown as Page;
-    const errors: string[] = [];
-    page.on("pageerror", (e) => errors.push(e.stack ?? e.message));
-    page.on("console", (m) => { if (m.type() == "error") errors.push(`console.error: ${m.text()}`); });
-    // (The browser's own "Failed to load resource" never names the address: these do, beside it.)
-    const refused: string[] = [];
-    page.on("response", (r) => {
-      if (r.status() >= 400) refused.push(`${r.status()} ${r.request().method()} ${r.url()}`);
-    });
+    // The attempt's page exists once something has navigated it. A journey's later steps find the page of the first.
+    const open = () => {
+      try {
+        return surfaceOf(engine)!.page() as unknown as Page;
+      } catch {
+        return null;
+      }
+    };
+    const page = open() ?? (await browser.goto("about:blank"), open()!);
+    let h = heard.get(page);
+    if (!h) {
+      const errors: string[] = [],
+        refused: string[] = [];
+      heard.set(page, (h = { errors, refused, strict: false }));
+      page.on("pageerror", (e) => errors.push(e.stack ?? e.message));
+      page.on("console", (m) => { if (m.type() == "error") errors.push(`console.error: ${m.text()}`); });
+      // (The browser's own "Failed to load resource" never names the address: these do, beside it.)
+      page.on("response", (r) => {
+        if (r.status() >= 400) refused.push(`${r.status()} ${r.request().method()} ${r.url()}`);
+      });
+    }
+    const { errors, refused } = h;
     const owned: Server[] = [];
     const tab: Tab = {
-      page, errors, strict: false,
-      async own(opts) { const s = await startServer(opts); owned.push(s); return s; },
+      page,
+      errors,
+      strict: h.strict,
+      async own(opts) {
+        const s = await startServer(opts);
+        owned.push(s);
+        return s;
+      },
     };
     try { await use(tab); } finally { for (const s of owned) s.dispose(); }
+    h.strict = tab.strict;
     if (tab.knownDrift) {
       const drift = errors.filter((e) => e.includes(DRIFT));
       if (!drift.length) throw new Error(`the page shows its HTML now: take off the knownDrift mark (${tab.knownDrift})`);
@@ -162,6 +196,19 @@ const extended = web.extend<{ tab: Tab }>({
       );
   },
 });
+
+/**
+ * A journey: one user path as steps, each a test with its own name and time limit, in order, on ONE page (e2e's serial
+ * group). The first step opens the page (`tab`, openEditor); the later steps go on where the one before stopped (keep
+ * what they share in a `let` of the journey). A step that fails skips the steps after it. A page load costs about as
+ * much as ten checks: a new check is a step of a journey, or a line of a step, before it is a test with a page of its own.
+ */
+export const journey = (name: string, steps: () => void) =>
+  describe(name, { serial: true }, () => {
+    // After each step, the page's errors fail it (the `tab` fixture's end), also when the step itself took no `tab`.
+    extended.afterEach(async ({ tab: _ }) => {});
+    steps();
+  });
 
 /**
  * e2e's `test`, each test with the time limit ERGA_TEST_MS (the config's) unless it names its own: e2e gives a test

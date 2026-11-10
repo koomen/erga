@@ -15,6 +15,7 @@ import { reached, ROOT, sourceFiles } from "./graph";
 import { runUnit } from "./unit";
 
 const LIMIT_MS = 4500;
+const VITE_CONFIG = ["node", "--no-experimental-webstorage", "-e", "import('vite').then((v) => v.resolveConfig({}, 'serve'))"];
 /** The tests of the repository's rules: they read the files' text, not their imports, so every change reaches them. */
 const RULES = [
   "agent-actions",
@@ -76,6 +77,7 @@ const lintable = changed.filter((f) => /\.(ts|js|json|css)$/.test(f) && existsSy
 // Vite's and the Worker's configuration load only in a real server: checked when the change reaches them.
 const config = reached(["vite.config.ts", "cloudflare.config.ts"], changed).size > 0;
 const notRun: string[] = [];
+let viteLoaded = false;
 
 await Promise.all([
   step("format", () => run(["bun", "dev/format.ts"])),
@@ -90,10 +92,13 @@ await Promise.all([
   step("typecheck", async () => {
     const inline = await run(["bun", "client/build.ts", "--inline"]);
     if (!inline.ok) return inline;
-    const rs = await Promise.all([
-      ...["tsconfig.json", "tsconfig.workers.json", "tsconfig.browser.json"].map((p) => run(["node_modules/.bin/tsc", "-p", p])),
-      ...(config ? [run(["node", "--no-experimental-webstorage", "-e", "import('vite').then((v) => v.resolveConfig({}, 'serve'))"])] : []),
-    ]);
+    // The load of Vite's configuration writes the Worker's types (.cloudflare/types): first in a new folder.
+    viteLoaded = config || !existsSync(join(ROOT, ".cloudflare/types"));
+    const loaded = viteLoaded ? await run(VITE_CONFIG) : { ok: true, out: "" };
+    if (!loaded.ok) return loaded;
+    const rs = await Promise.all(
+      ["tsconfig.json", "tsconfig.workers.json", "tsconfig.browser.json"].map((p) => run(["node_modules/.bin/tsc", "-p", p]))
+    );
     return {
       ok: rs.every((r) => r.ok),
       out: rs
@@ -116,7 +121,7 @@ await Promise.all([
 ]);
 
 if (tests.length > hit.size) notRun.push(`${tests.length - hit.size} unit test files that the change does not reach`);
-if (!config) notRun.push("the load of Vite's configuration");
+if (!viteLoaded) notRun.push("the load of Vite's configuration");
 notRun.push("the browser tests");
 console.log(`not run: ${notRun.join("; ")}. Before a push: bun run test`);
 console.log(`quick check ${ok ? "passed" : "FAILED"} (${(since() / 1000).toFixed(1)} s)`);

@@ -19,17 +19,30 @@ and `main`. There are no pull requests.
        bun erga push
 
    It formats the lines you changed, builds `.build/inline-code.ts`
-   again, runs `bun run test` (format, lint, typecheck, unit tests, smoke
-   run) and pushes the branch only when the tests end with `all passing`.
+   again, runs `bun run test` and pushes the branch only when the tests
+   end with `all passing`. `bun run test` is the one suite: format, lint,
+   typecheck, unit tests and browser tests, all at once, in under one
+   minute. One run at a time on this machine: a second run waits for its
+   turn, and says its place.
    When a step fails, it prints the failure and pushes nothing. It stops
    before the tests when a file has a change that no commit has (the
    formatter's too): commit it, and run the command again. It replaces
    your own earlier push of the branch (after an amend or a rebase), but
-   never commits on GitHub that this checkout has not seen. Also run the
-   e2e tests of the part you change (`bun run test:e2e e2e/full/page/`).
-   A test that you write to reproduce a bug is a tool of the task: it
-   stays only with a place in the suite (`bun run test`, under one
-   minute).
+   never commits on GitHub that this checkout has not seen.
+
+   While you work, run the quick check, not the suite:
+
+       bun run check
+
+   In under 5 seconds it checks the format, the lint and the types, and
+   runs the unit tests that your change reaches. It is loose: it runs no
+   browser test, and it says what it did not run. For one journey of the
+   suite: `bun run test:e2e e2e/smoke/editor.e2e.ts`.
+
+   The suite is designed (`e2e/COVERAGE.md`): each journey has a budget,
+   and the run fails over 60 seconds. A test that you write to reproduce
+   a bug is a tool of the task: it stays only as a step of a journey or
+   as a unit test, inside the budget. Else delete it before the push.
 3. A push deploys nothing. Make the branch's proof page, so that Pete sees
    the change before the merge:
 
