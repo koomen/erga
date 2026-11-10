@@ -37,7 +37,7 @@ test("the chevron and the account button act on the press, not on its release, a
   expect(await js(page, `!document.querySelector(".erga-account-menu").hidden`)).toBe(true);
   await page.mouse.up();
   expect(await js(page, `!document.querySelector(".erga-account-menu").hidden`)).toBe(true);
-  expect(await js(page, `document.activeElement?.textContent`)).toBe("Documents");
+  expect(await js(page, `document.activeElement == document.querySelector(".erga-account-menu a")`)).toBe(true);
   // A click elsewhere closes it, as before.
   await page.mouse.click(10, 400);
   expect(await js(page, `document.querySelector(".erga-account-menu").hidden`)).toBe(true);

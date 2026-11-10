@@ -1,7 +1,7 @@
 // The popover following the document live, Edit on an old version, and errors.
 import { expect, servers, test, type Tab } from "../../helpers/fixtures";
 import { roomOf, Participant } from "./versions";
-import { another, closeDrafts, draftDoc, openDocEditor, viewerShows } from "./settings";
+import { another, closeDrafts, draftDoc, MANY_VERSIONS, openDocEditor, viewerShows } from "./settings";
 import { F } from "../../helpers/editor";
 
 await servers.short();
@@ -17,7 +17,7 @@ async function twelve(tab: Tab) {
   return { server, doc, s, viewer: await another(tab) };
 }
 
-test("versions update live, a new one and then its description; viewers see the document as it is", async ({ tab }) => {
+test("versions update live, a new one and then its description; viewers see the document as it is", MANY_VERSIONS, async ({ tab }) => {
   const { server, doc, s, viewer } = await twelve(tab);
   doc.draft(13);
   await viewerShows(viewer, server, doc.address, "Draft 13");
@@ -25,7 +25,10 @@ test("versions update live, a new one and then its description; viewers see the 
   await expect.poll(() => s.firstRow()).toContain("Edited index.html");
 });
 
-test("Edit on a version: shown on hover at once and on focus, not on the current one; a copy becomes current, live in the editor, the room and the viewer", async ({ tab }) => {
+test(
+  "Edit on a version: shown on hover at once and on focus, not on the current one; a copy becomes current, live in the editor, the room and the viewer",
+  MANY_VERSIONS,
+  async ({ tab }) => {
   const { server, doc, s, viewer } = await twelve(tab);
   const room = await Participant.join(roomOf(server, doc.id), "tester");
   try {
@@ -58,7 +61,7 @@ test("Edit on a version: shown on hover at once and on focus, not on the current
   } finally { room.disconnect(); }
 });
 
-test("errors show inline, in plain words", async ({ tab }) => {
+test("errors show inline, in plain words", MANY_VERSIONS, async ({ tab }) => {
   const { doc, s } = await twelve(tab);
   // Requests that fail as if the network were down: the browser logs each, on purpose.
   tab.strict = false;

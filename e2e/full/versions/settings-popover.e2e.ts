@@ -1,6 +1,6 @@
 // The settings popover: loaded once the editor is idle, hanging from the gear, opened and closed by mouse and keyboard.
 import { expect, servers, test } from "../../helpers/fixtures";
-import { closeDrafts, draftDoc, openDocEditor } from "./settings";
+import { closeDrafts, draftDoc, MANY_VERSIONS, openDocEditor } from "./settings";
 
 await servers.short();
 test.afterEach(closeDrafts);
@@ -16,7 +16,10 @@ test("the settings' code and what they show load once the editor is idle, before
   expect(await s.isOpen()).toBe(false);
 });
 
-test("the popover hangs from the gear with the latest ten versions, and Show older versions; Escape, a click outside and the keyboard open and close it", async ({ tab }) => {
+test(
+  "the popover hangs from the gear with the latest ten versions, and Show older versions; Escape, a click outside and the keyboard open and close it",
+  MANY_VERSIONS,
+  async ({ tab }) => {
   const server = await servers.short();
   const doc = await draftDoc(server, "Field notes", 12);
   tab.strict = true;

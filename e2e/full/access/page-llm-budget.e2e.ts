@@ -10,6 +10,9 @@ import type {} from "../../../client/common/page-llm";
 
 type Result = { text?: string; code?: string; message?: string };
 
+/** Each test starts a server of its own, inside its time limit. */
+const OWN_SERVER = { timeout: 60_000 };
+
 /** The page in the viewer's frame, once its script has ergaLLM. */
 async function pageFrame(page: Page) {
   const f = await until(
@@ -48,7 +51,10 @@ async function llmDoc(s: Server, who: "signed_in" | "all" = "signed_in") {
 /** The view of today's use on /admin, as the page shows it. */
 const usage = (page: Page) => page.locator("section.llm-use").innerText();
 
-test("the daily spend limit stops pages' calls at today's estimated cost; the view shows the use; 0 turns them off", async ({ tab }) => {
+test(
+  "the daily spend limit stops pages' calls at today's estimated cost; the view shows the use; 0 turns them off",
+  OWN_SERVER,
+  async ({ tab }) => {
   const page = tab.page;
   const s = await tab.own({ env: { ERGA_AGENT_MODEL: "script" } });
   const doc = await llmDoc(s);
@@ -105,7 +111,10 @@ test("the daily spend limit stops pages' calls at today's estimated cost; the vi
   expect((await ask(page, "Hi")).code).toBe("off");
 });
 
-test("the guest switch: off, every signed-out visitor gets sign_in, where the owner lets all viewers call the model", async ({ tab }) => {
+test(
+  "the guest switch: off, every signed-out visitor gets sign_in, where the owner lets all viewers call the model",
+  OWN_SERVER,
+  async ({ tab }) => {
   const page = tab.page;
   const s = await tab.own({ env: { ERGA_AGENT_MODEL: "script" } });
   const doc = await llmDoc(s, "all");
@@ -134,7 +143,7 @@ test("the guest switch: off, every signed-out visitor gets sign_in, where the ow
   expect(await ask(page, '@script [{"text": "Hello, Ada."}]')).toEqual({ text: "Hello, Ada." });
 });
 
-test("a switch flipped twice during its save: the server ends with the last value shown", async ({ tab }) => {
+test("a switch flipped twice during its save: the server ends with the last value shown", OWN_SERVER, async ({ tab }) => {
   const page = tab.page;
   const s = await tab.own({ env: { ERGA_AGENT_MODEL: "script" } });
   await page.goto(`${s.root}/admin/settings`);

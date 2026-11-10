@@ -74,6 +74,12 @@ export async function draftDoc(server: Server, title: string, upTo: number, styl
   return doc;
 }
 
+/**
+ * The time limit of a test that makes many versions. Each version waits for the edits' pause (SHORT.idle, a second):
+ * twelve take 12 of the usual 15 seconds before the test starts its own work.
+ */
+export const MANY_VERSIONS = { timeout: 45_000 };
+
 const slug = (title: string) => title.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
 export interface EditorOptions { width?: number; height?: number; user?: string; dark?: boolean; mobile?: boolean }

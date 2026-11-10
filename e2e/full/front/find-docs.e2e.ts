@@ -7,10 +7,14 @@ import { person, servers, tools } from "./front";
 
 await servers.script();
 
+/** A login that holds none of the words these tests type: a row's address has it, and a random one can hold "x" or "b". */
+let logins = 0;
+const login = () => `w${String(Date.now() * 10 + ++logins).replace(/\d/g, (d) => "acefghjknq"[+d])}`;
+
 test("typing in Find filters the rows by title and address, says when none match, Escape clears it, and live rows obey it", async ({
   tab,
 }) => {
-  const p = await person(await servers.script());
+  const p = await person(await servers.script(), login());
   const agent = tools(p.base, await p.token("Find test agent"));
   const make = async (title: string, slug?: string) =>
     ((await agent.call("create_document", { title, ...(slug ? { slug } : {}) })).data as { id: string }).id;
@@ -86,7 +90,7 @@ test("typing in Find filters the rows by title and address, says when none match
 });
 
 test("Find stays fast with many rows: a key filters 2000 rows in well under a frame's worth of work", async ({ tab }) => {
-  const p = await person(await servers.script());
+  const p = await person(await servers.script(), login());
   const page = tab.page;
   tab.strict = true;
   await page.goto(`${p.base}/auth/github?as=${p.login}&next=/docs`);
@@ -117,7 +121,7 @@ test("Find stays fast with many rows: a key filters 2000 rows in well under a fr
 test("/docs/archived has the same Find: it filters the archived rows, a row archived meanwhile obeys it, Escape clears it", async ({
   tab,
 }) => {
-  const p = await person(await servers.script());
+  const p = await person(await servers.script(), login());
   const agent = tools(p.base, await p.token("Find test agent"));
   for (const title of ["Old minutes", "Old budget", "Garden"]) {
     const d = (await agent.call("create_document", { title })).data as { id: string };

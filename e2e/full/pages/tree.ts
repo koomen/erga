@@ -122,5 +122,11 @@ export const ready = async (page: import("playwright-core").Page) =>
         .map((f) => f.evaluate("!!window.ergaFrame?.page").catch(() => false))
     )
   ).some(Boolean);
+/**
+ * The answer to the page's editor, which asks the server for its own page as it starts (libs/text/ui/offline-page.ts).
+ * Ask for it before the page opens. A test that deletes or moves the page waits for it first: else the browser logs a 404.
+ */
+export const pageAsked = (page: import("playwright-core").Page, path: string) =>
+  page.waitForResponse((r) => r.request().resourceType() == "fetch" && new URL(r.url()).pathname.endsWith(`/${path}`));
 /** The page the editor edits (window.ergaPage.pagePath). */
 export const editing = (page: import("playwright-core").Page) => page.evaluate(() => (window as any).ergaPage?.pagePath ?? "").catch(() => "");

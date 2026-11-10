@@ -12,11 +12,15 @@ test("someone who may only view, in an editor's tab still open: the versions, an
   // Bo, an editor while the tab opens, then only a viewer.
   await doc.owner.share(doc.id, "bo", "editor");
   tab.strict = true;
+  // (The page's editor reads the comments with Bo's key as it starts: the tab is open once it has them.)
+  const comments = tab.page.waitForResponse((r) => new URL(r.url()).pathname == "/api/tools/comments");
   const s = await openDocEditor(tab.page, server, doc.address, { user: "Bo" });
+  await comments;
   await doc.owner.share(doc.id, "bo", "viewer");
   await s.open();
   await expect.poll(() => s.listed()).toEqual([5, 4, 3, 2, 1]);
-  expect(await s.eval<boolean>(`!!document.querySelector("#ds-list .ds-edit")`)).toBe(false);
+  // (It opens with what it read while Bo could edit, and reads again behind: client/pages/settings.ts.)
+  await expect.poll(() => s.eval<boolean>(`!!document.querySelector("#ds-list .ds-edit")`)).toBe(false);
   expect(await s.eval<boolean>(`document.getElementById("ds-home").hidden`)).toBe(true);
   // Document or Project: shown, not theirs to change.
   await expect.poll(() => s.eval<number>(`document.querySelectorAll('#ds-kind [aria-disabled="true"]').length`)).toBe(2);

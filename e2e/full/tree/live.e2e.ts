@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, test, until } from "../../helpers/fixtures";
 import { act, clickOn, menuItem, multi, openCard, openTreeEditor, paths, press, rows, type } from "./tree";
+import { pageAsked } from "../pages/tree";
 
 await servers.main();
 
@@ -60,8 +61,10 @@ test("?pages opens the tree at once; the page you're on, moved by an agent: the 
   const page = tab.page;
   const doc = await multi(await servers.main());
   await doc.agentTool("new", { path: "blog/owl-calls" });
+  const asked = pageAsked(page, "blog/owl-calls.html");
   await openTreeEditor(tab, `${doc.base}/blog/owl-calls`, { query: "?pages" });
   await until(async () => (await rows(page)).some((x) => x[0] == "blog/owl-calls.html" && x[3]), 10_000, "the tree marks the page you're on, in its folder, which opened");
+  await asked;
   await doc.agentTool("mv", { from: "blog/owl-calls.html", to: "owl-calls.html" });
   await until(() => { const u = new URL(page.url()); return u.pathname + u.search == `${doc.address}/owl-calls?edit`; }, 10_000, "the editor follows its page to its new address");
   await until(async () => (await rows(page).catch(() => [])).some((x) => x[0] == "owl-calls.html" && x[3]), 10_000, "and the tree marks it there");

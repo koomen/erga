@@ -42,7 +42,15 @@ export async function openTab(tab: Tab, url: string, size?: { width: number; hei
 }
 
 /** The editor is in and ready. */
-export const editorReady = (page: Page) => until(() => page.evaluate(() => document.body.classList.contains("erga-editor-ready")), 10_000, "the editor is ready");
+export const editorReady = (page: Page) =>
+  until(
+    // (And its half in the page, which starts after the shell's: a click before it is there loses the caret to its start.)
+    async () =>
+      (await page.evaluate(() => document.body.classList.contains("erga-editor-ready"))) &&
+      (await inPage<boolean>(page, "!!window.ergaFrame?.page")),
+    10_000,
+    "the editor is ready"
+  );
 
 /** Evaluates an expression in the document's page (whichever frame shows it): the first answer that isn't null. */
 export async function inPage<T = any>(page: Page, expr: string): Promise<T> {

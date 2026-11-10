@@ -85,17 +85,20 @@ async function firstFrame(page: Page, button: string, menu: string, name: string
 
 /** Every request the page makes from now on answers 300 ms late, as on a real network (localhost answers within a frame). */
 async function slowNetwork(page: Page) {
-  const p = page as any;
-  p.__inFlight = 0;
+  // (Counted until its answer is in, not only until it is sent on. Not the event channels: they stay open.)
+  const open = ((page as any).__inFlight = new Set<unknown>());
+  page.on("request", (r) => {
+    if (!["eventsource", "websocket"].includes(r.resourceType())) open.add(r);
+  });
+  page.on("requestfinished", (r) => open.delete(r));
+  page.on("requestfailed", (r) => open.delete(r));
   await page.route("**/*", async (route) => {
-    p.__inFlight++;
     await new Promise((r) => setTimeout(r, 300));
     await route.continue().catch(() => {});
-    p.__inFlight--;
   });
 }
 /** The requests the page made and has no answer to yet. */
-const inFlight = (page: Page) => (page as any).__inFlight as number;
+const inFlight = (page: Page) => ((page as any).__inFlight as Set<unknown>).size;
 
 const same = ({ first, later }: { first: Look; later: Omit<Look, "frames"> }) => {
   expect({ text: first.text, w: first.w, h: first.h }).toEqual(later);
