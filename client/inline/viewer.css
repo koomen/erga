@@ -2,9 +2,8 @@
    right, and the breadcrumbs upper left, in two glass bars (client/inline/bars.css). They never fade as the page scrolls:
    it goes under their glass. */
 
-/* Trap: the viewer's bars and the editor's are two copies in the same places, swapped at once. A change to one bar's
-   place or buttons changes the other's too (e2e/full/viewer/bars.e2e.ts compares them). Never move `#erga-editor`
-   in the page after it is made: its parts start again, and the editor's own actions stop opening out of the pencil. */
+/* The two bars are one element each, viewing and editing (server/pages/bars.ts): the editor adds nothing of its own to
+   the page for them. Trap: never move `#erga-editor` in the page after it is made: its parts start again. */
 
 /* Your avatar and its menu in the page's own colour, whatever the system's mode (the bars' tones: client/inline/bars.css). */
 html.page-light .erga-account { --acc-bg: #fff; --acc-fg: #1c1c1f; --acc-soft: #6b6b73; --acc-chrome: #a1a1a9; --acc-ring: #e6e6ea; --acc-hover: rgba(161, 161, 169, .14); }
@@ -25,12 +24,26 @@ html:not(.erga-can-full) .erga-full-button { display: none !important; }
 html.erga-full #frame { position: fixed !important; inset: 0 !important; z-index: 2147483646 !important; width: 100% !important; height: 100% !important;
   max-width: none !important; max-height: none !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important;
   transform: none !important; clip-path: none !important; visibility: visible !important; opacity: 1 !important; transition: none !important; }
-/* Into the editor and out (editBoot): the controls you're going to are there at once, whole, and the editor's others (the
-   agent) fade out on the way back. The two pages' bars are the same, in the same places: they swap at once, so they're
-   never two layers of glass, and what's in both (the pencil, your avatar, the breadcrumbs) never moves. */
+/* Into the editor and out (editBoot): the editor's own parts (its cards, its status) fade in and out; the bars stay. */
 #erga-editor { opacity: 0; transition: opacity 200ms ease; }
 body.erga-editing.erga-editor-ready #erga-editor { opacity: 1; transition: none; }
-body:not(.erga-editing) #erga-editor .erga-bar, body.erga-editing.erga-editor-ready :is(.erga-view-buttons, .erga-crumbs) { visibility: hidden; }
+/* Each bar is one, viewing and editing. The editor's own parts of them (server/pages/bars.ts) are out of sight
+   until someone edits: its page actions open out of the pencil (the group's column goes from nothing to its width, and
+   its actions fade over their last 14px at the pencil's edge; moving, it clips sideways only, so tooltips below still
+   show; open and at rest, .settled, nothing clips), the others here fade in at the far left, and your avatar is the
+   editor's (#me) in the place of the page's. Leaving, editBoot holds them while they go (erga-closing). */
+.edit-group { display: grid; grid-template-columns: 0fr; margin-left: -2px; transition: grid-template-columns 420ms cubic-bezier(0.45, 0, 0.15, 1), margin 420ms cubic-bezier(0.45, 0, 0.15, 1); }
+body.erga-editing.erga-editor-ready:not(.erga-closing) .edit-group { grid-template-columns: 1fr; margin-left: 0; }
+.edit-group-inner { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.edit-group-inner > * { flex-shrink: 0; }
+.edit-group:not(.settled) .edit-group-inner { overflow-x: clip; -webkit-mask-image: linear-gradient(to left, transparent, #000 14px); mask-image: linear-gradient(to left, transparent, #000 14px); }
+.erga-view-buttons .people { position: absolute; right: calc(100% + 10px); top: 0; bottom: 0; display: flex; align-items: center; transition: opacity 420ms cubic-bezier(0.45, 0, 0.15, 1); }
+.people:empty { display: none; }
+body:not(.erga-editing) .erga-view-buttons .people, body.erga-closing .erga-view-buttons .people, body:not(.erga-editor-ready) .erga-view-buttons .people { opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .edit-group, .erga-view-buttons .people { transition: none; } }
+body:not(.erga-editing.erga-editor-ready) :is(#me, #btn-zoom), body.erga-editing.erga-editor-ready .erga-view-buttons .me-slot:not(#me) { display: none; }
+/* The title: the page's own, or (editing) the editor's, which opens the pages and the document's name, in the same place. */
+.erga-crumbs > [hidden], body:not(.erga-editing.erga-editor-ready) :is(#doc-title, .erga-crumbs > .edit-only), body.erga-editing.erga-editor-ready .erga-crumbs > .erga-here { display: none; }
 .erga-view-buttons, .erga-account, .erga-crumbs { transition: none; }
 /* On a phone they'd sit over the text the whole way down: they stay at the top instead. */
 @media (max-width: 640px), (max-height: 480px) {

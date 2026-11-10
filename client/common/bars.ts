@@ -23,12 +23,15 @@ export function mountBars(root: Document | ShadowRoot, on: HTMLElement) {
   });
   // (Every page has it.)
   const share = bar.querySelector<HTMLElement>(".erga-agent-share");
-  if (share)
-    mountAgentMenu({
-      button: share,
-      root,
-      address: () => document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? location.pathname,
-      tokens: root.querySelector<HTMLElement>(".erga-account")?.dataset.ergaAccount == "in",
-    });
-  return toggle;
+  const agentMenu = share
+    ? mountAgentMenu({
+        button: share,
+        root,
+        address: () => document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? location.pathname,
+        tokens: root.querySelector<HTMLElement>(".erga-account")?.dataset.ergaAccount == "in",
+        // (The editor closes its other cards: client/shell/sharing.ts.)
+        onOpen: () => share.dispatchEvent(new Event("erga:agent-menu", { bubbles: true })),
+      })
+    : null;
+  return Object.assign(toggle, { agentMenu });
 }

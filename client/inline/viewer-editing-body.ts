@@ -16,16 +16,19 @@ export default function viewerEditingBody(): void {
   };
   if (!ergaEditAddress()) return;
   document.body.classList.add("erga-editing");
-  const r = window.ergaRestored,
-    wrap = ergaControls();
+  const r = window.ergaRestored;
+  ergaControls();
   viewerLayoutEarly();
   if (!r) return;
   document.body.classList.add(...r.body, "erga-restored", "erga-editor-ready", "no-motion");
-  for (const [id, html] of Object.entries(r.parts || {})) {
-    const t = document.createElement("template");
-    t.innerHTML = html;
-    const was = wrap.querySelector("#" + CSS.escape(id)),
-      now = t.content.firstElementChild;
-    if (was && now?.id == id) was.replaceWith(now);
-  }
+  // The bars' parts, once the bars are there (server/pages/viewer.ts, after them).
+  window.ergaRestoreParts = () => {
+    for (const [id, html] of Object.entries(r.parts || {})) {
+      const t = document.createElement("template");
+      t.innerHTML = html;
+      const was = document.getElementById(id),
+        now = t.content.firstElementChild;
+      if (was && now?.id == id) was.replaceWith(now);
+    }
+  };
 }

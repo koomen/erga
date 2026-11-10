@@ -17,7 +17,7 @@ test("⌘+, ⌘− and ctrl with the wheel zoom the page only; a click on the zo
   })()`);
   /** The sizes of Erga's own parts. */
   const chrome = () => ed.eval<{ header: number; font: number; agent: number; agentFont: number; dpr: number }>(`(() => {
-    const h = document.querySelector("header.chrome-top"), a = document.getElementById("agent");
+    const h = document.querySelector(".chrome-top"), a = document.getElementById("agent");
     return { header: h.getBoundingClientRect().height, font: parseFloat(getComputedStyle(h).fontSize), agent: a.getBoundingClientRect().width,
       agentFont: parseFloat(getComputedStyle(document.getElementById("agent-input")).fontSize), dpr: devicePixelRatio };
   })()`);
@@ -58,7 +58,9 @@ test("⌘+, ⌘− and ctrl with the wheel zoom the page only; a click on the zo
   await page.keyboard.down("Control");
   await page.mouse.wheel(0, 100);
   await expect.poll(async () => (await zoomed()).scale).toBeCloseTo(1.1, 2);
-  const head = await ed.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector("header.chrome-top").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  const head = await ed.eval<{ x: number; y: number }>(
+    `(() => { const r = document.querySelector(".chrome-top").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`
+  );
   await page.mouse.move(head.x, head.y);
   await page.mouse.wheel(0, 100);
   await page.keyboard.up("Control");

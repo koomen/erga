@@ -1,7 +1,6 @@
-/* The two glass bars at the top of a document's page, the same in the viewer (server/pages/viewer.ts) and the editor
-   (client/editor.html, which the build gives this sheet too): the breadcrumbs' bar (.erga-bar-l) on the left, the
-   buttons' bar (.erga-bar-r) with your avatar on the right. Each page puts its bars in place itself (client/inline/viewer.css,
-   client/styles/editor.css), at the same places: this sheet is the look they share, and the phone's layout.
+/* The two glass bars at the top of a document's page (server/pages/bars.ts), the same elements viewing and editing: the
+   breadcrumbs' bar (.erga-bar-l) on the left, the buttons' bar (.erga-bar-r) with your avatar on the right. Their place
+   is client/inline/viewer.css's (editing: client/styles/editor.css too); this sheet is their look, and the phone's layout.
 
    The glass: the page's colour at 76% (the menus: 90%), a blur of what is under it, a white shine on the top half, a white
    edge inside, and a soft shadow. On a white or near-white page (page-white) the glass is tinted 3.5% and its shadow

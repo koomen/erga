@@ -67,6 +67,13 @@ body.source :is(#frame, .erga-canvas) { visibility: hidden; }
    sit just here). */
 /* Its bar starts 14px right of a panel on the left (or 6px from the window's edge); the text inside where it was without one. */
 .chrome-nav { left: max(6px, var(--safe-l), calc(var(--frame-l) - 2px)); padding: 3.5px 8px; transition: opacity var(--show-ms) var(--ease), left var(--agent-ms) var(--agent-ease); }
+/* (The bar is the page's own, server/pages/bars.ts: over its rules in client/inline/viewer.css, which come later in the page.) */
+body.erga-editing .erga-crumbs.erga-bar.chrome-nav { transition: opacity var(--show-ms) var(--ease), left var(--agent-ms) var(--agent-ease); }
+body.erga-editing.chrome-hidden .erga-crumbs.erga-bar.chrome-nav { transition-duration: var(--hide-ms), var(--agent-ms); }
+/* (The editor's title takes the room left of the controls, main.ts navRoom: the bar has no width limit of its own on a wide window.) */
+@media (min-width: 760px) { body.erga-editing .erga-crumbs.erga-bar.chrome-nav { max-width: none; } }
+/* (Documents, editing: the editor's hover, a tint, not the page's fade.) */
+body.erga-editing .erga-crumbs a.nav-back:hover { opacity: 1; }
 .chrome-nav[hidden] { display: none; }
 /* Documents, its arrow and the title sit on one baseline: each text fills its 34px box as its line, so descenders (g, y) aren't clipped. */
 .chrome-nav, .nav-brand, .nav-back, .nav-title { align-items: baseline; }
@@ -103,6 +110,9 @@ html.erga-zoomed #frame { width: calc((100% - var(--frame-l) - var(--frame-r)) /
 .chrome-bottom { transition: opacity var(--show-ms) var(--ease), padding var(--agent-ms) var(--agent-ease); padding-left: var(--cb-l); padding-right: var(--cb-r); }
 /* The buttons' bar and its cards keep clear of a panel on the right, 14px from it, as the breadcrumbs' bar on the left. */
 .chrome-top { right: max(8px, var(--safe-r), calc(var(--frame-r) - 2px)); padding: 0 5px 0 7.5px; transition: opacity var(--show-ms) var(--ease), right var(--agent-ms) var(--agent-ease); }
+/* (The bar is the page's own, server/pages/bars.ts: over its rules in client/inline/viewer.css, which come later in the page.) */
+body.erga-editing .erga-view-buttons.erga-bar.chrome-top { transition: opacity var(--show-ms) var(--ease), right var(--agent-ms) var(--agent-ease); }
+body.erga-editing.chrome-hidden .erga-view-buttons.erga-bar.chrome-top { transition-duration: var(--hide-ms), var(--agent-ms); }
 /* The agent's circle and panel (#agent) are client/style.css's: every page has them. */
 
 /* Resizing and docking (layout.ts; the grip, the ghost and the drag's look are style.css's): the editor's parts. */
@@ -125,20 +135,7 @@ body:not(.layout-narrow) .agent-head { cursor: grab; user-select: none; touch-ac
 }
 /* The agent panel's insides (its head, the conversation, the box) are style.css's: the admin pages' panel has them too. */
 
-/* The editor's own page actions, between Full screen and the pencil. While editing (and the editor is up), the group's column is
-   its full width; else nothing. It eases between the two, and its actions keep to its left edge: as it narrows they all
-   slide right into the pencil, New document and Full screen with them, and each fades over its last 14px at the pencil's edge,
-   a line it vanishes at; as it widens they come out of the pencil. Leaving the editor, editBoot holds the
-   editor's row up while they go (erga-closing). Moving, it clips sideways only, so tooltips below still show; open and
-   at rest (settled), nothing clips. The others here fade in and out with it, at the far left. */
-.edit-group { display: grid; grid-template-columns: 0fr; margin-left: -2px; transition: grid-template-columns 420ms var(--agent-ease), margin 420ms var(--agent-ease); }
-body.erga-editing.erga-editor-ready:not(.erga-closing) .edit-group { grid-template-columns: 1fr; margin-left: 0; }
-.edit-group-inner { display: flex; align-items: center; gap: 2px; min-width: 0; }
-.edit-group-inner > * { flex-shrink: 0; }
-.edit-group:not(.settled) .edit-group-inner { overflow-x: clip; -webkit-mask-image: linear-gradient(to left, transparent, #000 14px); mask-image: linear-gradient(to left, transparent, #000 14px); }
-.chrome-top .people { transition: opacity 420ms var(--agent-ease); }
-body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .people, body:not(.erga-editor-ready) .chrome-top .people { opacity: 0; pointer-events: none; }
-@media (prefers-reduced-motion: reduce) { .edit-group, .chrome-top .people { transition: none; } }
+/* (The editor's own page actions, between Full screen and the pencil, and the others' fade: client/inline/viewer.css.) */
 /* The page's zoom, while it isn't 100% (main.ts, zoom): its level, in the bar's own type; a click goes back to 100%. */
 .icon-btn.zoom-btn { width: auto; min-width: 34px; padding: 0 7px; font-size: 12.5px; font-weight: 550; font-variant-numeric: tabular-nums; color: var(--fg); }
 /* Share, for anyone but the owner (no meta erga-share): there, off, from the first frame; its tip says why (client/shell/sharing.ts). */
@@ -150,8 +147,7 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
    outside its glass. It grows to the left, never over the bar. A hover, keyboard focus or a tap (.spread: people.ts) parts
    them so each face shows whole, and a face's name shows under it in its colour. Past four faces the stack ends in "+N"
    (.more), and the spread shows them all. (people.ts has the faces' size and overlap too, for the breadcrumbs' room.) */
-.chrome-top .people { position: absolute; right: calc(100% + 10px); top: 0; bottom: 0; display: flex; align-items: center; }
-.people:empty { display: none; }
+/* (Its place, left of the bar and out of its flow, is the page's sheet's: client/inline/viewer.css.) */
 .people > * { flex: none; transition: margin 240ms var(--agent-ease), width 240ms var(--agent-ease), opacity 180ms ease, visibility 240ms; }
 .people > * + * { margin-left: -9px; }
 .people > .person { width: 26px; }

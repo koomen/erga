@@ -153,7 +153,7 @@ test("Share with an agent in the viewer: Install Erga's MCP copies the one-line 
   const origin = new URL(address).origin;
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   await clickOn(page, ".erga-agent-share");
-  await clickOn(page, "#erga-agent-menu .am-mcp");
+  await clickOn(page, "#btn-agent-share-menu .am-mcp");
   await expect.poll(() => page.evaluate(() => document.querySelector<HTMLElement>(".erga-agent-share")!.dataset.tip)).toBe("Copied ✓");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`Add Erga's MCP server, ${origin}/mcp, then open ${address}.`);
 });
@@ -167,10 +167,12 @@ test("Share with an agent in the viewer: a prompt with a token, for the time and
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   await clickOn(page, ".erga-agent-share");
   // The dev server's person is an admin: Admin comes as a choice.
-  await expect.poll(() => page.locator("#erga-agent-menu select[name=scope] option").allTextContents()).toEqual(["My documents", "Admin"]);
-  await page.selectOption("#erga-agent-menu select[name=hours]", "24");
-  await clickOn(page, "#erga-agent-menu .am-copy");
-  await expect.poll(() => page.evaluate(() => document.querySelector<HTMLElement>("#erga-agent-menu")!.hidden)).toBe(true);
+  await expect
+    .poll(() => page.locator("#btn-agent-share-menu select[name=scope] option").allTextContents())
+    .toEqual(["My documents", "Admin"]);
+  await page.selectOption("#btn-agent-share-menu select[name=hours]", "24");
+  await clickOn(page, "#btn-agent-share-menu .am-copy");
+  await expect.poll(() => page.evaluate(() => document.querySelector<HTMLElement>("#btn-agent-share-menu")!.hidden)).toBe(true);
   const prompt = await page.evaluate(() => navigator.clipboard.readText());
   expect(prompt).toContain(`claude mcp add --transport http erga ${origin}/mcp --header "Authorization: Bearer erga_`);
   expect(prompt).toContain(`Then open ${address}.`);

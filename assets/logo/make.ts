@@ -12,7 +12,8 @@
 //   assets/logo/favicon.svg     a typed "e" in dark ink on a white rounded square
 //   assets/logo/logo.ts         the wordmark sized for the header, the favicon as a data: URL, and the "e"
 //                        alone (MARK: the agent's button), for the pages (server/pages/viewer.ts, server/admin/layout.ts)
-// and puts the wordmark, the favicon and the mark into client/editor.html and assets/landing/index.html,
+// and puts the favicon and the mark into client/editor.html and the wordmark into assets/landing/index.html (the
+// bars' wordmark is logo.ts's: server/pages/bars.ts),
 // which can't import logo.ts. It does not write assets/logo/logo.png (the 512 px PNG served at /logo.png):
 // that is erga-ink.svg at 368 px wide, centred on white, captured in a browser; make it again the same way after a change. No dependencies: the script reads the TrueType
 // tables it needs (cmap, hmtx, loca, glyf) itself.
@@ -194,7 +195,6 @@ function put(file: string, find: RegExp, html: string) {
 }
 const made = /<svg [^>]*class="wordmark"[\s\S]*?<\/svg>/;
 put("client/editor.html", /<link rel="icon"[^>]*>/, `<link rel="icon" type="image/svg+xml" href="${faviconUrl}">`);
-put("client/editor.html", made, header);
 put("client/editor.html", /<svg class="erga-mark"[\s\S]*?<\/svg>/, mark);
 put("assets/landing/index.html", made, wordmark("currentColor", ` class="wordmark"`));
 

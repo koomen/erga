@@ -25,7 +25,6 @@ test("the pages hold the wordmark assets/logo/make.ts made last", () => {
   const word = pathOf(read("assets/logo/erga.svg"));
   expect(word).toBeTruthy();
   expect(pathOf(WORDMARK)).toBe(word);
-  expect(read("client/editor.html")).toContain(WORDMARK);
   expect(pathOf(read("assets/landing/index.html").match(/<svg [^>]*class="wordmark"[\s\S]*?<\/svg>/)?.[0] ?? "")).toBe(word);
 });
 

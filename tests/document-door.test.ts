@@ -2,7 +2,7 @@
 // arguments. A name the object does not know is an answer, not a failed call.
 
 import { expect, test } from "bun:test";
-import { CALLS, throughDoor } from "../cloudflare/objects/document-door";
+import { CALLS, callsThrough, throughDoor } from "../cloudflare/objects/document-door";
 
 class Fake {
   private title = "Plan";
@@ -39,4 +39,27 @@ test("a name that is not a call, or that this object's code lacks, answers unkno
 test("the door's own name is not a call: a request can't ask for the door again", () => {
   expect((CALLS as readonly string[]).includes("call")).toBe(false);
   expect((CALLS as readonly string[]).includes("fetch")).toBe(false);
+});
+
+test("the caller's side: each call goes through the door with its name and arguments; an object behind a deploy fails with a clear error", async () => {
+  const object = new Fake();
+  const sent: [string, readonly unknown[]][] = [];
+  // The door of an object that runs the code from before a deploy: it knows the calls of then (here, all but view).
+  const door = {
+    call: (op: string, args: readonly unknown[]) => {
+      sent.push([op, args]);
+      return throughDoor(
+        object,
+        CALLS.filter((c) => c != "view"),
+        op,
+        args
+      );
+    },
+  };
+  const calls = callsThrough(door, (op) => new Error(`behind: ${op}`));
+  expect(Object.keys(calls).sort()).toEqual([...CALLS].sort());
+  expect(await calls.rename({ id: "ada" }, { title: "Trip" })).toEqual({ ok: true, by: "ada", title: "Trip" });
+  expect(sent).toEqual([["rename", [{ id: "ada" }, { title: "Trip" }]]]);
+  expect(calls.view(null, { page: "" })).rejects.toThrow("behind: view");
+  expect(calls.paths()).rejects.toThrow("the document failed");
 });

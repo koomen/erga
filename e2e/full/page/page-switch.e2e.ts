@@ -27,10 +27,10 @@ test("a page picked in the pages card opens in the editor in place, and Back and
     window.__same = true;
     const seen = window.__seen = [];
     const tick = () => {
-      const wrap = document.getElementById("erga-editor"), viewer = document.querySelector(".erga-view-buttons");
+      const wrap = document.getElementById("erga-editor"), viewer = document.querySelector(".erga-crumbs > .erga-here");
       seen.push({
         editor: !!wrap && getComputedStyle(wrap).opacity == "1",
-        viewer: !!viewer && getComputedStyle(viewer).visibility != "hidden" && getComputedStyle(viewer).opacity != "0",
+        viewer: !!viewer && viewer.checkVisibility({ visibilityProperty: true, opacityProperty: true }),
         agent: document.body.classList.contains("agent-open"),
         left: Math.round(document.getElementById("frame").getBoundingClientRect().left),
       });
