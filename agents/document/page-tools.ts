@@ -306,7 +306,7 @@ const STEP_WORDS = 'A presentation step to show first, e.g. "3.2".';
 const TIME_FIELDS = {
   at_ms: Schema.optionalKey(
     Schema.Finite.annotate({
-      description: `ms after the step or load.`,
+      description: `ms after the step or load. Default: 1000 after a step; after the load, 600 for a picture and 0 for code (give more for a page that draws itself late).`,
     })
   ),
   frames: Schema.optionalKey(

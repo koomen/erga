@@ -16,6 +16,7 @@ import {
   FRAMES,
   VIEW_DEFAULT,
   evalTimeout,
+  renderTimes,
   type ColorScheme,
   type PageRender,
   type Shot,
@@ -184,7 +185,7 @@ async function renderIn(page: Page, place: Place, job: Job): Promise<ViewResult>
   const width = Math.round(Math.max(320, Math.min(2400, req.width ?? VIEW_DEFAULT.width)));
   const height = Math.round(Math.max(200, Math.min(4000, req.height ?? VIEW_DEFAULT.height)));
   const scheme = req.colorScheme ?? "light";
-  const times = req.frames?.length ? req.frames : [req.atMs ?? (req.steps?.length ? FRAMES.afterStep : FRAMES.afterLoad)];
+  const times = renderTimes(req);
   if (times.length > FRAMES.count || times.some((t) => !Number.isFinite(t) || t < 0 || t > FRAMES.max))
     return { errors: [], error: `Give at most ${FRAMES.count} times, each from 0 to ${FRAMES.max} ms.` };
   if (req.editor && req.preview) return { errors: [], error: "A preview shows in the viewer only: leave out editor, or edits." };
@@ -198,16 +199,19 @@ async function renderIn(page: Page, place: Place, job: Job): Promise<ViewResult>
         if (level == "error") errors.push(`${frame.apart() ? "Erga's viewer: " : ""}console.error: ${text}`);
       }
     );
-    await page.setViewport(width, height);
-    await page.colorScheme(scheme);
-    // The person's agent stays closed (the agent that asked is beside it): the page has the window's whole width.
-    await page.send("Page.addScriptToEvaluateOnNewDocument", { source: AGENT_CLOSED });
-    // The viewer's Content-Security-Policy allows no eval, which the expression needs (client/page-tools/evaluate.ts).
-    if (req.shell && req.evaluate != null) await page.send("Page.setBypassCSP", { enabled: true });
-    // The frame's page comes from the room's text (the agent's latest edits, or a preview): its first request is answered here.
-    await page.send("Fetch.enable", {
-      patterns: [{ urlPattern: `${place.pages}/t/*`, resourceType: "Document", requestStage: "Request" }],
-    });
+    // The page's set-up, sent together: each is apart from the others, and all are done before the page opens.
+    await Promise.all([
+      page.setViewport(width, height),
+      page.colorScheme(scheme),
+      // The person's agent stays closed (the agent that asked is beside it): the page has the window's whole width.
+      page.send("Page.addScriptToEvaluateOnNewDocument", { source: AGENT_CLOSED }),
+      // The viewer's Content-Security-Policy allows no eval, which the expression needs (client/page-tools/evaluate.ts).
+      req.shell && req.evaluate != null ? page.send("Page.setBypassCSP", { enabled: true }) : null,
+      // The frame's page comes from the room's text (the agent's latest edits, or a preview): its first request is answered here.
+      page.send("Fetch.enable", {
+        patterns: [{ urlPattern: `${place.pages}/t/*`, resourceType: "Document", requestStage: "Request" }],
+      }),
+    ]);
     let served = false;
     page.on((method, e) => {
       if (method != "Fetch.requestPaused") return;
