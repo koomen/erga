@@ -8,14 +8,14 @@
 //
 // The two places show the same tree: the same rows, in the same order, with the same
 // look and keys. A project's tree shows every file: index.html first (the home page,
-// which the headline above the tree opens too, marked with its file's name), then its
+// which the headline above the tree opens too), then its
 // folders, pages and other files (stylesheets, scripts, images, PDFs: each by its name,
 // opened as itself in a new tab). Only a project has a tree; a document (one page) keeps
 // its files to itself (the document's settings switch between the two). To an agent
 // either is one folder of files. A page shows by its
 // title when known, else by its name made readable ("spring-migration" is
-// "Spring migration"; a folder's index is the folder's name), its file's name
-// a quiet hint only where two would read the same. Clicking a page opens it,
+// "Spring migration"; a folder's index is the folder's name), and its file's
+// name quietly on the right (notes.html), titled or not. Clicking a page opens it,
 // in the editor when you're editing, in the viewer otherwise, and the page
 // you're on is marked. Editors add (New page, New folder: at the top level
 // and in each folder), rename in place, move (drag and drop, or Move to…) and
@@ -514,10 +514,8 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     const isRoot = n.path == ROOT;
     const folder = n.type == "folder";
     const name = label(n);
-    // Two pages side by side that read the same: each says which it is, quietly, by its file's name.
-    const twins = n.type == "page" && (find(parentOf(n.path))?.children ?? []).filter((c) => c.type == "page" && c.path != n.path).some((c) => label(c).toLowerCase() == name.toLowerCase());
-    // index.html says it is: it reads as the project's title, which the headline above the tree has too.
-    const hint = twins || isRoot ? baseName(n.path) : "";
+    // Each page says which file it is, quietly, on the right: its title alone doesn't say.
+    const hint = n.type == "page" ? baseName(n.path) : "";
     const r = el("div", {
       className: `et-row ${n.type}${isRoot ? " root" : ""}${busy == n.path ? " busy" : ""}`,
       role: "treeitem", tabIndex: -1, dataset: { path: n.path, type: n.type },
@@ -547,7 +545,8 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
         if (folder) acts.append(actButton("add", ICONS.plus, `New in ${name}`));
         acts.append(actButton("more", ICONS.more, `More for ${name}`));
       }
-      if (acts.childElementCount) r.append(acts);
+      // Empty (index.html, where the document can't be renamed from here), it keeps its room: the file names line up.
+      r.append(acts);
       if (!isRoot) r.draggable = true;
     }
     return r;
