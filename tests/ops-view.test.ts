@@ -53,7 +53,7 @@ test("the view: each primary with its staging instances, the job line, and live 
     jobs: [jobOf(line(start) + line({ commit: "1".repeat(40) }) + line({ result: "ok", ended: "2026-11-05T11:55:00.000Z" }), () => true)!],
     setup: "",
     run: { at: "idle" },
-    polls: startPolls(30_000),
+    polls: startPolls(),
   };
   const html = viewHtml(facts, "staging.erga.dev", NOW);
   // A staging instance's name chooses its primary.
@@ -87,7 +87,7 @@ test("Logs shows the job that runs, else the last one, or the one the hash names
     ],
     setup: "",
     run: { at: "idle" },
-    polls: startPolls(30_000),
+    polls: startPolls(),
   };
   const logs = viewHtml(facts, "erga.dev/logs", NOW);
   expect(logs).toContain('<section class="logs" data-job="runs"');
@@ -113,7 +113,7 @@ test("Setup: the setup's host shows before it has an entry, and opens on its che
     jobs: [],
     setup: "new.example.com",
     run: { at: "idle" },
-    polls: startPolls(30_000),
+    polls: startPolls(),
   };
   expect(groupsOf(config, facts.setup).map((g) => [g.primary.host, g.primary.token])).toEqual([
     ["erga.dev", "t"],
@@ -181,7 +181,7 @@ const deploys = (more: Partial<Facts> = {}, staging = "3", production = "1"): Fa
   jobs: [],
   setup: "",
   run: { at: "idle" },
-  polls: startPolls(30_000),
+  polls: startPolls(),
   ...more,
 });
 /** The page's own command as it starts: a merge of a branch, or a deploy of commit n...n to staging.erga.dev. */
@@ -409,7 +409,7 @@ test("a merge: staging's cell says Deploying… until the merge ends, after the 
   expect(rowOf(ended, "2")).toContain("live");
 });
 
-test("the page's server checks GitHub and each instance at start and on a page load, and shows each source", async () => {
+test("the page's server checks GitHub and each instance at start, not on a page load, and shows each source", async () => {
   const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -436,11 +436,9 @@ test("the page's server checks GitHub and each instance at start and on a page l
     expect(first).toContain('<li class="source bad" data-source="github">');
     expect(first).toMatch(/<li class="source ok" data-source="erga.dev">.*runs 111111111111 · healthy/);
     expect(calls.sort()).toEqual(["ask", "fetch"]);
-    // A page load a moment later checks both again; /view (the page's redraws) does not.
-    await Bun.sleep(1100);
+    // A page load checks nothing again: GitHub's fetch keeps its minute, an instance its 5 seconds (poll-state.ts).
     await fetch(`${at}/`);
-    await until(() => calls.length == 4);
-    expect(calls.sort()).toEqual(["ask", "ask", "fetch", "fetch"]);
+    expect(calls.sort()).toEqual(["ask", "fetch"]);
   } finally {
     page.stop();
     rmSync(dir, { recursive: true, force: true });

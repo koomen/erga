@@ -1,8 +1,8 @@
 // `bun erga`: the ops page, a local server on 127.0.0.1 and the page it serves (deploy/cli/ops-view.ts draws it). It
 // reads .erga/config.json and .erga/jobs/ in the main clone, which it watches (a change reaches the page at once,
 // through /api/events), and the clone's git. It checks its sources (poll-state.ts): GitHub, with a git fetch of the
-// clone, and each instance's commit and health, with its ops token: every 30 seconds, every 5 while a job runs, and
-// when a page loads. The page shows each source's last check. Every command works without it. Its Merge and Deploy buttons run
+// clone, at most once a minute, and each instance's commit and health, with its ops token, every 5 seconds. The page
+// shows each source's last check. Every command works without it. Its Merge and Deploy buttons run
 // `bun erga merge` and `bun erga deploy` (POST /api/merge, /api/deploy) in a process of their own, as a terminal does:
 // the same code, locks and job records. A merge's tests take minutes, and this server must answer while they run.
 
@@ -173,13 +173,15 @@ export function serveOpsPage(o: OpsPageOptions) {
     jobs: [],
     setup: "",
     run: { at: "idle" },
-    polls: startPolls(30_000),
+    polls: startPolls(),
   };
   let refs = "";
   /** The first fetch ended (well or not): until then, the clone can show branches that GitHub deleted. */
   let fetched = false;
   /** The server stopped: a check that ends after it changes nothing (its clone can be gone). */
   let stopped = false;
+  /** The step's next wake (stepPolls). */
+  let wake: ReturnType<typeof setTimeout> | null = null;
   let sent = "";
   const clients = new Set<ReadableStreamDefaultController<string>>();
 
@@ -222,12 +224,16 @@ export function serveOpsPage(o: OpsPageOptions) {
       facts.git = { error: `git: ${(e as Error).message}` };
     }
   };
-  /** Steps the sources' state, and starts each check it asks for. */
+  /** Steps the sources' state, starts each check it asks for, and wakes it at the time it names. */
   const poll = (e: PollEvent) => {
+    if (stopped) return;
     const r = stepPolls(facts.polls, e);
     facts.polls = r.polls;
     for (const name of r.check) void check(name);
-    changed();
+    if (wake) clearTimeout(wake);
+    wake = r.wake == null ? null : setTimeout(() => poll({ type: "tick", now: Date.now() }), Math.max(0, r.wake - Date.now()));
+    // A check's start alone changes nothing that the page needs at once: its answer redraws it.
+    if (e.type != "tick") changed();
   };
   /** One check of a source: GitHub's fetch, or an instance's answer. Its end is the next event. */
   const check = async (name: string) => {
@@ -249,7 +255,6 @@ export function serveOpsPage(o: OpsPageOptions) {
     }
     poll({ type: "answer", name, now: Date.now(), error });
   };
-  const period = () => (facts.jobs.some((j) => j.phase == "running") ? 5_000 : 30_000);
 
   // A change in .erga/ (another terminal's register, deploy or rollback) reaches the page at once.
   let watcher: FSWatcher | null = null;
@@ -268,7 +273,7 @@ export function serveOpsPage(o: OpsPageOptions) {
   refs = refsOf(o.cwd);
   readFiles();
   watchDir();
-  // Each 5 seconds: git's refs (a fetch in a terminal), the jobs' processes, and the sources that are due.
+  // Each 5 seconds: git's refs (a fetch in a terminal) and the jobs' processes.
   const tick = setInterval(() => {
     if (!watcher) {
       watchDir();
@@ -280,7 +285,7 @@ export function serveOpsPage(o: OpsPageOptions) {
       readClone();
     }
     facts.jobs = readJobs(o.dir);
-    poll({ type: "tick", now: Date.now(), period: period() });
+    changed();
     send(": still here\n\n");
   }, 5_000);
 
@@ -302,7 +307,7 @@ export function serveOpsPage(o: OpsPageOptions) {
       // A command that stopped before its job record (a lock, a missing credential): its own words, here.
       const recorded = facts.jobs.some((j) => j.id.endsWith(`-${r.pid}`));
       facts.run = stepRun(facts.run, { type: "exit", code, out, recorded });
-      poll({ type: "refresh", now: Date.now() });
+      changed();
     });
     return Response.json({ ok: true, command }, { status: 202 });
   };
@@ -357,11 +362,7 @@ export function serveOpsPage(o: OpsPageOptions) {
       if (url.pathname == "/setup.js" || url.pathname.startsWith("/setup/"))
         return import("../own/page").then((p) => p.setupRoute(req, url));
       if (req.method == "POST" && (url.pathname == "/api/merge" || url.pathname == "/api/deploy")) return act(req, url.pathname.slice(5));
-      if (url.pathname == "/") {
-        // A page load checks each source again: the page draws now, and again as each answer comes (/api/events).
-        poll({ type: "refresh", now: Date.now() });
-        return html(pageHtml(viewHtml(facts, ""), script, code()));
-      }
+      if (url.pathname == "/") return html(pageHtml(viewHtml(facts, ""), script, code()));
       if (url.pathname == "/view") return html(viewHtml(facts, url.searchParams.get("hash") ?? ""), { "X-Ops-Code": code() });
       if (url.pathname == "/api/events") {
         let me: ReadableStreamDefaultController<string>;
@@ -396,6 +397,7 @@ export function serveOpsPage(o: OpsPageOptions) {
     stop() {
       stopped = true;
       clearInterval(tick);
+      if (wake) clearTimeout(wake);
       watcher?.close();
       for (const c of clients) c.close();
       server.stop(true);

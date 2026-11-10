@@ -172,7 +172,7 @@ function side(groups: Group[], chosen: Group | null, f: Facts, now: number): str
     const source = f.polls.sources[e.host];
     const st = !e.token
       ? { cls: "", what: "not registered yet: bun erga setup" }
-      : source && isStale(source, f.polls.period, now)
+      : source && isStale(source, now)
         ? { cls: "stale", what: `stale: ${source.error ?? "no answer yet"}` }
         : stateOf(f.answers[e.host]);
     return `<span class="${cls}" title="${esc(`${e.host}: ${st.what}`)}"><i class="light ${st.cls}"></i><span>${esc(e.host)}</span></span>`;
@@ -301,7 +301,7 @@ function sources(g: Group, f: Facts, now: number): string {
   const row = (name: string, label: string, said: string) => {
     const s = f.polls.sources[name];
     if (!s) return "";
-    const stale = isStale(s, f.polls.period, now);
+    const stale = isStale(s, now);
     const when =
       s.at == "asking" && s.checked == null
         ? "checking…"

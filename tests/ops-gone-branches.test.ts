@@ -76,7 +76,7 @@ test("a branch that GitHub deleted after the last fetch shows on neither the ops
       vars: {},
       token: "t",
     };
-    let polls = stepPolls(startPolls(30_000), { type: "sources", names: [GITHUB], now: 0 }).polls;
+    let polls = stepPolls(startPolls(), { type: "sources", names: [GITHUB], now: 0 }).polls;
     polls = stepPolls(polls, { type: "answer", name: GITHUB, now: 1000, error }).polls;
     const html = viewHtml(
       { config: { instances: [entry] }, answers: {}, git: readGit(clone, []), jobs: [], setup: "", run: { at: "idle" }, polls },
