@@ -630,9 +630,18 @@ journey("a project on Documents and in the viewer; a document becomes a project 
     await answered(page);
     expect(await doc.tree()).toContain("archive");
     await clickOn(page, `${sub} .et-foot .et-add:nth-child(1)`);
-    await type(page, "Old news");
+    await type(page, "Old");
+    // The document's row is live: an agent's change brings it again, with its pages beneath it. Not while a name is
+    // half typed there: the field keeps the focus, and the whole name.
+    const rowAsked = page.waitForResponse((r) => new URL(r.url()).pathname == "/api/news/rows" && r.url().includes(doc.id));
+    await doc.agentTool("new", { path: "colophon" });
+    await (await rowAsked).finished();
+    await settle(page);
+    expect(await focused(page), "the name's field while the document's row changes").toBe("input");
+    await type(page, " news");
     await press(page, "Enter");
     await answered(page);
+    await doc.agentTool("rm", { path: "colophon.html" });
     expect(await doc.tree()).toContain("old-news.html");
     await expect.poll(async () => (await rows(page, sub)).some((x) => x[0] == "old-news.html")).toBe(true);
     await act(page, "old-news.html", "more", sub);

@@ -55,6 +55,9 @@ export default function agentToggle(): void {
   body.classList.add("no-motion");
   const kept = restorePanel();
   set(!narrow.matches && kept.open);
+  // Shown from now (server/pages/agent.ts sends it hidden), and drawn before the browser paints again: never empty,
+  // where the tab's last page left a conversation. (Shown first: a hidden log keeps no scroll place.)
+  document.getElementById("agent")!.hidden = false;
   drawAsLeft(kept.drawn);
   requestAnimationFrame(() => requestAnimationFrame(() => body.classList.remove("no-motion")));
   // Collapsed with the mouse, focus goes back to the circle with no ring (Chrome would draw one, as focus comes from the

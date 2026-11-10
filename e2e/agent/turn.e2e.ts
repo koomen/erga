@@ -486,7 +486,7 @@ const FIRST_PAINT = `(() => {
   if (window.top != window) return;
   const look = () => {
     const l = document.getElementById("agent-log");
-    if (!l || !document.body.classList.contains("agent-open")) return requestAnimationFrame(look);
+    if (!l || l.closest("#agent").hidden || !document.body.classList.contains("agent-open")) return requestAnimationFrame(look);
     window.__firstPaint = { n: l.children.length, top: l.scrollTop, model: document.getElementById("agent-model").textContent };
     // For a failure's message: whether the panel's own script had run by then, and whether the tab had a copy to draw.
     window.__firstPaintFacts = { script: !!window.ergaAgent, copy: (sessionStorage.getItem("erga:agent-panel") || "").length };

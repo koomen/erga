@@ -4,7 +4,8 @@
 // key (data-live="doc:<id>") and its place (data-sort: a number, or text). One socket for the page (/api/news) hears
 // which of its person's rows changed, whoever changed them; the page then asks for those rows only (/api/news/rows),
 // and puts each in, in its place, replaces it, or takes it out. Nothing else on the page moves: focus, scroll, an open
-// menu or a half-typed field elsewhere stay as they are, and a row whose field has the focus waits until it hasn't.
+// menu or a half-typed field elsewhere stay as they are, and a row whose field has the focus (or a field beneath it:
+// a project's pages) waits until it hasn't.
 //
 // A hidden tab waits until it shows. A dropped socket comes back by itself and says the last version it heard, so it
 // hears what changed meanwhile. One ask at a time, so a later answer is never older than one before it. The socket's
@@ -202,12 +203,15 @@ const group = (row: Element) => {
   return out;
 };
 
-/** Whether a row has the focus in a field: someone is typing there, and its new state waits. */
+/**
+ * Whether a row, or what belongs to it beneath it (a project's pages), has the focus in a field: someone is typing
+ * there, and its new state waits. (The row comes in again with what is beneath it: a field there would lose the focus.)
+ */
 const typing = (row: Element) => {
   const a = document.activeElement;
   return (
     !!a &&
-    row.contains(a) &&
+    group(row).some((n) => n.contains(a)) &&
     (a.matches("textarea, select, [contenteditable]") ||
       (a.matches("input") && !/^(checkbox|radio|button|submit)$/.test((a as HTMLInputElement).type)))
   );
