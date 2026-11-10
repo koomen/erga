@@ -35,3 +35,10 @@ export interface AssetManifest {
 
 /** A hashed file's address without its hash and extension ("/_erga/main-1a2b3c4d.js" → "/_erga/main"): the same for every build of it. */
 export const stemOf = (url: string) => url.replace(/-[a-z0-9]+\.[a-z0-9]+$/i, "");
+
+/** Every file a manifest names (the typefaces' files too: the app's and the templates'). */
+export function namedBy(m: AssetManifest): string[] {
+  const out = new Set<string>([...Object.values(m.files), ...Object.values(m.deps).flat(), ...m.frame, ...Object.keys(m.integrity)]);
+  for (const u of `${m.fonts.css}${m.fonts.page ?? ""}`.matchAll(/url\(([^)]+)\)/g)) out.add(u[1]);
+  return [...out];
+}

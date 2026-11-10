@@ -458,13 +458,14 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     }
 
     const { buildHere } = await import("../pipeline/build");
+    const { keepLast } = await import("../pipeline/keep-last");
     if (aws) {
       log(`Deploy ${sha.slice(0, 12)} to ${o.host} on AWS:`);
       log(`  account ${aws.aws.account}, ${aws.aws.region}, stack ${aws.aws.stack}, machine ${aws.aws.machine}, bucket ${aws.aws.bucket}`);
       log(
         `  ${entryOrigin(aws)}, documents' pages on ${aws.aws.pages.kind == "domain" ? `*.${aws.aws.pages.domain}` : aws.aws.pages.host}`
       );
-      const release = await buildHere(sha, log, mocked());
+      const release = await keepLast(await buildHere(sha, log, mocked()), entryOrigin(aws), net, log);
       const { deployToAws } = await import("../aws/deploy");
       await deployToAws(aws, release, log, o.first);
       if (!(await healthOf(entryOrigin(aws), net)))
@@ -479,7 +480,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       log(
         `  https://${targetHost(t)}, documents' pages on ${targetPagesShown(t)}; ${sent.length ? `the secrets sent: ${sent.join(", ")}` : "no secret sent"}`
       );
-      const release = await buildHere(sha, log, mocked());
+      const release = await keepLast(await buildHere(sha, log, mocked()), `https://${targetHost(t)}`, net, log);
       const carry: Carry = {};
       try {
         await runPipeline(cf, release, t, {
