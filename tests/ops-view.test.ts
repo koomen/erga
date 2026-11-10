@@ -255,15 +255,22 @@ test("a branch's row shows one test state, and only a passed run of its merge's 
   expect(stale.html).toContain("Tests wait in the queue (the last run, passed, is stale)");
   expect(stale.merge?.disabled).toBe(true);
   const running = row([runOf("tree-clean", { state: "running", ended: undefined })]);
-  expect(running.html).toContain('data-test="running"><i class="light run"></i>Tests run, 600 s</span>');
+  expect(running.html).toContain(
+    'data-test="running"><i class="light run"></i>Tests run, <b class="f-slow" title="Over the target of 60 s for bun run test">600 s</b></span>'
+  );
   expect(running.merge).toEqual({ tip: "The tests must pass first. They run now.", disabled: true });
   const passed = row([runOf("tree-clean")]);
-  expect(passed.html).toContain('data-test="passed"><i class="light ok"></i>Tests passed</span>');
+  expect(passed.html).toContain('data-test="passed"><i class="light ok"></i>Tests passed in 24 s</span>');
+  // A run over the target of 60 s: its time is in the warning colour.
+  expect(row([runOf("tree-clean", { ended: "2026-11-05T11:51:01.000Z" })]).html).toContain(
+    'Tests passed in <b class="f-slow" title="Over the target of 60 s for bun run test">61 s</b></span>'
+  );
+  expect(row([runOf("tree-clean", { ended: "2026-11-05T11:51:00.000Z" })]).html).toContain("Tests passed in 60 s</span>");
   expect(passed.merge).toEqual({ tip: "", disabled: false });
   // A failed run opens to its failed tests, what the failed step said, and its log.
   const names = ["e2e/smoke/a.e2e.ts: typing shows", "e2e/smoke/b.e2e.ts: undo works"];
   const failed = row([runOf("tree-clean", { state: "failed", failed: names, note: "== smoke run: FAILED (9 s)" })]);
-  expect(failed.html).toContain('data-test="failed"><i class="light bad"></i>2 tests failed</span>');
+  expect(failed.html).toContain('data-test="failed"><i class="light bad"></i>2 tests failed in 24 s</span>');
   expect(failed.html).toContain(
     `<details class="f-fails"><summary>What failed</summary><ul><li>${names[0]}</li><li>${names[1]}</li></ul><pre>== smoke run: FAILED (9 s)</pre>`
   );
@@ -274,7 +281,7 @@ test("a branch's row shows one test state, and only a passed run of its merge's 
   });
   // A run with no failed browser test (the typecheck failed): what that step said.
   const broke = row([runOf("tree-clean", { state: "failed", note: "== typecheck: FAILED (9 s)" })]);
-  expect(broke.html).toContain("Tests failed</span>");
+  expect(broke.html).toContain("Tests failed in 24 s</span>");
   expect(broke.html).toContain("<summary>What failed</summary><pre>== typecheck: FAILED (9 s)</pre>");
   // A branch with a conflict has no merge to test; and the page has no other box of tests or times.
   const all = viewHtml(deploys(), "erga.dev", NOW);

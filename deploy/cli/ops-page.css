@@ -73,6 +73,7 @@ a.job:hover { border-color: var(--chrome); }
 .f-test { display: inline-flex; align-items: baseline; gap: 6px; }
 .f-test .light { align-self: center; }
 .f-test.ok { color: var(--ok); }
+.f-test .f-slow { margin-left: -2px; color: var(--off); font-weight: 600; }
 .f-test.bad { color: var(--bad); font-weight: 600; }
 .f-test.run .light { background: var(--live); animation: pulse 1.1s ease-in-out infinite; }
 .f-test.wait .light { background: transparent; box-shadow: inset 0 0 0 1.5px var(--chrome); }

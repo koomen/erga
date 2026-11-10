@@ -9,7 +9,7 @@ import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo";
 import { esc } from "../../shared/html";
 import { plural, timeAgo } from "../../shared/time";
 import type { Config, Entry } from "./config";
-import { type Test, type TestRun, testOf, testText } from "./gate";
+import { secondsOf, TARGET_S, type Test, type TestRun, testOf, testText } from "./gate";
 import { type Alive, activeJobs, deploysTo, type JobState, jobState, type Line, type Run } from "./job-state";
 import { GITHUB, isStale, type Polls } from "./poll-state";
 
@@ -286,7 +286,12 @@ function testCell(t: Test, now: number): { chip: string; more: string } {
   if (t.at == "none") return { chip: "", more: "" };
   const cls = { waiting: "wait", running: "run", passed: "ok", failed: "bad" }[t.at];
   const tip = t.at == "waiting" && t.before ? ' title="The branch or staging changed since that run: the merge is other code now."' : "";
-  const chip = `<span class="f-test ${cls}" data-test="${t.at}"${tip}><i class="light ${cls}"></i>${esc(testText(t, now))}</span>`;
+  // A run's time, in the warning colour when it is over the suite's target.
+  const slow = t.at != "waiting" && secondsOf(t.run, now) > TARGET_S;
+  const text = esc(testText(t, now)).replace(/\d+ s$/, (time) =>
+    slow ? `<b class="f-slow" title="Over the target of ${TARGET_S} s for bun run test">${time}</b>` : time
+  );
+  const chip = `<span class="f-test ${cls}" data-test="${t.at}"${tip}><i class="light ${cls}"></i>${text}</span>`;
   if (t.at != "failed") return { chip, more: "" };
   const list = t.run.failed.length ? `<ul>${t.run.failed.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
   const note = t.run.note ? `<pre>${esc(t.run.note)}</pre>` : "";
