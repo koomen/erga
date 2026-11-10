@@ -85,6 +85,9 @@ export async function painted(page: Page, at: Spot, load: () => Promise<void>): 
   await cdp.send("Page.startScreencast", { format: "png", everyNthFrame: 1, maxWidth: width, maxHeight: height });
   try {
     await load();
+    // The page counts its frames (watch). A busy machine paints few frames in a short load: the record goes on until
+    // it has enough frames to say "on every frame" (still asks for more than 5).
+    await page.waitForFunction(() => ((window as any).__spots?.length ?? 0) > 5, null, { timeout: 10_000 });
   } finally {
     await cdp.send("Page.stopScreencast").catch(() => {});
     await cdp.detach().catch(() => {});
