@@ -220,6 +220,20 @@ async function build(): Promise<void> {
     .replace(/\s*\n\s*/g, "").replace(/\s*([{};:,])\s*/g, "$1").replace(/;}/g, "}");
   const latin = fontUrl.get("inter-latin-normal.woff2");
   if (!latin) throw new Error("client/fonts has no inter-latin-normal.woff2");
+  // The templates' typefaces (assets/templates/: Instrument Sans, Literata), which a document's page gets by name from
+  // Erga (server/pages/reader.ts), never from another site. The files are the landing project's.
+  const pageFontCss = (
+    [
+      ["Instrument Sans", "font-weight:500 700", "instrument-sans.woff2"],
+      ["Literata", "font-weight:400 600", "literata.woff2"],
+      ["Literata", "font-style:italic;font-weight:400", "literata-italic.woff2"],
+    ] as const
+  )
+    .map(([family, how, f]) => {
+      const bytes = new Uint8Array(readFileSync(join(ROOT, "assets/landing/fonts", f)));
+      return `@font-face{font-family:"${family}";${how};font-display:swap;src:url(${put(`fonts/${f.replace(/\.woff2$/, "")}-${hashOf(bytes)}.woff2`, bytes)}) format("woff2")}`;
+    })
+    .join("");
   const enc = (s: string) => new TextEncoder().encode(s);
   files["inter.css"] = put(`inter-${hashOf(enc(fontCss))}.css`, enc(fontCss));
 
@@ -251,7 +265,7 @@ async function build(): Promise<void> {
     deps,
     frame: [...new Set(PAGE_SCRIPTS.flatMap((n) => closure(files[n], true)))],
     integrity: Object.fromEntries([...made].filter(([u]) => u.endsWith(".js")).sort(([a], [b]) => a.localeCompare(b)).map(([u, b]) => [u, integrityOf(b)])),
-    fonts: { css: fontCss, preload: latin },
+    fonts: { css: fontCss, preload: latin, page: pageFontCss },
     shell: editorShell(editor, new TextDecoder().decode(style)),
   };
 

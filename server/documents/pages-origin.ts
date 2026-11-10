@@ -138,7 +138,8 @@ export async function readPagesClaims(
 
 /**
  * A request to a document's pages origin: /t/<token>/<path> is the document's file at <path> (/t/<token>/ its own
- * page), which only the viewer on the token's site may frame. A page the frame goes to (an HTML file, as a frame's
+ * page), which only the viewer on the token's site may frame. A reader's address has the document's version after the
+ * token (/t/<token>/@<ver>/<path>, server/documents/view.ts): its files are kept by the browser until the version changes. A page the frame goes to (an HTML file, as a frame's
  * document) comes with the viewer's script first in it (readerPage); anything else as the file is.
  */
 export const pagesRoutes = (doc: { owner: string; id: string }) =>
@@ -152,7 +153,8 @@ export const pagesRoutes = (doc: { owner: string; id: string }) =>
 /** The answer of pagesRoutes, as a web Response: mostly the document's own, passed on. */
 async function pageFile(request: Request, url: URL, doc: { owner: string; id: string }, platform: Platform): Promise<Response> {
   const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-  const [, token, rest] = /^\/t\/([^/]+)(\/.*)$/.exec(url.pathname) ?? [];
+  // (/t/<token>/@<ver>/<path>: a reader's address, with the version of the document that the viewer showed.)
+  const [, token, ver, rest] = /^\/t\/([^/]+)(?:\/@([^/]+))?(\/.*)$/.exec(url.pathname) ?? [];
   if (!token || (request.method != "GET" && request.method != "HEAD")) return notFound();
   const claims = await readPagesClaims(platform.secret, token, doc.owner, doc.id);
   const shell = claims?.shell;
@@ -169,6 +171,11 @@ async function pageFile(request: Request, url: URL, doc: { owner: string; id: st
   // This origin has no cookies of its own. Until erga-pages.dev is on the Public Suffix List (a request to publicsuffix.org),
   // one document's page can set a cookie for all of them: it goes no further than here.
   asked.delete("cookie");
+  // A reader's address with a version: the document says its version now with the file. An address then always means the
+  // same files, and the browser keeps them. Not an editor's: its page changes under it, and is checked each time.
+  const versioned = !!ver && !claims.edit;
+  if (versioned) asked.set("x-erga-ver", ver);
+  else asked.delete("x-erga-ver");
   const inm = asked.get("if-none-match");
   if (page && inm) {
     const theirs = inm.split(",").map((t) => t.trim().replace(/^W\//, "")).filter((t) => t.endsWith(`${ours}"`)).map((t) => t.slice(0, -ours.length - 1) + '"');
@@ -183,7 +190,24 @@ async function pageFile(request: Request, url: URL, doc: { owner: string; id: st
   const [route, answer] = await Promise.all([platform.directory.route(doc.id), platform.docs.fetch(at, inner)]);
   if (!route || route.owner != at.owner) { await answer.body?.cancel(); return notFound(); }
   const type = answer.headers.get("content-type") ?? "";
-  if (!page || !/^text\/html\b/i.test(type) || (answer.status != 200 && answer.status != 304)) return answer;
+  const now = versioned ? answer.headers.get("x-erga-ver") : null;
+  const found = answer.status == 200 || answer.status == 304;
+  // A page at a version that is not the document's now (a link in an old page, a tab that was away): the same page at
+  // the version now, so its files are that version's too.
+  if (page && found && now && now != ver) {
+    await answer.body?.cancel();
+    return new Response(null, {
+      status: 302,
+      headers: { Location: `/t/${token}/@${now}${rest}${url.search}`, "Cache-Control": "no-store" },
+    });
+  }
+  if (!page || !/^text\/html\b/i.test(type) || !found) {
+    // A file as it is, at the version now: this address never has other bytes.
+    if (answer.status != 200 || !now || now != ver) return answer;
+    const kept = new Headers(answer.headers);
+    kept.set("Cache-Control", "private, max-age=31536000, immutable");
+    return new Response(answer.body, { status: 200, headers: kept });
+  }
   const etag = answer.headers.get("etag");
   const headers = new Headers(answer.headers);
   for (const h of ["content-length", "content-range", "accept-ranges"]) headers.delete(h);
@@ -193,7 +217,9 @@ async function pageFile(request: Request, url: URL, doc: { owner: string; id: st
   headers.set("Referrer-Policy", "no-referrer");
   if (answer.status == 304) return new Response(null, { status: 304, headers });
   const text = await answer.text();
-  return new Response(readerPage(text, { shell, prefix: `/t/${token}/`, src: sourceDigest(text), editor: !!claims.edit }), {
+  return new Response(
+    readerPage(text, { shell, prefix: `/t/${token}/${ver ? `@${ver}/` : ""}`, src: sourceDigest(text), editor: !!claims.edit }),
+    {
     status: 200,
     headers,
   });

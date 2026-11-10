@@ -19,8 +19,17 @@ const MANIFEST: AssetManifest = {
   files: { "page.js": "/_erga/main-aaaa1111.js", "frame.js": "/_erga/frame-bbbb2222.js", "style.css": "/_erga/style-cccc3333.css", "editor.html": "/_erga/editor-dddd4444.html", "inter.css": "/_erga/inter-eeee5555.css" },
   deps: { "page.js": ["/_erga/chunk-ffff6666.js"], "frame.js": ["/_erga/chunk-gggg7777.js"] },
   frame: ["/_erga/frame-bbbb2222.js", "/_erga/chunk-gggg7777.js", "/_erga/chunk-hhhh8888.js"],
-  integrity: { "/_erga/frame-bbbb2222.js": "sha384-frame", "/_erga/chunk-gggg7777.js": "sha384-chunk", "/_erga/chunk-hhhh8888.js": "sha384-later", "/_erga/main-aaaa1111.js": "sha384-main" },
-  fonts: { css: "@font-face{font-family:'Inter';font-display:swap;src:url(/_erga/fonts/inter-latin-normal-iiii9999.woff2) format('woff2')}", preload: "/_erga/fonts/inter-latin-normal-iiii9999.woff2" },
+  integrity: {
+    "/_erga/frame-bbbb2222.js": "sha384-frame",
+    "/_erga/chunk-gggg7777.js": "sha384-chunk",
+    "/_erga/chunk-hhhh8888.js": "sha384-later",
+    "/_erga/main-aaaa1111.js": "sha384-main",
+  },
+  fonts: {
+    css: "@font-face{font-family:'Inter';font-display:swap;src:url(/_erga/fonts/inter-latin-normal-iiii9999.woff2) format('woff2')}",
+    preload: "/_erga/fonts/inter-latin-normal-iiii9999.woff2",
+    page: '@font-face{font-family:"Literata";src:url(/_erga/fonts/literata-llll0000.woff2) format("woff2")}',
+  },
 };
 
 afterAll(() => useAssets(null));

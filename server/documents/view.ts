@@ -399,7 +399,9 @@ async function render(
     shares: d.shares,
   });
   const origin = pagesOrigin(d.owner, d.id, url, platform);
-  const files = `${origin}/t/${token}/`;
+  // A reader's files are at an address with the document's version: the browser keeps them until the version changes
+  // (pages-origin.ts). Whoever has the page's editor gets them checked each time: the page changes under it.
+  const files = `${origin}/t/${token}/${canEdit || canComment ? "" : `@${d.ver}/`}`;
   const address = addressOf(d);
   const clone = link(`/new?from=${landing ? "landing" : d.id}`, session);
   const here = pageAddress(d.file) ? `${address}/${pageAddress(d.file).split("/").map(encodeURIComponent).join("/")}` : address;

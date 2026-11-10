@@ -817,16 +817,19 @@ export class Document {
     // (once a room closing a moment ago has written them).
     await this.settled();
     const stored = this.phase.is == "open" || this.phase.is == "opening" ? null : await this.storedFile(request);
-    if (stored) return stored;
+    if (stored) return this.views.stamp(request, stored);
     const self = this;
-    return Effect.runPromise(
-      this.hold(
-        Effect.gen(function* () {
-          const opened = yield* self.admit(request);
-          // Not made yet: asked again next time, since it may be by then (made, or linked from disk).
-          if (!opened) return new Response("No such document", { status: 404 });
-          return yield* io(() => opened.handler(request));
-        })
+    return this.views.stamp(
+      request,
+      await Effect.runPromise(
+        this.hold(
+          Effect.gen(function* () {
+            const opened = yield* self.admit(request);
+            // Not made yet: asked again next time, since it may be by then (made, or linked from disk).
+            if (!opened) return new Response("No such document", { status: 404 });
+            return yield* io(() => opened.handler(request));
+          })
+        )
       )
     );
   }

@@ -58,6 +58,12 @@ export function fontTags(preload = false): string {
   return `${preload ? `<link rel="preload" as="font" type="font/woff2" crossorigin href="${manifest.fonts.preload}">` : ""}<style id="erga-fonts">${manifest.fonts.css}</style>`;
 }
 
+/**
+ * The templates' typefaces for a document's page, on its own origin: their @font-face rules, with the files on the
+ * app's origin `shell` (a font is fetched only by a page that uses it).
+ */
+export const pageFonts = (shell: string) => (manifest?.fonts.page ?? "").replace(/url\(\//g, `url(${shell}/`);
+
 /** The editor's shell (client/editor.html, as the build split it): its styles and its controls, for a document's page. */
 export const editorShell = () => manifest?.shell ?? { style: "", body: "" };
 

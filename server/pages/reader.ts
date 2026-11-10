@@ -14,7 +14,7 @@
 // this one document: that's the boundary (PAGE_SANDBOX).
 
 import { bringsEditor, pageOf, type ReaderConfig } from "../../shared/page-html.ts";
-import { asset, frameScripts } from "./assets.ts";
+import { asset, frameScripts, pageFonts } from "./assets.ts";
 import { inlineCall } from "./inline.ts";
 import { jsonInScript } from "../../shared/html.ts";
 
@@ -67,6 +67,8 @@ export function readerPage(html: string, o: { shell: string; prefix: string; src
   const head =
     (editor ? `<script type="importmap" data-erga>${jsonInScript({ imports: {}, integrity: editor.map })}</script>` : "") +
     `<script data-erga>${readerScript({ shell: o.shell, prefix: o.prefix, src: o.src, ...(editor ? { editor } : {}) })}</script>` +
+    // The templates' typefaces, by name, from Erga's own files: a page asks no other site for them.
+    (pageFonts(o.shell) ? `<style data-erga>${pageFonts(o.shell)}</style>` : "") +
     (editor
       ? `<script data-erga>${PROBLEM_WATCH}</script><script data-erga>${LIVE_WATCH}</script><script data-erga>${TEXT_GUARD}</script><script data-erga>${EDITING_API}</script>`
       : "");
@@ -75,7 +77,15 @@ export function readerPage(html: string, o: { shell: string; prefix: string; src
 
 /** The version of what the pages origin puts in a page: this script's and the editor's build's (frame.js's address names it). */
 export const readerVersion = () =>
-  versionOf(readerScript({ shell: "", prefix: "", src: "" }) + PROBLEM_WATCH + TEXT_GUARD + EDITING_API + LIVE_WATCH + asset("frame.js"));
+  versionOf(
+    readerScript({ shell: "", prefix: "", src: "" }) +
+      PROBLEM_WATCH +
+      TEXT_GUARD +
+      EDITING_API +
+      LIVE_WATCH +
+      asset("frame.js") +
+      pageFonts("")
+  );
 
 /** A digest of text (FNV-1a), which changes whenever it does. */
 const versionOf = (text: string) => {
