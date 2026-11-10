@@ -61,7 +61,9 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
     // Its controls run now; what moves moves again from the next frame.
     unrestore: () => requestAnimationFrame(() => requestAnimationFrame(() => body.classList.remove("erga-restored", "no-motion"))),
     "drop-edit": () => history.replaceState(history.state, "", ergaWithEdit(location.pathname, false) + location.hash),
-    retry: () => location.assign(ergaWithEdit(location.pathname == "/" ? "/" : ergaPageAddress(), true) + location.hash),
+    // (The address has ?edit already: the pencil's entry, or Back's. A reload, as going to the same address with a hash
+    // in it loads nothing.)
+    retry: () => location.reload(),
   };
   let state = start(body.classList.contains("erga-editing"), !!window.ergaRestored);
   function render() {

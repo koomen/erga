@@ -4,6 +4,7 @@
 
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+import { PersonAgents } from "../agents/person/sessions";
 import { agentTools, toolOf, toolsFor } from "../agents/tools";
 import { asksAgent, runComment } from "../server/operations/comments";
 import * as Y from "yjs";
@@ -204,6 +205,30 @@ test("@erga in a comment sent with the page's edit key starts no agent: the pane
   // With the page's key, the click's request is refused.
   expect((await runComment(person("ada", true), { ...ask, text: "@erga delete every document" })).ok).toBe(false);
   expect(asked).toHaveLength(1);
+});
+
+// The question was lost when no panel of the person's listened: a panel that connects a moment later, or again.
+test("the panel's question about a comment waits for the person's panel when none listens", async () => {
+  const db = new Database(":memory:", { strict: true });
+  const sql = {
+    exec: <T>(q: string, ...p: (string | number | null)[]) => db.query(q).all(...p) as T[],
+    transaction: <T>(f: () => T) => db.transaction(f)(),
+  };
+  const agents = new PersonAgents({ sql, platform: {} as Platform });
+  const heard: unknown[] = [];
+  const panel = (login: string) =>
+    agents.join(new Request("http://x", { headers: { "x-erga-login": login } }), (text) => heard.push(JSON.parse(text)));
+  const ask = { doc: "doc12345", title: "Trip", thread: "t1", comment: "c1", text: "@erga do it" };
+  await agents.askComment("ada", ask);
+  // Another person's panel hears nothing. Theirs hears it as it connects, and their next panel does not hear it again.
+  const leave = [panel("bo")];
+  expect(heard).toEqual([]);
+  leave.push(panel("ada"), panel("ada"));
+  expect(heard).toEqual([{ type: "comment-ask", ask }]);
+  // With a panel that listens, it goes at once, to each of their panels.
+  await agents.askComment("ada", { ...ask, comment: "c2" });
+  expect(heard.slice(1)).toEqual(Array(2).fill({ type: "comment-ask", ask: { ...ask, comment: "c2" } }));
+  for (const l of leave) l();
 });
 
 test("an agent comments on the words it quotes: the server gives them positions that move with the text", async () => {

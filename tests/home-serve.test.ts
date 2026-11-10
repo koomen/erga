@@ -115,3 +115,17 @@ test("a deploy that forgets the snapshot while this isolate asks the home object
   answer();
   expect((await second).status).toBe(200);
 });
+
+// One request for / asked for the snapshot two times: as the homepage, then as an address of the site.
+test("the first deploy ends while / is answered: / is not the site's bare index.html", async () => {
+  const p = platform();
+  (p.edge as { cache: unknown }).cache = undefined;
+  await forgetHome(p, new URL("https://erga.test/"));
+  const deployed = p.home.page;
+  let asked = 0;
+  (p.home as { page: unknown }).page = async (known?: string | null) => (asked++ ? deployed(known) : null);
+  const first = await respond(route, new Request("https://erga.test/"), p);
+  expect([asked, first.status, await first.text()]).toEqual([1, 404, "Not the site's"]);
+  // The next / is the homepage.
+  expect(await (await respond(route, new Request("https://erga.test/"), p)).text()).toContain("<h1>Erga</h1>");
+});

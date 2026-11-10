@@ -72,6 +72,13 @@ function joinHunks(a: string, hunks: { from: number; to: number; insert: string 
 }
 
 const WORD = /[\p{L}\p{N}_]/u;
+/**
+ * Text that starts with an opening bracket and ends with a closing one: a tag, an element, a mark. An insertion or a
+ * deletion that can be such text is that one, before any other equivalent one. The diff's own choice shares a bracket
+ * with a neighbour ("<li>b</li>" between two items reads as "b</li><li>" after the next item's "<li>"): when someone
+ * elsewhere deletes that neighbour at the same time, its bracket goes, and the new text is left broken.
+ */
+const whole = (first: string, last: string) => "<⟦([{".includes(first) && ">⟧)]}".includes(last);
 
 /**
  * The word diff can align a hunk loosely ("Where th" -> "Wher" rather than
@@ -94,25 +101,33 @@ function tidy(a: string, h: { from: number; to: number; insert: string }, lo: nu
     // equivalent position, leftmost first. (Never moved needlessly: when this
     // change is merged with others, which characters it sits between matters.)
     const minimal = { from, to, insert };
-    if (clean(a[from - 1], a[from], a[to - 1], a[to])) return minimal;
     while (from > lo && a[from - 1] == a[to - 1]) { from--; to--; }
-    for (let f = from, t = to; ; f++, t++) {
-      if (clean(a[f - 1], a[f], a[t - 1], a[t])) return { from: f, to: t, insert: "" };
-      if (t >= hi || a[f] != a[t]) break;
-    }
-    return minimal;
+    const find = (ok: (f: number, t: number) => boolean) => {
+      if (ok(minimal.from, minimal.to)) return minimal;
+      for (let f = from, t = to; ; f++, t++) {
+        if (ok(f, t)) return { from: f, to: t, insert: "" };
+        if (t >= hi || a[f] != a[t]) return null;
+      }
+    };
+    return find((f, t) => whole(a[f], a[t - 1])) ?? find((f, t) => clean(a[f - 1], a[f], a[t - 1], a[t])) ?? minimal;
   }
   if (insert && from == to) {
     // An insertion, likewise.
     const minimal = { from, to, insert };
-    if (clean(a[from - 1], insert[0], insert[insert.length - 1], a[from])) return minimal;
     while (from > lo && a[from - 1] == insert[insert.length - 1]) { from--; insert = a[from] + insert.slice(0, -1); }
-    for (let f = from, ins = insert; ; f++) {
-      if (clean(a[f - 1], ins[0], ins[ins.length - 1], a[f])) return { from: f, to: f, insert: ins };
-      if (f >= hi || a[f] != ins[0]) break;
-      ins = ins.slice(1) + a[f];
-    }
-    return minimal;
+    const find = (ok: (f: number, ins: string) => boolean) => {
+      if (ok(minimal.from, minimal.insert)) return minimal;
+      for (let f = from, ins = insert; ; f++) {
+        if (ok(f, ins)) return { from: f, to: f, insert: ins };
+        if (f >= hi || a[f] != ins[0]) return null;
+        ins = ins.slice(1) + a[f];
+      }
+    };
+    return (
+      find((_, ins) => whole(ins[0], ins[ins.length - 1])) ??
+      find((f, ins) => clean(a[f - 1], ins[0], ins[ins.length - 1], a[f])) ??
+      minimal
+    );
   }
   // Widen to word boundaries. Outside the hunk a and b agree, so the characters
   // taken in are the same on both sides.

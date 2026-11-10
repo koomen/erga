@@ -73,6 +73,8 @@ export class PersonAgents {
   /** The event streams open, each with the person it's for. */
   private clients = new Map<WritableStreamDefaultWriter<Uint8Array>, string>();
   private sockets = new Map<(text: string) => void, string>();
+  /** Each person's last comment that asks (askComment) while no panel of theirs listened. In memory: a restart loses it. */
+  private asks = new Map<string, CommentAsk>();
   /** Each person's agent (one, in their object), with where the server is and the document open, as their page said last. */
   private agents = new Map<string, { agent: AgentSession; origin: string; here: string | null }>();
   private beat: Fiber.Fiber<void> | null = null;
@@ -219,6 +221,14 @@ export class PersonAgents {
    */
   async askComment(login: string, ask: CommentAsk): Promise<void> {
     this.event({ type: "comment-ask", ask }, login);
+    // No panel of theirs listens (a socket that went away is out by now): the question waits for their next one.
+    if (![...this.sockets.values(), ...this.clients.values()].includes(login)) this.asks.set(login, ask);
+  }
+
+  /** A panel of the person's listens from now: it hears the question that waited for one. */
+  private listening(login: string) {
+    const ask = this.asks.get(login);
+    if (ask && this.asks.delete(login)) this.event({ type: "comment-ask", ask }, login);
   }
 
   // -- each person's conversation, kept
@@ -283,6 +293,7 @@ export class PersonAgents {
     const w = writable.getWriter();
     this.clients.set(w, login);
     this.send(w, ": connected\nretry: 2000\n\n");
+    this.listening(login);
     return new Response(readable, { headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", "X-Accel-Buffering": "no" } });
   }
 
@@ -319,8 +330,10 @@ export class PersonAgents {
    * `send`. It holds none of the browser's six connections to the host, as an event stream does. Returns its leave.
    */
   join(request: Request, send: (text: string) => void): () => void {
-    this.sockets.set(send, request.headers.get("x-erga-login") ?? "");
+    const login = request.headers.get("x-erga-login") ?? "";
+    this.sockets.set(send, login);
     this.keepBeating();
+    this.listening(login);
     return () => { this.sockets.delete(send); };
   }
 

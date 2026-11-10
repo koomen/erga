@@ -126,6 +126,10 @@ journey("a reader's open page shows an agent's change", () => {
     expect(await frameAt()).toMatch(/^\/t\/[^/]+\/@[^/]+\/second\.html$/);
     expect(await frameAt()).not.toBe(before);
     await expect.poll(pill).toBe("Live viewer agent is writing…");
+    // The change adds no entry to the tab's history: Back goes to the page before, not to the old version of this one.
+    await page.evaluate(() => history.back());
+    await expect.poll(shown).toContain("First page");
+    await expect.poll(() => new URL(page.url()).pathname).toBe(path);
   });
 
   test("only people who can edit read the versions: a viewer lists none, reads no old file, sees no diff and restores none; a bad token gets nothing", async () => {

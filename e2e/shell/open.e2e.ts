@@ -273,7 +273,8 @@ journey("a document of several pages: the pencil, Back, and an agent's open_page
     ({ dir, address } = await fixtureWith(s, "multi", {
       "index.html": home.replace("<h1>", `<nav data-erga-noedit><a href="about.html">About</a></nav>\n    <h1>`),
     }));
-    await openPage(page, address);
+    // (With the page's place in the address: the second try loaded nothing then, as the address changed in its hash only.)
+    await openPage(page, `${address}#place`);
     await soon(() => h1Of(page)).toBe("Field guide");
     fail = true;
     await page.locator(".erga-edit-button").click();
