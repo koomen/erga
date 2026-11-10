@@ -30,13 +30,45 @@ export function changesBetween(a: string, b: string): ChangeSet {
       if (!p.added && !p.removed) { open = null; pos += p.value.length; continue; }
       if (!open) hunks.push((open = { from: pos, to: pos, insert: "" }));
       if (p.added) open.insert += p.value;
-      else { open.to += p.value.length; pos += p.value.length; }
+      else {
+        open.to += p.value.length;
+        pos += p.value.length;
+      }
     }
   }
+  joinHunks(a, hunks);
   // Each hunk may only move within the unchanged text between its neighbours.
   const tidied: { from: number; to: number; insert: string }[] = [];
   hunks.forEach((h, i) => tidied.push(tidy(a, h, tidied[i - 1]?.to ?? 0, hunks[i + 1]?.from ?? a.length)));
   return ChangeSet.of(tidied, a.length);
+}
+
+/**
+ * The word diff can read one small edit as two: where two stretches start alike ("⟦p1.49⟧arset⟦p1.51⟧" with the first
+ * mark deleted), it may keep the start of the first for the second ("arset" added before "⟦p1.", "49⟧arset⟦p1." deleted
+ * after it). Then a change made between them elsewhere (rebase) lands in the wrong place: inside the second mark. Two
+ * hunks next to each other that are together one plain insertion or deletion become that one (in place).
+ */
+function joinHunks(a: string, hunks: { from: number; to: number; insert: string }[]): void {
+  for (let i = 0; i + 1 < hunks.length; ) {
+    const h = hunks[i],
+      n = hunks[i + 1];
+    const was = a.slice(h.from, n.to),
+      now = h.insert + a.slice(h.to, n.from) + n.insert;
+    let start = 0;
+    const max = Math.min(was.length, now.length);
+    while (start < max && was.charCodeAt(start) == now.charCodeAt(start)) start++;
+    let end = 0;
+    while (end < max - start && was.charCodeAt(was.length - 1 - end) == now.charCodeAt(now.length - 1 - end)) end++;
+    if (start + end < max) {
+      i++;
+      continue;
+    }
+    const one = { from: h.from + start, to: n.to - end, insert: now.slice(start, now.length - end) };
+    if (one.from == one.to && !one.insert) hunks.splice(i, 2);
+    else hunks.splice(i, 2, one);
+    if (i > 0) i--;
+  }
 }
 
 const WORD = /[\p{L}\p{N}_]/u;
