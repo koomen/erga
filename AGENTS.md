@@ -44,19 +44,20 @@ with requests.
    editor, press real keys and look at the screenshot:
    `bun run look 'type:- Milk' Enter Tab` (`--help` has the steps). A
    passing test alone is not proof.
-2. A reported bug becomes a failing end-to-end test first, with the
-   person's exact keys. The fix comes in the same commit.
-3. An editor e2e test drives the editor with keys, from an empty or
-   realistic document (`e2e/fixtures/empty`). It checks what the page shows
-   (`await ed.shows(...)`), not only the source.
-4. A test that shows a bug you do not fix keeps the right expectation and
-   the mark `knownBug`, with a comment that says what is wrong.
+2. One suite, `bun run test`: under 60 seconds (`e2e/COVERAGE.md`). While
+   you work: `bun run check` (5 seconds, loose).
+3. A reported bug becomes a failing test first, with the person's exact
+   keys. It stays only as a step of a journey or as a unit test, inside
+   the budget; else delete it before the push.
+4. A journey drives the page with real keys and checks what the page
+   shows. Logic without a page is a unit test. A bug that stays keeps the
+   mark `knownBug`.
 5. A passing local test, even one that fakes staging, is not proof that a
    fix works on staging. Run the real flow there, end to end. If you need
    an admin credential you don't have, say so.
 
-Tests run with no model in the loop. One good test for each required
-behavior, not five that check the same thing.
+Tests run with no model in the loop. The suite never grows past its
+minute: a new check replaces a weaker one.
 
 ## Rules
 
