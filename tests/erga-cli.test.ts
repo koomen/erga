@@ -24,7 +24,7 @@ describe("merge", () => {
   test("refuses staging and main, a branch GitHub lacks, an empty branch and a conflict", () => {
     expect(mergeRefusal({ branch: "main", exists: true, ahead: 1, conflicts: [] })).toContain("bun erga deploy <host>");
     expect(mergeRefusal({ branch: "staging", exists: true, ahead: 1, conflicts: [] })).toContain("not a feature branch");
-    expect(mergeRefusal({ branch: "x", exists: false, ahead: 0, conflicts: [] })).toContain("git push origin HEAD:x");
+    expect(mergeRefusal({ branch: "x", exists: false, ahead: 0, conflicts: [] })).toContain("bun erga push");
     expect(mergeRefusal({ branch: "x", exists: true, ahead: 0, conflicts: [] })).toContain("Nothing to merge");
     expect(mergeRefusal({ branch: "x", exists: true, ahead: 2, conflicts: ["a.ts", "b.ts"] })).toContain("a.ts, b.ts");
     expect(mergeRefusal({ branch: "x", exists: true, ahead: 2, conflicts: [] })).toBeNull();

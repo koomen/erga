@@ -42,7 +42,7 @@ export function mergeRefusal(o: { branch: string; exists: boolean; ahead: number
   if (!o.branch) return "Name the branch: bun erga merge <branch>.";
   if ((PROTECTED as readonly string[]).includes(o.branch))
     return `${o.branch} is not a feature branch. A deploy of a primary moves main: bun erga deploy <host>.`;
-  if (!o.exists) return `There is no branch ${o.branch} on GitHub. Push it first: git push origin HEAD:${o.branch}`;
+  if (!o.exists) return `There is no branch ${o.branch} on GitHub. Push it first, from its checkout: bun erga push`;
   if (o.ahead == 0) return `${o.branch} has no commits that staging does not have. Nothing to merge.`;
   if (o.conflicts.length)
     return `${o.branch} conflicts with staging in ${o.conflicts.join(", ")}. Rebase it on origin/staging, fix the conflicts, push it, and merge again.`;
@@ -190,6 +190,21 @@ export function pushRefusal(ref: string, cli: boolean): string | null {
   const name = ref.replace(/^refs\/heads\//, "");
   if (cli || !(PROTECTED as readonly string[]).includes(name)) return null;
   return name == "staging"
-    ? "Don't push to staging directly. Push your branch (git push origin HEAD:<branch>), then: bun erga merge <branch>. bun erga skill tells the rest."
+    ? "Don't push to staging directly. Push your branch (bun erga push), then: bun erga merge <branch>. bun erga skill tells the rest."
     : "Don't push to main directly. A deploy of a primary moves main: bun erga deploy <host>. bun erga skill tells the rest.";
+}
+
+/** Why `bun erga push` must stop before its first step, or null. `branch`: the checkout's branch, null when it has none. */
+export function branchRefusal(branch: string | null): string | null {
+  if (!branch) return "This checkout is on no branch. Start one: bun erga start <branch>.";
+  if ((PROTECTED as readonly string[]).includes(branch))
+    return `${branch} is not a feature branch: only bun erga merge and bun erga deploy move it. Start one: bun erga start <branch>.`;
+  return null;
+}
+
+/** The failed step's part of a test run's output (e2e/run.ts: "== <step>" to the end), its last `max` lines. */
+export function failureOf(out: string, max = 80): string[] {
+  const lines = out.trimEnd().split("\n");
+  const failed = /^== (.+): FAILED/m.exec(out)?.[1];
+  return lines.slice(failed ? lines.lastIndexOf(`== ${failed}`) : 0).slice(-max);
 }

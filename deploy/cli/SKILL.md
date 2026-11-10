@@ -13,14 +13,20 @@ and `main`. There are no pull requests.
    Any name but `staging` and `main`. In a worktree of your own, run a real
    `bun install --frozen-lockfile` first.
 2. Commit. A commit message is one line of ten words at most, with no
-   body. Before each push, run the tests and gate the push on the log:
+   body. Then push with the one command, never with `git push`:
 
-       bun run test > test.log 2>&1; grep -q "^all passing" test.log && git push origin HEAD:<branch>
+       bun erga push
 
-   `bun run test` (format, lint, typecheck, unit tests, smoke run) must end
-   with `all passing`. Also run the e2e tests of the part you change
-   (`bun run test:e2e e2e/full/page/`). The whole suite
-   (`bun run test:full`) only when Pete asks.
+   It formats the lines you changed, builds `server/pages/inline-code.ts`
+   again, runs `bun run test` (format, lint, typecheck, unit tests, smoke
+   run) and pushes the branch only when the tests end with `all passing`.
+   When a step fails, it prints the failure and pushes nothing. It stops
+   before the tests when a file has a change that no commit has (the
+   formatter's too): commit it, and run the command again. It replaces
+   your own earlier push of the branch (after an amend or a rebase), but
+   never commits on GitHub that this checkout has not seen. Also run the
+   e2e tests of the part you change (`bun run test:e2e e2e/full/page/`).
+   The whole suite (`bun run test:full`) only when Pete asks.
 3. A push deploys nothing. Tell Pete the branch name and what it changes.
 4. When Pete asks, merge the branch into staging:
 
