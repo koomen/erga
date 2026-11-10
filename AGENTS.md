@@ -7,9 +7,9 @@ Pete (`koomen`) owns Erga.
 ## How to work
 
 Run `bun erga skill` before you start, and do what it says. In short: one
-feature branch for each task, `bun run test` must end with `all passing`
-before each push, and only `bun erga` moves `staging` and `main`, when Pete
-asks. There are no pull requests.
+feature branch for each task, `bun erga push` formats, tests and pushes
+it (never a plain `git push`), and only `bun erga` moves `staging` and
+`main`, when Pete asks. There are no pull requests.
 
 Pete works with [herdr-core](https://github.com/herdrdev/herdr-core), in
 this way:
@@ -144,9 +144,6 @@ Found a new trap? Write it here, in the same change.
 - Several worktrees run dev servers at once. Stop only your own, by PID
   (`lsof -ti tcp:<your port>`). Never `pkill -f dev/start.ts` or any pattern
   that matches other worktrees; check it with `pgrep -fl` first.
-- Gate a push on the log: `bun run test > log 2>&1; grep -q "^all passing" log && git push ...`.
-  Never `bun run test | tail && git push`: `tail` exits 0 after a failure,
-  and a failing commit reached staging that way.
 - `bun run format` formats only changed lines, and on a new file it can leave
   broken indentation that the check then flags again. Format a new file whole:
   `node_modules/.bin/biome format --write <file>`.

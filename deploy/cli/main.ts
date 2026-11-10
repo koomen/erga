@@ -6,6 +6,8 @@
 //   bun erga [--port N] [--no-open]     the ops page on localhost: the registered instances, setup, deploys, logs, history
 //   bun erga skill                      how an agent works in this repository (the workflow and its rules)
 //   bun erga start <branch>             a new feature branch from origin/staging, in this checkout
+//   bun erga push                       before each push: formats the changed lines, builds the inline code's file, runs
+//                                       the tests, and pushes this branch only when they end with "all passing"
 //   bun erga status                     each registered instance's commit and health, the feature branches and the
 //                                       commits, as text; it only reads (no fetch)
 //   bun erga merge <branch> [-m text]   the branch onto staging as one commit: tests, a deploy to each staging
@@ -65,7 +67,18 @@ function start(name: string | undefined) {
   const r = git("switch", "-c", name!, "origin/staging");
   if (!r.ok) fail(`git switch failed: ${r.err}`, "Commit or stash your changes first, or pick another name.");
   pass(`${name} starts at staging's head ${headOf("origin/staging")?.slice(0, 12)}.`);
-  say(`NEXT  Commit, then push it: git push origin HEAD:${name}. When Pete asks: bun erga merge ${name}`);
+  say(`NEXT  Commit, then push it: bun erga push. When Pete asks: bun erga merge ${name}`);
+}
+
+// ------------------------------------------------------------------ push
+
+async function push() {
+  const { pushBranch } = await import("./push");
+  try {
+    pushBranch({ root: ROOT, log: say });
+  } catch (e) {
+    fail((e as Error).message);
+  }
 }
 
 // ------------------------------------------------------------------ merge
@@ -220,6 +233,8 @@ export async function main(argv: string[]) {
       return say(readFileSync(join(ROOT, "deploy/cli/SKILL.md"), "utf8"));
     case "start":
       return start(plain[0]);
+    case "push":
+      return push();
     case "status": {
       const { ergaDir, readConfig } = await import("./config");
       const s = await readState(readConfig(ergaDir()));
