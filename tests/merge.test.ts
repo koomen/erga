@@ -132,14 +132,14 @@ test("a rewrite stays fast when the clock stands still, as on Workers", () => {
 });
 
 // A room that lost its history takes a kept replica's text as edits (libs/text/ui/collab.ts, adopt): `base` is the text
-// that the old room last confirmed to the replica, `room` the text of the files, `ours` the replica's.
+// that the old room last said its files hold, `room` the text of the files, `ours` the replica's.
 const page = (h1: string, p = "A page.") => `<body>\n<h1>${h1}</h1>\n<p>${p}</p>\n</body>\n`;
 const adopt = (base: string, room: string, ours: string) => apply(room, rebaseOnce(base, room, ours));
 
 // (e2e/sync/restart.e2e.ts, 2 runs of 30 on a busy machine: "Launch notes offline, twice unsent lost, twice".)
-test("an edit that the room stored, but did not confirm before it lost its history, arrives one time", () => {
+test("an edit that the room stored, and lost its history before the replica heard so, arrives one time", () => {
   const base = page("Launch notes offline");
-  // A viewer's replica got ", twice" from the room after its last confirmation; the room stored it, and lost its history.
+  // A viewer's replica got ", twice" from the room after it last heard what the files hold; the room stored it, and lost its history.
   const viewer = page("Launch notes offline, twice");
   expect(adopt(base, viewer, viewer)).toBe(viewer);
   // The same, after the pages put in what their people typed meanwhile.
@@ -167,7 +167,7 @@ test("an edit that the room did not store arrives one time, beside what the room
   expect(adopt(base, page("Launch notes offline, twice lost"), page("Launch notes offline, twice unsent"))).toBe(
     page("Launch notes offline, twice lost unsent")
   );
-  // Stored and not confirmed in the heading, not stored in the paragraph, and someone else's edit that this replica never got.
+  // Stored, and not heard of, in the heading, not stored in the paragraph, and someone else's edit that this replica never got.
   expect(adopt(page("Launch notes"), page("Launch notes offline", "A page. Theirs."), page("Launch notes offline", "Mine. A page."))).toBe(
     page("Launch notes offline", "Mine. A page. Theirs.")
   );

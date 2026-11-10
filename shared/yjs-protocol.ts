@@ -104,6 +104,25 @@ export function readSyncMessage(d: Decoder, reply: Encoder, doc: Y.Doc, origin: 
   return kind;
 }
 
+// Stored (Erga's own, not of y-protocols; a peer that does not know it ignores it): what the room's files hold of the
+// history, as a state vector (document/room.ts, sayStored).
+export const MSG_STORED = 4;
+
+/** A state vector (each client and its clock), as Yjs writes one. */
+export function writeVector(e: Encoder, vector: Map<number, number>): void {
+  e.writeUint(vector.size);
+  for (const [client, clock] of vector) {
+    e.writeUint(client);
+    e.writeUint(clock);
+  }
+}
+
+export function readVector(d: Decoder): Map<number, number> {
+  const vector = new Map<number, number>();
+  for (let n = d.readUint(); n > 0; n--) vector.set(d.readUint(), d.readUint());
+  return vector;
+}
+
 // Awareness: each client's state (JSON, null when it left) with a clock that only goes up.
 
 /** A state not renewed in this time is dropped; a client renews its own at half of it. */
