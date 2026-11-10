@@ -2,21 +2,16 @@
 
 import { colorFor } from "../../document/content";
 import { safeAvatar } from "../../shared/avatars";
-import { mountAgentMenu } from "../common/agent-menu";
 import { showCopied } from "../common/copied";
 import { runTool } from "../common/tools";
 import { BASE, $, type Shell } from "./shell";
 
 export function mountSharing(shell: Shell) {
 
-  // Share with an agent (#btn-agent-share): its menu, the MCP prompt or a prompt with a token (client/common/agent-menu.ts).
-  const agentMenu = mountAgentMenu({
-    button: $("btn-agent-share"),
-    root: document,
-    address: () => shell.docName?.address ?? location.pathname,
-    tokens: true,
-    onOpen: () => shell.chrome.cardOpened("agent"),
-  });
+  // Share with an agent (#btn-agent-share): the bar's own menu (client/common/bars.ts), viewing and editing. When it
+  // opens, the editor's other cards close.
+  const agentMenu = window.ergaAgentMenu;
+  $("btn-agent-share").addEventListener("erga:agent-menu", () => shell.chrome.cardOpened("agent"));
 
   const shareBtn = $("btn-share");
   // Share (#btn-share, the Share card): who may view or edit the document, and anyone signed in with the link. Only its
@@ -187,7 +182,7 @@ export function mountSharing(shell: Shell) {
     if (sharing.hidden || !shareAt) return;
     shareCall().then(renderSharing, () => {});
   }
-  return { toggleSharing, accessChanged, toggleAgentMenu: agentMenu.toggle };
+  return { toggleSharing, accessChanged, toggleAgentMenu: (force?: boolean) => agentMenu?.toggle(force) };
 }
 
 export type Sharing = ReturnType<typeof mountSharing>;

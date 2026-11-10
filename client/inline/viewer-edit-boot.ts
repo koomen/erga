@@ -71,7 +71,13 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
     body.classList.toggle("erga-editor-ready", l.ready);
     const wrap = document.getElementById("erga-editor");
     if (wrap) wrap.inert = !l.live;
-    document.querySelector(".erga-edit-button")?.setAttribute("aria-pressed", String(l.editing && !l.closing));
+    // The pencil is one button, viewing and editing: blue while editing, when it goes back to the page.
+    const pencil = document.querySelector<HTMLAnchorElement>(".erga-edit-button");
+    const on = l.editing && !l.closing;
+    pencil?.setAttribute("aria-pressed", String(on));
+    pencil?.setAttribute("aria-label", on ? "Editing: stop, and view the page" : "Edit");
+    // Its address, for a new tab: the page in the viewer while editing, else its editor.
+    if (pencil) pencil.setAttribute("href", ergaWithEdit(new URL(pencil.href).pathname, !on));
     let note = document.querySelector(".erga-edit-failed");
     if (l.failed && !note) {
       note = Object.assign(document.createElement("p"), {
@@ -90,11 +96,11 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
   const edit = (on: boolean) => dispatch({ type: "edit", on, motion: !matchMedia("(prefers-reduced-motion: reduce)").matches });
   window.ergaShell = { ready: () => dispatch({ type: "ready" }) };
   document.addEventListener("click", (e) => {
-    const a = (e.target as Element | null)?.closest?.(".erga-edit-button, #btn-edit");
+    const a = (e.target as Element | null)?.closest?.(".erga-edit-button");
     if (!a || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
-    const on = a.id != "btn-edit";
-    if (on == looks(state.state).editing && !looks(state.state).closing) return;
+    // Into the editor, or (editing, and not on the way out already) out of it.
+    const on = !(looks(state.state).editing && !looks(state.state).closing);
     // A new entry, for the page shown (the page's place in its address, #3, stays: it is the same page).
     const page = shown() || editor()?.pagePath;
     history.pushState(

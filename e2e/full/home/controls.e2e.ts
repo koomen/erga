@@ -36,7 +36,7 @@ test("signed out, / has Clone (the New menu's last item) and Sign in with its me
   await p.mouse.click(600, 500);
   expect(await menuHidden()).toBe(true);
   // Signed in: the homepage project's page, with Edit for an admin (the dev server's own person), not for Bo.
-  expect(await homeView(server)).toContain('class="erga-view-button erga-edit-button"');
+  expect(await homeView(server)).toContain('erga-edit-button"');
   expect(await homeView(server, "Bo")).not.toContain("erga-edit-button");
 });
 

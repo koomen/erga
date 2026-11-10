@@ -239,6 +239,17 @@ export interface Platform {
   };
 }
 
+/**
+ * A document's object doesn't know a request: it still runs the code from before a deploy (it moves to the new code
+ * when it restarts, some minutes later). The request can go again then.
+ */
+export class DocumentBehind extends Error {
+  readonly status = 503;
+  constructor(readonly request: string) {
+    super("This document still runs the code from before the last update. Try again in a minute.");
+  }
+}
+
 /** Who a session is, to the directory's `may`. */
 export const whoOf = (session: Session): Who => ({
   login: session.login.toLowerCase(),

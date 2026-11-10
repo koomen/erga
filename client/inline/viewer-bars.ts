@@ -6,6 +6,8 @@ import { mountBars } from "../common/bars";
 
 export default function viewerBars(): void {
   const toggle = mountBars(document, document.body);
+  // The bar's menu is the editor's too (client/shell/sharing.ts).
+  window.ergaAgentMenu = toggle.agentMenu;
   addEventListener("message", (e) => {
     if (ergaFrames.from(e) && e.data?.type == "erga-pointer" && e.data.tap === true) toggle(false);
   });

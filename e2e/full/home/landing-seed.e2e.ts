@@ -61,7 +61,7 @@ test(
     const admin = await get(server, "/_home");
     const page = await admin.text();
     expect({ status: admin.status, refused: page.includes("Not shared with you") }).toEqual({ status: 200, refused: false });
-    expect(page).toContain('class="erga-view-button erga-edit-button"');
+    expect(page).toContain('erga-edit-button"');
     // The home page link on /docs goes there.
     expect(await (await get(server, "/docs")).text()).toMatch(
       /class="erga-view-button erga-home-button"[^>]*href="\/_home"|href="\/_home"[^>]*class="erga-view-button erga-home-button"/

@@ -44,12 +44,10 @@ export function mountNaming(shell: Shell) {
     const here = location.pathname == "/" ? "/" : at;
     if (location.pathname != here) window.history.replaceState(window.history.state, "", here + location.search + location.hash);
   }
-  /** The pencil, blue while editing, goes to this page in the viewer: its address (answered without the query). */
+  /** This page's address in the viewer (without the query): the pencil goes there, or to its editor while viewing (viewer-edit-boot.ts). */
   function viewHref(address: string) {
-    const view = $("btn-edit") as HTMLAnchorElement;
     const at = pageUrl(address, shell.pagePath);
-    view.href = at + shell.as;
-    view.hidden = false;
+    $("btn-edit").setAttribute("href", ergaWithEdit(at, !document.body.classList.contains("erga-editing")));
     return at;
   }
   if (shell.info.docName) showName(shell.info.docName);

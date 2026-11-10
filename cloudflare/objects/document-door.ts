@@ -1,5 +1,5 @@
-// The document object's one door: a request by its name and its arguments (DocumentObject.call). No type of the
-// Worker's here: a unit test runs it (tests/document-door.test.ts).
+// The document object's one door: a request by its name and its arguments (DocumentObject.call), which every caller
+// goes through (document-stub.ts). No type of the Worker's here: a unit test runs it (tests/document-door.test.ts).
 
 /** The object's methods the Worker calls. */
 export const CALLS = [
@@ -42,4 +42,25 @@ export async function throughDoor(target: object, calls: readonly string[], op: 
   const method = calls.includes(op) ? (target as Record<string, unknown>)[op] : undefined;
   if (typeof method != "function") return { ok: false, unknown: op };
   return { ok: true, value: await method.apply(target, args) };
+}
+
+/** The object's stub, as Cloudflare gives it: the door, and the requests of the web. */
+export type Door = { call(op: string, args: readonly unknown[]): Promise<CallAnswer>; fetch(request: Request): Promise<Response> };
+
+/**
+ * The caller's side of the door: a function for each call, which sends its name and arguments through `door` and gives
+ * the method's answer. An object that doesn't know the call fails with `behind(op)`.
+ */
+export function callsThrough(
+  door: Pick<Door, "call">,
+  behind: (op: Call) => Error
+): Record<Call, (...args: unknown[]) => Promise<unknown>> {
+  const through =
+    (op: Call) =>
+    async (...args: unknown[]) => {
+      const answer = await door.call(op, args);
+      if (!answer.ok) throw behind(op);
+      return answer.value;
+    };
+  return Object.fromEntries(CALLS.map((op) => [op, through(op)])) as Record<Call, (...args: unknown[]) => Promise<unknown>>;
 }

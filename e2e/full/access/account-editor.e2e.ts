@@ -138,10 +138,17 @@ test("the pencil switches between viewing and editing without a reload, the docu
   expect(viewing.length).toBeGreaterThanOrEqual(3);
   for (const v of viewing) expect(v, "viewing, overscroll").toBe("none");
   expect(await visible(".erga-crumbs"), "viewing, the viewer's breadcrumbs").toBe(true);
-  expect(await page.evaluate(() => getComputedStyle(document.getElementById("nav-docs")!).visibility)).toBe("hidden");
+  expect(await page.evaluate(() => document.getElementById("doc-title")!.checkVisibility()), "viewing, the editor's title").toBe(false);
   expect(await h1()).toBe(editingTop);
   await clickOn(page, ".erga-edit-button");
-  await until(async () => (await page.evaluate(() => location.pathname + location.search)) == at && await visible("#erga-editor") && !(await visible(".erga-view-buttons")), 5000, "the pencil goes back into the editor");
+  await until(
+    async () =>
+      (await page.evaluate(() => location.pathname + location.search)) == at &&
+      (await visible("#erga-editor")) &&
+      (await page.evaluate(() => document.getElementById("doc-title")!.checkVisibility())),
+    5000,
+    "the pencil goes back into the editor"
+  );
   expect(await page.evaluate(() => (window as any).__samePage === true), "neither reloaded the page").toBe(true);
   await page.evaluate(() => history.back());
   await until(async () => (await page.evaluate(() => location.pathname + location.search)) == at.replace(/[?&]edit=?$/, "") && await visible(".erga-view-buttons"), 5000, "Back goes to the viewer too");

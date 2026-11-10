@@ -27,10 +27,11 @@ test("a reload in the editor shows the editor, as it was, from its first frame",
     if (!top && !host) return;
     const tick = () => {
       if (top && document.body) {
-        const wrap = document.getElementById("erga-editor"), viewer = document.querySelector(".erga-view-buttons");
+        const wrap = document.getElementById("erga-editor"),
+          viewer = document.querySelector(".erga-crumbs > .erga-here");
         seen.push({
           editor: !!wrap && getComputedStyle(wrap).opacity == "1",
-          viewer: !!viewer && getComputedStyle(viewer).visibility != "hidden" && getComputedStyle(viewer).opacity != "0",
+          viewer: !!viewer && viewer.checkVisibility({ visibilityProperty: true, opacityProperty: true }),
           agent: document.body.classList.contains("agent-open"),
           left: document.getElementById("frame")?.getBoundingClientRect().left,
         });

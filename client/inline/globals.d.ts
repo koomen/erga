@@ -38,3 +38,7 @@ declare var ergaShellStyle: () => void;
 /** The editor's controls, on the page (inert until its code runs). */
 declare var ergaControls: () => HTMLElement;
 declare var ergaRestored: ErgaRestored | undefined;
+/** Share with an agent's menu, of the page's buttons' bar (client/common/bars.ts): the editor closes it with its cards. */
+declare var ergaAgentMenu: { toggle(force?: boolean): void } | null | undefined;
+/** Puts the bars' parts kept across a reload in the editor back (client/inline/viewer-editing-body.ts). */
+declare var ergaRestoreParts: (() => void) | undefined;

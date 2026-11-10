@@ -23,7 +23,7 @@ import { scratchSave } from "./scratch.ts";
 
 /** The viewer's pencil (Edit, the editor at `href`), blue while editing: also the homepage's. */
 export const editButton = (href: string, editing: boolean) =>
-  `<a href="${esc(href)}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit  ⌘⇧E"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0512) translate(-11.885 -13.365)" stroke-width="1.5221"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></g></svg></a>`;
+  `<a href="${esc(href)}" class="erga-view-button erga-edit-button" id="btn-edit" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit  ⌘⇧E"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0512) translate(-11.885 -13.365)" stroke-width="1.5221"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></g></svg></a>`;
 
 /** What a page kept for its reload (client/live/restore.ts, RESTORE_KEY: the same, which tests/restore-key.test.ts checks). */
 export const RESTORE_KEY = "erga:live:restore";
@@ -81,6 +81,9 @@ export const editBoot = () =>
 
 /** Full screen: the page's frame, from the button in the viewer and the editor (client/inline/viewer-full.ts). */
 export const FULL_BOOT = inlineCall("viewer-full");
+
+/** Reloaded in the editor: the bars' parts as they were (client/inline/viewer-editing-body.ts), before their scripts run. */
+const RESTORE_BARS = `<script>window.ergaRestoreParts?.()</script>`;
 
 /** The bars' quick actions on a phone, and Share with an agent (client/inline/viewer-bars.ts). */
 export const BARS_BOOT = inlineCall("viewer-bars");
@@ -165,9 +168,17 @@ ${headTags(o.head, o.title, o.file, o.files)}
 ${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(session, true)}${style}<style>${BAND_STYLE}${o.bars ? "" : NO_BARS}</style>${editing ? opening : ""}
 <body>${o.agent ? `<script>${AGENT_LAYOUT}</script>` : ""}${editing ? editingBody : ""}
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
-  const bars = barsHtml({ session, title: o.landing ? null : o.title, project: !!o.project, full: true, edit: o.edit, corner: o.corner });
+  const bars = barsHtml({
+    session,
+    title: o.landing ? null : o.title,
+    project: !!o.project,
+    full: true,
+    edit: o.edit,
+    corner: o.corner,
+    editor: o.editable,
+  });
   const after = `
-${editing ? "" : opening + editingBody}${bars}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}"><script>${inlineCall("viewer-live", `/d/${o.docId}`)}</script>` : ""}${o.commenter ? `<script>${inlineCall("viewer-comment", `/d/${o.docId}`, o.commenter)}</script>` : ""}${o.project && session && !o.landing ? `<meta name="erga-title" content="${esc(o.title)}"><script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
+${editing ? "" : opening + editingBody}${bars}${o.editable ? RESTORE_BARS : ""}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}"><script>${inlineCall("viewer-live", `/d/${o.docId}`)}</script>` : ""}${o.commenter ? `<script>${inlineCall("viewer-comment", `/d/${o.docId}`, o.commenter)}</script>` : ""}${o.project && session && !o.landing ? `<meta name="erga-title" content="${esc(o.title)}"><script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
 `;
   return { before, after };
 }

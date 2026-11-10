@@ -29,7 +29,7 @@ import {
 } from "../directory/index.ts";
 import { AuthError, type AgentToken, type AuthOps } from "../identity/index.ts";
 import { forwardedAs } from "../documents/index.ts";
-import type { Platform } from "../platform.ts";
+import { DocumentBehind, type Platform } from "../platform.ts";
 import type { ToolContent } from "../../document/agent.ts";
 import type { Role } from "../../document/access.ts";
 import { HOME_OWNER, HOME_SLUG, nameOf } from "../../document/names.ts";
@@ -130,6 +130,8 @@ export async function runOperation(op: Operation, args: Record<string, unknown>,
       e instanceof AuthError
     )
       throw new OperationError({ message: e.message, status: e.status });
+    // (A document open since before a deploy: cloudflare/objects/document-stub.ts.)
+    if (e instanceof DocumentBehind) throw new OperationError({ message: e.message, status: e.status });
     throw e;
   }
 }

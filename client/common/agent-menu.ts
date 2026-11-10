@@ -112,7 +112,7 @@ export function mountAgentMenu(o: AgentMenuOptions) {
   host.append(Object.assign(document.createElement("style"), { textContent: STYLE + DARK_STYLE }));
   const menu = document.createElement("div");
   menu.className = "erga-agent-menu";
-  // (The editor's page has the viewer's bars too: a menu for each button, each with its own id.)
+  // (A menu for each button, by the button's id: a document's page, an admin page.)
   menu.id = `${o.button.id || "erga-agent"}-menu`;
   menu.hidden = true;
   menu.setAttribute("role", "dialog");
