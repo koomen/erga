@@ -50,7 +50,7 @@ import {
   stateVector,
   type Author,
 } from "../../../document/content";
-import { changesBetween, rebase } from "../../../document/merge";
+import { changesBetween, rebaseOnce } from "../../../document/merge";
 import { decodeStart, PING, PONG } from "../../../shared/room-socket";
 import { base64, fromBase64 } from "../../../shared/bytes";
 import { sleep } from "../../../shared/time";
@@ -262,8 +262,10 @@ export class Collab {
 
   /**
    * A replica of a history the room lost (it started anew from its files: a new epoch), which can't merge into it: its
-   * edits go in as edits of the files' text instead, made against the text the room last had (`base`), as the room
-   * takes an edit made on disk (document/merge.ts, rebase). One tab takes it (claimKept), so they go in once.
+   * edits go in as edits of the files' text instead, made against the text the room last confirmed (`base`). That
+   * text may be behind the files: the room stored an edit and lost its history before it confirmed it, and a replica
+   * that only reads gets a confirmation one time on each socket. So what the files' text has already goes in no
+   * second time (document/merge.ts, rebaseOnce). One tab takes it (claimKept), so they go in once.
    */
   private async adopt(k: Kept): Promise<void> {
     if (!k.base || !this.opts.keep || !(await claimKept(this.opts.keep, k.epoch))) return;
@@ -275,7 +277,7 @@ export class Collab {
           ours = text.toString(),
           t = files(this.doc).get(path);
         if (base == null || ours == base || !t) continue;
-        applyChanges(t, rebase(base, t.toString(), ours));
+        applyChanges(t, rebaseOnce(base, t.toString(), ours));
       }
     }, "kept");
     was.destroy();

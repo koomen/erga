@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { changesBetween, rebase } from "../document/merge";
+import { changesBetween, rebase, rebaseOnce } from "../document/merge";
 
 const apply = (doc: string, cs: ReturnType<typeof changesBetween>) => cs.apply(Text.of(doc.split("\n"))).toString();
 import { Text } from "@codemirror/state";
@@ -129,4 +129,51 @@ test("a rewrite stays fast when the clock stands still, as on Workers", () => {
   } finally {
     Date.now = now;
   }
+});
+
+// A room that lost its history takes a kept replica's text as edits (libs/text/ui/collab.ts, adopt): `base` is the text
+// that the old room last confirmed to the replica, `room` the text of the files, `ours` the replica's.
+const page = (h1: string, p = "A page.") => `<body>\n<h1>${h1}</h1>\n<p>${p}</p>\n</body>\n`;
+const adopt = (base: string, room: string, ours: string) => apply(room, rebaseOnce(base, room, ours));
+
+// (e2e/sync/restart.e2e.ts, 2 runs of 30 on a busy machine: "Launch notes offline, twice unsent lost, twice".)
+test("an edit that the room stored, but did not confirm before it lost its history, arrives one time", () => {
+  const base = page("Launch notes offline");
+  // A viewer's replica got ", twice" from the room after its last confirmation; the room stored it, and lost its history.
+  const viewer = page("Launch notes offline, twice");
+  expect(adopt(base, viewer, viewer)).toBe(viewer);
+  // The same, after the pages put in what their people typed meanwhile.
+  const later = page("Launch notes offline, twice unsent lost");
+  expect(adopt(base, later, viewer)).toBe(later);
+  // The replica of the person who typed it, with more that never reached the room.
+  expect(adopt(base, viewer, page("Launch notes offline, twice unsent"))).toBe(page("Launch notes offline, twice unsent"));
+  // The room stored a part of what they typed there, and they typed on, also in the middle of it.
+  expect(adopt(base, page("Launch notes offline, twi"), page("Launch notes offline, twice unsent"))).toBe(
+    page("Launch notes offline, twice unsent")
+  );
+  expect(adopt(page("Launch"), page("Launch nots, shrt"), page("Launch notes, short"))).toBe(page("Launch notes, short"));
+  // A viewer that missed the room's last edits, at two places.
+  expect(adopt(page("Launch"), page("Launch big notes, short"), page("Launch notes"))).toBe(page("Launch big notes, short"));
+  // A word that they replaced, and a paragraph that they deleted.
+  expect(adopt(page("Launch notes"), page("Launch plans"), page("Launch plans today"))).toBe(page("Launch plans today"));
+  const two = page("Launch notes").replace("</p>", "</p>\n<p>Second.</p>");
+  expect(adopt(two, page("Launch notes"), page("Launch notes, short"))).toBe(page("Launch notes, short"));
+});
+
+test("an edit that the room did not store arrives one time, beside what the room has", () => {
+  const base = page("Launch notes offline, twice");
+  expect(adopt(base, base, page("Launch notes offline, twice unsent"))).toBe(page("Launch notes offline, twice unsent"));
+  // Another replica's text went in first, at the same place: both are there.
+  expect(adopt(base, page("Launch notes offline, twice lost"), page("Launch notes offline, twice unsent"))).toBe(
+    page("Launch notes offline, twice lost unsent")
+  );
+  // Stored and not confirmed in the heading, not stored in the paragraph, and someone else's edit that this replica never got.
+  expect(adopt(page("Launch notes"), page("Launch notes offline", "A page. Theirs."), page("Launch notes offline", "Mine. A page."))).toBe(
+    page("Launch notes offline", "Mine. A page. Theirs.")
+  );
+  // A deletion beside text that only the room has: the word goes, the room's text stays.
+  expect(adopt(page("Launch notes"), page("Launch notes of Bo"), page("Launch"))).toBe(page("Launch of Bo"));
+  // Two people's different text at one place is never one: all of both stays.
+  expect(adopt(page("Launch"), page("Launch notes"), page("Launch plans"))).toBe(page("Launch notes plans"));
+  expect(adopt(page("Launch"), page("Launch the dog"), page("Launch the cat"))).toBe(page("Launch the dog the cat"));
 });
