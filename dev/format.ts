@@ -10,7 +10,7 @@
 // a file stays as it is and a branch's diff stays its own. A line that Biome would only indent again
 // (the code around it got wrapped) isn't a part: the parts kept take the indentation of the file's
 // own lines around them. The file written must be the same code: Biome must format it exactly as it formats the file
-// as it was, else the formatter writes nothing and says so. `bun run test` runs the check.
+// as it was, else the formatter writes nothing and says so. A new file is formatted whole. `bun run test` runs the check.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -235,6 +235,15 @@ function main() {
     const pretty = formatted(file, text);
     if (pretty == undefined || pretty == text) continue;
     const before = text.split("\n");
+    // A new file is all the change's own: Biome's whole text. In parts, its indentation came out broken.
+    if (changed.size >= before.length - 1 && git("cat-file", "-e", `${from}:${file}`).status != 0) {
+      found++;
+      if (write) {
+        writeFileSync(path, pretty);
+        console.log(`format: formatted the new file ${file}`);
+      } else console.log(`\n${file}: a new file that is not formatted`);
+      continue;
+    }
     const todo = parts(before, pretty.split("\n"), changed, (t) => formatted(file, t));
     if (todo == undefined) {
       refused++;

@@ -37,6 +37,8 @@
 // the runs don't depend on the network.
 //
 // What each number means: measure.ts (the loads) and report.ts (the tables).
+//
+// To compare a change, run it before and after, one round each: a round is already the median of 5 runs.
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";

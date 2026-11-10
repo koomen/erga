@@ -30,6 +30,9 @@
 //
 // The same handler runs in the Worker and in the mock
 // Cloudflare's pretend servers, so the tests exercise it.
+//
+// A document's comments are SQL tables in its Durable Object (document/comments.ts), apart from this key-value
+// storage: staging's copy of a document does not have them.
 
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

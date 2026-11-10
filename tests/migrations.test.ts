@@ -1,5 +1,5 @@
 // server/migrations/: each applies in order to an empty database, and each
-// only adds (AGENTS.md, rule 3). A migration that drops or renames must say
+// only adds. A migration that drops or renames must say
 // so with its first line, `-- erga: destructive`, because the Worker before
 // it can't run on the schema after it, so a rollback across it needs a
 // database restore. The two from before this rule are listed here as they are.

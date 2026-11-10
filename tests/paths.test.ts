@@ -3,7 +3,7 @@
 // folders and ends in a file's extension or a "/" (server/app.ts, client/shell/).
 // Code is not checked (its strings are often data, not paths); only comments,
 // and the whole of each Markdown file. The migrations keep their words: a
-// deployed server has applied them (AGENTS.md, rule 3).
+// deployed server has applied them.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";

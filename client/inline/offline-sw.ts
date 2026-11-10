@@ -10,6 +10,11 @@
 //
 // After sign-out it keeps nothing, and answers from the network alone: it reads the "signed out" mark before each
 // write, so a restart of the worker doesn't forget it (client/common/offline.ts, keepWrite).
+//
+// Trap: the worker answers the frame's page on the pages origin. Its own fetch doesn't say it's for a frame (Sec-
+// Fetch-Dest), and the pages origin would answer with the file as it is, with no reader script and no editor: the
+// worker adds `x-erga-page` (shared/offline.ts). e2e/smoke/editor.e2e.ts (the editor in a second tab) loads a frame
+// through the worker.
 
 import { KEPT_AT, keptAddress, OFFLINE_CACHE, PAGE_HEADER } from "../../shared/offline";
 import { keepWrite } from "../common/offline";

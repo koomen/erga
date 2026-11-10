@@ -12,6 +12,8 @@
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { join, resolve } from "node:path";
+import { ergaDir } from "../deploy/cli/config";
+import { logLoop } from "../deploy/cli/loops";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const E2E = join(ROOT, "node_modules/.bin/e2e");
@@ -23,6 +25,8 @@ const mark = `run-${process.pid}-${Date.now()}`;
 const smokeLimit = Number(process.env.E2E_SMOKE_LIMIT_S) || 90;
 
 let current: ChildProcess | null = null;
+/** The step that failed. */
+let failed = "";
 /** Runs one step; a limit (seconds) stops it, as a failure. */
 function step(name: string, cmd: string, argv: string[], o: { env?: Record<string, string>; limitS?: number } = {}): Promise<boolean> {
   const t = Date.now();
@@ -35,6 +39,7 @@ function step(name: string, cmd: string, argv: string[], o: { env?: Record<strin
       if (timer) clearTimeout(timer);
       const ok = code == 0 && !signal;
       console.log(`== ${name}: ${ok ? "passed" : "FAILED"} (${Math.round((Date.now() - t) / 1000)} s)`);
+      if (!ok) failed = name;
       done(ok);
     });
     p.on("error", (e) => { console.error(`${name}: ${e.message}`); done(false); });
@@ -76,5 +81,12 @@ else {
 let ok = true;
 for (const s of steps) if (!(ok = await s())) break;
 sweep();
-console.log(`\n${ok ? "all passing" : "FAILED"} (${Math.round((Date.now() - t0) / 1000)} s)`);
+const seconds = Math.round((Date.now() - t0) / 1000);
+console.log(`\n${ok ? "all passing" : "FAILED"} (${seconds} s)`);
+// The loop's time log (deploy/cli/loops.ts): a test run of a feature branch. A merge's or a deploy's run is on no branch.
+const branch = spawnSync("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], { cwd: ROOT, encoding: "utf8" }).stdout.trim();
+if (branch && branch != "staging" && branch != "main")
+  try {
+    logLoop(ergaDir(ROOT), { event: "test", at: new Date().toISOString(), branch, ok, seconds, ...(failed ? { failed } : {}) });
+  } catch {}
 process.exit(ok ? 0 : 1);

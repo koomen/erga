@@ -1,6 +1,10 @@
 // Erga's service worker (client/inline/offline-sw.ts), for a page of the editor's: it registers it, and asks it to keep
 // what the page loaded before the worker was its own (the first time, the page came before the worker), so a reload
 // with no connection opens it as it was.
+//
+// Trap: an unregistered service worker still answers the pages it controls until they go, and another tab's editor
+// still writes after a sign-out. A new writer goes through `keepWrite`. A read of the copy uses `caches.match`, never
+// `caches.open`: that makes the copy again.
 
 import { KEPT_DB, OFFLINE_CACHE, ORIGINS_KEY, SIGNED_OUT, WORKER_PATH } from "../../shared/offline";
 import { type Offline, type OfflineEffect, type OfflineEvent, offlineStep } from "./offline-state";

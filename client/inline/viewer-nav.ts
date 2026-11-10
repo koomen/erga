@@ -2,6 +2,10 @@
 // when the page in it goes to another of the document's pages (a link followed: server/pages/reader.ts), and the
 // address bar follows, without a reload: /<owner>/<slug>/<page>, ?edit kept while editing. ergaPageAddress() is the
 // page's address now. And a link that leaves the document, and the document's address, which the frame's copy needs.
+//
+// Trap: a link in the frame opens another page with no reload, so the page shown is the meta `erga-page`, not the
+// address the frame opened with. Code that loads the frame again takes the address from `ergaFrames.src()`, never a
+// copy made at load.
 
 export default function viewerNav(): void {
   const meta = (name: string) => document.querySelector<HTMLMetaElement>('meta[name="' + name + '"]');

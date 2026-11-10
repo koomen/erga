@@ -1,10 +1,10 @@
 // Every source file stays under 48 KB (aim for 32), because an agent's read
 // tool stops near 50 KB: a larger file is read in parts, and its middle goes
-// unread (AGENTS.md, rule 9). The files over the cap today are listed with
+// unread. The files over the cap today are listed with
 // their size. The list only shrinks: a listed file may not grow, and one that
 // is under the cap again must leave it. Fixtures and assets don't count.
 
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { expect, test } from "bun:test";
 
@@ -37,4 +37,12 @@ test("every source file is under 48 KB, or listed and not growing", () => {
   }
   for (const f of Object.keys(OVER)) if (!all.includes(f)) wrong.push(`${f} is listed but isn't in the repo: take it off the list`);
   expect(wrong).toEqual([]);
+});
+
+// AGENTS.md is read by each agent before each task, and each task could add a warning to it: it had 3,352 words. A
+// known mistake goes into a script or a test that refuses it (dev/guard.ts, tests/test-habits.test.ts), else into the
+// comment at the top of the file that it is about.
+test("AGENTS.md stays under 1,300 words", () => {
+  const words = readFileSync(join(ROOT, "AGENTS.md"), "utf8").split(/\s+/).filter(Boolean).length;
+  expect(words).toBeLessThan(1300);
 });

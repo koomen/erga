@@ -45,6 +45,17 @@ export function pushBranch(o: { root: string; log: (line: string) => void; run?:
     stop("These files have changes that no commit has, so the tests would not test the commit.", "Commit them, then: bun erga push");
   }
   const sha = at(["git", "rev-parse", "HEAD"]).out;
+  // A link to the installed packages in a commit (git add -A takes it) fails `bun install` in every deploy.
+  const links = at(["git", "ls-tree", "-r", "HEAD"])
+    .out.split("\n")
+    .filter((l) => l.startsWith("120000 "))
+    .map((l) => l.split("\t")[1])
+    .filter((f) => /(^|\/)node_modules$/.test(f));
+  if (links.length)
+    stop(
+      `The commit has a link to the installed packages (${links.join(", ")}): every deploy would fail at bun install.`,
+      "Take it out (git rm --cached <path>), commit, then: bun erga push"
+    );
 
   const file = join(tmpdir(), `erga-push-${branch!.replace(/[^\w.-]/g, "_")}.log`);
   o.log(`      bun run test ... (the log: ${file})`);

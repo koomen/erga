@@ -1,14 +1,17 @@
 // `bun erga`: the ops page, a local server on 127.0.0.1 and the page it serves (deploy/cli/ops-view.ts draws it). It
-// reads .erga/config.json and .erga/jobs/ in the main clone, which it watches (a change reaches the page at once,
+// reads .erga/config.json, .erga/jobs/ and .erga/full/ (the whole suite's runs, full-run.ts) in the main clone, which it watches (a change reaches the page at once,
 // through /api/events), and the clone's git. It checks its sources (poll-state.ts): GitHub, with a git fetch of the
 // clone, at most once a minute, and each instance's commit and health, with its ops token, every 5 seconds. The page
-// shows each source's last check. Every command works without it. Its Merge and Deploy buttons run
+// shows each source's last check. It serves each branch's proof page (bun erga proof) at /proof/<branch>/. Every command works without it. Its Merge and Deploy buttons run
 // `bun erga merge` and `bun erga deploy` (POST /api/merge, /api/deploy) in a process of their own, as a terminal does:
 // the same code, locks and job records. A merge's tests take minutes, and this server must answer while they run.
 
 import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Entry, entryOrigin, readConfig } from "./config";
+import { readFullRuns } from "./full-run";
+import { loopStats, readLoops } from "./loops";
+import { readProofs } from "./proof";
 import { fetchGitHub, rememberedBranches } from "./observe";
 import { readOps } from "./ops";
 import {
@@ -174,6 +177,9 @@ export function serveOpsPage(o: OpsPageOptions) {
     setup: "",
     run: { at: "idle" },
     polls: startPolls(),
+    full: [],
+    proofs: {},
+    loops: { merged: 0 },
   };
   let refs = "";
   /** The first fetch ended (well or not): until then, the clone can show branches that GitHub deleted. */
@@ -212,6 +218,15 @@ export function serveOpsPage(o: OpsPageOptions) {
     const hosts = new Set(entries().map((e) => e.host));
     for (const h of Object.keys(facts.answers)) if (!hosts.has(h)) delete facts.answers[h];
     facts.jobs = readJobs(o.dir);
+    facts.full = readFullRuns(o.dir);
+    facts.proofs = readProofs(o.dir);
+    facts.loops = loopStats(
+      readLoops(
+        o.dir,
+        entries().flatMap((e) => (e.stagingOf ? [] : [e.host]))
+      ),
+      Date.now() - 7 * 86_400_000
+    );
     facts.setup = setupHost(o.dir);
     poll({ type: "sources", names: [GITHUB, ...hosts], now: Date.now() });
   };
@@ -285,6 +300,7 @@ export function serveOpsPage(o: OpsPageOptions) {
       readClone();
     }
     facts.jobs = readJobs(o.dir);
+    facts.full = readFullRuns(o.dir);
     changed();
     send(": still here\n\n");
   }, 5_000);
@@ -378,6 +394,16 @@ export function serveOpsPage(o: OpsPageOptions) {
           },
         });
         return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-store" } });
+      }
+      // A branch's proof page (bun erga proof): the files of .erga/proofs/<branch>/, and nothing above that folder.
+      const proof = /^\/proof\/([^/]+)\/([\w.-]*)$/.exec(url.pathname);
+      if (proof && !proof[1].startsWith(".") && !proof[2].startsWith(".")) {
+        const file = Bun.file(join(o.dir, "proofs", decodeURIComponent(proof[1]).replaceAll("/", "~"), proof[2] || "index.html"));
+        return file
+          .exists()
+          .then((is) =>
+            is ? new Response(file, { headers: { "Cache-Control": "no-store" } }) : new Response("No proof here.", { status: 404 })
+          );
       }
       if (FILES[url.pathname]) {
         const [path, type] = FILES[url.pathname];

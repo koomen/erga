@@ -91,7 +91,7 @@ export class Cloudflare {
       const text = yield* Effect.promise(() => r.text().catch(() => ""));
       const answer = Option.getOrNull(envelopeOf(text));
       if (r.status == 404 && opts.allow404) return null;
-      // A success that isn't Cloudflare's JSON (an empty or a proxy's page): said, not taken for "no result" (AGENTS.md rule 5).
+      // A success that isn't Cloudflare's JSON (an empty or a proxy's page): said, not taken for "no result" (report what you observed).
       if (r.ok && !answer && text.trim())
         return yield* new DeployError({
           message: `Cloudflare answered ${r.status} but not with its JSON when Erga tried to ${what}: ${quoted(text)}. Try again in a few minutes.`,
