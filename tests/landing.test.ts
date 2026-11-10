@@ -34,12 +34,12 @@ function memory(): Sql {
 function platformOn(
   sql: Sql,
   hosts: Map<string, Record<string, string | Uint8Array>>,
-  opts: { locked?: Record<string, unknown>; owner?: string | null; made?: () => Promise<void>; asked?: string[] } = {}
+  opts: { locked?: Record<string, unknown>; owner?: string | null; made?: () => Promise<void>; asked?: string[]; read?: () => void } = {}
 ): Platform {
   const directory = new Directory(sql, { admins: ["root", "second"], locked: opts.locked });
   return {
     directory,
-    landing: { files: LANDING, owner: opts.owner === undefined ? "root" : opts.owner },
+    landing: { files: async () => (opts.read?.(), LANDING), owner: opts.owner === undefined ? "root" : opts.owner },
     templates: { doc: { "index.html": "<h1>Untitled</h1>" } },
     docs: {
       create: async (doc: Route, files: Record<string, string | Uint8Array>) => { if (hosts.has(doc.id)) return false; hosts.set(doc.id, files); await opts.made?.(); return true; },
@@ -95,8 +95,10 @@ test("a fresh database: the first requests make one landing document, even from 
   expect((await p.directory.lists.list("second")).map((d) => d.id)).toEqual([doc.id]);
   expect(await p.directory.lists.list("ada")).toEqual([]);
   expect(await p.directory.rename(doc.id, { slug: "other" }, null).catch((e) => e.message)).toContain("/_home");
-  // Asked again, it's the same one.
-  expect((await landingDocument(platformOn(sql, hosts)))?.id).toBe(doc.id);
+  // Asked again, it's the same one, and the project's files (large: its fonts) aren't read for it.
+  let reads = 0;
+  expect((await landingDocument(platformOn(sql, hosts, { read: () => reads++ })))?.id).toBe(doc.id);
+  expect(reads).toBe(0);
 });
 
 test("two seeds at once: the winner is at /_home even when the loser made its document first", async () => {

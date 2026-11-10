@@ -963,6 +963,11 @@ export class Document {
     });
   }
 
+  /** The version viewers see now, from what is kept with the files where the document is closed (it stays closed); null: no document. */
+  viewed(): Effect.Effect<string | null, StoreError> {
+    return this.hold(io(() => this.views.current()));
+  }
+
   /** An operation's call (host.ts) on the document, opened; null if there's none. */
   call<A>(f: (calls: EditorCalls) => A | Promise<A>): Effect.Effect<A | null, StoreError> {
     return io(async () => {

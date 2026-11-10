@@ -112,13 +112,19 @@ test("an admin token: admin power while its person is an admin, checked live", a
 });
 
 test("an expired token stops working", async () => {
-  const { tokens, sql, call } = await server();
+  const { tokens, call } = await server();
   const { token, info } = await tokens.mint(ada, "Soon", { scope: "documents", expires: Date.now() + 60_000 });
   expect((await tokens.verify(token))?.id).toBe(info.id);
   expect((await call(token, "whoami")).status).toBe(200);
-  await sql.run("UPDATE agent_tokens SET expires = ?2 WHERE id = ?1", info.id, Date.now() - 1);
-  expect(await tokens.verify(token)).toBeNull();
-  expect((await call(token, "whoami")).status).toBe(401);
+  // Its end passes: the clock moves, as the server remembers a good token for a few seconds (not the row's change).
+  const now = Date.now;
+  try {
+    Date.now = () => now() + 61_000;
+    expect(await tokens.verify(token)).toBeNull();
+    expect((await call(token, "whoami")).status).toBe(401);
+  } finally {
+    Date.now = now;
+  }
 });
 
 test("the device flow carries the scope, the document and the expiry; the person approves or denies", async () => {

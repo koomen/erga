@@ -252,29 +252,39 @@ export class DocumentObject extends DurableObject<Env> {
     const allowed = await run(this.document.authorize(request));
     if (allowed instanceof Response) return allowed;
     request = allowed;
-    const opened = await run(this.document.admit(request));
-    if (!opened) return new Response("No such document", { status: 404 });
+    const watch = url.searchParams.get("watch") == "view";
+    const opened = watch ? null : await run(this.document.admit(request));
+    if (!watch && !opened) return new Response("No such document", { status: 404 });
     const tab: Tab = {
       id: crypto.randomUUID(),
       readOnly: request.headers.get("x-erga-access") != "edit",
       epoch: url.searchParams.get("epoch") || null,
       person: personOf(request.headers),
-      events: url.searchParams.get("events") == "1" || url.searchParams.get("watch") == "view",
+      events: url.searchParams.get("events") == "1" || watch,
       // Whom it's for, as the app said: when the permissions change, whether they may still (Tabs.permissionsChanged).
       ...(askerFrom(request.headers) ? { who: askerFrom(request.headers)! } : {}),
-      // A viewer's page (?watch=view, client/inline/viewer-live.ts): it hears what it shows change, and never joins the room.
-      ...(url.searchParams.get("watch") == "view" ? { watch: true } : {}),
+      // A viewer's page (?watch=view, client/inline/viewer-live.ts): it hears what it shows change, never joins the room,
+      // and opens no closed document (Tabs.watch).
+      ...(watch ? { watch: true } : {}),
       ...(url.searchParams.get("comments") == "1" ? { comments: true } : {}),
     };
     const [client, server] = Object.values(new WebSocketPair());
+    const accept = () => {
+      this.ctx.acceptWebSocket(server);
+      server.serializeAttachment(tab);
+      return server;
+    };
+    if (!opened)
+      return (await run(this.tabs.watch(tab, accept)))
+        ? new Response(null, { status: 101, webSocket: client })
+        : new Response("No such document", { status: 404 });
     // A tab holding another epoch's history is refused, never merged (on a socket of its own, closed at once).
-    if (!tab.watch && tab.epoch && tab.epoch != opened.room.epoch) {
+    if (tab.epoch && tab.epoch != opened.room.epoch) {
       server.accept();
       server.close(4409, "stale epoch");
       return new Response(null, { status: 101, webSocket: client });
     }
-    this.ctx.acceptWebSocket(server);
-    server.serializeAttachment(tab);
+    accept();
     if (!this.tabs.join(server, opened, tab)) server.close(4409, "stale epoch");
     return new Response(null, { status: 101, webSocket: client });
   }

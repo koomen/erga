@@ -38,6 +38,7 @@ import { placeOf } from "../../../client/common/link-target";
 import { keepOffline } from "../../../client/common/offline";
 import { keepPage } from "./offline-page";
 import { agentLabel } from "../../../shared/attribution";
+import { afterPause } from "./pause";
 // (window.__ergaReader: the page's first script, which loads this one.)
 import type {} from "../../../client/common/reader-api";
 
@@ -221,6 +222,12 @@ function join(run: number) {
   if (own) pageCopy ??= keepPage(SHELL, () => collab?.current() ?? "");
   const room = `${m.doc.replace(/^http/, "ws")}/api/room`;
   const c = (collab = new Collab({
+    // The room's text in one answer, asked for as the socket starts to connect: the editor is up when it comes, and the
+    // socket brings what changed since. (A key the host refuses: the socket's own sync, as before.)
+    start: fetch(`${m.doc}/api/start?${new URLSearchParams({ key: m.key })}`).then(
+      (r) => (r.ok ? r.arrayBuffer() : null),
+      () => null
+    ),
     // (Only the room: the person's events, the agent's asks among them, are the viewer's to hear.)
     // (comments=1: it hears that the document's comments changed, and reads them again: comments.ts.)
     url: (q) => `${room}?${new URLSearchParams({ key: editing()?.key ?? m.key, comments: "1", ...Object.fromEntries(q) })}`,
@@ -297,6 +304,11 @@ function enter() {
 
 /** This page in the browser's copy, made from the replica's text after each change (offline-page.ts), on an origin of its own. */
 let pageCopy: ReturnType<typeof keepPage> | null = null;
+/** After an edit, once the typing pauses: the page goes into the copy, and the controls take the page's tone again. */
+const whenPaused = afterPause(() => {
+  void pageCopy?.changed();
+  queueDark();
+});
 
 /** What says the page is read-only while someone edits its source (the lock), and takes it off. */
 let lockNote: (() => void) | null = null;
@@ -349,9 +361,9 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
       if (u.docChanged || u.selectionSet) queueCursor();
       // A presentation's pictures of its steps are out of date once its text changes (libs/steps).
       if (u.docChanged) {
-        void pageCopy?.changed();
+        // (The page in the copy and the page's colours read the whole document: when the typing pauses, pause.ts.)
+        whenPaused.ask();
         dispatchEvent(new Event("ergaedit"));
-        queueDark();
       }
       // (The editor takes the page as it's made: once it's this frame's.)
       if (u.rendered)

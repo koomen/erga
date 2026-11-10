@@ -76,7 +76,11 @@ const adminsOf = (env: Env): string[] => (env.DEV_LOGIN?.trim() ? [env.DEV_LOGIN
 export function directoryOf(env: Env): Directory {
   if (directory?.db !== env.DB) {
     // A change to the homepage setting, however it's made (the admin page, an agent, the homepage's API, the first /), reaches its deploys.
-    const changed = async (key: string) => { if (key == "landing_document" && env.HOME) await env.HOME.getByName("home").homeChanged(); };
+    // Public sharing on or off: the views kept for people signed out no longer hold (server/documents/view.ts).
+    const changed = async (key: string) => {
+      if (key == "public_sharing") forgetDecisions();
+      if (key == "landing_document" && env.HOME) await env.HOME.getByName("home").homeChanged();
+    };
     // A document's permissions changed: its object keeps a copy, and decides with it (document/document.ts, authorize).
     const permissionsChanged = async (id: string, permissions: Permission[]) => { forgetDecisions(id); if (permissions.length) await documentOf(env, id).setPermissions(permissions.map((p) => ({ login: p.login, role: p.role }))); };
     const dir = new Directory(sqlOn(env.DB), {
@@ -115,7 +119,10 @@ export function factoryKey(env: Env): string | null {
   return env.ERGA_LINK_SECRET && env.DEV_LOGIN ? `local:${env.SESSION_SECRET}` : null;
 }
 
-/** Agent tokens, on the same database. */
+let tokens: { db: D1Database; tokens: Tokens } | null = null;
+
+/** Agent tokens, on the same database: one for all requests, since it remembers the tokens that were good a moment ago. */
 export function tokensOf(env: Env): Tokens {
-  return new Tokens(sqlOn(env.DB), env.SESSION_SECRET, directoryOf(env));
+  if (tokens?.db !== env.DB) tokens = { db: env.DB, tokens: new Tokens(sqlOn(env.DB), env.SESSION_SECRET, directoryOf(env)) };
+  return tokens.tokens;
 }

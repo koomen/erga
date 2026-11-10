@@ -2,8 +2,9 @@
 // fails: client/inline/offline-sw.ts). The pages origin makes a page from its text, and the editor starts only on a page
 // made from the text it has (else it loads the page again): so for a reload offline, the copy must hold the page made
 // from the replica's text, with the edits that wait for the room. The editor makes it as the server does
-// (shared/page-html.ts, pageAgain), with Erga's head of this page as the server makes it, and puts it in after each
-// change: the changes that come while it puts one in go in together, next (no timer: a frame's can wait long).
+// (shared/page-html.ts, pageAgain), with Erga's head of this page as the server makes it, and puts it in when the typing
+// pauses (pause.ts; at once in a hidden tab, and as the tab goes): the changes that come while it puts one in go in
+// together, next.
 
 import { headIn, pageAgain } from "../../../shared/page-html";
 import { KEPT_AT, keptAddress, OFFLINE_CACHE, PAGE_HEADER } from "../../../shared/offline";

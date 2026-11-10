@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { AiError, LanguageModel, type Prompt, type Response } from "effect/ai";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
-import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic";
+import type { AnthropicLanguageModel } from "@effect/ai-anthropic";
 import { CREDENTIALS, type Credentials, type PersonKeys } from "../server/directory/index.ts";
 import {
   DEFAULT_MODEL,
@@ -26,7 +26,7 @@ import {
   type Provider,
   type Usable,
 } from "../shared/models.ts";
-import { piLanguageModel } from "./pi-model.ts";
+import type { piLanguageModel } from "./pi-model.ts";
 
 export { DEFAULT_MODEL, isModelChoice, MODELS, type ModelChoice } from "../shared/models.ts";
 
@@ -184,7 +184,7 @@ export function languageModel(cfg: AgentConfig, choice: ModelChoice | null): Lay
   const m: (typeof MODELS)[ModelChoice] & { fast?: boolean } = MODELS[choice];
   const apiKey = keyFor(cfg, choice);
   if (!apiKey) return failing(`${m.label} has no key to run it now`);
-  if (m.provider != "anthropic") return piLanguageModel({ provider: m.provider, id: m.id, apiKey, effort: cfg.effort });
+  if (m.provider != "anthropic") return pi({ provider: m.provider, id: m.id, apiKey, effort: cfg.effort });
   const config = {
     max_tokens: 64_000,
     thinking: { type: "adaptive", display: "summarized" },
@@ -192,13 +192,35 @@ export function languageModel(cfg: AgentConfig, choice: ModelChoice | null): Lay
     structuredOutputs: false,
     ...(m.fast ? { speed: "fast" } : {}),
   } as unknown as AnthropicConfig;
-  return AnthropicLanguageModel.layer({ model: m.id, config }).pipe(
-    Layer.provide(AnthropicClient.layer({ apiKey, transformClient: m.fast ? withBeta(FAST_BETA) : undefined })),
-    Layer.provide(FetchHttpClient.layer),
-    // The fetch of the moment: Effect's default is the first one it saw (a test's stub, say).
-    Layer.provide(Layer.succeed(FetchHttpClient.Fetch, ((input, init) => globalThis.fetch(input, init)) as typeof fetch))
-  );
+  return anthropic(m.id, config, apiKey, m.fast ? withBeta(FAST_BETA) : undefined);
 }
+
+// The providers' code is large (the Anthropic API's schemas, Pi's catalog of models), and only a turn needs it: each
+// loads at its first use, in a module of its own, so the Worker starts without it (tests/worker-start.test.ts).
+
+/** Claude on Effect AI's Anthropic provider. */
+const anthropic = (
+  model: string,
+  config: AnthropicConfig,
+  apiKey: Redacted.Redacted<string>,
+  transformClient?: (client: HttpClient.HttpClient) => HttpClient.HttpClient
+): Layer.Layer<LanguageModel.LanguageModel> =>
+  Layer.unwrap(
+    Effect.promise(() => import("@effect/ai-anthropic")).pipe(
+      Effect.map(({ AnthropicClient, AnthropicLanguageModel }) =>
+        AnthropicLanguageModel.layer({ model, config }).pipe(
+          Layer.provide(AnthropicClient.layer({ apiKey, transformClient })),
+          Layer.provide(FetchHttpClient.layer),
+          // The fetch of the moment: Effect's default is the first one it saw (a test's stub, say).
+          Layer.provide(Layer.succeed(FetchHttpClient.Fetch, ((input, init) => globalThis.fetch(input, init)) as typeof fetch))
+        )
+      )
+    )
+  );
+
+/** Another provider's model, through the Pi router (agents/pi-model.ts). */
+const pi = (options: Parameters<typeof piLanguageModel>[0]): Layer.Layer<LanguageModel.LanguageModel> =>
+  Layer.unwrap(Effect.promise(() => import("./pi-model.ts")).pipe(Effect.map((m) => m.piLanguageModel(options))));
 
 /**
  * The model a document's page calls as its visitor (agents/page-llm.ts), with the server's key, answering at most
@@ -210,13 +232,9 @@ export function pageModel(cfg: AgentConfig, choice: ModelChoice, maxTokens: numb
   const m = MODELS[choice];
   const apiKey = pageLlmChoices({ ...keySetup(cfg), own: [] }).includes(choice) ? cfg.server[m.provider] : undefined;
   if (!apiKey) return null;
-  if (m.provider == "openai") return piLanguageModel({ provider: m.provider, id: m.id, apiKey, effort: null, maxTokens });
+  if (m.provider == "openai") return pi({ provider: m.provider, id: m.id, apiKey, effort: null, maxTokens });
   const config = { max_tokens: maxTokens, structuredOutputs: false } as unknown as AnthropicConfig;
-  return AnthropicLanguageModel.layer({ model: m.id, config }).pipe(
-    Layer.provide(AnthropicClient.layer({ apiKey })),
-    Layer.provide(FetchHttpClient.layer),
-    Layer.provide(Layer.succeed(FetchHttpClient.Fetch, ((input, init) => globalThis.fetch(input, init)) as typeof fetch))
-  );
+  return anthropic(m.id, config, apiKey);
 }
 
 /**

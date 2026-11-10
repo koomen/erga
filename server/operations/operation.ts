@@ -22,10 +22,12 @@ import {
   NotAllowed,
   NotFound,
   OWNER,
+  roleMay,
   type Action,
   type Route,
   type Who,
 } from "../directory/index.ts";
+import type { Role } from "../../document/access.ts";
 import { AuthError, type AgentToken, type AuthOps } from "../identity/index.ts";
 import { forwardedAs } from "../documents/index.ts";
 import type { Platform } from "../platform.ts";
@@ -156,9 +158,9 @@ export function platformOf(caller: Caller): Platform {
 
 /**
  * The document a caller names (an address, a URL, an id, or one of the person's slugs; nothing for the one open on the
- * page of the person's own agent), whatever they may do with it: for an action of someone with no role in it.
+ * page of the person's own agent), and the caller's role on it.
  */
-export async function namedDocument(caller: Caller, ref: unknown): Promise<DocRow> {
+async function named(caller: Caller, ref: unknown): Promise<{ doc: DocRow; role: Role | null }> {
   const { dir, who } = caller;
   if ((ref == null || ref === "") && caller.here) ref = caller.here;
   if (typeof ref != "string" || !ref.trim())
@@ -170,26 +172,32 @@ export async function namedDocument(caller: Caller, ref: unknown): Promise<DocRo
     /* not a URL */
   }
   const parts = path.split("/").filter(Boolean);
-  let route: Route | null = null;
-  if (parts[0] == "_home") route = await routeAt(dir, HOME_OWNER, HOME_SLUG);
-  else if (parts.length >= 2)
-    route = parts[0] == "d" ? (ID.test(parts[1]) ? await dir.route(parts[1]) : null) : await routeAt(dir, parts[0], parts[1]);
-  else if (parts.length == 1) {
-    route = ID.test(parts[0]) ? await dir.route(parts[0]) : null;
-    route ??= await routeAt(dir, who.login, parts[0]);
-  }
-  const doc = route && (await dir.get(route.id));
-  if (!doc) throw new OperationError({ message: `There's no document "${ref}". list_documents lists yours.`, status: 404 });
-  if (who.onlyDoc != null && doc.id != who.onlyDoc)
+  // The document and the caller's role on it, in one query.
+  const byId = (id: string) => (ID.test(id) ? dir.openAs(who, "d", id) : null);
+  const at = (owner: string, segment: string) => (OWNER.test(owner) ? dir.openAs(who, owner, segment) : null);
+  const found =
+    parts[0] == "_home"
+      ? await at(HOME_OWNER, HOME_SLUG)
+      : parts.length >= 2
+        ? await (parts[0] == "d" ? byId(parts[1]) : at(parts[0], parts[1]))
+        : parts.length == 1
+          ? ((await byId(parts[0])) ?? (await at(who.login, parts[0])))
+          : null;
+  if (!found) throw new OperationError({ message: `There's no document "${ref}". list_documents lists yours.`, status: 404 });
+  if (who.onlyDoc != null && found.doc.id != who.onlyDoc)
     throw new OperationError({ message: "This token reaches one document only, and that isn't it.", status: 403 });
-  return doc;
+  return found;
 }
 
-/** The document a caller names (namedDocument), if they may do `action` with it. */
+/**
+ * The document a caller names, whatever they may do with it: for an action of someone with no role in it.
+ */
+export const namedDocument = async (caller: Caller, ref: unknown): Promise<DocRow> => (await named(caller, ref)).doc;
+
+/** The document a caller names, if they may do `action` with it. */
 export async function findDocument(caller: Caller, ref: unknown, action: Action): Promise<DocRow> {
-  const { dir, who } = caller;
-  const doc = await namedDocument(caller, ref);
-  if (!(await dir.may(who, action, doc))) {
+  const { doc, role } = await named(caller, ref);
+  if (!roleMay(role, action)) {
     throw new OperationError({
       message:
         action == "delete"
@@ -203,18 +211,6 @@ export async function findDocument(caller: Caller, ref: unknown, action: Action)
     });
   }
   return doc;
-}
-
-/** The document at /<owner>/<segment>: by id (if it's theirs), slug, or an old slug. */
-async function routeAt(dir: Directory, owner: string, segment: string): Promise<Route | null> {
-  if (!OWNER.test(owner)) return null;
-  owner = owner.toLowerCase();
-  if (ID.test(segment)) {
-    const byId = await dir.route(segment);
-    if (byId?.owner == owner) return byId;
-  }
-  const found = await dir.locate(owner, segment);
-  return found && { id: found.doc.id, owner: found.doc.owner, test: found.doc.test };
 }
 
 /** A document as answers name it: its id, title, address, and URL where the origin is known. */

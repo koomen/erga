@@ -114,6 +114,21 @@ class World {
     return tab;
   }
 
+  /** A viewer's page connects (the fetch that upgrades, with ?watch=view): it only hears events. */
+  async watch(): Promise<FakeTab> {
+    const tab = new FakeTab(this, {
+      id: crypto.randomUUID(),
+      readOnly: true,
+      epoch: null,
+      person: { id: "bo", name: "Bo" },
+      events: true,
+      watch: true,
+    });
+    const socket = await Effect.runPromise(this.tabs.watch(tab.tab, () => (this.sockets.add(tab), tab)));
+    expect(socket).toBe(tab);
+    return tab;
+  }
+
   /** A message from a tab reaches the object (and may wake it). */
   deliver(tab: FakeTab, m: Uint8Array): void {
     queueMicrotask(() => this.inflight.push(Effect.runPromise(this.tabs.message(tab, m))));
@@ -221,4 +236,36 @@ test("a tab holding another history (the document's was lost) is closed as the d
   expect(b.closed).toBe(4409);
   expect(a.closed).toBeNull();
   expect(a.text()).toBe("<p>xHi</p>");
+});
+
+test("a viewer's page on a closed document opens nothing: it hears the version kept, and each change once someone edits", async () => {
+  const w = await made();
+  // What viewers see is kept with the document's files, as after any view of it.
+  const ver = await Effect.runPromise(w.document.viewed());
+  expect(ver).toBeTruthy();
+  // A new object, with nothing in memory: the reader's page connects.
+  w.boot();
+  const reader = await w.watch();
+  expect(w.document.isOpen()).toBe(false);
+  expect(reader.events).toEqual([{ type: "view", ver }]);
+  // Someone starts to edit: the room opens, the reader's page joins it and hears the new version.
+  const a = await w.connect();
+  a.type(3, "new ");
+  await w.settle();
+  const heard = (tab: FakeTab) => tab.events.some((e) => (e as { type: string }).type == "view" && (e as { ver: string }).ver != ver);
+  for (let i = 0; i < 100 && !heard(reader); i++) await w.settle();
+  expect(heard(reader)).toBe(true);
+  // On an open document, a viewer's page joins at once.
+  const second = await w.watch();
+  for (let i = 0; i < 100 && !heard(second); i++) await w.settle();
+  expect(heard(second)).toBe(true);
+  // No such document: no socket.
+  const none = new World(w.dir);
+  expect(
+    await Effect.runPromise(
+      none.tabs.watch({ id: "x", readOnly: true, epoch: null, person: { id: "bo", name: "Bo" }, events: true, watch: true }, () => {
+        throw new Error("accepted");
+      })
+    )
+  ).toBeNull();
 });

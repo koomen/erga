@@ -100,8 +100,6 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
     // Locally DEV_LOGIN; on a deployed server its first admin (none yet: no homepage).
     const owner = (project.owner ?? (await platform.directory.users.firstAdmin()))?.toLowerCase();
     if (!owner) return null;
-    const index = project.files["index.html"] != null ? "index.html" : null;
-    if (!index) return null;
     // Read afresh (settings are remembered a few seconds): another isolate may have seeded it just now.
     const live = async (stored: string | null) => {
       let ref: unknown = null;
@@ -116,6 +114,9 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
     const stored = await config.stored("landing_document");
     const there = await live(stored);
     if (there) return there;
+    const files = await project.files();
+    const index = files["index.html"] != null ? "index.html" : null;
+    if (!index) return null;
     let made: DocRow | null = null;
     for (let tries = 0; !made && tries < 5; tries++) {
       const id = newDocId();
@@ -123,7 +124,7 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
         platform,
         HOME_OWNER,
         id,
-        { ...project.files },
+        { ...files },
         { index, slug: id, published: true, kind: "project", title: HOME_TITLE }
       );
     }

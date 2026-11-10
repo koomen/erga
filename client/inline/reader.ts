@@ -4,6 +4,10 @@
 // viewer's asks (the editor), and sends links that leave the
 // document to the viewer, which opens them. `C`: the viewer's origin, where the document's files are, and the editor's
 // half for whoever may edit.
+//
+// Trap: `check` (the colour, the canvas, the scroll, the hash) runs only after an event that `soon` hears (a DOM change,
+// a size, a load, a transition's start), never on each frame. A new thing the viewer must hear of needs its event
+// there. A change made only through the CSSOM (`insertRule`) reaches the viewer at the next such event.
 
 import type { ReaderConfig } from "../../shared/page-html";
 import type { ToolAsk } from "../common/reader-api";
@@ -185,8 +189,16 @@ export default function reader(C: ReaderConfig): void {
   const room = topRoom(document);
   let roomDirty = true,
     fillsSaid: boolean | null = null;
+  // A check of what the viewer hears of the page (`check`, below), on the next screen frame: one for all that changed.
+  let due = false;
+  function soon() {
+    if (due) return;
+    due = true;
+    requestAnimationFrame(check);
+  }
   const dirty = () => {
     roomDirty = true;
+    soon();
   };
   const styles = new MutationObserver(dirty);
   styles.observe(root, { attributes: true, attributeFilter: ["style", "class"] });
@@ -402,7 +414,8 @@ export default function reader(C: ReaderConfig): void {
         () => {
           pictures[u] = null;
         }
-      );
+      )
+      .then(soon);
     return undefined;
   }
   function canvas(): Canvas | null {
@@ -459,9 +472,14 @@ export default function reader(C: ReaderConfig): void {
   // goes through the page's places. replaceState stays a replace.
   const doc = (u: string | URL) => new URL(String(u), location.href).href.split("#")[0];
   history.pushState = function (state: unknown, title: string, url?: string | URL | null) {
+    soon();
     if (url == null || doc(url) != doc(location.href)) return History.prototype.pushState.call(this, state, title, url);
     History.prototype.replaceState.call(this, state, title, url);
     push = true;
+  };
+  history.replaceState = function (state: unknown, title: string, url?: string | URL | null) {
+    History.prototype.replaceState.call(this, state, title, url);
+    soon();
   };
   type Navigate = Event & { navigationType: string; hashChange: boolean; destination: { url: string } };
   (window as Window & { navigation?: EventTarget }).navigation?.addEventListener("navigate", (ev) => {
@@ -471,7 +489,10 @@ export default function reader(C: ReaderConfig): void {
     push = true;
     location.replace(e.destination.url);
   });
-  (function watch() {
+  // What the viewer hears of the page: its room, its colour and canvas, where it is scrolled to and its hash. Checked
+  // when something can have changed (the events below), at most once a screen frame; a page at rest checks nothing.
+  function check() {
+    due = false;
     try {
       keepRoom();
       if (startY) place();
@@ -496,9 +517,22 @@ export default function reader(C: ReaderConfig): void {
         tell({ type: "erga-hash", hash, push });
       }
       push = false;
+      // On the way to where it was scrolled, or its background changing over time: again on the next frame.
+      const moving = (el: Element | null) => !!el && el.getAnimations().some((a) => a.playState == "running");
+      if (startY || moving(root) || moving(document.body)) soon();
     } catch {}
-    requestAnimationFrame(watch);
-  })();
+  }
+  // The page's content, attributes and styles; its size; a stylesheet or a picture that loaded (a load doesn't bubble:
+  // heard on its way down); a transition or an animation that starts; the window's size and colour scheme; its hash.
+  new MutationObserver(soon).observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+  new ResizeObserver(soon).observe(root);
+  document.addEventListener("readystatechange", soon);
+  document.addEventListener("load", soon, true);
+  document.addEventListener("transitionrun", soon);
+  document.addEventListener("animationstart", soon);
+  ["load", "pageshow", "resize", "hashchange", "popstate"].forEach((type) => addEventListener(type, soon));
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", soon);
+  soon();
   // A file dragged from the computer onto the page never opens in its place (the editor puts it in: its drop). A
   // page that takes the drop itself has already stopped the browser's own.
   function stopFileDrop(e: DragEvent) {

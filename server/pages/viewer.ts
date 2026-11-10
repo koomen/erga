@@ -137,9 +137,18 @@ export function viewerPage(o: {
   // Opened with ?edit, for whoever may edit: the page is the editor's from its first moment (editingHead, EDITING_BODY),
   // the page in the frame starts on its half of the editor at once (frameSrc), and the editor's files are fetched as the
   // page parses, rather than one after another once its script runs (editBoot).
-  const opening = o.editable ? `${shellTemplate()}<script>${editingHead()}</script>` : "";
-  // The page on its own origin, connected to from the start; it may play media only on the editor's say (EDITOR_ALLOW).
   const editing = o.editable && o.editing;
+  const opening = o.editable ? `${shellTemplate()}<script>${editingHead()}</script>` : "";
+  const editingBody = o.editable ? `<script>${EDITING_BODY}</script>` : "";
+  // The app's stylesheet (the agent's panel). In the page's HTML, the scripts after it wait for it: someone who reads gets
+  // it from a script (client/inline/viewer-style.ts), so the document's frame starts at once, and the editor's parts
+  // (72 kB) after the frame.
+  const style = !o.agent
+    ? ""
+    : editing
+      ? styleTag()
+      : `<link rel="preload" as="style" href="${asset("style.css")}">${inlineScript("viewer-style", asset("style.css"))}`;
+  // The page on its own origin, connected to from the start; it may play media only on the editor's say (EDITOR_ALLOW).
   const frame = `<iframe id="frame" class="erga-view" title="${esc(o.title)}" sandbox="${PAGE_SANDBOX}" allow="${editing ? EDITOR_ALLOW : PAGE_ALLOW}"></iframe>`;
   // The band above the document (and, editing, the room the agent opens) takes the page's background: remembered from this
   // document's last visit, before anything has loaded, then as the frame tells it (BAND_BOOT). With none remembered, the
@@ -153,12 +162,12 @@ export function viewerPage(o: {
 ${headTags(o.head, o.title, o.file, o.files)}
 <link rel="preconnect" href="${esc(o.pages)}">
 <meta name="erga-doc" content="${esc(o.docId)}">
-${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(session, true)}${o.agent ? styleTag() : ""}<style>${BAND_STYLE}${o.bars ? "" : NO_BARS}</style>${opening}
-<body>${o.agent ? `<script>${AGENT_LAYOUT}</script>` : ""}${o.editable ? `<script>${EDITING_BODY}</script>` : ""}
+${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(session, true)}${style}<style>${BAND_STYLE}${o.bars ? "" : NO_BARS}</style>${editing ? opening : ""}
+<body>${o.agent ? `<script>${AGENT_LAYOUT}</script>` : ""}${editing ? editingBody : ""}
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
   const bars = barsHtml({ session, title: o.landing ? null : o.title, project: !!o.project, full: true, edit: o.edit, corner: o.corner });
   const after = `
-${bars}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}"><script>${inlineCall("viewer-live", `/d/${o.docId}`)}</script>` : ""}${o.commenter ? `<script>${inlineCall("viewer-comment", `/d/${o.docId}`, o.commenter)}</script>` : ""}${o.project && session && !o.landing ? `<meta name="erga-title" content="${esc(o.title)}"><script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
+${editing ? "" : opening + editingBody}${bars}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}"><script>${inlineCall("viewer-live", `/d/${o.docId}`)}</script>` : ""}${o.commenter ? `<script>${inlineCall("viewer-comment", `/d/${o.docId}`, o.commenter)}</script>` : ""}${o.project && session && !o.landing ? `<meta name="erga-title" content="${esc(o.title)}"><script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
 `;
   return { before, after };
 }

@@ -404,6 +404,8 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       if (login) await dir.share(caller.who, doc.id, login, args.role == "none" ? null : (args.role as Grant));
       if (step.agent === true) await dir.setReaderOption(doc.id, "agent", true);
       if (args.reader_bars != null) await dir.setReaderOption(doc.id, "bars", args.reader_bars === true);
+      // The readers' options are part of what a view keeps (documents/view.ts).
+      if (step.agent != null || args.reader_bars != null) forgetDecisions(doc.id);
       if (llm) {
         const had = await dir.pageLlm.setting(doc.id);
         const model = args.page_llm_model ?? (had.model && isPageLlmModel(had.model) ? had.model : DEFAULT_PAGE_LLM_MODEL);
