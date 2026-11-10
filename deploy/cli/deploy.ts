@@ -10,7 +10,7 @@
 // has no copy yet, it gets a new copy: the pipeline's snapshot of the primary's database and documents, with the primary's
 // SNAPSHOT_TOKEN (the environment, or .erga/secrets.json). Each deploy or
 // rollback holds the lock .erga/jobs/<host>.lock and writes its job record in .erga/jobs/. A deploy runs only a commit
-// whose tests passed: .erga/tests/<sha>, which this CLI writes when `bun run test` ends with "all passing".
+// whose tests passed (gate.ts: bun run test): the record .erga/tests/<tree>.json of the commit's tree, which its merge wrote.
 //
 // ERGA_DEPLOY_MOCK=1: against the mock Cloudflare's example account (dev/mock-cloudflare.ts, the fleet), with
 // .build/release/ for the build: nothing real is touched. No branch moves on origin, but in a clone a test gives.
@@ -61,6 +61,8 @@ import {
   writeConfig,
 } from "./config";
 import { previousVersion } from "./flow";
+import { testRun, type Suite, treeOf } from "./test-run";
+import { gateRefusal } from "./gate";
 import { readOps } from "./ops";
 import { alive, ownStart } from "./pid";
 import { ROOT } from "../root";
@@ -203,39 +205,6 @@ export function startJob(dir: string, o: { command: string; host: string; from?:
     note: add,
     end: (result, error) => add({ result, ...(error ? { error } : {}), ended: new Date().toISOString() }),
   };
-}
-
-// ------------------------------------------------------------------ the tests
-
-export const passPath = (dir: string, sha: string) => join(dir, "tests", sha);
-
-/** Writes the pass of `sha`'s tests, when their log ends with "all passing" (AGENTS.md's gate). True if it did. */
-export function recordPass(dir: string, sha: string, log: string): boolean {
-  if (!/^all passing/m.test(log)) return false;
-  mkdirSync(join(dir, "tests"), { recursive: true });
-  writeFileSync(passPath(dir, sha), `${new Date().toISOString()} all passing\n`);
-  return true;
-}
-
-/** Runs `bun run test` on `sha` in a scratch worktree, and records a pass. True if it passed. */
-export async function testCommit(dir: string, sha: string, log: (line: string) => void): Promise<boolean> {
-  const at = join(tmpdir(), `erga-tests-${sha.slice(0, 12)}-${process.pid}`);
-  const file = `${at}.log`;
-  const add = git("worktree", "add", "--quiet", "--detach", at, sha);
-  if (!add.ok) throw new Error(`git worktree add failed: ${add.err}`);
-  try {
-    const run = (cmd: string[]) => Bun.spawnSync(cmd, { cwd: at, env: testEnv(), stdout: "pipe", stderr: "pipe" });
-    log("tests: bun install --frozen-lockfile ...");
-    const i = run(["bun", "install", "--frozen-lockfile"]);
-    if (i.exitCode != 0) throw new Error(`bun install failed: ${i.stderr.toString().slice(-600)}`);
-    log(`tests: bun run test ... (the log: ${file})`);
-    const t = run(["bun", "run", "test"]);
-    const out = t.stdout.toString();
-    writeFileSync(file, `${out}\n${t.stderr.toString()}`);
-    return recordPass(dir, sha, out);
-  } finally {
-    git("worktree", "remove", "--force", at);
-  }
 }
 
 // ------------------------------------------------------------------ the commit of a primary's staging instances
@@ -386,8 +355,8 @@ export interface DeployOptions {
   net?: Fetch;
   token?: string;
   print?: (line: string) => void;
-  /** The tests of a commit with no pass yet (default: `bun run test` in a scratch worktree). */
-  test?: (sha: string, log: (line: string) => void) => Promise<boolean>;
+  /** The suite for a commit with no test record yet (test-run.ts): a fake, in the tests. */
+  suite?: Suite;
   /** The clone whose commits deploy, and whose origin's main a primary moves (default: this one). */
   clone?: string;
   /** `bun erga setup`'s first deploy only: the secrets the Worker doesn't hold yet, and a new workers.dev subdomain. */
@@ -480,14 +449,12 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     if (o.noTests) {
       job.note({ tests: "skipped: --no-tests" });
       log(`NOTE  The tests of ${sha.slice(0, 12)} did not run (--no-tests).`);
-    } else if (existsSync(passPath(o.dir, sha))) {
-      job.note({ tests: "passed before" });
-      log(`The tests of ${sha.slice(0, 12)} passed before (${passPath(o.dir, sha)}).`);
     } else {
-      const passed = await (o.test ?? ((s, l) => testCommit(o.dir, s, l)))(sha, log);
-      job.note({ tests: passed ? "passed" : "failed" });
-      if (!passed) throw new Error(`The tests of ${sha.slice(0, 12)} did not end with "all passing". It does not deploy.`);
-      log(`The tests of ${sha.slice(0, 12)}: all passing.`);
+      // The gate (gate.ts): the record of the commit's tree, which its merge wrote; with none, the tests run now.
+      const run = await testRun({ dir: o.dir, clone, tree: treeOf(clone, sha)!, commit: sha, what: sha.slice(0, 12), log, suite: o.suite });
+      job.note({ tests: run.state });
+      const no = gateRefusal(run, sha.slice(0, 12));
+      if (no) throw new Error(`${no}\nIt does not deploy.`);
     }
 
     const { buildHere } = await import("../pipeline/build");

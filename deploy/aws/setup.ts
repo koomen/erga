@@ -226,7 +226,7 @@ export interface FirstAws {
   net?: Fetch;
   print: (line: string) => void;
   noTests?: boolean;
-  test?: DeployOptions["test"];
+  suite?: DeployOptions["suite"];
   commit?: string;
 }
 
@@ -265,7 +265,7 @@ export async function firstDeployAws(o: FirstAws): Promise<string> {
     commit: o.commit ?? SETUP_COMMIT,
     command: `bun erga setup ${a.host}`,
     noTests: o.noTests,
-    test: o.test,
+    suite: o.suite,
     ...(o.net ? { net: o.net } : {}),
     print: o.print,
     first: firstSql(a),

@@ -40,8 +40,9 @@ minutes.
      too), with no token yet.
    - It deploys origin/main's commit (run git fetch first) with
      bun erga deploy's code: the Worker, the D1 database, the R2 bucket,
-     the address and the pages address, in 3 to 6 minutes. It runs the commit's tests first, unless
-     they passed before (--no-tests skips them, and the job record says so).
+     the address and the pages address, in 3 to 6 minutes. It runs the commit's tests first (about
+     a minute), unless they passed before (--no-tests skips them, and
+     the job record says so).
    - It sends each secret one time: SESSION_SECRET, FACTORY_KEY, the
      sign-in apps' secrets, and SNAPSHOT_TOKEN with a staging server. They
      are also in .erga/secrets.json. No later deploy sends a secret.

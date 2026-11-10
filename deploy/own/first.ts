@@ -31,7 +31,7 @@ export interface Setup {
   token: string;
   print?: (line: string) => void;
   noTests?: boolean;
-  test?: DeployOptions["test"];
+  suite?: DeployOptions["suite"];
   /** The commit to deploy (default: SETUP_COMMIT, origin's main). */
   commit?: string;
   /** --home: the homepage's own domain, for the primary (deployInstance's home). */
@@ -109,7 +109,7 @@ export async function firstDeploy(o: Setup, t: TargetName): Promise<string> {
     commit: o.commit ?? SETUP_COMMIT,
     command: `bun erga setup ${o.answers.host}`,
     noTests: o.noTests,
-    test: o.test,
+    suite: o.suite,
     net: o.net,
     token: o.token,
     print,

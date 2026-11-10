@@ -32,6 +32,10 @@ export interface Branch {
   behind: number;
   /** Null: not checked. */
   conflicts: string[] | null;
+  /** The tree that its merge onto staging makes (observe.ts, mergeTree): the key of its tests' record. */
+  tree?: string | null;
+  /** Its tests (gate.ts), in words: the state, then each failed test of a failed run, for the task's agent to repair. */
+  tests?: string[];
   at: number;
   subject: string;
   author?: string;
@@ -193,10 +197,13 @@ export function statusText(s: State, has: (sha: string) => boolean = () => true)
   out.push("", "Feature branches:");
   if (!s.github) out.push("(GitHub did not answer git ls-remote: the list is as this clone last saw it, deleted branches too.)");
   if (!s.branches.length) out.push("- none");
-  for (const b of s.branches)
+  for (const b of s.branches) {
+    const test = b.tests?.length ? ` ${b.tests[0]}.` : "";
     out.push(
-      `- ${b.name}: ${b.ahead} ahead, ${b.behind} behind staging; ${b.ahead == 0 ? "nothing to merge" : b.conflicts == null ? "not checked" : b.conflicts.length ? `conflicts in ${b.conflicts.join(", ")}` : "merges cleanly"}. ${b.subject}`
+      `- ${b.name}: ${b.ahead} ahead, ${b.behind} behind staging; ${b.ahead == 0 ? "nothing to merge" : b.conflicts == null ? "not checked" : b.conflicts.length ? `conflicts in ${b.conflicts.join(", ")}` : "merges cleanly"}.${test} ${b.subject}`
     );
+    out.push(...(b.tests ?? []).slice(1).map((l) => `    ${l}`));
+  }
   out.push("", `On staging, not on main (${s.waiting.length}):`);
   if (!s.waiting.length) out.push("- none");
   for (const c of s.waiting) out.push(`- ${c.sha.slice(0, 7)} ${c.subject}`);

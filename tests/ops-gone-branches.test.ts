@@ -87,9 +87,8 @@ test("a branch that GitHub deleted after the last fetch shows on neither the ops
         setup: "",
         run: { at: "idle" },
         polls,
-        full: [],
+        runs: [],
         proofs: {},
-        loops: { merged: 0 },
       },
       "erga.dev",
       2000

@@ -85,13 +85,17 @@ export function commitsIn(cwd: string, ...range: string[]): Commit[] {
     });
 }
 
-/** The files where `branch` conflicts with `onto` (git merge-tree: nothing is written to the checkout). */
-export function conflictsOf(onto: string, branch: string, cwd = ROOT): string[] {
+/**
+ * The merge of `branch` onto `onto` (git merge-tree: nothing is written to the checkout): its tree, which is the tree of
+ * the commit that `bun erga merge` then makes (the key of its tests' record, test-run.ts), or the files that conflict.
+ */
+export function mergeTree(onto: string, branch: string, cwd = ROOT): { tree: string | null; conflicts: string[] } {
   const r = sh(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", onto, branch], { cwd });
-  if (r.code == 0) return [];
+  const [tree, ...rest] = r.out.split("\n");
+  if (r.code == 0) return { tree, conflicts: [] };
   // Exit 1: conflicts. The first line is the tree; the conflicted files follow.
-  const files = r.out.split("\n").slice(1).filter(Boolean);
-  return files.length ? [...new Set(files)] : [`(git merge-tree failed: ${r.err || r.code})`];
+  const files = rest.filter(Boolean);
+  return { tree: null, conflicts: files.length ? [...new Set(files)] : [`(git merge-tree failed: ${r.err || r.code})`] };
 }
 
 /**
@@ -142,7 +146,8 @@ export function branchesOf(live: Set<string> | null, cwd = ROOT): Branch[] {
     const [behind, ahead] = sh(["git", "rev-list", "--left-right", "--count", `origin/staging...origin/${b.name}`], { cwd })
       .out.split(/\s+/)
       .map(Number);
-    return { ...b, ahead: ahead || 0, behind: behind || 0, conflicts: ahead ? conflictsOf("origin/staging", `origin/${b.name}`, cwd) : [] };
+    const m = ahead ? mergeTree("origin/staging", `origin/${b.name}`, cwd) : { tree: null, conflicts: [] };
+    return { ...b, ahead: ahead || 0, behind: behind || 0, ...m };
   });
 }
 

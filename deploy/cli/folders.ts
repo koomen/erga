@@ -3,11 +3,10 @@
 // the folders and the local branches whose task is merged and on production, by the merge records (.erga/jobs/), and
 // removes them after a yes. cleanPlan decides, with no IO.
 
-import { existsSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { PROTECTED } from "./flow";
-import { readRecords } from "./loops";
 import { sh } from "./observe";
 import { proofDir } from "./proof";
 
@@ -69,6 +68,26 @@ export interface MergedBranch {
   branch: string;
   sha: string;
   at: number;
+}
+
+/** The branches that the merges of the job records put on staging (.erga/jobs/*.jsonl: merge.ts writes a "Merged" line for each). */
+export function readMerges(dir: string): MergedBranch[] {
+  const jobs = join(dir, "jobs");
+  if (!existsSync(jobs)) return [];
+  return readdirSync(jobs)
+    .filter((f) => f.endsWith(".jsonl"))
+    .flatMap((f) => {
+      const lines = readFileSync(join(jobs, f), "utf8").split("\n");
+      let at = 0;
+      try {
+        at = Date.parse(String(JSON.parse(lines[0]).started));
+      } catch {}
+      if (!at) return [];
+      return lines.flatMap((l) => {
+        const m = /PASS {2}Merged (\S+) as ([0-9a-f]{12}):/.exec(l);
+        return m ? [{ branch: m[1], sha: m[2], at }] : [];
+      });
+    });
 }
 
 export interface Folder {
@@ -175,7 +194,7 @@ export function cleanFolders(o: {
   const plan = cleanPlan({
     folders: foldersOf(o.clone, o.cwd),
     branches,
-    merges: readRecords(o.dir).merges,
+    merges: readMerges(o.dir),
     onMain: (sha) => git("merge-base", "--is-ancestor", sha, "origin/main").ok,
   });
   for (const k of plan.keep) o.log(`KEEP  ${k.what}: ${k.why}.`);

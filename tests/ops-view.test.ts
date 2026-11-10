@@ -7,6 +7,7 @@ import type { Entry } from "../deploy/cli/config";
 import { type Run, stepRun } from "../deploy/cli/job-state";
 import { type Branch, type Facts, groupsOf, jobOf, viewHtml } from "../deploy/cli/ops-view";
 import { startPolls } from "../deploy/cli/poll-state";
+import { runOf } from "./helpers/pass.ts";
 
 const NOW = Date.parse("2026-11-05T12:00:00Z");
 const entry = (host: string, stagingOf?: string): Entry => ({
@@ -54,9 +55,8 @@ test("the view: each primary with its staging instances, the job line, and live 
     setup: "",
     run: { at: "idle" },
     polls: startPolls(),
-    full: [],
+    runs: [],
     proofs: {},
-    loops: { merged: 0 },
   };
   const html = viewHtml(facts, "staging.erga.dev", NOW);
   // A staging instance's name chooses its primary.
@@ -91,9 +91,8 @@ test("Logs shows the job that runs, else the last one, or the one the hash names
     setup: "",
     run: { at: "idle" },
     polls: startPolls(),
-    full: [],
+    runs: [],
     proofs: {},
-    loops: { merged: 0 },
   };
   const logs = viewHtml(facts, "erga.dev/logs", NOW);
   expect(logs).toContain('<section class="logs" data-job="runs"');
@@ -120,9 +119,8 @@ test("Setup: the setup's host shows before it has an entry, and opens on its che
     setup: "new.example.com",
     run: { at: "idle" },
     polls: startPolls(),
-    full: [],
+    runs: [],
     proofs: {},
-    loops: { merged: 0 },
   };
   expect(groupsOf(config, facts.setup).map((g) => [g.primary.host, g.primary.token])).toEqual([
     ["erga.dev", "t"],
@@ -171,6 +169,8 @@ const branch = (name: string, more: Partial<Branch> = {}): Branch => ({
   ahead: 1,
   behind: 0,
   conflicts: [],
+  // The tree of its merge: none when it has no merge.
+  tree: more.ahead == 0 || more.conflicts?.length ? null : `tree-${name}`,
   ...more,
 });
 const deploys = (more: Partial<Facts> = {}, staging = "3", production = "1"): Facts => ({
@@ -191,9 +191,9 @@ const deploys = (more: Partial<Facts> = {}, staging = "3", production = "1"): Fa
   setup: "",
   run: { at: "idle" },
   polls: startPolls(),
-  full: [],
+  // Every test passed on the merge of clean.
+  runs: [runOf("tree-clean")],
   proofs: {},
-  loops: { merged: 0 },
   ...more,
 });
 /** The page's own command as it starts: a merge of a branch, or a deploy of commit n...n to staging.erga.dev. */
@@ -236,6 +236,50 @@ test("Merge: a button on each feature branch, with a field for the message; disa
     disabled: true,
   });
   expect(mergeOf(viewHtml(deploys({ run: starts("merge", "clash") }), "erga.dev", NOW), "clean")?.disabled).toBe(true);
+});
+
+/** A branch's row, in the view's HTML. */
+const featureOf = (html: string, name: string) =>
+  html.split('<li class="feature"').find((li) => /data-branch="([\w-]+)"/.exec(li)?.[1] == name) ?? "";
+
+test("a branch's row shows one test state, and only a passed run of its merge's tree opens Merge", () => {
+  const row = (runs: Facts["runs"]) => {
+    const html = viewHtml(deploys({ runs }), "erga.dev", NOW);
+    return { html: featureOf(html, "clean"), merge: mergeOf(html, "clean") };
+  };
+  // No record of the tree: it waits in the queue. A record of another tree of the branch: the row says it is stale.
+  const waiting = row([]);
+  expect(waiting.html).toContain('data-test="waiting"><i class="light wait"></i>Tests wait in the queue</span>');
+  expect(waiting.merge).toEqual({ tip: "The tests must pass first. Its run waits in the queue.", disabled: true });
+  const stale = row([runOf("tree-before", { branch: "clean" })]);
+  expect(stale.html).toContain("Tests wait in the queue (the last run, passed, is stale)");
+  expect(stale.merge?.disabled).toBe(true);
+  const running = row([runOf("tree-clean", { state: "running", ended: undefined })]);
+  expect(running.html).toContain('data-test="running"><i class="light run"></i>Tests run, 600 s</span>');
+  expect(running.merge).toEqual({ tip: "The tests must pass first. They run now.", disabled: true });
+  const passed = row([runOf("tree-clean")]);
+  expect(passed.html).toContain('data-test="passed"><i class="light ok"></i>Tests passed</span>');
+  expect(passed.merge).toEqual({ tip: "", disabled: false });
+  // A failed run opens to its failed tests, what the failed step said, and its log.
+  const names = ["e2e/smoke/a.e2e.ts: typing shows", "e2e/smoke/b.e2e.ts: undo works"];
+  const failed = row([runOf("tree-clean", { state: "failed", failed: names, note: "== smoke run: FAILED (9 s)" })]);
+  expect(failed.html).toContain('data-test="failed"><i class="light bad"></i>2 tests failed</span>');
+  expect(failed.html).toContain(
+    `<details class="f-fails"><summary>What failed</summary><ul><li>${names[0]}</li><li>${names[1]}</li></ul><pre>== smoke run: FAILED (9 s)</pre>`
+  );
+  expect(failed.html).toContain("The log: <code>/tmp/erga-tests.log</code>");
+  expect(failed.merge).toEqual({
+    tip: "Its tests failed. The task&#39;s agent repairs them on the branch, and pushes it.",
+    disabled: true,
+  });
+  // A run with no failed browser test (the typecheck failed): what that step said.
+  const broke = row([runOf("tree-clean", { state: "failed", note: "== typecheck: FAILED (9 s)" })]);
+  expect(broke.html).toContain("Tests failed</span>");
+  expect(broke.html).toContain("<summary>What failed</summary><pre>== typecheck: FAILED (9 s)</pre>");
+  // A branch with a conflict has no merge to test; and the page has no other box of tests or times.
+  const all = viewHtml(deploys(), "erga.dev", NOW);
+  expect(featureOf(all, "clash")).not.toContain("f-test");
+  expect(all).not.toContain("tests-head");
 });
 
 /** The row of a commit, in the view's HTML. */
@@ -283,6 +327,7 @@ test("the page's server: Merge and Deploy start their `bun erga` command, one jo
   writeFileSync(join(dir, ".erga/config.json"), JSON.stringify({ instances: [entry("erga.dev"), entry("staging.erga.dev", "erga.dev")] }));
   const version = { "erga.dev": git("rev-parse", "HEAD~2").slice(0, 12), "staging.erga.dev": git("rev-parse", "HEAD~1").slice(0, 12) };
   const runs: string[][] = [];
+  const { writePass } = await import("./helpers/pass.ts");
   let end = (_: { code: number; out: string }) => {};
   const page = serveOpsPage({
     dir: join(dir, ".erga"),
@@ -300,6 +345,14 @@ test("the page's server: Merge and Deploy start their `bun erga` command, one jo
   const view = async () => (await fetch(`${at}/view?hash=erga.dev`)).text();
   try {
     for (let i = 0; i < 100 && !(await view()).includes("dep live"); i++) await Bun.sleep(20);
+    // No test record of its merge yet: the server refuses the merge, as the button does.
+    const early = await post("/api/merge", { branch: "a-feature", message: "A feature" });
+    expect([early.status, ((await early.json()) as { error: string }).error]).toEqual([
+      409,
+      "The tests must pass first. Its run waits in the queue.",
+    ]);
+    writePass(join(dir, ".erga"), "HEAD", dir);
+    for (let i = 0; i < 100 && !(await view()).includes('data-merge="a-feature">Merge'); i++) await Bun.sleep(20);
     expect(await view()).toContain('data-merge="a-feature">Merge');
     expect((await post("/api/merge", { branch: "a-feature", message: "A feature" }, "https://evil.example")).status).toBe(403);
     expect((await post("/api/merge", { branch: "nope", message: "x" })).status).toBe(409);
@@ -457,42 +510,6 @@ test("the page's server checks GitHub and each instance at start, not on a page 
   }
 });
 
-test("the newest run of all the tests shows above the log with each failed test's name, and a mark at its commit", () => {
-  const run = {
-    sha: "3".repeat(40),
-    started: "2026-11-05T11:50:00.000Z",
-    pid: 1,
-    pidStart: null,
-    total: 841,
-    failed: [] as string[],
-    log: "/tmp/full.log",
-  };
-  const names = ["e2e/full/tree/docs-fast.e2e.ts: the list opens fast", "e2e/full/suite/robustness.e2e.ts: a restart keeps the text"];
-  const failed = viewHtml(
-    deploys({ full: [{ ...run, state: "failed", failed: names, ended: "2026-11-05T11:54:00.000Z" }] }),
-    "erga.dev",
-    NOW
-  );
-  expect(failed).toContain("2 tests of 841 failed on 3333333 in 4 minutes:");
-  for (const n of names) expect(failed).toContain(`<li>${n}</li>`);
-  expect(failed).toContain("/tmp/full.log");
-  // The mark is in the row of its commit, and in no other.
-  expect(
-    failed
-      .split('<div class="row')
-      .filter((r) => r.includes('class="full bad"'))
-      .map((r) => /data-sha="(\d)/.exec(r)?.[1])
-  ).toEqual(["3"]);
-  const passed = viewHtml(deploys({ full: [{ ...run, state: "passed", ended: "2026-11-05T11:54:00.000Z" }] }), "erga.dev", NOW);
-  expect(passed).toContain("All 841 tests passed on 3333333 in 4 minutes.");
-  expect(passed).toContain('<span class="full ok"');
-  expect(viewHtml(deploys({ full: [{ ...run, state: "running" }] }), "erga.dev", NOW)).toContain(
-    "All tests run on 3333333, since 10 minutes ago."
-  );
-  expect(viewHtml(deploys({ full: [{ ...run, state: "stopped" }] }), "erga.dev", NOW)).toContain("bun erga full 3333333");
-  expect(viewHtml(deploys(), "erga.dev", NOW)).not.toContain("tests-head");
-});
-
 test("a branch's proof is a link beside Merge: old when the branch has a newer commit, and named when there is none", () => {
   const sha = (name: string) => /data-branch="(\w+)"/.exec(name);
   const of = (html: string, name: string) => html.split('<li class="feature"').find((li) => sha(li)?.[1] == name) ?? "";
@@ -512,14 +529,83 @@ test("a branch's proof is a link beside Merge: old when the branch has a newer c
   expect(of(viewHtml(deploys(), "erga.dev", NOW), "done")).not.toContain("f-proof");
 });
 
-test("the week's loops show their medians above the log, and nothing when no loop merged", () => {
-  const html = viewHtml(
-    deploys({ loops: { merged: 22, work: 17.5, failed: 1, wait: 21.5, toStaging: 1, toProduction: 5.6 } }),
-    "erga.dev",
-    NOW
-  );
-  expect(html).toContain(
-    "22 tasks merged. Medians: work 17.5 min · failed test runs 1 · wait for the merge 21.5 min · merge to staging 1 min · staging to production 5.6 min."
-  );
-  expect(viewHtml(deploys(), "erga.dev", NOW)).not.toContain("loops-head");
-});
+test("the page's server works the tests' queue: each branch's merge runs one time, one at a time, the oldest first; a new commit runs again", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { serveOpsPage } = await import("../deploy/cli/ops-page");
+  const { runPath } = await import("../deploy/cli/test-run");
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "erga-ops-queue-")));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim();
+  let when = 1_800_000_000;
+  /** A commit with one file more, at a later time; the result: its tree. */
+  const commit = (file: string) => {
+    writeFileSync(join(dir, file), file);
+    git("add", "-A");
+    const date = `${when++} +0000`;
+    execFileSync("git", ["-c", "user.name=Pete", "-c", "user.email=p@example.com", "commit", "--quiet", "-m", file], {
+      cwd: dir,
+      env: { ...process.env, GIT_COMMITTER_DATE: date, GIT_AUTHOR_DATE: date },
+    });
+    return git("rev-parse", "HEAD^{tree}");
+  };
+  git("init", "--quiet", "-b", "work");
+  commit("base.txt");
+  git("update-ref", "refs/remotes/origin/staging", "HEAD");
+  const trees = { old: commit("old.txt") };
+  git("update-ref", "refs/remotes/origin/old", "HEAD");
+  git("reset", "--quiet", "--hard", "origin/staging");
+  const newer = commit("new.txt");
+  git("update-ref", "refs/remotes/origin/new", "HEAD");
+  mkdirSync(join(dir, ".erga/tests"), { recursive: true });
+  writeFileSync(join(dir, ".erga/config.json"), JSON.stringify({ instances: [entry("erga.dev")] }));
+  // The fake suite: it notes the branch, and its end (the test's) writes the record of the tree, as `bun erga full` does.
+  const started: string[] = [];
+  let end = () => {};
+  const page = serveOpsPage({
+    dir: join(dir, ".erga"),
+    cwd: dir,
+    port: 0,
+    ask: async () => ({ version: null, healthy: null }),
+    fetch: async () => null,
+    test: (branch) => {
+      started.push(branch);
+      return { pid: 999_999, done: new Promise((done) => (end = () => done({ code: 0, out: "" }))) };
+    },
+  });
+  const view = async () => (await fetch(`http://127.0.0.1:${page.server.port}/view?hash=erga.dev`)).text();
+  const until = async (is: () => boolean | Promise<boolean>) => {
+    // The server sees a moved ref at its next 5 seconds' tick.
+    for (let i = 0; i < 500 && !(await is()); i++) await Bun.sleep(20);
+  };
+  const finish = (tree: string, state: "passed" | "failed") => {
+    writeFileSync(runPath(join(dir, ".erga"), tree), JSON.stringify(runOf(tree, { state, branch: started.at(-1) })));
+    end();
+  };
+  try {
+    await until(() => started.length == 1);
+    expect(started).toEqual(["old"]);
+    expect(featureOf(await view(), "new")).toContain("Tests wait in the queue");
+    finish(trees.old, "failed");
+    await until(() => started.length == 2);
+    expect(started).toEqual(["old", "new"]);
+    expect(featureOf(await view(), "old")).toContain('data-test="failed"');
+    finish(newer, "passed");
+    await until(async () => featureOf(await view(), "new").includes('data-test="passed"'));
+    // Each has its record: nothing more runs. The failed branch gets a commit: its merge is a new tree, and it runs again.
+    git("checkout", "--quiet", "--detach", "origin/old");
+    const repaired = commit("repair.txt");
+    git("update-ref", "refs/remotes/origin/old", "HEAD");
+    await until(() => started.length == 3);
+    expect(started).toEqual(["old", "new", "old"]);
+    expect(featureOf(await view(), "old")).toContain("the last run, failed, is stale");
+    finish(repaired, "passed");
+    await until(async () => featureOf(await view(), "old").includes('data-test="passed"'));
+    expect(started.length).toBe(3);
+  } finally {
+    end();
+    page.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 30_000);

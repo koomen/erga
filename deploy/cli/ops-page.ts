@@ -1,18 +1,20 @@
 // `bun erga`: the ops page, a local server on 127.0.0.1 and the page it serves (deploy/cli/ops-view.ts draws it). It
-// reads .erga/config.json, .erga/jobs/ and .erga/full/ (the whole suite's runs, full-run.ts) in the main clone, which it watches (a change reaches the page at once,
+// reads .erga/config.json, .erga/jobs/ and .erga/tests/ (the tests' runs, test-run.ts) in the main clone, which it watches (a change reaches the page at once,
 // through /api/events), and the clone's git. It checks its sources (poll-state.ts): GitHub, with a git fetch of the
 // clone, at most once a minute, and each instance's commit and health, with its ops token, every 5 seconds. The page
 // shows each source's last check. It serves each branch's proof page (bun erga proof) at /proof/<branch>/. Every command works without it. Its Merge and Deploy buttons run
 // `bun erga merge` and `bun erga deploy` (POST /api/merge, /api/deploy) in a process of their own, as a terminal does:
 // the same code, locks and job records. A merge's tests take minutes, and this server must answer while they run.
+// It works the tests' queue (gate.ts, stepQueue): for each pushed branch whose merge has no test record, `bun erga test
+// <branch>` (about a minute), one at a time, the oldest first. A branch or a staging head that moves makes a new tree: it waits again.
 
 import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Entry, entryOrigin, readConfig } from "./config";
-import { readFullRuns } from "./full-run";
-import { loopStats, readLoops } from "./loops";
+import { readRuns } from "./test-run";
+import { type Queue, stepQueue, testOf } from "./gate";
 import { readProofs } from "./proof";
-import { fetchGitHub, rememberedBranches } from "./observe";
+import { fetchGitHub, mergeTree, rememberedBranches } from "./observe";
 import { readOps } from "./ops";
 import {
   type Answer,
@@ -82,13 +84,8 @@ export function readGit(cwd: string, versions: string[]): Git {
     });
   const branches: Branch[] = rememberedBranches(cwd, null).map((b) => {
     const [behind, ahead] = git(cwd, "rev-list", "--left-right", "--count", `${base}...origin/${b.name}`).out.split(/\s+/).map(Number);
-    let conflicts: string[] = [];
-    if (ahead) {
-      // git merge-tree writes nothing to the clone. Exit 1: the conflicted files follow the tree's line.
-      const m = git(cwd, "merge-tree", "--write-tree", "--name-only", "--no-messages", base, `origin/${b.name}`);
-      if (m.code == 1) conflicts = [...new Set(m.out.split("\n").slice(1).filter(Boolean))];
-    }
-    return { ...b, ahead: ahead || 0, behind: behind || 0, conflicts };
+    const m = ahead ? mergeTree(base, `origin/${b.name}`, cwd) : { tree: null, conflicts: [] };
+    return { ...b, ahead: ahead || 0, behind: behind || 0, ...m };
   });
   const elsewhere: Record<string, boolean> = {};
   for (const v of versions) if (!log.some((c) => c.sha.startsWith(v))) elsewhere[v] = has(v);
@@ -156,6 +153,8 @@ export interface OpsPageOptions {
   fetch?: (cwd: string) => Promise<string | null>;
   /** Runs `bun erga <args>` for the Merge and Deploy buttons (default: the CLI, in a process of its own), or a fake. */
   run?: (args: string[]) => Run;
+  /** Runs all the tests on a branch's merge, for the tests' queue: `bun erga test <branch>` (startOpsPage), or a fake. None: no queue. */
+  test?: (branch: string) => Run;
 }
 
 const FILES: Record<string, [string, string]> = {
@@ -177,10 +176,11 @@ export function serveOpsPage(o: OpsPageOptions) {
     setup: "",
     run: { at: "idle" },
     polls: startPolls(),
-    full: [],
+    runs: [],
     proofs: {},
-    loops: { merged: 0 },
   };
+  /** The tests' queue: the run that this page started, if one is on. */
+  let queue: Queue = { at: "idle" };
   let refs = "";
   /** The first fetch ended (well or not): until then, the clone can show branches that GitHub deleted. */
   let fetched = false;
@@ -200,8 +200,9 @@ export function serveOpsPage(o: OpsPageOptions) {
       }
     }
   };
-  /** Tells the pages when what they show changed. */
+  /** After each change of the facts: the tests' queue looks at them, and the pages hear when what they show changed. */
   const changed = () => {
+    work();
     const now = JSON.stringify(facts);
     if (now == sent) return;
     sent = now;
@@ -218,17 +219,32 @@ export function serveOpsPage(o: OpsPageOptions) {
     const hosts = new Set(entries().map((e) => e.host));
     for (const h of Object.keys(facts.answers)) if (!hosts.has(h)) delete facts.answers[h];
     facts.jobs = readJobs(o.dir);
-    facts.full = readFullRuns(o.dir);
+    facts.runs = readRuns(o.dir);
     facts.proofs = readProofs(o.dir);
-    facts.loops = loopStats(
-      readLoops(
-        o.dir,
-        entries().flatMap((e) => (e.stagingOf ? [] : [e.host]))
-      ),
-      Date.now() - 7 * 86_400_000
-    );
     facts.setup = setupHost(o.dir);
     poll({ type: "sources", names: [GITHUB, ...hosts], now: Date.now() });
+  };
+  /** Steps the tests' queue with what git and the records say now, and starts the run it asks for. Its end is an event. */
+  const work = () => {
+    if (stopped || !o.test || "error" in facts.git) return;
+    const wanted = facts.git.branches.flatMap((b) => (b.tree ? [{ branch: b.name, tree: b.tree, at: b.at }] : []));
+    const r = stepQueue(queue, { type: "look", wanted, runs: facts.runs });
+    queue = r.queue;
+    if (!r.start) return;
+    let done: Promise<unknown>;
+    try {
+      done = o.test(r.start.branch).done;
+    } catch {
+      done = Promise.resolve();
+    }
+    void done.then(() => {
+      queue = stepQueue(queue, { type: "end" }).queue;
+      if (stopped) return;
+      // The clone as it is now, so that the next look and the run that ended agree on the trees.
+      readClone();
+      readFiles();
+      changed();
+    });
   };
   /** Reads git, once the first fetch ended. */
   const readClone = () => {
@@ -300,7 +316,7 @@ export function serveOpsPage(o: OpsPageOptions) {
       readClone();
     }
     facts.jobs = readJobs(o.dir);
-    facts.full = readFullRuns(o.dir);
+    facts.runs = readRuns(o.dir);
     changed();
     send(": still here\n\n");
   }, 5_000);
@@ -336,7 +352,7 @@ export function serveOpsPage(o: OpsPageOptions) {
       const b = facts.git.branches.find((x) => x.name == body.branch);
       const message = typeof body.message == "string" ? body.message.trim() : "";
       if (!b) return no(`There is no branch ${String(body.branch)} in this clone.`);
-      const block = mergeBlock(b, facts.git.base, "");
+      const block = mergeBlock(b, facts.git.base, "", testOf(b, facts.runs));
       if (block) return no(block);
       if (!message) return no("Write the message of the commit on staging.");
       const host = entries().find((x) => x.stagingOf)?.host ?? "staging";
@@ -437,7 +453,7 @@ export function startOpsPage(o: { dir: string; cwd: string; port?: number; open:
   const from = o.port ?? 4801;
   for (let p = from; !page && p < from + 20; p++) {
     try {
-      page = serveOpsPage({ dir: o.dir, cwd: o.cwd, port: p });
+      page = serveOpsPage({ dir: o.dir, cwd: o.cwd, port: p, test: (branch) => runCli(o.cwd)(["test", branch]) });
     } catch (e) {
       if (from == 0 || !/in use|EADDRINUSE/i.test((e as Error).message)) throw e;
     }
