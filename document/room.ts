@@ -13,7 +13,9 @@
 // and git still see ordinary files. Over a journal they're written lazily
 // (each at most every `fileDelay`, 2 seconds, and all of them as the room
 // closes), and the journal names the files storage doesn't have yet, so a
-// room stopped before writing them writes them as it opens again. Edits that
+// room stopped before writing them writes them as it opens again. After each
+// write that leaves no file behind, the room tells every participant what the
+// files hold now ("stored"). Edits that
 // arrive as files (an editor, git) are merged in as ordinary edits: diffed
 // word by word against the last version both sides agreed on and rebased
 // over the room's edits since. Writes and merges take turns on one queue, so
@@ -55,6 +57,8 @@ import {
   writeUpdate,
   readSyncMessage,
   SYNC_STEP1,
+  MSG_STORED,
+  writeVector,
   applyAwarenessUpdate,
   removeAwarenessStates,
   encodeAwarenessUpdate,
@@ -184,6 +188,12 @@ export class Room {
   readonly awareness: Awareness;
   /** Each text file as storage last had it: the base for merging edits made there. */
   private stored = new Map<string, string>();
+  /**
+   * What the files hold of the history: each client's clock at the last write that left no file behind (none: the
+   * files are behind since the room opened). A new epoch starts from the files, so a page takes this, and nothing
+   * that the room only has in memory or in its journal, as the base of its edits (libs/text/ui/collab.ts, adopt).
+   */
+  private filed = new Map<number, number>();
   /** What it must still write of each file (writes.ts). */
   private writes: Writes = NOTHING;
   /** The Yjs updates made since the last write, for the journal. */
@@ -235,6 +245,8 @@ export class Room {
       yield* room.restore(!doc || saved!.reconcile, saved?.unwritten ?? []);
       // A lock from before the room closed has no holder now.
       if (roomInfo(room.doc).has("lock")) room.act(() => roomInfo(room.doc).delete("lock"));
+      // The files are as the room is, unless the journal names some that wait.
+      if (!room.writes.paths.size) room.filed = Y.decodeStateVector(Y.encodeStateVector(room.doc));
       room.doc.on("update", (update: Uint8Array, origin: unknown) => room.broadcast(syncUpdate(update), origin));
       room.doc.on("afterTransaction", (tr: Y.Transaction) => room.noteDirty(tr));
       // The tree changed: files or folders came or went (a file's text changing isn't one).
@@ -387,6 +399,8 @@ export class Room {
     send(hello.toBytes());
     const present = [...this.awareness.getStates().keys()];
     if (present.length) send(awarenessMessage(this.awareness, present));
+    // All that the files hold: a participant that was away catches up.
+    if (this.filed.size) send(storedMessage(this.filed));
     return {
       receive: (message) => {
         try {
@@ -458,6 +472,17 @@ export class Room {
 
   private broadcast(message: Uint8Array, origin: unknown): void {
     for (const [key, conn] of this.conns) if (key !== origin) conn.send(message);
+  }
+
+  /** The files hold the history up to `vector` (a state vector) now: every participant hears what is new in it. */
+  private sayStored(vector: Uint8Array): void {
+    const news = new Map<number, number>();
+    for (const [client, clock] of Y.decodeStateVector(vector)) {
+      if (this.filed.get(client) == clock) continue;
+      this.filed.set(client, clock);
+      news.set(client, clock);
+    }
+    if (news.size) this.broadcast(storedMessage(news), null);
   }
 
   // ------------------------------------------------------------ storage
@@ -559,11 +584,14 @@ export class Room {
       this.unsaved = [];
       const update = updates.length == 0 ? null : updates.length == 1 ? updates[0] : Y.mergeUpdates(updates);
       const write = c.write.map((path) => [path, this.text(path)!] as [string, string]);
+      // With no file left for later, the files are the room as it is at this moment.
+      const filed = c.later.length ? null : Y.encodeStateVector(this.doc);
       return this.state.commit({ update, write, remove: c.remove, unwritten: c.later }).pipe(
         Effect.map(() => {
           this.step({ on: "committed" });
           for (const [path, text] of write) this.stored.set(path, text);
           for (const path of c.remove) this.stored.delete(path);
+          if (filed) this.sayStored(filed);
         }),
         Effect.andThen(
           Effect.catch(
@@ -914,6 +942,13 @@ function syncUpdate(update: Uint8Array): Uint8Array {
   const e = new Encoder();
   e.writeUint(MSG_SYNC);
   writeUpdate(e, update);
+  return e.toBytes();
+}
+
+function storedMessage(vector: Map<number, number>): Uint8Array {
+  const e = new Encoder();
+  e.writeUint(MSG_STORED);
+  writeVector(e, vector);
   return e.toBytes();
 }
 

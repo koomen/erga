@@ -150,7 +150,7 @@ export function rebase(base: string, current: string, incoming: string): ChangeS
 /**
  * `rebase` for a base that may be behind both texts: each has a change that the base has not, and a plain rebase makes
  * that change two times. A replica of a history that the room lost goes in so (libs/text/ui/collab.ts, adopt): the
- * room stored an edit, the replica's own or another's, and its history went before it confirmed the edit to the replica.
+ * room stored an edit, the replica's own or another's, and its history went before the replica heard so.
  *
  * What the two texts have in common is there one time: the base is asked only where they differ. The rebase is from
  * `current` with, in the place of each stretch that differs, the base's text if one of them still has it (the other

@@ -4,7 +4,7 @@
 // into one again. A merge of the same update twice changes nothing, so a replica that two tabs keep under one name
 // stays whole.
 //
-// Beside it, the text of each file as the room last had it (`base`): if the room loses its history (a new epoch), the
+// Beside it, the text of each file as the room's files last had it (`base`): if the room loses its history (a new epoch), the
 // replica can't merge into it, and its files' text goes in as edits instead, against that base (collab.ts, `adopt`).
 //
 // One database per origin: the viewer's (erga.dev) keeps the shell's replica, a document's pages origin its page's.
@@ -21,7 +21,7 @@ export interface Kept {
   update: Uint8Array;
   /** What the replica's owner keeps beside it (the shell: the host's hello). */
   extra?: unknown;
-  /** Each file's text as the room last had it, if it was ever written. */
+  /** Each file's text as the room's files last had it, if it was ever written. */
   base?: Record<string, string>;
 }
 
@@ -111,7 +111,7 @@ export async function claimKept(name: string, epoch: string): Promise<boolean> {
   }));
 }
 
-/** What keeps a replica: `base` writes the room's text of each file; `stop` ends it (`save`: with what waits). */
+/** What keeps a replica: `base` writes the text of each file as the room's files hold it; `stop` ends it (`save`: with what waits). */
 export interface Keeper {
   base(texts: Record<string, string>): void;
   stop(save?: boolean): Promise<void>;

@@ -1,4 +1,4 @@
-// Work that reads the whole document (the page in the browser's copy, the texts the room confirmed, the page's
+// Work that reads the whole document (the page in the browser's copy, the texts that the room's files hold, the page's
 // colours) runs when the typing pauses, not after each key, where it would compete with the next key. It runs at once in a
 // hidden tab, whose timers can wait long, and as the tab is hidden or goes: nothing asked for is ever left undone.
 

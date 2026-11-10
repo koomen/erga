@@ -29,8 +29,9 @@ import {
   writeSyncStep1,
   writeUpdate,
   readSyncMessage,
-  SYNC_STEP1,
   SYNC_STEP2,
+  MSG_STORED,
+  readVector,
   applyAwarenessUpdate,
   removeAwarenessStates,
   encodeAwarenessUpdate,
@@ -57,7 +58,7 @@ import { sleep } from "../../../shared/time";
 import { claimKept, keepReplica, readKept, type Keeper, type Kept } from "./kept";
 import { afterPause } from "./pause";
 import { socketStep, type PhaseEffect, type PhaseEvent, type SocketPhase } from "../../../shared/socket-phase";
-import { ackStep, holdsState, replicaStep, STARTING, type Ack, type AckEvent, type Replica, type ReplicaEvent } from "./replica-state";
+import { holdsState, replicaStep, STARTING, type Replica, type ReplicaEvent } from "./replica-state";
 
 /** What the page shows of the socket. */
 export type RoomStatus = "up" | "down" | "gone";
@@ -162,23 +163,24 @@ export class Collab {
   /** The replica this browser kept (read as this starts), and what stops keeping it. */
   private kept: Kept | null = null;
   private keeping: Keeper | null = null;
-  /** Writes the confirmed texts beside the replica, once the typing pauses (pause.ts). */
+  /** Writes the base's texts beside the replica, once the room's writes pause (pause.ts). */
   private baseLater: ReturnType<typeof afterPause> | null = null;
   /**
-   * With `keep`: the room's state as the room confirmed it (what it sent, and this tab's edits it has answered for), the
-   * base of this tab's edits if the room loses its history (adopt). A sync step 1 this tab sends is answered in order,
-   * after everything sent before it: each answer confirms what this tab had sent when it asked (`acks`, oldest first;
-   * null: nothing of its own yet). `ack`: whether an ask for a confirmation is out (replica-state.ts, ackStep).
+   * With `keep`: the room's state as its files hold it, the base of this tab's edits if the room loses its history
+   * (adopt): the new history starts from the files. The room says what the files hold (its message "stored": each
+   * client's clock, `stored`). An update, this tab's or one from the room, waits in `unstored`, with the clocks that it
+   * ends at, until the files hold all of it. So the base is never ahead of the files: the room has an edit before it
+   * stores it, and may never store it.
    */
-  private readonly confirmed: Y.Doc | null;
-  private acks: (Uint8Array | null)[] = [];
-  private ack: Ack = "closed";
+  private readonly base: Y.Doc | null;
+  private readonly stored = new Map<number, number>();
+  private unstored: { update: Uint8Array; to: Map<number, number> }[] = [];
   /** The host's last hello, kept with the replica. */
   private lastHello: Hello | null = null;
 
   constructor(private opts: CollabOptions) {
-    this.confirmed = opts.keep ? new Y.Doc() : null;
-    if (this.confirmed) this.baseLater = afterPause(() => this.keeping?.base(this.confirmedTexts()));
+    this.base = opts.keep ? new Y.Doc() : null;
+    if (this.base) this.baseLater = afterPause(() => this.keepBase());
     this.hello.catch(() => {});
     this.awareness.on("change", ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }) => {
       // This tab's own cursor moving is no news to it.
@@ -186,11 +188,12 @@ export class Collab {
     });
     // What changes here goes to the room: this tab's edits and its presence (not what came from the room).
     this.doc.on("update", (update: Uint8Array, origin: unknown) => {
-      if (origin === this) {
-        if (this.confirmed) Y.applyUpdate(this.confirmed, update);
-        return;
+      if (this.base) {
+        this.unstored.push({ update, to: Y.parseUpdateMeta(update).to });
+        // (What the room sends may be in its files already. An edit of this tab's is not.)
+        if (origin === this) this.nowStored();
       }
-      queueMicrotask(() => this.ackGo({ type: "want" }));
+      if (origin === this) return;
       const e = new Encoder();
       e.writeUint(MSG_SYNC);
       writeUpdate(e, update);
@@ -262,10 +265,10 @@ export class Collab {
 
   /**
    * A replica of a history the room lost (it started anew from its files: a new epoch), which can't merge into it: its
-   * edits go in as edits of the files' text instead, made against the text the room last confirmed (`base`). That
-   * text may be behind the files: the room stored an edit and lost its history before it confirmed it, and a replica
-   * that only reads gets a confirmation one time on each socket. So what the files' text has already goes in no
-   * second time (document/merge.ts, rebaseOnce). One tab takes it (claimKept), so they go in once.
+   * edits go in as edits of the files' text instead, made against the text that the room last said its files hold
+   * (`base`). That text may be behind the files: the room stored an edit, and lost its history before this tab heard so
+   * (it was off the network). So what the files' text has already goes in no second time (document/merge.ts,
+   * rebaseOnce). One tab takes it (claimKept), so they go in once.
    */
   private async adopt(k: Kept): Promise<void> {
     if (!k.base || !this.opts.keep || !(await claimKept(this.opts.keep, k.epoch))) return;
@@ -283,21 +286,26 @@ export class Collab {
     was.destroy();
   }
 
-  /** Each file's text as the room confirmed it: what this browser keeps beside the replica (`base`). */
-  private confirmedTexts(): Record<string, string> {
-    return Object.fromEntries([...files(this.confirmed!)].map(([p, t]) => [p, t.toString()]));
+  /** Each file's text as the room's files hold it: what this browser keeps beside the replica (`base`). */
+  private baseTexts(): Record<string, string> {
+    return Object.fromEntries([...files(this.base!)].map(([p, t]) => [p, t.toString()]));
   }
 
-  /**
-   * An event of the confirmations (replica-state.ts, ackStep): it may ask the room to confirm what this tab has sent,
-   * with a sync step 1, which the room answers in order. One at a time (another after it, if this tab changed
-   * meanwhile). Not while the room holds a lock, when it drops other tabs' edits.
-   */
-  private ackGo(e: AckEvent): void {
-    if (!this.confirmed) return;
-    const t = ackStep(this.ack, e, !!roomInfo(this.doc).get("lock"));
-    this.ack = t.state;
-    if (t.ask) this.askForChanges(Y.encodeStateAsUpdate(this.doc, Y.encodeStateVector(this.confirmed)));
+  /** The base's texts go beside the kept replica, once it has any: before that, what was kept there stays. */
+  private keepBase(): void {
+    if (this.keeping && files(this.base!).size) this.keeping.base(this.baseTexts());
+  }
+
+  /** The files hold more, or the room sent an update: each update that the files hold whole goes into the base. */
+  private nowStored(): void {
+    const waits: typeof this.unstored = [];
+    for (const u of this.unstored) {
+      if ([...u.to].some(([client, clock]) => clock > (this.stored.get(client) ?? 0))) waits.push(u);
+      else Y.applyUpdate(this.base!, u.update);
+    }
+    if (waits.length == this.unstored.length) return;
+    this.unstored = waits;
+    this.baseLater!.ask();
   }
 
   /**
@@ -313,9 +321,8 @@ export class Collab {
   }
 
   /** What the room has that this tab doesn't (and, in the answer to the room's own step 1, the other way): once it has a state, on each socket. */
-  private askForChanges(unconfirmed: Uint8Array | null = null): void {
+  private askForChanges(): void {
     if (!this.connected || this.replica.at == "starting") return;
-    this.acks.push(unconfirmed);
     const e = new Encoder();
     e.writeUint(MSG_SYNC);
     writeSyncStep1(e, this.doc);
@@ -362,7 +369,7 @@ export class Collab {
     this.bind();
     if (this.opts.keep && this.epoch && !this.keeping) {
       this.keeping = keepReplica(this.opts.keep, this.doc, this.epoch, this.lastHello ?? undefined);
-      if (this.confirmed && files(this.confirmed).size) this.keeping.base(this.confirmedTexts());
+      this.keepBase();
     }
     if (!this.text) throw new Error(`${this.path} isn't in the room`);
     return this.text.toString();
@@ -472,8 +479,6 @@ export class Collab {
       [...this.awareness.getStates().keys()].filter((c) => c != this.doc.clientID),
       this
     );
-    this.acks = [];
-    this.ackGo({ type: "closed" });
     this.go({ type: "closed", code, known: this.greeted || this.live || holdsState(this.replica) });
   }
 
@@ -549,17 +554,6 @@ export class Collab {
         reply.writeUint(MSG_SYNC);
         const kind = readSyncMessage(decoder, reply, this.doc, this);
         if (reply.length > 1) this.send(reply.toBytes());
-        // The room's step 1, answered: this tab has sent it all it holds. A step 2 answers this tab's oldest step 1.
-        if (kind == SYNC_STEP1) this.ackGo({ type: "replied" });
-        else if (kind == SYNC_STEP2) {
-          const sent = this.acks.shift();
-          if (sent && this.confirmed) {
-            Y.applyUpdate(this.confirmed, sent);
-            // (Every file's text: when the typing pauses, not at each answer.)
-            this.baseLater?.ask();
-          }
-          this.ackGo({ type: "answered", ask: !!sent });
-        }
         if (kind == SYNC_STEP2 && this.phase.at == "open" && !this.phase.ready) {
           this.go({ type: "ready" });
           void this.replicaGo({ type: "synced" });
@@ -568,6 +562,11 @@ export class Collab {
       }
       case MSG_AWARENESS:
         applyAwarenessUpdate(this.awareness, decoder.readBytes(), this);
+        return;
+      case MSG_STORED:
+        if (!this.base) return;
+        for (const [client, clock] of readVector(decoder)) this.stored.set(client, clock);
+        this.nowStored();
         return;
       case MSG_QUERY_AWARENESS:
         this.sendAwareness([this.doc.clientID]);
