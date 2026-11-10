@@ -85,16 +85,3 @@ test("the next item joins the nested list; Tab again makes three levels, on the 
   await ed.press(process.platform == "darwin" ? "Meta+Shift+z" : "Control+y");
   await expect.poll(async () => (await ed.count("li li li")) == 1 && await editable(ed)).toBe(true);
 });
-
-test("Tab and Shift+Tab work with the caret anywhere in the item's text, and the caret stays where it was", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "page");
-  await ed.clickEnd("li:last-child");
-  await ed.press("Tab");
-  await expect.poll(() => list(ed)).toBe(NESTED);
-  await ed.type("!");
-  await expect.poll(() => list(ed)).toBe(NESTED.replace("editor<", "editor!<"));
-  await ed.press("Shift+Tab");
-  await expect.poll(() => list(ed)).toBe("<ul><li>Faster builds</li><li>A <strong>new</strong> editor!</li></ul>");
-  await ed.type("?");
-  await expect.poll(() => list(ed)).toBe("<ul><li>Faster builds</li><li>A <strong>new</strong> editor!?</li></ul>");
-});

@@ -7,37 +7,14 @@
 // fails on such an object until it restarts (2026-10-19: "The RPC receiver
 // does not implement the method view", 5 minutes of 500s on the documents
 // open at the deploy).
+//
+// The one door (DocumentObject.call: document-door.ts) is the way out of that: one method takes the name of the
+// request and its arguments, so a new request is no new method. Nothing calls it yet: the objects must run the code
+// that has it first (one deploy), and only then do the callers use it (the next).
 
 import type { DocumentObject } from "./document";
 import type { Env } from "../env";
-
-/** The object's methods the Worker calls. */
-type Call =
-  | "create"
-  | "keep"
-  | "link"
-  | "publish"
-  | "paths"
-  | "index"
-  | "snapshot"
-  | "delete"
-  | "notify"
-  | "diskPath"
-  | "exportStorage"
-  | "importStorage"
-  | "wipeStorage"
-  | "versionsState"
-  | "restore"
-  | "currentFiles"
-  | "version"
-  | "versionFile"
-  | "tree"
-  | "treeOp"
-  | "fileList"
-  | "rename"
-  | "setPermissions"
-  | "view"
-  | "comments";
+import type { Call } from "./document-door";
 
 /** A document's object as its callers see it (Cloudflare's own stub type loses the shape of a union answer). */
 export type DocumentHost = { [K in Call]: DocumentObject[K] extends (...a: infer A) => infer R ? (...a: A) => Promise<Awaited<R>> : never } & {

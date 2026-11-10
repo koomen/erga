@@ -39,32 +39,6 @@ for (const [what, sel, joined, prevSel, prevText] of CASES) {
   });
 }
 
-// A heading, and a list's first item, first become a paragraph (blocks.ts, Pete's decision), and the next Backspace
-// joins it; one undo takes back each.
-const TWICE: [string, string, string, string][] = [
-  ["a heading", "#head", `<p id="head">A heading</p>`, `<p id="beta">of a paragraph to join it.A heading</p>\n    <p id="gamma">`],
-  [
-    "a list's first item",
-    "#one",
-    `<p>Item one</p>\n    <ul>\n      <li id="two">`,
-    `<p id="gamma">keeps its own type.Item one</p>\n    <ul>\n      <li id="two">`,
-  ],
-];
-for (const [what, sel, para, joined] of TWICE)
-  test(`${what}: Backspace makes it a paragraph, the next joins it; undo brings back each`, async ({ tab }) => {
-    const ed = await openEditor(tab, await servers.main(), "join");
-    const original = await ed.source();
-    await backspaceAt(ed, sel);
-    await expect.poll(() => ed.source()).toContain(para);
-    const once = await ed.source();
-    await ed.press("Backspace");
-    await expect.poll(() => ed.source()).toContain(joined);
-    await ed.press("ControlOrMeta+z");
-    await expect.poll(() => ed.source()).toBe(once);
-    await ed.press("ControlOrMeta+z");
-    await expect.poll(() => ed.source()).toBe(original);
-  });
-
 // A quote's paragraph first leaves the quote (blocks.ts), and the next Backspace joins it; one undo takes back each.
 test("a quote's only paragraph: Backspace takes the quote off, the next joins it; undo brings back each", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "join");

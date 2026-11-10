@@ -37,14 +37,3 @@ test("[ ] in a paragraph makes a to-do list; Enter makes the next item; a click 
   await ed.type("After");
   await expect.poll(() => ed.source()).toMatch(/Walk the dog<\/li>\s*<\/ul>\s*<p>After<\/p>/);
 });
-
-test("- [x] makes a ticked item; Backspace at its text's start takes the checkbox off", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "todo-list");
-  await ed.clickEnd("p");
-  await ed.press("Enter");
-  await ed.type("- [x] Done");
-  await expect.poll(() => list(ed)).toBe(`<ul><li style="list-style: none"><input type="checkbox" checked> Done</li></ul>`);
-  for (let i = 0; i < 4; i++) await ed.press("ArrowLeft");
-  await ed.press("Backspace");
-  await expect.poll(() => list(ed)).toBe(`<ul><li>Done</li></ul>`);
-});

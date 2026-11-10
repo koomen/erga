@@ -57,6 +57,7 @@ import { sleep } from "../../../shared/time";
 import { claimKept, keepReplica, readKept, type Keeper, type Kept } from "./kept";
 import { afterPause } from "./pause";
 import { socketStep, type PhaseEffect, type PhaseEvent, type SocketPhase } from "../../../shared/socket-phase";
+import { ackStep, holdsState, replicaStep, STARTING, type Ack, type AckEvent, type Replica, type ReplicaEvent } from "./replica-state";
 
 /** What the page shows of the socket. */
 export type RoomStatus = "up" | "down" | "gone";
@@ -143,8 +144,9 @@ export class Collab {
   private readonly listening = new AbortController();
   /** The history this tab holds (once it's synced), which it names on every reconnect. */
   private epoch = "";
-  /** The start's answer is in (or failed: then the socket's sync brings the state), and the history it was of. */
-  private haveState = false;
+  /** Where its first state comes from: the start's answer, the socket's sync, or what this browser kept (replica-state.ts). */
+  private replica: Replica = STARTING;
+  /** The history its first state was of. */
   private startEpoch: string | null = null;
   private pinger = 0;
   private answered = true;
@@ -157,26 +159,20 @@ export class Collab {
   private synced = new Promise<void>((r) => (this.gotSynced = r));
   /** Set once the first sync is done; until then everything arriving is the initial state. */
   private live = false;
-  /** The replica this browser kept (read as this starts), whether it went in yet, and what stops keeping it. */
+  /** The replica this browser kept (read as this starts), and what stops keeping it. */
   private kept: Kept | null = null;
-  private keptIn = false;
   private keeping: Keeper | null = null;
   /** Writes the confirmed texts beside the replica, once the typing pauses (pause.ts). */
   private baseLater: ReturnType<typeof afterPause> | null = null;
-  /** The room's whole state came (the start's, or the socket's sync); the socket failed at least once before it did. */
-  private stateIn = false;
-  private failed = false;
   /**
    * With `keep`: the room's state as the room confirmed it (what it sent, and this tab's edits it has answered for), the
    * base of this tab's edits if the room loses its history (adopt). A sync step 1 this tab sends is answered in order,
    * after everything sent before it: each answer confirms what this tab had sent when it asked (`acks`, oldest first;
-   * null: nothing of its own yet). `replied`: this tab has answered the room's step 1 on this socket, so it has sent all
-   * it holds.
+   * null: nothing of its own yet). `ack`: whether an ask for a confirmation is out (replica-state.ts, ackStep).
    */
   private readonly confirmed: Y.Doc | null;
   private acks: (Uint8Array | null)[] = [];
-  private replied = false;
-  private ackAgain = false;
+  private ack: Ack = "closed";
   /** The host's last hello, kept with the replica. */
   private lastHello: Hello | null = null;
 
@@ -194,7 +190,7 @@ export class Collab {
         if (this.confirmed) Y.applyUpdate(this.confirmed, update);
         return;
       }
-      queueMicrotask(() => this.askAck());
+      queueMicrotask(() => this.ackGo({ type: "want" }));
       const e = new Encoder();
       e.writeUint(MSG_SYNC);
       writeUpdate(e, update);
@@ -228,17 +224,30 @@ export class Collab {
     try { if (bytes) got = decodeStart<Hello>(new Uint8Array(bytes)); } catch (e) { console.warn("the editor's start didn't decode", e); }
     if (got) {
       Y.applyUpdate(this.doc, got.state, this);
-      this.stateIn = true;
       this.startEpoch = got.hello.epoch;
-      await this.mergeKept(got.hello.epoch);
-      this.greeted = true;
-      this.lastHello = got.hello;
-      this.gotHello(got.hello);
-      this.gotSynced();
     }
-    this.haveState = true;
-    this.askForChanges();
-    this.offlineStart();
+    const at = this.phase.at;
+    await this.replicaGo({ type: "started", got: !!got, kept: !!kept, connecting: at == "connecting" || at == "backoff" }, got?.hello);
+  }
+
+  /** An event of the replica's first state: its new state, and what that asks for, in order (replica-state.ts). */
+  private async replicaGo(e: ReplicaEvent, hello?: Hello): Promise<void> {
+    const { state, effects } = replicaStep(this.replica, e);
+    this.replica = state;
+    for (const f of effects) {
+      if (f == "merge") await this.mergeKept(hello?.epoch ?? roomInfo(this.doc).get("epoch"));
+      else if (f == "greet") this.greet(hello!);
+      else if (f == "openKept") this.openKept();
+      else if (f == "ready") this.gotSynced();
+      else this.askForChanges();
+    }
+  }
+
+  /** The document's hello: the start's, the socket's, or the one this browser kept. */
+  private greet(hello: Hello): void {
+    this.greeted = true;
+    this.lastHello = hello;
+    this.gotHello(hello);
   }
 
   /**
@@ -246,9 +255,7 @@ export class Collab {
    * (`epoch`); else its files' text, as edits (adopt).
    */
   private async mergeKept(epoch: string | undefined): Promise<void> {
-    const k = this.kept;
-    if (this.keptIn || !k) return;
-    this.keptIn = true;
+    const k = this.kept!;
     if (k.epoch == epoch) Y.applyUpdate(this.doc, k.update, "kept");
     else await this.adopt(k);
   }
@@ -280,45 +287,32 @@ export class Collab {
   }
 
   /**
-   * Asks the room to confirm what this tab has sent: a sync step 1, which it answers in order. One at a time (another
-   * after it, if this tab changed meanwhile). Not while the room holds a lock, when it drops other tabs' edits.
+   * An event of the confirmations (replica-state.ts, ackStep): it may ask the room to confirm what this tab has sent,
+   * with a sync step 1, which the room answers in order. One at a time (another after it, if this tab changed
+   * meanwhile). Not while the room holds a lock, when it drops other tabs' edits.
    */
-  private askAck(): void {
-    if (!this.confirmed || !this.connected || !this.replied) return;
-    if (this.acks.some((a) => a)) {
-      this.ackAgain = true;
-      return;
-    }
-    this.ackAgain = false;
-    const unconfirmed = Y.encodeStateAsUpdate(this.doc, Y.encodeStateVector(this.confirmed));
-    if (roomInfo(this.doc).get("lock")) return;
-    this.askForChanges(unconfirmed);
+  private ackGo(e: AckEvent): void {
+    if (!this.confirmed) return;
+    const t = ackStep(this.ack, e, !!roomInfo(this.doc).get("lock"));
+    this.ack = t.state;
+    if (t.ask) this.askForChanges(Y.encodeStateAsUpdate(this.doc, Y.encodeStateVector(this.confirmed)));
   }
 
   /**
    * No room to sync with (the start brought nothing, and the socket failed before it synced): the replica opens from
    * what this browser kept, and syncs once the socket opens.
    */
-  private offlineStart(): void {
-    const k = this.kept;
-    const at = this.phase.at;
-    if (!k || this.stateIn || !this.haveState || !this.failed || (at != "connecting" && at != "backoff")) return;
-    this.stateIn = true;
-    this.keptIn = true;
+  private openKept(): void {
+    const k = this.kept!;
     Y.applyUpdate(this.doc, k.update, "kept");
     this.startEpoch = k.epoch;
     const hello = k.extra as Hello | undefined;
-    if (hello?.epoch == k.epoch) {
-      this.greeted = true;
-      this.lastHello = hello;
-      this.gotHello(hello);
-    }
-    this.gotSynced();
+    if (hello?.epoch == k.epoch) this.greet(hello);
   }
 
   /** What the room has that this tab doesn't (and, in the answer to the room's own step 1, the other way): once it has a state, on each socket. */
   private askForChanges(unconfirmed: Uint8Array | null = null): void {
-    if (!this.connected || !this.haveState) return;
+    if (!this.connected || this.replica.at == "starting") return;
     this.acks.push(unconfirmed);
     const e = new Encoder();
     e.writeUint(MSG_SYNC);
@@ -412,10 +406,7 @@ export class Collab {
         if (f.open) this.opts.onStatus("down");
         return;
       case "retry":
-        if (!this.stateIn) {
-          this.failed = true;
-          this.offlineStart();
-        }
+        void this.replicaGo({ type: "failed" });
         this.timer = window.setTimeout(() => this.go({ type: "timer" }), waitFor(f.tries));
         return;
       case "shut": {
@@ -480,8 +471,8 @@ export class Collab {
       this
     );
     this.acks = [];
-    this.replied = this.ackAgain = false;
-    this.go({ type: "closed", code, known: this.greeted || this.live || this.stateIn });
+    this.ackGo({ type: "closed" });
+    this.go({ type: "closed", code, known: this.greeted || this.live || holdsState(this.replica) });
   }
 
   /** An idle socket that no longer answers (a laptop woken from sleep, a network that changed) is closed, and opens again. */
@@ -544,9 +535,7 @@ export class Collab {
           this.stale();
           return;
         }
-        this.greeted = true;
-        this.lastHello = msg as Hello;
-        this.gotHello(msg as Hello);
+        this.greet(msg as Hello);
       }
       this.opts.onEvent(msg);
       return;
@@ -559,22 +548,19 @@ export class Collab {
         const kind = readSyncMessage(decoder, reply, this.doc, this);
         if (reply.length > 1) this.send(reply.toBytes());
         // The room's step 1, answered: this tab has sent it all it holds. A step 2 answers this tab's oldest step 1.
-        if (kind == SYNC_STEP1) {
-          this.replied = true;
-          this.askAck();
-        } else if (kind == SYNC_STEP2) {
+        if (kind == SYNC_STEP1) this.ackGo({ type: "replied" });
+        else if (kind == SYNC_STEP2) {
           const sent = this.acks.shift();
           if (sent && this.confirmed) {
             Y.applyUpdate(this.confirmed, sent);
             // (Every file's text: when the typing pauses, not at each answer.)
             this.baseLater?.ask();
           }
-          if (this.ackAgain) this.askAck();
+          this.ackGo({ type: "answered", ask: !!sent });
         }
         if (kind == SYNC_STEP2 && this.phase.at == "open" && !this.phase.ready) {
           this.go({ type: "ready" });
-          this.stateIn = true;
-          void this.mergeKept(roomInfo(this.doc).get("epoch")).then(() => this.gotSynced());
+          void this.replicaGo({ type: "synced" });
         }
         return;
       }

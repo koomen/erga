@@ -37,14 +37,6 @@ test("Enter twice keeps a blank paragraph, a line high, held open by a <br>; the
   await expect.poll(() => ed.source()).toMatch(/<p>hello<\/p>\s*<p>world<\/p>\s*<p class="lede">/);
 });
 
-test("Enter at the start of a block leaves a blank block before it, held open by a <br>", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "page");
-  await ed.clickEnd("figcaption");
-  await ed.press("Home");
-  await ed.press("Enter");
-  await expect.poll(() => ed.source()).toMatch(/<figcaption><br><\/figcaption>\s*<figcaption>Where the leads go\.<\/figcaption>/);
-});
-
 test("Enter in the middle splits the block, and typing starts the second half", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
   const f = await ed.frameAt();

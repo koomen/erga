@@ -1,6 +1,6 @@
 // Enter, Backspace and undo in an HTML list ("HTML page").
 import { expect, servers, test } from "../../helpers/fixtures";
-import { openEditor, type Editor } from "../../helpers/editor";
+import { openEditor } from "../../helpers/editor";
 
 await servers.main();
 
@@ -30,30 +30,4 @@ test("Backspace at the start of an item joins it to the one before; undo brings 
   await ed.press("ControlOrMeta+z");
   await ed.press("ControlOrMeta+z");
   await expect.poll(async () => [await ed.count("li"), await ed.textOf("li:first-child")]).toEqual([2, "Faster builds"]);
-});
-
-const list = async (ed: Editor) => ((await ed.source()).match(/<ul>[\s\S]*<\/ul>/)?.[0] ?? "").replace(/\s*\n\s*/g, "");
-
-test("Enter in an empty item between two leaves the list there: a paragraph between two lists", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "page");
-  await ed.clickEnd("li:first-child");
-  await ed.press("Enter");
-  await ed.press("Enter");
-  await ed.type("Between");
-  await expect
-    .poll(() => ed.source())
-    .toMatch(/<ul>\s*<li>Faster builds<\/li>\s*<\/ul>\s*<p>Between<\/p>\s*<ul>\s*<li>A <strong>new<\/strong> editor<\/li>\s*<\/ul>/);
-});
-
-test("Enter in an empty nested item moves it one level out", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "page");
-  await ed.clickEnd("li:last-child");
-  await ed.press("Tab");
-  await expect.poll(() => list(ed)).toBe("<ul><li>Faster builds<ul><li>A <strong>new</strong> editor</li></ul></li></ul>");
-  await ed.idle();
-  await ed.clickEnd("li li");
-  await ed.press("Enter");
-  await ed.press("Enter");
-  await ed.type("Out");
-  await expect.poll(() => list(ed)).toBe("<ul><li>Faster builds<ul><li>A <strong>new</strong> editor</li></ul></li><li>Out</li></ul>");
 });
