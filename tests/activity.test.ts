@@ -131,6 +131,14 @@ test("a page's model call counts its tokens once, when it finishes; a failed one
   const { sql, dir } = await setup();
   const now = Date.now();
   const before = await dir.activity.days(ada, 1, now);
+  // On a weekday (UTC), the month's events already gave p01 tokens today.
+  const p01 = () =>
+    (
+      sql.db.query("SELECT n FROM activity_days WHERE login = 'p01' AND metric = 'in:server' AND day = ?1").get(dayOf(now)) as {
+        n: number;
+      } | null
+    )?.n ?? 0;
+  const had = p01();
   const call = async () =>
     (await dir.pageLlm.start({ login: "p01", docId: "doc1", model: "haiku", now, reserved: { input: 500, output: 1024 }, budget: 100 }))!;
   const id = await call();
@@ -140,9 +148,7 @@ test("a page's model call counts its tokens once, when it finishes; a failed one
   const [after] = await dir.activity.days(ada, 1, now);
   expect(after.tokens.server.input - before[0].tokens.server.input).toBe(320);
   expect(after.tokens.server.output - before[0].tokens.server.output).toBe(80);
-  expect(sql.db.query("SELECT n FROM activity_days WHERE login = 'p01' AND metric = 'in:server' AND day = ?1").get(dayOf(now))).toEqual({
-    n: 320,
-  });
+  expect(p01() - had).toBe(320);
 });
 
 test("the migration brings in the pages' models' tokens the log has; a visitor who isn't a user is nobody's", () => {

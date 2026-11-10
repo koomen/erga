@@ -55,10 +55,10 @@ and `main`. There are no pull requests.
 - `bun erga`: the ops page on localhost. It lists the instances of `.erga/config.json`,
   each primary with its staging instances, the feature branches, the log with "live" at each
   instance's commit, and the job that runs. Its tabs: Setup (the checklist of `bun erga setup`), Deploys,
-  Logs (a job's output, live) and History (the jobs). It checks its sources every 30 seconds
-  (every 5 while a job runs) and when a page loads: GitHub, with `git fetch --prune` in the main
-  clone, and each instance's commit and health. The Deploys tab's Sources box shows each source's
-  last check, its answer or its error, and "stale" after three periods with no good answer. A new job
+  Logs (a job's output, live) and History (the jobs). It checks its sources, each on its own
+  period, whatever happens: GitHub at most once a minute, with `git fetch --prune` in the main
+  clone, and each instance's commit and health every 5 seconds. The Deploys tab's Sources box shows each source's
+  last check, its answer or its error, and "stale" after three of its periods with no good answer. A new job
   on another primary's instance switches the page to that primary. Each feature branch has a Merge
   button (`bun erga merge <branch> -m <text>`). A commit row shows a Deploy button on hover in each
   column whose instance does not run it (`bun erga deploy <commit> <host>`). They run the same
