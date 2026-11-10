@@ -4,6 +4,7 @@
 import { expect, test } from "bun:test";
 import { Directory } from "../server/directory/index.ts";
 import { Tokens } from "../server/identity/tokens";
+import { freshLogin, runTool, server as app, type Server } from "./helpers/app";
 import { memory } from "./helpers/memory-sql";
 
 
@@ -42,4 +43,38 @@ test("a document's pages token is checked whole (its MAC compared in constant ti
   const flip = token.slice(0, -1) + (token.endsWith("A") ? "B" : "A");
   for (const bad of [flip, token.slice(0, -1), `${token}x`, token.split(".")[0] + "."]) expect(await readPagesToken("pages-secret", bad, "ada", "abcd1234")).toBeNull();
   expect(await readPagesToken("another-secret", token, "ada", "abcd1234")).toBeNull();
+});
+
+test("a person removed from a document can't read it with the page address they kept; the others can, after a load", async () => {
+  // The whole app, in memory: a share that ends stops the address of the document's page (its pass:
+  // server/documents/pages-origin.ts) that the person kept; someone whose share stays gets a new address at their next load.
+  const s = app();
+  const at = (await s.fetch("/new")).headers.get("location")!.replace(/[?&]edit=?$/, "");
+  const id = ((await (await s.fetch(`${at}/api/doc`)).json()) as { docName: { id: string } }).docName.id;
+  /** Shares as the owner (the dev login), as their page does. */
+  const share = async (login: string, role: string) => (await runTool(s, "share_document", { document: id, login, role })).status;
+  /** The address of the document's files that the viewer gives `who`: its pages origin, with their pass. */
+  const filesOf = async (server: Server, who: string) => {
+    const html = await (await server.fetch(`${at}?user=${who}`)).text();
+    const files = /https?:\/\/[^"'\s]+\/t\/[^/"'\s]+\//.exec(html)?.[0];
+    expect(files, `${who}'s viewer names the page's address`).toBeTruthy();
+    return files!;
+  };
+  const sam = freshLogin("sam"),
+    kim = freshLogin("kim");
+  expect(await share(sam, "viewer")).toBe(200);
+  expect(await share(kim, "viewer")).toBe(200);
+  const sams = await filesOf(s, sam),
+    kims = await filesOf(s, kim);
+  expect((await s.fetch(`${sams}index.html`)).status).toBe(200);
+  // The owner removes Sam.
+  expect(await share(sam, "none")).toBe(200);
+  const kept = await s.fetch(`${sams}index.html`);
+  expect(kept.status).toBe(403);
+  expect(await kept.text()).toBe("This link has expired: reload the page.");
+  // Kim's address from before stops too; the next load gives a new one, which opens the page.
+  expect((await s.fetch(`${kims}index.html`)).status).toBe(403);
+  const again = await filesOf(s, kim);
+  expect(again).not.toBe(kims);
+  expect((await s.fetch(`${again}index.html`)).status).toBe(200);
 });

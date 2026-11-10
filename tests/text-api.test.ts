@@ -73,7 +73,7 @@ test("styles and links: on, off, cleared; a link put on and taken off", () => {
 });
 
 // Clear formatting (api/format.ts, clearStyles): the edit, and the same change with Cmd+\ in the editor (helpers/page-keys.ts,
-// walk), where one undo takes it back. (Browser tests before: e2e/full/page/format-clear.e2e.ts.)
+// walk), where one undo takes it back. (Browser tests before: the old format-clear browser test.)
 test("clear_styles splits an element it only partly covers, as one undo step", () => {
   const list = (item: string) => `<ul>\n  <li>Faster builds</li>\n  <li>A ${item} editor</li>\n</ul>`;
   expect(run("clear_styles", { selector: "li:nth-of-type(2)", find: "ew" }, list("<strong>new</strong>"))).toBe(

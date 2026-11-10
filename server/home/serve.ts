@@ -10,7 +10,7 @@
 // Then that host gets only the site's files (serveHomeDomain), and the Erga domain's `/` is the small Sign in page. On
 // that domain, Erga has only `/_erga/` (server/app.ts): the pages' model and its sign-in, a round trip through the
 // Erga domain (server/identity/home-pass.ts) that needs the facts' `app`. The Erga domain's session never counts
-// there. A test gives its server `ERGA_DEPLOY={"home":"home.localhost"}` (e2e/full/home/domain.e2e.ts). The browser
+// there. A test gives its server `ERGA_DEPLOY={"home":"home.localhost"}` (e2e/homepage/homepage.e2e.ts). The browser
 // reaches home.localhost; Node's and Bun's fetch can't, so send the Host header with `node:http`.
 
 import * as Effect from "effect/Effect";

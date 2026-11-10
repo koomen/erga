@@ -96,6 +96,8 @@ const { dir } = fresh("the factory key", ["ANTHROPIC_API_KEY"]);
 const session = { login: "ada", name: "Ada", admin: true } as unknown as Session;
 const platform = { sessionOf: async () => session, directory: dir } as unknown as Platform;
 const server = Bun.serve({
+  // (Its own address: with all addresses, a test server of the browser tests can take the same port on 127.0.0.1.)
+  hostname: "127.0.0.1",
   port: 0,
   fetch: async (r) => {
     const path = new URL(r.url).pathname;

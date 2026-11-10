@@ -356,6 +356,8 @@ describe("a primary with no commit", () => {
   test("deploys the commit that GET /api/ops of its staging instance reports", async () => {
     const asked: string[] = [];
     const server = Bun.serve({
+      // (Its own address: with all addresses, a test server of the browser tests can take the same port on 127.0.0.1.)
+      hostname: "127.0.0.1",
       port: 0,
       fetch: (req) => {
         const path = new URL(req.url).pathname;
@@ -460,6 +462,8 @@ describe("the branches move only after a healthy deploy", () => {
       const unpushed = commit("C4: deployed to staging, but staging's push failed");
       let runs = c2;
       const server = Bun.serve({
+        // (Its own address: with all addresses, a test server of the browser tests can take the same port on 127.0.0.1.)
+        hostname: "127.0.0.1",
         port: 0,
         fetch: (req) => {
           const path = new URL(req.url).pathname;

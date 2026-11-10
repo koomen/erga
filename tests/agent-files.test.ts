@@ -7,7 +7,9 @@ import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";
 import { PDFDocument } from "pdf-lib";
 import { sha256Hex } from "../shared/bytes";
+import { person, server, tool as overHttp } from "./helpers/app";
 import { bytesOf, pdf, setup } from "./helpers/files-fixture";
+import { until } from "./helpers/until";
 
 type Content = { type: string; text?: string; data?: string; mimeType?: string };
 
@@ -128,4 +130,50 @@ test("someone who may only view has the tools that change nothing: read, find an
   const w = await tool("write", { path: "x.md", content: "x" }, "bob");
   expect(w.ok).toBe(false);
   expect(w.error).toContain("can only view this document");
+});
+
+// On the whole app in memory (tests/helpers/app.ts): versions is the server's operation, read with version the document's.
+// The edits are publishes with the person's token: a version is cut once they pause. (The tools of the token would hold
+// the cut back 8 seconds, as an agent's turn does: no tool is called before the versions are there.)
+test("versions lists them, and read with version reads an old file; there's no publish_version", async () => {
+  const s = server();
+  const owner = await person(s);
+  const document = await owner.make();
+  const token = await owner.token("versions test");
+  const tool = (name: string, args: Record<string, unknown>) => overHttp(s, token, name, { document, ...args });
+  const total = async () => (JSON.parse((await tool("versions", {})).text) as { versions: unknown[] }).versions.length;
+  let page = await (await owner.get(`/d/${document}/doc/index.html`)).text();
+  for (const [n, word] of [" alpha", " beta"].entries()) {
+    page = page.replace("</h1>", `${word}</h1>`);
+    const sent = await s.fetch("/api/publish", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ document, files: { "index.html": page } }),
+    });
+    expect(sent.status).toBe(200);
+    await until(async () => (await total()) == n + 2);
+  }
+  let t = await tool("versions", {});
+  expect(t.status).toBe(200);
+  const listing = JSON.parse(t.text) as { current: { id: string }; versions: { id: string; description: string }[] };
+  expect(listing.current.id).toBe("v3");
+  expect(listing.versions.find((v) => v.id == "v2")?.description).toBe("Edited index.html");
+  expect(t.text).not.toContain("Published");
+  t = await tool("read", { version: "v2", path: "index.html" });
+  expect(t.status).toBe(200);
+  expect(t.text).toContain("alpha");
+  expect(t.text).not.toContain("beta");
+  // One element of it, as read takes it from the file as it is now.
+  t = await tool("read", { version: "v2", path: "index.html", selector: "h1" });
+  expect(t.text).toMatch(/^\[index\.html, line \d+: the element "h1"\]\n<h1>.*alpha<\/h1>$/);
+  t = await tool("read", { version: "v2", path: "nope.html" });
+  expect([t.status, t.text]).toEqual([400, "v2 has no file nope.html. Its files: index.html"]);
+  t = await tool("publish_version", { mode: "manual", version: "v3" });
+  expect(t.status).not.toBe(200);
+  const listed = (await (await s.fetch("/api/tools", { headers: { Authorization: `Bearer ${token}` } })).json()) as {
+    tools: { name: string; parameters: { properties: { op: { description: string } } } }[];
+  };
+  const ops = listed.tools.flatMap((x) => x.parameters.properties.op.description.split("\n").map((l: string) => l.split("(")[0]));
+  expect(ops).toContain("restore_version");
+  expect(ops).not.toContain("publish_version");
 });

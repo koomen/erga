@@ -11,6 +11,7 @@
 //
 //   bun e2e/helpers/cores.ts     prints "<jobs> <cores> <why>"
 
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
@@ -59,6 +60,24 @@ export function testJobs(opts: { env?: Record<string, string | undefined>; root?
   const why = `${coresWhy}, ${perJob} a job${env.TEST_CORES_PER_JOB ? " (TEST_CORES_PER_JOB)" : ""}` +
     (byMemory < byCores ? `; capped by ${Math.round(memory / 2 ** 30)} GB of memory, ${memPerJob / 2 ** 20} MB a job` : "");
   return { jobs, cores, why };
+}
+
+/**
+ * How much longer than on a quiet machine a step may take: the tests' time limits are multiplied by it (e2e.config.ts).
+ * From 1 (a quiet machine) to 3. The larger of two measures as the run starts: the load of the last minute for each
+ * core, and the cores that other processes use right now (`busy`: the load's minute is late when another test run has
+ * just started). With other test runs on the machine, a step took 2 to 3 times as long, and a limit made for a quiet
+ * machine failed it.
+ */
+export function timeFactor(load: number, cores: number, busy = 0): number {
+  const n = Math.max(1, cores);
+  return Math.min(3, Math.max(1, Math.round(Math.max(load / n, 1 + busy / n) * 10) / 10));
+}
+
+/** The cores in use right now, by all processes: the sum of `ps`'s CPU shares. 0 when `ps` gives none. */
+export function busyCores(): number {
+  const out = spawnSync("ps", ["-A", "-o", "%cpu="], { encoding: "utf8", timeout: 10_000 }).stdout ?? "";
+  return out.split("\n").reduce((sum, line) => sum + (Number(line) || 0), 0) / 100;
 }
 
 if (import.meta.main) {

@@ -125,7 +125,7 @@ const { dir } = fresh();
 let session: Partial<Session> | null = { login: "bob", name: "Bob" };
 // The person's agent object isn't reached: the key goes to the directory.
 const platform = { sessionOf: async () => session, directory: dir, personAgent: () => ({}) } as unknown as Platform;
-const server = Bun.serve({ port: 0, fetch: (r) => respond(agentApi, r, platform) });
+const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (r) => respond(agentApi, r, platform) });
 const origin = `http://localhost:${server.port}`;
 afterAll(() => server.stop(true));
 

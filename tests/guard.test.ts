@@ -45,7 +45,7 @@ test("the right forms run", () => {
 });
 
 test("the tests that call the real model ask the person first", () => {
-  expect(verdict("ERGA_LIVE_AGENT=1 bun run test:e2e e2e/full/page/agent-live.e2e.ts")?.ask).toBe(true);
+  expect(verdict("ERGA_LIVE_AGENT=1 bun run test:e2e e2e/bench/agent-live.e2e.ts")?.ask).toBe(true);
 });
 
 test("the hook: node runs the guard, which stops the command with exit 2, or asks in JSON", () => {

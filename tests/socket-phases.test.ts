@@ -104,6 +104,19 @@ test("news: a stop in the backoff leaves no socket to open; a later start opens 
   expect(again.effects).toEqual([{ do: "connect" }]);
 });
 
+test("news: the socket fails to come back three times, then a link to another admin page: one news socket, not two", () => {
+  const closed: PhaseEvent = { type: "closed" },
+    timer: PhaseEvent = { type: "timer" };
+  // The socket drops, and each of the next three fails: the fourth wait is the longest so far.
+  const waiting = news({ at: "stopped" }, { type: "start" }, { type: "opened" }, closed, timer, closed, timer, closed, timer, closed);
+  expect(waiting.phase).toEqual({ at: "backoff", tries: 4 });
+  expect(waiting.effects.at(-1)).toEqual({ do: "retry", tries: 3 });
+  // The link: the page's lists stop, the new page's start, and its socket opens. Then the old wait's time is up.
+  const linked = news(waiting.phase, { type: "stop" }, { type: "start" }, { type: "opened" }, timer);
+  expect(linked.phase).toEqual({ at: "open", ready: false });
+  expect(linked.effects).toEqual([{ do: "shut" }, { do: "connect" }, { do: "up" }]);
+});
+
 test("with no final codes, any close code is retried", () => {
   expect(news({ at: "open", ready: false }, { type: "closed", code: 4404 }).phase).toEqual({ at: "backoff", tries: 1 });
 });

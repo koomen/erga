@@ -1,5 +1,5 @@
 // Live pages: the keys each change of the directory sends, to whom, and the hub's versions and catch-up
-// (server/news/hub.ts). The browser's side is e2e/full/front/live-docs.e2e.ts.
+// (server/news/hub.ts). The browser's side is e2e/documents/list.e2e.ts.
 
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";

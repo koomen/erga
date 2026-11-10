@@ -1,53 +1,57 @@
 // The tests' fixtures, on e2e and its web engine.
 //
-// Per worker, started on first use: dev servers (servers.*), one of the named
-// kinds and one servers.of at a time (`once`). e2e has no
-// worker-scoped fixtures (test.extend's run for every test), so these live in
-// a registry in this module, which a worker imports once (e2e imports each
-// test file afresh for every file and retry, but not the modules it imports).
+// Per worker, started on first use: the test servers (servers.*). A worker keeps the suite's one server
+// (servers.main) for all its files, and one servers.of at a time (`once`). e2e has no worker-scoped fixtures
+// (test.extend's run for every test), so these live in a registry in this module, which a worker imports once (e2e
+// imports each test file afresh for every file and retry, but not the modules it imports).
 //
-// A file starts the servers it needs at its top level, as the worker imports
-// it: `await servers.main();`. e2e waits for that import with no time limit
-// (a beforeAll has the test's 15 s, and under load a server takes longer to
-// start, which skipped the whole file), so no test or hook pays for a server.
-// The runner imports every file too, only to list its tests: there servers.*
-// start nothing (WORKER). A file's own processes start the same way, in
-// beforeTests(). A test still calls servers.x() for the server (at
-// once: started), which also starts again one that stopped by itself. They
-// stop when the worker exits, and e2e/run.ts sweeps up after a
-// worker that was killed.
-// Hooks get config.timeout (90 s, e2e.config.ts) as a backstop; each test still gets ERGA_TEST_MS
-// (15 s, which `test` below gives it).
+// A file starts the servers it needs at its top level, as the worker imports it: `const s = await servers.main();`.
+// e2e waits for that import with no time limit, so no test or hook pays for a server. The runner imports every
+// file too, only to list its tests: there servers.* start nothing (WORKER). A file's own processes start the same
+// way, in beforeTests(). A test may call servers.x() again for the server (at once: started), which also starts
+// again one that stopped by itself. They stop when the worker exits, and e2e/run.ts sweeps up after a worker that
+// was killed. Hooks get config.timeout (90 s, e2e.config.ts) as a backstop; each test gets ERGA_TEST_MS (15 s,
+// which `test` below gives it).
 //
-//   servers.main()     a dev server, signed in as DEV_LOGIN, with no agent key
-//   servers.agent()    the same with an agent key that is never used (the agent's UI comes on)
-//   servers.script()   a plain dev server whose agents (the editor's, the admin's) run on the scripted model
-//   servers.short()    the scripted agent model, and short timings (SHORT): versions cut, homepages deployed, in seconds
-//   servers.suite()    the multiplayer suite's: the scripted agent model, and a short write delay
-//   servers.of(key, o) a kind one file needs alone (its own settings, or one it changes or restarts),
-//                      started with ServerOptions `o`: `const own = () => servers.of("deploy-page");`
-//                      (the worker keeps the last file's only)
-//   startServer()      a server for one test alone, started inside its time limit (test.ts disposes
-//                      of it, see `tab.own`): only where each attempt needs a fresh one
+//   servers.main()     the suite's one server (ONE, below): signed in as DEV_LOGIN, the scripted agent model
+//   servers.of(key, o) a server one file needs alone (its own settings, or one it changes or restarts), started
+//                      with ServerOptions `o`: `const own = await servers.of("homepage");` (the worker keeps the
+//                      last file's only)
+//   startServer()      a server for one test alone, started inside its time limit (see `tab.own`): only where each
+//                      attempt needs a fresh one
 //
-// Per test: `tab`, the attempt's own page in a fresh browser context (the web
-// engine makes one per attempt), as Playwright's Page, with the page's errors
-// collected from every frame. e2e's `browser` fixture reads only the main
-// frame and has no frame-level evaluate, modifier-held clicks or
-// insertText, which the editor's tests need, so the tests drive the
-// Playwright page underneath it (surfaceOf).
+// Per test: `tab`, the attempt's own page in a fresh browser context (the web engine makes one per attempt), as
+// Playwright's Page, with the page's errors collected from every frame. The steps of a journey (`journey`, below)
+// share one page. e2e's `browser` fixture reads only the main frame and has no frame-level evaluate, modifier-held
+// clicks or insertText, which the editor's tests need, so the tests drive the Playwright page underneath it
+// (surfaceOf).
 //
-// Tests share a worker's server one after another, never at once, and each
-// makes its own data (documents, tokens), so none depends on another or
-// on their order.
+// Files share a worker's server one after another, never at once, and each makes its own data (documents, tokens,
+// people), so none depends on another or on their order. Trap: the one server keeps what earlier files made: the
+// documents list holds their documents, and a person has ONE agent conversation for all documents. A check that
+// counts rows or messages uses a person of its own, or starts a new conversation first.
 
 import { surfaceOf, test as web } from "@e2e-dev/web";
-import { describe, expect } from "e2e";
+import { describe, expect as e2eExpect } from "e2e";
 import type { Page } from "playwright-core";
 import { engine } from "./engine";
 import { startServer, type Server, type ServerOptions } from "./server";
 
-export { expect };
+/**
+ * e2e's expect, with an `expect.poll` that reads again every 20 ms. e2e's own pause is 100 ms: a state that comes
+ * in a frame or two then costs 100 ms, in each of the hundreds of polls of a run. A time limit that a test gives is
+ * multiplied by the factor for a busy machine.
+ */
+/** The time limits' factor for a busy machine (e2e.config.ts, timeFactor): a wait's limit is multiplied by it. */
+const FACTOR = Number(process.env.ERGA_TIME_FACTOR) || 1;
+
+export const expect = new Proxy(e2eExpect, {
+  get(target, key, receiver) {
+    if (key != "poll") return Reflect.get(target, key, receiver);
+    return (read: () => unknown, options?: { timeout?: number }) =>
+      target.poll(read, { interval: 20, ...options, ...(options?.timeout ? { timeout: options.timeout * FACTOR } : {}) });
+  },
+}) as typeof e2eExpect;
 export type { Page, Server };
 
 type Disposable = { alive(): boolean; dispose(): void };
@@ -64,19 +68,12 @@ const once = <T extends Disposable>(key: string, make: () => Promise<T>) => (): 
   // Listing the tests: nothing runs, so nothing starts (and nothing may use what this gives).
   if (!WORKER) return Promise.resolve(null as unknown as T);
   let s = started.get(key);
-  // A worker keeps one server of the named kinds (servers.main to servers.suite), the last file's: no file needs two
-  // (with its helpers), and a dev server holds about 1.7 GB (Vite 1.2, workerd 0.4). Kept, every kind a worker met
-  // added up: in the gate's 12 GB VM, two workers reached ten servers, and the kernel killed processes in every shard.
-  if (!s && !key.startsWith("of:")) disposeWhere((k) => !k.startsWith("of:"));
   if (!s) { s = make(); started.set(key, s); s.catch(() => started.delete(key)); }
   // One that stopped by itself (server.ts says why) is started again, for the tests after.
   return s.then((x) => { if (x.alive()) return x; x.dispose(); started.delete(key); return once(key, make)(); }) as Promise<T>;
 };
 
-/**
- * servers.short()'s timings: a version is cut once edits pause for `idle` ms (or after `max`, whatever the typing); /
- * always asks for the latest homepage deploy.
- */
+/** The suite's version timings: a version is cut once edits pause for `idle` ms (or after `max`, whatever the typing). */
 export const SHORT = { idle: 1000, max: 8000 };
 
 /**
@@ -94,14 +91,6 @@ const ONE = {
 
 export const servers = {
   main: once("main", () => startServer({ env: ONE })),
-  agent: once("agent", () => startServer({ env: { ANTHROPIC_API_KEY: "sk-ant-test-not-used" } })),
-  short: once("short", () => startServer({ env: {
-    ERGA_AGENT_MODEL: "script", ERGA_WRITE_DELAY_MS: "50", ERGA_VERSION_IDLE_MS: String(SHORT.idle), ERGA_VERSION_MAX_MS: String(SHORT.max),
-        ERGA_HOME_RECHECK_MS: "0",
-  } })),
-  // The scripted model (agents/document/session.ts, "@script [...]"): a message plays the tool calls and replies it lists.
-  script: once("script", () => startServer({ env: { ERGA_AGENT_MODEL: "script" } })),
-  suite: once("suite", () => startServer({ env: SUITE_ENV })),
   /**
    * A kind of server one file needs (`key`, its own), started with `opts` the first time. A worker keeps one such
    * server: the next file's (another key) disposes of it, as files run one after another. So one key for each file.
@@ -111,12 +100,6 @@ export const servers = {
     return once(`of:${key}`, () => startServer(opts))() as Promise<Server>;
   },
 };
-
-/**
- * The multiplayer suite's server settings. A short write delay: the suite waits on storage a lot. Not too short:
- * tests share a server, and one that makes an edit "not yet stored" needs its next request in first.
- */
-export const SUITE_ENV = { ERGA_AGENT_MODEL: "script", ERGA_WRITE_DELAY_MS: "200" };
 
 /**
  * Work a file does before its tests (processes of its own: checkouts, a copy of the repository), awaited at its top
@@ -219,7 +202,10 @@ export const test = new Proxy(extended, {
     const ms = Number(process.env.ERGA_TEST_MS) || undefined;
     if (!ms) return Reflect.apply(target, self, args);
     const [title, a, b] = args;
-    return b === undefined ? Reflect.apply(target, self, [title, { timeout: ms }, a]) : Reflect.apply(target, self, [title, { timeout: ms, ...(a as object) }, b]);
+    if (b === undefined) return Reflect.apply(target, self, [title, { timeout: ms }, a]);
+    // A test's own limit is for a quiet machine: the factor for a busy one multiplies it, as it does ERGA_TEST_MS.
+    const own = (a as { timeout?: number }).timeout;
+    return Reflect.apply(target, self, [title, { ...(a as object), timeout: own ? own * FACTOR : ms }, b]);
   },
 }) as typeof extended;
 
@@ -251,7 +237,7 @@ export function withoutOutage(errors: string[]): string[] {
 
 /** Waits until `f` gives something truthy (a thrown error counts as not yet), and returns it; fails after `ms`, with `detail()` if given. */
 export async function until<T>(f: () => Promise<T> | T, ms = 5_000, what = "the condition", detail?: () => unknown): Promise<T> {
-  const end = Date.now() + ms;
+  const end = Date.now() + ms * FACTOR;
   let last: unknown;
   for (;;) {
     try {

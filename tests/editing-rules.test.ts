@@ -108,7 +108,7 @@ describe("the keys", () => {
 
   // Where no join can be, the key moves the caret to the other block, and the source stays as it was. "{B}" is the
   // caret before Backspace, "{D}" the caret before Delete: each key puts the caret where the other starts. (Browser
-  // tests before: e2e/full/page/join-cases.e2e.ts and its page.)
+  // tests before: the old join-cases browser test and its page.)
   test.each([
     ["after a table", '<table>\n  <tr><td id="table-a">A cell{D}</td></tr>\n</table>\n<p id="table-b">{B}After the table</p>'],
     [
@@ -127,7 +127,7 @@ describe("the keys", () => {
 });
 
 // The same rules through the editor's own handlers (helpers/page-keys.ts): a paste, a cut, and typing over the selection
-// a triple-click makes. (Browser tests before, e2e/full/page; they made the clipboard's events by hand, as this does.)
+// a triple-click makes. (Browser tests before; they made the clipboard's events by hand, as this does.)
 describe("through the editor's handlers", () => {
   test("text pasted over a selection replaces it; a URL pasted over selected text links it", () => {
     expect(keys('<p class="lede">[Bui]ld <em>cool</em> things</p>').pasteText("not a url").text).toBe(

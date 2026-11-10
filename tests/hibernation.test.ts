@@ -6,7 +6,7 @@
 // joined to it.
 
 import * as Effect from "effect/Effect";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import * as Y from "yjs";
 import { Encoder, Decoder, writeSyncStep1, writeUpdate, readSyncMessage } from "../shared/yjs-protocol";
 import { Document, type DocumentDeps } from "../document/document";
@@ -265,4 +265,77 @@ test("a viewer's page on a closed document opens nothing: it hears the version k
       })
     )
   ).toBeNull();
+});
+
+test("truncated, corrupt and unknown Yjs messages: the room keeps its text, and edits still flow", async () => {
+  const w = await made();
+  const a = await w.connect();
+  const text = a.text();
+  const msg = (...parts: ((e: Encoder) => void)[]) => {
+    const e = new Encoder();
+    for (const p of parts) p(e);
+    return e.toBytes();
+  };
+  const bad: Uint8Array[] = [
+    msg((e) => e.writeUint(0)), // sync, nothing else
+    msg(
+      (e) => e.writeUint(0),
+      (e) => e.writeUint(2)
+    ), // update, no payload
+    msg(
+      (e) => e.writeUint(0),
+      (e) => e.writeUint(2),
+      (e) => e.writeBytes(new Uint8Array([1, 1, 200, 3, 0, 9, 9, 9]))
+    ), // corrupt update
+    msg(
+      (e) => e.writeUint(0),
+      (e) => e.writeUint(1),
+      (e) => e.writeBytes(new Uint8Array([255, 255, 255, 255, 15]))
+    ), // corrupt step 2
+    msg(
+      (e) => e.writeUint(1),
+      (e) => e.writeBytes(new Uint8Array([5, 1, 2]))
+    ), // corrupt awareness
+    msg((e) => e.writeUint(99)), // unknown type
+    msg(
+      (e) => e.writeUint(0),
+      (e) => e.writeUint(7)
+    ), // unknown sync step
+  ];
+  // Each from a socket of its own, as a hostile client sends it; then a text frame that isn't binary.
+  const raws: FakeTab[] = [];
+  // A message the room can't read closes its own socket (4400: malformed), and no other. A corrupt update or step 2 is
+  // dropped, and one of a type the room doesn't know is passed over: those sockets stay.
+  const CLOSED = [4400, 4400, null, null, 4400, null, 4400];
+  // (An update that Yjs can't read is logged where it is dropped: shared/yjs-protocol.ts.)
+  const logged = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    for (const m of bad) {
+      const raw = await w.connect();
+      w.deliver(raw, m);
+      await w.settle();
+      raws.push(raw);
+    }
+    // (A socket's close can come after its message is taken, when the room was still opening for it: on a busy
+    // machine the list read at once had a null where the close came a moment later.)
+    await until(() => CLOSED.every((code, i) => code == null || raws[i].closed == code));
+    await w.settle();
+    expect(logged.mock.calls.map((c) => c[0])).toEqual(Array(2).fill("Caught error while handling a Yjs update"));
+  } finally {
+    logged.mockRestore();
+  }
+  const raw = await w.connect();
+  await Effect.runPromise(w.tabs.message(raw, "a text frame, not binary"));
+  expect(raw.closed).toBeNull();
+  expect(raws.map((r) => r.closed)).toEqual(CLOSED);
+  expect(a.closed).toBeNull();
+  // The room is up, holds the text from before, and still carries an edit between two newcomers.
+  expect(w.document.isOpen()).toBe(true);
+  const x = await w.connect(),
+    y = await w.connect();
+  expect(x.text()).toBe(text);
+  x.type(3, "ALIVE ");
+  await w.settle();
+  expect(y.text()).toBe("<p>ALIVE Hi</p>");
+  expect(a.text()).toBe("<p>ALIVE Hi</p>");
 });

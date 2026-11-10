@@ -9,7 +9,7 @@ import * as Layer from "effect/Layer";
 import { FileStore, Room, StateStore, StoreError, joinLocal } from "../document/room";
 import * as Effect from "effect/Effect";
 import { YjsWorkspace, type Cursor, type WorkspaceError } from "../agents/document/workspace";
-import { authorOf, files, introduce, roomInfo, type Author } from "../document/content";
+import { assets, authorOf, files, introduce, roomInfo, type Author } from "../document/content";
 import { until } from "./helpers/until";
 
 /** Files in memory, as the room's storage (no saved state: each room starts afresh). */
@@ -21,7 +21,14 @@ function memoryStore(init: Record<string, string>) {
     read: (p) => Effect.sync(() => data.get(p) ?? null),
     write: (p, text) => Effect.sync(() => { writes.push(p); data.set(p, new TextEncoder().encode(text)); }),
   });
-  return { layer: StateStore.none.pipe(Layer.provideMerge(files)), writes, get: (p: string) => new TextDecoder().decode(data.get(p)), set: (p: string, t: string) => data.set(p, new TextEncoder().encode(t)) };
+  return {
+    layer: StateStore.none.pipe(Layer.provideMerge(files)),
+    writes,
+    get: (p: string) => new TextDecoder().decode(data.get(p)),
+    set: (p: string, t: string) => data.set(p, new TextEncoder().encode(t)),
+    /** A file that isn't text, as storage has it now. */
+    put: (p: string, bytes: Uint8Array<ArrayBuffer>) => data.set(p, bytes),
+  };
 }
 
 /** Runs a test against a room on that storage, closed when the test ends. */
@@ -307,4 +314,84 @@ test("a write that fails is tried again, later each time, until it lands; then s
   };
   const run = Effect.flatMap(Room.make({ writeDelay: 10, fileDelay: 0 }), (room) => Effect.promise(() => check(room)));
   await Effect.runPromise(Effect.scoped(run).pipe(Effect.provide(StateStore.none.pipe(Layer.provideMerge(store)))));
+});
+
+test("a changed image updates its versioned reference", async () => {
+  const m = memoryStore({ "index.html": '<img src="pic.png">' });
+  await withRoom(m, async (room) => {
+    const a = await peer(room, person("Ada"));
+    const refs = assets(a.doc);
+    expect(refs.has("pic.png")).toBe(false);
+    // The image is written to storage behind the room (a file on disk), which hears of the change.
+    m.put("pic.png", new Uint8Array([137, 80, 78, 71, 1]));
+    await Effect.runPromise(room.fileChanged("pic.png"));
+    await tick();
+    const h = refs.get("pic.png");
+    expect(h).toMatch(/^[0-9a-f]{16}$/);
+    m.put("pic.png", new Uint8Array([137, 80, 78, 71, 2]));
+    await Effect.runPromise(room.fileChanged("pic.png"));
+    await tick();
+    expect(refs.get("pic.png")).toMatch(/^[0-9a-f]{16}$/);
+    expect(refs.get("pic.png")).not.toBe(h);
+  });
+});
+
+/** mulberry32: the same seed gives the same run. */
+function seeded(seed: number) {
+  let a = seed >>> 0;
+  const next = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  return Object.assign(next, {
+    int: (n: number) => Math.floor(next() * n),
+    pick: <T>(list: T[]) => list[Math.floor(next() * list.length)],
+  });
+}
+
+test("arbitrary edits (any text, any range, unicode) from many hands converge", async () => {
+  const start = `<!doctype html>\n<h1>Leads</h1>\n<figure><img src="funnel.png"><figcaption>Where the leads go.</figcaption></figure>\n<ul>\n<li>First</li>\n<li>Second</li>\n</ul>\n`;
+  const m = memoryStore({ "index.html": start });
+  const rng = seeded(20261110);
+  const pieces = ["a", " ", "word ", "\n", "<b>x</b>", "é", "日本語", "🙂", "👩‍👩‍👧", "\r\n", "&amp;", "\t", "—"];
+  const isLowSurrogate = (c: number) => c >= 0xdc00 && c <= 0xdfff;
+  await withRoom(m, async (room) => {
+    const ps: (Awaited<ReturnType<typeof peer>> & { connected: boolean })[] = [];
+    for (let i = 0; i < 5; i++) ps.push({ ...(await peer(room, person(`P${i}`))), connected: true });
+    const reconnect = (p: (typeof ps)[number]) => {
+      p.joined = joinLocal(room, p.doc, p.aw);
+      p.connected = true;
+    };
+    for (let r = 0; r < 400; r++) {
+      const p = rng.pick(ps),
+        t = p.text().toString();
+      const roll = rng();
+      const safe = (i: number) => (isLowSurrogate(t.charCodeAt(i)) ? i - 1 : i);
+      if (roll < 0.55) p.text().insert(safe(rng.int(t.length + 1)), rng.pick(pieces));
+      else if (roll < 0.9 && t.length > 50) {
+        const from = safe(rng.int(t.length - 1));
+        const to = safe(Math.min(t.length, from + 1 + rng.int(12)));
+        if (to > from) p.text().delete(from, to - from);
+      } else if (roll < 0.95 && p.connected) {
+        // Off the network: its edits wait in its own replica.
+        p.joined.leave();
+        p.connected = false;
+      } else if (!p.connected) reconnect(p);
+      // Now and then some of the messages on their way land before the next edit (each goes in a microtask).
+      if (rng() < 0.2) for (let i = 0; i < 3; i++) await null;
+    }
+    for (const p of ps) if (!p.connected) reconnect(p);
+    const text = () => ps[0].text().toString();
+    await until(() => ps.every((p) => p.text().toString() == text()) && room.text("index.html") == text());
+    // Every hand made edits, and the text is not the start's.
+    expect(text()).not.toBe(start);
+    // Storage has the same text, unicode and all; so does a newcomer.
+    await Effect.runPromise(room.flush);
+    expect(m.get("index.html")).toBe(text());
+    const late = await peer(room, person("Late"));
+    expect(late.text().toString()).toBe(text());
+  });
 });

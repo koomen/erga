@@ -12,6 +12,7 @@ import { Directory, type Param, type Route, type Sql } from "../server/directory
 import { landingDocument } from "../server/documents/index.ts";
 import { HOME_OWNER } from "../document/names.ts";
 import type { Platform } from "../server/platform";
+import { runTool, server, signedOut, type Server } from "./helpers/app";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const LANDING = { "index.html": "<!doctype html><title>Erga</title><h1>Erga</h1>" };
@@ -187,4 +188,42 @@ test("on a deployed server (no DEV_LOGIN, no admin in the deploy) the oldest adm
   );
   expect(await landingDocument(platformOn(sql, hosts, { owner: null }))).toMatchObject({ owner: HOME_OWNER });
   expect(await sql.all("SELECT updated_by FROM server_config WHERE key = 'landing_document'")).toEqual([{ updated_by: "ada" }]);
+});
+
+// The two below run on the whole app in memory (tests/helpers/app.ts): the operations over HTTP, as the admin (the dev login).
+
+/** A fresh homepage project (made by the first / after the setting's reset): its id, as the page / shows names it. */
+async function freshHome(s: Server) {
+  await runTool(s, "set_setting", { key: "landing_document", reset: true });
+  return docOnFront(s);
+}
+/** The document / shows to someone signed out (the viewer's frame names it). */
+const docOnFront = async (s: Server) =>
+  /<meta name="erga-doc" content="([a-z0-9]{8})">/.exec(await (await s.fetch("/", { headers: signedOut() })).text())?.[1];
+
+test("the homepage project is nobody's: an admin can't delete it; reset, it's made again from the landing project's files", async () => {
+  const s = server();
+  const id = await freshHome(s);
+  expect(id).toBeTruthy();
+  const del = await runTool(s, "delete_document", { document: "/_home" });
+  expect(del.status).toBe(403);
+  expect(await docOnFront(s)).toBe(id);
+  const again = await freshHome(s);
+  expect(again).toBeTruthy();
+  expect(again).not.toBe(id);
+  expect(await (await s.fetch(`/d/${again}/doc/index.html`)).text()).toBe((await s.platform.landing!.files())["index.html"] as string);
+  // The one before is an ordinary document of the dev server's person now, at its id.
+  expect((await s.fetch(`/tester/${id}`)).status).toBe(200);
+});
+
+test("rename_document renames the homepage project for an admin, and refuses a new address", async () => {
+  const s = server();
+  const id = await freshHome(s);
+  const r = await runTool(s, "rename_document", { document: id, title: "Home, renamed" });
+  expect(r.error).toBeUndefined();
+  expect(r.result).toMatchObject({ title: "Home, renamed", address: "/_home" });
+  const listed = (await runTool(s, "list_documents", { query: "Home, renamed" })).result as { address: string; url?: string }[];
+  expect(listed.map((d) => [d.address, d.url && new URL(d.url).pathname])).toEqual([["/_home", "/_home"]]);
+  const slug = await runTool(s, "rename_document", { document: id, slug: "other" });
+  expect(slug.error).toMatch(/\/_home/);
 });

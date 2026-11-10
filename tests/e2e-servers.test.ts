@@ -10,7 +10,7 @@ import { Glob } from "bun";
 const ROOT = resolve(import.meta.dir, "..");
 /** Files that may start their server inside the test, and why. */
 const EXEMPT: Record<string, string> = {
-  "e2e/full/page/agent-live.e2e.ts": "it skips itself without a key, and must start nothing then",
+  "e2e/bench/agent-live.e2e.ts": "it skips itself without a key, and must start nothing then",
   "e2e/bench/structural.e2e.ts": "a benchmark, not in the suite",
 };
 

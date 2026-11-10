@@ -11,6 +11,8 @@ import { serverApi } from "../server/api";
 import { respond } from "../server/http";
 import { ADMIN_DAYS, NOT_FOR_AGENTS, OPS_DAYS, REQUESTS_WAITING, ScopeError, Tokens } from "../server/identity/tokens";
 import { VIA } from "../shared/attribution";
+import { mockGithubId } from "../dev/github-mock";
+import { freshLogin, mint, person, server as app, signIn, tool, type Server } from "./helpers/app";
 import { memory } from "./helpers/memory-sql";
 
 const ORIGIN = "https://erga.test";
@@ -330,4 +332,112 @@ test("one network address has REQUESTS_WAITING requests for a token at most; ano
   // The requests lapse: the address asks again.
   await sql.run("UPDATE token_requests SET expires = 1 WHERE asked_from = ?1", "203.0.113.7");
   expect((await tokens.request("Later", { scope: "documents" }, undefined, "203.0.113.7")).label).toBe("Later");
+});
+
+// The whole app, in memory (tests/helpers/app.ts): the tokens as the Settings dialog, the share button and an outside
+// agent's calls reach them.
+
+/** Publishes a document with a documents token: its id and address. */
+async function publish(s: Server, token: string, title: string) {
+  const r = await s.fetch("/api/publish", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ title, files: { "index.html": `<h1>${title}</h1>` } }),
+  });
+  return (await r.json()) as { id: string; address: string };
+}
+
+test("an agent lists its person's tokens a page at a time and revokes one by its id; a document token can't", async () => {
+  const s = app();
+  const { cookie } = await signIn(s, freshLogin("rev"));
+  const agent = (await mint(s, cookie, { label: "The agent", scope: "documents" })).token;
+  const other = (await mint(s, cookie, { label: "Share with an agent", scope: "documents" })).token;
+  const third = (await mint(s, cookie, { label: "Third", scope: "documents" })).token;
+  expect([agent, other, third].every(Boolean)).toBe(true);
+  const docs = (args: Record<string, unknown>) =>
+    tool(s, agent, "documents", args).then((r) => ({ status: r.status, json: r.status == 200 ? JSON.parse(r.text) : r.text }));
+
+  // Newest first, two of them; one more after them, which offset lists.
+  const first = (await docs({ op: "whoami", limit: 2 })).json as { tokens: { id: string; label: string }[]; moreTokens: number };
+  expect(first.tokens.map((t) => t.label)).toEqual(["Third", "Share with an agent"]);
+  expect(first.moreTokens).toBe(1);
+  const next = (await docs({ op: "whoami", limit: 2, offset: 2 })).json as typeof first;
+  expect(next.tokens.map((t) => t.label)).toEqual(["The agent"]);
+  expect(next.moreTokens).toBe(0);
+
+  // Revoke by the id whoami gave: the token stops at once, and the list no longer has it.
+  const id = first.tokens[1].id;
+  expect((await docs({ op: "revoke", token: id })).json).toEqual({ revoked: id });
+  expect((await tool(s, other, "documents", { op: "whoami" })).status).toBe(401);
+  expect(((await docs({ op: "whoami" })).json as typeof first).tokens.map((t) => t.label)).toEqual(["Third", "The agent"]);
+  expect((await docs({ op: "revoke", token: id })).status).toBe(404);
+
+  // A document token reaches one document: it neither lists its person's tokens nor revokes one.
+  const doc = JSON.parse((await tool(s, agent, "documents", { op: "create_document", title: "One" })).text) as { id: string };
+  const one = (await mint(s, cookie, { label: "One document", scope: "document", doc: doc.id })).token;
+  expect(JSON.parse((await tool(s, one, "documents", { op: "whoami" })).text).tokens).toBeUndefined();
+  const refused = await tool(s, one, "documents", { op: "revoke", token: first.tokens[0].id });
+  expect([403, 404]).toContain(refused.status);
+  expect((await tool(s, third, "documents", { op: "whoami" })).status).toBe(200);
+});
+
+test("on staging a token works only while its person is an admin: refused once they aren't, and a non-admin can't make one", async () => {
+  const s = app({ staging: true });
+  const admin = (await mint(s, null, { label: "Admin", scope: "admin" })).token;
+  expect(admin).toBeTruthy();
+  // Added by their GitHub login, as an admin, before their first sign-in; then that sign-in (the pretend provider, with
+  // the id the pretend GitHub gives the login) and the username step make their account, an admin's.
+  const login = freshLogin("bo");
+  expect((await tool(s, admin, "set_user", { action: "add", provider: "github", handle: login, role: "admin" })).status).toBe(200);
+  const joining = await s.fetch(`/auth/dev?provider=github&subject=${mockGithubId(login)}&handle=${login}&next=/docs`);
+  expect(joining.headers.get("location")).toBe("/auth/username");
+  const cookies = (r: Response) => r.headers.getSetCookie().map((x) => x.split(";")[0]);
+  const join = cookies(joining).find((x) => x.includes("erga_join"))!;
+  const made = await s.fetch("/auth/username", {
+    method: "POST",
+    headers: { Cookie: join, Origin: s.root },
+    body: new URLSearchParams({ username: login }),
+  });
+  const cookie = cookies(made).find((x) => /^erga_session(_\d+)?=/.test(x))!;
+  expect(cookie).toBeTruthy();
+  const theirs = (await mint(s, cookie, { label: "Bo's", scope: "documents" })).token;
+  expect(theirs).toBeTruthy();
+  const doc = await publish(s, theirs, "Bo on staging");
+  expect((await tool(s, theirs, "read", { document: doc.id, path: "index.html" })).text).toContain("Bo on staging");
+
+  expect((await tool(s, admin, "set_user", { action: "role", login, role: "write" })).status).toBe(200);
+  expect((await tool(s, theirs, "read", { document: doc.id, path: "index.html" })).status).toBe(403);
+  const refused = await s.fetch("/mcp", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${theirs}`, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  expect(refused.status).toBe(403);
+  expect(((await refused.json()) as { adminsOnly?: boolean }).adminsOnly).toBe(true);
+  // Not an admin: staging lets them make no token at all.
+  expect((await mint(s, cookie, { label: "Again", scope: "documents" })).token).toBe("");
+});
+
+test("the share button's token is a server-wide agent token: the same each time, until New token turns it off", async () => {
+  const s = app();
+  const p = await person(s);
+  const id = await p.make();
+  const share = async (rotate: boolean) =>
+    (
+      (await (
+        await p.get(`/d/${id}/api/share`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Origin: p.origin },
+          body: JSON.stringify({ rotate }),
+        })
+      ).json()) as { token: string }
+    ).token;
+  const whoami = (token: string) =>
+    s.fetch("/api/tools/whoami", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "{}" });
+  const shared = await share(false);
+  expect(shared.startsWith("erga_")).toBe(true);
+  expect(await share(false)).toBe(shared);
+  expect((await whoami(shared)).ok).toBe(true);
+  expect(await share(true)).not.toBe(shared);
+  expect((await whoami(shared)).status).toBe(401);
 });

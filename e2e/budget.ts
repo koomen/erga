@@ -2,7 +2,7 @@
 // each file's time from e2e's report and names the files that are over; tests/suite.test.ts holds the map to the files.
 
 /** The suite's whole budget of test time, in seconds: the sum of the journeys' budgets may not pass it. */
-export const TOTAL_S = 300;
+export const TOTAL_S = 280;
 
 /** Each journey file's budget, from the map's table rows: "| `e2e/<area>/<file>.e2e.ts` | ... | <seconds> |". */
 export function budgets(map: string): Map<string, number> {

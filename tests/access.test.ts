@@ -203,6 +203,46 @@ test("a GitHub sign-in's organizations: active memberships only, as the pretend 
   } finally { globalThis.fetch = real; }
 });
 
+test("Add user: GitHub's rate limit is said as such; with the sign-in app, a pasted profile URL is added", async () => {
+  const { mockGithub, mockGithubId } = await import("../dev/github-mock");
+  const { githubAccounts } = await import("../server/identity/sign-in");
+  // The pretend GitHub refuses a rate-limited-* login as GitHub does a server's IP that used up its 60 lookups an hour
+  // (a reported bug: Add user said "GitHub didn't answer … status 403"), unless the sign-in app's values come with it.
+  const APP = { clientId: "Iv1.mockgithubapp0", secret: "mock-github-client-secret" };
+  const gh = mockGithub({
+    app: { slug: "erga-editor", clientId: APP.clientId, clientSecret: APP.secret },
+    origin: "https://gh.test",
+    callback: "https://erga.test/auth/github/callback",
+  });
+  let app: typeof APP | null = null;
+  const dir = new Directory(memory(), { admins: ["koomen"], github: githubAccounts("https://gh.test", async () => app) });
+  const login = "rate-limited-4f9a1c07";
+  const real = globalThis.fetch;
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) =>
+    gh
+      .fetch(
+        new Request(
+          new URL(String(input instanceof Request ? input.url : input).replace("https://gh.test/api", "https://gh.test/__github/api")),
+          init
+        )
+      )
+      .then((r) => r ?? new Response("", { status: 404 }))) as typeof fetch;
+  try {
+    // No app that GitHub knows: refused, and the answer says why and until when.
+    await expect(dir.addUser(ADMIN, { provider: "github", handle: login }, "read")).rejects.toThrow(
+      "GitHub's rate limit stops this lookup until 2030-01-01 12:34 UTC: try again then."
+    );
+    expect(await dir.people.list(ADMIN)).toEqual([]);
+    // The app in use: the lookup is the app's. Their profile's URL, pasted: they wait for their first sign-in, by their login.
+    app = APP;
+    const { person } = await dir.addUser(ADMIN, { provider: "github", handle: `https://github.com/${login}` }, "read");
+    expect(person).toMatchObject({ provider: "github", handle: login, subject: String(mockGithubId(login)), role: "read" });
+    expect((await dir.people.list(ADMIN)).map((p) => p.handle)).toEqual([login]);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 test("public sharing: off by default; then anyone with the link is refused, saying why, kept shares open to no one signed out; on restores them", async () => {
   const dir = fresh();
   await dir.users.add(ADMIN, "ada");

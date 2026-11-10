@@ -300,7 +300,7 @@ test("Deploy: each commit row has a button in each instance's column, except whe
   expect(hosts("2")).toEqual(["staging.erga.dev", "erga.dev"]);
   expect(hosts("1")).toEqual(["staging.erga.dev"]);
   // Its question names the host and the commit; the page shows it only in the cell under the mouse or
-  // with the focus (ops-page.css, .deps.here; e2e/full/ops/ops-page.e2e.ts).
+  // with the focus (ops-page.css, .deps.here).
   expect(rowOf(html, "2")).toContain(
     `<span class="deps here"><span class="tip"><button class="btn" type="button" data-deploy data-host="staging.erga.dev" data-sha="${"2".repeat(40)}" data-ask="Deploy 2222222 Change 2 to staging.erga.dev?"`
   );
