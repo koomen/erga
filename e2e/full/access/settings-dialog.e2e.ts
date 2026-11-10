@@ -74,11 +74,10 @@ test("tokens: Admin is offered to an admin only; a new token shows once, is list
   // DEV_LOGIN, an admin.
   await page.goto(`${s.root}/docs`);
   await openSettings(page);
-  expect(await page.$$eval("#erga-settings select[name=scope] option", (o) => o.map((x) => (x as HTMLOptionElement).value))).toEqual([
-    "documents",
-    "document",
-    "admin",
-  ]);
+  // (Admin comes when the dialog knows who asks: client/agent/settings-dialog.ts.)
+  await expect
+    .poll(() => page.$$eval("#erga-settings select[name=scope] option", (o) => o.map((x) => (x as HTMLOptionElement).value)))
+    .toEqual(["documents", "document", "admin"]);
   const label = `Chrome made ${Date.now()}`;
   await page.fill("#erga-settings input[name=label]", label);
   await page.click("#erga-settings form.make button");
