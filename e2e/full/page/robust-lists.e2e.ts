@@ -1,19 +1,11 @@
 // Lists under real use (the robustness hunt): keys only, from an empty page, checked by what the page shows.
-import { knownBug, servers, test, until, type Tab } from "../../helpers/fixtures";
-import { openEditor } from "../../helpers/editor";
+import { servers, test, until, type Tab } from "../../helpers/fixtures";
+import { openEmpty } from "../../helpers/editor";
 
 await servers.main();
 
-/** An empty page in the editor, the caret in its one paragraph. */
-const empty = async (tab: Tab) => {
-  const ed = await openEditor(tab, await servers.main(), "empty");
-  await ed.clickEnd("p");
-  await ed.idle();
-  return ed;
-};
-
 test("Tab nests an item with no gap between it and the item above", async ({ tab }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await ed.type("- One");
     await ed.press("Enter");
     await ed.type("Two");
@@ -32,7 +24,7 @@ test("Tab nests an item with no gap between it and the item above", async ({ tab
 // With an element that an extension added to the page's body (a plain <div>), Tab patches the page around it. (It
 // loaded the page again, and the key typed while it loaded was lost.) A person types right after Tab and does not wait.
 test("a key right after Tab is kept when an extension has put a <div> in the page", async ({ tab }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await ed.type("- One");
     await ed.press("Enter");
     await ed.type("Two");
@@ -46,7 +38,7 @@ test("a key right after Tab is kept when an extension has put a <div> in the pag
 // When the page must load again (a change to a script; here the test starts the load), the keys typed while it loads
 // are held, and the page that comes types them.
 test("keys typed while the page loads again are kept", async ({ tab }) => {
-  const ed = await empty(tab);
+  const ed = await openEmpty(tab);
   await ed.type("- One");
   await ed.press("Enter");
   await ed.type("Two");

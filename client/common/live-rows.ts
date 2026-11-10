@@ -8,13 +8,13 @@
 //
 // A hidden tab waits until it shows. A dropped socket comes back by itself and says the last version it heard, so it
 // hears what changed meanwhile. One ask at a time, so a later answer is never older than one before it. The socket's
-// phase (news-phase.ts) owns its reconnect timer: once the last list stops, no socket opens.
+// phase (shared/socket-phase.ts) owns its reconnect timer: once the last list stops, no socket opens.
 //
 // Trap: a live list gets new rows after the page loaded, and a changed row is a new element. Attach a row's listeners
 // in its `wire(row)`, never in a loop over the rows at load: a row that comes later would have none.
 
 import { backoff, live } from "../live/client";
-import { newsStep, type NewsEvent, type NewsPhase } from "./news-phase";
+import { socketStep, type PhaseEvent, type SocketPhase } from "../../shared/socket-phase";
 import { PING, PONG } from "../../shared/room-socket";
 
 type Row = { html: string; sort: number | string } | null;
@@ -34,13 +34,15 @@ const pending = new Set<string>();
 const own = new Set<string>();
 let since = 0,
   socket: WebSocket | null = null,
-  phase: NewsPhase = { at: "stopped" },
+  phase: SocketPhase = { at: "stopped" },
   retry: ReturnType<typeof setTimeout> | undefined,
   heard = 0;
 
 /** An event of the socket's: its new phase, and what that asks for. */
-function go(e: NewsEvent): void {
-  const next = newsStep(phase, e);
+const step = socketStep();
+
+function go(e: PhaseEvent): void {
+  const next = step(phase, e);
   phase = next.phase;
   if (phase.at != "backoff") clearTimeout(retry);
   for (const f of next.effects) {
@@ -50,7 +52,7 @@ function go(e: NewsEvent): void {
       live((l) => l.connection("news", "up"));
     } else if (f.do == "down") live((l) => l.connection("news", "down"));
     else if (f.do == "retry") retry = setTimeout(() => go({ type: "timer" }), backoff(f.tries));
-    else {
+    else if (f.do == "shut") {
       const ws = socket;
       socket = null;
       ws?.close();

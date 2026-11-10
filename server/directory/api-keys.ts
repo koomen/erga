@@ -137,7 +137,9 @@ export interface CredentialEntry {
 }
 
 /** A key that can't be stored (not one, or no secret to encrypt it with): the message says why. */
-export class CredentialError extends Schema.TaggedError<CredentialError>()("CredentialError", { message: Schema.String }) {}
+export class CredentialError extends Schema.TaggedError<CredentialError>()("CredentialError", { message: Schema.String }) {
+  readonly status = 400;
+}
 
 interface Row { name: string; iv: string; data: string; last4: string; updated: number; updated_by: string; updated_via?: string | null }
 

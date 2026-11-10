@@ -19,7 +19,9 @@ import * as Effect from "effect/Effect";
 import { safeNext } from "../pages/index.ts";
 import type { Platform, Session } from "../platform.ts";
 import { call, ctx, redirect, text } from "../http.ts";
-import { sign, unsign, sessionOf } from "./session.ts";
+import { sessionOf } from "./session.ts";
+import * as Schema from "effect/Schema";
+import { signed } from "../signed.ts";
 import { cookies, withCookie } from "./cookies.ts";
 import { PROVIDERS } from "./apps.ts";
 
@@ -28,7 +30,7 @@ export const HOME_ERGA = "/_erga/";
 
 const VISITOR = "erga_visitor";
 const DAY = 86_400;
-const PASS_MS = 60_000;
+const PASS_SECONDS = 60;
 
 /** The same address on another host (the protocol and port as they are: locally, one server answers both). */
 function onHost(url: URL, host: string, path: string): string {
@@ -40,18 +42,20 @@ function onHost(url: URL, host: string, path: string): string {
 /** Where sign-out on the Erga domain goes on to: the own domain's sign-out, which ends its cookie too; or `/`. */
 export const afterSignOut = (p: Platform, url: URL) => (p.deploy.home ? onHost(url, p.deploy.home, "/_erga/sign-out") : "/");
 
-/** The person a signed value of `kind` names, if it's good and not older than `ms`. */
-async function signedLogin(p: Platform, kind: string, signed: string | null | undefined, ms: number): Promise<string | null> {
-  const value = signed ? await unsign(p.secret, signed) : null;
-  const [k, login, at] = value?.split(":") ?? [];
-  const made = Number(at);
-  if (k != kind || !login || !Number.isFinite(made) || made > Date.now() + 60_000 || Date.now() - made >= ms) return null;
-  return (await p.directory.users.allowed(login)) ? login : null;
+/** A pass from the Erga domain to the own domain (a minute), and the own domain's cookie (30 days): who signed in (server/signed.ts). */
+const Login = Schema.Struct({ login: Schema.String });
+const Pass = signed("home-pass", Login, PASS_SECONDS);
+const Visitor = signed("home-visitor", Login, 30 * DAY);
+
+/** The person a pass or a visitor's cookie names, if it's good, current, and they may still sign in. */
+async function signedLogin(p: Platform, kind: typeof Pass, text: string | null | undefined): Promise<string | null> {
+  const login = (await kind.open(p.secret, text))?.login;
+  return login && (await p.directory.users.allowed(login)) ? login : null;
 }
 
 /** Who the own domain's cookie names (the homepage's model only); null: a guest. */
 export async function homeVisitor(p: Platform, request: Request): Promise<Session | null> {
-  const login = await signedLogin(p, "home-visitor", cookies(request).get(VISITOR), 30 * DAY * 1000);
+  const login = await signedLogin(p, Visitor, cookies(request).get(VISITOR));
   return login ? { login, name: login } : null;
 }
 
@@ -68,7 +72,7 @@ export const homePass = Effect.gen(function* () {
     const signIn = provider in PROVIDERS ? `/auth/${provider}` : "/auth/sign-in";
     return redirect(`${signIn}?next=${encodeURIComponent(here)}`, 302, { "Cache-Control": "no-store" });
   }
-  const pass = yield* call(() => sign(p.secret, `home-pass:${session.login}:${Date.now()}`));
+  const pass = yield* call(() => Pass.seal(p.secret, { login: session.login }));
   const to = `/_erga/pass?pass=${encodeURIComponent(pass)}&next=${encodeURIComponent(next)}`;
   return redirect(onHost(url, home, to), 302, { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
 });
@@ -92,9 +96,9 @@ export const homeDomainSignIn = Effect.gen(function* () {
       0
     );
   if (url.pathname == "/_erga/pass") {
-    const login = yield* call(() => signedLogin(p, "home-pass", url.searchParams.get("pass"), PASS_MS));
+    const login = yield* call(() => signedLogin(p, Pass, url.searchParams.get("pass")));
     if (!login) return text("This sign-in link is old or not good. Go back and sign in again.", 403, { "Cache-Control": "no-store" });
-    const value = yield* call(() => sign(p.secret, `home-visitor:${login}:${Date.now()}`));
+    const value = yield* call(() => Visitor.seal(p.secret, { login }));
     return withCookie(
       redirect(next, 302, { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" }),
       request,

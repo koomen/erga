@@ -2,8 +2,7 @@
 // the events on the document's socket.
 
 import { Transaction, type ChangeSet } from "@codemirror/state";
-import type { SocketEvent } from "../../libs/text/ui/collab";
-import type { RoomStatus } from "../../libs/text/ui/room-phase";
+import type { RoomStatus, SocketEvent } from "../../libs/text/ui/collab";
 import type { DocName, Hello } from "../../document/api";
 import type { LogEvent } from "../../shared/agent-log";
 import type { LiveRequest } from "../../shared/live-page";

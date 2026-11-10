@@ -1,24 +1,17 @@
 // Markdown at the start of a line, typed with real keys from an empty page, as a person does in a writing app: what the
 // page shows, and how a person takes it back. Google Docs, Notion, Typora and Bear agree on each behavior here.
 import { expect, servers, test, type Tab } from "../../helpers/fixtures";
-import { F, openEditor, type Editor } from "../../helpers/editor";
+import { F, openEditor, type Editor, openEmpty } from "../../helpers/editor";
 
 await servers.main();
 
-/** An empty page in the editor, the caret in its one paragraph. */
-const empty = async (tab: Tab) => {
-  const ed = await openEditor(tab, await servers.main(), "empty");
-  await ed.clickEnd("p");
-  await ed.idle();
-  return ed;
-};
 /** Types text with real key presses, a key for each character ("\n" is Enter). */
 const keys = async (ed: Editor, text: string) => {
   for (const ch of text) await ed.press(ch == " " ? "Space" : ch == "\n" ? "Enter" : ch);
 };
 
 test("#, - and 1. with a space make a heading and lists; undo gives back the typed marks", async ({ tab }) => {
-  const ed = await empty(tab);
+  const ed = await openEmpty(tab);
   await keys(ed, "## Plan\n- Milk\nEggs\n\n1. One\nTwo");
   await ed.shows(`
     ## Plan
@@ -58,7 +51,7 @@ test("#, - and 1. with a space make a heading and lists; undo gives back the typ
 // Tab in a paragraph indents it one step, as Google Docs does, and Shift+Tab takes the step back. The caret stays in
 // the paragraph, and the next key types there (Tab moved the focus out of the page once, and the keys went nowhere).
 test("Tab in a paragraph indents it, Shift+Tab takes it back, and the next key types there", async ({ tab }: { tab: Tab }) => {
-  const ed = await empty(tab);
+  const ed = await openEmpty(tab);
   await keys(ed, "Plan");
   const left = () => ed.frame<number>(`${F}.querySelector("body > p").getBoundingClientRect().left`);
   const start = await left();
@@ -82,7 +75,7 @@ test("Tab in a paragraph indents it, Shift+Tab takes it back, and the next key t
 // Backspace at the start of a heading makes it a paragraph, as Notion, Typora and Bear do (editing-blocks.e2e.ts: in the
 // middle of a page).
 test("Backspace at the start of a heading makes it a paragraph", async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await keys(ed, "# Title");
     await ed.press("Home");
     await ed.press("Backspace");
@@ -94,7 +87,7 @@ test("Backspace at the start of a heading makes it a paragraph", async ({ tab }:
 // Backspace at the start of a list's first item takes the bullet off, as Google Docs, Notion, Typora and Bear do. (A
 // later item joins the item above: list-keys.e2e.ts.)
 test("Backspace at the start of a list item takes the bullet off", async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await keys(ed, "- Milk");
     await ed.press("Home");
     await ed.press("Backspace");
@@ -106,7 +99,7 @@ test("Backspace at the start of a list item takes the bullet off", async ({ tab 
 // Enter in an empty line of a quote leaves the quote, as Notion, Typora and Bear do, and as Enter in an empty list item
 // leaves the list.
 test("Enter twice in a quote leaves the quote", async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await keys(ed, "> Quoted\n\nAfter");
     await ed.shows(`
       Quoted
@@ -118,7 +111,7 @@ test("Enter twice in a quote leaves the quote", async ({ tab }: { tab: Tab }) =>
 
 // Backspace at the start of a quote makes it a paragraph again, as Notion, Typora and Bear do.
 test("Backspace at the start of a quote makes it a paragraph", async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await keys(ed, "> Quoted");
     await ed.press("Home");
     await ed.press("Backspace");
@@ -129,7 +122,7 @@ test("Backspace at the start of a quote makes it a paragraph", async ({ tab }: {
 });
 
 test("- [ ] makes a to-do item that shows a checkbox and no bullet", async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await keys(ed, "- [ ] Walk");
     await ed.shows(`
       ☐ Walk|
@@ -138,7 +131,7 @@ test("- [ ] makes a to-do item that shows a checkbox and no bullet", async ({ ta
 );
 
 test("``` and Enter make a code block, with the language as a class; undo gives back the typed marks", async ({ tab }) => {
-  const ed = await empty(tab);
+  const ed = await openEmpty(tab);
   await keys(ed, "```js\nlet a = 1");
   await ed.shows(`
     let a = 1|
@@ -155,7 +148,7 @@ test("``` and Enter make a code block, with the language as a class; undo gives 
 // Enter at the end of a code line adds a line that shows (a <pre> hides its last line break: a <br> holds the new line
 // open until text comes). The snapshot shows a code block's lines with a space between them.
 test("Enter in a code block adds a line in it", async ({ tab }: { tab: Tab }) => {
-  const ed = await empty(tab);
+  const ed = await openEmpty(tab);
   await keys(ed, "```js\nlet a = 1\nlet b");
   await ed.shows(`
     let a = 1 let b|
@@ -167,7 +160,7 @@ test("Enter in a code block adds a line in it", async ({ tab }: { tab: Tab }) =>
 // ArrowDown on the last line of a code block that ends the page makes a paragraph after it, as Notion does: else there
 // is no way out of the code block with keys.
 test("ArrowDown at the end of a code block goes to a paragraph after it", async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await keys(ed, "```\ncode");
     await ed.press("ArrowDown");
     await keys(ed, "After");
@@ -176,7 +169,7 @@ test("ArrowDown at the end of a code block goes to a paragraph after it", async 
 });
 
 test("---, *** or ___ on its own line, then Enter, makes a horizontal rule; undo gives back the typed marks", async ({ tab }) => {
-  const ed = await empty(tab);
+  const ed = await openEmpty(tab);
   await keys(ed, "Above\n---\nBelow\n***\n");
   await expect.poll(() => ed.count("hr")).toBe(2);
   await expect.poll(() => ed.textOf("body")).not.toContain("---");

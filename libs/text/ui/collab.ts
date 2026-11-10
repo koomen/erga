@@ -55,7 +55,20 @@ import { decodeStart, PING, PONG } from "../../../shared/room-socket";
 import { base64, fromBase64 } from "../../../shared/bytes";
 import { sleep } from "../../../shared/time";
 import { claimKept, keepReplica, readKept, type Keeper, type Kept } from "./kept";
-import { roomStep, statusOf, type RoomEffect, type RoomEvent, type RoomPhase, type RoomStatus } from "./room-phase";
+import { socketStep, type PhaseEffect, type PhaseEvent, type SocketPhase } from "../../../shared/socket-phase";
+
+/** What the page shows of the socket. */
+export type RoomStatus = "up" | "down" | "gone";
+
+/**
+ * The room's socket (shared/socket-phase.ts). 4404: the document was deleted. 4403: no longer theirs to open (the page
+ * loads again). 4409: a stale history (the page loads again). A socket that never got in is refused on its third
+ * failure: no such document, or not theirs. (4408, a role changed: it joins again, as they may now.)
+ */
+const roomStep = socketStep({ final: { 4404: "gone", 4403: "reload", 4409: "stale" }, refuseAfter: 2 });
+/** The wait before try `tries` (from 0): 0.1 s, doubling to 2.5 s. */
+const waitFor = (tries: number) => Math.min(2500, 100 * 2 ** tries);
+const statusOf = (p: SocketPhase): RoomStatus => (p.at == "open" ? "up" : p.at == "ended" && p.why == "gone" ? "gone" : "down");
 import type { Peer } from "./types";
 
 /** Someone in the room, from awareness. */
@@ -121,8 +134,8 @@ export class Collab {
   private me: Author | null = null;
   private path = "";
   private ws: WebSocket | null = null;
-  /** The socket's phase (room-phase.ts), and the timer of its backoff: cleared each time the phase leaves backoff. */
-  private phase: RoomPhase = { at: "connecting", tries: 0 };
+  /** The socket's phase (shared/socket-phase.ts), and the timer of its backoff: cleared each time the phase leaves backoff. */
+  private phase: SocketPhase = { at: "connecting", tries: 0 };
   private timer = 0;
   /** The listeners on the window, until this leaves the room. */
   private readonly listening = new AbortController();
@@ -366,18 +379,18 @@ export class Collab {
     void this.keeping?.stop();
     this.keeping = null;
     removeAwarenessStates(this.awareness, [this.doc.clientID], "left");
-    this.go({ type: "close" });
+    this.go({ type: "stop" });
   }
 
-  /** An event of the socket's: its new phase, and what that asks for (room-phase.ts). */
-  private go(e: RoomEvent): void {
+  /** An event of the socket's: its new phase, and what that asks for (shared/socket-phase.ts). */
+  private go(e: PhaseEvent): void {
     const { phase, effects } = roomStep(this.phase, e);
     this.phase = phase;
     if (phase.at != "backoff") clearTimeout(this.timer);
     for (const f of effects) this.effect(f);
   }
 
-  private effect(f: RoomEffect): void {
+  private effect(f: PhaseEffect): void {
     switch (f.do) {
       case "connect":
         return this.connect();
@@ -387,17 +400,16 @@ export class Collab {
         this.answered = true;
         clearInterval(this.pinger);
         this.pinger = window.setInterval(() => this.ping(), PING_EVERY);
+        return this.opts.onStatus("up");
+      case "down":
+        if (f.open) this.opts.onStatus("down");
         return;
-      case "status":
-        // (Gone before its hello: there's nothing to open.)
-        if (f.status == "gone") this.noHello(new Error("the document was deleted"));
-        return this.opts.onStatus(f.status);
       case "retry":
         if (!this.stateIn) {
           this.failed = true;
           this.offlineStart();
         }
-        this.timer = window.setTimeout(() => this.go({ type: "timer" }), f.after);
+        this.timer = window.setTimeout(() => this.go({ type: "timer" }), waitFor(f.tries));
         return;
       case "shut": {
         const ws = this.ws;
@@ -411,14 +423,17 @@ export class Collab {
         }
         return;
       }
-      case "stale":
-        return this.stale();
-      // Its person may no longer open it: the page opens again, and says so.
-      case "reload":
-        return location.reload();
-      // (Never in: no such document, or not theirs to open. One that was in keeps trying.)
-      case "refused":
-        return this.noHello(new Error("the host refused the connection"));
+      case "end":
+        if (f.why == "gone") {
+          // (Gone before its hello: there's nothing to open.)
+          this.noHello(new Error("the document was deleted"));
+          return this.opts.onStatus("gone");
+        }
+        // (Never in: no such document, or not theirs to open. One that was in keeps trying.)
+        if (f.why == "refused") return this.noHello(new Error("the host refused the connection"));
+        if (f.open) this.opts.onStatus("down");
+        // Its person may no longer open it: the page opens again, and says so.
+        return f.why == "reload" ? location.reload() : this.stale();
     }
   }
 
@@ -518,7 +533,8 @@ export class Collab {
         // A socket on another history than the one this tab started from (the room lost its own in between): never merged.
         const epoch = (msg as Hello).epoch;
         if (this.startEpoch && epoch && epoch != this.startEpoch) {
-          this.go({ type: "stale" });
+          this.go({ type: "stop" });
+          this.stale();
           return;
         }
         this.greeted = true;
@@ -547,8 +563,8 @@ export class Collab {
           }
           if (this.ackAgain) this.askAck();
         }
-        if (kind == SYNC_STEP2 && this.phase.at == "open") {
-          this.go({ type: "synced" });
+        if (kind == SYNC_STEP2 && this.phase.at == "open" && !this.phase.ready) {
+          this.go({ type: "ready" });
           this.stateIn = true;
           void this.mergeKept(roomInfo(this.doc).get("epoch")).then(() => this.gotSynced());
         }
@@ -730,7 +746,7 @@ export class Collab {
   async flushed(): Promise<boolean> {
     for (let i = 0; i < 60; i++) {
       const ws = this.ws;
-      if (this.phase.at != "synced" || !ws) return false;
+      if (this.phase.at != "open" || !this.phase.ready || !ws) return false;
       if (ws.bufferedAmount == 0) {
         await sleep(150);
         return this.connected;

@@ -13,7 +13,7 @@ import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
-import { cookieName, SESSION_COOKIE, sign } from "../../server/identity/index.ts";
+import { cookieName, SESSION_COOKIE, sessionCookie } from "../../server/identity/index.ts";
 import { openEditor } from "../../e2e/helpers/editor";
 import type { Server } from "../../e2e/helpers/server";
 
@@ -25,8 +25,7 @@ if (!origin || !login || !secret) {
 }
 const root = origin.replace(/\/+$/, "");
 const url = new URL(root);
-const session = Base64Url.encode(JSON.stringify({ login, name: login, exp: Math.floor(Date.now() / 1000) + 3600 }));
-const cookie = { name: cookieName(url, SESSION_COOKIE), value: await sign(secret, session) };
+const cookie = { name: cookieName(url, SESSION_COOKIE), value: await sessionCookie(secret, { login, name: login }, 3600) };
 const headers = { cookie: `${cookie.name}=${cookie.value}`, origin: root, "content-type": "application/json" };
 
 const results: [string, string][] = [];

@@ -10,10 +10,10 @@
 import { readdirSync, readFileSync, existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { ROOT } from "../root";
 import { unpackRelease } from "./bundle";
 import { loadRelease, type Release } from "./release-format";
 
-const ROOT = new URL("../..", import.meta.url).pathname;
 
 /** Builds `commit` of this clone in a scratch worktree: the release. Under the mock, the checkout's own .build/release/, stamped. */
 export async function buildHere(commit: string, log: Log, mock = false): Promise<Release> {

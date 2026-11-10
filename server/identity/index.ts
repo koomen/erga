@@ -2,7 +2,7 @@
 // with GitHub and its settings, the other of Erga's servers. The rest of the
 // app imports identity through this file.
 
-export { actingAdmin, SESSION_COOKIE, sessionOf, sign, unsign, viewCookie } from "./session.ts";
+export { actingAdmin, SESSION_COOKIE, sessionCookie, sessionOf, viewCookie } from "./session.ts";
 export {
   chooseSignIn,
   finishGoogleSignIn,

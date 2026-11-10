@@ -2,20 +2,7 @@
 // admins, for admins only. Everyone else gets "not found": they
 // can't see the page, nor that there is one.
 //
-//   /admin                     the Analytics page: what people did each day (?days=7, 30 or 90), the most active and the newest people
-//   /admin/settings            the Settings page
-//   /admin/changes             the Change log: the settings' versions, factory tasks added and merged, and production deploys, newest first; ?before=n for older ones
-//   /admin/users               the Users page: the specific people, each a GitHub or Google account with one role (Admin, Can
-//                              create and edit content, Can authenticate), the deploy role as a switch, when they joined and last came;
-//                              add one (before their first sign-in too), remove one
-//   /admin/access              the Access page: the group rules (everybody, a Google Workspace, a GitHub organization: No
-//                              access, Can authenticate or Can create and edit content), and whether users can share content publicly
-//   /admin/feedback            the Feedback page: what people sent with Send feedback, newest first, each with its GitHub issue
-//   /admin/api-keys            the API keys page: every key Erga needs from the services it calls
-//   /admin/auth                the Authentication page: how people sign in on this server (GitHub, Google)
-//   GET /admin/auth/status     the same as JSON {here, google, providers} (server/identity/apps.ts, AuthStatus: never a secret), with live checks
-//   POST /admin/auth           provider (github or google), and do=save (clientId, secret): an app's values, a secret, set only here
-//   POST /admin/credentials    name (anthropic), and value to set or replace its key: a secret, set only here
+// The routes are ROUTES, below: each page, and the two POSTs that set a secret.
 //
 // The API keys page shows whether each key is set, its
 // last four characters, and who set it when; and, read-only, the secrets only the
@@ -42,6 +29,8 @@
 // and the last admin, who can't be demoted or removed at all.
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import type { HttpServerResponse } from "effect/http";
+import { routeFor, SECRET, type RouteRow } from "../../shared/routes.ts";
 import { ConfigError, CredentialError, NotAllowed, roleValue, type UserRole } from "../directory/index.ts";
 import { page } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
@@ -57,6 +46,130 @@ import { accessPage } from "./access.ts";
 import { changesPage } from "./changes.ts";
 import { feedbackPage } from "./feedback.ts";
 
+/** Who asks, checked: an admin, in their browser. */
+interface Asked {
+  readonly platform: Platform;
+  readonly session: Session;
+  readonly who: Who;
+  readonly url: URL;
+}
+type Answer = HttpServerResponse.HttpServerResponse;
+type Run = (a: Asked, f: AdminFields) => Promise<Answer> | Answer;
+
+/** The Authentication page's facts, with live checks. */
+const authStatus = (a: Asked) => authOps(a.platform, a.url.origin).status(a.who);
+
+/** Every /admin route: a page (GET), or a POST that sets a secret, which is set only here. */
+export const ROUTES: readonly RouteRow<Run>[] = [
+  {
+    method: "GET",
+    path: "/admin",
+    // ?days=7, 30 or 90
+    run: (a) => {
+      const days = Number(a.url.searchParams.get("days") ?? 30);
+      return analyticsPage(a.platform, a.session, isSpan(days) ? days : 30);
+    },
+    action: "Read each day's activity, the most active and newest users (Analytics)",
+    domain: "admin",
+    tool: "analytics",
+  },
+  {
+    method: "GET",
+    path: "/admin/settings",
+    run: (a) => settingsPage(a.platform, a.session),
+    action: "Read the settings and pages' model use today (Settings)",
+    domain: "admin",
+    tool: "settings",
+  },
+  {
+    method: "GET",
+    path: "/admin/changes",
+    // The settings' versions and production deploys, newest first; ?before=n for older ones.
+    run: (a) => {
+      const before = Number(a.url.searchParams.get("before"));
+      return changesPage(a.platform, a.session, Number.isInteger(before) && before > 0 ? before : undefined);
+    },
+    action: "Read the change log (Change log)",
+    domain: "admin",
+    tool: "settings",
+  },
+  {
+    method: "GET",
+    path: "/admin/users",
+    run: (a) => usersPage(a.platform, a.session),
+    action: "Read the users (Users)",
+    domain: "admin",
+    tool: "people",
+  },
+  {
+    method: "GET",
+    path: "/admin/access",
+    run: (a) => accessPage(a.platform, a.session),
+    action: "Read the group rules, and whether users can share content publicly (Access)",
+    domain: "admin",
+    tool: "people",
+  },
+  {
+    method: "GET",
+    path: "/admin/api-keys",
+    run: (a) => apiKeysPage(a.platform, a.session),
+    action: "Read the API keys' status (API keys)",
+    domain: "admin",
+    tool: "settings",
+  },
+  {
+    method: "GET",
+    path: "/admin/feedback",
+    run: (a) => feedbackPage(a.platform, a.session),
+    action: "Read the feedback people sent, with each one's issue (Feedback)",
+    domain: "admin",
+    tool: "feedback",
+  },
+  {
+    method: "GET",
+    path: "/admin/auth",
+    run: async (a) => authPage(a.session, await authStatus(a)),
+    action: "Read how people sign in on this server (Authentication)",
+    domain: "admin",
+    tool: "sign_in",
+  },
+  {
+    method: "GET",
+    path: "/admin/auth/status",
+    // {here, google, providers} (server/identity/apps.ts, AuthStatus: never a secret)
+    run: async (a) => json(await authStatus(a)),
+    action: "Read the same, as JSON, with live checks (Authentication)",
+    domain: "admin",
+    tool: "sign_in",
+  },
+  {
+    method: "POST",
+    path: "/admin/credentials",
+    // name (anthropic), and value. The answer says what the page shows: never the key.
+    run: async (a, f) => plainJson({ credential: await a.platform.directory.credentials.set(a.who, f.name, f.value) }),
+    action: "Set or replace an API key (API keys)",
+    domain: "admin",
+    exempt: SECRET,
+  },
+  {
+    method: "POST",
+    path: "/admin/auth",
+    // provider (github or google), do=save (clientId, secret). The answer says what the page shows: never the secret.
+    run: async (a, f) => {
+      if (f.do != "save") return elsewhere();
+      const provider: Provider = f.provider == "google" ? "google" : "github";
+      return plainJson({
+        result: await authOps(a.platform, a.url.origin).save(a.who, { clientId: f.clientId, secret: f.secret }, provider),
+      });
+    },
+    action: "Set a GitHub app's or Google client's ID and secret (Authentication)",
+    domain: "admin",
+    exempt: SECRET,
+  },
+];
+
+const elsewhere = () => plainJson({ error: "Not here: every other change is an operation, POST /api/tools/<name>." }, 404);
+
 /** /admin and its POSTs. */
 export const adminRoutes = Effect.gen(function* () {
   const { request, url, platform } = yield* ctx;
@@ -67,41 +180,19 @@ export const adminRoutes = Effect.gen(function* () {
   // Only the person themselves, in a browser (which comes with admin power): an agent with their token isn't an admin here.
   const admin = !!who && !session?.agent && (yield* call(() => platform.directory.users.actsAsAdmin(who)));
   if (read) {
-    if (!admin) return notFound();
-
-    if (url.pathname == "/admin/changes") {
-      const before = Number(url.searchParams.get("before"));
-      return yield* call(() => changesPage(platform, session!, Number.isInteger(before) && before > 0 ? before : undefined));
-    }
-    if (url.pathname == "/admin/api-keys") return yield* call(() => apiKeysPage(platform, session!));
-    if (url.pathname == "/admin/feedback") return yield* call(() => feedbackPage(platform, session!));
-    if (url.pathname == "/admin/auth" || url.pathname == "/admin/auth/status") {
-      const status = yield* call(() => authOps(platform, url.origin).status(who!));
-      return url.pathname == "/admin/auth" ? authPage(session!, status) : json(status);
-    }
-    if (url.pathname == "/admin/access") return yield* call(() => accessPage(platform, session!));
-    if (url.pathname == "/admin/users") return yield* call(() => usersPage(platform, session!));
-    if (url.pathname == "/admin/settings") return yield* call(() => settingsPage(platform, session!));
-    if (url.pathname == "/admin") {
-      const days = Number(url.searchParams.get("days") ?? 30);
-      return yield* call(() => analyticsPage(platform, session!, isSpan(days) ? days : 30));
-    }
-    return notFound();
+    const found = admin ? routeFor(ROUTES, "GET", url.pathname) : null;
+    if (!found) return notFound();
+    return yield* call(async () => found.route.run({ platform, session: session!, who: who!, url }, NO_FIELDS));
   }
   if (request.method != "POST") return notFound();
   if (!admin) return plainJson({ error: "Only an admin can do that." }, session ? 403 : 401);
 
   if (request.headers.get("origin") != url.origin) return plainJson({ error: "Forbidden" }, 403);
   const fields = yield* form(AdminForm).pipe(Effect.orDie);
-  return yield* Effect.tryPromise({ try: () => act(platform, session!, who!, url, fields), catch: refusal }).pipe(
-    // The directory's own words, for a person to act on.
-    Effect.catchTags({
-      NotAllowed: (e) => Effect.succeed(plainJson({ error: e.message }, 403)),
-      ScopeError: (e) => Effect.succeed(plainJson({ error: e.message }, 403)),
-      ConfigError: (e) => Effect.succeed(plainJson({ error: e.message }, 400)),
-      CredentialError: (e) => Effect.succeed(plainJson({ error: e.message }, 400)),
-      AuthError: (e) => Effect.succeed(plainJson({ error: e.message }, 400)),
-    })
+  const run = routeFor(ROUTES, "POST", url.pathname)?.route.run ?? elsewhere;
+  return yield* Effect.tryPromise({ try: async () => run({ platform, session: session!, who: who!, url }, fields), catch: refusal }).pipe(
+    // The directory's own words, for a person to act on, with the refusal's own status.
+    Effect.catch((e) => Effect.succeed(plainJson({ error: e.message }, e.status)))
   );
 });
 
@@ -128,6 +219,7 @@ const AdminForm = Schema.Struct({
   deploy: Field,
 });
 type AdminFields = typeof AdminForm.Type;
+const NO_FIELDS = Schema.decodeUnknownSync(AdminForm)({});
 
 /** What a POST's call may refuse with, as its typed error; anything else is a defect. */
 function refusal(e: unknown): NotAllowed | ScopeError | ConfigError | CredentialError | AuthError {
@@ -140,20 +232,6 @@ function refusal(e: unknown): NotAllowed | ScopeError | ConfigError | Credential
   )
     return e;
   throw e;
-}
-
-/** A POST, done: its answer. */
-async function act(platform: Platform, session: Session, who: Who, url: URL, f: AdminFields) {
-  if (url.pathname == "/admin/credentials") {
-    // The answer says what the page shows: never the key.
-    return plainJson({ credential: await platform.directory.credentials.set(who, f.name, f.value) });
-  }
-  if (url.pathname == "/admin/auth" && f.do == "save") {
-    const provider: Provider = f.provider == "google" ? "google" : "github";
-    // The answer says what the page shows: never the secret.
-    return plainJson({ result: await authOps(platform, url.origin).save(who, { clientId: f.clientId, secret: f.secret }, provider) });
-  }
-  return plainJson({ error: "Not here: every other change is an operation, POST /api/tools/<name>." }, 404);
 }
 
 const notFound = () => page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);

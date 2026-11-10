@@ -17,6 +17,7 @@
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/http-api";
+import { PANEL, type Action, type Audit } from "../shared/routes.ts";
 
 // ------------------------------------------------------------ failures
 
@@ -104,42 +105,137 @@ export interface Hello {
 
 // ------------------------------------------------------------ the API
 
+/** An endpoint's place in the audit (shared/routes.ts): what the person does there, and the agent tool that does it or why there's none. */
+export class Audited extends Context.Service<Audited, { readonly action: string } & Audit>()("erga/Audited") {}
+
+const PANEL_ROW = { domain: "none", exempt: PANEL } as const;
+const SERVER = "the server's own call, refused from outside (server/documents/routes.ts)";
+
 export const Api = HttpApi.make("erga")
-  .add(HttpApiGroup.make("doc")
-    .add(HttpApiEndpoint.get("info", "/api/doc", { success: DocInfo }))
-    .middleware(PersonFromRequest))
-  .add(HttpApiGroup.make("agent")
-    /** A tab's answer to the agent's live page request (shared/live-page.ts, LiveAnswer). */
-    .add(
-      HttpApiEndpoint.post("live", "/api/agent/live", {
-      payload: Schema.Struct({
-        id: Schema.String,
-        value: Schema.optional(Schema.String),
-        declined: Schema.optional(Schema.Boolean),
-        rank: Schema.optional(Schema.Number),
-      }),
-      success: Ok,
-    }))
-    /** How many of the person's agent's changes here Undo can take back (count), and Redo can put back. */
-    .add(HttpApiEndpoint.get("undoable", "/api/agent/undo", { success: Schema.Struct({ count: Schema.Number, redo: Schema.Number }) }))
-    /** Undoes the agent's last change; ok is false when there was nothing to undo. */
-    .add(HttpApiEndpoint.post("undo", "/api/agent/undo", { success: Schema.Struct({ ok: Schema.Boolean }) }))
-    /** Puts back the change Undo took back last; ok is false when there was nothing to redo. */
-    .add(HttpApiEndpoint.post("redo", "/api/agent/redo", { success: Schema.Struct({ ok: Schema.Boolean }) }))
-    .middleware(PersonFromRequest))
+  .add(
+    HttpApiGroup.make("doc")
+      .add(
+        HttpApiEndpoint.get("info", "/api/doc", { success: DocInfo }).annotate(Audited, {
+          action: "The editor wakes the document as the pointer nears Edit (its name and who you are)",
+          domain: "none",
+          exempt: "the page's own warm-up, not a person's action (the name: ls)",
+        })
+      )
+      .middleware(PersonFromRequest)
+  )
+  .add(
+    HttpApiGroup.make("agent")
+      /** A tab's answer to the agent's live page request (shared/live-page.ts, LiveAnswer). */
+      .add(
+        HttpApiEndpoint.post("live", "/api/agent/live", {
+          payload: Schema.Struct({
+            id: Schema.String,
+            value: Schema.optional(Schema.String),
+            declined: Schema.optional(Schema.Boolean),
+            rank: Schema.optional(Schema.Number),
+          }),
+          success: Ok,
+        }).annotate(Audited, { action: "The tab answers the agent's page_log, page_input and eval_in_page with live", ...PANEL_ROW })
+      )
+      /** How many of the person's agent's changes here Undo can take back (count), and Redo can put back. */
+      .add(
+        HttpApiEndpoint.get("undoable", "/api/agent/undo", {
+          success: Schema.Struct({ count: Schema.Number, redo: Schema.Number }),
+        }).annotate(Audited, {
+          action: "How many of your agent's changes to the document Undo can take back, and Redo can put back",
+          ...PANEL_ROW,
+        })
+      )
+      /** Undoes the agent's last change; ok is false when there was nothing to undo. */
+      .add(
+        HttpApiEndpoint.post("undo", "/api/agent/undo", { success: Schema.Struct({ ok: Schema.Boolean }) }).annotate(Audited, {
+          action: "Undo your agent's last change to the document",
+          ...PANEL_ROW,
+        })
+      )
+      /** Puts back the change Undo took back last; ok is false when there was nothing to redo. */
+      .add(
+        HttpApiEndpoint.post("redo", "/api/agent/redo", { success: Schema.Struct({ ok: Schema.Boolean }) }).annotate(Audited, {
+          action: "Redo the change Undo took back last",
+          ...PANEL_ROW,
+        })
+      )
+      .middleware(PersonFromRequest)
+  )
   // The server's, only: an agent's document tool (POST /api/tools/<name> with "document", server/api.ts) runs here, as
   // the person's agent (agents/tools.ts, runInDocument). The app refuses this path from outside (server/documents/routes.ts).
   .add(
     HttpApiGroup.make("tools")
-    /** Runs one tool with the body as its arguments, in the person's agent session. */
-    .add(
-      HttpApiEndpoint.post("run", "/api/tools/:name", {
-      params: { name: Schema.String },
-      payload: Schema.Record(Schema.String, Schema.Unknown),
-      success: Schema.Struct({ ok: Schema.Literal(true), content: Schema.Any }),
-      error: [SessionFailed, NoSuchTool, ToolFailed],
-    }))
-    /** The person's own agent's turn is done (agents/person/sessions.ts): its presence here ends, and a version is cut. */
-    .add(HttpApiEndpoint.post("done", "/api/agent/done", { success: Ok, error: [SessionFailed] }))
-    .middleware(ExternalAgent))
+      /** Runs one tool with the body as its arguments, in the person's agent session. */
+      .add(
+        HttpApiEndpoint.post("run", "/api/tools/:name", {
+          params: { name: Schema.String },
+          payload: Schema.Record(Schema.String, Schema.Unknown),
+          success: Schema.Struct({ ok: Schema.Literal(true), content: Schema.Any }),
+          error: [SessionFailed, NoSuchTool, ToolFailed],
+        }).annotate(Audited, {
+          action:
+            "The server runs a document tool in the document's host, as the person's agent (outside agents call POST /api/tools/<name> with \"document\")",
+          domain: "none",
+          exempt: `${SERVER}: the document tools are every agent's already`,
+        })
+      )
+      /** The person's own agent's turn is done (agents/person/sessions.ts): its presence here ends, and a version is cut. */
+      .add(
+        HttpApiEndpoint.post("done", "/api/agent/done", { success: Ok, error: [SessionFailed] }).annotate(Audited, {
+          action: "The server says a person's agent's turn is done (agents/person/sessions.ts)",
+          domain: "none",
+          exempt: SERVER,
+        })
+      )
+      .middleware(ExternalAgent)
+  )
   .middleware(ExplainBadRequests);
+
+/**
+ * The document's actions that aren't endpoints of the API above: the plain routes of document/host.ts and
+ * cloudflare/objects/document.ts, and what a person does on the page as it runs, with no route of its own.
+ */
+export const ACTIONS: readonly Action[] = [
+  {
+    method: "WS",
+    path: "/d/<id>/api/room",
+    action: "Edit the text, and hear the document's and your agent's events (editor: its one socket)",
+    domain: "document",
+    tool: "edit",
+  },
+  {
+    method: "GET",
+    path: "/d/<id>/api/start",
+    action: "Open the editor: the document's name, pages and text in one answer (editor)",
+    domain: "document",
+    tool: "read",
+  },
+  // A route, not an operation: its body is the file's bytes (up to the upload limits, streamed to storage: uploads.ts).
+  // Editors: one file, of any kind, replacing one at that path.
+  {
+    method: "PUT",
+    path: "/api/files/<path>",
+    action: "Add or replace a file of any kind, its bytes the body (a drop on the page, an HTTP client)",
+    domain: "document",
+    tool: "write",
+  },
+  // The live page in the person's tab (shared/live-page.ts).
+  { method: "UI", path: "/d/<id>#page-click", action: "Click on the page as it runs (editor)", domain: "document", tool: "page_input" },
+  { method: "UI", path: "/d/<id>#page-key", action: "Press a key on the page as it runs (editor)", domain: "document", tool: "page_input" },
+  {
+    method: "UI",
+    path: "/d/<id>#devtools",
+    action: "Read the page's console, requests and state, as the browser's developer tools show them (editor)",
+    domain: "document",
+    tool: "page_log",
+  },
+  // Full screen (client/inline/viewer-full.ts): nothing an agent could do with it.
+  {
+    method: "UI",
+    path: "/d/<id>#fullscreen",
+    action: "Show the page full screen, as a presentation (the Full screen button, viewing and editing)",
+    domain: "none",
+    exempt: "the person's own screen: a browser goes full screen only on the person's click, and an agent has no screen to show it on",
+  },
+];

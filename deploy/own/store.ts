@@ -14,9 +14,9 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ergaDir } from "../cli/config";
+import { ROOT } from "../root";
 import { type Answers, defaultAnswers } from "./plan";
 
-export const ROOT = new URL("../..", import.meta.url).pathname;
 export const DIR = ergaDir(ROOT);
 
 export interface Own {

@@ -48,7 +48,7 @@ const call = (server: Server, body: Record<string, unknown>, headers: Record<str
 
 /** The page token in a homepage page as served signed out. */
 const tokenIn = async (server: Server, path: string) =>
-  /"(home-llm:[a-z0-9]+:\d+\.[\w-]+)"/.exec(await (await get(server, path, { headers: signedOut(server) })).text())?.[1];
+  /"(eyJ2Ijp7ImRvYyI6[\w-]+\.[\w-]+)"/.exec(await (await get(server, path, { headers: signedOut(server) })).text())?.[1];
 
 test("signed out, every page of the homepage's project has ergaLLM, which answers where page_llm is on", async ({ tab }) => {
   const server = await servers.short();
@@ -83,7 +83,7 @@ test("signed out, the homepage's model refuses a call from elsewhere, without it
   // No token, or one that isn't this server's.
   expect(await call(server, { document: id }, ip)).toMatchObject({ status: 403, error: "Reload this page to use its model." });
   expect((await call(server, { document: id, token: token!.replace(/\.[\w-]+$/, ".AAAA") }, ip)).status).toBe(403);
-  expect((await call(server, { document: id, token: `home-llm:${id}:${Date.now() - 7_200_000}.AAAA` }, ip)).status).toBe(403);
+  expect((await call(server, { document: id, token: "AAAA.AAAA" }, ip)).status).toBe(403);
   // Signed-in viewers only (share_document page_llm_who): sign_in, even from the page.
   expect((await runTool(server.root, "share_document", { document: id, page_llm_who: "signed_in" })).error).toBeUndefined();
   expect(await call(server, { document: id, token }, ip)).toMatchObject({ status: 401, code: "sign_in" });

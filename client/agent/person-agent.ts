@@ -19,6 +19,7 @@ import { attachments } from "./attach-ui";
 import { canSend, type SendPath } from "./send-gate";
 import type { Log, LogEvent } from "../../shared/agent-log";
 import { backoff, live, transient } from "../live/client";
+import { socketStep, type PhaseEvent, type SocketPhase } from "../../shared/socket-phase";
 import { restoredFor } from "../live/restore";
 import { sleep } from "../../shared/time";
 import { agentPrompt } from "../common/agent-prompt";
@@ -368,18 +369,28 @@ async function load(tries = 0, fresh = false): Promise<void> {
 // WebSocket, not an EventSource: over HTTP/1.1 an EventSource holds one of the browser's six connections to the host
 // while the page is open, and with a few tabs open every later request waits. A socket that closes (the server
 // restarts) is made again, a little later each time.
-let tries = 0;
+let socketPhase: SocketPhase = { at: "stopped" };
+let retry = 0;
+const socketNext = socketStep();
+/** An event of the socket's: its new phase, and what that asks for (shared/socket-phase.ts). */
+function go(e: PhaseEvent): void {
+  const next = socketNext(socketPhase, e);
+  socketPhase = next.phase;
+  if (socketPhase.at != "backoff") clearTimeout(retry);
+  for (const f of next.effects) {
+    if (f.do == "connect") connect();
+    else if (f.do == "retry") retry = window.setTimeout(() => go({ type: "timer" }), backoff(f.tries));
+    else if (f.do == "up" || f.do == "down") {
+      const state = f.do;
+      live((l) => l.connection("agent", state));
+      if (state == "up") load();
+    }
+  }
+}
 function connect() {
   const ws = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${asUser("/api/agent/events")}`);
-  ws.onopen = () => {
-    tries = 0;
-    live((l) => l.connection("agent", "up"));
-    load();
-  };
-  ws.onclose = () => {
-    live((l) => l.connection("agent", "down"));
-    setTimeout(connect, backoff(tries++));
-  };
+  ws.onopen = () => go({ type: "opened" });
+  ws.onclose = () => go({ type: "closed" });
   ws.onmessage = (e) => {
     let m: { type?: string; ev?: LogEvent } & Partial<AgentState>;
     try { m = JSON.parse(String(e.data)); } catch { return; }
@@ -394,7 +405,7 @@ function connect() {
     }
   };
 }
-load().then(connect);
+load().then(() => go({ type: "start" }));
 
 // The panel as this page leaves it, for the tab's next page: client/inline/agent-toggle.ts draws it there before the
 // page paints, so the conversation doesn't empty and come back from page to page. Until this page has loaded the

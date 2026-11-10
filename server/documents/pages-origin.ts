@@ -10,12 +10,13 @@ import * as Effect from "effect/Effect";
 import { call, ctx, fromWeb } from "../http.ts";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import { signed } from "../signed.ts";
 import { ID, OWNER } from "../directory/index.ts";
 import type { Platform } from "../platform.ts";
 import { forwarded } from "./routes.ts";
 import { sourceDigest } from "../../shared/page-html.ts";
 import { readerPage, readerVersion } from "../pages/index.ts";
-import { sameText } from "../../shared/bytes.ts";
 import { PAGE_HEADER } from "../../shared/offline.ts";
 
 const PAGES_LABEL = /^([a-z0-9]{8})-([a-z0-9-]{1,39})$/;
@@ -48,7 +49,8 @@ export function pagesHost(url: URL, platform: Platform): { owner: string; id: st
   if (shared && url.hostname == shared) {
     const claims = /^\/t\/([^/.]+)\./.exec(url.pathname)?.[1];
     try {
-      const d = claims && (JSON.parse(Result.getOrThrow(Base64Url.decodeString(claims))) as { d?: unknown }).d;
+      // (Only to find the document: pagesRoutes opens the token, with its signature.)
+      const d = claims && (JSON.parse(Result.getOrThrow(Base64Url.decodeString(claims))) as { v?: { d?: unknown } }).v?.d;
       const [owner, id] = typeof d == "string" ? d.split("/") : [];
       return owner && id && OWNER.test(owner) && ID.test(id) ? { owner, id } : null;
     } catch { return null; }
@@ -59,18 +61,15 @@ export function pagesHost(url: URL, platform: Platform): { owner: string; id: st
   return m && OWNER.test(m[2]) && ID.test(m[1]) ? { owner: m[2], id: m[1] } : null;
 }
 
-/** The signing key, imported once per secret (per isolate): every file of a document's page checks its token. */
-const hmacKeys = new Map<string, Promise<CryptoKey>>();
-
-export const hmac = async (secret: string, value: string) => {
-  let key = hmacKeys.get(secret);
-  if (!key) {
-    key = crypto.subtle.importKey("raw", new TextEncoder().encode(`erga-pages:${secret}`), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-    if (hmacKeys.size > 4) hmacKeys.clear();
-    hmacKeys.set(secret, key);
-  }
-  return Base64Url.encode(new Uint8Array(await crypto.subtle.sign("HMAC", await key, new TextEncoder().encode(value))));
-};
+/**
+ * A pages token's value (server/signed.ts): the document (d), the viewer's origin (s), whom it was made for (a) and
+ * whether for an editor (w).
+ */
+const PagesToken = signed(
+  "pages",
+  Schema.Struct({ d: Schema.String, s: Schema.String, a: Schema.optionalKey(Schema.String), w: Schema.optionalKey(Schema.Literal(1)) }),
+  WEEK
+);
 
 /**
  * A token that opens one document's files on its pages origin, for a week, for the viewer at `shell` (whose origin it names);
@@ -90,18 +89,16 @@ export async function pagesToken(
   // by: whom it was made for, only on a server for admins alone (staging, Platform.adminsOnly): its pages origin lets the
   // token in only while they're still an admin. Elsewhere a token names nobody (a page's own
   // scripts can read its address).
-  const claims = Base64Url.encode(
-    new TextEncoder().encode(
-      JSON.stringify({
-        d: `${owner.toLowerCase()}/${id}`,
-        e: opts.ttl ? Math.ceil(now / 1000 + opts.ttl) : Math.ceil((now / 1000 + WEEK) / DAY) * DAY,
-        s: shell,
-        ...(opts.by ? { a: opts.by.toLowerCase() } : {}),
-        ...(opts.edit ? { w: 1 } : {}),
-      })
-    )
+  return PagesToken.seal(
+    secret,
+    {
+      d: `${owner.toLowerCase()}/${id}`,
+      s: shell,
+      ...(opts.by ? { a: opts.by.toLowerCase() } : {}),
+      ...(opts.edit ? { w: 1 as const } : {}),
+    },
+    { until: opts.ttl ? Math.ceil(now / 1000 + opts.ttl) : Math.ceil((now / 1000 + WEEK) / DAY) * DAY }
   );
-  return `${claims}.${await hmac(secret, claims)}`;
 }
 
 /** The editor's origin, if `token` is good for this document and current. */
@@ -111,18 +108,10 @@ export async function readPagesToken(secret: string, token: string, owner: strin
 
 /** What a good, current token for this document says: the viewer's origin, whom it was made for (if it says), and whether for an editor. */
 export async function readPagesClaims(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<{ shell: string; by?: string; edit?: boolean } | null> {
-  const [claims, mac, extra] = token.split(".");
-  if (!claims || !mac || extra != null || !sameText(mac, await hmac(secret, claims))) return null;
+  const c = await PagesToken.open(secret, token, now);
+  if (!c || c.d != `${owner.toLowerCase()}/${id}`) return null;
   try {
-    const c = JSON.parse(Result.getOrThrow(Base64Url.decodeString(claims))) as {
-      d?: string;
-      e?: number;
-      s?: string;
-      a?: unknown;
-      w?: unknown;
-    };
-    if (c.d != `${owner.toLowerCase()}/${id}` || !(Number(c.e) > now / 1000) || typeof c.s != "string") return null;
-    return new URL(c.s).origin == c.s ? { shell: c.s, ...(typeof c.a == "string" ? { by: c.a } : {}), ...(c.w === 1 ? { edit: true } : {}) } : null;
+    return new URL(c.s).origin == c.s ? { shell: c.s, ...(c.a != null ? { by: c.a } : {}), ...(c.w === 1 ? { edit: true } : {}) } : null;
   } catch { return null; }
 }
 

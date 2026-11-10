@@ -39,15 +39,9 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { latestTag, mergeArgs, nextVersion, releaseNotes, releaseRefusal, statusText } from "./flow";
-import { commitsOf, fetchOrigin, headOf, readState, repoOf, ROOT, sh, tagsOf } from "./observe";
+import { commitsOf, fetchOrigin, headOf, readState, repoOf, sh, tagsOf } from "./observe";
+import { fail, pass, ROOT, say } from "../root";
 
-const say = (s = "") => console.log(s);
-const pass = (s: string) => say(`PASS  ${s}`);
-const fail = (s: string, next?: string): never => {
-  say(`FAIL  ${s}`);
-  if (next) say(`NEXT  ${next}`);
-  process.exit(1);
-};
 
 /** Where this command was typed: ERGA_JOB_FROM=page when the ops page runs it (ops-page.ts), else a terminal. */
 const fromOf = () => (process.env.ERGA_JOB_FROM == "page" ? "page" : "terminal");

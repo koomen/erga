@@ -1,4 +1,4 @@
-// The app: one route table, read top to bottom, over web Requests and the
+// The app: its parts in order, read top to bottom, over web Requests and the
 // Platform (what the app needs from where it runs, server/platform.ts).
 // The app is an Effect (server/http.ts): cloudflare/index.ts turns it into the
 // Worker's fetch handler, and the unit tests may run it on a Platform in memory.
@@ -41,8 +41,11 @@
 //                              editor opens with no connection. The only service worker a pages origin takes
 //   /api/llm                   a document's page calls a model as its signed-in visitor (agents/page-llm.ts)
 //   /api/news, /api/news/rows  live pages: an open page's socket, and the rows it asks for when they change
-//   GET /api/release           which of them this release has: open pages follow a redeploy with it,
+//   /api/release               which of them this release has: open pages follow a redeploy with it,
 //                              and every page of the site's own gets live.js
+//
+// This is the order of the parts, by the start of the address. Each part's routes are a list in its own file
+// (shared/routes.ts); this file's own are ROUTES, below.
 //
 // The routes that run only on Cloudflare (what the deploy pipeline asks, the
 // dev server's) are `outside`'s: cloudflare/index.ts answers them, at their place
@@ -96,6 +99,7 @@ import { whoOf } from "./platform.ts";
 import { withSecurity } from "./security.ts";
 import { HttpServerResponse } from "effect/http";
 import { call, fromWeb, platform, redirect, text, toWeb, webRequest, type Needs, type Route } from "./http.ts";
+import { DEV, routeAt, routeFor, SIGN_IN, type RouteRow } from "../shared/routes.ts";
 
 /** The routes that live outside the app (on Cloudflare, or in the dev server): the answer, or null for a path that isn't theirs. */
 export type Outside = (url: URL) => Effect.Effect<HttpServerResponse.HttpServerResponse | null, never, Needs>;
@@ -144,6 +148,48 @@ export const app = (outside: Outside): Route =>
     return fromWeb(withSecurity(live, url, "site", !isAsset(url.pathname)));
   });
 
+const SIGN = { domain: "none", exempt: SIGN_IN } as const;
+
+/** The routes this file answers itself: signing in, and the release an open page follows. */
+export const ROUTES: readonly RouteRow<Route>[] = [
+  { method: "GET", path: "/auth/sign-in", run: chooseSignIn, action: "Choose a sign-in provider that is on (GitHub, Google)", ...SIGN },
+  // ?app=pending: a test sign-in with the values that wait on /admin/auth.
+  { method: "GET", path: "/auth/github", run: startSignIn, action: "Sign in with GitHub", ...SIGN },
+  { method: "GET", path: "/auth/github/callback", run: finishSignIn, action: "GitHub sends the person back, signed in", ...SIGN },
+  { method: "GET", path: "/auth/google", run: startGoogleSignIn, action: "Sign in with Google", ...SIGN },
+  { method: "GET", path: "/auth/google/callback", run: finishGoogleSignIn, action: "Google sends the person back, signed in", ...SIGN },
+  { method: "POST", path: "/auth/logout", run: signOut, action: "Sign out", ...SIGN },
+  // Whether a username is free, with ?check=: {ok} or {problem}.
+  { method: "GET", path: "/auth/username", run: usernameStep, action: "A new account's first sign-in: choose a username", ...SIGN },
+  // username: makes the account, signs in, goes on to `next`.
+  {
+    method: "POST",
+    path: "/auth/username",
+    run: usernameStep,
+    action: "A new account's first sign-in: make the account under the username",
+    ...SIGN,
+  },
+  // ?provider=&subject=&handle=&name=&email=&verified=&org=&hd=&picture=: local development only.
+  {
+    method: "GET",
+    path: "/auth/dev",
+    run: devSignIn,
+    action: "Local development's pretend provider signs someone in",
+    domain: "none",
+    exempt: DEV,
+  },
+  { method: "GET", path: "/auth/home-pass", run: homePass, action: "Sign in on the homepage's own domain, through this one", ...SIGN },
+  // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
+  {
+    method: "GET",
+    path: "/api/release",
+    run: releaseApi,
+    action: "An open page asks whether its code is still the server's (after a redeploy)",
+    domain: "none",
+    exempt: "the page's own check, not a person's action",
+  },
+];
+
 const route = (url: URL, outside: Outside): Route =>
   Effect.gen(function* () {
     const request = yield* webRequest,
@@ -167,15 +213,11 @@ const route = (url: URL, outside: Outside): Route =>
       return text("A document's page can't register a service worker.", 403);
     // (Not the editor's files: the page loads them from the app's origin, one address for every document: pages/reader.ts.)
     if (isPagesSite(url, p)) return yield* documentRoutes;
-    if (path == "/auth/sign-in") return yield* chooseSignIn;
-    if (path == "/auth/github") return yield* startSignIn;
-    if (path == "/auth/google") return yield* startGoogleSignIn;
-    if (path == "/auth/google/callback") return yield* finishGoogleSignIn;
-    if (path == "/auth/github/callback") return yield* finishSignIn;
-    if (path == "/auth/logout") return yield* signOut;
-    if (path == "/auth/username") return yield* usernameStep;
-    if (path == "/auth/dev") return yield* devSignIn;
-    if (path == "/auth/home-pass") return yield* homePass;
+    // This file's own routes. Signing in: each function answers its path's methods itself.
+    const own = path.startsWith("/auth/")
+      ? routeAt(ROUTES, path)
+      : routeFor(ROUTES, request.method == "HEAD" ? "GET" : request.method, path)?.route;
+    if (own) return yield* own.run;
     // The editor's own files: its code, styles and typeface, and its page, which a document's page adds to itself to go into the editor.
     if (assets) return isAssetPath(path) ? yield* serveAsset : fromWeb(yield* call(() => p.assets(request)));
     // Erga's editing libraries, each at its one address, its newest build (a document's page imports it).
@@ -207,8 +249,6 @@ const route = (url: URL, outside: Outside): Route =>
     if (isAgentPath(path)) return yield* agentApi;
     // A page's model, called as its visitor (window.ergaLLM): before the server's API too.
     if (isPageLlmPath(path)) return yield* pageLlmApi;
-    // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
-    if (path == "/api/release" && read) return yield* releaseApi;
     // Live pages: an open page's socket, and the rows it asks for when they change.
     if (path == "/api/news" || path.startsWith("/api/news/")) return yield* newsRoutes;
     // The server's one API (the pages' and every agent's), its guide, and people's agent tokens.

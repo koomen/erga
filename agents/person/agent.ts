@@ -6,8 +6,8 @@
 // page_log and page_input use their open editor). Its prompt: agents/person/prompt.ts. One session per person, in their PersonAgent object
 // (agents/person/sessions.ts, cloudflare/objects/person-agent.ts), so it keeps working when the tab closes.
 //
-// The rule: the agent can do everything its person can do in Erga, when they ask. agents/actions.ts lists each action
-// with its tool, and tests/agent-actions.test.ts fails when one has none. The one exception is a secret: an API key or
+// The rule: the agent can do everything its person can do in Erga, when they ask. Each route's row names the action's
+// tool (shared/routes.ts), and tests/agent-actions.test.ts fails when one has none. The one exception is a secret: an API key or
 // a new token is pasted or made only on its page, never in a conversation; the agent can clear or revoke them.
 //
 // Every tool acts as the person (their login), via their agent, so the change log (/admin/changes), a document's

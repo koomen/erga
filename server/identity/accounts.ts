@@ -17,12 +17,7 @@
 // The email a provider vouches for (Google's, only when email_verified) is
 // kept for the access rules' domains (server/directory/access.ts), never to
 // find an account.
-//
-//   GET  /auth/username            the username step: a username to choose, for a new account
-//   GET  /auth/username ?check=    whether a username is free: {ok} or {problem}
-//   POST /auth/username            username: makes the account, signs in, goes on to `next`
-//   GET  /auth/dev                 ?provider=&subject=&handle=&name=&email=&verified=&org=&hd=&picture=:
-//                                  local development only: a pretend provider's sign-in, through the same steps
+// (The routes /auth/username and /auth/dev are rows of server/app.ts's list.)
 
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -35,7 +30,7 @@ import { esc } from "../../shared/html.ts";
 import { type Directory, label, NotAllowed, type SignInProvider, type Vouched } from "../directory/index.ts";
 import { cookies, withCookie } from "./cookies.ts";
 import { noteOf, readOnce, seeOther } from "./flash.ts";
-import { sign, unsign } from "./session.ts";
+import { signed } from "../signed.ts";
 import { clearState, signIn } from "./sign-in.ts";
 import type { TestEnd } from "./app-test.ts";
 
@@ -163,7 +158,26 @@ const refusedPage = Effect.fnUntraced(function* (platform: Platform, v: Vouched,
 
 // ------------------------------------------------------------ the username step
 
-interface Pending { v: Vouched; next: string; exp: number; taken?: string }
+/** Who waits at the username step, as the provider vouched for them, and where they go after: signed, for half an hour (server/signed.ts). */
+const Join = signed(
+  "join",
+  Schema.Struct({
+    v: Schema.Struct({
+      provider: Schema.Literals(["github", "google"]),
+      subject: Schema.NonEmptyString,
+      handle: Schema.String,
+      name: Schema.NullOr(Schema.String),
+      emails: Schema.mutable(Schema.Array(Schema.Struct({ email: Schema.String, verified: Schema.Boolean }))),
+      orgs: Schema.optionalKey(Schema.NullOr(Schema.mutable(Schema.Array(Schema.String)))),
+      hd: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      picture: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    }),
+    next: Schema.String,
+    taken: Schema.optionalKey(Schema.String),
+  }),
+  JOIN_SECONDS
+);
+type Pending = typeof Join.seal extends (secret: string, value: infer A, ...rest: never[]) => unknown ? A : never;
 
 /** An answer that sets (or, with "" and 0, clears) the username step's cookie too. */
 const withJoin = (response: Parameters<typeof withCookie>[0], request: Request, value: string, maxAge: number) =>
@@ -171,20 +185,11 @@ const withJoin = (response: Parameters<typeof withCookie>[0], request: Request, 
 
 /** On to the username step, with its cookie: who they are, signed, for half an hour. */
 const toUsernameStep = Effect.fnUntraced(function* (platform: Platform, request: Request, v: Vouched, next: string, taken?: string) {
-  const pending: Pending = { v, next: safeNext(next), exp: Math.floor(Date.now() / 1000) + JOIN_SECONDS, ...(taken ? { taken } : {}) };
-  const value = yield* call(() => sign(platform.secret, `join:${Base64Url.encode(JSON.stringify(pending))}`));
+  const value = yield* call(() => Join.seal(platform.secret, { v, next: safeNext(next), ...(taken ? { taken } : {}) }));
   return clearState(withJoin(redirect("/auth/username", 302, { "Cache-Control": "no-store" }), request, value, JOIN_SECONDS), request);
 });
 
-async function pendingOf(platform: Platform, request: Request): Promise<Pending | null> {
-  const raw = cookies(request).get(JOIN);
-  const value = raw && (await unsign(platform.secret, raw));
-  if (!value?.startsWith("join:")) return null;
-  try {
-    const p = JSON.parse(Result.getOrThrow(Base64Url.decodeString(value.slice("join:".length)))) as Pending;
-    return p.exp > Date.now() / 1000 && p.v?.subject ? p : null;
-  } catch { return null; }
-}
+const pendingOf = (platform: Platform, request: Request): Promise<Pending | null> => Join.open(platform.secret, cookies(request).get(JOIN));
 
 /** /auth/username: choose a username, for a new account. */
 export const usernameStep: Route = Effect.gen(function* () {

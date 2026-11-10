@@ -1,10 +1,7 @@
 // A person's tokens (server/app.ts sends /tokens/... here): approving or denying an agent's request for one, a page;
 // and, for the Settings dialog (client/agent/settings-dialog.ts), making one, as JSON. The list
 // and Revoke are the operations whoami and revoke. And a token's expiry as given, which the API reads too.
-//
-//   GET  /tokens/approve      ?code=: an agent's request for a token, with Approve (if the person may give it) and Deny
-//   POST /tokens/approve      code, answer (approve or deny), scope (documents: an admin request approved as documents only)
-//   POST /tokens/new          { label, scope, doc?, expires? }: a new token, answered once ({ token, info })
+// The routes are ROUTES, below.
 
 
 import * as Effect from "effect/Effect";
@@ -17,6 +14,7 @@ import { normalCode, ScopeError, type Scope } from "./tokens.ts";
 import { type Note, noteOf, readOnce, seeOther } from "./flash.ts";
 import { callbackUrl, whereBack } from "./oauth.ts";
 import { call, ctx, Field, form, html, json, NO_STORE, redirect, text, type Route } from "../http.ts";
+import { routeFor, SECRET, SIGN_IN, type RouteRow } from "../../shared/routes.ts";
 
 /** A token's expiry as given: an ISO 8601 time, a date (the end of that day, UTC), milliseconds since the epoch, or nothing (never). */
 export function expiryOf(v: unknown): number | null | "bad" {
@@ -39,19 +37,40 @@ export const tokensRoutes: Route = Effect.gen(function* () {
   const post = request.method == "POST";
   // Only this site's own pages may make, approve or deny.
   if (post && request.headers.get("origin") != url.origin) return text("Forbidden", 403);
-  const who = { login: session.login, name: session.name };
-  /** A token call that may refuse the scope (ScopeError): its result, or the refusal. */
-  const scoped = <A>(f: () => Promise<A>) =>
-    Effect.tryPromise({ try: f, catch: (e) => e }).pipe(
-      Effect.map((value) => ({ value })),
-      Effect.catchIf(
-        (e): e is ScopeError => e instanceof ScopeError,
-        (e) => Effect.succeed({ refused: e.message })
-      ),
-      Effect.orDie
+  const found = routeFor(ROUTES, post ? "POST" : "GET", path);
+  if (!found)
+    return page(
+      "Not found",
+      `There's nothing here. Your tokens are in Settings (the menu at your picture): <a href="/docs#settings">open it</a>.`,
+      404
     );
+  return yield* found.route.run({ request, platform, url, session, post, who: { login: session.login, name: session.name } });
+});
 
-  if (path == "/tokens/new" && post) {
+/** The person who asks, signed in as themselves, from this site's own page. */
+interface Asked {
+  readonly request: Request;
+  readonly platform: Platform;
+  readonly url: URL;
+  readonly session: Session;
+  readonly post: boolean;
+  readonly who: { login: string; name: string };
+}
+
+/** A token call that may refuse the scope (ScopeError): its result, or the refusal. */
+const scoped = <A>(f: () => Promise<A>) =>
+  Effect.tryPromise({ try: f, catch: (e) => e }).pipe(
+    Effect.map((value) => ({ value })),
+    Effect.catchIf(
+      (e): e is ScopeError => e instanceof ScopeError,
+      (e) => Effect.succeed({ refused: e.message })
+    ),
+    Effect.orDie
+  );
+
+/** { label, scope, doc?, expires? }: a new token, answered once ({ token, info }). */
+const newToken = ({ request, platform, who }: Asked): Route =>
+  Effect.gen(function* () {
     const f = yield* call(() => request.json().catch(() => ({}))).pipe(
       Effect.flatMap((b) => Schema.decodeUnknownEffect(NewToken)(b)),
       Effect.orElseSucceed(() => ({}) as typeof NewToken.Type)
@@ -64,14 +83,14 @@ export const tokensRoutes: Route = Effect.gen(function* () {
     return "refused" in r
       ? json({ ok: false, error: r.refused }, 400)
       : json({ ok: true, token: r.value.token, info: r.value.info }, 200, NO_STORE);
-  }
-  if (path != "/tokens/approve")
-    return page(
-      "Not found",
-      `There's nothing here. Your tokens are in Settings (the menu at your picture): <a href="/docs#settings">open it</a>.`,
-      404
-    );
+  });
 
+/**
+ * GET ?code=: an agent's request for a token, with Approve (if the person may give it) and Deny. POST: code, answer
+ * (approve or deny), scope (documents: an admin request approved as documents only).
+ */
+const approve = ({ request, platform, url, session, post, who }: Asked): Route =>
+  Effect.gen(function* () {
   // A POST answers 303 to a page, never with one (flash.ts): Back and Reload don't send the form again. Its note is for
   // this person only.
   const f = post ? yield* form(ApproveForm).pipe(Effect.orDie) : Schema.decodeUnknownSync(ApproveForm)({});
@@ -120,7 +139,27 @@ export const tokensRoutes: Route = Effect.gen(function* () {
     return yield* show(error(`That request (${code}) has expired, or was already approved or denied. Ask the agent to start again.`));
   const refused = note.refused ? error(`${note.refused} The request is still waiting: deny it, or ask the agent for another scope.`) : "";
   return yield* show(refused + (yield* call(() => approvalCard(platform, session, code, waiting))));
-});
+  });
+
+export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
+  {
+    method: "GET",
+    path: "/tokens/approve",
+    run: approve,
+    action: "An agent's request for a token, to approve or deny",
+    domain: "none",
+    exempt: SIGN_IN,
+  },
+  {
+    method: "POST",
+    path: "/tokens/approve",
+    run: approve,
+    action: "Approve an agent's request for a token (/tokens/approve)",
+    domain: "admin",
+    exempt: `${SECRET} (it hands a new token to an outside agent)`,
+  },
+  { method: "POST", path: "/tokens/new", run: newToken, action: "Make an agent token (Settings)", domain: "admin", exempt: SECRET },
+];
 
 /** The approval page's form (a field that's missing is ""). */
 const ApproveForm = Schema.Struct({ code: Field, answer: Field, scope: Field });

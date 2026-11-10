@@ -2,21 +2,13 @@
 // Backspace where items meet. From an empty page, checked by what the page shows. Each expected snapshot was checked
 // by eye first, on `bun run look` screenshots with the same keys.
 import { servers, test, type Tab } from "../../helpers/fixtures";
-import { openEditor } from "../../helpers/editor";
+import { openEmpty } from "../../helpers/editor";
 
 await servers.main();
 
-/** An empty page in the editor, the caret in its one paragraph. */
-const empty = async (tab: Tab) => {
-  const ed = await openEditor(tab, await servers.main(), "empty");
-  await ed.clickEnd("p");
-  await ed.idle();
-  return ed;
-};
-
 /** A list of three items, One, Two and Three, the caret at the end of Three. */
 const three = async (tab: Tab) => {
-  const ed = await empty(tab);
+  const ed = await openEmpty(tab);
   await ed.type("- One");
   await ed.press("Enter");
   await ed.type("Two");
@@ -72,7 +64,7 @@ test("A key typed over a selection of whole items replaces them with one item", 
 // Pete's decision: Backspace at the start of a nested item joins its text to the item above. It does not move the
 // item out one level (as Notion does).
 test("Backspace at the start of a nested item joins its text to the item above", async ({ tab }) => {
-  const ed = await empty(tab);
+  const ed = await openEmpty(tab);
   await ed.type("- One");
   await ed.press("Enter");
   await ed.press("Tab");
@@ -85,7 +77,7 @@ test("Backspace at the start of a nested item joins its text to the item above",
 });
 
 test("Delete at the end of the last item joins the paragraph after it into the item", async ({ tab }) => {
-  const ed = await empty(tab);
+  const ed = await openEmpty(tab);
   await ed.type("- One");
   await ed.press("Enter");
   await ed.press("Enter");

@@ -4,10 +4,10 @@
 // changes (Document.tellView, at most every 2 s). A version other than the one shown loads the page again in its frame,
 // where it was scrolled to (?erga-y: the reader puts it back there). Not while the editor is open in this page, nor in
 // a hidden tab: it catches up when it shows. A dropped socket comes back by itself, and hears the version first. A
-// deleted document (4404), or one no longer theirs (4403), never comes back, and the page says so (view-phase.ts).
+// deleted document (4404), or one no longer theirs (4403), never comes back, and the page says so (shared/socket-phase.ts).
 
 import { backoff, live } from "../live/client";
-import { viewStep, type ViewEvent, type ViewPhase } from "../common/view-phase";
+import { socketStep, type PhaseEvent, type SocketPhase } from "../../shared/socket-phase";
 import { DELETED_NOTE, PING, PONG } from "../../shared/room-socket";
 
 export default function viewerLive(base: string): void {
@@ -20,7 +20,7 @@ export default function viewerLive(base: string): void {
     heard = 0,
     timer: ReturnType<typeof setTimeout> | undefined,
     socket: WebSocket | null = null,
-    phase: ViewPhase = { at: "connecting", tries: 0 },
+    phase: SocketPhase = { at: "connecting", tries: 0 },
     retry: ReturnType<typeof setTimeout> | undefined;
   // Where the reader is scrolled to, as the page in the frame tells (server/pages/reader.ts).
   addEventListener("message", (e) => {
@@ -42,22 +42,19 @@ export default function viewerLive(base: string): void {
     f.src = window.ergaFrames.src() + (y > 0 ? "?erga-y=" + y : "") + location.hash;
   }
   document.addEventListener("visibilitychange", show);
+  // A deleted document, or one no longer theirs to open, never comes back.
+  const step = socketStep({ final: { 4404: "deleted", 4403: "unshared" } });
   /** An event of the socket's: its new phase, and what that asks for. */
-  function go(e: ViewEvent) {
-    const next = viewStep(phase, e);
+  function go(e: PhaseEvent) {
+    const next = step(phase, e);
     phase = next.phase;
     if (phase.at != "backoff") clearTimeout(retry);
     for (const f of next.effects) {
       if (f.do == "connect") connect();
       else if (f.do == "retry") retry = setTimeout(() => go({ type: "timer" }), backoff(f.tries));
-      else
-        live((l) =>
-          l.connection(
-            "view",
-            f.state,
-            f.why == "deleted" ? DELETED_NOTE : f.why ? "This document is no longer shared with you." : undefined
-          )
-        );
+      else if (f.do == "up" || f.do == "down") live((l) => l.connection("view", f.do));
+      else if (f.do == "end")
+        live((l) => l.connection("view", "gone", f.why == "deleted" ? DELETED_NOTE : "This document is no longer shared with you."));
     }
   }
   function connect() {

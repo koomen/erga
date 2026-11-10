@@ -30,7 +30,9 @@ import { providersOn, signInApp, testedSignIn } from "./settings.ts";
 import { type AppValues, googleEndpoints, PROVIDERS, type Provider } from "./apps.ts";
 import type { TestEnd } from "./app-test.ts";
 import { afterSignOut } from "./home-pass.ts";
-import { SESSION_COOKIE, sign, SIGNED_OUT, unsign } from "./session.ts";
+import { SESSION_COOKIE, sessionCookie, SIGNED_OUT } from "./session.ts";
+import { signed } from "../signed.ts";
+import * as Schema from "effect/Schema";
 import { randomToken } from "../../shared/bytes.ts";
 import { type GithubLookup, NotAllowed, type Vouched } from "../directory/index.ts";
 import { vouchedSignIn } from "./accounts.ts";
@@ -96,8 +98,7 @@ export const signIn = Effect.fnUntraced(function* (
   next: string,
   ttl = 30 * DAY
 ) {
-  const value = Base64Url.encode(JSON.stringify({ ...session, exp: Math.floor(Date.now() / 1000) + ttl }));
-  let answer = withCookie(redirect(next), request, SESSION_COOKIE, yield* call(() => sign(platform.secret, value)), ttl);
+  let answer = withCookie(redirect(next), request, SESSION_COOKIE, yield* call(() => sessionCookie(platform.secret, session, ttl)), ttl);
   answer = clearState(answer, request);
   return cookies(request).has(SIGNED_OUT) ? withCookie(answer, request, SIGNED_OUT, "", 0) : answer;
 });
@@ -133,7 +134,7 @@ export const startSignIn: Route = Effect.gen(function* () {
     redirect(github.toString()),
     request,
     STATE,
-    yield* call(() => sign(platform.secret, stateValue(state, next, testing ? app.clientId : ""))),
+    yield* call(() => State.seal(platform.secret, { state, tests: testing ? app.clientId : "", next })),
     600
   );
 });
@@ -143,12 +144,11 @@ const TESTING = "p.";
 /** A state that starts so is an admin's test sign-in with a provider that's off. */
 const OFF_TEST = "t.";
 
-/** The sign-in's cookie: its state, the client ID a test sign-in tests (app-test.ts), and where it goes after. */
-const stateValue = (state: string, next: string, tests: string) => `${state}|${tests}|${next}`;
-function readState(value: string | null | undefined): { state?: string; tests?: string; next?: string } {
-  if (!value) return {};
-  const [state, tests, ...rest] = value.split("|");
-  return { state, tests, next: rest.join("|") || "/" };
+/** The sign-in's cookie, for ten minutes: its state, the client ID a test sign-in tests (app-test.ts), and where it goes after. */
+const State = signed("oauth-state", Schema.Struct({ state: Schema.String, tests: Schema.String, next: Schema.String }), 600);
+async function readState(secret: string, saved: string | undefined): Promise<{ state?: string; tests?: string; next?: string }> {
+  const s = await State.open(secret, saved);
+  return s ? { ...s, next: s.next || "/" } : {};
 }
 
 /**
@@ -249,8 +249,7 @@ export const finishSignIn: Route = Effect.gen(function* () {
   const users = platform.directory.users;
   const dev = platform.dev(url);
   const saved = cookies(request).get(STATE);
-  const value = saved && (yield* call(() => unsign(platform.secret, saved)));
-  const { state, tests, next } = readState(value);
+  const { state, tests, next } = yield* call(() => readState(platform.secret, saved));
   const testing = !!state?.startsWith(TESTING);
   const app = dev ? null : yield* call(() => signInApp(platform, testing ? "pending" : "active"));
   // GitHub turned off on /admin/auth: only an admin's sign-in (a test) goes through.
@@ -331,7 +330,7 @@ export const startGoogleSignIn: Route = Effect.gen(function* () {
     redirect(google.toString()),
     request,
     STATE,
-    yield* call(() => sign(platform.secret, stateValue(state, next, testing ? app.clientId : ""))),
+    yield* call(() => State.seal(platform.secret, { state, tests: testing ? app.clientId : "", next })),
     600
   );
 });
@@ -359,8 +358,7 @@ interface GoogleUser {
 export const finishGoogleSignIn: Route = Effect.gen(function* () {
   const { platform, request, url } = yield* ctx;
   const saved = cookies(request).get(STATE);
-  const value = saved && (yield* call(() => unsign(platform.secret, saved)));
-  const { state, tests, next } = readState(value);
+  const { state, tests, next } = yield* call(() => readState(platform.secret, saved));
   const testing = !!state?.startsWith(TESTING);
   const app = yield* call(() => signInApp(platform, testing ? "pending" : "active", "google"));
   if (!app?.clientId) return testing ? nothingToTest() : noGoogleClient(url.origin);

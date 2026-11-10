@@ -1,21 +1,13 @@
 // Lists as a person makes them: from an empty page, with keys only, checked by what the page shows (ed.shows: the
 // visible snapshot, e2e/helpers/visible.ts), not by the source. Each expected snapshot was checked by eye first, on
 // `bun run look` screenshots with the same keys.
-import { knownBug, servers, test, type Tab } from "../../helpers/fixtures";
-import { openEditor } from "../../helpers/editor";
+import { servers, test, type Tab } from "../../helpers/fixtures";
+import { openEmpty } from "../../helpers/editor";
 
 await servers.main();
 
-/** An empty page in the editor, the caret in its one paragraph. */
-const empty = async (tab: Tab) => {
-  const ed = await openEditor(tab, await servers.main(), "empty");
-  await ed.clickEnd("p");
-  await ed.idle();
-  return ed;
-};
-
 test("- makes a bulleted list; Enter adds an item, Shift+Enter a line in it, Enter in an empty item leaves the list", async ({ tab }) => {
-  const ed = await empty(tab);
+  const ed = await openEmpty(tab);
   await ed.type("Groceries");
   await ed.press("Enter");
   await ed.type("- Milk");
@@ -58,7 +50,7 @@ test("- makes a bulleted list; Enter adds an item, Shift+Enter a line in it, Ent
 });
 
 test("Enter in an item's text splits it; Backspace at an item's start joins it to the item above", async ({ tab }) => {
-  const ed = await empty(tab);
+  const ed = await openEmpty(tab);
   await ed.type("- One");
   await ed.press("Enter");
   await ed.type("Two");
@@ -87,7 +79,7 @@ test("Tab nests an item under the one above and Shift+Tab brings the next out ag
 }: {
   tab: Tab;
 }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await ed.type("1. One");
     await ed.press("Enter");
     await ed.type("Two");
@@ -112,7 +104,7 @@ test("Tab nests an item under the one above and Shift+Tab brings the next out ag
 );
 
 test("Undo after Tab and typing takes back the typing first, then the indent", async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
+  const ed = await openEmpty(tab);
     await ed.type("- One");
     await ed.press("Enter");
     await ed.press("Tab");
@@ -138,7 +130,7 @@ for (const [what, tag] of [
   ["a plain element", "div"],
 ])
   test(`Tab then Shift+Tab leaves no blank bullet when an extension has put ${what} in the page`, async ({ tab }) => {
-    const ed = await empty(tab);
+    const ed = await openEmpty(tab);
     await ed.type("- One");
     await ed.press("Enter");
     await ed.type("Two");

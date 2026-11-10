@@ -44,7 +44,6 @@ export const MODELS = {
 export type ModelChoice = keyof typeof MODELS;
 export const DEFAULT_MODEL: ModelChoice = "opus-fast";
 export const isModelChoice = (s: string): s is ModelChoice => Object.hasOwn(MODELS, s);
-export const modelInfo = (choice: ModelChoice): ModelInfo => MODELS[choice];
 
 /** What decides the models a person can use: the providers with a key (theirs, the server's), and the admin's settings. */
 export interface KeySetup {

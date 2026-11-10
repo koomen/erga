@@ -46,16 +46,10 @@ import {
   targetsOf,
 } from "./plan";
 import { cloudflare, type Connection, observe, signInCheck, site } from "./facts";
+import { fail, pass, say } from "../root";
 import { firstDeploy, registerSetup } from "./first";
 import { addMessage, answersOf, DIR, loadOwn, loadSecrets, messages, putSecret, readEnvFile, saveOwn, saveSecrets } from "./store";
 
-const say = (s = "") => console.log(s);
-const pass = (s: string) => say(`PASS  ${s}`);
-const fail = (s: string, next: string): never => {
-  say(`FAIL  ${s}`);
-  say(`NEXT  ${next}`);
-  process.exit(1);
-};
 
 /** The person's GitHub login, if gh is logged in here: the default admin. */
 const ghLogin = () => {

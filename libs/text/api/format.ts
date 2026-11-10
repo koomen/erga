@@ -207,16 +207,6 @@ export function linkOf(page: Page, from: number, to: number): { u: M.Unit; el: M
   return el ? { u: first.u, el } : null;
 }
 
-/** A link's address, its text, and whether it opens in this tab. */
-export function linkInfo(page: Page, at: { u: M.Unit; el: M.ElementNode }): { href: string; text: string; self: boolean } {
-  const open = page.src.slice(at.el.from, at.el.openTo);
-  return {
-    href: attrOf(open, "href") ?? "",
-    text: textIn([at.u], at.el.openTo, at.el.closeFrom),
-    self: (attrOf(open, "target") ?? "").toLowerCase() == "_self",
-  };
-}
-
 /** A change to a link: an empty url takes it off; text and self, when given, replace its own. */
 export interface LinkChange {
   url: string;

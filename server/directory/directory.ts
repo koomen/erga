@@ -46,7 +46,7 @@ import * as Effect from "effect/Effect";
 import { ConfigError, ServerConfig } from "./settings.ts";
 import { type Access, AccessRules, type Facts, higher } from "./access.ts";
 import { type GithubLookup, People, type Person, personHandle } from "./people.ts";
-import { type Actor, NotAllowed, type User, type UserRole, Users } from "./users.ts";
+import { type Actor, NotAllowed, NotFound, type User, type UserRole, Users } from "./users.ts";
 
 import { Credentials, PersonKeys } from "./api-keys.ts";
 import { PageLlm } from "./page-llm.ts";
@@ -782,7 +782,7 @@ export class Directory {
    */
   async share(who: Who, id: string, login: string, role: Grant | null): Promise<Permission[]> {
     const doc = await this.get(id);
-    if (!doc) throw new NotAllowed({ message: "There's no such document." });
+    if (!doc) throw new NotFound({ message: "There's no such document." });
     if (!(await this.may(who, "share", doc))) throw new NotAllowed({ message: "Only its owner can share a document." });
     login = login.trim().toLowerCase();
     if (login != ANYONE && !/^[a-z0-9][a-z0-9-]{0,38}$/.test(login))

@@ -101,7 +101,9 @@ export interface AppCheck {
 }
 
 /** A value an admin pasted that can't be used; the message says why, for a person or an agent to act on. */
-export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", { message: Schema.String }) {}
+export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", { message: Schema.String }) {
+  readonly status = 400;
+}
 
 const SECRET = /^[\x21-\x7e]{16,200}$/;
 

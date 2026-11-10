@@ -110,7 +110,7 @@ test("on its own domain, /_erga/ is Erga's: the model for the homepage only, a p
   const { server, id } = await site();
   const json = { "Content-Type": "application/json", Origin: origin(server) };
   const body = (o: Record<string, unknown>) => JSON.stringify({ messages: [{ role: "user", content: '@script [{"text": "Hi."}]' }], ...o });
-  const token = /"(home-llm:[a-z0-9]+:\d+\.[\w-]+)"/.exec((await onHome(server, "/essays/essay")).text)?.[1];
+  const token = /"(eyJ2Ijp7ImRvYyI6[\w-]+\.[\w-]+)"/.exec((await onHome(server, "/essays/essay")).text)?.[1];
   expect(token).toBeTruthy();
   // The site's files under /_erga/ never answer.
   expect((await onHome(server, "/_erga/x.html")).status).toBe(404);
@@ -139,9 +139,10 @@ test("on its own domain, /_erga/ is Erga's: the model for the homepage only, a p
   expect((await onHome(server, "/_erga/auth/github?next=%2Fessays%2Fessay")).location).toBe(
     `${server.root}/auth/home-pass?provider=github&next=%2Fessays%2Fessay`
   );
-  // A pass that isn't this server's, or is old: no cookie.
+  // A pass that isn't this server's, or whose claims changed (a later expiry): no cookie.
   const good = to.searchParams.get("pass")!;
-  for (const bad of [good.replace(/\.[\w-]+$/, ".AAAA"), good.replace(/:\d+\./, `:${Date.now() - 120_000}.`)]) {
+  const later = Buffer.from(JSON.stringify({ v: { login: "tester" }, e: Math.floor(Date.now() / 1000) + 3600 })).toString("base64url");
+  for (const bad of [good.replace(/\.[\w-]+$/, ".AAAA"), good.replace(/^[\w-]+\./, `${later}.`)]) {
     const r = await onHome(server, `/_erga/pass?pass=${encodeURIComponent(bad)}&next=%2F`);
     expect(r.status).toBe(403);
     expect(r.setCookie).toEqual([]);

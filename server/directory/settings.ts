@@ -26,7 +26,9 @@ import { isModelChoice, MODELS } from "../../shared/models.ts";
 class Interleaved extends Data.TaggedError("Interleaved") {}
 
 /** A value a setting won't take; the message says why. */
-export class ConfigError extends Schema.TaggedError<ConfigError>()("ConfigError", { message: Schema.String }) {}
+export class ConfigError extends Schema.TaggedError<ConfigError>()("ConfigError", { message: Schema.String }) {
+  readonly status = 400;
+}
 
 export interface Setting<T = unknown> {
   /** Its name on the admin page: words for a person, never the key. */

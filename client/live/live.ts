@@ -31,6 +31,16 @@
 
 import { RESTORE_KEY, restored, type Saved } from "./restore";
 import type { ConnectionState, Live } from "./client";
+import {
+  CHECK_START,
+  checkStep,
+  isStrong,
+  reloadStep,
+  type CheckEvent,
+  type CheckState,
+  type ReloadEvent,
+  type ReloadState,
+} from "./release-state";
 import { ASSET_PREFIX, stemOf } from "../../shared/assets";
 
 declare global {
@@ -131,35 +141,25 @@ function inUse(): Map<string, string> {
   return out;
 }
 
-let checking: Promise<void> | null = null, lastCheck = 0, failures = 0, retryTimer = 0;
-/** Why the next check is wanted, if one is: the reason that asks most (one that also looks at the page itself) wins. */
-let wanted: string | null = null;
-const MIN_GAP_MS = 3000;
-const STRONG = new Set(["a request failed", "reconnected"]);
-
-/** Asks the server about this page's code: at most every few seconds; asked again meanwhile, once more after. */
-function check(why: string): void {
-  if (reloading) return;
-  if (wanted == null || (STRONG.has(why) && !STRONG.has(wanted))) wanted = why;
-  if (checking) return;
-  const wait = lastCheck + MIN_GAP_MS - now();
-  clearTimeout(retryTimer);
-  if (wait > 0) { retryTimer = window.setTimeout(() => check(wanted ?? why), wait); return; }
-  const reason = wanted;
-  wanted = null;
-  lastCheck = now();
-  checking = run(reason).then(() => {
-    checking = null;
-    failures = 0;
-    if (wanted != null) check(wanted);
-  }, () => {
-    // The server isn't answering (it's restarting): ask again, for the same reason, a little later each time, until it does.
-    checking = null;
-    if (wanted == null || (STRONG.has(reason) && !STRONG.has(wanted))) wanted = reason;
-    clearTimeout(retryTimer);
-    retryTimer = window.setTimeout(() => check(wanted ?? reason), Math.min(15_000, 1000 * 2 ** failures++));
-  });
+// Asks the server about this page's code: at most every few seconds; asked again meanwhile, once more after
+// (release-state.ts, checkStep).
+let checking: CheckState = CHECK_START,
+  checkTimer = 0;
+function checkGo(e: CheckEvent): void {
+  const next = checkStep(checking, e);
+  checking = next.state;
+  for (const f of next.effects) {
+    if (f.do == "wait") {
+      clearTimeout(checkTimer);
+      checkTimer = window.setTimeout(() => checkGo({ type: "timer", now: now() }), f.ms);
+    } else
+      run(f.why).then(
+        () => checkGo({ type: "done", now: now() }),
+        () => checkGo({ type: "failed" })
+      );
+  }
 }
+const check = (why: string) => checkGo({ type: "ask", why, now: now() });
 
 /** While a deploy rolls out, the first answer may come from the old version: ask again a little later. */
 let recheck: number[] = [];
@@ -186,7 +186,7 @@ async function run(why: string): Promise<void> {
   // just made it) nor every minute (that would make the page again and again for nothing).
   const mine = document.querySelector<HTMLMetaElement>('meta[name="erga-build"]')?.content;
   const another = release != null && version != release;
-  if (mine && why != "loaded" && (another || STRONG.has(why))) {
+  if (mine && why != "loaded" && (another || isStrong(why))) {
     const p = await nativeFetch(location.pathname + location.search, { headers: { "X-Erga-Check": "build" }, cache: "no-store", credentials: "same-origin", redirect: "manual" });
     const theirs = p.headers.get("x-erga-build");
     if (p.status >= 500) throw new Error(`page: ${p.status}`);
@@ -214,7 +214,7 @@ function restyle(url: string) {
 // ------------------------------------------------------------------ reloading, at a safe moment
 
 const QUIET_MS = 2500;
-let reloading = false, scheduled = false;
+
 
 function blocker(): string | null {
   if (document.visibilityState == "hidden") return null;
@@ -232,26 +232,31 @@ function loopDelay(): number {
   return past.length ? Math.min(600_000, 10_000 * 2 ** past.length) - (now() - past[past.length - 1]) : 0;
 }
 
-function reloadSoon() {
-  if (scheduled) return;
-  scheduled = true;
-  window.setTimeout(waitForQuiet, Math.max(0, loopDelay()));
+// The reload, at a safe moment (release-state.ts, reloadStep).
+let reloading: ReloadState = "current",
+  reloadTimer = 0;
+function reloadGo(e: ReloadEvent): void {
+  const next = reloadStep(reloading, e);
+  reloading = next.state;
+  for (const f of next.effects) {
+    if (f.do == "wait") {
+      clearTimeout(reloadTimer);
+      reloadTimer = window.setTimeout(() => reloadGo({ type: "timer", blocked: !!blocker() }), f.ms);
+    } else if (f.do == "whenIdle") {
+      const idle = () => reloadGo({ type: "idle", blocked: !!blocker() });
+      if (document.visibilityState == "hidden" || !("requestIdleCallback" in window)) idle();
+      else requestIdleCallback(idle, { timeout: 1000 });
+    } else if (f.do == "flush") {
+      void Promise.all(
+        flushes.map((fn) => Promise.race([fn().catch(() => false), new Promise<boolean>((r) => setTimeout(() => r(false), 10_000))]))
+      ).then((flushed) => reloadGo({ type: "flushed", ok: !flushed.includes(false), blocked: !!blocker() }));
+    } else reload();
+  }
 }
+const reloadSoon = () => reloadGo({ type: "stale", delay: loopDelay() });
 
-function waitForQuiet() {
-  if (blocker()) { window.setTimeout(waitForQuiet, 400); return; }
-  const go = () => { if (blocker()) waitForQuiet(); else void reload(); };
-  if (document.visibilityState == "hidden" || !("requestIdleCallback" in window)) go();
-  else requestIdleCallback(go, { timeout: 1000 });
-}
-
-async function reload() {
-  if (reloading) return;
-  // What the page holds goes to the server first; if it can't yet (offline), try again later.
-  const flushed = await Promise.all(flushes.map((f) => Promise.race([f().catch(() => false), new Promise<boolean>((r) => setTimeout(() => r(false), 10_000))])));
-  if (flushed.includes(false)) { window.setTimeout(waitForQuiet, 2000); return; }
-  if (blocker()) { waitForQuiet(); return; }
-  reloading = true;
+function reload() {
+  checkGo({ type: "reloading" });
   keepAll([...keepers.keys()], false);
   let past: number[] = [];
   try { past = JSON.parse(session.get(KEYS.last) || "[]"); } catch { /* none */ }
@@ -275,7 +280,7 @@ function keepAll(names: string[], hand: boolean) {
 // (Not on the way out of a reload for a release, which kept everything already.)
 addEventListener("pagehide", () => {
   const names = [...keepers].filter(([, k]) => k.everyReload).map(([name]) => name);
-  if (!reloading && names.length) keepAll(names, true);
+  if (reloading != "reloading" && names.length) keepAll(names, true);
 });
 
 // ------------------------------------------------------------------ the page's own state

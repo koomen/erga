@@ -2,22 +2,8 @@
 // The same operations, through the same route, with the same answers: with the person's session (their pages), or
 // with one of their agent tokens (an outside agent: "Authorization: Bearer erga_...").
 //
-//   GET  /llms.txt                 a few lines for anyone: agents use Erga through /mcp, or /api/tools with a token
-//   GET  /api/tools                the operations and tools the caller may use, as JSON (name, description, JSON Schema)
-//   POST /api/tools/<name>         runs one, the body its arguments: {"ok": true, "result": ...} or {"ok": false, "error"}.
-//                                  A person's session acts from this site's own pages only; a token from anywhere
-//   POST /mcp                      the same list and the same calls over MCP (stateless, Streamable HTTP, JSON answers),
-//                                  for a token: an adapter, with no logic of its own. Without one, a 401 that starts an
-//                                  MCP app's sign-in in the browser (server/identity/oauth.ts). An outside agent's
-//                                  manual is the tools' descriptions and the instructions `initialize` answers
-//   POST /api/publish              a folder of files as a document (multipart or JSON), or into one: for an HTTP client
-//                                  (curl -F), whose multipart body isn't an operation's JSON arguments
-//   POST /api/auth/request         an agent asks for a token: a link for its person to approve
-//   POST /api/auth/poll            ... and collects the token once they have
-//   GET  /api/ops                  an admin's ops token only: {version, target, host, deploy}, what a deploy from a
-//                                  machine needs to deploy this server again (the CLI: deploy/cli/ops.ts)
-//   /tokens/...                    a person's tokens: approve or deny an agent's request; make one, for the
-//                                  Settings dialog (server/identity/tokens-page.ts)
+// The routes are ROUTES, at the end of this file. /tokens/... is a person's tokens: approve or deny an agent's
+// request; make one, for the Settings dialog (server/identity/tokens-page.ts).
 //
 // The app (server/app.ts) sends those paths here: each answer is an Effect
 // (server/http.ts), with the platform that knows agent tokens. The share button's token
@@ -32,6 +18,7 @@ import * as Schema from "effect/Schema";
 import { HttpServerResponse } from "effect/http";
 import { type Platform, type Session, whoOf } from "./platform";
 import { call, json, platform as currentPlatform, text, webRequest, type Route } from "./http.ts";
+import { AGENT_SIGN_IN, routeFor, type RouteRow } from "../shared/routes.ts";
 import { allTools, jsonSchemaOf, runTool, toolsFor, type Tool } from "../agents/tools";
 import { addFile, type Caller, cleanFilePath, OperationError, PAGE_RULES } from "./operations/index.ts";
 import { keyedOp } from "./documents/index.ts";
@@ -120,51 +107,76 @@ export const serverApi: Route = Effect.gen(function* () {
   const agent = session?.agent ? (session as Session & { agent: AgentToken }) : null;
   // An agent token's caller (MCP is for tokens only).
   const ctx: ToolContext | null = agent && callerOf(platform, agent, origin);
-  const method = request.method;
-
-  if (path == "/llms.txt" && (method == "GET" || method == "HEAD"))
-    return HttpServerResponse.text(llmsTxt(origin), {
-      contentType: "text/markdown; charset=utf-8",
-      headers: { "Cache-Control": "no-cache" },
-    });
-  if (path == "/mcp") return yield* mcp(ctx, origin);
-  if (path == "/api/auth/request" && method == "POST") return yield* askForToken(platform, origin);
   // A comment op from a document's page, with its edit key: before the session, which the pages origin has none of.
   const keyed = yield* call(() => keyedOp(platform, url));
   if (keyed) return yield* fromPage(keyed, path, platform, origin);
-  // The one API: the person's own pages (their session), and every agent (a token).
-  if (path == "/api/tools" || path.startsWith("/api/tools/")) {
-    if (!session) return request.headers.get("authorization") ? unauthorized(origin, true) : failure("Sign in first.", 401);
-    const caller = callerOf(platform, session, origin);
-    if (path == "/api/tools" && (method == "GET" || method == "HEAD"))
-      return json({ ok: true, tools: (yield* listed(caller)).map(specOf) });
-    const [, named] = /^\/api\/tools\/([^/]+)$/.exec(path) ?? [];
-    if (!named || method != "POST")
-      return failure(`GET ${origin}/api/tools lists the tools; POST ${origin}/api/tools/<name> runs one.`, 404);
+  // (/mcp's function answers every method itself.)
+  const method = path == "/mcp" ? "POST" : request.method == "HEAD" ? "GET" : request.method;
+  const found = routeFor(ROUTES, method, path);
+  if (found) return yield* found.route.run({ request, url, origin, platform, session, ctx }, found.params);
+  if (path == "/api/tools" || path.startsWith("/api/tools/"))
+    return (
+      signInFirst(request, session, origin) ??
+      failure(`GET ${origin}/api/tools lists the tools; POST ${origin}/api/tools/<name> runs one.`, 404)
+    );
+  return failure(`There's nothing at ${request.method} ${path}. Erga's MCP server is ${origin}/mcp.`, 404);
+});
+
+/** Who asks: their session (a person's, or an agent token's), and the token's caller (MCP and publish are for tokens only). */
+interface Asked {
+  readonly request: Request;
+  readonly url: URL;
+  readonly origin: string;
+  readonly platform: Platform;
+  readonly session: Session | null;
+  readonly ctx: ToolContext | null;
+}
+
+/** The one API is for someone signed in: the answer to anyone else, or null. */
+const signInFirst = (request: Request, session: Session | null, origin: string) =>
+  session ? null : request.headers.get("authorization") ? unauthorized(origin, true) : failure("Sign in first.", 401);
+
+/** The operations and tools the caller may use, as JSON (name, description, JSON Schema). */
+const listTools = ({ request, origin, platform, session }: Asked): Route =>
+  Effect.gen(function* () {
+    if (!session) return signInFirst(request, session, origin)!;
+    return json({ ok: true, tools: (yield* listed(callerOf(platform, session, origin))).map(specOf) });
+  });
+
+/**
+ * Runs one, the body its arguments: {"ok": true, "result": ...} or {"ok": false, "error"}. A person's session acts from
+ * this site's own pages only; a token from anywhere.
+ */
+const runOne = ({ request, origin, platform, session }: Asked, { name }: Record<string, string>): Route =>
+  Effect.gen(function* () {
+    if (!session) return signInFirst(request, session, origin)!;
+    if (name.includes("/")) return failure(`GET ${origin}/api/tools lists the tools; POST ${origin}/api/tools/<name> runs one.`, 404);
     // A person's session acts only from this site's own pages.
     // (A form another site posts as text/plain carries an Origin too: only this site's own is let through.)
     if (!session.agent && request.headers.get("origin") != origin) return failure("Only this site's own pages may do this.", 403);
     const args = yield* body(Schema.Unknown);
     if (args._tag == "None" && request.headers.get("content-length") != "0")
       return failure("The body must be the tool's arguments, as JSON.", 400);
-    return yield* runNamed(decodeURIComponent(named), args._tag == "Some" ? args.value : undefined, caller).pipe(
+    return yield* runNamed(
+      decodeURIComponent(name),
+      args._tag == "Some" ? args.value : undefined,
+      callerOf(platform, session, origin)
+    ).pipe(
       Effect.map((result) => json({ ok: true, result })),
       Effect.catchTag("OperationError", (e) => Effect.succeed(failure(e.message, e.status)))
     );
-  }
-  if (path == "/api/auth/poll" && method == "POST") return yield* pollForToken(platform);
-  if (path == "/api/ops" && (method == "GET" || method == "HEAD")) return yield* opsFacts(platform, request, url);
-  if (path == "/api/publish" && method == "POST") {
-    if (!ctx) return unauthorized(origin, !!request.headers.get("authorization"));
-    return yield* publish(ctx).pipe(
-      Effect.map((r) => json({ ok: true, ...r })),
-      Effect.catchTag("OperationError", (e) =>
-        Effect.succeed(failure(e.status == 500 ? e.message.replace(/^The tool failed/, "Publishing failed") : e.message, e.status))
-      )
-    );
-  }
-  return failure(`There's nothing at ${method} ${path}. Erga's MCP server is ${origin}/mcp.`, 404);
-});
+  });
+
+/** A folder of files as a document (multipart or JSON), or into one: for an HTTP client (curl -F), whose multipart body isn't an operation's JSON arguments. */
+const publishRoute = ({ request, origin, ctx }: Asked): Route => {
+  if (!ctx) return Effect.succeed(unauthorized(origin, !!request.headers.get("authorization")));
+  return publish(ctx).pipe(
+    Effect.map((r) => json({ ok: true, ...r })),
+    Effect.catchTag("OperationError", (e) =>
+      Effect.succeed(failure(e.status == 500 ? e.message.replace(/^The tool failed/, "Publishing failed") : e.message, e.status))
+    )
+  );
+};
 
 /**
  * POST /api/tools/comment or /api/tools/comments, ?doc=<id>&key=<edit key>: the page's editor on its pages origin,
@@ -472,3 +484,76 @@ Add it to your MCP app (Streamable HTTP). It signs you in through your person's 
 
 Without MCP, call the same tools over HTTP with a token (Authorization: Bearer erga_...): GET ${origin}/api/tools lists them, and POST ${origin}/api/tools/<name> runs one, with its arguments as JSON.
 `;
+
+// ---------------------------------------------------------------- the routes
+
+const API = "the API itself: each operation has its own row in the audit, with its tool";
+
+export const ROUTES: readonly RouteRow<(a: Asked, params: Record<string, string>) => Route>[] = [
+  {
+    method: "GET",
+    path: "/llms.txt",
+    run: ({ origin }) =>
+      Effect.succeed(
+        HttpServerResponse.text(llmsTxt(origin), { contentType: "text/markdown; charset=utf-8", headers: { "Cache-Control": "no-cache" } })
+      ),
+    action: "A few lines that point an agent to the MCP server (/mcp) and /api/tools",
+    domain: "none",
+    exempt: "a fixed pointer for agents, not a person's action",
+  },
+  {
+    method: "POST",
+    path: "/mcp",
+    // The same list and the same calls over MCP (stateless, Streamable HTTP, JSON answers), for a token: an adapter,
+    // with no logic of its own. Without one, a 401 that starts an MCP app's sign-in in the browser
+    // (server/identity/oauth.ts). An outside agent's manual is the tools' descriptions and the instructions `initialize` answers.
+    run: ({ ctx, origin }) => mcp(ctx, origin),
+    action: "The same tools over MCP, for an outside agent with a token",
+    domain: "none",
+    exempt: API,
+  },
+  {
+    method: "GET",
+    path: "/api/tools",
+    run: listTools,
+    action: "The operations a caller may use (the pages' and agents' API)",
+    domain: "none",
+    exempt: API,
+  },
+  { method: "POST", path: "/api/tools/<name>", run: runOne, action: "A page or an agent runs an operation", domain: "none", exempt: API },
+  {
+    method: "POST",
+    path: "/api/publish",
+    run: publishRoute,
+    action: "Publish a folder of files as a document, or into one, from an HTTP client (curl -F): multipart, so not an operation's JSON",
+    domain: "document",
+    tool: "create_document",
+  },
+  // An agent asks for a token: a link for its person to approve; and collects the token once they have.
+  {
+    method: "POST",
+    path: "/api/auth/request",
+    run: ({ platform, origin }) => askForToken(platform, origin),
+    action: "An outside agent asks for a token",
+    domain: "none",
+    exempt: AGENT_SIGN_IN,
+  },
+  {
+    method: "POST",
+    path: "/api/auth/poll",
+    run: ({ platform }) => pollForToken(platform),
+    action: "An outside agent collects its token",
+    domain: "none",
+    exempt: AGENT_SIGN_IN,
+  },
+  {
+    method: "GET",
+    path: "/api/ops",
+    // An admin's ops token only: {version, target, host, deploy}, what a deploy from a machine needs to deploy this
+    // server again (the CLI: deploy/cli/ops.ts).
+    run: ({ platform, request, url }) => opsFacts(platform, request, url),
+    action: "The CLI reads the server's deploy facts (the commit it runs, its Cloudflare account, Worker, database, domains)",
+    domain: "none",
+    exempt: "the CLI's, with an ops token: not a person's action, and no agent's token reads it",
+  },
+];

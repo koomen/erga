@@ -3,16 +3,15 @@
 // to documents, proving itself with ERGA_LINK_SECRET, and brings the local
 // D1 up to date.
 //
-//   POST /__erga/migrate           brings the local D1 up to date with server/migrations/ (as it starts)
-//   POST /__erga/link              makes (or finds) the document for a file or folder, for whoever's signed in
-//   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
+// The routes are ROUTES, below.
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpServerRequest } from "effect/http";
+import { HttpServerRequest, type HttpServerResponse } from "effect/http";
 import { idShaped, OWNER } from "../server/directory/index.ts";
 import { slugify } from "../document/pages.ts";
-import { call, ctx, fromWeb, plainJson, text } from "../server/http.ts";
+import { call, ctx, fromWeb, plainJson, text, type Needs } from "../server/http.ts";
+import { DEV, routeFor, type RouteRow } from "../shared/routes.ts";
 import { directoryOf } from "./d1";
 import type { Env } from "./env";
 import { isDev } from "./platform";
@@ -24,30 +23,62 @@ export const devRoutes = (env: Env) =>
     const { request, url, platform } = yield* ctx;
   if (!url.pathname.startsWith("/__erga/")) return null;
   if (!isDev(env, url) || !env.ERGA_LINK_SECRET || url.searchParams.get("link") != env.ERGA_LINK_SECRET) return text("Not found", 404);
-  const directory = directoryOf(env);
-  if (url.pathname == "/__erga/migrate" && request.method == "POST") {
-    const applied = yield* call(() => migrate(env.DB));
-    return plainJson({ applied });
-  }
-  if (url.pathname == "/__erga/link" && request.method == "POST") {
-    const session = yield* call(() => platform.sessionOf(request));
-    const body = yield* HttpServerRequest.schemaBodyJson(LinkBody).pipe(Effect.orDie);
-    // Whoever's signed in, unless the dev server names the owner (linking again what it linked last run).
-    const owner = (body.owner ?? session?.login)?.toLowerCase();
-    if (!owner || !OWNER.test(owner) || !body.id || !idShaped(body.id) || !body.index || !body.path) return text("Bad link", 400);
-    const { id, index, path } = body;
-    const doc = yield* call(() =>
-      documentOf(env, id).link(owner, id, index, { path, slug: slugify(body.slug ?? "") || "untitled", only: !!body.only })
-    );
-    return plainJson({ owner: doc.owner, id: doc.id, slug: doc.slug });
-  }
-  const [, id] = /^\/__erga\/mirror\/([^/]+)$/.exec(url.pathname) ?? [];
-  const route = id && idShaped(id) ? yield* call(() => directory.route(id)) : null;
-  if (!route || request.headers.get("upgrade")?.toLowerCase() != "websocket") return text("Not found", 404);
-  return fromWeb(
-    yield* call(() => documentOf(env, route.id).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request)))
-  );
+  const found = routeFor(ROUTES, request.headers.get("upgrade")?.toLowerCase() == "websocket" ? "WS" : request.method, url.pathname);
+  if (!found) return text("Not found", 404);
+  return yield* found.route.run(env, found.params);
 });
+
+type Run = (env: Env, params: Record<string, string>) => Effect.Effect<HttpServerResponse.HttpServerResponse, never, Needs>;
+
+export const ROUTES: readonly RouteRow<Run>[] = [
+  {
+    method: "POST",
+    path: "/__erga/migrate",
+    // As the dev server starts, with server/migrations/.
+    run: (env) => call(() => migrate(env.DB)).pipe(Effect.map((applied) => plainJson({ applied }))),
+    action: "The dev server brings the local database up to date",
+    domain: "none",
+    exempt: DEV,
+  },
+  {
+    method: "POST",
+    path: "/__erga/link",
+    // Makes (or finds) the document for a file or folder, for whoever's signed in.
+    run: (env) =>
+      Effect.gen(function* () {
+        const { request, platform } = yield* ctx;
+        const session = yield* call(() => platform.sessionOf(request));
+        const body = yield* HttpServerRequest.schemaBodyJson(LinkBody).pipe(Effect.orDie);
+        // Whoever's signed in, unless the dev server names the owner (linking again what it linked last run).
+        const owner = (body.owner ?? session?.login)?.toLowerCase();
+        if (!owner || !OWNER.test(owner) || !body.id || !idShaped(body.id) || !body.index || !body.path) return text("Bad link", 400);
+        const { id, index, path } = body;
+        const doc = yield* call(() =>
+          documentOf(env, id).link(owner, id, index, { path, slug: slugify(body.slug ?? "") || "untitled", only: !!body.only })
+        );
+        return plainJson({ owner: doc.owner, id: doc.id, slug: doc.slug });
+      }),
+    action: "The dev server links a file on disk to a document",
+    domain: "none",
+    exempt: DEV,
+  },
+  {
+    method: "WS",
+    path: "/__erga/mirror/<id>",
+    run: (env, { id }) =>
+      Effect.gen(function* () {
+        const { request, url } = yield* ctx;
+        const route = idShaped(id) ? yield* call(() => directoryOf(env).route(id)) : null;
+        if (!route) return text("Not found", 404);
+        return fromWeb(
+          yield* call(() => documentOf(env, route.id).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request)))
+        );
+      }),
+    action: "The document reaches its files on disk (a WebSocket)",
+    domain: "none",
+    exempt: DEV,
+  },
+];
 
 /** What the dev server sends to link a file or folder on disk. */
 const LinkBody = Schema.Struct({
@@ -59,8 +90,9 @@ const LinkBody = Schema.Struct({
   owner: Schema.optional(Schema.String),
 });
 
-/** The directory's migrations, as `cf d1 migrations apply` would apply them. */
-const MIGRATIONS = import.meta.glob("../server/migrations/*.sql", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
+/** The directory's migrations, as `cf d1 migrations apply` would apply them. (Read when asked: a unit test loads this file without Vite.) */
+const migrations = () =>
+  import.meta.glob("../server/migrations/*.sql", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 
 /**
  * Brings the local D1 up to date with server/migrations/ when the dev server
@@ -73,7 +105,7 @@ async function migrate(db: D1Database): Promise<string[]> {
   await db.prepare("CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)").run();
   const done = new Set((await db.prepare("SELECT name FROM d1_migrations").all<{ name: string }>()).results.map((r) => r.name));
   const applied: string[] = [];
-  for (const [path, sql] of Object.entries(MIGRATIONS).sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [path, sql] of Object.entries(migrations()).sort(([a], [b]) => a.localeCompare(b))) {
     const name = path.split("/").pop()!;
     if (done.has(name)) continue;
     // One statement each (D1 prepares them one at a time), comments left out; all in one batch, which is a transaction.

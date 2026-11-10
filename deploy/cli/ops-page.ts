@@ -30,8 +30,8 @@ import {
 import { alive } from "./pid";
 import { type JobState, stepRun } from "./job-state";
 import { GITHUB, type PollEvent, startPolls, stepPolls } from "./poll-state";
+import { ROOT } from "../root";
 
-const ROOT = new URL("../..", import.meta.url).pathname;
 
 /** What an instance answers now: the commit it runs (with its ops token) and its health. */
 export async function askInstance(e: Entry): Promise<Answer> {

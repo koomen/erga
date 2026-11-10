@@ -7,12 +7,7 @@
 // their picture, client/agent/settings-dialog.ts): there is no refresh token, as agent tokens have no other expiry. An
 // admin token's admin power is checked on each request (Users.actsAsAdmin): a person no longer an admin loses it at once.
 //
-//   GET  /.well-known/oauth-protected-resource      /mcp's metadata (RFC 9728): the resource, and who signs in for it
-//   GET  /.well-known/oauth-protected-resource/mcp  the same, where a client looks for /mcp's own
-//   GET  /.well-known/oauth-authorization-server    the authorization server's metadata (RFC 8414)
-//   POST /oauth/register                            an app registers (RFC 7591): a public client, with its redirect URIs
-//   GET  /oauth/authorize                           the person signs in, then approves on /tokens/approve
-//   POST /oauth/token                               the app trades the code and its PKCE verifier for the token
+// The routes are ROUTES, below.
 //
 // A client is not kept: its client_id holds its name and redirect URIs, signed with the server's secret.
 
@@ -23,7 +18,9 @@ import { page, signInFirst } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { base64url, fromBase64url } from "../../shared/bytes.ts";
 import { call, ctx, Field, form, json, query, redirect, text, type Route } from "../http.ts";
-import { sign, unsign } from "./session.ts";
+import { mac, macOk } from "../signed.ts";
+import { AGENT_SIGN_IN, routeAt, SECRET, type RouteRow } from "../../shared/routes.ts";
+import type { Platform } from "../platform.ts";
 import { LABEL_MAX } from "./tokens.ts";
 
 /** The scopes an app can get: the person's own power, admin for an admin, else documents (all their documents). */
@@ -95,14 +92,17 @@ const clientKey = (secret: string) => `${secret}:oauth-client`;
 const ClientJson = Schema.fromJsonString(Schema.Struct({ n: Schema.String, r: Schema.Array(Schema.String) }));
 
 /** A client's client_id: its name and redirect URIs, signed. */
-export const clientIdFor = (secret: string, c: Client) =>
-  sign(clientKey(secret), base64url(new TextEncoder().encode(JSON.stringify({ n: c.name, r: c.redirectUris }))));
+export async function clientIdFor(secret: string, c: Client): Promise<string> {
+  const value = base64url(new TextEncoder().encode(JSON.stringify({ n: c.name, r: c.redirectUris })));
+  return `${value}.${await mac(clientKey(secret), value)}`;
+}
 
 /** The client a client_id names, if this server signed it. */
 export async function clientOf(secret: string, id: string): Promise<Client | null> {
   if (!id || id.length > 4000) return null;
-  const value = await unsign(clientKey(secret), id);
-  if (!value) return null;
+  // (Its format from before server/signed.ts's kinds, kept: apps hold their client_id for as long as they are installed.)
+  const [value, given, extra] = id.split(".");
+  if (!value || !given || extra != null || !(await macOk(clientKey(secret), value, given))) return null;
   try {
     const c = Schema.decodeUnknownOption(ClientJson)(new TextDecoder().decode(fromBase64url(value)));
     return c._tag == "Some" ? { name: c.value.n, redirectUris: [...c.value.r] } : null;
@@ -137,29 +137,29 @@ const AuthorizeQuery = Schema.Struct({
 
 const TokenForm = Schema.Struct({ grant_type: Field, code: Field, redirect_uri: Field, client_id: Field, code_verifier: Field });
 
-/** The routes at the top of this file. */
-export const oauthRoutes: Route = Effect.gen(function* () {
-  const { request, platform, url } = yield* ctx;
-  const path = url.pathname.replace(/\/+$/, "");
-  const origin = url.origin;
-  const method = request.method;
-  const read = method == "GET" || method == "HEAD";
-  const preflight = method == "OPTIONS";
+/** The request's parts every route here reads. */
+interface Asked {
+  readonly request: Request;
+  readonly platform: Platform;
+  readonly url: URL;
+  readonly origin: string;
+  readonly method: string;
+  readonly read: boolean;
+  readonly preflight: boolean;
+}
 
-  if (path == "/.well-known/oauth-protected-resource" || path == "/.well-known/oauth-protected-resource/mcp") {
+/** Metadata, as JSON a client may keep for an hour (with its preflight, and a 405 for any other method). */
+const metadata =
+  (of: (origin: string) => unknown) =>
+  ({ origin, read, preflight }: Asked): Route =>
+    Effect.sync(() => {
     if (preflight) return HttpServerResponse.empty({ status: 204, headers: CORS });
-    return read
-      ? json(resourceMetadata(origin), 200, { ...CORS, "Cache-Control": "max-age=3600" })
-      : text("GET only.", 405, { Allow: "GET" });
-  }
-  if (path == "/.well-known/oauth-authorization-server") {
-    if (preflight) return HttpServerResponse.empty({ status: 204, headers: CORS });
-    return read
-      ? json(serverMetadata(origin), 200, { ...CORS, "Cache-Control": "max-age=3600" })
-      : text("GET only.", 405, { Allow: "GET" });
-  }
+    return read ? json(of(origin), 200, { ...CORS, "Cache-Control": "max-age=3600" }) : text("GET only.", 405, { Allow: "GET" });
+  });
 
-  if (path == "/oauth/register") {
+/** An app registers (RFC 7591): a public client, with its redirect URIs. */
+const register = ({ request, platform, method, preflight }: Asked): Route =>
+  Effect.gen(function* () {
     if (preflight) return HttpServerResponse.empty({ status: 204, headers: CORS });
     if (method != "POST") return text("POST only.", 405, { Allow: "POST" });
     const raw = yield* call(() => request.text());
@@ -189,9 +189,11 @@ export const oauthRoutes: Route = Effect.gen(function* () {
       201,
       CORS
     );
-  }
+  });
 
-  if (path == "/oauth/authorize") {
+/** The person signs in, then approves on /tokens/approve. */
+const authorize = ({ request, platform, url, origin, read }: Asked): Route =>
+  Effect.gen(function* () {
     if (!read) return text("GET only.", 405, { Allow: "GET" });
     const q = yield* query(AuthorizeQuery).pipe(Effect.orDie);
     const client = yield* call(() => clientOf(platform.secret, q.client_id));
@@ -219,9 +221,11 @@ export const oauthRoutes: Route = Effect.gen(function* () {
       )
     );
     return redirect(`/tokens/approve?code=${encodeURIComponent(asked.userCode)}`);
-  }
+  });
 
-  if (path == "/oauth/token") {
+/** The app trades the code and its PKCE verifier for the token. */
+const token = ({ platform, method, preflight }: Asked): Route =>
+  Effect.gen(function* () {
     if (preflight) return HttpServerResponse.empty({ status: 204, headers: CORS });
     if (method != "POST") return text("POST only.", 405, { Allow: "POST" });
     const f = yield* form(TokenForm).pipe(Effect.orElseSucceed(() => null));
@@ -236,9 +240,61 @@ export const oauthRoutes: Route = Effect.gen(function* () {
         "That code expired, was used, or doesn't match the client, the redirect URI or the PKCE verifier."
       );
     return json({ access_token: got.token, token_type: "Bearer", scope: got.info.scope }, 200, { ...CORS, Pragma: "no-cache" });
-  }
+  });
 
-  return text("Not found", 404);
+const AGENT = { domain: "none", exempt: AGENT_SIGN_IN } as const;
+
+export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
+  // /mcp's metadata (RFC 9728): the resource, and who signs in for it; and the same, where a client looks for /mcp's own.
+  {
+    method: "GET",
+    path: "/.well-known/oauth-protected-resource",
+    run: metadata(resourceMetadata),
+    action: "An MCP app reads how /mcp signs in",
+    ...AGENT,
+  },
+  {
+    method: "GET",
+    path: "/.well-known/oauth-protected-resource/mcp",
+    run: metadata(resourceMetadata),
+    action: "The same, where an MCP app looks for /mcp's own",
+    ...AGENT,
+  },
+  // The authorization server's metadata (RFC 8414).
+  {
+    method: "GET",
+    path: "/.well-known/oauth-authorization-server",
+    run: metadata(serverMetadata),
+    action: "An MCP app reads the sign-in's endpoints",
+    ...AGENT,
+  },
+  { method: "POST", path: "/oauth/register", run: register, action: "An MCP app registers itself", ...AGENT },
+  {
+    method: "GET",
+    path: "/oauth/authorize",
+    run: authorize,
+    action: "The person, in their browser, lets an MCP app act for them (approved on /tokens/approve)",
+    domain: "none",
+    exempt: `${SECRET} (it hands a new token to an outside agent)`,
+  },
+  { method: "POST", path: "/oauth/token", run: token, action: "An MCP app trades its code for its token", ...AGENT },
+];
+
+/** MCP's sign-in: each function answers its path's other methods too (a preflight, a 405). */
+export const oauthRoutes: Route = Effect.gen(function* () {
+  const { request, platform, url } = yield* ctx;
+  const method = request.method;
+  const route = routeAt(ROUTES, url.pathname.replace(/\/+$/, ""));
+  if (!route) return text("Not found", 404);
+  return yield* route.run({
+    request,
+    platform,
+    url,
+    origin: url.origin,
+    method,
+    read: method == "GET" || method == "HEAD",
+    preflight: method == "OPTIONS",
+  });
 });
 
 /** The paths oauthRoutes answers. */

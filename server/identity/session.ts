@@ -7,7 +7,7 @@
 //     scope. A token that isn't good (revoked, expired) signs in nobody,
 //     whatever cookie comes with it;
 //   - else the session cookie sign-in.ts set: the GitHub login and display
-//     name with an expiry, signed with HMAC-SHA256 (the platform's secret), so
+//     name with an expiry, signed (server/signed.ts), so
 //     the server trusts it without a session store. Only users may sign in
 //     (users.ts), and a session lasts only while its person still is one;
 //   - else a view cookie (viewCookie): the session the server's browser holds while it renders a document's page in
@@ -18,8 +18,8 @@
 //     carried along in its links), else whoever this browser signed in as,
 //     else the dev login, unless the browser signed out.
 
-import * as Base64Url from "effect/encoding/Base64Url";
-import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import { signed } from "../signed.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import type { Users } from "../directory/index.ts";
 import { cookies } from "./cookies.ts";
@@ -28,32 +28,19 @@ export const SESSION_COOKIE = "erga_session";
 /** Local development: this browser signed out, so it's nobody (not the dev login) until it signs in again. */
 export const SIGNED_OUT = "erga_signed_out";
 
-const key = (secret: string) => crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+/**
+ * The session cookie's value (server/signed.ts): who signed in; with `doc`, a view cookie, on that document only.
+ * 30 days unless the seal says another time.
+ */
+const SessionCookie = signed(
+  "session",
+  Schema.Struct({ login: Schema.String, name: Schema.String, doc: Schema.optionalKey(Schema.String) }),
+  30 * 24 * 60 * 60
+);
 
-/** `value` with its signature, so it can go to a browser and come back unchanged. */
-export async function sign(secret: string, value: string): Promise<string> {
-  const mac = await crypto.subtle.sign("HMAC", await key(secret), new TextEncoder().encode(value));
-  return `${value}.${Base64Url.encode(new Uint8Array(mac))}`;
-}
-
-/** The value a signature vouches for, or null. */
-export async function unsign(secret: string, signed: string): Promise<string | null> {
-  const i = signed.lastIndexOf(".");
-  if (i < 0) return null;
-  const value = signed.slice(0, i);
-  try {
-    return (await crypto.subtle.verify(
-      "HMAC",
-      await key(secret),
-      Result.getOrThrow(Base64Url.decode(signed.slice(i + 1))) as Uint8Array<ArrayBuffer>,
-      new TextEncoder().encode(value)
-    ))
-      ? value
-      : null;
-  } catch {
-    return null;
-  }
-}
+/** The session cookie's value for someone who signed in, good for `seconds`. */
+export const sessionCookie = (secret: string, who: { login: string; name: string }, seconds: number) =>
+  SessionCookie.seal(secret, { login: who.login, name: who.name }, { seconds });
 
 /** Asked more than once for one request (the route, then the account corner): worked out once. */
 const sessions = new WeakMap<Request, Promise<Session | null>>();
@@ -94,12 +81,12 @@ async function findSession(platform: Platform, request: Request): Promise<Sessio
 async function cookieSession(platform: Platform, request: Request, dev: boolean, url: URL): Promise<Session | null | "refused"> {
   const users = platform.directory.users;
   const raw = cookies(request).get(SESSION_COOKIE);
-  const value = raw && await unsign(platform.secret, raw);
-  if (!value) return null;
+  const read = await SessionCookie.read(platform.secret, raw);
+  if (!read) return null;
   try {
-    const s = JSON.parse(Result.getOrThrow(Base64Url.decodeString(value))) as Session & { exp: number; doc?: unknown };
-    const doc = typeof s.doc == "string" ? s.doc : null;
-    if (typeof s.login != "string" || !(s.exp > Date.now() / 1000)) return doc == null ? null : "refused";
+    const s = read.value;
+    const doc = s.doc ?? null;
+    if (read.expired) return doc == null ? null : "refused";
     if (doc != null && !(await onDocument(platform, url.pathname, doc))) return "refused";
     // Locally, someone with no row yet gets one (findSession); anyone with one passes the access rules, as on a server.
     if (!((dev && !(await users.get(s.login))) || (await users.allowed(s.login)))) return null;
@@ -112,7 +99,7 @@ const VIEW_SECONDS = 300;
 
 /** A view cookie's value (see the top of this file): `login` on the document `doc` (its id), for VIEW_SECONDS from `now`. */
 export const viewCookie = (secret: string, login: string, doc: string, now = Date.now()) =>
-  sign(secret, Base64Url.encode(JSON.stringify({ login, name: login, doc, exp: Math.floor(now / 1000) + VIEW_SECONDS })));
+  SessionCookie.seal(secret, { login, name: login, doc }, { now, seconds: VIEW_SECONDS });
 
 /**
  * Whether `path` is one of the document `doc`'s own: its viewer and API at /d/<doc>/..., at its address, or at /_home;
