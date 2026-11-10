@@ -437,8 +437,9 @@ async function render(
     clone,
     edit,
     corner: accountHtml(accountOf(session, admin), url.pathname + url.search),
-    // The page follows each change while it's open: for someone signed in in their browser, who may open its room.
-    ...(session && !session.agent ? { live: d.ver } : {}),
+    // The page follows each change while it's open: for someone signed in in their browser, who may open its room. Not
+    // the server's browser (view_page: Session.view): its page stays as it loaded, while the picture is taken.
+    ...(session && !session.agent && !session.view ? { live: d.ver } : {}),
     ...(session && !session.agent && d.kind == "project" ? { project: address } : {}),
     ...(canComment && session
       ? {
