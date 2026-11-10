@@ -43,7 +43,7 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
-import { ASSET_PREFIX, type AssetManifest } from "../shared/assets";
+import { ASSET_PREFIX, namedBy, type AssetManifest } from "../shared/assets";
 
 const ROOT = resolve(import.meta.dir, "..");
 const OUT = join(ROOT, ".build");
@@ -306,13 +306,6 @@ export function editorShell(editor: string, styleCss: string): { style: string; 
   const controls = body.replace(/<iframe id="frame"[^>]*><\/iframe>/, "").replace(/<script\b[\s\S]*?<\/script>/g, "").replace(/<!--[\s\S]*?-->/g, "").trim();
   if (/<\/template/i.test(controls)) throw new Error("the editor's controls hold </template>");
   return { style: css, body: controls };
-}
-
-/** Every file a manifest names. */
-function namedBy(m: AssetManifest): string[] {
-  const out = new Set<string>([...Object.values(m.files), ...Object.values(m.deps).flat(), ...m.frame, ...Object.keys(m.integrity)]);
-  for (const u of m.fonts.css.matchAll(/url\(([^)]+)\)/g)) out.add(u[1]);
-  return [...out];
 }
 
 /** What the editor loads before it takes input (the shell's and the frame's scripts, its page and stylesheet), raw, gzip and brotli. */
