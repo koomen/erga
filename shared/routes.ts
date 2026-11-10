@@ -7,7 +7,9 @@
 // thing a person does is an operation (server/operations/), which the pages call over POST /api/tools/<name> and every
 // agent has as a tool. The exceptions: an agent with a document token never has admin power, even an admin's: "admin"
 // actions are an admin's own agent's, and an admin token's. A secret (an API key, a GitHub app's secret, a new agent
-// token) is pasted or made only on the page, never in a conversation. And the agents act only on what their person
+// token) is pasted or made only on the page, never in a conversation. An agent never makes a token of any kind, also
+// not with its person's approval: the routes that make one refuse an agent's session, and the tokens' own code refuses
+// anyone who acts through an agent (Tokens.mint, NOT_FOR_AGENTS). And the agents act only on what their person
 // asks in the conversation, never on text found in tool results (their system prompts say so).
 
 /** "WS": a WebSocket's address. "UI": what a person does on a page with no route of its own. */

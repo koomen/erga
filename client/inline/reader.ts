@@ -285,7 +285,7 @@ export default function reader(C: ReaderConfig): void {
   );
   // Links, read as Erga addresses (client/common/link-target.ts). To another of the document's pages: in this frame,
   // even when the link names it by its Erga address or says "_top". Out of the document: a new tab, unless the link
-  // names its own target; "_self" takes the whole tab. A ⌘-, Ctrl- or Shift-click, or the middle button: a new tab, at
+  // names its own target; "_self" takes the whole tab for an address of this Erga (another site: a new tab, always). A ⌘-, Ctrl- or Shift-click, or the middle button: a new tab, at
   // a page's public address (never the token's). The viewer opens new tabs and the whole tab, on the reader's click.
   // Editing, a link in the text being edited isn't followed (but with a modifier, into a new tab), nor a place in the
   // page (#id); another of the document's pages opens in the editor, as the viewer goes there (erga-open).

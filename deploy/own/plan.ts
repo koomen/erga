@@ -87,7 +87,7 @@ export const QUESTIONS: { key: keyof Answers; ask: string; help: string; aws?: t
   {
     key: "pages",
     ask: "Documents' pages",
-    help: "shared (one address for all of them: workers.dev, or on AWS CloudFront's; no domain needed) or a second domain on your account (never the app's): each document gets an origin of its own. On AWS: shared with a short name, a domain with a domain.",
+    help: "shared (one address for all of them: workers.dev, or on AWS CloudFront's; no domain needed) or a second domain on your account (never the app's): each document gets an origin of its own. Shared is safe for one author only: there, a script in one document can reach what another document's page keeps in the browser. On AWS: shared with a short name, a domain with a domain.",
   },
   {
     key: "feedback",

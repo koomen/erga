@@ -236,11 +236,14 @@ export const ROUTES: readonly RouteRow<(a: Asked) => HttpRoute>[] = [
         if (session.agent || (origin && origin != url.origin)) return text("Not allowed", 403);
         const doc = yield* openable(a);
         if (!doc) return text("Not allowed", 403);
+        const who = whoOf(session);
         const person = {
           login: session.login,
           name: session.name,
           ...(session.avatar ? { avatar: session.avatar } : {}),
-          ...(whoOf(session).admin ? { admin: true } : {}),
+          ...(who.admin ? { admin: true } : {}),
+          // The server's browser (Session.view): its key is an agent's too.
+          ...(who.via ? { via: who.via } : {}),
         };
         return plainJson(yield* call(() => editKey(platform.secret, doc.owner, doc.id, person)), 200, { "Cache-Control": "no-store" });
       }),
@@ -383,6 +386,7 @@ export function forwardedAs(
     "x-erga-access",
     "x-erga-who",
     "x-erga-checked",
+    "x-erga-shares",
     "x-erga-view",
     "x-erga-agent",
     "x-erga-via",

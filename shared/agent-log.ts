@@ -9,6 +9,9 @@
 import type { FileRef } from "./attach";
 import type { TextEdit } from "./text-edits";
 
+/** A tool call's state; "asking": it waits for the person's Approve (`detail` says what it would do). */
+export type ToolStatus = "running" | "asking" | "done" | "error";
+
 export type LogItem =
   /** `files`: what was attached, as the log shows it; `id`: the sending tab's own id for it (client/agent/sends.ts). */
   | { kind: "user"; text: string; files?: FileRef[]; id?: string }
@@ -19,7 +22,7 @@ export type LogItem =
       id: string;
       name: string;
       path: string | null;
-      status: "running" | "done" | "error";
+      status: ToolStatus;
       detail?: string;
       image?: string;
       via?: "external";
@@ -35,7 +38,7 @@ export type LogEvent =
       id: string;
       name: string;
       path: string | null;
-      status: "running" | "done" | "error";
+      status: ToolStatus;
       detail?: string;
       image?: string;
       via?: "external";

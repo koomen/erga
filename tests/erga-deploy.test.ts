@@ -21,6 +21,8 @@ import {
   stagingCommit,
   takeLock,
 } from "../deploy/cli/deploy";
+import { replaceSnapshotSecret } from "../deploy/cli/snapshot-secret";
+import { snapshotAuth } from "../document/snapshot";
 import { deployFacts } from "../deploy/pipeline/account";
 import { guardTarget } from "../deploy/pipeline/pipeline";
 import { MOCK_SNAPSHOT_TOKEN, mockCloudflare, PROD_DOCS } from "../dev/mock-cloudflare";
@@ -255,6 +257,50 @@ describe("bun erga deploy --fresh", () => {
       "--fresh is only for a staging instance"
     );
   }, 60_000);
+});
+
+describe("bun erga snapshot-secret", () => {
+  test("a new secret on the primary and each of its staging instances, and in the secrets file; the old one opens nothing", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    fresh(primary, staging);
+    writeFileSync(secretsPath(dir), JSON.stringify({ "example.com": { SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, FACTORY_KEY: "kept" } }));
+    const lines: string[] = [];
+    const hosts = await replaceSnapshotSecret({ dir, host: "example.com", net: mock.fetch, print: (l) => lines.push(l) });
+    expect(hosts).toEqual(["example.com", "staging.example.com"]);
+    const file = JSON.parse(readFileSync(secretsPath(dir), "utf8"));
+    const now = file["example.com"].SNAPSHOT_TOKEN as string;
+    expect(now).toMatch(/^[0-9a-f]{64}$/);
+    expect(now).not.toBe(MOCK_SNAPSHOT_TOKEN);
+    expect(file["example.com"].FACTORY_KEY).toBe("kept");
+    expect([mock.state.secrets.erga.SNAPSHOT_TOKEN, mock.state.secrets["erga-staging"].SNAPSHOT_TOKEN]).toEqual([now, now]);
+    // The output names the servers, never the secret.
+    expect(lines.join("\n")).not.toContain(now);
+    // The primary answers a request signed with the new secret, and refuses the old one's.
+    const ask = async (secret: string) => {
+      const url = "https://example.com/api/snapshot/docs",
+        body = JSON.stringify({ ids: [PROD_DOCS[0]] });
+      return (await mock.fetch(url, { method: "POST", headers: { Authorization: await snapshotAuth(secret, "POST", url, body) }, body }))
+        .status;
+    };
+    expect([await ask(now), await ask(MOCK_SNAPSHOT_TOKEN)]).toEqual([200, 403]);
+    // A fresh copy of the documents works with the new secret.
+    await deployInstance({ dir, host: "staging.example.com", commit: "HEAD", fresh: true, net: mock.fetch, print: () => {} });
+    expect(records().at(-1)).toContainEqual({ copy: "fresh" });
+  }, 60_000);
+
+  test("it names the primary: a staging instance, and a host with no entry, are refused before any change", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    fresh(primary, staging);
+    const calls = mock.state.calls.length;
+    await expect(replaceSnapshotSecret({ dir, host: "staging.example.com", net: mock.fetch })).rejects.toThrow(
+      "staging.example.com is a staging instance: name its primary (bun erga snapshot-secret example.com)."
+    );
+    await expect(replaceSnapshotSecret({ dir, host: "nope.example.com", net: mock.fetch })).rejects.toThrow("has no entry");
+    expect(mock.state.calls.length).toBe(calls);
+    expect(mock.state.secrets.erga.SNAPSHOT_TOKEN).toBe(MOCK_SNAPSHOT_TOKEN);
+  });
 });
 
 describe("bun erga deploy --home", () => {

@@ -1,13 +1,10 @@
 // view_page, as an agent calls it: the server's browser renders the page in Erga's viewer, as its person sees it. It
 // waits for the fonts and draws them (not a fallback), and says which fonts rendered, at what size and in which mode.
 // Several places in one call: one picture each. Other sizes and modes: view-page-modes.e2e.ts.
-import { expect, servers, test } from "../../helpers/fixtures";
-import { CAPTURES, differ, expectColour, fontSite, openFonts as open, SCRIPT_LIGHT, SLOW_MS, WHITE } from "./view-page";
+import { expect, beforeTests, test } from "../../helpers/fixtures";
+import { CAPTURES, differ, expectColour, fontSite, fontsServer, openFonts as open, SCRIPT_LIGHT, SLOW_MS, WHITE } from "./view-page";
 
-await servers.script();
-test.beforeAll(async () => {
-  await fontSite();
-});
+await beforeTests(fontsServer);
 
 test(
   "the whole screenful, 1280×800 in light mode by default; it waits for the slow web font and says which fonts rendered, where, and which fell back; the page's CSS and script both see light mode",

@@ -386,6 +386,13 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 .msg-tool img.shot { display: block; max-width: 100%; max-height: 220px; object-fit: contain; object-position: left top; margin-top: 6px; border: 1px solid var(--rule); border-radius: 8px; background: #fff; }
 .msg-tool.retried { color: var(--chrome); }
 .msg-tool.retried::before { background: color-mix(in srgb, var(--chrome) 60%, transparent); }
+.msg-tool.asking { color: var(--fg); flex-wrap: wrap; padding: 9px 10px; border-radius: 10px; background: var(--code-bg); }
+.msg-tool.asking::before { background: var(--caret); }
+.msg-tool.asking .detail { color: var(--fg-strong); font-weight: 600; font-size: 12.5px; opacity: 1; overflow-wrap: anywhere; }
+.msg-tool .ask-acts { display: flex; justify-content: flex-end; gap: 6px; flex-basis: 100%; }
+.msg-tool .ask-acts button { height: 28px; padding: 0 10px; border: 1px solid var(--rule); border-radius: 9px; background: transparent; color: var(--fg); font: 600 12.5px var(--font-text); cursor: pointer; }
+.msg-tool .ask-acts button.run { border-color: transparent; background: var(--fg-strong); color: var(--bg); }
+.msg-tool .ask-acts button:disabled { opacity: 0.5; cursor: default; }
 .msg-tool .detail { display: block; white-space: pre-wrap; font-size: 12px; opacity: 0.85; }
 /* The admin agent's panel, off for want of an Anthropic API key: the key, pasted in place. */
 .agent-no-key a { color: var(--link); }
@@ -450,6 +457,15 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 .agent-hint { margin: 0 10px 8px; padding: 7px 10px; border-radius: 10px; background: var(--code-bg); color: var(--soft); font-size: 12.5px; line-height: 1.45; }
 .agent-hint.sticky { color: var(--fg); }
 .agent-hint[hidden] { display: none; }
+/* A comment with @erga written in the page: the person's click here runs it (person-agent.ts). */
+.agent-ask { margin: 0 10px 8px; padding: 9px 10px; border-radius: 10px; background: var(--code-bg); font-size: 12.5px; line-height: 1.45; }
+.agent-ask[hidden] { display: none; }
+.agent-ask p { margin: 0; }
+.agent-ask-q { color: var(--fg-strong); font-weight: 600; }
+.agent-ask-text { margin-top: 4px !important; max-height: 7.25em; overflow: auto; color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-ask-acts { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.agent-ask-acts button { height: 28px; padding: 0 10px; border: 1px solid var(--rule); border-radius: 9px; background: transparent; color: var(--fg); font: 600 12.5px var(--font-text); cursor: pointer; }
+.agent-ask-acts button.run { border-color: transparent; background: var(--fg-strong); color: var(--bg); }
 #agent-undo[aria-disabled="true"], #agent-redo[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
 /* Shown while you've scrolled back and the agent has written more below. */
 .agent-jump {

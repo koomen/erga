@@ -5,6 +5,10 @@
 // new one before it ends, for the next socket. It carries the person's admin power only if their session has it (an
 // admin edits the homepage project, which is nobody's), and only for this one document. The document decides what the
 // person may do (read or edit) as it does for any request: a share taken away holds for the next socket.
+//
+// Trap: a page's own scripts can read its edit key and call the keyed operations as the person. So a call with the key
+// (Caller.fromPage) never starts the person's agent: for a comment with "@erga", their agent panel asks them first
+// (server/operations/comments.ts). Give the key no new power that the page's author must not have.
 
 import * as Schema from "effect/Schema";
 import type { Who } from "../directory/index.ts";
@@ -19,9 +23,14 @@ export interface KeyPerson {
   name: string;
   avatar?: string;
   admin?: boolean;
+  /** How they act, when their session was an agent's (the server's browser, Session.view): what the key does is via it. */
+  via?: string;
 }
 
-/** An edit key's value (server/signed.ts): the document (d), and the person: login (l), name (n), picture (a), admin power (m). */
+/**
+ * An edit key's value (server/signed.ts): the document (d), and the person: login (l), name (n), picture (a), admin
+ * power (m), and how they act when their session was an agent's (v).
+ */
 const EditKey = signed(
   "edit-key",
   Schema.Struct({
@@ -30,6 +39,7 @@ const EditKey = signed(
     n: Schema.String,
     a: Schema.optionalKey(Schema.String),
     m: Schema.optionalKey(Schema.Literal(1)),
+    v: Schema.optionalKey(Schema.String),
   }),
   KEY_SECONDS
 );
@@ -50,6 +60,7 @@ export async function editKey(
       n: person.name,
       ...(person.avatar ? { a: person.avatar } : {}),
       ...(person.admin ? { m: 1 as const } : {}),
+      ...(person.via ? { v: person.via } : {}),
     },
     { now }
   );
@@ -60,7 +71,13 @@ export async function editKey(
 export async function readEditKey(secret: string, key: string, owner: string, id: string, now = Date.now()): Promise<KeyPerson | null> {
   const c = await EditKey.open(secret, key, now);
   if (!c || c.d != `${owner.toLowerCase()}/${id}`) return null;
-  return { login: c.l, name: c.n, ...(c.a != null ? { avatar: c.a } : {}), ...(c.m === 1 ? { admin: true } : {}) };
+  return {
+    login: c.l,
+    name: c.n,
+    ...(c.a != null ? { avatar: c.a } : {}),
+    ...(c.m === 1 ? { admin: true } : {}),
+    ...(c.v != null ? { via: c.v } : {}),
+  };
 }
 
 /** Who a key's person is, to the document: this one document, with admin power only if their session had it. */
@@ -68,4 +85,5 @@ export const keyWho = (person: KeyPerson, id: string): Who => ({
   login: person.login,
   ...(person.admin ? { admin: true } : {}),
   onlyDoc: id,
+  ...(person.via ? { via: person.via } : {}),
 });

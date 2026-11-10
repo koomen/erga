@@ -31,6 +31,13 @@ export const fontSite = () => fonts ??= new Promise((resolve) => {
   server.listen(0, "127.0.0.1", () => resolve({ server, port: (server.address() as { port: number }).port }));
 });
 
+/**
+ * The server of the fonts tests. The other site is on this machine, and the server's browser reaches no private
+ * address but Erga's own and the ones its server names (ERGA_RENDER_ALLOW).
+ */
+export const fontsServer = async () =>
+  servers.of("view-fonts", { env: { ERGA_AGENT_MODEL: "script", ERGA_RENDER_ALLOW: `http://127.0.0.1:${(await fontSite()).port}` } });
+
 const LINE = "Hamburgefonstiv 0123";
 const page = (fontPort: number) => `<!doctype html>
 <html><head><meta charset="utf-8"><title>Fonts</title>
@@ -58,7 +65,8 @@ const page = (fontPort: number) => `<!doctype html>
 
 /** The fonts page as a document of its own, open in the editor at 1100×800, the user in light or dark mode; and the agent's tools on it. */
 export async function openFonts(tab: Tab, dark = false): Promise<{ ed: Editor } & AgentTools> {
-  const s = await servers.script(), { port } = await fontSite();
+  const { port } = await fontSite();
+  const s = await fontsServer();
   const dir = join(s.scratch, "docs", `view-${crypto.randomUUID().slice(0, 8)}`);
   mkdirSync(dir, { recursive: true });
   copyFileSync(FONT, join(dir, "local.woff2"));

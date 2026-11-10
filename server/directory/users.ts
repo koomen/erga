@@ -67,6 +67,8 @@ export interface User {
   githubId: number | null;
   /** Their picture (users.avatar, shared/avatars.ts), from their last sign-in; null: none, so their initial shows. */
   avatar: string | null;
+  /** Their sign-in number (users.sessions): a session cookie works only while it carries this number (endSessions). */
+  sessions: number;
 }
 
 /**
@@ -116,6 +118,7 @@ interface Row {
   last_seen: number | null;
   github_id?: number | null;
   avatar?: string | null;
+  sessions?: number | null;
 }
 
 export class Users {
@@ -161,6 +164,16 @@ export class Users {
   async allowed(login: string): Promise<boolean> {
     const user = await this.get(login);
     return user != null && (await this.gate(user));
+  }
+
+  /**
+   * Sign-out: every session cookie of `login` made until now stops (their sign-in number goes up), on every device.
+   * Another server instance remembers the old number for REMEMBER_MS at most.
+   */
+  async endSessions(login: string): Promise<void> {
+    login = login.toLowerCase();
+    await this.sql.run("UPDATE users SET sessions = sessions + 1 WHERE login = ?1", login);
+    this.known.delete(login);
   }
 
   /** Whether `login` is an admin. */
@@ -387,6 +400,7 @@ export class Users {
       lastSeen: r.last_seen == null ? null : Number(r.last_seen),
       githubId: r.github_id == null ? null : Number(r.github_id),
       avatar: safeAvatar(r.avatar),
+      sessions: Number(r.sessions ?? 0),
     };
   }
 
@@ -403,6 +417,7 @@ export class Users {
       lastSeen: null,
       githubId: null,
       avatar: null,
+      sessions: 0,
     };
   }
 }

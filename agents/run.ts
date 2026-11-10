@@ -19,9 +19,11 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { type AiError, LanguageModel, Prompt, Tool, type Response, type Toolkit } from "effect/ai";
 import { fileRefs, messageContent, type Attachment } from "../shared/attach";
+import { noMarks } from "../shared/page-report";
 import { emptyLog, reduce, type Log, type LogEvent } from "../shared/agent-log";
 import type { ToolContent } from "../document/agent";
 import {
+  ASK_LOST,
   CUT,
   Checkpoints,
   STOPPED,
@@ -51,6 +53,11 @@ export interface AgentTool {
   readonly activity?: string;
   readonly description: string;
   readonly parameters: Schema.Top;
+  /**
+   * What the person must approve before this call runs, in words for the panel ("Delete /ada/notes for good"); null
+   * for a call that runs at once. The run stops at such a call until the person answers (agents/turn.ts, asking).
+   */
+  asks?(params: Record<string, unknown>): string | null;
   /** Runs with its arguments decoded; throws (an Error whose message the model reads) when it fails. */
   execute(id: string, params: Record<string, unknown>): Promise<ToolOutput>;
 }
@@ -65,6 +72,11 @@ export interface LoopHooks {
   busy?(on: boolean): void;
   /** The model changed by itself: the one it was on can't be used now (its key went, or the admin turned it off). */
   modelChanged?(): void;
+  /**
+   * Before each model turn on the server's keys: why the turn can't run now (the person's day is at its limit), in
+   * words for the transcript; null when it can. A person's own key has no limit, and never asks.
+   */
+  limit?(): Promise<string | null>;
   /** A model turn's tokens, and whether the person's own key ran it (else the server's). */
   used?(tokens: { input: number; output: number; own: boolean }): void;
 }
@@ -116,6 +128,8 @@ export interface AgentLoop {
   prompt(text: string, context: string | null, files: Attachment[], id?: string): void;
   /** Stop: the run ends after the tool call that runs now; the messages sent before it are never answered. */
   abort(): void;
+  /** The person's answer to the tool call `id` that waits for it (asking): run it, or not. False when no such call waits. */
+  answer(id: string, approve: boolean): boolean;
   /** Forgets the conversation, once the run ended. */
   reset(): Promise<void>;
   /** Goes on with a run that a restart cut off, from its last checkpoint (only while idle). Answers whether a run goes on. */
@@ -131,8 +145,19 @@ export function toolMessage(id: string, name: string, out: ToolOutput, isFailure
   return { role: "tool", content: [{ type: "tool-result", id, name, isFailure, result: text, modelOutput, providerExecuted: false }] };
 }
 
+/**
+ * The most model turns in one run on the server's keys: a run that a page's text or a mistake keeps going ends here,
+ * and the person's next message starts a new one. A person's own key has no limit.
+ */
+export const MAX_STEPS = 100;
+
 /** A call that never began because the person stopped the run: what the model hears. */
 const NOT_RUN = "The person stopped the run before this call began. It did not run.";
+
+/** A call the person did not approve, and the calls of its turn after it: what the model hears. */
+const DENIED = "The person did not approve this call. It did not run. Do not call it again unless they ask for it.";
+const UNANSWERED = "The server restarted before the person answered. This call did not run. Ask them again if they still want it.";
+const AFTER_DENIED = "The person did not approve an earlier call of this turn. This call did not run.";
 
 /** A failure's words as the model reads them. */
 const failure = (text: string): ToolOutput => ({ content: [{ type: "text", text }] });
@@ -223,6 +248,9 @@ export function startLoop(opts: LoopOptions): AgentLoop {
   /** Messages sent after Stop, before the run ended: they start the next run. */
   const held: ChatMessage[] = [];
   let run: Fiber.Fiber<void> | null = null;
+  /** The call the run ended at, which waits for the person's Approve; and the one they approved, until it ran. */
+  let asked: string | null = null;
+  let approved: string | null = null;
   /** Who waits for a new conversation (`reset`). */
   const resets: (() => void)[] = [];
 
@@ -232,7 +260,7 @@ export function startLoop(opts: LoopOptions): AgentLoop {
   const paths = new Map<string, { path: string | null; name: string }>();
   const emit = (ev: LogEvent) => {
     if (ev.t == "tool") {
-      if (ev.status == "running") paths.set(ev.id, { path: ev.path, name: ev.name });
+      if (ev.status == "running" || ev.status == "asking") paths.set(ev.id, { path: ev.path, name: ev.name });
       else ev = { ...ev, path: paths.get(ev.id)?.path ?? null, name: paths.get(ev.id)?.name ?? ev.name };
     }
     checkpoints.logged(reduce(log, ev));
@@ -249,12 +277,21 @@ export function startLoop(opts: LoopOptions): AgentLoop {
   });
 
   /** A call begins: the panel names the operation that a tool of several runs (its `op`). */
-  const toolStarted = (id: string, tool: string, args: unknown) => {
+  const shown = (tool: string, args: unknown) => {
     const op = (args as { op?: unknown } | null)?.op;
     const name = typeof op == "string" ? op : tool;
-    const path = hooks.about(name, args);
+    return { name, path: hooks.about(name, args) };
+  };
+  const toolStarted = (id: string, tool: string, args: unknown) => {
+    const { name, path } = shown(tool, args);
     hooks.toolStarted?.(name, path);
     emit({ t: "tool", id, name, path, status: "running" });
+  };
+  /** What the person must approve before `call` runs, or null: its tool's `asks`, unless they approved it. */
+  const question = (call: { id: string; name: string; params: unknown }): string | null => {
+    if (call.id == approved) return null;
+    const params = call.params && typeof call.params == "object" ? (call.params as Record<string, unknown>) : {};
+    return side?.tools.find((t) => t.name == call.name)?.asks?.(params) ?? null;
   };
   const toolEnded = (id: string, name: string, out: ToolOutput, isError: boolean) => {
     hooks.toolEnded?.();
@@ -312,6 +349,9 @@ export function startLoop(opts: LoopOptions): AgentLoop {
     );
   };
 
+  /** Whether the person's own key runs the model now (else the server's, with its limits). */
+  const ownKey = (c: AgentConfig) => choice != null && usable(c).find((u) => u.choice == choice)?.key == "own";
+
   /** One model turn: streamed into the transcript, then into the messages. Fails with the model's error, in its words. */
   const turn = (s: ModelSide, c: AgentConfig): Effect.Effect<boolean, string> =>
     Effect.gen(function* () {
@@ -333,10 +373,9 @@ export function startLoop(opts: LoopOptions): AgentLoop {
         Effect.catchCause((cause) => Effect.fail(modelError(Cause.squash(cause))))
       );
       const finish = parts.find((p) => p.type == "finish");
-      if (finish && choice) {
-        const own = usable(c).find((u) => u.choice == choice)?.key == "own";
-        hooks.used?.({ input: finish.usage.inputTokens.total ?? 0, output: finish.usage.outputTokens.total ?? 0, own });
-      }
+      // (The scripted model's too, with no model chosen: its tokens count as the server's, for a test of the limit.)
+      if (finish)
+        hooks.used?.({ input: finish.usage.inputTokens.total ?? 0, output: finish.usage.outputTokens.total ?? 0, own: ownKey(c) });
       const answer = encodeMessages(Prompt.fromResponseParts(parts)).content.filter((m) => m.role == "assistant");
       messages = [...messages, ...answer];
       yield* Effect.promise(() => checkpoints.answered());
@@ -345,11 +384,23 @@ export function startLoop(opts: LoopOptions): AgentLoop {
 
   /** A run: turns and their tool calls, until the model is done and no message waits. */
   const runLoop = Effect.gen(function* () {
+    asked = null;
+    let steps = 0;
     hooks.busy?.(true);
     emit({ t: "busy", busy: true });
     yield* Effect.promise(() => checkpoints.started());
     while (true) {
-      for (const call of open()) yield* runCall(call);
+      for (const call of open()) {
+        const q = question(call);
+        if (q != null) {
+          // The run ends here, and the turn waits for the person's answer.
+          asked = call.id;
+          emit({ t: "tool", id: call.id, ...shown(call.name, call.params), status: "asking", detail: q });
+          return;
+        }
+        yield* runCall(call);
+        if (call.id == approved) approved = null;
+      }
       while (steering.length) {
         const m = steering.shift()!;
         messages = [...messages, m];
@@ -361,6 +412,17 @@ export function startLoop(opts: LoopOptions): AgentLoop {
       // The model may not be usable now (its key went, the admin turned it off): never run it then.
       refit(c);
       if (choice == null && c.model != "script") return;
+      // The server's keys have limits: the steps of one run, and the person's day (the hook's).
+      if (!ownKey(c)) {
+        const over =
+          ++steps > MAX_STEPS
+            ? `The agent stopped after ${MAX_STEPS} steps, the most for one run on the server's keys. Say "go on" to continue.`
+            : yield* Effect.promise(() => (hooks.limit?.() ?? Promise.resolve(null)).catch(() => null));
+        if (over) {
+          emit({ t: "error", text: over });
+          return;
+        }
+      }
       const calls = yield* turn(s, c).pipe(
         Effect.catch((text) =>
           Effect.sync(() => {
@@ -388,7 +450,7 @@ export function startLoop(opts: LoopOptions): AgentLoop {
         hooks.busy?.(false);
         emit({ t: "busy", busy: false });
         await checkpoints.ended();
-        step({ e: "ended", steered: steering.length > 0, held: held.length > 0 });
+        step({ e: "ended", steered: steering.length > 0, held: held.length > 0, ...(asked ? { asking: asked } : {}) });
       })
     )
   );
@@ -446,7 +508,21 @@ export function startLoop(opts: LoopOptions): AgentLoop {
       case "release":
         steering.push(...held.splice(0));
         return;
+      case "approve":
+        approved = asked;
+        asked = null;
+        return;
+      case "deny":
+        for (const call of open()) {
+          const first = call.id == asked;
+          messages = [...messages, toolMessage(call.id, call.name, failure(first ? DENIED : AFTER_DENIED), true)];
+          toolEnded(call.id, call.name, failure(first ? "Not approved." : "Not run."), true);
+        }
+        asked = null;
+        void checkpoints.ended();
+        return;
       case "clear": {
+        asked = approved = null;
         steering.length = 0;
         held.length = 0;
         paths.clear();
@@ -511,13 +587,20 @@ export function startLoop(opts: LoopOptions): AgentLoop {
       }
       const message: ChatMessage = {
         role: "user",
-        content: messageContent(context ? `<${opts.tag}>\n${context}\n</${opts.tag}>\n\n${text}` : text, files),
+        // The note has text from the page (its title, the selection): nothing in it can close the note (noMarks),
+        // so none of it reads as the person's words.
+        content: messageContent(context ? `<${opts.tag}>\n${noMarks(context)}\n</${opts.tag}>\n\n${text}` : text, files),
       };
       // Kept until the model has it: a restart before then doesn't lose it.
       checkpoints.queue(message);
       step({ e: "prompt" }, message);
     },
     abort: () => step({ e: "stop" }),
+    answer(id, approve) {
+      if (now.at != "asking" || now.id != id) return false;
+      step({ e: approve ? "approve" : "deny", id });
+      return true;
+    },
     reset() {
       return new Promise<void>((done) => {
         resets.push(done);
@@ -548,8 +631,10 @@ export function startLoop(opts: LoopOptions): AgentLoop {
             messages = [...messages, toolMessage(call.id, call.name, failure(STOPPED), true)];
             toolEnded(call.id, call.name, failure(STOPPED_SHOWN), true);
           } else if (!cut) {
-            messages = [...messages, toolMessage(call.id, call.name, failure(NOT_RUN), true)];
-            toolEnded(call.id, call.name, failure("Stopped."), true);
+            // A call that waited for the person's Approve: the restored transcript closed it (ASK_LOST).
+            const lost = log.items.some((i) => i.kind == "tool" && i.id == call.id && i.detail == ASK_LOST);
+            messages = [...messages, toolMessage(call.id, call.name, failure(lost ? UNANSWERED : NOT_RUN), true)];
+            if (!lost) toolEnded(call.id, call.name, failure("Stopped."), true);
           }
         }
         // What the person sent that the model hadn't had: it has it now, in order.

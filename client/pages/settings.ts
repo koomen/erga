@@ -33,6 +33,7 @@
 import { ago, clock, RECENT, type Version, type Versions } from "./versions";
 import { runTool } from "../common/tools";
 import { esc } from "../../shared/html";
+import { EDITORS_READ_VERSIONS } from "../../document/content";
 import { isModelChoice, MODELS, PROVIDER_LABEL } from "../../shared/models";
 import { openPageHead } from "./page-head";
 import { headUrl, tabTitle, type PageHead } from "../../shared/page-head";
@@ -348,6 +349,11 @@ function mount(host: SettingsHost): Settings {
     } catch (e) {
       if (seq != loadSeq) return;
       loadError = (e as Error).message;
+      // No longer theirs to read (they may only view now): what was shown goes.
+      if (loadError == EDITORS_READ_VERSIONS) {
+        data = null;
+        loaded = new Map();
+      }
       // What was shown stays, saying it may be out of date.
       if (data) histError.textContent = `Couldn't refresh the versions: ${loadError}`;
       else render();

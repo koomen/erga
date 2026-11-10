@@ -67,6 +67,32 @@ test("a cookie that one document's page set for every page (erga-pages.dev isn't
   expect(seen!.headers.get("cookie")).toBeNull();
 });
 
+test("a pass carries the document's share counter, and the document hears the pass's, never the browser's", async () => {
+  const { pagesRoutes, pagesToken, readPagesClaims } = await import("../server/documents/pages-origin.ts");
+  const token = await pagesToken("s", "ada", "abcd1234", "https://erga.dev", undefined, { shares: 3 });
+  expect((await readPagesClaims("s", token, "ada", "abcd1234"))?.shares).toBe(3);
+  // A pass from before the counter: 0.
+  expect((await readPagesClaims("s", await pagesToken("s", "ada", "abcd1234", "https://erga.dev"), "ada", "abcd1234"))?.shares).toBe(0);
+  let seen: Request | null = null;
+  const platform = {
+    secret: "s",
+    directory: { route: async () => ({ id: "abcd1234", owner: "ada", test: false }) },
+    docs: {
+      fetch: async (_: unknown, r: Request) => {
+        seen = r;
+        return new Response("x", { headers: { "Content-Type": "text/plain" } });
+      },
+    },
+  } as never;
+  const { respond } = await import("../server/http.ts");
+  await respond(
+    pagesRoutes({ owner: "ada", id: "abcd1234" }),
+    new Request(`https://abcd1234-ada.erga-pages.dev/t/${token}/data.txt`, { headers: { "x-erga-shares": "9" } }),
+    platform
+  );
+  expect(seen!.headers.get("x-erga-shares")).toBe("3");
+});
+
 test("the app's pages run only the scripts the server wrote in: each <script> has this answer's nonce, new at each answer", async () => {
   const page = () => withSecurity(html(), at("https://erga.dev/docs"), "site", true);
   const made = (body: string) =>

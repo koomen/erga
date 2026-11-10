@@ -11,6 +11,7 @@
 import * as Schema from "effect/Schema";
 import type { DocRow } from "../directory/index.ts";
 import type { DocName } from "../../document/api.ts";
+import { EDITORS_READ_VERSIONS } from "../../document/content.ts";
 import { nameOf } from "../../document/names.ts";
 import { pageAddress, type TreeOp } from "../../document/pages.ts";
 import { globToRegExp } from "../../shared/glob.ts";
@@ -326,6 +327,8 @@ export const EDITOR_OPERATIONS: Operation[] = [
     }),
     run: async (args, caller) => {
       const doc = await findDocument(caller, args.document, "open");
+      // A version may hold text that its authors removed before they shared the document: for those who may edit only.
+      if (!(await mayEdit(caller, doc))) throw new OperationError({ message: EDITORS_READ_VERSIONS, status: 403 });
       // A diff in the document's host: only it knows where this agent's last turn ended.
       if (args.from != null || args.to != null) {
         const { from, to, path, context } = args;
@@ -336,7 +339,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
         limit: typeof args.limit == "number" ? args.limit : undefined,
       });
       if (!state) throw new OperationError({ message: "There's no such document.", status: 404 });
-      return { ...state, canEdit: await mayEdit(caller, doc) };
+      return { ...state, canEdit: true };
     },
   },
   {

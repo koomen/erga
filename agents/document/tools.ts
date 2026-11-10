@@ -15,6 +15,7 @@ import type { LiveAnswer, LiveRequest } from "../../shared/live-page";
 import { readableSize } from "../../shared/bytes";
 import { globToRegExp } from "../../shared/glob";
 import { unifiedDiff } from "../../document/versions";
+import { EDITORS_READ_VERSIONS } from "../../document/content";
 import { EDITS, WorkspaceError, modelPath, type Workspace } from "./workspace";
 import { isPdf, pageCount, pageRange, PAGES_PER_READ, PDF_READ_MAX, pdfPages } from "../../document/pdf";
 import type { FilesAccess, OpenResult, VersionsAccess } from "../../document/agent";
@@ -135,6 +136,7 @@ export function makeTools(
   };
   /** read with `version`: the file's bytes in that version. */
   const oldFile = async (version: string, path: string) => {
+    if (!(opts.canEdit?.() ?? true)) throw new Error(EDITORS_READ_VERSIONS);
     const files = await opts.versions?.files(version);
     if (!files) throw new Error(`There's no version "${version}": versions lists them.`);
     const bytes = files.get(path);
@@ -377,7 +379,7 @@ export function makeTools(
     },
     ...pageTools(opts.view, opts.live),
     ...(opts.open ? [openPage(opts.open)] : []),
-    ...(opts.versions ? [diffVersions(opts.versions, opts.lastTurn ?? (async () => null))] : []),
+    ...(opts.versions ? [diffVersions(opts.versions, opts.lastTurn ?? (async () => null), opts.canEdit ?? (() => true))] : []),
   ] as AgentTool[];
 }
 
@@ -387,7 +389,7 @@ export function makeTools(
  * operation versions' diff (HOST_ONLY), whose arguments are described there (server/operations/editor.ts). Each file's
  * unified diff (binary files only say they changed), cut at about 50KB.
  */
-function diffVersions(versions: VersionsAccess, lastTurn: () => Promise<string | null>): AgentTool {
+function diffVersions(versions: VersionsAccess, lastTurn: () => Promise<string | null>, canEdit: () => boolean): AgentTool {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
   return {
       name: "diff_versions",
@@ -400,6 +402,7 @@ function diffVersions(versions: VersionsAccess, lastTurn: () => Promise<string |
         context: Schema.optionalKey(Schema.Finite),
       }),
       execute: async (_id, p: { from?: string; to?: string; path?: string; context?: number }) => {
+        if (!canEdit()) throw new Error(EDITORS_READ_VERSIONS);
         /** A side of the diff: its name, as the answer says it, and its files. */
         const side = async (ref: string) => {
           const r = ref.trim().toLowerCase().replace(/[\s-]+/g, "_");

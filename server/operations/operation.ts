@@ -54,6 +54,11 @@ export interface Caller {
   readonly auth?: AuthOps;
   /** An outside agent's token, when it calls with one. */
   readonly token?: AgentToken;
+  /**
+   * The call came with a page's edit key (server/api.ts, fromPage). The page's own scripts can send one as the person,
+   * so it never asks the person's agent by itself (comments.ts).
+   */
+  readonly fromPage?: true;
   /** A person's own agent hears each document its tools ran in (callDocument), to say when its turn is done there. */
   readonly ranIn?: (doc: Route) => void;
 }
@@ -74,6 +79,12 @@ export interface Operation {
   readonly wide?: boolean;
   /** Checks its own arguments (files take more than their schema says): only the required ones are checked first. */
   readonly loose?: boolean;
+  /**
+   * What the person's own agent must have approved before it runs this call, in words for their panel ("Delete
+   * /ada/notes for good"); null for a call that needs no approval. The agent's run stops at such a call until the
+   * person clicks Approve there (agents/turn.ts, asking). The pages and outside agents with a token run it at once.
+   */
+  readonly asks?: (args: Record<string, unknown>) => string | null;
   /** Where a person does it in the UI ("Users: Add user"): the audit lists it (tests/agent-actions.test.ts). */
   readonly ui: string;
   /** Its answer: text, JSON, or content items. Throws an OperationError (or NotAllowed, ConfigError) to act on. */
@@ -131,6 +142,9 @@ export const DOCUMENT = Schema.optionalKey(
 /** The same, always given. */
 export const ANY_DOCUMENT = str("The document: /<owner>/<slug>, its URL or id, or one of your slugs.");
 export const LOGIN = str("A GitHub login");
+
+/** A value the agent gave, as the person reads it in the question their panel asks (an operation's `asks`). */
+export const said = (v: unknown) => (typeof v == "string" ? v : (JSON.stringify(v) ?? "(none)")).slice(0, 200);
 
 export const iso = (t: number | null | undefined) => (t ? new Date(t).toISOString() : null);
 

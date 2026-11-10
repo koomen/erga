@@ -7,6 +7,8 @@
 /** What the person asks, in the shell's words. */
 export const FIX_REPORTED = "Fix the problem with this page that the editor reported (the page-report in the editor block).";
 
+/** Text from a page, with no character that can open or close a block the agent reads (‹ › for < >). */
+export const noMarks = (text: string) => text.replace(/[<>]/g, (c) => (c == "<" ? "‹" : "›"));
+
 /** The report, as a block the agent reads as data: nothing in it can close the block. */
-export const pageReport = (report: string) =>
-  `<page-report>\n${report.slice(0, 2000).replace(/[<>]/g, (c) => (c == "<" ? "‹" : "›"))}\n</page-report>`;
+export const pageReport = (report: string) => `<page-report>\n${noMarks(report.slice(0, 2000))}\n</page-report>`;

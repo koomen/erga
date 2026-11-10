@@ -25,6 +25,8 @@ export interface ChatOptions {
   verbs: Record<string, [string, string]>;
   /** The tooltip on a call an outside agent made (the share button's), as "External agent:". */
   externalTip?: string;
+  /** The person's click on Approve or Deny, for the tool call `id` that waits for it. */
+  answer?: (id: string, approve: boolean) => void;
   /** The alt text of a picture a tool returned. */
   imageAlt?: string;
 }
@@ -88,7 +90,11 @@ export function chat(opts: ChatOptions): Chat {
         item.via == "external"
           ? `<span class="via" title="${esc(opts.externalTip ?? "An outside agent, working as your agent")}">External agent:</span> `
           : "";
-      if (retried(i)) {
+      if (item.status == "asking") {
+        // The agent's call waits for the person: what it would do, in the server's words, and their answer.
+        el.classList.add("asking");
+        el.innerHTML = `<span>Your agent asks to:<span class="detail">${esc(item.detail ?? item.name)}</span></span><span class="ask-acts"><button type="button" data-answer="deny" data-call="${esc(item.id)}">Deny</button><button type="button" class="run" data-answer="approve" data-call="${esc(item.id)}">Approve</button></span>`;
+      } else if (retried(i)) {
         el.classList.add("retried");
         el.title = item.detail ?? "";
         el.innerHTML = `<span>${via}${doing}${what} didn't apply; retried</span>`;
@@ -133,6 +139,13 @@ export function chat(opts: ChatOptions): Chat {
   new ResizeObserver(() => pin()).observe(logEl);
   logEl.addEventListener("load", () => pin(), true); // screenshots arrive after their event
   jump.addEventListener("click", () => follow(true));
+  // Approve or Deny on a call that waits (one listener on the log: a log drawn before this script ran has the buttons too).
+  logEl.addEventListener("click", (e) => {
+    const b = (e.target as Element).closest<HTMLButtonElement>("button[data-answer]");
+    if (!b || !e.isTrusted) return;
+    for (const x of b.parentElement!.querySelectorAll("button")) x.disabled = true;
+    opts.answer?.(b.dataset.call ?? "", b.dataset.answer == "approve");
+  });
 
   function render() {
     const next = log.items.map((it, i) => renderItem(it, i));

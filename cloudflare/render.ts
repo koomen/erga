@@ -7,6 +7,12 @@
 // client/page-tools/capture.ts waits for its fonts, shows a step and holds its animations; the browser takes each
 // picture itself, of the whole window.
 //
+// Trap: a browser of our own (the dev server's Chrome, the AWS host's) is on the server's machine, so the render
+// refuses each request to a private address but Erga's own two origins (`own`; shared/private-address.ts). A test
+// whose page loads from another site on 127.0.0.1 names that origin in its server's ERGA_RENDER_ALLOW
+// (e2e/full/page/view-page.ts, fontsServer). The check reads the address as written: a public name that resolves to a
+// private address, and a WebSocket, still pass.
+//
 // Each render logs its time in the browser (Cloudflare bills Browser Rendering by the browser's time): one JSON line,
 // {"render": ...}.
 //
@@ -28,6 +34,7 @@ import {
   type ViewResult,
 } from "../shared/agent-log";
 import { sourceDigest } from "../shared/page-html";
+import { reachable } from "../shared/private-address";
 import { pagesOrigin, readPagesClaims } from "../server/documents/index";
 import { cookieName, SESSION_COOKIE, viewCookie } from "../server/identity/index";
 import { inlineCall, loadAssets, readerPage } from "../server/pages/index";
@@ -64,6 +71,12 @@ interface Place {
   pages: string;
   cookie: { name: string; value: string; url: string; path: string; httpOnly: true; secure: boolean; sameSite: "Lax" };
   secret: string;
+  /**
+   * A browser of our own (the AWS host's Chrome, local development's), which is on the server's machine and in its
+   * network: the only origins of a private address that it may ask (Erga's own two). Null for Cloudflare's browser,
+   * which sees only the public internet.
+   */
+  own: string[] | null;
 }
 
 async function render(env: Env, mine: ReturnType<typeof browsers>, job: Job): Promise<ViewResult> {
@@ -73,10 +86,11 @@ async function render(env: Env, mine: ReturnType<typeof browsers>, job: Job): Pr
   // The editor's files' addresses, for the frame's page (readerPage): this object's isolate may not be the Worker's.
   await loadAssets(p, app);
   const rest = pageAddress(job.path);
+  const pages = pagesOrigin(job.owner, job.id, app, p);
   const place: Place = {
     app,
     shell: `${app.origin}/d/${job.id}${rest ? `/${encodePath(rest)}` : ""}${job.req.editor ? "?edit" : ""}`,
-    pages: pagesOrigin(job.owner, job.id, app, p),
+    pages,
     cookie: {
       name: cookieName(app, SESSION_COOKIE),
       value: await viewCookie(p.secret, job.by, job.id, t0),
@@ -87,6 +101,7 @@ async function render(env: Env, mine: ReturnType<typeof browsers>, job: Job): Pr
       sameSite: "Lax",
     },
     secret: p.secret,
+    own: env.BROWSER ? null : [app.origin, new URL(pages).origin, ...(env.ERGA_RENDER_ALLOW ?? "").split(",").filter(Boolean)],
   };
   let how = "none";
   let opened = 0;
@@ -153,7 +168,7 @@ type Runner = <T>(expression: string) => Promise<T>;
  * viewer's process. Its errors and console's join `errors`. It runs code in the frame's page as it is now (a link in the
  * frame may have opened another).
  */
-async function watchFrame(page: Page, pages: string, scheme: string, errors: string[]) {
+async function watchFrame(page: Page, pages: string, scheme: string, errors: string[], guard: ((target: Page) => Promise<void>) | null) {
   let target: Page | null = null;
   const contexts = new Map<string, number>();
   const onError = (message: string) => errors.push(message);
@@ -164,13 +179,14 @@ async function watchFrame(page: Page, pages: string, scheme: string, errors: str
     if (method == "Runtime.executionContextCreated" && e.context.auxData?.isDefault) contexts.set(e.context.auxData.frameId, e.context.id);
   });
   await page.onFrames(async (frame, url) => {
-    if (!url.startsWith(pages) && url != "about:blank" && url != "") return void frame.detach();
+    // (A guarded frame of another site keeps its listeners: they refuse its requests to private addresses.)
+    if (!url.startsWith(pages) && url != "about:blank" && url != "") return guard ? undefined : void frame.detach();
     target?.detach();
     target = frame;
     frame.onErrors(onError, onConsole);
     await Promise.all(["Runtime.enable", "Log.enable"].map((m) => frame.send(m)));
     await frame.colorScheme(scheme);
-  });
+  }, guard ?? undefined);
   const run: Runner = async <T>(expression: string) => {
     if (target) return target.evaluate<T>(expression);
     // The same process: the frame's own context, by its frame's id (the viewer's only frame, iframe#frame).
@@ -194,7 +210,30 @@ async function renderIn(page: Page, place: Place, job: Job): Promise<ViewResult>
     return { errors: [], error: `Give at most ${FRAMES.count} times, each from 0 to ${FRAMES.max} ms.` };
   if (req.editor && req.preview) return { errors: [], error: "A preview shows in the viewer only: leave out editor, or edits." };
   const errors: string[] = [];
-  const frame = await watchFrame(page, place.pages, scheme, errors);
+  const own = place.own;
+  /** Refuses a paused request to a private address; answers whether it did. */
+  const refused = (target: Page, e: { requestId: string; request: { url: string } }) => {
+    if (!own || reachable(e.request.url, own)) return false;
+    target.send("Fetch.failRequest", { requestId: e.requestId, errorReason: "AddressUnreachable" }).catch(() => {});
+    return true;
+  };
+  /**
+   * Our own browser: each target of the page (a frame of another site, a frame in it, a worker) has every request
+   * paused, and one to a private address fails (shared/private-address.ts). Before any of its code runs.
+   */
+  const guard = own
+    ? async (target: Page): Promise<void> => {
+        target.on((method, e) => {
+          if (method == "Fetch.requestPaused" && !refused(target, e as never))
+            target.send("Fetch.continueRequest", { requestId: e.requestId }).catch(() => {});
+        });
+        await Promise.all([
+          target.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] }),
+          target.onFrames(async () => {}, guard!),
+        ]).catch(() => {});
+      }
+    : null;
+  const frame = await watchFrame(page, place.pages, scheme, errors, guard);
   try {
     // The viewer's own errors too: in a frame of its own process, the page's are apart, and these say they're the viewer's.
     page.onErrors(
@@ -212,15 +251,21 @@ async function renderIn(page: Page, place: Place, job: Job): Promise<ViewResult>
       // The viewer's Content-Security-Policy allows no eval, which the expression needs (client/page-tools/evaluate.ts).
       req.shell && req.evaluate != null ? page.send("Page.setBypassCSP", { enabled: true }) : null,
       // The frame's page comes from the room's text (the agent's latest edits, or a preview): its first request is answered here.
+      // (Our own browser: every request of the window is paused, and one to a private address fails.)
       page.send("Fetch.enable", {
-        patterns: [{ urlPattern: `${place.pages}/t/*`, resourceType: "Document", requestStage: "Request" }],
+        patterns: [
+          own
+            ? { urlPattern: "*", requestStage: "Request" }
+            : { urlPattern: `${place.pages}/t/*`, resourceType: "Document", requestStage: "Request" },
+        ],
       }),
     ]);
     let served = false;
     page.on((method, e) => {
-      if (method != "Fetch.requestPaused") return;
+      if (method != "Fetch.requestPaused" || refused(page, e as never)) return;
       void (async () => {
-        const [, token, file] = /^\/t\/([^/]+)\/(.*)$/.exec(new URL(e.request.url).pathname) ?? [];
+        const mine = e.resourceType == "Document" && e.request.url.startsWith(`${place.pages}/t/`);
+        const [, token, file] = (mine ? /^\/t\/([^/]+)\/(.*)$/.exec(new URL(e.request.url).pathname) : null) ?? [];
         const claims = !served && token ? await readPagesClaims(place.secret, token, job.owner, job.id) : null;
         if (!claims || safeDecode(file) != job.path) return page.send("Fetch.continueRequest", { requestId: e.requestId });
         served = true;

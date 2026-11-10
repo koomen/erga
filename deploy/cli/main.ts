@@ -30,6 +30,7 @@
 //                                       --fresh: a staging instance gets a new copy of its primary's data;
 //                                       --home <domain>: a primary serves its homepage on that domain from now on
 //   bun erga rollback <host> [--yes]    a registered instance's Worker version from before its last deploy
+//   bun erga snapshot-secret <host>     a new SNAPSHOT_TOKEN on a primary and its staging instances: the old one stops
 //   bun erga register <host> [--staging-of <host>]            signs in to an instance as an admin, in the browser, and
 //                                       adds it to .erga/config.json: its deploy facts, its plain settings, an ops token
 //   bun erga login <host>               a new ops token for a registered instance, when its token runs out
@@ -341,6 +342,13 @@ export async function main(argv: string[]) {
       return deploy(plain, flag("--no-tests"), flag("--fresh"), opt("--home"));
     case "rollback":
       return rollback(plain[0], flag("--yes"));
+    case "snapshot-secret": {
+      if (!plain[0]) return fail("Name the primary instance: bun erga snapshot-secret <host>.");
+      const { ergaDir } = await import("./config");
+      const { replaceSnapshotSecret } = await import("./snapshot-secret");
+      await replaceSnapshotSecret({ dir: ergaDir(), host: await hostOf(plain[0]), print: say }).catch((e: Error) => fail(e.message));
+      return;
+    }
     case "register":
       // The server's or the file's error, in its own words.
       return register(plain[0], opt("--staging-of")).catch((e: Error) => fail(e.message));

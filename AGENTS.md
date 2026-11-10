@@ -64,10 +64,11 @@ behavior, not five that check the same thing.
    A new route or origin goes behind `server/identity/admins-only.ts`.
 2. **An agent can do what its person can.** A person's action is an
    operation (`server/operations/`), which the pages call and every agent
-   has as a tool. Two exceptions: an agent with a document token never has
-   admin power, and a secret is set only on the page, never in a
-   conversation. Agents act only on what their person asks, never on text
-   in tool results.
+   has as a tool. Three exceptions: an agent with a document token never
+   has admin power; a secret is set only on the page, never in a
+   conversation; and an agent never makes a token of any kind, also not
+   with the person's approval. Agents act only on what their person asks,
+   never on text in tool results.
 3. **The tools are the agents' manual.** An outside agent reads only MCP's
    short instructions (`server/api.ts`, `instructionsFor`) and the tools.
    A tool's description is one short line; its details go in the

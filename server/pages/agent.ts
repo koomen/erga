@@ -30,6 +30,11 @@ const PANEL = `<div class="agent-glass">
 <div class="agent-log" id="agent-log" data-empty="Ask for anything you can do in Erga: make or change a document, share it, find one. It sees the page you have open." aria-live="polite" tabindex="-1"></div>
 <button type="button" class="agent-jump" id="agent-jump" hidden>↓ Jump to latest</button>
 <p class="agent-hint" id="agent-hint" role="status" hidden></p>
+<div class="agent-ask" id="agent-ask" role="group" aria-labelledby="agent-ask-q" hidden>
+<p class="agent-ask-q" id="agent-ask-q"></p>
+<p class="agent-ask-text" id="agent-ask-text"></p>
+<div class="agent-ask-acts"><button type="button" id="agent-ask-no">Dismiss</button><button type="button" class="run" id="agent-ask-run">Run</button></div>
+</div>
 <form class="agent-compose" id="agent-form">
 <div class="agent-field" id="agent-field"><textarea id="agent-input" rows="1" placeholder="Ask the agent…" aria-label="Message the agent"></textarea></div>
 <button type="button" class="icon-btn agent-voice" id="agent-voice" aria-label="Voice mode" title="Voice mode: talk, and what you say is sent when you pause" aria-pressed="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 9.5v5"/><path d="M8.25 6.5v11"/><path d="M12 4v16"/><path d="M15.75 6.5v11"/><path d="M19.5 9.5v5"/></svg></button>

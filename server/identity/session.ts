@@ -13,7 +13,8 @@
 //   - else a view cookie (viewCookie): the session the server's browser holds while it renders a document's page in
 //     the viewer for an agent (view_page, cloudflare/render.ts). It names the person and one document, holds for a few
 //     minutes, and signs them in only on that document's own paths (its viewer and its API), never with admin power
-//     and never with their agent (Session.view). Anywhere else it signs in nobody, not even the dev login;
+//     and never with their agent (Session.view). It runs an agent's code, so it acts as an agent (whoOf) and makes no
+//     token. Anywhere else it signs in nobody, not even the dev login;
 //   - in local development, someone always: the person a tab names (?user=Ada,
 //     carried along in its links), else whoever this browser signed in as,
 //     else the dev login, unless the browser signed out.
@@ -34,13 +35,22 @@ export const SIGNED_OUT = "erga_signed_out";
  */
 const SessionCookie = signed(
   "session",
-  Schema.Struct({ login: Schema.String, name: Schema.String, doc: Schema.optionalKey(Schema.String) }),
+  // n: the person's sign-in number when it was made (Users.endSessions); none counts as 0.
+  Schema.Struct({
+    login: Schema.String,
+    name: Schema.String,
+    doc: Schema.optionalKey(Schema.String),
+    n: Schema.optionalKey(Schema.Number),
+  }),
   30 * 24 * 60 * 60
 );
 
-/** The session cookie's value for someone who signed in, good for `seconds`. */
-export const sessionCookie = (secret: string, who: { login: string; name: string }, seconds: number) =>
-  SessionCookie.seal(secret, { login: who.login, name: who.name }, { seconds });
+/**
+ * The session cookie's value for someone who signed in, good for `seconds`, while their sign-in number is `n` (sign-out
+ * raises it; 0: they never signed out, as deploy/aws/check.ts's person).
+ */
+export const sessionCookie = (secret: string, who: { login: string; name: string }, seconds: number, n = 0) =>
+  SessionCookie.seal(secret, { login: who.login, name: who.name, n }, { seconds });
 
 /** Asked more than once for one request (the route, then the account corner): worked out once. */
 const sessions = new WeakMap<Request, Promise<Session | null>>();
@@ -90,6 +100,8 @@ async function cookieSession(platform: Platform, request: Request, dev: boolean,
     if (doc != null && !(await onDocument(platform, url.pathname, doc))) return "refused";
     // Locally, someone with no row yet gets one (findSession); anyone with one passes the access rules, as on a server.
     if (!((dev && !(await users.get(s.login))) || (await users.allowed(s.login)))) return null;
+    // Their sign-out since ended it, on every device (Users.endSessions): the cookie has an older sign-in number.
+    if (doc == null && ((await users.get(s.login))?.sessions ?? 0) != (s.n ?? 0)) return null;
     return doc == null ? { login: s.login, name: s.name } : { login: s.login, name: s.name, onlyDoc: doc, view: true };
   } catch { return null; }
 }

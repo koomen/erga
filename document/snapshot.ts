@@ -4,9 +4,10 @@
 // with deploy/pipeline/copy-documents.ts). The database is copied by D1 itself (export
 // and import); a Durable Object's storage can only be read from inside the
 // Worker that owns it, so production serves a read-only snapshot endpoint and
-// staging an import one, both behind a shared bearer token (SNAPSHOT_TOKEN,
-// set on both Workers by hand: bunx cf workers secrets update SNAPSHOT_TOKEN). With it staging can read every
-// production document, so it is at least 32 characters, compared in constant time:
+// staging an import one, both behind a shared secret (SNAPSHOT_TOKEN, on both Workers; `bun erga snapshot-secret
+// <host>` replaces it on both). With it staging can read every production document, so it is at least 32 characters,
+// and it never travels: each request is signed with it (snapshotAuth: the time, the method, the path and the body),
+// and a signature holds for SNAPSHOT_MINUTES, for that one request. A request someone kept opens nothing later.
 //
 //   POST /api/snapshot/docs          {ids, after?}  → {docs: [{id, entries, alarm, more?}], done, failed}
 //                                                     any server with SNAPSHOT_TOKEN: read-only
@@ -38,8 +39,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { Base64 } from "effect/encoding";
-import { sameText } from "../shared/bytes.ts";
+import { Base64, Base64Url } from "effect/encoding";
+import { sameText, sha256Hex } from "../shared/bytes.ts";
 
 /** One value of a document's storage, as JSON: its bytes as base64 (`b`), or the value itself (`j`). */
 const Encoded = Schema.Union([Schema.Struct({ b: Schema.String }), Schema.Struct({ j: Schema.Unknown })]);
@@ -112,12 +113,32 @@ export async function exportPage(id: string, page: Page, alarm: number | null, l
   }
 }
 
-/** The snapshot endpoints' guard: 404 with no SNAPSHOT_TOKEN (or a short one), 403 without it as the bearer, else null. */
-export function snapshotRefused(request: Request, token: string | undefined): Response | null {
+/** How long a signed snapshot request holds, in minutes (and how far the two servers' clocks may differ). */
+export const SNAPSHOT_MINUTES = 5;
+
+/** What a request's signature covers: when, and exactly which request (its method, path and body). */
+async function mac(secret: string, at: number, method: string, url: string, body: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const text = `${at}\n${method.toUpperCase()}\n${new URL(url).pathname}\n${await sha256Hex(body)}`;
+  return Base64Url.encode(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(text))));
+}
+
+/** The Authorization header of one snapshot request, signed with the servers' shared secret: good for SNAPSHOT_MINUTES. */
+export const snapshotAuth = async (secret: string, method: string, url: string, body = "", now = Date.now()) =>
+  `Erga-Snapshot ${now}.${await mac(secret.trim(), now, method, url, body)}`;
+
+/**
+ * The snapshot endpoints' guard: 404 with no SNAPSHOT_TOKEN (or a short one); 403 unless the request (with `body`) is
+ * signed with it, no more than SNAPSHOT_MINUTES ago; else null.
+ */
+export async function snapshotRefused(request: Request, token: string | undefined, body = "", now = Date.now()): Promise<Response | null> {
   const want = token?.trim();
   if (!want || want.length < 32) return Response.json({ error: "Not found" }, { status: 404 });
-  const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";
-  return sameText(bearer, want) ? null : Response.json({ error: "Not allowed" }, { status: 403 });
+  const [, at, sig] = /^Erga-Snapshot\s+(\d{1,16})\.([A-Za-z0-9_-]+)\s*$/.exec(request.headers.get("authorization") ?? "") ?? [];
+  const fresh = at != null && Math.abs(now - Number(at)) <= SNAPSHOT_MINUTES * 60_000;
+  return fresh && sameText(sig, await mac(want, Number(at), request.method, request.url, body))
+    ? null
+    : Response.json({ error: "Not allowed" }, { status: 403 });
 }
 
 /**
@@ -131,10 +152,16 @@ export async function snapshotRoutes(
 ): Promise<Response | null> {
   const path = new URL(request.url).pathname.replace(/\/+$/, "");
   if (path != "/api/snapshot/docs" && path != "/api/snapshot/docs/import") return null;
-  const refused = snapshotRefused(request, o.token);
+  const text = await request.text().catch(() => "");
+  const refused = await snapshotRefused(request, o.token, text);
   if (refused) return refused;
   if (request.method != "POST") return Response.json({ error: "POST only" }, { status: 405 });
-  const body: unknown = await request.json().catch(() => null);
+  let body: unknown = null;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    /* not JSON: nothing asked */
+  }
   if (path == "/api/snapshot/docs") return Effect.runPromise(exportDocs(body, o.store, o.budget ?? SNAPSHOT_BUDGET));
   if (!o.importAllowed) return Response.json({ error: "Not found" }, { status: 404 });
   return Effect.runPromise(importDocs(body, o.store));

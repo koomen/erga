@@ -180,7 +180,7 @@ test("on staging the app finds and registers without a cookie, and an admin's si
     method: "POST",
     redirect: "manual",
     headers: { Origin: root },
-    body: new URLSearchParams({ code: userCode, answer: "approve" }),
+    body: new URLSearchParams({ code: userCode, answer: "approve", scope: "admin" }),
   });
   expect(sent.status).toBe(303);
   const code = new URL(sent.headers.get("location")!).searchParams.get("code")!;
@@ -190,7 +190,7 @@ test("on staging the app finds and registers without a cookie, and an admin's si
 });
 
 /** The whole sign-in, as an MCP app does it, by `cookie`'s person (none: the dev login, an admin): the approval card's text and the token. */
-async function signInOver(root: string, cookie: string | null) {
+async function signInOver(root: string, cookie: string | null, give?: "admin") {
   const as = await discover(root);
   const redirect = "http://127.0.0.1:9/callback";
   const client = await register(as.registration_endpoint, redirect);
@@ -208,7 +208,7 @@ async function signInOver(root: string, cookie: string | null) {
     method: "POST",
     redirect: "manual",
     headers: { ...headers, Origin: root },
-    body: new URLSearchParams({ code: userCode, answer: "approve" }),
+    body: new URLSearchParams({ code: userCode, answer: "approve", ...(give ? { scope: give } : {}) }),
   });
   expect(sent.status).toBe(303);
   const code = new URL(sent.headers.get("location")!).searchParams.get("code")!;
@@ -224,11 +224,17 @@ const whoami = async (root: string, token: string) =>
 
 test("the MCP sign-in gives the person's own power: an admin's app gets admin power and the admin tools; anyone else's, documents", async () => {
   const root = (await servers.main()).root;
-  // The admin (the dev login): the card says what the app gets, and the token is admin scope, with no expiry.
-  const admin = await signInOver(root, null);
+  // The admin (the dev login) who chooses admin power: the card says what the app gets, and the token is admin scope,
+  // for 30 days at most.
+  const admin = await signInOver(root, null, "admin");
   expect(admin.card).toContain("all your documents, and admin power");
   expect(admin.scope).toBe("admin");
-  expect(await whoami(root, admin.token)).toMatchObject({ adminPower: true, token: { scope: "admin", expires: null } });
+  const mine = await whoami(root, admin.token);
+  expect(mine).toMatchObject({ adminPower: true, token: { scope: "admin" } });
+  const days = (Date.parse(mine.token.expires!) - Date.now()) / 86_400_000;
+  expect(days > 29 && days <= 30).toBe(true);
+  // An approval that names no scope (a form that isn't the card's) gives documents only, never admin power.
+  expect((await signInOver(root, null)).scope).toBe("documents");
   const names = (await mcp(root, admin.token, "tools/list")).result.tools.map((t: { name: string }) => t.name);
   expect(names).toEqual(expect.arrayContaining(["settings", "people"]));
 
@@ -242,7 +248,7 @@ test("the MCP sign-in gives the person's own power: an admin's app gets admin po
   expect(theirs).not.toContain("settings");
 });
 
-test("an admin can give the app documents only: the card offers the choice, and the token has no admin power", async ({ tab }) => {
+test("the card gives an admin's app documents only unless the admin chooses admin power", async ({ tab }) => {
   const root = (await servers.main()).root;
   const as = await discover(root);
   const redirect = "http://127.0.0.1:9/callback";
@@ -252,9 +258,10 @@ test("an admin can give the app documents only: the card offers the choice, and 
   await page.goto(
     `${as.authorization_endpoint}?${new URLSearchParams({ response_type: "code", client_id: client, redirect_uri: redirect, code_challenge: challenge, code_challenge_method: "S256" })}`
   );
-  // Admin power is the default; the admin picks documents only, as a person does, and approves.
-  expect(await page.getByLabel(/Admin power/).isChecked()).toBe(true);
-  await page.getByLabel(/Documents only/).check();
+  // Documents only is the default: one click on Approve never gives admin power. The card says when each choice ends.
+  expect(await page.getByLabel(/Documents only/).isChecked()).toBe(true);
+  expect(await page.getByLabel(/Admin power/).isChecked()).toBe(false);
+  expect(await page.locator("dl.grant").innerText()).toContain("Admin power: 30 days");
   const [sent] = await Promise.all([page.waitForRequest((r) => r.url().startsWith(redirect)), page.click("button[value=approve]")]);
   const code = new URL(sent.url()).searchParams.get("code")!;
   const got = await trade(as.token_endpoint, { code, client_id: client, redirect_uri: redirect, code_verifier: verifier });

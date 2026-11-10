@@ -7,6 +7,8 @@
 //   their admin agent           the admin pages' agent before each person had one (the change log's older rows)
 //   a shared agent (<label>)    an agent with one of their tokens: the server's
 //                               API (/api/tools), MCP, Git pushes
+//   an agent's view of the page the server's browser, which renders a page for
+//                               one of their agents (view_page, eval_in_page)
 //   the factory (task #<n>)     a factory VM, before the factory went (the change log's older rows)
 //
 // Shown together: "koomen, via their agent". Nothing is attributed to an
@@ -22,6 +24,8 @@ export const VIA = {
   admin: "their admin agent",
   /** An agent with one of their tokens: its label. */
   token: (label: string) => `a shared agent (${label.trim() || "no label"})`,
+  /** The server's browser, rendering a page for one of their agents, whose code it may run (Session.view). */
+  view: "an agent's view of the page",
   /** A push on GitHub (the webhook), synced back into Erga's repository. */
   github: "a push on GitHub",
 } as const;
@@ -43,3 +47,15 @@ export function changeLogEntry(at: number, by: string, via: string | null | unde
 
 /** Someone acting: their login, and how when not in person (VIA). */
 export interface Act { login: string; via?: string | null }
+
+/**
+ * What a person's agent panel asks them: whether to run this comment of theirs, with @erga, as a request. For a
+ * comment sent with a page's edit key (server/operations/comments.ts), which starts no agent by itself.
+ */
+export interface CommentAsk {
+  doc: string;
+  title: string;
+  thread: string;
+  comment: string;
+  text: string;
+}

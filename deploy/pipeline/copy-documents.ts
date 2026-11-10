@@ -3,7 +3,7 @@
 // endpoints of both (document/snapshot.ts).
 
 import { DeployError, type Fetch } from "./cloudflare-api";
-import type { DocSnapshot } from "../../document/snapshot";
+import { snapshotAuth, type DocSnapshot } from "../../document/snapshot";
 
 /**
  * Copies documents' storage from the server at `from` to the one at `to`:
@@ -23,12 +23,16 @@ export async function copyDocuments(o: {
   fetch: Fetch;
   batch?: number;
 }): Promise<{ copied: number; missing: number; wiped: number; failed: { id: string; error: string }[]; unsupported: boolean }> {
-  const headers = { Authorization: `Bearer ${o.token}`, "Content-Type": "application/json" };
+  // Each request is signed with the secret, which never travels (document/snapshot.ts, snapshotAuth).
+  const post = async (url: string, body: string) =>
+    o.fetch(url, {
+      method: "POST",
+      headers: { Authorization: await snapshotAuth(o.token, "POST", url, body), "Content-Type": "application/json" },
+      body,
+    });
   const size = o.batch ?? 25;
   const put = async (docs: DocSnapshot[], wipe: string[]) => {
-    const r = await o
-      .fetch(`${o.to}/api/snapshot/docs/import`, { method: "POST", headers, body: JSON.stringify({ docs, wipe }) })
-      .catch((e) => {
+    const r = await post(`${o.to}/api/snapshot/docs/import`, JSON.stringify({ docs, wipe })).catch((e) => {
         throw new DeployError({ message: `Couldn't reach ${o.to} to copy documents in: ${(e as Error).message}` });
       });
     if (!r.ok)
@@ -45,9 +49,7 @@ export async function copyDocuments(o: {
     first = true;
   while (queue.length) {
     const ids = queue.slice(0, size);
-    const r = await o
-      .fetch(`${o.from}/api/snapshot/docs`, { method: "POST", headers, body: JSON.stringify(after == null ? { ids } : { ids, after }) })
-      .catch((e) => {
+    const r = await post(`${o.from}/api/snapshot/docs`, JSON.stringify(after == null ? { ids } : { ids, after })).catch((e) => {
         throw new DeployError({ message: `Couldn't reach ${o.from} to read its documents: ${(e as Error).message}` });
       });
     if (r.status == 404 && first) {
@@ -57,7 +59,7 @@ export async function copyDocuments(o: {
     first = false;
     if (!r.ok)
       throw new DeployError({
-        message: `${o.from} didn't give its documents' snapshot (it answered ${r.status}${r.status == 403 ? ": the two servers' SNAPSHOT_TOKEN differ" : ""}).`,
+        message: `${o.from} didn't give its documents' snapshot (it answered ${r.status}${r.status == 403 ? ": the two servers' SNAPSHOT_TOKEN differ, their clocks do, or it runs a version from before signed requests" : ""}).`,
       });
     const answer = (await r.json()) as { docs: DocSnapshot[]; done?: number; failed?: { id: string; error: string }[] };
     // An older source sends each document whole, and no `done`.

@@ -164,6 +164,13 @@ export const SETTINGS = {
     },
     choices: ["server", "own"],
   }),
+  agent_daily_tokens: setting<number>({
+    label: "Agents: daily token limit for each person",
+    description:
+      "The most tokens (input and output) that one person's agent may use each day (UTC) on the server's keys. Then their agent stops until midnight UTC, and says why. A person's own key has no limit.",
+    default: 30_000_000,
+    parse: integer(1, 100_000_000_000),
+  }),
   agent_models_off: setting<string[]>({
     label: "Models a server key doesn't run",
     description: `The models that a server key doesn't run; a person's own key still runs them. A list of: ${Object.keys(MODELS).join(", ")}.`,
