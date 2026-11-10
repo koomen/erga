@@ -468,8 +468,12 @@ function connect() {
   ws.onmessage = (e) => {
     let m: { type?: string; ev?: LogEvent; ask?: CommentAsk } & Partial<AgentState>;
     try { m = JSON.parse(String(e.data)); } catch { return; }
-    // The model switched, from another tab of the person's.
-    if (m.type == "model") renderModel({ ...m, enabled: true });
+    // The model switched, from another tab of the person's. (Heard, as the agent's events are: load() asks again, so
+    // an answer from before the switch never puts the old model back.)
+    if (m.type == "model") {
+      heard++;
+      renderModel({ ...m, enabled: true });
+    }
     if (m.type == "comment-ask" && m.ask) showAsk(m.ask);
     if (m.type == "agent" && m.ev) {
       heard++;
