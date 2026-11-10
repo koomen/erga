@@ -38,7 +38,6 @@
 // such a document has.
 
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import { nameOf, UNTITLED, type NamedRow, type NamesDirectory } from "./names.ts";
 import { DocumentAccess, personOf, type Asker, type Person, type Role } from "./access.ts";
 import { DocumentView, type ViewAnswer } from "./view.ts";
@@ -56,6 +55,7 @@ import { decodeValue, exportPage, type DocSnapshot, type Page } from "./snapshot
 import { cleanRel, kindOf, titleOf, type DocKind } from "./pages.ts";
 import { throttle } from "../shared/time.ts";
 import { later } from "./later.ts";
+import { idleStep, RESTING, type Idle, type IdleEvent } from "./idle.ts";
 import { History } from "./history.ts";
 import { expiryOf, expiryStep, type ExpiryEffect, type ExpiryEvent } from "./expiry.ts";
 import { openRoom, type Opened } from "./open.ts";
@@ -194,10 +194,8 @@ export class Document {
   private info: DocumentInfo | null | undefined = undefined;
   /** The changes of its record under way, one after another (updateInfo). */
   private infoWrites: Promise<unknown> = Promise.resolve();
-  /** Requests and calls under way: the document doesn't close under them. */
-  private busy = 0;
-  private lastActive = 0;
-  private idleTimer: Fiber.Fiber<void> | null = null;
+  /** When it closes for being idle, with the calls under way (idle.ts). */
+  private idle: Idle = RESTING;
 
   constructor(private deps: DocumentDeps) {
     this.storage = deps.storage;
@@ -360,13 +358,10 @@ export class Document {
   /** Runs `work` with the document held open: it doesn't close for being idle meanwhile. */
   hold<A, E, R>(work: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> {
     return Effect.suspend(() => {
-      this.busy++;
+      this.idleGo({ on: "hold" });
       return Effect.ensuring(
         work,
-        Effect.sync(() => {
-          this.busy--;
-          this.activity();
-        })
+        Effect.sync(() => this.idleGo({ on: "release", now: Date.now() }))
       );
     });
   }
@@ -377,39 +372,39 @@ export class Document {
    * moving) doesn't count, so tabs left open let it close.
    */
   activity(): void {
-    const ms = this.deps.timing.closeIdleMs;
-    if (!ms) return;
-    this.lastActive = Date.now();
-    if (!this.idleTimer)
-      this.idleTimer = later(ms, () => {
-        this.idleTimer = null;
-        void this.closeIfIdle();
-      });
+    this.idleGo({ on: "activity", now: Date.now() });
   }
 
   /**
-   * Closes the document once nothing has happened for `closeIdleMs`, every
-   * edit is written and in a version, and no agent is at work: its room
-   * writes what it holds and its timers stop, so the object can sleep. Tabs
-   * stay connected; the next edit or request opens it again, from storage.
+   * An event of the idle close (idle.ts): the document closes once nothing has happened for `closeIdleMs`, every edit
+   * is written and in a version, and no agent is at work. Its room writes what it holds and its timers stop, so the
+   * object can sleep. Tabs stay connected; the next edit or request opens it again, from storage.
    */
-  private async closeIfIdle(): Promise<void> {
-    const ms = this.deps.timing.closeIdleMs!;
-    await this.history.cutting;
-    const opened = this.opened;
-    if (!opened || this.info?.disk || this.idleTimer) return;
-    const idle = () => this.lastActive + ms <= Date.now() && this.busy == 0 && !this.history.dirty && !this.history.agentWorking();
-    // Its room writes everything first: while a write fails, it stays open (its room tries again), so nothing is lost.
-    if (idle()) await Effect.runPromise(opened.room.flush);
-    if (this.opened !== opened || this.idleTimer) return;
-    if (!idle() || !opened.room.saved) {
-      const wait = this.lastActive + ms - Date.now();
-      this.idleTimer = later(wait > 0 ? wait : Math.min(ms, 1000), () => {
-        this.idleTimer = null;
-        void this.closeIfIdle();
-      });
+  private idleGo(e: IdleEvent): void {
+    const ms = this.deps.timing.closeIdleMs;
+    // With no idle time it never closes: only the calls under way are counted.
+    if (!ms) {
+      if (e.on == "hold" || e.on == "release") this.idle = { ...this.idle, busy: this.idle.busy + (e.on == "hold" ? 1 : -1) };
       return;
     }
+    const t = idleStep(this.idle, e, ms);
+    this.idle = t.state;
+    if (!t.do) return;
+    const quiet = () => !this.history.dirty && !this.history.agentWorking();
+    const opened = this.opened;
+    if (t.do.do == "wait") later(t.do.ms, () => this.idleGo({ on: "timer" }));
+    else if (t.do.do == "cut")
+      void this.history.cutting.then(() =>
+        this.idleGo({ on: "cut", now: Date.now(), closable: !!this.opened && !this.info?.disk, quiet: quiet() })
+      );
+    else if (t.do.do == "flush")
+      void Effect.runPromise(opened!.room.flush).then(() =>
+        this.idleGo({ on: "flushed", now: Date.now(), same: this.opened === opened, quiet: quiet(), saved: !!opened?.room.saved })
+      );
+    else void this.closeRoom(opened!);
+  }
+
+  private async closeRoom(opened: Opened): Promise<void> {
     this.editing = 0;
     this.deps.tabs.detach?.();
     const done = opened.close().catch((e) => this.deps.log(`couldn't close the room: ${e}`));
@@ -597,7 +592,7 @@ export class Document {
       // A kept one stays kept: no need to ask the directory.
       if (!info || expiryOf(info) == "kept") return;
       const setting = yield* io(() => self.directory.config.get("delete_docs_after_hours"));
-      yield* io(() => self.expire({ type: "alarm", now: Date.now(), tabs: self.deps.tabs.count(), busy: self.busy, setting }));
+      yield* io(() => self.expire({ type: "alarm", now: Date.now(), tabs: self.deps.tabs.count(), busy: self.idle.busy, setting }));
     });
   }
 

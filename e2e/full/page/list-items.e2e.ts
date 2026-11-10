@@ -1,7 +1,6 @@
-// An item with a list in it splits and joins as an item (libs/text/api/lists.ts): Enter at the end of its text
-// makes a new item that takes the list, not a second paragraph in the item; Backspace gives the item back. Shift+Tab
-// with the caret at the end of an item's text keeps the caret there. A selection from a paragraph into a list, deleted,
-// joins the two, as in a list.
+// A selection from a list into the paragraph after it, deleted, joins the two, as in a list (libs/text/api/lists.ts).
+// The keys in an item with a list in it (Enter, Backspace, Shift+Tab) are in the key table with no browser
+// (tests/lists.test.ts).
 import { expect, servers, test } from "../../helpers/fixtures";
 import { openEditor, type Editor } from "../../helpers/editor";
 
@@ -13,34 +12,6 @@ const body = async (ed: Editor) =>
     .replace(/[\s\S]*<main[^>]*>|<\/main>[\s\S]*/g, "")
     .replace(/\s+/g, " ")
     .trim();
-
-test("Enter at the end of an item with a list in it makes a new item with the list; Backspace gives the item back", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "tab-round");
-  const start = await ed.source();
-  await ed.clickEnd("ul.nested > li:nth-child(2) > p");
-  await ed.idle();
-  await ed.press("Enter");
-  await expect.poll(() => body(ed)).toContain("<li>Beta</li> <li><p><br></p> <ul> <li>Beta one</li>");
-  await ed.press("Backspace");
-  await expect.poll(() => ed.source()).toBe(start);
-  await ed.press("Enter");
-  await ed.type("X");
-  await expect.poll(() => body(ed)).toContain("<li>Beta</li> <li><p>X</p> <ul> <li>Beta one</li>");
-  expect(await body(ed)).not.toMatch(/<\/p> <p>/);
-  await ed.press("ControlOrMeta+z");
-  await ed.press("ControlOrMeta+z");
-  await expect.poll(() => ed.source()).toBe(start);
-});
-
-test("Shift+Tab with the caret at the end of the first item of a nested list keeps the caret at the end of its text", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "tab-round");
-  await ed.clickEnd("ul.nested li li:nth-child(1)");
-  await ed.idle();
-  await ed.press("Shift+Tab");
-  await expect.poll(() => body(ed)).toContain("<li>Beta</li> <li>Beta one <ul>");
-  await ed.type("X");
-  await expect.poll(() => body(ed)).toContain("<li>Beta oneX <ul> <li>Beta two</li>");
-});
 
 test("A selection from a list's last item into the paragraph after it, deleted, joins the two in the item", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "tab-round");

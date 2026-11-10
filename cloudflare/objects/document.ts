@@ -37,6 +37,7 @@ import { forgetDecisions } from "../../server/documents/index.ts";
 import { platform } from "../platform";
 import { DiskLink } from "../../document/disk";
 import type { Env } from "../env";
+import { CALLS, throughDoor, type CallAnswer } from "./document-door";
 import { blobsOf } from "../blobs";
 import { renderer } from "../render";
 import { safeAvatar } from "../../shared/avatars";
@@ -128,6 +129,11 @@ export class DocumentObject extends DurableObject<Env> {
   }
 
   // ------------------------------------------------------------ what the Worker calls (RPC)
+
+  /** The one door to every call below (document-door.ts): the request's name and its arguments. */
+  call(op: string, args: readonly unknown[]): Promise<CallAnswer> {
+    return throughDoor(this, CALLS, op, args);
+  }
 
   create(
     owner: string,

@@ -14,12 +14,6 @@ async function backspaceAt(ed: Editor, sel: string, changes = true) {
   else await ed.settle();
 }
 
-test("a quote with nothing left goes", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "join");
-  await backspaceAt(ed, "#quoted");
-  expect(await ed.source()).not.toMatch(/<blockquote>/);
-});
-
 test("a list with nothing left goes, typing goes in at the join and reaches the disk, and undo brings the list back", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "join");
   const original = await ed.source();
@@ -49,13 +43,6 @@ test("in the first block Backspace makes a heading a paragraph, then does nothin
   await ed.press("Backspace");
   expect(await ed.source()).toBe(para);
   expect((await ed.selection()).head).toBe(para.indexOf("Joining blocks</p>"));
-});
-
-test("Delete at the end of a block joins the next one to it", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "join");
-  await ed.clickEnd("#head");
-  await ed.press("Delete");
-  await expect.poll(() => ed.source()).toContain(`<h2 id="head">A headingkeeps its own type.</h2>`);
 });
 
 test("Backspace at the start of a paragraph after a code block joins its text to the code's last line, inside the <code>", async ({

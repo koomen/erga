@@ -24,10 +24,3 @@ test("an ampersand typed is escaped in the source and shown as itself on the pag
   await expect.poll(() => ed.textOf("p.lede em")).toBe("cool & fun");
   expect(await ed.source()).toContain("<em>cool &amp; fun</em>");
 });
-
-test("an edit in a <pre> lands after its entity", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "page");
-  await ed.clickEnd("pre");
-  await ed.type(" // ok");
-  await expect.poll(() => ed.source()).toContain("const x = 1 &lt; 2; // ok</pre>");
-});

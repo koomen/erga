@@ -45,6 +45,55 @@ const CASES: [string, string, string[], string][] = [
     '<ol start="3">\n  <li>One</li>\n</ol>\n<p>|<br></p>\n<ol start="4">\n  <li>Three</li>\n</ol>',
   ],
   ["Enter in the empty only item", "<p>A</p>\n<ul>\n  <li>|<br></li>\n</ul>\n<p>B</p>", ["Enter"], "<p>A</p>\n<p>|<br></p>\n<p>B</p>"],
+  // (This case and the next four were browser tests that read only the source: e2e/full/page.)
+  [
+    "Enter twice at the end of an item between two: a paragraph between two lists",
+    "<ul>\n  <li>Faster builds|</li>\n  <li>A <strong>new</strong> editor</li>\n</ul>",
+    ["Enter", "Enter", "Between"],
+    "<ul>\n  <li>Faster builds</li>\n</ul>\n<p>Between|</p>\n<ul>\n  <li>A <strong>new</strong> editor</li>\n</ul>",
+  ],
+  [
+    "Enter in the empty last item: the page's own empty list stays as it was",
+    "<ul></ul>\n<ul>\n  <li>Item 8</li>\n  <li>|<br></li>\n</ul>\n<section>\n  <p>x</p>\n</section>",
+    ["Enter", "Z"],
+    "<ul></ul>\n<ul>\n  <li>Item 8</li>\n</ul>\n<p>Z|</p>\n<section>\n  <p>x</p>\n</section>",
+  ],
+  [
+    "Enter twice at the end of the only item, in a section: the paragraph stays in the section",
+    "<section>\n  <ol>\n    <li>First|</li>\n  </ol>\n</section>",
+    ["Enter", "Enter"],
+    "<section>\n  <ol>\n    <li>First</li>\n  </ol>\n  <p>|<br></p>\n</section>",
+  ],
+  [
+    "Enter twice in a nested item moves the new item one level out",
+    "<ul>\n  <li>Faster builds\n    <ul>\n      <li>A <strong>new</strong> editor|</li>\n    </ul>\n  </li>\n</ul>",
+    ["Enter", "Enter", "Out"],
+    "<ul>\n  <li>Faster builds\n    <ul>\n      <li>A <strong>new</strong> editor</li>\n    </ul>\n  </li>\n  <li>Out|</li>\n</ul>",
+  ],
+  [
+    "Tab, a key, Shift+Tab, a key: the caret stays where it was in the item's text",
+    "<ul>\n  <li>Faster builds</li>\n  <li>A <strong>new</strong> editor|</li>\n</ul>",
+    ["Tab", "!", "Shift+Tab", "?"],
+    "<ul>\n  <li>Faster builds</li>\n  <li>A <strong>new</strong> editor!?|</li>\n</ul>",
+  ],
+  [
+    "Enter at the end of an item with a list in it, then typing: the new item takes the list",
+    "<ul>\n  <li>Beta</li>\n  <li><p>Two|</p>\n    <ul>\n      <li>Beta one</li>\n    </ul>\n  </li>\n</ul>",
+    ["Enter", "X"],
+    "<ul>\n  <li>Beta</li>\n  <li>Two</li>\n  <li><p>X|</p>\n    <ul>\n      <li>Beta one</li>\n    </ul>\n  </li>\n</ul>",
+  ],
+  [
+    "Shift+Tab at the end of the first nested item keeps the caret at the end of its text",
+    "<ul>\n  <li>Beta</li>\n  <li><p>Two</p>\n    <ul>\n      <li>Beta one|</li>\n      <li>Beta two</li>\n    </ul>\n  </li>\n</ul>",
+    ["Shift+Tab", "X"],
+    "<ul>\n  <li>Beta</li>\n  <li>Two</li>\n  <li>Beta oneX|\n    <ul>\n      <li>Beta two</li>\n    </ul>\n  </li>\n</ul>",
+  ],
+  [
+    "Backspace at a ticked to-do's text start takes the checkbox off",
+    '<ul>\n  <li style="list-style: none"><input type="checkbox" checked> |Done</li>\n</ul>',
+    ["Backspace"],
+    "<ul>\n  <li>|Done</li>\n</ul>",
+  ],
   [
     "Enter in an empty nested item",
     "<ul>\n  <li><p>One</p>\n    <ul>\n      <li>A</li>\n      <li>B</li>\n      <li>|<br></li>\n    </ul>\n  </li>\n  <li>Two</li>\n</ul>",

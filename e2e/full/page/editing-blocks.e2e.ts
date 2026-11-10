@@ -73,15 +73,6 @@ test("Tab indents the paragraph of a quote, and a selection's blocks; the caret 
   expect(await ed.source()).toContain("<li>Apple</li>");
 });
 
-// Tab in a code block types an indent: two spaces, or a tab where the block's lines start with tabs.
-test("Tab in a code block types two spaces", async ({ tab }) => {
-  const ed = await open(tab, "pre");
-  await ed.press("Home");
-  await ed.press("Tab");
-  await ed.type("x");
-  await expect.poll(() => ed.source()).toContain("code line one\n  xcode line two</pre>");
-});
-
 // Enter at the end of a code block starts a new line, and the text typed next goes on it (it joined the last line: a
 // <pre> hides its last line break).
 test("Enter at the end of a code block starts a new line in it, and typing goes there", async ({ tab }) => {
@@ -152,18 +143,6 @@ test("Cmd+B with no selection makes the text typed next bold, and Cmd+B again en
     expect(await weight("bold")).toBeGreaterThanOrEqual(600);
     expect(await weight("plain")).toBeLessThan(600);
     expect(await ed.source()).toContain(`<p id="last">Last paragraph. <strong>bold</strong> plain</p>`);
-});
-
-// Pete: with the caret at the end of bold text, Cmd+B ends the bold, and the text typed next is not bold: it goes after
-// the </b>, not in it. Cmd+B again turns bold back on. The same for Cmd+I and Cmd+U.
-test("with the caret clicked at the end of bold text, Cmd+B makes the text typed next plain; Cmd+B again, bold", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "page");
-  await ed.clickEnd("li strong");
-  await ed.press("ControlOrMeta+b");
-  await ed.type(" plain");
-  await ed.press("ControlOrMeta+b");
-  await ed.type("B");
-  await expect.poll(() => ed.source()).toContain("<li>A <strong>new</strong> plain<strong>B</strong> editor</li>");
 });
 
 test("Cmd+I and Cmd+U with no selection style the text typed next, and end it again", async ({ tab }) => {

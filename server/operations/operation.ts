@@ -27,11 +27,11 @@ import {
   type Route,
   type Who,
 } from "../directory/index.ts";
-import type { Role } from "../../document/access.ts";
 import { AuthError, type AgentToken, type AuthOps } from "../identity/index.ts";
 import { forwardedAs } from "../documents/index.ts";
 import type { Platform } from "../platform.ts";
 import type { ToolContent } from "../../document/agent.ts";
+import type { Role } from "../../document/access.ts";
 import { HOME_OWNER, HOME_SLUG, nameOf } from "../../document/names.ts";
 
 /** An operation's failure, worded for a person or an agent to act on; `status` is the HTTP status the API answers. */

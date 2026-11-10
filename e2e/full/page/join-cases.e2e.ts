@@ -127,13 +127,6 @@ for (const [what, a, b] of HTML) {
   }
 }
 
-test("a block that ends in a line break: the text joins on the same line, before the break", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "join-cases");
-  await caretAt(ed, "and the break goes on", false);
-  await ed.press("Backspace");
-  await expect.poll(() => ed.source()).toContain(`This ends in a line breakand the break goes on<br></p>`);
-});
-
 test("a rule between: Backspace takes the rule away, and the next Backspace joins; Delete the same", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "join-cases");
   const original = await ed.source();
