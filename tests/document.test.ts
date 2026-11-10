@@ -10,6 +10,7 @@ import { Directory } from "../server/directory/index.ts";
 import { documentAgents } from "../agents/document/session";
 import { testSandbox } from "./helpers/sandbox";
 import { sleep } from "../shared/time";
+import { until } from "./helpers/until";
 import { promised, type Promised } from "./helpers/promised";
 import { memory } from "./helpers/memory-sql";
 
@@ -72,11 +73,10 @@ test("a document is made from files, read from storage while closed, edited by a
   const out = await doc.publish({ "index.html": "<h1>Two</h1>" }, [], "ada");
   expect(out).toEqual({ written: ["index.html"], removed: [], refused: [] });
   expect(await doc.paths()).toEqual(["index.html", "logo.png"]);
-  await sleep(120);
+  await until(async () => (await doc.versionsState())!.total == 2);
   let state = (await doc.versionsState())!;
-  expect(state.total).toBe(2);
   expect(state.current.n).toBe(2);
-  expect((await dir.get("doc12345"))!.modified).not.toBeNull();
+  await until(async () => (await dir.get("doc12345"))!.modified != null);
 
   // Viewers, and a copy, see the document as it is now.
   expect(await (await get(doc, "/doc/index.html")).text()).toBe("<h1>Two</h1>");
@@ -101,20 +101,25 @@ test("a document is made from files, read from storage while closed, edited by a
 });
 
 test("an unedited document goes when its alarm comes; an edited one stays", async () => {
-  const { dir, make, forgotten } = setup();
+  const { dir, make, forgotten, storage } = setup();
   await dir.add({ id: "gone12345", owner: "ada", title: "Gone", created: Date.now() - 10, expires: Date.now() + 30 });
   const gone = make();
   await gone.create("ada", "gone12345", { "index.html": "<h1>Gone</h1>" }, "index.html", { expires: Date.now() + 30 });
-  await sleep(120);
+  // The homepage hears last.
+  await until(() => forgotten.length > 0);
   expect(await gone.index()).toBeNull();
   expect(await dir.get("gone12345")).toBeNull();
   expect(forgotten).toEqual(["gone12345"]);
 
-  await dir.add({ id: "kept12345", owner: "ada", title: "Kept", created: Date.now() - 10, expires: Date.now() + 30 });
+  // (Its alarm is far off, so the edit is first on a busy machine too: the test brings the alarm.)
+  await dir.add({ id: "kept12345", owner: "ada", title: "Kept", created: Date.now() - 10, expires: Date.now() + 60_000 });
   const kept = make();
-  await kept.create("ada", "kept12345", { "index.html": "<h1>Kept</h1>" }, "index.html", { expires: Date.now() + 30 });
+  await kept.create("ada", "kept12345", { "index.html": "<h1>Kept</h1>" }, "index.html", { expires: Date.now() + 60_000 });
+  expect(await storage().getAlarm()).not.toBeNull();
   await kept.publish({ "index.html": "<h1>Kept, edited</h1>" }, [], "ada");
-  await sleep(120);
+  // The edit took its alarm away; and an alarm that comes all the same leaves it.
+  expect(await storage().getAlarm()).toBeNull();
+  await kept.wake();
   expect(await kept.index()).not.toBeNull();
   expect(await dir.get("kept12345")).not.toBeNull();
 });
@@ -196,8 +201,7 @@ test("a document stored before publishing went (its record names a published ver
   await dir.add({ id: "old12345", owner: "ada", title: "Old", created: Date.now() });
   await doc.create("ada", "old12345", { "index.html": "<h1>One</h1>" }, "index.html", { expires: null });
   await doc.publish({ "index.html": "<h1>Two</h1>" }, [], "ada");
-  await sleep(120);
-  expect((await doc.versionsState())!.total).toBe(2);
+  await until(async () => (await doc.versionsState())!.total == 2);
   // Its record as an older Erga left it: viewers saw version 1 ("manual").
   const stored = storage();
   await doc.flush();
@@ -282,18 +286,24 @@ test("a call while the document is deleted finds no document, and opens nothing 
   // Storage is slow to empty; a publish comes meanwhile.
   const s = storage();
   const deleteAll = s.deleteAll.bind(s);
+  let began!: () => void, empty!: () => void;
+  const emptying = new Promise<void>((r) => (began = r));
+  const gate = new Promise<void>((r) => (empty = r));
   s.deleteAll = async () => {
-    await sleep(40);
+    began();
+    await gate;
     await deleteAll();
   };
   const deleted = doc.delete();
-  await sleep(10);
+  await emptying;
   const late = doc.publish({ "index.html": "<h1>Back</h1>" }, [], "ada").then(
     () => "published",
     (e: { message?: string }) => e.message
   );
-  expect(await deleted).toBe(true);
   expect(await late).toBe("There's no such document.");
+  empty();
+  expect(await deleted).toBe(true);
+  // Nothing opened: nothing writes later. (No state shows that: a short time.)
   await sleep(60);
   expect(storage().data.size).toBe(0);
   expect(await doc.index()).toBeNull();
@@ -308,7 +318,7 @@ test("two publishes at once: each file's edit is by its own publisher", async ()
     modified: Date.now(),
   });
   await Promise.all([doc.publish({ "a.css": "a{color:red}" }, [], "ada"), doc.publish({ "b.css": "b{color:red}" }, [], "bob")]);
-  await sleep(150);
+  await until(async () => (await doc.versionsState())!.total == 2);
   const state = (await doc.versionsState())!;
   expect(state.current.authors).toEqual(["ada", "bob"]);
 });

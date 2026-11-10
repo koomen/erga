@@ -5,6 +5,7 @@
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import { fileStoreOf, KEYS, kvOf, MemoryStorage } from "../document/storage";
+import { until } from "./helpers/until";
 
 test("get, put and delete, one key or many; list in key order, by prefix, after a key, at most a limit", async () => {
   const s = new MemoryStorage();
@@ -33,7 +34,7 @@ test("the alarm wakes once it is due; set again, only the last one counts", asyn
   await s.setAlarm(Date.now() + 10_000);
   await s.setAlarm(Date.now() + 20);
   expect(await s.getAlarm()).toBeGreaterThan(Date.now() - 1);
-  await new Promise((r) => setTimeout(r, 60));
+  await until(() => woke > 0);
   expect(woke).toBe(1);
   expect(await s.getAlarm()).toBeNull();
 });

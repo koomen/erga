@@ -18,6 +18,7 @@ import { Directory } from "../server/directory/index.ts";
 import { documentAgents } from "../agents/document/session";
 import { testSandbox } from "./helpers/sandbox";
 import { sleep } from "../shared/time";
+import { until } from "./helpers/until";
 import type { AgentSettings } from "../agents/models";
 import { memory } from "./helpers/memory-sql";
 
@@ -134,11 +135,12 @@ class World {
     queueMicrotask(() => this.inflight.push(Effect.runPromise(this.tabs.message(tab, m))));
   }
 
+  /** Until no message is on its way: each one goes in a microtask (so a tick sees it), and its answer may send more. */
   async settle(): Promise<void> {
-    for (let i = 0; i < 50; i++) {
-      await sleep(2);
+    for (;;) {
+      await sleep(0);
       const now = this.inflight.splice(0);
-      if (!now.length && i > 3) return;
+      if (!now.length) return;
       await Promise.all(now);
     }
   }
@@ -188,8 +190,7 @@ test("idle, the document closes and tabs stay; presence passes between them with
   expect(files(fresh).get("index.html")?.toString()).toBe("<p>one Hi</p>");
 
   // Nothing happens: a version is cut, then the document closes. The tabs stay connected.
-  await sleep(250);
-  expect(w.document.isOpen()).toBe(false);
+  await until(() => !w.document.isOpen());
   expect(a.closed).toBeNull();
   expect(b.closed).toBeNull();
 
@@ -218,16 +219,14 @@ test("idle, the document closes and tabs stay; presence passes between them with
   w.document.notify({ type: "site" });
   expect(events.events).toContainEqual({ type: "site" });
   // Written: the file, through the reopened room.
-  await sleep(100);
-  const page = await w.storage.get<Uint8Array>("files/index.html");
-  expect(new TextDecoder().decode(page!)).toBe("<!-- a --><p>two one Hi</p>");
+  const page = async () => new TextDecoder().decode((await w.storage.get<Uint8Array>("files/index.html"))!);
+  await until(async () => (await page()) == "<!-- a --><p>two one Hi</p>");
 });
 
 test("a tab holding another history (the document's was lost) is closed as the document opens again, never merged", async () => {
   const w = await made();
   const a = await w.connect(), b = await w.connect();
-  await sleep(250);
-  expect(w.document.isOpen()).toBe(false);
+  await until(() => !w.document.isOpen());
   w.boot();
   // As if B's history were another epoch's.
   b.tab = { ...b.tab, epoch: "another-epoch" };
@@ -253,12 +252,10 @@ test("a viewer's page on a closed document opens nothing: it hears the version k
   a.type(3, "new ");
   await w.settle();
   const heard = (tab: FakeTab) => tab.events.some((e) => (e as { type: string }).type == "view" && (e as { ver: string }).ver != ver);
-  for (let i = 0; i < 100 && !heard(reader); i++) await w.settle();
-  expect(heard(reader)).toBe(true);
+  await until(() => heard(reader));
   // On an open document, a viewer's page joins at once.
   const second = await w.watch();
-  for (let i = 0; i < 100 && !heard(second); i++) await w.settle();
-  expect(heard(second)).toBe(true);
+  await until(() => heard(second));
   // No such document: no socket.
   const none = new World(w.dir);
   expect(

@@ -16,6 +16,7 @@ import { FileStore, Room, StateStore } from "../document/room.ts";
 import { documentAgents } from "../agents/document/session";
 import { agentSettingsFrom, UNREADABLE_KEY, type AgentSettings } from "../agents/models";
 import { memory } from "./helpers/memory-sql";
+import { until } from "./helpers/until";
 
 const KEY1 = "sk-ant-api03-" + "a".repeat(80) + "One1", KEY2 = "sk-ant-api03-" + "b".repeat(80) + "Two2";
 const ada = { login: "ada", admin: true };
@@ -71,7 +72,8 @@ test("the admin agent: a key replaced after its session started reaches its next
   expect(await requests(1)).toEqual([KEY1]);
   // agents/person/sessions.ts reads the settings at each turn and gives them to the session it keeps.
   agent.configure({ own: {}, server: { anthropic: Redacted.make(KEY2) }, mode: "server", off: [], model: "sonnet", effort: "medium" });
-  await new Promise((r) => setTimeout(r, 50));
+  // The first turn ended (with the error): the next message starts a turn of its own.
+  await until(() => !agent.log().busy);
   agent.prompt("again", null);
   expect((await requests(2)).at(-1)).toBe(KEY2);
 });

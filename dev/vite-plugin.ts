@@ -30,7 +30,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
-import type { Plugin } from "vite";
+import type { Plugin, PreviewServer, ViteDevServer } from "vite";
 import { ALPHABET } from "../server/directory/index.ts";
 import { ignored } from "../document/pages.ts";
 import { mockGithub } from "./github-mock.ts";
@@ -74,9 +74,19 @@ export function ergaDev(opts: DevOptions): Plugin {
       if (live && !editor && this.environment.name != "client") live.reload(`${file.startsWith(ROOT + sep) ? file.slice(ROOT.length + 1) : file} changed`);
     },
     configureServer(server) {
+      serve(server, server);
+    },
+    // The tests' servers: the built Worker under `vite preview` (ERGA_PREVIEW_ROOT), with the same links, mirrors and pretend GitHub.
+    configurePreviewServer(server) {
+      serve(server, null);
+    },
+  };
+
+  /** Sets the server up. `dev`: the dev server, with its watcher and reloads; null under `vite preview`. */
+  function serve(server: ViteDevServer | PreviewServer, dev: ViteDevServer | null) {
       const log = (line: string) => server.config.logger.info(line, { timestamp: true });
       // First, so it sees every page the Worker sends.
-      live = opts.reload ? liveReload(server, log) : undefined;
+      live = opts.reload && dev ? liveReload(dev, log) : undefined;
       // A network's delay on the rooms' sockets (latency.ts), when asked for.
       const latency = latencyOf(process.env.ERGA_DEV_LATENCY_MS);
       if (latency && server.httpServer) {
@@ -84,7 +94,10 @@ export function ergaDev(opts: DevOptions): Plugin {
         log(`rooms' sockets delayed ${latency.join("-")} ms each way (ERGA_DEV_LATENCY_MS)`);
       }
       // A change Vite restarts the server for (its config, or a file the config imports): the restarted server reloads the tabs.
-      if (live) server.watcher.on("change", (file) => { if (server.config.configFileDependencies.includes(file)) live?.restarting(); });
+      if (live && dev)
+        dev.watcher.on("change", (file) => {
+          if (dev.config.configFileDependencies.includes(file)) live?.restarting();
+        });
       const linksFile = join(opts.stateDir, "erga-links.json");
       const mirrors = new Map<string, Mirror>();
       // Where the Worker answers (for us), and the address people use.
@@ -207,14 +220,13 @@ export function ergaDev(opts: DevOptions): Plugin {
         })().catch((e) => log(`couldn't link: ${(e as Error).message}`));
       });
 
-      const unwatch = process.env.ERGA_BUILT ? () => {} : watchEditor(log, () => live?.reload("rebuilt the editor"));
+      const unwatch = process.env.ERGA_BUILT || !dev ? () => {} : watchEditor(log, () => live?.reload("rebuilt the editor"));
       // Started by dev/start.ts in a process group of its own: if dev/start.ts is gone (killed outright), so is this.
       const parent = Number(process.env.ERGA_PARENT);
       if (parent) setInterval(() => { try { process.kill(parent, 0); } catch { process.exit(1); } }, 1000).unref();
       // Closed (stopping, or Vite restarting it when its config changes): nothing of this one stays behind.
       server.httpServer?.once("close", () => { unwatch(); live?.stop(); for (const m of mirrors.values()) m.stop(); });
-    },
-  };
+  }
 }
 
 // ------------------------------------------------------------ the target

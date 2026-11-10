@@ -11,6 +11,7 @@ import type { StoredChat } from "../agents/checkpoint";
 import type { AgentTool } from "../agents/run";
 import type { Platform } from "../server/platform";
 import { IDLE, next, type Turn, type TurnEvent } from "../agents/turn";
+import { until } from "./helpers/until";
 
 const script = { own: {}, server: {}, mode: "server" as const, off: [], model: "script" as const, effort: "medium" as const };
 
@@ -31,11 +32,6 @@ function busyOf(agent: ReturnType<typeof startAgent>) {
   return seen;
 }
 
-const until = async (ok: () => boolean) => {
-  for (let i = 0; i < 300 && !ok(); i++) await new Promise((r) => setTimeout(r, 10));
-  expect(ok()).toBe(true);
-};
-
 test("Stop clears the queue: a message sent during the run is never answered, after a restart too", async () => {
   const t = new ChatTables(db()),
     store = tableStore(t, "you:ada");
@@ -46,6 +42,7 @@ test("Stop clears the queue: a message sent during the run is never answered, af
   a.prompt("And this too.", null);
   a.abort();
   await until(() => busy.length == 2);
+  // No run starts for the message. (No state shows that none will: a short time.)
   await new Promise((r) => setTimeout(r, 20));
   expect(busy).toEqual([true, false]);
   // The message stays in the conversation, as the transcript shows it, and nothing waits.
@@ -61,12 +58,14 @@ test("Stop clears the queue: a message sent during the run is never answered, af
 
 test("Stop waits for the tool call that runs: its edit lands before the run says it stopped", async () => {
   const order: string[] = [];
+  let finish!: () => void;
+  const slow = new Promise<void>((r) => (finish = r));
   const edit: AgentTool = {
     name: "edit",
     description: "Edits, slowly.",
     parameters: Schema.Struct({}),
     execute: async () => {
-      await new Promise((r) => setTimeout(r, 150));
+      await slow;
       order.push("edited");
       return { content: [{ type: "text", text: "edited" }] };
     },
@@ -80,8 +79,11 @@ test("Stop waits for the tool call that runs: its edit lands before the run says
   a.prompt(`@script [{"tool":"edit"},{"text":"Done."}]`, null);
   await until(() => started);
   a.abort();
+  // While the call runs, the run does not say that it stopped. (No state shows that the stop waits: a short time.)
+  await new Promise((r) => setTimeout(r, 20));
+  expect(order).toEqual([]);
+  finish();
   await until(() => order.includes("stopped"));
-  await new Promise((r) => setTimeout(r, 200));
   expect(order).toEqual(["edited", "stopped"]);
   // The model hears what the call did, not that it stopped.
   const result = a.messages().find((m) => m.role == "tool") as unknown as { content: { result: string; isFailure: boolean }[] };

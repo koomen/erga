@@ -14,7 +14,7 @@ const giveBack = () => {
 };
 g.navigator ??= { platform: "MacIntel", userAgent: "bun" };
 
-import { mock } from "bun:test";
+import { expect, mock } from "bun:test";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import * as M from "../../shared/manuscript";
 import * as standIn from "../../libs/text/ui/frame-view";
@@ -84,9 +84,14 @@ class Keys extends EditorInput {
       "Shift+Enter": () => this.enter(true),
       Backspace: () => this.deleteChar(false),
       Delete: () => this.deleteChar(true),
-      Tab: () => this.indentItem(false),
+      // (As the editor's keydown: Tab in a table's last cell adds a row; false in any other place.)
+      Tab: () => this.tableRow() || this.indentItem(false),
       "Shift+Tab": () => this.indentItem(true),
       "Mod+b": () => this.styleKey("strong"),
+      "Mod+i": () => this.styleKey("em"),
+      "Mod+u": () => this.styleKey("u"),
+      "Mod+e": () => this.styleKey("code"),
+      "Mod+\\": () => this.clearStyles(),
       Undo: () => this.undo(),
       Redo: () => this.redo(),
     };
@@ -98,7 +103,50 @@ class Keys extends EditorInput {
     this.pasteBlocks(blocks);
     return this;
   }
+  /**
+   * Puts the caret or the selection where a marked source shows it, as a click, the arrows or a drag do on a page (the
+   * browser's work, which this has none of). The source must be the editor's now: a test says the source it selects in.
+   */
+  select(marked: string): this {
+    const { src, anchor, head } = parse(marked);
+    if (src != this.state.doc.toString()) throw new Error(`select: the source is\n${this.text}\nnot\n${marked}`);
+    this.state = this.state.update({ selection: EditorSelection.single(anchor, head), userEvent: "select" }).state;
+    return this;
+  }
+  /** A paste of plain text, through the editor's own paste handler (ui/clipboard.ts), with an event made for it. */
+  pasteText(text: string): this {
+    this.paste(clip({ "text/plain": text }));
+    return this;
+  }
+  /** A cut of the selection, through the editor's own handler. (Its copy reads the page: with no page it copies nothing.) */
+  cutOut(): this {
+    this.cut(clip({}));
+    return this;
+  }
 }
+
+/** A clipboard event as a browser hands it to the page, with only what the editor reads of it. */
+const clip = (data: Record<string, string>) =>
+  ({
+    preventDefault() {},
+    clipboardData: { getData: (type: string) => data[type] ?? "", setData() {}, files: [] },
+  }) as unknown as ClipboardEvent;
 
 /** An editor on a marked source (see show): press keys with `key`, paste with `pasteIn`, read the marked source with `text`. */
 export const keys = (marked: string) => new Keys(marked);
+
+/**
+ * A case of more than one step, on an editor on `start`. A step is keys and the marked source after them; or a marked
+ * source alone, for a click or the arrows (see select). Returns the editor.
+ */
+export function walk(start: string, ...steps: ([string[], string] | string)[]) {
+  const ed = keys(start);
+  for (const step of steps) {
+    if (typeof step == "string") ed.select(step);
+    else {
+      for (const k of step[0]) ed.key(k);
+      expect(ed.text).toBe(step[1]);
+    }
+  }
+  return ed;
+}

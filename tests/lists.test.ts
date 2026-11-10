@@ -4,7 +4,13 @@
 // and "]" the anchor and head of a selection (helpers/page-keys.ts).
 import { describe, expect, test } from "bun:test";
 import * as M from "../shared/manuscript";
-import { keys, parse } from "./helpers/page-keys";
+import { keys, parse, walk } from "./helpers/page-keys";
+
+/** The item after an item with a list in it, the caret at the end of that list's last item. */
+const NEXT_ITEM =
+  '<ul>\n  <li><p id="nested-a">A parent item</p>\n    <ul>\n      <li id="nested-b">a child item|</li>\n    </ul>\n  </li>\n  <li id="nested-c">The next item</li>\n</ul>';
+/** A list of five items (e2e/fixtures/tab-round). */
+const FIVE = "<ul>\n  <li>One</li>\n  <li>Two</li>\n  <li>Three</li>\n  <li>Four</li>\n  <li>Five</li>\n</ul>";
 
 /** Each key in a place: the source, the keys, the source after them. */
 const CASES: [string, string, string[], string][] = [
@@ -298,6 +304,51 @@ const CASES: [string, string, string[], string][] = [
     ["[", "]", " "],
     '<ul>\n  <li style="list-style: none"><input type="checkbox"> |</li>\n</ul>',
   ],
+  // (The cases below were browser tests of one rule each: e2e/full/page. The same keys; a selection made with Shift
+  // and the arrows there is the source's "[" and "]" here.)
+  [
+    "Delete at the end of the last nested item joins the next item to it",
+    NEXT_ITEM,
+    ["Delete"],
+    '<ul>\n  <li><p id="nested-a">A parent item</p>\n    <ul>\n      <li id="nested-b">a child item|The next item</li>\n    </ul>\n  </li>\n</ul>',
+  ],
+  [
+    "Delete a selection from a paragraph over a whole list into the next list: no list is left empty",
+    "<p>Bef[ore.</p>\n<ul>\n  <li>Only</li>\n</ul>\n<section>\n  <ol>\n    <li>Fi]rst</li>\n  </ol>\n</section>\n<p>After.</p>",
+    ["Backspace"],
+    "<p>Bef|rst</p>\n<p>After.</p>",
+  ],
+  [
+    "A key typed over a selection of whole items replaces them with one item",
+    "<ul>\n  <li>]One</li>\n  <li>Two[</li>\n  <li>Three</li>\n</ul>",
+    ["x"],
+    "<ul>\n  <li>x|</li>\n  <li>Three</li>\n</ul>",
+  ],
+  [
+    "Tab in a to-do item nests it, with its checkbox",
+    '<ul class="todo">\n  <li style="list-style: none"><input type="checkbox"> Buy seeds</li>\n  <li style="list-style: none"><input type="checkbox"> Wate|r the plots</li>\n</ul>',
+    ["Tab"],
+    '<ul class="todo">\n  <li style="list-style: none"><input type="checkbox"> Buy seeds\n    <ul class="todo">\n      <li style="list-style: none"><input type="checkbox"> Wate|r the plots</li>\n    </ul>\n  </li>\n</ul>',
+  ],
+  [
+    "Tab right after typing in an item nests it, with the text typed",
+    "<ul>\n  <li>Item 8</li>\n  <li>Item| 9</li>\n  <li>Item 10</li>\n</ul>",
+    ["abc", "Tab"],
+    "<ul>\n  <li>Item 8\n    <ul>\n      <li>Itemabc| 9</li>\n    </ul>\n  </li>\n  <li>Item 10</li>\n</ul>",
+  ],
+  ["Undo right after - makes a list gives back the - typed, as text", "<p>|<br></p>", ["- ", "Undo"], "<p>- |</p>"],
+  [
+    "Redo after - and undo makes the list again, the caret in its item, and typing goes on there",
+    "<p>|<br></p>",
+    ["- ", "Undo", "Redo", "One"],
+    "<ul>\n  <li>One|</li>\n</ul>",
+  ],
+  [
+    "Undo after Tab and Shift+Tab takes back the Shift+Tab only: the item is nested again",
+    "<p>|<br></p>",
+    ["- One", "Enter", "Two", "Tab", "Shift+Tab", "Undo"],
+    "<ul>\n  <li>One\n    <ul>\n      <li>Two|</li>\n    </ul>\n  </li>\n</ul>",
+  ],
 ];
 
 const P = (t: string) => ({ tag: "p" as const, html: t, text: t, md: t });
@@ -336,6 +387,25 @@ const PASTES: [string, string, Parameters<ReturnType<typeof keys>["pasteIn"]>[0]
     [{ tag: "ul", items: ["X", "Y"].map((t) => ({ html: t, text: t, md: t, lists: [] })) }],
     "<ul>\n  <li>OneX</li>\n  <li>Y|</li>\n</ul>",
   ],
+  // (Browser tests before, e2e/full/page: the blocks are what the page read from the clipboard's HTML there.)
+  [
+    "two paragraphs, the first with bold, in the middle of a paragraph split it",
+    '<h1>Clipboard</h1>\n<p id="target">Before |after.</p>\n<p id="empty"><br></p>',
+    [{ tag: "p", html: "one <strong>bold</strong>", text: "one bold", md: "one **bold**" }, P("two")],
+    '<h1>Clipboard</h1>\n<p id="target">Before one <strong>bold</strong></p>\n<p>two|after.</p>\n<p id="empty"><br></p>',
+  ],
+  [
+    "a paragraph and a list into a table cell, which can't split, are lines in it",
+    '<table><tr><td id="cell">Cell|</td></tr></table>',
+    [P("a"), { tag: "ul", items: [{ html: "<em>b</em>", text: "b", md: "*b*", lists: [] }] }],
+    '<table><tr><td id="cell">Cella<br><em>b</em>|</td></tr></table>',
+  ],
+  [
+    "items in the empty paragraph right above a list join that list",
+    "<p>Intro</p>\n<p>|<br></p>\n<ul>\n  <li>One</li>\n  <li>Two</li>\n</ul>",
+    [{ tag: "ul", items: ["One", "Two"].map((t) => ({ html: t, text: t, md: t, lists: [] })) }],
+    "<p>Intro</p>\n<ul>\n  <li>One</li>\n  <li>Two|</li>\n  <li>One</li>\n  <li>Two</li>\n</ul>",
+  ],
 ];
 
 /**
@@ -366,6 +436,11 @@ const ROUNDS: [string, string[]][] = [
   ["<ul>\n  <li>One</li>\n  <li><p>Tw|o</p>\n    <ul>\n      <li>A</li>\n    </ul>\n  </li>\n</ul>", ["Tab", "Shift+Tab"]],
   ["<ol>\n  <li>One</li>\n  <li>|<br></li>\n  <li>Three</li>\n</ol>", ["Enter", "Undo"]],
   ['<ul id="flat">\n  <li>One|</li>\n  <li>Two</li>\n</ul>', ["Enter", "Enter", "Backspace"]],
+  // (Browser tests before: e2e/full/page/list-tab-round.e2e.ts, join-cases.e2e.ts.)
+  [FIVE.replace("Three", "Th|ree"), ["Tab", "Tab", "Shift+Tab", "Shift+Tab"]],
+  [FIVE.replace("Five", "Fi|ve"), ["Tab", "Tab", "Shift+Tab", "Shift+Tab"]],
+  ["<main><h1>One line</h1><ul><li>One</li><li>Two</li><li>Th|ree</li></ul><p>After.</p></main>", ["Tab", "Shift+Tab"]],
+  [NEXT_ITEM, ["Delete", "Undo"]],
 ];
 
 /** The lists the sweep goes over: flat, on one line, nested, numbered, to-do, with attributes, with empty items. */
@@ -414,6 +489,94 @@ describe("lists", () => {
     const ed = keys(src);
     for (const k of ks) ed.key(k);
     expect(ed.text).toBe(src);
+  });
+
+  // ---- Cases of more than one step (helpers/page-keys.ts, walk: keys and the source after them; a source alone is a
+  // click or the arrows). Browser tests before: e2e/full/page.
+
+  test("paste: plain text at the end of an item: its paragraphs and its list's items join the list; one undo takes it back", () => {
+    const start = '<ul id="list">\n  <li>Alpha|</li>\n  <li>Omega</li>\n</ul>';
+    const ed = keys(start).pasteText("Beta\n\nGamma\n- Delta\n  - Epsilon");
+    expect(ed.text).toBe(
+      '<ul id="list">\n  <li>AlphaBeta</li>\n  <li>Gamma</li>\n  <li>Delta\n    <ul>\n      <li>Epsilon|</li>\n    </ul>\n  </li>\n  <li>Omega</li>\n</ul>'
+    );
+    expect(ed.key("Undo").text).toBe(start);
+  });
+
+  test("Undo after Tab and typing takes back the typing first, then the indent", () => {
+    const nested = (item: string) => `<ul>\n  <li>One\n    <ul>\n      <li>${item}</li>\n    </ul>\n  </li>\n</ul>`;
+    walk(
+      "<p>|<br></p>",
+      [["- One", "Enter", "Tab"], nested("|<br>")],
+      [["Sub"], nested("Sub|")],
+      [["Undo"], nested("|<br>")],
+      [["Undo"], "<ul>\n  <li>One</li>\n  <li>|<br></li>\n</ul>"]
+    );
+  });
+
+  test("Redo of a Backspace that joins two items puts the caret at the join, and typing goes on there", () => {
+    walk(
+      "<p>|<br></p>",
+      [["- One", "Enter", "Two"], "<ul>\n  <li>One</li>\n  <li>Two|</li>\n</ul>"],
+      "<ul>\n  <li>One</li>\n  <li>|Two</li>\n</ul>",
+      [["Backspace"], "<ul>\n  <li>One|Two</li>\n</ul>"],
+      [["Undo"], "<ul>\n  <li>One</li>\n  <li>|Two</li>\n</ul>"],
+      [["Redo", "X"], "<ul>\n  <li>OneX|Two</li>\n</ul>"]
+    );
+  });
+
+  test("Deleting the paragraph between two bulleted lists makes them one list", () => {
+    const lists = (gap: string) => `<ul>\n  <li>One</li>\n</ul>\n<p>${gap}</p>\n<ul>\n  <li>Two</li>\n</ul>`;
+    walk(
+      "<p>|<br></p>",
+      [["- One", "Enter", "Enter", "Gap", "Enter", "- Two"], lists("Gap").replace("Two", "Two|")],
+      lists("[Gap]"),
+      [["Backspace"], lists("|")],
+      [["Backspace"], "<ul>\n  <li>One|</li>\n  <li>Two</li>\n</ul>"]
+    );
+  });
+
+  test.each([
+    [
+      "bulleted",
+      "<ul>\n  <li>Item 1: check the north plots</li>\n  <li>Item 2: check the north plots</li>\n  <li>Item 3: check the north plots</li>\n</ul>",
+      "Item 2: check the north plots",
+    ],
+    ["numbered", "<ol>\n  <li>First step</li>\n  <li>Second step with <strong>bold</strong> text</li>\n</ol>", "First step"],
+  ])("Shift+Enter in a %s item breaks the line in the item, mid-text and at the end; undo and Backspace take it out", (_, list, text) => {
+    /** The list with `t` as the item's text ("|" in it: the caret). */
+    const item = (t: string) => list.replace(text, t);
+    const [a, b] = [text.slice(0, 4), text.slice(4)];
+    const mid = item(`${a}|${b}`),
+      end = item(`${text}|`);
+    walk(
+      mid,
+      // Mid-text: the break, then a letter on the new line. The list keeps its items.
+      [["Shift+Enter", "Z"], item(`${a}<br>Z|${b}`)],
+      // Backspace twice: the Z, then the break; the lines join.
+      [["Backspace", "Backspace"], mid],
+      [["Y"], item(`${a}Y|${b}`)],
+      [["Backspace"], mid],
+      // At the end of the text: a new, empty line in the item, with the caret on it.
+      end,
+      [["Shift+Enter"], item(`${text}<br>|<br>`)],
+      [["W"], item(`${text}<br>W|`)],
+      // Undo: the W, then the break, each in one step.
+      [["Undo"], item(`${text}<br>|<br>`)],
+      [["Undo"], end],
+      // Backspace on the new, empty line: the break goes, and the caret is at the end of the text again.
+      [["Shift+Enter", "Backspace"], end],
+      [["V"], item(`${text}V|`)],
+      [["Backspace"], end],
+      // One undo takes a break out, mid-text and at the end.
+      mid,
+      [["Shift+Enter"], item(`${a}<br>|${b}`)],
+      [["Undo"], mid],
+      end,
+      [["Shift+Enter", "Undo"], end],
+      // Enter, as before: a new item.
+      [["Enter"], item(`${text}</li>\n  <li>|<br>`)]
+    );
   });
 
   test("every key at the start, in the middle and at the end of every item: the list stays whole, undo and redo are exact", () => {

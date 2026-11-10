@@ -15,12 +15,15 @@ const suite = [...new Glob("e2e/**/*.e2e.ts").scanSync(ROOT)]
   .sort();
 const map = budgets(readFileSync(join(ROOT, "e2e/COVERAGE.md"), "utf8"));
 
-test("the map names each file of the suite, with a budget, and no file that is gone", () => {
-  expect([...map.keys()].sort()).toEqual(suite);
+test("the map names each file of the suite, with a budget", () => {
+  // (While the areas are rebuilt, the map also names the journeys that are not built yet.)
+  expect(suite.filter((f) => !map.has(f))).toEqual([]);
 });
 
 test(`the budgets sum to at most ${TOTAL_S} s of test time`, () => {
-  expect([...map.values()].reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(TOTAL_S);
+  // (The old smoke run's budget does not count: it goes when the editor's journeys are built.)
+  const planned = [...map].filter(([file]) => !file.startsWith("e2e/smoke/"));
+  expect(planned.reduce((sum, [, s]) => sum + s, 0)).toBeLessThanOrEqual(TOTAL_S);
 });
 
 test("a file of the suite uses the one kind of server, or a server of its own", () => {
@@ -39,12 +42,14 @@ test("the map's rows are read, and a file over its budget is named, the worst fi
   const result = (file: string, ...ms: number[]) => ({ file, attempts: ms.map((durationMs) => ({ durationMs })) });
   const report = {
     run: {
+      // A plain test's time is its own. A journey's is its group's: its steps have no time of their own here.
       results: [
-        result("e2e/editor/typing.e2e.ts", 7000),
-        result("e2e/editor/typing.e2e.ts", 6500),
+        result("e2e/editor/typing.e2e.ts", 3000),
+        result("e2e/editor/typing.e2e.ts"),
         result("e2e/viewer/open.e2e.ts", 2000, 4000),
         result("e2e/other.e2e.ts", 99_000),
       ],
+      serialGroups: [result("e2e/editor/typing.e2e.ts", 6000), result("e2e/editor/typing.e2e.ts", 4500)],
     },
   };
   expect(overBudget(report, rows)).toEqual([

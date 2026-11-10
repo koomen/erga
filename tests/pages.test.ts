@@ -12,6 +12,7 @@ import { FileStore, Room, StateStore, joinLocal } from "../document/room";
 import { relativeUrl, runTreeOp } from "../document/host";
 import { checkNewName, cleanTreePath, pageAddress, pageUrl, resolvePage, titleOf, TreeError, treeEntries } from "../document/pages";
 import { files, folders } from "../document/content";
+import { until } from "./helpers/until";
 
 test("an address is <path>.html, then <path>/index.html; never with a slash added", () => {
   const all = new Set(["index.html", "about.html", "blog/index.html", "blog/post.html", "notes/index.md", "style.css", "deep/a/b.html"]);
@@ -217,8 +218,7 @@ test("a file a participant deletes from the room is deleted from storage too", a
     joinLocal(room, doc, new Awareness(doc));
     await tick();
     files(doc).delete("extra.html");
-    await new Promise((r) => setTimeout(r, 50));
-    expect(m.text("extra.html")).toBeNull();
+    await until(() => m.text("extra.html") === null);
     expect(m.text("index.html")).toBe("<h1>Home</h1>");
   });
 });

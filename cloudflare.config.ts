@@ -20,8 +20,16 @@ const LOCAL_DB = "00000000-0000-4000-8000-00000000e29a";
 
 /** Where the dev server's .dev.vars is (tests give each server its own). */
 const ENV_DIR = process.env.ERGA_ENV_DIR || process.cwd();
+/**
+ * The tests' build (ERGA_TEST_BUILD, e2e/helpers/worker-build.ts): the Worker built one time, for every test server to
+ * run (vite preview: a server starts in under a second, a dev server in three). What a dev server reads from its
+ * environment as it starts (`local`) is a secret in this build: each server's own .dev.vars gives it its value.
+ */
+const TEST_BUILD = !!process.env.ERGA_TEST_BUILD;
+const local = (value: string) => (TEST_BUILD ? bindings.secret() : bindings.text(value));
 /** A secret local development does without: declared there only when set, so Vite doesn't warn that it's missing. */
-const optionalSecret = (mode: string | undefined, name: string) => (mode != "development" || hasDevSecret(ENV_DIR, name) ? { [name]: bindings.secret() } : {});
+const optionalSecret = (mode: string | undefined, name: string) =>
+  mode != "development" || TEST_BUILD || hasDevSecret(ENV_DIR, name) ? { [name]: bindings.secret() } : {};
 
 export default defineConfig(({ mode }) => ({
   worker: {
@@ -91,10 +99,10 @@ export default defineConfig(({ mode }) => ({
       // The settings the deploy fixes, as JSON. Admins set the rest.
       SERVER_CONFIG: bindings.text(JSON.stringify(deployed())),
       // The GitHub OAuth app's client ID: each instance's own, from its entry's vars. Locally, ERGA_GITHUB_CLIENT_ID only.
-      GITHUB_CLIENT_ID: bindings.text(mode == "development" ? (process.env.ERGA_GITHUB_CLIENT_ID ?? "") : ""),
+      GITHUB_CLIENT_ID: mode == "development" ? local(process.env.ERGA_GITHUB_CLIENT_ID ?? "") : bindings.text(""),
 
       // "staging" on a staging instance (admins only): `bun erga deploy` sets it. Locally: ERGA_DEPLOY_TARGET.
-      DEPLOY_TARGET: bindings.text(mode == "development" ? (process.env.ERGA_DEPLOY_TARGET ?? "") : ""),
+      DEPLOY_TARGET: mode == "development" ? local(process.env.ERGA_DEPLOY_TARGET ?? "") : bindings.text(""),
       ...optionalSecret(mode, "GITHUB_CLIENT_SECRET"),
       // Opens an issue in Erga's repository for each feedback (server/feedback.ts). Locally the pretend GitHub takes its own.
       ...optionalSecret(mode, "GITHUB_ISSUES_TOKEN"),
@@ -108,28 +116,30 @@ export default defineConfig(({ mode }) => ({
         ...optionalSecret(mode, "ERGA_AGENT_MODEL"),
         // From the process that runs the dev server, not .dev.vars: the
         // secret that lets it link files on disk to documents, and a shorter write delay for tests.
-        ERGA_LINK_SECRET: bindings.text(process.env.ERGA_LINK_SECRET ?? ""),
-        ERGA_WRITE_DELAY_MS: bindings.text(process.env.ERGA_WRITE_DELAY_MS ?? ""),
-        ERGA_RENDER_ALLOW: bindings.text(process.env.ERGA_RENDER_ALLOW ?? ""),
+        ERGA_LINK_SECRET: local(process.env.ERGA_LINK_SECRET ?? ""),
+        ERGA_WRITE_DELAY_MS: local(process.env.ERGA_WRITE_DELAY_MS ?? ""),
+        ERGA_RENDER_ALLOW: local(process.env.ERGA_RENDER_ALLOW ?? ""),
         // How often / checks for a newer homepage deploy (tests shorten it).
-        ERGA_HOME_RECHECK_MS: bindings.text(process.env.ERGA_HOME_RECHECK_MS ?? ""),
+        ERGA_HOME_RECHECK_MS: local(process.env.ERGA_HOME_RECHECK_MS ?? ""),
         // When versions are cut: how long edits pause first, and the longest burst one version holds.
-        ERGA_VERSION_IDLE_MS: bindings.text(process.env.ERGA_VERSION_IDLE_MS ?? ""),
-        ERGA_VERSION_MAX_MS: bindings.text(process.env.ERGA_VERSION_MAX_MS ?? ""),
+        ERGA_VERSION_IDLE_MS: local(process.env.ERGA_VERSION_IDLE_MS ?? ""),
+        ERGA_VERSION_MAX_MS: local(process.env.ERGA_VERSION_MAX_MS ?? ""),
         // How long a document stays open with nothing done before it closes and its object may sleep (tests shorten it).
-        ERGA_ROOM_IDLE_MS: bindings.text(process.env.ERGA_ROOM_IDLE_MS ?? ""),
+        ERGA_ROOM_IDLE_MS: local(process.env.ERGA_ROOM_IDLE_MS ?? ""),
         // The deploy facts a deploy would set (deploy/pipeline/account.ts, deployFacts): tests of `bun erga register`.
-        ERGA_DEPLOY: bindings.text(process.env.ERGA_DEPLOY ?? ""),
+        ERGA_DEPLOY: local(process.env.ERGA_DEPLOY ?? ""),
         // e2e/bench/run.ts --latency: each call to the database or a document waits this long first.
-        ERGA_REMOTE_LATENCY_MS: bindings.text(process.env.ERGA_REMOTE_LATENCY_MS ?? ""),
+        ERGA_REMOTE_LATENCY_MS: local(process.env.ERGA_REMOTE_LATENCY_MS ?? ""),
 
         // Sign-in's settings, for the tests: a stand-in for github.com (the dev server's pretend GitHub unless given), and the other target's server.
-        ERGA_GITHUB_ORIGIN: bindings.text(process.env.ERGA_GITHUB_ORIGIN ?? (process.env.ERGA_DEV_ORIGIN ? `${process.env.ERGA_DEV_ORIGIN}/__github` : "")),
+        ERGA_GITHUB_ORIGIN: local(
+          process.env.ERGA_GITHUB_ORIGIN ?? (process.env.ERGA_DEV_ORIGIN ? `${process.env.ERGA_DEV_ORIGIN}/__github` : "")
+        ),
         // The dev server's address, where its stand-in for GitHub and its own headless Chrome answer.
-        ERGA_DEV_ORIGIN: bindings.text(process.env.ERGA_DEV_ORIGIN ?? ""),
+        ERGA_DEV_ORIGIN: local(process.env.ERGA_DEV_ORIGIN ?? ""),
         // The agent's key: a real one in .dev.vars, else the environment's, so a
         // placeholder in .dev.vars doesn't hide the key you exported. Never written to .dev.vars.
-        ANTHROPIC_API_KEY: bindings.text(localAgentKey(ENV_DIR)),
+        ANTHROPIC_API_KEY: local(localAgentKey(ENV_DIR)),
       } : {}),
     },
   },

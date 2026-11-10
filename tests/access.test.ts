@@ -149,7 +149,7 @@ test("a document's access asks the database a few things at once, so a stall cou
     ...sql,
     all: async <T>(q: string, ...p: Parameters<typeof sql.all>[1][]) => {
       most = Math.max(most, ++open);
-      await new Promise((r) => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, 0));
       open--;
       return sql.all<T>(q, ...p);
     },

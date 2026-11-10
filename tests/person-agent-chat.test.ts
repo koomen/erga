@@ -10,6 +10,7 @@ import { ChatTables, tableStore } from "../agents/chat-store";
 import { restoredLog, STOPPED, STOPPED_SHOWN, type ChatStore, type StoredChat } from "../agents/checkpoint";
 import * as Schema from "effect/Schema";
 import type { AgentTool } from "../agents/run";
+import { until } from "./helpers/until";
 
 const script = { own: {}, server: {}, mode: "server" as const, off: [], model: "script" as const, effort: "medium" as const };
 
@@ -30,7 +31,8 @@ test("a conversation stored and restored goes on where it was: the transcript an
   const t = tables(), store = tableStore(t, "admin:root");
   const a = startAgent({ cfg: script, owner: "root", admin: true, tools: [], store });
   await turn(a, `@script [{"text":"Hello, root."}]`);
-  await new Promise((r) => setTimeout(r, 10));
+  // The store has the run's end: a little after the agent says it.
+  await until(() => t.load("admin:root")?.state.running === false);
 
   const b = startAgent({ cfg: script, owner: "root", admin: true, tools: [], store, stored: t.load("admin:root") });
   expect(b.log().items).toEqual([{ kind: "user", text: `@script [{"text":"Hello, root."}]` }, { kind: "assistant", text: "Hello, root." }]);
@@ -39,8 +41,7 @@ test("a conversation stored and restored goes on where it was: the transcript an
   await turn(b, `@script [{"text":"Again."}]`);
   expect(b.log().items.map((i) => i.kind)).toEqual(["user", "assistant", "user", "assistant"]);
   expect(b.messages().length).toBe(4);
-  await new Promise((r) => setTimeout(r, 10));
-  expect(t.load("admin:root")!.messages.length).toBe(4);
+  await until(() => t.load("admin:root")!.messages.length == 4);
   await b.reset();
   expect(t.load("admin:root")).toBeNull();
 });

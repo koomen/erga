@@ -6,6 +6,7 @@ import { ChangeSet, Text } from "@codemirror/state";
 import * as M from "../shared/manuscript";
 import { blockRange, caretNear, joinBlocks, rules, type Intent, type Page, type Step } from "../libs/text/api/rules";
 import type { Change } from "../libs/text/api/lists";
+import { keys } from "./helpers/page-keys";
 
 function parse(marked: string): { src: string; anchor: number; head: number } {
   const caret = marked.indexOf("|");
@@ -103,6 +104,78 @@ describe("the keys", () => {
 
   test("text typed into an empty block takes the place of its <br>", () => {
     expect(key("<p>|<br></p>", type("a"))).toEqual({ text: "<p>a|</p>", undo: "type" });
+  });
+
+  // Where no join can be, the key moves the caret to the other block, and the source stays as it was. "{B}" is the
+  // caret before Backspace, "{D}" the caret before Delete: each key puts the caret where the other starts. (Browser
+  // tests before: e2e/full/page/join-cases.e2e.ts and its page.)
+  test.each([
+    ["after a table", '<table>\n  <tr><td id="table-a">A cell{D}</td></tr>\n</table>\n<p id="table-b">{B}After the table</p>'],
+    [
+      "with a locked block between",
+      '<p id="noedit-a">Before a locked block{D}</p>\n<div data-erga-noedit><p>Locked text</p></div>\n<p id="noedit-b">{B}After the locked block</p>',
+    ],
+    [
+      "with a picture between",
+      '<p id="pic-a">Before a picture{D}</p>\n<svg width="40" height="20"><rect width="40" height="20" fill="#7fb6e0"/></svg>\n<p id="pic-b">{B}After the picture</p>',
+    ],
+  ])("%s: Backspace puts the caret at the end of the block before, and Delete at the start of the next", (_, blocks) => {
+    const [atB, atD] = ["{B}", "{D}"].map((mine) => blocks.replace(mine, "|").replace(/\{[BD]\}/, ""));
+    expect(key(atB, { kind: "delete", forward: false })).toMatchObject({ text: atD });
+    expect(key(atD, { kind: "delete", forward: true })).toMatchObject({ text: atB });
+  });
+});
+
+// The same rules through the editor's own handlers (helpers/page-keys.ts): a paste, a cut, and typing over the selection
+// a triple-click makes. (Browser tests before, e2e/full/page; they made the clipboard's events by hand, as this does.)
+describe("through the editor's handlers", () => {
+  test("text pasted over a selection replaces it; a URL pasted over selected text links it", () => {
+    expect(keys('<p class="lede">[Bui]ld <em>cool</em> things</p>').pasteText("not a url").text).toBe(
+      '<p class="lede">not a url|ld <em>cool</em> things</p>'
+    );
+    expect(keys("<h1>[Launch] notes</h1>").pasteText(" https://example.com/a?b=1&c=2 ").text).toBe(
+      '<h1><a href="https://example.com/a?b=1&amp;c=2">[Launch]</a> notes</h1>'
+    );
+  });
+
+  // Pete's report: typing over a block a triple-click selected changed the next block too. (A triple-click selects to
+  // the start of the next block's text.)
+  test("a triple-clicked heading and list item, typed over, keep the block after them", () => {
+    expect(keys('<h1>[Title here</h1>\n<p id="first">]First paragraph.</p>').key("To").text).toBe(
+      '<h1>To|</h1>\n<p id="first">First paragraph.</p>'
+    );
+    expect(keys("<ul>\n  <li>[Apple</li>\n  <li>]Banana</li>\n</ul>").key("Pe").text).toBe(
+      "<ul>\n  <li>Pe|</li>\n  <li>Banana</li>\n</ul>"
+    );
+  });
+
+  test("on a slide, a triple-clicked title, typed over, keeps the slide's text below it", () => {
+    const slide = (title: string, text: string) => `<section class="slide current"><h1>${title}</h1><p>${text}</p></section>`;
+    expect(keys(slide("[First slide", "]The arrows move between slides.")).key("Hi").text).toBe(
+      slide("Hi|", "The arrows move between slides.")
+    );
+  });
+
+  // An id is unique in the page: a paste adds none that the page has already.
+  const IDS =
+    '<p id="target" class="lead">A block with an id.</p>\n<p id="linked">See <a id="link" name="link" href="#target">the target block</a> above.</p>\n<p class="other">Another block.</p>';
+
+  test("a paste of a copied block with an id: the original keeps its id, and the paste adds no id", () => {
+    const pasted = IDS.replace("Another block.", 'Another block.See <a href="#target">the target block</a> above.|');
+    // What a copy of the block puts on the clipboard has no id (the copy reads the page: ui/clipboard-read.ts). A block
+    // that comes with the page's id and name all the same loses them here.
+    for (const link of ['<a href="#target">', '<a id="link" name="link" href="#target">']) {
+      const block = { tag: "p" as const, html: `See ${link}the target block</a> above.`, text: "See the target block above.", md: "" };
+      expect(keys(IDS.replace("Another block.", "Another block.|")).pasteIn([block]).text).toBe(pasted);
+    }
+  });
+
+  test("cut and paste of text in a block with an id: the block keeps its id, and the paste adds none", () => {
+    const cut = IDS.replace("the target block", "");
+    const ed = keys(IDS.replace("the target block", "[the target block]")).cutOut();
+    expect(ed.text).toBe(cut.replace('href="#target">', 'href="#target">|'));
+    ed.select(cut.replace("Another block.", "Another block.|")).pasteText("the target block");
+    expect(ed.text).toBe(cut.replace("Another block.", "Another block.the target block|"));
   });
 });
 

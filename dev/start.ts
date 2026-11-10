@@ -90,7 +90,11 @@ if (!process.env.ERGA_BUILT) {
 
 const secret = process.env.ERGA_LINK_SECRET || randomBytes(24).toString("hex");
 // No Web Storage in Node (Node 25+ warns when something reaches for it, and nothing here needs it).
-const vite = Bun.spawn(["node", "--no-experimental-webstorage", join(ROOT, "node_modules/vite/bin/vite.js"), "dev", "--port", String(port), "--strictPort"], {
+// A test server runs the Worker that the tests built one time (ERGA_PREVIEW_ROOT, e2e/helpers/worker-build.ts).
+const how = process.env.ERGA_PREVIEW_ROOT ? ["preview", "--mode", "development", "--config", join(ROOT, "vite.config.ts")] : ["dev"];
+const vite = Bun.spawn(
+  ["node", "--no-experimental-webstorage", join(ROOT, "node_modules/vite/bin/vite.js"), ...how, "--port", String(port), "--strictPort"],
+  {
   cwd: ROOT,
   stdio: ["ignore", "inherit", "inherit"],
   // Its own process group: Ctrl-C comes to us first, so the documents write to disk before it stops.

@@ -15,16 +15,14 @@ export function budgets(map: string): Map<string, number> {
   return out;
 }
 
-/** Each file's test time in e2e's report (.e2e/report.json), in seconds. */
+/** Each file's test time in e2e's report (.e2e/report.json), in seconds: its plain tests, and its journeys (a journey's time is its group's, not its steps'). */
 export function fileSeconds(report: unknown): Map<string, number> {
   const out = new Map<string, number>();
-  const results = ((report as { run?: { results?: unknown } } | null)?.run?.results ?? []) as {
-    file?: string;
-    attempts?: { durationMs?: number }[];
-  }[];
-  for (const r of results) {
+  type Timed = { file?: string; attempts?: { durationMs?: number }[] };
+  const run = (report as { run?: { results?: Timed[]; serialGroups?: Timed[] } } | null)?.run;
+  for (const r of [...(run?.results ?? []), ...(run?.serialGroups ?? [])]) {
     const ms = (r.attempts ?? []).reduce((sum, a) => sum + (a.durationMs ?? 0), 0);
-    if (r.file) out.set(r.file, (out.get(r.file) ?? 0) + ms / 1000);
+    if (r.file && ms) out.set(r.file, (out.get(r.file) ?? 0) + ms / 1000);
   }
   return out;
 }

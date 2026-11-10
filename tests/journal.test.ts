@@ -16,6 +16,7 @@ import { fileStoreOf, Journal, KEYS, MemoryStorage, PART, stateStoreOf, type Sto
 import { files, introduce } from "../document/content";
 import { joinLocal } from "../document/room";
 import { sleep } from "../shared/time";
+import { until } from "./helpers/until";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const ada = { user: "ada", name: "Ada", color: "#2f6fec", kind: "person" as const };
@@ -56,6 +57,13 @@ async function open(storage: Storage, opts: { journal?: Journal; writeDelay?: nu
   return {
     room, doc, edits: () => edits,
     text: (p = "index.html") => files(doc).get(p)!,
+    /** Whether the journal holds every edit made here: the room's writer wrote them (`writeDelay` after an edit). */
+    written: async () => {
+      const kept = new Y.Doc();
+      for (const u of (await new Journal(storage).load())?.updates ?? []) Y.applyUpdate(kept, u);
+      const have = Y.decodeStateVector(Y.encodeStateVector(kept));
+      return [...Y.decodeStateVector(Y.encodeStateVector(doc))].every(([client, clock]) => have.get(client) == clock);
+    },
     /** Closes it as it closes normally: everything written. */
     close: async () => { leave(); aw.destroy(); await Effect.runPromise(Scope.close(scope, Exit.void)); },
     /** Stops it without its last writes (the object was evicted, the machine stopped). */
@@ -96,13 +104,16 @@ test("the log becomes a snapshot when it grows, and the history still loads whol
   await s.put(KEYS.file + "index.html", new TextEncoder().encode("<p></p>"));
   const journal = new Journal(s, { logEntries: 4, logBytes: 1 << 20, cutEntries: 2, cutBytes: 1 << 20 });
   const a = await open(s, { journal });
-  for (let i = 0; i < 11; i++) { a.text().insert(3, "x"); await sleep(15); }
+  for (let i = 0; i < 11; i++) {
+    a.text().insert(3, "x");
+    await until(a.written);
+  }
   // 11 writes, a snapshot every 4: the log never holds more than 3.
   expect(journal.size.entries).toBeLessThan(4);
   expect(roomKeys(s).filter((k) => k.startsWith("room/s/")).length).toBe(1);
   // At a version, a shorter log is enough (2 here).
   a.text().insert(3, "y");
-  await sleep(15);
+  await until(a.written);
   a.text().insert(3, "y");
   await tick();
   await Effect.runPromise(a.room.settle);
@@ -121,7 +132,7 @@ test("a compaction stopped half way, or a write cut short, leaves a history that
   const journal = new Journal(s, { logEntries: 1000, logBytes: 1 << 30, cutEntries: 1, cutBytes: 1 << 30 });
   const a = await open(s, { journal });
   a.text().insert(3, "one ");
-  await sleep(20);
+  await until(a.written);
 
   // Stopped after writing the new snapshot's parts, before the head that points at them.
   s.failPut = (keys) => keys.includes("room/head");
@@ -144,16 +155,16 @@ test("a compaction stopped half way, or a write cut short, leaves a history that
   b = await open(left);
   expect(b.room.text("index.html")).toBe("<p>three two one </p>");
   b.text().insert(3, "four ");
-  await sleep(20);
-  expect(roomKeys(left).filter((k) => k.startsWith("room/s/")).length).toBe(1);
+  await until(() => roomKeys(left).filter((k) => k.startsWith("room/s/")).length == 1);
   b.drop();
 
   // A write that fails (the room's update with its files) isn't lost: the next one takes it.
-  s.failPut = (keys) => keys.some((k) => k.startsWith("room/u/"));
+  let failed = 0;
+  s.failPut = (keys) => keys.some((k) => k.startsWith("room/u/")) && ++failed > 0;
   a.text().insert(3, "five ");
-  await sleep(20);
+  await until(() => failed > 0);
   s.failPut = null;
-  await sleep(30);
+  await until(a.written);
   // Stopped before closing: what the journal has is what a new room finds.
   const after = cloneOf(s);
   a.drop();
@@ -176,9 +187,9 @@ test("a state bigger than a stored value is cut into parts, each under the limit
   // A huge edit is one log entry in parts too.
   const b = await open(s);
   files(b.doc).get("big.html")!.insert(0, "y".repeat(PART + 10));
-  await tick();
-  await sleep(30);
-  const entry = roomKeys(s).filter((k) => k.startsWith("room/u/") && k.endsWith("-0002"));
+  const entries = () => roomKeys(s).filter((k) => k.startsWith("room/u/") && k.endsWith("-0002"));
+  await until(() => entries().length > 0);
+  const entry = entries();
   expect(entry.length).toBe(2);
   for (const k of entry) expect((s.data.get(k) as Uint8Array).length).toBeLessThanOrEqual(PART);
   b.drop();
@@ -192,7 +203,7 @@ test("files are written lazily: one stopped before writing them writes them as i
   await s.put(KEYS.file + "index.html", new TextEncoder().encode("<p>one</p>"));
   const a = await open(s, { fileDelay: 10_000 });
   a.text().insert(3, "new ");
-  await sleep(30);
+  await until(a.written);
   // In the journal, not yet in the file: the journal says which file is behind.
   expect(await text(s, "index.html")).toBe("<p>one</p>");
   expect(s.data.get(KEYS.unwritten)).toEqual(["index.html"]);
@@ -200,7 +211,7 @@ test("files are written lazily: one stopped before writing them writes them as i
   a.drop();
 
   const b = await open(s, { fileDelay: 10_000 });
-  await sleep(30);
+  await until(() => b.edits() > 0);
   expect(await text(s, "index.html")).toBe("<p>new one</p>");
   expect(s.data.has(KEYS.unwritten)).toBe(false);
   expect(b.edits()).toBe(1);
