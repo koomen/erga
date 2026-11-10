@@ -1,10 +1,12 @@
 // view_page's words beside its pictures: the size and
 // mode the page rendered in, the fonts its text rendered in (a fallback says
 // what the page asked for), what was still loading, its script errors, and
-// where and when each picture was taken. The render itself: e2e/full/page/view-*.e2e.ts.
+// where and when each picture was taken; and when a render takes its picture or runs its code. The render itself:
+// e2e/full/page/view-*.e2e.ts.
 
 import { describe, expect, test } from "bun:test";
 import { describeView } from "../agents/document/page-tools";
+import { renderTimes } from "../shared/agent-log";
 
 const shot = (o: object) => ({ png: "x", width: 1100, height: 800, at: 600, ...o });
 
@@ -46,5 +48,22 @@ describe("describeView", () => {
       page: "index.html",
     });
     expect(text).toContain("Screenshots (2) of index.html: h1, at 600 ms, 300×40px; #chart, at 600 ms, 500×90px.");
+  });
+});
+
+describe("renderTimes", () => {
+  test("code runs as soon as the page has loaded; a picture waits 600 ms, and a step 1 s", () => {
+    expect([
+      renderTimes({ evaluate: "1" }),
+      renderTimes({}),
+      renderTimes({ evaluate: "1", steps: ["2"] }),
+      renderTimes({ steps: ["2"] }),
+    ]).toEqual([[0], [600], [1000], [1000]]);
+  });
+
+  test("the times asked for stand, for code too", () => {
+    expect([renderTimes({ evaluate: "1", atMs: 600 }), renderTimes({ evaluate: "1", frames: [0, 300] }), renderTimes({ atMs: 0 })]).toEqual(
+      [[600], [0, 300], [0]]
+    );
   });
 });

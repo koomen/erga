@@ -230,8 +230,15 @@ export interface PageRender {
   fonts(selector: string | null): RenderedFont[];
 }
 
-/** The times view_page and eval_in_page wait: after a step by default, at most for one time, and how many pictures in one call. */
+/**
+ * The times view_page and eval_in_page wait: after a step by default, after the load for a picture (the page's scripts
+ * and animations draw), at most for one time, and how many pictures in one call.
+ */
 export const FRAMES = { afterStep: 1_000, afterLoad: 600, max: 10_000, count: 6 };
+
+/** When a render takes its pictures or runs its code, in ms after the step or the load: code runs at once after the load. */
+export const renderTimes = (req: Pick<ViewRequest, "frames" | "atMs" | "steps" | "evaluate">): number[] =>
+  req.frames?.length ? req.frames : [req.atMs ?? (req.steps?.length ? FRAMES.afterStep : req.evaluate != null ? 0 : FRAMES.afterLoad)];
 
 /** eval_in_page's limits: how long it waits, by default and at most (ms), and how much JSON it sends back. */
 export const EVAL_TIMEOUT = { default: 5_000, max: 15_000 };
