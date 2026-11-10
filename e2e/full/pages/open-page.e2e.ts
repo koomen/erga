@@ -1,6 +1,6 @@
 // Agents and the open editor of a page: what they see, and taking it to another page.
 import { expect, servers, test, type Tab } from "../../helpers/fixtures";
-import { editing, inFrames, ready, site, where } from "./tree";
+import { editing, inFrames, pageAsked, ready, site, where } from "./tree";
 
 await servers.short();
 
@@ -70,8 +70,10 @@ test("new then open_page take the editor to the new page; its page deleted, the 
   await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/second?edit true`);
   await expect.poll(() => inFrames<string>(p, `document.querySelector("h1")?.textContent ?? null`)).toBe("Untitled");
   await s.tool("new", { path: "blog/third" });
+  const asked = pageAsked(p, "blog/third.html");
   expect((await s.tool("open_page", { path: "blog/third.html" })).ok).toBe(true);
   await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/third?edit true`);
+  await asked;
   await s.tool("rm", { path: "blog/second.html" });
   await s.tool("rm", { path: "blog/third.html" });
   await expect.poll(() => where(p)).toMatch(new RegExp(`^${s.address}/?\\?edit$`));

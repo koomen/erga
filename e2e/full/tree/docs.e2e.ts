@@ -108,7 +108,10 @@ test("it stays open for the tab; closed and opened again its pages show at once,
   expect(await js(page, `document.querySelector("${sub}").hidden`)).toBe(true);
   let again = await page.evaluate(reopen) as { box: boolean; rows: number };
   expect(again.box && again.rows > 0).toBe(true);
-  await page.evaluate(`sessionStorage.removeItem("erga:docs-open")`);
+  // Closed, as a person closes it, for the next visit. (Not by taking it out of the tab's storage: the page writes
+  // the open ones there again when another file's document comes into the list.)
+  await clickOn(page, twist);
+  expect(await js(page, `document.querySelector("${sub}").hidden`)).toBe(true);
   await page.goto(`${doc.root}/docs`);
   await until(() => page.evaluate(`!!window.ergaTree`), 5000, "the tree's script loads once the list is up");
   again = await page.evaluate(reopen) as { box: boolean; rows: number };

@@ -1,7 +1,7 @@
 // Nested pages in the viewer and the editor, in a browser.
 import { expect, servers, test } from "../../helpers/fixtures";
 import { editor, F } from "../../helpers/editor";
-import { site, styled, where, ready, editing } from "./tree";
+import { site, styled, where, ready, editing, pageAsked } from "./tree";
 
 await servers.short();
 
@@ -80,12 +80,16 @@ test("in the editor, a link to another page opens its editor, and a page moved u
   await expect.poll(() => ready(p)).toBe(true);
   const ed = editor(p, { address: s.address, dir: "", file: "" });
   await expect.poll(() => ed.frame<boolean>(`!!${F}?.querySelector('nav a[href="post.html"]')`)).toBe(true);
+  let asked = pageAsked(p, "blog/post.html");
   await ed.frame(`${F}.querySelector('nav a[href="post.html"]').click()`);
   await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/post?edit true`);
   expect(await editing(p)).toBe("blog/post.html");
+  await asked;
+  asked = pageAsked(p, "blog/hello.html");
   await s.treeOp({ op: "move", from: "blog/post.html", to: "blog/hello.html" });
   await expect.poll(() => where(p)).toBe(`${s.address}/blog/hello?edit`);
   await expect.poll(() => editing(p)).toBe("blog/hello.html");
+  await asked;
   await s.treeOp({ op: "move", from: "blog/hello.html", to: "blog/post.html" });
   await expect.poll(() => where(p)).toBe(`${s.address}/blog/post?edit`);
   await expect.poll(() => ready(p)).toBe(true);

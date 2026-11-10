@@ -133,13 +133,15 @@ export const robustness: Test[] = [
     name: "paths that try to leave the document are refused",
     async run(ctx) {
       const d = await ctx.doc();
+      // A line of /etc/passwd, or the start of .git/config. (Not just "root:": the 404 page's own script has `root:e`.)
+      const leak = /root:[^:\n]*:0:0:|\[core\]/;
       for (const p of ["../../../../etc/passwd", "..%2f..%2f..%2fetc%2fpasswd", "%2e%2e/%2e%2e/etc/passwd", "/etc/passwd", "....//....//etc/passwd", ".git/config"]) {
         const r1 = await d.fetch(`/api/stored/${p}`);
         expect(r1.status >= 400 && r1.status < 500, `GET stored ${p} is refused (${r1.status})`);
         const body = await r1.text();
-        expect(!/root:|\[core\]/.test(body), `nothing leaks for ${p}`);
+        expect(!leak.test(body), `nothing leaks for ${p}`);
         const r2 = await d.fetch(`/doc/${p}`);
-        expect(!/root:|\[core\]/.test(await r2.text()), `/doc/${p} leaks nothing (${r2.status})`);
+        expect(!leak.test(await r2.text()), `/doc/${p} leaks nothing (${r2.status})`);
         const r3 = await d.fetch(`/api/stored/${p}`, { method: "PUT", body: "pwned" });
         expect(r3.status >= 400 && r3.status < 500, `PUT stored ${p} is refused (${r3.status})`);
       }

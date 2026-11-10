@@ -140,6 +140,11 @@ const extended = web.extend<{ tab: Tab }>({
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.stack ?? e.message));
     page.on("console", (m) => { if (m.type() == "error") errors.push(`console.error: ${m.text()}`); });
+    // (The browser's own "Failed to load resource" never names the address: these do, beside it.)
+    const refused: string[] = [];
+    page.on("response", (r) => {
+      if (r.status() >= 400) refused.push(`${r.status()} ${r.request().method()} ${r.url()}`);
+    });
     const owned: Server[] = [];
     const tab: Tab = {
       page, errors, strict: false,
@@ -151,7 +156,10 @@ const extended = web.extend<{ tab: Tab }>({
       if (!drift.length) throw new Error(`the page shows its HTML now: take off the knownDrift mark (${tab.knownDrift})`);
       errors.splice(0, errors.length, ...errors.filter((e) => !e.includes(DRIFT)));
     }
-    if (tab.strict && errors.length) throw new Error(`the page had errors:\n${errors.join("\n")}`);
+    if (tab.strict && errors.length)
+      throw new Error(
+        `the page had errors:\n${errors.join("\n")}${refused.length ? `\nrequests the server refused:\n${refused.join("\n")}` : ""}`
+      );
   },
 });
 

@@ -2,7 +2,7 @@
 // These change which document is the server's homepage (landing_document): each puts it back after.
 import { expect, servers, SHORT, test } from "../../helpers/fixtures";
 import { setLanding, signedOut } from "../home/home";
-import { closeDrafts, draftDoc, openDocEditor } from "./settings";
+import { closeDrafts, draftDoc, MANY_VERSIONS, openDocEditor } from "./settings";
 import { runTool } from "../../helpers/tools";
 
 await servers.short();
@@ -74,9 +74,10 @@ test("a new version never deploys by itself: Deploy turns blue and its tip says 
   held.release();
 });
 
-test("a deployed version older than the latest ten shows apart: the latest five, a gap, then five with it third; Show older versions goes on below it", async ({
-  tab,
-}) => {
+test(
+  "a deployed version older than the latest ten shows apart: the latest five, a gap, then five with it third; Show older versions goes on below it",
+  MANY_VERSIONS,
+  async ({ tab }) => {
   const server = await servers.short();
   const doc = await draftDoc(server, "Front page", 8);
   expect((await setLanding(server, doc.id)).error).toBeUndefined();

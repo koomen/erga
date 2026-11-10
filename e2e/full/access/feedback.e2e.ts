@@ -78,7 +78,12 @@ test("Send feedback in the account menu: type, Send, thanks; the issue on GitHub
   });
   expect(setting?.text).toContain("Feedback's repository");
   expect(setting?.value).toBe("erga/pretend");
-  await page.locator("[data-key=feedback_repository]").screenshot({ path: `${SHOTS}/feedback-setting.png` });
+  // (The settings are live rows: another file's change of a setting makes the row again under the picture.)
+  await until(
+    async () => (await page.locator("[data-key=feedback_repository]").screenshot({ path: `${SHOTS}/feedback-setting.png` })).length,
+    5000,
+    "the setting's picture"
+  );
   await clickOn(page, ".admin-side a[href='/admin/feedback']");
   await page.waitForSelector(`.feedback li:has-text("${text.split("\n")[0]}")`);
   const row = await page.evaluate((first) => {
