@@ -28,7 +28,6 @@ import {
   evalTimeout,
   renderTimes,
   type ColorScheme,
-  type PageRender,
   type Shot,
   type StepShown,
   type ViewResult,
@@ -37,9 +36,10 @@ import { sourceDigest } from "../shared/page-html";
 import { reachable } from "../shared/private-address";
 import { pagesOrigin, readPagesClaims } from "../server/documents/index";
 import { cookieName, SESSION_COOKIE, viewCookie } from "../server/identity/index";
-import { inlineCall, loadAssets, readerPage } from "../server/pages/index";
+import { loadAssets, readerPage } from "../server/pages/index";
 import { browserBinding, browsers } from "./browser";
 import type { Page } from "./cdp";
+import { renderTools, type Runner } from "./render-tools";
 import type { Env } from "./env";
 import { platform } from "./platform";
 
@@ -161,7 +161,6 @@ async function render(env: Env, mine: ReturnType<typeof browsers>, job: Job): Pr
 const closed = (page: Page) => Promise.race([page.close().catch(() => {}), new Promise((r) => setTimeout(r, CLOSE_MS))]);
 
 /** Where code runs: the viewer's window, or the page's frame. */
-type Runner = <T>(expression: string) => Promise<T>;
 
 /**
  * The page's frame: its target, when it's on another site (its own process), else its execution context in the
@@ -324,15 +323,7 @@ async function shown(
       if (Date.now() > deadline) return { errors, error: `The editor didn't start in ${EDITOR_MS / 1000} s.` };
       else await new Promise((r) => setTimeout(r, 50));
   }
-  /** One of the render tools (window.__ergaRender) in the page's frame (or with `where`, the viewer's window), with its arguments. */
-  const tools = (where: Runner) => {
-    let installed: Promise<unknown> | null = null;
-    return async <K extends keyof PageRender>(name: K, ...args: Parameters<PageRender[K]>) => {
-      await (installed ??= where(inlineCall("page-render")));
-      return where<Awaited<ReturnType<PageRender[K]>>>(`globalThis.__ergaRender[${JSON.stringify(name)}](...${JSON.stringify(args)})`);
-    };
-  };
-  const call = tools(o.run);
+  const call = renderTools(o.run);
   const pending = await call("settle");
   const base = {
     errors,
@@ -356,7 +347,7 @@ async function shown(
     if (typeof step == "string") return { ...base, error: step };
     if (pending.length) notes.push(`Still loading when the expression ran: ${pending.join(", ")}.`);
     const runs: { at: number; value?: string; note?: string; error?: string }[] = [];
-    const inShell = req.shell ? tools(shell) : call;
+    const inShell = req.shell ? renderTools(shell) : call;
     for (const t of times) runs.push(await inShell("evaluate", req.evaluate, evalTimeout(req), t));
     const failed = runs.find((x) => x.error);
     const value = !req.frames?.length
