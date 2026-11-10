@@ -10,7 +10,7 @@
     "test": "bun e2e/run.ts",
     "format": "bun dev/format.ts --write",
     "lint": "biome lint .",
-    "typecheck": "node --no-experimental-webstorage -e \"import('vite').then((v) => v.resolveConfig({}, 'serve'))\" && tsc -p . && tsc -p tsconfig.workers.json && tsc -p tsconfig.browser.json",
+    "typecheck": "bun client/build.ts --inline && node --no-experimental-webstorage -e \"import('vite').then((v) => v.resolveConfig({}, 'serve'))\" && tsc -p . && tsc -p tsconfig.workers.json && tsc -p tsconfig.browser.json",
     "erga": "bun deploy/cli/main.ts",
     "prepare": "bun deploy/cli/prepare.ts || true",
     "release": "bun deploy/release.ts",

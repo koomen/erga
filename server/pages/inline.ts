@@ -1,8 +1,8 @@
-// The scripts and styles a page carries inline (client/inline/, as server/pages/inline-code.ts has them built): the
+// The scripts and styles a page carries inline (client/inline/, as the build has them in .build/inline-code.ts): the
 // scripts that must run as the page parses, before it paints, or before the page's other scripts, and the styles that
 // must be there before it paints.
 
-import { SCRIPTS, STYLES } from "./inline-code.ts";
+import { SCRIPTS, STYLES } from "../../.build/inline-code.ts";
 import { jsonInScript } from "../../shared/html.ts";
 
 /** The function of script `name` of client/inline/, as an expression. */

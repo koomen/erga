@@ -2,8 +2,7 @@
 // tool stops near 50 KB: a larger file is read in parts, and its middle goes
 // unread (AGENTS.md, rule 9). The files over the cap today are listed with
 // their size. The list only shrinks: a listed file may not grow, and one that
-// is under the cap again must leave it. Fixtures, assets and generated files
-// don't count.
+// is under the cap again must leave it. Fixtures and assets don't count.
 
 import { statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -12,18 +11,13 @@ import { expect, test } from "bun:test";
 const ROOT = resolve(import.meta.dir, "..");
 const CAP = 48 * 1024;
 
-/** Made by a build, not read or edited by hand. */
-const GENERATED = ["server/pages/inline-code.ts"];
-
 /** The files over the cap, and their size in bytes when listed. Split one when you next touch it. */
 const OVER: Record<string, number> = {};
 
 /** The repo's tracked source files. */
 function files(): string[] {
   const out = Bun.spawnSync(["git", "ls-files"], { cwd: ROOT }).stdout.toString().trim().split("\n");
-  return out.filter(
-    (f) => /\.(ts|tsx|js|mjs|css|html|sql)$/.test(f) && !f.startsWith("e2e/fixtures/") && !f.startsWith("assets/") && !GENERATED.includes(f)
-  );
+  return out.filter((f) => /\.(ts|tsx|js|mjs|css|html|sql)$/.test(f) && !f.startsWith("e2e/fixtures/") && !f.startsWith("assets/"));
 }
 
 test("every source file is under 48 KB, or listed and not growing", () => {

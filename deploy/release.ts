@@ -50,7 +50,8 @@ export async function makeRelease(): Promise<ReleaseIndex> {
   mkdirSync(staging, { recursive: true });
   const modules = files(join(built, "bundle"));
   cpSync(join(built, "bundle"), join(staging, "bundle"), { recursive: true, filter: (p) => !p.includes("/.vite") });
-  const assets = files(SITE).filter((p) => !p.startsWith("release/") && !p.startsWith("release."));
+  // Not the inline code (client/build.ts): the Worker's bundle has it.
+  const assets = files(SITE).filter((p) => !p.startsWith("release/") && !p.startsWith("release.") && p != "inline-code.ts");
   for (const p of assets) { mkdirSync(join(staging, "assets", p, ".."), { recursive: true }); cpSync(join(SITE, p), join(staging, "assets", p)); }
   const migrations = files(join(ROOT, "server/migrations")).filter((n) => n.endsWith(".sql"));
   cpSync(join(ROOT, "server/migrations"), join(staging, "migrations"), { recursive: true });

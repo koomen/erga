@@ -84,6 +84,7 @@ describe("deploying", () => {
     const built = JSON.parse(new TextDecoder().decode(release.assets["/manifest.json"])) as AssetManifest;
     for (const name of ["page.js", "frame.js", "editor.html", "style.css"]) expect(Object.keys(release.assets)).toContain(built.files[name]);
     expect(Object.keys(release.assets).some((p) => p.startsWith("/release"))).toBe(false);
+    expect(Object.keys(release.assets)).not.toContain("/inline-code.ts");
     expect(Object.keys(release.migrations)[0]).toBe("0001_erga.sql");
   });
 

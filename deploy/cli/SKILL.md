@@ -17,7 +17,7 @@ and `main`. There are no pull requests.
 
        bun erga push
 
-   It formats the lines you changed, builds `server/pages/inline-code.ts`
+   It formats the lines you changed, builds `.build/inline-code.ts`
    again, runs `bun run test` (format, lint, typecheck, unit tests, smoke
    run) and pushes the branch only when the tests end with `all passing`.
    When a step fails, it prints the failure and pushes nothing. It stops
