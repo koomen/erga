@@ -113,7 +113,8 @@ test("a reader's viewer holds the page in one frame on its own origin (allow-sam
   const meta = (name: string) => new RegExp(`<meta name="${name}" content="([^"]*)"`).exec(html)?.[1].replace(/&amp;/g, "&") ?? "";
   const src = meta("erga-pages") + meta("erga-page").split("/").map(encodeURIComponent).join("/");
   expect(new URL(src).origin).not.toBe(p.origin);
-  expect(new URL(src).pathname).toMatch(/^\/t\/[^/]+\/index\.html$/);
+  // (A reader's files are at an address with the document's version: the browser keeps them until it changes.)
+  expect(new URL(src).pathname).toMatch(/^\/t\/[^/]+\/@[^/]+\/index\.html$/);
   expect(html).not.toContain('name="erga-base"');
   // Unchanged: a 304, with no body.
   const etag = view.headers.get("etag")!;
@@ -128,5 +129,8 @@ test("a reader's viewer holds the page in one frame on its own origin (allow-sam
   expect((await p.as("Zed", address)).status).toBe(403);
   // Edited: the next load shows it (readers see the document as it is now).
   expect((await p.get(`/d/${id}/api/stored/index.html`, { method: "PUT", body: "<h1>Edited</h1>" })).status).toBe(200);
-  expect(await (await framed(src)).text()).toContain("<h1>Edited</h1>");
+  // (The address the viewer gave names the version from before: the page is at the version now.)
+  const moved = await framed(src);
+  expect(moved.status).toBe(302);
+  expect(await (await framed(new URL(moved.headers.get("location")!, src).href)).text()).toContain("<h1>Edited</h1>");
 });

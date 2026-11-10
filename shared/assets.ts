@@ -20,7 +20,12 @@ export interface AssetManifest {
   /** Each script's Subresource Integrity hash ("sha384-..."), by its address. */
   integrity: Record<string, string>;
   /** The app's typeface: its @font-face rules (the font files' addresses root-relative), to put in a page's own <style>. */
-  fonts: { css: string; preload: string };
+  fonts: {
+    css: string;
+    preload: string;
+    /** The templates' typefaces (Instrument Sans, Literata), for a document's page: their @font-face rules, the files' addresses root-relative. */
+    page: string;
+  };
   /**
    * The editor's shell (client/editor.html), which the server puts into a document's page: its styles, and its controls'
    * HTML. Not in GET /api/release's copy (server/live.ts): only the app's own Worker makes those pages.

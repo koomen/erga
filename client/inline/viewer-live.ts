@@ -40,6 +40,9 @@ export default function viewerLive(base: string): void {
     }
     last = Date.now();
     shown = wanted;
+    // A reader's files are at an address with the version in it (server/documents/view.ts): the new version's address.
+    const pages = document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]');
+    if (pages) pages.content = pages.content.replace(/\/@[^/]+\/$/, "/@" + wanted + "/");
     const f = window.ergaFrames.frame;
     f.src = window.ergaFrames.src() + (y > 0 ? "?erga-y=" + y : "") + location.hash;
   }

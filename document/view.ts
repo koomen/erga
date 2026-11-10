@@ -160,6 +160,20 @@ export class DocumentView {
     return info ? Effect.runPromise(Effect.map(this.now(info), (s) => s.ver).pipe(Effect.orElseSucceed(() => null))) : null;
   }
 
+  /**
+   * A file asked for at a version (x-erga-ver: a reader's address names it, server/documents/pages-origin.ts): the
+   * answer says the version viewers see now, worked out after the file was read. So an answer whose version is the
+   * one asked for holds that version's bytes, and the browser may keep it.
+   */
+  async stamp(request: Request, answer: Response): Promise<Response> {
+    if (request.method != "GET" || !request.headers.has("x-erga-ver") || (answer.status != 200 && answer.status != 304)) return answer;
+    const ver = await this.current().catch(() => null);
+    if (!ver) return answer;
+    const headers = new Headers(answer.headers);
+    headers.set("x-erga-ver", ver);
+    return new Response(answer.body, { status: answer.status, headers });
+  }
+
   /** A viewer's page that just opened (or came back) hears the version it should show, so it catches up. */
   greet(send: (ver: string) => void): void {
     void this.current().then(

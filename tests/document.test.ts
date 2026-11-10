@@ -312,3 +312,40 @@ test("two publishes at once: each file's edit is by its own publisher", async ()
   const state = (await doc.versionsState())!;
   expect(state.current.authors).toEqual(["ada", "bob"]);
 });
+
+test("a file asked for at a version comes with the version viewers see now: the same until a file changes", async () => {
+  const { dir, make } = setup();
+  const doc = make();
+  await dir.add({ id: "vers1234", owner: "ada", title: "Notes", created: Date.now() });
+  await doc.create(
+    "ada",
+    "vers1234",
+    { "index.html": '<link rel="stylesheet" href="style.css"><h1>One</h1>', "style.css": "h1{color:red}" },
+    "index.html",
+    { expires: null }
+  );
+  const file = (path: string, ver?: string) =>
+    doc.handle(
+      new Request(`http://doc/doc/${path}`, {
+        headers: { "x-erga-checked": "files", "x-erga-shares": "0", ...(ver ? { "x-erga-ver": ver } : {}) },
+      })
+    );
+  const ver = (await doc.view({ login: "ada" }, { page: "" }))!.ver!;
+  const first = await file("style.css", ver);
+  expect([first.status, first.headers.get("x-erga-ver"), await first.text()]).toEqual([200, ver, "h1{color:red}"]);
+  // Not asked at a version: no word of it.
+  expect((await file("style.css")).headers.get("x-erga-ver")).toBeNull();
+  // The file changes: the same address is asked, and the answer names another version.
+  const put = await doc.handle(
+    new Request("http://doc/api/stored/style.css", {
+      method: "PUT",
+      body: "h1{color:blue}",
+      headers: { "x-erga-person": JSON.stringify({ id: "ada", name: "ada" }), "x-erga-who": JSON.stringify({ login: "ada" }) },
+    })
+  );
+  expect(put.ok).toBe(true);
+  const after = await file("style.css", ver);
+  expect(after.status).toBe(200);
+  expect(after.headers.get("x-erga-ver")).not.toBe(ver);
+  expect(after.headers.get("x-erga-ver")).toBe((await doc.view({ login: "ada" }, { page: "" }))!.ver!);
+});
