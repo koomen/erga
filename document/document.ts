@@ -182,6 +182,8 @@ export class Document {
   private uploads: Uploads;
   /** Room connections that may edit: when the last one goes, a version is cut. */
   private editing = 0;
+  /** Who made the last edit, as its author's line ("ada", "ada, via their agent"); null before the first since it opened. */
+  private lastAuthor: string | null = null;
   /** Who may edit, by person id, as the app said last (x-erga-access): their agents may too. */
   private editors = new Map<string, boolean>();
   /** Who may do what: its copy of its permissions, and the directory's rule (access.ts). */
@@ -237,7 +239,8 @@ export class Document {
         if (id) deps.viewChanged?.(id);
       },
       info: () => this.readInfo(),
-      tell: (ver) => this.opened?.broadcast({ type: "view", ver }),
+      // (`by`: who changed it last, for the pill that tells a reader who writes: client/inline/viewer-live.ts.)
+      tell: (ver) => this.opened?.broadcast({ type: "view", ver, ...(this.lastAuthor ? { by: this.lastAuthor } : {}) }),
     });
   }
 
@@ -1023,6 +1026,7 @@ export class Document {
       kind: () => this.info?.kind ?? "project",
       setKind: (kind) => this.setKind(kind),
       edited: (author) => {
+        this.lastAuthor = author;
         this.views.changed();
         this.history.noteEdit(author);
       },

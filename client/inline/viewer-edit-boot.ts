@@ -1,4 +1,4 @@
-// Going into the editor and back, on a document's page (server/pages/viewer.ts), for those who may: the pencil, the
+// Going into the editor and back, on a document's page (server/pages/viewer.ts), for those who may: the pencil, ⌘⇧E, the
 // editor's eye, the browser's back and forward, or a page opened with ?edit. Only the address's ?edit changes
 // (pushState), never the page. client/common/edit-phase.ts decides; this script does what it says. The first time in,
 // the editor's controls and styles (client/editor.html, in the page already) go on, its socket opens (ergaConnect) and
@@ -106,6 +106,21 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
     const at = editor()?.pagePath;
     if (on && at != null && page && page != at) location.reload();
     else edit(on);
+  });
+  // ⌘⇧E (Ctrl+Shift+E off a Mac) opens and closes the editor, as a click on the pencil does: pressed here, or in the page
+  // (its first script says so: client/inline/reader.ts).
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+  const pencil = () => {
+    const on = looks(state.state).editing && !looks(state.state).closing;
+    document.querySelector<HTMLElement>(on ? "#btn-edit" : ".erga-edit-button")?.click();
+  };
+  addEventListener("keydown", (e) => {
+    if (!(mac ? e.metaKey : e.ctrlKey) || !e.shiftKey || e.altKey || e.key.toLowerCase() != "e" || e.isComposing) return;
+    e.preventDefault();
+    pencil();
+  });
+  addEventListener("message", (e) => {
+    if (ergaFrames.from(e) && e.data?.type == "erga-edit-key") pencil();
   });
   // Back and forward: editing follows the address. The entry's page is the editor's to open, in place (client/shell/main.ts,
   // popstate: it reads the entry's ergaPage), never the page shown, which the frame's own history may not have brought back yet.

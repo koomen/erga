@@ -34,7 +34,7 @@ browserTest(FILE, "the agent panel is per person, and the agent sees the page th
   await until(async () => (await b.textOf("h1")).includes("by agent"), 5000, "Bo's page shows the agent's edit");
   expect(!(await b.eval<boolean>(`[...document.querySelectorAll(".msg-user, .msg-assistant")].length > 0`)), "Bo's panel shows none of it");
   await until(async () => b.eval<boolean>(`[...document.querySelectorAll(":is(#people, #me) .agent-badge")].some((e) => /Ada, via their agent/.test(e.dataset.tip))`), 5000, "the agent's badge shows on Bo's page");
-  const idle = async () => !(await peerNames(b)).includes("Ada, via their agent");
+  const idle = async () => !(await peerNames(b)).includes("Ada’s agent");
   // (Its tools run in the document's host as Ada's agent, which counts it as working until 8 s after its last call:
   // agents/document/session.ts, IDLE_MS.)
   await until(idle, 12_000, "and no caret of its own once it's idle", async () => peerNames(b));
@@ -111,7 +111,7 @@ browserTest(FILE, AS_IT_HAPPENS, { needs: ["scriptedAgent"] }, async (ctx, tab) 
   expect(news[news.length - 1].hidden == 0, "and all of it shows at the end", saidNews);
   // With the agent's caret, its name on it, while it plays.
   expect(
-    playing.some((s) => /Ada, via their agent/.test(s.name)),
+    playing.some((s) => /^Ada’s agent · writing$/.test(s.name)),
     "the agent's caret plays it, with its name",
     saidNews
   );
@@ -123,7 +123,7 @@ browserTest(FILE, AS_IT_HAPPENS, { needs: ["scriptedAgent"] }, async (ctx, tab) 
     marked
   );
   expect((await marksNow(b)).length == 0, "and nothing marks it once it has played", await marksNow(b));
-  const idle = async () => !(await peerNames(b)).includes("Ada, via their agent");
+  const idle = async () => !(await peerNames(b)).includes("Ada’s agent");
   await until(idle, 12_000, "the caret goes once the agent is idle", async () => peerNames(b));
   noErrors(a, "Ada");
   noErrors(b, "Bo");

@@ -24,7 +24,7 @@ test("someone who may only view, in an editor's tab still open: no versions, a l
     .poll(() => s.eval<string>(`document.getElementById("ds-hist-error").textContent`))
     .toBe("Couldn't load the versions: Only people who can edit a document read its versions.");
   expect(await s.listed()).toEqual([]);
-  expect(await s.eval<boolean>(`!!document.querySelector("#ds-list .ds-edit")`)).toBe(false);
+  expect(await s.eval<boolean>(`!!document.querySelector("#ds-list .ds-restore")`)).toBe(false);
   expect(await s.eval<boolean>(`document.getElementById("ds-home").hidden`)).toBe(true);
   // Document or Project: shown, not theirs to change.
   await expect.poll(() => s.eval<number>(`document.querySelectorAll('#ds-kind [aria-disabled="true"]').length`)).toBe(2);

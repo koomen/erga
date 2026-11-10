@@ -65,7 +65,7 @@ export async function person(server: Server, as: string) {
     /** The homepage's state, as ls answers it; not the homepage: { isHome: false }. */
     home: async (id: string) =>
       ((await runTool(server.root, "ls", { document: id }, { cookie, origin })).result?.homepage ?? { isHome: false }) as HomeState,
-    /** Brings a version back, as the settings' Edit does (restore_version; `body.path`: one file). */
+    /** Brings a version back, as the settings' Restore does (restore_version; `body.path`: one file). */
     restore: async (id: string, version: string, body?: { path?: string }) => {
       const r = await runTool(server.root, "restore_version", { document: id, version, ...body }, { cookie, origin });
       return { ok: r.ok, status: r.status, json: async () => (r.ok ? r.result : { error: r.error }) };

@@ -14,7 +14,8 @@ export interface PageProblem {
 export type RawProblem =
   | { kind: "resource"; tag: string; url: string }
   | { kind: "script"; message: string; file: string; line: number; stack?: string }
-  | { kind: "notice"; message: string; fix: string };
+  /** `draft`: `fix` is the start of a request for the person to complete in the agent's box, not one to send as it is. */
+  | { kind: "notice"; message: string; fix: string; draft?: boolean };
 
 /** Where the editor's own scripts are (this module and its chunks, in the app's /_erga/). */
 const OWN = new URL(".", import.meta.url).href;

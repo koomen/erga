@@ -103,7 +103,7 @@ export interface HostOptions {
   /** The document's title and address in the directory, read and changed as a person. */
   readonly naming?: (person: { id: string; name: string }) => Naming;
   /** An agent's run of calls ended: a version is cut; answers the version the document is at then. */
-  readonly turnEnded?: () => Promise<string | null> | void;
+  readonly cutVersion?: () => Promise<string | null> | void;
   /** The document's versions, for the agents' tools. */
   readonly versions?: VersionsAccess;
   /** A new page's text; a plain one if not given. */
@@ -333,7 +333,7 @@ export function makeHost(opts: HostOptions) {
         view: render(user.id),
         live: live(user.id),
         readAsset: (rel) => Effect.runPromise(Effect.orElseSucceed(files.read(rel), () => null)),
-        turnEnded: opts.turnEnded,
+        cutVersion: opts.cutVersion,
         versions: opts.versions,
         open: openFor(user),
         files: filesAccess,
@@ -401,7 +401,7 @@ export function makeHost(opts: HostOptions) {
       Person.use((user) =>
         session(user).pipe(
           Effect.map((s) => s.undoable()),
-          Effect.orElseSucceed(() => ({ count: 0, redo: 0 }))
+          Effect.orElseSucceed(() => ({ count: 0, redo: 0, turn: null }))
         )
       )
     )
@@ -410,6 +410,23 @@ export function makeHost(opts: HostOptions) {
         session(user).pipe(
           Effect.map((s) => ({ ok: s.undo() })),
           Effect.orElseSucceed(() => ({ ok: false }))
+        )
+      )
+    )
+    .handle("undoTurn", () =>
+      Person.use((user) =>
+        session(user).pipe(
+          Effect.map((s) => ({ undone: s.undoTurn() })),
+          Effect.orElseSucceed(() => ({ undone: 0 }))
+        )
+      )
+    )
+    .handle("turnDiff", () =>
+      Person.use((user) =>
+        session(user).pipe(
+          Effect.flatMap((s) => Effect.promise(() => s.turnDiff())),
+          Effect.map((diff) => ({ diff })),
+          Effect.orElseSucceed(() => ({ diff: "" }))
         )
       )
     )

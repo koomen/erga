@@ -1,6 +1,7 @@
 // The documents list page (/docs): a person's documents, latest edit first.
 
 import type { Listed, LiveRow, LiveRows, Session } from "../platform.ts";
+import type { AccessRequest } from "../directory/index.ts";
 import { asset, assetScripts } from "./assets.ts";
 import { appPage, ICON, link, withEdit } from "./chrome.ts";
 import { homeButton, pageBars } from "./bars.ts";
@@ -77,7 +78,24 @@ export function docRow(session: Session, d: Listed, now: number, hours: number |
  * The documents view: yours and those shared with you, with new, open, archive, share and delete; or, `archived`
  * (/docs/archived), those you archived, the same rows with Unarchive. Each heading links to the other list.
  */
-export function docsPage(session: Session, docs: Listed[], now: number, hours: number | null, archived = false): string {
+export function docsPage(
+  session: Session,
+  docs: Listed[],
+  now: number,
+  hours: number | null,
+  archived = false,
+  /** The requests for access to the person's documents that wait for an answer (server/directory/requests.ts). */
+  asks: AccessRequest[] = []
+): string {
+  // Each request: who asks, for which document, and the owner's two answers (client/inline/docs.ts: share_document).
+  const asking = asks.length
+    ? `<ul class="asks" aria-label="Requests for access">${asks
+        .map(
+          (r) =>
+            `<li data-doc="${esc(r.doc)}" data-login="${esc(r.login)}"><span><b>${esc(r.login)}</b> asks for access to <a href="${esc(link(`/d/${r.doc}`, session))}">${esc(r.title)}</a></span><button type="button" class="share">Share</button><button type="button" class="decline">Decline</button></li>`
+        )
+        .join("")}</ul>`
+    : "";
   const rows = docs.map((d) => docRow(session, d, now, hours, archived)).join("\n");
   const count = plural(docs.length, "document");
   const [title, other, otherLabel] = archived ? ["Archived", "/docs", "Documents"] : ["Documents", "/docs/archived", "Archived"];
@@ -95,7 +113,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
       <div class="make-buttons"><input type="search" class="input find" placeholder="Find" aria-label="Find documents by title or address" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false"${docs.length ? "" : " hidden"}>${newDocButton("pill", "New")}<a class="pill scratch erga-scratch-tip" href="${esc(link("/scratch", session))}" draggable="false" data-tip="${esc(scratchMakeTip(hours))}" aria-description="${esc(scratchMakeTip(hours))}">${PLUS}Scratch</a></div>
     </div>
   </header>
-  <p class="none" id="docs-none" role="status" hidden></p>
+  ${asking}<p class="none" id="docs-none" role="status" hidden></p>
   <div class="labels" aria-hidden="true"${docs.length ? "" : " hidden"}><span>Name</span><span>Edited</span><span></span></div>
   <ol class="rows" data-live-kind="doc" data-live-view="${archived ? "docs-archived" : "docs"}" data-live-at="${now}"${docs.length ? "" : " hidden"}>\n${rows}\n  </ol>
   <p class="empty"${docs.length ? " hidden" : ""}>${empty}</p>

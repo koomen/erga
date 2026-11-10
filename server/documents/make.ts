@@ -193,10 +193,14 @@ export const listDocs = Effect.gen(function* () {
   const session = yield* call(() => platform.sessionOf(request));
   if (!session) return signInFirst(url.pathname);
   if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't list others.", 403);
-  const [docs, hours] = yield* call(() =>
-    Promise.all([platform.docs.list(session.login, { archived }), platform.directory.config.get("delete_docs_after_hours")])
+  const [docs, hours, asks] = yield* call(() =>
+    Promise.all([
+      platform.docs.list(session.login, { archived }),
+      platform.directory.config.get("delete_docs_after_hours"),
+      archived ? [] : platform.directory.requests.waiting(session.login),
+    ])
   );
-  return html(docsPage(session, docs, Date.now(), hours, archived), 200, NO_STORE);
+  return html(docsPage(session, docs, Date.now(), hours, archived, asks), 200, NO_STORE);
 });
 
 /**

@@ -25,7 +25,12 @@ export function mountToast(shell: Shell) {
   // to, with a prompt that names the problem.
   const EXPLAIN_MS = ms(5000);
   const problemQueue: { text: string; fix?: string; key?: string }[] = [];
-  function explain(text: string, fix?: string, key?: string) {
+  /**
+   * `fix`: what "Fix with agent" asks the agent, as the page editor's report. With `draft`, the button puts it in the
+   * agent's box instead, as the start of a request for the person to complete ("Change the text “42” to: "): one
+   * line, as the person will see it before they send it.
+   */
+  function explain(text: string, fix?: string, key?: string, draft?: boolean) {
     clearTimeout(toastTimer);
     toast.textContent = "";
     toast.append(Object.assign(document.createElement("span"), { className: "toast-text", textContent: text }));
@@ -42,6 +47,10 @@ export function mountToast(shell: Shell) {
           return;
         }
         hideExplanation();
+        if (draft) {
+          agent.draft(fix.replace(/\s+/g, " ").slice(0, 200));
+          return;
+        }
         // The page editor's report goes to your agent as data, in the page note (shared/page-report.ts).
         if (key) shell.room.shownProblems.delete(key);
         agent.ask(FIX_REPORTED, `${editorContext(shell)}\n${pageReport(fix)}`);

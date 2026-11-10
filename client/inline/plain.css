@@ -10,3 +10,9 @@ main.plain b { color: var(--fg-strong); }
 main.plain .new { margin-top: 6px; }
 /* The sign-in page's buttons: shared/sign-in.ts. */
 @media (max-width: 520px) { main.plain { padding: 72px 16px 64px; } main.plain h1 { font-size: 22px; } }
+/* The ways out of a page (a document that isn't shared with you: server/documents/view.ts). */
+main.plain .ways { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+main.plain .ways .new { margin-top: 0; }
+main.plain .ways .new:disabled { opacity: 0.55; cursor: default; }
+main.plain .ways .way { border: 1px solid var(--panel-border); border-radius: 9px; padding: 6px 12px; text-decoration: none; font-size: 14px; }
+main.plain #ask-note:empty { display: none; }

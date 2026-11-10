@@ -10,7 +10,7 @@ test("someone it isn't shared with can't open it, nor reach its host, and is tol
   const id = await p.make();
   const r = await p.as("Ada", `/${p.login}/untitled`);
   expect(r.status).toBe(403);
-  expect(await r.text()).toContain("hasn't been shared with");
+  expect(await r.text()).toContain("has not shared this document with");
   expect((await p.as("Ada", `/d/${id}/api/doc`)).status).toBe(403);
 });
 

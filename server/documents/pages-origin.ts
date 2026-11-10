@@ -83,7 +83,8 @@ const PagesToken = signed(
 
 /**
  * A token that opens one document's files on its pages origin, for a week, for the viewer at `shell` (whose origin it names);
- * `edit`: for someone who may edit it, whose pages come with what the editor needs in them (readerPage).
+ * `edit`: for someone who may edit it, or comment on it (the comments are the editor's), whose pages come with what
+ * the editor needs in them (readerPage).
  * Its expiry is rounded up to the next whole day, so the token, and with it the address of every file of the page, stays the
  * same all day: the browser's cache can answer for them (they're checked by ETag, pagesRoutes and document/host.ts's docFile).
  * `ttl`: good for that many seconds only, not rounded (the server's own browser: cloudflare/render.ts).

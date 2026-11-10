@@ -155,10 +155,10 @@ export function platformOf(caller: Caller): Platform {
 }
 
 /**
- * The document a caller names (an address, a URL, an id, or one of the
- * person's slugs; nothing for the one open on the page of the person's own agent), if they may do `action` with it.
+ * The document a caller names (an address, a URL, an id, or one of the person's slugs; nothing for the one open on the
+ * page of the person's own agent), whatever they may do with it: for an action of someone with no role in it.
  */
-export async function findDocument(caller: Caller, ref: unknown, action: Action): Promise<DocRow> {
+export async function namedDocument(caller: Caller, ref: unknown): Promise<DocRow> {
   const { dir, who } = caller;
   if ((ref == null || ref === "") && caller.here) ref = caller.here;
   if (typeof ref != "string" || !ref.trim())
@@ -182,6 +182,13 @@ export async function findDocument(caller: Caller, ref: unknown, action: Action)
   if (!doc) throw new OperationError({ message: `There's no document "${ref}". list_documents lists yours.`, status: 404 });
   if (who.onlyDoc != null && doc.id != who.onlyDoc)
     throw new OperationError({ message: "This token reaches one document only, and that isn't it.", status: 403 });
+  return doc;
+}
+
+/** The document a caller names (namedDocument), if they may do `action` with it. */
+export async function findDocument(caller: Caller, ref: unknown, action: Action): Promise<DocRow> {
+  const { dir, who } = caller;
+  const doc = await namedDocument(caller, ref);
   if (!(await dir.may(who, action, doc))) {
     throw new OperationError({
       message:

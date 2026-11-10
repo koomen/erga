@@ -21,6 +21,8 @@ export type HeldInput = { key: string; shift: boolean; alt: boolean; ctrl: boole
 export interface TypingAgent {
   name: string;
   color: string;
+  /** Its label at its caret while its text plays (Peer.label). */
+  label?: { label: string; title: string };
 }
 
 /** Someone else in the document: their caret (and selection) as source positions. */
@@ -32,8 +34,8 @@ export interface Peer {
   /** The other end of their selection, if they have one. */
   head: number | null;
   agent?: boolean;
-  /** What an agent is doing ("editing index.html"), shown on its label. */
-  activity?: string | null;
+  /** An agent's label at its caret, short ("Claude Code · looking"), and the full line for its tooltip (shared/attribution.ts, agentLabel). */
+  label?: { label: string; title: string };
 }
 
 export interface PageEditorConfig {
@@ -52,7 +54,11 @@ export interface PageEditorConfig {
    * document itself is at fault, `fix` is a prompt that asks the agent to
    * repair it, which the viewer offers as a button.
    */
-  onNotice?: (message: string, fix?: string) => void;
+  /**
+   * Why something can't be done. `fix`: a request the agent can do for it (the viewer offers "Fix with agent"); with
+   * `draft`, the start of a request that the person completes ("Change the text “42” to: ").
+   */
+  onNotice?: (message: string, fix?: string, draft?: boolean) => void;
   /**
    * Files dropped or pasted on the text, at source position `at` (`point`: where, in the page's coordinates): the
    * caller adds them to the document's files, then puts them on the page (insertFiles), or says why not (dropError).

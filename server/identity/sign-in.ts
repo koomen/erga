@@ -165,7 +165,11 @@ const providerOff = Effect.fnUntraced(function* (platform: Platform, provider: P
   );
 });
 
-/** /auth/sign-in: the providers that are on, to choose from (one: straight there). */
+/**
+ * /auth/sign-in: the providers that are on, to choose from (one: straight there). From a document's address
+ * (&open=document, signInFirst), it says so and shows the address asked for: the same whether there's a document there
+ * or not. Where everybody may make an account, it says that the same buttons make one.
+ */
 export const chooseSignIn: Route = Effect.gen(function* () {
   const { platform, url } = yield* ctx;
   const next = safeNext(url.searchParams.get("next"));
@@ -177,12 +181,22 @@ export const chooseSignIn: Route = Effect.gen(function* () {
     providers.map((id) => ({ id, label: PROVIDERS[id].label })),
     next
   );
+  if (!buttons) return page("Sign in", "No sign-in is on here.", 200);
+  const document = url.searchParams.get("open") == "document";
+  const rules = yield* call(() => platform.directory.rules.all().catch(() => []));
+  const open =
+    rules.some((r) => r.kind == "everybody" && r.access != "none") || (platform.dev(url) && platform.directory.defaultRules(rules));
   return page(
-    "Sign in",
-    buttons ? `<style>${PROVIDER_CSS}</style><span class="providers">${buttons}</span>` : "No sign-in is on here.",
+    document ? "Sign in to open this document" : "Sign in",
+    `<style>${PROVIDER_CSS}${SIGN_IN_CSS}</style>${document ? `</p><p class="asked">${esc(url.host + next.split(/[?#]/)[0])}</p><p>` : ""}<span class="providers">${buttons}</span>${open ? `</p><p class="new-here">New here? The same buttons make your account.` : ""}`,
     200
   );
 });
+
+/** The sign-in page's two lines: the address asked for, above the buttons, and the line for a new person, below them. */
+const SIGN_IN_CSS = `
+main.plain .asked, main.plain .new-here { font-size: 14px; color: var(--soft); overflow-wrap: anywhere; }
+main.plain .new-here { margin-top: 18px; }`;
 
 const nothingToTest = () => page("Nothing to test", `No new sign-in values wait for a test. <a href="/admin/auth">Authentication</a>`, 404);
 /** The values that wait changed during a test sign-in: it tested none of them. */

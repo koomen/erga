@@ -29,6 +29,7 @@ const PANEL = `<div class="agent-glass">
 </div>
 <div class="agent-log" id="agent-log" data-empty="Ask for anything you can do in Erga: make or change a document, share it, find one. It sees the page you have open." aria-live="polite" tabindex="-1"></div>
 <button type="button" class="agent-jump" id="agent-jump" hidden>↓ Jump to latest</button>
+<p class="agent-turn" id="agent-turn" role="status" hidden></p>
 <p class="agent-hint" id="agent-hint" role="status" hidden></p>
 <div class="agent-ask" id="agent-ask" role="group" aria-labelledby="agent-ask-q" hidden>
 <p class="agent-ask-q" id="agent-ask-q"></p>

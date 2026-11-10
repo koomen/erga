@@ -317,7 +317,10 @@ export abstract class EditorCore {
           fix: `The ${what} “${quote}” (line ${line}) has a stray </${tag}> in its HTML, which the browser ignores, so I can't edit it on the page. Fix the markup so it's well-formed, keeping its text exactly as it is.`,
         };
     }
-    return { message: `This text was changed by the page's script after it loaded, so it can't be edited here.` };
+    return {
+      message: `This text was changed by the page's script after it loaded, so it can't be edited here.`,
+      fix: `The ${what} “${quote}” (line ${line}) is changed by the page's script after the page loads, so I can't edit it on the page. Change the page so that this text can be edited by hand: a script must not change text that is in the source. Give the script an empty element to fill, or mark the text data-erga-noedit if a script must own it.`,
+    };
   }
 
   protected unitOf(node: Node): M.Unit | null {

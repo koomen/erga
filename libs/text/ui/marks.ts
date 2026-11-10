@@ -80,7 +80,7 @@ export abstract class EditorMarks extends EditorCore {
       anchor: t.shown,
       head: null,
       agent: true,
-      activity: null,
+      ...(t.author.label ? { label: t.author.label } : {}),
     }));
   }
 
@@ -184,7 +184,9 @@ export abstract class EditorMarks extends EditorCore {
       caret.style.cssText = `left:${rect.left + win.scrollX}px;top:${rect.top + win.scrollY}px;height:${rect.height || 18}px;--erga-peer:${p.color}`;
       if (p.agent) caret.setAttribute("data-agent", "");
       const label = doc.createElement("erga-peer-name");
-      label.textContent = p.activity ? `${p.name} · ${p.activity}` : p.name;
+      // An agent: its short name and what it does in one word; the full line is the tooltip.
+      label.textContent = p.label?.label ?? p.name;
+      if (p.label) label.title = p.label.title;
       caret.append(label);
       layer.append(caret);
     }

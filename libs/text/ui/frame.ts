@@ -22,6 +22,8 @@ import { clampZoom } from "../../../client/common/zoom";
 import { Collab } from "./collab";
 import { mountControls, noteOnPage, type Controls } from "./controls";
 import { mountComments, type Comments } from "./comments";
+import { mountSlash, pickImages, type Slash } from "./slash";
+import { watchUnsaved } from "./unsaved";
 import { addFiles } from "./uploads";
 import { apiCode, runPageEdit, warm } from "./page-edits";
 import type { EditMode } from "./mode";
@@ -35,6 +37,7 @@ import { isAppShortcut } from "../../../client/common/app-keys";
 import { placeOf } from "../../../client/common/link-target";
 import { keepOffline } from "../../../client/common/offline";
 import { keepPage } from "./offline-page";
+import { agentLabel } from "../../../shared/attribution";
 // (window.__ergaReader: the page's first script, which loads this one.)
 import type {} from "../../../client/common/reader-api";
 
@@ -74,6 +77,10 @@ let collab: Collab | null = null;
 let page: PageEditor | null = null;
 let controls: Controls | null = null;
 let comments: Comments | null = null;
+/** The note for edits that are not on the server yet (unsaved.ts). */
+let unsaved: ReturnType<typeof watchUnsaved> | null = null;
+/** The "/" menu of blocks (slash.ts). */
+let slash: Slash | null = null;
 /** The shell's word on comments (erga-comments: shown or hidden); the page's first script kept the last one. Shown by default. */
 let commentsShown = (window.__ergaReader?.comments as { show?: unknown } | undefined)?.show !== false;
 /** The editor's state as it stopped (undo history and all), for the way back in. */
@@ -192,7 +199,8 @@ try {
 }
 
 /** An agent's edit plays as typing, behind its caret; anyone else's shows as it comes. */
-const typingAgent = (a: Author | null): TypingAgent | null => (a?.kind == "agent" ? { name: a.name, color: a.color } : null);
+const typingAgent = (a: Author | null): TypingAgent | null =>
+  a?.kind == "agent" ? { name: a.name, color: a.color, ...(collab ? { label: collab.agentLabel(a, "writing") } : {}) } : null;
 
 /** Whether this origin holds nothing but this document: then the replica and the page are kept in this browser. */
 let own = false;
@@ -274,9 +282,14 @@ function enter() {
   const follow = () => {
     if (collab != c) return;
     const by = (roomInfo(c.doc).get("lock") as string | undefined) ?? null;
-    page?.setReadOnly(!!by);
+    // (A commenter's page is read-only always: mode.ts, `comment`.)
+    const commenting = !!editing()?.comment;
+    page?.setReadOnly(!!by || commenting);
     lockNote?.();
-    lockNote = by ? noteOnPage(window, `${by} is editing this page's source: you can read it, and edit it again once they're done.`) : null;
+    lockNote =
+      by && !commenting
+        ? noteOnPage(window, `${by} is editing this page's source: you can read it, and edit it again once they're done.`)
+        : null;
   };
   roomInfo(c.doc).observe(follow);
   follow();
@@ -291,6 +304,8 @@ let lockNote: (() => void) | null = null;
 /** The editor on the page, from the room's text (`c`'s replica) and what it kept of itself, if it did. */
 function edit(c: Collab, m: Editing, back: Carry | null) {
   let text = c.current();
+  // (A commenter makes no edits.)
+  if (!m.comment) unsaved = watchUnsaved(window, { flushed: () => (collab == c ? c.flushed() : Promise.resolve(false)), key: m.path });
   // The state this page's editor had (with its undo history), brought to the room's text: before the page loaded again,
   // or before the editor stopped (out of the editor and back). Else the room's text, afresh.
   let begin = EditorState.create({ doc: text, extensions: docExtensions }),
@@ -326,7 +341,10 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
     check: m.check,
     onReload: reload,
     onUpdate(u) {
-      if (u.changes && !u.remote) collab?.push(u.changes);
+      if (u.changes && !u.remote) {
+        collab?.push(u.changes);
+        unsaved?.edit();
+      }
       if (u.changes) for (const d of drops) d.at = u.changes.mapPos(d.at, 1);
       if (u.docChanged || u.selectionSet) queueCursor();
       // A presentation's pictures of its steps are out of date once its text changes (libs/steps).
@@ -339,25 +357,35 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
       if (u.rendered)
         queueMicrotask(() => {
           if (!page) return;
-          unwatch.push(drawCaret(window as Window & typeof globalThis, () => zoom));
-          const made = mountControls(window, page, {
-            place: () => placeOf(window, reader),
-            zoom: () => zoom,
-            comment: () => comments?.compose(),
-          });
-          controls = made;
-          unwatch.push(() => {
-            made.remove();
-            if (controls == made) controls = null;
-          });
-          const drawn = mountComments(window, page, {
+          // A commenter has the comments alone: no caret, no style bar, and a "Comment" button at the selection.
+          if (!m.comment) {
+            unwatch.push(drawCaret(window as Window & typeof globalThis, () => zoom));
+            const made = mountControls(window, page, {
+              place: () => placeOf(window, reader),
+              zoom: () => zoom,
+              comment: () => comments?.compose(),
+            });
+            controls = made;
+            unwatch.push(() => {
+              made.remove();
+              if (controls == made) controls = null;
+            });
+            const menu = mountSlash(window, { zoom: () => zoom, choose: slashChosen });
+            slash = menu;
+            unwatch.push(() => {
+              menu.remove();
+              if (slash == menu) slash = null;
+            });
+          }
+          const drawn = mountComments(window, m.comment ? commenterPage(page) : page, {
             text: () => (collab ? (files(collab.doc).get(m.path) ?? null) : null),
             person,
             me: m.me.user,
             call: commentOp,
-            explain: (message) => controls?.explain(message),
+            explain: (message) => (controls ? controls.explain(message) : sayOnPage(message)),
             zoom: () => zoom,
             shown: commentsShown,
+            button: !!m.comment,
           });
           comments = drawn;
           unwatch.push(() => {
@@ -378,16 +406,21 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
           // caret in its text: it had the focus as it loaded again, or has it now, for the keys held meanwhile.
           // (Not after full screen: the text is left, as after Escape, until a click on it.)
           if (wasFull) page.leaveText();
-          else if (focus || document.hasFocus()) page.focus();
+          else if (!m.comment && (focus || document.hasFocus())) page.focus();
           wasFull = false;
+          // (The viewer stops its own reloads of the page: this shows each change in place. client/inline/viewer-live.ts.)
+          if (m.comment) window.parent.postMessage({ type: "erga-commenting" }, SHELL);
           // (The keys held meanwhile go in now, whether or not it has the focus yet.)
           page.hold(false);
           focus = false;
         });
       controls?.queue();
       comments?.queue();
+      if (u.docChanged || u.selectionSet) slash?.update(page?.slashText() ?? null);
     },
     onKey: (e) => {
+      // The "/" menu's keys, while it is open.
+      if (slash?.key(e)) return true;
       const mod = isMac ? e.metaKey : e.ctrlKey;
       // The link bar (⌘⇧K); Escape: the focus off the text, still in the page (its own keys work: a deck's arrows).
       if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() == "k") {
@@ -410,8 +443,15 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
     },
     // A notice the agent can fix (a paragraph whose HTML is broken) goes to the viewer, which offers the fix: through the
     // page's problem watch (client/inline/page-problems.ts), Erga's own. Any other says why, here.
-    onNotice: (message, fix) => {
-      if (fix) (window as Window & { __ergaReport?: (p: unknown) => void }).__ergaReport?.({ kind: "notice", message, fix });
+    onNotice: (message, fix, draft) => {
+      if (m.comment) return;
+      if (fix)
+        (window as Window & { __ergaReport?: (p: unknown) => void }).__ergaReport?.({
+          kind: "notice",
+          message,
+          fix,
+          ...(draft ? { draft } : {}),
+        });
       else controls?.explain(message);
     },
     // In the page: its change shows at once (page-edits.ts).
@@ -424,27 +464,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
         });
       return runPageEdit(code, html, edit, input);
     },
-    onDropFiles(list, at, point) {
-      // (Its state is on its way to the page that comes: what's dropped now would have nowhere to go in.)
-      const m = editing();
-      if (state.phase != "editing" || !m || !collab) return page?.dropError(point, LOADING_AGAIN);
-      const d = { at, point };
-      drops.add(d);
-      const taken = new Set([...files(collab.doc).keys(), ...assets(collab.doc).keys()].map((p) => p.toLowerCase()));
-      void addFiles(m.doc, m.key, list.slice(0, 50), taken, (p) => sent.add(p)).then(({ paths, error }) => {
-        drops.delete(d);
-        if (!page) return;
-        // From this page's folder (a page in blog/ reaches images/ as ../images/).
-        const up = "../".repeat(HERE.startsWith(BASE) ? HERE.slice(BASE.length).split("/").filter(Boolean).length : 0);
-        const items = paths.map((p) => ({ href: up + encodePath(p), name: baseName(p), image: p.startsWith("images/") }));
-        if (items.length && !page.insertFiles(d.at, items))
-          page.dropError(
-            d.point,
-            `The text where it was dropped changed meanwhile. It's in the document's files (${paths.join(", ")}): drop it again.`
-          );
-        else if (error) page.dropError(d.point, error);
-      });
-    },
+    onDropFiles: dropFiles,
   });
   // The page's own API, imported before the person's first edit asks for it.
   warm(apiCode(m.path, text, (p) => files(c.doc).get(p)?.toString()));
@@ -457,6 +477,54 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
       return state.phase == "reloading";
     },
   };
+}
+
+/** Files dropped or picked for the page: into the document's files, then onto the page at `at` (`point`: where an error shows). */
+function dropFiles(list: File[], at: number, point: { x: number; y: number }) {
+  // (Its state is on its way to the page that comes: what's dropped now would have nowhere to go in.)
+  const m = editing();
+  if (state.phase != "editing" || !m || !collab) return page?.dropError(point, LOADING_AGAIN);
+  const d = { at, point };
+  drops.add(d);
+  const taken = new Set([...files(collab.doc).keys(), ...assets(collab.doc).keys()].map((p) => p.toLowerCase()));
+  void addFiles(m.doc, m.key, list.slice(0, 50), taken, (p) => sent.add(p)).then(({ paths, error }) => {
+    drops.delete(d);
+    if (!page) return;
+    // From this page's folder (a page in blog/ reaches images/ as ../images/).
+    const up = "../".repeat(HERE.startsWith(BASE) ? HERE.slice(BASE.length).split("/").filter(Boolean).length : 0);
+    const items = paths.map((p) => ({ href: up + encodePath(p), name: baseName(p), image: p.startsWith("images/") }));
+    if (items.length && !page.insertFiles(d.at, items))
+      page.dropError(
+        d.point,
+        `The text where it was dropped changed meanwhile. It's in the document's files (${paths.join(", ")}): drop it again.`
+      );
+    else if (error) page.dropError(d.point, error);
+  });
+}
+
+/** The "/" menu's choice: the editor makes the block; for an image, the person picks files, which go in as dropped ones do. */
+function slashChosen(kind: Parameters<PageEditor["slashBlock"]>[0]) {
+  const at = page?.slashBlock(kind);
+  if (kind != "image" || at == null || at === false) return;
+  const r = document.getSelection()?.rangeCount ? document.getSelection()!.getRangeAt(0).getBoundingClientRect() : null;
+  void pickImages(document).then((list) => {
+    if (list.length) dropFiles(list, at, { x: r?.left ?? 0, y: r?.bottom ?? 0 });
+  });
+}
+
+/** The page as a commenter's comments see it: the browser's own selection (the page has no caret), and no focus to give back. */
+const commenterPage = (p: PageEditor) => ({
+  selectionNow() {
+    const s = p.readSelection()?.main;
+    return s ? { from: s.from, to: s.to } : { from: 0, to: 0 };
+  },
+  textRanges: (from: number, to: number) => p.textRanges(from, to),
+  focus() {},
+});
+
+/** A note on the page for a few seconds: where there are no controls to say it (a commenter's page). */
+function sayOnPage(message: string) {
+  setTimeout(noteOnPage(window, message), 5000);
 }
 
 /** Who a login is, for a comment: their name as the room knows it (each editor introduces themself), and their colour. */
@@ -504,10 +572,11 @@ function refreshSoon() {
       refreshing = false;
       return;
     }
-    const busy = collab
+    const c = collab;
+    const busy = c
       .others()
       .filter((p) => p.user.kind == "agent" && p.busy)
-      .map((p) => p.user.name);
+      .map((p) => agentLabel(p.user, null, false).label);
     if (busy.length) {
       controls?.waiting([...new Set(busy)], now);
       setTimeout(go, 300);
@@ -598,6 +667,8 @@ function stopEditor() {
     page.stop();
   }
   for (const f of unwatch.splice(0)) f();
+  unsaved?.stop();
+  unsaved = null;
   darkObserver?.disconnect();
   page = null;
   window.ergaFrame = undefined;
@@ -611,7 +682,7 @@ function queueCursor() {
   cursorQueued = true;
   requestAnimationFrame(() => {
     cursorQueued = false;
-    if (!page || !collab) return;
+    if (!page || !collab || editing()?.comment) return;
     const sel = page.state.selection.main;
     collab.setCursor(sel.anchor, sel.head);
   });
@@ -649,7 +720,7 @@ function watchPage() {
       true
     )
   );
-  unwatch.push(listenAsEditor(d, "mouseup", () => controls?.released(), true));
+  unwatch.push(listenAsEditor(d, "mouseup", () => (controls?.released(), comments?.queue()), true));
   // (Focusing or using this tab's page makes it the one its person is shown by: Collab.activate.)
   on(d, "keydown", () => collab?.activate(), true);
   on(win, "focus", () => collab?.activate(), true);
@@ -658,7 +729,7 @@ function watchPage() {
   watchMoves(d, win, () => {
     if (page && d.getSelection()?.isCollapsed === false) controls?.queue();
   });
-  on(d, "selectionchange", () => controls?.queue());
+  on(d, "selectionchange", () => (controls?.queue(), comments?.queue()));
   on(win, "resize", () => (controls?.queue(), comments?.queue()));
 }
 
@@ -668,7 +739,7 @@ function watchPage() {
 let darkObserver: MutationObserver | null = null,
   darkQueued = false;
 function syncDark() {
-  if (!page || !controls) return;
+  if (!page) return;
   const transparent = (cs: CSSStyleDeclaration) =>
     cs.backgroundImage == "none" && /^(transparent|rgba\([^)]*,\s*0\))$/.test(cs.backgroundColor);
   let cs = getComputedStyle(document.documentElement);
@@ -676,7 +747,8 @@ function syncDark() {
   const rgb = cs.backgroundColor.match(/[\d.]+/g)?.map(Number);
   const clear = !rgb || rgb.length < 3 || rgb[3] === 0;
   const dark = !clear && (0.2126 * rgb![0] + 0.7152 * rgb![1] + 0.0722 * rgb![2]) / 255 < 0.45;
-  controls.dark(dark);
+  controls?.dark(dark);
+  slash?.dark(dark);
   comments?.dark(dark);
 }
 function queueDark() {

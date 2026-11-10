@@ -81,6 +81,20 @@ export default function reader(C: ReaderConfig): void {
     "keydown",
     (e) => {
       if (e.isComposing) return;
+      // Print (⌘P; Ctrl+P off a Mac): this page alone, whole. The browser's own would print the viewer around it, with
+      // Erga's bars and only the part of the page on the screen.
+      if ((mac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() == "p") {
+        e.preventDefault();
+        print();
+        return;
+      }
+      // The editor, opened or closed (⌘⇧E; Ctrl+Shift+E off a Mac): the viewer does it, for whoever may edit (viewer-edit-boot.ts).
+      if ((mac ? e.metaKey : e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() == "e") {
+        e.preventDefault();
+        e.stopPropagation();
+        tell({ type: "erga-edit-key" });
+        return;
+      }
       if (editing()) {
         tell({ type: "erga-activity", kind: "key" });
         if (!isAppShortcut(e, mac)) return;
@@ -160,7 +174,9 @@ export default function reader(C: ReaderConfig): void {
   // The page stops dead at its top and bottom.
   const still = document.createElement("style");
   still.setAttribute("data-erga", "");
-  still.textContent = "html { overscroll-behavior: none; }";
+  // (And the editor's own parts on the page never print.)
+  still.textContent =
+    "html { overscroll-behavior: none; } @media print { erga-controls, erga-comments, erga-caret, erga-peers, erga-note, erga-drop-caret, erga-drop-note, erga-drop-image { display: none !important; } }";
   (document.head || root).append(still);
   // The room for the bars at the top of a scrolling page (client/common/top-room.ts), measured again when the page's
   // styles may have changed (its head, its root's attributes), as it loads, the window's size, or the room the viewer asks for (its
@@ -536,7 +552,10 @@ export default function reader(C: ReaderConfig): void {
         } catch (err) {
           console.error("window.ergaZoom threw:", err);
         }
-    } else if (type == "erga-live") {
+    }
+    // ⌘P in the viewer: this page prints itself.
+    else if (type == "erga-print") print();
+    else if (type == "erga-live") {
       if (typeof e.data.id == "number") askTools(e.data as ToolAsk);
     }
     else if (type == "erga-room" && typeof e.data.px == "number" && e.data.px >= 0 && e.data.px <= 400) {

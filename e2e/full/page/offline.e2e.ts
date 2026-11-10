@@ -8,7 +8,7 @@ import { DISK_MS, F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
 
-const NOTE = "Offline. Your edits will sync when you reconnect.";
+const NOTE = "Edits not saved yet. Erga saves them when the connection is back.";
 
 /** Every socket a page of the tab opens, in each frame: to close them as a lost connection does. */
 async function watchSockets(tab: Tab) {
@@ -59,7 +59,9 @@ function withoutOffline(errors: string[]) {
 }
 
 /** The note in the tab's corner, or null. */
-const note = (ed: Editor) => ed.eval<string | null>(`document.querySelector(".erga-live-note")?.textContent ?? null`);
+/** The note for edits that are not on the server yet, at the bottom right of the page (libs/text/ui/unsaved.ts); null: none. */
+const note = (ed: Editor) =>
+  ed.frame<string | null>(`document.querySelector("erga-unsaved")?.shadowRoot?.querySelector("p")?.textContent ?? null`).catch(() => null);
 
 /** After a reload offline: the shell is up, and the editor on the page, from what this browser kept. */
 async function editorBack(ed: Editor) {
@@ -81,9 +83,20 @@ test("offline: type on, see the note, reload, type more; back online, every edit
   await ed.type(" Milk.");
   await until(() => ed.disk().includes(" Milk.</p>"), DISK_MS, "the first edit on disk");
 
+  // (Online, an edit saves at once: no note, and no "Saved" mark.)
+  expect(await note(ed)).toBeNull();
   await goOffline(ed);
+  // Offline with no edit: still no note.
+  await ed.settle();
+  expect(await note(ed)).toBeNull();
   await ed.type(" Eggs.");
   await expect.poll(() => note(ed), { timeout: 10_000 }).toBe(NOTE);
+  // At the bottom right of the page.
+  const at = await ed.frame<{ right: number; bottom: number }>(
+    `(() => { const r = document.querySelector("erga-unsaved").shadowRoot.querySelector("p").getBoundingClientRect(); return { right: innerWidth - r.right, bottom: innerHeight - r.bottom }; })()`
+  );
+  expect([Math.round(at.right), Math.round(at.bottom)]).toEqual([16, 16]);
+  await ed.page.screenshot({ path: ".e2e/shots/unsaved-note.png" });
 
   await ed.page.reload();
   await editorBack(ed);

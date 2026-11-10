@@ -70,6 +70,7 @@ const roomStep = socketStep({ final: { 4404: "gone", 4403: "reload", 4409: "stal
 const waitFor = (tries: number) => Math.min(2500, 100 * 2 ** tries);
 const statusOf = (p: SocketPhase): RoomStatus => (p.at == "open" ? "up" : p.at == "ended" && p.why == "gone" ? "gone" : "down");
 import type { Peer } from "./types";
+import { agentLabel } from "../../../shared/attribution";
 
 /** Someone in the room, from awareness. */
 export interface Presence {
@@ -720,10 +721,21 @@ export class Collab {
           anchor: at.anchor,
           head: at.head,
           agent,
-          activity: agent ? (p.activity ?? null) : null,
+          ...(agent ? { label: this.agentLabel(p.user, p.activity) } : {}),
         });
     }
     return peers;
+  }
+
+  /** An agent as the page names it: short, and whose it is when more than one person is in the document (agentLabel). */
+  agentLabel(agent: { name: string; via?: string }, activity: string | null | undefined): { label: string; title: string } {
+    const people = new Set(
+      this.others()
+        .filter((o) => o.user.kind == "person")
+        .map((o) => o.user.user)
+    );
+    if (this.me) people.add(this.me.user);
+    return agentLabel(agent, activity, people.size > 1);
   }
 
   /** A presence's caret and selection as positions in the document, if it's in it. */

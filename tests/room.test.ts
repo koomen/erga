@@ -151,6 +151,13 @@ test("an edit based on text the file no longer has says the file changed since",
     const wrong = failure(ws.edit("index.html", [{ oldText: "No such line.", newText: "x" }]));
     expect(wrong.reason).toBe("notFound");
     expect(wrong.message).toMatch(/same as when you last read it/);
+    // The error says what to do next: nothing like it in the file, check oldText; else the nearest line, and where it differs.
+    expect(wrong.message).toEndWith("Check oldText against it.");
+    const near = failure(ws.edit("index.html", [{ oldText: "<p>Restored lime.</p>", newText: "x" }]));
+    expect(near.message).toEndWith(" Nearest, line 2:\n  <p>Restored line.</p>\nIt differs from oldText at character 15 of that line.");
+    // A file that isn't there: the files that are.
+    const missing = failure(ws.edit("nope.html", [{ oldText: "a", newText: "b" }]));
+    expect([missing.reason, missing.message]).toEqual(["missing", "nope.html doesn't exist. The files: index.html."]);
 
     // Read again, the edit lands.
     Effect.runSync(ws.edit("index.html", [{ oldText: "Restored line.", newText: "New line." }]));

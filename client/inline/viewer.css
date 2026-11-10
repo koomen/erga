@@ -65,3 +65,20 @@ html.page-dark .erga-tree-card { --fg: #cacad2; --fg-strong: #ececf1; --soft: #8
 .erga-crumbs.erga-bar { left: max(6px, env(safe-area-inset-left), calc(var(--frame-l, 0px) - 2px)); transition: left 560ms cubic-bezier(0.45, 0, 0.15, 1); }
 .erga-view-buttons.erga-bar { right: max(8px, env(safe-area-inset-right), calc(var(--frame-r, 0px) - 2px)); transition: right 560ms cubic-bezier(0.45, 0, 0.15, 1); }
 .agent { z-index: 1001; }
+/* The browser's own Print (its menu): the page alone, from the sheet's top, with no bars, agent or editor around it. Only
+   the part of the page in the frame prints so; ⌘P prints all of it (viewer-bars.ts tells the page to print itself). */
+@media print {
+  body > :not(#frame) { display: none !important; }
+  #frame { position: static !important; left: 0 !important; top: 0 !important; width: 100% !important; height: 100vh !important; }
+}
+/* Who writes, for a reader (viewer-live.ts): a small pill at the top, between the bars, while changes come; a green dot while they do. */
+#erga-writer { position: fixed; z-index: 2147483600; top: 16px; left: 50%; transform: translateX(-50%); margin: 0; padding: 5px 11px 5px 10px; border-radius: 999px;
+  display: flex; align-items: center; gap: 7px; white-space: nowrap; max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis;
+  font: 500 12.5px/1.4 "Inter", ui-sans-serif, system-ui, sans-serif; color: #3f3f46; background: rgba(255, 255, 255, 0.92); border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); pointer-events: none; }
+#erga-writer[hidden] { display: none; }
+#erga-writer.on::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #1a9f4b; flex: none; animation: erga-writer 1.6s ease-in-out infinite; }
+@keyframes erga-writer { 50% { opacity: 0.35; transform: scale(0.8); } }
+@media (prefers-reduced-motion: reduce) { #erga-writer.on::before { animation: none; } }
+@media (max-width: 720px) { #erga-writer { top: 58px; } }
+@media print { #erga-writer { display: none !important; } }

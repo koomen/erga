@@ -4,7 +4,8 @@
 // before the last ends, for the next socket), who this tab is (`me`: the room attributes the edits to the key's person;
 // this is how the editor shows them), which of the document's pages this is (`path`), this tab's own mark (`tab`: its
 // presence in the room carries it, so the viewer knows its own page's caret), the zoom the viewer draws the page at, and
-// what the tests set (`timescale`, `check`).
+// what the tests set (`timescale`, `check`). `comment`: for a person who may comment and not edit (a commenter:
+// client/inline/viewer-comment.ts sends it): the comments alone, on a page that nothing here changes.
 
 import type { Author } from "../../../document/content";
 
@@ -20,5 +21,6 @@ export type EditMode =
       zoom: number;
       timescale?: number;
       check?: boolean;
+      comment?: true;
     }
   | { type: "erga-mode"; mode: "view" };

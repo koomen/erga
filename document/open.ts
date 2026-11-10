@@ -120,7 +120,8 @@ export async function openRoom(h: RoomHost): Promise<Opened> {
     // Its title and address (the app decided who may rename it: rename_document).
     naming: () => naming,
     // An agent's turn is one version, and where its next diff_versions starts from ("last_turn").
-    turnEnded: () => history.cutSoon("agent turn").then(async (v) => (v ?? (await Effect.runPromise(history.versions.latest)))?.id ?? null),
+    cutVersion: () =>
+      history.cutSoon("agent turn").then(async (v) => (v ?? (await Effect.runPromise(history.versions.latest)))?.id ?? null),
     versions: {
       state: (opts) => Effect.runPromise(history.versionsState(opts)).then((s) => s!),
       version: (ref) => Effect.runPromise(history.version(ref)),
