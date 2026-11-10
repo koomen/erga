@@ -1,14 +1,14 @@
-// The scripts and styles the server's pages carry inline are built from client/inline/ (client/build.ts) into a file
-// the repository keeps (server/pages/inline-code.ts): it must be the build of those sources as they are now.
+// The scripts and styles the server's pages carry inline are built from client/inline/ into .build/inline-code.ts
+// (client/build.ts), which git ignores: each test run builds it first (tests/helpers/build-inline.ts).
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { INLINE_OUT, inlineCode } from "../client/build.ts";
-import { SCRIPTS } from "../server/pages/inline-code.ts";
-
-test("server/pages/inline-code.ts is client/inline/ built as it is now (else: bun client/build.ts --inline)", async () => {
-  expect(readFileSync(INLINE_OUT, "utf8")).toBe(await inlineCode());
-});
+import { SCRIPTS } from "../.build/inline-code.ts";
 
 test("each inline script is a function", () => {
+  expect(Object.keys(SCRIPTS)).toContain("account-menu");
   for (const [name, text] of Object.entries(SCRIPTS)) expect(typeof new Function(`return ${text}`)(), name).toBe("function");
+});
+
+test("git has no built inline code", () => {
+  const tracked = Bun.spawnSync(["git", "ls-files", "*inline-code.ts"], { cwd: `${import.meta.dir}/..` }).stdout.toString();
+  expect(tracked).toBe("");
 });

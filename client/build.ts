@@ -30,9 +30,10 @@
 //   logo.png           Erga's logo (assets/logo/logo.png), public at /logo.png: a square 512 px PNG for
 //                      places that want one (an OAuth client's logo)
 //
-// And, into the repository: server/pages/inline-code.ts, the scripts and styles the server puts in its pages inline
-// (each file of client/inline/; the scripts type-checked as the client is), as text. It's committed, so the server
-// needs no build to run; tests/inline-code.test.ts checks it's up to date. Usage: bun client/build.ts --inline makes only it.
+// And .build/inline-code.ts, the scripts and styles the server puts in its pages inline (each file of client/inline/;
+// the scripts type-checked as the client is), as text, which server/pages/inline.ts imports. It's no static asset
+// (deploy/release.ts leaves it out). Usage: bun client/build.ts --inline makes only it: the typecheck and the unit
+// tests run that first (package.json, bunfig.toml).
 //
 // The build writes into a folder of its own, then moves each file into .build/
 // and writes the manifest last, so a server never names a file that isn't there,
@@ -86,7 +87,7 @@ const hashOf = (bytes: Uint8Array) => sha(bytes).digest("hex").slice(0, 10);
 const integrityOf = (bytes: Uint8Array) => `sha384-${new Bun.CryptoHasher("sha384").update(bytes).digest("base64")}`;
 
 /** Where the inline scripts and styles go, as text (see above). */
-export const INLINE_OUT = join(ROOT, "server/pages/inline-code.ts");
+const INLINE_OUT = join(OUT, "inline-code.ts");
 
 /**
  * The inline code's file: each script of client/inline/ (a default-exported function) built alone and minified, as
@@ -124,10 +125,8 @@ export async function inlineCode(): Promise<string> {
     if (/<\/style/i.test(css)) throw new Error(`client/inline/${f} holds </style>`);
     styles.push(`  ${JSON.stringify(f.replace(/\.css$/, ""))}: ${JSON.stringify(css)},`);
   }
-  return `// Made by client/build.ts from client/inline/: don't edit it, edit those and run bun client/build.ts --inline.
-// tests/inline-code.test.ts checks it's up to date. For server/pages/inline.ts: each script is the text of a function,
-// each style the text of a stylesheet.
-/* biome-ignore-all format: made by client/build.ts */
+  return `// Made by client/build.ts from client/inline/: don't edit it, edit those.
+// For server/pages/inline.ts: each script is the text of a function, each style the text of a stylesheet.
 
 export const SCRIPTS = {
 ${scripts.join("\n")}
@@ -140,7 +139,7 @@ ${styles.join("\n")}
 }
 
 /** Writes the inline code's file, if it changed. */
-async function writeInline(): Promise<void> {
+export async function writeInline(): Promise<void> {
   const text = await inlineCode();
   const was = (() => {
     try {
@@ -149,7 +148,12 @@ async function writeInline(): Promise<void> {
       return "";
     }
   })();
-  if (text != was) writeFileSync(INLINE_OUT, text);
+  if (text == was) return;
+  // Into place at once: a server or a test that starts meanwhile never reads half of it.
+  mkdirSync(OUT, { recursive: true });
+  const next = join(OUT, `.inline-code.${process.pid}`);
+  writeFileSync(next, text);
+  renameSync(next, INLINE_OUT);
 }
 
 async function build(): Promise<void> {
