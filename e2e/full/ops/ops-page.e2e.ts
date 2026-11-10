@@ -2,12 +2,15 @@
 // the primary with its staging instance, the job that runs, and "live" at the commit each instance answers. An entry
 // that another terminal adds to the file shows at once, with no reload. A row's Deploy button shows only in the cell
 // under the mouse, or in the cell whose button has the focus. After a click, "Deploying…" or "Merging…" stays shown
-// until its job ends (fake jobs: fake-jobs.ts), and a tab that loaded older styles reloads.
+// until its job ends (fake jobs: fake-jobs.ts), and a tab that loaded older styles reloads. Merge is open only for a
+// branch whose tests passed; a failed branch's list of tests stays open when the page draws again.
 import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runPath } from "../../../deploy/cli/test-run";
+import { runOf } from "../../../tests/helpers/pass";
 import { expect, test, until } from "../../helpers/fixtures";
 
 const CLI = new URL("../../../deploy/cli/main.ts", import.meta.url).pathname;
@@ -185,6 +188,20 @@ test("after a click, Deploying… and Merging… stay shown, with no hover and t
     join(dir, ".erga/config.json"),
     JSON.stringify({ instances: [entry("127.0.0.1:9"), entry("localhost:9", { stagingOf: "127.0.0.1:9" })] })
   );
+  // The tests' records: every test passed on a-feature's merge, and one failed on the merge of a second branch.
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim();
+  mkdirSync(join(dir, ".erga/tests"));
+  const passed = runOf(git("rev-parse", "origin/a-feature^{tree}"));
+  writeFileSync(runPath(join(dir, ".erga"), passed.tree), JSON.stringify(passed));
+  writeFileSync(join(dir, "broken.txt"), "broken");
+  git("add", "-A");
+  git("-c", "user.name=Pete", "-c", "user.email=p@example.com", "commit", "--quiet", "-m", "A broken feature");
+  git("update-ref", "refs/remotes/origin/b-broken", "HEAD");
+  const failed = runOf(git("rev-parse", "HEAD^{tree}"), {
+    state: "failed",
+    failed: ["e2e/full/a.e2e.ts: it breaks"],
+  });
+  writeFileSync(runPath(join(dir, ".erga"), failed.tree), JSON.stringify(failed));
   // The page with fake jobs: each runs until the file `end` says how it ends.
   const cli = spawn("bun", [new URL("./fake-jobs.ts", import.meta.url).pathname, dir]);
   const url = await new Promise<string>((done, fail) => {
@@ -220,8 +237,18 @@ test("after a click, Deploying… and Merging… stay shown, with no hover and t
     end("failed");
     await expect.poll(state).toBe("Deploy:0");
 
+    // The failed branch: Merge is closed, and its row opens to the failed test; the list stays open through a draw.
+    const broken = page.locator('.feature[data-branch="b-broken"]');
+    await expect.poll(() => broken.locator(".f-test").textContent()).toBe("1 test failed");
+    expect(await broken.locator("[data-merge]").isDisabled()).toBe(true);
+    await broken.locator(".f-fails summary").click();
+    await drawn();
+    expect(await broken.locator(".f-fails li").isVisible()).toBe(true);
+    expect(await broken.locator(".f-fails").textContent()).toContain("What failede2e/full/a.e2e.ts: it breaks");
+
     // Merge: its form, then Merging… until the job ends.
     const merge = page.locator('.feature[data-branch="a-feature"]');
+    expect(await merge.locator(".f-test").textContent()).toBe("Tests passed");
     await merge.locator("[data-merge]").click();
     await merge.locator(".f-merge button:not([data-cancel])").click();
     await page.mouse.move(0, 0);

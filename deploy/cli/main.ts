@@ -14,16 +14,16 @@
 //   bun erga proof "<sentence>" [--look "<bun run look arguments>"]... [--no-picture "<the tests that prove it>"]
 //                                       the branch's proof page, for Pete before the merge: what changed, a picture
 //                                       before and after at desktop and phone width, the tests' result, the files
-//   bun erga loops [--days N]           the time of each loop (default: the last 7 days): for each branch, the minutes
-//                                       of work, the failed test runs, the wait for the merge, the time to staging and
-//                                       to production; then the medians
-//   bun erga status                     each registered instance's commit and health, the feature branches and the
-//                                       commits, as text; it only reads (no fetch)
+//   bun erga status                     each registered instance's commit and health, the feature branches, each with
+//                                       its tests' state (in the queue, running, passed, failed with the tests'
+//                                       names), and the commits, as text; it only reads (no fetch)
 //   bun erga merge <branch>... [-m text]
-//                                       each branch onto staging as one commit, then one test run, one deploy to
-//                                       each staging instance, and the push of staging; -m is for the branch before it
-//   bun erga full [<commit>]            every end-to-end test on a commit (default: staging's head), in a scratch
-//                                       folder; a merge starts it in the background, and the ops page shows its result
+//                                       each branch onto staging as one commit, then the gate (the tests, bun run
+//                                       test, passed on the result: it runs them if no run has), one deploy to each
+//                                       staging instance, and the push of staging; -m is for the branch before it
+//   bun erga test [<branch>|<commit>]   the gate's run: bun run test on a branch's merge onto staging, or on a commit
+//                                       (default: staging's head), in a scratch folder; a tree that ran before runs
+//                                       no more; the ops page runs it for each pushed branch
 //   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
 //   bun erga deploy [<commit>] <host> [--no-tests]            deploys a registered instance from this machine; a primary
 //                                       with no commit takes the commit its staging instances run, and main moves to it;
@@ -40,6 +40,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { latestTag, mergeArgs, nextVersion, releaseNotes, releaseRefusal, statusText } from "./flow";
+import { gateRefusal } from "./gate";
 import { commitsOf, fetchOrigin, headOf, readState, repoOf, sh, tagsOf } from "./observe";
 import { fail, pass, ROOT, say } from "../root";
 
@@ -68,10 +69,8 @@ function help(code = 0): never {
 async function start(name: string | undefined) {
   const { ergaDir } = await import("./config");
   const { startFolder } = await import("./folders");
-  const { logLoop } = await import("./loops");
   try {
     const dir = startFolder({ clone: dirname(ergaDir()), name, log: say });
-    logLoop(ergaDir(), { event: "start", at: new Date().toISOString(), branch: name! });
     say(`NEXT  Work in ${dir}. Commit, then push: bun erga push. When Pete asks: bun erga merge ${name}`);
   } catch (e) {
     fail((e as Error).message);
@@ -93,10 +92,7 @@ async function clean(yes: boolean) {
 async function push() {
   const { pushBranch } = await import("./push");
   try {
-    const sha = pushBranch({ root: ROOT, log: say });
-    const { ergaDir } = await import("./config");
-    const { logLoop } = await import("./loops");
-    logLoop(ergaDir(), { event: "push", at: new Date().toISOString(), branch: sh(["git", "symbolic-ref", "--short", "HEAD"]).out, sha });
+    pushBranch({ root: ROOT, log: say });
   } catch (e) {
     fail((e as Error).message);
   }
@@ -123,18 +119,6 @@ async function proof(sentence: string | undefined, looks: string[], noPicture: s
   }
 }
 
-// ------------------------------------------------------------------ loops
-
-async function loops(days: number) {
-  const { ergaDir, readConfig } = await import("./config");
-  const { loopsText, readLoops } = await import("./loops");
-  const dir = ergaDir();
-  const production = readConfig(dir)
-    .instances.filter((e) => !e.stagingOf)
-    .map((e) => e.host);
-  say(loopsText(readLoops(dir, production), Date.now() - days * 86_400_000, days));
-}
-
 // ------------------------------------------------------------------ merge
 
 async function merge(args: string[]) {
@@ -148,18 +132,33 @@ async function merge(args: string[]) {
   if (r.left.length) process.exit(1);
 }
 
-// ------------------------------------------------------------------ full
+// ------------------------------------------------------------------ test
 
-async function full(commit: string | undefined) {
+async function test(name: string | undefined) {
   const { ergaDir } = await import("./config");
-  const { fullRun } = await import("./full-run");
+  const { testRun, treeOf } = await import("./test-run");
+  const { mergeTree } = await import("./observe");
+  const { PROTECTED } = await import("./flow");
   const dir = ergaDir();
   const clone = dirname(dir);
-  // The name is read where the command is typed: HEAD is this folder's commit.
-  const sha = sh(["git", "rev-parse", "--verify", "--quiet", `${commit ?? "origin/staging"}^{commit}`], { cwd: process.cwd() }).out;
-  if (!sha) fail(`This clone has no commit ${commit ?? "origin/staging"}.`, "git fetch");
-  const r = await fullRun({ dir, clone, sha, log: say }).catch((e: Error) => fail(e.message));
-  if (r.state == "failed") process.exit(1);
+  const has = (ref: string) => sh(["git", "rev-parse", "--verify", "--quiet", `${ref}^{commit}`], { cwd: process.cwd() });
+  const log = (line: string) => say(line);
+  // A feature branch: the tree of its merge onto staging, as the ops page's row and `bun erga merge` test it.
+  if (name && !(PROTECTED as readonly string[]).includes(name) && has(`origin/${name}`).ok) {
+    const m = mergeTree("origin/staging", `origin/${name}`, clone);
+    if (!m.tree) fail(`${name} conflicts with staging in ${m.conflicts.join(", ")}.`, "Rebase it on origin/staging, and push it.");
+    const what = `${name} on staging ${has("origin/staging").out.slice(0, 7)}`;
+    const r = await testRun({ dir, clone, tree: m.tree!, what, branch: name, log }).catch((e: Error) => fail(e.message));
+    if (r.state != "passed") fail(gateRefusal(r, what)!);
+    return;
+  }
+  // A commit: the name is read where the command is typed (HEAD is this folder's commit).
+  const sha = has(name ?? "origin/staging").out;
+  if (!sha) fail(`This clone has no branch origin/${name} and no commit ${name ?? "origin/staging"}.`, "git fetch");
+  const r = await testRun({ dir, clone, tree: treeOf(clone, sha)!, commit: sha, what: sha.slice(0, 12), log }).catch((e: Error) =>
+    fail(e.message)
+  );
+  if (r.state != "passed") fail(gateRefusal(r, sha.slice(0, 12))!);
 }
 
 // ------------------------------------------------------------------ release
@@ -298,9 +297,7 @@ export async function main(argv: string[]) {
     const i = rest.indexOf(f);
     return i >= 0 ? rest[i + 1] : undefined;
   };
-  const plain = rest.filter(
-    (x, i) => !x.startsWith("-") && !["-m", "--port", "--staging-of", "--home", "--days"].includes(rest[i - 1] ?? "")
-  );
+  const plain = rest.filter((x, i) => !x.startsWith("-") && !["-m", "--port", "--staging-of", "--home"].includes(rest[i - 1] ?? ""));
   switch (cmd) {
     case "skill":
       return say(readFileSync(join(ROOT, "deploy/cli/SKILL.md"), "utf8"));
@@ -314,15 +311,21 @@ export async function main(argv: string[]) {
         opt("--no-picture")
       );
     }
-    case "loops":
-      return loops(Number(opt("--days")) || 7);
     case "clean":
       return clean(flag("--yes"));
     case "push":
       return push();
     case "status": {
       const { ergaDir, readConfig } = await import("./config");
+      const { readRuns } = await import("./test-run");
+      const { testOf, testText } = await import("./gate");
       const s = await readState(readConfig(ergaDir()));
+      const runs = readRuns(ergaDir());
+      s.branches = s.branches.map((b) => {
+        const t = testOf({ name: b.name, tree: b.tree ?? null }, runs);
+        const failed = t.at == "failed" ? gateRefusal(t.run, b.name)!.split("\n").slice(1) : [];
+        return { ...b, tests: t.at == "none" ? [] : [testText(t, Date.now()), ...failed] };
+      });
       return say(flag("--json") ? JSON.stringify(s, null, 2) : statusText(s, (sha) => headOf(sha) != null));
     }
     case "": {
@@ -334,8 +337,8 @@ export async function main(argv: string[]) {
     }
     case "merge":
       return merge(rest);
-    case "full":
-      return full(plain[0]);
+    case "test":
+      return test(plain[0]);
     case "release":
       return release(plain[0], flag("--dry-run"));
     case "deploy":

@@ -7,7 +7,7 @@
 // Merge opens a field for the commit's message under its branch. A commit row's cell shows a Deploy button in an instance's column on hover or focus, which asks a question
 // first (the instance and the commit). Each starts its job (POST /api/merge, /api/deploy); the page stays on its tab,
 // and the job line shows the job as it runs. An open field or question stays open, with what the person typed, when the
-// page draws again.
+// page draws again, and so does a failed branch's list of tests.
 (() => {
   const ops = document.getElementById("ops");
   const gone = document.getElementById("gone");
@@ -40,6 +40,7 @@
       err: form?.querySelector(".err").textContent,
       deploy: ask?.matches(":popover-open") ? { ...ask.dataset } : null,
       deployErr: ask?.querySelector(".err").textContent,
+      fails: [...ops.querySelectorAll(".f-fails[open]")].map((d) => d.closest(".feature").dataset.branch),
     };
   }
   function reopen(o) {
@@ -55,6 +56,7 @@
       }
     }
     if (o.deploy) question(o.deploy, o.deployErr);
+    for (const d of ops.querySelectorAll(".f-fails")) d.open = o.fails.includes(d.closest(".feature").dataset.branch);
   }
   /** The deploy question for a row's button (its data: host, sha, ask, note). */
   function question(d, err = "") {

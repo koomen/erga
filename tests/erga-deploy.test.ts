@@ -16,7 +16,6 @@ import {
   deployStaging,
   entryTarget,
   lockPath,
-  passPath,
   rollbackInstance,
   stagingCommit,
   takeLock,
@@ -39,6 +38,8 @@ import {
   stagingDbOf,
   writesToProduction,
 } from "./helpers/deploys.ts";
+import type { Suite } from "../deploy/cli/test-run";
+import { writePass } from "./helpers/pass.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 
 quietConsole();
@@ -56,11 +57,12 @@ const staging: Entry = {
 };
 
 let dir = "";
+/** The record that every test passed on HEAD's tree. */
+let pass = "";
 const fresh = (...entries: Entry[]) => {
   dir = join(mkdtempSync(join(tmpdir(), "erga-deploy-")), ".erga");
   writeConfig(dir, entries.reduce(withEntry, { instances: [] }));
-  mkdirSync(join(dir, "tests"), { recursive: true });
-  writeFileSync(passPath(dir, HEAD), "all passing\n");
+  pass = writePass(dir, HEAD);
   return dir;
 };
 const records = () =>
@@ -121,7 +123,7 @@ describe("bun erga deploy", () => {
     const [job] = records();
     expect(job[0]).toMatchObject({ command: `bun erga deploy HEAD staging.example.com`, host: "staging.example.com", from: "terminal" });
     expect(job).toContainEqual({ commit: HEAD });
-    expect(job).toContainEqual({ tests: "passed before" });
+    expect(job).toContainEqual({ tests: "passed" });
     expect(job.at(-1).result).toBe("ok");
     expect(job.filter((x) => x.out).length).toBe(lines.length);
     expect(existsSync(lockPath(dir, "staging.example.com"))).toBe(false);
@@ -175,21 +177,25 @@ describe("bun erga deploy", () => {
     expect(records().at(-1)?.[0].pidStart).toMatch(/\d\d:\d\d:\d\d/);
   }, 60_000);
 
-  test("the tests' gate: a commit with no pass runs them, and a failure stops before the build; --no-tests is in the record", async () => {
+  test("the tests' gate: a commit with no record runs the tests, and a failure stops before the build; --no-tests is in the record", async () => {
     fresh(primary);
-    rmSync(passPath(dir, HEAD));
+    rmSync(pass);
     const mock = mockCloudflare({ fleet: true });
-    const tested: string[] = [];
-    const failing = async (sha: string) => (tested.push(sha), false);
-    await expect(
-      deployInstance({ dir, host: "example.com", commit: "HEAD", net: mock.fetch, print: () => {}, test: failing })
-    ).rejects.toThrow('did not end with "all passing"');
-    expect(tested).toEqual([HEAD]);
+    let ran = 0;
+    const failing: Suite = (_, log) => (
+      ran++, writeFileSync(log, "FAILED (1 s)\n"), { run: { results: [{ file: "e2e/a.e2e.ts", titlePath: ["breaks"], status: "failed" }] } }
+    );
+    const deploy = (more: object = {}) =>
+      deployInstance({ dir, host: "example.com", commit: "HEAD", net: mock.fetch, print: () => {}, suite: failing, ...more });
+    await expect(deploy()).rejects.toThrow("1 test failed on");
+    // The failed run is the tree's record: a second deploy refuses it with the test's name, and runs nothing.
+    await expect(deploy()).rejects.toThrow("\n  e2e/a.e2e.ts: breaks");
+    expect(ran).toBe(1);
     expect(mock.state.calls).toEqual([]);
     expect(records()[0].at(-1).result).toBe("failed");
 
-    await deployInstance({ dir, host: "example.com", commit: "HEAD", noTests: true, net: mock.fetch, print: () => {}, test: failing });
-    expect(tested).toEqual([HEAD]);
+    await deploy({ noTests: true });
+    expect(ran).toBe(1);
     expect(records().some((r) => r.some((x) => x.tests == "skipped: --no-tests") && r.at(-1).result == "ok")).toBe(true);
   }, 60_000);
 });
@@ -405,7 +411,7 @@ describe("the branches move only after a healthy deploy", () => {
       const c2 = commit("C2: the merged commit");
 
       fresh(primary, staging);
-      writeFileSync(passPath(dir, c2), "all passing\n");
+      writePass(dir, c2, clone);
       const mock = mockCloudflare({ fleet: true });
       await bootstrap(mock);
       // The hook needs bun on the PATH, in the push that the CLI makes.
@@ -440,7 +446,7 @@ describe("the branches move only after a healthy deploy", () => {
       // A commit apart from main does not deploy: nothing is built or uploaded.
       run("git", "checkout", "-q", "--detach", c1);
       const apart = commit("C3: not on main");
-      writeFileSync(passPath(dir, apart), "all passing\n");
+      writePass(dir, apart, clone);
       const calls = mock.state.calls.length;
       await expect(deployInstance({ dir, host: "example.com", commit: apart, clone, net: mock.fetch, print })).rejects.toThrow(
         "is not on main"
@@ -464,8 +470,8 @@ describe("the branches move only after a healthy deploy", () => {
       try {
         const fake = `127.0.0.1:${server.port}`;
         fresh(primary, { ...staging, host: fake });
-        writeFileSync(passPath(dir, c2), "all passing\n");
-        writeFileSync(passPath(dir, unpushed), "all passing\n");
+        writePass(dir, c2, clone);
+        writePass(dir, unpushed, clone);
         const net: typeof mock.fetch = (input, init) => (String(input).includes(fake) ? fetch(input, init) : mock.fetch(input, init));
         expect(await deployInstance({ dir, host: "example.com", clone, net, print })).toBe(c2);
         runs = unpushed;

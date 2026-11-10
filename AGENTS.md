@@ -20,13 +20,13 @@ this way:
    <task> --cwd worktrees/<task> claude "<brief>"`. Never a subagent of the
    manager's own session: Pete must see each agent and talk to it. A task
    is small: its change is one commit on staging.
-3. The task's agent does the work, pushes its branch, makes its proof page
-   (`bun erga proof`: pictures of the change) and stops. It does not
-   merge. Pete looks at the proof on the ops page; the branch waits.
+3. The task's agent pushes its branch and makes its proof
+   (`bun erga proof`). The ops page tests the branch's merge: the agent
+   watches (`bun erga status`) and repairs each failure. It does not merge.
 4. When Pete says to merge, the manager starts one agent for the merges. It
-   merges all the waiting branches in one run (`bun erga merge a -m "..." b
-   -m "..."`), in the order that gives the fewest conflicts, and fixes each
-   conflict as it comes.
+   merges the green branches in one run (`bun erga merge a -m "..." b
+   -m "..."`), in the order with the fewest conflicts, and fixes each
+   conflict.
 5. Each merge is one squashed commit. Every commit message is one line of
    ten words at most, with no body: what the whole task does.
 6. When a task's commit is on production (`bun erga deploy erga.dev`), the

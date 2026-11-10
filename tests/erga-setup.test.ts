@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type CloudflareEntry, readConfig, withEntry, writeConfig } from "../deploy/cli/config";
-import { passPath } from "../deploy/cli/deploy";
+import { writePass } from "./helpers/pass.ts";
 import { firstDeploy, registerSetup, type Setup } from "../deploy/own/first";
 import { defaultAnswers } from "../deploy/own/plan";
 import { loadSecrets, putSecret } from "../deploy/own/store";
@@ -26,8 +26,7 @@ beforeAll(async () => {
   process.env.ERGA_DEPLOY_MOCK = "1";
   await prepareRelease();
   dir = join(mkdtempSync(join(tmpdir(), "erga-setup-")), ".erga");
-  mkdirSync(join(dir, "tests"), { recursive: true });
-  writeFileSync(passPath(dir, HEAD), "all passing\n");
+  writePass(dir, HEAD);
 }, 120_000);
 afterAll(() => {
   delete process.env.ERGA_DEPLOY_MOCK;

@@ -1,18 +1,20 @@
 // `bun erga merge <branch>... [-m text]`, and the ops page's Merge button (deploy/cli/ops-page.ts runs this command):
-// each branch onto staging as one commit, in a worktree of its own, then one test run on the result, one deploy to each
-// staging instance, and the push of staging. A branch that conflicts stays out. When the tests fail on several
-// branches, they go one by one, each with its own test run, and a branch that fails stays out. It holds the lock
+// each branch onto staging as one commit, in a worktree of its own, then the gate (gate.ts) on the result, one deploy to
+// each staging instance, and the push of staging. The gate: the tests (bun run test) must have passed on the last commit's tree. A
+// tree with a record (.erga/tests/, test-run.ts: the ops page ran it for the branch's row) runs no test here; a tree with
+// none runs them now. A branch that conflicts stays out. When the tests fail on several branches, they go one by
+// one, each with its own gate, and a branch that fails stays out. No flag skips the gate. It holds the lock
 // .erga/jobs/staging.lock, and writes its job record (deploy.ts, startJob) on the first staging instance, so the ops
-// page shows its output as it comes. After the merge, the whole test suite starts on the merged commit, in the
-// background (full-run.ts).
+// page shows its output as it comes.
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readConfig } from "./config";
-import { deployStaging, type From, recordPass, startJob, takeLock, testEnv } from "./deploy";
+import { deployStaging, type From, startJob, takeLock } from "./deploy";
 import { type Merge, mergeRefusal, squashMessage } from "./flow";
-import { startFullRun } from "./full-run";
+import { testRun, type Suite } from "./test-run";
+import { gateRefusal } from "./gate";
 import { commitsIn, fetchOrigin, sh } from "./observe";
 import { ROOT } from "../root";
 
@@ -22,18 +24,9 @@ export interface Merged {
   left: { branch: string; why: string }[];
 }
 
-/** `bun install` and `bun run test` in `dir`: the tests' output, which ends with "all passing" or not. */
-function installAndTest(dir: string): string {
-  // The tests run with no ERGA_JOB_FROM: a test's own job records are a terminal's.
-  const i = sh(["bun", "install", "--frozen-lockfile"], { cwd: dir, env: testEnv() });
-  if (!i.ok) return `bun install failed: ${i.err.slice(-600)}`;
-  const t = sh(["bun", "run", "test"], { cwd: dir, env: testEnv() });
-  return `${t.out}\n${t.err}`;
-}
-
 /**
  * Merges the branches onto staging, in their order. It throws when no branch merges: the error says what stopped it,
- * and what to do next. `clone`, `test`, `deploy` and `full` are for the tests: a clone of their own, and fakes.
+ * and what to do next. `clone`, `suite` and `deploy` are for the tests: a clone of their own, and fakes.
  */
 export async function mergeBranches(o: {
   dir: string;
@@ -41,9 +34,8 @@ export async function mergeBranches(o: {
   from?: From;
   print?: (line: string) => void;
   clone?: string;
-  test?: (dir: string) => string;
+  suite?: Suite;
   deploy?: (sha: string) => Promise<string[]>;
-  full?: (sha: string) => void;
 }): Promise<Merged> {
   const names = o.merges.map((m) => m.branch).join(" ");
   const command = `bun erga merge ${names}`;
@@ -61,7 +53,6 @@ export async function mergeBranches(o: {
 
     // A worktree of its own, so this checkout stays as it is.
     dir = mkdtempSync(join(tmpdir(), "erga-merge-"));
-    const logs = dir;
     const add = git("worktree", "add", "--quiet", "--detach", dir, base);
     if (!add.ok) {
       dir = "";
@@ -93,14 +84,10 @@ export async function mergeBranches(o: {
       if (!c.ok) return out(`git commit of ${name} failed: ${c.err || c.out}`);
       return { sha: head(), text: text.split("\n")[0] };
     };
-    /** The tests on the worktree's head: null when they pass, else the reason. */
-    const fails = (file: string, what: string): string | null => {
-      log(`      bun install, bun run test on ${what} ... (the log: ${file})`);
-      const out = (o.test ?? installAndTest)(dir);
-      writeFileSync(file, out);
-      if (/^all passing/m.test(out)) return null;
-      for (const l of out.trim().split("\n").slice(-30)) log(l);
-      return `bun run test did not end with "all passing" on ${what}. The log: ${file}`;
+    /** The gate on the worktree's head: null when the tests passed on its tree, else why not, with the failed tests. */
+    const fails = async (what: string): Promise<string | null> => {
+      const r = await testRun({ dir: o.dir, clone, tree: at("rev-parse", "HEAD^{tree}").out, commit: head(), what, log, suite: o.suite });
+      return gateRefusal(r, what);
     };
 
     const result: Merged = { merged: [], left: [] };
@@ -121,10 +108,13 @@ export async function mergeBranches(o: {
     }
     if (result.merged.length) job.note({ commit: head() });
     const all = result.merged;
-    const failed = all.length ? fails(`${logs}.log`, all.length == 1 ? "the merged commit" : `the ${all.length} merged commits`) : null;
+    const on = `staging ${base.slice(0, 7)}`;
+    const failed = all.length
+      ? await fails(all.length == 1 ? `${all[0].branch} on ${on}` : `${all.map((m) => m.branch).join(", ")} on ${on}`)
+      : null;
     if (failed && all.length == 1) {
       result.merged = [];
-      leave(all[0].branch, `${failed} Fix it on ${all[0].branch}, push it, and merge again.`);
+      leave(all[0].branch, `${failed}\nFix it on ${all[0].branch}, push it, and merge again.`);
     } else if (failed) {
       // The batch fails: each branch again, on the ones that passed before it, with a test run of its own.
       log("NOTE  The tests fail on the batch. The branches go one by one.");
@@ -137,13 +127,13 @@ export async function mergeBranches(o: {
           leave(branch, p.why);
           continue;
         }
-        const why = fails(`${logs}-${branch.replace(/[^\w.-]/g, "_")}.log`, branch);
+        const why = await fails(`${branch} on ${was == base ? on : `${on} and the branches before it`}`);
         if (why) {
           at("reset", "--quiet", "--hard", was);
-          leave(branch, `${why} Fix it on ${branch}, push it, and merge again.`);
+          leave(branch, `${why}\nFix it on ${branch}, push it, and merge again.`);
         } else {
           result.merged.push({ branch, sha: p.sha });
-          log(`PASS  ${branch}: all passing, as ${p.sha.slice(0, 12)}.`);
+          log(`PASS  ${branch}: all tests passed, as ${p.sha.slice(0, 12)}.`);
         }
       }
     }
@@ -151,8 +141,6 @@ export async function mergeBranches(o: {
 
     const sha = head();
     job.note({ commit: sha });
-    log("PASS  bun run test: all passing.");
-    recordPass(o.dir, sha, "all passing");
     const deploy = o.deploy ?? ((s: string) => deployStaging({ dir: o.dir, sha: s, command, from: o.from, print: log }));
     const hosts = await deploy(sha).catch((e: Error) => {
       throw new Error(`${e.message} Fix it, then run ${command} again.`);
@@ -166,12 +154,7 @@ export async function mergeBranches(o: {
       if (git("rev-parse", "--verify", "--quiet", `refs/heads/${branch}`).ok)
         log(`NOTE  The local branch ${branch} is still here. Delete it when you are done with it: git branch -D ${branch}`);
     }
-    for (const l of result.left) log(`FAIL  ${l.branch} is not merged: ${l.why}`);
-    // Every end-to-end test, on the commit that staging runs now: in the background, and nothing waits for it.
-    (o.full ?? ((s: string) => startFullRun(clone, s)))(sha);
-    log(
-      `NOTE  The whole test suite runs on ${sha.slice(0, 12)} in the background. The ops page (bun erga) shows its result at the commit.`
-    );
+    for (const l of result.left) log(`FAIL  ${l.branch} is not merged: ${l.why.split("\n")[0]}`);
     job.end("ok");
     return result;
   } catch (e) {
