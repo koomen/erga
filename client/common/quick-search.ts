@@ -199,7 +199,8 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
   }
 
   window.ergaQuickSearch = open;
-  addEventListener(
+  // (window's own: the unit tests check this file with Bun's types too, where the bare global takes a plain Event.)
+  window.addEventListener(
     "keydown",
     (e) => {
       // On a Mac, Ctrl+K stays the editor's (it deletes to the end of the line).

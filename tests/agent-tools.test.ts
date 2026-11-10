@@ -11,6 +11,7 @@ import { type Caller, OPERATIONS, OperationError } from "../server/operations/in
 import { VIA } from "../shared/attribution";
 import type { Platform } from "../server/platform";
 import { newDocMenu, templateById } from "../server/pages/templates.ts";
+import { person, runTool as overHttp, server, signedOut } from "./helpers/app";
 import { memory } from "./helpers/memory-sql";
 
 function fresh(opts: ConstructorParameters<typeof Directory>[1] = {}): Directory {
@@ -325,4 +326,96 @@ test("a person's agent's document tools: the document open on their page, or ano
   // Someone else's, not shared with her: refused, as it would be to her.
   expect((await failure(runTool(read, { document: "cccccccc", path: "index.html" }, agent))).status).toBe(403);
   expect(sent.length).toBe(2);
+});
+
+test("list_documents' all is an admin's: someone else is refused", async () => {
+  const dir = fresh({ admins: ["root"] });
+  await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1 });
+  // (A signed-in session comes with admin power; the directory says whether its person is an admin.)
+  expect((await failure(run({ dir, who: { login: "someone-else", admin: true } }, "list_documents", { all: true }))).status).toBe(403);
+  const found = await run({ dir, who: { login: "root", admin: true } }, "list_documents", { all: true });
+  expect(found.length).toBeGreaterThan(0);
+  expect(found[0]).toMatchObject({
+    address: expect.stringMatching(/^\/[^/]+\/[^/]+$/),
+    kind: expect.stringMatching(/^(document|project)$/),
+  });
+});
+
+// The cases below run on the whole app in memory (tests/helpers/app.ts): real documents, the tools over HTTP.
+
+test("an admin changes the readers' options on the homepage project (/_home), which has no owner", async () => {
+  const s = server();
+  // (The first / makes the homepage project.)
+  await s.fetch("/", { headers: signedOut() });
+  const on = async () => ((await overHttp(s, "ls", { document: "/_home" })).result?.access as { pageLlm?: { on: boolean } })?.pageLlm?.on;
+  const was = await on();
+  expect(was).toBe(false);
+  expect((await overHttp(s, "share_document", { document: "/_home", page_llm: !was })).status).toBe(200);
+  expect(await on()).toBe(!was);
+  // Someone who isn't an admin can't.
+  expect((await overHttp(s, "share_document", { document: "/_home", page_llm: was }, { user: "Bo" })).status).toBe(403);
+  expect(await on()).toBe(!was);
+});
+
+test("an agent makes a scratch document (create_document, scratch) and saves it (save_document), as its person can", async () => {
+  const p = await person(server());
+  const made = await p.tool<{ id: string; address: string; expires: string }>("create_document", { scratch: true, title: "Notes" });
+  expect(made.status).toBe(200);
+  const { id, address, expires } = made.result!;
+  expect(address).toBe(`/${p.login}/${id}`);
+  expect(expires).toContain("unless someone saves it");
+  expect(p.row(id, await p.docs())).toBe("(not listed)");
+  const saved = await p.tool("save_document", { document: id });
+  expect(saved.status).toBe(200);
+  expect(saved.result.saved.address).toBe(`/${p.login}/notes`);
+  expect(p.row(id, await p.docs())).not.toBe("(not listed)");
+  expect((await p.tool("save_document", { document: id })).status).toBe(409);
+});
+
+test("ls says who a document is shared with, to its owner only; the list marks it shared, with a share button", async () => {
+  const p = await person(server());
+  const id = await p.make();
+  await p.share(id, "Ada", "viewer");
+  type Access = { permissions: { login: string; role: string }[]; notUsers: string[] };
+  const sharedWith = (await p.tool<{ access: Access }>("ls", { document: id })).result!.access;
+  expect(sharedWith.permissions.map((x) => `${x.login}:${x.role}`)).toEqual([`${p.login}:owner`, "ada:viewer"]);
+  expect(Array.isArray(sharedWith.notUsers)).toBe(true);
+  const asAda = await p.tool<{ access?: Access }>("ls", { document: id }, "Ada");
+  expect([asAda.status, asAda.result?.access]).toEqual([200, undefined]);
+  const row = (await p.docs()).split(/<li[ >]/).find((li) => li.includes(`/${p.login}/untitled"`)) ?? "";
+  expect(row).toContain(">Shared<");
+  expect(row).toContain(`class="act share"`);
+});
+
+test("scratch documents follow delete_docs_after_hours: one made while it is 7 goes after 7 hours; while it is never, one is never deleted, and the pages say so", async () => {
+  const s = server();
+  const p = await person(s);
+  /** The setting, set as the admin (the dev login) sets it. */
+  const set = async (value: number | null) => (await overHttp(s, "set_setting", { key: "delete_docs_after_hours", value })).status;
+  /** A scratch document's id, and its page as its maker gets it. */
+  const scratch = async () => {
+    const at = (await p.get("/scratch")).headers.get("location") ?? "";
+    const id = at.split("/")[2].replace(/\?edit$/, "");
+    return { id, page: await (await p.get(at.replace(/\?edit$/, ""))).text() };
+  };
+  /** When the agent's answer says it goes (create_document's expires), in hours from now; null if it never goes. */
+  const madeFor = async () => {
+    const made = await p.tool("create_document", { scratch: true });
+    const expires = made.result.expires as string | undefined;
+    return expires ? Math.round((Date.parse(expires.split(",")[0]) - Date.now()) / 3_600_000) : null;
+  };
+  expect(await set(7)).toBe(200);
+  expect(await p.docs()).toContain(`data-tip="Unsaved scratch docs are deleted in 7h"`);
+  expect(await madeFor()).toBe(7);
+  expect((await scratch()).page).toContain("Unsaved scratch docs are deleted in 7h");
+
+  expect(await set(null)).toBe(200);
+  const docs = await p.docs();
+  expect(docs).toContain(`data-tip="Not on your documents list until you save it"`);
+  expect(docs).not.toContain("Unsaved scratch docs are deleted");
+  expect(await madeFor()).toBe(null);
+  const never = await scratch();
+  expect(never.page).toContain("Save to your documents list.");
+  expect(never.page).not.toContain("Unsaved scratch docs are deleted");
+  expect(p.row(never.id, await p.docs())).toBe("(not listed)");
 });

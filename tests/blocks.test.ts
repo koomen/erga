@@ -116,7 +116,7 @@ const CASES: [string, string, string[], string][] = [
     ["Mod+b", " plain", "Mod+b", "B"],
     "<ul>\n  <li>A <strong>new</strong> plain<strong>B|</strong> editor</li>\n</ul>",
   ],
-  // The cases below were browser tests that read only the source (e2e/full/page). The same keys, with no browser.
+  // The cases below were browser tests that read only the source (git has them). The same keys, with no browser.
   [
     "Tab in a code block types two spaces",
     "<pre>code line one\n|code line two</pre>",
@@ -208,7 +208,7 @@ const CASES: [string, string, string[], string][] = [
     '<p>see <a href="https://example.com">the site</a> ok|</p>',
   ],
   ["___ and Enter make a horizontal rule", "<p>|<br></p>", ["___", "Enter"], "<hr>\n<p>|<br></p>"],
-  // More browser tests of one rule each (e2e/full/page), with the same keys.
+  // More browser tests of one rule each (git has them), with the same keys.
   [
     "Cmd+I and Cmd+U with no selection style the text typed next, and end it again",
     '<p id="last">Last paragraph.|</p>',
@@ -245,7 +245,7 @@ test("one undo takes back each Tab", () => {
 // ---------------------------------------------------------------- joins
 // Backspace at the start of any block joins it to the end of the block before, and Delete at the end of a block joins
 // the next one to it: whatever the blocks are, however they nest, whatever lies between them in the source. The caret
-// is at the join, and one undo for each key gives back the source and the caret. (e2e/full/page/join-cases.e2e.ts and
+// is at the join, and one undo for each key gives back the source and the caret. (The old join-cases browser test and
 // its page, with no browser.) "{B}" is the caret for Backspace, "{D}" the caret for Delete.
 
 /** [what, the two blocks, the source after the join, the key that joins (both when left out), how many presses of each join]. */
@@ -379,7 +379,7 @@ test("a rule between: Backspace takes the rule away, and the caret stays at the 
 
 // ---------------------------------------------------------------- empty blocks
 // Backspace in an empty block takes the block away and puts the caret at the end of the block before; Delete there
-// joins the next block to it. (e2e/full/page/backspace-empty.e2e.ts and its page.)
+// joins the next block to it. (The old backspace-empty browser test and its page.)
 const EMPTIES = `<main>
   <header>
     <p class="kicker">Erga designs</p>

@@ -10,7 +10,7 @@
 // Trap: a browser of our own (the dev server's Chrome, the AWS host's) is on the server's machine, so the render
 // refuses each request to a private address but Erga's own two origins (`own`; shared/private-address.ts). A test
 // whose page loads from another site on 127.0.0.1 names that origin in its server's ERGA_RENDER_ALLOW
-// (e2e/full/page/view-page.ts, fontsServer). The check reads the address as written: a public name that resolves to a
+// (a test's own fonts server). The check reads the address as written: a public name that resolves to a
 // private address, and a WebSocket, still pass.
 //
 // Each render logs its time in the browser (Cloudflare bills Browser Rendering by the browser's time): one JSON line,

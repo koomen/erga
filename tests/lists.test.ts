@@ -51,7 +51,7 @@ const CASES: [string, string, string[], string][] = [
     '<ol start="3">\n  <li>One</li>\n</ol>\n<p>|<br></p>\n<ol start="4">\n  <li>Three</li>\n</ol>',
   ],
   ["Enter in the empty only item", "<p>A</p>\n<ul>\n  <li>|<br></li>\n</ul>\n<p>B</p>", ["Enter"], "<p>A</p>\n<p>|<br></p>\n<p>B</p>"],
-  // (This case and the next four were browser tests that read only the source: e2e/full/page.)
+  // (This case and the next four were browser tests that read only the source: git has them.)
   [
     "Enter twice at the end of an item between two: a paragraph between two lists",
     "<ul>\n  <li>Faster builds|</li>\n  <li>A <strong>new</strong> editor</li>\n</ul>",
@@ -304,7 +304,7 @@ const CASES: [string, string, string[], string][] = [
     ["[", "]", " "],
     '<ul>\n  <li style="list-style: none"><input type="checkbox"> |</li>\n</ul>',
   ],
-  // (The cases below were browser tests of one rule each: e2e/full/page. The same keys; a selection made with Shift
+  // (The cases below were browser tests of one rule each: git has them. The same keys; a selection made with Shift
   // and the arrows there is the source's "[" and "]" here.)
   [
     "Delete at the end of the last nested item joins the next item to it",
@@ -387,7 +387,7 @@ const PASTES: [string, string, Parameters<ReturnType<typeof keys>["pasteIn"]>[0]
     [{ tag: "ul", items: ["X", "Y"].map((t) => ({ html: t, text: t, md: t, lists: [] })) }],
     "<ul>\n  <li>OneX</li>\n  <li>Y|</li>\n</ul>",
   ],
-  // (Browser tests before, e2e/full/page: the blocks are what the page read from the clipboard's HTML there.)
+  // (Browser tests before, git has them: the blocks are what the page read from the clipboard's HTML there.)
   [
     "two paragraphs, the first with bold, in the middle of a paragraph split it",
     '<h1>Clipboard</h1>\n<p id="target">Before |after.</p>\n<p id="empty"><br></p>',
@@ -436,7 +436,7 @@ const ROUNDS: [string, string[]][] = [
   ["<ul>\n  <li>One</li>\n  <li><p>Tw|o</p>\n    <ul>\n      <li>A</li>\n    </ul>\n  </li>\n</ul>", ["Tab", "Shift+Tab"]],
   ["<ol>\n  <li>One</li>\n  <li>|<br></li>\n  <li>Three</li>\n</ol>", ["Enter", "Undo"]],
   ['<ul id="flat">\n  <li>One|</li>\n  <li>Two</li>\n</ul>', ["Enter", "Enter", "Backspace"]],
-  // (Browser tests before: e2e/full/page/list-tab-round.e2e.ts, join-cases.e2e.ts.)
+  // (Browser tests before: list-tab-round and join-cases.)
   [FIVE.replace("Three", "Th|ree"), ["Tab", "Tab", "Shift+Tab", "Shift+Tab"]],
   [FIVE.replace("Five", "Fi|ve"), ["Tab", "Tab", "Shift+Tab", "Shift+Tab"]],
   ["<main><h1>One line</h1><ul><li>One</li><li>Two</li><li>Th|ree</li></ul><p>After.</p></main>", ["Tab", "Shift+Tab"]],
@@ -492,7 +492,7 @@ describe("lists", () => {
   });
 
   // ---- Cases of more than one step (helpers/page-keys.ts, walk: keys and the source after them; a source alone is a
-  // click or the arrows). Browser tests before: e2e/full/page.
+  // click or the arrows). Browser tests before: git has them.
 
   test("paste: plain text at the end of an item: its paragraphs and its list's items join the list; one undo takes it back", () => {
     const start = '<ul id="list">\n  <li>Alpha|</li>\n  <li>Omega</li>\n</ul>';

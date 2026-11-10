@@ -8,7 +8,7 @@ import { respond } from "../server/http.ts";
 
 const agent = { agentState: async () => ({ enabled: true }), conversation: async () => ({ items: [] }) };
 const platform = { sessionOf: async () => ({ login: "bob", name: "Bob" }), personAgent: () => agent } as unknown as Platform;
-const server = Bun.serve({ port: 0, fetch: (r) => respond(agentApi, r, platform) });
+const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (r) => respond(agentApi, r, platform) });
 const site = `http://localhost:${server.port}`;
 afterAll(() => server.stop(true));
 

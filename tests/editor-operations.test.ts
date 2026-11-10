@@ -1,6 +1,6 @@
 // The operations inside a document (server/operations/editor.ts), on a real document and directory: the editor's
 // agent calls them from its tool list, defaulting to its own document, as its person may; someone who may only view
-// reads, and is refused a change. (read with version runs in the document's host: e2e/full/versions/tools.e2e.ts.)
+// reads, and is refused a change. (read with version runs in the document's host: e2e/agent/tools.e2e.ts.)
 
 import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";

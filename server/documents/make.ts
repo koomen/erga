@@ -82,7 +82,7 @@ export const newDoc = Effect.gen(function* () {
   // ?kind=project: a project from the start (create_document's kind), else the kind it copies, else from its files.
   const kind = params.get("kind") == "project" ? "project" as const : start.kind;
   // Local development may name the document (the test suite wants "test" in its address),
-  // and say how soon it goes if nobody edits it (?unedited=<ms>, for e2e/full/front/lifetime.e2e.ts).
+  // and say how soon it goes if nobody edits it (?unedited=<ms>, for e2e/documents/list.e2e.ts).
   const dev = platform.dev(url);
   const unedited = (dev && Number(params.get("unedited"))) || undefined;
   for (let tries = 0; tries < 5; tries++) {

@@ -12,6 +12,7 @@ import { FileStore, Room, StateStore, joinLocal } from "../document/room";
 import { relativeUrl, runTreeOp } from "../document/host";
 import { checkNewName, cleanTreePath, pageAddress, pageUrl, resolvePage, titleOf, TreeError, treeEntries } from "../document/pages";
 import { files, folders } from "../document/content";
+import { person, server, tool as overHttp } from "./helpers/app";
 import { until } from "./helpers/until";
 
 test("an address is <path>.html, then <path>/index.html; never with a slash added", () => {
@@ -232,4 +233,64 @@ test("a single file opened on its own has no tree to change", async () => {
     expect(e).toBeInstanceOf(TreeError);
     expect(e.status).toBe(403);
   });
+});
+
+// On the whole app in memory (tests/helpers/app.ts): ls and open_page as an agent with a token calls them.
+test("ls: every page with its title and address, the folders and the other files; open_page with no editor open says so", async () => {
+  const s = server();
+  const token = await (await person(s)).token("Pages test");
+  const page = (title: string, body: string, up = "") =>
+    `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>${title}</title>\n<link rel="stylesheet" href="${up}style.css">\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
+  const nav = (links: string) => `<nav data-erga-noedit>${links}</nav>`;
+  // A project: a home page, a blog folder with its own stylesheet, and an about page.
+  const files = {
+    "index.html": page(
+      "Home",
+      `${nav('<a href="blog">Blog</a> · <a href="about.html">About</a>')}\n<h1>Home</h1>\n<p>The first page of a document with several.</p>`
+    ),
+    "style.css":
+      "body { background: rgb(250, 246, 236); font-family: Georgia, serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; } nav a { margin-right: .5rem; }\n",
+    "blog/index.html": page(
+      "Blog",
+      `<link rel="stylesheet" href="blog.css">\n${nav('<a href="post.html">A post</a> · <a href="../about.html">About</a> · <a href="../">Home</a>')}\n<h1>Blog</h1>\n<p>Posts, one page each, in this folder.</p>`,
+      "../"
+    ),
+    "blog/post.html": page(
+      "A post",
+      `<link rel="stylesheet" href="blog.css">\n${nav('<a href="./">Blog</a> · <a href="../about.html">About</a>')}\n<h1>A post</h1>\n<p>A page two folders down, styled by its folder's stylesheet and the document's.</p>`,
+      "../"
+    ),
+    "blog/blog.css": "h1 { color: rgb(180, 40, 30); }\n",
+    "about.html": page(
+      "About",
+      `${nav('<a href="index.html">Home</a> · <a href="blog/post.html">A post</a>')}\n<h1>About</h1>\n<p>Who made this.</p>`
+    ),
+  };
+  const made = await overHttp(s, token, "create_document", { title: "Pages test", slug: "site", kind: "project", files });
+  expect(made.ok, made.text).toBe(true);
+  const { id: document, address: a } = made.data as { id: string; address: string };
+  const tool = (name: string, args: Record<string, unknown>) => overHttp(s, token, name, { document, ...args });
+  const lp = await tool("ls", {});
+  expect(lp.ok).toBe(true);
+  type Ls = { entries: { path: string; type: string; title?: string; address?: string }[] };
+  const entries = (JSON.parse(lp.text) as Ls).entries;
+  const pages = entries.filter((e) => e.type == "page").map((e) => `${e.path} "${e.title}" ${e.address}`);
+  for (const line of [
+    `index.html "Home" ${a}`,
+    `about.html "About" ${a}/about`,
+    `blog/index.html "Blog" ${a}/blog`,
+    `blog/post.html "A post" ${a}/blog/post`,
+  ])
+    expect(pages).toContain(line);
+  expect(
+    entries
+      .filter((e) => e.type != "page")
+      .map((e) => `${e.path} ${e.type}`)
+      .sort()
+  ).toEqual(["blog folder", "blog/blog.css file", "style.css file"]);
+  const none = await tool("open_page", { path: "about" });
+  expect(none.ok).toBe(true);
+  expect(none.text).toContain("no editor open");
+  expect(none.text).toContain(`${a}/about?edit`);
+  expect((await tool("open_page", { path: "nope.html" })).ok).toBe(false);
 });

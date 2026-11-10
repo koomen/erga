@@ -9,6 +9,7 @@ import { sha256Hex } from "../shared/bytes";
 import { KEYS, MemoryStorage } from "../document/storage";
 import { Document } from "../document/document";
 import { promised } from "./helpers/promised";
+import { person, server, tool } from "./helpers/app";
 import { bytesOf, setup } from "./helpers/files-fixture";
 import { until } from "./helpers/until";
 import { files } from "../document/content";
@@ -192,4 +193,34 @@ test("a copy of a document takes its blobs by their refs", async () => {
   const snap = (await doc.snapshot())!;
   expect(snap.files["index.html"]).toBe("<h1>Files</h1>");
   expect(snap.files["a.pdf"]).toMatchObject({ hash: await sha256Hex(pdf), size: pdf.length });
+});
+
+// On the whole app in memory (tests/helpers/app.ts): write's {blob} is the server's operation, the blob store the documents'.
+test("write takes a file Erga keeps by its sha-256 (an image sent to the person's agent): the file, byte for byte; an unknown one is refused", async () => {
+  const PNG = Uint8Array.from(
+    atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkaPhfDwAEgQHAp0dVPQAAAABJRU5ErkJggg=="),
+    (c) => c.charCodeAt(0)
+  );
+  const s = server();
+  const p = await person(s);
+  const token = await p.token();
+  /** Publishes a page and the picture, titled `title`, as multipart parts named by their paths. */
+  const publish = async (title: string) => {
+    const site = new FormData();
+    site.set("title", title);
+    site.set("index.html", new Blob([`<!doctype html><title>x</title><h1>Hello from a folder</h1><img src="img/dot.png">`]), "index.html");
+    site.set("img/dot.png", new Blob([PNG]), "dot.png");
+    const res = await s.fetch("/api/publish", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: site });
+    return (await res.json()) as { id: string; address: string };
+  };
+  await publish("Has the picture");
+  const pub = await publish("Gets the picture");
+  const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", PNG))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const r = await tool(s, token, "write", {
+    document: pub.address,
+    files: { "images/dot.png": { blob: hash }, "images/none.png": { blob: "0".repeat(64) } },
+  });
+  expect(r.status).toBe(200);
+  expect(r.data).toMatchObject({ written: ["images/dot.png"], refused: [{ path: "images/none.png" }] });
+  expect(new Uint8Array(await (await p.get(`/d/${pub.id}/doc/images/dot.png`)).arrayBuffer())).toEqual(PNG);
 });

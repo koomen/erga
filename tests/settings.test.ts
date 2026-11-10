@@ -44,6 +44,8 @@ const platform = {
 } as unknown as Platform;
 // The admin pages, on the stand-in.
 const server = Bun.serve({
+  // (Its own address: with all addresses, a test server of the browser tests can take the same port on 127.0.0.1.)
+  hostname: "127.0.0.1",
   port: 0,
   fetch: async (r) => {
     const path = new URL(r.url).pathname;

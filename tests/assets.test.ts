@@ -14,6 +14,7 @@ import { readerPage, readerVersion } from "../server/pages/reader.ts";
 import type { Platform } from "../server/platform.ts";
 import { ASSET_PREFIX, stemOf, type AssetManifest } from "../shared/assets.ts";
 import { respond } from "../server/http.ts";
+import { person, server } from "./helpers/app";
 
 const MANIFEST: AssetManifest = {
   files: { "page.js": "/_erga/main-aaaa1111.js", "frame.js": "/_erga/frame-bbbb2222.js", "style.css": "/_erga/style-cccc3333.css", "editor.html": "/_erga/editor-dddd4444.html", "inter.css": "/_erga/inter-eeee5555.css" },
@@ -114,4 +115,62 @@ test("staging (admins only) lets anyone read the hashed files and the logo, and 
   expect((await gate("/_erga/main-aaaa1111.js", "POST"))?.status).toBe(403);
   expect((await gate("/manifest.json"))?.status).toBe(403);
   expect((await gate("/api/release"))?.status).toBe(403);
+});
+
+test("a file has an ETag, is checked each time, and is a 304 with no body when unchanged; so is the page, with what goes in it; an editor's page names the editor's half at the app's origin; the viewer preloads the editor's files", async () => {
+  // The whole app in memory (tests/helpers/app.ts), with its own list of the build's files.
+  const s = server();
+  const p = await person(s);
+  const id = await p.make();
+  const address = (await p.tool<{ address: string }>("ls", { document: id })).result!.address;
+  const viewer = await (await p.get(address)).text();
+  // The address of the document's files on its own origin, with the token: the viewer names it.
+  const url = /<meta name="erga-pages" content="([^"]+)">/.exec(viewer)![1];
+  const at = new URL(url);
+  const framed = (u: string, headers: Record<string, string> = {}) => s.fetch(u, { headers: { ...headers, "Sec-Fetch-Dest": "iframe" } });
+  const file = await s.fetch(`${url}index.html`);
+  const etag = file.headers.get("etag");
+  expect(etag).toBeTruthy();
+  expect(file.headers.get("cache-control")).toBe("no-cache");
+  const again = await s.fetch(`${url}index.html`, { headers: { "If-None-Match": etag! } });
+  expect(again.status).toBe(304);
+  expect(await again.text()).toBe("");
+  // The page: its own ETag (the file's, and what goes in it), a 304 when neither changed; its address is the file's own.
+  expect(await (await framed(url)).text()).toBe(await (await framed(`${url}index.html`)).text());
+  const page = await framed(`${url}index.html`);
+  const pageTag = page.headers.get("etag")!;
+  expect(pageTag).toMatch(/^"[^"]+\.[a-z0-9]+w"$/);
+  expect(pageTag).not.toBe(etag!);
+  expect((await framed(`${url}index.html`, { "If-None-Match": pageTag })).status).toBe(304);
+  expect((await framed(`${url}index.html`, { "If-None-Match": etag! })).status).toBe(200);
+  // The editor (erga/text) loads from the app's origin at one address, its newest build; the build and its chunks
+  // preloaded, each with its integrity.
+  const html = await page.text();
+  const config = JSON.parse(/\((\{"shell":.*?\})\);<\/script>/.exec(html)?.[1] ?? "null") as {
+    shell: string;
+    prefix: string;
+    editor: { src: string; integrity: string; preload: string[]; map: Record<string, string> };
+  };
+  expect(config.shell).toBe(p.origin);
+  expect(config.prefix).toBe(at.pathname);
+  expect(config.editor.src).toBe(`${p.origin}/erga/text/editor.js`);
+  expect(html).toContain('<script type="importmap" data-erga>');
+  const build = config.editor.preload[0];
+  expect(build).toMatch(new RegExp(`^${p.origin}/_erga/frame-[a-z0-9]+\\.js$`));
+  expect(config.editor.map[build]).toMatch(/^sha384-/);
+  // The library's address: asked again each time, loadable from the document's origin, and it imports that build.
+  const library = await s.fetch(config.editor.src, { headers: { Origin: at.origin } });
+  expect(library.headers.get("cache-control")).toBe("no-cache");
+  expect(library.headers.get("access-control-allow-origin")).toBe("*");
+  expect(await library.text()).toBe(`import ${JSON.stringify(new URL(build).pathname)};\n`);
+  // A file that isn't there is never kept.
+  expect((await s.fetch("/_erga/frame-none.js")).headers.get("cache-control")).toBe("no-store");
+  // The editor's shell is in the page (no page of its own to fetch); its script and chunks are preloaded, and its start
+  // and socket asked for, as the page parses, opened with ?edit.
+  expect(viewer).toContain("ergaEditAddress()");
+  expect(viewer).toContain('<template id="erga-shell"><style>');
+  expect(viewer).not.toMatch(/\/_erga\/editor-[a-z0-9]+\.html","fetch"/);
+  expect(viewer).toMatch(/\["\/_erga\/main-[a-z0-9]+\.js"(,"\/_erga\/chunk-[a-z0-9]+\.js")*\]/);
+  expect(viewer).toMatch(/rel:\s*"modulepreload"/);
+  expect(viewer).toContain('"/api/start"');
 });

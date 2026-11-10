@@ -3,7 +3,7 @@
 // Anthropic API for the model's tools. The lists: MCP's tools/list and GET /api/tools
 // (server/api.ts), the admin agent's, and the request to the model.
 
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import * as Schema from "effect/Schema";
 import { Directory } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
@@ -13,6 +13,7 @@ import { respond } from "../server/http";
 import { Tokens } from "../server/identity/tokens";
 import { agentTools, allTools, KINDS, jsonSchemaOf } from "../agents/tools";
 import { argumentsSchema } from "../agents/run";
+import { mcp, person, server as app } from "./helpers/app";
 import { memory } from "./helpers/memory-sql";
 
 const ORIGIN = "https://erga.test";
@@ -73,4 +74,61 @@ test("every tool of the registry, the admin agent's own and the model's: an obje
   const admin = agentTools(allTools(), null);
   expect(notObjects(admin.map((t) => ({ name: t.name, schema: argumentsSchema(t.parameters) })))).toEqual([]);
   expect(argumentsSchema(Schema.Struct({}))).toEqual({ type: "object", properties: {} });
+});
+
+test("/mcp serves the same tools as a stateless MCP server: initialize, a notification, tools/list, tools/call (a tool's failure is isError, each call one line in the log); it needs the token too", async () => {
+  const s = app();
+  const p = await person(s);
+  const token = await p.token();
+  const logged = spyOn(console, "log").mockImplementation(() => {});
+  try {
+    let m = await mcp(s, token, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } },
+    });
+    expect(m.body?.result?.protocolVersion).toBe("2025-06-18");
+    expect(m.body.result.capabilities.tools).toBeTruthy();
+    expect((await mcp(s, token, { jsonrpc: "2.0", method: "notifications/initialized" })).status).toBe(202);
+    m = await mcp(s, token, { jsonrpc: "2.0", id: 2, method: "tools/list" });
+    const listed = (m.body?.result?.tools ?? []) as {
+      name: string;
+      inputSchema: { required?: string[]; properties: { op: { description: string } } };
+    }[];
+    expect(
+      listed
+        .find((x) => x.name == "documents")
+        ?.inputSchema.properties.op.description.split("\n")
+        .map((l: string) => l.split("(")[0])
+    ).toContain("create_document");
+    expect(listed.find((x) => x.name == "edit")?.inputSchema.required).toContain("document");
+    m = await mcp(s, token, {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "create_document",
+        arguments: { title: "Made over MCP", files: { "index.html": "<h1>Made over MCP</h1>\n<p>Hello.</p>" } },
+      },
+    });
+    const made = JSON.parse(m.body?.result?.content?.[0]?.text ?? "{}") as { id: string; address: string };
+    expect(made.address).toBe(`/${p.login}/made-over-mcp`);
+    expect(await (await p.get(`/d/${made.id}/doc/index.html`)).text()).toContain("Hello.");
+    m = await mcp(s, token, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "delete_document", arguments: { document: "/nobody/nothing" } },
+    });
+    expect(m.body?.result?.isError).toBe(true);
+    // The server's log: the tool, its time and ok or error, and never its arguments.
+    const lines = logged.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(lines).toMatch(/mcp create_document \d+ ms ok/);
+    expect(lines).toMatch(/mcp delete_document \d+ ms error/);
+    expect(lines).not.toContain("/nobody/nothing");
+    expect((await s.fetch("/mcp", { method: "POST", body: "{}" })).status).toBe(401);
+  } finally {
+    logged.mockRestore();
+  }
 });

@@ -5,6 +5,7 @@ import { finishSignIn, startSignIn } from "../server/identity/sign-in";
 import type { Platform } from "../server/platform";
 import type { Directory } from "../server/directory/index.ts";
 import { respond } from "../server/http.ts";
+import { server as app, signedOut } from "./helpers/app";
 
 /** A server with this GitHub client ID, and nothing else sign-in needs for these requests. */
 const serverWith = (clientId: string): Platform => ({
@@ -80,4 +81,19 @@ test("an admin's token without the admin scope reaches only the API, MCP and doc
     "/",
   ])
     expect(`${p}: ${tokenPath(p)}`).toBe(`${p}: false`);
+});
+
+test("a server whose deploy says DEPLOY_TARGET=staging is for admins only: signed out, a page asks to sign in, and the API refuses", async () => {
+  const s = app({ staging: true });
+  const page = await s.fetch("/docs", { headers: { ...signedOut(), Accept: "text/html" } });
+  expect(page.status).toBe(403);
+  const html = await page.text();
+  expect(html).toContain("Staging is for admins: sign in");
+  // No SNAPSHOT_FROM here: the page names no primary, and no instance's name.
+  expect(html).not.toContain("Erga itself");
+  const api = await s.fetch("/api/tools", { headers: signedOut() });
+  expect(api.status).toBe(403);
+  expect(((await api.json()) as { adminsOnly?: boolean }).adminsOnly).toBe(true);
+  // (The same server lets its admin in: the guard, not a broken route, refused those.)
+  expect((await s.fetch("/docs", { headers: { Accept: "text/html" } })).status).toBe(200);
 });

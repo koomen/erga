@@ -37,7 +37,7 @@ and `main`. There are no pull requests.
    In under 5 seconds it checks the format, the lint and the types, and
    runs the unit tests that your change reaches. It is loose: it runs no
    browser test, and it says what it did not run. For one journey of the
-   suite: `bun run test:e2e e2e/smoke/editor.e2e.ts`.
+   suite: `bun run test:e2e e2e/editor/typing.e2e.ts`.
 
    The suite is designed (`e2e/COVERAGE.md`): each journey has a budget,
    and the run fails over 60 seconds. A test that you write to reproduce

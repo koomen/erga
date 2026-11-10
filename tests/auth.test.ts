@@ -28,6 +28,7 @@ import { testedSignIn } from "../server/identity/settings";
 import { testEnded, type PendingTest } from "../server/identity/app-test";
 import type { Platform } from "../server/platform";
 import type { Directory } from "../server/directory/index.ts";
+import { server as app } from "./helpers/app";
 import { quietConsole } from "./helpers/quiet.ts";
 import { respond } from "../server/http.ts";
 
@@ -271,4 +272,14 @@ test("a test sign-in's end: an admin's puts the values in use; every other end n
   expect(testEnded({ state: "none" }, { clientId: OTHER.clientId, end: { kind: "new", handle: "x" }, at: 7 }).effect).toEqual({
     do: "stale",
   });
+});
+
+test("sign-in's next= stays on the site, however the address is dressed up", async () => {
+  const s = app();
+  for (const next of ["//elsewhere.example", "/\\elsewhere.example", "/\t/elsewhere.example", "https://elsewhere.example"]) {
+    const res = await s.fetch(`/auth/github?as=someone&next=${encodeURIComponent(next)}`);
+    expect(res.headers.get("location"), JSON.stringify(next)).toBe("/");
+  }
+  // (An address of the site's own is where sign-in goes: the answers above are no accident of the route.)
+  expect((await s.fetch(`/auth/github?as=someone&next=${encodeURIComponent("/docs?x=1")}`)).headers.get("location")).toBe("/docs?x=1");
 });

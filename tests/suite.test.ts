@@ -9,26 +9,16 @@ import { join, resolve } from "node:path";
 import { budgets, overBudget, TOTAL_S } from "../e2e/budget";
 
 const ROOT = resolve(import.meta.dir, "..");
-/** The suite's files: every e2e file but the old tests (until their area is rebuilt) and the benchmarks. */
-const suite = [...new Glob("e2e/**/*.e2e.ts").scanSync(ROOT)]
-  .filter((f) => !f.startsWith("e2e/full/") && !f.startsWith("e2e/bench/"))
-  .sort();
+/** The suite's files: every e2e file but the benchmarks, which run by name only. */
+const suite = [...new Glob("e2e/**/*.e2e.ts").scanSync(ROOT)].filter((f) => !f.startsWith("e2e/bench/")).sort();
 const map = budgets(readFileSync(join(ROOT, "e2e/COVERAGE.md"), "utf8"));
 
-test("the map names each file of the suite, with a budget", () => {
-  // (While the areas are rebuilt, the map also names the journeys that are not built yet.)
-  expect(suite.filter((f) => !map.has(f))).toEqual([]);
+test("the map names each file of the suite, with a budget, and no file that is gone", () => {
+  expect([...map.keys()].sort()).toEqual(suite);
 });
 
 test(`the budgets sum to at most ${TOTAL_S} s of test time`, () => {
-  // (The old smoke run's budget does not count: it goes when the editor's journeys are built.)
-  const planned = [...map].filter(([file]) => !file.startsWith("e2e/smoke/"));
-  expect(planned.reduce((sum, [, s]) => sum + s, 0)).toBeLessThanOrEqual(TOTAL_S);
-});
-
-test("a file of the suite uses the one kind of server, or a server of its own", () => {
-  const other = suite.filter((f) => /\bservers\.(agent|script|short|suite)\(/.test(readFileSync(join(ROOT, f), "utf8")));
-  expect(other).toEqual([]);
+  expect([...map.values()].reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(TOTAL_S);
 });
 
 test("the map's rows are read, and a file over its budget is named, the worst first", () => {

@@ -47,7 +47,7 @@ const MOD: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8, Con
 export const TIMESCALE = 0.1;
 /**
  * How long an edit on disk may take to reach the tab, or the tab's to reach the disk: the file watcher, the dev server
- * and the room. Well under a second alone; seconds while bun run test:full keeps the machine busy.
+ * and the room. Well under a second alone; seconds while the suite keeps the machine busy.
  */
 export const DISK_MS = 15_000;
 
@@ -123,8 +123,41 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
       try { return await read(); } catch (e) { if (Date.now() > end || !/of null|of undefined|detached|destroyed/.test((e as Error).message)) throw e; await new Promise((r) => setTimeout(r, 30)); }
     }
   };
-  /** Where the page editor's frame sits in the tab (to turn a point on the page into one for the mouse). */
-  const frameAt = () => page.evaluate(() => { const r = document.getElementById("frame")!.getBoundingClientRect(); return { x: r.left, y: r.top }; });
+  /**
+   * Where the page editor's frame sits in the tab (to turn a point on the page into one for the mouse), once it rests:
+   * the agent's pane slides the page aside as it opens and closes, and a click aimed during the slide lands on the pane.
+   */
+  const frameAt = () =>
+    page.evaluate(async () => {
+      const el = document.getElementById("frame")!;
+      const at = () => {
+        const r = el.getBoundingClientRect();
+        return { x: r.left, y: r.top };
+      };
+      // A transition that moves the page: one on the frame, on what holds it, or on the agent's pane beside it. (Two
+      // equal readings a frame apart do not prove rest on a busy machine: a frame can come late.)
+      const moving = () =>
+        document.getAnimations().some((a) => {
+          const target = (a.effect as KeyframeEffect | null)?.target;
+          return a.playState == "running" && !!target && (target.contains(el) || target.id == "agent");
+        });
+      const frame = () =>
+        new Promise((r) => {
+          const t = setTimeout(r, 50);
+          requestAnimationFrame(() => {
+            clearTimeout(t);
+            r(0);
+          });
+        });
+      let was = at();
+      for (const end = Date.now() + 2000; Date.now() < end; ) {
+        await frame();
+        const now = at();
+        if (now.x == was.x && now.y == was.y && !moving()) break;
+        was = now;
+      }
+      return was;
+    });
   const toTab = async <T extends Record<string, number>>(r: T, xs: (keyof T)[], ys: (keyof T)[]): Promise<T> => {
     const f = await frameAt();
     const out = { ...r } as Record<string, number>;

@@ -1,6 +1,6 @@
 // What every answer tells a browser about how it may use it (server/security.ts): HSTS over HTTPS, the site's own
 // origin framed only by itself, its pages' policy; a document's own HTML keeps its policy; the pages origin names its
-// viewer itself. e2e/full/security/headers.e2e.ts checks each kind of page on a running server.
+// viewer itself. e2e/security/boundaries.e2e.ts checks each kind of page on a running server.
 import { expect, test } from "bun:test";
 import { FRAME_POLICY, HSTS, PAGE_POLICY, withSecurity } from "../server/security.ts";
 

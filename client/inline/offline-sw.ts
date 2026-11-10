@@ -13,7 +13,7 @@
 //
 // Trap: the worker answers the frame's page on the pages origin. Its own fetch doesn't say it's for a frame (Sec-
 // Fetch-Dest), and the pages origin would answer with the file as it is, with no reader script and no editor: the
-// worker adds `x-erga-page` (shared/offline.ts). e2e/smoke/editor.e2e.ts (the editor in a second tab) loads a frame
+// worker adds `x-erga-page` (shared/offline.ts). e2e/sync/two-people.e2e.ts (the editor in a second tab) loads a frame
 // through the worker.
 
 import { KEPT_AT, keptAddress, OFFLINE_CACHE, PAGE_HEADER } from "../../shared/offline";

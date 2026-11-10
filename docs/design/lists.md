@@ -105,4 +105,4 @@ but each one changes only the source that it must change.
   make a new list from a paragraph, and they had no bugs.
 
 Tests: `tests/lists.test.ts` (no browser, 69 tests) and
-`e2e/full/page/list-*.e2e.ts`.
+`e2e/editor/lists.e2e.ts`.

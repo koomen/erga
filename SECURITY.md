@@ -30,5 +30,5 @@ vulnerability:
 - The server never sends a stored secret (an API key, a token) to a browser
   or to a model.
 
-`tests/frame-security.test.ts` and `e2e/full/security/` test these
+`tests/frame-security.test.ts` and `e2e/security/boundaries.e2e.ts` test these
 boundaries with a hostile page.

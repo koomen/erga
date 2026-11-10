@@ -110,7 +110,7 @@ Two more decisions come with it:
      start), or between its two halves. A stored style holds while the caret and the document stay as they were.
 - The last open knownBug (an extension's `<span>` around a word locked the paragraph): the editor reads the caret in
   text that others split by its length, and draws the block again from its HTML before the edit (`redraw`). No
-  knownBug test is left in `e2e/full/page/`.
+  knownBug test is left in the old browser tests (git has them).
 - The one-host prototype (step 7) works in Chromium, WebKit and Firefox, with two additions: a caret that lands
   outside the text (in an `<svg>`, or past the last block in Firefox) goes to the nearest block before the paint,
   and Enter and Shift+Enter stay in `keydown` (WebKit sends Shift+Enter as `insertParagraph`).

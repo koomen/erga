@@ -1,9 +1,11 @@
 // A page's own API (document/page-api.ts): its module, run in the sandbox, answers operations on elements named by CSS
 // selector; Erga makes them one change to the source, or refuses them, saying why.
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { EditorState } from "@codemirror/state";
 import { applyPageEdit, describePageApi } from "../document/page-api";
 import { apiPathOf, applyChanges, planPageOps } from "../shared/page-ops";
+import { keys } from "./helpers/page-keys";
 import { testSandbox } from "./helpers/sandbox";
 
 const page = `<body>
@@ -187,5 +189,39 @@ describe("a page's API module, in the sandbox", () => {
       /didn't answer: boom/
     );
     await expect(describePageApi(testSandbox, `export default { name: "x" }`)).rejects.toThrow(/needs edits/);
+  });
+});
+
+describe("a page's own edit in the editor: an id is unique in the page", () => {
+  // The cards' page and its API (e2e/fixtures/unique-ids): each card's Copy and Up buttons call copy_card and move_up.
+  const FIXTURE = new URL("../e2e/fixtures/unique-ids/", import.meta.url).pathname;
+  const original = readFileSync(`${FIXTURE}index.html`, "utf8");
+  type Api = { apply(html: string, edit: string, input: unknown): unknown };
+  const ids = (src: string) => [...src.matchAll(/<[a-z0-9]+ [^>]*\bid="([^"]+)"/g)].map((m) => m[1]);
+  const cards = (src: string) => [...src.matchAll(/<h3>([^<]*)<\/h3>/g)].map((m) => m[1]);
+
+  test("a page's own edit that copies a card: the copy loses the id, the original keeps it; a move keeps the id; undo brings back the page", async () => {
+    const api: Api = (await import(`${FIXTURE}api.js`)).default;
+    // The editor on the page, the caret in the first card's heading (where the click on its button leaves it).
+    const ed = keys(original.replace("First card", "|First card"));
+    const source = () => ed.state.doc.toString();
+    /** One of the page's edits, as the editor makes it (ui/render.ts, pageEdit): the API's operations, as one change. */
+    const call = (edit: string, input: unknown) => {
+      const src = source();
+      const plan = planPageOps(src, api.apply(src, edit, input));
+      if ("error" in plan) throw new Error(plan.error);
+      ed.make(plan.changes, "input.page", plan.caret);
+    };
+    expect(ids(original)).toEqual(["target", "linked", "link", "card-1", "card-2"]);
+    // Copy on the first card: its script sends the card's place, its id and its title.
+    call("copy_card", { card: 1, id: "card-1", title: "First card" });
+    expect(source()).toContain(`<article class="card">\n      <h3>First card (copy)</h3>\n    </article>`);
+    expect(ids(source())).toEqual(["target", "linked", "link", "card-1", "card-2"]);
+    // Up on the second card, which is the third now.
+    call("move_up", { card: 3 });
+    expect(cards(source())).toEqual(["First card", "Second card", "First card (copy)"]);
+    expect(ids(source())).toEqual(["target", "linked", "link", "card-1", "card-2"]);
+    ed.key("Undo").key("Undo");
+    expect(source()).toBe(original);
   });
 });

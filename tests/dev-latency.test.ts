@@ -1,5 +1,5 @@
 // The dev server's delay on the room's sockets (dev/latency.ts): its setting. (The order of the delayed chunks is
-// e2e/full/page/dev-latency.e2e.ts's: it breaks only under Node's timers, where the dev server runs.)
+// the old dev-latency browser test's: it breaks only under Node's timers, where the dev server runs.)
 
 import { expect, test } from "bun:test";
 import { latencyOf } from "../dev/latency.ts";

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Page parts</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>Page parts</h1>
+<p id="target" class="lead">A block with an id.</p>
+<p class="free">Total: <span class="count" data-erga-noedit>42</span> items.</p>
+<section class="fixed" data-erga-noedit>
+  <p>The agent keeps this in step with the data.</p>
+</section>
+<div id="box" contenteditable="true"><p id="own">Own editable</p></div>
+<div id="scratch" contenteditable data-erga-noedit><p>Scratch</p></div>
+<p id="now">Loading the weather…</p>
+<div class="typo">
+  <p>This paragraph ends with the wrong tag.</h2>
+</div>
+<p id="last">Last paragraph.</p>
+<script>document.getElementById("now").textContent = "Sunny, 21 degrees";</script>
+</body>
+</html>

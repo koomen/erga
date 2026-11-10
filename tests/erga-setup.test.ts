@@ -131,6 +131,8 @@ test("from the answers to a healthy deploy: the entries, the secrets one time, t
 test("setup ends with register's token: the admin approves it, and the entry gets it", async () => {
   const asked: string[] = [];
   const server = Bun.serve({
+    // (Its own address: with all addresses, a test server of the browser tests can take the same port on 127.0.0.1.)
+    hostname: "127.0.0.1",
     port: 0,
     fetch: async (req) => {
       const path = new URL(req.url).pathname;

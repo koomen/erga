@@ -27,7 +27,7 @@ test("rebase keeps unsaved edits and the incoming edit", () => {
   expect(apply(current, rebase(base, current, incoming))).toBe("# Title, edited\n\nFirst para.\n\nSecond paragraph, rewritten.\n");
 });
 
-// (e2e/full/suite/suites/fuzz.ts, seed 186029: the publish's token went inside a person's, which then read as lost.)
+// (the old multiplayer fuzz, seed 186029: the publish's token went inside a person's, which then read as lost.)
 test("rebase puts the incoming edit in its place beside an unsaved delete of a mark that starts as the next one does", () => {
   const base = `<title>Notes</title> <meta ch⟦p1.49⟧arset⟦p1.51⟧="utf-8"> <p>End</p>`;
   const current = `<title>My notes</title> <meta charset⟦p1.51⟧="utf-8"> <p>The end</p>`;
