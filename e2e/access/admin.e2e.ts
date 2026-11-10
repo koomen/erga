@@ -99,7 +99,6 @@ journey("an admin on the admin pages", () => {
     page = tab.page;
     tab.strict = true;
     token = await mint(root, null, { label: "Admin's agent", scope: "admin" });
-    await agent("set_setting", { key: "feedback_repository", value: "erga/pretend" });
     // For the Analytics step, later: twelve people read a shared document, and the admin edits it in its room (one
     // edit, counted when its version is cut: the last person who may edit leaves). Each reader opens it one time,
     // the oldest account first; then the last three open it again (AGAIN).
@@ -119,6 +118,18 @@ journey("an admin on the admin pages", () => {
 
     await page.setViewportSize({ width: 1200, height: 760 });
     await agentClosed(page);
+    // The Change log hears a change and asks for its row. The answer comes late: after the next page shows. It once
+    // threw there (the Change log's empty line is not on that page).
+    let asked = 0,
+      release!: () => void;
+    const late = new Promise<void>((done) => {
+      release = done;
+    });
+    await page.route("**/api/news/rows*", async (route) => {
+      asked++;
+      await late;
+      await route.continue();
+    });
     await page.goto(`${root}/admin/changes`);
     await settle(page);
     admin = await looks(page, APP);
@@ -126,7 +137,13 @@ journey("an admin on the admin pages", () => {
     await page.evaluate(() => {
       (window as unknown as { stayed: boolean }).stayed = true;
     });
+    await agent("set_setting", { key: "feedback_repository", value: "erga/pretend" });
+    await soon(() => asked).toBe(1);
     await go("/admin/api-keys", "li.provider .about");
+    const answered = page.waitForResponse("**/api/news/rows*");
+    release();
+    await answered;
+    await page.unroute("**/api/news/rows*");
     expect(
       await page.evaluate(() => {
         const name = getComputedStyle(document.querySelector("li.provider .key")!),

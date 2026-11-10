@@ -186,6 +186,8 @@ async function askOnce(): Promise<void> {
       continue;
     }
     const { rows } = (await r.json()) as { rows: Record<string, Row> };
+    // The list stopped meanwhile (the shell left its admin page): its answer has no page to go to.
+    if (!lists.has(el)) continue;
     for (const [key, row] of Object.entries(rows)) if (!put(el, o, key, row)) pending.add(key);
     o.changed?.();
   }
