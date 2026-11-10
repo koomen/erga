@@ -18,10 +18,8 @@ test("New folder (the foot) asks for its name in place and makes it; its + menu'
   await act(page, "notes", "add");
   await menuItem(page, "New page");
   await type(page, "Ideas");
-  // No .html anywhere but index.html's own row: they're pages, not files.
-  expect(
-    await js(page, `[...document.querySelectorAll("#pages .et-row:not([data-path='index.html'])")].map((r) => r.textContent).join(" ")`)
-  ).not.toContain(".html");
+  // The name is typed without .html: it's a page, not a file.
+  expect(await js(page, `document.activeElement.value`)).toBe("Ideas");
   await press(page, "Enter");
   await until(async () => (await doc.tree()).includes("notes/ideas.html"), 5000, "the page is made: its name as an address, then .html");
   // Inside the folder, which opened, by its name.

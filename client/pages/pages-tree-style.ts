@@ -46,6 +46,7 @@ export const STYLE = `
 .et-row.busy { opacity: 0.55; pointer-events: none; }
 /* A row's buttons: on hover or focus, always on touch. */
 .et-acts { flex: none; display: flex; gap: 0; margin-right: -2px; opacity: 0; transition: opacity 120ms ease; }
+.et-acts:empty { width: 24px; }
 .et-row:hover .et-acts, .et-row:focus-within .et-acts, .et-row.menu-open .et-acts { opacity: 1; }
 @media (hover: none) { .et-acts { opacity: 1; } }
 .et-act { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--chrome); cursor: pointer; transition: color 120ms ease, background-color 120ms ease; }
