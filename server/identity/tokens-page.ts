@@ -9,8 +9,8 @@ import * as Schema from "effect/Schema";
 import { nameOf } from "../../document/names.ts";
 import { appPage, pageBars, inlineStyle, page, safeNext } from "../pages/index.ts";
 import { dateTag, esc } from "../../shared/html.ts";
-import type { Platform, Session } from "../platform";
-import { normalCode, ScopeError, type Scope } from "./tokens.ts";
+import { type Platform, type Session, whoOf } from "../platform";
+import { ADMIN_DAYS, adminEnd, normalCode, ScopeError, type Scope } from "./tokens.ts";
 import { type Note, noteOf, readOnce, seeOther } from "./flash.ts";
 import { callbackUrl, whereBack } from "./oauth.ts";
 import { call, ctx, Field, form, html, json, NO_STORE, redirect, text, type Route } from "../http.ts";
@@ -44,7 +44,10 @@ export const tokensRoutes: Route = Effect.gen(function* () {
       `There's nothing here. Your tokens are in Settings (the menu at your picture): <a href="/docs#settings">open it</a>.`,
       404
     );
-  return yield* found.route.run({ request, platform, url, session, post, who: { login: session.login, name: session.name } });
+  // How they act goes along: the tokens refuse anyone who isn't there in person (Tokens.mint).
+  const via = whoOf(session).via;
+  const who = { login: session.login, name: session.name, ...(via ? { via } : {}) };
+  return yield* found.route.run({ request, platform, url, session, post, who });
 });
 
 /** The person who asks, signed in as themselves, from this site's own page. */
@@ -54,7 +57,7 @@ interface Asked {
   readonly url: URL;
   readonly session: Session;
   readonly post: boolean;
-  readonly who: { login: string; name: string };
+  readonly who: { login: string; name: string; via?: string };
 }
 
 /** A token call that may refuse the scope (ScopeError): its result, or the refusal. */
@@ -128,7 +131,8 @@ const approve = ({ request, platform, url, session, post, who }: Asked): Route =
         );
       return yield* back("/tokens/approve", { denied: waiting.label });
     }
-    const r = yield* scoped(() => platform.tokens.approve(code, who, f.scope == "documents"));
+    // Admin power only when the person chose it on the card: any other approval of an admin request gives documents only.
+    const r = yield* scoped(() => platform.tokens.approve(code, who, f.scope != "admin"));
     if ("refused" in r) return yield* back(`/tokens/approve?code=${encodeURIComponent(code)}`, { refused: r.refused });
     // MCP's sign-in: back to the app, with the code it trades for the token.
     if (r.value?.oauth)
@@ -201,16 +205,24 @@ async function approvalCard(
         : g.scope == "ops"
           ? "this server's deploy facts: the commit it runs, and its Cloudflare account, Worker, database and domains. It reads nothing else: no documents, and no admin power."
         : "all your documents, and admin power: everything you can do in Erga, the server's settings, users, source and deploys included, while you're an admin.";
-  // An admin request the person may approve: they choose admin power (the default) or documents only.
+  // An admin request the person may approve: they choose documents only (the default) or admin power, on purpose.
   const choose = g.scope == "admin" && !may;
   const choice = choose
     ? `<fieldset class="choice"><legend>Give it</legend>
-<label><input type="radio" name="scope" value="admin" checked><span><b>Admin power</b>: all your documents, and the server's settings, users, source and deploys</span></label>
-<label><input type="radio" name="scope" value="documents"><span><b>Documents only</b>: all your documents, but no admin power</span></label></fieldset>`
+<label><input type="radio" name="scope" value="documents" checked><span><b>Documents only</b>: all your documents, but no admin power</span></label>
+<label><input type="radio" name="scope" value="admin"><span><b>Admin power</b>: all your documents, and the server's settings, users, source and deploys, for ${ADMIN_DAYS} days at most</span></label></fieldset>`
     : "";
+  const asked = g.expires ? day(g.expires) : "Never (until you revoke it)";
+  // An admin token ends after ADMIN_DAYS at most (Tokens.check): the card says when each choice ends.
+  const ends =
+    g.scope != "admin"
+      ? asked
+      : choose
+        ? `Documents only: ${asked}<br>Admin power: ${g.expires && g.expires < adminEnd(null) ? day(g.expires) : `${ADMIN_DAYS} days from now`}`
+        : day(adminEnd(g.expires));
   return `<section class="card approve"><h2>An agent asks to act as you</h2>
 <p><b>${esc(waiting.label)}</b> wants a token for ${what}</p>
-<dl class="grant">${choose ? "" : `<dt>Scope</dt><dd class="scope-${g.scope}">${SCOPE_NAMES[g.scope]}</dd>`}<dt>Expires</dt><dd>${g.expires ? day(g.expires) : "Never (until you revoke it)"}</dd></dl>
+<dl class="grant">${choose ? "" : `<dt>Scope</dt><dd class="scope-${g.scope}">${SCOPE_NAMES[g.scope]}</dd>`}<dt>Expires</dt><dd>${ends}</dd></dl>
 ${
   waiting.oauth
     ? `<p>Approve only if you just added Erga to this app. Approve sends you back to <b>${esc(whereBack(waiting.oauth.redirectUri))}</b>, and the app gets the token.</p>`

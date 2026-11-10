@@ -123,6 +123,9 @@ and `main`. There are no pull requests.
 - `bun erga rollback <host>`: a registered instance's Worker version from
   before its last deploy, in seconds. Only when Pete asks. The next deploy
   goes forward again.
+- `bun erga snapshot-secret <host>`: a new `SNAPSHOT_TOKEN` on a primary and
+  each of its staging instances, and in `.erga/secrets.json`. The old one
+  opens nothing from then on. Only when Pete asks (when it may have leaked).
 - A deploy or a rollback holds the lock `.erga/jobs/<host>.lock` and writes
   its record in `.erga/jobs/`. A second one on the same instance stops.
 - `bun erga register <host> [--staging-of <host>]`: signs in to an instance
@@ -139,7 +142,8 @@ and `main`. There are no pull requests.
 - Never push to `staging` or `main` with git. The pre-push hook stops it
   (`bun install` turns the hook on, in a clone).
 - Never open a pull request. Pull requests are off on GitHub.
-- `merge`, `deploy`, `release` and `rollback` run only when Pete asks.
+- `merge`, `deploy`, `release`, `rollback` and `snapshot-secret` run only
+  when Pete asks.
 - Report what you observed (a version, a health check, a run's result),
   never what you assumed.
 - When a deploy fails, read its output, or its job record in

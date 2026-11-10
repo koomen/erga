@@ -89,6 +89,16 @@ export class Activity {
     if (statements.length) await this.sql.batch(statements);
   }
 
+  /** The tokens (input and output) that `login`'s models used on the server's keys in the day of `at`. */
+  async serverTokens(login: string, at = Date.now()): Promise<number> {
+    const [row] = await this.sql.all<{ n: number | null }>(
+      "SELECT SUM(n) AS n FROM activity_days WHERE day = ?1 AND login = ?2 AND metric IN ('in:server', 'out:server')",
+      dayOf(at),
+      loginOf(login)
+    );
+    return Number(row?.n ?? 0);
+  }
+
   /** Each of the `days` days up to and with `now`'s, oldest first; a day with no row has zeros. Admins only. */
   async days(by: Actor, days: number, now = Date.now()): Promise<DayActivity[]> {
     await this.users.mustAdmin(by);

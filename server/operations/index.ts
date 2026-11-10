@@ -25,6 +25,7 @@ export {
   runOperation,
 } from "./operation.ts";
 export { addFile, cleanFilePath, PAGE_RULES } from "./documents.ts";
+export { runComment } from "./comments.ts";
 
 /** Every operation. Add one here and the front end's API, every agent, REST and MCP have it. */
 export const OPERATIONS: Operation[] = [

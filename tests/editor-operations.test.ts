@@ -94,7 +94,7 @@ test("a person's agent renames the document open on their page, lists, makes, mo
   expect(r.current.authors).toEqual(["ada, via their agent"]);
 });
 
-test("someone who may only view lists the pages and versions, and is refused a change, in the operation's words", async () => {
+test("someone who may only view lists the pages, and is refused the versions and a change, in the operation's words", async () => {
   const { platform, dir } = await world();
   const bo: Caller = { dir, who: { login: "bo" }, name: "Bo", platform };
   const tool = (name: string) => allTools().find((t) => t.name == name)!;
@@ -102,8 +102,10 @@ test("someone who may only view lists the pages and versions, and is refused a c
   expect(pages.canEdit).toBe(false);
   // Who it's shared with is its owner's to see.
   expect(pages.access).toBeUndefined();
-  expect(((await runTool(tool("versions"), { document: "/ada/files" }, bo)) as { canEdit: boolean }).canEdit).toBe(false);
   for (const [name, args] of [
+    // Its versions are for those who may edit it: they may hold text removed before it was shared.
+    ["versions", {}],
+    ["versions", { from: "v1" }],
     ["new", { path: "x" }],
     ["rename_document", { title: "Mine" }],
     ["restore_version", { version: "v1" }],

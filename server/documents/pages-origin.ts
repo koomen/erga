@@ -5,6 +5,10 @@
 // signed token in the address opens the document's files (pagesToken): /t/<token>/<path>
 // is the file at <path>, and a page (an HTML file the frame goes to) comes with what the
 // viewer and the editor need in it (pages/reader.ts, readerPage).
+//
+// Trap: a pass carries the document's share counter (document/access.ts, `shares`), and the document refuses a pass
+// from before a share ended. A test that asks the document for a file with a checked key sends `x-erga-shares` too.
+// An open page keeps its old pass: after a share ends, its next file gets a 403 until the person loads the page again.
 
 import * as Effect from "effect/Effect";
 import { call, ctx, fromWeb } from "../http.ts";
@@ -63,11 +67,17 @@ export function pagesHost(url: URL, platform: Platform): { owner: string; id: st
 
 /**
  * A pages token's value (server/signed.ts): the document (d), the viewer's origin (s), whom it was made for (a) and
- * whether for an editor (w).
+ * whether for an editor (w), and the document's share counter when it was made (n).
  */
 const PagesToken = signed(
   "pages",
-  Schema.Struct({ d: Schema.String, s: Schema.String, a: Schema.optionalKey(Schema.String), w: Schema.optionalKey(Schema.Literal(1)) }),
+  Schema.Struct({
+    d: Schema.String,
+    s: Schema.String,
+    a: Schema.optionalKey(Schema.String),
+    w: Schema.optionalKey(Schema.Literal(1)),
+    n: Schema.optionalKey(Schema.Number),
+  }),
   WEEK
 );
 
@@ -77,6 +87,7 @@ const PagesToken = signed(
  * Its expiry is rounded up to the next whole day, so the token, and with it the address of every file of the page, stays the
  * same all day: the browser's cache can answer for them (they're checked by ETag, pagesRoutes and document/host.ts's docFile).
  * `ttl`: good for that many seconds only, not rounded (the server's own browser: cloudflare/render.ts).
+ * `shares`: the document's share counter now (document/access.ts): the token opens its files only until a share of it ends.
  */
 export async function pagesToken(
   secret: string,
@@ -84,7 +95,7 @@ export async function pagesToken(
   id: string,
   shell: string,
   now = Date.now(),
-  opts: { by?: string; edit?: boolean; ttl?: number } = {}
+  opts: { by?: string; edit?: boolean; ttl?: number; shares?: number } = {}
 ): Promise<string> {
   // by: whom it was made for, only on a server for admins alone (staging, Platform.adminsOnly): its pages origin lets the
   // token in only while they're still an admin. Elsewhere a token names nobody (a page's own
@@ -96,6 +107,7 @@ export async function pagesToken(
       s: shell,
       ...(opts.by ? { a: opts.by.toLowerCase() } : {}),
       ...(opts.edit ? { w: 1 as const } : {}),
+      ...(opts.shares ? { n: opts.shares } : {}),
     },
     { until: opts.ttl ? Math.ceil(now / 1000 + opts.ttl) : Math.ceil((now / 1000 + WEEK) / DAY) * DAY }
   );
@@ -106,12 +118,20 @@ export async function readPagesToken(secret: string, token: string, owner: strin
   return (await readPagesClaims(secret, token, owner, id, now))?.shell ?? null;
 }
 
-/** What a good, current token for this document says: the viewer's origin, whom it was made for (if it says), and whether for an editor. */
-export async function readPagesClaims(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<{ shell: string; by?: string; edit?: boolean } | null> {
+/** What a good, current token for this document says: the viewer's origin, whom it was made for (if it says), whether for an editor, and its share counter. */
+export async function readPagesClaims(
+  secret: string,
+  token: string,
+  owner: string,
+  id: string,
+  now = Date.now()
+): Promise<{ shell: string; by?: string; edit?: boolean; shares: number } | null> {
   const c = await PagesToken.open(secret, token, now);
   if (!c || c.d != `${owner.toLowerCase()}/${id}`) return null;
   try {
-    return new URL(c.s).origin == c.s ? { shell: c.s, ...(c.a != null ? { by: c.a } : {}), ...(c.w === 1 ? { edit: true } : {}) } : null;
+    return new URL(c.s).origin == c.s
+      ? { shell: c.s, ...(c.a != null ? { by: c.a } : {}), ...(c.w === 1 ? { edit: true } : {}), shares: c.n ?? 0 }
+      : null;
   } catch { return null; }
 }
 
@@ -155,12 +175,11 @@ async function pageFile(request: Request, url: URL, doc: { owner: string; id: st
   }
   // The token names the document; the directory confirms it's still its owner's (remembered, so usually without asking the
   // database). Both at once: a file is only read, so asking the document before the answer comes costs nothing if it's no.
+  // The document hears the token's share counter, and refuses one from before a share ended (document/access.ts).
   const at = { id: doc.id, owner: doc.owner.toLowerCase(), test: false };
-  const inner = new Request(request.url, { method: request.method, headers: asked });
-  const [route, answer] = await Promise.all([
-    platform.directory.route(doc.id),
-    platform.docs.fetch(at, forwarded(inner, url, `/doc${rest}`, null, "files")),
-  ]);
+  const inner = forwarded(new Request(request.url, { method: request.method, headers: asked }), url, `/doc${rest}`, null, "files");
+  inner.headers.set("x-erga-shares", String(claims.shares));
+  const [route, answer] = await Promise.all([platform.directory.route(doc.id), platform.docs.fetch(at, inner)]);
   if (!route || route.owner != at.owner) { await answer.body?.cancel(); return notFound(); }
   const type = answer.headers.get("content-type") ?? "";
   if (!page || !/^text\/html\b/i.test(type) || (answer.status != 200 && answer.status != 304)) return answer;

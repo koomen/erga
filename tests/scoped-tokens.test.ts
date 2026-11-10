@@ -9,7 +9,8 @@ import type { Platform } from "../server/platform";
 import { sessionOf } from "../server/identity/index.ts";
 import { serverApi } from "../server/api";
 import { respond } from "../server/http";
-import { OPS_DAYS, ScopeError, Tokens } from "../server/identity/tokens";
+import { ADMIN_DAYS, NOT_FOR_AGENTS, OPS_DAYS, REQUESTS_WAITING, ScopeError, Tokens } from "../server/identity/tokens";
+import { VIA } from "../shared/attribution";
 import { memory } from "./helpers/memory-sql";
 
 const ORIGIN = "https://erga.test";
@@ -255,4 +256,72 @@ test("the device flow asks for an ops token: its approval shows when it ends, OP
   const approved = await tokens.approve(asked.userCode, ada);
   expect(approved?.info.scope).toBe("ops");
   expect((await tokens.collect(asked.code)).status).toBe("ready");
+});
+
+test("an agent never makes a token of any kind: not a new one, not the share button's, not by an approval", async () => {
+  const { tokens } = await server();
+  // Each way an agent acts for its person: with a token, as their own agent, in the server's browser.
+  for (const via of [VIA.token("Laptop"), VIA.agent, VIA.view]) {
+    const agent = { ...ada, via };
+    await expect(tokens.mint(agent, "More", { scope: "documents" })).rejects.toThrow(NOT_FOR_AGENTS);
+    await expect(tokens.mint(agent, "One", { scope: "document", docId: "oneoneon" })).rejects.toThrow(NOT_FOR_AGENTS);
+    await expect(tokens.share(agent, false)).rejects.toThrow(NOT_FOR_AGENTS);
+    await expect(tokens.share(agent, true)).rejects.toThrow(NOT_FOR_AGENTS);
+    const asked = await tokens.request("Another agent", { scope: "documents" });
+    await expect(tokens.approve(asked.userCode, agent)).rejects.toThrow(NOT_FOR_AGENTS);
+    // The request still waits for the person.
+    expect((await tokens.approve(asked.userCode, ada))?.info.label).toBe("Another agent");
+  }
+});
+
+test("only the pages for people call the code that makes a token", async () => {
+  // Each file that calls Tokens.mint, share, approve or exchange, with why an agent can't use it.
+  const MAKERS: Record<string, string> = {
+    "server/identity/tokens-page.ts": "/tokens/new and /tokens/approve: a person's session only, with how they act",
+    "server/documents/make.ts": "the share button's token: a person's session only, with how they act",
+    "server/identity/oauth.ts": "trades a code that a person's approval on /tokens/approve made",
+  };
+  const found = new Set<string>();
+  for (const dir of ["server", "agents", "cloudflare", "document", "shared", "client", "libs"])
+    for await (const file of new Bun.Glob("**/*.ts").scan(dir)) {
+      const path = `${dir}/${file}`;
+      if (path == "server/identity/tokens.ts") continue;
+      if (/\btokens\.(mint|share|approve|exchange)\(/.test(await Bun.file(path).text())) found.add(path);
+    }
+  expect([...found].sort()).toEqual(Object.keys(MAKERS).sort());
+  // And no operation, so no agent tool, has the tokens' makers at all.
+  for (const dir of ["server/operations", "agents"])
+    for await (const file of new Bun.Glob("**/*.ts").scan(dir))
+      expect([
+        `${dir}/${file}`,
+        /\.tokens\.(mint|share|approve|request|exchange|collect)\(/.test(await Bun.file(`${dir}/${file}`).text()),
+      ]).toEqual([`${dir}/${file}`, false]);
+});
+
+test("an admin token ends after ADMIN_DAYS at most; a documents token may last until it's revoked", async () => {
+  const { tokens } = await server();
+  const day = 86_400_000;
+  const most = Date.now() + ADMIN_DAYS * day;
+  const never = (await tokens.mint(ada, "Admin", { scope: "admin" })).info.expires!;
+  expect(Math.abs(never - most) < 5000).toBe(true);
+  const long = (await tokens.mint(ada, "Admin", { scope: "admin", expires: Date.now() + 365 * day })).info.expires!;
+  expect(Math.abs(long - most) < 5000).toBe(true);
+  const week = Date.now() + 7 * day;
+  expect((await tokens.mint(ada, "Admin", { scope: "admin", expires: week })).info.expires).toBe(week);
+  expect((await tokens.mint(ada, "Docs", { scope: "documents" })).info.expires).toBeNull();
+  // An admin request approved as documents only keeps what it asked for: no end.
+  const asked = await tokens.request("App", { scope: "admin" });
+  expect((await tokens.approve(asked.userCode, ada, true))?.info).toMatchObject({ scope: "documents", expires: null });
+});
+
+test("one network address has REQUESTS_WAITING requests for a token at most; another address, and a later time, ask on", async () => {
+  const { tokens, sql } = await server();
+  for (let i = 0; i < REQUESTS_WAITING; i++) await tokens.request(`Agent ${i}`, { scope: "documents" }, undefined, "203.0.113.7");
+  await expect(tokens.request("One more", { scope: "documents" }, undefined, "203.0.113.7")).rejects.toThrow(/Too many requests/);
+  expect((await tokens.request("Elsewhere", { scope: "documents" }, undefined, "203.0.113.8")).label).toBe("Elsewhere");
+  // A request with no address known (a person's browser, on the app's own page) has no limit.
+  expect((await tokens.request("In the browser", { scope: "documents" })).label).toBe("In the browser");
+  // The requests lapse: the address asks again.
+  await sql.run("UPDATE token_requests SET expires = 1 WHERE asked_from = ?1", "203.0.113.7");
+  expect((await tokens.request("Later", { scope: "documents" }, undefined, "203.0.113.7")).label).toBe("Later");
 });

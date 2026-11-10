@@ -18,7 +18,7 @@ import {
 } from "../directory/index.ts";
 import type { AuthOps, AuthStatus } from "../identity/index.ts";
 import { ACTIVE_DAYS, analytics, analyticsList, isSpan, pageLlmUsage, SPANS } from "../admin/index.ts";
-import { type Caller, iso, LOGIN, type Operation, OperationError } from "./operation.ts";
+import { type Caller, iso, LOGIN, type Operation, OperationError, said } from "./operation.ts";
 
 const PROVIDER = Schema.Literals(["github", "google"]).annotate({ description: "github or google" });
 const ACCESS = Schema.Literals(["none", "read", "write"]).annotate({
@@ -113,6 +113,10 @@ export const ADMIN_OPERATIONS: Operation[] = [
     activity: "changing a server setting",
     admin: true,
     description: "Sets one of the server's settings, or puts it back to its default (reset).",
+    asks: (args) =>
+      args.reset === true
+        ? `Put the server's setting ${said(args.key)} back to its default`
+        : `Set the server's setting ${said(args.key)} to ${said(args.value)}`,
     parameters: Schema.Struct({
       key: Schema.String.annotate({ description: "The setting's key, e.g. delete_docs_after_hours (settings lists them)" }),
       value: Schema.optionalKey(
@@ -150,6 +154,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
     activity: "clearing an API key",
     admin: true,
     description: "Clears one of the server's API keys; its Worker secret, if any, stands in.",
+    asks: (args) => `Clear the server's API key ${said(args.name)}`,
     parameters: Schema.Struct({ name: Schema.String.annotate({ description: "The key's name, e.g. anthropic (settings lists them)" }) }),
     run: async (args, { dir, who }) => {
       const c = await dir.credentials.clear(who, String(args.name ?? ""));
@@ -183,6 +188,13 @@ export const ADMIN_OPERATIONS: Operation[] = [
     activity: "changing how people sign in",
     admin: true,
     description: "Turns a sign-in provider on or off, or clears its app values set on /admin/auth.",
+    asks: (args) => {
+      const provider = args.provider == "google" ? "Google" : "GitHub";
+      if (args.action == "clear")
+        return `Clear the ${provider} sign-in app's values${args.force === true ? ", even if nobody can sign in then" : ""}`;
+      if (args.action == "discard") return `Discard the ${provider} sign-in app's new values`;
+      return `Turn sign-in with ${provider} ${said(args.action)}`;
+    },
     parameters: Schema.Struct({
       provider: PROVIDER,
       action: Schema.Literals(["on", "off", "clear", "discard"]).annotate({
@@ -280,6 +292,12 @@ export const ADMIN_OPERATIONS: Operation[] = [
     activity: "changing a user",
     admin: true,
     description: "Adds a user, changes a user's role, or removes a user.",
+    asks: (args) => {
+      const whom = said(args.handle ?? args.login ?? `person ${args.person}`);
+      if (args.action == "add") return `Add the user ${whom} with the role ${said(args.role ?? "none")}`;
+      if (args.action == "remove") return `Remove the user ${whom}`;
+      return `Change the role of the user ${whom} to ${said(args.role)}`;
+    },
     parameters: Schema.Struct({
       action: Schema.Literals(["add", "role", "remove"]).annotate({
         description:
@@ -337,6 +355,12 @@ export const ADMIN_OPERATIONS: Operation[] = [
     activity: "changing the access rules",
     admin: true,
     description: "Adds, changes or removes a group rule, or turns public sharing on or off.",
+    asks: (args) => {
+      if (args.action == "public") return `Turn public sharing ${args.on ? "on" : "off"} for the whole server`;
+      if (args.action == "add") return `Add the access rule ${said(args.kind)} ${said(args.value)}: ${said(args.access)}`;
+      if (args.action == "remove") return `Remove the access rule ${said(args.id)}`;
+      return `Change the access rule ${said(args.id)} to ${said(args.access)}`;
+    },
     parameters: Schema.Struct({
       action: Schema.Literals(["add", "change", "remove", "public"]).annotate({
         description:

@@ -952,9 +952,11 @@ export class Document {
       const role = who ? yield* self.roleOf(who) : null;
       const name = info.name ?? null;
       if (!role && !opts.anyone) return { role: null, name, test: !!info.test };
-      return yield* self
-        .hold(self.views.answer(info, role, name, opts.page))
-        .pipe(Effect.catchTag("NoSuchDocument", () => Effect.succeed(null)));
+      const shares = yield* io(() => self.access.shares());
+      return yield* self.hold(self.views.answer(info, role, name, opts.page)).pipe(
+        Effect.map((answer) => ({ ...answer, shares })),
+        Effect.catchTag("NoSuchDocument", () => Effect.succeed(null))
+      );
     });
   }
 

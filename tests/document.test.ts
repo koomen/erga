@@ -139,13 +139,28 @@ test("the document decides who may do what from its own copy of its permissions,
   expect(pushed).toEqual(["perm1234"]);
   expect((await as("bo")).status).toBe(200);
   expect(await doc.roleOf({ login: "bo" })).toBe("viewer");
+  expect((await doc.view({ login: "bo" }, { page: "" }))!.shares).toBe(0);
   expect((await as("bo", "/api/stored/index.html", { method: "PUT", body: "<h1>Bo</h1>" })).status).toBe(403);
   await dir.share({ login: "ada" }, "perm1234", "bo", null);
   expect((await as("bo")).status).toBe(403);
   // What the browser claims is never taken: x-erga-access is the document's own to set.
   expect((await as("bo", "/doc/index.html", { headers: { "x-erga-access": "edit" } })).status).toBe(403);
-  // A checked key reads files, and nothing else.
-  const checked = (path: string, method = "GET") => doc.handle(new Request(`http://doc${path}`, { method, headers: { "x-erga-checked": "files" }, ...(method == "GET" ? {} : { body: "x" }) }));
+  // A checked key reads files, and nothing else. It says its pass's share counter: Bo's share ended, so the counter went
+  // up, and a pass from before (Bo's, kept) reads nothing.
+  const checked = (path: string, method = "GET", shares = 1) =>
+    doc.handle(
+      new Request(`http://doc${path}`, {
+        method,
+        headers: { "x-erga-checked": "files", "x-erga-shares": String(shares) },
+        ...(method == "GET" ? {} : { body: "x" }),
+      })
+    );
+  expect((await doc.view({ login: "ada" }, { page: "" }))!.shares).toBe(1);
+  expect((await checked("/doc/index.html")).status).toBe(200);
+  expect((await checked("/doc/index.html", "GET", 0)).status).toBe(403);
+  // A new share, or a changed role, ends nobody's: the counter stays.
+  await dir.share({ login: "ada" }, "perm1234", "bo", "viewer");
+  await dir.share({ login: "ada" }, "perm1234", "bo", "editor");
   expect((await checked("/doc/index.html")).status).toBe(200);
   expect((await checked("/pub/index.html")).status).toBe(403);
   expect((await checked("/api/doc")).status).toBe(403);

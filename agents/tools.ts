@@ -342,6 +342,15 @@ export function agentTools(tools: Tool[], caller: Caller | (() => Caller) | null
     activity: t.activity,
     description: t.description,
     parameters: t.parameters,
+    asks: (params) => {
+      // A kind asks what the op it picks asks; a bad op fails when the call runs.
+      try {
+        const { tool, args } = isKind(t) ? t.pick(params) : { tool: t, args: params };
+        return tool.asks?.(args) ?? null;
+      } catch {
+        return null;
+      }
+    },
     execute: async (_id, params) => {
       await guard?.();
       const out = await runTool(t, params as Record<string, unknown>, typeof caller == "function" ? caller() : caller).catch(

@@ -6,8 +6,10 @@
 //   GET  /api/agent              the state: on or off (and why), the model, the conversation so far (?fresh: the
 //                                settings read now, after a key changed; else they may be up to 5 s old)
 //   POST /api/agent              { text, context }: a message; context is the page note (the page open, what is selected)
-//   POST /api/agent/abort|reset|model
+//   POST /api/agent/abort|reset|model|approve|deny
 //   /api/agent/events            { type: "agent", ev } for this person's agent (a WebSocket)
+//                                { type: "comment-ask", ask }: a comment of theirs with @erga, written in a page
+//   POST /api/agent/comment      the comment the panel asked about, as their request (their click on Run)
 //   GET|DELETE /api/agent/conversation   the conversation, kept on the server (read on mount); a new one
 //
 // The conversation follows the person from page to page, browser to browser and sign-in to sign-in: the server keeps
@@ -18,6 +20,7 @@ import { fileRefs, type Attachment } from "../../shared/attach";
 import { attachments } from "./attach-ui";
 import { canSend, type SendPath } from "./send-gate";
 import type { Log, LogEvent } from "../../shared/agent-log";
+import type { CommentAsk } from "../../shared/attribution";
 import { backoff, live, transient } from "../live/client";
 import { socketStep, type PhaseEvent, type SocketPhase } from "../../shared/socket-phase";
 import { restoredFor } from "../live/restore";
@@ -83,6 +86,18 @@ const talk = chat({
   verbs: VERBS,
   imageAlt: "The screenshot the agent looked at",
   externalTip: "An agent you shared this page with, working as your agent",
+  answer: async (id, approve) => {
+    const r = await call(`/api/agent/${approve ? "approve" : "deny"}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    }).catch(() => null);
+    if (r?.ok) return;
+    const a = (await r?.json().catch(() => null)) as { reason?: string } | null;
+    showHint(`Your answer didn't arrive: ${a?.reason ?? "the server didn't answer"}.`, true);
+    // The call may still wait: the buttons work again.
+    for (const b of $("agent-log").querySelectorAll<HTMLButtonElement>("button[data-answer]")) if (b.dataset.call == id) b.disabled = false;
+  },
 });
 const log = talk.log;
 let off: string | null = "Connecting to the agent…";
@@ -126,6 +141,32 @@ function hideHint() {
   hint.hidden = true;
   hint.classList.remove("sticky");
 }
+// A comment with @erga that the person wrote in a page starts no agent by itself: the page's own scripts can write one
+// as them (server/operations/comments.ts). The panel, which the page can't reach, shows the comment, and their click
+// on Run makes it their request.
+let asking: CommentAsk | null = null;
+function showAsk(ask: CommentAsk | null) {
+  asking = ask;
+  $("agent-ask").hidden = !ask;
+  if (!ask) return;
+  $("agent-ask-q").textContent = `Run this comment on "${ask.title}" as a request?`;
+  $("agent-ask-text").textContent = ask.text;
+  if (!window.ergaAgent?.open()) window.ergaAgent?.show(true);
+}
+$("agent-ask-no").addEventListener("click", () => showAsk(null));
+$("agent-ask-run").addEventListener("click", async () => {
+  const ask = asking;
+  if (!ask) return;
+  showAsk(null);
+  const r = await call("/api/agent/comment", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(ask),
+  }).catch(() => null);
+  if (r?.ok) return;
+  const a = (await r?.json().catch(() => null)) as { reason?: string; error?: string } | null;
+  showHint(`Your agent wasn't asked: ${a?.reason ?? a?.error?.replace(/\.$/, "") ?? "the server didn't answer"}.`, true);
+});
 /** Why a message can't go by this path now (send-gate.ts), or null if it can. */
 const gate = (path: SendPath, text: string) => canSend(path, { off, voice: !!voice, reading: att.reading, text, files: att.files.length });
 /** Why Send can't send right now, or null if it can. */
@@ -392,10 +433,11 @@ function connect() {
   ws.onopen = () => go({ type: "opened" });
   ws.onclose = () => go({ type: "closed" });
   ws.onmessage = (e) => {
-    let m: { type?: string; ev?: LogEvent } & Partial<AgentState>;
+    let m: { type?: string; ev?: LogEvent; ask?: CommentAsk } & Partial<AgentState>;
     try { m = JSON.parse(String(e.data)); } catch { return; }
     // The model switched, from another tab of the person's.
     if (m.type == "model") renderModel({ ...m, enabled: true });
+    if (m.type == "comment-ask" && m.ask) showAsk(m.ask);
     if (m.type == "agent" && m.ev) {
       heard++;
       talk.apply(m.ev);

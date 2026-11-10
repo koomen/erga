@@ -37,6 +37,8 @@ export interface ViewAnswer {
   canonical?: string | null;
   /** The page's head's details: its title, description, icon and link picture, as its <head> says. */
   head?: PageHead;
+  /** The document's share counter (access.ts), for the pass to its files. */
+  shares?: number;
   /** No file changed in QUIET_MS: the answer may be kept a moment (server/documents/view.ts). */
   quiet?: boolean;
 }

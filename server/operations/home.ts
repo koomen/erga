@@ -71,6 +71,7 @@ export const HOME_OPERATIONS: Operation[] = [
     description:
       "Deploys the homepage (landing_document) as it is now: answers when it is live, with each file's live address (live.files).",
     parameters: Schema.Struct({}),
+    asks: () => "Deploy the homepage as it is now",
     run: (_, caller) => redeployHome(caller),
   },
 ];

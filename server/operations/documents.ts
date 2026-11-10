@@ -21,6 +21,7 @@ import {
   DOCUMENT,
   findDocument,
   iso,
+  said,
   type Operation,
   OperationError,
   platformOf,
@@ -290,6 +291,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     ui: "Documents (/docs): Delete",
     description: "Deletes a document for good (owner only).",
     parameters: Schema.Struct({ document: ANY_DOCUMENT }),
+    asks: (args) => `Delete the document ${named(args.document)} for good`,
     run: async (args, caller) => {
       const doc = await findDocument({ ...caller, here: undefined }, args.document, "delete");
       if (doc.id == caller.here)
@@ -326,6 +328,11 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     activity: "sharing the document",
     ui: "Share (the documents list and the editor): give someone a role, change it, or stop sharing; Document settings (the editor): Readers",
     description: "Shares a document (owner), or sets its readers' options (editors).",
+    // Only a share with anyone: a person is named, and sees it in their list.
+    asks: (args) =>
+      args.login == "*" && args.role != "none"
+        ? `Share ${named(args.document)} with anyone who has the link${typeof args.role == "string" ? ` (${args.role})` : ""}`
+        : null,
     parameters: Schema.Struct({
       document: DOCUMENT,
       login: Schema.optionalKey(str('A GitHub login, or "*" for anyone with the link.')),
@@ -432,6 +439,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     wide: true,
     ui: "Settings (/settings): Revoke a token; Settings, Agent: Remove a key",
     description: "Turns off a token, or removes an API key.",
+    asks: (args) => (args.api_key != null ? `Remove your ${said(args.api_key)} API key` : `Revoke the token ${said(args.token)}`),
     parameters: Schema.Struct({
       token: Schema.optionalKey(Schema.String),
       api_key: Schema.optionalKey(str("anthropic, openai, google or openrouter.")),
@@ -450,6 +458,8 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     },
   },
 ];
+
+const named = (document: unknown) => (typeof document == "string" && document.trim() ? said(document) : "the document open on the page");
 
 /** The page models the owner may choose now: Claude's, and the others the server's keys run (pageLlmChoices). */
 async function pageLlmModels(caller: Caller): Promise<ModelChoice[]> {

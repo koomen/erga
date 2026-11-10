@@ -100,6 +100,11 @@ export interface Env {
   ERGA_GOOGLE_ORIGIN?: string;
   /** On celld (deploy/aws/machine.ts): the DevTools address of a headless Chrome on the same machine, for view_page (cloudflare/browser.ts). */
   ERGA_CHROME?: string;
+  /**
+   * Local development's tests: origins of private addresses that the server's own browser may ask besides Erga's own
+   * (cloudflare/render.ts), separated by commas: a test's "other site" on 127.0.0.1.
+   */
+  ERGA_RENDER_ALLOW?: string;
   /** Local development only: the dev server's address, where its own headless Chrome is (cloudflare/browser.ts). */
   ERGA_DEV_ORIGIN?: string;
   /** Local development only: how often the Worker checks for a newer homepage deploy (5 seconds by default; tests shorten it). */

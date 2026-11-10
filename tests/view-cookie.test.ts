@@ -3,7 +3,8 @@
 // anywhere else, or once expired, it signs in nobody (not even local development's dev login).
 import { expect, test } from "bun:test";
 import { sessionOf, viewCookie } from "../server/identity/session.ts";
-import type { Platform } from "../server/platform.ts";
+import { type Platform, whoOf } from "../server/platform.ts";
+import { VIA } from "../shared/attribution.ts";
 
 const SECRET = "test-secret";
 const DOC = "abcd1234";
@@ -28,6 +29,11 @@ test("it signs its person in on its document's viewer, its API and the operation
     expect(s, path).toMatchObject({ login: "ada", onlyDoc: DOC, view: true });
     expect(s?.admin, path).toBeUndefined();
   }
+});
+
+test("what it does is an agent's: the server's browser runs an agent's code", async () => {
+  const s = await ask(`/d/${DOC}/api/key`, await viewCookie(SECRET, "ada", DOC));
+  expect(whoOf(s!)).toEqual({ login: "ada", onlyDoc: DOC, via: VIA.view });
 });
 
 test("anywhere else, or expired, it signs in nobody, not even the dev login", async () => {

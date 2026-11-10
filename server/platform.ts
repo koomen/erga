@@ -34,7 +34,8 @@ export interface Session {
   onlyDoc?: string;
   /**
    * The server's browser, rendering the document's page in the viewer for an agent (view_page: identity/session.ts,
-   * viewCookie): the person on one document, with no admin power and no agent of theirs.
+   * viewCookie): the person on one document, with no admin power and no agent of theirs. It runs an agent's code
+   * (eval_in_page), so what it does is an agent's (whoOf: `via`), and it makes no token (shareToken).
    */
   view?: boolean;
   /** Their picture (users.avatar, shared/avatars.ts), read with their row at each request; absent: none. */
@@ -244,5 +245,6 @@ export const whoOf = (session: Session): Who => ({
   ...(session.admin ? { admin: true } : {}),
   ...(session.onlyDoc != null ? { onlyDoc: session.onlyDoc } : {}),
   // An agent with their token acts for them: what it does is theirs, via it.
-  ...(session.agent ? { via: VIA.token(session.agent.label) } : {}),
+  // The server's browser runs an agent's code: an agent's too.
+  ...(session.agent ? { via: VIA.token(session.agent.label) } : session.view ? { via: VIA.view } : {}),
 });

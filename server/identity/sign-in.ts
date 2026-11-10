@@ -30,7 +30,7 @@ import { providersOn, signInApp, testedSignIn } from "./settings.ts";
 import { type AppValues, googleEndpoints, PROVIDERS, type Provider } from "./apps.ts";
 import type { TestEnd } from "./app-test.ts";
 import { afterSignOut } from "./home-pass.ts";
-import { SESSION_COOKIE, sessionCookie, SIGNED_OUT } from "./session.ts";
+import { SESSION_COOKIE, sessionCookie, sessionOf, SIGNED_OUT } from "./session.ts";
 import { signed } from "../signed.ts";
 import * as Schema from "effect/Schema";
 import { randomToken } from "../../shared/bytes.ts";
@@ -90,15 +90,16 @@ const DAY = 24 * 60 * 60;
 export const clearState = (response: HttpServerResponse.HttpServerResponse, request: Request) =>
   withCookie(response, request, STATE, "", 0);
 
-/** Signs `session` in: its cookie, and on to `next`. */
+/** Signs `session` in: its cookie, with the person's sign-in number as it is now (sign-out raises it), and on to `next`. */
 export const signIn = Effect.fnUntraced(function* (
-  platform: Pick<Platform, "secret">,
+  platform: Pick<Platform, "secret" | "directory">,
   request: Request,
   session: Session,
   next: string,
   ttl = 30 * DAY
 ) {
-  let answer = withCookie(redirect(next), request, SESSION_COOKIE, yield* call(() => sessionCookie(platform.secret, session, ttl)), ttl);
+  const n = (yield* call(() => platform.directory.users.get(session.login)))?.sessions ?? 0;
+  let answer = withCookie(redirect(next), request, SESSION_COOKIE, yield* call(() => sessionCookie(platform.secret, session, ttl, n)), ttl);
   answer = clearState(answer, request);
   return cookies(request).has(SIGNED_OUT) ? withCookie(answer, request, SIGNED_OUT, "", 0) : answer;
 });
@@ -412,9 +413,18 @@ export const finishGoogleSignIn: Route = Effect.gen(function* () {
   return yield* vouchedSignIn(platform, request, v, next ?? "/", { onlyAdmins, tested });
 });
 
-/** /auth/logout (another site's link to it asks first) */
-export const signOut: Route = Effect.map(ctx, ({ platform, request, url }) => {
+/**
+ * /auth/logout (another site's link to it asks first): ends every sign-in of the person, on every device
+ * (Users.endSessions), so a cookie that someone copied stops too.
+ */
+export const signOut: Route = Effect.gen(function* () {
+  const { platform, request, url } = yield* ctx;
   if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) return confirmAction("Sign out", "Sign out of Erga", "/auth/logout");
+  const session = yield* call(() => sessionOf(platform, request));
+  // Only a browser's own sign-in ends them: not an agent's token, the server's browser, or local development's
+  // person with no cookie.
+  if (session && !session.agent && !session.view && cookies(request).has(SESSION_COOKIE))
+    yield* call(() => platform.directory.users.endSessions(session.login));
   // A page, not a redirect: it deletes the editor's offline copies in this browser first, then goes on (client/inline/sign-out.ts).
   const out = withCookie(
     page("Signing out", `<p>Signing out…</p>${inlineScript("sign-out", { to: afterSignOut(platform, url) })}`, 200),
@@ -426,4 +436,3 @@ export const signOut: Route = Effect.map(ctx, ({ platform, request, url }) => {
   // Locally someone is always signed in (the dev login), unless the browser signs out: then nobody, as on erga.dev.
   return platform.dev(url) ? withCookie(out, request, SIGNED_OUT, "1", 30 * DAY) : out;
 });
-

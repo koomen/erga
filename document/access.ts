@@ -71,6 +71,9 @@ export const mayResolveAny = (role: Role | null): boolean => role == "editor" ||
 /** Where the copy of the permissions is kept in the document's storage. */
 const PERMS = "perms";
 
+/** Where its share counter is kept: how many times a share of it ended (DocumentAccess.shares). */
+const SHARES = "shares";
+
 /** How long a document trusts its copy of its permissions before it reads them again (in the background): changes are pushed, so this only covers one that didn't arrive. */
 const PERMISSIONS_FRESH_MS = 5 * 60_000;
 
@@ -92,11 +95,25 @@ export class DocumentAccess {
   /** Its permissions as the directory last said, and when (undefined: not read yet; null: none kept). */
   private perms: { list: PersonRole[]; at: number } | null | undefined = undefined;
 
+  /** Its share counter (undefined: not read yet). */
+  private ended: number | undefined = undefined;
+
   constructor(private o: AccessOptions) {}
 
   /** Storage was emptied or replaced: the copy is read again. */
   forget(): void {
     this.perms = undefined;
+    this.ended = undefined;
+  }
+
+  /**
+   * The share counter: how many times a share of the document ended. A pass to its files (server/documents/pages-origin.ts)
+   * carries the counter of when it was made, and opens them only while that is still the counter: whoever lost their
+   * share keeps no pass that works, and the others get a new one at their next load.
+   */
+  async shares(): Promise<number> {
+    this.ended ??= (await this.o.storage.get<number>(SHARES)) ?? 0;
+    return this.ended;
   }
 
   /**
@@ -114,8 +131,14 @@ export class DocumentAccess {
     const read = request.method == "GET" || request.method == "HEAD";
     if (headers.has("x-erga-checked")) {
       headers.delete("x-erga-who");
-      if (read && url.pathname.startsWith("/doc/") && !headers.get("upgrade")) return new Request(request, { headers });
-      return new Response("Not allowed", { status: 403 });
+      if (!read || !url.pathname.startsWith("/doc/") || headers.get("upgrade")) return new Response("Not allowed", { status: 403 });
+      // The pass is from before a share ended (x-erga-shares: its counter).
+      if (Number(headers.get("x-erga-shares")) != (await this.shares()))
+        return new Response("This link has expired: reload the page.", {
+          status: 403,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      return new Request(request, { headers });
     }
     const who = askerFrom(headers);
     if (!who) return new Response("Sign in first", { status: 401 });
@@ -148,8 +171,11 @@ export class DocumentAccess {
   async setPermissions(list: readonly PersonRole[], at = Date.now()): Promise<void> {
     if (this.perms === undefined) this.perms = (await this.o.storage.get<{ list: PersonRole[]; at: number }>(PERMS)) ?? null;
     if (this.perms && this.perms.at > at) return;
+    // Someone (or anyone with the link) is no longer on the list: a share ended, and the passes made before stop.
+    const ended = this.perms?.list.some((had) => !list.some((p) => p.login == had.login));
     this.perms = { list: list.map((p) => ({ login: p.login, role: p.role })), at };
     await this.o.storage.put(PERMS, this.perms);
+    if (ended) await this.o.storage.put(SHARES, (this.ended = (await this.shares()) + 1));
   }
 
   /**

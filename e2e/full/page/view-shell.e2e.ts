@@ -72,3 +72,18 @@ test("editor: true opens the page in the editor, with the editor's controls", CA
   });
   expect(page.text.split("\n\n")[0]).toBe("true");
 });
+
+test("code in the viewer's window can't get the person's Share token: the server's browser is an agent", async ({ tab }) => {
+  const { tool } = await open(tab);
+  const out = JSON.parse(
+    (
+      await tool("eval_in_page", {
+        editor: true,
+        shell: true,
+        expression: `const r = await fetch(location.pathname + "/api/share", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); return { status: r.status, body: await r.text() };`,
+      })
+    ).text.split("\n\n")[0]
+  );
+  expect(out.body).not.toContain("erga_");
+  expect(out).toEqual({ status: 403, body: JSON.stringify({ ok: false, error: "An agent can't make tokens." }) });
+});

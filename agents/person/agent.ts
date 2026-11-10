@@ -40,6 +40,8 @@ export interface AgentSession {
   /** A message, with any files attached; `id` is the sending tab's id for it (the transcript's copy carries it). */
   prompt(text: string, context: string | null, files?: Attachment[], id?: string): void;
   abort(): void;
+  /** The person's answer to the tool call that waits for their Approve: false when none waits by that id. */
+  answer(id: string, approve: boolean): boolean;
   reset(): Promise<void>;
   subscribe(listener: (ev: LogEvent) => void): () => void;
   /** Goes on with a run that a restart cut off, from its last checkpoint (the first call only). Answers whether a run goes on. */
@@ -87,6 +89,8 @@ export function startAgent(opts: {
   modelChanged?: () => void;
   /** A model turn's tokens, and whether the person's own key ran it. */
   used?: LoopHooks["used"];
+  /** Why the agent can't take another turn on the server's keys now (the day's limit), or null. */
+  limit?: LoopHooks["limit"];
 }): AgentSession {
   const { owner } = opts;
   const loop = startLoop({
@@ -95,7 +99,7 @@ export function startAgent(opts: {
     store: opts.store ?? null,
     meta: { login: owner, ...opts.meta },
     tag: "page",
-    hooks: { about, modelChanged: () => opts.modelChanged?.(), used: opts.used },
+    hooks: { about, modelChanged: () => opts.modelChanged?.(), used: opts.used, limit: opts.limit },
   });
   loop.start(opts.cfg, systemPrompt(owner, opts.admin), opts.tools);
   return {
@@ -114,6 +118,7 @@ export function startAgent(opts: {
     messages: () => loop.messages,
     prompt: (text, context, files = [], id) => loop.prompt(text, context, files, id),
     abort: loop.abort,
+    answer: loop.answer,
     reset: () => loop.reset(),
     subscribe: loop.subscribe,
     resume: loop.resume,

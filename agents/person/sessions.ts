@@ -13,12 +13,12 @@ import { startAgent, type AgentSession } from "./agent.ts";
 import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
 import { restoredLog } from "../checkpoint.ts";
 import { agentTools, toolsFor } from "../tools.ts";
-import { callDocument, type Caller } from "../../server/operations/index.ts";
-import type { Route as DocRoute } from "../../server/directory/index.ts";
+import { callDocument, type Caller, runComment } from "../../server/operations/index.ts";
+import type { Directory, Route as DocRoute } from "../../server/directory/index.ts";
 import { isModelChoice, type AgentSettings } from "../models.ts";
 import { emptyLog, type Log } from "../../shared/agent-log.ts";
 import { checkAttachments } from "../../shared/attach.ts";
-import { VIA } from "../../shared/attribution.ts";
+import { type CommentAsk, VIA } from "../../shared/attribution.ts";
 import { authOps } from "../../server/identity/index.ts";
 import type { Platform } from "../../server/platform.ts";
 import * as Effect from "effect/Effect";
@@ -52,6 +52,18 @@ export interface PersonAgentsDeps {
   watch?: () => void;
   /** Where an image sent to the agent is kept, so the agent can add it to a document (write's {"blob": ...}). */
   blobs?: BlobStore;
+}
+
+/**
+ * Why `login`'s agent can't take another turn on the server's keys now: their tokens there today (UTC) reached the
+ * setting agent_daily_tokens. Null when it can. Their own key has no limit (agents/run.ts never asks then).
+ */
+export async function dailyLimit(dir: Directory, login: string, now = Date.now()): Promise<string | null> {
+  const [most, used] = await Promise.all([dir.config.get("agent_daily_tokens"), dir.activity.serverTokens(login, now)]);
+  const n = (v: number) => v.toLocaleString("en-US");
+  return used < most
+    ? null
+    : `Your agent used ${n(used)} tokens on the server's keys today, and the limit for one day is ${n(most)}. It works again after midnight UTC, or now with your own API key (Settings, Agent).`;
 }
 
 /** How long the panel's state may use the agent settings read before: a few polls of the panel. */
@@ -138,6 +150,7 @@ export class PersonAgents {
       stored: this.chats.load(scope),
       meta: { origin, name: state.name },
       modelChanged: () => this.event({ type: "model", ...modelState(agent) }, login),
+      limit: () => dailyLimit(this.platform.directory, login),
       // Its tokens, in the day's counts (the Analytics page), by whose key.
       used: (t) =>
         void this.platform.directory.activity
@@ -200,6 +213,14 @@ export class PersonAgents {
     return { ok: true };
   }
 
+  /**
+   * A comment with @erga that came with a page's edit key (server/operations/comments.ts): no agent starts. The
+   * person's panels ask them whether to run it.
+   */
+  async askComment(login: string, ask: CommentAsk): Promise<void> {
+    this.event({ type: "comment-ask", ask }, login);
+  }
+
   // -- each person's conversation, kept
 
   /** The person's conversation: the live one, or the one stored (the agent need not be on to read it). */
@@ -229,7 +250,7 @@ export class PersonAgents {
     return emptyLog();
   }
 
-  async agentControl(login: string, op: "abort" | "reset" | "model", model?: string) {
+  async agentControl(login: string, op: "abort" | "reset" | "model" | "approve" | "deny", model?: string) {
     const s = this.agents.get(login);
     if (!s) {
       if (op == "reset") await this.clearConversation(login);
@@ -238,10 +259,13 @@ export class PersonAgents {
         this.chats.stop(`you:${login}`);
         this.event({ type: "agent", ev: { t: "busy", busy: false } }, login);
       }
-      return { ok: op != "model", reason: "the agent hasn't started" };
+      return { ok: op == "abort" || op == "reset", reason: "the agent hasn't started" };
     }
     if (op == "abort") s.agent.abort();
-    else if (op == "reset") await this.clearConversation(login);
+    else if (op == "approve" || op == "deny") {
+      // `model` carries the call's id: the answer is for the question the person saw, never for a later one.
+      if (!s.agent.answer(model ?? "", op == "approve")) return { ok: false, reason: "that call no longer waits for your answer" };
+    } else if (op == "reset") await this.clearConversation(login);
     else if (!model || !isModelChoice(model) || !s.agent.setModel(model))
       return { ok: false, reason: "that model isn't one you can use now" };
     const state = modelState(s.agent);
@@ -312,7 +336,7 @@ export class PersonAgents {
 /** What the routes ask of a person's agent (their Durable Object answers, by RPC, forwarding to a PersonAgents). */
 export type PersonAgentObject = Pick<
   PersonAgents,
-  "agentState" | "agentPrompt" | "agentControl" | "conversation" | "clearConversation" | "fetch"
+  "agentState" | "agentPrompt" | "askComment" | "agentControl" | "conversation" | "clearConversation" | "fetch"
 >;
 
 declare module "../../server/platform.ts" {
@@ -343,6 +367,13 @@ const Prompt = Schema.Struct({
   id: Schema.optionalKey(Schema.Unknown),
 });
 const ModelBody = Schema.Struct({ model: Schema.optionalKey(Schema.String) });
+const AnswerBody = Schema.Struct({ id: Schema.optionalKey(Schema.String) });
+const CommentBody = Schema.Struct({
+  doc: Schema.optionalKey(Schema.Unknown),
+  thread: Schema.optionalKey(Schema.Unknown),
+  comment: Schema.optionalKey(Schema.Unknown),
+  text: Schema.optionalKey(Schema.Unknown),
+});
 const KeyBody = Schema.Struct({ name: Schema.optionalKey(Schema.String), value: Schema.optionalKey(Schema.String) });
 
 /** The body as JSON, as `schema` has it; else `fallback` (a body that isn't JSON counts as none, as before). */
@@ -389,11 +420,16 @@ interface Asked {
   readonly h: ReturnType<Platform["personAgent"]>;
 }
 
-/** Stops the turn, starts a new conversation, or switches the model ({ model }: one the person can use, from the next turn). */
-const control = (what: "abort" | "reset" | "model") => (a: Asked) =>
+/**
+ * Stops the turn, starts a new conversation, switches the model ({ model }: one the person can use, from the next
+ * turn), or gives the person's answer ({ id }) to the tool call `id` that waits for it (a delete, a share with anyone,
+ * a token's revoke, an admin change: an operation's `asks`): run it, or not.
+ */
+const control = (what: "abort" | "reset" | "model" | "approve" | "deny") => (a: Asked) =>
   Effect.gen(function* () {
     const b = what == "model" ? yield* body(a.request, ModelBody, {}) : {};
-    const r = yield* call(() => a.h.agentControl(a.me.login, what, b.model));
+    const answered = what == "approve" || what == "deny" ? yield* body(a.request, AnswerBody, {}) : {};
+    const r = yield* call(() => a.h.agentControl(a.me.login, what, b.model ?? answered.id));
     return json(r, r.ok ? 200 : 409);
   });
 
@@ -442,6 +478,8 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
   { method: "POST", path: "/api/agent/abort", run: control("abort"), action: "Stop your agent", ...PANEL_ROW },
   { method: "POST", path: "/api/agent/reset", run: control("reset"), action: "Start a new conversation with your agent", ...PANEL_ROW },
   { method: "POST", path: "/api/agent/model", run: control("model"), action: "Switch your agent's model", ...PANEL_ROW },
+  { method: "POST", path: "/api/agent/approve", run: control("approve"), action: "Approve a call your agent asks for", ...PANEL_ROW },
+  { method: "POST", path: "/api/agent/deny", run: control("deny"), action: "Deny a call your agent asks for", ...PANEL_ROW },
   {
     method: "GET",
     path: "/api/agent/events",
@@ -471,6 +509,29 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
     path: "/api/agent/conversation",
     run: (a) => call(() => a.h.clearConversation(a.me.login)).pipe(Effect.map((log) => json({ ok: true, log }))),
     action: "A new conversation with your agent",
+    ...PANEL_ROW,
+  },
+  {
+    method: "POST",
+    path: "/api/agent/comment",
+    // { doc, thread, comment, text }: the person's click on "Run this comment as a request?", which the panel shows
+    // for a comment with @erga sent with the page's edit key (the event { type: "comment-ask", ask }): their agent
+    // takes the thread.
+    run: (a) =>
+      Effect.gen(function* () {
+        const b = yield* body(a.request, CommentBody, {});
+        const admin = yield* call(() => a.platform.directory.users.isAdmin(a.me.login));
+        const caller: Caller = {
+          dir: a.platform.directory,
+          who: { login: a.me.login, ...(admin ? { admin: true } : {}) },
+          name: a.me.name,
+          origin: a.url.origin,
+          platform: a.platform,
+        };
+        const r = yield* call(() => runComment(caller, b));
+        return json(r, r.ok ? 200 : 409);
+      }),
+    action: "Run your comment with @erga as a request (the panel's question)",
     ...PANEL_ROW,
   },
   {

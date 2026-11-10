@@ -205,7 +205,7 @@ const fromPage = Effect.fnUntraced(function* (
   if (request.method != "POST") return json({ ok: false, error: "POST it." }, 405, cors);
   if (!keyed.person || !keyed.who) return json({ ok: false, error: "This key has expired: reload the page." }, 403, cors);
   const args = yield* body(Schema.Record(Schema.String, Schema.Unknown));
-  const caller: Caller = { dir: platform.directory, who: keyed.who, name: keyed.person.name, origin, platform };
+  const caller: Caller = { dir: platform.directory, who: keyed.who, name: keyed.person.name, origin, platform, fromPage: true };
   return yield* runNamed(
     path.slice("/api/tools/".length),
     { ...(args._tag == "Some" ? args.value : {}), document: keyed.doc.id },
@@ -387,6 +387,8 @@ const TokenAsk = Schema.Struct({
 
 /** POST /api/auth/request {label, scope, doc?, expires?}: a link for the person to approve, and a code to poll with. */
 const askForToken = Effect.fnUntraced(function* (platform: Platform, origin: string) {
+  // The address Cloudflare saw the request come from (its header can't be sent from outside); elsewhere, none.
+  const from = (yield* webRequest).headers.get("cf-connecting-ip");
   const asked = yield* body(TokenAsk);
   const b = asked._tag == "Some" ? asked.value : {};
   const scope = b.scope ?? "documents";
@@ -397,13 +399,9 @@ const askForToken = Effect.fnUntraced(function* (platform: Platform, origin: str
     );
   const expires = expiryOf(b.expires);
   if (expires == "bad") return failure("expires must be a time (ISO 8601, e.g. 2026-12-31T00:00:00Z), a date, or left out for a token that lasts until it's revoked.", 400);
+  const grant = { scope: scope as Scope, docId: typeof b.doc == "string" ? b.doc : null, expires };
   const made = yield* Effect.tryPromise({
-    try: () =>
-      platform.tokens.request(typeof b.label == "string" ? b.label : null, {
-        scope: scope as Scope,
-        docId: typeof b.doc == "string" ? b.doc : null,
-        expires,
-      }),
+    try: () => platform.tokens.request(typeof b.label == "string" ? b.label : null, grant, undefined, from),
     catch: (e) => e,
   }).pipe(Effect.result);
   if (made._tag == "Failure") {

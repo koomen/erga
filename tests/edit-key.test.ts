@@ -40,3 +40,9 @@ test("a key's person has this one document, and admin power only if their sessio
   );
   expect(keyWho(admin!, "abcd2345")).toEqual({ login: "koomen", admin: true, onlyDoc: "abcd2345" });
 });
+
+test("a key from an agent's session is an agent's: what it does is via it", async () => {
+  const key = (await editKey("s", "koomen", "abcd2345", { login: "ada", name: "Ada", via: "an agent's view of the page" })).key;
+  const person = await readEditKey("s", key, "koomen", "abcd2345");
+  expect(keyWho(person!, "abcd2345")).toEqual({ login: "ada", onlyDoc: "abcd2345", via: "an agent's view of the page" });
+});

@@ -11,7 +11,7 @@
 import type { BlobBody, BlobStore } from "../document/blobs";
 import type { EdgeCache } from "./kv-cache";
 import type { Env } from "./env";
-import { snapshotRefused } from "../document/snapshot";
+import { snapshotAuth, snapshotRefused } from "../document/snapshot";
 
 /** The edge keeps a whole blob up to this size (the Cache API takes up to 512 MB). */
 const CACHE_MAX = 512 * 1024 * 1024;
@@ -38,9 +38,8 @@ export function blobsOf(
   const fromProduction =
     primary && env.SNAPSHOT_IMPORT == "1" && env.DEPLOY_TARGET != "production" && (env.SNAPSHOT_TOKEN?.trim().length ?? 0) >= 32
     ? async (hash: string): Promise<boolean> => {
-        const r = await fetch(`${primary}/api/snapshot/blob/${hash}`, {
-          headers: { Authorization: `Bearer ${env.SNAPSHOT_TOKEN!.trim()}` },
-        }).catch(() => null);
+        const url = `${primary}/api/snapshot/blob/${hash}`;
+        const r = await fetch(url, { headers: { Authorization: await snapshotAuth(env.SNAPSHOT_TOKEN!, "GET", url) } }).catch(() => null);
       const size = Number(r?.headers.get("content-length"));
       if (!r?.ok || !r.body || !Number.isInteger(size)) { await r?.body?.cancel(); return false; }
       await put(hash, r.body, size);
@@ -108,7 +107,7 @@ export async function snapshotBlob(request: Request, env: Pick<Env, "FILES" | "S
   const m = /^\/api\/snapshot\/blob\/([0-9a-f]{64})$/.exec(new URL(request.url).pathname);
   if (!m) return null;
   if (!env.FILES) return Response.json({ error: "Not found" }, { status: 404 });
-  const refused = snapshotRefused(request, env.SNAPSHOT_TOKEN);
+  const refused = await snapshotRefused(request, env.SNAPSHOT_TOKEN);
   if (refused) return refused;
   if (request.method != "GET") return Response.json({ error: "GET only" }, { status: 405 });
   const o = await env.FILES.get(key(m[1]));

@@ -68,6 +68,8 @@ export interface ChatStore {
 export const STOPPED = "The server restarted while this tool call ran, so it stopped. It was not run again: it may or may not have taken effect. Check before you do it again.";
 /** The same, as the panel shows it. */
 export const STOPPED_SHOWN = "Stopped: the server restarted while this ran. It was not run again.";
+/** A call that waited for the person's Approve when the server restarted, as the panel shows it. */
+export const ASK_LOST = "Not run: the server restarted before you answered. Ask again.";
 /** A run that could not go on after a restart (the agent is off now). */
 export const CUT = "The server restarted before the agent finished, and the agent is off now. What arrived is kept.";
 
@@ -81,6 +83,8 @@ export function restoredLog(stored: StoredChat): Log {
   const items = stored.log
     .filter((item, i) => !(state.running && i >= state.stable && (item.kind == "assistant" || item.kind == "thinking")))
     .map((item): LogItem => {
+      // A call that waited for the person's Approve is closed: a restart never leaves a question that nothing answers.
+      if (item.kind == "tool" && item.status == "asking") return { ...item, status: "error", detail: ASK_LOST };
       if (item.kind != "tool" || item.status != "running") return item;
       const result = state.calls[item.id]?.result;
       if (result) return { ...item, status: result.content.some((p) => p.type == "tool-result" && p.isFailure) ? "error" : "done" };

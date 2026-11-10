@@ -14,7 +14,7 @@ import { bucketName, ownCredentials } from "../deploy/pipeline/account";
 import { Cloudflare } from "../deploy/pipeline/cloudflare-api";
 import type { Release } from "../deploy/pipeline/release-format";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare, PROD_DB, PROD_DOCS } from "../dev/mock-cloudflare";
-import { memoryStore, snapshotRoutes } from "../document/snapshot";
+import { memoryStore, SNAPSHOT_MINUTES, snapshotAuth, snapshotRoutes } from "../document/snapshot";
 import {
   prepareRelease,
   release,
@@ -235,7 +235,7 @@ describe("production", () => {
 });
 
 describe("the snapshot endpoints", () => {
-  test("export needs the token and only reads; import only where it's allowed", async () => {
+  test("export needs a request signed with the secret and only reads; import only where it's allowed", async () => {
     const store = memoryStore();
     store.docs.set("abcd2345", {
       entries: new Map<string, unknown>([
@@ -244,12 +244,35 @@ describe("the snapshot endpoints", () => {
       ]),
       alarm: 5,
     });
-    const req = (path: string, body: unknown, token = MOCK_SNAPSHOT_TOKEN) =>
-      new Request(`https://x${path}`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
-    const routes = (r: Request, importAllowed = false, token: string | undefined = MOCK_SNAPSHOT_TOKEN) =>
-      snapshotRoutes(r, { token, importAllowed, store });
-    expect((await routes(req("/api/snapshot/docs", { ids: ["abcd2345"] }), false, ""))!.status).toBe(404);
-    expect((await routes(req("/api/snapshot/docs", { ids: ["abcd2345"] }, "wrong-token-wrong-token-wrong-token-xx")))!.status).toBe(403);
+    const req = async (path: string, body: unknown, token = MOCK_SNAPSHOT_TOKEN, at = Date.now()) => {
+      const text = JSON.stringify(body);
+      const Authorization = await snapshotAuth(token, "POST", `https://x${path}`, text, at);
+      return new Request(`https://x${path}`, { method: "POST", headers: { Authorization }, body: text });
+    };
+    const routes = async (r: Request | Promise<Request>, importAllowed = false, token: string | undefined = MOCK_SNAPSHOT_TOKEN) =>
+      snapshotRoutes(await r, { token, importAllowed, store });
+    const ask = { ids: ["abcd2345"] };
+    expect((await routes(req("/api/snapshot/docs", ask), false, ""))!.status).toBe(404);
+    expect((await routes(req("/api/snapshot/docs", ask, "wrong-token-wrong-token-wrong-token-xx")))!.status).toBe(403);
+    // The secret itself never opens it: it doesn't travel, so nothing on the way can keep it.
+    const bearer = new Request("https://x/api/snapshot/docs", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${MOCK_SNAPSHOT_TOKEN}` },
+      body: JSON.stringify(ask),
+    });
+    expect((await routes(bearer))!.status).toBe(403);
+    // A signature holds for SNAPSHOT_MINUTES, for its own request only: not later, not from the future, not for
+    // another body or path.
+    const minutes = SNAPSHOT_MINUTES * 60_000;
+    expect((await routes(req("/api/snapshot/docs", ask, MOCK_SNAPSHOT_TOKEN, Date.now() - minutes + 30_000)))!.status).toBe(200);
+    expect((await routes(req("/api/snapshot/docs", ask, MOCK_SNAPSHOT_TOKEN, Date.now() - minutes - 1000)))!.status).toBe(403);
+    expect((await routes(req("/api/snapshot/docs", ask, MOCK_SNAPSHOT_TOKEN, Date.now() + minutes + 1000)))!.status).toBe(403);
+    const signed = (await req("/api/snapshot/docs", ask)).headers.get("authorization")!;
+    const other = (path: string, body: unknown) =>
+      new Request(`https://x${path}`, { method: "POST", headers: { Authorization: signed }, body: JSON.stringify(body) });
+    expect((await routes(other("/api/snapshot/docs", ask)))!.status).toBe(200);
+    expect((await routes(other("/api/snapshot/docs", { ids: ["efgh6789"] })))!.status).toBe(403);
+    expect((await routes(other("/api/snapshot/docs/import", ask), true))!.status).toBe(403);
     const r = await routes(req("/api/snapshot/docs", { ids: ["abcd2345", "nope0000"] }));
     const { docs } = await r!.json() as any;
     expect(docs).toEqual([{ id: "abcd2345", entries: [["meta", { j: { id: "abcd2345" } }], ["state", { b: btoa("\x09\x08") }]], alarm: 5 }]);
@@ -271,7 +294,7 @@ describe("the snapshot endpoints", () => {
       (await (await snapshotRoutes(
         new Request("https://x/api/snapshot/docs", {
           method: "POST",
-          headers: { Authorization: `Bearer ${MOCK_SNAPSHOT_TOKEN}` },
+          headers: { Authorization: await snapshotAuth(MOCK_SNAPSHOT_TOKEN, "POST", "https://x/api/snapshot/docs", JSON.stringify(body)) },
           body: JSON.stringify(body),
         }),
         { token: MOCK_SNAPSHOT_TOKEN, importAllowed: false, store, budget: 500 }

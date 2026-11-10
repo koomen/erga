@@ -206,7 +206,8 @@ export const listDocs = Effect.gen(function* () {
 export const shareToken = Effect.fnUntraced(function* (session: Session) {
   const { request, url, platform } = yield* ctx;
   const refuse = (error: string) => plainJson({ ok: false, error }, 403);
-  if (session.agent) return refuse("An agent can't make tokens.");
+  // The server's browser (Session.view) runs an agent's code in the viewer's window: an agent too.
+  if (session.agent || session.view) return refuse("An agent can't make tokens.");
   const origin = request.headers.get("origin");
   if (origin && origin != url.origin) return refuse("Forbidden");
   // Any body that isn't { rotate: true } keeps the token as it is.
@@ -214,7 +215,10 @@ export const shareToken = Effect.fnUntraced(function* (session: Session) {
     Effect.flatMap(Schema.decodeUnknownEffect(RotateBody)),
     Effect.orElseSucceed(() => ({ rotate: false }))
   );
-  const { token } = yield* call(() => platform.tokens.share({ login: session.login, name: session.name }, rotate === true));
+  const via = whoOf(session).via;
+  const { token } = yield* call(() =>
+    platform.tokens.share({ login: session.login, name: session.name, ...(via ? { via } : {}) }, rotate === true)
+  );
   return json({ token });
 });
 

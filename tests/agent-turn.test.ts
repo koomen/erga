@@ -213,3 +213,105 @@ test("the turn: a resume goes on, or not; a message meanwhile steers the run; St
   // Only an idle agent resumes.
   expect(walk({ at: "running" }, [{ e: "resume" }])).toEqual(["running"]);
 });
+
+test("the turn: a call that asks waits for Approve or Deny; a message or Stop counts as Deny", () => {
+  const asks: TurnEvent = { e: "ended", steered: false, held: false, asking: "c1" };
+  expect(walk(IDLE, [{ e: "prompt" }, asks, { e: "approve", id: "c1" }, ended()])).toEqual([
+    "running steer start",
+    "asking",
+    "running approve start",
+    "idle",
+  ]);
+  expect(walk({ at: "asking", id: "c1" }, [{ e: "deny", id: "c1" }])).toEqual(["running deny start"]);
+  // An answer to another call (an old question in another tab) does nothing.
+  expect(
+    walk({ at: "asking", id: "c1" }, [
+      { e: "approve", id: "c0" },
+      { e: "deny", id: "c0" },
+    ])
+  ).toEqual(["asking", "asking"]);
+  expect(walk({ at: "asking", id: "c1" }, [{ e: "prompt" }])).toEqual(["running deny steer start"]);
+  expect(walk({ at: "asking", id: "c1" }, [{ e: "stop" }])).toEqual(["idle deny"]);
+  expect(walk({ at: "asking", id: "c1" }, [{ e: "reset" }])).toEqual(["idle clear"]);
+  // A message sent before the question came, or a Stop: the call is closed, never left to wait.
+  expect(walk({ at: "running" }, [{ ...asks, steered: true }])).toEqual(["running deny start"]);
+  expect(walk({ at: "stopping", reset: false }, [asks])).toEqual(["idle deny settle"]);
+  // No answer starts a call outside the asking state.
+  expect(walk(IDLE, [{ e: "approve", id: "c1" }])).toEqual(["idle"]);
+  expect(walk({ at: "running" }, [{ e: "approve", id: "c1" }])).toEqual(["running"]);
+});
+
+/** A tool that asks first, and says when it ran. */
+function asker(ran: string[]): AgentTool {
+  return {
+    name: "delete",
+    description: "Deletes.",
+    parameters: Schema.Struct({ what: Schema.optionalKey(Schema.String) }),
+    asks: (p) => (p.what == "draft" ? null : `Delete ${p.what} for good`),
+    execute: async (_id, p) => {
+      ran.push(String(p.what));
+      return { content: [{ type: "text", text: "deleted" }] };
+    },
+  };
+}
+const asking = (a: ReturnType<typeof startAgent>) => a.log().items.flatMap((i) => (i.kind == "tool" && i.status == "asking" ? [i] : []))[0];
+const results = (a: ReturnType<typeof startAgent>) =>
+  a.messages().flatMap((m) => (m.role == "tool" ? (m.content as unknown as { result: string; isFailure: boolean }[]) : []));
+
+test("a call that asks does not run until the person approves; then the run goes on", async () => {
+  const ran: string[] = [];
+  const a = startAgent({ cfg: script, owner: "ada", admin: false, tools: [asker(ran)] });
+  const busy = busyOf(a);
+  a.prompt(`@script [{"tool":"delete","args":{"what":"notes"}},{"text":"Done."}]`, null);
+  // The run ended at the question: nothing of it is left that could run the call.
+  await until(() => !!asking(a) && busy.at(-1) == false);
+  expect(ran).toEqual([]);
+  expect(asking(a)).toMatchObject({ name: "delete", detail: "Delete notes for good" });
+  expect(a.answer("another", true)).toBe(false);
+  expect(a.answer(asking(a).id, true)).toBe(true);
+  await until(() => a.log().items.at(-1)?.kind == "assistant" && busy.at(-1) == false);
+  expect(ran).toEqual(["notes"]);
+  expect(results(a)).toMatchObject([{ result: "deleted", isFailure: false }]);
+  expect(a.log().items.map((i) => (i.kind == "tool" ? i.status : i.kind))).toEqual(["user", "done", "assistant"]);
+  // A second answer finds nothing to answer.
+  expect(a.answer("x", true)).toBe(false);
+});
+
+test("Deny, a new message and Stop each close the call unrun, and the model hears it", async () => {
+  for (const how of ["deny", "message", "stop"] as const) {
+    const ran: string[] = [];
+    const a = startAgent({ cfg: script, owner: "ada", admin: false, tools: [asker(ran)] });
+    const busy = busyOf(a);
+    a.prompt(`@script [{"tool":"delete","args":{"what":"notes"}},{"text":"Not deleted."}]`, null);
+    await until(() => !!asking(a) && busy.at(-1) == false);
+    if (how == "deny") expect(a.answer(asking(a).id, false)).toBe(true);
+    else if (how == "message") a.prompt("No, wait.", null);
+    else a.abort();
+    await until(() => !asking(a) && busy.at(-1) == false && (how == "stop" || a.log().items.at(-1)?.kind == "assistant"));
+    expect(ran).toEqual([]);
+    expect(results(a)).toMatchObject([{ isFailure: true }]);
+    expect(results(a)[0].result).toContain("did not approve");
+    expect(a.log().items.find((i) => i.kind == "tool")).toMatchObject({ status: "error", detail: "Not approved." });
+  }
+});
+
+test("a call that needs no approval runs at once; a restart closes a question that waits", async () => {
+  const ran: string[] = [];
+  const t = new ChatTables(db()),
+    store = tableStore(t, "you:ada");
+  const a = startAgent({ cfg: script, owner: "ada", admin: false, tools: [asker(ran)], store });
+  const busy = busyOf(a);
+  a.prompt(`@script [{"tool":"delete","args":{"what":"draft"}},{"tool":"delete","args":{"what":"notes"}},{"text":"Done."}]`, null);
+  await until(() => !!asking(a) && busy.at(-1) == false);
+  expect(ran).toEqual(["draft"]);
+  await until(() => t.load("you:ada")!.log.some((i) => i.kind == "tool" && i.status == "asking"));
+
+  // The object restarts: nothing is approved by default, and nothing waits for an answer that can't come.
+  const b = startAgent({ cfg: script, owner: "ada", admin: false, tools: [asker(ran)], store, stored: t.load("you:ada") });
+  expect(asking(b)).toBeUndefined();
+  expect(await b.resume()).toBe(false);
+  expect(ran).toEqual(["draft"]);
+  expect(results(b).at(-1)).toMatchObject({ isFailure: true });
+  expect(results(b).at(-1)!.result).toContain("restarted before the person answered");
+  expect(b.answer("x", true)).toBe(false);
+});

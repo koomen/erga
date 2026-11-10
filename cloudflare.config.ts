@@ -110,6 +110,7 @@ export default defineConfig(({ mode }) => ({
         // secret that lets it link files on disk to documents, and a shorter write delay for tests.
         ERGA_LINK_SECRET: bindings.text(process.env.ERGA_LINK_SECRET ?? ""),
         ERGA_WRITE_DELAY_MS: bindings.text(process.env.ERGA_WRITE_DELAY_MS ?? ""),
+        ERGA_RENDER_ALLOW: bindings.text(process.env.ERGA_RENDER_ALLOW ?? ""),
         // How often / checks for a newer homepage deploy (tests shorten it).
         ERGA_HOME_RECHECK_MS: bindings.text(process.env.ERGA_HOME_RECHECK_MS ?? ""),
         // When versions are cut: how long edits pause first, and the longest burst one version holds.

@@ -135,3 +135,9 @@ export function hasSeen(doc: Y.Doc, vector: string): boolean {
   for (const [client, clock] of want) if (Y.getState(doc.store, client) < clock) return false;
   return true;
 }
+
+/**
+ * Who reads a document's versions (the list, an old file, a diff): only people who may edit it. A version may hold
+ * text that its authors removed before they shared the document.
+ */
+export const EDITORS_READ_VERSIONS = "Only people who can edit a document read its versions.";

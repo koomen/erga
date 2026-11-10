@@ -83,12 +83,14 @@ export default function viewerNav(): void {
   });
   // A link that leaves the document (reader.ts): a new tab (tab: "new"), or the whole tab when its author set it
   // to open in this one (target="_self"), on the reader's click only. (A tab the page opened itself would have its sandbox.)
+  // An address outside Erga always gets a new tab: the page's own script can send this message too, and the tab that
+  // shows Erga must not become a site that only looks like it.
   addEventListener("message", (e) => {
     if (!ergaFrames.from(e) || e.data?.type != "erga-go") return;
     const url = String(e.data.url ?? "");
     const activation = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation;
     if (!/^https?:\/\//i.test(url) || url.length > 4000 || activation?.isActive === false) return;
-    if (e.data.tab == "new") window.open(url, "_blank", "noopener,noreferrer");
+    if (e.data.tab == "new" || new URL(url).origin != location.origin) window.open(url, "_blank", "noopener,noreferrer");
     else location.assign(url);
   });
 }

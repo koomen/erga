@@ -1,12 +1,9 @@
 // view_page in other sizes and modes: width, height and color_scheme change the render, and the scripted model's
 // view_page call takes them. A user in dark mode: their agent's context says so, and color_scheme dark renders it.
-import { expect, servers, test, until } from "../../helpers/fixtures";
-import { CAPTURES, DARK, expectColour, fontSite, openFonts as open, SCRIPT_DARK, SCRIPT_LIGHT, WHITE } from "./view-page";
+import { expect, beforeTests, test, until } from "../../helpers/fixtures";
+import { CAPTURES, DARK, expectColour, fontSite, fontsServer, openFonts as open, SCRIPT_DARK, SCRIPT_LIGHT, WHITE } from "./view-page";
 
-await servers.script();
-test.beforeAll(async () => {
-  await fontSite();
-});
+await beforeTests(fontsServer);
 
 test(
   "width and height set the window it renders in; color_scheme dark renders dark mode, which the page's script sees too",

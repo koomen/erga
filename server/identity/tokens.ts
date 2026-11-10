@@ -67,6 +67,13 @@ export type Scope = "document" | "documents" | "admin" | "ops";
 export const SCOPES: readonly Scope[] = ["document", "documents", "admin", "ops"];
 /** An ops token's longest life, in days: it ends then, or sooner if asked. */
 export const OPS_DAYS = 90;
+/** The most days an admin token lasts: its person approves again after that. */
+export const ADMIN_DAYS = 30;
+/** An admin token's end: the one asked for, but never more than ADMIN_DAYS from now. */
+export const adminEnd = (expires: number | null | undefined, now = Date.now()) =>
+  Math.min(expires ?? Infinity, now + ADMIN_DAYS * 86_400_000);
+/** The most requests for a token that one network address has waiting at one time (askForToken, server/api.ts). */
+export const REQUESTS_WAITING = 20;
 /** An ops token's end: the one asked for, but never more than OPS_DAYS from now. */
 const opsEnd = (expires: number | null | undefined) => Math.min(expires ?? Infinity, Date.now() + OPS_DAYS * 86_400_000);
 const NOT_A_SCOPE = (s: string) => `"${s}" isn't a scope: document, documents, admin or ops.`;
@@ -94,11 +101,18 @@ export interface OAuthBack {
 /** How long an OAuth request's authorization code works, once approved. */
 export const CODE_MINUTES = 10;
 
-/** Whom a token is for: a login and name. */
+/** Whom a token is for: a login and name; and how they act, when not in person (`via`: one of their agents). */
 export interface Who {
   login: string;
   name: string;
+  via?: string;
 }
+
+/** The rule, with no exception: a token is made by a person, in person. An agent never makes one, of any kind. */
+export const NOT_FOR_AGENTS = "An agent can't make a token: a person makes one, signed in as themselves, on the page.";
+const inPerson = (who: Who) => {
+  if (who.via) throw new ScopeError({ message: NOT_FOR_AGENTS });
+};
 
 export const TOKEN_PREFIX = "erga_";
 export const LABEL_MAX = 80;
@@ -200,6 +214,7 @@ export class Tokens {
     if ((grant.scope == "admin" || grant.scope == "ops") && !(await this.dir.users.isAdmin(who.login)))
       throw new ScopeError({ message: `Only an admin can make an ${grant.scope} token.` });
     if (grant.scope == "ops") expires = opsEnd(expires);
+    if (grant.scope == "admin") expires = adminEnd(expires);
     if (grant.scope != "document") return { scope: grant.scope, docId: null, expires };
     const doc = grant.docId ? await this.dir.find(grant.docId) : null;
     const as = { login: who.login.toLowerCase() };
@@ -209,6 +224,7 @@ export class Tokens {
 
   /** A new token for someone, within `grant` (check): the token (show it once) and its entry. */
   async mint(who: Who, label: string, grant: Grant, kind: "agent" | "share" = "agent"): Promise<{ token: string; info: AgentToken }> {
+    inPerson(who);
     const { scope, docId, expires } = await this.check(who, grant);
     const info: AgentToken = {
       id: randomString(12, ID_ALPHABET),
@@ -261,6 +277,7 @@ export class Tokens {
    * (and with `rotate`, a new one in place of the old, which stops working).
    */
   async share(who: Who, rotate: boolean): Promise<{ token: string; info: AgentToken }> {
+    inPerson(who);
     const [row] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE login = ?1 AND kind = 'share' AND scope != 'admin' ORDER BY created DESC LIMIT 1`, who.login.toLowerCase());
     // Not ours (another server's row): a new one in its place, as with rotate.
     const own = row && !rotate ? await this.ownToken(row.id) : null;
@@ -336,7 +353,8 @@ export class Tokens {
   async request(
     label: string | null | undefined,
     grant: Grant,
-    oauth?: OAuthAsk
+    oauth?: OAuthAsk,
+    from?: string | null
   ): Promise<{ code: string; userCode: string; label: string; expires: number }> {
     if (!SCOPES.includes(grant.scope)) throw new ScopeError({ message: NOT_A_SCOPE(grant.scope) });
     if (grant.scope == "document" && !grant.docId)
@@ -349,12 +367,20 @@ export class Tokens {
       const s = step(stateOf(r), "lapse");
       if (s) await this.move(r, s);
     }
+    // Anyone may ask, signed in or not: one address can't fill the table.
+    if (from) {
+      const [{ n }] = await this.sql.all<{ n: number }>("SELECT COUNT(*) AS n FROM token_requests WHERE asked_from = ?1", from);
+      if (Number(n) >= REQUESTS_WAITING)
+        throw new ScopeError({
+          message: `Too many requests for a token wait from your network address. Try again in ${REQUEST_MINUTES} minutes.`,
+        });
+    }
     const code = "ergareq_" + randomToken(24);
     const userCode = `${randomString(4, CODE_ALPHABET)}-${randomString(4, CODE_ALPHABET)}`;
     const expires = now + REQUEST_MINUTES * 60 * 1000;
     const clipped = clipLabel(label, "An agent");
     await this.sql.run(
-      "INSERT INTO token_requests (code_hash, user_code, label, created, expires, login, token_id, scope, doc_id, token_expires, oauth_client, redirect_uri, code_challenge, oauth_state, status) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'waiting')",
+      "INSERT INTO token_requests (code_hash, user_code, label, created, expires, login, token_id, scope, doc_id, token_expires, oauth_client, redirect_uri, code_challenge, oauth_state, status, asked_from) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'waiting', ?13)",
       await sha256Hex(code),
       userCode,
       clipped,
@@ -366,7 +392,8 @@ export class Tokens {
       oauth?.client ?? null,
       oauth?.redirectUri ?? null,
       oauth?.challenge ?? null,
-      oauth?.state ?? null
+      oauth?.state ?? null,
+      from ?? null
     );
 
     return { code, userCode, label: clipped, expires };

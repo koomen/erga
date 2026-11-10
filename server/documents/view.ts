@@ -68,6 +68,8 @@ interface Decision {
   file: string;
   /** The page's own address under the document's ("" for its own page). */
   canonical: string;
+  /** The document's share counter (document/access.ts): the pass to its files carries it. */
+  shares?: number;
   /** A project (pages: its crumb opens its tree), or not; null if its row doesn't say. */
   kind?: DocKind | null;
   /** The page's head's details (shared/page-head.ts): the tab's title and icon, and a link's preview. */
@@ -183,7 +185,10 @@ async function address(
     // document's pages origin, where its scripts can't reach the app; the pages origin answers 404 if it isn't there.
     if (answer.file == null && FILE.test(wanted)) {
       const by = platform.adminsOnly ? session.login : null;
-      const token = await pagesToken(platform.secret, name.owner, id, url.origin, undefined, by ? { by } : {});
+      const token = await pagesToken(platform.secret, name.owner, id, url.origin, undefined, {
+        ...(by ? { by } : {}),
+        shares: answer.shares,
+      });
       return redirect(`${pagesOrigin(name.owner, id, url, platform)}/t/${token}/${wanted}`, 302, {
         "Cache-Control": "no-store",
         "Referrer-Policy": "no-referrer",
@@ -199,6 +204,7 @@ async function address(
       ver: answer.ver,
       file: answer.file,
       canonical: answer.canonical ?? "",
+      shares: answer.shares,
       kind: row?.kind ?? null,
       head: answer.head,
       ...(row?.scratch ? { scratch: { expires: row.expires } } : {}),
@@ -242,6 +248,7 @@ async function publicView(
     ver: answer.ver,
     file: answer.file,
     canonical: answer.canonical ?? "",
+    shares: answer.shares,
     head: answer.head,
   };
   const canonical = `${addressOf(d)}${suffix(d.canonical)}`;
@@ -288,6 +295,7 @@ async function landingView(platform: Platform, request: Request, session: Sessio
       ver: answer.ver,
       file: answer.file,
       canonical: "",
+      shares: answer.shares,
       head: answer.head,
     };
     if (answer.quiet && key && row.id == home) keepDecision(platform, key, d);
@@ -331,7 +339,11 @@ async function render(
   const admin = session ? await dir.users.isAdmin(whoOf(session)) : false;
   // On a server for admins alone (staging), the token names the admin.
   const by = platform.adminsOnly && session ? session.login : null;
-  const token = await pagesToken(platform.secret, d.owner, d.id, url.origin, undefined, { ...(by ? { by } : {}), ...(canEdit ? { edit: true } : {}) });
+  const token = await pagesToken(platform.secret, d.owner, d.id, url.origin, undefined, {
+    ...(by ? { by } : {}),
+    ...(canEdit ? { edit: true } : {}),
+    shares: d.shares,
+  });
   const origin = pagesOrigin(d.owner, d.id, url, platform);
   const files = `${origin}/t/${token}/`;
   const address = addressOf(d);
