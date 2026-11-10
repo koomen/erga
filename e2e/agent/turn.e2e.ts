@@ -386,9 +386,8 @@ journey("a turn of the agent in the editor", () => {
     expect(v.title).toMatch(/Voice mode/);
     v = await st(`__hear(["make the title", false])`);
     expect(v).toMatchObject({ input: "make the title", sent: [] });
-    // From here the pause that sends the words is a tenth of its second, so the step does not wait for it. (The panel
-    // reads window.ergaTimescale for it, the editor __ergaTimescale: both are set.)
-    await ada.eval(`window.ergaTimescale = window.__ergaTimescale = 0.1; __hear(${BLUE})`);
+    // From here the pause that sends the words is a tenth of its time (the tests' timescale), so the step does not wait for it.
+    await ada.eval(`window.__ergaTimescale = 0.1; __hear(${BLUE})`);
     await expect.poll(async () => (await st()).sent.length).toBe(1);
     expect(await st()).toMatchObject({ sent: ["make the title blue"], input: "" });
 
@@ -420,7 +419,7 @@ journey("a turn of the agent in the editor", () => {
     await expect.poll(async () => (await st()).on).toBe("false");
     expect(await ada.eval<boolean>(`!__recs.at(-1).running`)).toBe(true);
     expect(await paneOpen(page)).toBe(false);
-    await ada.eval(`window.fetch = window.__realFetch; delete window.ergaTimescale`);
+    await ada.eval(`window.fetch = window.__realFetch`);
   });
 
   // The bug: after a mouse click on Collapse, the agent's circle showed hints of a blue focus ring.

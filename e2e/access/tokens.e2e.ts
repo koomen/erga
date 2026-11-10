@@ -9,6 +9,7 @@
 // A test never makes a token by itself: it asks as the Settings dialog does (POST /tokens/new), or as an agent does.
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import type { Route } from "playwright-core";
 import { expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
 import { agentClosed, getter, mint, publish, signIn, soon, tool, unique } from "./access";
 
@@ -81,11 +82,9 @@ const trade = async (endpoint: string, fields: Record<string, string>) => {
 const whoami = async (root: string, token: string) =>
   JSON.parse((await mcpTool(root, token, "whoami")).text) as { adminPower: boolean; token: { scope: string; expires: string | null } };
 
-/** Opens Settings from the account menu, as a person does. */
 /**
- * Opens Settings from the account menu, and waits until the dialog has drawn its lists. The dialog keeps the rows of
- * the last time it was open while it loads (whoami, list_documents): a step that pressed Show 10 more on those old
- * rows lost the new rows when the load ended (one run in 13).
+ * Opens Settings from the account menu, as a person does, and waits until the dialog has drawn its lists. The dialog
+ * keeps the rows of the last time it was open while it loads (whoami, list_documents).
  */
 async function openSettings(page: Page) {
   await page.click(".erga-account-btn");
@@ -279,7 +278,25 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
     await soon(async () => (await rows()).length).toBe(15);
     expect((await rows()).slice(-1)).toEqual(["T3"]);
     expect(await more()).toBe("2 more Show 2 more");
-    // A click: the last two, and no more to show; the focus goes to the first new row.
+    // Closed and opened again, the dialog shows the old rows while it loads. A press on Show 2 more then asks for
+    // nothing: the rows that the load brings stay, and no row comes in after them out of its place.
+    await page.keyboard.press("Escape");
+    const held: Route[] = [];
+    await page.route("**/api/tools/whoami*", (r) => void held.push(r));
+    await page.click(".erga-account-btn");
+    await page.click("#erga-account-menu >> text=Settings");
+    await soon(() => held.length).toBe(2);
+    const button = page.locator("#erga-settings section.tokens p.more button");
+    await button.scrollIntoViewIfNeeded();
+    const b = (await button.boundingBox())!;
+    await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+    for (const r of held.slice(0, 2)) await r.continue();
+    await soon(rows).toEqual(["T17", "T16", "T15", "T14", "T13"]);
+    expect([held.length, await more()]).toEqual([2, "12 more Show 10 more"]);
+    await page.unroute("**/api/tools/whoami*");
+    // A click: the next ten again, then the last two, and no more to show; the focus goes to the first new row.
+    await page.click("#erga-settings section.tokens p.more button");
+    await soon(async () => (await rows()).length).toBe(15);
     await page.click("#erga-settings section.tokens p.more button");
     await soon(async () => (await rows()).slice(-2)).toEqual(["T2", "T1"]);
     expect(await more()).toBe("");

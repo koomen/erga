@@ -167,12 +167,21 @@ const SHOWN = 5,
   MORE = 10;
 type Mine = { adminPower?: boolean; tokens: Token[]; moreTokens: number };
 
+/** The loads of the list so far. The rows of the last time stay while one runs: Show 10 more waits for its end. */
+let loads = 0;
+const moreButton = () => $<HTMLButtonElement>("section.tokens p.more button");
+
 async function tokens() {
   const list = $("section.tokens ul.rows");
+  const load = ++loads;
+  moreButton().disabled = true;
   const [me, docs] = await Promise.all([
     runTool<Mine>("whoami", { limit: SHOWN }).catch((e: Error) => e),
     runTool<{ id: string; title: string; address: string }[]>("list_documents").catch(() => []),
   ]);
+  // (A newer load draws the list.)
+  if (load != loads) return;
+  moreButton().disabled = false;
   const doc = $<HTMLSelectElement>("select[name=doc]");
   doc.innerHTML = docs.map((d) => `<option value="${esc(d.id)}">${esc(d.title)} (${esc(d.address)})</option>`).join("");
   const scope = $<HTMLSelectElement>("select[name=scope]");
@@ -189,11 +198,14 @@ async function tokens() {
 
 /** Show 10 more: the next tokens after the rows shown, from the server. */
 async function showMore() {
-  const button = $<HTMLButtonElement>("section.tokens p.more button");
+  const button = moreButton(),
+    load = loads;
   button.disabled = true;
   const shown = $("section.tokens ul.rows").querySelectorAll("li[data-id]").length;
   try {
     const me = await runTool<Mine>("whoami", { limit: MORE, offset: shown });
+    // (The list loaded again meanwhile: these rows are after others than its rows.)
+    if (load != loads) return;
     const first = addTokens(me.tokens);
     moreTokens(me.moreTokens);
     // The keyboard stays on the button, or goes to the first new row when there's no more.
@@ -201,7 +213,7 @@ async function showMore() {
   } catch (err) {
     alert((err as Error).message);
   } finally {
-    button.disabled = false;
+    if (load == loads) button.disabled = false;
   }
 }
 

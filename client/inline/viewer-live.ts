@@ -43,8 +43,9 @@ export default function viewerLive(base: string): void {
     // A reader's files are at an address with the version in it (server/documents/view.ts): the new version's address.
     const pages = document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]');
     if (pages) pages.content = pages.content.replace(/\/@[^/]+\/$/, "/@" + wanted + "/");
-    const f = window.ergaFrames.frame;
-    f.src = window.ergaFrames.src() + (y > 0 ? "?erga-y=" + y : "") + location.hash;
+    // In place of the entry shown (location.replace; the frame's src would add an entry to the tab's history, and Back
+    // would show the old version of the same page).
+    window.ergaFrames.frame.contentWindow!.location.replace(window.ergaFrames.src() + (y > 0 ? "?erga-y=" + y : "") + location.hash);
   }
   document.addEventListener("visibilitychange", show);
   // Who writes (an experiment): a small pill at the top of the page while changes come, then "Updated now", then gone

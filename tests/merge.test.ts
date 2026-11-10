@@ -41,6 +41,27 @@ test("rebase puts the incoming edit in its place beside an unsaved delete of a m
   expect(hunks).toEqual(["Notes->My notes", "⟦p1.49⟧->", "End->The end"]);
 });
 
+// (A publish between two marks took the next mark's "⟦"; a person who deleted that mark elsewhere left "pub.3⟧⟦".)
+test("an insertion or a deletion between brackets is the whole bracketed text, with no bracket of a neighbour's", () => {
+  const hunks = (a: string, b: string) => {
+    const out: string[] = [];
+    changesBetween(a, b).iterChanges((fa, ta, _fb, _tb, ins) => out.push(`${fa}: ${a.slice(fa, ta)}->${ins}`));
+    return out;
+  };
+  for (const [a, b, hunk] of [
+    ["x ⟦a.1⟧⟦b.2⟧ y", "x ⟦a.1⟧⟦pub.3⟧⟦b.2⟧ y", "7: ->⟦pub.3⟧"],
+    ["<ul><li>a</li><li>c</li></ul>", "<ul><li>a</li><li>b</li><li>c</li></ul>", "14: -><li>b</li>"],
+  ]) {
+    expect(hunks(a, b)).toEqual([hunk]);
+    expect(hunks(b, a)).toEqual([hunk.replace(/: ->(.*)/, ": $1->")]);
+  }
+  // A person off the network deletes the mark before, or the one after: the publish's mark stays whole.
+  const base = "x ⟦a.1⟧⟦b.2⟧ y",
+    incoming = "x ⟦a.1⟧⟦pub.3⟧⟦b.2⟧ y";
+  expect(apply("x ⟦b.2⟧ y", rebase(base, "x ⟦b.2⟧ y", incoming))).toBe("x ⟦pub.3⟧⟦b.2⟧ y");
+  expect(apply("x ⟦a.1⟧ y", rebase(base, "x ⟦a.1⟧ y", incoming))).toBe("x ⟦a.1⟧⟦pub.3⟧ y");
+});
+
 test("rebase with nothing unsaved is the incoming edit", () => {
   expect(apply("a b c", rebase("a b c", "a b c", "a x c"))).toBe("a x c");
 });

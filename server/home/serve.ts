@@ -201,6 +201,9 @@ type Where = { notFound: boolean; taken?: () => Promise<boolean>; direct?: boole
 
 async function siteAnswer(request: Request, platform: Platform, o: Where): Promise<Response | null> {
   const url = new URL(request.url);
+  // On the Erga domain, / is serveHome's alone. It had no snapshot a moment ago: a first deploy that ends since must
+  // not make / the site's bare index.html.
+  if (url.pathname == "/" && !o.direct) return null;
   const live = await livePage(platform, url);
   if (!live) return null;
   const page = live.page;

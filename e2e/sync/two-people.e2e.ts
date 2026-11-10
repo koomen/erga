@@ -581,14 +581,13 @@ test("random edits from four people, with spells off the network and publishes: 
       stale = 0;
     /**
      * The stored file as it was read, with one token more: taken, or refused as stale when the room stored since.
-     * Not next to another token: the room takes a publish as a difference of two texts, and between two tokens the
-     * new one may share a bracket with the one before it ("⟧⟦pub.1" is the same difference as "⟦pub.1⟧"). Then a
-     * person who deletes that token at the same time takes the bracket too.
+     * (Next to another token too: the room takes a publish as a difference of two texts, and the new token is whole
+     * in it, with no bracket of its neighbour's. document/merge.ts, whole.)
      */
     const push = async (pub: (typeof publishes)[number]) => {
       const was = await pub.read;
       if (!was) return;
-      const sl = slots(was.text).filter((i) => was.text[i - 1] != "⟧" && was.text[i] != "⟦"),
+      const sl = slots(was.text),
         at = sl[Math.floor(pub.pick * sl.length)];
       const res = await room.push(was.text.slice(0, at) + pub.token + was.text.slice(at), was.etag);
       if (res.ok) {

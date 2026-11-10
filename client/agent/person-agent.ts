@@ -25,6 +25,7 @@ import { backoff, live, transient } from "../live/client";
 import { socketStep, type PhaseEvent, type SocketPhase } from "../../shared/socket-phase";
 import { restoredFor } from "../live/restore";
 import { sleep } from "../../shared/time";
+import { ms } from "../../libs/text/ui/timescale";
 import { agentPrompt } from "../common/agent-prompt";
 import { showCopied } from "../common/copied";
 import { panelStep, savePanel, type PanelPhase } from "../common/agent-panel";
@@ -618,7 +619,7 @@ function listenVoice(before: string) {
     sizeInput();
     clearTimeout(v.timer);
     v.due = false;
-    v.timer = window.setTimeout(voiceSend, PAUSE_MS * ((window as unknown as { ergaTimescale?: number }).ergaTimescale ?? 1));
+    v.timer = window.setTimeout(voiceSend, ms(PAUSE_MS));
   };
   rec.onerror = (e) => {
     if (voice != v) return;

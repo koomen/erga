@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type { Route } from "playwright-core";
 import { editor, type Editor } from "../helpers/editor";
 import { ROOT } from "../helpers/env";
-import { expect, journey, knownBug, servers, settle, test, until, type Page } from "../helpers/fixtures";
+import { expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
 import { agentClosed, clickOn, listenNews, middle, pane, person, quietLogin, type Agent, type Person } from "./people";
 
 const s = await servers.main();
@@ -21,11 +21,6 @@ const UNEDITED_MS = 3000;
 const shown = (page: Page) =>
   page.evaluate<string>(
     `[document.getElementById("docs-count")].filter((c) => c.checkVisibility()).map((c) => c.innerText).concat([...document.querySelectorAll("ol.rows > li[data-live] .title")].filter((t) => t.checkVisibility()).map((t) => t.innerText)).join(" | ")`
-  );
-/** The count and the titles of the rows that the page has not marked hidden. */
-const unhidden = (page: Page) =>
-  page.evaluate<string>(
-    `[document.getElementById("docs-count").innerText].concat([...document.querySelectorAll("ol.rows > li[data-live]:not([hidden]) .title")].map((t) => t.innerText)).join(" | ")`
   );
 /** Each row's title, the left edge of its name and the row's height, in CSS px. */
 const boxes = (page: Page) =>
@@ -196,27 +191,18 @@ journey("a person's documents", () => {
     );
   });
 
-  test("Delete: the row is marked as gone and the count falls at once, before the server answers", async () => {
+  test("Delete: the row leaves the screen and the count falls at once, before the server answers", async () => {
     await page.route("**/api/tools/delete_document*", (r) => void held.push(r));
     await dialogs(page, true);
     await hover(page, "Tax notes 2026");
     await clickOn(page, 'button[aria-label="Delete Tax notes 2026"]');
-    await expect.poll(() => unhidden(page)).toBe("3 documents | Garden plan, spring | A project | Old minutes");
+    await expect.poll(() => shown(page)).toBe("3 documents | Garden plan, spring | A project | Old minutes");
     await expect.poll(() => held.length).toBe(1);
   });
 
-  // Known bug: the row stays on the screen until the server answers. The page marks it hidden, but the rule
-  // `ol.rows > li { display: grid }` (client/inline/docs.css) wins over the hidden attribute. The count says 3 above 4 rows.
-  test(
-    "Delete: while the server has not answered, the row does not show",
-    knownBug(async () => {
-      expect(await shown(page)).toBe("3 documents | Garden plan, spring | A project | Old minutes");
-    })
-  );
-
   test("Delete: refused, the row is back in its place, and the page says why", async ({ tab }) => {
     await held[0].fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ ok: false, error: "Not now." }) });
-    await expect.poll(() => unhidden(page)).toBe("4 documents | Garden plan, spring | Tax notes 2026 | A project | Old minutes");
+    await expect.poll(() => shown(page)).toBe("4 documents | Garden plan, spring | Tax notes 2026 | A project | Old minutes");
     expect(await said(page)).toEqual(["Delete “Tax notes 2026”? This can't be undone.", "Not now."]);
     await page.unroute("**/api/tools/delete_document*");
     // The refused call is an error in the console: that one only.
