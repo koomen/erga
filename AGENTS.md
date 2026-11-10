@@ -26,7 +26,8 @@ this way:
    with `hc run` as in step 2.
    That agent merges all the waiting branches into staging, in the order
    that gives the fewest conflicts, and fixes each conflict as it comes.
-5. Each merge is one squashed commit (`bun erga merge <branch> -m`). Its
+5. Each merge is one squashed commit. One run takes all the branches
+   (`bun erga merge a -m "..." b -m "..."`): one test run and one deploy. Its
    message tells what the whole task does, not the branch's steps.
    Every commit message is one line of ten words at most, with no body.
 6. When a task's commit is on production (`bun erga deploy erga.dev`), the

@@ -28,18 +28,25 @@ and `main`. There are no pull requests.
    e2e tests of the part you change (`bun run test:e2e e2e/full/page/`).
    The whole suite (`bun run test:full`) only when Pete asks.
 3. A push deploys nothing. Tell Pete the branch name and what it changes.
-4. When Pete asks, merge the branch into staging:
+4. When Pete asks, merge the branch into staging, or many branches in
+   one run:
 
        bun erga merge <branch> [-m "message"]
+       bun erga merge a -m "message of a" b c
 
    The message tells what the whole task does, in one line of ten words
-   at most. Without `-m`, it is the subject of the branch's first commit.
+   at most. A `-m` is for the branch before it. Without `-m`, the message
+   is the subject of the branch's first commit.
 
-   It squashes the branch into one commit, runs the tests on that commit,
-   deploys it from this machine to each registered staging instance, then
-   pushes staging and deletes the branch on GitHub. It stops on a conflict:
-   rebase the branch on `origin/staging`, push it again, and merge again.
-   It stops when a deploy fails, and staging stays where it was.
+   It squashes each branch into one commit, in the order given. Then it
+   runs the tests one time, on the last commit, deploys that commit from
+   this machine to each registered staging instance, pushes staging and
+   deletes the merged branches on GitHub. A branch that conflicts stays
+   out: rebase it on `origin/staging`, push it again, and merge it again.
+   When the tests fail on many branches, it merges them one by one, each
+   with its own test run, and a branch that fails stays out. It names each
+   branch that stays out, and then ends with exit code 1. It stops when no
+   branch merges, and when a deploy fails: staging stays where it was.
 5. `merge` reports each staging instance's commit and health. Check the
    change on https://staging.erga.dev before you say that it works.
    Staging is for admins only.
