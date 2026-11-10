@@ -20,9 +20,9 @@ export interface Live {
   /**
    * A live connection (a WebSocket, an event stream) is up, down (it comes back by itself), or gone (it never comes
    * back: its document was deleted); null: its page left. `note`: what the corner says while it's down (else
-   * "Reconnecting…"), or gone (at once).
+   * "Reconnecting…"), or gone (at once); null: it says nothing while it's down.
    */
-  connection(name: string, state: ConnectionState | null, note?: string): void;
+  connection(name: string, state: ConnectionState | null, note?: string | null): void;
   /** Asks the server whether this page's code is still current (a request failed oddly, a connection came back). */
   check(why: string): void;
 }

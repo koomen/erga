@@ -53,6 +53,7 @@ import { PageLlm } from "./page-llm.ts";
 import { Feedback } from "./feedback.ts";
 import { Activity } from "./activity.ts";
 import { Lists } from "./lists.ts";
+import { Requests } from "./requests.ts";
 import { Identities, type Vouched, workspaceOf } from "./identities.ts";
 import { isDocKind, SLUG_MAX, slugify, type DocKind } from "../../document/pages.ts";
 import { addressOf, HOME_OWNER, HOME_SLUG, NameError, UNTITLED } from "../../document/names.ts";
@@ -127,6 +128,8 @@ export class Directory {
   readonly people: People;
   /** A person's lists of documents (/docs, /docs/archived), and an admin's search of everyone's. */
   readonly lists: Lists;
+  /** Requests for access to a document, for its owner to answer (requests.ts). */
+  readonly requests: Requests;
   /** GitHub's public users API, for a GitHub account added by its login. */
   private readonly github: GithubLookup | null;
 
@@ -167,6 +170,7 @@ export class Directory {
     this.rules = new AccessRules(sql, this.users);
     this.people = new People(sql, this.users);
     this.lists = new Lists(sql, this.users, (news) => this.publish(news));
+    this.requests = new Requests(sql);
     this.github = opts.github ?? null;
     // A user's role and the group rules decide who may sign in (Users.allowed, Users.signedIn): read or write.
     this.users.gate = async (user) => (await this.accessOf(user)) != "none";
@@ -808,6 +812,8 @@ export class Directory {
       `INSERT INTO permissions (doc_id, login, role, granted, granted_by, granted_via) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
        ON CONFLICT (doc_id, login) DO UPDATE SET role = ?3, granted = ?4, granted_by = ?5, granted_via = ?6`,
       id, login, role, Date.now(), who.login.toLowerCase(), who.via ?? null);
+    // The person's request for access, if they asked: answered (requests.ts).
+    if (login != ANYONE) await this.requests.answered(id, login, role != null);
     const now = await this.permissions(id);
     await this.tell(id, now);
     await this.docChanged(id, [login]);

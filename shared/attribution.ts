@@ -59,3 +59,27 @@ export interface CommentAsk {
   comment: string;
   text: string;
 }
+
+/**
+ * How an agent shows on a page, at its caret: short, so it fits. `label`: the name of its connection (a shared agent's
+ * token label, without what it has in parentheses at its end: "Claude Code"), or "Agent" for the person's own; with
+ * `many` (more than one person is in the document), whose it is ("Pete’s Claude Code"); then one word for what it does
+ * ("looking"). `title`: the full line, for the tooltip. `name`: the agent's full name (byLine: "Pete, via their agent").
+ */
+export function agentLabel(
+  agent: { name: string; via?: string | null },
+  activity: string | null | undefined,
+  many: boolean
+): { label: string; title: string } {
+  const title = activity ? `${agent.name} · ${activity}` : agent.name;
+  if (!agent.via) return { label: title, title };
+  const shared = /^a shared agent \((.*)\)$/
+    .exec(agent.via)?.[1]
+    .replace(/\s*\([^()]*\)$/, "")
+    .trim();
+  const what = shared && shared != "no label" ? shared : "agent";
+  const person = agent.name.split(", via ")[0];
+  const who = many ? `${person}’s ${what}` : what[0].toUpperCase() + what.slice(1);
+  const doing = activity?.trim().split(/\s+/)[0];
+  return { label: doing ? `${who} · ${doing}` : who, title };
+}

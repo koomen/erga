@@ -11,22 +11,21 @@ import type { Shell } from "./shell";
 import { esc } from "../../shared/html";
 import { DELETED_NOTE } from "../../shared/room-socket";
 
-/** What the note says while the room can't be reached. */
-export const OFFLINE_NOTE = "Offline. Your edits will sync when you reconnect.";
-
 export function mountRoom(shell: Shell) {
 
   // The room writes files to disk as edits land; there's nothing to save here. Without a connection, edits stay in this
   // tab and in this browser (collab.ts, `keep`), and sync on return. A short break (the server restarting, a redeploy)
-  // passes unseen: the room reconnects by itself. A longer one, or the browser offline, shows one quiet line (live.ts's
-  // note), which goes when the room is back. A deleted document's room never comes back: the note says so, at once.
+  // passes unseen: the room reconnects by itself, and nothing says so. Only edits that are not on the server yet show a
+  // small note, at the bottom right, until they are (libs/text/ui/unsaved.ts). A deleted document's room never comes
+  // back: live.ts's note says so, at once.
   let status: RoomStatus = "up";
   function connectionChanged(now: RoomStatus) {
     // (The body's erga-listening class: this tab hears its agent, and open_page counts it. Set by the hello: socketEvent.)
     if (now != "up") document.body.classList.remove("erga-listening");
     if (now == status) return;
     status = now;
-    live((l) => l.connection("room", now, now == "gone" ? DELETED_NOTE : OFFLINE_NOTE));
+    // (Down, it says nothing: a note shows only for edits that are not on the server yet. libs/text/ui/unsaved.ts)
+    live((l) => l.connection("room", now, now == "gone" ? DELETED_NOTE : null));
   }
 
   /**

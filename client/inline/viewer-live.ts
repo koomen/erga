@@ -9,6 +9,7 @@
 import { backoff, live } from "../live/client";
 import { socketStep, type PhaseEvent, type SocketPhase } from "../../shared/socket-phase";
 import { DELETED_NOTE, PING, PONG } from "../../shared/room-socket";
+import { DONE_MS, QUIET_MS, writerName, writerStep, writerText, type WriterEvent, type WriterPhase } from "../common/writer-phase";
 
 export default function viewerLive(base: string): void {
   // (The version is in a meta, not an argument: the page's build is its scripts, server/live.ts.)
@@ -26,7 +27,8 @@ export default function viewerLive(base: string): void {
   addEventListener("message", (e) => {
     if (window.ergaFrames.from(e) && e.data?.type == "erga-scroll") y = Number(e.data.y) || 0;
   });
-  const editing = () => document.body.classList.contains("erga-editing");
+  // (erga-commenting: a commenter's page shows each change in place itself, viewer-comment.ts.)
+  const editing = () => document.body.classList.contains("erga-editing") || document.body.classList.contains("erga-commenting");
   /** Loads the version wanted, if it isn't the one shown: now, or once the last load is 2 s old. */
   function show() {
     if (wanted == shown || document.hidden || editing()) return;
@@ -42,6 +44,25 @@ export default function viewerLive(base: string): void {
     f.src = window.ergaFrames.src() + (y > 0 ? "?erga-y=" + y : "") + location.hash;
   }
   document.addEventListener("visibilitychange", show);
+  // Who writes (an experiment): a small pill at the top of the page while changes come, then "Updated now", then gone
+  // (client/common/writer-phase.ts). Never over the text, which gets no highlight.
+  let writing: WriterPhase = { at: "none" };
+  function writer(e: WriterEvent) {
+    const next = writerStep(writing, e);
+    writing = next.phase;
+    for (const f of next.effects) setTimeout(() => writer({ type: f.wait, n: f.n }), f.wait == "quiet" ? QUIET_MS : DONE_MS);
+    let pill = document.getElementById("erga-writer");
+    const text = writerText(writing);
+    if (!pill && text) {
+      pill = Object.assign(document.createElement("p"), { id: "erga-writer" });
+      pill.setAttribute("role", "status");
+      document.body.append(pill);
+    }
+    if (!pill) return;
+    pill.hidden = !text;
+    pill.textContent = text ?? "";
+    pill.classList.toggle("on", writing.at == "writing");
+  }
   // A deleted document, or one no longer theirs to open, never comes back.
   const step = socketStep({ final: { 4404: "deleted", 4403: "unshared" } });
   /** An event of the socket's: its new phase, and what that asks for. */
@@ -75,8 +96,11 @@ export default function viewerLive(base: string): void {
       heard = Date.now();
       if (typeof e.data != "string" || e.data == PONG) return;
       try {
-        const m = JSON.parse(e.data) as { type?: string; ver?: string };
+        const m = JSON.parse(e.data) as { type?: string; ver?: string; by?: string };
         if (m.type == "view" && m.ver) {
+          // Someone changed it (not the version it hears as the socket opens): the pill says who writes.
+          if (m.ver != wanted && typeof m.by == "string" && m.by && !editing())
+            writer({ type: "change", by: writerName(m.by.slice(0, 200)) });
           wanted = m.ver;
           show();
         }

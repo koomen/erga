@@ -108,3 +108,29 @@ test("a reader's open page whose document is deleted says so, not that it reconn
   expect(routes.length, "no new socket").toBe(1);
   expect(await note()).toBe("This document was deleted.");
 });
+
+test("while an agent writes, a reader sees who in a pill at the top; then 'Updated now', and the pill goes", async ({ tab }) => {
+  const p = await person(await servers.script());
+  const id = await p.make();
+  const agent = tools(p.base, await p.token("Claude Code (erga)"));
+  expect((await agent.call("write", { document: id, path: "index.html", content: page() })).status).toBe(200);
+  await p.share(id, "Ada", "viewer");
+  const tabPage = tab.page;
+  tab.strict = true;
+  await tabPage.goto(`${p.base}${(await p.nameOf(id)).address}?user=Ada`);
+  const pill = () =>
+    tabPage.evaluate<string | null>(
+      `(() => { const e = document.getElementById("erga-writer"); return e && !e.hidden ? e.textContent : null; })()`
+    );
+  await until(() => tabPage.evaluate<boolean>(`!!document.querySelector('meta[name="erga-ver"]')`), 10_000, "the viewer is up");
+  // (Nothing while nobody writes: not for the version it hears as it opens.)
+  await new Promise<void>((r) =>
+    tabPage.evaluate(`new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)))`).then(() => r())
+  );
+  expect(await pill()).toBeNull();
+  await agent.call("write", { document: id, path: "index.html", content: page(" Written by an agent.") });
+  await until(async () => (await pill()) == "Claude Code is writing…", 10_000, "the pill says who writes", pill);
+  await tabPage.screenshot({ path: ".e2e/shots/writer-pill.png" });
+  await until(async () => (await pill()) == "Updated now", 10_000, "then that the page is up to date", pill);
+  await until(async () => (await pill()) == null, 10_000, "and it goes", pill);
+});

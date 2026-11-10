@@ -20,7 +20,8 @@ export default function pageProblems(): void {
       } catch {}
   };
   function r(p: Problem) {
-    if (all.length < 100) all.push(p);
+    // (A notice answers a click: told once, never again as the viewer asks for what it missed.)
+    if (p.kind != "notice" && all.length < 100) all.push(p);
     tell(p);
   }
   w.__ergaReport = r;

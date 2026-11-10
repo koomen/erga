@@ -24,6 +24,8 @@ import { applyChanges, assets, files, folders, stamp, type Author } from "../../
 import { cleanPath } from "../../document/pages";
 import { aligned, type Change } from "./minimal";
 import { aimEdits, type TextEdit } from "../../shared/text-edits";
+import { broke } from "./faults";
+import { filesNote, nearestNote } from "./nearest";
 
 export interface Workspace {
   read(path: string): Effect.Effect<string, WorkspaceError>;
@@ -76,6 +78,10 @@ export class WorkspaceError extends Schema.TaggedError<WorkspaceError>()("Worksp
   message: Schema.String,
 }) {}
 
+/** A change's summary, and under it what the change broke in the page's HTML (./faults.ts), if anything. */
+const withFaults = (summary: string, path: string, before: string, t: Y.Text) =>
+  [summary, broke(path, before, t.toString())].filter(Boolean).join("\n");
+
 const fail = (reason: WorkspaceError["reason"], message: string) => Effect.fail(new WorkspaceError({ reason, message }));
 
 /** A path the model gives (document/pages.ts cleanPath: a leading ./ or / is fine), refused if it leaves the folder or names nothing. */
@@ -111,7 +117,7 @@ export class YjsWorkspace implements Workspace {
     const t = files(this.doc).get(path);
     if (t) return Effect.succeed(t);
     if (assets(this.doc).has(path)) return fail("binary", `${path} is a file kept whole (not text), so it can't be edited: read shows it, and write's content_base64 replaces it.`);
-    return fail("missing", `${path} doesn't exist`);
+    return fail("missing", `${path} doesn't exist.${filesNote(this.paths())}`);
   }
 
   isText(path: string): boolean { return files(this.doc).has(path); }
@@ -162,7 +168,9 @@ export class YjsWorkspace implements Workspace {
           );
         return yield* fail(
           "notFound",
-          `${aimed.label} isn't in the current text of ${path}${seen == current ? ", which is the same as when you last read it: check oldText against it" : ""}. Read the file again and retry.`
+          `${aimed.label} isn't in the current text of ${path}${seen == current ? ", which is the same as when you last read it" : ""}.${
+            nearestNote(current, e.oldText ?? "") || (seen == current ? " Check oldText against it." : " Read the file again and retry.")
+          }`
         );
       }
       const spans = aimed.spans;
@@ -179,9 +187,9 @@ export class YjsWorkspace implements Workspace {
         at
       );
       // An oldText found only with other white space: the agent learns the file's own.
-      if (!aimed.loose.length) return done;
       const which = aimed.loose.map((i) => (edits.length > 1 ? `edits[${i}]` : "oldText")).join(", ");
-      return { ...done, summary: `${done.summary} (${which}: found with other white space than given.)` };
+      const summary = which ? `${done.summary} (${which}: found with other white space than given.)` : done.summary;
+      return { ...done, summary: withFaults(summary, path, current, t) };
     });
   }
 
@@ -227,7 +235,11 @@ export class YjsWorkspace implements Workspace {
       if (!minimal.length) return { path, at: 0, summary: `No change to ${path}.` };
       const at = self.apply(path, t, minimal);
       self.see(path, t.toString());
-      return { path, at, summary: `Edited ${path} (${minimal.length} change${minimal.length > 1 ? "s" : ""}).` };
+      return {
+        path,
+        at,
+        summary: withFaults(`Edited ${path} (${minimal.length} change${minimal.length > 1 ? "s" : ""}).`, path, current, t),
+      };
     });
   }
   /** The edit's result, and what the agent now believes the file says: what it saw, with its edits. */
@@ -264,7 +276,7 @@ export class YjsWorkspace implements Workspace {
           files(self.doc).set(path, t);
         }, self.origin);
         self.cursor(path, Y.createRelativePositionFromTypeIndex(t!, content.length, -1), null);
-        return { path, at: content.length, summary: `Created ${path}.` };
+        return { path, at: content.length, summary: withFaults(`Created ${path}.`, path, "", t!) };
       }
       // Never a wholesale replace. The agent's change is what it did to the
       // version it last saw, rebased over what others have done since (the
@@ -282,7 +294,7 @@ export class YjsWorkspace implements Workspace {
         self.cursor(path, Y.createRelativePositionFromTypeIndex(t, at, -1), null);
       }
       self.see(path, t.toString());
-      return { path, at, summary: changes.empty ? `No change to ${path}.` : `Wrote ${path}.` };
+      return { path, at, summary: changes.empty ? `No change to ${path}.` : withFaults(`Wrote ${path}.`, path, current, t) };
     });
   }
 

@@ -112,7 +112,10 @@ export function mountPageFrame(c: PageFrameConfig) {
           m.base
         );
       else if (p.kind == "notice" && s("message", 500) && s("fix", 2000))
-        c.onProblem({ kind: "notice", message: s("message", 500)!, fix: s("fix", 2000)! }, m.base);
+        c.onProblem(
+          { kind: "notice", message: s("message", 500)!, fix: s("fix", 2000)!, ...(p.draft === true ? { draft: true } : {}) },
+          m.base
+        );
     }
     if (!active()) return;
     switch (m.type) {

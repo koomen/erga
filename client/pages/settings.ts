@@ -22,8 +22,9 @@
 //     description (a quiet placeholder until it arrives), when and who; the
 //     current one marked, and on the homepage the deployed one. A deployed version older than the latest ten shows
 //     in its own place: the latest five, a gap, then five around it (two newer, it, two older); only those five are
-//     read. Show older versions loads the ten before the oldest one shown. Edit, on hover or
-//     focus, makes a copy of a version the current one (restore_version).
+//     read. Show older versions loads the ten before the oldest one shown. Restore, on hover or
+//     focus, makes a copy of a version the current one (restore_version). Then "Restored v3. Undo" shows for 10
+//     seconds: Undo puts back the document as it was (a restore of the version from just before).
 //
 // It runs the operations (server/operations/: versions, restore_version, ls, set_kind, deploy_homepage,
 // share_document; over POST /api/tools/<name>), and refreshes on the event channel's
@@ -129,20 +130,22 @@ const CSS = `
 .ds-error { margin: 8px 0 0; padding: 7px 10px; border-radius: 8px; font-size: 12.5px; line-height: 1.45; color: #b42318; background: color-mix(in srgb, #d0453a 10%, transparent); }
 html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-desc-none { color: var(--chrome); font-style: italic; }
+.ds-restored { margin: 0 0 6px; padding: 6px 10px; border-radius: 8px; font-size: 12.5px; background: var(--code-bg); color: var(--fg); }
+.ds-restored[hidden] { display: none; }
 .ds-list { list-style: none; margin: 0; padding: 0; }
 .ds-list li { display: grid; grid-template-columns: 34px 1fr auto; gap: 1px 8px; align-items: baseline; padding: 7px 0; border-top: 1px solid var(--rule); }
 .ds-list li:first-child { border-top: 0; }
 .ds-list li { position: relative; }
-/* Edit: over the version's tags the moment the pointer is on it (or the keyboard reaches it), no fade. */
-.ds-edit {
+/* Restore: over the version's tags the moment the pointer is on it (or the keyboard reaches it), no fade. */
+.ds-restore {
   position: absolute; right: 0; top: 50%; transform: translateY(-50%); opacity: 0; pointer-events: none;
   font: 600 12px var(--font-text); padding: 5px 11px; border-radius: 7px; cursor: pointer; white-space: nowrap;
   border: 1px solid var(--panel-border); background: var(--bg); color: var(--fg); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
-.ds-list li:hover .ds-edit, .ds-edit:focus-visible, .ds-edit.busy { opacity: 1; pointer-events: auto; }
-.ds-list li:hover .ds-edit:hover { border-color: color-mix(in srgb, var(--chrome) 45%, var(--panel-border)); }
-.ds-edit:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
-@media (hover: none) { .ds-edit { opacity: 1; pointer-events: auto; position: static; transform: none; grid-column: 3; grid-row: 1 / span 2; align-self: center; } .ds-list li:has(.ds-edit) .ds-tags { display: none; } }
+.ds-list li:hover .ds-restore, .ds-restore:focus-visible, .ds-restore.busy { opacity: 1; pointer-events: auto; }
+.ds-list li:hover .ds-restore:hover { border-color: color-mix(in srgb, var(--chrome) 45%, var(--panel-border)); }
+.ds-restore:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+@media (hover: none) { .ds-restore { opacity: 1; pointer-events: auto; position: static; transform: none; grid-column: 3; grid-row: 1 / span 2; align-self: center; } .ds-list li:has(.ds-restore) .ds-tags { display: none; } }
 .ds-list .ds-n { grid-row: span 2; }
 .ds-list .ds-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong, var(--fg)); font-size: 13px; }
 .ds-list .ds-meta { grid-column: 2 / span 2; font-size: 11.5px; color: var(--chrome); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -274,6 +277,7 @@ function mount(host: SettingsHost): Settings {
     </section>
     <section class="ds-history" aria-labelledby="ds-history-title">
       <h3 id="ds-history-title">Versions <small id="ds-total"></small></h3>
+      <p class="ds-restored" id="ds-restored" role="status" hidden><span></span> <button type="button" class="ds-quiet" id="ds-undo">Undo</button></p>
       <ol class="ds-list" id="ds-list" aria-label="Recent versions"></ol>
       <p class="ds-error" id="ds-hist-error" role="alert"></p>
       <p class="ds-foot" id="ds-foot" hidden><span id="ds-foot-text"></span><button type="button" class="ds-quiet" id="ds-older">Show older versions</button></p>
@@ -494,17 +498,42 @@ function mount(host: SettingsHost): Settings {
   llmModel.addEventListener("change", () => setReader({ page_llm_model: llmModel.value }));
   llmWho.addEventListener("change", () => setReader({ page_llm_who: llmWho.value }));
 
-  /** Edit on a version: a copy of it becomes the current version (the previous current one stays a version). */
+  /** How long "Restored v3. Undo" stays. */
+  const UNDO_MS = 10_000;
+  const restoredNote = pop.querySelector<HTMLElement>("#ds-restored")!;
+  /** After a restore: the version that was current before it, which Undo restores. */
+  let undoTo: string | null = null,
+    undoTimer = 0;
+  function restored(n: number | null, back: string | null) {
+    clearTimeout(undoTimer);
+    undoTo = back;
+    restoredNote.hidden = back == null;
+    if (back == null) return;
+    restoredNote.querySelector("span")!.textContent = `Restored v${n}.`;
+    undoTimer = window.setTimeout(() => restored(null, null), UNDO_MS);
+  }
+  restoredNote.querySelector("button")!.addEventListener("click", () => {
+    if (undoTo) void restore(undoTo, true);
+  });
+
+  /**
+   * Restore on a version: a copy of it becomes the current version (the previous current one stays a version). `undo`:
+   * the Undo of a restore, which restores the version from just before it, and offers no Undo of its own.
+   */
   let restoring: string | null = null;
-  async function restore(id: string) {
+  async function restore(id: string, undo = false) {
     if (!data || restoring) return;
     const v = [...loaded.values()].find((x) => x.id == id);
+    const before = data.current.n;
     restoring = id;
     histError.textContent = "";
+    restored(null, null);
     render();
     try {
       const r = await runTool<{ current: Version }>("restore_version", { document: host.docId, version: id });
       restoring = null;
+      // (The restore cut a version of the document as it was, when it had edits since the last: the one before the new one.)
+      if (!undo && v && r.current.n > before) restored(v.n, `v${r.current.n - 1}`);
       // Shown at once; the event channel's "versions" brings the rest (its description, the total).
       if (data && !data.versions.some((x) => x.id == r.current.id)) {
         data = { ...data, current: r.current, versions: [r.current, ...data.versions], total: data.total + 1 };
@@ -521,7 +550,7 @@ function mount(host: SettingsHost): Settings {
   }
   list.addEventListener("click", (e) => {
     const b = (e.target as Element).closest<HTMLElement>("[data-restore]");
-    if (b) restore(b.dataset.restore!);
+    if (b) void restore(b.dataset.restore!);
   });
 
   // ------------------------------------------------------------ rendering
@@ -539,7 +568,7 @@ function mount(host: SettingsHost): Settings {
     }
     const { current } = data;
     totalEl.textContent = data.total > 1 ? `${data.total} in all` : "";
-    // The list is drawn afresh: an Edit button that had focus keeps it.
+    // The list is drawn afresh: a Restore button that had focus keeps it.
     const focused = (document.activeElement as HTMLElement | null)?.closest?.("#ds-list [data-restore]")?.getAttribute("data-restore");
     // A deployed version apart: the latest five, a gap, then what's loaded from two newer than it down.
     const vs = visible(),
@@ -552,7 +581,7 @@ function mount(host: SettingsHost): Settings {
       const edit =
         v.id == current.id || !data!.canEdit
           ? ""
-        : `<button type="button" class="ds-edit${restoring == v.id ? " busy" : ""}" data-restore="${esc(v.id)}" aria-label="Edit version ${v.n}: make a copy of it the current version" title="Make a copy of version ${v.n} the current version, to edit it">${restoring == v.id ? "Restoring…" : "Edit"}</button>`;
+          : `<button type="button" class="ds-restore${restoring == v.id ? " busy" : ""}" data-restore="${esc(v.id)}" aria-label="Restore version ${v.n}: make a copy of it the current version" title="Make a copy of version ${v.n} the current version. The version of now stays in the list.">${restoring == v.id ? "Restoring…" : "Restore"}</button>`;
       return `<li data-n="${v.n}"><span class="ds-n">v${v.n}</span><span class="ds-desc">${desc(v)}</span><span class="ds-tags">${tags}</span><span class="ds-meta" title="${esc(new Date(v.at).toLocaleString())}">${esc(whoWhen(v))}</span>${edit}</li>`;
     };
     const hidden = d == null || vs.length <= 5 ? 0 : vs[4].n - vs[5].n - 1;

@@ -25,6 +25,7 @@ import {
   type Operation,
   OperationError,
   platformOf,
+  namedDocument,
   runInDocument,
   str,
 } from "./operation.ts";
@@ -323,11 +324,27 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     })
   ),
   {
+    name: "request_access",
+    label: "Ask for access",
+    activity: "asking for access",
+    wide: true,
+    ui: 'A document that isn\'t shared with you (its "no access" page): Ask its owner for access',
+    description: "Asks a document's owner for access to it: one request for each document.",
+    parameters: Schema.Struct({ document: DOCUMENT }),
+    run: async (args, caller) => {
+      const doc = await namedDocument(caller, args.document);
+      if (await caller.dir.may(caller.who, "open", doc))
+        throw new OperationError({ message: "You already have access to that document.", status: 409 });
+      await caller.dir.requests.ask(doc.id, caller.who.login);
+      return { asked: doc.owner, note: `${doc.owner} sees the request on their documents list.` };
+    },
+  },
+  {
     name: "share_document",
     label: "Share the document",
     activity: "sharing the document",
     ui: "Share (the documents list and the editor): give someone a role, change it, or stop sharing; Document settings (the editor): Readers",
-    description: "Shares a document (owner), or sets its readers' options (editors).",
+    description: "Shares a document or answers a request for access (owner); sets its readers' options (editors).",
     // Only a share with anyone: a person is named, and sees it in their list.
     asks: (args) =>
       args.login == "*" && args.role != "none"
@@ -508,6 +525,8 @@ export async function accessOf(caller: Caller, doc: DocRow) {
     notUsers,
     avatars: await dir.users.avatars(permissions.map((p) => p.login)),
     publicSharing: await dir.config.get("public_sharing"),
+    // Who asked for access and waits for the owner's answer (request_access): share_document answers, "none" declines.
+    requests: (await dir.requests.waiting(doc.owner, doc.id)).map((r) => ({ login: r.login, asked: iso(r.asked) })),
     ...readers,
   };
 }

@@ -39,6 +39,7 @@ import {
   accountOf,
   editButton,
   hasAgent,
+  inlineScript,
   link,
   OWN_ACCOUNT,
   page,
@@ -53,6 +54,7 @@ import { pageToken } from "../home/index.ts";
 const HALF_HOUR = 1_800_000;
 import { sha256 } from "../../shared/bytes.ts";
 import { addressOf, HOME_OWNER } from "../../document/names.ts";
+import { colorFor } from "../../document/content.ts";
 
 /** How long a decision (who may see what at an address) is kept: as long as the directory keeps who's an admin (users.ts). */
 export const DECISION_MS = 10_000;
@@ -125,10 +127,17 @@ const nothing = () => page("Not found", "There's no document here. <a href=\"/\"
 /** A document that's there, at a page that isn't. */
 const noPage = (address: string) => page("Not found", `This document has no page here. <a href="${esc(address)}">Go to its first page</a>.`, 404);
 
-const refused = (session: Session) =>
+/**
+ * A document that isn't shared with the person signed in: who owns it, and three ways out. "Ask <owner> for access"
+ * sends a request (the operation request_access; `asked`: they did already), which the owner sees on their documents
+ * list; "Use another account" signs out; "Your documents" is their list.
+ */
+const refused = (session: Session, doc: { id: string; owner: string }, asked: boolean) =>
   page(
     "Not shared with you",
-    `This document hasn't been shared with <b>${esc(session.login)}</b>. Ask its owner to share it with you.`,
+    `<b>${esc(doc.owner)}</b> has not shared this document with <b>${esc(session.login)}</b>.</p>
+<p class="ways"><button type="button" class="new" id="ask-access" data-doc="${esc(doc.id)}"${asked ? " disabled" : ""}>${asked ? "Asked" : `Ask ${esc(doc.owner)} for access`}</button><a class="way" href="/auth/logout">Use another account</a><a class="way" href="${esc(link("/docs", session))}">Your documents</a></p>
+<p id="ask-note" role="status" data-asked="${esc(doc.owner)} sees your request on their documents list.">${asked ? `${esc(doc.owner)} sees your request on their documents list.` : ""}${inlineScript("ask-access")}`,
     403
   );
 
@@ -178,7 +187,11 @@ async function address(
     const id = row?.id ?? second;
     answer = await platform.docs.view(id, whoOf(session), { page: wanted });
     if (!answer) return nothing();
-    if (!answer.role) return refused(session);
+    if (!answer.role) {
+      const doc = row ?? (await platform.directory.route(id));
+      if (!doc) return nothing();
+      return refused(session, { id, owner: doc.owner }, (await platform.directory.requests.state(id, session.login)) != null);
+    }
     const name = row ?? answer.name ?? (await platform.directory.get(id));
     if (!name) return nothing();
     // A file that isn't a page (style.css, assets/owl.png: a project's tree links to them) opens as itself, on the
@@ -336,12 +349,14 @@ async function render(
   const dir = platform.directory;
   const canEdit = !!session && !session.agent && roleMay(d.role, "edit");
   const editing = canEdit && url.searchParams.has("edit");
+  // Someone who may comment and not edit: the comments alone, on the page (client/inline/viewer-comment.ts).
+  const canComment = !canEdit && !!session && !session.agent && roleMay(d.role, "comment");
   const admin = session ? await dir.users.isAdmin(whoOf(session)) : false;
   // On a server for admins alone (staging), the token names the admin.
   const by = platform.adminsOnly && session ? session.login : null;
   const token = await pagesToken(platform.secret, d.owner, d.id, url.origin, undefined, {
     ...(by ? { by } : {}),
-    ...(canEdit ? { edit: true } : {}),
+    ...(canEdit || canComment ? { edit: true } : {}),
     shares: d.shares,
   });
   const origin = pagesOrigin(d.owner, d.id, url, platform);
@@ -384,6 +399,16 @@ async function render(
     // The page follows each change while it's open: for someone signed in in their browser, who may open its room.
     ...(session && !session.agent ? { live: d.ver } : {}),
     ...(session && !session.agent && d.kind == "project" ? { project: address } : {}),
+    ...(canComment && session
+      ? {
+          commenter: {
+            user: session.login,
+            name: session.name,
+            color: colorFor(session.login),
+            ...(session.avatar ? { avatar: session.avatar } : {}),
+          },
+        }
+      : {}),
     // A scratch document, for its owner: Save, with how long an unsaved one stays (the setting; none if this one stays).
     ...(canShare && d.scratch
       ? { scratch: { hours: d.scratch.expires == null ? null : await platform.directory.config.get("delete_docs_after_hours") } }

@@ -115,6 +115,7 @@ export const KINDS: readonly {
       "save_document",
       "rename_document",
       "share_document",
+      "request_access",
       "archive_document",
       "unarchive_document",
       "delete_document",

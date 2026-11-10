@@ -88,7 +88,8 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   // /api/... and /doc/... under it are the document's host (so no page or folder at its top may be called api or doc).
   if (!/^\/(api|doc)(\/|$)/.test(rest ?? "")) {
     // Not signed in: a document shared publicly opens for them, to view (Directory.isPublic); any other, sign in first.
-    if (!session) return (yield* viewPublic(first, second, (rest ?? "").replace(/^\/+|\/+$/g, ""))) ?? signInFirst(path + url.search);
+    if (!session)
+      return (yield* viewPublic(first, second, (rest ?? "").replace(/^\/+|\/+$/g, ""))) ?? signInFirst(path + url.search, "document");
     if (first == "d" && !ID.test(second)) return nothing();
     return yield* viewAddress(session, first, second, (rest ?? "").replace(/^\/+|\/+$/g, ""));
   }

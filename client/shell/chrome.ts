@@ -61,11 +61,14 @@ export function mountChrome(shell: Shell) {
   });
 
   const help = $("help");
+  const helpBtn = $("btn-help");
   function toggleHelp(force?: boolean) {
     const open = typeof force == "boolean" ? force : help.hidden;
     help.hidden = !open;
+    helpBtn.setAttribute("aria-expanded", String(open));
     if (open) cardOpened("help");
   }
+  helpBtn.addEventListener("click", () => toggleHelp());
   /** Closes every card but `keep`. */
   function closeCards(keep?: Card) {
     if (keep != "help") toggleHelp(false);

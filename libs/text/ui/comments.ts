@@ -39,6 +39,8 @@ export interface CommentsOptions {
   explain: (message: string) => void;
   zoom: () => number;
   shown: boolean;
+  /** A "Comment" button at the page's selection: where the editor's style bar, which has one, isn't (a commenter's page). */
+  button?: boolean;
 }
 
 /** How long "Resolved · Undo" stays. */
@@ -91,6 +93,10 @@ textarea::placeholder { color: var(--chrome); }
 .go svg { width: 14px; height: 14px; stroke-width: 2; }
 .pill { left: 50%; bottom: 20px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; border-radius: 10px;
   padding: 7px 8px 7px 12px; white-space: nowrap; }
+/* The button at the selection, on a commenter's page. */
+.cbtn { display: flex; align-items: center; gap: 6px; border-radius: 9px; padding: 6px 11px 6px 9px; font-weight: 600; white-space: nowrap;
+  border: 1px solid var(--panel-border); background: var(--bg); }
+.cbtn svg { width: 16px; height: 16px; stroke-width: 1.8; }
 .pill .u { color: var(--caret); font-weight: 600; padding: 2px 4px; border-radius: 6px; }
 /* (Its bottom leaves room for the shell's agent circle, which floats over the page's bottom left.) */
 .sheet { left: 0; right: 0; bottom: 0; width: auto; border-radius: 16px 16px 0 0; padding: 8px 14px 72px; }
@@ -102,6 +108,7 @@ textarea::placeholder { color: var(--chrome); }
 const ICON = {
   check: '<path d="m5.5 12.5 4 4 9-9.5"/>',
   up: '<path d="M12 19V6M6.5 11.5 12 6l5.5 5.5"/>',
+  comment: '<path d="M5 6.5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-5.5L7.5 19v-3.5H7a2 2 0 0 1-2-2z"/>',
   pen: '<path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/>',
 };
 const svg = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
@@ -123,11 +130,13 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
   const host = doc.createElement("erga-comments");
   const root = host.attachShadow({ mode: "open" });
   root.innerHTML = `<style>${STYLE}</style><div class="c" id="c"><div class="card pill" id="pill" role="status" hidden>
-<span>Resolved</span><button type="button" class="u" id="undo">Undo</button></div></div>`;
+<span>Resolved</span><button type="button" class="u" id="undo">Undo</button></div>
+<button type="button" class="card cbtn" id="cbtn" hidden>${svg(ICON.comment)}Comment</button></div>`;
   doc.documentElement.append(host);
   for (const type of KEPT) root.addEventListener(type, (e) => e.stopPropagation());
   const box = root.getElementById("c")!,
-    pill = root.getElementById("pill")!;
+    pill = root.getElementById("pill")!,
+    cbtn = root.getElementById("cbtn")!;
   const registry = ((win as Window & typeof globalThis).CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
   const Highlight = (win as Window & { Highlight?: new (...r: Range[]) => unknown }).Highlight;
 
@@ -294,6 +303,18 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
       }
     } else for (const r of rects) r.el.style.top = r.el.style.right = "";
     pill.hidden = !state.resolved;
+    if (o.button) placeButton(z);
+  }
+
+  /** The "Comment" button under the end of the page's selection, while it has text and no comment is being written. */
+  function placeButton(z: number) {
+    const { from, to } = state.draft ? { from: 0, to: 0 } : page.selectionNow();
+    const rects = from < to ? page.textRanges(from, to).at(-1)?.getClientRects() : undefined;
+    const r = rects?.[rects.length - 1];
+    cbtn.hidden = !r;
+    if (!r) return;
+    cbtn.style.left = Math.max(8, Math.min(win.innerWidth * z - cbtn.offsetWidth - 8, r.right * z - cbtn.offsetWidth)) + "px";
+    cbtn.style.top = r.bottom * z + 8 + "px";
   }
 
   function paint(dim: Range[], on: Range[]) {
@@ -413,6 +434,7 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
   box.addEventListener("click", (e) => {
     const target = e.target as Element;
     if (target.closest("#undo")) return send({ type: "undo" });
+    if (target.closest("#cbtn")) return compose();
     const id = threadOf(target);
     const act = (target.closest("button") as HTMLButtonElement | null)?.dataset.act;
     if (act == "resolve" && id) return send({ type: "resolve", id });
@@ -458,21 +480,23 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
   };
   doc.addEventListener("click", onClick, true);
 
+  /** The Comment button, or ⌘⌥M: a new comment on the selection. */
+  function compose() {
+    const text = o.text(),
+      { from, to } = page.selectionNow();
+    const a = text && anchorOf(text, from, to);
+    if (!a) return o.explain("Select the text to comment on, then press Comment.");
+    send({ type: "compose", anchor: anchorToJSON(a) });
+    // (At once: the next key typed goes into its box, not the page.)
+    draw();
+  }
+
   void refresh();
 
   return {
     queue,
     refresh,
-    /** The Comment button, or ⌘⌥M: a new comment on the selection. */
-    compose() {
-      const text = o.text(),
-        { from, to } = page.selectionNow();
-      const a = text && anchorOf(text, from, to);
-      if (!a) return o.explain("Select the text to comment on, then press Comment.");
-      send({ type: "compose", anchor: anchorToJSON(a) });
-      // (At once: the next key typed goes into its box, not the page.)
-      draw();
-    },
+    compose,
     /** The page's colours: the cards take their dark look on a dark page. */
     dark(on: boolean) {
       box.classList.toggle("dark", on);

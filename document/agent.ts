@@ -81,8 +81,11 @@ export interface SessionOptions {
   readAsset: (path: string) => Promise<Uint8Array | null>;
   /** Switches the owner's open editor tabs to a page (open_page). */
   open?: (path: string) => Promise<OpenResult>;
-  /** An agent's run of calls ended: the document cuts a version, and answers the version it's at then (diff_versions' "last_turn"). */
-  turnEnded?: () => Promise<string | null> | void;
+  /**
+   * The document cuts a version (if it changed since the last one), and answers the version it's at then: as an agent's
+   * run of calls ends (diff_versions' "last_turn"), and before the person's own agent's turn changes it (AgentSession.undoable).
+   */
+  cutVersion?: () => Promise<string | null> | void;
   /** The document's versions; without it those tools are left out. */
   versions?: VersionsAccess;
   /** Every file's size, time and kind, PDFs' text, and writes of bytes (host.ts); without it the file tools see text and names only. */
@@ -94,8 +97,16 @@ export interface AgentSession {
   undo(): boolean;
   /** Puts back the change Undo took back last, if any. A new change by the agent clears what is left to redo. */
   redo(): boolean;
-  /** How many of its changes Undo can take back (count), and how many Redo can put back. */
-  undoable(): { count: number; redo: number };
+  /**
+   * How many of its changes Undo can take back (count), and how many Redo can put back. `turn`: the person's own agent's
+   * last turn here (or the one under way): how many of its changes Undo can still take back, the files it changed, and
+   * the version before it; null before its first.
+   */
+  undoable(): { count: number; redo: number; turn: { changes: number; files: string[]; version: string | null } | null };
+  /** Takes back every change of that turn that Undo still can, at once: how many. */
+  undoTurn(): number;
+  /** What changed since the version before that turn, as a unified diff of each file; "" when nothing did, or there is no turn. */
+  turnDiff(): Promise<string>;
   /** The person's agent's turn is done: it's no longer working here, and the document cuts a version of its edits. */
   done(): void;
   /** Its events for the person's tabs: Undo's and Redo's counts as they change. */

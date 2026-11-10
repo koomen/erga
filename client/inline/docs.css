@@ -81,3 +81,11 @@
   .pill.scratch { position: relative; text-decoration: none; }
   /* Its tip (client/inline/scratch.css) opens to the left: the button is at the page's right. */
   .pill.scratch::after { left: auto; right: 0; }
+/* Requests for access to your documents (server/pages/docs.ts): each with Share and Decline. */
+ul.asks { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; }
+ul.asks li { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; border: 1px solid var(--panel-border); border-radius: 10px; font-size: 14px; }
+ul.asks li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+ul.asks button { border: 1px solid var(--panel-border); border-radius: 8px; padding: 4px 10px; background: transparent; color: var(--fg); font: inherit; font-size: 13px; cursor: pointer; }
+ul.asks button.share { background: var(--fg-strong); border-color: var(--fg-strong); color: var(--bg); }
+ul.asks button:disabled { opacity: 0.5; cursor: default; }
+ul.asks a { color: var(--fg-strong); }

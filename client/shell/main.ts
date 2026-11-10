@@ -330,7 +330,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     // until someone asks the agent to fix it (if it's still broken after, it says so again).
     onProblem: (raw, base) => {
       if (raw.kind == "notice") {
-        shell.toast.explain(raw.message, raw.fix);
+        shell.toast.explain(raw.message, raw.fix, undefined, raw.draft);
         return;
       }
       const p = describeProblem(raw, base, pagesOrigin);
@@ -500,7 +500,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   fastClick(document, `.chrome-top button, #doc-title, #agent-fab, #agent-close`);
   document.addEventListener("mousedown", (e) => {
     const at = e.target as Node;
-    if (!$("help").hidden && !$("help").contains(at)) shell.chrome.toggleHelp(false);
+    if (!$("help").hidden && !$("help").contains(at) && !$("btn-help").contains(at)) shell.chrome.toggleHelp(false);
     if (!$("sharing").hidden && !$("sharing").contains(at) && !$("btn-share").contains(at)) shell.sharing.toggleSharing(false);
     if (!$("account").hidden && !$("account").contains(at) && !shell.people.accountBtn?.contains(at)) shell.people.toggleAccount(false);
   });

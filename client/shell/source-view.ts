@@ -15,15 +15,20 @@ import { htmlCode, htmlEnter } from "./html-code";
 export const setPeers = StateEffect.define<Peer[]>();
 
 class PeerCaret extends WidgetType {
-  constructor(readonly peer: Peer) { super(); }
-  eq(other: PeerCaret) { return other.peer.name == this.peer.name && other.peer.color == this.peer.color && other.peer.activity == this.peer.activity; }
+  constructor(readonly peer: Peer) {
+    super();
+  }
+  eq(other: PeerCaret) {
+    return other.peer.name == this.peer.name && other.peer.color == this.peer.color && other.peer.label?.label == this.peer.label?.label;
+  }
   toDOM() {
     const el = document.createElement("span");
     el.className = "cm-peer" + (this.peer.agent ? " is-agent" : "");
     el.style.setProperty("--c", this.peer.color);
     const name = document.createElement("span");
     name.className = "cm-peer-name";
-    name.textContent = this.peer.activity ? `${this.peer.name} · ${this.peer.activity}` : this.peer.name;
+    name.textContent = this.peer.label?.label ?? this.peer.name;
+    if (this.peer.label) name.title = this.peer.label.title;
     el.append(name);
     return el;
   }

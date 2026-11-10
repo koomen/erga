@@ -76,6 +76,78 @@ export abstract class EditorMarkdown extends EditorFormat {
   }
 
   /**
+   * The "/" menu (slash.ts): what the caret's paragraph holds when that is a "/" and letters alone, with the caret at
+   * its end ("/he": "he"); else null. Only a paragraph of its own: never in a sentence, a list item or a table.
+   */
+  slashText(): string | null {
+    const sel = this.state.selection.main;
+    const u = sel.empty ? M.unitAt(this.units, sel.head) : null;
+    if (!u || u.tag != "p" || u.node.parent?.tag == "li" || !this.verify(u) || sel.head < M.textEnd(u)) return null;
+    const typed = textIn([u], u.contentFrom, u.contentTo);
+    return /^\/[a-z-]*$/i.test(typed) ? typed.slice(1) : null;
+  }
+
+  /**
+   * The "/" menu's choice: the paragraph that holds the "/" becomes the block, by the same rules as its Markdown typed
+   * by hand (blockRule, enterRule); a table of 3 by 3 with a header row, and an empty paragraph after it; for an image, an empty paragraph, and the place
+   * for the file (the caller asks for it). False if the caret's paragraph is no longer a "/" paragraph.
+   */
+  slashBlock(kind: "heading" | "list" | "todo" | "quote" | "code" | "table" | "image" | "divider"): number | false {
+    const typed = this.slashText();
+    const head = this.state.selection.main.head;
+    const u = M.unitAt(this.units, head);
+    if (typed == null || !u) return false;
+    const from = head - typed.length - 1;
+    if (kind == "table") {
+      const indent = M.lineIndent(this.src, u.from);
+      const row = (cell: string) => `${indent}  <tr>${`<${cell}><br></${cell}>`.repeat(3)}</tr>\n`;
+      const open = `<table border="1" cellpadding="6" style="border-collapse: collapse; table-layout: fixed; width: 100%">\n${indent}  <tr><th>`;
+      this.dispatch({
+        changes: {
+          from: u.from,
+          to: u.to,
+          insert: `${open}<br></th>${"<th><br></th>".repeat(2)}</tr>\n${row("td").repeat(2)}${indent}</table>\n${indent}<p><br></p>`,
+        },
+        selection: { anchor: u.from + open.length },
+        annotations: isolateHistory.of("full"),
+        userEvent: "input.format",
+        scrollIntoView: true,
+      });
+      return u.from + open.length;
+    }
+    const mark = { heading: "##", list: "-", todo: "[ ]", quote: ">", code: "```", divider: "---", image: "" }[kind];
+    if (!this.replaceRange(from, head, mark, "input.type")) return false;
+    if (kind == "code" || kind == "divider") this.enter(false);
+    else if (kind != "image") this.insertText(" ", null);
+    return this.state.selection.main.head;
+  }
+
+  /**
+   * Tab in the last cell of a table: a new row under it, with as many cells, and the caret in its first. False when the
+   * caret is not in a table's last cell.
+   */
+  protected tableRow(): boolean {
+    const sel = this.state.selection.main;
+    const u = sel.empty ? M.unitAt(this.units, sel.head) : null;
+    if (!u || (u.tag != "td" && u.tag != "th")) return false;
+    const src = this.src;
+    const end = /^\s*<\/tr>(?=\s*(?:<\/tbody>\s*)?<\/table>)/i.exec(src.slice(u.to));
+    const rowAt = src.lastIndexOf("<tr", u.from);
+    if (!end || rowAt < 0) return false;
+    const cells = src.slice(rowAt, u.to).match(/<t[dh]\b/gi)?.length ?? 1;
+    const open = `\n${M.lineIndent(src, rowAt)}<tr><td>`;
+    const at = u.to + end[0].length;
+    this.dispatch({
+      changes: { from: at, insert: `${open}<br></td>${"<td><br></td>".repeat(cells - 1)}</tr>` },
+      selection: { anchor: at + open.length },
+      annotations: isolateHistory.of("full"),
+      userEvent: "input.format",
+      scrollIntoView: true,
+    });
+    return true;
+  }
+
+  /**
    * `[ ] ` (or `[] `, `[x] `) at the start of a list item or a paragraph makes a to-do item: a checkbox before its text
    * (todoBox), and no bullet. In a paragraph (`- [ ] ` too), a list of one such item. Returns whether it did.
    */

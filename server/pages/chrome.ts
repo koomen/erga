@@ -76,5 +76,7 @@ export const fromElsewhere = (request: Request) => {
 export const homeGoesToDocs = (session: Session | null) => !!session && !session.agent;
 
 
-export const signInFirst = (next: string) => redirect(`/auth/sign-in?next=${encodeURIComponent(safeNext(next))}`);
+/** Off to sign in, and back to `next`. `open`: what `next` is, which the sign-in page then says ("document": a document's address). */
+export const signInFirst = (next: string, open?: "document") =>
+  redirect(`/auth/sign-in?next=${encodeURIComponent(safeNext(next))}${open ? `&open=${open}` : ""}`);
 

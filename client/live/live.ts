@@ -62,7 +62,7 @@ const keepers = new Map<string, { save: () => unknown; everyReload: boolean }>()
 const holds: (() => string | null)[] = [];
 const flushes: (() => Promise<boolean>)[] = [];
 let lastActivity = 0, pointerHeld = false, composing = false;
-const connections = new Map<string, { state: ConnectionState; since: number; wasUp: boolean; note?: string }>();
+const connections = new Map<string, { state: ConnectionState; since: number; wasUp: boolean; note?: string | null }>();
 
 const api: Live = {
   keep(name, save, opts) { keepers.set(name, { save, everyReload: !!opts?.everyReload }); },
@@ -106,7 +106,8 @@ let note: HTMLElement | null = null, noteTimer = 0;
 function showNote() {
   clearTimeout(noteTimer);
   const gone = [...connections.values()].filter((c) => c.state == "gone");
-  const down = gone.length ? gone : [...connections.values()].filter((c) => c.state == "down" && c.wasUp);
+  // (A connection with the note null says nothing while it's down: the editor's room, whose own note tells of edits not saved.)
+  const down = gone.length ? gone : [...connections.values()].filter((c) => c.state == "down" && c.wasUp && c.note !== null);
   if (!down.length) { note?.remove(); note = null; return; }
   const left = navigator.onLine && !gone.length ? Math.min(...down.map((c) => c.since)) + NOTE_AFTER_MS - now() : 0;
   if (left > 0) { noteTimer = window.setTimeout(showNote, left); return; }

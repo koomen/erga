@@ -140,7 +140,14 @@ export const Api = HttpApi.make("erga")
       /** How many of the person's agent's changes here Undo can take back (count), and Redo can put back. */
       .add(
         HttpApiEndpoint.get("undoable", "/api/agent/undo", {
-          success: Schema.Struct({ count: Schema.Number, redo: Schema.Number }),
+          success: Schema.Struct({
+            count: Schema.Number,
+            redo: Schema.Number,
+            /** The person's own agent's last turn here: its changes Undo can still take back, its files, the version before it. */
+            turn: Schema.NullOr(
+              Schema.Struct({ changes: Schema.Number, files: Schema.Array(Schema.String), version: Schema.NullOr(Schema.String) })
+            ),
+          }),
         }).annotate(Audited, {
           action: "How many of your agent's changes to the document Undo can take back, and Redo can put back",
           ...PANEL_ROW,
@@ -157,6 +164,20 @@ export const Api = HttpApi.make("erga")
       .add(
         HttpApiEndpoint.post("redo", "/api/agent/redo", { success: Schema.Struct({ ok: Schema.Boolean }) }).annotate(Audited, {
           action: "Redo the change Undo took back last",
+          ...PANEL_ROW,
+        })
+      )
+      /** Undoes every change of the agent's last turn at once: how many it took back. */
+      .add(
+        HttpApiEndpoint.post("undoTurn", "/api/agent/undo-turn", { success: Schema.Struct({ undone: Schema.Number }) }).annotate(Audited, {
+          action: "Undo every change of your agent's last turn at once",
+          ...PANEL_ROW,
+        })
+      )
+      /** What the agent's last turn changed: a unified diff of each file, from the version before the turn. */
+      .add(
+        HttpApiEndpoint.get("turnDiff", "/api/agent/turn-diff", { success: Schema.Struct({ diff: Schema.String }) }).annotate(Audited, {
+          action: "What your agent's last turn changed in the document, as a diff",
           ...PANEL_ROW,
         })
       )

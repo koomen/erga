@@ -15,6 +15,8 @@ export abstract class EditorEdit extends EditorRender {
   protected abstract inputRule(pos: number): void;
   protected abstract linkRule(pos: number): void;
   protected abstract enterRule(u: M.Unit, pos: number): boolean;
+  /** Tab in a table's last cell (markdown.ts): a new row. */
+  protected abstract tableRow(): boolean;
   protected abstract typeAtLinkEdge(pos: number, text: string, userEvent: string): boolean;
   protected abstract typeStored(pos: number, text: string): boolean;
 

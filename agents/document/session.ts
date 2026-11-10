@@ -27,6 +27,7 @@ import { cleanPath } from "../../document/pages";
 import type { AgentSettings } from "../models";
 import type { Sandbox } from "../../document/page-api";
 import { CHANGES, makeTools, toolPath } from "./tools";
+import { unifiedDiff } from "../../document/versions";
 
 /**
  * A document's agents, as the server gives them to it (DocumentDeps.agents): each person's session, and the key the
@@ -100,6 +101,13 @@ async function startSession(opts: SessionOptions, sandbox: Sandbox): Promise<Age
   // calls and nothing here says when its turn is done.
   const busy = { calls: 0, timer: null as Fiber.Fiber<void> | null };
   let wasBusy = false;
+  /**
+   * The person's own agent's turn here (never a shared agent's, which says no end): where it began in the undo history,
+   * the version before it, and the files it changed. It begins with the agent's first call after done().
+   */
+  let turn: { from: number; version: string | null; files: Set<string> } | null = null;
+  let turnOver = true;
+  const own = (via: string | undefined) => !via || via == VIA.agent;
   /** The version the document was at when this agent's last run of calls ended. */
   let lastTurn: Promise<string | null> = Promise.resolve(null);
   const syncBusy = (activity?: string | null) => {
@@ -107,7 +115,7 @@ async function startSession(opts: SessionOptions, sandbox: Sandbox): Promise<Age
     // A run of calls just ended: the document cuts a version of it, and the lock for source edits goes, if it had it.
     if (wasBusy && !on) {
       room.unlock();
-      const at = opts.turnEnded?.();
+      const at = opts.cutVersion?.();
       if (at) { const before = lastTurn; lastTurn = at.catch(() => before); }
     }
     wasBusy = on;
@@ -165,6 +173,7 @@ async function startSession(opts: SessionOptions, sandbox: Sandbox): Promise<Age
       // One undo step per tool call, and the agent's cursor where it last wrote.
       undo.stopCapturing();
       undoable();
+      if (own(acting.via)) turn?.files.add(path);
       const t = files(doc).get(path);
       if (t) presence({ cursor: { path, anchor: Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(t, at)), head: null } });
     },
@@ -187,8 +196,22 @@ async function startSession(opts: SessionOptions, sandbox: Sandbox): Promise<Age
     },
     undo: () => replay("undo"),
     redo: () => replay("redo"),
-    undoable: () => ({ count: undo.undoStack.length, redo: undo.redoStack.length }),
+    undoable: () => ({
+      count: undo.undoStack.length,
+      redo: undo.redoStack.length,
+      turn: turn && { changes: Math.max(0, undo.undoStack.length - turn.from), files: [...turn.files].sort(), version: turn.version },
+    }),
+    undoTurn() {
+      let n = 0;
+      while (turn && undo.undoStack.length > turn.from && replay("undo")) n++;
+      return n;
+    },
+    async turnDiff() {
+      const before = turn?.version && opts.versions ? await opts.versions.files(turn.version) : null;
+      return before && opts.versions ? unifiedDiff(before, await opts.versions.current()).diff : "";
+    },
     done() {
+      turnOver = true;
       if (busy.calls) return;
       if (busy.timer) Effect.runFork(Fiber.interrupt(busy.timer));
       busy.timer = null;
@@ -233,6 +256,14 @@ async function startSession(opts: SessionOptions, sandbox: Sandbox): Promise<Age
           throw new Error(
             `${other} is editing this document's source just now, so nothing was changed. The lock ends when their turn ends, or ${LOCK_IDLE_MS / 1000} seconds after their last edit: wait, then try again.`
           );
+      }
+      // The person's own agent's turn begins: a version of the document before it (the panel's "See changes" shows the
+      // turn from it), and its place in the undo history ("Undo the turn").
+      if (own(via) && turnOver) {
+        turnOver = false;
+        const began: NonNullable<typeof turn> = { from: undo.undoStack.length, version: null, files: new Set() };
+        turn = began;
+        began.version = (await Promise.resolve(opts.cutVersion?.()).catch(() => null)) ?? null;
       }
       busy.calls++;
       // A shared agent's edits are its person's, via it, under the token's label ("Ada, via a shared agent (CI)"); the cursor says so too.

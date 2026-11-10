@@ -40,6 +40,6 @@ test("someone the document stops being shared with, while their editor is open, 
     10_000,
     "Ada's page opened again"
   );
-  expect(await page.evaluate<string>(`document.body.innerText`)).toContain("hasn't been shared with");
+  expect(await page.evaluate<string>(`document.body.innerText`)).toContain("has not shared this document with");
   expect((await p.as("Ada", `/d/${id}/api/stored/index.html`, { method: "PUT", body: "<h1>Still mine</h1>" })).status).toBe(403);
 });

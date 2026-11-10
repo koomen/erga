@@ -322,7 +322,14 @@ export abstract class EditorInput extends EditorClipboard {
       !pageOwn &&
       !(e.target as Element).closest("button, a[href], input, textarea, select, label, canvas, svg, video, audio, iframe")
     ) {
-      this.config.onNotice?.("This part of the page is marked as not editable by hand. Ask the agent to change it.");
+      // (The agent changes it: the note's button starts the request, with the text, for the person to complete.)
+      const text = (fixed.textContent ?? "").replace(/\s+/g, " ").trim();
+      const quote = text.length > 60 ? text.slice(0, 57).trimEnd() + "…" : text;
+      this.config.onNotice?.(
+        "This part of the page is marked as not editable by hand. Ask the agent to change it.",
+        `Change the text “${quote}” to: `,
+        true
+      );
     }
     if (e.button == 0) {
       // A press in the selection would drag its text, which the editor doesn't do (dragstart): it starts a new one.
@@ -445,7 +452,7 @@ export abstract class EditorInput extends EditorClipboard {
     else if (key.startsWith("arrow")) handled = this.arrow(e);
     else if (isMac && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && EMACS[key])
       handled = this.arrow({ key: EMACS[key] } as KeyboardEvent);
-    else if (key == "tab" && !mod && !e.altKey) handled = this.indentItem(e.shiftKey);
+    else if (key == "tab" && !mod && !e.altKey) handled = (!e.shiftKey && this.tableRow()) || this.indentItem(e.shiftKey);
     else if (mod && !e.altKey && key == "z") handled = e.shiftKey ? this.redo() : this.undo();
     else if (mod && !e.altKey && !e.shiftKey && key == "y" && !isMac) handled = this.redo();
     else if (mod && !e.altKey && !e.shiftKey && key == "b") handled = this.styleKey("strong");

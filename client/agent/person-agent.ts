@@ -28,6 +28,7 @@ import { sleep } from "../../shared/time";
 import { agentPrompt } from "../common/agent-prompt";
 import { showCopied } from "../common/copied";
 import { panelStep, savePanel, type PanelPhase } from "../common/agent-panel";
+import { mountTurn, type TurnFacts } from "./turn-summary";
 
 interface AgentState {
   enabled: boolean;
@@ -128,6 +129,31 @@ const att = attachments({
   },
 });
 
+// The end of a turn: what it changed here, with "See changes" and "Undo the turn" (turn-summary.ts).
+const turn = BASE
+  ? mountTurn({
+      el: $("agent-turn"),
+      diff: async () => {
+        const r = await fetch(`${BASE}${asUser("/api/agent/turn-diff")}`);
+        if (!r.ok) throw new Error("Couldn't read the changes. Try again.");
+        return ((await r.json()) as { diff: string }).diff;
+      },
+      undo: async () => {
+        const r = await fetch(`${BASE}${asUser("/api/agent/undo-turn")}`, { method: "POST" });
+        return r.ok ? ((await r.json()) as { undone: number }).undone : 0;
+      },
+      changed: () => void readUndo(),
+      hint: (t) => showHint(t),
+    })
+  : null;
+let wasBusy: boolean | null = null;
+/** The agent started or stopped (renderBusy calls it): the turn's line follows, with the counts as the turn left them. */
+function busyChanged() {
+  if (log.busy == wasBusy) return;
+  wasBusy = log.busy;
+  turn?.busy(log.busy);
+  if (!log.busy) void readUndo();
+}
 function showHint(text: string, sticky = false) {
   clearTimeout(hintTimer);
   delete hint.dataset.off;
@@ -172,6 +198,7 @@ const gate = (path: SendPath, text: string) => canSend(path, { off, voice: !!voi
 /** Why Send can't send right now, or null if it can. */
 const blocker = () => gate("box", input.value);
 function renderBusy() {
+  busyChanged();
   // In voice mode the button can't send, so while the agent works it's Stop.
   const stop = log.busy && (!!voice || (!input.value.trim() && !att.files.length && !att.reading));
   const why = off ?? (stop ? null : blocker());
@@ -501,10 +528,11 @@ async function readUndo() {
   const a = (await fetch(`${BASE}${asUser("/api/agent/undo")}`).then(
     (r) => (r.ok ? r.json() : null),
     () => null
-  )) as { count?: number; redo?: number } | null;
+  )) as { count?: number; redo?: number; turn?: TurnFacts | null } | null;
   undoable = a?.count ?? 0;
   redoable = a?.redo ?? 0;
   renderUndo();
+  turn?.facts(a?.turn ?? null);
 }
 undoBtn.hidden = redoBtn.hidden = !BASE;
 if (BASE) {
@@ -637,6 +665,8 @@ declare global {
     /** The panel, for the editor's own "Fix with agent" buttons and its reload (client/shell/). */
     ergaAgentPanel?: {
       ask(text: string, context: string | null): void;
+      /** Opens the panel with `text` in its box, the caret after it, for the person to complete and send. */
+      draft(text: string): void;
       readonly off: string | null;
       readonly busy: boolean;
       readonly voice: boolean;
@@ -651,6 +681,13 @@ window.ergaAgentPanel = {
     const why = gate("editor", text);
     if (why) showHint(why, why == off);
     else ask(text, ctx ?? context());
+  },
+  draft: (text) => {
+    window.ergaAgent?.show(true);
+    input.value = text;
+    input.dispatchEvent(new Event("input"));
+    input.focus();
+    input.setSelectionRange(text.length, text.length);
   },
   get off() {
     return off;

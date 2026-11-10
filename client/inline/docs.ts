@@ -412,6 +412,27 @@ export default function docs(c: DocsConfig): void {
     none.textContent = `No documents match “${q}”.`;
     findBox.hidden = !n && !q;
   }
+  // The requests for access (server/pages/docs.ts): Share gives the person the role "Can view", Decline gives none; both
+  // are share_document, as an agent's are, and the request's row goes.
+  for (const b of document.querySelectorAll<HTMLButtonElement>("ul.asks button")) {
+    b.addEventListener("click", async () => {
+      const row = b.closest("li")!;
+      for (const x of row.querySelectorAll("button")) x.disabled = true;
+      try {
+        await runTool("share_document", {
+          document: row.dataset.doc,
+          login: row.dataset.login,
+          role: b.classList.contains("share") ? "viewer" : "none",
+        });
+        const all = row.parentElement!;
+        row.remove();
+        if (!all.children.length) all.remove();
+      } catch (err) {
+        for (const x of row.querySelectorAll("button")) x.disabled = false;
+        alert((err as Error).message);
+      }
+    });
+  }
   // Every row, and the rows that change while the page is open: whoever changes them (another tab, an agent, someone
   // who shares one with you), the list follows (client/common/live-rows.ts). A row that comes in obeys the find box.
   const list = document.querySelector<HTMLElement>("ol.rows")!;

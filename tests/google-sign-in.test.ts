@@ -89,6 +89,34 @@ test("Google is off until an admin turns it on: its sign-in says so in place and
   expect(Object.fromEntries(start.searchParams)).toMatchObject({ client_id: APP.clientId, redirect_uri: `${ORIGIN}/auth/google/callback`, response_type: "code", scope: "openid email profile" });
 });
 
+test("the sign-in page says what the person will open: the address asked for, and how a new person starts", async () => {
+  const { platform, directory } = server(),
+    koomen = { login: "koomen", admin: true };
+  await authOps(platform, ORIGIN).setProvider(koomen, "google", true);
+  const pageOf = async (query: string) => (await respond(chooseSignIn, new Request(`${ORIGIN}/auth/sign-in?${query}`), platform)).text();
+  const main = (html: string) => html.slice(html.indexOf("<main"), html.indexOf("</main>"));
+  // From a document's address: the heading and the address, without its query; the buttons keep the whole way back.
+  const doc = main(await pageOf(`next=${encodeURIComponent("/koomen/trip/day-2?edit")}&open=document`));
+  expect(doc).toContain("<h1>Sign in to open this document</h1>");
+  expect(doc).toContain('<p class="asked">erga.example/koomen/trip/day-2</p>');
+  expect(doc).toContain(`href="/auth/github?next=${encodeURIComponent("/koomen/trip/day-2?edit")}"`);
+  // An address is text, never markup.
+  expect(main(await pageOf(`next=${encodeURIComponent("/a/<b>x")}&open=document`))).toContain(
+    '<p class="asked">erga.example/a/&lt;b&gt;x</p>'
+  );
+  // From anywhere else: Sign in, and no address.
+  const list = main(await pageOf("next=%2Fdocs"));
+  expect(list).toContain("<h1>Sign in</h1>");
+  expect(list).not.toContain('class="asked"');
+  // Only where everybody may make an account does the page say that the buttons make one.
+  const NEW = "New here? The same buttons make your account.";
+  expect(doc).not.toContain(NEW);
+  expect(list).not.toContain(NEW);
+  await directory.rules.change(koomen, (await directory.rules.list(koomen)).find((r) => r.kind == "everybody")!.id, "read");
+  expect(main(await pageOf("next=%2Fdocs"))).toContain(NEW);
+  expect(main(await pageOf("next=%2Fkoomen%2Ftrip&open=document"))).toContain(NEW);
+});
+
 test("the switch's rules: on only with a working client; off only with the other on and the admin able to sign in with it", async () => {
   const { platform, directory } = server();
   const auth = authOps(platform, ORIGIN), koomen = { login: "koomen", admin: true };

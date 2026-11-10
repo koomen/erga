@@ -346,7 +346,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
     name: "restore_version",
     label: "Restore a version",
     activity: "restoring a version",
-    ui: "The editor's settings: Versions, a version's Edit",
+    ui: "The editor's settings: Versions, a version's Restore",
     description: "Brings back a version, or one file of it.",
     parameters: Schema.Struct({
       document: DOCUMENT,

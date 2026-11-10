@@ -1,5 +1,6 @@
 // Two views of the document: the page itself, and the file's source (its HTML), editable. ⌘⇧P goes between them.
 
+import { watchUnsaved } from "../../libs/text/ui/unsaved";
 import { EditorSelection, EditorState, Transaction, type ChangeSet } from "@codemirror/state";
 import { changesBetween } from "../../document/merge";
 import { live } from "../live/client";
@@ -20,9 +21,12 @@ export function mountViews(shell: Shell) {
         throw e;
       }
     ));
+  let unsaved: ReturnType<typeof watchUnsaved> | null = null;
   const sourceHooks = {
     edited(changes: ChangeSet) {
       shell.collab.push(changes);
+      // (An edit in the source view that does not reach the server shows the same note as one on the page.)
+      (unsaved ??= watchUnsaved(window, { flushed: () => shell.collab.flushed(), key: `source:${location.pathname}` })).edit();
       shell.chrome.hideChrome();
     },
     moved: () => shell.people.queueCursor(),
