@@ -8,23 +8,27 @@ import { EditorFormat } from "./format";
 
 export abstract class EditorMarkdown extends EditorFormat {
   /**
-   * Markdown at the start of a paragraph: `# ` to `###### ` makes a heading
-   * (or changes a heading's level), `- ` / `* ` a bullet list, `1. ` a
-   * numbered list, `> ` a quote. The paragraph's element is replaced. Its own
-   * undo step, like the inline shortcuts.
+   * Markdown at the start of a paragraph, or of a later line of it (after a line break of its own, not one in a
+   * style): `# ` to `###### ` makes a heading (or changes a heading's level), `- ` / `* ` a bullet list, `1. ` a
+   * numbered list, `> ` a quote. The block is that line and the lines after it; the lines before it stay a paragraph.
+   * Its own undo step, like the inline shortcuts.
    */
   protected blockRule(pos: number): void {
     const u = M.unitAt(this.units, pos);
     if (!u || !this.verify(u)) return;
-    const typed = textIn([u], u.contentFrom, pos).replace(/^\s+/, "");
-    if (this.todoRule(u, pos, typed)) return;
+    const src = this.src;
+    const br = u.tag == "p" ? u.node.children.filter((c) => c.kind == "element" && c.tag == "br" && c.to <= pos).pop() : undefined;
+    const typed = textIn([u], br ? br.to : u.contentFrom, pos).replace(/^\s+/, "");
+    // The lines before: their paragraph, which keeps a blank line at its end open (two line breaks).
+    const blank = !!br && /(^|<br\s*\/?>)\s*$/i.test(src.slice(u.contentFrom, br.from));
+    const head = br ? `${src.slice(u.from, blank ? br.to : br.from)}</p>\n${M.lineIndent(src, u.from)}` : "";
+    if (this.todoRule(u, pos, typed, head)) return;
     const m = /^(#{1,6}|[-*+]|\d{1,9}[.)]|>) $/.exec(typed);
     if (!m) return;
     const mark = m[1];
     const kind = mark[0] == "#" ? "heading" : mark == ">" ? "quote" : /\d/.test(mark) ? "ol" : "ul";
     const heading = /^h[1-6]$/.test(u.tag);
     if (u.tag != "p" && !(heading && kind == "heading")) return;
-    const src = this.src;
     const lead = reopened(src, u, pos),
       rest = lead + src.slice(pos, u.contentTo);
     const indent = M.lineIndent(src, u.from);
@@ -41,8 +45,8 @@ export abstract class EditorMarkdown extends EditorFormat {
       open = `<${list}${start}>\n${indent}  <li>`;
       close = `</li>\n${indent}</${list}>`;
     }
-    const change = { from: u.from, to: u.to, insert: open + rest + close },
-      caret = u.from + open.length + lead.length;
+    const change = { from: u.from, to: u.to, insert: head + open + rest + close },
+      caret = u.from + head.length + open.length + lead.length;
     this.dispatch({
       changes: change,
       selection: { anchor: caret },
@@ -149,9 +153,10 @@ export abstract class EditorMarkdown extends EditorFormat {
 
   /**
    * `[ ] ` (or `[] `, `[x] `) at the start of a list item or a paragraph makes a to-do item: a checkbox before its text
-   * (todoBox), and no bullet. In a paragraph (`- [ ] ` too), a list of one such item. Returns whether it did.
+   * (todoBox), and no bullet. In a paragraph (`- [ ] ` too), a list of one such item, after `head` (blockRule: the
+   * paragraph's lines before the caret's). Returns whether it did.
    */
-  protected todoRule(u: M.Unit, pos: number, typed: string): boolean {
+  protected todoRule(u: M.Unit, pos: number, typed: string, head: string): boolean {
     const m = /^(?:[-*+] )?\[([ xX]?)\] $/.exec(typed);
     if (!m || (u.tag != "li" && u.tag != "p") || (u.tag == "li" && m[0][0] != "[")) return false;
     const src = this.src;
@@ -167,7 +172,7 @@ export abstract class EditorMarkdown extends EditorFormat {
       caret = u.openFrom + li.length + box.length + lead.length;
     } else {
       const indent = M.lineIndent(src, u.from);
-      const open = `<ul>\n${indent}  <li${TODO_ITEM}>${box}`;
+      const open = `${head}<ul>\n${indent}  <li${TODO_ITEM}>${box}`;
       change = { from: u.from, to: u.to, insert: open + rest + `</li>\n${indent}</ul>` };
       caret = u.from + open.length + lead.length;
     }
