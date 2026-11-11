@@ -3,7 +3,8 @@
 //
 //   1. What setup observes: the AWS CLI's login, the account's Route 53 zones, the stack, and the server it made.
 //   2. `stack`: the templates into .erga/aws/ (only if they aren't there: the person's changes stay), then AWS's change
-//      sets; with --yes, it applies them (the certificates first, in us-east-1, when there are domains).
+//      sets; with --yes, it applies them (the certificates first, in us-east-1, when CloudFront has domains). With the
+//      company's sign-in in front, its endpoints come from its issuer, and its client's secret must be in Secrets Manager.
 //   3. The first deploy: the entry from the stack's outputs, the secrets into Parameter Store (encrypted with the stack's
 //      key), the programs into the bucket and onto the machine, then `bun erga deploy`'s code, with the first admin.
 
@@ -13,7 +14,7 @@ import { type AwsEntry, type Config, entryOf, entryOrigin, readConfig, withEntry
 import { type DeployOptions, deployInstance } from "../cli/deploy";
 import type { Fetch } from "../pipeline/pipeline";
 import type { Answers, Facts, TargetFacts, TargetName } from "../own/plan";
-import { hostOf, isName, SETUP_COMMIT, stackOf, varsOf } from "../own/plan";
+import { frontSignIn, hostOf, isName, SETUP_COMMIT, stackOf, varsOf } from "../own/plan";
 import { type Aws, awsCli, whoAmI, type Where } from "./cli";
 import { provisionScript, putPrograms, onMachine, untilReachable } from "./machine";
 import {
@@ -27,7 +28,7 @@ import {
   writeTemplates,
   zoneOf,
 } from "./stack";
-import { type AwsShape, paramPath } from "./template";
+import { type AwsShape, type Oidc, oidcSecretName, paramPath } from "./template";
 
 export const whereOf = (a: Answers): Where => ({ profile: a.awsProfile || undefined, region: a.awsRegion });
 
@@ -36,11 +37,32 @@ const hash = (path: string) => (existsSync(path) ? createHash("sha256").update(r
 /** The templates of the setup's production stack: the certificates' (with domains), then the main one. */
 const templatesOf = (dir: string, a: Answers) => {
   const stack = stackOf(a, "production");
-  return isName(a.host) ? [templatePath(dir, stack)] : [templatePath(dir, stack, true), templatePath(dir, stack)];
+  return isName(a.host) || frontSignIn(a) ? [templatePath(dir, stack)] : [templatePath(dir, stack, true), templatePath(dir, stack)];
 };
 
-/** The shape of the production stack, from the answers and what the account has (its zones, CloudFront's prefix list). */
-export async function shapeOf(a: Answers): Promise<AwsShape> {
+/**
+ * The sign-in's endpoints, as its issuer publishes them (OpenID Connect discovery): the load balancer sends each person
+ * to them, so each must be https, and the document must be this issuer's.
+ */
+export async function discoverOidc(issuer: string, net: Fetch = fetch): Promise<Omit<Oidc, "clientId">> {
+  const url = `${issuer}/.well-known/openid-configuration`;
+  const r = await net(url, { signal: AbortSignal.timeout(10_000) }).catch(() => null);
+  const d = r?.ok ? ((await r.json().catch(() => null)) as Record<string, unknown> | null) : null;
+  if (!d) throw new Error(`The sign-in's issuer didn't answer at ${url}${r ? ` (${r.status})` : ""}: is oidc its issuer's URL?`);
+  const https = (key: string) => {
+    const v = d[key];
+    if (typeof v != "string" || !v.startsWith("https://")) throw new Error(`${url} names no https ${key}.`);
+    return v;
+  };
+  if (d.issuer != issuer) throw new Error(`${url} is the document of another issuer (${String(d.issuer)}).`);
+  return { issuer, authorize: https("authorization_endpoint"), token: https("token_endpoint"), userInfo: https("userinfo_endpoint") };
+}
+
+/**
+ * The shape of the production stack, from the answers and what the account has (its zones, CloudFront's prefix list),
+ * and with a sign-in in front what its issuer publishes.
+ */
+export async function shapeOf(a: Answers, net: Fetch = fetch): Promise<AwsShape> {
   const aws = awsCli(whereOf(a));
   const [vpcId, subnetId] = a.egress.includes("/") ? a.egress.split("/") : [];
   let domains: AwsShape["domains"] = null;
@@ -54,7 +76,9 @@ export async function shapeOf(a: Answers): Promise<AwsShape> {
     stack: stackOf(a, "production"),
     egress: vpcId ? { kind: "vpc", vpcId, subnetId } : { kind: a.egress as "nat-instance" | "nat-gateway" },
     domains,
-    cloudFrontPrefixList: await cloudFrontPrefixList(aws),
+    front: frontSignIn(a)
+      ? { kind: "balancer", oidc: { ...(await discoverOidc(a.oidc, net)), clientId: a.oidcClient } }
+      : { kind: "cloudfront", prefixList: await cloudFrontPrefixList(aws) },
   };
 }
 
@@ -87,8 +111,25 @@ export async function observeAws(dir: string, a: Answers, applied: Record<string
         ? "changed"
         : "new";
   facts.stack = { name, status: st.status, outputs: st.outputs, template };
+  if (frontSignIn(a)) facts.frontSecret = await secretThere(aws, secretOf(files[0], name));
   facts.targets.production = await targetFacts(dir, a, st.outputs, net, githubId);
 }
+
+/** The secret's name the main template reads the client's secret by: its parameter's (the person may change it), else ours. */
+const secretOf = (template: string, stack: string): string => {
+  try {
+    return JSON.parse(readFileSync(template, "utf8")).Parameters.OidcSecret.Default || oidcSecretName(stack);
+  } catch {
+    return oidcSecretName(stack);
+  }
+};
+
+/** Whether Secrets Manager has the secret (its description only: never its value). */
+const secretThere = (aws: Aws, name: string) =>
+  aws("secretsmanager", "describe-secret", "--secret-id", name).then(
+    () => true,
+    () => false
+  );
 
 async function getJson<T>(net: Fetch, url: string): Promise<T | null> {
   const r = await net(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
@@ -115,8 +156,8 @@ async function targetFacts(dir: string, a: Answers, outputs: Record<string, stri
   if (v) {
     const h = await getJson<{ ok?: boolean; checks?: unknown }>(net, `https://${host}/api/health`);
     facts.health = h?.ok ? "ok" : { bad: h ? JSON.stringify(h.checks ?? h).slice(0, 200) : "no answer" };
-    const { signInCheck } = await import("../own/facts");
-    facts.signIn = await signInCheck(net, host, githubId);
+    const { frontSignInCheck, signInCheck } = await import("../own/facts");
+    facts.signIn = frontSignIn(a) ? await frontSignInCheck(net, host, a.oidcClient) : await signInCheck(net, host, githubId);
   }
   const params = await awsCli(whereOf(a))<{ Parameters: { Name: string }[] }>(
     "ssm",
@@ -142,7 +183,11 @@ export async function stackStep(dir: string, a: Answers, yes: boolean, applied: 
   for (const p of writeTemplates(dir, shape)) if (fresh) log(`wrote ${p}`);
   const where = whereOf(a);
   const params: Record<string, string> = {};
-  if (shape.domains) {
+  if (shape.front.kind == "balancer" && !(await secretThere(awsCli(where), secretOf(templatePath(dir, shape.stack), shape.stack))))
+    throw new Error(
+      `The sign-in's client secret isn't in Secrets Manager (${where.region}) as ${secretOf(templatePath(dir, shape.stack), shape.stack)}: the stack reads it there. The person who has it stores it (plain text, only the secret), then run this again.`
+    );
+  if (shape.domains && shape.front.kind == "cloudfront") {
     const certs = `${shape.stack}-certs`;
     const file = templatePath(dir, shape.stack, true);
     const plan = await planStack({ ...where, region: CERT_REGION }, certs, file);
@@ -192,7 +237,13 @@ export function awsEntry(
       app: outputs.AppHost,
       pages: isName(a.host) ? { kind: "shared", host: outputs.PagesHost } : { kind: "domain", domain: a.pages },
     },
-    vars: varsOf(a, ids),
+    vars: {
+      ...varsOf(a, ids),
+      // Whose signed header is the sign-in (server/identity/front.ts): this balancer's, for this client; and who is the first admin.
+      ...(frontSignIn(a) && outputs.Balancer
+        ? { FRONT_SIGN_IN: JSON.stringify({ signer: outputs.Balancer, issuer: a.oidc, client: a.oidcClient, admin: a.admin }) }
+        : {}),
+    },
   };
 }
 
@@ -233,10 +284,19 @@ export interface FirstAws {
 /** SQL quoting of a value checked already (a login, a repository): ' doubled. */
 const q = (v: string) => `'${v.replace(/'/g, "''")}'`;
 
-/** The first admin, and feedback's repository, only into a database with no admin yet. */
+/**
+ * The first admin, and feedback's repository, only into a database with no admin yet. With a sign-in in front, the
+ * first admin has no username yet (they choose it at their first sign-in, and the server knows their email:
+ * FRONT_SIGN_IN), so no row; with the company preset, everybody who passes that sign-in may make an account and write.
+ */
 export function firstSql(a: Answers): string {
   const now = Date.now();
-  const admin = `INSERT INTO users (login, name, role, created) SELECT ${q(a.admin)}, ${q(a.admin)}, 'admin', ${now} WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin') ON CONFLICT (login) DO UPDATE SET role = 'admin'`;
+  const noAdmin = "WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')";
+  const admin = frontSignIn(a)
+    ? a.preset == "company"
+      ? `INSERT INTO access_rules (kind, value, access, created) SELECT 'everybody', '', 'write', ${now} ${noAdmin} ON CONFLICT (kind, value) DO UPDATE SET access = 'write'`
+      : "SELECT 1"
+    : `INSERT INTO users (login, name, role, created) SELECT ${q(a.admin)}, ${q(a.admin)}, 'admin', ${now} ${noAdmin} ON CONFLICT (login) DO UPDATE SET role = 'admin'`;
   if (!a.feedback) return admin;
   return `${admin}; INSERT INTO server_config (key, value, updated, updated_by) VALUES ('feedback_repository', ${q(JSON.stringify(a.feedback))}, ${now}, ${q(a.admin)}) ON CONFLICT (key) DO NOTHING`;
 }

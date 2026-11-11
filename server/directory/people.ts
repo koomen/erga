@@ -106,6 +106,8 @@ export class People {
    * email writes its sub, so from then on only that account matches.
    */
   async match(v: Vouched): Promise<Person | null> {
+    // Nobody waits for the company's sign-in in front: an admin adds people by GitHub or Google only.
+    if (v.provider == "front") return null;
     if (v.provider == "github") {
       const [row] = await this.sql.all<Row>("SELECT * FROM people WHERE provider = 'github' AND subject = ?1", v.subject);
       return row ? fromRow(row) : null;

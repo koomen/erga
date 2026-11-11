@@ -3,7 +3,7 @@
 // templates on disk are the source: a change to them goes through the same steps (`bun erga setup <name> stack`).
 //
 //   .erga/aws/<stack>.json          the main stack, in the instance's region
-//   .erga/aws/<stack>-certs.json    with domains: the ACM certificates, in us-east-1 (CloudFront's region)
+//   .erga/aws/<stack>-certs.json    CloudFront with domains: the ACM certificates, in us-east-1 (CloudFront's region)
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -23,7 +23,8 @@ export const templatePath = (dir: string, stack: string, certs = false) => join(
 export function writeTemplates(dir: string, shape: AwsShape, fresh = false): string[] {
   mkdirSync(templatesDir(dir), { recursive: true });
   const out: [string, unknown][] = [[templatePath(dir, shape.stack), stackTemplate(shape)]];
-  if (shape.domains) out.unshift([templatePath(dir, shape.stack, true), certificatesTemplate(shape.stack, shape.domains)]);
+  if (shape.domains && shape.front.kind == "cloudfront")
+    out.unshift([templatePath(dir, shape.stack, true), certificatesTemplate(shape.stack, shape.domains)]);
   for (const [path, t] of out) if (fresh || !existsSync(path)) writeFileSync(path, `${JSON.stringify(t, null, 2)}\n`);
   return out.map(([p]) => p);
 }

@@ -4,7 +4,7 @@
 // memory. The app's code takes a Platform and web Requests, and never a
 // Cloudflare binding.
 
-import type { AgentToken, AppValues, AuthStorage, Tokens } from "./identity/index.ts";
+import type { AgentToken, AppValues, AuthStorage, FrontSignIn, Tokens } from "./identity/index.ts";
 import type { HomeObject } from "./home/index.ts";
 import { type Directory, type Route, type Who } from "./directory/index.ts";
 import type { Role } from "../document/access.ts";
@@ -158,6 +158,8 @@ export interface Platform {
     googleApp?: AppValues;
     /** A stand-in for Google's sign-in endpoints (the tests'); null or absent: Google's own. */
     google?: string | null;
+    /** The company's own sign-in in front of the server, which is then its only sign-in (FRONT_SIGN_IN; server/identity/front.ts); null or absent: none. */
+    front?: FrontSignIn | null;
     /** Local development: the login signed in without GitHub; null elsewhere. */
     devLogin: string | null;
     /** What encrypts the secrets admins store (sign-in's secret, the API keys); null where the server can't keep them. */

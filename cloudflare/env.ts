@@ -98,6 +98,11 @@ export interface Env {
   ERGA_GITHUB_ORIGIN?: string;
   /** Local development only: a stand-in for Google's sign-in endpoints. */
   ERGA_GOOGLE_ORIGIN?: string;
+  /**
+   * The company's own sign-in in front of the server (on AWS, a load balancer's: deploy/aws/setup.ts writes it): JSON
+   * {signer, issuer, client, admin}. Then that sign-in is the server's (server/identity/front.ts).
+   */
+  FRONT_SIGN_IN?: string;
   /** On celld (deploy/aws/machine.ts): the DevTools address of a headless Chrome on the same machine, for view_page (cloudflare/browser.ts). */
   ERGA_CHROME?: string;
   /**

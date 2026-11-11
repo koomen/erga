@@ -1,5 +1,6 @@
-// Which account a sign-in is: the step after a provider (GitHub, Google)
-// says who someone is (a `Vouched`), the same for each provider.
+// Which account a sign-in is: the step after a provider (GitHub, Google, or
+// the company's sign-in in front: front.ts) says who someone is (a
+// `Vouched`), the same for each provider.
 //
 //   1. An identity already linked (by the provider's subject id: GitHub's
 //      numeric id, Google's sub) signs in to its account, whatever its email
@@ -32,6 +33,7 @@ import { cookies, withCookie } from "./cookies.ts";
 import { noteOf, readOnce, seeOther } from "./flash.ts";
 import { signed } from "../signed.ts";
 import { clearState, signIn } from "./sign-in.ts";
+import { isFrontAdmin } from "./front.ts";
 import type { TestEnd } from "./app-test.ts";
 
 const JOIN = "erga_join";
@@ -48,8 +50,8 @@ export type Outcome =
  * matches them with read or write (Access). Local development stands in for an admin while the group rules are as a
  * server starts: everyone may join there, and may write. A group's rule decides there as anywhere.
  */
-export async function mayJoin(platform: Pick<Platform, "dev" | "directory">, url: URL, v: Vouched): Promise<boolean> {
-  if (await platform.directory.mayJoin(v)) return true;
+export async function mayJoin(platform: Pick<Platform, "dev" | "directory" | "signIn">, url: URL, v: Vouched): Promise<boolean> {
+  if (isFrontAdmin(platform.signIn.front, v) || (await platform.directory.mayJoin(v))) return true;
   if (!platform.dev(url)) return false;
   return platform.directory.defaultRules(await platform.directory.rules.all());
 }
@@ -163,7 +165,7 @@ const Join = signed(
   "join",
   Schema.Struct({
     v: Schema.Struct({
-      provider: Schema.Literals(["github", "google"]),
+      provider: Schema.Literals(["github", "google", "front"]),
       subject: Schema.NonEmptyString,
       handle: Schema.String,
       name: Schema.NullOr(Schema.String),
@@ -224,6 +226,7 @@ export const usernameStep: Route = Effect.gen(function* () {
   const login = yield* Effect.tryPromise({
     try: async () => {
       const { may, person } = await dir.joining(v);
+      if (isFrontAdmin(platform.signIn.front, v)) return dir.identities.createAccount(wanted, v, { role: "admin" });
       return dir.identities.createAccount(wanted, v, person ? { role: person.role, waited: person.id } : may ? {} : { role: "write" });
     },
     catch: (e) => e,

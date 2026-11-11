@@ -24,6 +24,7 @@ const facts = (over: Partial<Facts> = {}): Facts => ({
   zones: ["example.com", "pages.example"],
   workersSubdomain: "me",
   stack: null,
+  frontSecret: null,
   targets: {},
   secrets: [],
   ...over,

@@ -14,6 +14,7 @@ export {
   startSignIn,
 } from "./sign-in.ts";
 export { devSignIn, usernameStep } from "./accounts.ts";
+export { type FrontSignIn, frontOf, frontSignIn, unlessFront } from "./front.ts";
 export { authOps, providersOn, signInApp } from "./settings.ts";
 export { adminsOnlyGate } from "./admins-only.ts";
 export { HOME_ERGA, homeDomainSignIn, homePass, homeVisitor } from "./home-pass.ts";

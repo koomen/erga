@@ -69,12 +69,14 @@ import {
   devSignIn,
   finishGoogleSignIn,
   finishSignIn,
+  frontSignIn,
   isOAuthPath,
   oauthRoutes,
   startGoogleSignIn,
   signOut,
   startSignIn,
   tokensRoutes,
+  unlessFront,
   usernameStep,
 } from "./identity/index.ts";
 import { releaseApi, withLive } from "./live.ts";
@@ -154,10 +156,24 @@ const SIGN = { domain: "none", exempt: SIGN_IN } as const;
 export const ROUTES: readonly RouteRow<Route>[] = [
   { method: "GET", path: "/auth/sign-in", run: chooseSignIn, action: "Choose a sign-in provider that is on (GitHub, Google)", ...SIGN },
   // ?app=pending: a test sign-in with the values that wait on /admin/auth.
-  { method: "GET", path: "/auth/github", run: startSignIn, action: "Sign in with GitHub", ...SIGN },
-  { method: "GET", path: "/auth/github/callback", run: finishSignIn, action: "GitHub sends the person back, signed in", ...SIGN },
-  { method: "GET", path: "/auth/google", run: startGoogleSignIn, action: "Sign in with Google", ...SIGN },
-  { method: "GET", path: "/auth/google/callback", run: finishGoogleSignIn, action: "Google sends the person back, signed in", ...SIGN },
+  { method: "GET", path: "/auth/github", run: unlessFront(startSignIn), action: "Sign in with GitHub", ...SIGN },
+  {
+    method: "GET",
+    path: "/auth/github/callback",
+    run: unlessFront(finishSignIn),
+    action: "GitHub sends the person back, signed in",
+    ...SIGN,
+  },
+  { method: "GET", path: "/auth/google", run: unlessFront(startGoogleSignIn), action: "Sign in with Google", ...SIGN },
+  {
+    method: "GET",
+    path: "/auth/google/callback",
+    run: unlessFront(finishGoogleSignIn),
+    action: "Google sends the person back, signed in",
+    ...SIGN,
+  },
+  // The company's own sign-in in front (a load balancer's signed header): the only sign-in where there is one.
+  { method: "GET", path: "/auth/front", run: frontSignIn, action: "Sign in with the company's sign-in in front of the server", ...SIGN },
   { method: "POST", path: "/auth/logout", run: signOut, action: "Sign out", ...SIGN },
   // Whether a username is free, with ?check=: {ok} or {problem}.
   { method: "GET", path: "/auth/username", run: usernameStep, action: "A new account's first sign-in: choose a username", ...SIGN },

@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { base64, base64url, fromBase64, fromBase64url, hex, randomToken, readableSize, sha256, sha256Hex } from "../shared/bytes";
 import { baseName, joinPath, pageUrl, parentOf, slugify } from "../document/pages";
 import { dateTag, esc, jsonInScript } from "../shared/html";
-import { json } from "../shared/http";
+import { callerAddress, json } from "../shared/http";
 import { plural, sleep, timeAgo } from "../shared/time";
 
 test("esc escapes the five characters HTML gives a meaning, in text and in either quote", () => {
@@ -103,4 +103,11 @@ test("paths and page addresses: one set of helpers for the server and the browse
     "/ada/notes/blog",
     "/ada/notes/a%20b",
   ]);
+});
+
+test("the caller's address: Cloudflare's header, else the last one the front added to X-Forwarded-For", () => {
+  expect(callerAddress(new Headers({ "cf-connecting-ip": "203.0.113.7", "x-forwarded-for": "198.51.100.1" }))).toBe("203.0.113.7");
+  // A caller's own entry comes first; the load balancer adds the address it saw last.
+  expect(callerAddress(new Headers({ "x-forwarded-for": "10.0.0.1, 203.0.113.9" }))).toBe("203.0.113.9");
+  expect(callerAddress(new Headers())).toBeNull();
 });

@@ -39,6 +39,7 @@ import {
   parseAnswer,
   PRESETS,
   QUESTIONS,
+  frontSignIn,
   type Step,
   steps,
   summary,
@@ -292,7 +293,9 @@ async function registerStep({ answers: a }: Status, t: TargetName) {
   if (!a) return;
   const host = hostOf(a, t);
   const c = a.provider == "aws" ? { net: site } : await connect();
-  say(`Register ${host}: ${a.admin} signs in with GitHub and approves an ops token (an admin only, 90 days at most).`);
+  say(
+    `Register ${host}: ${a.admin} signs in with ${frontSignIn(a) ? "the company's sign-in" : "GitHub"} and approves an ops token (an admin only, 90 days at most).`
+  );
   try {
     const login = await registerSetup(DIR, host, { site: c.net, say: (l) => say(`      ${l}`) });
     pass(`${login} approved the ops token: ${host} is registered in .erga/config.json.`);

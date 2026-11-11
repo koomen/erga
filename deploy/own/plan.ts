@@ -3,6 +3,7 @@
 // acts). `bun erga setup skill` is the manual; `bun erga setup <host> status` prints these steps, and the Setup tab of the
 // ops page (deploy/own/page.ts) shows them.
 
+import { oidcSecretName } from "../aws/template";
 import type { CloudflareEntry } from "../cli/config";
 import { deployFacts } from "../pipeline/account";
 import type { Target } from "../pipeline/pipeline";
@@ -22,7 +23,7 @@ export interface Answers {
   providers: ("github" | "google")[];
   /** What the server is for: its settings' defaults (PRESETS). */
   preset: PresetName;
-  /** The first admin's GitHub login. */
+  /** The first admin's GitHub login; with a sign-in in front (oidc), their email address as that sign-in gives it. */
   admin: string;
   /** "company" only: a Google Workspace domain or GitHub organization whose people may sign in. */
   company: string;
@@ -35,7 +36,17 @@ export interface Answers {
   awsRegion: string;
   /** AWS: the machine's way out to the internet: a NAT machine, a NAT gateway, or "<vpc id>/<private subnet id>" of the person's own. */
   egress: string;
+  /**
+   * AWS: the company's own sign-in in front of Erga (OIDC): its issuer's URL, and Erga's client ID there. Then a load
+   * balancer, not CloudFront, signs each person in before Erga, and that sign-in is Erga's own: no GitHub, no Google.
+   * Empty: none.
+   */
+  oidc: string;
+  oidcClient: string;
 }
+
+/** Whether the company's sign-in in front is Erga's sign-in (AWS, with oidc). */
+export const frontSignIn = (a: Pick<Answers, "provider" | "oidc">) => a.provider == "aws" && !!a.oidc;
 
 export type PresetName = "website" | "company";
 export type Provider = "cloudflare" | "aws";
@@ -78,7 +89,11 @@ export const QUESTIONS: { key: keyof Answers; ask: string; help: string; aws?: t
   },
   { key: "providers", ask: "Sign-in", help: "github, or github,google. The first admin signs in with GitHub." },
   { key: "preset", ask: "Server preset", help: `website (${PRESETS.website.summary}) or company (${PRESETS.company.summary})` },
-  { key: "admin", ask: "Admin (your GitHub login)", help: "You become the first admin." },
+  {
+    key: "admin",
+    ask: "Admin (your GitHub login)",
+    help: "You become the first admin. With a sign-in in front (oidc): your email address, as that sign-in gives it.",
+  },
   {
     key: "company",
     ask: "Company domain or GitHub org (company preset only)",
@@ -87,7 +102,7 @@ export const QUESTIONS: { key: keyof Answers; ask: string; help: string; aws?: t
   {
     key: "pages",
     ask: "Documents' pages",
-    help: "shared (one address for all of them: workers.dev, or on AWS CloudFront's; no domain needed) or a second domain on your account (never the app's): each document gets an origin of its own. Shared is safe for one author only: there, a script in one document can reach what another document's page keeps in the browser. On AWS: shared with a short name, a domain with a domain.",
+    help: "shared (one address for all of them: workers.dev, or on AWS CloudFront's; no domain needed) or a second domain on your account (never the app's): each document gets an origin of its own. Shared is safe for one author only: there, a script in one document can reach what another document's page keeps in the browser. On AWS: shared with a short name, a domain with a domain. With a sign-in in front (oidc), any name on a zone of the account that is not the app's, also one under it (pages.erga.example.com).",
   },
   {
     key: "feedback",
@@ -107,6 +122,18 @@ export const QUESTIONS: { key: keyof Answers; ask: string; help: string; aws?: t
     help: "nat-instance (a small NAT machine, about $7 a month), nat-gateway (AWS's managed NAT, about $33 a month), or <vpc id>/<private subnet id> of a VPC of yours that has its own way out and an internet gateway. The machine never has a public address.",
     aws: true,
   },
+  {
+    key: "oidc",
+    ask: "Your company's sign-in in front (aws only: its OIDC issuer's URL, or no)",
+    help: "With it, a public load balancer (not CloudFront) signs each person in with your company's sign-in before Erga, and Erga takes that as its own sign-in: no GitHub, no Google. It needs a domain for the app (the sign-in's callback is https://<host>/oauth2/idpresponse), and the client's secret in Secrets Manager. Default: no.",
+    aws: true,
+  },
+  {
+    key: "oidcClient",
+    ask: "Erga's client ID at that sign-in (with oidc)",
+    help: "The sign-in's admin gives it, with the secret.",
+    aws: true,
+  },
 ];
 
 export const defaultAnswers = (admin = ""): Answers => ({
@@ -122,6 +149,8 @@ export const defaultAnswers = (admin = ""): Answers => ({
   awsProfile: "",
   awsRegion: "us-east-1",
   egress: "nat-instance",
+  oidc: "",
+  oidcClient: "",
 });
 
 const HOST = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -130,6 +159,7 @@ const NAME = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 /** Whether the setup's host is a short name (no domain) rather than an address. */
 export const isName = (host: string) => NAME.test(host);
 const LOGIN = /^[a-z0-9](?:[a-z0-9-]{0,38})$/i;
+const EMAIL = /^[^\s@']+@[^\s@']+\.[a-z]{2,63}$/i;
 
 /** Reads one answer as the person typed it: the value, or why it isn't one. */
 export function parseAnswer(key: keyof Answers, raw: string): { value: Answers[keyof Answers] } | { problem: string } {
@@ -168,7 +198,17 @@ export function parseAnswer(key: keyof Answers, raw: string): { value: Answers[k
     case "preset":
       return v == "website" || v == "company" ? { value: v } : { problem: "The preset is website or company." };
     case "admin":
-      return LOGIN.test(v) ? { value: v.toLowerCase() } : { problem: `"${v}" isn't a GitHub login.` };
+      return LOGIN.test(v) || EMAIL.test(v)
+        ? { value: v.toLowerCase() }
+        : { problem: `"${v}" isn't a GitHub login (or, with a sign-in in front, an email address).` };
+    case "oidc":
+      return off
+        ? { value: "" }
+        : /^https:\/\/[a-z0-9.-]+(:\d+)?(\/[\w.~/-]*)?$/i.test(v)
+          ? { value: v.replace(/\/+$/, "") }
+          : { problem: `"${v}" isn't an issuer's URL (https://...), or "no".` };
+    case "oidcClient":
+      return off || /^[\w.~-]{1,128}$/.test(v) ? { value: off ? "" : v } : { problem: `"${v}" isn't a client ID.` };
     case "company":
       return off
         ? { value: "" }
@@ -195,9 +235,21 @@ export function parseAnswer(key: keyof Answers, raw: string): { value: Answers[k
 /** What's still wrong with the answers as a whole (each one on its own is parsed already); null if nothing. */
 export function answersProblem(a: Answers, zones: string[]): string | null {
   if (!a.host) return "Answer the questions first (bun erga setup <host> ask).";
-  if (!a.admin) return "Name the first admin: your GitHub login.";
+  const front = frontSignIn(a);
+  if (!a.admin) return `Name the first admin: your ${front ? "email address" : "GitHub login"}.`;
+  if (a.oidc && !front) return "A sign-in in front (oidc) is for an instance on AWS: answer oidc=no.";
+  if (front != EMAIL.test(a.admin))
+    return front
+      ? "With a sign-in in front, the first admin is an email address: yours, as that sign-in gives it (admin=you@example.com)."
+      : "The first admin is a GitHub login.";
   if (a.provider == "aws") {
     if (a.staging) return "Staging on AWS isn't there yet: answer staging=no.";
+    if (front) {
+      if (!a.oidcClient) return "Give Erga's client ID at the sign-in (oidcClient=...): its admin has it.";
+      if (isName(a.host)) return "A sign-in in front needs a domain for the app: the sign-in sends each person back to it.";
+      if (a.egress.includes("/"))
+        return "A load balancer in front needs the stack's own network: answer egress=nat-instance or nat-gateway.";
+    }
     if (isName(a.host) != (a.pages == "shared"))
       return isName(a.host)
         ? "With a short name, the pages share CloudFront's own address: answer pages=shared, or give the app a domain."
@@ -211,7 +263,13 @@ export function answersProblem(a: Answers, zones: string[]): string | null {
     if (!zoneOf(h))
       return `${h} isn't on one of the ${account} (${zones.join(", ") || "it has none"}). Add the domain first, or pick a name on one of these.`;
   if (a.staging && a.staging == a.host) return "Staging needs an address of its own.";
-  if (a.pages != "shared") {
+  // A load balancer's certificate and rules are the stack's own, so the pages take any name on a zone, also one under
+  // the app's (the person's decision: under one registrable domain, a page's script can set a cookie for that domain).
+  if (a.pages != "shared" && front) {
+    if (!zoneOf(a.pages)) return `${a.pages} isn't on one of the ${account} (${zones.join(", ") || "it has none"}).`;
+    if (a.pages == a.host || a.host.endsWith(`.${a.pages}`))
+      return "Documents' pages need a name of their own: not the app's, and not one above it.";
+  } else if (a.pages != "shared") {
     if (!zones.includes(a.pages)) return `${a.pages} isn't one of the ${account}: pages need a whole zone of their own.`;
     if ([a.host, a.staging].some((h) => h && zoneOf(h) == a.pages))
       return "Documents' pages need a different domain from the app's: a page's scripts must not share the app's site.";
@@ -318,6 +376,8 @@ export interface Facts {
   workersSubdomain: string | null;
   /** AWS: the production stack as AWS has it (null: not looked at), and whether the templates on disk are the ones applied. */
   stack: { name: string; status: string | null; outputs: Record<string, string>; template: "none" | "new" | "changed" | "applied" } | null;
+  /** AWS with a sign-in in front: whether its client's secret is in Secrets Manager (null: not looked at). */
+  frontSecret: boolean | null;
   /** By target: what's there now. */
   targets: Partial<Record<TargetName, TargetFacts>>;
   /** Which secrets the secrets file holds, as host:NAME (names only). */
@@ -427,6 +487,20 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
     next: `The agent asks all of them in one message (${cmd} ask shows them, with defaults), then records the answers with ${cmd} set key=value ... The person can also answer on ${page}.`,
   });
   if (!a || problem) return out;
+  const front = frontSignIn(a);
+  if (front)
+    add({
+      id: "secret",
+      title: "The sign-in's client secret (Secrets Manager)",
+      who: "person",
+      ok: f.frontSecret,
+      detail: f.frontSecret
+        ? `the secret ${oidcSecretName(stackOf(a, "production"))} is there`
+        : f.frontSecret == null
+          ? "not looked at"
+          : "not there yet",
+      next: `The person who has the client secret stores it in Secrets Manager, in this account and region (${a.awsRegion}), as plain text, with the name ${oidcSecretName(stackOf(a, "production"))} (console: Secrets Manager, Store a new secret, Other type of secret, Plaintext; only the secret, no JSON). Never in the chat, a file or a command. The stack reads it by its name.`,
+    });
   if (a.provider == "aws") {
     const st = f.stack;
     const done = !!st?.status && /_COMPLETE$/.test(st.status) && !/ROLLBACK|DELETE/.test(st.status) && st.template == "applied";
@@ -442,19 +516,20 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
     });
   }
   const ghSecret = hasSecret(f, a.host, "GITHUB_CLIENT_SECRET");
-  add({
-    id: "github",
-    title: "GitHub sign-in app",
-    who: "person",
-    ok: !!o.ids.github && ghSecret,
-    detail: o.ids.github ? `client id ${o.ids.github}${ghSecret ? ", secret stored" : ", no secret yet"}` : "none yet",
-    next: `On ${page}, the person clicks "Create the GitHub App", then "Create GitHub App" on GitHub. Erga stores its id and secret by itself. (Already have an app? ${cmd} signin github --from-file <file with GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET>, and add the callback ${targetsOf(
-      a
-    )
-      .map((t) => callbackOf(shown(a, t, f), "github"))
-      .join(" and ")} to it.)`,
-  });
-  if (a.providers.includes("google"))
+  if (!front)
+    add({
+      id: "github",
+      title: "GitHub sign-in app",
+      who: "person",
+      ok: !!o.ids.github && ghSecret,
+      detail: o.ids.github ? `client id ${o.ids.github}${ghSecret ? ", secret stored" : ", no secret yet"}` : "none yet",
+      next: `On ${page}, the person clicks "Create the GitHub App", then "Create GitHub App" on GitHub. Erga stores its id and secret by itself. (Already have an app? ${cmd} signin github --from-file <file with GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET>, and add the callback ${targetsOf(
+        a
+      )
+        .map((t) => callbackOf(shown(a, t, f), "github"))
+        .join(" and ")} to it.)`,
+    });
+  if (!front && a.providers.includes("google"))
     add({
       id: "google",
       title: "Google sign-in client",
@@ -505,11 +580,15 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
       ok: tf?.signIn == "ok",
       detail:
         tf?.signIn == "ok"
-          ? "/auth/github goes to GitHub with your app"
+          ? front
+            ? "a browser goes to your company's sign-in first, with your client"
+            : "/auth/github goes to GitHub with your app"
           : typeof tf?.signIn == "object" && tf.signIn
             ? tf.signIn.bad
             : "not checked",
-      next: `Fix what the detail names (the app's callback URL, or its id), then: ${cmd}`,
+      next: front
+        ? `Fix what the detail names (the client ID, or the callback https://${host}/oauth2/idpresponse at the sign-in), then: ${cmd} stack`
+        : `Fix what the detail names (the app's callback URL, or its id), then: ${cmd}`,
     });
   }
   for (const t of targetsOf(a)) {
@@ -521,10 +600,13 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
       who: "person",
       ok: !!f.targets[t]?.registered,
       detail: f.targets[t]?.registered ? "registered in .erga/config.json, with an ops token" : "no ops token yet",
-      next: `The agent runs ${cmd}: it prints a link. The person opens it, signs in with GitHub as ${a.admin}, and approves.`,
+      next: front
+        ? `The agent runs ${cmd}: it prints a link. The person opens it, signs in with the company's sign-in as ${a.admin} (the first time, they choose a username: they are the admin), and approves.`
+        : `The agent runs ${cmd}: it prints a link. The person opens it, signs in with GitHub as ${a.admin}, and approves.`,
     });
   }
-  if (a.preset == "company" && a.company)
+  // With a sign-in in front, the company is whoever passes it: the first deploy writes that rule (deploy/aws/setup.ts).
+  if (!front && a.preset == "company" && a.company)
     add({
       id: "rule",
       title: `People of ${a.company} may sign in`,
@@ -537,7 +619,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
 }
 
 export const summary = (a: Answers) =>
-  `${a.provider == "aws" ? `on AWS (${a.awsProfile || "the default profile"}, ${a.awsRegion}, way out: ${a.egress}): ${isName(a.host) ? `${a.host}, at CloudFront's own address` : `https://${a.host}`}` : `https://${a.host}`}${a.staging ? `, staging https://${a.staging}` : ", no staging"}; sign-in ${a.providers.join(" + ")}; preset ${a.preset}${a.company ? ` (${a.company})` : ""}; admin ${a.admin}; pages ${a.pages == "shared" ? `on one shared ${a.provider == "aws" ? "CloudFront" : "workers.dev"} address` : `on *.${a.pages}`}; feedback ${a.feedback ? `to ${a.feedback}` : "kept on the server"}`;
+  `${a.provider == "aws" ? `on AWS (${a.awsProfile || "the default profile"}, ${a.awsRegion}, way out: ${a.egress}): ${isName(a.host) ? `${a.host}, at CloudFront's own address` : `https://${a.host}`}` : `https://${a.host}`}${a.staging ? `, staging https://${a.staging}` : ", no staging"}; sign-in ${frontSignIn(a) ? `your company's, in front (${a.oidc})` : a.providers.join(" + ")}; preset ${a.preset}${a.company ? ` (${a.company})` : ""}; admin ${a.admin}; pages ${a.pages == "shared" ? `on one shared ${a.provider == "aws" ? "CloudFront" : "workers.dev"} address` : `on *.${a.pages}`}; feedback ${a.feedback ? `to ${a.feedback}` : "kept on the server"}`;
 
 /** The step to do now: the first that isn't done (null: all done). */
 export const nextStep = (s: Step[]) => s.find((x) => x.state != "done") ?? null;
