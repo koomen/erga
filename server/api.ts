@@ -19,6 +19,7 @@ import { HttpServerResponse } from "effect/http";
 import { type Platform, type Session, whoOf } from "./platform";
 import { call, json, platform as currentPlatform, text, webRequest, type Route } from "./http.ts";
 import { AGENT_SIGN_IN, routeFor, type RouteRow } from "../shared/routes.ts";
+import { callerAddress } from "../shared/http.ts";
 import { allTools, jsonSchemaOf, runTool, toolsFor, type Tool } from "../agents/tools";
 import { addFile, type Caller, cleanFilePath, OperationError, PAGE_RULES } from "./operations/index.ts";
 import { keyedOp } from "./documents/index.ts";
@@ -387,8 +388,8 @@ const TokenAsk = Schema.Struct({
 
 /** POST /api/auth/request {label, scope, doc?, expires?}: a link for the person to approve, and a code to poll with. */
 const askForToken = Effect.fnUntraced(function* (platform: Platform, origin: string) {
-  // The address Cloudflare saw the request come from (its header can't be sent from outside); elsewhere, none.
-  const from = (yield* webRequest).headers.get("cf-connecting-ip");
+  // The address the front saw the request come from; none in local development.
+  const from = callerAddress((yield* webRequest).headers);
   const asked = yield* body(TokenAsk);
   const b = asked._tag == "Some" ? asked.value : {};
   const scope = b.scope ?? "documents";

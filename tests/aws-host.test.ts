@@ -1,11 +1,17 @@
 // The AWS host of bun erga (deploy/aws/): the stacks' templates, setup's answers and steps on AWS, the first admin's SQL.
 // No AWS here: the templates and the steps are pure.
 import { expect, test } from "bun:test";
-import { firstSql } from "../deploy/aws/setup";
-import { type AwsShape, certificatesTemplate, stackTemplate } from "../deploy/aws/template";
+import { awsEntry, discoverOidc, firstSql } from "../deploy/aws/setup";
+import { type AwsShape, certificatesTemplate, stackTemplate, TOKEN_PATHS } from "../deploy/aws/template";
+import { frontSignInCheck } from "../deploy/own/facts";
 import { addressOf, answersProblem, defaultAnswers, type Facts, githubManifest, parseAnswer, steps } from "../deploy/own/plan";
 
-const shape: AwsShape = { stack: "erga", egress: { kind: "nat-instance" }, domains: null, cloudFrontPrefixList: "pl-82a045eb" };
+const shape: AwsShape = {
+  stack: "erga",
+  egress: { kind: "nat-instance" },
+  domains: null,
+  front: { kind: "cloudfront", prefixList: "pl-82a045eb" },
+};
 const resources = (s: AwsShape) => stackTemplate(s).Resources as Record<string, { Type: string; Properties: Record<string, any> }>;
 
 test("the machine is private: CloudFront's prefix list is its only way in, and it has no public address", () => {
@@ -63,6 +69,7 @@ const facts = (over: Partial<Facts> = {}): Facts => ({
   zones: [],
   workersSubdomain: null,
   stack: null,
+  frontSecret: null,
   targets: {},
   secrets: [],
   ...over,
@@ -109,4 +116,211 @@ test("the first admin goes only into a database with no admin, and a quote can't
   const sql = firstSql({ ...aws, admin: "ada", feedback: "ada/it's" });
   expect(sql).toContain("WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')");
   expect(sql).toContain(`'"ada/it''s"'`);
+});
+
+// ------------------------------------------------------------------ the company's sign-in in front (a load balancer)
+
+const oidc = {
+  issuer: "https://idp.example.com/pool",
+  authorize: "https://sign-in.example.com/oauth2/authorize",
+  token: "https://sign-in.example.com/oauth2/token",
+  userInfo: "https://sign-in.example.com/oauth2/userInfo",
+  clientId: "client-1",
+};
+const balanced: AwsShape = {
+  stack: "erga-example-com",
+  egress: { kind: "nat-instance" },
+  domains: { app: "erga.example.com", appZone: "Z1", pages: "pages.erga.example.com", pagesZone: "Z1" },
+  front: { kind: "balancer", oidc },
+};
+type Rule = { Properties: { Priority: number; Conditions: Record<string, any>[]; Actions: Record<string, any>[] } };
+const rulesOf = (s: AwsShape) =>
+  Object.entries(resources(s))
+    .filter(([, r]) => r.Type == "AWS::ElasticLoadBalancingV2::ListenerRule")
+    .map(([name, r]) => ({ name, ...(r as unknown as Rule).Properties }))
+    .sort((a, b) => a.Priority - b.Priority);
+/** A rule's values to match, each condition's list. */
+const valuesOf = (c: Record<string, any>): unknown[] =>
+  (c.HostHeaderConfig ?? c.PathPatternConfig ?? c.HttpHeaderConfig ?? c.QueryStringConfig ?? c.SourceIpConfig).Values;
+
+test("a load balancer in front: the sign-in on the app's address, and no CloudFront", () => {
+  const r = resources(balanced);
+  expect(Object.values(r).filter((x) => x.Type.startsWith("AWS::CloudFront::"))).toEqual([]);
+  // The machine lets in the balancer only; the balancer is public, in two zones.
+  expect(r.Firewall.Properties.SecurityGroupIngress).toEqual([
+    {
+      IpProtocol: "tcp",
+      FromPort: 8080,
+      ToPort: 8080,
+      SourceSecurityGroupId: { Ref: "BalancerFirewall" },
+      Description: "The load balancer",
+    },
+  ]);
+  expect(r.Balancer.Properties).toMatchObject({ Scheme: "internet-facing", Subnets: [{ Ref: "PublicSubnet" }, { Ref: "PublicSubnetB" }] });
+  expect(r.Machine.Properties.SubnetId).toEqual({ Ref: "PrivateSubnet" });
+  // Its health check asks the machine itself, a path with no sign-in.
+  expect(r.Targets.Properties).toMatchObject({
+    Port: 8080,
+    HealthCheckPath: "/api/deploys/version",
+    Targets: [{ Id: { Ref: "Machine" } }],
+  });
+  // One certificate, in this stack and region: the app's name and the pages' wildcard. The names point at the balancer.
+  expect(r.Certificate.Properties).toMatchObject({ DomainName: "erga.example.com", SubjectAlternativeNames: ["*.pages.erga.example.com"] });
+  expect(r.PagesRecord.Properties).toMatchObject({ HostedZoneId: "Z1", Name: "*.pages.erga.example.com", Type: "A" });
+  expect(r.AppRecord.Properties.AliasTarget.DNSName).toEqual({ "Fn::GetAtt": ["Balancer", "DNSName"] });
+  // Any other host: nothing.
+  expect(r.Listener.Properties.DefaultActions[0]).toMatchObject({ Type: "fixed-response", FixedResponseConfig: { StatusCode: "404" } });
+  const t = stackTemplate(balanced) as { Parameters: Record<string, unknown>; Outputs: Record<string, unknown> };
+  expect(t.Parameters.AppCertificate).toBeUndefined();
+  expect(t.Outputs.Balancer).toEqual({ Value: { Ref: "Balancer" } });
+
+  // The last rule: everything else on the app's address signs in first. The client's secret is a reference: never a value.
+  const rules = rulesOf(balanced);
+  const signIn = rules.at(-1)!;
+  expect(signIn.name).toBe("SignInRule");
+  expect(signIn.Conditions.map(valuesOf)).toEqual([["erga.example.com"]]);
+  expect(signIn.Actions.map((a) => a.Type)).toEqual(["authenticate-oidc", "forward"]);
+  expect(signIn.Actions[0].AuthenticateOidcConfig).toMatchObject({
+    Issuer: oidc.issuer,
+    AuthorizationEndpoint: oidc.authorize,
+    TokenEndpoint: oidc.token,
+    UserInfoEndpoint: oidc.userInfo,
+    ClientId: "client-1",
+    ClientSecret: { "Fn::Sub": "{{resolve:secretsmanager:${OidcSecret}:SecretString}}" },
+    Scope: "openid email",
+  });
+  expect(t.Parameters.OidcSecret).toMatchObject({ Default: "erga/erga-example-com/oidc-client-secret" });
+});
+
+test("what passes the load balancer without the sign-in: the pages by their token, the token paths, a keyed request, the server's browser", () => {
+  const rules = rulesOf(balanced);
+  // First, a caller's own X-Forwarded-Host is refused: celld would take it for the host.
+  expect(rules[0]).toMatchObject({ name: "RefuseForwardedHost", Priority: 1 });
+  expect(rules[0].Conditions[0].HttpHeaderConfig).toEqual({ HttpHeaderName: "X-Forwarded-Host", Values: ["?*"] });
+  expect(rules[0].Actions[0].FixedResponseConfig.StatusCode).toBe("400");
+  const open = rules.filter((r) => r.Actions.length == 1 && r.Actions[0].Type == "forward");
+  const by = Object.fromEntries(open.map((r) => [r.name, r.Conditions.map(valuesOf)]));
+  // A document's own address: its files by their token and the offline worker, never the app's pages.
+  expect(by.PagesRule).toEqual([["*.pages.erga.example.com"], ["/t/*", "/erga-sw.js", "/erga-clear"]]);
+  // The app's address: MCP and its OAuth for the client, the operations, the CLI's token request, the deploy's checks.
+  const tokens = open.filter((r) => r.name.startsWith("TokenRule"));
+  expect(tokens.every((r) => r.Conditions[0].HostHeaderConfig.Values[0] == "erga.example.com")).toBe(true);
+  const paths = tokens.flatMap((r) => r.Conditions[1].PathPatternConfig.Values);
+  expect(paths).toEqual(TOKEN_PATHS.flat());
+  for (const p of ["/mcp", "/oauth/token", "/oauth/register", "/api/tools/*", "/api/auth/poll", "/api/ops", "/api/health"])
+    expect(paths).toContain(p);
+  // Where a person approves an agent, signs in or is an admin stays behind the sign-in.
+  expect(paths.filter((p) => /^\/(oauth\/authorize|tokens|auth|admin)\b/.test(p) || p == "/*")).toEqual([]);
+  expect(by.KeyRule).toEqual([["erga.example.com"], ["/d/*/api/*"], [{ Key: "key", Value: "*" }]]);
+  // The server's own browser comes from the NAT's address: a fixed one.
+  expect(by.OwnBrowserRule).toEqual([["erga.example.com"], [{ "Fn::Sub": "${NatAddress.PublicIp}/32" }]]);
+  expect(resources(balanced).NatAddress.Properties.InstanceId).toEqual({ Ref: "Nat" });
+  expect(resources({ ...balanced, egress: { kind: "nat-gateway" } }).NatAddress.Type).toBe("AWS::EC2::EIP");
+  // No more rules than these, and each within a balancer's limits: 5 values a rule, 3 a condition, 5 wildcards.
+  expect(open.length + 2).toBe(rules.length);
+  for (const r of rules) {
+    const values = r.Conditions.flatMap(valuesOf);
+    expect(values.length).toBeLessThanOrEqual(5);
+    expect(Math.max(...r.Conditions.map((c) => valuesOf(c).length))).toBeLessThanOrEqual(3);
+    expect((JSON.stringify(values).match(/[*?]/g) ?? []).length).toBeLessThanOrEqual(5);
+  }
+});
+
+const front = {
+  ...defaultAnswers("ada@example.com"),
+  provider: "aws" as const,
+  host: "erga.example.com",
+  pages: "pages.erga.example.com",
+  preset: "company" as const,
+  awsRegion: "us-west-2",
+  oidc: "https://idp.example.com/pool",
+  oidcClient: "client-1",
+};
+
+test("setup with a sign-in in front: an email for the admin, pages under the app's name, no GitHub app", () => {
+  const zones = ["erga.example.com"];
+  expect(parseAnswer("oidc", "https://idp.example.com/pool/")).toEqual({ value: "https://idp.example.com/pool" });
+  expect("problem" in parseAnswer("oidc", "http://idp.example.com")).toBe(true);
+  expect(answersProblem(front, zones)).toBeNull();
+  expect(answersProblem({ ...front, admin: "ada" }, zones)).toContain("email address");
+  expect(answersProblem({ ...front, oidcClient: "" }, zones)).toContain("client ID");
+  expect(answersProblem({ ...front, egress: "vpc-0a1/subnet-0b2" }, zones)).toContain("own network");
+  expect(answersProblem({ ...front, host: "erga", pages: "shared" }, zones)).toContain("needs a domain");
+  expect(answersProblem({ ...front, pages: "erga.example.com" }, zones)).toContain("name of their own");
+  expect(answersProblem({ ...front, pages: "pages.other.org" }, zones)).toContain("Route 53");
+  expect(answersProblem({ ...front, provider: "cloudflare" }, zones)).toContain("on AWS");
+  // Without it, the pages still need a zone apart from the app's.
+  expect(answersProblem({ ...front, oidc: "", admin: "ada" }, zones)).toContain("whole zone");
+
+  const f = facts({ zones, frontSecret: false });
+  const list = steps(front, f, { ids: {} });
+  expect(list.map((s) => s.id)).toEqual([
+    "tools",
+    "login",
+    "decide",
+    "secret",
+    "stack",
+    "deploy-production",
+    "signin-production",
+    "register-production",
+  ]);
+  const secret = list.find((s) => s.id == "secret")!;
+  expect(secret).toMatchObject({ who: "person", state: "todo" });
+  expect(secret.next).toContain("erga/erga-example-com/oidc-client-secret");
+  expect(steps(front, facts({ zones, frontSecret: true }), { ids: {} }).find((s) => s.state != "done")?.id).toBe("stack");
+
+  // The server learns whose header is the sign-in, and who the first admin is, from the stack's balancer.
+  const entry = awsEntry(
+    front,
+    "production",
+    "123456789012",
+    { AppHost: "erga.example.com", Balancer: "arn:aws:elasticloadbalancing:us-west-2:1:loadbalancer/app/x/1" },
+    {}
+  );
+  expect(JSON.parse(entry.vars.FRONT_SIGN_IN)).toEqual({
+    signer: "arn:aws:elasticloadbalancing:us-west-2:1:loadbalancer/app/x/1",
+    issuer: "https://idp.example.com/pool",
+    client: "client-1",
+    admin: "ada@example.com",
+  });
+  expect(awsEntry(aws, "production", "123456789012", { AppHost: "d1.cloudfront.net" }, {}).vars.FRONT_SIGN_IN).toBeUndefined();
+  // The first deploy writes no admin's row (they have no username yet): everybody who passes the sign-in may write.
+  const sql = firstSql(front);
+  expect(sql).toContain("INSERT INTO access_rules (kind, value, access, created) SELECT 'everybody', '', 'write'");
+  expect(sql).toContain("WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')");
+  expect(sql).not.toContain("INSERT INTO users");
+});
+
+test("the sign-in's endpoints come from its issuer, and the check sees the load balancer send a browser there", async () => {
+  const document = {
+    issuer: oidc.issuer,
+    authorization_endpoint: oidc.authorize,
+    token_endpoint: oidc.token,
+    userinfo_endpoint: oidc.userInfo,
+  };
+  const issuer = (d: unknown) =>
+    (async (url: string) =>
+      url == `${oidc.issuer}/.well-known/openid-configuration`
+        ? Response.json(d)
+        : new Response("", { status: 404 })) as unknown as typeof fetch;
+  const { clientId: _, ...endpoints } = oidc;
+  expect(await discoverOidc(oidc.issuer, issuer(document))).toEqual(endpoints);
+  await expect(discoverOidc(oidc.issuer, issuer({ ...document, issuer: "https://other.example.com" }))).rejects.toThrow("another issuer");
+  await expect(discoverOidc(oidc.issuer, issuer({ ...document, token_endpoint: "http://sign-in.example.com/token" }))).rejects.toThrow(
+    "https token_endpoint"
+  );
+  await expect(discoverOidc("https://none.example.com", issuer(document))).rejects.toThrow("didn't answer");
+
+  const balancer = (location: string) => (async () => new Response("", { status: 302, headers: { location } })) as unknown as typeof fetch;
+  const to = (client: string, back: string) =>
+    `${oidc.authorize}?client_id=${client}&redirect_uri=${encodeURIComponent(back)}&response_type=code`;
+  expect(
+    await frontSignInCheck(balancer(to("client-1", "https://erga.example.com/oauth2/idpresponse")), "erga.example.com", "client-1")
+  ).toBe("ok");
+  expect(
+    await frontSignInCheck(balancer(to("client-2", "https://erga.example.com/oauth2/idpresponse")), "erga.example.com", "client-1")
+  ).toMatchObject({ bad: expect.stringContaining("client-2") });
+  expect(await frontSignInCheck(balancer("https://erga.example.com/auth/github"), "erga.example.com", "client-1")).toMatchObject({
+    bad: expect.stringContaining("not to the sign-in in front"),
+  });
 });

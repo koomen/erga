@@ -10,7 +10,8 @@
 // works puts them in use (apps.ts, the lockout rules). Everyone else keeps
 // signing in with the values that work.
 //
-//   /auth/sign-in[?next=]                the providers that are on, to choose from (one: straight there)
+//   /auth/sign-in[?next=]                the providers that are on, to choose from (one: straight there; with the
+//                                        company's sign-in in front, /auth/front: front.ts)
 //   /auth/github[?next=][&app=pending]   off to GitHub, back to `next` (&app=test: an admin's test while GitHub is off)
 //   /auth/github/callback                GitHub's answer: a code, traded for who they are
 //   /auth/google[?next=][&app=pending]   off to Google, the same way
@@ -173,6 +174,8 @@ const providerOff = Effect.fnUntraced(function* (platform: Platform, provider: P
 export const chooseSignIn: Route = Effect.gen(function* () {
   const { platform, url } = yield* ctx;
   const next = safeNext(url.searchParams.get("next"));
+  // The company's sign-in in front is the only one (front.ts): the person passed it already.
+  if (platform.signIn.front) return redirect(`/auth/front?next=${encodeURIComponent(next)}`, 302, { "Cache-Control": "no-store" });
   const on = yield* call(() => providersOn(platform));
   const providers = (Object.keys(PROVIDERS) as Provider[]).filter((p) => on[p]);
   if (providers.length == 1)

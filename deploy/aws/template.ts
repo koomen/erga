@@ -6,9 +6,12 @@
 //     NAT gateway), or a private subnet of a VPC the person names, which has its own way out;
 //   - the machine (celld and Chrome, deploy/aws/machine.ts): no public address, and only CloudFront may reach its port;
 //   - the bucket (celld's state, the releases, the programs), the KMS key (the bucket and the secrets), the role;
-//   - two CloudFront distributions, the app's and the pages', each with the machine as its VPC origin;
+//   - the front, one of two:
+//       CloudFront: two distributions, the app's and the pages', each with the machine as its VPC origin; with domains,
+//       a second stack in us-east-1 holds the ACM certificates, where CloudFront needs them (certificatesTemplate);
+//       a load balancer (an ALB, public): it signs each person in with the company's OIDC sign-in before Erga, and
+//       lets pass without it only what Erga's own tokens guard (balancer, below). Its certificate is in this stack;
 //   - with domains: the Route 53 records of the app's name and the pages' wildcard name.
-// With domains, a second stack in us-east-1 holds the ACM certificates, where CloudFront needs them (certificatesTemplate).
 //
 // The structure follows the answers (the way out, the domains); the sizes and the machine image are the template's
 // parameters, with defaults, which the person may change in the file.
@@ -21,14 +24,49 @@ export interface AwsShape {
   egress: { kind: "nat-instance" } | { kind: "nat-gateway" } | { kind: "vpc"; vpcId: string; subnetId: string };
   /** The domains, each with its Route 53 hosted zone; none: CloudFront's own names (the pages on one shared name). */
   domains: { app: string; appZone: string; pages: string; pagesZone: string } | null;
-  /** The CloudFront origin-facing prefix list of the region (com.amazonaws.global.cloudfront.origin-facing). */
-  cloudFrontPrefixList: string;
+  /**
+   * What answers the internet. CloudFront, with the region's origin-facing prefix list
+   * (com.amazonaws.global.cloudfront.origin-facing); or a load balancer with a sign-in in front of Erga: it needs
+   * domains, and the stack's own network.
+   */
+  front: { kind: "cloudfront"; prefixList: string } | { kind: "balancer"; oidc: Oidc };
 }
 
-/** The port celld answers on, on the machine. Only CloudFront reaches it. */
+/** The company's OIDC sign-in, as its issuer publishes it (/.well-known/openid-configuration), and Erga's client there. */
+export interface Oidc {
+  issuer: string;
+  authorize: string;
+  token: string;
+  userInfo: string;
+  clientId: string;
+}
+
+/** The port celld answers on, on the machine. Only the front reaches it. */
 export const CELLD_PORT = 8080;
 /** Where the instance's secrets are in Parameter Store: /erga/<stack>/<NAME>. */
 export const paramPath = (stack: string) => `/erga/${stack}/`;
+/**
+ * The Secrets Manager secret that holds the OIDC client's secret, as plain text: the person who has the secret stores
+ * it there, and the stack reads it by this name (a dynamic reference). It is never in a file, a command or a chat.
+ */
+export const oidcSecretName = (stack: string) => `erga/${stack}/oidc-client-secret`;
+
+/**
+ * What passes the load balancer without the sign-in, on the app's address: only what Erga's own tokens guard, or what
+ * holds nothing private. An agent or the CLI can't sign in with a browser: MCP and its OAuth (the person approves the
+ * agent on /tokens/approve, which stays behind the sign-in), the operations, the CLI's token request, the deploy's
+ * checks. And the editor's code, which a document's page loads from its own address, with no cookie.
+ * Three paths a rule: a rule takes five values, and the host is one.
+ */
+export const TOKEN_PATHS: readonly (readonly string[])[] = [
+  ["/mcp", "/llms.txt", "/api/publish"],
+  ["/.well-known/oauth-*", "/oauth/register", "/oauth/token"],
+  ["/api/auth/request", "/api/auth/poll", "/api/ops"],
+  ["/api/tools", "/api/tools/*", "/api/health"],
+  ["/api/deploys/version", "/_erga/*", "/erga/*"],
+];
+/** What a document's own address answers (server/documents/pages-origin.ts): its files by their token, and the offline worker. */
+export const PAGES_PATHS = ["/t/*", "/erga-sw.js", "/erga-clear"] as const;
 
 /** CloudFront's managed origin request policy AllViewer: the viewer's Host, headers, cookies and query to the origin. */
 const ALL_VIEWER = "216adef6-5c7f-47e4-b989-5492eafa07d3";
@@ -99,6 +137,28 @@ function network(s: AwsShape): { subnet: unknown; vpc: unknown; resources: Json 
       },
     },
   };
+  // A load balancer needs two zones. Its rule for the server's own browser names the NAT's address: a fixed one.
+  if (s.front.kind == "balancer") {
+    r.PublicSubnetB = {
+      Type: "AWS::EC2::Subnet",
+      Properties: {
+        VpcId: ref("Vpc"),
+        CidrBlock: "10.80.2.0/24",
+        AvailabilityZone: { "Fn::Select": [1, { "Fn::GetAZs": "" }] },
+        Tags: tags(s.stack, "public-b"),
+      },
+    };
+    r.PublicRoutesOfB = {
+      Type: "AWS::EC2::SubnetRouteTableAssociation",
+      Properties: { SubnetId: ref("PublicSubnetB"), RouteTableId: ref("PublicRoutes") },
+    };
+    if (s.egress.kind == "nat-instance")
+      r.NatAddress = {
+        Type: "AWS::EC2::EIP",
+        DependsOn: "GatewayAttachment",
+        Properties: { Domain: "vpc", InstanceId: ref("Nat"), Tags: tags(s.stack, "nat") },
+      };
+  }
   if (s.egress.kind == "nat-gateway") {
     r.NatAddress = { Type: "AWS::EC2::EIP", DependsOn: "GatewayAttachment", Properties: { Domain: "vpc", Tags: tags(s.stack, "nat") } };
     r.Nat = {
@@ -202,7 +262,7 @@ function distribution(s: AwsShape, which: "App" | "Pages"): Json {
 /** The main stack's template. */
 export function stackTemplate(s: AwsShape): Json {
   const net = network(s);
-  const machineArn = sub("arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Machine}");
+  const front = s.front.kind == "balancer" ? balancer(s, s.front.oidc, net.vpc) : cloudFront(s, s.front.prefixList);
   const role = att("Role", "Arn");
   const resources: Json = {
     ...net.resources,
@@ -347,21 +407,13 @@ export function stackTemplate(s: AwsShape): Json {
       },
     },
     Profile: { Type: "AWS::IAM::InstanceProfile", Properties: { Roles: [ref("Role")] } },
-    // Only CloudFront reaches celld's port; nothing else comes in.
+    // Only the front reaches celld's port; nothing else comes in.
     Firewall: {
       Type: "AWS::EC2::SecurityGroup",
       Properties: {
-        GroupDescription: `Erga ${s.stack}: celld, from CloudFront only`,
+        GroupDescription: `Erga ${s.stack}: celld, from ${s.front.kind == "balancer" ? "the load balancer" : "CloudFront"} only`,
         VpcId: net.vpc,
-        SecurityGroupIngress: [
-          {
-            IpProtocol: "tcp",
-            FromPort: CELLD_PORT,
-            ToPort: CELLD_PORT,
-            SourcePrefixListId: s.cloudFrontPrefixList,
-            Description: "CloudFront",
-          },
-        ],
+        SecurityGroupIngress: [{ IpProtocol: "tcp", FromPort: CELLD_PORT, ToPort: CELLD_PORT, ...front.ingress }],
         Tags: tags(s.stack, "machine"),
       },
     },
@@ -379,6 +431,45 @@ export function stackTemplate(s: AwsShape): Json {
         Tags: tags(s.stack, "machine"),
       },
     },
+    ...front.resources,
+  };
+  return {
+    AWSTemplateFormatVersion: "2010-09-09",
+    Description: `Erga ${s.stack}: one celld machine, its bucket, and ${s.front.kind == "balancer" ? "a load balancer with the sign-in" : "CloudFront"} in front (written by bun erga setup)`,
+    Parameters: {
+      MachineType: {
+        Type: "String",
+        Default: "t4g.small",
+        Description: "The machine that runs Erga (ARM: a t4g or another Graviton type)",
+      },
+      DiskGb: { Type: "Number", Default: 16, Description: "The machine's disk: celld's local copies (the bucket holds the state)" },
+      MachineImage: {
+        Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+        Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64",
+        Description: "Amazon Linux 2023 for ARM, AWS's newest",
+      },
+      ...(s.egress.kind == "nat-instance"
+        ? { NatType: { Type: "String", Default: "t4g.nano", Description: "The NAT machine: the Erga machine's way out" } }
+        : {}),
+      ...front.parameters,
+    },
+    Resources: resources,
+    Outputs: { Bucket: { Value: ref("Bucket") }, Machine: { Value: ref("Machine") }, Key: { Value: att("Key", "Arn") }, ...front.outputs },
+  };
+}
+
+/** A front's part of the stack: who may reach the machine's port, and its own resources, parameters and outputs. */
+interface Front {
+  ingress: Json;
+  resources: Json;
+  parameters: Json;
+  outputs: Json;
+}
+
+/** CloudFront in front: two distributions with the machine as their VPC origin, and with domains their names in Route 53. */
+function cloudFront(s: AwsShape, prefixList: string): Front {
+  const machineArn = sub("arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Machine}");
+  const resources: Json = {
     Origin: {
       Type: "AWS::CloudFront::VpcOrigin",
       Properties: {
@@ -437,37 +528,190 @@ export function stackTemplate(s: AwsShape): Json {
         };
   }
   return {
-    AWSTemplateFormatVersion: "2010-09-09",
-    Description: `Erga ${s.stack}: one celld machine, its bucket, and CloudFront in front (written by bun erga setup)`,
-    Parameters: {
-      MachineType: {
-        Type: "String",
-        Default: "t4g.small",
-        Description: "The machine that runs Erga (ARM: a t4g or another Graviton type)",
-      },
-      DiskGb: { Type: "Number", Default: 16, Description: "The machine's disk: celld's local copies (the bucket holds the state)" },
-      MachineImage: {
-        Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
-        Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64",
-        Description: "Amazon Linux 2023 for ARM, AWS's newest",
-      },
-      ...(s.egress.kind == "nat-instance"
-        ? { NatType: { Type: "String", Default: "t4g.nano", Description: "The NAT machine: the Erga machine's way out" } }
-        : {}),
-      ...(s.domains
-        ? {
-            AppCertificate: { Type: "String", Description: `The ACM certificate of ${s.domains.app}, in us-east-1` },
-            PagesCertificate: { Type: "String", Description: `The ACM certificate of *.${s.domains.pages}, in us-east-1` },
-          }
-        : {}),
-    },
-    Resources: resources,
-    Outputs: {
-      Bucket: { Value: ref("Bucket") },
-      Machine: { Value: ref("Machine") },
-      Key: { Value: att("Key", "Arn") },
+    ingress: { SourcePrefixListId: prefixList, Description: "CloudFront" },
+    resources,
+    parameters: s.domains
+      ? {
+          AppCertificate: { Type: "String", Description: `The ACM certificate of ${s.domains.app}, in us-east-1` },
+          PagesCertificate: { Type: "String", Description: `The ACM certificate of *.${s.domains.pages}, in us-east-1` },
+        }
+      : {},
+    outputs: {
       AppHost: { Value: s.domains ? s.domains.app : att("AppDistribution", "DomainName") },
       PagesHost: { Value: s.domains ? s.domains.pages : att("PagesDistribution", "DomainName") },
+    },
+  };
+}
+
+/**
+ * A load balancer in front (an ALB, public), with the company's sign-in. Its listener's rules, first match wins:
+ *
+ *    1  a request that brings X-Forwarded-Host: refused. celld trusts that header (CELLD_TRUST_FORWARDED_HEADERS) for
+ *       https (the balancer's X-Forwarded-Proto), and the balancer passes a caller's own; without it celld reads Host.
+ *    2  a document's own address (*.<pages>), its files and its worker only: no sign-in. The page's token is the pass
+ *       (a frame can't follow a sign-in, and that address has no cookie).
+ *   10+ the app's address, what Erga's tokens guard (TOKEN_PATHS): no sign-in.
+ *   20  the app's address, a request with a key (?key=): what a document's page asks of its room, from its own address.
+ *   30  the app's address, from the NAT's address: the server's own browser (view_page), which holds Erga's view cookie.
+ *  100  the app's address, anything else: the sign-in (OIDC) first. The balancer then adds x-amzn-oidc-data, which says
+ *       who signed in, signed by AWS (server/identity/front.ts reads it).
+ * Any other host: 404. The machine lets in only the balancer.
+ */
+function balancer(s: AwsShape, oidc: Oidc, vpc: unknown): Front {
+  if (!s.domains || s.egress.kind == "vpc") throw new Error("A load balancer in front needs domains, and the stack's own network.");
+  const d = s.domains;
+  const forward = { Type: "forward", TargetGroupArn: ref("Targets") };
+  const host = (name: string) => ({ Field: "host-header", HostHeaderConfig: { Values: [name] } });
+  const paths = (values: readonly string[]) => ({ Field: "path-pattern", PathPatternConfig: { Values: [...values] } });
+  const rule = (priority: number, conditions: Json[], actions: Json[]): Json => ({
+    Type: "AWS::ElasticLoadBalancingV2::ListenerRule",
+    Properties: { ListenerArn: ref("Listener"), Priority: priority, Conditions: conditions, Actions: actions },
+  });
+  const alias = (zone: string, name: string) => ({
+    Type: "AWS::Route53::RecordSet",
+    Properties: {
+      HostedZoneId: zone,
+      Name: name,
+      Type: "A",
+      AliasTarget: { DNSName: att("Balancer", "DNSName"), HostedZoneId: att("Balancer", "CanonicalHostedZoneID") },
+    },
+  });
+  const resources: Json = {
+    Certificate: {
+      Type: "AWS::CertificateManager::Certificate",
+      Properties: {
+        DomainName: d.app,
+        SubjectAlternativeNames: [`*.${d.pages}`],
+        ValidationMethod: "DNS",
+        DomainValidationOptions: [
+          { DomainName: d.app, HostedZoneId: d.appZone },
+          { DomainName: `*.${d.pages}`, HostedZoneId: d.pagesZone },
+        ],
+        Tags: [{ Key: "erga", Value: s.stack }],
+      },
+    },
+    BalancerFirewall: {
+      Type: "AWS::EC2::SecurityGroup",
+      Properties: {
+        GroupDescription: `Erga ${s.stack}: the load balancer, from the internet`,
+        VpcId: vpc,
+        SecurityGroupIngress: [443, 80].map((port) => ({ IpProtocol: "tcp", FromPort: port, ToPort: port, CidrIp: "0.0.0.0/0" })),
+        Tags: tags(s.stack, "balancer"),
+      },
+    },
+    Balancer: {
+      Type: "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      DependsOn: "PublicDefault",
+      Properties: {
+        Type: "application",
+        Scheme: "internet-facing",
+        Subnets: [ref("PublicSubnet"), ref("PublicSubnetB")],
+        SecurityGroups: [ref("BalancerFirewall")],
+        LoadBalancerAttributes: [
+          // A quiet socket of the editor stays open.
+          { Key: "idle_timeout.timeout_seconds", Value: "3600" },
+          { Key: "routing.http.preserve_host_header.enabled", Value: "true" },
+          { Key: "routing.http.drop_invalid_header_fields.enabled", Value: "true" },
+        ],
+        Tags: tags(s.stack, "balancer"),
+      },
+    },
+    // The health check goes to the machine itself: no rule, so no sign-in.
+    Targets: {
+      Type: "AWS::ElasticLoadBalancingV2::TargetGroup",
+      Properties: {
+        VpcId: vpc,
+        Protocol: "HTTP",
+        Port: CELLD_PORT,
+        TargetType: "instance",
+        Targets: [{ Id: ref("Machine") }],
+        HealthCheckPath: "/api/deploys/version",
+        HealthCheckIntervalSeconds: 15,
+        HealthyThresholdCount: 2,
+        Matcher: { HttpCode: "200" },
+        TargetGroupAttributes: [{ Key: "deregistration_delay.timeout_seconds", Value: "30" }],
+        Tags: tags(s.stack, "machine"),
+      },
+    },
+    Listener: {
+      Type: "AWS::ElasticLoadBalancingV2::Listener",
+      Properties: {
+        LoadBalancerArn: ref("Balancer"),
+        Port: 443,
+        Protocol: "HTTPS",
+        SslPolicy: "ELBSecurityPolicy-TLS13-1-2-2021-06",
+        Certificates: [{ CertificateArn: ref("Certificate") }],
+        DefaultActions: [
+          { Type: "fixed-response", FixedResponseConfig: { StatusCode: "404", ContentType: "text/plain", MessageBody: "Not found" } },
+        ],
+      },
+    },
+    PlainListener: {
+      Type: "AWS::ElasticLoadBalancingV2::Listener",
+      Properties: {
+        LoadBalancerArn: ref("Balancer"),
+        Port: 80,
+        Protocol: "HTTP",
+        DefaultActions: [{ Type: "redirect", RedirectConfig: { Protocol: "HTTPS", Port: "443", StatusCode: "HTTP_301" } }],
+      },
+    },
+    RefuseForwardedHost: rule(
+      1,
+      [{ Field: "http-header", HttpHeaderConfig: { HttpHeaderName: "X-Forwarded-Host", Values: ["?*"] } }],
+      [{ Type: "fixed-response", FixedResponseConfig: { StatusCode: "400", ContentType: "text/plain", MessageBody: "Bad request" } }]
+    ),
+    PagesRule: rule(2, [host(`*.${d.pages}`), paths(PAGES_PATHS)], [forward]),
+    ...Object.fromEntries(TOKEN_PATHS.map((group, i) => [`TokenRule${i + 1}`, rule(10 + i, [host(d.app), paths(group)], [forward])])),
+    KeyRule: rule(
+      20,
+      [host(d.app), paths(["/d/*/api/*"]), { Field: "query-string", QueryStringConfig: { Values: [{ Key: "key", Value: "*" }] } }],
+      [forward]
+    ),
+    OwnBrowserRule: rule(
+      30,
+      [host(d.app), { Field: "source-ip", SourceIpConfig: { Values: [sub("${NatAddress.PublicIp}/32")] } }],
+      [forward]
+    ),
+    SignInRule: rule(
+      100,
+      [host(d.app)],
+      [
+        {
+          Type: "authenticate-oidc",
+          Order: 1,
+          AuthenticateOidcConfig: {
+            Issuer: oidc.issuer,
+            AuthorizationEndpoint: oidc.authorize,
+            TokenEndpoint: oidc.token,
+            UserInfoEndpoint: oidc.userInfo,
+            ClientId: oidc.clientId,
+            // Read from Secrets Manager when the stack is made: the secret is in no file.
+            ClientSecret: sub("{{resolve:secretsmanager:${OidcSecret}:SecretString}}"),
+            Scope: "openid email",
+            OnUnauthenticatedRequest: "authenticate",
+          },
+        },
+        { ...forward, Order: 2 },
+      ]
+    ),
+    AppRecord: alias(d.appZone, d.app),
+    PagesRecord: alias(d.pagesZone, `*.${d.pages}`),
+  };
+  return {
+    ingress: { SourceSecurityGroupId: ref("BalancerFirewall"), Description: "The load balancer" },
+    resources,
+    parameters: {
+      OidcSecret: {
+        Type: "String",
+        Default: oidcSecretName(s.stack),
+        Description: "The Secrets Manager secret (its name) that holds the OIDC client's secret, as plain text",
+      },
+    },
+    outputs: {
+      AppHost: { Value: d.app },
+      PagesHost: { Value: d.pages },
+      // Who signs x-amzn-oidc-data: Erga takes the header only from this balancer.
+      Balancer: { Value: ref("Balancer") },
     },
   };
 }

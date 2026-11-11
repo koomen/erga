@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import { OWNER, type Route } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
-import { sessionOf } from "../server/identity/index.ts";
+import { frontOf, sessionOf } from "../server/identity/index.ts";
 import { directoryOf, factoryKey, tokensOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
@@ -53,6 +53,7 @@ const SETTINGS = Config.all({
   googleApp: Config.all({ clientId: text("GOOGLE_CLIENT_ID"), secret: text("GOOGLE_CLIENT_SECRET") }),
   githubOrigin: origin("ERGA_GITHUB_ORIGIN"),
   googleOrigin: origin("ERGA_GOOGLE_ORIGIN"),
+  front: text("FRONT_SIGN_IN").pipe(Config.map(frontOf)),
   /** How often the served homepage looks for a newer deploy (ms); not a number: 0, every request. */
   homeRecheckMs: text("ERGA_HOME_RECHECK_MS").pipe(Config.map((v) => (v ? Number(v) || 0 : 5000))),
 });
@@ -145,6 +146,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       github: standIn(settings.githubOrigin) ?? "https://github.com",
       googleApp: settings.googleApp,
       google: standIn(settings.googleOrigin),
+      front: settings.front,
       devLogin: settings.devLogin || null,
       encryptionKey: factoryKey(env),
     },

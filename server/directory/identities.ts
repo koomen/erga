@@ -17,7 +17,9 @@ import { RESERVED } from "./model.ts";
 import { avatarFor } from "../../shared/avatars.ts";
 import { type Actor, NotAllowed, type Users } from "./users.ts";
 
-export type SignInProvider = "github" | "google";
+/** GitHub, Google, or the company's own sign-in in front of the server (server/identity/front.ts). */
+export type SignInProvider = "github" | "google" | "front";
+/** The providers an admin adds a person by, before their first sign-in (people.ts). */
 export const SIGN_IN_PROVIDERS: readonly SignInProvider[] = ["github", "google"];
 
 /** An identity, as kept. */
@@ -191,7 +193,7 @@ export class Identities {
 
   /** A username to offer first: the provider's name for them, made valid, with a number when it's taken. */
   async suggest(v: Vouched): Promise<string> {
-    const from = v.provider == "google" ? v.handle.split("@")[0] : v.handle;
+    const from = v.provider == "github" ? v.handle : v.handle.split("@")[0];
     let base = from.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32).replace(/-+$/, "");
     if (!base || base.startsWith("test-")) base = "me";
     for (let i = 1; i < 50; i++) {
@@ -240,7 +242,7 @@ export class Identities {
   }
 }
 
-export const label = (p: SignInProvider) => (p == "github" ? "GitHub" : "Google");
+export const label = (p: SignInProvider) => (p == "github" ? "GitHub" : p == "google" ? "Google" : "your company's sign-in");
 
 /** The account's picture, from the identity it signed in with now (shared/avatars.ts). */
 const avatarStatement = (login: string, v: Vouched): Statement => ["UPDATE users SET avatar = ?2 WHERE login = ?1", login, avatarFor(v)];

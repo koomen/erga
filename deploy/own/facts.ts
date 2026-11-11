@@ -96,6 +96,24 @@ export async function signInCheck(net: Fetch, host: string, clientId: string | u
   return "ok";
 }
 
+/**
+ * With the company's sign-in in front: where the load balancer sends a browser that isn't signed in. To that sign-in,
+ * with this client and this host's callback (the balancer's own, /oauth2/idpresponse), or what's wrong.
+ */
+export async function frontSignInCheck(net: Fetch, host: string, clientId: string): Promise<TargetFacts["signIn"]> {
+  const r = await net(`https://${host}/auth/sign-in`, { redirect: "manual", signal: AbortSignal.timeout(8000) }).catch(() => null);
+  if (!r) return null;
+  const to = r.headers.get("location") ?? "";
+  if (r.status != 302 || !to.startsWith("https://") || new URL(to).host == host)
+    return { bad: `/auth/sign-in answers ${r.status}${to ? ` and sends to ${to.slice(0, 80)}` : ""}, not to the sign-in in front` };
+  const q = new URL(to).searchParams;
+  if (q.get("client_id") != clientId)
+    return { bad: `the load balancer signs in with the client ${q.get("client_id")}, not yours (${clientId})` };
+  if (q.get("redirect_uri") != `https://${host}/oauth2/idpresponse`)
+    return { bad: `the sign-in would come back to ${q.get("redirect_uri")}` };
+  return "ok";
+}
+
 /** One server: its Worker, its address, what it answers, its entry, and (with the database) the company's access rule. */
 async function targetFacts(
   { cf, net }: Connection,
@@ -207,6 +225,7 @@ export async function observe(own: Own, a: Answers | null): Promise<Facts & { zo
     zoneIds: [],
     workersSubdomain: null,
     stack: null,
+    frontSecret: null,
     targets: {},
     secrets: secretNames(loadSecrets()),
   };

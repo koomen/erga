@@ -27,6 +27,7 @@ import * as Stream from "effect/Stream";
 import { LanguageModel, Prompt } from "effect/ai";
 import { call, ctx, json, type Route } from "../server/http.ts";
 import { PAGE_SCRIPT, routeFor, type RouteRow } from "../shared/routes.ts";
+import { callerAddress } from "../shared/http.ts";
 import {
   callStep,
   PAGE_LLM_LIMITS,
@@ -95,7 +96,7 @@ async function decide(
 
 /** Who a signed-out visitor is counted as: "ip:" and a hash of their IP address (the log never keeps the address). */
 async function guestOf(request: Request): Promise<string> {
-  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+  const ip = callerAddress(request.headers) ?? "unknown";
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ip)));
   return "ip:" + Array.from(hash.slice(0, 8), (b) => b.toString(16).padStart(2, "0")).join("");
 }
