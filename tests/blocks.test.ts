@@ -561,6 +561,23 @@ for (const [marker, block] of [
     ]);
   });
 
+// The marks worked only at a paragraph's start: after Shift+Enter, "- " stayed as text.
+for (const [marker, block] of [
+  ["- ", "<ul>\n  <li>Milk|</li>\n</ul>"],
+  ["1. ", "<ol>\n  <li>Milk|</li>\n</ol>"],
+  ["# ", "<h1>Milk|</h1>"],
+  ["[ ] ", '<ul>\n  <li style="list-style: none"><input type="checkbox"> Milk|</li>\n</ul>'],
+])
+  test(`"${marker}" at the start of a paragraph's later line makes the block from that line; the lines before stay a paragraph`, () => {
+    walk('<p class="a">|<br></p>', [["Groceries", "Shift+Enter", `${marker}Milk`], `<p class="a">Groceries</p>\n${block}`]);
+  });
+
+test('"- " at the start of a middle line takes the lines after it too; a blank line before it stays; one undo gives back the mark', () => {
+  walk("<p>A<br><br>|B<br>C</p>", [["- "], "<p>A<br><br></p>\n<ul>\n  <li>|B<br>C</li>\n</ul>"], [["Undo"], "<p>A<br><br>- |B<br>C</p>"]);
+  // A line break in a style is not a line of the paragraph's own: the mark stays text.
+  walk("<p><em>A<br>|B</em></p>", [["- "], "<p><em>A<br>- |B</em></p>"]);
+});
+
 // ArrowDown on the last line of a code block that ends the page makes a paragraph after it: else there is no way out of
 // the code block with keys. (The rule alone: that the caret is on the block's last line, the editor reads from the page.)
 test("ArrowDown at the end of a code block that ends the page: a paragraph after it, and typing goes there", () => {

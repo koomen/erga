@@ -201,6 +201,20 @@ journey("lists made with keys on an empty page", () => {
     await ed.type("After");
     await expect.poll(() => ed.source()).toMatch(/Walk the dog<\/li>\s*<\/ul>\s*<p>After<\/p>/);
   });
+
+  // "- " and "1. " made a list only at a paragraph's start: on a line after Shift+Enter they stayed as text.
+  test("- and 1. at the start of a paragraph's later line, after Shift+Enter, make a list from that line", async () => {
+    const end = async () => (await ed.visible()).split("\n").slice(-7).join("\n");
+    await ed.press("Shift+Enter");
+    await ed.type("- Milk");
+    await ed.press("Enter");
+    await ed.press("Enter");
+    await ed.type("Steps");
+    await ed.press("Shift+Enter");
+    await ed.type("1. One");
+    await expect.poll(end).toBe(["After", "", "• Milk", "", "Steps", "", "1. One|"].join("\n"));
+    expect(await ed.source()).toMatch(/<p>After<\/p>\s*<ul>\s*<li>Milk<\/li>\s*<\/ul>\s*<p>Steps<\/p>\s*<ol>\s*<li>One<\/li>\s*<\/ol>/);
+  });
 });
 
 journey("Tab in a page that has lists", () => {
