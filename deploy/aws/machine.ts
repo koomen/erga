@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Aws } from "./cli";
-import { CELLD_PORT, paramPath } from "./template";
+import { CELLD_PORT, paramFolder } from "./template";
 
 /** celld (Deno, Apache-2.0) for Linux ARM64, at a fixed version. */
 export const CELLD = {
@@ -27,6 +27,12 @@ export const CHROME = {
 };
 /** Where the Worker finds the machine's Chrome (ERGA_CHROME, cloudflare/browser.ts): on the loopback only. */
 export const CHROME_DEVTOOLS = "127.0.0.1:9222";
+
+/**
+ * celld's listener for its own commands (deploy, d1): on the loopback only, since it asks nobody who they are. Trap:
+ * celld does not start with a public CELLD_ADDR unless this is set.
+ */
+const CELLD_INTERNAL = "127.0.0.1:8081";
 
 const celldKey = `programs/celld-${CELLD.version}.gz`;
 const chromeKey = `programs/chrome-${CHROME.revision}.zip`;
@@ -48,6 +54,13 @@ async function fetched(url: string, sha256: string, log: (l: string) => void): P
   return path;
 }
 
+/**
+ * Puts one file in the bucket, in one request. Trap: `aws s3 cp` sends a large file in parts, and S3 then asks the
+ * sender for kms:Decrypt. The key lets the admins encrypt only (template.ts, Key), so S3 refuses a file in parts.
+ */
+export const putObject = (aws: Aws, bucket: string, key: string, file: string) =>
+  aws("s3api", "put-object", "--bucket", bucket, "--key", key, "--body", file);
+
 /** Puts celld and Chrome in the bucket, unless they are there. */
 export async function putPrograms(aws: Aws, bucket: string, log: (l: string) => void) {
   for (const [key, url, sha] of [
@@ -56,7 +69,7 @@ export async function putPrograms(aws: Aws, bucket: string, log: (l: string) => 
   ] as const) {
     const there = await aws("s3api", "head-object", "--bucket", bucket, "--key", key).catch(() => null);
     if (there) continue;
-    await aws("s3", "cp", await fetched(url, sha, log), `s3://${bucket}/${key}`);
+    await putObject(aws, bucket, key, await fetched(url, sha, log));
     log(`put ${key} in the bucket`);
   }
 }
@@ -91,7 +104,7 @@ export async function onMachine(aws: Aws, machine: string, script: string, timeo
     if (!r || ["Pending", "InProgress", "Delayed"].includes(r.Status)) continue;
     if (r.Status == "Success") return r.StandardOutputContent;
     throw new Error(
-      `on the machine (${r.Status}): ${(r.StandardErrorContent || r.StandardOutputContent).trim().split("\n").slice(-6).join("\n")}`
+      `on the machine (${r.Status}): ${`${r.StandardOutputContent}\n${r.StandardErrorContent}`.trim().split("\n").slice(-6).join("\n")}`
     );
   }
 }
@@ -133,6 +146,7 @@ After=network-online.target
 [Service]
 User=celld
 Environment=AWS_REGION=${o.region} CELLD_BUCKET=${fleet(o.bucket)} CELLD_ADDR=0.0.0.0:${CELLD_PORT} CELLD_TRUST_FORWARDED_HEADERS=1
+Environment=CELLD_INTERNAL_ADDR=${CELLD_INTERNAL}
 Environment=CELLD_WATCH=/var/lib/celld/state CELLD_ASSET_CACHE_DIR=/var/lib/celld/assets
 ExecStart=/usr/local/bin/celld
 Restart=always
@@ -166,6 +180,9 @@ EOF
 systemctl daemon-reload
 systemctl enable celld chrome >/dev/null 2>&1
 systemctl restart celld chrome
+listens() { ss -ltn | grep -q ':${CELLD_PORT} '; }
+for i in $(seq 1 30); do listens && break; sleep 1; done
+listens || { echo "celld doesn't start: $(journalctl -u celld -n 20 --no-pager -o cat | grep -m1 Error)" >&2; exit 1; }
 for i in $(seq 1 30); do curl -fsS http://${CHROME_DEVTOOLS}/json/version >/dev/null 2>&1 && break; sleep 1; done
 echo "celld $(/usr/local/bin/celld --version | head -1); $(curl -fsS http://${CHROME_DEVTOOLS}/json/version | grep -o '"Browser": "[^"]*"')"
 `;
@@ -173,7 +190,9 @@ echo "celld $(/usr/local/bin/celld --version | head -1); $(curl -fsS http://${CH
 
 /**
  * Loads a release that is in the bucket: the database's migrations first (they only add: the release that runs now
- * still works on the new schema), then the Worker, then it waits until the new version answers. The secrets go into
+ * still works on the new schema), then the Worker, then it waits until the new version answers. Trap: celld's node
+ * takes its lease (nodes/ in the fleet's folder) only when it has a deployment, and celld d1 needs that node: the
+ * first release goes the other way, the Worker and then the migrations. The secrets go into
  * the settings on the machine only, never into the bucket's release. The machine adds the version to its list of
  * releases (rollback reads it). `first`: SQL to run after it answers (setup's first admin).
  */
@@ -186,13 +205,21 @@ if [ ! -f "$dir/wrangler.json" ]; then
   rm -rf "$dir" && mv "$dir.new" "$dir"
 fi
 live=$(mktemp -d) && trap 'rm -rf "$live"' EXIT && cp -r "$dir/." "$live" && cd "$live"
-aws ssm get-parameters-by-path --path ${paramPath(o.stack)} --with-decryption --output json | python3 -c 'import json, sys
+aws ssm get-parameters-by-path --path ${paramFolder(o.stack)} --with-decryption --output json | python3 -c 'import json, sys
 c = json.load(open("wrangler.json"))
 c["vars"].update({p["Name"].rsplit("/", 1)[1]: p["Value"] for p in json.load(sys.stdin)["Parameters"]})
 json.dump(c, open("wrangler.json", "w"))'
 quiet() { grep -v 'jemalloc\\|allocator' || true; }
-celld d1 migrations apply erga . --bucket ${fleet(o.bucket)} 2>&1 | quiet | tail -3
-celld deploy . --bucket ${fleet(o.bucket)} 2>&1 | quiet | tail -2
+migrate() { celld d1 migrations apply erga . --bucket ${fleet(o.bucket)} 2>&1 | quiet | tail -3; }
+load() { celld deploy . --bucket ${fleet(o.bucket)} 2>&1 | quiet | tail -2; }
+if aws s3 ls ${fleet(o.bucket)}/nodes/ 2>/dev/null | grep -q .; then
+  migrate
+  load
+else
+  load
+  for i in $(seq 1 60); do aws s3 ls ${fleet(o.bucket)}/nodes/ 2>/dev/null | grep -q . && break; sleep 2; done
+  migrate
+fi
 for i in $(seq 1 90); do curl -sS localhost:${CELLD_PORT}/api/deploys/version 2>/dev/null | grep -q '"version":"${o.version}"' && break; sleep 2; done
 curl -fsS localhost:${CELLD_PORT}/api/deploys/version | grep -q '"version":"${o.version}"' || { echo "release ${o.version} doesn't answer" >&2; exit 1; }
 ${o.first ? `celld d1 execute erga . --bucket ${fleet(o.bucket)} --command "${o.first.replace(/"/g, '\\"')}" 2>&1 | quiet | tail -1` : ""}
@@ -211,6 +238,6 @@ export async function putRelease(aws: Aws, bucket: string, dir: string, version:
   // (No macOS extended attributes: GNU tar on the machine warns of each.)
   const tar = Bun.spawnSync(["tar", "--no-xattrs", "--no-mac-metadata", "-czf", tgz, "-C", dir, "."]);
   if (tar.exitCode != 0) throw new Error(`tar failed: ${tar.stderr.toString()}`);
-  await aws("s3", "cp", tgz, `s3://${bucket}/releases/${version}.tgz`, "--quiet");
+  await putObject(aws, bucket, `releases/${version}.tgz`, tgz);
   return Bun.file(tgz).size;
 }

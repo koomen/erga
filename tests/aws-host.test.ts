@@ -1,8 +1,11 @@
 // The AWS host of bun erga (deploy/aws/): the stacks' templates, setup's answers and steps on AWS, the first admin's SQL.
 // No AWS here: the templates and the steps are pure.
 import { expect, test } from "bun:test";
+import type { Aws } from "../deploy/aws/cli";
+import { deployScript, provisionScript, putObject } from "../deploy/aws/machine";
 import { awsEntry, discoverOidc, firstSql } from "../deploy/aws/setup";
-import { type AwsShape, certificatesTemplate, stackTemplate, TOKEN_PATHS } from "../deploy/aws/template";
+import { changeSetKind } from "../deploy/aws/stack";
+import { type AwsShape, certificatesTemplate, NAT_USER_DATA, stackTemplate, TOKEN_PATHS } from "../deploy/aws/template";
 import { frontSignInCheck } from "../deploy/own/facts";
 import { addressOf, answersProblem, defaultAnswers, type Facts, githubManifest, parseAnswer, steps } from "../deploy/own/plan";
 
@@ -323,4 +326,50 @@ test("the sign-in's endpoints come from its issuer, and the check sees the load 
   expect(await frontSignInCheck(balancer("https://erga.example.com/auth/github"), "erga.example.com", "client-1")).toMatchObject({
     bad: expect.stringContaining("not to the sign-in in front"),
   });
+});
+
+test("the plan of a new stack can run again: the stack that waits for its first change set is still new", () => {
+  expect(changeSetKind("erga", "us-west-2", null)).toBe("CREATE");
+  // `setup <host> stack` shows the plan, and leaves this status; `stack --yes` plans again, then applies.
+  expect(changeSetKind("erga", "us-west-2", "REVIEW_IN_PROGRESS")).toBe("CREATE");
+  expect(changeSetKind("erga", "us-west-2", "UPDATE_COMPLETE")).toBe("UPDATE");
+  expect(() => changeSetKind("erga", "us-west-2", "UPDATE_IN_PROGRESS")).toThrow("busy");
+  expect(() => changeSetKind("erga", "us-west-2", "ROLLBACK_COMPLETE")).toThrow("delete the stack");
+});
+
+test("an upload to the bucket is one request: the key lets the admins encrypt, and a file in parts needs kms:Decrypt", async () => {
+  const calls: string[][] = [];
+  await putObject((async (...args: string[]) => void calls.push(args)) as Aws, "bucket", "releases/v1.tgz", "/tmp/v1.tgz");
+  expect(calls).toEqual([["s3api", "put-object", "--bucket", "bucket", "--key", "releases/v1.tgz", "--body", "/tmp/v1.tgz"]]);
+  const statements: { Sid: string; Action: string[] }[] = (stackTemplate(shape).Resources as any).Key.Properties.KeyPolicy.Statement;
+  expect(statements.filter((s) => s.Sid.includes("admins")).flatMap((s) => s.Action)).not.toContain("kms:Decrypt");
+});
+
+test("the NAT machine's script runs at each start, gives dnf a swap file, and adds its rule one time", () => {
+  expect((stackTemplate(shape).Resources as any).Nat.Properties.UserData).toEqual({ "Fn::Base64": NAT_USER_DATA });
+  expect(NAT_USER_DATA).toContain("- [scripts-user, always]");
+  const script = NAT_USER_DATA.slice(NAT_USER_DATA.indexOf("#!/bin/bash"), NAT_USER_DATA.indexOf("--//--"));
+  expect(script.indexOf("swapon /swap")).toBeLessThan(script.indexOf("dnf install"));
+  expect(script).toContain("iptables -t nat -C $rule 2> /dev/null || iptables -t nat -A $rule");
+  // The script is good bash.
+  expect(Bun.spawnSync(["bash", "-n"], { stdin: Buffer.from(script) }).exitCode).toBe(0);
+});
+
+test("the machine reads its secrets by the path its role allows; the first release loads the Worker before the migrations", () => {
+  const script = deployScript({ bucket: "bucket", region: "us-west-2", stack: "erga", version: "v1" });
+  // The first release: celld's node has no lease before it has a deployment, and the migrations need that node.
+  const at = script.indexOf("if aws s3 ls s3://bucket/fleet/nodes/");
+  const [later, first] = script.slice(at, script.indexOf("\nfi\n", at)).split("\nelse\n");
+  expect(later.indexOf("\n  migrate")).toBeLessThan(later.indexOf("\n  load"));
+  expect(first.indexOf("  load")).toBeLessThan(first.indexOf("\n  migrate"));
+  expect([later.indexOf("\n  migrate"), first.indexOf("  load")].every((i) => i >= 0)).toBe(true);
+  expect(script).toContain("aws ssm get-parameters-by-path --path /erga/erga --with-decryption");
+  expect(JSON.stringify((stackTemplate(shape).Resources as any).Role)).toContain(':parameter/erga/erga"');
+});
+
+test("celld has a listener of its own on the loopback, and the machine's setup fails when celld doesn't listen", () => {
+  const script = provisionScript({ bucket: "bucket", region: "us-west-2" });
+  expect(script).toContain("CELLD_ADDR=0.0.0.0:8080");
+  expect(script).toContain("Environment=CELLD_INTERNAL_ADDR=127.0.0.1:");
+  expect(script).toContain(`listens || { echo "celld doesn't start:`);
 });
