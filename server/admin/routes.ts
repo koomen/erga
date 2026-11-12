@@ -34,7 +34,7 @@ import { routeFor, SECRET, type RouteRow } from "../../shared/routes.ts";
 import { ConfigError, CredentialError, NotAllowed, roleValue, type UserRole } from "../directory/index.ts";
 import { page } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
-import { authOps, AuthError, ScopeError, type Provider } from "../identity/index.ts";
+import { authOps, AuthError, providerOf, ScopeError } from "../identity/index.ts";
 import type { Who } from "../directory/index.ts";
 import { call, ctx, Field, form, json, plainJson, redirect } from "../http.ts";
 import { settingsPage } from "./settings.ts";
@@ -154,15 +154,15 @@ export const ROUTES: readonly RouteRow<Run>[] = [
   {
     method: "POST",
     path: "/admin/auth",
-    // provider (github or google), do=save (clientId, secret). The answer says what the page shows: never the secret.
+    // provider (an OAuth provider's id), do=save (clientId, secret). The answer says what the page shows: never the secret.
     run: async (a, f) => {
-      if (f.do != "save") return elsewhere();
-      const provider: Provider = f.provider == "google" ? "google" : "github";
+      const provider = providerOf(f.provider);
+      if (f.do != "save" || !provider) return elsewhere();
       return plainJson({
         result: await authOps(a.platform, a.url.origin).save(a.who, { clientId: f.clientId, secret: f.secret }, provider),
       });
     },
-    action: "Set a GitHub app's or Google client's ID and secret (Authentication)",
+    action: "Set an OAuth provider's app: its client ID and secret (Authentication)",
     domain: "admin",
     exempt: SECRET,
   },

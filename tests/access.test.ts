@@ -5,7 +5,7 @@
 // in. Admins always have write. On an in-memory database with D1's migrations, 0240's and 0250's translations included.
 
 import { expect, test } from "bun:test";
-import { Directory, type Vouched } from "../server/directory/index.ts";
+import { Directory, groupOf, type Vouched } from "../server/directory/index.ts";
 import { resolve } from "../server/identity/accounts.ts";
 import { memory } from "./helpers/memory-sql.ts";
 import { quietConsole } from "./helpers/quiet.ts";
@@ -13,12 +13,28 @@ import { quietConsole } from "./helpers/quiet.ts";
 quietConsole();
 
 const ADMIN = { login: "koomen", admin: true };
-const google = (sub: string, email: string, hd: string | null = null, verified = true): Vouched => ({ provider: "google", subject: sub, handle: email, name: null, emails: [{ email, verified }], hd });
-const github = (id: number, login: string, orgs: string[] | null = null): Vouched => ({ provider: "github", subject: String(id), handle: login, name: null, emails: [], orgs });
+// As each provider's sign-in gives them (server/identity/providers.ts): Google's Workspace (its hd claim; none: a
+// personal account), GitHub's organizations (null: not asked, so those of the last sign-in stand).
+const google = (sub: string, email: string, hd: string | null = null, verified = true): Vouched => ({
+  provider: "google",
+  subject: sub,
+  handle: email,
+  name: null,
+  emails: [{ email, verified }],
+  groups: hd ? [groupOf("workspace", hd)] : [],
+});
+const github = (id: number, login: string, orgs: string[] | null = null): Vouched => ({
+  provider: "github",
+  subject: String(id),
+  handle: login,
+  name: null,
+  emails: [],
+  groups: orgs?.map((o) => groupOf("github_org", o)) ?? null,
+});
 /** The pretend GitHub's public users API: every login is an account (its id from its length and first letter), but no-such-*. */
-const lookup = async (login: string) =>
-  login.startsWith("no-such-") ? null : { id: String(1000 + login.length * 100 + login.charCodeAt(0)), login };
-const fresh = () => new Directory(memory(), { admins: ["koomen"], github: lookup });
+const lookup = async (_provider: string, login: string) =>
+  login.startsWith("no-such-") ? null : { subject: String(1000 + login.length * 100 + login.charCodeAt(0)), handle: login };
+const fresh = () => new Directory(memory(), { admins: ["koomen"], providers: ["github", "google"], lookup });
 /** An account someone made at their first sign-in (no rule of its own). */
 const joined = (dir: Directory, name: string, v: Vouched) => dir.identities.createAccount(name, v);
 const everybody = async (dir: Directory, access: string) => dir.rules.change(ADMIN, (await dir.rules.list(ADMIN)).find((r) => r.kind == "everybody")!.id, access);
@@ -68,7 +84,7 @@ test("Google Workspace: the hd claim, never the email's domain; a personal accou
   // The email says example.com, but no hd: a personal account (or another Workspace's alias). No.
   expect(await dir.mayJoin(google("g2", "a@example.com"))).toBe(false);
   expect(await dir.mayJoin(google("g3", "a@gmail.com"))).toBe(false);
-  expect(await dir.mayJoin({ ...github(4, "gh"), hd: "example.com" })).toBe(false);
+  expect(await dir.mayJoin(github(4, "gh", ["example.com"]))).toBe(false);
   await joined(dir, "eve", google("g1", "eve@example.com", "example.com"));
   expect(await accessOf(dir, "eve")).toBe("write");
   // Her account leaves the Workspace (Google gives no hd now): her next sign-in records it, and she's refused.
@@ -84,7 +100,7 @@ test("GitHub organizations: as GitHub answered at each sign-in, recorded on the 
   await joined(dir, "fay", github(1, "fay", ["acme"]));
   expect(await resolve(dir, github(1, "fay", ["acme"]), { join: false })).toEqual({ kind: "in", login: "fay" });
   expect((await resolve(dir, github(1, "fay", []), { join: false })).kind).toBe("refused");
-  expect((await dir.identities.find("github", "1"))?.orgs).toEqual([]);
+  expect((await dir.identities.find("github", "1"))?.groups).toEqual([]);
 });
 
 test("users added before their first sign-in: a GitHub account by its id, a Google account by its verified email, then its sub", async () => {
@@ -96,7 +112,7 @@ test("users added before their first sign-in: a GitHub account by its id, a Goog
   };
   // GitHub: the login resolved to GitHub's id now; a login GitHub doesn't know is refused.
   const { person: jo } = await dir.addUser(ADMIN, { provider: "github", handle: "Jo" }, "read");
-  expect(jo).toMatchObject({ provider: "github", handle: "jo", subject: String((await lookup("jo"))!.id), role: "read" });
+  expect(jo).toMatchObject({ provider: "github", handle: "jo", subject: (await lookup("github", "jo"))!.subject, role: "read" });
   await expect(dir.addUser(ADMIN, { provider: "github", handle: "no-such-person" }, "read")).rejects.toThrow("GitHub has no account");
   // The id matches, whatever the login is now; the login on another account (it changed hands) doesn't.
   expect(await dir.mayJoin(github(9999, "jo"))).toBe(false);
@@ -170,7 +186,7 @@ test("the rules' own rules: admins only; groups only; everybody's stays; values 
   await expect(dir.rules.add(ADMIN, { kind: "account", value: "ada", access: "read" })).rejects.toThrow("isn't a kind of rule");
   await expect(dir.rules.add(ADMIN, { kind: "workspace", value: "not a domain", access: "read" })).rejects.toThrow("isn't a domain");
   await expect(dir.addUser(ADMIN, { provider: "google", handle: "1+x@users.noreply.github.com" }, "read")).rejects.toThrow(
-    "isn't a Google account"
+    "isn't an account's email address"
   );
   const org = await dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "read" });
   expect((await dir.rules.change(ADMIN, org.id, "write")).access).toBe("write");
@@ -192,7 +208,7 @@ test("suggestions: the Workspace domains and GitHub organizations of people who 
 
 test("a GitHub sign-in's organizations: active memberships only, as the pretend GitHub answers the person's token; none when it can't", async () => {
   const { mockGithub } = await import("../dev/github-mock");
-  const { memberships } = await import("../server/identity/sign-in");
+  const { memberships } = await import("../server/identity/providers");
   const gh = mockGithub({ app: { slug: "erga-editor", clientId: "Iv1.x", clientSecret: "s" }, origin: "https://gh.test", callback: "https://erga.test/auth/github/callback", orgs: ["Acme", "other"] });
   gh.state.tokens.push({ token: "ghu_ada", kind: "user", login: "ada" });
   const real = globalThis.fetch;
@@ -205,7 +221,7 @@ test("a GitHub sign-in's organizations: active memberships only, as the pretend 
 
 test("Add user: GitHub's rate limit is said as such; with the sign-in app, a pasted profile URL is added", async () => {
   const { mockGithub, mockGithubId } = await import("../dev/github-mock");
-  const { githubAccounts } = await import("../server/identity/sign-in");
+  const { PROVIDERS } = await import("../server/identity/providers");
   // The pretend GitHub refuses a rate-limited-* login as GitHub does a server's IP that used up its 60 lookups an hour
   // (a reported bug: Add user said "GitHub didn't answer … status 403"), unless the sign-in app's values come with it.
   const APP = { clientId: "Iv1.mockgithubapp0", secret: "mock-github-client-secret" };
@@ -215,7 +231,11 @@ test("Add user: GitHub's rate limit is said as such; with the sign-in app, a pas
     callback: "https://erga.test/auth/github/callback",
   });
   let app: typeof APP | null = null;
-  const dir = new Directory(memory(), { admins: ["koomen"], github: githubAccounts("https://gh.test", async () => app) });
+  const dir = new Directory(memory(), {
+    admins: ["koomen"],
+    providers: ["github"],
+    lookup: (_provider, login) => PROVIDERS.github.lookup!("https://gh.test", app, login),
+  });
   const login = "rate-limited-4f9a1c07";
   const real = globalThis.fetch;
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) =>

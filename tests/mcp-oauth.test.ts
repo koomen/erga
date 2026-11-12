@@ -1,4 +1,4 @@
-// MCP's sign-in (server/identity/oauth.ts) on an in-memory database: the metadata, PKCE, the clients' redirect URIs,
+// MCP's sign-in (server/identity/mcp-oauth.ts) on an in-memory database: the metadata, PKCE, the clients' redirect URIs,
 // and the whole flow (register, authorize, approve, trade the code, call /mcp with the token). And where / sends
 // someone signed in (homeGoesToDocs).
 
@@ -15,7 +15,7 @@ import {
   redirectAllowed,
   resourceMetadata,
   serverMetadata,
-} from "../server/identity/oauth";
+} from "../server/identity/mcp-oauth";
 import { serverApi } from "../server/api";
 import { respond } from "../server/http";
 import { homeGoesToDocs } from "../server/pages/index.ts";

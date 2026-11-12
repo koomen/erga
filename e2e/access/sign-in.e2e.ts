@@ -162,21 +162,21 @@ journey("who may sign in, on a server of its own", () => {
     await addRule("github_org", "acme", "read");
     await page.locator(rule("github_org", "acme")).waitFor();
 
-    // A Workspace account of example.org (hd): write, so a new document.
+    // A Workspace account of example.org (its group): write, so a new document.
     await signIn(AMY(id));
     await join(`amy${id}`);
     expect(await makes()).toMatch(new RegExp(`^/amy${id}/`));
-    // The same email domain without hd is a personal account: refused, and told so.
+    // The same email domain with no Workspace is a personal account: refused, and told so.
     await signIn(BOB(id));
     expect(await page.textContent("h1")).toBe("Not on this server");
     expect(await page.textContent("main")).toContain("personal Google account");
     // A member of acme: read, so no new document.
-    await signIn(`provider=github&subject=${Date.now()}&handle=dee-${id}&org=acme`);
+    await signIn(`provider=github&subject=${Date.now()}&handle=dee-${id}&group=acme`);
     await join(`dee${id}`);
     expect((await page.goto(`${root}/new`))?.status()).toBe(403);
     expect(await page.textContent("main")).toContain("not make or edit documents");
     // Not a member: refused, told what GitHub said.
-    await signIn(`provider=github&subject=${Date.now() + 1}&handle=eve-${id}&org=other`);
+    await signIn(`provider=github&subject=${Date.now() + 1}&handle=eve-${id}&group=other`);
     expect(await page.textContent("main")).toContain("an active member of other");
   });
 
@@ -203,6 +203,10 @@ journey("who may sign in, on a server of its own", () => {
     const CARD = 'section.server[data-provider="github"]';
     await page.goto(`${root}/admin/auth?user=tester`);
     await page.waitForSelector(CARD);
+    // The first card is the mode (the deploy's: OAuth here), then a card for each provider.
+    expect(await page.$$eval("section.auth > section", (cs) => cs.map((c) => (c as HTMLElement).dataset.mode ?? c.className).join())).toBe(
+      "oauth,provider,provider"
+    );
     expect(await page.$$eval("section.server", (cs) => cs.map((c) => (c as HTMLElement).dataset.provider).join())).toBe("github,google");
     const card = () =>
       page.evaluate((sel) => {
@@ -241,8 +245,8 @@ journey("who may sign in, on a server of its own", () => {
 
 /** A rule's row on the Access page, by its kind and (for a group) its name. */
 const rule = (kind: string, value = "") => `ol.rules > li[data-kind="${kind}"]${value ? `:has(.title:text-is("${value}"))` : ""}`;
-/** The pretend Google's answers: Amy, of the Workspace example.org (hd); Bob, a personal account with the same email domain. */
-const AMY = (id: string) => `provider=google&subject=g${id}&handle=amy.${id}@example.org&email=amy.${id}@example.org&hd=example.org`;
+/** The pretend Google's answers: Amy, of the Workspace example.org (her group); Bob, a personal account with the same email domain. */
+const AMY = (id: string) => `provider=google&subject=g${id}&handle=amy.${id}@example.org&email=amy.${id}@example.org&group=example.org`;
 const BOB = (id: string) => `provider=google&subject=h${id}&handle=bob.${id}@example.org&email=bob.${id}@example.org`;
 
 journey("a new person signs in, uses the account corner, signs out and signs in", () => {
@@ -250,8 +254,9 @@ journey("a new person signs in, uses the account corner, signs out and signs in"
   const sub = unique("g"),
     name = unique("nia");
   const PICTURE = "https://lh3.googleusercontent.com/a/nia";
+  // (Her picture's address as Google's sign-in gives it: at the pages' size.)
   const signIn = () =>
-    `${root}/auth/dev?provider=google&subject=${sub}&handle=${encodeURIComponent(`Nia.Ray.${sub}@example.com`)}&email=${encodeURIComponent(`nia.${sub}@example.com`)}&name=Nia&picture=${encodeURIComponent(PICTURE)}&next=/docs`;
+    `${root}/auth/dev?provider=google&subject=${sub}&handle=${encodeURIComponent(`Nia.Ray.${sub}@example.com`)}&email=${encodeURIComponent(`nia.${sub}@example.com`)}&name=Nia&picture=${encodeURIComponent(`${PICTURE}=s64-c`)}&next=/docs`;
   const path = () => new URL(page.url()).pathname;
   /** Her document: its editor address (a path, with ?edit). */
   let at: string;

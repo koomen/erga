@@ -4,8 +4,8 @@
 // 2. The first deploy, with the secrets that the Worker doesn't hold yet: its own SESSION_SECRET and FACTORY_KEY, the
 //    sign-in apps' secrets, and SNAPSHOT_TOKEN when the setup has a staging server. Each is made one time and kept in
 //    .erga/secrets.json under its host; a Worker that holds a secret keeps it, and no later deploy sends one.
-// 3. After the health check: the first admin (a users row) and feedback_repository, written into the new database with
-//    the Cloudflare D1 API. A database that has an admin already gets nothing.
+// 3. After the health check: the first admin and feedback_repository (plan.ts, firstRows), written into the new
+//    database with the Cloudflare D1 API. A database that has an admin already gets nothing.
 // 4. At the end, register's ops token: the admin signs in and approves it in the browser, and the entry gets it.
 
 import { randomBytes } from "node:crypto";
@@ -14,7 +14,7 @@ import { type DeployOptions, deployInstance } from "../cli/deploy";
 import { askOpsToken, readOps } from "../cli/ops";
 import { d1 } from "../pipeline/account";
 import { Cloudflare, type Fetch } from "../pipeline/pipeline";
-import { type Answers, hostOf, SETUP_COMMIT, setupEntry, type TargetName, targetsOf } from "./plan";
+import { type Answers, firstRows, hostOf, SETUP_COMMIT, setupEntry, type TargetName, targetsOf } from "./plan";
 import { loadSecrets, saveSecrets } from "./store";
 
 export interface Setup {
@@ -117,16 +117,16 @@ export async function firstDeploy(o: Setup, t: TargetName): Promise<string> {
     createSubdomain: !!entry.subdomain && !o.subdomain,
     ...(o.home && t == "production" ? { home: o.home } : {}),
   });
-  await firstRows(cf, acc, entry.worker, o.answers, print);
+  await writeFirstRows(cf, acc, entry.worker, o.answers, print);
   return sha;
 }
 
 /**
- * The first admin (a users row with the role admin) and, if the person gave one, feedback_repository: written only into
+ * The first admin and, if the person gave one, feedback_repository (plan.ts, firstRows): written only into
  * a database with no admin yet, the one `worker` binds as DB. A staging server's is a copy of its primary's (it has the
  * admin already), and a run again, or an admin's later change, stays as it is.
  */
-export async function firstRows(cf: Cloudflare, acc: string, worker: string, a: Answers, print: (line: string) => void) {
+export async function writeFirstRows(cf: Cloudflare, acc: string, worker: string, a: Answers, print: (line: string) => void) {
   const settings = await cf.call<{ bindings?: { type: string; name: string; database_id?: string }[] }>(
     "GET",
     `${acc}/workers/scripts/${worker}/settings`,
@@ -141,24 +141,15 @@ export async function firstRows(cf: Cloudflare, acc: string, worker: string, a: 
     print(`The database ${database} has an admin already (${admin.login}): setup writes nothing into it.`);
     return;
   }
-  const now = Date.now();
-  await q(
-    "INSERT INTO users (login, name, role, created) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (login) DO UPDATE SET role = 'admin'",
-    a.admin,
-    a.admin,
-    "admin",
-    now
-  );
+  for (const { table, row, onConflict } of firstRows(a))
+    await q(
+      `INSERT INTO ${table} (${Object.keys(row).join(", ")}) VALUES (${Object.keys(row)
+        .map((_, i) => `?${i + 1}`)
+        .join(", ")}) ON CONFLICT ${onConflict}`,
+      ...Object.values(row)
+    );
   print(`${a.admin} is the first admin, in the database ${database}.`);
-  if (!a.feedback) return;
-  await q(
-    "INSERT INTO server_config (key, value, updated, updated_by) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (key) DO NOTHING",
-    "feedback_repository",
-    JSON.stringify(a.feedback),
-    now,
-    a.admin
-  );
-  print(`Feedback opens issues in ${a.feedback} (the setting feedback_repository).`);
+  if (a.feedback) print(`Feedback opens issues in ${a.feedback} (the setting feedback_repository).`);
 }
 
 /**

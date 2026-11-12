@@ -8,13 +8,10 @@
 
 import { expect, test } from "bun:test";
 import {
-  type AppCheck,
   type AppContext,
-  type AppValues,
   AuthApps,
   AuthError,
   cachedCheck,
-  checkGithubApp,
   checkValues,
   clearApp,
   discardApp,
@@ -23,7 +20,8 @@ import {
   statusOf,
 } from "../server/identity/apps";
 import type { SignInChange } from "../server/directory/index.ts";
-import { startSignIn } from "../server/identity/sign-in";
+import { startOAuth } from "../server/identity/oauth";
+import { type AppCheck, type AppValues, PROVIDERS } from "../server/identity/providers";
 import { testedSignIn } from "../server/identity/settings";
 import { testEnded, type PendingTest } from "../server/identity/app-test";
 import type { Platform } from "../server/platform";
@@ -33,6 +31,9 @@ import { quietConsole } from "./helpers/quiet.ts";
 import { respond } from "../server/http.ts";
 
 quietConsole();
+
+const startSignIn = startOAuth("github");
+const checkGithubApp = PROVIDERS.github.check;
 
 const GOOD = { clientId: "Ov23liGoodApp00000001", secret: "a".repeat(40) };
 const OTHER = { clientId: "Ov23liOtherApp0000002", secret: "b".repeat(40) };
@@ -67,9 +68,9 @@ test("the live check tells a working app from a wrong client ID, a wrong or miss
 });
 
 test("pasted values are tidied and checked: a client ID and a secret, one line each", () => {
-  expect(checkValues({ clientId: ` ${GOOD.clientId} `, secret: `${GOOD.secret}\n` })).toEqual(GOOD);
+  expect(checkValues({ clientId: ` ${GOOD.clientId} `, secret: `${GOOD.secret}\n` }, "github")).toEqual(GOOD);
   for (const bad of [{ clientId: "", secret: GOOD.secret }, { clientId: "has spaces in it", secret: GOOD.secret }, { clientId: GOOD.clientId, secret: "" }, { clientId: GOOD.clientId, secret: "short" }]) {
-    expect(() => checkValues(bad)).toThrow(AuthError);
+    expect(() => checkValues(bad, "github")).toThrow(AuthError);
   }
 });
 
@@ -204,7 +205,13 @@ test("checks are remembered for a minute by the values, but not when GitHub coul
 function serverOn(own: Platform["own"]): Platform {
   return {
     secret: "s", dev: () => false,
-    signIn: { app: GOOD, github: "https://github.com", devLogin: null, encryptionKey: "factory-key" },
+    signIn: {
+      mode: "oauth",
+      apps: { github: GOOD, google: { clientId: "", secret: "" } },
+      origins: { github: null, google: null },
+      devLogin: null,
+      encryptionKey: "factory-key",
+    },
     deploy: { target: "production", version: null, primary: null },
     own,
     directory: { config: { record: async () => {} } } as unknown as Directory,
@@ -227,12 +234,12 @@ test("sign-in uses the page's values over the deploy's, and ?app=pending tests t
   expect(test.searchParams.get("state")).toStartWith("p.");
   expect(test.searchParams.get("redirect_uri")).toBe("https://erga.dev/auth/github/callback");
   // A test that worked for someone who isn't an admin changes nothing, and says why; an admin's puts them in use.
-  expect(await testedSignIn(env, OTHER.clientId, { kind: "in", login: "bo", admin: false })).toBe(false);
+  expect(await testedSignIn(env, OTHER.clientId, { kind: "in", login: "bo", admin: false }, "github")).toBe(false);
   expect((await apps.read("github")).pending?.test?.error).toContain("only an admin's sign-in");
   // The end of a test of other values (they changed meanwhile) notes nothing.
-  expect(await testedSignIn(env, GOOD.clientId, { kind: "in", login: "koomen", admin: true })).toBe(false);
+  expect(await testedSignIn(env, GOOD.clientId, { kind: "in", login: "koomen", admin: true }, "github")).toBe(false);
   expect((await apps.read("github")).pending?.clientId).toBe(OTHER.clientId);
-  expect(await testedSignIn(env, OTHER.clientId, { kind: "in", login: "koomen", admin: true })).toBe(true);
+  expect(await testedSignIn(env, OTHER.clientId, { kind: "in", login: "koomen", admin: true }, "github")).toBe(true);
   expect((await go()).searchParams.get("client_id")).toBe(OTHER.clientId);
   // A server whose own storage can't be read signs in with the deploy's values.
   const broken = serverOn({

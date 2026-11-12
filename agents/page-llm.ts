@@ -39,7 +39,7 @@ import {
   type PageLlmWho,
 } from "../server/directory/index.ts";
 import { whoOf, type Platform, type Session } from "../server/platform.ts";
-import { homeVisitor, PROVIDERS, providersOn, type Provider } from "../server/identity/index.ts";
+import { homeVisitor, signInChoices } from "../server/identity/index.ts";
 import type { SignInChoice } from "../shared/sign-in.ts";
 import { tokenOk } from "../server/home/index.ts";
 import { DEFAULT_PAGE_LLM_MODEL, isPageLlmModel, MODELS, type ModelChoice } from "../shared/models.ts";
@@ -63,12 +63,6 @@ type Ask = typeof Ask.Type;
 type Code = "sign_in" | "off" | "limit" | "error";
 const STATUS: Record<Code, number> = { sign_in: 401, off: 403, limit: 429, error: 400 };
 const fail = (code: Code, error: string, status = STATUS[code]) => json({ error, code }, status);
-
-/** The sign-in providers that are on, for the sign-in dialog. */
-async function signInChoices(p: Platform): Promise<SignInChoice[]> {
-  const on = await providersOn(p);
-  return (Object.keys(PROVIDERS) as Provider[]).filter((id) => on[id]).map((id) => ({ id, label: PROVIDERS[id].label }));
-}
 
 /** The visitor, in person: agents' tokens have no model here. */
 const visitorOf = (s: Session | null) => (s && !s.agent ? s : null);

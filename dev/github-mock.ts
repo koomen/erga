@@ -1,5 +1,5 @@
 // A pretend GitHub, for the tests and local development: the parts of github.com and api.github.com that sign-in
-// with GitHub touches (server/identity/sign-in.ts). One origin, the dev server's, under /__github:
+// with GitHub touches (server/identity/oauth.ts). One origin, the dev server's, under /__github:
 //
 //   GET  /login/oauth/authorize              GitHub's sign-in page: Authorize goes back to the app's callback with a code
 //   POST /login/oauth/access_token           the code for the person's token (the app's client id and secret checked)

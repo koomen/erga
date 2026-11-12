@@ -15,7 +15,7 @@
 // share button in the editor makes a documents token, /tokens makes and
 // revokes them, and an agent on the command line can ask for one (a device
 // flow: it gets a link for the person to approve, and polls), or an agent's app
-// asks through the browser (MCP's OAuth sign-in, oauth.ts: the same request,
+// asks through the browser (MCP's OAuth sign-in, mcp-oauth.ts: the same request,
 // approved on the same page, handed back with a code). Share with an
 // agent's menu makes one through /tokens, as Settings does. Only a person signed in in a browser makes a token: an agent
 // never can, whatever its scope. The app
@@ -86,7 +86,7 @@ export class ScopeError extends Schema.TaggedError<ScopeError>()("ScopeError", {
   readonly status = 403;
 }
 
-/** An OAuth request's own parts (oauth.ts): the client, where its person goes back, its PKCE challenge (S256) and state. */
+/** An OAuth request's own parts (mcp-oauth.ts): the client, where its person goes back, its PKCE challenge (S256) and state. */
 export interface OAuthAsk {
   client: string;
   redirectUri: string;
@@ -364,7 +364,7 @@ export class Tokens {
    * An agent asks for a token: `code` is its secret to poll with, and
    * `userCode` goes in the link the person opens to approve it.
    */
-  /** `oauth`: an agent's app asking through the browser (oauth.ts), which gets its token back with a code, not by polling. */
+  /** `oauth`: an agent's app asking through the browser (mcp-oauth.ts), which gets its token back with a code, not by polling. */
   async request(
     label: string | null | undefined,
     grant: Grant,
@@ -520,7 +520,7 @@ export class Tokens {
   }
 
   /**
-   * An agent's app trades its authorization code for the token (oauth.ts, /oauth/token): once, before the code
+   * An agent's app trades its authorization code for the token (mcp-oauth.ts, /oauth/token): once, before the code
    * expires, from the client the code was made for, with the same redirect URI and the PKCE verifier of its
    * challenge. Null for anything else. A code tried is used up, right or wrong.
    */

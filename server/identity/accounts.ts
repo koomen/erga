@@ -1,23 +1,22 @@
-// Which account a sign-in is: the step after a provider (GitHub, Google, or
-// the company's sign-in in front: front.ts) says who someone is (a
-// `Vouched`), the same for each provider.
+// Which account a sign-in is: the step after a sign-in, of either mode
+// (mode.ts), says who someone is (a `Vouched`), the same for each provider.
+// Nothing here asks which provider it is, or the mode.
 //
-//   1. An identity already linked (by the provider's subject id: GitHub's
-//      numeric id, Google's sub) signs in to its account, whatever its email
-//      or login is now. Each GitHub account and each Google account is its
-//      own Erga account: nothing links two of them, by email or otherwise.
-//   2. A GitHub identity whose login names an account with no identity at all
-//      (one from before identities, or one an admin added by GitHub login)
-//      claims it, once: the accounts from before keep their GitHub login as
-//      their username. An account that has an identity is never claimed by a
-//      login: a login that changed hands is refused, and the page says so.
+//   1. An identity already linked (by the provider's subject id) signs in to
+//      its account, whatever its email or login is now. Each provider's
+//      account is its own Erga account: nothing links two of them, by email
+//      or otherwise.
+//   2. An identity whose old login (Vouched.oldLogin: a GitHub login) names an
+//      account with no identity at all (one from before identities) claims
+//      it, once: the accounts from before keep that login as their username.
+//      An account that has an identity is never claimed by a login: a login
+//      that changed hands is refused, and the page says so.
 //   3. Anyone else who may join makes a new account: they choose a username
 //      first (/auth/username). Until they do, who they are waits in a signed
 //      cookie for half an hour, and nothing is written.
 //
-// The email a provider vouches for (Google's, only when email_verified) is
-// kept for the access rules' domains (server/directory/access.ts), never to
-// find an account.
+// The emails a provider verified are kept to match a person an admin added
+// by an email (server/directory/people.ts), never to find an account.
 // (The routes /auth/username and /auth/dev are rows of server/app.ts's list.)
 
 import * as Effect from "effect/Effect";
@@ -28,12 +27,13 @@ import type { Platform, Session } from "../platform.ts";
 import { inlineScript, inlineStyle, page, safeNext } from "../pages/index.ts";
 import { call, ctx, Field, form, json, plainJson, redirect, text, type Route } from "../http.ts";
 import { esc } from "../../shared/html.ts";
-import { type Directory, label, NotAllowed, type SignInProvider, type Vouched } from "../directory/index.ts";
+import { type Directory, groupOf, KIND_PEOPLE, label, NotAllowed, type RuleKind, type Vouched } from "../directory/index.ts";
+import { safeAvatar } from "../../shared/avatars.ts";
+import { SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
 import { cookies, withCookie } from "./cookies.ts";
 import { noteOf, readOnce, seeOther } from "./flash.ts";
 import { signed } from "../signed.ts";
 import { clearState, signIn } from "./sign-in.ts";
-import { isFrontAdmin } from "./front.ts";
 import type { TestEnd } from "./app-test.ts";
 
 const JOIN = "erga_join";
@@ -50,8 +50,8 @@ export type Outcome =
  * matches them with read or write (Access). Local development stands in for an admin while the group rules are as a
  * server starts: everyone may join there, and may write. A group's rule decides there as anywhere.
  */
-export async function mayJoin(platform: Pick<Platform, "dev" | "directory" | "signIn">, url: URL, v: Vouched): Promise<boolean> {
-  if (isFrontAdmin(platform.signIn.front, v) || (await platform.directory.mayJoin(v))) return true;
+export async function mayJoin(platform: Pick<Platform, "dev" | "directory">, url: URL, v: Vouched): Promise<boolean> {
+  if (await platform.directory.mayJoin(v)) return true;
   if (!platform.dev(url)) return false;
   return platform.directory.defaultRules(await platform.directory.rules.all());
 }
@@ -75,8 +75,8 @@ export async function resolve(dir: Directory, v: Vouched, o: { join: boolean; cr
     return { kind: "in", login: user.login };
   }
   let taken: string | undefined;
-  if (v.provider == "github") {
-    const row = await users.get(v.handle);
+  if (v.oldLogin) {
+    const row = await users.get(v.oldLogin);
     if (row && (await identities.unclaimed(row.login))) {
       if (o.onlyAdmins && !(await users.isAdmin(row.login))) return { kind: "refused" };
       // Its row first: a bootstrap admin has none yet, and the link writes the picture into it.
@@ -134,27 +134,33 @@ export const vouchedSignIn = Effect.fnUntraced(function* (
 
 const sessionFor = (login: string, v: Vouched): Session => ({ login, name: v.name?.trim().split(/\s+/)[0] || login });
 
-/** A GitHub login whose Erga account is someone else's (another GitHub id, or another provider). */
-const takenNote = (login: string) => `The Erga account <b>${esc(login)}</b> is someone else's: it doesn't sign in with this GitHub account. A GitHub login that changes hands never brings its Erga account with it.`;
+/** A login whose Erga account is someone else's (another account of the provider, or another provider). */
+const takenNote = (v: Vouched, login: string) =>
+  `The Erga account <b>${esc(login)}</b> is someone else's: it doesn't sign in with this ${esc(label(v.provider))} account. A ${esc(label(v.provider))} login that changes hands never brings its Erga account with it.`;
 
 function takenPage(v: Vouched, login: string) {
-  return page("Not your account", `${takenNote(login)} You signed in with ${esc(label(v.provider))} as <b>${esc(v.handle)}</b>, and this server is invite-only: ask an admin to add you under another username.`, 403);
+  return page(
+    "Not your account",
+    `${takenNote(v, login)} You signed in with ${esc(label(v.provider))} as <b>${esc(v.handle)}</b>, and this server is invite-only: ask an admin to add you under another username.`,
+    403
+  );
 }
 
 /** Who the access rules let in, and why this person isn't one of them: in place, so they know what to ask for. */
 const refusedPage = Effect.fnUntraced(function* (platform: Platform, v: Vouched, login?: string) {
   const who = login ?? v.handle;
   const rules = yield* call(() => platform.directory.rules.all().catch(() => []));
-  const workspaces = rules.filter((r) => r.kind == "workspace" && r.access != "none").map((r) => `<b>${esc(r.value)}</b>`);
-  const orgs = rules.filter((r) => r.kind == "github_org" && r.access != "none").map((r) => `<b>${esc(r.value)}</b>`);
-  const ways = ["the people an admin added"];
-  if (workspaces.length) ways.push(`Google Workspace accounts of ${workspaces.join(" or ")}`);
-  if (orgs.length) ways.push(`members of the GitHub organization${orgs.length > 1 ? "s" : ""} ${orgs.join(" or ")}`);
+  type Kind = Exclude<RuleKind, "everybody">;
+  const kinds = [...new Set(rules.flatMap((r) => (r.kind != "everybody" && r.access != "none" ? [r.kind] : [])))] as Kind[];
+  const valuesOf = (kind: Kind) => rules.filter((r) => r.kind == kind && r.access != "none").map((r) => `<b>${esc(r.value)}</b>`);
+  const ways = ["the people an admin added", ...kinds.map((kind) => KIND_PEOPLE[kind](valuesOf(kind)))];
   let why = `<b>${esc(who)}</b> (${esc(label(v.provider))}) isn't one of them.`;
-  if (v.provider == "github" && orgs.length) {
-    why += ` GitHub says this account is an active member of ${v.orgs?.length ? v.orgs.map((o) => esc(o)).join(", ") : "no organization Erga can see"}. If you are a member, the organization may not let Erga see it yet: an owner of the organization approves Erga on GitHub.`;
+  // What the provider said of their groups, where a rule reads that kind of group.
+  const groups = SIGN_IN_PROVIDERS[v.provider]?.groups;
+  if (groups && kinds.some((kind) => kind == groups.kind)) {
+    const prefix = groupOf(groups.kind as Kind, "");
+    why += ` ${groups.said((v.groups ?? []).filter((g) => g.startsWith(prefix)).map((g) => esc(g.slice(prefix.length))))}`;
   }
-  if (v.provider == "google" && workspaces.length) why += v.hd ? ` Google says this account is in the Workspace ${esc(v.hd)}.` : " This is a personal Google account: it's in no Google Workspace organization.";
   return page("Not on this server", `This server lets in ${ways.join(", ")}. ${why} An admin can add you on the Users page.`, 403);
 });
 
@@ -165,14 +171,14 @@ const Join = signed(
   "join",
   Schema.Struct({
     v: Schema.Struct({
-      provider: Schema.Literals(["github", "google", "front"]),
+      provider: Schema.NonEmptyString,
       subject: Schema.NonEmptyString,
       handle: Schema.String,
       name: Schema.NullOr(Schema.String),
       emails: Schema.mutable(Schema.Array(Schema.Struct({ email: Schema.String, verified: Schema.Boolean }))),
-      orgs: Schema.optionalKey(Schema.NullOr(Schema.mutable(Schema.Array(Schema.String)))),
-      hd: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      groups: Schema.optionalKey(Schema.NullOr(Schema.mutable(Schema.Array(Schema.String)))),
       picture: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      oldLogin: Schema.optionalKey(Schema.String),
     }),
     next: Schema.String,
     taken: Schema.optionalKey(Schema.String),
@@ -226,7 +232,6 @@ export const usernameStep: Route = Effect.gen(function* () {
   const login = yield* Effect.tryPromise({
     try: async () => {
       const { may, person } = await dir.joining(v);
-      if (isFrontAdmin(platform.signIn.front, v)) return dir.identities.createAccount(wanted, v, { role: "admin" });
       return dir.identities.createAccount(wanted, v, person ? { role: person.role, waited: person.id } : may ? {} : { role: "write" });
     },
     catch: (e) => e,
@@ -244,7 +249,7 @@ export const usernameStep: Route = Effect.gen(function* () {
 const UsernameForm = Schema.Struct({ username: Field });
 
 function usernamePage(v: Vouched, value: string, error: string | null, taken?: string) {
-  const body = `${taken ? `${takenNote(taken)}</p><p>` : ""}Welcome. You signed in with ${esc(label(v.provider))} as <b>${esc(v.handle)}</b>. Choose a username for your Erga account: it is in the address of each of your documents (/<i>username</i>/…).</p>
+  const body = `${taken ? `${takenNote(v, taken)}</p><p>` : ""}Welcome. You signed in with ${esc(label(v.provider))} as <b>${esc(v.handle)}</b>. Choose a username for your Erga account: it is in the address of each of your documents (/<i>username</i>/…).</p>
 <form method="post" action="/auth/username" class="username" novalidate>
   <label for="username">Username</label>
   <p class="row"><input class="input" id="username" name="username" value="${esc(value)}" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" maxlength="39" required autofocus>
@@ -263,18 +268,34 @@ export const devSignIn: Route = Effect.gen(function* () {
   const { platform, request, url } = yield* ctx;
   if (!platform.dev(url)) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   const q = url.searchParams;
-  const provider = (q.get("provider") == "google" ? "google" : "github") as SignInProvider;
+  const provider = q.get("provider") ?? "";
+  const info = SIGN_IN_PROVIDERS[provider];
   const subject = q.get("subject")?.trim();
   const handle = q.get("handle")?.trim();
-  if (!subject || !handle) return page("Not enough", "Give the pretend identity's subject= and handle=.", 400);
+  if (!info || !subject || !handle) return page("Not enough", "Give the pretend identity's provider=, subject= and handle=.", 400);
   const emails = q.getAll("email").filter(Boolean).map((email) => ({ email: email.toLowerCase(), verified: q.get("verified") != "0" }));
-  const orgs = provider == "github" ? q.getAll("org").filter(Boolean).map((o) => o.toLowerCase()) : null;
-  const hd = provider == "google" ? q.get("hd")?.toLowerCase() || null : null;
-  const picture = provider == "google" ? q.get("picture") || null : null;
+  // As the provider's own sign-in gives them (providers.ts): its groups (group=), its picture, the login an old account has.
+  const kind = info.groups?.kind as Exclude<RuleKind, "everybody"> | undefined;
+  const groups = kind
+    ? q
+        .getAll("group")
+        .filter(Boolean)
+        .map((g) => groupOf(kind, g))
+    : [];
+  const picture = safeAvatar(q.get("picture"));
   return yield* vouchedSignIn(
     platform,
     request,
-    { provider, subject, handle, name: q.get("name") || null, emails, orgs, hd, picture },
+    {
+      provider,
+      subject,
+      handle,
+      name: q.get("name") || null,
+      emails,
+      groups,
+      picture,
+      ...(info.handle == "login" ? { oldLogin: handle.toLowerCase() } : {}),
+    },
     q.get("next") ?? "/",
     {}
   );

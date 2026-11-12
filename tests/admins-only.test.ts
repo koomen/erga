@@ -1,7 +1,7 @@
-// Pages tokens on a server for admins only, and sign-in on a server with no GitHub OAuth app.
+// Pages tokens on a server for admins only, and sign-in on a server with no OAuth app for a provider.
 import { expect, test } from "bun:test";
 import { pagesToken, readPagesClaims } from "../server/documents/index.ts";
-import { finishSignIn, startSignIn } from "../server/identity/sign-in";
+import { finishOAuth, startOAuth } from "../server/identity/oauth";
 import type { Platform } from "../server/platform";
 import type { Directory } from "../server/directory/index.ts";
 import { respond } from "../server/http.ts";
@@ -10,7 +10,13 @@ import { server as app, signedOut } from "./helpers/app";
 /** A server with this GitHub client ID, and nothing else sign-in needs for these requests. */
 const serverWith = (clientId: string): Platform => ({
   secret: "x", dev: () => false, directory: {} as Directory,
-  signIn: { app: { clientId, secret: "" }, github: "https://github.com", devLogin: null, encryptionKey: null },
+  signIn: {
+    mode: "oauth",
+    apps: { github: { clientId, secret: "" }, google: { clientId: "", secret: "" } },
+    origins: { github: null, google: null },
+    devLogin: null,
+    encryptionKey: null,
+  },
   deploy: { target: null, version: null, primary: null },
   own: { get: async () => undefined, put: async () => {}, delete: async () => {} },
 } as unknown as Platform);
@@ -31,16 +37,23 @@ test("a pages token names its admin only when asked to (staging), and it can't b
 test("no GitHub OAuth app (GITHUB_CLIENT_ID empty): sign-in says so, rather than sending people to GitHub's 404", async () => {
   const env = serverWith("");
   for (const answer of [
-    await respond(startSignIn, new Request("https://staging.erga.dev/auth/github?next=/docs"), env),
-    await respond(finishSignIn, new Request("https://staging.erga.dev/auth/github/callback?code=1&state=2"), env),
+    await respond(startOAuth("github"), new Request("https://staging.erga.dev/auth/github?next=/docs"), env),
+    await respond(finishOAuth("github"), new Request("https://staging.erga.dev/auth/github/callback?code=1&state=2"), env),
   ]) {
     expect(answer.status).toBe(503);
     expect(answer.headers.get("location")).toBeNull();
     const html = await answer.text();
-    expect(html).toContain("Sign-in isn't set up on this server: it has no GitHub OAuth app.");
+    expect(html).toContain("<h1>GitHub sign-in isn't set up</h1>");
+    expect(html).toContain("This server has no GitHub OAuth app yet.");
     expect(html).toContain("GITHUB_CLIENT_ID");
   }
-  const set = await respond(startSignIn, new Request("https://erga.dev/auth/github"), serverWith("Ov23abc"));
+  // The same page for each provider: Google's, with its own names.
+  const google = await respond(finishOAuth("google"), new Request("https://staging.erga.dev/auth/google/callback?code=1&state=2"), env);
+  expect(google.status).toBe(503);
+  const html = await google.text();
+  expect(html).toContain("<h1>Google sign-in isn't set up</h1>");
+  expect(html).toContain("GOOGLE_CLIENT_ID");
+  const set = await respond(startOAuth("github"), new Request("https://erga.dev/auth/github"), serverWith("Ov23abc"));
   expect(set.status).toBe(302);
   expect(set.headers.get("location")).toStartWith("https://github.com/login/oauth/authorize?client_id=Ov23abc&");
 });

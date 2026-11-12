@@ -5,11 +5,28 @@
 import { expect, test } from "bun:test";
 import { Directory, type Vouched } from "../server/directory/index.ts";
 import { resolve } from "../server/identity/accounts.ts";
+import { githubAvatar } from "../shared/avatars.ts";
 import { memory } from "./helpers/memory-sql.ts";
 
 const ADMIN = { login: "koomen", admin: true };
-export const github = (id: number, login: string, orgs: string[] | null = null): Vouched => ({ provider: "github", subject: String(id), handle: login, name: login, emails: [], orgs });
-export const google = (sub: string, email: string, verified = true): Vouched => ({ provider: "google", subject: sub, handle: email, name: email.split("@")[0], emails: [{ email, verified }] });
+// As each provider's sign-in gives them (server/identity/providers.ts): GitHub's with its picture by id, and the login an account from before identities has.
+export const github = (id: number, login: string): Vouched => ({
+  provider: "github",
+  subject: String(id),
+  handle: login,
+  name: login,
+  emails: [],
+  groups: null,
+  picture: githubAvatar(id),
+  oldLogin: login.toLowerCase(),
+});
+export const google = (sub: string, email: string, verified = true): Vouched => ({
+  provider: "google",
+  subject: sub,
+  handle: email,
+  name: email.split("@")[0],
+  emails: [{ email, verified }],
+});
 
 /** A rule for one account, with write, made with it (as an admin's rule, or local development's, would be). */
 /** An account that may write: its own role. */
@@ -38,6 +55,10 @@ test("a linked identity signs in to its account by its id, whatever its GitHub l
 test("an account with no identity (from before, or added by an admin) is claimed by the GitHub login it names; a bootstrap admin too", async () => {
   const dir = new Directory(memory(), { admins: ["koomen"] });
   await dir.users.add(ADMIN, "bo");
+  // Only an identity that says so (oldLogin: GitHub's) claims it: another provider's whose handle is that name does not.
+  expect(await resolve(dir, { provider: "proxy", subject: "s-bo", handle: "bo", name: null, emails: [] }, { join: false })).toEqual({
+    kind: "refused",
+  });
   expect(await resolve(dir, github(20, "bo"), { join: false })).toEqual({ kind: "in", claimed: true, login: "bo" });
   expect(await resolve(dir, github(1, "koomen"), { join: false })).toEqual({ kind: "in", claimed: true, login: "koomen" });
   expect((await dir.users.get("koomen"))?.created).toBeGreaterThan(0);
@@ -137,8 +158,9 @@ test("a Google account and a GitHub account with the same email are two accounts
   expect((await resolve(dir, google("g-u", "una@example.com"), { join: true })).kind).toBe("new");
   expect((await resolve(dir, google("g-u", "una@example.com"), { join: false })).kind).toBe("refused");
   expect(await dir.identities.find("google", "g-u")).toBeNull();
-  // A GitHub account's email is never kept (GitHub vouches for none); Google's only when verified, never a noreply one.
-  expect(await dir.identities.emailsOf("una")).toEqual([]);
+  // An address is kept only when its provider verified it, whichever provider (GitHub's sign-in gives none:
+  // server/identity/providers.ts), and it found no account above.
+  expect(await dir.identities.emailsOf("una")).toEqual(["una@example.com"]);
   await dir.identities.createAccount("vic", google("g-v", "vic@example.com", false), writes("vic"));
   expect(await dir.identities.emailsOf("vic")).toEqual([]);
   await dir.identities.createAccount("wes", google("g-w", "wes@example.com"), writes("wes"));
@@ -149,7 +171,7 @@ test("a Google account and a GitHub account with the same email are two accounts
 });
 
 test("a person who waits as an email an account verified later waits no more once that account signs in", async () => {
-  const dir = new Directory(memory(), { admins: ["koomen"] });
+  const dir = new Directory(memory(), { admins: ["koomen"], providers: ["google"] });
   await dir.identities.createAccount("erin", google("g-5", "erin@a.example"), writes("erin"));
   const { person } = await dir.addUser(ADMIN, { provider: "google", handle: "erin@b.example" }, "read");
   expect(person).toBeDefined();

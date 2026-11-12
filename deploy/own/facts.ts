@@ -9,7 +9,18 @@ import { mocked, netOf } from "../cli/deploy";
 import { Cloudflare, type Fetch, findDatabase } from "../pipeline/pipeline";
 import { d1 } from "../pipeline/account";
 import { machineCredential } from "../local-credential";
-import { type Answers, type Facts, hostOf, SETUP_COMMIT, namesOf, type TargetFacts, type TargetName, targetsOf } from "./plan";
+import {
+  type Answers,
+  type Facts,
+  hostOf,
+  namesOf,
+  proxyExpects,
+  proxySignIn,
+  SETUP_COMMIT,
+  type TargetFacts,
+  type TargetName,
+  targetsOf,
+} from "./plan";
 import { DIR, loadSecrets, type Own, secretNames } from "./store";
 import { ROOT } from "../root";
 
@@ -97,22 +108,33 @@ export async function signInCheck(net: Fetch, host: string, clientId: string | u
 }
 
 /**
- * With the company's sign-in in front: where the load balancer sends a browser that isn't signed in. To that sign-in,
- * with this client and this host's callback (the balancer's own, /oauth2/idpresponse), or what's wrong.
+ * The proxy mode: where the proxy in front sends a browser that isn't signed in. To the company's sign-in, away from
+ * this host, or what's wrong. `to`: the host it must send to (Cloudflare Access: the team's). `clientId`, `callback`:
+ * the client and the callback it must name there (an AWS load balancer's own, /oauth2/idpresponse).
  */
-export async function frontSignInCheck(net: Fetch, host: string, clientId: string): Promise<TargetFacts["signIn"]> {
+export async function proxySignInCheck(
+  net: Fetch,
+  host: string,
+  o: { to?: string; clientId?: string; callback?: string }
+): Promise<TargetFacts["signIn"]> {
   const r = await net(`https://${host}/auth/sign-in`, { redirect: "manual", signal: AbortSignal.timeout(8000) }).catch(() => null);
   if (!r) return null;
   const to = r.headers.get("location") ?? "";
   if (r.status != 302 || !to.startsWith("https://") || new URL(to).host == host)
-    return { bad: `/auth/sign-in answers ${r.status}${to ? ` and sends to ${to.slice(0, 80)}` : ""}, not to the sign-in in front` };
+    return {
+      bad: `/auth/sign-in answers ${r.status}${to ? ` and sends to ${to.slice(0, 80)}` : ""}, not to the sign-in at the proxy in front`,
+    };
+  if (o.to && new URL(to).host != o.to) return { bad: `the proxy sends a browser to ${new URL(to).host}, not to ${o.to}` };
   const q = new URL(to).searchParams;
-  if (q.get("client_id") != clientId)
-    return { bad: `the load balancer signs in with the client ${q.get("client_id")}, not yours (${clientId})` };
-  if (q.get("redirect_uri") != `https://${host}/oauth2/idpresponse`)
-    return { bad: `the sign-in would come back to ${q.get("redirect_uri")}` };
+  if (o.clientId && q.get("client_id") != o.clientId)
+    return { bad: `the proxy signs in with the client ${q.get("client_id")}, not yours (${o.clientId})` };
+  if (o.callback && q.get("redirect_uri") != o.callback) return { bad: `the sign-in would come back to ${q.get("redirect_uri")}` };
   return "ok";
 }
+
+/** Whether sign-in works on `host`, in the setup's mode: the OAuth app's, or the proxy's. */
+export const checkSignIn = (net: Fetch, host: string, a: Answers, githubId: string | undefined) =>
+  proxySignIn(a) ? proxySignInCheck(net, host, proxyExpects(a, host)) : signInCheck(net, host, githubId);
 
 /** One server: its Worker, its address, what it answers, its entry, and (with the database) the company's access rule. */
 async function targetFacts(
@@ -165,7 +187,7 @@ async function targetFacts(
     ? await getJson<{ ok?: boolean; checks?: Record<string, { ok: boolean; error?: string }> }>(net, `https://${host}/api/health`)
     : null;
   const health: TargetFacts["health"] = !v ? null : h?.ok ? "ok" : { bad: h ? JSON.stringify(h.checks ?? h).slice(0, 200) : "no answer" };
-  const signIn = v ? await signInCheck(net, host, own.github?.clientId) : null;
+  const signIn = v ? await checkSignIn(net, host, a, own.github?.clientId) : null;
   let rule: boolean | null = null;
   if (worker == "ours") {
     const db = await findDatabase(cf, acc, n.database).catch(() => null);
@@ -225,7 +247,7 @@ export async function observe(own: Own, a: Answers | null): Promise<Facts & { zo
     zoneIds: [],
     workersSubdomain: null,
     stack: null,
-    frontSecret: null,
+    proxySecret: null,
     targets: {},
     secrets: secretNames(loadSecrets()),
   };

@@ -23,7 +23,7 @@ import { sessionOf } from "./session.ts";
 import * as Schema from "effect/Schema";
 import { signed } from "../signed.ts";
 import { cookies, withCookie } from "./cookies.ts";
-import { PROVIDERS } from "./apps.ts";
+import { providersOf } from "./mode.ts";
 
 /** The own domain's paths of Erga's: the site's files never answer under it. */
 export const HOME_ERGA = "/_erga/";
@@ -69,7 +69,7 @@ export const homePass = Effect.gen(function* () {
   if (!session || session.agent) {
     const provider = url.searchParams.get("provider") ?? "";
     const here = url.pathname + url.search;
-    const signIn = provider in PROVIDERS ? `/auth/${provider}` : "/auth/sign-in";
+    const signIn = providersOf(p.signIn).includes(provider) ? `/auth/${provider}` : "/auth/sign-in";
     return redirect(`${signIn}?next=${encodeURIComponent(here)}`, 302, { "Cache-Control": "no-store" });
   }
   const pass = yield* call(() => Pass.seal(p.secret, { login: session.login }));
@@ -82,7 +82,7 @@ export const homeDomainSignIn = Effect.gen(function* () {
   const { request, url, platform: p } = yield* ctx;
   const next = safeNext(url.searchParams.get("next"));
   const provider = /^\/_erga\/auth\/([a-z]+)$/.exec(url.pathname)?.[1];
-  if (provider && provider in PROVIDERS) {
+  if (provider && providersOf(p.signIn).includes(provider)) {
     if (!p.deploy.app) return text("Signing in isn't on for this site.", 404);
     const to = `/auth/home-pass?provider=${provider}&next=${encodeURIComponent(next)}`;
     return redirect(onHost(url, p.deploy.app, to), 302, { "Cache-Control": "no-store" });

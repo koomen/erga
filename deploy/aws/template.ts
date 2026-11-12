@@ -16,6 +16,8 @@
 // The structure follows the answers (the way out, the domains); the sizes and the machine image are the template's
 // parameters, with defaults, which the person may change in the file.
 
+import { PROXY_FREE_PATHS } from "../../shared/proxy-paths";
+
 /** The answers that shape an instance's stacks. */
 export interface AwsShape {
   /** The instance's own name: the stack's, and every name in it. */
@@ -93,19 +95,12 @@ export const NAT_USER_DATA = [
 export const oidcSecretName = (stack: string) => `erga/${stack}/oidc-client-secret`;
 
 /**
- * What passes the load balancer without the sign-in, on the app's address: only what Erga's own tokens guard, or what
- * holds nothing private. An agent or the CLI can't sign in with a browser: MCP and its OAuth (the person approves the
- * agent on /tokens/approve, which stays behind the sign-in), the operations, the CLI's token request, the deploy's
- * checks. And the editor's code, which a document's page loads from its own address, with no cookie.
- * Three paths a rule: a rule takes five values, and the host is one.
+ * What passes the load balancer without the sign-in, on the app's address (shared/proxy-paths.ts says what and why),
+ * as the listener's rules take them: three paths a rule (a rule takes five values, and the host is one).
  */
-export const TOKEN_PATHS: readonly (readonly string[])[] = [
-  ["/mcp", "/llms.txt", "/api/publish"],
-  ["/.well-known/oauth-*", "/oauth/register", "/oauth/token"],
-  ["/api/auth/request", "/api/auth/poll", "/api/ops"],
-  ["/api/tools", "/api/tools/*", "/api/health"],
-  ["/api/deploys/version", "/_erga/*", "/erga/*"],
-];
+export const TOKEN_PATHS: readonly (readonly string[])[] = Array.from({ length: Math.ceil(PROXY_FREE_PATHS.length / 3) }, (_, i) =>
+  PROXY_FREE_PATHS.slice(i * 3, i * 3 + 3)
+);
 /** What a document's own address answers (server/documents/pages-origin.ts): its files by their token, and the offline worker. */
 export const PAGES_PATHS = ["/t/*", "/erga-sw.js", "/erga-clear"] as const;
 
@@ -582,7 +577,7 @@ function cloudFront(s: AwsShape, prefixList: string): Front {
  *   20  the app's address, a request with a key (?key=): what a document's page asks of its room, from its own address.
  *   30  the app's address, from the NAT's address: the server's own browser (view_page), which holds Erga's view cookie.
  *  100  the app's address, anything else: the sign-in (OIDC) first. The balancer then adds x-amzn-oidc-data, which says
- *       who signed in, signed by AWS (server/identity/front.ts reads it).
+ *       who signed in, signed by AWS (server/identity/proxy.ts reads it).
  * Any other host: 404. The machine lets in only the balancer.
  */
 function balancer(s: AwsShape, oidc: Oidc, vpc: unknown): Front {

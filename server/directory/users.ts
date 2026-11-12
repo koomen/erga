@@ -63,8 +63,6 @@ export interface User {
   addedVia?: string | null;
   /** When they last used the server (to the nearest few minutes); null if never. */
   lastSeen: number | null;
-  /** Their GitHub account id (users.github_id), from their last sign-in; null until then. */
-  githubId: number | null;
   /** Their picture (users.avatar, shared/avatars.ts), from their last sign-in; null: none, so their initial shows. */
   avatar: string | null;
   /** Their sign-in number (users.sessions): a session cookie works only while it carries this number (endSessions). */
@@ -116,7 +114,6 @@ interface Row {
   added_by: string | null;
   added_via?: string | null;
   last_seen: number | null;
-  github_id?: number | null;
   avatar?: string | null;
   sessions?: number | null;
 }
@@ -227,14 +224,6 @@ export class Users {
     this.known.delete(login);
     if (!user || user.created == 0) await this.pagesChanged([`user:${login}`]);
     return this.get(login);
-  }
-
-  /** Their GitHub account id (from GitHub, at sign-in or when the factory asks it), written when it's new. Only for someone with a row. */
-  async setGithubId(login: string, id: number): Promise<void> {
-    login = login.toLowerCase();
-    if (!Number.isSafeInteger(id) || id <= 0 || (await this.get(login))?.githubId == id) return;
-    await this.sql.run("UPDATE users SET github_id = ?2 WHERE login = ?1", login, id);
-    this.known.delete(login);
   }
 
   /** Forgets what was remembered of `login` (a row written elsewhere: a new account, server/directory/identities.ts). */
@@ -398,7 +387,6 @@ export class Users {
       addedBy: r.added_by,
       addedVia: r.added_via ?? null,
       lastSeen: r.last_seen == null ? null : Number(r.last_seen),
-      githubId: r.github_id == null ? null : Number(r.github_id),
       avatar: safeAvatar(r.avatar),
       sessions: Number(r.sessions ?? 0),
     };
@@ -415,7 +403,6 @@ export class Users {
       created: 0,
       addedBy: null,
       lastSeen: null,
-      githubId: null,
       avatar: null,
       sessions: 0,
     };

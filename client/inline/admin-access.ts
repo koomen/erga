@@ -31,15 +31,15 @@ export default function adminAccess(): void {
     }
   });
   const rulesHint = document.getElementById("rules-hint")!,
-    ruleForm = document.querySelector<HTMLFormElement>("form.add-rule")!;
-  const field = (name: string) => ruleForm.elements.namedItem(name) as HTMLInputElement;
-  const PLACEHOLDER: Record<string, string> = { workspace: "example.com", github_org: "my-org" };
-  field("kind").addEventListener("change", () => {
-    const kind = field("kind").value;
-    field("value").placeholder = PLACEHOLDER[kind];
-    field("value").setAttribute("list", "suggest-" + kind);
+    // There only where the server's sign-in gives groups.
+    ruleForm = document.querySelector<HTMLFormElement>("form.add-rule");
+  const field = (name: string) => ruleForm!.elements.namedItem(name) as HTMLInputElement;
+  ruleForm?.querySelector<HTMLSelectElement>('select[name="kind"]')?.addEventListener("change", () => {
+    const kind = field("kind") as unknown as HTMLSelectElement;
+    field("value").placeholder = kind.selectedOptions[0]?.dataset.placeholder ?? "";
+    field("value").setAttribute("list", "suggest-" + kind.value);
   });
-  ruleForm.addEventListener("submit", async (e) => {
+  ruleForm?.addEventListener("submit", async (e) => {
     e.preventDefault();
     say(rulesHint, "Adding…");
     try {

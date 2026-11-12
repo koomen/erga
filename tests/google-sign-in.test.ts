@@ -1,18 +1,26 @@
-// Signing in with Google (server/identity/sign-in.ts), against the pretend Google (dev/google-mock.ts): the live check
+// Signing in with Google (server/identity/oauth.ts, providers.ts), against the pretend Google (dev/google-mock.ts): the live check
 // of a client, the switch that turns Google on (and its lockout rules), a sign-in from start to session, by the sub, and
 // the way back in: values set on the page that stop working give way to the deploy's.
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mockGoogle, type MockGoogleUser } from "../dev/google-mock";
-import { AuthApps, checkGoogleApp } from "../server/identity/apps";
+import { AuthApps } from "../server/identity/apps";
+import type { OAuthSignIn } from "../server/identity/mode";
+import { finishOAuth, startOAuth } from "../server/identity/oauth";
+import { PROVIDERS } from "../server/identity/providers";
 import { authOps, providersOn, signInApp } from "../server/identity/settings";
-import { chooseSignIn, finishGoogleSignIn, startGoogleSignIn, startSignIn } from "../server/identity/sign-in";
+import { chooseSignIn } from "../server/identity/sign-in";
 import { Directory } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
 import { memory } from "./helpers/memory-sql.ts";
 import { respond } from "../server/http.ts";
 
+const startSignIn = startOAuth("github"),
+  startGoogleSignIn = startOAuth("google"),
+  finishGoogleSignIn = finishOAuth("google"),
+  checkGoogleApp = PROVIDERS.google.check;
 const GOOGLE = "https://google.test", GITHUB = "https://github.test";
+const GITHUB_APP = { clientId: "Ov23liGoodApp00000001", secret: "a".repeat(40) };
 const APP = { clientId: "123456789012-abcdefghijklmnop.apps.googleusercontent.com", secret: "GOCSPX-abcdefghijklmnopqrstuv" };
 const ORIGIN = "https://erga.example";
 const ADA: MockGoogleUser = { sub: "1001", email: "ada@example.com", email_verified: true, name: "Ada Lovelace" };
@@ -34,14 +42,23 @@ afterEach(() => { globalThis.fetch = realFetch; });
 function server() {
   const m = new Map<string, unknown>();
   const own = { get: async (k: string) => structuredClone(m.get(k)), put: async (k: string, v: unknown) => { m.set(k, structuredClone(v)); }, delete: async (k: string) => { m.delete(k); } };
-  const directory = new Directory(memory(), { admins: ["koomen"] });
+  const directory = new Directory(memory(), { admins: ["koomen"], providers: ["github", "google"] });
   const platform = {
     secret: "session-secret", dev: () => false, own, directory,
-    signIn: { app: { clientId: "Ov23liGoodApp00000001", secret: "a".repeat(40) }, github: GITHUB, googleApp: APP, google: GOOGLE, relay: null, devLogin: null, encryptionKey: "factory-key" },
+    signIn: {
+      mode: "oauth",
+      apps: { github: GITHUB_APP, google: APP },
+      origins: { github: GITHUB, google: GOOGLE },
+      devLogin: null,
+      encryptionKey: "factory-key",
+    },
     deploy: { target: null, version: null, primary: null },
   } as unknown as Platform;
   return { platform, own, directory };
 }
+
+/** The deploy's apps of a server made here (the OAuth mode's). */
+const appsOf = (platform: Platform) => (platform.signIn as OAuthSignIn).apps;
 
 const cookieOf = (r: Response) => (r.headers.get("set-cookie") ?? "").split(/,(?=\s*erga_)/).map((c) => c.split(";")[0].trim()).join("; ");
 
@@ -122,16 +139,16 @@ test("the switch's rules: on only with a working client; off only with the other
   const auth = authOps(platform, ORIGIN), koomen = { login: "koomen", admin: true };
   await expect(auth.setProvider({ login: "bo" }, "google", true)).rejects.toThrow("Only an admin");
   // Google can't go on without a working client.
-  (platform.signIn as { googleApp: unknown }).googleApp = { clientId: "", secret: "" };
+  appsOf(platform).google = { clientId: "", secret: "" };
   await expect(auth.setProvider(koomen, "google", true)).rejects.toThrow("doesn't work on this server yet");
-  (platform.signIn as { googleApp: unknown }).googleApp = APP;
+  appsOf(platform).google = APP;
   await auth.setProvider(koomen, "google", true);
   await expect(auth.setProvider(koomen, "google", false)).resolves.toEqual({ github: true, google: false });
   await auth.setProvider(koomen, "google", true);
   // Google can't go off while GitHub's app doesn't work: nobody could sign in.
-  (platform.signIn as { app: unknown }).app = { clientId: "", secret: "" };
+  appsOf(platform).github = { clientId: "", secret: "" };
   await expect(auth.setProvider(koomen, "google", false)).rejects.toThrow("would stop sign-in");
-  (platform.signIn as { app: unknown }).app = { clientId: "Ov23liGoodApp00000001", secret: "a".repeat(40) };
+  appsOf(platform).github = GITHUB_APP;
   // koomen's account signs in with GitHub (no identity yet: by his login): turning GitHub off would lock him out.
   await expect(auth.setProvider(koomen, "github", false)).rejects.toThrow("would lock you out");
   // An admin whose account signs in with Google may.
@@ -260,7 +277,7 @@ test("values set on the page that the provider refuses give way to the deploy's,
   // With no deploy values that work, the page's stand: nothing else to fall back to.
   const noDeploy = {
     ...platform,
-    signIn: { ...platform.signIn, googleApp: { clientId: APP.clientId, secret: "GOCSPX-wrong-wrong-wrong" } },
+    signIn: { ...platform.signIn, apps: { ...appsOf(platform), google: { clientId: APP.clientId, secret: "GOCSPX-wrong-wrong-wrong" } } },
   } as Platform;
   expect((await signInApp(noDeploy, "active", "google"))?.clientId).toBe(gone.clientId);
 });

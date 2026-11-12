@@ -4,6 +4,7 @@ import {
   answersProblem,
   defaultAnswers,
   type Facts,
+  firstRows,
   githubManifest,
   namesOf,
   nextStep,
@@ -24,7 +25,7 @@ const facts = (over: Partial<Facts> = {}): Facts => ({
   zones: ["example.com", "pages.example"],
   workersSubdomain: "me",
   stack: null,
-  frontSecret: null,
+  proxySecret: null,
   targets: {},
   secrets: [],
   ...over,
@@ -60,6 +61,57 @@ test("a preset sets defaults the server takes, and locks nothing", () => {
   expect(vars).toMatchObject({ GITHUB_CLIENT_ID: "Iv1.x", DEPLOY_TARGET: "" });
   // No admin in the deploy: bun erga own writes the first admin into the database (firstAdmin).
   expect(vars.ADMINS).toBeUndefined();
+});
+
+test("the proxy mode on Cloudflare: Cloudflare Access's team and application, an email for the admin, no GitHub app", () => {
+  const zones = ["example.com", "pages.example.org"];
+  const access = {
+    ...answers,
+    admin: "ada@example.com",
+    pages: "pages.example.org",
+    preset: "company" as const,
+    signIn: "proxy" as const,
+    accessTeam: "example",
+    accessAud: "0123456789abcdef0123456789abcdef",
+  };
+  expect(parseAnswer("signIn", "Proxy")).toMatchObject({ problem: expect.stringContaining("oauth or proxy") });
+  expect(parseAnswer("signIn", "")).toEqual({ value: "oauth" });
+  expect(parseAnswer("accessTeam", "Example.cloudflareaccess.com")).toEqual({ value: "example" });
+  expect("problem" in parseAnswer("accessAud", "not a tag")).toBe(true);
+  expect(answersProblem(access, zones)).toBeNull();
+  expect(answersProblem({ ...access, admin: "ada" }, zones)).toContain("email address");
+  expect(answersProblem({ ...access, accessAud: "" }, zones)).toContain("accessAud");
+  expect(answersProblem({ ...access, signIn: "oauth", admin: "ada" }, zones)).toContain("signIn=proxy");
+  // The server's setting names the proxy and its values; no OAuth app's id goes with it.
+  const vars = varsOf(access, { github: "Iv1.x" });
+  expect(JSON.parse(vars.PROXY_SIGN_IN)).toEqual({
+    kind: "cloudflare-access",
+    team: "example",
+    aud: "0123456789abcdef0123456789abcdef",
+    email: { claim: "email", prefix: "" },
+  });
+  expect(vars.GITHUB_CLIENT_ID).toBe("");
+  expect(varsOf(answers, { github: "Iv1.x" }).PROXY_SIGN_IN).toBeUndefined();
+  // The first admin waits as a person added by their email; with the company preset, everybody who passes may write.
+  expect(firstRows(access, 1)).toEqual([
+    {
+      table: "people",
+      row: { provider: "proxy", handle: "ada@example.com", role: "admin", created: 1 },
+      onConflict: "(provider, handle) DO UPDATE SET role = 'admin'",
+      noAdmin: true,
+    },
+    {
+      table: "access_rules",
+      row: { kind: "everybody", value: "", access: "write", created: 1 },
+      onConflict: "(kind, value) DO UPDATE SET access = 'write'",
+      noAdmin: true,
+    },
+  ]);
+  // No step for a GitHub app, and none for a company rule.
+  const ids = steps(access, facts({ zones }), { ids: {} }).map((s) => s.id);
+  expect(ids).not.toContain("github");
+  expect(ids).not.toContain("rule");
+  expect(ids).toContain("signin-production");
 });
 
 test("the steps go in order, each with who does it, and the next one is the first not done", () => {

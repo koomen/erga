@@ -1,7 +1,17 @@
 // /admin/access, the Access page: the group rules, and whether users can share content publicly
 // (client/inline/admin-access.ts changes them).
 
-import { type Access, ACCESS_LABEL, type AccessRule, KIND_LABEL, RULE_KINDS, ruleKey, SETTINGS } from "../directory/index.ts";
+import {
+  type Access,
+  ACCESS_LABEL,
+  type AccessRule,
+  KIND_LABEL,
+  RULE_KINDS,
+  type RuleKind,
+  ruleKey,
+  SETTINGS,
+} from "../directory/index.ts";
+import { SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
 import { ICON, inlineCall } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
@@ -27,21 +37,45 @@ const publicRow = (on: boolean) =>
     <div class="value"><label class="switch"><input type="checkbox" role="switch" id="public-sharing"${on ? " checked" : ""}><span class="track" aria-hidden="true"></span><span class="state" aria-hidden="true">${on ? "On" : "Off"}</span></label></div>
   </li>`;
 
-/** The group rules on the Access page: each rule a row (who, and its access); a form adds one. */
-function rulesSection(rules: AccessRule[], suggestions: { workspaces: string[]; orgs: string[] }): string {
-  return `<section class="rules" aria-labelledby="rules-head">
-    <h3 class="sub-head" id="rules-head">Groups</h3>
-    <form class="add-rule">
+/** A kind of group, in the form that adds a rule: its short name, an example, and what the server saw of it. */
+const GROUP: Record<
+  Exclude<RuleKind, "everybody">,
+  { name: string; like: string; seen: (s: { workspaces: string[]; orgs: string[] }) => string[] }
+> = {
+  workspace: { name: "Google Workspace", like: "example.com", seen: (s) => s.workspaces },
+  github_org: { name: "GitHub org", like: "my-org", seen: (s) => s.orgs },
+};
+
+/**
+ * The group rules on the Access page: each rule a row (who, and its access); a form adds one, of the kinds of group
+ * that this server's sign-in gives (`providers`: shared/sign-in.ts). A sign-in that gives no groups has no form.
+ */
+function rulesSection(rules: AccessRule[], suggestions: { workspaces: string[]; orgs: string[] }, providers: readonly string[]): string {
+  const kinds = (Object.keys(GROUP) as (keyof typeof GROUP)[]).filter((k) =>
+    providers.some((p) => SIGN_IN_PROVIDERS[p]?.groups?.kind == k)
+  );
+  const form = kinds.length
+    ? `<form class="add-rule">
       <select name="kind" aria-label="Who">
-        <option value="workspace">Google Workspace</option>
-        <option value="github_org">GitHub org</option>
+        ${kinds.map((k) => `<option value="${k}" data-placeholder="${esc(GROUP[k].like)}">${esc(GROUP[k].name)}</option>`).join("\n        ")}
       </select>
-      <input class="input" name="value" list="suggest-workspace" placeholder="example.com" aria-label="The domain or the organization" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <input class="input" name="value" list="suggest-${kinds[0]}" placeholder="${esc(GROUP[kinds[0]].like)}" aria-label="The domain or the organization" autocomplete="off" autocapitalize="off" spellcheck="false" required>
       <select name="access" aria-label="Access"><option value="none">${ACCESS_LABEL.none}</option><option value="read">${ACCESS_LABEL.read}</option><option value="write" selected>${ACCESS_LABEL.write}</option></select>
       <button class="new">Add group</button>
     </form>
-    <datalist id="suggest-workspace">${suggestions.workspaces.map((d) => `<option value="${esc(d)}">`).join("")}</datalist>
-    <datalist id="suggest-github_org">${suggestions.orgs.map((o) => `<option value="${esc(o)}">`).join("")}</datalist>
+    ${kinds
+      .map(
+        (k) =>
+          `<datalist id="suggest-${k}">${GROUP[k]
+            .seen(suggestions)
+            .map((v) => `<option value="${esc(v)}">`)
+            .join("")}</datalist>`
+      )
+      .join("\n    ")}`
+    : `<p class="note">This server's sign-in gives no groups. The rule for everybody, and each user's role, decide.</p>`;
+  return `<section class="rules" aria-labelledby="rules-head">
+    <h3 class="sub-head" id="rules-head">Groups</h3>
+    ${form}
     <p class="hint" id="rules-hint" role="status"></p>
     <ol class="rows rules" data-live-kind="rule" data-live-view="access" data-live-order="asc" data-live-at="${Date.now()}">
 ${rules.map(ruleRow).join("\n")}
@@ -63,7 +97,7 @@ export async function accessPage(platform: Platform, session: Session) {
     here: "access",
     lede: "Who can sign in by group, and what they can do. Each user's own role is on Users.",
     body: `
-  ${rulesSection(rules, suggestions)}
+  ${rulesSection(rules, suggestions, platform.directory.providers)}
   <section class="public-sharing" aria-labelledby="public-head">
     <h3 class="sub-head" id="public-head">Sharing</h3>
     <ol class="rows settings" data-live-kind="setting" data-live-view="access" data-live-at="${Date.now()}">

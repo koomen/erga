@@ -55,15 +55,21 @@ setup's status shows a template that changed since it was applied.
   path and the query.
 - **Domains.** Each must have a Route 53 hosted zone in the account, and the pages' domain must not be under the
   app's. The certificates are in a second stack in us-east-1, where CloudFront needs them; DNS validates them.
-- **Or a load balancer, with the company's sign-in** (`oidc=<issuer's URL> oidcClient=<client ID>`). A public
-  Application Load Balancer takes CloudFront's place. It sends each browser to the company's OIDC sign-in first, and
-  that sign-in is Erga's own: no GitHub, no Google (`server/identity/front.ts` reads the balancer's signed header). The
-  first admin is an email address; with the company preset, everybody who passes the sign-in may make an account.
+- **Or a load balancer, with the company's sign-in**: the proxy mode (`signIn=proxy oidc=<issuer's URL>
+  oidcClient=<client ID>`; `server/identity/mode.ts` has the two modes). A public Application Load Balancer takes
+  CloudFront's place. It sends each browser to the company's OIDC sign-in first, and that sign-in is Erga's own: no
+  GitHub, no Google (`server/identity/proxy.ts` reads the balancer's signed header; the setup writes which balancer
+  and which client as `PROXY_SIGN_IN`). The first admin is an email address: a person added before their first
+  sign-in, as an admin adds one on the Users page. With the company preset, everybody who passes the sign-in may make
+  an account.
+  - Erga knows each person by the email address the sign-in gives: the `email` claim, or the one `proxyEmail` names
+    (`proxyEmail="username SSO_"` for a sign-in that gives `SSO_you@example.com` as `username`). A sign-in that gives
+    none there makes no account, and its page names the claims that came.
   - The setup reads the sign-in's endpoints from its issuer. The client's secret is never in a file: the person who
     has it stores it in Secrets Manager as `erga/<stack>/oidc-client-secret` (plain text), and the stack reads it there.
   - Without the sign-in pass only: a document's own address (its files by their token; a frame can't sign in); on the
     app's address, what Erga's tokens guard (MCP and its OAuth, the operations, the CLI's token request, the deploy's
-    checks: `TOKEN_PATHS`), a page's keyed requests to its room, and the server's own browser, by the NAT's fixed
+    checks: `shared/proxy-paths.ts`), a page's keyed requests to its room, and the server's own browser, by the NAT's fixed
     address. A person approves an agent on a page behind the sign-in.
   - The balancer refuses a request that brings its own `X-Forwarded-Host`, which celld would take for the host.
   - One certificate, in the stack and its region, for the app's name and the pages' wildcard. The pages' name may be

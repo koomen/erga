@@ -7,8 +7,9 @@ import { server, signedOut, type Server } from "./helpers/app";
 
 /** The dev login signs in with a pretend GitHub account, so it has GitHub's picture, by its id: that picture. */
 async function githubPicture(s: Server): Promise<string> {
-  await s.fetch("/auth/dev?provider=github&subject=4242&handle=tester");
-  return "https://avatars.githubusercontent.com/u/4242?s=64";
+  const picture = "https://avatars.githubusercontent.com/u/4242?s=64";
+  await s.fetch(`/auth/dev?provider=github&subject=4242&handle=tester&picture=${encodeURIComponent(picture)}`);
+  return picture;
 }
 
 /** A new document from /new, as the dev login: its editor address (with ?edit) and id. */

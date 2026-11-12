@@ -24,7 +24,7 @@
 //   /auth/home-pass            the homepage's own domain's sign-in, through here (server/identity/home-pass.ts)
 //   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent; /llms.txt points agents to /mcp
 //   /.well-known/oauth-..., /oauth/...
-//                              MCP's sign-in: an agent's app gets a token through its person's browser (server/identity/oauth.ts)
+//                              MCP's sign-in: an agent's app gets a token through its person's browser (server/identity/mcp-oauth.ts)
 //   /tokens/...                approving an agent's request for a token; making one (the Settings dialog)
 //   /_home-files/<gen>/<path>  the homepage's files, as deployed
 //   any other address          the homepage's site (server/home/site.ts): its redirects, its files at clean addresses
@@ -67,16 +67,13 @@ import {
   homeDomainSignIn,
   homePass,
   devSignIn,
-  finishGoogleSignIn,
-  finishSignIn,
-  frontSignIn,
+  finishOAuth,
   isOAuthPath,
   oauthRoutes,
-  startGoogleSignIn,
+  proxySignIn,
   signOut,
-  startSignIn,
+  startOAuth,
   tokensRoutes,
-  unlessFront,
   usernameStep,
 } from "./identity/index.ts";
 import { releaseApi, withLive } from "./live.ts";
@@ -154,26 +151,21 @@ const SIGN = { domain: "none", exempt: SIGN_IN } as const;
 
 /** The routes this file answers itself: signing in, and the release an open page follows. */
 export const ROUTES: readonly RouteRow<Route>[] = [
-  { method: "GET", path: "/auth/sign-in", run: chooseSignIn, action: "Choose a sign-in provider that is on (GitHub, Google)", ...SIGN },
+  { method: "GET", path: "/auth/sign-in", run: chooseSignIn, action: "Choose a way to sign in that is on here", ...SIGN },
+  // The OAuth mode (server/identity/oauth.ts): one flow, a start and a callback for each provider.
   // ?app=pending: a test sign-in with the values that wait on /admin/auth.
-  { method: "GET", path: "/auth/github", run: unlessFront(startSignIn), action: "Sign in with GitHub", ...SIGN },
+  { method: "GET", path: "/auth/github", run: startOAuth("github"), action: "Sign in with GitHub", ...SIGN },
+  { method: "GET", path: "/auth/github/callback", run: finishOAuth("github"), action: "GitHub sends the person back, signed in", ...SIGN },
+  { method: "GET", path: "/auth/google", run: startOAuth("google"), action: "Sign in with Google", ...SIGN },
+  { method: "GET", path: "/auth/google/callback", run: finishOAuth("google"), action: "Google sends the person back, signed in", ...SIGN },
+  // The proxy mode (server/identity/proxy.ts): the signed header of the proxy in front of the server.
   {
     method: "GET",
-    path: "/auth/github/callback",
-    run: unlessFront(finishSignIn),
-    action: "GitHub sends the person back, signed in",
+    path: "/auth/proxy",
+    run: proxySignIn,
+    action: "Sign in with the company's sign-in at the proxy in front of the server",
     ...SIGN,
   },
-  { method: "GET", path: "/auth/google", run: unlessFront(startGoogleSignIn), action: "Sign in with Google", ...SIGN },
-  {
-    method: "GET",
-    path: "/auth/google/callback",
-    run: unlessFront(finishGoogleSignIn),
-    action: "Google sends the person back, signed in",
-    ...SIGN,
-  },
-  // The company's own sign-in in front (a load balancer's signed header): the only sign-in where there is one.
-  { method: "GET", path: "/auth/front", run: frontSignIn, action: "Sign in with the company's sign-in in front of the server", ...SIGN },
   { method: "POST", path: "/auth/logout", run: signOut, action: "Sign out", ...SIGN },
   // Whether a username is free, with ?check=: {ok} or {problem}.
   { method: "GET", path: "/auth/username", run: usernameStep, action: "A new account's first sign-in: choose a username", ...SIGN },

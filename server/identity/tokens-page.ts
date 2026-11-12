@@ -12,7 +12,7 @@ import { dateTag, esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform";
 import { ADMIN_DAYS, adminEnd, normalCode, ScopeError, type Scope } from "./tokens.ts";
 import { type Note, noteOf, readOnce, seeOther } from "./flash.ts";
-import { callbackUrl, whereBack } from "./oauth.ts";
+import { callbackUrl, whereBack } from "./mcp-oauth.ts";
 import { call, ctx, Field, form, html, json, NO_STORE, redirect, text, type Route } from "../http.ts";
 import { routeFor, SECRET, SIGN_IN, type RouteRow } from "../../shared/routes.ts";
 
