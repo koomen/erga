@@ -5,6 +5,9 @@
 // where it was scrolled to (?erga-y: the reader puts it back there). Not while the editor is open in this page, nor in
 // a hidden tab: it catches up when it shows. A dropped socket comes back by itself, and hears the version first. A
 // deleted document (4404), or one no longer theirs (4403), never comes back, and the page says so (shared/socket-phase.ts).
+//
+// Trap: an address that differs from the frame's only by its hash loads nothing: the browser moves the page to the
+// hash. Someone who can edit has no version in the files' address, so the version goes in the query too (?erga-v).
 
 import { backoff, live } from "../live/client";
 import { socketStep, type PhaseEvent, type SocketPhase } from "../../shared/socket-phase";
@@ -44,8 +47,10 @@ export default function viewerLive(base: string): void {
     const pages = document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]');
     if (pages) pages.content = pages.content.replace(/\/@[^/]+\/$/, "/@" + wanted + "/");
     // In place of the entry shown (location.replace; the frame's src would add an entry to the tab's history, and Back
-    // would show the old version of the same page).
-    window.ergaFrames.frame.contentWindow!.location.replace(window.ergaFrames.src() + (y > 0 ? "?erga-y=" + y : "") + location.hash);
+    // would show the old version of the same page). ?erga-v: a new address for each version (the trap above).
+    window.ergaFrames.frame.contentWindow!.location.replace(
+      window.ergaFrames.src() + "?erga-v=" + wanted + (y > 0 ? "&erga-y=" + y : "") + location.hash
+    );
   }
   document.addEventListener("visibilitychange", show);
   // Who writes (an experiment): a small pill at the top of the page while changes come, then "Updated now", then gone

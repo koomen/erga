@@ -167,6 +167,25 @@ journey("a reader's open page shows an agent's change", () => {
     expect((await fetch(`${s.root}/d/${id}/pub/index.html`)).status).toBe(404);
     expect((await runTool(s.root, "versions", { document: id }, { token: "erga_forged" })).status).toBe(401);
   });
+
+  // The owner's open page stayed as it was until a reload by hand: the files' address of someone who can edit has no
+  // version, and with a place in the address (#), the same address again only moved the page to its place.
+  test("someone who can edit, at a place in the page (#), sees an agent's change to a linked stylesheet alone", async () => {
+    // (A document of its own: the first one's viewers hear of a change at most every 2 s.)
+    const made = await runTool(s.root, "create_document", {
+      title: "Live edit",
+      kind: "project",
+      files: { "index.html": FIRST, "style.css": "h1 { color: rgb(200, 0, 0) }" },
+    });
+    expect(made.ok, made.error).toBe(true);
+    const own = JSON.parse(textOf(made.result)) as { id: string; address: string };
+    await page.goto(`${s.root}${own.address}#place`);
+    expect((await seen())!.at).toMatch(/^\/t\/[^/]+\/index\.html$/);
+    const changed = await agent("edit", { document: own.id, path: "style.css", edits: [{ oldText: "200, 0, 0", newText: "0, 0, 200" }] });
+    expect(changed.ok, changed.text).toBe(true);
+    await expect.poll(() => inDoc<string>(page, `getComputedStyle(document.querySelector("h1")).color`)).toBe("rgb(0, 0, 200)");
+    expect(await inDoc<string>(page, "location.hash")).toBe("#place");
+  });
 });
 
 /** What the music page fetches one time for each run of it: its scripts, its media, and what its inline script fetches. */
