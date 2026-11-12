@@ -540,6 +540,9 @@ journey("a person's documents", () => {
     await editor(page, { address: `${s.root}${scratch}`, dir: "", file: "" }).loaded();
     const save = page.locator("#quick .erga-scratch-save");
     await expect.poll(() => save.isVisible()).toBe(true);
+    // The editor's own actions open out of the pencil, and push Save 108 px to the left in 420 ms. A press aimed
+    // where Save was 80 ms before landed on the bar beside it, and saved nothing: the press waits for the bar's rest.
+    await expect.poll(() => page.locator("#edit-group.settled").count()).toBe(1);
     await clickOn(page, "#quick .erga-scratch-save");
     await expect.poll(() => page.locator(".erga-scratch-save").count()).toBe(0);
     await until(async () => (await p.docs()).includes(`doc:${id["Zebra scratch"]}"`), 5000, "the saved document is on the list");
