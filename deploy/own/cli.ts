@@ -46,7 +46,7 @@ import {
   type TargetName,
   targetsOf,
 } from "./plan";
-import { cloudflare, type Connection, observe, signInCheck, site } from "./facts";
+import { cloudflare, type Connection, frontSignInCheck, observe, signInCheck, site } from "./facts";
 import { fail, pass, say } from "../root";
 import { firstDeploy, registerSetup } from "./first";
 import { addMessage, answersOf, DIR, loadOwn, loadSecrets, messages, putSecret, readEnvFile, saveOwn, saveSecrets } from "./store";
@@ -261,8 +261,11 @@ async function deployStepAws({ own, answers: a, facts: f }: Status, t: TargetNam
     );
   }
   const host = f.stack!.outputs.AppHost;
-  const check = await signInCheck(site, host, ids.github);
-  if (check == "ok") pass(`Sign-in: https://${host}/auth/github goes to GitHub with your app.`);
+  const check = a.oidc ? await frontSignInCheck(site, host, a.oidcClient) : await signInCheck(site, host, ids.github);
+  if (check == "ok")
+    pass(
+      `Sign-in: https://${host}/auth/${a.oidc ? "sign-in goes to your company's sign-in with your client" : "github goes to GitHub with your app"}.`
+    );
   else say(`FAIL  Sign-in: ${check && typeof check == "object" ? check.bad : "no answer"}`);
 }
 

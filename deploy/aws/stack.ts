@@ -93,17 +93,27 @@ export interface Planned {
 const DEAD = new Set(["ROLLBACK_COMPLETE", "ROLLBACK_FAILED", "DELETE_FAILED"]);
 
 /**
+ * The kind of change set a stack with this status takes (null: no such stack). Trap: a change set for a new stack
+ * leaves the stack in REVIEW_IN_PROGRESS, with nothing in it, until one runs: it is still new, not busy. Throws for a
+ * stack that AWS can only delete, and for a busy one.
+ */
+export function changeSetKind(stack: string, region: string, status: string | null): "CREATE" | "UPDATE" {
+  if (!status || status == "REVIEW_IN_PROGRESS") return "CREATE";
+  if (DEAD.has(status))
+    throw new Error(
+      `The stack ${stack} (${region}) is ${status}: its first creation failed. Read why in the CloudFormation console, delete the stack, then run setup again.`
+    );
+  if (status.endsWith("_IN_PROGRESS")) throw new Error(`The stack ${stack} is busy (${status}). Wait, then run setup again.`);
+  return "UPDATE";
+}
+
+/**
  * A change set from the template on disk to the stack: what AWS would make, change or replace. Nothing changes yet.
  * `params` are the template's parameters that come from another stack (the certificates' ARNs).
  */
 export async function planStack(where: Where, stack: string, templateFile: string, params: Record<string, string> = {}): Promise<Planned> {
   const aws = awsCli(where);
-  const now = await stackState(aws, stack);
-  if (now.status && DEAD.has(now.status))
-    throw new Error(
-      `The stack ${stack} (${where.region}) is ${now.status}: its first creation failed. Read why in the CloudFormation console, delete the stack, then run setup again.`
-    );
-  if (now.status?.endsWith("_IN_PROGRESS")) throw new Error(`The stack ${stack} is busy (${now.status}). Wait, then run setup again.`);
+  const kind = changeSetKind(stack, where.region, (await stackState(aws, stack)).status);
   const name = `erga-${Date.now()}`;
   await aws(
     "cloudformation",
@@ -113,7 +123,7 @@ export async function planStack(where: Where, stack: string, templateFile: strin
     "--change-set-name",
     name,
     "--change-set-type",
-    now.status ? "UPDATE" : "CREATE",
+    kind,
     "--template-body",
     `file://${templateFile}`,
     "--capabilities",

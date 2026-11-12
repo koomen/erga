@@ -46,9 +46,50 @@ export const CELLD_PORT = 8080;
 /** Where the instance's secrets are in Parameter Store: /erga/<stack>/<NAME>. */
 export const paramPath = (stack: string) => `/erga/${stack}/`;
 /**
+ * The parameters' folder, as the machine asks for it and as its role allows it. Trap: IAM compares the path as it is
+ * given: with a "/" at its end it is another resource, and AWS refuses the machine.
+ */
+export const paramFolder = (stack: string) => paramPath(stack).slice(0, -1);
+/**
  * The Secrets Manager secret that holds the OIDC client's secret, as plain text: the person who has the secret stores
  * it there, and the stack reads it by this name (a dynamic reference). It is never in a file, a command or a chat.
  */
+/**
+ * What the NAT machine runs at each start (cloud-init runs a plain script at the first start only: then a change to
+ * this script would do nothing, and a script that failed would never run again). Each step is safe to do again.
+ * Trap: dnf needs more memory than the smallest machine has, and the kernel stops it: it gets a swap file.
+ */
+export const NAT_USER_DATA = [
+  'Content-Type: multipart/mixed; boundary="//"',
+  "MIME-Version: 1.0",
+  "",
+  "--//",
+  "Content-Type: text/cloud-config",
+  "",
+  "#cloud-config",
+  "cloud_final_modules:",
+  "  - [scripts-user, always]",
+  "",
+  "--//",
+  "Content-Type: text/x-shellscript",
+  "",
+  "#!/bin/bash",
+  "set -euo pipefail",
+  "if ! rpm -q iptables-services > /dev/null; then",
+  "  swapoff /swap 2> /dev/null || true",
+  "  dd if=/dev/zero of=/swap bs=1M count=1024 status=none && chmod 600 /swap && mkswap -q /swap && swapon /swap",
+  "  dnf install -y -q iptables-services",
+  "  swapoff /swap && rm /swap",
+  "fi",
+  "echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/90-nat.conf && sysctl -q -p /etc/sysctl.d/90-nat.conf",
+  "dev=$(ip route show default | awk '{print $5; exit}')",
+  'rule="POSTROUTING -o $dev -s 10.80.0.0/16 -j MASQUERADE"',
+  "iptables -t nat -C $rule 2> /dev/null || iptables -t nat -A $rule",
+  "iptables -F FORWARD && service iptables save && systemctl enable --now iptables",
+  "--//--",
+  "",
+].join("\n");
+
 export const oidcSecretName = (stack: string) => `erga/${stack}/oidc-client-secret`;
 
 /**
@@ -191,18 +232,7 @@ function network(s: AwsShape): { subnet: unknown; vpc: unknown; resources: Json 
         NetworkInterfaces: [
           { DeviceIndex: "0", SubnetId: ref("PublicSubnet"), AssociatePublicIpAddress: true, GroupSet: [ref("NatFirewall")] },
         ],
-        UserData: {
-          "Fn::Base64": [
-            "#!/bin/bash",
-            "set -euo pipefail",
-            "dnf install -y -q iptables-services",
-            "echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/90-nat.conf && sysctl -p /etc/sysctl.d/90-nat.conf",
-            "dev=$(ip route show default | awk '{print $5; exit}')",
-            'iptables -t nat -A POSTROUTING -o "$dev" -s 10.80.0.0/16 -j MASQUERADE',
-            "iptables -F FORWARD && service iptables save && systemctl enable --now iptables",
-            "",
-          ].join("\n"),
-        },
+        UserData: { "Fn::Base64": NAT_USER_DATA },
         Tags: tags(s.stack, "nat"),
       },
     };
@@ -395,9 +425,7 @@ export function stackTemplate(s: AwsShape): Json {
                 {
                   Effect: "Allow",
                   Action: "ssm:GetParametersByPath",
-                  Resource: sub(
-                    `arn:\${AWS::Partition}:ssm:\${AWS::Region}:\${AWS::AccountId}:parameter${paramPath(s.stack).slice(0, -1)}`
-                  ),
+                  Resource: sub(`arn:\${AWS::Partition}:ssm:\${AWS::Region}:\${AWS::AccountId}:parameter${paramFolder(s.stack)}`),
                 },
               ],
             },
