@@ -35,7 +35,7 @@
 //   /api/snapshot/...               the deploy copying production's documents in, and staging reading a blob its copy
 //                                   lacks (/api/snapshot/blob/<sha-256>), both with SNAPSHOT_TOKEN
 //   /__erga/...                     local development only, behind the dev server's secret
-//   MCP's sign-in (oauth.ts)        an agent's app signs in with no cookie, so it must reach these without one:
+//   MCP's sign-in (mcp-oauth.ts)        an agent's app signs in with no cookie, so it must reach these without one:
 //                                   GET /.well-known/oauth-protected-resource[/mcp] and
 //                                   /.well-known/oauth-authorization-server (the metadata, made from the code: no data);
 //                                   POST /oauth/register (it signs a client_id, and keeps nothing); POST /oauth/token

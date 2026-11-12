@@ -157,13 +157,6 @@ test("users: who may sign in, bootstrap admins and server roles", async () => {
   expect(await users.signedIn("ada", "Ada Lovelace")).toMatchObject({ name: "Ada Lovelace" });
   // Coming back without a name keeps it.
   expect((await users.signedIn("ada"))?.name).toBe("Ada Lovelace");
-  // Their GitHub id, from the sign-in; kept until it changes.
-  expect((await users.get("ada"))?.githubId).toBeNull();
-  await users.setGithubId("Ada", 583231);
-  expect((await users.get("ada"))?.githubId).toBe(583231);
-  await users.setGithubId("ada", -1);
-  await users.setGithubId("nobody", 7);
-  expect((await users.get("ada"))?.githubId).toBe(583231);
   expect(await users.get("nobody")).toBeNull();
   expect(await users.isAdmin("ada")).toBe(false);
   // Admins make admins; bootstrap admins can't be demoted or removed here.

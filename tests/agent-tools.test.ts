@@ -82,7 +82,8 @@ test("settings: set, a number given as a string, bad values explained, reset, lo
 test("users: add by provider account with a role, make admin, demote, remove; bootstrap admins and yourself are kept", async () => {
   const dir = fresh({
     admins: ["root"],
-    github: async (login) => (login.startsWith("no-such-") ? null : { id: String(login.length), login }),
+    providers: ["github", "google"],
+    lookup: async (_provider, login) => (login.startsWith("no-such-") ? null : { subject: String(login.length), handle: login }),
   });
   const root = { dir, who: { login: "root", admin: true } };
   // Before their first sign-in: their GitHub account (its id found) or Google email, and one role.

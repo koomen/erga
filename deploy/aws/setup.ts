@@ -4,7 +4,7 @@
 //   1. What setup observes: the AWS CLI's login, the account's Route 53 zones, the stack, and the server it made.
 //   2. `stack`: the templates into .erga/aws/ (only if they aren't there: the person's changes stay), then AWS's change
 //      sets; with --yes, it applies them (the certificates first, in us-east-1, when CloudFront has domains). With the
-//      company's sign-in in front, its endpoints come from its issuer, and its client's secret must be in Secrets Manager.
+//      company's sign-in at a load balancer (the proxy mode), its endpoints come from its issuer, and its client's secret must be in Secrets Manager.
 //   3. The first deploy: the entry from the stack's outputs, the secrets into Parameter Store (encrypted with the stack's
 //      key), the programs into the bucket and onto the machine, then `bun erga deploy`'s code, with the first admin.
 
@@ -14,7 +14,7 @@ import { type AwsEntry, type Config, entryOf, entryOrigin, readConfig, withEntry
 import { type DeployOptions, deployInstance } from "../cli/deploy";
 import type { Fetch } from "../pipeline/pipeline";
 import type { Answers, Facts, TargetFacts, TargetName } from "../own/plan";
-import { frontSignIn, hostOf, isName, SETUP_COMMIT, stackOf, varsOf } from "../own/plan";
+import { firstRows, hostOf, isName, proxySignIn, SETUP_COMMIT, stackOf, varsOf } from "../own/plan";
 import { type Aws, awsCli, whoAmI, type Where } from "./cli";
 import { provisionScript, putPrograms, onMachine, untilReachable } from "./machine";
 import {
@@ -37,7 +37,7 @@ const hash = (path: string) => (existsSync(path) ? createHash("sha256").update(r
 /** The templates of the setup's production stack: the certificates' (with domains), then the main one. */
 const templatesOf = (dir: string, a: Answers) => {
   const stack = stackOf(a, "production");
-  return isName(a.host) || frontSignIn(a) ? [templatePath(dir, stack)] : [templatePath(dir, stack, true), templatePath(dir, stack)];
+  return isName(a.host) || proxySignIn(a) ? [templatePath(dir, stack)] : [templatePath(dir, stack, true), templatePath(dir, stack)];
 };
 
 /**
@@ -60,7 +60,7 @@ export async function discoverOidc(issuer: string, net: Fetch = fetch): Promise<
 
 /**
  * The shape of the production stack, from the answers and what the account has (its zones, CloudFront's prefix list),
- * and with a sign-in in front what its issuer publishes.
+ * and in the proxy mode what its issuer publishes.
  */
 export async function shapeOf(a: Answers, net: Fetch = fetch): Promise<AwsShape> {
   const aws = awsCli(whereOf(a));
@@ -76,7 +76,7 @@ export async function shapeOf(a: Answers, net: Fetch = fetch): Promise<AwsShape>
     stack: stackOf(a, "production"),
     egress: vpcId ? { kind: "vpc", vpcId, subnetId } : { kind: a.egress as "nat-instance" | "nat-gateway" },
     domains,
-    front: frontSignIn(a)
+    front: proxySignIn(a)
       ? { kind: "balancer", oidc: { ...(await discoverOidc(a.oidc, net)), clientId: a.oidcClient } }
       : { kind: "cloudfront", prefixList: await cloudFrontPrefixList(aws) },
   };
@@ -111,7 +111,7 @@ export async function observeAws(dir: string, a: Answers, applied: Record<string
         ? "changed"
         : "new";
   facts.stack = { name, status: st.status, outputs: st.outputs, template };
-  if (frontSignIn(a)) facts.frontSecret = await secretThere(aws, secretOf(files[0], name));
+  if (proxySignIn(a)) facts.proxySecret = await secretThere(aws, secretOf(files[0], name));
   facts.targets.production = await targetFacts(dir, a, st.outputs, net, githubId);
 }
 
@@ -156,8 +156,8 @@ async function targetFacts(dir: string, a: Answers, outputs: Record<string, stri
   if (v) {
     const h = await getJson<{ ok?: boolean; checks?: unknown }>(net, `https://${host}/api/health`);
     facts.health = h?.ok ? "ok" : { bad: h ? JSON.stringify(h.checks ?? h).slice(0, 200) : "no answer" };
-    const { frontSignInCheck, signInCheck } = await import("../own/facts");
-    facts.signIn = frontSignIn(a) ? await frontSignInCheck(net, host, a.oidcClient) : await signInCheck(net, host, githubId);
+    const { checkSignIn } = await import("../own/facts");
+    facts.signIn = await checkSignIn(net, host, a, githubId);
   }
   const params = await awsCli(whereOf(a))<{ Parameters: { Name: string }[] }>(
     "ssm",
@@ -237,13 +237,8 @@ export function awsEntry(
       app: outputs.AppHost,
       pages: isName(a.host) ? { kind: "shared", host: outputs.PagesHost } : { kind: "domain", domain: a.pages },
     },
-    vars: {
-      ...varsOf(a, ids),
-      // Whose signed header is the sign-in (server/identity/front.ts): this balancer's, for this client; and who is the first admin.
-      ...(frontSignIn(a) && outputs.Balancer
-        ? { FRONT_SIGN_IN: JSON.stringify({ signer: outputs.Balancer, issuer: a.oidc, client: a.oidcClient, admin: a.admin }) }
-        : {}),
-    },
+    // In the proxy mode: whose signed header is the sign-in (server/identity/proxy.ts): this balancer's, for this client.
+    vars: varsOf(a, ids, outputs.Balancer),
   };
 }
 
@@ -285,21 +280,19 @@ export interface FirstAws {
 const q = (v: string) => `'${v.replace(/'/g, "''")}'`;
 
 /**
- * The first admin, and feedback's repository, only into a database with no admin yet. With a sign-in in front, the
- * first admin has no username yet (they choose it at their first sign-in, and the server knows their email:
- * FRONT_SIGN_IN), so no row; with the company preset, everybody who passes that sign-in may make an account and write.
+ * The first rows (deploy/own/plan.ts, firstRows) as one SQL text for the machine to run after the release answers. The
+ * machine can't ask first whether the database has an admin, so each statement for a new database says so itself.
  */
-export function firstSql(a: Answers): string {
-  const now = Date.now();
-  const noAdmin = "WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')";
-  const admin = frontSignIn(a)
-    ? a.preset == "company"
-      ? `INSERT INTO access_rules (kind, value, access, created) SELECT 'everybody', '', 'write', ${now} ${noAdmin} ON CONFLICT (kind, value) DO UPDATE SET access = 'write'`
-      : "SELECT 1"
-    : `INSERT INTO users (login, name, role, created) SELECT ${q(a.admin)}, ${q(a.admin)}, 'admin', ${now} ${noAdmin} ON CONFLICT (login) DO UPDATE SET role = 'admin'`;
-  if (!a.feedback) return admin;
-  return `${admin}; INSERT INTO server_config (key, value, updated, updated_by) VALUES ('feedback_repository', ${q(JSON.stringify(a.feedback))}, ${now}, ${q(a.admin)}) ON CONFLICT (key) DO NOTHING`;
-}
+export const firstSql = (a: Answers): string =>
+  firstRows(a)
+    .map(({ table, row, onConflict, noAdmin }) => {
+      const values = Object.values(row)
+        .map((v) => (typeof v == "number" ? String(v) : q(v)))
+        .join(", ");
+      const what = noAdmin ? `SELECT ${values} WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')` : `VALUES (${values})`;
+      return `INSERT INTO ${table} (${Object.keys(row).join(", ")}) ${what} ON CONFLICT ${onConflict}`;
+    })
+    .join("; ");
 
 /** The first deploy of the production server on AWS. The result: the commit it deployed. */
 export async function firstDeployAws(o: FirstAws): Promise<string> {

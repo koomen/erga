@@ -16,11 +16,18 @@ import {
   type User,
   type UserRole,
 } from "../directory/index.ts";
-import type { AuthOps, AuthStatus } from "../identity/index.ts";
+import { type AuthOps, type AuthStatus, type Provider, providerOf, PROVIDERS } from "../identity/index.ts";
+import { SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
 import { ACTIVE_DAYS, analytics, analyticsList, isSpan, pageLlmUsage, SPANS } from "../admin/index.ts";
 import { type Caller, iso, LOGIN, type Operation, OperationError, said } from "./operation.ts";
 
-const PROVIDER = Schema.Literals(["github", "google"]).annotate({ description: "github or google" });
+const OAUTH = Object.keys(PROVIDERS) as Provider[];
+/** An OAuth provider (the OAuth mode's: set_sign_in). */
+const PROVIDER = Schema.Literals(OAUTH).annotate({ description: OAUTH.join(" or ") });
+/** The provider of a person's account: an OAuth provider, or the proxy of a server in the proxy mode (sign_in says the mode). */
+const ACCOUNT_PROVIDER = Schema.Literals(Object.keys(SIGN_IN_PROVIDERS)).annotate({
+  description: `${OAUTH.join(" or ")}; proxy on a server whose sign-in mode is proxy (sign_in)`,
+});
 const ACCESS = Schema.Literals(["none", "read", "write"]).annotate({
   description: "none ('No access'), read ('Can authenticate') or write ('Can create and edit content')",
 });
@@ -169,14 +176,20 @@ export const ADMIN_OPERATIONS: Operation[] = [
     label: "Read how people sign in",
     activity: "reading how people sign in",
     admin: true,
-    description: "How people sign in: the providers on, each OAuth app, and a live check of each.",
+    description: "How people sign in: the mode (oauth or proxy); the providers on, each OAuth app and a live check of each; or the proxy.",
     parameters: Schema.Struct({}),
     run: async (_args, caller) => {
-      const { here, google, providers } = await authOf(caller).status(caller.who);
+      const status = await authOf(caller).status(caller.who);
+      if (status.mode == "proxy")
+        return {
+          mode: "proxy",
+          proxy: status.proxy,
+          note: "A proxy in front of the server signs each person in. The deploy sets it: nothing here changes it.",
+        };
       return {
-        providersOn: providers,
-        github: signInOf(here),
-        google: signInOf(google),
+        mode: "oauth",
+        providersOn: status.providers,
+        ...Object.fromEntries(OAUTH.map((id) => [id, signInOf(status.apps[id])])),
         note: "An app's values are pasted only on /admin/auth, never in a conversation.",
       };
     },
@@ -189,7 +202,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
     admin: true,
     description: "Turns a sign-in provider on or off, or clears its app values set on /admin/auth.",
     asks: (args) => {
-      const provider = args.provider == "google" ? "Google" : "GitHub";
+      const provider = PROVIDERS[providerOf(args.provider) ?? OAUTH[0]].label;
       if (args.action == "clear")
         return `Clear the ${provider} sign-in app's values${args.force === true ? ", even if nobody can sign in then" : ""}`;
       if (args.action == "discard") return `Discard the ${provider} sign-in app's new values`;
@@ -209,8 +222,8 @@ export const ADMIN_OPERATIONS: Operation[] = [
       ),
     }),
     run: async (args, caller) => {
-      const provider = args.provider == "google" ? "google" : args.provider == "github" ? "github" : null;
-      if (!provider) throw new OperationError({ message: 'provider: "github" or "google".', status: 400 });
+      const provider = providerOf(args.provider);
+      if (!provider) throw new OperationError({ message: `provider: ${OAUTH.map((id) => `"${id}"`).join(" or ")}.`, status: 400 });
       const auth = authOf(caller);
       if (args.action == "on" || args.action == "off")
         return { providersOn: await auth.setProvider(caller.who, provider, args.action == "on") };
@@ -303,8 +316,10 @@ export const ADMIN_OPERATIONS: Operation[] = [
         description:
           "add (provider, handle, role; before they ever signed in too), role (role), remove (sessions and tokens stop; documents stay)",
       }),
-      provider: Schema.optionalKey(PROVIDER),
-      handle: Schema.optionalKey(Schema.String.annotate({ description: "add: the GitHub login, or the Google account's email" })),
+      provider: Schema.optionalKey(ACCOUNT_PROVIDER),
+      handle: Schema.optionalKey(
+        Schema.String.annotate({ description: "add: the account's login (github), or its email (google, proxy)" })
+      ),
       login: Schema.optionalKey(LOGIN),
       person: Schema.optionalKey(PERSON),
       role: Schema.optionalKey(

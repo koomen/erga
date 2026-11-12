@@ -49,7 +49,7 @@ export function d1Query(
       .filter(Boolean)
       .map((login) => ({ login }));
   // A row with its values as parameters (?1, ?2, ...: each once, in order), kept as the export writes it.
-  const put = /^INSERT INTO (credentials|users|server_config) \(([^)]+)\) VALUES \(\?/.exec(sql);
+  const put = /^INSERT INTO (credentials|users|server_config|people|access_rules) \(([^)]+)\) VALUES \(\?/.exec(sql);
   if (put) {
     const lit = (v: unknown) => (v == null ? "NULL" : typeof v == "number" ? String(v) : `'${String(v).replace(/'/g, "''")}'`);
     (db.rows ??= []).push(`INSERT INTO ${put[1]} (${put[2]}) VALUES (${(params ?? []).map(lit).join(", ")});`);

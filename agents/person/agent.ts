@@ -19,6 +19,7 @@
 
 import type { AgentConfig, ModelChoice } from "../models";
 import type { Usable } from "../../shared/models";
+import { providerName } from "../../shared/sign-in";
 import type { Attachment } from "../../shared/attach";
 import type { Log, LogEvent } from "../../shared/agent-log";
 import type { ChatMessage, ChatStore, StoredChat } from "../checkpoint";
@@ -55,7 +56,7 @@ function about(name: string, args: unknown): string | null {
   if (typeof a.key == "string") return a.key;
   if (typeof a.target == "string") return a.target;
   if (name == "clear_api_key" && typeof a.name == "string") return a.name;
-  if (name == "set_sign_in") return `${a.provider == "google" ? "Google" : "GitHub"} (${a.action})`;
+  if (name == "set_sign_in") return `${providerName(String(a.provider))} (${a.action})`;
   if (name == "set_user") {
     const whom = a.handle ?? a.login ?? `person ${a.person}`,
       role = typeof a.role == "string" ? ` (${ROLE_LABEL[a.role as UserRole | "none"] ?? a.role})` : "";

@@ -1,14 +1,17 @@
 // The people an admin added before their first sign-in (the people table,
 // server/migrations/0250; the Users page): one provider account each, and the
 // role their account gets. An Erga username comes only at the first sign-in,
-// so until then a person is their provider account:
+// so until then a person is their provider account, by what the provider's
+// row in shared/sign-in.ts says an admin gives (`handle`):
 //
-//   GitHub  by the login the admin gives; GitHub's numeric id for it is found
-//           then (GitHub's public users API), kept, and matched: a login that
-//           changes hands brings nothing.
-//   Google  by the email the admin gives; the first sign-in whose email Google
-//           verified as that one matches, and writes its sub, which alone
-//           matches from then on.
+//   a login  the provider's id for it is found then (GitHub's public users
+//            API), kept, and matched: a login that changes hands brings
+//            nothing.
+//   an email the first sign-in whose email the provider verified as that one
+//            matches, and writes its subject id, which alone matches from
+//            then on.
+//
+// The deploy adds a server's first admin in the same way (deploy/own/first.ts).
 //
 // Their first sign-in makes their account with that role (Identities.createAccount),
 // and the row goes: from then on they're a user (server/directory/users.ts). A sign-in
@@ -16,16 +19,18 @@
 
 import { changeLogEntry } from "../../shared/attribution.ts";
 import type { Sql, Statement } from "./model.ts";
-import { label, type SignInProvider, SIGN_IN_PROVIDERS, type Vouched, vouchedEmails } from "./identities.ts";
+import { providerName, SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
+import type { SignInProvider, Vouched } from "./identities.ts";
+import { vouchedEmails } from "./identities.ts";
 import { type Actor, NotAllowed, type UserRole, type Users } from "./users.ts";
 
 /** A person added, waiting for their first sign-in. */
 export interface Person {
   id: number;
   provider: SignInProvider;
-  /** The GitHub login or the Google email the admin gave (lowercase). */
+  /** The login or the email the admin gave (lowercase). */
   handle: string;
-  /** GitHub's account id; Google's sub once a sign-in matched; else null. */
+  /** The provider's id for them: found when they were added (a login), or once a sign-in matched (an email); else null. */
   subject: string | null;
   role: UserRole;
   created: number;
@@ -33,8 +38,11 @@ export interface Person {
   addedVia?: string | null;
 }
 
-/** A GitHub account, as GitHub's public users API answers its login; null: there's no such account. */
-export type GithubLookup = (login: string) => Promise<{ id: string; login: string } | null>;
+/**
+ * A provider's account by its login, as the provider answers now: its stable id, and its login now; null: there's no
+ * such account. (GitHub's public users API: server/identity/.)
+ */
+export type AccountLookup = (provider: SignInProvider, login: string) => Promise<{ subject: string; handle: string } | null>;
 
 const LOGIN = /^[a-z0-9](?:[a-z0-9-]{0,38})$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -60,22 +68,30 @@ const fromRow = (r: Row): Person => ({
   ...(r.added_via ? { addedVia: r.added_via } : {}),
 });
 
-/** The provider account a person is, as given: checked and tidied; a NotAllowed says what's wrong. */
-export function personHandle(provider: unknown, raw: unknown): { provider: SignInProvider; handle: string } {
+/**
+ * The provider account a person is, as given: checked and tidied; a NotAllowed says what's wrong. `providers`: those an
+ * admin may add a person by on this server.
+ */
+export function personHandle(
+  provider: unknown,
+  raw: unknown,
+  providers: readonly SignInProvider[]
+): { provider: SignInProvider; handle: string } {
   const p = String(provider ?? "")
     .trim()
-    .toLowerCase() as SignInProvider;
-  if (!SIGN_IN_PROVIDERS.includes(p)) throw new NotAllowed({ message: `"${provider}" isn't a provider: github or google.` });
+    .toLowerCase();
+  const info = providers.includes(p) ? SIGN_IN_PROVIDERS[p] : undefined;
+  if (!info) throw new NotAllowed({ message: `"${provider}" isn't a provider here: ${providers.join(" or ")}.` });
   let h = String(raw ?? "")
     .trim()
     .toLowerCase()
     .replace(/^@/, "");
-  // A GitHub profile's URL, pasted: its login.
-  if (p == "github") h = h.replace(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/?#]+)\/?$/, "$1");
-  if (!h) throw new NotAllowed({ message: p == "github" ? "Give the GitHub login." : "Give the Google account's email address." });
-  if (p == "github" && !LOGIN.test(h)) throw new NotAllowed({ message: `"${h}" isn't a GitHub login.` });
-  if (p == "google" && (!EMAIL.test(h) || h.endsWith("@users.noreply.github.com")))
-    throw new NotAllowed({ message: `"${h}" isn't a Google account's email address.` });
+  // A profile's URL, pasted: its login.
+  if (info.profile) h = h.replace(info.profile, "$1");
+  if (!h) throw new NotAllowed({ message: info.handle == "login" ? `Give the ${info.name} login.` : "Give the account's email address." });
+  if (info.handle == "login" && !LOGIN.test(h)) throw new NotAllowed({ message: `"${h}" isn't a ${info.name} login.` });
+  if (info.handle == "email" && (!EMAIL.test(h) || h.endsWith("@users.noreply.github.com")))
+    throw new NotAllowed({ message: `"${h}" isn't an account's email address.` });
   return { provider: p, handle: h };
 }
 
@@ -102,22 +118,17 @@ export class People {
   }
 
   /**
-   * The person a provider just vouched for, if an admin added them. A Google account's first match by its verified
-   * email writes its sub, so from then on only that account matches.
+   * The person a provider just vouched for, if an admin added them: by the provider's id for them; else by an email the
+   * provider verified, whose first match writes that id, so from then on only that account matches.
    */
   async match(v: Vouched): Promise<Person | null> {
-    // Nobody waits for the company's sign-in in front: an admin adds people by GitHub or Google only.
-    if (v.provider == "front") return null;
-    if (v.provider == "github") {
-      const [row] = await this.sql.all<Row>("SELECT * FROM people WHERE provider = 'github' AND subject = ?1", v.subject);
-      return row ? fromRow(row) : null;
-    }
-    const [bound] = await this.sql.all<Row>("SELECT * FROM people WHERE provider = 'google' AND subject = ?1", v.subject);
+    const [bound] = await this.sql.all<Row>("SELECT * FROM people WHERE provider = ?1 AND subject = ?2", v.provider, v.subject);
     if (bound) return fromRow(bound);
     const emails = vouchedEmails(v);
     if (!emails.length) return null;
     const [row] = await this.sql.all<Row>(
-      `SELECT * FROM people WHERE provider = 'google' AND subject IS NULL AND handle IN (${emails.map((_, i) => `?${i + 1}`).join(", ")})`,
+      `SELECT * FROM people WHERE provider = ?1 AND subject IS NULL AND handle IN (${emails.map((_, i) => `?${i + 2}`).join(", ")})`,
+      v.provider,
       ...emails
     );
     if (!row) return null;
@@ -153,7 +164,7 @@ export class People {
         by.login.toLowerCase(),
         by.via ?? null,
       ],
-      logged(by, at, `${label(p.provider)} ${p.handle}`, "added", role),
+      logged(by, at, `${providerName(p.provider)} ${p.handle}`, "added", role),
     ]);
     const [row] = await this.sql.all<Row>("SELECT * FROM people WHERE provider = ?1 AND handle = ?2", p.provider, p.handle);
     await this.users.pagesChanged([`person:${row.id}`]);
@@ -166,7 +177,7 @@ export class People {
     if (!p) throw new NotAllowed({ message: `Nobody waits as ${id}: people lists them.` });
     await this.sql.batch([
       ["UPDATE people SET role = ?2 WHERE id = ?1", id, role],
-      logged(by, Date.now(), `${label(p.provider)} ${p.handle}`, "role", role),
+      logged(by, Date.now(), `${providerName(p.provider)} ${p.handle}`, "role", role),
     ]);
     await this.users.pagesChanged([`person:${id}`]);
     return { ...p, role };
@@ -176,7 +187,10 @@ export class People {
     await this.users.mustAdmin(by);
     const p = await this.get(id);
     if (!p) throw new NotAllowed({ message: `Nobody waits as ${id}: people lists them.` });
-    await this.sql.batch([["DELETE FROM people WHERE id = ?1", id], logged(by, Date.now(), `${label(p.provider)} ${p.handle}`, "removed")]);
+    await this.sql.batch([
+      ["DELETE FROM people WHERE id = ?1", id],
+      logged(by, Date.now(), `${providerName(p.provider)} ${p.handle}`, "removed"),
+    ]);
     await this.users.pagesChanged([`person:${id}`]);
   }
 }

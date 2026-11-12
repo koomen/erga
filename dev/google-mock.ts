@@ -1,5 +1,5 @@
 // A pretend Google, for the tests: the parts of Google's OAuth that Erga's sign-in touches
-// (server/identity/sign-in.ts), under one origin (Platform.signIn.google, server/identity/apps.ts googleEndpoints):
+// (server/identity/oauth.ts), under one origin (Platform.signIn.origins.google, server/identity/providers.ts):
 //
 //   GET  /o/oauth2/v2/auth     Google's sign-in page: answers at once, back to redirect_uri with a code (as `user`)
 //   POST /token                the code for an access token (the client's id, secret and redirect_uri checked);

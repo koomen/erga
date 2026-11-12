@@ -38,7 +38,7 @@ export default function adminUsers(c: UsersConfig): void {
   }
   const provider = field<HTMLSelectElement>("provider");
   provider.addEventListener("change", () => {
-    field("handle").placeholder = provider.value == "github" ? "a GitHub login" : "someone@gmail.com";
+    field("handle").placeholder = provider.selectedOptions[0]?.dataset.placeholder ?? "";
   });
   addForm.addEventListener("submit", (e) => {
     e.preventDefault();

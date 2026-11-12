@@ -3,6 +3,7 @@
 import { type Identity, type Person, ROLE_LABEL, type User, USER_ROLES, type UserRole } from "../directory/index.ts";
 import { ICON, inlineCall, TIMES_SCRIPT } from "../pages/index.ts";
 import { dateTag, esc } from "../../shared/html.ts";
+import { providerName, SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
 import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
@@ -14,19 +15,29 @@ function roleSelect(now: UserRole | "none", label: string, o: { none?: boolean; 
   return `<select class="role" aria-label="Role for ${esc(label)}"${o.fixed ? ` disabled title="${esc(o.fixed)}"` : ""}>${roles.map((r) => `<option value="${r}"${r == now ? " selected" : ""}>${esc(ROLE_LABEL[r])}</option>`).join("")}</select>`;
 }
 
-/** The provider's name. */
-const providerName = (provider: string) => (provider == "github" ? "GitHub" : "Google");
-
-/** What a user signs in with: their GitHub or Google account (a bootstrap admin's, or one from before: its GitHub login), the handle only where it isn't the login. */
-const accountOf = (u: User, ids: Identity[]) =>
-  (ids.length ? ids : [{ provider: "github", handle: u.login }])
+/**
+ * What a user signs in with: their provider's account, the handle only where it isn't the login. One with no identity
+ * (a bootstrap admin's, or one from before identities) signs in by its login, where a provider here has logins.
+ */
+const accountOf = (u: User, ids: Identity[], providers: readonly string[]) =>
+  (ids.length
+    ? ids
+    : providers
+        .filter((p) => SIGN_IN_PROVIDERS[p]?.handle == "login")
+        .slice(0, 1)
+        .map((provider) => ({ provider, handle: u.login }))
+  )
     .map((i) => `${providerName(i.provider)}${i.handle && i.handle.toLowerCase() != u.login ? ` ${i.handle}` : ""}`)
     .join(", ");
+
+/** What the Add user form's field asks for, by the provider's kind of handle. */
+const handlePlaceholder = (provider: string) =>
+  SIGN_IN_PROVIDERS[provider]?.handle == "login" ? `a ${providerName(provider)} login` : "someone@example.com";
 
 /** Never seen: a dash in the column. */
 const NEVER = `<time class="seen never" title="Never signed in">—</time>`;
 
-function userRow(u: User, ids: Identity[], session: Session, lastAdmin: boolean): string {
+function userRow(u: User, ids: Identity[], session: Session, lastAdmin: boolean, providers: readonly string[]): string {
   const me = u.login == session.login.toLowerCase();
   const joined = u.created ? ` · Joined ${dateTag(u.created, "joined")}` : "";
   const seen = u.lastSeen != null ? dateTag(u.lastSeen, "seen") : NEVER;
@@ -39,7 +50,7 @@ function userRow(u: User, ids: Identity[], session: Session, lastAdmin: boolean)
       : "";
   const role: UserRole | "none" = u.role == "admin" ? "admin" : (u.access ?? "none");
   return `  <li data-login="${esc(u.login)}" data-live="user:${esc(u.login)}" data-sort="${esc(u.login)}">
-    <div class="who">${avatarHtml(u.login, u.avatar)}<span class="name"><span class="title">${esc(u.login)}</span>${u.name && u.name.toLowerCase() != u.login ? `<span class="note">${esc(u.name)}</span>` : ""}${me ? `<span class="badge">you</span>` : ""}</span><span class="added"${u.bootstrap ? ` title="DEV_LOGIN"` : ""}>${esc([accountOf(u, ids), added].filter(Boolean).join(" · "))}${joined}</span></div>
+    <div class="who">${avatarHtml(u.login, u.avatar)}<span class="name"><span class="title">${esc(u.login)}</span>${u.name && u.name.toLowerCase() != u.login ? `<span class="note">${esc(u.name)}</span>` : ""}${me ? `<span class="badge">you</span>` : ""}</span><span class="added"${u.bootstrap ? ` title="DEV_LOGIN"` : ""}>${esc([accountOf(u, ids, providers), added].filter(Boolean).join(" · "))}${joined}</span></div>
     ${seen}
     ${roleSelect(role, u.login, { none: true, fixed })}
     <button type="button" class="act remove" aria-label="Remove ${esc(u.login)}" title="${esc(fixed || "Remove: they can't sign in any more, unless a group lets them in")}"${fixed ? " disabled" : ""}>${ICON.delete}</button>
@@ -74,15 +85,15 @@ export async function usersPage(platform: Platform, session: Session) {
     body: `
   <section aria-labelledby="page-head">
     <form class="add-user">
-      <select name="provider" aria-label="Provider"><option value="github">GitHub</option><option value="google">Google</option></select>
-      <input class="input" name="handle" placeholder="a GitHub login" aria-label="The GitHub login or Google email" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" required>
+      <select name="provider" aria-label="Provider">${dir.providers.map((p) => `<option value="${esc(p)}" data-placeholder="${esc(handlePlaceholder(p))}">${esc(providerName(p))}</option>`).join("")}</select>
+      <input class="input" name="handle" placeholder="${esc(handlePlaceholder(dir.providers[0] ?? ""))}" aria-label="The account's login or email" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" required>
       <select name="role" aria-label="Role">${USER_ROLES.map((r) => `<option value="${r}"${r == "write" ? " selected" : ""}>${esc(ROLE_LABEL[r])}</option>`).join("")}</select>
       <button class="new">Add user</button>
     </form>
     <p class="hint" id="users-hint" role="status"></p>
     <div class="labels" aria-hidden="true"><span>User</span><span class="t seen">Last seen</span><span>Role</span><span></span></div>
     <ol class="rows users" data-live-kind="user person" data-live-view="users" data-live-order="asc" data-live-at="${Date.now()}">
-${users.map((u) => userRow(u, ids.get(u.login) ?? [], session, u.role == "admin" && admins.length == 1)).join("\n")}
+${users.map((u) => userRow(u, ids.get(u.login) ?? [], session, u.role == "admin" && admins.length == 1, dir.providers)).join("\n")}
 ${people.map(personRow).join("\n")}
     </ol>
   </section>
@@ -100,7 +111,7 @@ export const usersRows: LiveRows = async (platform, session, keys) => {
   for (const u of users)
     if (`user:${u.login}` in out)
       out[`user:${u.login}`] = {
-        html: userRow(u, ids.get(u.login) ?? [], session, u.role == "admin" && admins.length == 1),
+        html: userRow(u, ids.get(u.login) ?? [], session, u.role == "admin" && admins.length == 1, dir.providers),
         sort: u.login,
       };
   for (const p of people) if (`person:${p.id}` in out) out[`person:${p.id}`] = { html: personRow(p), sort: personSort(p) };

@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import { OWNER, type Route } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
-import { frontOf, sessionOf } from "../server/identity/index.ts";
+import { sessionOf, type SignIn, signInOf } from "../server/identity/index.ts";
 import { directoryOf, factoryKey, tokensOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
@@ -49,17 +49,27 @@ const SETTINGS = Config.all({
   /** Where the pipeline deployed this server (ERGA_DEPLOY, JSON: deploy/pipeline/account.ts deployFacts), or null. */
   deployFacts: text("ERGA_DEPLOY").pipe(Config.map((v): unknown => Result.getOrNull(Result.try(() => (v ? JSON.parse(v) : null))))),
   pagesHost: text("PAGES_HOST"),
-  githubApp: Config.all({ clientId: text("GITHUB_CLIENT_ID"), secret: text("GITHUB_CLIENT_SECRET") }),
-  googleApp: Config.all({ clientId: text("GOOGLE_CLIENT_ID"), secret: text("GOOGLE_CLIENT_SECRET") }),
-  githubOrigin: origin("ERGA_GITHUB_ORIGIN"),
-  googleOrigin: origin("ERGA_GOOGLE_ORIGIN"),
-  front: text("FRONT_SIGN_IN").pipe(Config.map(frontOf)),
+  /** The OAuth mode's app at each provider (the names are its entry's: server/identity/providers.ts), and the tests' stand-in for it. */
+  apps: Config.all({
+    github: Config.all({ clientId: text("GITHUB_CLIENT_ID"), secret: text("GITHUB_CLIENT_SECRET") }),
+    google: Config.all({ clientId: text("GOOGLE_CLIENT_ID"), secret: text("GOOGLE_CLIENT_SECRET") }),
+  }),
+  origins: Config.all({ github: origin("ERGA_GITHUB_ORIGIN"), google: origin("ERGA_GOOGLE_ORIGIN") }),
+  /** The proxy mode's proxy (server/identity/proxy.ts); any value: this server's sign-in is the proxy's. */
+  proxy: text("PROXY_SIGN_IN"),
   /** How often the served homepage looks for a newer deploy (ms); not a number: 0, every request. */
   homeRecheckMs: text("ERGA_HOME_RECHECK_MS").pipe(Config.map((v) => (v ? Number(v) || 0 : 5000))),
 });
 
 /** The Worker's settings, read from its bindings. */
 const settingsOf = (env: Env) => Effect.runSync(SETTINGS.parse(ConfigProvider.fromUnknown(env)));
+
+/** How people sign in here (server/identity/mode.ts), from the bindings. A stand-in's origin counts in local development only (the tests). */
+export const signInOfEnv = (env: Env): SignIn => {
+  const s = settingsOf(env);
+  const standIn = (value: string) => (env.DEV_LOGIN && value ? value : null);
+  return signInOf({ proxy: s.proxy, apps: s.apps, origins: { github: standIn(s.origins.github), google: standIn(s.origins.google) } });
+};
 
 /** The homepage's own domain in the deploy facts, or null. */
 const homeOf = (facts: unknown): string | null => {
@@ -113,7 +123,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
   const own = () => env.OWN.getByName("own");
   // Feedback's issues (server/feedback.ts), with GITHUB_ISSUES_TOKEN, in the setting feedback_repository. Locally (the
   // tests): on the pretend GitHub (dev/github-mock.ts), which takes its own token (ISSUES_TOKEN).
-  const pretend = standIn(settings.githubOrigin);
+  const pretend = standIn(settings.origins.github);
   const issuesToken = env.GITHUB_ISSUES_TOKEN?.trim() || (pretend ? "github_pat_mock_issues" : "");
   const issues = issuesToken
     ? githubIssues({ api: pretend ? `${pretend}/api` : "https://api.github.com", web: pretend ?? "https://github.com", token: issuesToken })
@@ -141,15 +151,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       home: homeOf(settings.deployFacts),
       app: appOf(settings.deployFacts),
     },
-    signIn: {
-      app: settings.githubApp,
-      github: standIn(settings.githubOrigin) ?? "https://github.com",
-      googleApp: settings.googleApp,
-      google: standIn(settings.googleOrigin),
-      front: settings.front,
-      devLogin: settings.devLogin || null,
-      encryptionKey: factoryKey(env),
-    },
+    signIn: { ...signInOfEnv(env), devLogin: settings.devLogin || null, encryptionKey: factoryKey(env) },
     own: { get: (k) => own().get(k), put: (k, v) => own().put(k, v), delete: (k) => own().delete(k) },
     home: env.HOME.getByName("home"),
     news: env.NEWS.getByName("news"),

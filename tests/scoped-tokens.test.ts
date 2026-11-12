@@ -287,7 +287,7 @@ test("only the pages for people call the code that makes a token", async () => {
   const MAKERS: Record<string, string> = {
     "server/identity/tokens-page.ts": "/tokens/new and /tokens/approve: a person's session only, with how they act",
     "server/documents/make.ts": "the share button's token: a person's session only, with how they act",
-    "server/identity/oauth.ts": "trades a code that a person's approval on /tokens/approve made",
+    "server/identity/mcp-oauth.ts": "trades a code that a person's approval on /tokens/approve made",
   };
   const found = new Set<string>();
   for (const dir of ["server", "agents", "cloudflare", "document", "shared", "client", "libs"])

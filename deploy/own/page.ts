@@ -153,7 +153,9 @@ const QUESTION_FIELDS = QUESTIONS.map((q) => {
         ? `<select name="providers"><option value="github">GitHub</option><option value="github,google">GitHub and Google</option></select>`
         : q.key == "provider"
           ? `<select name="provider"><option value="cloudflare">Cloudflare</option><option value="aws">AWS</option></select>`
-          : `<input name="${q.key}" autocomplete="off">`;
+          : q.key == "signIn"
+            ? `<select name="signIn"><option value="oauth">OAuth: GitHub, Google</option><option value="proxy">Proxy: your company's sign-in</option></select>`
+            : `<input name="${q.key}" autocomplete="off">`;
   return `<label><b>${esc(q.ask)}</b>${input}<small>${esc(q.help)}</small></label>`;
 }).join("");
 

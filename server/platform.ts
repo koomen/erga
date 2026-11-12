@@ -4,7 +4,7 @@
 // memory. The app's code takes a Platform and web Requests, and never a
 // Cloudflare binding.
 
-import type { AgentToken, AppValues, AuthStorage, FrontSignIn, Tokens } from "./identity/index.ts";
+import type { AgentToken, AuthStorage, SignIn, Tokens } from "./identity/index.ts";
 import type { HomeObject } from "./home/index.ts";
 import { type Directory, type Route, type Who } from "./directory/index.ts";
 import type { Role } from "../document/access.ts";
@@ -148,19 +148,9 @@ export interface Platform {
     /** The app's own host in the deploy facts (app), or null: where the homepage's own domain sends a visitor to sign in. */
     app: string | null;
   };
-  /** Sign-in's fixed values, from the deploy. */
-  signIn: {
-    /** The deploy's GitHub OAuth app (GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET); the values an admin sets on /admin/auth win while set. */
-    app: AppValues;
-    /** GitHub's origin (the tests' stand-in for it; its API is api.github.com, or the stand-in's /api). */
-    github: string;
-    /** The deploy's Google OAuth client (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET); the values an admin sets on /admin/auth win while set. */
-    googleApp?: AppValues;
-    /** A stand-in for Google's sign-in endpoints (the tests'); null or absent: Google's own. */
-    google?: string | null;
-    /** The company's own sign-in in front of the server, which is then its only sign-in (FRONT_SIGN_IN; server/identity/front.ts); null or absent: none. */
-    front?: FrontSignIn | null;
-    /** Local development: the login signed in without GitHub; null elsewhere. */
+  /** How people sign in: the mode and its values, from the deploy (server/identity/mode.ts), and what both modes read. */
+  signIn: SignIn & {
+    /** Local development: the login signed in without a provider; null elsewhere. */
     devLogin: string | null;
     /** What encrypts the secrets admins store (sign-in's secret, the API keys); null where the server can't keep them. */
     encryptionKey: string | null;

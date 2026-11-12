@@ -19,7 +19,7 @@ import { OPERATIONS } from "../server/operations/index.ts";
 import { type Action, routeFor } from "../shared/routes";
 
 // cloudflare/dev.ts reaches the Worker's platform, which only Vite loads (import.meta.glob): no test can import it.
-mock.module("../cloudflare/platform", () => ({ isDev: () => false, platform: () => null }));
+mock.module("../cloudflare/platform", () => ({ isDev: () => false, platform: () => null, signInOfEnv: () => null }));
 
 const ROOT = new URL("../", import.meta.url).pathname;
 const read = (file: string) => readFileSync(ROOT + file, "utf8");
@@ -34,7 +34,7 @@ const ROUTE_FILES = [
   "server/api.ts",
   "server/admin/routes.ts",
   "server/documents/routes.ts",
-  "server/identity/oauth.ts",
+  "server/identity/mcp-oauth.ts",
   "server/identity/tokens-page.ts",
   "server/news/routes.ts",
   "agents/person/sessions.ts",

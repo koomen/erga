@@ -39,14 +39,14 @@ import {
   parseAnswer,
   PRESETS,
   QUESTIONS,
-  frontSignIn,
+  proxySignIn,
   type Step,
   steps,
   summary,
   type TargetName,
   targetsOf,
 } from "./plan";
-import { cloudflare, type Connection, frontSignInCheck, observe, signInCheck, site } from "./facts";
+import { checkSignIn, cloudflare, type Connection, observe, site } from "./facts";
 import { fail, pass, say } from "../root";
 import { firstDeploy, registerSetup } from "./first";
 import { addMessage, answersOf, DIR, loadOwn, loadSecrets, messages, putSecret, readEnvFile, saveOwn, saveSecrets } from "./store";
@@ -225,8 +225,8 @@ async function deployStep(s: Status, t: TargetName, noTests: boolean, home: stri
       `Fix what it names (the person decides anything about the account), then: bun erga setup ${a.host}. Every step is safe to run again.`
     );
   }
-  const check = await signInCheck(c.net, host, ids.github);
-  if (check == "ok") pass(`Sign-in: https://${host}/auth/github goes to GitHub with your app.`);
+  const check = await checkSignIn(c.net, host, a, ids.github);
+  if (check == "ok") pass(SIGN_IN_OK(a, host));
   else say(`FAIL  Sign-in: ${check && typeof check == "object" ? check.bad : "no answer"}`);
 }
 
@@ -261,11 +261,8 @@ async function deployStepAws({ own, answers: a, facts: f }: Status, t: TargetNam
     );
   }
   const host = f.stack!.outputs.AppHost;
-  const check = a.oidc ? await frontSignInCheck(site, host, a.oidcClient) : await signInCheck(site, host, ids.github);
-  if (check == "ok")
-    pass(
-      `Sign-in: https://${host}/auth/${a.oidc ? "sign-in goes to your company's sign-in with your client" : "github goes to GitHub with your app"}.`
-    );
+  const check = await checkSignIn(site, host, a, ids.github);
+  if (check == "ok") pass(SIGN_IN_OK(a, host));
   else say(`FAIL  Sign-in: ${check && typeof check == "object" ? check.bad : "no answer"}`);
 }
 
@@ -292,12 +289,18 @@ async function stack(yes: boolean) {
 }
 
 /** register's ops token for `t`: the admin signs in and approves it in the browser, and the entry gets it. */
+/** What a working sign-in is, in the setup's mode. */
+const SIGN_IN_OK = (a: Answers, host: string) =>
+  proxySignIn(a)
+    ? `Sign-in: the proxy in front of https://${host} sends a browser to your company's sign-in.`
+    : `Sign-in: https://${host}/auth/github goes to GitHub with your app.`;
+
 async function registerStep({ answers: a }: Status, t: TargetName) {
   if (!a) return;
   const host = hostOf(a, t);
   const c = a.provider == "aws" ? { net: site } : await connect();
   say(
-    `Register ${host}: ${a.admin} signs in with ${frontSignIn(a) ? "the company's sign-in" : "GitHub"} and approves an ops token (an admin only, 90 days at most).`
+    `Register ${host}: ${a.admin} signs in with ${proxySignIn(a) ? "the company's sign-in" : "GitHub"} and approves an ops token (an admin only, 90 days at most).`
   );
   try {
     const login = await registerSetup(DIR, host, { site: c.net, say: (l) => say(`      ${l}`) });

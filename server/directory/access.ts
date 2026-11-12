@@ -16,6 +16,7 @@
 // read to every session and token (Users.allowed), write to every document (Directory.decide) and every new one.
 
 import { changeLogEntry } from "../../shared/attribution.ts";
+import { groupsOf } from "./identities.ts";
 import type { Sql } from "./model.ts";
 import { type Actor, NotAllowed, type Users } from "./users.ts";
 
@@ -40,17 +41,25 @@ export interface AccessRule {
   addedVia?: string | null;
 }
 
-/** What the rules read of a person: what their providers vouched for. */
+/** What the rules read of a person: the groups their sign-ins said they are in (groupOf). */
 export interface Facts {
-  workspaces: string[];
-  orgs: string[];
+  groups: string[];
 }
+
+/** A group as a sign-in names it and a rule matches it: a rule's kind and its value. */
+export const groupOf = (kind: Exclude<RuleKind, "everybody">, value: string) => `${kind}:${value.trim().toLowerCase()}`;
 
 /** How each kind of rule is named, for a person (the page) or an agent. */
 export const KIND_LABEL: Record<RuleKind, string> = {
   everybody: "Everybody",
   workspace: "Google Workspace organization",
   github_org: "GitHub organization",
+};
+
+/** The people a kind's rules let in, for a sentence; `values`: the rules' values, as the page shows them. */
+export const KIND_PEOPLE: Record<Exclude<RuleKind, "everybody">, (values: string[]) => string> = {
+  workspace: (v) => `Google Workspace accounts of ${v.join(" or ")}`,
+  github_org: (v) => `members of the GitHub organization${v.length > 1 ? "s" : ""} ${v.join(" or ")}`,
 };
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -76,10 +85,7 @@ export function accessValue(raw: unknown): Access {
 }
 
 /** Whether a rule matches a person. */
-const matches = (r: AccessRule, f: Facts) =>
-  r.kind == "everybody" ||
-  (r.kind == "workspace" && f.workspaces.includes(r.value)) ||
-  (r.kind == "github_org" && f.orgs.includes(r.value));
+const matches = (r: AccessRule, f: Facts) => r.kind == "everybody" || f.groups.includes(groupOf(r.kind, r.value));
 
 interface Row { id: number; kind: RuleKind; value: string; access: Access; created: number; added_by: string | null; added_via: string | null }
 const fromRow = (r: Row): AccessRule => ({ id: Number(r.id), kind: r.kind, value: r.value, access: r.access, created: Number(r.created), addedBy: r.added_by, ...(r.added_via ? { addedVia: r.added_via } : {}) });
@@ -186,13 +192,17 @@ export class AccessRules {
   /** What the page offers as WHO: the Workspace domains and GitHub organizations of people who signed in here. */
   async suggestions(by: Actor): Promise<{ workspaces: string[]; orgs: string[] }> {
     await this.users.mustAdmin(by);
-    const rows = await this.sql.all<{ hd: string | null; orgs: string | null }>("SELECT hd, orgs FROM identities WHERE hd IS NOT NULL OR orgs IS NOT NULL");
-    const orgs = new Set<string>(), workspaces = new Set<string>();
-    for (const r of rows) {
-      if (r.hd) workspaces.add(r.hd);
-      try { for (const o of JSON.parse(r.orgs ?? "[]") as string[]) orgs.add(String(o)); } catch { /* none */ }
-    }
-    return { workspaces: [...workspaces].sort(), orgs: [...orgs].sort() };
+    const rows = await this.sql.all<{ groups: string }>("SELECT groups FROM identities WHERE groups IS NOT NULL");
+    const of = (kind: RuleKind) =>
+      [
+        ...new Set(
+          rows
+            .flatMap((r) => groupsOf(r.groups))
+            .filter((g) => g.startsWith(`${kind}:`))
+            .map((g) => g.slice(kind.length + 1))
+        ),
+      ].sort();
+    return { workspaces: of("workspace"), orgs: of("github_org") };
   }
 }
 

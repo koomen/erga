@@ -401,6 +401,12 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     throw new Error(`${o.host} is a staging instance: name the commit (bun erga deploy <commit> ${o.host}).`);
   if (o.fresh && !entry.stagingOf)
     throw new Error(`${o.host} is a primary: --fresh is only for a staging instance, which copies its primary's data.`);
+  // An entry from before the proxy mode (server/identity/mode.ts) has its sign-in under a name the server no longer
+  // reads: deployed so, the server would have no sign-in behind its proxy.
+  if (entry.vars.FRONT_SIGN_IN)
+    throw new Error(
+      `${o.host}'s entry in .erga/config.json has the var FRONT_SIGN_IN, from before the proxy mode. Give it the name PROXY_SIGN_IN, and put "kind": "aws-alb" and "email": {"claim": "email", "prefix": ""} in its value (deploy/aws/README.md). Nothing was deployed.`
+    );
   const aws = isAws(entry) ? entry : null;
   if (aws && entry.stagingOf) throw new Error(`${o.host} is a staging instance on AWS: Erga has no staging on AWS yet.`);
   if (aws && (o.home || o.createSubdomain)) throw new Error(`${o.host} is on AWS: --home is only for an instance on Cloudflare.`);

@@ -5,7 +5,7 @@
 import { expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import * as Schema from "effect/Schema";
-import { clientIdFor, clientOf } from "../server/identity/oauth.ts";
+import { clientIdFor, clientOf } from "../server/identity/mcp-oauth.ts";
 import { mac, signed } from "../server/signed.ts";
 
 const Pass = Schema.Struct({ login: Schema.String });

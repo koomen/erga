@@ -135,6 +135,8 @@ export default defineConfig(({ mode }) => ({
         ERGA_GITHUB_ORIGIN: local(
           process.env.ERGA_GITHUB_ORIGIN ?? (process.env.ERGA_DEV_ORIGIN ? `${process.env.ERGA_DEV_ORIGIN}/__github` : "")
         ),
+        // The proxy mode, to see its pages locally: the proxy's setting (server/identity/proxy.ts). Empty: the oauth mode.
+        PROXY_SIGN_IN: local(process.env.ERGA_PROXY_SIGN_IN ?? ""),
         // The dev server's address, where its stand-in for GitHub and its own headless Chrome answer.
         ERGA_DEV_ORIGIN: local(process.env.ERGA_DEV_ORIGIN ?? ""),
         // The agent's key: a real one in .dev.vars, else the environment's, so a

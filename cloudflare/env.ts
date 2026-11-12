@@ -99,10 +99,10 @@ export interface Env {
   /** Local development only: a stand-in for Google's sign-in endpoints. */
   ERGA_GOOGLE_ORIGIN?: string;
   /**
-   * The company's own sign-in in front of the server (on AWS, a load balancer's: deploy/aws/setup.ts writes it): JSON
-   * {signer, issuer, client, admin}. Then that sign-in is the server's (server/identity/front.ts).
+   * The proxy mode (server/identity/mode.ts): the proxy in front of the server that signs each person in, as the
+   * deploy writes it: JSON, a `Proxy` (server/identity/proxy.ts). Any value: that sign-in is the server's only one.
    */
-  FRONT_SIGN_IN?: string;
+  PROXY_SIGN_IN?: string;
   /** On celld (deploy/aws/machine.ts): the DevTools address of a headless Chrome on the same machine, for view_page (cloudflare/browser.ts). */
   ERGA_CHROME?: string;
   /**

@@ -1,10 +1,14 @@
 // How each account signs in: the identities table (server/migrations/0210),
 // one row for each identity a provider vouches for, by the provider's stable
 // subject id (GitHub's numeric account id, Google's `sub`), never by an email
-// or a GitHub login. Each GitHub account and each Google account is its own
-// Erga account (one identity each); nothing links two. The emails table
-// (0220) keeps the address Google verified at the last sign-in, for the
-// access rules' domains only.
+// or a GitHub login. Each provider's account is its own Erga account (one
+// identity each); nothing links two. The emails table (0220) keeps the
+// addresses the provider verified at the last sign-in: they match a person an
+// admin added by an email (people.ts), and never find or link an account.
+//
+// The directory never asks which provider an identity is of: a provider is an
+// id (shared/sign-in.ts has its name), and a `Vouched` says all that the
+// directory reads of a sign-in. How a sign-in works is server/identity/'s.
 //
 // A username is the account's name in its addresses (/<username>/<id>): free
 // to choose on the first sign-in, valid for an address, and not a name in use
@@ -14,13 +18,11 @@
 
 import type { Sql, Statement } from "./model.ts";
 import { RESERVED } from "./model.ts";
-import { avatarFor } from "../../shared/avatars.ts";
+import { providerLabel } from "../../shared/sign-in.ts";
 import { type Actor, NotAllowed, type Users } from "./users.ts";
 
-/** GitHub, Google, or the company's own sign-in in front of the server (server/identity/front.ts). */
-export type SignInProvider = "github" | "google" | "front";
-/** The providers an admin adds a person by, before their first sign-in (people.ts). */
-export const SIGN_IN_PROVIDERS: readonly SignInProvider[] = ["github", "google"];
+/** A provider's id: an OAuth provider's ("github", "google"), or "proxy" (shared/sign-in.ts, SIGN_IN_PROVIDERS). */
+export type SignInProvider = string;
 
 /** An identity, as kept. */
 export interface Identity {
@@ -31,51 +33,77 @@ export interface Identity {
   handle: string | null;
   created: number;
   lastUsed: number | null;
-  /** A GitHub identity's organizations at its last sign-in (lowercase logins); null when not checked. */
-  orgs: string[] | null;
-  /** A Google identity's Workspace (the hd claim: its domain) at its last sign-in; null for a personal account. */
-  hd: string | null;
-}
-
-/** Who a provider says someone is, at a sign-in. */
-export interface Vouched {
-  provider: SignInProvider;
-  /** The provider's stable id for them (GitHub's account id, as text; Google's sub). */
-  subject: string;
-  /** What the provider calls them (a GitHub login, a Google email). */
-  handle: string;
-  /** Their display name, if the provider gives one. */
-  name: string | null;
-  /** Their email addresses, as the provider gives them: only Google's verified ones pass a domain rule. */
-  emails: { email: string; verified: boolean }[];
-  /** A GitHub account's organizations, as GitHub answered at this sign-in; null or absent: not asked, or no answer. */
-  orgs?: string[] | null;
-  /** A Google Workspace account's organization: the ID token's hd claim (its domain). Absent for a personal account. */
-  hd?: string | null;
-  /** A Google account's picture: the picture claim (shared/avatars.ts). A GitHub account's is found by its id. */
-  picture?: string | null;
+  /** The groups the provider said they are in, as the access rules match them (access.ts, groupOf); none known: []. */
+  groups: string[];
 }
 
 /**
- * The addresses a domain rule may read (server/directory/access.ts): Google's, when it says the address is verified.
- * Never GitHub's (it vouches for none at sign-in), never a noreply one. No address ever finds or links an account.
+ * Who a provider says someone is, at a sign-in: all the app knows of one, the same from every way to sign in. Each
+ * mode of sign-in has one place that makes it (server/identity/providers.ts for an OAuth provider, proxy.ts for the
+ * proxy in front); the steps after it are shared (accounts.ts). Always there: `subject`, which finds the account, and
+ * `handle`, a name the person knows as theirs.
  */
-export function vouchedEmails(v: Pick<Vouched, "provider" | "emails">): string[] {
-  if (v.provider != "google") return [];
+export interface Vouched {
+  provider: SignInProvider;
+  /** The provider's stable id for them (GitHub's account id, as text; Google's sub; the proxy's sign-in's sub). */
+  subject: string;
+  /** What the provider calls them (a GitHub login; a Google email; the email the proxy's sign-in gives). */
+  handle: string;
+  /** Their display name, if the provider gives one. */
+  name: string | null;
+  /** Their email addresses, as the provider gives them, and whether it verified each (a provider that vouches for none gives none). */
+  emails: { email: string; verified: boolean }[];
+  /**
+   * The groups the provider says they are in at this sign-in, as the access rules match them (access.ts, groupOf);
+   * null or absent: not asked, or no answer, so those of their last sign-in stand.
+   */
+  groups?: string[] | null;
+  /** Their picture's address, one a page may show (shared/avatars.ts); null or absent: none. */
+  picture?: string | null;
+  /**
+   * The username of an account from before identities that this identity may claim, once, while that account has no
+   * identity (accounts.ts, resolve): those accounts have their GitHub login as their username. Absent: none.
+   */
+  oldLogin?: string;
+}
+
+/** The addresses the provider verified, lowercase: never a noreply one. No address ever finds or links an account. */
+export function vouchedEmails(v: Pick<Vouched, "emails">): string[] {
   return [...new Set(v.emails.filter((e) => e.verified).map((e) => e.email.trim().toLowerCase())
     .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && !e.endsWith("@users.noreply.github.com")))];
 }
-
-/** A Google Workspace account's domain (the hd claim), lowercase; null for anything else. */
-export const workspaceOf = (v: Pick<Vouched, "provider" | "hd">): string | null => (v.provider == "google" && v.hd?.trim() ? v.hd.trim().toLowerCase() : null);
 
 export const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 /** Names no account may take, besides the app's addresses (RESERVED): people would read them as Erga's. */
 const NOT_A_USERNAME = new Set(["anyone", "admins", "erga", "root", "system", "support", "security", "staff", "www", "mail", "ops", "git", "deploy", "install", "me", "you", "everyone", "null", "undefined"]);
 
-interface Row { provider: SignInProvider; subject: string; login: string; handle: string | null; created: number; last_used: number | null; orgs?: string | null; hd?: string | null }
-const orgsOf = (raw: string | null | undefined): string[] | null => { try { const v = raw ? JSON.parse(raw) : null; return Array.isArray(v) ? v.map(String) : null; } catch { return null; } };
-const fromRow = (r: Row): Identity => ({ provider: r.provider, subject: String(r.subject), login: r.login, handle: r.handle, created: Number(r.created), lastUsed: r.last_used == null ? null : Number(r.last_used), orgs: orgsOf(r.orgs), hd: r.hd ?? null });
+interface Row {
+  provider: SignInProvider;
+  subject: string;
+  login: string;
+  handle: string | null;
+  created: number;
+  last_used: number | null;
+  groups?: string | null;
+}
+/** The groups kept on an identity (a JSON list); [] for none, or for anything else. */
+export const groupsOf = (raw: string | null | undefined): string[] => {
+  try {
+    const v = raw ? JSON.parse(raw) : null;
+    return Array.isArray(v) ? v.map(String) : [];
+  } catch {
+    return [];
+  }
+};
+const fromRow = (r: Row): Identity => ({
+  provider: r.provider,
+  subject: String(r.subject),
+  login: r.login,
+  handle: r.handle,
+  created: Number(r.created),
+  lastUsed: r.last_used == null ? null : Number(r.last_used),
+  groups: groupsOf(r.groups),
+});
 
 export class Identities {
   constructor(private sql: Sql, private users: Users) {}
@@ -119,8 +147,15 @@ export class Identities {
 
   /** The statement that links an identity to an account (with `link`, or in a batch that makes the account). */
   private linkStatement(login: string, v: Vouched, at: number): Statement {
-    const orgs = v.orgs ? JSON.stringify(v.orgs) : null;
-    return ["INSERT INTO identities (provider, subject, login, handle, created, last_used, orgs, orgs_checked, hd) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8)", v.provider, v.subject, login.toLowerCase(), v.handle || null, at, orgs, orgs ? at : null, workspaceOf(v)];
+    return [
+      "INSERT INTO identities (provider, subject, login, handle, created, last_used, groups) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6)",
+      v.provider,
+      v.subject,
+      login.toLowerCase(),
+      v.handle || null,
+      at,
+      v.groups ? JSON.stringify(v.groups) : null,
+    ];
   }
 
   /**
@@ -150,18 +185,23 @@ export class Identities {
   }
 
   /** An identity signed in again: when, what the provider calls them now, and their picture now. */
-  async used(v: Pick<Vouched, "provider" | "subject" | "handle" | "orgs" | "hd" | "picture">): Promise<void> {
+  async used(v: Pick<Vouched, "provider" | "subject" | "handle" | "groups" | "picture">): Promise<void> {
     const at = Date.now();
     await this.sql.run(
       "UPDATE users SET avatar = ?3 WHERE login = (SELECT login FROM identities WHERE provider = ?1 AND subject = ?2)",
       v.provider,
       v.subject,
-      avatarFor(v)
+      v.picture ?? null
     );
-    // Its Workspace as Google says now (none: a personal account); a GitHub identity has none.
-    await this.sql.run("UPDATE identities SET last_used = ?3, handle = COALESCE(?4, handle), hd = ?5 WHERE provider = ?1 AND subject = ?2", v.provider, v.subject, at, v.handle || null, workspaceOf(v));
-    // Its organizations, when GitHub answered this time: recorded, the old answer replaced.
-    if (v.orgs) await this.sql.run("UPDATE identities SET orgs = ?3, orgs_checked = ?4 WHERE provider = ?1 AND subject = ?2", v.provider, v.subject, JSON.stringify(v.orgs), at);
+    // Its groups, when the provider answered this time: recorded, the old answer replaced.
+    await this.sql.run(
+      "UPDATE identities SET last_used = ?3, handle = COALESCE(?4, handle), groups = COALESCE(?5, groups) WHERE provider = ?1 AND subject = ?2",
+      v.provider,
+      v.subject,
+      at,
+      v.handle || null,
+      v.groups ? JSON.stringify(v.groups) : null
+    );
   }
 
   /** Whether an account has no identity at all: one from before identities, or one an admin added by its GitHub login. */
@@ -193,7 +233,7 @@ export class Identities {
 
   /** A username to offer first: the provider's name for them, made valid, with a number when it's taken. */
   async suggest(v: Vouched): Promise<string> {
-    const from = v.provider == "github" ? v.handle : v.handle.split("@")[0];
+    const from = v.handle.split("@")[0];
     let base = from.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32).replace(/-+$/, "");
     if (!base || base.startsWith("test-")) base = "me";
     for (let i = 1; i < 50; i++) {
@@ -242,7 +282,11 @@ export class Identities {
   }
 }
 
-export const label = (p: SignInProvider) => (p == "github" ? "GitHub" : p == "google" ? "Google" : "your company's sign-in");
+export const label = providerLabel;
 
 /** The account's picture, from the identity it signed in with now (shared/avatars.ts). */
-const avatarStatement = (login: string, v: Vouched): Statement => ["UPDATE users SET avatar = ?2 WHERE login = ?1", login, avatarFor(v)];
+const avatarStatement = (login: string, v: Vouched): Statement => [
+  "UPDATE users SET avatar = ?2 WHERE login = ?1",
+  login,
+  v.picture ?? null,
+];

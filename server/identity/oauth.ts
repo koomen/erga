@@ -1,301 +1,177 @@
-// MCP's sign-in (the MCP authorization spec, 2025-06-18: OAuth 2.1 with PKCE). An agent's app (Claude Code, Codex)
-// adds <origin>/mcp and gets a 401 that names this server's metadata. It registers itself, and opens /oauth/authorize
-// in its person's browser. The person signs in (if they aren't) and approves on /tokens/approve, the page that
-// approves a device flow's request (tokens-page.ts). The browser goes back to the app with a code, and the app trades
-// the code and its PKCE verifier for an ordinary agent token at /oauth/token, with the person's own power: an admin's is
-// admin scope, anyone else's documents scope. The token lasts until the person revokes it in Settings (the dialog at
-// their picture, client/agent/settings-dialog.ts): there is no refresh token, as agent tokens have no other expiry. An
-// admin token's admin power is checked on each request (Users.actsAsAdmin): a person no longer an admin loses it at once.
+// The OAuth mode's sign-in (mode.ts): one flow, for whichever provider. It reads a provider's own parts from its entry
+// (providers.ts) and never asks which provider it is. Each provider's answer goes on to the same steps (accounts.ts):
+// which account it is (by the provider's id), or a username first.
+// An admin chooses which providers are on (/admin/auth, settings.ts); one that's off signs in only admins (a test).
 //
-// The routes are ROUTES, below.
+// A provider's app is the deploy's (Platform.signIn.apps), or the one an admin set on /admin/auth (settings.ts). New
+// values set there while the app in use works wait for a test sign-in: /auth/<provider>?app=pending signs in with
+// them, and an admin's sign-in that works puts them in use (apps.ts, the lockout rules). Everyone else keeps signing in
+// with the values that work.
 //
-// A client is not kept: its client_id holds its name and redirect URIs, signed with the server's secret.
+//   /auth/<provider>[?next=][&app=pending]   off to the provider, back to `next` (&app=test: an admin's test while
+//                                            the provider is off)
+//   /auth/<provider>/callback                the provider's answer: a code, traded for who they are
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpServerResponse } from "effect/http";
-import { page, signInFirst } from "../pages/index.ts";
+import { randomToken } from "../../shared/bytes.ts";
 import { esc } from "../../shared/html.ts";
-import { base64url, fromBase64url } from "../../shared/bytes.ts";
-import { call, ctx, Field, form, json, query, redirect, text, type Route } from "../http.ts";
-import { mac, macOk } from "../signed.ts";
-import { AGENT_SIGN_IN, routeAt, SECRET, type RouteRow } from "../../shared/routes.ts";
+import { SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
+import { call, ctx, redirect, type Route } from "../http.ts";
+import { page, safeNext } from "../pages/index.ts";
 import type { Platform } from "../platform.ts";
-import { LABEL_MAX } from "./tokens.ts";
+import { signed } from "../signed.ts";
+import { vouchedSignIn } from "./accounts.ts";
+import type { TestEnd } from "./app-test.ts";
+import { cookies, withCookie } from "./cookies.ts";
+import { type Provider, PROVIDERS, type Token } from "./providers.ts";
+import { providersOn, signInApp, testedSignIn } from "./settings.ts";
+import { signIn, STATE } from "./sign-in.ts";
 
-/** The scopes an app can get: the person's own power, admin for an admin, else documents (all their documents). */
-const SCOPES = ["documents", "admin"];
+/** A state that starts so is a test sign-in with the pending values ("." is never in base64url). */
+const TESTING = "p.";
+/** A state that starts so is an admin's test sign-in with a provider that's off. */
+const OFF_TEST = "t.";
 
-/** Where /mcp's metadata is: the 401 from /mcp names it (server/api.ts). */
-export const resourceMetadataUrl = (origin: string) => `${origin}/.well-known/oauth-protected-resource`;
+/** The sign-in's cookie, for ten minutes: its state, the client ID a test sign-in tests (app-test.ts), and where it goes after. */
+const State = signed("oauth-state", Schema.Struct({ state: Schema.String, tests: Schema.String, next: Schema.String }), 600);
+async function readState(secret: string, saved: string | undefined): Promise<{ state?: string; tests?: string; next?: string }> {
+  const s = await State.open(secret, saved);
+  return s ? { ...s, next: s.next || "/" } : {};
+}
 
-/** /mcp's metadata (RFC 9728). */
-export const resourceMetadata = (origin: string) => ({
-  resource: `${origin}/mcp`,
-  authorization_servers: [origin],
-  scopes_supported: SCOPES,
-  bearer_methods_supported: ["header"],
-  resource_name: "Erga",
+/** Where a server in the proxy mode has no OAuth sign-in: a route of this file says so. */
+const notThisWay = () =>
+  page("Not this way", 'This server signs in with your company\'s sign-in. <a class="new" href="/auth/sign-in">Sign in</a>', 404);
+
+/** Sign-in with a provider that's off here: the page says so and offers Sign in (another one), in place. */
+const providerOff = Effect.fnUntraced(function* (platform: Platform, provider: Provider, next: string) {
+  const on = yield* call(() => providersOn(platform));
+  const others = (Object.keys(PROVIDERS) as Provider[]).filter((p) => p != provider && on[p]);
+  return page(
+    `${PROVIDERS[provider].label} sign-in is off`,
+    `This server doesn't take sign-in with ${PROVIDERS[provider].label}.${others.length ? `</p><p><a class="new" href="/auth/sign-in?next=${encodeURIComponent(next)}">Sign in</a>` : " An admin turns it on at /admin/auth."}`,
+    403
+  );
 });
 
-/** The authorization server's metadata (RFC 8414): public clients, the code flow, PKCE with S256 only. */
-export const serverMetadata = (origin: string) => ({
-  issuer: origin,
-  authorization_endpoint: `${origin}/oauth/authorize`,
-  token_endpoint: `${origin}/oauth/token`,
-  registration_endpoint: `${origin}/oauth/register`,
-  scopes_supported: SCOPES,
-  response_types_supported: ["code"],
-  response_modes_supported: ["query"],
-  grant_types_supported: ["authorization_code"],
-  token_endpoint_auth_methods_supported: ["none"],
-  code_challenge_methods_supported: ["S256"],
-});
+const nothingToTest = () => page("Nothing to test", `No new sign-in values wait for a test. <a href="/admin/auth">Authentication</a>`, 404);
+/** The values that wait changed during a test sign-in: it tested none of them. */
+const valuesChanged = () =>
+  page(
+    "Test sign-in stopped",
+    `The values to test changed during this test sign-in, so it tested nothing. Test the new ones on <a href="/admin/auth">Authentication</a>.`,
+    409
+  );
 
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
-const NEVER = new Set(["javascript:", "data:", "file:", "blob:", "about:", "vbscript:", "ftp:", "ws:", "wss:"]);
+/** A provider's routes on a server with no app for it: a page saying what an admin does. */
+const notSetUp = (provider: Provider, origin: string) => {
+  const p = PROVIDERS[provider];
+  return page(
+    `${p.label} sign-in isn't set up`,
+    `This server has no ${p.label} OAuth ${p.appWord} yet. An admin makes one (${esc(p.newApp)}; homepage ${esc(origin)}, callback ${esc(origin)}${p.callbackPath}), and pastes its Client ID and client secret on this server's Authentication page (/admin/auth). Or they put its Client ID in the deploy's <code>${p.idEnv}</code>, set its client secret as the <code>${p.secretEnv}</code> secret, and deploy.</p><p><a class="new" href="/auth/sign-in">Sign in</a>`,
+    503
+  );
+};
 
-/**
- * A redirect URI an app may register: https, http to this computer only (loopback, RFC 8252), or an app's own scheme
- * (cursor://...). Never one that runs in a page, and never with a fragment.
- */
-export function redirectAllowed(uri: string): boolean {
-  if (uri.length > 500 || !URL.canParse(uri)) return false;
-  const u = new URL(uri);
-  if (u.hash || NEVER.has(u.protocol)) return false;
-  if (u.protocol == "http:") return LOOPBACK.has(u.hostname);
-  return true;
-}
-
-/** Where a redirect URI sends the person, in words for the approval page: an app on their own computer, or a site. */
-export function whereBack(uri: string): string {
-  const u = new URL(uri);
-  if (u.protocol == "http:" && LOOPBACK.has(u.hostname)) return "the app, on this computer";
-  return u.origin != "null" ? u.origin : `${u.protocol}//${u.host}`;
-}
-
-/** The redirect URI with OAuth's answer added to its query (a value of null is left out). */
-export function callbackUrl(redirectUri: string, params: Record<string, string | null>): string {
-  const u = new URL(redirectUri);
-  for (const [k, v] of Object.entries(params)) if (v != null) u.searchParams.set(k, v);
-  return u.href;
-}
-
-/** A registered app: its name, as it gave it, and its redirect URIs. */
-export interface Client {
-  name: string;
-  redirectUris: string[];
-}
-
-/** The client_id key: the server's secret, apart from the sessions' use of it. */
-const clientKey = (secret: string) => `${secret}:oauth-client`;
-const ClientJson = Schema.fromJsonString(Schema.Struct({ n: Schema.String, r: Schema.Array(Schema.String) }));
-
-/** A client's client_id: its name and redirect URIs, signed. */
-export async function clientIdFor(secret: string, c: Client): Promise<string> {
-  const value = base64url(new TextEncoder().encode(JSON.stringify({ n: c.name, r: c.redirectUris })));
-  return `${value}.${await mac(clientKey(secret), value)}`;
-}
-
-/** The client a client_id names, if this server signed it. */
-export async function clientOf(secret: string, id: string): Promise<Client | null> {
-  if (!id || id.length > 4000) return null;
-  // (Its format from before server/signed.ts's kinds, kept: apps hold their client_id for as long as they are installed.)
-  const [value, given, extra] = id.split(".");
-  if (!value || !given || extra != null || !(await macOk(clientKey(secret), value, given))) return null;
+/** Whether an access rule reads this provider's groups: then its sign-in asks for them. */
+async function wantsGroups(platform: Pick<Platform, "directory">, provider: Provider): Promise<boolean> {
+  const kind = SIGN_IN_PROVIDERS[provider].groups?.kind;
+  if (!kind) return false;
   try {
-    const c = Schema.decodeUnknownOption(ClientJson)(new TextDecoder().decode(fromBase64url(value)));
-    return c._tag == "Some" ? { name: c.value.n, redirectUris: [...c.value.r] } : null;
+    return (await platform.directory.rules.all()).some((r) => r.kind == kind);
   } catch {
-    return null;
+    return false;
   }
 }
 
-/** The metadata and the client's calls may come from a page's script (an MCP app in a browser): no cookies, so any origin. */
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, MCP-Protocol-Version",
-};
-/** An OAuth error, as RFC 6749 has it. */
-const oauthError = (error: string, description: string, status = 400) => json({ error, error_description: description }, status, CORS);
-
-const Registration = Schema.Struct({
-  redirect_uris: Schema.Array(Schema.String),
-  client_name: Schema.optionalKey(Schema.String),
-});
-
-const AuthorizeQuery = Schema.Struct({
-  client_id: Field,
-  redirect_uri: Field,
-  response_type: Field,
-  code_challenge: Field,
-  code_challenge_method: Field,
-  state: Field,
-  resource: Field,
-});
-
-const TokenForm = Schema.Struct({ grant_type: Field, code: Field, redirect_uri: Field, client_id: Field, code_verifier: Field });
-
-/** The request's parts every route here reads. */
-interface Asked {
-  readonly request: Request;
-  readonly platform: Platform;
-  readonly url: URL;
-  readonly origin: string;
-  readonly method: string;
-  readonly read: boolean;
-  readonly preflight: boolean;
-}
-
-/** Metadata, as JSON a client may keep for an hour (with its preflight, and a 405 for any other method). */
-const metadata =
-  (of: (origin: string) => unknown) =>
-  ({ origin, read, preflight }: Asked): Route =>
-    Effect.sync(() => {
-    if (preflight) return HttpServerResponse.empty({ status: 204, headers: CORS });
-    return read ? json(of(origin), 200, { ...CORS, "Cache-Control": "max-age=3600" }) : text("GET only.", 405, { Allow: "GET" });
-  });
-
-/** An app registers (RFC 7591): a public client, with its redirect URIs. */
-const register = ({ request, platform, method, preflight }: Asked): Route =>
+/** /auth/<provider>: off to the provider to sign in, coming back to `next`. */
+export const startOAuth = (provider: Provider): Route =>
   Effect.gen(function* () {
-    if (preflight) return HttpServerResponse.empty({ status: 204, headers: CORS });
-    if (method != "POST") return text("POST only.", 405, { Allow: "POST" });
-    const raw = yield* call(() => request.text());
-    const asked = Schema.decodeUnknownOption(Schema.fromJsonString(Registration))(raw);
-    if (asked._tag == "None") return oauthError("invalid_client_metadata", "Send JSON with redirect_uris (a list of URIs).");
-    const uris = [...new Set(asked.value.redirect_uris)];
-    if (!uris.length || uris.length > 10) return oauthError("invalid_redirect_uri", "Give 1 to 10 redirect_uris.");
-    const bad = uris.find((u) => !redirectAllowed(u));
-    if (bad)
-      return oauthError(
-        "invalid_redirect_uri",
-        `${bad} can't be a redirect URI: use https, http to localhost or 127.0.0.1, or the app's own scheme.`
-      );
-    const name = (asked.value.client_name ?? "").replace(/\s+/g, " ").trim().slice(0, LABEL_MAX) || "An MCP app";
-    const clientId = yield* call(() => clientIdFor(platform.secret, { name, redirectUris: uris }));
-    return json(
-      {
-        client_id: clientId,
-        client_id_issued_at: Math.floor(Date.now() / 1000),
-        client_name: name,
-        redirect_uris: uris,
-        grant_types: ["authorization_code"],
-        response_types: ["code"],
-        token_endpoint_auth_method: "none",
-        scope: SCOPES.join(" "),
-      },
-      201,
-      CORS
+    const { platform, request, url } = yield* ctx;
+    const mode = platform.signIn;
+    if (mode.mode != "oauth") return notThisWay();
+    const next = safeNext(url.searchParams.get("next"));
+    // Local development: sign in as the dev login (or ?as=, for the test suite's people), never on a real hostname.
+    if (platform.dev(url)) {
+      const login = url.searchParams.get("as") || platform.signIn.devLogin!;
+      return yield* signIn(platform, request, { login, name: login }, next);
+    }
+    // A test sign-in with the values that wait on /admin/auth: the state says so, for the callback.
+    const testing = url.searchParams.get("app") == "pending";
+    // Sign-in with a provider turned off on /admin/auth: only an admin's test sign-in (?app=test) goes on.
+    const offTest = !testing && url.searchParams.get("app") == "test";
+    if (!testing && !offTest && !(yield* call(() => providersOn(platform)))[provider]) return yield* providerOff(platform, provider, next);
+    const app = yield* call(() => signInApp(platform, testing ? "pending" : "active", provider));
+    if (testing && !app) return nothingToTest();
+    // No app yet (staging's, until an admin makes one): the provider would answer an error, so say so here instead.
+    if (!app?.clientId) return notSetUp(provider, url.origin);
+    const p = PROVIDERS[provider];
+    const state = (testing ? TESTING : offTest ? OFF_TEST : "") + randomToken(18);
+    const to = new URL(p.authorizeUrl(mode.origins[provider]));
+    to.searchParams.set("client_id", app.clientId);
+    to.searchParams.set("redirect_uri", `${url.origin}${p.callbackPath}`);
+    to.searchParams.set("state", state);
+    const groups = yield* call(() => wantsGroups(platform, provider));
+    for (const [key, value] of Object.entries(p.authorize({ groups }))) to.searchParams.set(key, value);
+    return withCookie(
+      redirect(to.toString()),
+      request,
+      STATE,
+      yield* call(() => State.seal(platform.secret, { state, tests: testing ? app.clientId : "", next })),
+      600
     );
   });
 
-/** The person signs in, then approves on /tokens/approve. */
-const authorize = ({ request, platform, url, origin, read }: Asked): Route =>
+/** /auth/<provider>/callback: the provider sends the person back with a code to trade for who they are. */
+export const finishOAuth = (provider: Provider): Route =>
   Effect.gen(function* () {
-    if (!read) return text("GET only.", 405, { Allow: "GET" });
-    const q = yield* query(AuthorizeQuery).pipe(Effect.orDie);
-    const client = yield* call(() => clientOf(platform.secret, q.client_id));
-    // Until the redirect URI is known to be the app's, an error is a page here, never a redirect.
-    const wrong = (why: string) => page("This sign-in link doesn't work", `${esc(why)} Ask your agent's app to add Erga again.`, 400);
-    if (!client) return wrong("The app that sent you here isn't registered with this server.");
-    const redirectUri = q.redirect_uri || (client.redirectUris.length == 1 ? client.redirectUris[0] : "");
-    if (!client.redirectUris.includes(redirectUri)) return wrong("The address it asks to go back to isn't one it registered.");
-    const back = (error: string, description: string) =>
-      redirect(callbackUrl(redirectUri, { error, error_description: description, state: q.state || null }));
-    if (q.response_type != "code") return back("unsupported_response_type", "Only response_type=code.");
-    if (q.code_challenge_method != "S256" || !/^[A-Za-z0-9_-]{43}$/.test(q.code_challenge))
-      return back("invalid_request", "PKCE is required: code_challenge with code_challenge_method=S256.");
-    if (q.resource && ![`${origin}/mcp`, origin, `${origin}/`].includes(q.resource))
-      return back("invalid_target", `This server signs in for ${origin}/mcp only.`);
-    const session = yield* call(() => platform.sessionOf(request));
-    if (!session) return signInFirst(url.pathname + url.search);
-    if (session.agent) return page("Sign in as yourself", "Only a person, signed in as themselves, can let an app act for them.", 403);
-    const admin = yield* call(() => platform.directory.users.isAdmin(session.login));
-    const asked = yield* call(() =>
-      platform.tokens.request(
-        client.name,
-        { scope: admin ? "admin" : "documents" },
-        { client: q.client_id, redirectUri, challenge: q.code_challenge, state: q.state || null }
-      )
-    );
-    return redirect(`/tokens/approve?code=${encodeURIComponent(asked.userCode)}`);
+    const { platform, request, url } = yield* ctx;
+    const mode = platform.signIn;
+    if (mode.mode != "oauth") return notThisWay();
+    const p = PROVIDERS[provider];
+    const origin = mode.origins[provider];
+    const { state, tests, next } = yield* call(() => readState(platform.secret, cookies(request).get(STATE)));
+    const testing = !!state?.startsWith(TESTING);
+    const app = yield* call(() => signInApp(platform, testing ? "pending" : "active", provider));
+    if (!app?.clientId) return testing ? nothingToTest() : notSetUp(provider, url.origin);
+    if (!state || state != url.searchParams.get("state"))
+      return page("Sign-in expired", 'That sign-in link is stale. <a href="/">Start again</a>.', 400);
+    if (testing && app.clientId != tests) return valuesChanged();
+    // The person said no on the provider's page, or the provider refused: nothing changes.
+    const refused = url.searchParams.get("error");
+    // The token: the code traded here.
+    const token: Token = refused
+      ? { error: refused, error_description: refused == "access_denied" ? "you didn't allow it" : refused }
+      : yield* call(() => p.token(origin, app, url.searchParams.get("code") ?? "", `${url.origin}${p.callbackPath}`));
+    if (!token.access_token) {
+      // The provider's own reason (e.g. incorrect_client_credentials: a wrong client secret) goes to the logs and the page.
+      console.log(`${p.label} sign-in failed: ${token.error}: ${token.error_description}`);
+      const why = token.error ? ` (${esc(token.error_description ?? token.error)})` : "";
+      if (testing) {
+        yield* call(() =>
+          testedSignIn(
+            platform,
+            app.clientId,
+            { kind: "provider", error: `${p.label} refused the sign-in: ${token.error_description ?? token.error ?? "no reason given"}.` },
+            provider
+          )
+        );
+        return page(
+          "Test sign-in failed",
+          `${p.label} didn't sign you in with the new values${why}. Sign-in still uses the values that worked before. <a href="/admin/auth">Authentication</a>`,
+          400
+        );
+      }
+      return page("Sign-in failed", `${p.label} didn't let you in${why}. <a href="/auth/sign-in">Try again</a>.`, 400);
+    }
+    // The provider's access token reads who they are, once, and is never stored.
+    const groups = yield* call(() => wantsGroups(platform, provider));
+    const v = yield* call(() => p.who(origin, token.access_token!, { groups }));
+    if (!v) return page("Sign-in failed", `${p.label} didn't say who you are. <a href="/auth/sign-in">Try again</a>.`, 400);
+    // The provider turned off on /admin/auth: only an admin's sign-in (a test) goes through.
+    const onlyAdmins = !(yield* call(() => providersOn(platform)))[provider];
+    // A test sign-in with the pending values: each end has a result; an admin's sign-in puts them in use.
+    const tested = testing ? (end: TestEnd) => testedSignIn(platform, app.clientId, end, provider) : undefined;
+    return yield* vouchedSignIn(platform, request, v, next ?? "/", { onlyAdmins, tested });
   });
-
-/** The app trades the code and its PKCE verifier for the token. */
-const token = ({ platform, method, preflight }: Asked): Route =>
-  Effect.gen(function* () {
-    if (preflight) return HttpServerResponse.empty({ status: 204, headers: CORS });
-    if (method != "POST") return text("POST only.", 405, { Allow: "POST" });
-    const f = yield* form(TokenForm).pipe(Effect.orElseSucceed(() => null));
-    if (!f) return oauthError("invalid_request", "Send the request as a form (application/x-www-form-urlencoded).");
-    if (f.grant_type != "authorization_code") return oauthError("unsupported_grant_type", "Only grant_type=authorization_code.");
-    if (!(yield* call(() => clientOf(platform.secret, f.client_id))))
-      return oauthError("invalid_client", "This server didn't register that client_id.", 401);
-    const got = yield* call(() => platform.tokens.exchange(f.code, f.client_id, f.redirect_uri, f.code_verifier));
-    if (!got)
-      return oauthError(
-        "invalid_grant",
-        "That code expired, was used, or doesn't match the client, the redirect URI or the PKCE verifier."
-      );
-    return json({ access_token: got.token, token_type: "Bearer", scope: got.info.scope }, 200, { ...CORS, Pragma: "no-cache" });
-  });
-
-const AGENT = { domain: "none", exempt: AGENT_SIGN_IN } as const;
-
-export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
-  // /mcp's metadata (RFC 9728): the resource, and who signs in for it; and the same, where a client looks for /mcp's own.
-  {
-    method: "GET",
-    path: "/.well-known/oauth-protected-resource",
-    run: metadata(resourceMetadata),
-    action: "An MCP app reads how /mcp signs in",
-    ...AGENT,
-  },
-  {
-    method: "GET",
-    path: "/.well-known/oauth-protected-resource/mcp",
-    run: metadata(resourceMetadata),
-    action: "The same, where an MCP app looks for /mcp's own",
-    ...AGENT,
-  },
-  // The authorization server's metadata (RFC 8414).
-  {
-    method: "GET",
-    path: "/.well-known/oauth-authorization-server",
-    run: metadata(serverMetadata),
-    action: "An MCP app reads the sign-in's endpoints",
-    ...AGENT,
-  },
-  { method: "POST", path: "/oauth/register", run: register, action: "An MCP app registers itself", ...AGENT },
-  {
-    method: "GET",
-    path: "/oauth/authorize",
-    run: authorize,
-    action: "The person, in their browser, lets an MCP app act for them (approved on /tokens/approve)",
-    domain: "none",
-    exempt: `${SECRET} (it hands a new token to an outside agent)`,
-  },
-  { method: "POST", path: "/oauth/token", run: token, action: "An MCP app trades its code for its token", ...AGENT },
-];
-
-/** MCP's sign-in: each function answers its path's other methods too (a preflight, a 405). */
-export const oauthRoutes: Route = Effect.gen(function* () {
-  const { request, platform, url } = yield* ctx;
-  const method = request.method;
-  const route = routeAt(ROUTES, url.pathname.replace(/\/+$/, ""));
-  if (!route) return text("Not found", 404);
-  return yield* route.run({
-    request,
-    platform,
-    url,
-    origin: url.origin,
-    method,
-    read: method == "GET" || method == "HEAD",
-    preflight: method == "OPTIONS",
-  });
-});
-
-/** The paths oauthRoutes answers. */
-export const isOAuthPath = (path: string) => path.startsWith("/.well-known/oauth-") || path == "/oauth" || path.startsWith("/oauth/");

@@ -12,6 +12,7 @@ import {
 } from "../directory/index.ts";
 import { inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
+import { providerName } from "../../shared/sign-in.ts";
 import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine, SYSTEM, VIA } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
@@ -68,7 +69,7 @@ function eventItem(c: SettingChange): string {
   if (c.signIn) {
     const a = c.signIn,
       server = a.target ? `${esc(a.target)}'s` : "the";
-    const name = a.provider == "google" ? "Google" : "GitHub";
+    const name = esc(providerName(a.provider));
     if (a.event == "on" || a.event == "off") return `<li><span class="key">Sign-in</span> ${name} turned ${a.event}</li>`;
     const what =
       a.event == "set"

@@ -82,7 +82,7 @@ const NO_TOKEN = (origin: string) =>
   `This needs Erga's sign-in. Add Erga's MCP server, ${origin}/mcp, to your app (Claude Code, Codex): it signs you in through your person's browser. If you had a token, it expired or was revoked.`;
 /**
  * No token, or one that doesn't work: a 401 that names /mcp's metadata, where an MCP app finds how to sign in
- * (server/identity/oauth.ts).
+ * (server/identity/mcp-oauth.ts).
  */
 const unauthorized = (origin: string, sent: boolean) =>
   json({ ok: false, error: NO_TOKEN(origin) }, 401, {
@@ -505,7 +505,7 @@ export const ROUTES: readonly RouteRow<(a: Asked, params: Record<string, string>
     path: "/mcp",
     // The same list and the same calls over MCP (stateless, Streamable HTTP, JSON answers), for a token: an adapter,
     // with no logic of its own. Without one, a 401 that starts an MCP app's sign-in in the browser
-    // (server/identity/oauth.ts). An outside agent's manual is the tools' descriptions and the instructions `initialize` answers.
+    // (server/identity/mcp-oauth.ts). An outside agent's manual is the tools' descriptions and the instructions `initialize` answers.
     run: ({ ctx, origin }) => mcp(ctx, origin),
     action: "The same tools over MCP, for an outside agent with a token",
     domain: "none",

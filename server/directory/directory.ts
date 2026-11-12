@@ -45,7 +45,7 @@
 import * as Effect from "effect/Effect";
 import { ConfigError, ServerConfig } from "./settings.ts";
 import { type Access, AccessRules, type Facts, higher } from "./access.ts";
-import { type GithubLookup, People, type Person, personHandle } from "./people.ts";
+import { type AccountLookup, People, type Person, personHandle } from "./people.ts";
 import { type Actor, NotAllowed, NotFound, type User, type UserRole, Users } from "./users.ts";
 
 import { Credentials, PersonKeys } from "./api-keys.ts";
@@ -54,7 +54,8 @@ import { Feedback } from "./feedback.ts";
 import { Activity } from "./activity.ts";
 import { Lists } from "./lists.ts";
 import { Requests } from "./requests.ts";
-import { Identities, type Vouched, workspaceOf } from "./identities.ts";
+import { Identities, type SignInProvider, type Vouched } from "./identities.ts";
+import { providerName, SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
 import { isDocKind, SLUG_MAX, slugify, type DocKind } from "../../document/pages.ts";
 import { addressOf, HOME_OWNER, HOME_SLUG, NameError, UNTITLED } from "../../document/names.ts";
 import type { Role } from "../../document/access.ts";
@@ -130,8 +131,9 @@ export class Directory {
   readonly lists: Lists;
   /** Requests for access to a document, for its owner to answer (requests.ts). */
   readonly requests: Requests;
-  /** GitHub's public users API, for a GitHub account added by its login. */
-  private readonly github: GithubLookup | null;
+  /** The providers an admin adds a person by on this server (the sign-in's: server/identity/), and how a login's account is found. */
+  readonly providers: readonly SignInProvider[];
+  private readonly lookup: AccountLookup | null;
 
   /**
    * `admins`: the deploy's bootstrap admins. `locked`: settings
@@ -154,7 +156,8 @@ export class Directory {
       locked?: Record<string, unknown>;
       defaults?: Record<string, unknown>;
       local?: boolean;
-      github?: GithubLookup;
+      providers?: readonly SignInProvider[];
+      lookup?: AccountLookup;
       changed?: (key: string) => Promise<void>;
       credentialSecret?: string | null;
       fallback?: (env: string) => boolean;
@@ -171,7 +174,8 @@ export class Directory {
     this.people = new People(sql, this.users);
     this.lists = new Lists(sql, this.users, (news) => this.publish(news));
     this.requests = new Requests(sql);
-    this.github = opts.github ?? null;
+    this.providers = opts.providers ?? [];
+    this.lookup = opts.lookup ?? null;
     // A user's role and the group rules decide who may sign in (Users.allowed, Users.signedIn): read or write.
     this.users.gate = async (user) => (await this.accessOf(user)) != "none";
     this.users.accessChanged = () => this.rules.forget();
@@ -641,24 +645,19 @@ export class Directory {
     this.known.delete(login.toLowerCase());
   }
 
-  /** What the group rules read of an account: its Google Workspace and its GitHub organizations, at its last sign-in. */
+  /** What the group rules read of an account: the groups its providers said it is in, at its last sign-in. */
   async factsOf(login: string): Promise<Facts> {
-    const identities = await this.identities.of(login);
-    return {
-      workspaces: identities.flatMap((i) => (i.hd ? [i.hd] : [])),
-      orgs: identities.flatMap((i) => (i.provider == "github" ? (i.orgs ?? []) : [])),
-    };
+    return { groups: (await this.identities.of(login)).flatMap((i) => i.groups) };
   }
 
   /** What the group rules read of someone with no account yet, from what their provider vouched for. */
   factsOfVouched(v: Vouched): Facts {
-    const hd = workspaceOf(v);
-    return { workspaces: hd ? [hd] : [], orgs: v.provider == "github" ? (v.orgs ?? []) : [] };
+    return { groups: v.groups ?? [] };
   }
 
   /**
-   * Adds a user by their provider account, with a role (the Users page's Add user): a GitHub login (GitHub's id for it
-   * found now; refused when GitHub has no such account) or a Google email. An account that signs in with it already
+   * Adds a user by their provider account, with a role (the Users page's Add user): a login (the provider's id for it
+   * found now; refused when the provider has no such account) or an email. An account that signs in with it already
    * gets the role; anyone else waits for their first sign-in (people.ts). A bootstrap admin is an admin already:
    * `note` says so, and nothing changes.
    */
@@ -668,21 +667,23 @@ export class Directory {
     role: UserRole
   ): Promise<{ user?: User; person?: Person; note?: string }> {
     await this.users.mustAdmin(by);
-    const { provider, handle } = personHandle(input.provider, input.handle);
-    if (provider == "github") {
+    const { provider, handle } = personHandle(input.provider, input.handle, this.providers);
+    if (SIGN_IN_PROVIDERS[provider].handle == "login") {
       if (this.users.isBootstrapAdmin(handle)) return { user: (await this.users.get(handle))!, note: `${handle} is already an admin.` };
-      if (!this.github) throw new NotAllowed({ message: "This server can't ask GitHub for an account's id." });
-      const found = await this.github(handle);
-      if (!found) throw new NotAllowed({ message: `GitHub has no account "${handle}": check the login.` });
-      const known = await this.identities.find("github", found.id);
-      // One from before identities, with this login as its username, which this GitHub account claims at its first sign-in.
+      if (!this.lookup) throw new NotAllowed({ message: `This server can't ask ${providerName(provider)} for an account's id.` });
+      const found = await this.lookup(provider, handle);
+      if (!found) throw new NotAllowed({ message: `${providerName(provider)} has no account "${handle}": check the login.` });
+      const known = await this.identities.find(provider, found.subject);
+      // One from before identities, with this login as its username, which this account claims at its first sign-in.
       const login =
         known?.login ??
-        ((await this.users.get(found.login))?.created && (await this.identities.unclaimed(found.login)) ? found.login.toLowerCase() : null);
+        ((await this.users.get(found.handle))?.created && (await this.identities.unclaimed(found.handle))
+          ? found.handle.toLowerCase()
+          : null);
       if (login) return this.roleOfUser(by, login, role);
-      return { person: await this.people.add(by, { provider, handle: found.login.toLowerCase(), subject: found.id }, role) };
+      return { person: await this.people.add(by, { provider, handle: found.handle.toLowerCase(), subject: found.subject }, role) };
     }
-    const [had] = await this.sql.all<{ login: string }>("SELECT login FROM emails WHERE provider = 'google' AND email = ?1", handle);
+    const [had] = await this.sql.all<{ login: string }>("SELECT login FROM emails WHERE provider = ?1 AND email = ?2", provider, handle);
     if (had) return this.roleOfUser(by, had.login, role);
     return { person: await this.people.add(by, { provider, handle, subject: null }, role) };
   }

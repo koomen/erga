@@ -24,13 +24,6 @@ export function googleAvatar(picture: string | null | undefined): string | null 
   return url.toString();
 }
 
-/** The picture of a provider's account at its sign-in: GitHub's by its id, Google's from its claim. */
-export function avatarFor(v: { provider: string; subject: string; picture?: string | null }): string | null {
-  if (v.provider == "github") return githubAvatar(v.subject);
-  if (v.provider == "google") return googleAvatar(v.picture);
-  return null;
-}
-
 /**
  * An address a page may show as a picture: GitHub's by id, or Google's; null for anything else. The editor asks it
  * of every participant's picture, since anyone in a room can put anything in their presence.

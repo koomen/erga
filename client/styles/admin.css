@@ -142,9 +142,12 @@ li.deploy-secret .key { font-size: 13px; font-weight: 600; }
 .switch .state { min-width: 2em; }
 .switch:has(input:disabled) { cursor: default; opacity: 0.5; }
 
-/* Authentication: a card for each provider: its name, its state and its switch at the top, then its app. */
-section.provider { margin: 0 0 16px; padding: 20px; border: 1px solid var(--rule); border-radius: 12px; }
-section.provider > header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0; }
+/* Authentication: a card for the sign-in mode, then one for each provider (or for the proxy): its name, its state and
+   its switch at the top, then its app. */
+section.provider, section.mode { margin: 0 0 16px; padding: 20px; border: 1px solid var(--rule); border-radius: 12px; }
+section.provider > header, section.mode > header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0; }
+section.mode > .summary { margin: 10px 0 0; font-size: 13.5px; color: var(--fg); }
+section.mode .note { margin: 6px 0 0; font-size: 13px; color: var(--soft); }
 .provider-head { margin: 0; font-size: 16px; font-weight: 600; color: var(--fg-strong); }
 section.provider > header .switch { margin-left: auto; }
 section.provider > .provider-hint { margin: 6px 0 0; }

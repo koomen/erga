@@ -96,8 +96,9 @@ export function server(o: ServerOptions = {}) {
     local: true,
     defaults: { public_sharing: true },
     credentialSecret: "local:secret",
+    providers: ["github", "google"],
     // GitHub's public users API, as the pretend GitHub answers it (dev/github-mock.ts): every login is an account.
-    github: async (login) => ({ id: String(mockGithubId(login)), login }),
+    lookup: async (_provider, login) => ({ subject: String(mockGithubId(login)), handle: login }),
     changed: async (key) => {
       if (key == "public_sharing") forgetDecisions();
     },
@@ -149,7 +150,13 @@ export function server(o: ServerOptions = {}) {
     adminsOnly: !!o.staging,
     tokens: new Tokens(sql, "session-secret", dir),
     deploy: { target: o.staging ? "staging" : null, version: null, facts: null, primary: null, home: null, app: null },
-    signIn: { app: { clientId: "", secret: "" }, github: "https://github.com", devLogin: "tester", encryptionKey: "local:secret" },
+    signIn: {
+      mode: "oauth",
+      apps: { github: { clientId: "", secret: "" }, google: { clientId: "", secret: "" } },
+      origins: { github: null, google: null },
+      devLogin: "tester",
+      encryptionKey: "local:secret",
+    },
     own: { get: async (k) => own.get(k) as never, put: async (k, v) => void own.set(k, v), delete: async (k) => void own.delete(k) },
     // The homepage has no deploy: / is the viewer on the homepage project.
     home: {
