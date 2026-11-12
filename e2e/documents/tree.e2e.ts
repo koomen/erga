@@ -9,6 +9,7 @@ import { join } from "node:path";
 import type { Frame, Route } from "playwright-core";
 import { expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
 import { newToken } from "../helpers/new-token";
+import { clickOn } from "../helpers/press";
 import { idOf, runTool, treeOp } from "../helpers/tools";
 import { listenNews, person } from "./people";
 import {
@@ -16,7 +17,6 @@ import {
   agentClosed,
   answered,
   changing,
-  clickOn,
   edges,
   editorFocused,
   focused,
@@ -286,8 +286,21 @@ journey("a project's tree in the editor", () => {
   test("a deleted page's row goes at once; refused, it is back, and the tree says why", async ({ tab }) => {
     const rm = await hold(page, "rm");
     await act(page, "notes/ideas.html", "more");
+    // A change from elsewhere comes while the menu is open, and again while the delete is on its way: the tree reads
+    // the server again only after the delete's answer. (Its read went out with the delete, and put the row back.)
+    const reads = new Set<unknown>();
+    const out = (r: { url(): string }) => void (r.url().includes("/api/tools/ls") && reads.add(r));
+    const back = (r: unknown) => void reads.delete(r);
+    page.on("request", out).on("requestfinished", back).on("requestfailed", back);
+    const elsewhere = () => page.evaluate(`window.dispatchEvent(new CustomEvent("erga-tree", { detail: { type: "tree" } }))`);
+    await elsewhere();
     await menuItem(page, "Delete page");
-    await expect.poll(() => paths(page, "#pages")).not.toContain("notes/ideas.html");
+    await elsewhere();
+    await settle(page);
+    await until(() => !reads.size, 5000, "the tree's reads have their answers");
+    await settle(page);
+    page.off("request", out).off("requestfinished", back).off("requestfailed", back);
+    expect(await paths(page, "#pages")).not.toContain("notes/ideas.html");
     await rm.refuse("Someone is editing that page.");
     await expect.poll(() => paths(page, "#pages")).toContain("notes/ideas.html");
     await expect.poll(() => js(page, `document.querySelector("#pages")?.textContent ?? ""`)).toContain("Someone is editing that page.");

@@ -193,8 +193,18 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   // Asked to focus before the first answer came: done once it has.
   let wantFocus = false;
   // A change from elsewhere came while someone was in the middle of something here: read again once they're done.
-  let stale = false;
-  const interacting = () => !!(editing || confirming || menu || dragFrom || busy);
+  // A change of their own on its way to the server counts (`sending`): a read from before it would put back the row
+  // it took out, and `asked` marks a read that started before the change, whose answer is dropped.
+  let stale = false,
+    sending = 0,
+    asked = 0;
+  const interacting = () => !!(editing || confirming || menu || dragFrom || busy || sending);
+  const catchUp = () => {
+    if (stale && !interacting()) {
+      stale = false;
+      load();
+    }
+  };
 
   const root = el("div", { className: "et" });
   const bannerEl = el("div", { className: "et-banner", role: "alert", hidden: true });
@@ -252,8 +262,13 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   // ------------------------------------------------------------ talking to the server
 
   async function load() {
+    const at = asked;
     try {
       const body = await run<TreeAnswer>("ls", { document: opts.id });
+      if (at != asked) {
+        stale = true;
+        return;
+      }
       set(body.entries ?? [], !!body.canEdit, body.kind);
       loadError = null;
     } catch (e) {
@@ -308,6 +323,8 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     const before = entries;
     if (before) set(ahead(before, op), canEdit);
     else busy = path;
+    sending++;
+    asked++;
     render();
     try {
       await send(op, before);
@@ -317,6 +334,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
       say(plain(e));
       return false;
     } finally {
+      sending--;
       busy = null;
       render();
     }
@@ -521,7 +539,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     }
     focusPath = null;
     if (!rows.querySelector('[tabindex="0"]')) setRoving(rows.querySelector<HTMLElement>('[aria-current="page"]') ?? rows.querySelector<HTMLElement>(".et-row[data-path]"));
-    if (stale && !interacting()) { stale = false; queueMicrotask(load); }
+    queueMicrotask(catchUp);
   }
 
   const setRoving = (target: HTMLElement | null) => {
@@ -649,7 +667,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     if (!menu) return;
     menu.remove();
     menu = null;
-    if (stale && !interacting()) { stale = false; queueMicrotask(load); }
+    queueMicrotask(catchUp);
     menuButton?.setAttribute("aria-expanded", "false");
     menuButton?.closest(".et-row")?.classList.remove("menu-open");
     const row = menuButton?.closest<HTMLElement>(".et-row");
@@ -860,7 +878,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   });
   root.addEventListener("dragend", () => {
     dragFrom = null; clearDrop(); root.querySelectorAll(".dragging").forEach((x) => x.classList.remove("dragging"));
-    if (stale && !interacting()) { stale = false; load(); }
+    catchUp();
   });
 
   // The tree changed, anyone's doing: the editor says so with an "erga-tree" event on window ({ type: "tree", moved?, deleted? }:

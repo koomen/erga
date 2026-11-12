@@ -7,7 +7,8 @@
 import { openEditor } from "../helpers/editor";
 import { expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
 import { runTool } from "../helpers/tools";
-import { agentClosed, clickOn, editorUp, joinRoom, mint, newDoc, soon, unique } from "./access";
+import { agentClosed, editorUp, joinRoom, mint, newDoc, soon, unique } from "./access";
+import { clickOn } from "../helpers/press";
 
 // (The scripted model: the agent's pane is on the pages.)
 const own = await servers.of("admin", { env: { ERGA_AGENT_MODEL: "script" } });

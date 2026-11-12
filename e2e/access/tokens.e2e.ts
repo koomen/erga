@@ -482,17 +482,25 @@ journey("on a staging server with no agent key: a token's reach, the agent's pan
     const other = await page.context().newPage();
     await other.goto(page.url());
     const clickWhileRedrawn = async (end: string, answer: "real" | "error") => {
-      await page.route("**/api/tools/set_setting*", async (route) => {
-        await other.fill("#key-openai", KEY(end));
-        await other.press("#key-openai", "Enter");
-        await soon(state).toContain(`…${end}`);
-        if (answer == "real") await route.continue();
-        else await route.fulfill({ status: 503, json: { ok: false, error: "The server is busy: try again." } });
-      });
+      // The first save only, and the step waits for its handler. (Trap: a wait in a route's handler that is still
+      // going when its step ends fails a later test, in another file: one run in 40 on a busy machine.)
+      let handled: Promise<void> = Promise.resolve();
+      await page.route(
+        "**/api/tools/set_setting*",
+        (route) =>
+          (handled = (async () => {
+            await other.fill("#key-openai", KEY(end));
+            await other.press("#key-openai", "Enter");
+            await soon(state).toContain(`…${end}`);
+            if (answer == "real") await route.continue();
+            else await route.fulfill({ status: 503, json: { ok: false, error: "The server is busy: try again." } });
+          })()),
+        { times: 1 }
+      );
       const finished = page.waitForEvent("requestfinished", (r) => r.url().includes("/api/tools/set_setting"));
       await page.click(box(model));
       await finished;
-      await page.unroute("**/api/tools/set_setting*");
+      await handled;
     };
     // The box is off (the step before). On, with the row drawn again: Saved., and it stays on.
     await clickWhileRedrawn("Bb02", "real");

@@ -10,7 +10,8 @@ import type { Route } from "playwright-core";
 import { editor, type Editor } from "../helpers/editor";
 import { ROOT } from "../helpers/env";
 import { expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
-import { agentClosed, clickOn, listenNews, middle, pane, person, quietLogin, type Agent, type Person } from "./people";
+import { agentClosed, listenNews, middle, pane, person, quietLogin, type Agent, type Person } from "./people";
+import { clickOn } from "../helpers/press";
 
 const s = await servers.main();
 
@@ -494,6 +495,9 @@ journey("a person's documents", () => {
     await expect.poll(() => ed.controls<boolean>(`!C.getElementById("fmt").hidden && !C.getElementById("link").hidden`)).toBe(true);
     expect(await pane(page)).toBeNull();
     await page.keyboard.press("Escape");
+    // The key goes from the page to Erga's own window, which fades its controls: nothing else was open. (A press
+    // before the key came there opened the menu, and the key closed it.)
+    await expect.poll(() => page.evaluate(() => document.body.classList.contains("chrome-hidden"))).toBe(true);
     // The editor's own avatar menu (#account).
     await clickOn(page, "#me .avatar");
     await clickOn(page, "#account-go");
@@ -540,9 +544,6 @@ journey("a person's documents", () => {
     await editor(page, { address: `${s.root}${scratch}`, dir: "", file: "" }).loaded();
     const save = page.locator("#quick .erga-scratch-save");
     await expect.poll(() => save.isVisible()).toBe(true);
-    // The editor's own actions open out of the pencil, and push Save 108 px to the left in 420 ms. A press aimed
-    // where Save was 80 ms before landed on the bar beside it, and saved nothing: the press waits for the bar's rest.
-    await expect.poll(() => page.locator("#edit-group.settled").count()).toBe(1);
     await clickOn(page, "#quick .erga-scratch-save");
     await expect.poll(() => page.locator(".erga-scratch-save").count()).toBe(0);
     await until(async () => (await p.docs()).includes(`doc:${id["Zebra scratch"]}"`), 5000, "the saved document is on the list");

@@ -9,6 +9,7 @@
 //          wins at an address, who may edit, the bars, the picker on /admin/settings, and the homepage made afresh.
 // Both journeys change which document is the server's homepage; the main server gets its own back at the end.
 import { expect, journey, servers, test, until } from "../helpers/fixtures";
+import { pressOn } from "../helpers/press";
 import { runTool } from "../helpers/tools";
 import {
   ask,
@@ -284,8 +285,8 @@ journey("the homepage on a domain of its own, from a new server on", () => {
         const at = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
         return document.elementFromPoint(at.x, at.y)?.closest("#btn-settings") == g ? at : null;
       });
-    const at = (await until(gear, 10_000, "the gear can be clicked"))!;
-    await p.mouse.click(at.x, at.y);
+    await until(gear, 10_000, "the gear can be clicked");
+    await pressOn(p, "#btn-settings");
     const note = () => p.evaluate(() => document.getElementById("ds-home-note")?.textContent?.trim() ?? "");
     await until(async () => (await note()) == `Homepage · ${HOME}`, 5_000, "the settings name the domain", note);
     expect(await p.getAttribute("#ds-home-domain", "href")).toBe(`${origin}/`);
@@ -597,19 +598,7 @@ journey("the homepage on the Erga domain", () => {
   test("an admin renames the homepage in the breadcrumb: its address stays /_home, and the title stays after a reload", async ({ tab }) => {
     const page = tab.page;
     const js = <T>(expr: string) => page.evaluate(expr) as Promise<T>;
-    /** Clicks the middle of an element, once it shows. */
-    const clickOn = async (selector: string) => {
-      const at = await until(
-        () =>
-          js<{ x: number; y: number } | null>(
-            `(() => { const r = document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect(); return r && r.width ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null; })()`
-          ),
-        5_000,
-        `${selector} shows`
-      );
-      await page.mouse.move(at!.x, at!.y);
-      await page.mouse.click(at!.x, at!.y);
-    };
+    const clickOn = (selector: string) => pressOn(page, selector);
     const title = () => js<string>(`document.getElementById("doc-title-text").textContent`);
     /** The editor is up with its title, its tree mounted, and the page in its frame has the focus (a card opened before loses its focus to it). */
     const editorUp = async () => {

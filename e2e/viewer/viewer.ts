@@ -77,27 +77,6 @@ export async function signIn(server: Server, login: string): Promise<string> {
   return cookie;
 }
 
-/** Clicks the middle of the first element that matches `selector`, once it is on the page with nothing over it. */
-export async function clickOn(page: Page, selector: string) {
-  const r = await until(
-    () =>
-      page.evaluate((s) => {
-        const el = document.querySelector(s),
-          r = el?.getBoundingClientRect();
-        if (!el || !r?.width) return null;
-        const x = r.x + r.width / 2,
-          y = r.y + r.height / 2,
-          top = document.elementFromPoint(x, y);
-        return top && (el == top || el.contains(top)) ? { x, y } : null;
-      }, selector),
-    5000,
-    `${selector} on the page, uncovered`
-  );
-  await page.mouse.click(r!.x, r!.y);
-  // A click that leaves the page has nothing to settle.
-  await settle(page).catch(() => {});
-}
-
 export type Box = { l: number; t: number; r: number; b: number };
 /** The parts of Erga's two bars, by one name for the viewer's and the editor's. */
 const PARTS = {

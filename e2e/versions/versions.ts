@@ -10,6 +10,7 @@
 import type { Page } from "playwright-core";
 import { editor } from "../helpers/editor";
 import { settle, until, type Server } from "../helpers/fixtures";
+import { pressOn } from "../helpers/press";
 import { runTool } from "../helpers/tools";
 
 export interface V {
@@ -133,12 +134,7 @@ export function settings(p: Page) {
       }
       return r;
     },
-    async clickOn(sel: string) {
-      await p.evaluate((sel) => document.querySelector(sel)?.scrollIntoView({ block: "nearest" }), sel);
-      const r = await s.steadyRect(sel);
-      if (!r) throw new Error(`${sel} isn't on the page`);
-      await p.mouse.click(r.x, r.y);
-    },
+    clickOn: (sel: string) => pressOn(p, sel),
     isOpen: () => p.evaluate(() => !!document.getElementById("doc-settings") && !document.getElementById("doc-settings")!.hidden),
     text: (sel: string) => p.evaluate((sel) => document.querySelector(sel)?.textContent?.trim() ?? "", sel),
     attr: (sel: string, name: string) =>

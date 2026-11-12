@@ -7,7 +7,8 @@ import { expect, journey, servers, test, until, type Page } from "../helpers/fix
 import { newToken } from "../helpers/new-token";
 import { runTool, textOf } from "../helpers/tools";
 import { diff, layout, layoutOk, type Layout } from "./band";
-import { bars, clickOn, docFrame, docShows, editorUp, GLASS, inDoc, openViewer, site, styled, viewing, where, type Box } from "./viewer";
+import { bars, docFrame, docShows, editorUp, GLASS, inDoc, openViewer, site, styled, viewing, where, type Box } from "./viewer";
+import { clickOn } from "../helpers/press";
 
 const s = await servers.main();
 

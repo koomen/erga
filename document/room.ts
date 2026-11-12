@@ -931,6 +931,21 @@ function docOf(updates: Uint8Array[], log: (line: string) => void): Y.Doc | null
 /** Whether a room message is presence only (awareness): it changes nothing in the document. */
 export const isAwareness = (message: Uint8Array) => message.length > 0 && message[0] == MSG_AWARENESS;
 
+/** Whether a presence message reads as one, as applyAwarenessUpdate reads it: each client's number, clock and state. */
+export function readsAsAwareness(message: Uint8Array): boolean {
+  try {
+    const d = new Decoder(new Decoder(message.subarray(1)).readBytes());
+    for (let n = d.readUint(); n > 0; n--) {
+      d.readUint();
+      d.readUint();
+      JSON.parse(d.readString());
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The files-map key a changed Y.Text lives under. */
 function pathOf(type: Y.AbstractType<any>): string | null {
   const item = type._item;

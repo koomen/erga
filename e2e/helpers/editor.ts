@@ -19,7 +19,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Frame, Page } from "playwright-core";
 import { ROOT } from "./env";
-import { expect, servers, settle, until, type Server, type Tab } from "./fixtures";
+import { expect, goto, servers, settle, until, type Server, type Tab } from "./fixtures";
 import { VISIBLE } from "./visible";
 
 /** A template literal's text without its first newline and its common indent. */
@@ -94,7 +94,7 @@ export async function openEditor(tab: Tab, server: Server, fixture: string, opts
       }
     } catch { /* no storage */ }
   }, { timescale, agent: opts.agent ?? false });
-  await page.goto(`${address}${opts.query ? `${opts.query}&edit` : "?edit"}`);
+  await goto(page, `${address}${opts.query ? `${opts.query}&edit` : "?edit"}`);
   const ed = editor(page, { address, dir, file });
   await ed.loaded();
   // The page's own fonts too: text measured before they load moves when they do.

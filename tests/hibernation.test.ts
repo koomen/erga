@@ -195,11 +195,23 @@ test("idle, the document closes and tabs stay; presence passes between them with
   expect(b.closed).toBeNull();
 
   // Presence while closed goes straight to the other tabs, and opens nothing.
-  const caret = awareness([1, 2, 3]);
+  const here = new Encoder();
+  here.writeUint(1);
+  here.writeUint(7);
+  here.writeUint(1);
+  here.writeString('{"user":{"name":"Ada"}}');
+  const caret = awareness([...here.toBytes()]);
   w.deliver(a, caret);
   await w.settle();
   expect(b.presence.at(-1)).toEqual(caret);
   expect(w.document.isOpen()).toBe(false);
+  // Bytes that are no presence close their own socket, as when the document is open, and reach no other tab.
+  const hostile = await w.connect();
+  await until(() => !w.document.isOpen());
+  const before = b.presence.length;
+  w.deliver(hostile, awareness([5, 1, 2]));
+  await w.settle();
+  expect([hostile.closed, b.presence.length, w.document.isOpen()]).toEqual([4400, before, false]);
   // A message for every tab reaches the event channels while it's closed.
   w.tabs.notify({ type: "home" });
   expect(events.events).toContainEqual({ type: "home" });
@@ -208,8 +220,7 @@ test("idle, the document closes and tabs stay; presence passes between them with
   w.boot();
   b.type(3, "two ");
   await w.settle();
-  expect(w.document.isOpen()).toBe(true);
-  // B's edit reached the reopened room, and A (joined as it opened) got it.
+  // B's edit reached the reopened room, and A (joined as it opened) got it. (Idle for 60 ms, it is closed again.)
   expect(a.text()).toBe("<p>two one Hi</p>");
   // And A's edits flow the other way, through the new object.
   a.type(0, "<!-- a -->");
@@ -329,8 +340,8 @@ test("truncated, corrupt and unknown Yjs messages: the room keeps its text, and 
   expect(raw.closed).toBeNull();
   expect(raws.map((r) => r.closed)).toEqual(CLOSED);
   expect(a.closed).toBeNull();
-  // The room is up, holds the text from before, and still carries an edit between two newcomers.
-  expect(w.document.isOpen()).toBe(true);
+  // The room holds the text from before, and still carries an edit between two newcomers. (Not a check that it is
+  // open now: idle for 60 ms, this document closes, and on a busy machine it had.)
   const x = await w.connect(),
     y = await w.connect();
   expect(x.text()).toBe(text);

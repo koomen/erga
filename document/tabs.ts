@@ -28,7 +28,7 @@ import type { Person } from "./access.ts";
 import type { Document } from "./document.ts";
 import type { Opened } from "./open.ts";
 import type { StoreError } from "./room.ts";
-import { isAwareness } from "./room.ts";
+import { isAwareness, readsAsAwareness } from "./room.ts";
 import { PING, PONG } from "../shared/room-socket.ts";
 import type { Asker, Role } from "./access.ts";
 
@@ -138,8 +138,10 @@ export class Tabs<S extends TabSocket> {
       const document = self.o.document();
       let joined = self.joined.get(tab.id);
       if (!joined) {
-        // Presence while the document is closed: to the other tabs, and nothing opens.
-        if (isAwareness(data) && !document.isOpen()) return self.relay(socket, tab.id, data);
+        // Presence while the document is closed: to the other tabs, and nothing opens. Bytes that are no presence
+        // close their socket, as the open room does, and reach no other tab.
+        if (isAwareness(data) && !document.isOpen())
+          return readsAsAwareness(data) ? self.relay(socket, tab.id, data) : quietly(() => socket.close(4400, "malformed message"));
         const opened = yield* document.reopen();
         if (!opened) return quietly(() => socket.close(4404, "document deleted"));
         // Joined as it opened (attachAll); one refused there is closed.
