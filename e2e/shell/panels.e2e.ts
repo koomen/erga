@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
 import { expect, journey, servers, test } from "../helpers/fixtures";
+import { pressOn } from "../helpers/press";
 import { atRest, soon } from "./shell";
 
 const s = await servers.main();
@@ -29,8 +30,7 @@ journey("the panels and the bars over a page", () => {
     const box = (await page.locator(selector).boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 4 });
     await soon(centre).toBeTruthy();
-    const at = (await centre())!;
-    await page.mouse.click(at.x, at.y);
+    await pressOn(page, selector);
   };
   const cardOpen = () => ed.eval<boolean>(`!document.getElementById("sharing").hidden`);
   const agentTip = () => ed.eval<string>(`document.getElementById("btn-agent-share").dataset.tip`);
@@ -286,8 +286,7 @@ journey("the panels and the bars over a page", () => {
 
   test("phone: at rest only the avatar; a tap opens the quick actions and the menu, the breadcrumbs make way; a card keeps them open; a tap on the page closes all", async () => {
     await soon(resting).toEqual({ quick: 0, shown: ["me"], open: false });
-    const avatar = await atRest(page, ".me-slot .avatar");
-    await page.mouse.click(avatar.x + avatar.width / 2, avatar.y + avatar.height / 2);
+    await pressOn(page, ".me-slot .avatar");
     await soon(async () => (await look()).shown).toEqual(
       expect.arrayContaining(["btn-new", "btn-full", "btn-settings", "btn-edit", "btn-agent-share", "btn-docs", "me"])
     );
@@ -303,8 +302,7 @@ journey("the panels and the bars over a page", () => {
       };
     }).toEqual({ open: true, menu: true, navEndsBeforeTheButtons: true, titleEndShows: true, brandSlidOut: true });
     // Document settings, from the quick actions: its card opens, the menu closes, the quick actions stay.
-    const gear = await atRest(page, "#btn-settings");
-    await page.mouse.click(gear.x + gear.width / 2, gear.y + gear.height / 2);
+    await pressOn(page, "#btn-settings");
     await soon(() => ed.eval<boolean>(`!!document.querySelector("#doc-settings:not([hidden])")`)).toBe(true);
     await soon(async () => {
       const l = await look();

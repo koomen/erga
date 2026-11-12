@@ -81,30 +81,6 @@ export const corner = (page: Page) =>
     };
   });
 
-/**
- * Clicks the middle of an element of the tab's own document, once nothing else is on top of it there: coming into
- * the editor, the viewer's own buttons stay over the editor's for their 200 ms fade, and take the click.
- */
-export async function clickOn(page: Page, selector: string) {
-  const r = await until(
-    () =>
-      page.evaluate((s) => {
-        const el = document.querySelector(s),
-          r = el?.getBoundingClientRect();
-        if (!el || !r?.width) return null;
-        const x = r.x + r.width / 2,
-          y = r.y + r.height / 2,
-          top = document.elementFromPoint(x, y);
-        return top && (el == top || el.contains(top)) ? { x, y } : null;
-      }, selector),
-    5000,
-    `${selector} on the page, uncovered`
-  );
-  await page.mouse.click(r!.x, r!.y);
-  // A click that navigates leaves nothing to settle.
-  await settle(page).catch(() => {});
-}
-
 /** Evaluates in every frame but the tab's own (a document's page on its own origin, the page editor's frame). */
 export const inFrames = <T>(page: Page, expr: string): Promise<(T | null)[]> =>
   Promise.all(

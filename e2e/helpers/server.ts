@@ -216,6 +216,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
     pid: () => proc?.pid,
     dispose() {
       server.stop();
+      // For a run that failed: the server's last words, in the folder that ERGA_TEST_LOGS names.
+      if (process.env.ERGA_TEST_LOGS && !opts.keep)
+        try {
+          writeFileSync(join(process.env.ERGA_TEST_LOGS, `server-${process.pid}-${server.port}.log`), output);
+        } catch {
+          /* no such folder */
+        }
       // Anything a test started detached runs from a folder in the scratch one.
       // (The folder is a real path, /private/var/... on a Mac, so that is what its processes' command lines name.)
       spawnSync("pkill", ["-9", "-f", scratch], { timeout: 10_000 });

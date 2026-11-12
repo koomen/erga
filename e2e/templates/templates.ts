@@ -3,7 +3,7 @@
 // The document's page runs in the tab's frame (#frame), on the document's own origin: `inPage` evaluates in it.
 
 import type { Page } from "playwright-core";
-import { settle, until, type Server, type Tab } from "../helpers/fixtures";
+import { goto, settle, until, type Server, type Tab } from "../helpers/fixtures";
 
 /** Makes a document from a template (/new?template=<id>): the answer's status, and the document's address (no ?edit). */
 export async function newDoc(server: Server, template: string) {
@@ -31,7 +31,7 @@ export async function openTab(tab: Tab, url: string, size?: { width: number; hei
       /* no storage */
     }
   });
-  await page.goto(url);
+  await goto(page, url);
   await settle(page);
 }
 

@@ -43,13 +43,13 @@ The rules:
 | V2 | `e2e/viewer/live.e2e.ts` | A reader sees an old page; the page's scripts run twice. | 8 |
 | T1 | `e2e/templates/templates.e2e.ts` | A template makes a broken document; a deck does not step or leaves full screen in a bad state. | 11 |
 | D1 | `e2e/documents/list.e2e.ts` | A person cannot make, find, archive or delete a document; the list shows old rows. | 14 |
-| D2 | `e2e/documents/tree.e2e.ts` | A page or folder cannot be made, renamed, moved or deleted; the tree shows old rows. | 12 |
+| D2 | `e2e/documents/tree.e2e.ts` | A page or folder cannot be made, renamed, moved or deleted; the tree shows old rows. | 13 |
 | A1 | `e2e/access/sign-in.e2e.ts` | A person cannot sign in, or a person who may not, can. | 10 |
 | A2 | `e2e/access/share.e2e.ts` | A person without access reads or edits; access taken away stays; a share does not arrive. | 9 |
 | A3 | `e2e/access/tokens.e2e.ts` | A token gives more than its scope; an agent cannot sign in; a key shows in a page. | 8 |
 | A4 | `e2e/access/admin.e2e.ts` | An admin page does not save a setting, or shows old values. | 6 |
 | C1 | `e2e/comments/comments.e2e.ts` | A comment is lost, lands on the wrong text, or a commenter changes the text. | 9 |
-| R1 | `e2e/versions/versions.e2e.ts` | A version is not cut; Restore gives the wrong text; the homepage deploys by itself. | 14 |
+| R1 | `e2e/versions/versions.e2e.ts` | A version is not cut; Restore gives the wrong text; the homepage deploys by itself. | 13 |
 | H1 | `e2e/homepage/homepage.e2e.ts` | The homepage is blank on a new server, shows the wrong document, or a deploy breaks it. | 7 |
 | P1 | `e2e/page-model/page-model.e2e.ts` | A page spends the owner's model budget for a visitor who may not, or past the limit. | 4 |
 | X1 | `e2e/security/boundaries.e2e.ts` | A page's script reaches the editor, the cookies or a token; another site frames Erga; a hostile page takes the tab. | 6 |

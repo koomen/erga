@@ -270,5 +270,24 @@ export async function until<T>(f: () => Promise<T> | T, ms = 5_000, what = "the 
   }
 }
 
+/**
+ * page.goto. A page that never finishes its load (twice in 120 runs of the suite on a busy machine, both a deck in the
+ * editor, with every request answered at the server) fails with what was still on its way, and the tab's frames.
+ */
+export async function goto(page: Page, url: string) {
+  const going = new Map<unknown, string>();
+  const out = (r: { url(): string; resourceType(): string }) => void going.set(r, `${r.resourceType()} ${r.url().slice(0, 200)}`);
+  const back = (r: unknown) => void going.delete(r);
+  page.on("request", out).on("requestfinished", back).on("requestfailed", back);
+  try {
+    await page.goto(url);
+  } catch (e) {
+    const frames = page.frames().map((f) => f.url().slice(0, 200));
+    throw new Error(`${(e as Error).message}\nstill on its way: ${JSON.stringify([...going.values()])}\nframes: ${JSON.stringify(frames)}`);
+  } finally {
+    page.off("request", out).off("requestfinished", back).off("requestfailed", back);
+  }
+}
+
 /** Two animation frames in the tab: input just sent has been handled and painted. */
 export const settle = (page: Page) => page.evaluate(() => new Promise((r) => { const t = setTimeout(r, 100); requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(t); r(true); })); }));

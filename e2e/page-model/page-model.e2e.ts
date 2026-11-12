@@ -12,7 +12,6 @@ import {
   ask,
   askIn,
   call,
-  clickOn,
   haikuCost,
   homeWithEssay,
   newDoc,
@@ -32,6 +31,7 @@ import {
   usd,
   useToday,
 } from "./model";
+import { clickOn } from "../helpers/press";
 
 const s = await servers.main();
 

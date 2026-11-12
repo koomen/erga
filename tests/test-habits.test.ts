@@ -1,9 +1,12 @@
-// Two habits that tests must not pick up again, each checked in the tests' own text:
+// Three habits that tests must not pick up again, each checked in the tests' own text:
 //
 // - a fixed pause (`await sleep(150)`): it is slow when the code is fast and fails when the machine is busy. Wait for a
 //   state: a loop with a condition (`until`, `expect.poll`). A pause of 0 ms (a tick) and a loop's own pause don't count.
 // - `toMatchObject` with `expect.any(...)`: Bun 1.4.2 writes the matcher into the object it checks, and a later read
 //   of that field gets `{}`. Check the fields with `toEqual` on a list.
+// - a press at a place (`page.mouse.click(x, y)`, `mouse.down()`) on an element whose place was read before: on a busy
+//   machine the element has moved by then, and the press lands beside it. Press the element: `pressOn` or `clickOn`
+//   (e2e/helpers/press.ts). The ones listed press a place on purpose (text, a point of the page, a press held down).
 //
 // The files that have one today are listed with their count. A listed file may not get more, and no other file may
 // get one. When you take one out, lower its number.
@@ -43,6 +46,29 @@ export function matcherBugs(text: string): number {
   return n;
 }
 
+/** The presses at a place of a test file's text. */
+export const presses = (text: string): number => text.match(/\bmouse\.(click|down)\(/g)?.length ?? 0;
+
+const PRESSES: Record<string, number> = {
+  "e2e/access/tokens.e2e.ts": 1,
+  "e2e/agent/samples.ts": 1,
+  "e2e/agent/tools.e2e.ts": 1,
+  "e2e/comments/comments.ts": 1,
+  "e2e/documents/list.e2e.ts": 1,
+  "e2e/documents/tree.e2e.ts": 5,
+  "e2e/editor/format.e2e.ts": 1,
+  "e2e/editor/steady.e2e.ts": 1,
+  "e2e/helpers/editor.ts": 2,
+  "e2e/helpers/press.ts": 2,
+  "e2e/homepage/homepage.e2e.ts": 1,
+  "e2e/page-model/page-model.e2e.ts": 1,
+  "e2e/shell/open.e2e.ts": 1,
+  "e2e/shell/panels.e2e.ts": 1,
+  "e2e/templates/templates.e2e.ts": 4,
+  "e2e/templates/templates.ts": 2,
+  "e2e/versions/versions.e2e.ts": 1,
+  "e2e/viewer/reader.e2e.ts": 3,
+};
 const PAUSES: Record<string, number> = {
   "e2e/helpers/editor.ts": 1,
   "e2e/helpers/fixtures.ts": 1,
@@ -89,6 +115,11 @@ test("the counters see a fixed pause and the matcher bug, and not a loop's pause
 
 test("no test gets a new fixed pause: wait for a state", () => {
   expect(over(pauses, PAUSES)).toEqual([]);
+});
+
+test("no test gets a new press at a place: press the element (e2e/helpers/press.ts)", () => {
+  expect(presses("await page.mouse.click(r.x, r.y);\nawait mouse.down();\nawait pressOn(page, sel);")).toBe(2);
+  expect(over(presses, PRESSES)).toEqual([]);
 });
 
 test("no test gets a new toMatchObject with expect.any: use toEqual on a list", () => {

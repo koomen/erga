@@ -12,6 +12,7 @@
 import type { Page } from "playwright-core";
 import { expect, settle, until, type Server } from "../helpers/fixtures";
 import { newToken } from "../helpers/new-token";
+import { clickOn } from "../helpers/press";
 import { runTool, textOf } from "../helpers/tools";
 
 export { agentClosed } from "./people";
@@ -59,15 +60,22 @@ export async function multi(server: Server) {
 export const watchTree = (page: Page) =>
   page.addInitScript(() => {
     if (window.top != window) return;
-    const w = window as unknown as { __tree: string[]; __calls: number };
+    const w = window as unknown as { __tree: string[]; __calls: number; __open: string[] };
     w.__tree = [];
     w.__calls = 0;
+    w.__open = [];
     window.addEventListener("erga-tree", (e) => w.__tree.push(JSON.stringify((e as CustomEvent).detail)));
     const send = window.fetch;
     window.fetch = ((...a: Parameters<typeof fetch>) => {
       if (!String(a[0] instanceof Request ? a[0].url : a[0]).includes("/api/tools/")) return send(...a);
       w.__calls++;
-      const done = () => setTimeout(() => w.__calls--, 0);
+      const call = `${a[0] instanceof Request ? a[0].url : a[0]} ${(a[1]?.body as string | undefined)?.slice(0, 120) ?? ""}`;
+      w.__open.push(call);
+      const done = () =>
+        setTimeout(() => {
+          w.__calls--;
+          w.__open.splice(w.__open.indexOf(call), 1);
+        }, 0);
       return send(...a).then(
         (r) => {
           const json = r.json.bind(r);
@@ -87,7 +95,12 @@ export const treeEvents = (page: Page) => page.evaluate(() => (window as unknown
 
 /** Every call of an operation from the tab has its answer, and the tree has drawn it: its rows stay until the next change. */
 export const answered = (page: Page) =>
-  until(() => page.evaluate(() => !(window as unknown as { __calls?: number }).__calls), 5000, "the tab's calls have their answers");
+  until(
+    () => page.evaluate(() => !(window as unknown as { __calls?: number }).__calls),
+    5000,
+    "the tab's calls have their answers",
+    () => page.evaluate(() => (window as unknown as { __open?: string[] }).__open)
+  );
 
 /**
  * The server's last event for a change: a new page or folder says "tree"; a move says "tree", then "moved" with the
@@ -216,13 +229,6 @@ export async function centre(page: Page, selector: string) {
   );
   return at!;
 }
-export async function clickOn(page: Page, selector: string) {
-  const r = await centre(page, selector);
-  await page.mouse.click(r.x, r.y);
-  // (A click that leaves the page has nothing to settle.)
-  await settle(page).catch(() => {});
-}
-
 /** Hovers a row (its buttons show), then clicks one of them; a menu button's menu opens. */
 export async function act(page: Page, path: string, which: "add" | "more" | "rename", within = "") {
   const sel = `${within} ${row(path)}`.trim();

@@ -9,7 +9,8 @@
 import { framed, pagesFetch } from "../helpers/pages-fetch";
 import { expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
 import { runTool } from "../helpers/tools";
-import { agentClosed, clickOn, editorUp, getter, joinRoom, newDoc, share, signedOut, signIn, soon, unique } from "./access";
+import { agentClosed, editorUp, getter, joinRoom, newDoc, share, signedOut, signIn, soon, unique } from "./access";
+import { clickOn } from "../helpers/press";
 
 const [s, own] = await Promise.all([servers.main(), servers.of("share")]);
 

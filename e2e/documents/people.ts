@@ -122,15 +122,6 @@ export const middle = (page: Page, selector: string) =>
     `${selector} is on the page, with nothing over it`
   ) as Promise<{ x: number; y: number }>;
 
-/** Moves the mouse to an element and clicks it, as a person does. */
-export async function clickOn(page: Page, selector: string) {
-  const { x, y } = await middle(page, selector);
-  await page.mouse.move(x, y, { steps: 2 });
-  await page.mouse.click(x, y);
-  // (A click that leaves the page has nothing to settle.)
-  await settle(page).catch(() => {});
-}
-
 /** The quick search (⌘K) as a person sees it: its groups, its rows (label and address), the row chosen; null while it is closed. */
 export const pane = (page: Page) =>
   page.evaluate(() => {
@@ -146,33 +137,52 @@ export const pane = (page: Page) =>
 /** What a list's socket hears and each ask for rows, from now on: call it before the page opens. */
 export function listenNews(page: Page) {
   const heard: string[] = [],
-    asks: string[] = [];
-  let answered = 0;
+    asks: string[] = [],
+    /** The asks with no answer yet. */
+    open = new Set<unknown>(),
+    /** All of it with its time, for a failure's message. */
+    log: string[] = [],
+    t0 = Date.now(),
+    say = (line: string) => log.push(`${Date.now() - t0} ${line}`),
+    rows = (r: { url(): string }) => r.url().includes("/api/news/rows");
   page.on("websocket", (ws) => {
-    if (ws.url().includes("/api/news")) ws.on("framereceived", (f) => heard.push(String(f.payload)));
+    if (!ws.url().includes("/api/news")) return;
+    // A new socket is a new page's (a reload), or the page's own again: what the page before heard and asked is over.
+    // Trap: a reload ends the old page's ask with no answer. Counted as open, it never closes, and the list never
+    // "catches up"; and the old page's first message is not the new page's.
+    heard.length = asks.length = 0;
+    open.clear();
+    say("socket");
+    ws.on("framereceived", (f) => {
+      heard.push(String(f.payload));
+      say(`heard ${String(f.payload).slice(0, 200)}`);
+    });
   });
   page.on("request", (r) => {
-    if (r.url().includes("/api/news/rows")) asks.push(r.url());
+    if (!rows(r)) return;
+    asks.push(r.url());
+    open.add(r);
+    say(`ask ${r.url().slice(-60)}`);
   });
-  page.on("requestfinished", (r) => {
-    if (r.url().includes("/api/news/rows")) answered++;
-  });
+  const ended = (r: { url(): string }) => void (open.delete(r) && say("answered or ended"));
+  page.on("requestfinished", ended).on("requestfailed", ended);
   return {
     heard,
     asks,
     /**
      * The list has heard its socket's first answer (what changed since a little before the page was made: the rows
      * just made, again), and every ask has its answer on the page: the rows stay until the next change. Then it
-     * forgets what it heard.
+     * forgets what it heard. (An admin's socket hears of users and settings too: the list asks only for documents.)
      */
     async caughtUp() {
       await until(
-        () => heard.length > 0 && (!heard[0].includes('"key"') || asks.length > 0) && answered == asks.length,
+        () => heard.length > 0 && (!heard[0].includes('"key":"doc:') || asks.length > 0) && !open.size,
         5000,
-        "the list caught up"
+        "the list caught up",
+        () => ({ at: Date.now() - t0, heard: heard.length, asks: asks.length, open: open.size, log: log.slice(-30) })
       );
       await settle(page);
-      heard.length = asks.length = answered = 0;
+      heard.length = asks.length = 0;
     },
   };
 }

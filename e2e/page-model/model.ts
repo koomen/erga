@@ -76,26 +76,6 @@ export const signInState = (page: Page) =>
   });
 export const signInOpen = async (page: Page) => (await signInState(page)).open;
 
-/** Clicks the middle of an element of the tab's own document, once nothing else is on top of it there. */
-export async function clickOn(page: Page, selector: string) {
-  const r = await until(
-    () =>
-      page.evaluate((s) => {
-        const el = document.querySelector(s),
-          r = el?.getBoundingClientRect();
-        if (!el || !r?.width) return null;
-        const x = r.x + r.width / 2,
-          y = r.y + r.height / 2,
-          top = document.elementFromPoint(x, y);
-        return top && (el == top || el.contains(top)) ? { x, y } : null;
-      }, selector),
-    5000,
-    `${selector} on the page, uncovered`
-  );
-  await page.mouse.click(r!.x, r!.y);
-  await settle(page);
-}
-
 // The admin's limits on pages' models, on the Settings page (/admin/settings) and as the admin's agent reads them.
 
 /** Today's use of pages' models, as the admin's agent reads it (the operation `settings`). */

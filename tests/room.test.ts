@@ -198,17 +198,27 @@ test("every edit is attributed, deletions included", async () => {
 
 test("the room writes an edit after its delay, and what's left when it closes", async () => {
   const m = memoryStore({ "index.html": "<p>one</p>" });
+  // A long delay: nothing is written while the room is open. (With a delay of 30 ms, a check one tick after the edit
+  // failed on a busy machine: the tick took longer than the delay.)
   await withRoom(m, async (room) => {
     const a = await peer(room, person("Ada"));
     a.text().insert(3, "just ");
     await tick();
     expect(m.writes).toEqual([]);
-    await until(() => m.get("index.html") == "<p>just one</p>");
-    a.text().insert(3, "not ");
-    await tick();
-  }, { writeDelay: 30 });
+    },
+    { writeDelay: 60_000 }
+  );
   // Closed before the delay was up: written on the way out.
-  expect(m.get("index.html")).toBe("<p>not just one</p>");
+  expect(m.get("index.html")).toBe("<p>just one</p>");
+  expect(m.writes).toEqual(["index.html"]);
+  // A short delay: written by itself, with the room open.
+  await withRoom(
+    m,
+    async (room) => {
+      const a = await peer(room, person("Ada"));
+    a.text().insert(3, "not ");
+    await until(() => m.get("index.html") == "<p>not just one</p>");
+  }, { writeDelay: 30 });
   expect(m.writes).toEqual(["index.html", "index.html"]);
 });
 

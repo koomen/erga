@@ -10,7 +10,6 @@ import { expect, journey, servers, test, until, type Page } from "../helpers/fix
 import { runTool } from "../helpers/tools";
 import {
   agentClosed,
-  clickOn,
   corner,
   editorUp,
   getter,
@@ -24,6 +23,7 @@ import {
   unique,
   where,
 } from "./access";
+import { clickOn } from "../helpers/press";
 
 const [s, own] = await Promise.all([servers.main(), servers.of("sign-in")]);
 
