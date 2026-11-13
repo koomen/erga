@@ -131,6 +131,13 @@ attributes, new elements of other kinds.
     A slide that builds up in parts names the part too: `#3.2` is the second
     part of slide 3, and `#3` its first.
 
+    A view that the person moves by hand (a canvas's camera, a map) goes in
+    the address too, once it rests: `#3@1280,640,0.5` is frame 3 with the
+    camera at that point and zoom. The page loads again for each change to
+    its script or stylesheet: with the view in the address, the person stays
+    where they were. The canvas template's `canvas.js` does it (`note`,
+    `fromAddress`); give a canvas made before it the same.
+
 ## Presentations (erga/steps)
 
 A presentation is a page with steps: it defines `window.ergaSteps` and

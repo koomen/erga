@@ -256,6 +256,54 @@ journey("a page that keeps its view in its address, in the viewer and in the edi
     await soon(hash).toBe("#aws");
     expect(await entries(), "replaceState: a replace, as at the top").toBe(before);
   });
+
+  // Was a bug (Pete's): the page loads again for an agent's change to its script or stylesheet, and a canvas's camera
+  // went back to a frame. And the editor's caret below the window counted as the page's overflow: the frame moved up.
+  test("editor: a canvas dragged away, its caret out of the window, stays as it is when an agent changes its script: the camera, the frame, the history", async () => {
+    const made = await fetch(`${s.root}/new?template=canvas`, { redirect: "manual" });
+    const canvas = s.root + (made.headers.get("location") ?? "").replace(/[?&]edit=?$/, "");
+    await page.goto(`${canvas}?edit`);
+    const ed = editor(page, { address: canvas, dir: "", file: "" });
+    await ed.loaded();
+    await ed.clickEnd(".frame.current p");
+    /** The camera, the page's frame in the tab, and the tab's address and entries. */
+    const view = async () => ({
+      camera: await ed.frame<string>(`${F}.querySelector(".canvas").style.transform`),
+      frame: await ed.eval<number[]>(
+        `(() => { const r = document.getElementById("frame").getBoundingClientRect(); return [r.top, r.height]; })()`
+      ),
+      hash: hash(),
+      entries: await entries(),
+    });
+    const first = await view();
+    // A drag from the empty canvas left of the frame, down, until the caret's line is below the window's bottom.
+    const down = await ed.frame<number>(`Math.round(innerHeight - ${F}.querySelector("erga-caret").getBoundingClientRect().top + 10)`);
+    const at = await ed.frameAt(),
+      y = at.y + Math.round(first.frame[1] * 0.3);
+    await ed.drag(at.x + 8, y, at.x + 48, y + down);
+    // The address says where the camera rests, with no new entry.
+    await soon(hash).toMatch(/^#1@-?[\d.]+,-?[\d.]+,[\d.]+$/);
+    const before = await view();
+    expect(before.camera).not.toBe(first.camera);
+    expect({ ...before, camera: "", hash: "" }).toEqual({ ...first, camera: "", hash: "" });
+    await ed.frame(`window.__before = true`);
+    const calls = await agentTurn(s, await idOf(canvas), "Glide further", [
+      { tool: "edit", args: { path: "canvas.js", edits: [{ oldText: "const RHO = 1.1;", newText: "const RHO = 1.2;" }] } },
+    ]);
+    expect(calls.map((c) => c.status)).toEqual(["done"]);
+    await soon(() => ed.frame<boolean>(`!window.__before`), 10_000).toBe(true);
+    await ed.loaded();
+    await soon(view).toEqual(before);
+    // A canvas made before it had the whole window (no window.ergaInset) sits below the bars, as a page that fills
+    // its window does. The editor's caret, below the window's bottom, is not the page's overflow: measured again (a
+    // resize), the page still fills its window.
+    await soon(() => ed.frame<boolean>(`${F}.querySelector("erga-caret.on")?.getBoundingClientRect().top > innerHeight`)).toBe(true);
+    await ed.frame(`delete window.ergaInset`);
+    const size = page.viewportSize()!;
+    await page.setViewportSize({ width: size.width + 40, height: size.height });
+    await soon(async () => (await view()).frame[0]).toBeGreaterThan(0);
+    await page.setViewportSize(size);
+  });
 });
 
 journey("a document of several pages: the pencil, Back, and an agent's open_page", () => {

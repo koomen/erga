@@ -127,13 +127,39 @@ function fly(a, b, id, ms) {
     requestAnimationFrame(tick);
   });
 }
-async function show(i, animate = true) {
-  const n = frames().length;
-  at = Math.max(0, Math.min(n - 1, i | 0));
+// The address says where the camera is: "#3" on frame 3, and "#3@1280,640,0.5" once a hand moved it (that point of the
+// canvas in the middle of the view, at that zoom). So a reload, a link, and the page loaded again for an edit to its
+// files (an agent's, say) all open at the same view.
+/** Writes the camera's place to the address. replaceState: a move adds no entry to the history. */
+let noting = 0;
+function note() {
+  clearTimeout(noting);
+  // (The camera goes exactly where the address says, a hundredth of a pixel at most: the page that loads again there is the same picture.)
+  if (free) place({ x: +cam.x.toFixed(2), y: +cam.y.toFixed(2), s: +cam.s.toPrecision(5) });
+  const hash = `#${at + 1}` + (free ? `@${cam.x},${cam.y},${cam.s}` : "");
+  if (location.hash == hash) return;
+  try {
+    history.replaceState(history.state, "", hash);
+  } catch {
+    /* too many in a short time (Safari): the next one says it */
+  }
+}
+/** The address follows once the camera rests: not at each move of a drag. */
+function noteSoon() {
+  clearTimeout(noting);
+  noting = setTimeout(note, 200);
+}
+/** Frame i is the current one. */
+function mark(i) {
+  at = Math.max(0, Math.min(frames().length - 1, i | 0));
   frames().forEach((f, k) => f.classList.toggle("current", k == at));
   dispatchEvent(new Event("ergastep"));
+}
+async function show(i, animate = true) {
+  mark(i);
   const id = ++run;
   free = false;
+  note();
   if (!animate || !placed || matchMedia("(prefers-reduced-motion: reduce)").matches) return place(onFrame(at));
   canvas.style.willChange = "transform";
   if (!(await fly(cam, onFrame(at), id))) return;
@@ -155,7 +181,20 @@ function handMove() {
   run++;
   free = true;
   canvas.style.willChange = "";
+  noteSoon();
 }
+/** Opens at the view the address names: its frame, or where a hand left the camera. */
+function fromAddress(animate) {
+  const m = /^#(\d+)(?:@(-?[\d.]+),(-?[\d.]+),([\d.]+))?$/.exec(location.hash);
+  const c = m?.[4] ? { x: +m[2], y: +m[3], s: Math.min(MOST, Math.max(LEAST, +m[4])) } : null;
+  if (!c || !Number.isFinite(c.x + c.y + c.s)) return void show(m ? m[1] - 1 : 0, animate);
+  mark(m[1] - 1);
+  run++;
+  free = true;
+  place(c);
+}
+// The address changed by itself (typed, Back, a link to "#3").
+addEventListener("hashchange", () => fromAddress(true));
 // Scroll moves the canvas; a pinch (or ctrl and scroll) zooms.
 stage.addEventListener(
   "wheel",
@@ -259,15 +298,21 @@ window.ergaInset = (to) => {
   inset = to;
   insetKnown = true;
   const now = view();
-  place({
-    ...cam,
-    x: cam.x + (now.x - was.x) / cam.s,
-    y: cam.y + (now.y - was.y) / cam.s,
-  });
+  // The picture stays where it is, and the camera's point follows. Not at the first word, as the page loads: the
+  // camera is where the address says, in the middle of the clear part.
+  place(
+    first
+      ? cam
+      : {
+          ...cam,
+          x: cam.x + (now.x - was.x) / cam.s,
+          y: cam.y + (now.y - was.y) / cam.s,
+        }
+  );
   const t = performance.now(),
     dragged = t - insetAt < 120;
   insetAt = t;
-  if (free) return;
+  if (free) return void noteSoon();
   const id = ++run;
   if (first || dragged || matchMedia("(prefers-reduced-motion: reduce)").matches) return place(onFrame(at));
   void fly(cam, onFrame(at), id, 560);
@@ -335,4 +380,4 @@ window.ergaSteps = {
   label: (i) => frames()[i]?.querySelector("h1, h2, h3")?.textContent?.trim() || `Frame ${i + 1}`,
   image,
 };
-void show(0, false);
+fromAddress(false);
