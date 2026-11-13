@@ -1,14 +1,21 @@
 // The editor's panels and bars over one page: the Share card and Share with an agent, the zoom of the page (the bars
-// keep their size), the agent pane's colours on a dark page, a reload at a phone's width, and the bars on a phone.
+// keep their size), the agent pane's colours on a dark page, a reload at a phone's width, and the bars on a phone. And
+// a canvas, which has the whole window under them.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
+import { openNew } from "../editor/caret-helpers";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
 import { expect, journey, servers, test } from "../helpers/fixtures";
 import { pressOn } from "../helpers/press";
 import { atRest, soon } from "./shell";
 
 const s = await servers.main();
+
+/** The page's frame in the window: its left and top. */
+const FRAME = `(() => { const r = document.getElementById("frame").getBoundingClientRect(); return [r.left, r.top]; })()`;
+/** Where the room beside the agent's pane ends: the left edge of what the pane leaves clear (--frame-l). */
+const PANE = `parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--frame-l"))`;
 
 journey("the panels and the bars over a page", () => {
   let ed: Editor, page: Page;
@@ -270,6 +277,8 @@ journey("the panels and the bars over a page", () => {
     ed.write(ed.disk().replace("</head>", `<script type="module" src="${s.root}/erga/text/editor.js"></script>\n</head>`));
     await soon(() => ed.source(), DISK_MS).toContain("/erga/text/editor.js");
     expect(await ed.eval<boolean>(`document.body.classList.contains("agent-open")`), "on a desktop the agent is open").toBe(true);
+    // (A page of text stays beside the agent's pane, where nothing covers it: only a canvas goes under it, below.)
+    expect(await ed.eval<number[]>(FRAME), "a text page's frame starts at the pane's side").toEqual([await ed.eval<number>(PANE), 0]);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
     await ed.loaded();
@@ -313,5 +322,40 @@ journey("the panels and the bars over a page", () => {
     await page.mouse.click(390 / 2, sheet.y / 2 + 40);
     await soon(resting).toEqual({ quick: 0, shown: ["me"], open: false });
     await soon(() => ed.eval<boolean>(`!!document.querySelector("#doc-settings:not([hidden])")`)).toBe(false);
+  });
+
+  // Was Pete's complaint: around a canvas, the band behind the bars and the room beside the agent's pane were the
+  // shell's, not the canvas. The canvas template takes what they cover itself (window.ergaInset).
+  test("a canvas has the whole window, under the bars and the agent's pane; its frame stays in the part they leave clear", async ({
+    tab,
+  }) => {
+    const canvas = await openNew(tab, s, "canvas", { width: 1100, height: 800 });
+    await soon(() => canvas.eval<number[]>(FRAME)).toEqual([0, 0]);
+    expect(
+      await canvas.eval<number[]>(`[document.getElementById("frame").offsetWidth, document.getElementById("frame").offsetHeight]`)
+    ).toEqual([1100, 800]);
+    /** The canvas's current frame on the screen (the page has the whole window: its own coordinates), once it rests there. */
+    const current = `(() => { const r = ${F}.querySelector(".frame.current").getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom].map(Math.round); })()`;
+    /** Whether the current frame is in the clear part: below the bars, right of the pane (`left`), and in its middle. */
+    const clear = async (left: number) => {
+      const [l, t, r, b] = await canvas.frame<number[]>(current);
+      return {
+        belowTheBars: t >= 56,
+        inTheWindow: r <= 1100 && b <= 800,
+        besideThePane: l >= left,
+        inTheMiddle: Math.abs((l + r) / 2 - (left + 1100) / 2) <= 1,
+      };
+    };
+    const all = { belowTheBars: true, inTheWindow: true, besideThePane: true, inTheMiddle: true };
+    const open = () => canvas.eval<boolean>(`document.body.classList.contains("agent-open")`);
+    if (await open()) await canvas.eval(`window.ergaAgent.show(false)`);
+    await soon(() => clear(0)).toEqual(all);
+    // The agent's pane opens over the canvas: the frame's box stays, and the camera moves the frame out from under it.
+    await canvas.eval(`window.ergaAgent.show(true)`);
+    await soon(open).toBe(true);
+    const pane = await canvas.eval<number>(PANE);
+    expect(pane).toBeGreaterThan(300);
+    await soon(() => clear(pane)).toEqual(all);
+    expect(await canvas.eval<number[]>(FRAME)).toEqual([0, 0]);
   });
 });

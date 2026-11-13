@@ -3,6 +3,8 @@
 // canvas: each frame is a step (window.ergaSteps: erga/steps draws back, forward and the list of frames, each drawn
 // small), and the camera glides to the next frame in one smooth move. Drag or scroll moves the canvas, a pinch (or ctrl
 // and the wheel) zooms it, and Erga's zoom keys zoom the camera (window.ergaZoom). A click on another frame goes to it.
+// The canvas has the whole window, under Erga's bars and its agent's panel (window.ergaInset): the camera centres each
+// frame in the part of the window that they leave clear.
 // In the editor a press on a frame is the text's: no click goes to a frame, and a drag moves the canvas only from the
 // space between the frames.
 
@@ -25,6 +27,26 @@ let at = 0,
   free = false;
 /** Whether the editor is on (Erga's word on the page's <html>). */
 const editing = () => document.documentElement.hasAttribute("data-erga-editing");
+/** What Erga's bars and its agent's panel cover of the window, at each edge (window.ergaInset, below). */
+let inset = {
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
+  insetKnown = false,
+  insetAt = 0;
+/** The clear part of the window: its size, and its middle. */
+function view() {
+  const w = Math.max(1, innerWidth - inset.left - inset.right),
+    h = Math.max(1, innerHeight - inset.top - inset.bottom);
+  return {
+    w,
+    h,
+    x: inset.left + w / 2,
+    y: inset.top + h / 2,
+  };
+}
 const box = (el) => ({
   x: el.offsetLeft,
   y: el.offsetTop,
@@ -32,7 +54,8 @@ const box = (el) => ({
   h: el.offsetHeight,
 });
 function fit(b, room) {
-  const s = Math.min(innerWidth / b.w, innerHeight / b.h) * room;
+  const v = view(),
+    s = Math.min(v.w / b.w, v.h / b.h) * room;
   return {
     x: b.x + b.w / 2,
     y: b.y + b.h / 2,
@@ -41,17 +64,19 @@ function fit(b, room) {
 }
 const onFrame = (i) => fit(box(frames()[i]), 0.9);
 function place(c) {
+  const v = view();
   cam = c;
   placed = true;
-  canvas.style.transform = `translate(${innerWidth / 2 - c.x * c.s}px, ${innerHeight / 2 - c.y * c.s}px) scale(${c.s})`;
+  canvas.style.transform = `translate(${v.x - c.x * c.s}px, ${v.y - c.y * c.s}px) scale(${c.s})`;
 }
 /**
  * The path from camera a to camera b: van Wijk and Nuij's smooth zoom and pan, which pulls back a little on a long move
- * so that the pan stays slow on the screen. w is the window's width on the canvas. S is the path's length.
+ * so that the pan stays slow on the screen. w is the view's width on the canvas. S is the path's length.
  */
 function glide(a, b) {
-  const w0 = innerWidth / a.s,
-    w1 = innerWidth / b.s,
+  const vw = view().w,
+    w0 = vw / a.s,
+    w1 = vw / b.s,
     dx = b.x - a.x,
     dy = b.y - a.y,
     d = Math.hypot(dx, dy),
@@ -80,15 +105,15 @@ function glide(a, b) {
       return {
         x: a.x + u * dx,
         y: a.y + u * dy,
-        s: (innerWidth * Math.cosh(r)) / (w0 * Math.cosh(r0)),
+        s: (vw * Math.cosh(r)) / (w0 * Math.cosh(r0)),
       };
     },
   };
 }
-/** From a to b along the glide, eased at both ends; a longer path takes a little longer. False if another move took over. */
-function fly(a, b, id) {
-  const { S, at: point } = glide(a, b),
-    ms = Math.min(1600, 700 + 320 * S);
+/** From a to b along the glide, eased at both ends, in `ms` (else: a longer path takes a little longer). False if another move took over. */
+function fly(a, b, id, ms) {
+  const { S, at: point } = glide(a, b);
+  ms ??= Math.min(1600, 700 + 320 * S);
   return new Promise((done) => {
     const t0 = performance.now();
     const ease = (t) => (1 - Math.cos(Math.PI * t)) / 2;
@@ -117,8 +142,9 @@ async function show(i, animate = true) {
 /** Moves the camera by hand. Zoom keeps the canvas point under (px, py) in place. */
 function zoomAt(px, py, k) {
   const s = Math.min(MOST, Math.max(LEAST, cam.s * k)),
-    dx = px - innerWidth / 2,
-    dy = py - innerHeight / 2;
+    v = view(),
+    dx = px - v.x,
+    dy = py - v.y;
   place({
     x: cam.x + dx / cam.s - dx / s,
     y: cam.y + dy / cam.s - dy / s,
@@ -215,11 +241,36 @@ const lift = (e) => {
 };
 addEventListener("pointerup", lift);
 addEventListener("pointercancel", lift);
-// Erga's zoom (its keys): k times closer around the middle of the window; 0 goes back to the current frame.
+// Erga's zoom (its keys): k times closer around the middle of the view; 0 goes back to the current frame.
 window.ergaZoom = (k) => {
   if (!(k > 0)) return void show(at);
   handMove();
-  zoomAt(innerWidth / 2, innerHeight / 2, k);
+  const v = view();
+  zoomAt(v.x, v.y, k);
+};
+// Erga gives a page with this function the whole window, and tells it what its bars and its agent's panel cover of
+// it ({ top, right, bottom, left }, in px), at the start and at each change. The canvas stays where it is on the
+// screen (the camera looks at the middle of the clear part now); from there the camera moves the current frame into
+// the clear part, in the time the panel takes to open (at once while the panel's edge is dragged: a change right after
+// another), unless the canvas was moved by hand.
+window.ergaInset = (to) => {
+  const was = view(),
+    first = !insetKnown;
+  inset = to;
+  insetKnown = true;
+  const now = view();
+  place({
+    ...cam,
+    x: cam.x + (now.x - was.x) / cam.s,
+    y: cam.y + (now.y - was.y) / cam.s,
+  });
+  const t = performance.now(),
+    dragged = t - insetAt < 120;
+  insetAt = t;
+  if (free) return;
+  const id = ++run;
+  if (first || dragged || matchMedia("(prefers-reduced-motion: reduce)").matches) return place(onFrame(at));
+  void fly(cam, onFrame(at), id, 560);
 };
 // A click on another frame goes to it (not in the editor, where it's the text's). A drag is not a click.
 canvas.addEventListener("click", (e) => {

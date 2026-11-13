@@ -1,6 +1,8 @@
 // The band's colour and the page's canvas on a document's page (server/pages/viewer.ts), as the page tells them
 // (server/pages/reader.ts); the page shows once that's painted, so a first visit's page shows only under its own colour.
 
+import { insetOf, seatOf } from "../common/top-room";
+
 /** The page's canvas, as the page in the frame says it is (server/pages/reader.ts, canvas). */
 type Canvas = {
   image?: unknown;
@@ -130,29 +132,38 @@ export default function viewerBand(): void {
   } catch {}
   // The room a scrolling page keeps at its top for the bars (client/common/top-room.ts): the band's height, in the page's
   // own pixels (the editor's zoom), told to the page as it starts and when either changes (in full screen too: the page
-  // doesn't move as it goes in and out). A page that fills the window says so, and its frame stays below the band (viewer-band.css, erga-fills), here and next time.
+  // doesn't move as it goes in and out). With it, what the bars and the agent's panel cover of a frame over the whole
+  // window (insetOf), for a page that keeps clear of them itself. The page says its seat (client/common/top-room.ts), and
+  // its frame is below the band (erga-fills) or over the whole window (erga-whole: viewer-band.css), here and next time.
   const root = document.documentElement,
     probe = document.createElement("div");
-  probe.style.cssText = "position: fixed; top: 0; width: 0; height: var(--band-h); visibility: hidden; pointer-events: none";
+  probe.style.cssText =
+    "position: fixed; top: 0; width: 0; height: var(--band-h); padding: 0 var(--frame-r, 0px) 0 var(--frame-l, 0px); visibility: hidden; pointer-events: none";
   document.body.append(probe);
-  let roomSaid = -1;
+  let roomSaid = "";
   function tellRoom(again?: boolean) {
-    const r = Math.round((probe.offsetHeight / ergaFrames.scale()) * 100) / 100;
-    if (!again && r == roomSaid) return;
-    roomSaid = r;
-    ergaFrames.send({ type: "erga-room", px: r });
+    const scale = ergaFrames.scale(),
+      band = probe.offsetHeight,
+      cs = getComputedStyle(probe),
+      inset = insetOf(band, parseFloat(cs.paddingLeft), parseFloat(cs.paddingRight), scale, root.classList.contains("erga-full")),
+      room = { type: "erga-room", px: Math.round((band / scale) * 100) / 100, inset },
+      said = JSON.stringify(room);
+    if (!again && said == roomSaid) return;
+    roomSaid = said;
+    ergaFrames.send(room);
   }
   new MutationObserver(() => tellRoom()).observe(root, { attributes: true, attributeFilter: ["style", "class"] });
   addEventListener("resize", () => tellRoom());
   addEventListener("message", (e) => {
     if (!ergaFrames.from(e)) return;
     if (e.data?.type == "erga-hello") return tellRoom(true);
-    if (e.data?.type == "erga-fills") {
-      const fills = e.data.fills === true;
-      root.classList.toggle("erga-fills", fills);
+    if (e.data?.type == "erga-seat") {
+      const seat = seatOf(e.data.seat == "below", e.data.seat == "whole");
+      root.classList.toggle("erga-fills", seat == "below");
+      root.classList.toggle("erga-whole", seat == "whole");
       try {
-        if (fills) localStorage.setItem("erga:fills:v1:" + id, "1");
-        else localStorage.removeItem("erga:fills:v1:" + id);
+        if (seat != "under") localStorage.setItem("erga:seat:v1:" + id, seat);
+        else localStorage.removeItem("erga:seat:v1:" + id);
       } catch {}
       return;
     }

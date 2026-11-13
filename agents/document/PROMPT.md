@@ -190,6 +190,14 @@ for each step, placed by its `left` and `top`. Its heading names the step.
 `canvas.js` moves the camera, and defines `window.ergaZoom`, so Erga's zoom
 keys zoom the camera.
 
+A page that defines `window.ergaInset` has the whole window: Erga's bars and
+its agent's panel float over the page. Erga calls it with what they cover,
+`{ top, right, bottom, left }` in px, at the start and at each change; the
+page keeps what matters in the clear part (`canvas.js` centres the frame
+there). The same values are `--erga-inset-top` (and `-right`, `-bottom`,
+`-left`) on `<html>`. Only for a page that moves its own view: a page
+without it never has anything under the bars.
+
 To check a step, give `page` op `view_page` or `eval_in_page` the step (`step: "3"`),
 and `frames: [300, 900]` to see a transition partway. To check several steps,
 give `view_page` a list (`step: ["1", "2.2", "4"]`): one picture each, in one

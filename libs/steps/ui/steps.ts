@@ -32,7 +32,8 @@ const STYLE = `
 .dark :is(.bar, .panel) { --bg: rgba(31, 31, 35, .95); --fg: #e4e4e9; --soft: #8f8f99; --hover: rgba(161, 161, 169, .2);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 4px 18px rgba(0, 0, 0, .4); }
 [hidden] { display: none !important; }
-.bar { left: 50%; bottom: 14px; display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 10px; transform: translateX(-50%); }
+/* (In the part of the window that Erga's bars and its agent's panel leave clear, on a page that has the whole window: client/common/top-room.ts.) */
+.bar { left: calc(50% + (var(--erga-inset-left, 0px) - var(--erga-inset-right, 0px)) / 2); bottom: 14px; display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 10px; transform: translateX(-50%); }
 .bar button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: inherit; cursor: pointer; }
 .bar button:hover:not(:disabled) { background: var(--hover); }
 .bar button:disabled { opacity: .3; cursor: default; }
@@ -40,7 +41,8 @@ const STYLE = `
 .bar button[aria-expanded="true"] { color: #3b7cf0; }
 .bar svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .at { min-width: 54px; padding: 0 2px; text-align: center; font-variant-numeric: tabular-nums; }
-.panel { top: 12px; right: 12px; display: flex; flex-direction: column; width: min(208px, 55vw); max-height: max(80px, calc(100vh - 76px)); overflow: hidden; border-radius: 12px; }
+.panel { top: calc(12px + var(--erga-inset-top, 0px)); right: calc(12px + var(--erga-inset-right, 0px)); display: flex; flex-direction: column; width: min(208px, 55vw);
+  max-height: max(80px, calc(100vh - 76px - var(--erga-inset-top, 0px))); overflow: hidden; border-radius: 12px; }
 .head { flex: none; padding: 10px 12px 2px; color: var(--soft); font-size: 12px; font-weight: 600; }
 ol { flex: 1 1 auto; min-height: 0; margin: 0; padding: 6px; list-style: none; overflow-y: auto; overscroll-behavior: contain; }
 .step { display: block; width: 100%; padding: 5px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
@@ -62,7 +64,9 @@ ol { flex: 1 1 auto; min-height: 0; margin: 0; padding: 6px; list-style: none; o
 .bar.full { transition: opacity 400ms ease; }
 .full .toggle, .bar:not(.full) .exit { display: none; }
 .full.still { opacity: 0; cursor: none; }
-@media (prefers-reduced-motion: reduce) { .bar.full { transition: none; } }
+/* (It moves aside with the agent's panel, on the panel's curve: once the page has started, not as it does.) */
+.bar.live:not(.full) { transition: left 560ms cubic-bezier(0.45, 0, 0.15, 1); }
+@media (prefers-reduced-motion: reduce) { .bar:is(.full, .live) { transition: none; } }
 `;
 
 const svg = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
@@ -107,6 +111,10 @@ export function mountSteps(): void {
     toggle = $<HTMLButtonElement>(".toggle"),
     back = $<HTMLButtonElement>(".back"),
     next = $<HTMLButtonElement>(".next");
+  // (The bar's place has its transition two frames after the page loaded: the inset is on the page by then.)
+  const live = () => requestAnimationFrame(() => requestAnimationFrame(() => bar.classList.add("live")));
+  if (document.readyState == "complete") live();
+  else addEventListener("load", live, { once: true });
 
   /** The page's steps, read (null: none, or they threw). */
   function read(): Shown | null {
