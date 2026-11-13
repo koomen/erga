@@ -70,13 +70,13 @@ function make(): HTMLDialogElement {
   d.setAttribute("aria-labelledby", "erga-settings-title");
   d.innerHTML = `<header><h2 id="erga-settings-title">Settings</h2><button type="button" class="close" aria-label="Close">✕</button></header>
 <section class="keys" aria-labelledby="erga-settings-keys"><h3 id="erga-settings-keys">Agent</h3>
-<p class="sub">Your own API keys. Your key runs every model of its provider in your agent, and wins over the server's. Only your agent uses it. Erga keeps it encrypted and never shows it again.</p>
+<p class="sub">Your own API keys, for your agent only. A saved key is never shown again.</p>
 <ul class="rows"></ul></section>
 <section class="tokens" aria-labelledby="erga-settings-tokens"><h3 id="erga-settings-tokens">Tokens</h3>
-<p class="sub">A token lets an outside agent or a script (Claude Code, Codex, git) act as you, within its scope.</p>
+<p class="sub">A token lets an outside agent or script act as you.</p>
 <div class="made" hidden></div><ul class="rows"></ul>
 <p class="more" hidden><span></span> <button type="button" class="pill">Show 10 more</button></p>
-<form class="make"><label>Name <input name="label" maxlength="80" placeholder="What it's for: Claude Code on my laptop" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore></label>
+<form class="make"><label>Name <input name="label" maxlength="80" placeholder="Claude Code on my laptop" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore></label>
 <label>Scope <select name="scope"><option value="documents">All my documents</option><option value="document">One document</option></select></label>
 <label class="doc" hidden>Document <select name="doc"></select></label>
 <label>Expires <input type="date" name="expires" aria-label="Expiry date (optional)"></label>

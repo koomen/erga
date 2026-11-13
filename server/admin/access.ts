@@ -24,7 +24,7 @@ const ruleSort = (r: AccessRule) => `${RULE_KINDS.indexOf(r.kind)}:${r.value}`;
 function ruleRow(r: AccessRule): string {
   const option = (v: Access, now: Access) => `<option value="${v}"${v == now ? " selected" : ""}>${ACCESS_LABEL[v]}</option>`;
   return `  <li data-id="${r.id}" data-kind="${r.kind}" data-live="${esc(ruleKey(r.kind, r.value))}" data-sort="${esc(ruleSort(r))}">
-    <div class="who">${r.kind == "everybody" ? `<span class="title">Everybody</span><span class="kind">Anyone who signs in with a provider that is on</span>` : `<span class="title">${esc(r.value)}</span><span class="kind">${esc(KIND_LABEL[r.kind])}</span>`}</div>
+    <div class="who">${r.kind == "everybody" ? `<span class="title">Everybody</span><span class="kind">Anyone who signs in</span>` : `<span class="title">${esc(r.value)}</span><span class="kind">${esc(KIND_LABEL[r.kind])}</span>`}</div>
     <select class="access" aria-label="Access for ${esc(r.kind == "everybody" ? "everybody" : r.value)}">${(["none", "read", "write"] as Access[]).map((v) => option(v, r.access)).join("")}</select>
     ${r.kind == "everybody" ? `<span></span>` : `<button type="button" class="act remove-rule" aria-label="Remove the rule for ${esc(r.value)}" title="Remove this rule">${ICON.delete}</button>`}
   </li>`;
@@ -33,7 +33,7 @@ function ruleRow(r: AccessRule): string {
 /** The switch for sharing content publicly: the public_sharing setting, as the Access page shows it. */
 const publicRow = (on: boolean) =>
   `<li class="setting" data-live="setting:public_sharing" data-sort="0">
-    <div class="about"><label class="key" for="public-sharing" title="public_sharing">${esc(SETTINGS.public_sharing.label!)}</label><p class="desc">${esc(SETTINGS.public_sharing.description)}</p></div>
+    <div class="about"><label class="key" for="public-sharing" title="public_sharing">${esc(SETTINGS.public_sharing.label!)}</label><p class="desc">${esc(SETTINGS.public_sharing.description!)}</p></div>
     <div class="value"><label class="switch"><input type="checkbox" role="switch" id="public-sharing"${on ? " checked" : ""}><span class="track" aria-hidden="true"></span><span class="state" aria-hidden="true">${on ? "On" : "Off"}</span></label></div>
   </li>`;
 
@@ -72,7 +72,7 @@ function rulesSection(rules: AccessRule[], suggestions: { workspaces: string[]; 
             .join("")}</datalist>`
       )
       .join("\n    ")}`
-    : `<p class="note">This server's sign-in gives no groups. The rule for everybody, and each user's role, decide.</p>`;
+    : `<p class="note">This server's sign-in has no groups.</p>`;
   return `<section class="rules" aria-labelledby="rules-head">
     <h3 class="sub-head" id="rules-head">Groups</h3>
     ${form}
@@ -95,7 +95,6 @@ export async function accessPage(platform: Platform, session: Session) {
     session,
     title: "Access",
     here: "access",
-    lede: "Who can sign in by group, and what they can do. Each user's own role is on Users.",
     body: `
   ${rulesSection(rules, suggestions, platform.directory.providers)}
   <section class="public-sharing" aria-labelledby="public-head">

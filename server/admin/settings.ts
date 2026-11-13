@@ -65,7 +65,7 @@ function valueInput(e: Shown, never: boolean): string {
   if (typeof e.default == "number")
     return `<span class="amount"><input class="input" type="number" step="${unit == "US$" ? "0.01" : "1"}" min="0" ${attrs} data-kind="number" value="${esc(String(e.value))}" required>${unit ? `<span class="unit">${unit}</span>` : ""}</span>`;
   if (typeof e.default == "string")
-    return `<input class="input" ${attrs} data-kind="string" value="${esc(String(e.value))}" autocomplete="off" spellcheck="false">`;
+    return `<input class="input" ${attrs} data-kind="string" value="${esc(String(e.value))}"${e.placeholder ? ` placeholder="${esc(e.placeholder)}"` : ""} autocomplete="off" spellcheck="false">`;
   return `<input class="input mono" ${attrs} data-kind="json" value="${esc(JSON.stringify(e.value))}" autocomplete="off" spellcheck="false">`;
 }
 
@@ -113,7 +113,7 @@ export function settingRow(e: Shown, session: Session, never: boolean, place: nu
   return `  <li class="setting" data-key="${esc(e.key)}" data-control="${control}" data-live="setting:${esc(e.key)}" data-sort="${place}">
     <div class="about">
       <div class="head"><label class="key" for="${control == "document" ? "find-" : "set-"}${esc(e.key)}" title="${esc(e.key)}">${esc(e.label ?? e.key)}</label>${meta || doc ? `<span class="meta">${[meta, doc].filter(Boolean).join(`<span aria-hidden="true">·</span>`)}</span>` : ""}</div>
-      <p class="desc">${esc(e.description)}</p>
+      ${e.description ? `<p class="desc">${esc(e.description)}</p>` : ""}
       ${set}
     </div>
     <form class="value">
@@ -167,7 +167,6 @@ export async function settingsPage(platform: Platform, session: Session) {
     session,
     title: "Settings",
     here: "settings",
-    lede: "Limits and defaults for this server.",
     body: `
   <section aria-labelledby="page-head">
     <ol class="rows settings" data-live-kind="setting" data-live-view="settings" data-live-order="asc" data-live-at="${Date.now()}">

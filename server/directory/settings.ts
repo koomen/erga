@@ -33,8 +33,12 @@ export class ConfigError extends Schema.TaggedError<ConfigError>()("ConfigError"
 export interface Setting<T = unknown> {
   /** Its name on the admin page: words for a person, never the key. */
   label?: string;
-  /** What it does, for the admin (or agent) changing it. */
-  description: string;
+  /** What it is for, in one short line, for the admin (or agent) changing it. None where the label says it. */
+  description?: string;
+  /** For an agent only: the values it takes, and what a special one does. A person sees these in the page's control. */
+  values?: string;
+  /** A value's form, shown in the page's text input while it is empty. */
+  placeholder?: string;
   /** Its value until it's set. */
   default: T;
   /** A value as given (parsed JSON), checked: throws a ConfigError saying what's wrong. */
@@ -86,7 +90,7 @@ export const AGENT_SETTINGS: readonly string[] = ["agent_keys", "agent_models_of
 export const SETTINGS = {
   delete_docs_after_hours: setting<number | null>({
     label: "Delete unedited new documents",
-    description: "A new document that nobody edits is deleted after this many hours.",
+    values: "Hours, or null: never.",
     default: 24,
     // null, or "never" (as an agent or a deploy might say it), is never.
     parse: (v) => {
@@ -98,34 +102,36 @@ export const SETTINGS = {
   }),
   landing_document: setting<string | null>({
     label: "Homepage",
-    description: "The document or project shown at /. Empty: the demo page.",
+    description: "The document or project shown at /.",
+    values: "A document's address or id, or null: the demo page.",
     default: null,
     parse: (v) => (v === null || v === "" ? null : text(300)(v) || null),
     kind: "document",
   }),
   max_file_mb: setting<number>({
     label: "Largest file",
-    description: "The largest file, in MB, that a person or an agent can add to a document.",
+    description: "The largest file anyone can add to a document.",
     default: 100,
     parse: integer(1, 500),
   }),
   max_project_gb: setting<number>({
     label: "Largest project",
-    description: "The most space, in GB, that all the files of one project can use.",
+    description: "The most space one project's files can use.",
     default: 5,
     parse: integer(1, 1000),
   }),
   public_sharing: setting<boolean>({
     label: "Public sharing",
-    description:
-      "Owners can share a document with anyone who has the link, signed in or not. Off: those links open only after a sign-in. The homepage is always public.",
+    description: "Owners can share a document with anyone who has the link, signed in or not.",
+    values: "false: those links open only after a sign-in. The homepage is always public.",
     default: false,
     parse: boolean,
   }),
   page_llm_daily_usd: setting<number>({
     label: "Pages' models: daily spend limit",
-    description:
-      "The most that all pages' model calls together may cost each day (UTC), in US dollars, as estimated from their tokens. Then each call gets \"limit\" until midnight UTC. 0: pages can't call a model.",
+    description: "The most all pages' model calls can cost each day.",
+    values:
+      'US dollars a day (UTC), estimated from tokens. Over it, each call gets "limit" until midnight UTC. 0: pages can\'t call a model.',
     default: 5,
     parse: (v) => {
       if (typeof v != "number" || !Number.isFinite(v) || v < 0 || v > 100_000)
@@ -135,15 +141,16 @@ export const SETTINGS = {
   }),
   page_llm_guests: setting<boolean>({
     label: "Guests can call pages' models",
-    description:
-      "Someone who isn't signed in can call a page's model where its owner lets all viewers call it. Off: they must sign in first, on every page.",
+    description: "Only on pages whose owner lets all viewers call the model.",
+    values: "false: they must sign in first, on every page.",
     default: true,
     parse: boolean,
   }),
   feedback_repository: setting<string>({
     label: "Feedback's repository",
-    description:
-      "The GitHub repository (owner/name) where Send feedback opens an issue, without the sender's name. Empty: no issues; the Feedback page keeps the feedback.",
+    description: 'The GitHub repository where "Send feedback" opens issues.',
+    values: 'owner/name, or "": no issues, and the Feedback page keeps the feedback. An issue never has the sender\'s name.',
+    placeholder: "owner/name",
     default: "",
     parse: (v) => {
       const repo = (v === null ? "" : text(200)(v)).replace(/^https:\/\/github\.com\//, "").replace(/\/+$/, "");
@@ -166,8 +173,9 @@ export const SETTINGS = {
   }),
   agent_daily_tokens: setting<number>({
     label: "Agents: daily token limit for each person",
-    description:
-      "The most tokens (input and output) that one person's agent may use each day (UTC) on the server's keys. Then their agent stops until midnight UTC, and says why. A person's own key has no limit.",
+    description: "The most tokens one person's agent can use each day on the server's keys.",
+    values:
+      "Input and output tokens a day (UTC). Over it, their agent stops until midnight UTC, and says why. A person's own key has no limit.",
     default: 30_000_000,
     parse: integer(1, 100_000_000_000),
   }),
@@ -192,7 +200,11 @@ type ValueOf<S extends Setting> = S extends Setting<infer T> ? T : never;
 /** A setting as an admin sees it. */
 export interface ConfigEntry {
   key: string;
-  description: string;
+  description?: string;
+  /** For an agent only (Setting.values). */
+  values?: string;
+  /** A text input's placeholder (Setting.placeholder). */
+  placeholder?: string;
   /** What it is now: the locked value, else the one set, else the default. */
   value: unknown;
   default: unknown;
@@ -365,7 +377,9 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     const row = (await this.table()).get(key);
     const base = {
       key,
-      description: s.description,
+      ...(s.description ? { description: s.description } : {}),
+      ...(s.values ? { values: s.values } : {}),
+      ...(s.placeholder ? { placeholder: s.placeholder } : {}),
       default: s.default,
       ...(s.kind ? { kind: s.kind } : {}),
       ...(s.label ? { label: s.label } : {}),

@@ -172,12 +172,12 @@ export async function changesPage(platform: Platform, session: Session, before?:
     session,
     title: "Change log",
     here: "changes",
-    lede: `Every change to settings, users, access, keys, tokens and deploys, newest first.${history.total ? ` ${plural(history.total, "change")} in all.` : ""}`,
+    ...(history.total ? { lede: plural(history.total, "change") } : {}),
     body: `
   <ol class="changes"${before ? "" : ` data-live-kind="change" data-live-view="changes" data-live-at="${Date.now()}"`}${rows.length ? "" : " hidden"}>
 ${rows.map((r) => r.html).join("\n")}
   </ol>
-  <p class="changes-empty"${rows.length ? " hidden" : ""}>${before ? "No older changes." : "Nothing has changed yet."}</p>
+  <p class="changes-empty"${rows.length ? " hidden" : ""}>${before ? "No older changes." : "No changes yet."}</p>
   ${before || older ? `<p class="changes-more">${before ? `<a href="${esc(link("/admin/changes", session))}">Newest</a>` : ""}${before && older ? " · " : ""}${older ? `<a href="${esc(link(`/admin/changes?before=${last!.n}`, session))}">Older changes</a>` : ""}</p>` : ""}
 <script>
   ${TIMES_SCRIPT}${before ? "" : inlineCall("admin-changes")}

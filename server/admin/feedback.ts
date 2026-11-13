@@ -35,20 +35,20 @@ export async function feedbackPage(platform: Platform, session: Session) {
   const waiting = rows.filter((f) => f.issue == null && f.target == target).length;
   if (repo && waiting) platform.edge.background(fileFeedback(platform.directory, issues, target));
   const where = repo
-    ? `Each one becomes an issue in ${esc(repo)} on GitHub, without the sender's name.`
+    ? `Each message opens an issue in ${repo}.`
     : issues
-      ? `This server opens no issues: the setting Feedback's repository is empty (<a href="/admin/settings">Settings</a>). The feedback waits here.`
-      : "This server opens no issues: it has no GITHUB_ISSUES_TOKEN. The feedback waits here.";
+      ? "No issues open: Feedback's repository is not set."
+      : "No issues open: this server has no GITHUB_ISSUES_TOKEN.";
   return adminPage({
     session,
     title: "Feedback",
     here: "feedback",
-    lede: `What people sent with Send feedback, newest first. ${where}${rows.length ? ` ${plural(rows.length, "message")}${waiting ? `, ${waiting} with no issue yet` : ""}.` : ""}`,
+    lede: `${where}${rows.length ? ` ${plural(rows.length, "message")}${waiting ? `, ${waiting} with no issue yet` : ""}.` : ""}`,
     body: `
   <ol class="feedback"${rows.length ? "" : " hidden"}>
 ${rows.map((f) => feedbackRow(f, target, issues && repo ? (n) => issues.link(repo, n) : null)).join("\n")}
   </ol>
-  <p class="changes-empty"${rows.length ? " hidden" : ""}>Nobody has sent feedback yet.</p>
+  <p class="changes-empty"${rows.length ? " hidden" : ""}>No feedback yet.</p>
 <script>${TIMES_SCRIPT}</script>`,
   });
 }

@@ -136,11 +136,11 @@ const card = (key: string, title: string, big: string, line: string, chart: stri
   </section>`;
 
 /** A list's section: its people, and Load more while there are more. */
-function listSection(list: AnalyticsList, title: string, lede: string, page: { people: AnalyticsPerson[]; more: boolean }) {
+function listSection(list: AnalyticsList, title: string, lede: string | null, page: { people: AnalyticsPerson[]; more: boolean }) {
   return `
   <section class="people-list" aria-labelledby="list-${list}-head">
     <h3 class="sub-head" id="list-${list}-head">${esc(title)}</h3>
-    <p class="lede">${esc(lede)}</p>
+    ${lede ? `<p class="lede">${esc(lede)}</p>` : ""}
     <ol class="people-rows" data-list="${list}">${page.people.map((p) => personRow(p, list)).join("")}</ol>
     ${page.people.length ? "" : `<p class="none">Nobody yet.</p>`}
     <p class="more-row"><button type="button" class="pill more" data-list="${list}"${page.more ? "" : " hidden"}>Load more</button><span class="hint" role="status"></span></p>
@@ -168,18 +168,18 @@ export async function analyticsPage(platform: Platform, session: Session, days: 
     session,
     title: "Analytics",
     here: "analytics",
-    lede: "What people did each day (UTC). A person is active on a day when they open a document, edit one, or use a model.",
+    lede: "A person is active on a day (UTC) when they open a document, edit one, or use a model.",
     body: `
   <nav class="range" aria-label="Days shown">${range}</nav>
   <div class="charts">
   ${card("people", "Daily active people", count(people[people.length - 1]), `today · ${avg(people)} a day on average in ${span}`, barChart("chart-people-svg", dates, [{ label: "Active people", cls: "s1", values: people }], "active people"))}
-  ${card("views", "Document views", count(sum(views)), `in ${span} · a document's page opened in the viewer`, barChart("chart-views-svg", dates, [{ label: "Views", cls: "s1", values: views }], "views"))}
-  ${card("edits", "Document edits", count(sum(edits)), `in ${span} · a version: a burst of edits by one person`, barChart("chart-edits-svg", dates, [{ label: "Edits", cls: "s1", values: edits }], "edits"))}
+  ${card("views", "Document views", count(sum(views)), `in ${span}`, barChart("chart-views-svg", dates, [{ label: "Views", cls: "s1", values: views }], "views"))}
+  ${card("edits", "Document edits", count(sum(edits)), `in ${span} · counted by version`, barChart("chart-edits-svg", dates, [{ label: "Edits", cls: "s1", values: edits }], "edits"))}
   ${card(
     "tokens",
     "Model tokens",
     compact(input + output),
-    `in ${span} · ${compact(input)} input, ${compact(output)} output, every model`,
+    `in ${span} · ${compact(input)} input, ${compact(output)} output`,
     barChart(
       "chart-tokens-svg",
       dates,
@@ -191,8 +191,8 @@ export async function analyticsPage(platform: Platform, session: Session, days: 
     )
   )}
   </div>
-  ${listSection("active", "Most active in the last 7 days", "The most edits and views together, then the most tokens.", a.active)}
-  ${listSection("newest", "Newest users", "The accounts made last, newest first.", a.newest)}
+  ${listSection("active", "Most active in the last 7 days", "By edits and views, then by tokens.", a.active)}
+  ${listSection("newest", "Newest users", null, a.newest)}
 <script>${TIMES_SCRIPT}${inlineCall("admin-analytics")}</script>`,
   });
 }

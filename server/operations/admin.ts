@@ -433,7 +433,8 @@ function entryOf(e: ConfigEntry) {
   return {
     key: e.key,
     ...(e.label ? { label: e.label } : {}),
-    description: e.description,
+    ...(e.description ? { description: e.description } : {}),
+    ...(e.values ? { values: e.values } : {}),
     value: e.value,
     default: e.default,
     source: e.source,

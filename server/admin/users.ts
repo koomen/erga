@@ -81,7 +81,6 @@ export async function usersPage(platform: Platform, session: Session) {
     session,
     title: "Users",
     here: "users",
-    lede: "Everyone who can sign in, and the role of each. Groups are on Access.",
     body: `
   <section aria-labelledby="page-head">
     <form class="add-user">

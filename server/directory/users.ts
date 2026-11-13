@@ -32,7 +32,7 @@ export const ROLE_LABEL: Record<UserRole | "none", string> = {
   admin: "Admin",
   write: "Can create and edit content",
   read: "Can authenticate",
-  none: "No role (only the Access page's groups)",
+  none: "No role (groups decide)",
 };
 /** A role as given (`none` too, for an account), checked; a NotAllowed says what's wrong. */
 export function roleValue(raw: unknown, o: { none?: boolean } = {}): UserRole | "none" {

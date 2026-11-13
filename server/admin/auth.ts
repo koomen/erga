@@ -44,21 +44,18 @@ function serverCard(s: AuthStatus, o: { editable: boolean; session: Session; on:
       <dt>Callback URL</dt><dd><code class="callback">${esc(s.callbackUrl)}</code>${copy(s.callbackUrl)}</dd>
     </dl>`;
   // The deploy's values are the way back in (server/identity/settings.ts, signInApp): one line says so where it has them.
-  const deployHas = !!s.deploy.clientId && s.deploy.secretSet;
   const deployNote = s.dev
     ? ""
     : s.inUse.source == "page"
-      ? `<p class="note deploy-note">${s.deploy.clientId ? `The deploy has client ID <code>${esc(s.deploy.clientId)}</code>${s.deploy.secretSet ? "" : ", with no secret"}.` : "The deploy has no client ID."} Clear goes back to the deploy's values${deployHas ? `; sign-in also falls back to them if these stop working` : ""}.</p>`
+      ? `<p class="note deploy-note">Clear goes back to the deploy's values: ${s.deploy.clientId ? `client ID <code>${esc(s.deploy.clientId)}</code>${s.deploy.secretSet ? "" : ", with no secret"}` : "no client ID"}.</p>`
       : "";
-  const devNote = s.dev
-    ? `<p class="note">Local development signs everyone in without ${name}, so these values are not used here.</p>`
-    : "";
+  const devNote = s.dev ? `<p class="note">Local development does not use these values.</p>` : "";
   // A real sign-in is what checks the callback URL.
   const testUrl = `/auth/${provider}?app=pending&next=/admin/auth`;
   // A provider that's off: an admin's sign-in with the values in use checks them before anyone else uses them.
   const offTest =
     !o.on && s.inUse.clientId && !s.pending
-      ? `<div class="pending"><p>Sign-in with ${name} is off. Test these values with your own sign-in before you turn it on.</p><div class="row"><a class="pill test-off" href="${esc(link(`/auth/${provider}?app=test&next=/admin/auth`, o.session))}">Test sign-in</a></div></div>`
+      ? `<div class="pending"><p>Test these values before you turn ${name} on.</p><div class="row"><a class="pill test-off" href="${esc(link(`/auth/${provider}?app=test&next=/admin/auth`, o.session))}">Test sign-in</a></div></div>`
       : "";
   const test =
     s.pending?.test && !s.pending.test.ok
@@ -66,13 +63,13 @@ function serverCard(s: AuthStatus, o: { editable: boolean; session: Session; on:
       : "";
   const pending = s.pending
     ? `<div class="pending">
-      <p><b>New values wait for a test sign-in.</b> Client ID <code>${esc(s.pending.clientId)}</code>, set by ${who_(s.pending.updatedBy, s.pending.updatedVia)}, ${esc(setAt(s.pending.updated))}. ${s.pendingCheck ? esc(s.pendingCheck.summary) : ""} Until an admin signs in with them, sign-in uses the values above.</p>
+      <p><b>New values wait for a test sign-in.</b> Client ID <code>${esc(s.pending.clientId)}</code>, set by ${who_(s.pending.updatedBy, s.pending.updatedVia)}, ${esc(setAt(s.pending.updated))}. ${s.pendingCheck ? esc(s.pendingCheck.summary) : ""}</p>
       ${test}
       <div class="row"><a class="pill test" href="${esc(link(testUrl, o.session))}">Test sign-in</a>${o.editable ? `<button type="button" class="pill discard">Discard</button>` : ""}</div>
     </div>`
     : "";
   const reasons =
-    s.check.reasons.length && s.check.state != "working"
+    s.check.reasons.length && s.check.state != "working" && s.check.state != "not_set_up"
       ? `<ul class="reasons">${s.check.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>`
       : "";
   const steps = s.setup
@@ -82,7 +79,7 @@ function serverCard(s: AuthStatus, o: { editable: boolean; session: Session; on:
     !o.editable && !s.canStore ? `<p class="note">This server has no FACTORY_KEY, so only the deploy sets these values.</p>` : "";
   const form = o.editable
     ? `<form class="configure" method="post" action="${esc(link("/admin/auth", o.session))}">
-      <p class="lede">${s.check.state == "working" ? `Replace with another app's values. They wait for a test sign-in before anyone else uses them.` : `Paste the app's values. ${name} checks them before sign-in uses them.`}</p>
+      ${s.check.state == "working" ? `<p class="lede">Replace with another ${PROVIDERS[provider].appWord}'s values.</p>` : ""}
       <input type="hidden" name="provider" value="${provider}">
       <label>Client ID<input class="input" name="clientId" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" placeholder="${esc(PROVIDERS[provider].clientIdLike)}" required></label>
       <label>Client secret<input class="input" type="password" name="secret" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" placeholder="Paste the secret" required></label>
@@ -104,9 +101,7 @@ function providerSection(p: Provider, on: ProvidersOn, s: AuthStatus, session: S
   const label = PROVIDERS[p].label;
   const others = IDS.filter((id) => id != p);
   const last = on[p] && !others.some((id) => on[id]);
-  const why = last
-    ? `The only sign-in that is on. To turn it off, turn on ${others.map((id) => PROVIDERS[id].label).join(" or ")} first.`
-    : "";
+  const why = last ? `To turn this off, turn on ${others.map((id) => PROVIDERS[id].label).join(" or ")} first.` : "";
   return `<section class="provider" data-provider="${p}" data-live="auth:${p}" data-sort="${IDS.indexOf(p)}">
     <header><h3 class="provider-head">${label}</h3><span class="app-state ${s.check.state}">${esc(STATE_LABEL[s.check.state])}</span>
       <label class="switch" title="${esc(why || `Sign-in with ${label}: ${on[p] ? "on" : "off"}`)}"><input type="checkbox" role="switch" data-provider="${p}" aria-label="Sign-in with ${label}"${on[p] ? " checked" : ""}${last ? " disabled" : ""}><span class="track" aria-hidden="true"></span><span class="state">${on[p] ? "On" : "Off"}</span></label>
@@ -126,20 +121,19 @@ function sections(session: Session, status: SignInStatus): Partial<Record<Provid
 
 /** The two modes, as the page names them (server/identity/mode.ts): the name, and what it is in one sentence. */
 const MODES: Record<SignInStatus["mode"], { name: string; what: string }> = {
-  oauth: { name: "OAuth sign-in", what: "Erga signs people in itself, with the providers that are on below." },
+  oauth: { name: "OAuth sign-in", what: "Erga signs people in with the providers below." },
   proxy: {
     name: "Proxy sign-in",
-    what: "A proxy in front of this server signs each person in, with your company's sign-in. Erga trusts the proxy's signed header.",
+    what: "A proxy in front of this server signs people in.",
   },
 };
 
 /** The page's first card: the mode in use, and the other one. The deploy chooses the mode, so the page only shows it. */
 function modeSection(mode: SignInStatus["mode"]): string {
-  const other = mode == "oauth" ? "proxy" : "oauth";
   return `<section class="mode" data-mode="${mode}">
     <header><h3 class="provider-head">${MODES[mode].name}</h3><span class="app-state working">In use</span></header>
     <p class="summary">${esc(MODES[mode].what)}</p>
-    <p class="note">The other mode is ${MODES[other].name}. The deploy chooses the mode (<code>bun erga setup</code>): this page can't change it.</p>
+    <p class="note">The deploy sets the mode.</p>
   </section>`;
 }
 
@@ -149,9 +143,9 @@ function proxySection(p: ProxyStatus): string {
   return `<section class="mode proxy" data-proxy="${esc(p.kind ?? "")}">
     <header><h3 class="provider-head">${esc(p.label)}</h3><span class="app-state ${p.kind ? "working" : "misconfigured"}">${p.kind ? "In front" : "Misconfigured"}</span></header>
     <section class="server" data-state="${p.kind ? "working" : "misconfigured"}">
-      <p class="summary">${p.kind ? "Each person signs in at the proxy before a request reaches this server." : "The deploy's value for the proxy (PROXY_SIGN_IN) isn't one this server can read: nobody can sign in."}</p>
+      <p class="summary">${p.kind ? "People sign in at the proxy." : "The deploy's value for the proxy (PROXY_SIGN_IN) isn't one this server can read: nobody can sign in."}</p>
       <dl>${rows.map((r) => `<dt>${esc(r.name)}</dt><dd><code>${esc(r.value)}</code></dd>`).join("")}</dl>
-      <p class="note">The deploy sets these values. The proxy's own settings say who may pass it.</p>
+      <p class="note">The deploy sets these values.</p>
     </section>
   </section>`;
 }
@@ -163,10 +157,6 @@ export function authPage(session: Session, status: SignInStatus) {
     session,
     title: "Authentication",
     here: "auth",
-    lede:
-      status.mode == "oauth"
-        ? "How people sign in, and the OAuth app behind each provider."
-        : "How people sign in, and the proxy in front of this server.",
     body: `
   <section aria-labelledby="page-head" class="auth" data-live-kind="auth" data-live-view="auth" data-live-order="asc" data-live-at="${Date.now()}">
     ${modeSection(status.mode)}

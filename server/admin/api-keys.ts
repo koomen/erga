@@ -67,7 +67,6 @@ export async function apiKeysPage(platform: Platform, session: Session) {
     session,
     title: "API keys",
     here: "keys",
-    lede: "The keys the agents use to call the model providers.",
     body: `
   <section aria-labelledby="page-head" class="credentials">
     <ol class="rows settings">
@@ -87,7 +86,6 @@ ${credentials.map((c, place) => credentialRow(c, session, place, off)).join("\n"
   </section>
   <section class="deploy-secrets" aria-labelledby="deploy-head">
     <h3 class="sub-head" id="deploy-head">Set by the deploy</h3>
-    <p class="lede">Worker secrets. Only a deploy changes them.</p>
     <ol class="rows">
 ${deployed.map(deploySecretRow).join("\n")}
     </ol>
