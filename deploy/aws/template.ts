@@ -16,7 +16,7 @@
 // The structure follows the answers (the way out, the domains); the sizes and the machine image are the template's
 // parameters, with defaults, which the person may change in the file.
 
-import { PROXY_FREE_PATHS } from "../../shared/proxy-paths";
+import { PROXY_FREE_PATHS } from "../proxy-paths";
 
 /** The answers that shape an instance's stacks. */
 export interface AwsShape {
@@ -95,7 +95,7 @@ export const NAT_USER_DATA = [
 export const oidcSecretName = (stack: string) => `erga/${stack}/oidc-client-secret`;
 
 /**
- * What passes the proxy without the sign-in, on the app's address (shared/proxy-paths.ts says what and why),
+ * What passes the proxy without the sign-in, on the app's address (deploy/proxy-paths.ts says what and why),
  * as the listener's rules take them: three paths a rule (a rule takes five values, and the host is one).
  */
 export const TOKEN_PATHS: readonly (readonly string[])[] = Array.from({ length: Math.ceil(PROXY_FREE_PATHS.length / 3) }, (_, i) =>

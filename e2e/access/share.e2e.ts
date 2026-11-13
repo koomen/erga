@@ -7,10 +7,11 @@
 // The second journey is the admin's switch "Users can share content publicly", on a server of this file's own: it
 // changes the whole server.
 import { framed, pagesFetch } from "../helpers/pages-fetch";
-import { expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
+import { agentClosed, expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
+import { joinRoom } from "../helpers/room";
 import { deployHome } from "../helpers/server";
 import { runTool } from "../helpers/tools";
-import { agentClosed, editorUp, getter, joinRoom, newDoc, share, signedOut, signIn, soon, unique } from "./access";
+import { editorUp, getter, newDoc, sent, share, signedOut, signIn, soon, unique } from "./access";
 import { clickOn } from "../helpers/press";
 
 const [s, own] = await Promise.all([servers.main(), servers.of("share")]);
@@ -130,19 +131,19 @@ journey("an owner shares a document with a reader", () => {
     try {
       viewer.insertAfter("<p>", "Viewer was here. ");
       // The viewer's edit has gone out before the owner's is made: once the room serves the owner's, it has had both.
-      await until(viewer.sent, 2000, "the viewer's edit sent");
+      await until(() => sent(viewer), 2000, "the viewer's edit sent");
       me.insertAfter("<p>", "Owner was here. ");
-      await until(() => viewer.text().includes("Owner was here."), 5000, "the viewer sees the owner's edit");
+      await until(() => viewer.str().includes("Owner was here."), 5000, "the viewer sees the owner's edit");
       // (Storage has an edit a second later: the step after the next one reads it there, with no wait.)
       await until(async () => (await served()).includes("Owner was here."), 5000, "the room serves the owner's edit");
-      expect(me.text()).not.toContain("Viewer was here.");
+      expect(me.str()).not.toContain("Viewer was here.");
       expect(await served()).not.toContain("Viewer was here.");
       viewer.leave();
       await share(root, doc.id, ada, "editor", owner);
       const editor = await joinRoom(host, ada);
       try {
         editor.insertAfter("<p>", "Editor was here. ");
-        await until(() => me.text().includes("Editor was here."), 5000, "an editor's edit reaches the owner");
+        await until(() => me.str().includes("Editor was here."), 5000, "an editor's edit reaches the owner");
         expect((await put(ada, "notes.txt", "hi")).ok).toBe(true);
       } finally {
         editor.leave();

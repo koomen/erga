@@ -2,7 +2,6 @@
 // (agents/person/agent.ts, `stored`): the transcript and the model's messages, kept step by step
 // (agents/checkpoint.ts), a run cut off in the middle and resumed.
 
-import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
 import { startAgent } from "../agents/person/agent";
@@ -10,6 +9,7 @@ import { ChatTables, tableStore } from "../agents/chat-store";
 import { restoredLog, STOPPED, STOPPED_SHOWN, type ChatStore, type StoredChat } from "../agents/checkpoint";
 import * as Schema from "effect/Schema";
 import type { AgentTool } from "../agents/run";
+import { objectSql } from "./helpers/memory-sql";
 import { until } from "./helpers/until";
 
 const script = { own: {}, server: {}, mode: "server" as const, off: [], model: "script" as const, effort: "medium" as const };
@@ -22,10 +22,7 @@ function turn(agent: ReturnType<typeof startAgent>, text: string) {
   });
 }
 
-function tables() {
-  const db = new Database(":memory:", { strict: true });
-  return new ChatTables({ exec: <T>(q: string, ...p: (string | number | null)[]) => db.query(q).all(...p) as T[], transaction: (f) => db.transaction(f)() });
-}
+const tables = () => new ChatTables(objectSql());
 
 test("a conversation stored and restored goes on where it was: the transcript and what the model remembers", async () => {
   const t = tables(), store = tableStore(t, "admin:root");

@@ -8,7 +8,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Base64 } from "effect/encoding";
 import { readersStep, type Readers } from "./readers.ts";
-import { ANYONE, type DocRow, type Grant, newDocId, NO_WRITE, PAGE_LLM_WHO, type PageLlmWho } from "../directory/index.ts";
+import { ANYONE, type DocRow, type Grant, NO_WRITE, PAGE_LLM_WHO, type PageLlmWho } from "../directory/index.ts";
 import { forgetDecisions, makeDoc, startingFiles } from "../documents/index.ts";
 import { TEMPLATES, templateById } from "../pages/index.ts";
 import type { FileData } from "../../document/document.ts";
@@ -234,27 +234,24 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         startKind = start.kind;
       }
       if (!(await caller.dir.mayWrite(who.login))) throw new OperationError({ message: NO_WRITE, status: 403 });
-      for (let tries = 0; tries < 5; tries++) {
-        const doc = await makeDoc(platform, who.login.toLowerCase(), newDocId(), files, {
-          index,
-          published,
-          title: optString(args.title, "title"),
-          slug: optString(args.slug, "slug"),
-          kind: isDocKind(args.kind) ? args.kind : startKind,
-          scratch,
-        });
-        if (doc)
-          return {
-            ...described(doc, caller),
-            page: index,
-            files: Object.keys(files).sort(),
-            ...(from ? { from } : {}),
-            ...(doc.expires == null || (published && !scratch)
-              ? {}
-              : { expires: `${iso(doc.expires)}, ${scratch ? "unless someone saves it (save_document)" : "unless someone edits it"}` }),
-          };
-      }
-      throw new OperationError({ message: "Couldn't pick an address for it: try again.", status: 500 });
+      const doc = await makeDoc(platform, who.login.toLowerCase(), files, {
+        index,
+        published,
+        title: optString(args.title, "title"),
+        slug: optString(args.slug, "slug"),
+        kind: isDocKind(args.kind) ? args.kind : startKind,
+        scratch,
+      });
+      if (!doc) throw new OperationError({ message: "Couldn't pick an address for it: try again.", status: 500 });
+      return {
+        ...described(doc, caller),
+        page: index,
+        files: Object.keys(files).sort(),
+        ...(from ? { from } : {}),
+        ...(doc.expires == null || (published && !scratch)
+          ? {}
+          : { expires: `${iso(doc.expires)}, ${scratch ? "unless someone saves it (save_document)" : "unless someone edits it"}` }),
+      };
     },
   },
   {

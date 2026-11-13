@@ -2,35 +2,18 @@
 // and tests, and pushes the tested commit only when the tests end with "all passing"; else it says why and pushes nothing.
 
 import { expect, test } from "bun:test";
-import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { failureOf } from "../deploy/cli/flow";
 import { pushBranch, type Run } from "../deploy/cli/push";
-
-const sh = (cwd: string, ...cmd: string[]) => {
-  const r = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe" });
-  if (r.exitCode != 0) throw new Error(`${cmd.join(" ")}: ${r.stderr.toString()}`);
-  return r.stdout.toString().trim();
-};
+import { commit, gitWorld, sh } from "./helpers/git-world.ts";
 
 /** A clone on the branch `task`, one commit ahead of its origin's staging. */
 function clone(branch = "task") {
-  const top = mkdtempSync(join(tmpdir(), "erga-push-"));
-  const [origin, root] = [join(top, "origin.git"), join(top, "clone")];
-  sh(top, "git", "init", "--quiet", "--bare", "-b", "staging", origin);
-  sh(top, "git", "clone", "--quiet", origin, root);
-  const commit = (text: string) => {
-    writeFileSync(join(root, "a.ts"), text);
-    sh(root, "git", "add", "a.ts");
-    sh(root, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", text);
-  };
-  sh(root, "git", "switch", "--quiet", "-c", "staging");
-  commit("one");
-  sh(root, "git", "push", "--quiet", "origin", "staging");
+  const { origin, clone: root } = gitWorld("erga-push-");
   if (branch != "staging") {
     sh(root, "git", "switch", "--quiet", "-c", branch);
-    commit("two");
+    commit(root, "a.ts", "two");
   }
   const onOrigin = () =>
     Bun.spawnSync(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], { cwd: origin })

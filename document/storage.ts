@@ -16,7 +16,7 @@
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import type { KV } from "./versions.ts";
-import { FileStore, StateStore, StoreError } from "./room.ts";
+import { FileStore, io, StateStore } from "./room.ts";
 import { isBlobRef, OBJECT_MAX, storeBlob, type BlobRef, type BlobStore } from "./blobs.ts";
 
 export interface Storage {
@@ -159,8 +159,6 @@ export class MemoryStorage implements Storage {
   }
 }
 
-const storeError = (e: unknown) => new StoreError({ message: e instanceof Error ? e.message : String(e) });
-
 /**
  * The room's files in a Storage, as the FileStore it reads and writes:
  * `touch` runs for every change to them (the document is edited). With
@@ -185,51 +183,44 @@ export function fileStoreOf(storage: Storage, hooks: { touch: () => Promise<void
   /** Drops a file's ref (written as text now, or gone). */
   const dropRef = async (path: string) => { if (await refs.drop(path)) await storage.delete(REF + path); };
   return FileStore.of({
-    list: Effect.tryPromise({
-      try: async () => [...new Set([...[...(await storage.list({ prefix: FILE })).keys()].map((k) => k.slice(FILE.length)), ...(await refs.all())])],
-      catch: storeError,
-    }),
-    read: (path) => Effect.tryPromise({
-      try: async () => {
+    list: io(async () => [
+      ...new Set([...[...(await storage.list({ prefix: FILE })).keys()].map((k) => k.slice(FILE.length)), ...(await refs.all())]),
+    ]),
+    read: (path) =>
+      io(async () => {
         const ref = await refOf(path);
         if (ref) return blobs ? await blobs.bytes(ref.hash) : null;
         return (await storage.get<Uint8Array>(FILE + path)) ?? null;
-      },
-      catch: storeError,
-    }),
-    write: (path, text) => Effect.tryPromise({ try: () => Promise.all([storage.put(FILE + path, new TextEncoder().encode(text)), dropRef(path), hooks.touch()]).then(() => {}), catch: storeError }),
-    writeBytes: (path, bytes) => Effect.tryPromise({
-      try: async () => {
+      }),
+    write: (path, text) =>
+      io(() => Promise.all([storage.put(FILE + path, new TextEncoder().encode(text)), dropRef(path), hooks.touch()]).then(() => {})),
+    writeBytes: (path, bytes) =>
+      io(async () => {
         if (!blobs) { await Promise.all([storage.put(FILE + path, bytes), hooks.touch()]); return; }
         await putBlob(path, await Effect.runPromise(storeBlob(blobs, bytes)));
-      },
-      catch: storeError,
-    }),
-    remove: (path) => Effect.tryPromise({
-      try: async () => {
+      }),
+    remove: (path) =>
+      io(async () => {
         const had = await refs.has(path);
         await dropRef(path);
         if (await times.drop(path)) await storage.delete(AT + path);
         if ((await storage.delete(FILE + path)) || had) await hooks.touch();
-      },
-      catch: storeError,
+      }),
+    stats: io(async () => {
+      const [refMap, timeMap] = await Promise.all([storage.list<BlobRef>({ prefix: REF }), times.load()]);
+      const out = new Map<string, { size?: number; at?: number; hash?: string }>();
+      for (const [path, at] of timeMap) out.set(path, { at });
+      for (const [key, ref] of refMap) if (isBlobRef(ref)) out.set(key.slice(REF.length), { ...out.get(key.slice(REF.length)), size: ref.size, at: ref.at, hash: ref.hash });
+      return out;
     }),
-    stats: Effect.tryPromise({
-      try: async () => {
-        const [refMap, timeMap] = await Promise.all([storage.list<BlobRef>({ prefix: REF }), times.load()]);
-        const out = new Map<string, { size?: number; at?: number; hash?: string }>();
-        for (const [path, at] of timeMap) out.set(path, { at });
-        for (const [key, ref] of refMap) if (isBlobRef(ref)) out.set(key.slice(REF.length), { ...out.get(key.slice(REF.length)), size: ref.size, at: ref.at, hash: ref.hash });
-        return out;
-      },
-      catch: storeError,
-    }),
-    ...(blobs ? {
-      ref: (path: string) => Effect.tryPromise({ try: () => refOf(path), catch: storeError }),
-      putBlob: (path: string, ref: BlobRef) => Effect.tryPromise({ try: () => putBlob(path, ref), catch: storeError }),
-    } : {}),
-    copy: (from, to) => Effect.tryPromise({
-      try: async () => {
+    ...(blobs
+      ? {
+          ref: (path: string) => io(() => refOf(path)),
+          putBlob: (path: string, ref: BlobRef) => io(() => putBlob(path, ref)),
+        }
+      : {}),
+    copy: (from, to) =>
+      io(async () => {
         const ref = await refOf(from);
         if (ref) {
           await putBlob(to, ref);
@@ -239,20 +230,16 @@ export function fileStoreOf(storage: Storage, hooks: { touch: () => Promise<void
         if (!bytes) return false;
         await Promise.all([storage.put(FILE + to, bytes), dropRef(to), hooks.touch()]);
         return true;
-      },
-      catch: storeError,
-    }),
-    folders: Effect.tryPromise({ try: async () => [...(await storage.list({ prefix: DIR })).keys()].map((k) => k.slice(DIR.length)), catch: storeError }),
-    mkdir: (path) => Effect.tryPromise({
-      try: async () => {
+      }),
+    folders: io(async () => [...(await storage.list({ prefix: DIR })).keys()].map((k) => k.slice(DIR.length))),
+    mkdir: (path) =>
+      io(async () => {
         const all = path.split("/").map((_, i, parts) => parts.slice(0, i + 1).join("/"));
         await storage.put(Object.fromEntries(all.map((d) => [DIR + d, true])));
         await hooks.touch();
-      },
-      catch: storeError,
-    }),
-    rmdir: (path) => Effect.tryPromise({
-      try: async () => {
+      }),
+    rmdir: (path) =>
+      io(async () => {
         const inRefs = (await refs.all()).filter((p) => p.startsWith(path + "/"));
         for (const p of inRefs) await refs.drop(p);
         const inTimes = [...(await times.load()).keys()].filter((p) => p.startsWith(path + "/"));
@@ -260,9 +247,7 @@ export function fileStoreOf(storage: Storage, hooks: { touch: () => Promise<void
         const keys = [...(await storage.list({ prefix: FILE + path + "/" })).keys(), ...inRefs.map((p) => REF + p), ...inTimes.map((p) => AT + p), ...(await storage.list({ prefix: DIR + path + "/" })).keys(), DIR + path];
         for (let i = 0; i < keys.length; i += BATCH) await storage.delete(keys.slice(i, i + BATCH));
         await hooks.touch();
-      },
-      catch: storeError,
-    }),
+      }),
   });
 }
 
@@ -456,15 +441,12 @@ export function stateStoreOf(storage: Storage, opts: { reconcile?: boolean; edit
   const times = opts.times ?? new TimeIndex(storage);
   const encoder = new TextEncoder();
   return StateStore.of({
-    load: Effect.tryPromise({
-      try: async () => {
-        const saved = await journal.load();
-        return saved && { updates: saved.updates, unwritten: saved.unwritten, reconcile: !!opts.reconcile };
-      },
-      catch: storeError,
+    load: io(async () => {
+      const saved = await journal.load();
+      return saved && { updates: saved.updates, unwritten: saved.unwritten, reconcile: !!opts.reconcile };
     }),
-    commit: (c) => Effect.tryPromise({
-      try: async () => {
+    commit: (c) =>
+      io(async () => {
         const files: Record<string, unknown> = {}, drop: string[] = [];
         const now = Date.now();
         for (const [path, text] of c.write) {
@@ -485,17 +467,13 @@ export function stateStoreOf(storage: Storage, opts: { reconcile?: boolean; edit
           if (await times.drop(path)) drop.push(KEYS.at + path);
         }
         await journal.commit({ update: c.update, files, remove: c.remove, unwritten: c.unwritten, drop }, c.write.length || c.remove.length ? opts.edited : undefined);
-      },
-      catch: storeError,
-    }),
-    compact: (state, when) => Effect.tryPromise({
-      try: async () => {
+      }),
+    compact: (state, when) =>
+      io(async () => {
         if (!journal.wants(when)) return false;
         await journal.compact(state());
         return true;
-      },
-      catch: storeError,
-    }),
+      }),
     lazyFiles: !opts.reconcile,
   });
 }

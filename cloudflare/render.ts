@@ -8,7 +8,7 @@
 // picture itself, of the whole window.
 //
 // Trap: a browser of our own (the dev server's Chrome, the AWS host's) is on the server's machine, so the render
-// refuses each request to a private address but Erga's own two origins (`own`; shared/private-address.ts). A test
+// refuses each request to a private address but Erga's own two origins (`own`; private-address.ts). A test
 // whose page loads from another site on 127.0.0.1 names that origin in its server's ERGA_RENDER_ALLOW
 // (a test's own fonts server). The check reads the address as written: a public name that resolves to a
 // private address, and a WebSocket, still pass.
@@ -22,6 +22,7 @@
 
 import type { RenderJob } from "../document/agent";
 import { encodePath, pageAddress } from "../document/pages";
+import { base64 } from "../shared/bytes";
 import {
   FRAMES,
   VIEW_DEFAULT,
@@ -31,9 +32,9 @@ import {
   type Shot,
   type StepShown,
   type ViewResult,
-} from "../shared/agent-log";
+} from "../shared/view-page";
 import { sourceDigest } from "../shared/page-html";
-import { reachable } from "../shared/private-address";
+import { reachable } from "./private-address";
 import { pagesOrigin, readPagesClaims } from "../server/documents/index";
 import { cookieName, SESSION_COOKIE, viewCookie } from "../server/identity/index";
 import { loadAssets, readerPage } from "../server/pages/index";
@@ -218,7 +219,7 @@ async function renderIn(page: Page, place: Place, job: Job): Promise<ViewResult>
   };
   /**
    * Our own browser: each target of the page (a frame of another site, a frame in it, a worker) has every request
-   * paused, and one to a private address fails (shared/private-address.ts). Before any of its code runs.
+   * paused, and one to a private address fails (private-address.ts). Before any of its code runs.
    */
   const guard = own
     ? async (target: Page): Promise<void> => {
@@ -282,7 +283,7 @@ async function renderIn(page: Page, place: Place, job: Job): Promise<ViewResult>
             { name: "Cache-Control", value: "no-store" },
             { name: "Content-Security-Policy", value: `frame-ancestors ${place.app.origin}` },
           ],
-          body: base64(html),
+          body: base64(new TextEncoder().encode(html)),
         });
       })().catch(() => {});
     });
@@ -432,9 +433,3 @@ const safeDecode = (path: string | undefined) => {
   }
 };
 
-const base64 = (text: string) => {
-  const bytes = new TextEncoder().encode(text);
-  let s = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
-};

@@ -6,6 +6,8 @@
 // shortest is 60 s; at most a week, so the namespace stays small). It keeps no copy KV can't hold whole (1 MiB: above
 // that celld puts the value in the bucket, no faster than the origin), and answers no range: the caller reads those.
 
+import { sha256Hex } from "../shared/bytes";
+
 /** The cache's interface (server/platform.ts, edge.cache). */
 export interface EdgeCache {
   match(key: string | Request): Promise<Response | undefined>;
@@ -23,11 +25,7 @@ interface Meta {
 }
 
 /** The key KV holds a copy at: the SHA-256 of the URL (a URL can pass KV's 512 bytes). */
-async function kvKey(key: string | Request): Promise<string> {
-  const url = typeof key == "string" ? key : key.url;
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url));
-  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+const kvKey = (key: string | Request) => sha256Hex(typeof key == "string" ? key : key.url);
 
 /** How long a response may be kept, in seconds, as its Cache-Control says; null: not at all. */
 export function keepFor(response: Response): number | null {

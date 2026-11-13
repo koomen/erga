@@ -3,7 +3,7 @@
 // "4": slide 4, or its first part), or a hash ("#3.2"). Pure. The steps library on the page (libs/steps/ui/steps.ts)
 // answers the agent's render (client/page-tools/capture.ts) with goToStep; the agent's tool cleans the step with stepSpec.
 
-import type { StepShown } from "../../../shared/agent-log";
+import type { StepShown } from "../../../shared/view-page";
 
 /**
  * The contract: window.ergaSteps, which a presentation's page defines in its own code, and imports erga/steps (the

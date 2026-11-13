@@ -17,7 +17,7 @@
 // the tab's side is client/page-tools/live-page-tab.ts.
 
 import { plural } from "./time";
-import { evalTimeout } from "./agent-log";
+import { evalTimeout } from "./view-page";
 
 export type ConsoleLevel = "error" | "warn" | "info" | "log" | "debug";
 export const CONSOLE_LEVELS: ConsoleLevel[] = ["error", "warn", "info", "log", "debug"];

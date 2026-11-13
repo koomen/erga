@@ -9,9 +9,8 @@
 // Trap: an address that differs from the frame's only by its hash loads nothing: the browser moves the page to the
 // hash. Someone who can edit has no version in the files' address, so the version goes in the query too (?erga-v).
 
-import { backoff, live } from "../live/client";
-import { socketStep, type PhaseEvent, type SocketPhase } from "../../shared/socket-phase";
-import { DELETED_NOTE, PING, PONG } from "../../shared/room-socket";
+import { liveSocket } from "../live/socket";
+import { DELETED_NOTE } from "../../shared/room-socket";
 import { DONE_MS, QUIET_MS, writerName, writerStep, writerText, type WriterEvent, type WriterPhase } from "../common/writer-phase";
 
 export default function viewerLive(base: string): void {
@@ -21,11 +20,7 @@ export default function viewerLive(base: string): void {
     wanted = ver,
     y = 0,
     last = 0,
-    heard = 0,
-    timer: ReturnType<typeof setTimeout> | undefined,
-    socket: WebSocket | null = null,
-    phase: SocketPhase = { at: "connecting", tries: 0 },
-    retry: ReturnType<typeof setTimeout> | undefined;
+    timer: ReturnType<typeof setTimeout> | undefined;
   // Where the reader is scrolled to, as the page in the frame tells (server/pages/reader.ts).
   addEventListener("message", (e) => {
     if (window.ergaFrames.from(e) && e.data?.type == "erga-scroll") y = Number(e.data.y) || 0;
@@ -72,38 +67,15 @@ export default function viewerLive(base: string): void {
     pill.textContent = text ?? "";
     pill.classList.toggle("on", writing.at == "writing");
   }
-  // A deleted document, or one no longer theirs to open, never comes back.
-  const step = socketStep({ final: { 4404: "deleted", 4403: "unshared" } });
-  /** An event of the socket's: its new phase, and what that asks for. */
-  function go(e: PhaseEvent) {
-    const next = step(phase, e);
-    phase = next.phase;
-    if (phase.at != "backoff") clearTimeout(retry);
-    for (const f of next.effects) {
-      if (f.do == "connect") connect();
-      else if (f.do == "retry") retry = setTimeout(() => go({ type: "timer" }), backoff(f.tries));
-      else if (f.do == "up" || f.do == "down") live((l) => l.connection("view", f.do));
-      else if (f.do == "end")
-        live((l) => l.connection("view", "gone", f.why == "deleted" ? DELETED_NOTE : "This document is no longer shared with you."));
-    }
-  }
-  function connect() {
-    const user = new URLSearchParams(location.search).get("user");
-    const ws = new WebSocket(
-      (location.protocol == "https:" ? "wss://" : "ws://") +
-        location.host +
-        base +
-        "/api/room?watch=view" +
-        (user ? "&user=" + encodeURIComponent(user) : "")
-    );
-    socket = ws;
-    heard = Date.now();
-    ws.onopen = () => {
-      if (socket == ws) go({ type: "opened" });
-    };
-    ws.onmessage = (e) => {
-      heard = Date.now();
-      if (typeof e.data != "string" || e.data == PONG) return;
+  liveSocket({
+    name: "view",
+    path: base + "/api/room?watch=view",
+    // A deleted document, or one no longer theirs to open, never comes back.
+    rules: { final: { 4404: "deleted", 4403: "unshared" } },
+    ping: true,
+    ended: (why) => (why == "deleted" ? DELETED_NOTE : "This document is no longer shared with you."),
+    message(e) {
+      if (typeof e.data != "string") return;
       try {
         const m = JSON.parse(e.data) as { type?: string; ver?: string; by?: string };
         if (m.type == "view" && m.ver) {
@@ -116,18 +88,6 @@ export default function viewerLive(base: string): void {
       } catch {
         /* not ours */
       }
-    };
-    ws.onclose = (e) => {
-      if (socket != ws) return;
-      socket = null;
-      go({ type: "closed", code: e.code });
-    };
-  }
-  connect();
-  // An idle socket can die without a close: a ping now and then, and one with no answer for a while is closed.
-  setInterval(() => {
-    if (!socket || socket.readyState != WebSocket.OPEN) return;
-    if (Date.now() - heard > 75_000) return socket.close();
-    socket.send(PING);
-  }, 30_000);
+    },
+  }).start();
 }

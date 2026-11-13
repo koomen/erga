@@ -33,12 +33,13 @@
 
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { deployedSettings } from "../server/directory/index.ts";
+import { freePort } from "./browser";
 import { resolveTarget } from "./vite-plugin";
 import { deployed } from "../deploy/locked-settings";
+import { ROOT } from "../deploy/root";
 
-const ROOT = resolve(import.meta.dir, "..");
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
   console.log(readFileSync(import.meta.path, "utf8").split("\n").slice(1).filter((l) => l.startsWith("//")).map((l) => l.slice(3)).join("\n"));
@@ -71,13 +72,13 @@ if (ownState && existsSync(URL_FILE)) {
     process.exit(2);
   }
 }
-const port = asked ? Number(asked) : checkoutPort();
+const port = asked ? Number(asked) : (checkoutPort() ?? (await freePort()));
 if (asked && !free(port)) {
   console.error(`port ${port} is taken: is another server running? Pick another with --port`);
   process.exit(2);
 }
 // The Worker's debugger (workerd's inspector), beside it: the plugin's own pick (the first free from 9229) races another server starting.
-const inspector = process.env.ERGA_INSPECTOR == "0" ? 0 : [port + 10000].find(free) ?? anyFreePort();
+const inspector = process.env.ERGA_INSPECTOR == "0" ? 0 : ([port + 10000].find(free) ?? (await freePort()));
 
 // Who you are locally, and what signs your session: .dev.vars, made the first time.
 if (!process.env.ERGA_ENV_DIR) ensureDevVars(join(ROOT, ".dev.vars"));
@@ -159,26 +160,17 @@ function free(port: number): boolean {
   return true;
 }
 
-/** A port the OS says is free now. */
-function anyFreePort(): number {
-  const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
-  const port = probe.port;
-  probe.stop(true);
-  return port;
-}
-
 /**
  * This checkout's port, the same every time: 4400 for the main checkout (.git a folder), else one from its path in
- * 4410-4999 (a worktree, a copy). Taken: the next free one in that range, then any.
+ * 4410-4999 (a worktree, a copy). Taken: the next free one in that range. Undefined: none of them is free.
  */
-function checkoutPort(): number {
+function checkoutPort(): number | undefined {
   const main = (() => { try { return statSync(join(ROOT, ".git")).isDirectory(); } catch { return false; } })();
   const first = main ? 4400 : 4410 + createHash("sha1").update(ROOT).digest().readUInt32BE(0) % 590;
   for (let i = 0; i < 590; i++) {
     const p = first + i > 4999 ? first + i - 590 : first + i;
     if (free(p)) return p;
   }
-  return anyFreePort();
 }
 
 /** .dev.vars with what local development needs: who you are (DEV_LOGIN) and a session secret. */

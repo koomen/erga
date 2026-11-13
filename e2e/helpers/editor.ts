@@ -19,7 +19,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Frame, Page } from "playwright-core";
 import { ROOT } from "./env";
-import { expect, goto, servers, settle, until, type Server, type Tab } from "./fixtures";
+import { agentClosed, expect, goto, servers, settle, until, type Server, type Tab } from "./fixtures";
 import { VISIBLE } from "./visible";
 
 /** A template literal's text without its first newline and its common indent. */
@@ -81,19 +81,13 @@ export async function openEditor(tab: Tab, server: Server, fixture: string, opts
   const file = join(dir, opts.file ?? "index.html");
   const timescale = opts.timescale ?? TIMESCALE;
   // In the tab itself only: the page editor's frame and the page have their own origins.
-  await page.addInitScript(({ timescale, agent }) => {
+  await page.addInitScript((timescale) => {
     if (window.top != window) return;
     (window as any).__ergaTimescale = timescale;
     // The page editor checks after each change that the page shows its HTML (libs/text/ui/check.ts).
     (window as any).__ergaCheck = true;
-    // Someone who keeps the agent pane closed (it opens by itself in the editor otherwise): set once, so the tab can still open it.
-    if (!agent) try {
-      if (!sessionStorage.getItem("erga-test:agent-seeded")) {
-        sessionStorage.setItem("erga-test:agent-seeded", "1");
-        if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}');
-      }
-    } catch { /* no storage */ }
-  }, { timescale, agent: opts.agent ?? false });
+  }, timescale);
+  if (!opts.agent) await agentClosed(page);
   await goto(page, `${address}${opts.query ? `${opts.query}&edit` : "?edit"}`);
   const ed = editor(page, { address, dir, file });
   await ed.loaded();

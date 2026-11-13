@@ -28,7 +28,7 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { Platform, Session } from "../platform.ts";
-import { inlineScript, inlineStyle, page, safeNext } from "../pages/index.ts";
+import { inlineScript, inlineStyle, notFound, page, safeNext } from "../pages/index.ts";
 import { call, ctx, Field, form, json, plainJson, redirect, text, type Route } from "../http.ts";
 import { esc } from "../../shared/html.ts";
 import { type Directory, groupOf, label, NotAllowed, type RuleKind, type Vouched } from "../directory/index.ts";
@@ -296,7 +296,7 @@ ${inlineScript("username")}<p>`;
 /** /auth/dev: a pretend provider's answer, for trying the sign-in steps and for the end-to-end tests (local development only). */
 export const devSignIn: Route = Effect.gen(function* () {
   const { platform, request, url } = yield* ctx;
-  if (!platform.dev(url)) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
+  if (!platform.dev(url)) return notFound();
   const q = url.searchParams;
   const provider = q.get("provider") ?? "";
   const info = SIGN_IN_PROVIDERS[provider];

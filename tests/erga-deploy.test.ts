@@ -11,15 +11,8 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type CloudflareEntry, type Entry, entryOf, readConfig, secretsPath, withEntry, writeConfig } from "../deploy/cli/config";
-import {
-  deployInstance,
-  deployStaging,
-  entryTarget,
-  lockPath,
-  rollbackInstance,
-  stagingCommit,
-  takeLock,
-} from "../deploy/cli/deploy";
+import { deployInstance, deployStaging, entryTarget, rollbackInstance, stagingCommit } from "../deploy/cli/deploy";
+import { lockPath, takeLock } from "../deploy/cli/jobs";
 import { replaceSnapshotSecret } from "../deploy/cli/snapshot-secret";
 import { snapshotAuth } from "../document/snapshot";
 import { deployFacts } from "../deploy/pipeline/account";

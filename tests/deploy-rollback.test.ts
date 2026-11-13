@@ -3,8 +3,9 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
-import { Cloudflare } from "../deploy/pipeline/cloudflare-api";
-import { rollbackTo, runPipeline, Unhealthy, type Carry } from "../deploy/pipeline/pipeline";
+import { rollbackTo } from "../deploy/pipeline/account";
+import { Cloudflare, Unhealthy } from "../deploy/pipeline/cloudflare-api";
+import { runPipeline, type Carry } from "../deploy/pipeline/pipeline";
 import { prepareRelease, release, SHA2, SHA3, staging, bindingsOf, bootstrap, quick } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 

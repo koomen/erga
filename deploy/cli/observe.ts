@@ -1,25 +1,10 @@
 // What `bun erga` reads: git (the checkout's view of GitHub), and each registered instance's GET /api/ops (with its ops
 // token) and GET /api/health. Each call says what it saw; nothing here decides (flow.ts).
 
-import { type Config, entryOrigin } from "./config";
-import { healthOf } from "./deploy";
-import { type Branch, type Commit, type Instance, PROTECTED, type State, stateOf } from "./flow";
-import { readOps } from "./ops";
-import { ROOT } from "../root";
-
-
-/** A command's result: its exit, and what it printed. */
-export function sh(cmd: string[], o: { cwd?: string; input?: string; env?: Record<string, string | undefined> } = {}) {
-  const r = Bun.spawnSync(cmd, {
-    cwd: o.cwd ?? ROOT,
-    stdin: o.input != null ? new TextEncoder().encode(o.input) : "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-    env: o.env ?? process.env,
-  });
-  return { ok: r.exitCode == 0, code: r.exitCode, out: r.stdout.toString().trim(), err: r.stderr.toString().trim() };
-}
-export const git = (...args: string[]) => sh(["git", ...args]);
+import { type Config, type Entry, entryOrigin } from "./config";
+import { type Answer, type Commit, type Instance, PROTECTED, type State, stateOf } from "./flow";
+import { readOps, type Site } from "./ops";
+import { git, ROOT, sh } from "../root";
 
 /** The GitHub repository of `origin` (owner/name), or null. */
 export const repoOf = (): string | null => {
@@ -70,9 +55,9 @@ export const headOf = (ref: string): string | null => {
 };
 
 /** Commits of a range (`git log` arguments), newest first. */
-export const commitsOf = (...range: string[]): Commit[] => commitsIn(ROOT, ...range);
-/** The commits of a range, newest first, in the clone `cwd`. */
-export function commitsIn(cwd: string, ...range: string[]): Commit[] {
+export const commitsOf = (...range: string[]) => commitsIn(ROOT, ...range);
+/** The commits of a range, newest first, in the clone `cwd`: each with every field. */
+export function commitsIn(cwd: string, ...range: string[]): Required<Commit>[] {
   const r = sh(["git", "log", "--format=%H%x1f%s%x1f%ct%x1f%an%x1f%b%x1e", ...range], { cwd });
   if (!r.ok || !r.out) return [];
   return r.out
@@ -122,7 +107,7 @@ export async function githubHeads(cwd = ROOT): Promise<Set<string> | null> {
 }
 
 /** The origin's branches that the clone remembers, less those that GitHub no longer has (`live`; null: no answer). */
-export function rememberedBranches(cwd: string, live: Set<string> | null) {
+function rememberedBranches(cwd: string, live: Set<string> | null) {
   return sh(
     [
       "git",
@@ -140,13 +125,13 @@ export function rememberedBranches(cwd: string, live: Set<string> | null) {
     .filter((b) => !live || live.has(b.name));
 }
 
-/** The feature branches on GitHub: each with its place against staging. */
-export function branchesOf(live: Set<string> | null, cwd = ROOT): Branch[] {
+/** The feature branches on GitHub: each with its place against `base` (staging), and every field of a branch. */
+export function branchesOf(live: Set<string> | null, cwd = ROOT, base = "origin/staging") {
   return rememberedBranches(cwd, live).map((b) => {
-    const [behind, ahead] = sh(["git", "rev-list", "--left-right", "--count", `origin/staging...origin/${b.name}`], { cwd })
+    const [behind, ahead] = sh(["git", "rev-list", "--left-right", "--count", `${base}...origin/${b.name}`], { cwd })
       .out.split(/\s+/)
       .map(Number);
-    const m = ahead ? mergeTree("origin/staging", `origin/${b.name}`, cwd) : { tree: null, conflicts: [] };
+    const m = ahead ? mergeTree(base, `origin/${b.name}`, cwd) : { tree: null, conflicts: [] };
     return { ...b, ahead: ahead || 0, behind: behind || 0, ...m };
   });
 }
@@ -161,29 +146,52 @@ export const tagsOf = () =>
       return { name, sha };
     });
 
-/** What each registered instance answers now: the commit it runs (its ops token) and its health. */
-export function instancesOf(config: Config, site: typeof fetch = fetch): Promise<Instance[]> {
-  const get = (url: string | URL | Request, init?: RequestInit) => site(url, { ...init, signal: AbortSignal.timeout(8000) });
-  return Promise.all(
-    config.instances.map(async (e) => {
-      const origin = entryOrigin(e);
-      const [ops, healthy] = await Promise.all([
-        readOps(origin, e.token, get).then(
-          (f) => ({ version: f.version }),
-          (err: Error) => ({
-            version: null,
-            error: /refused/.test(err.message) ? `refuses its ops token: bun erga login ${e.host}` : "no answer",
-          })
-        ),
-        healthOf(origin, get).catch(() => null),
-      ]);
-      return { host: e.host, ...(e.stagingOf ? { stagingOf: e.stagingOf } : {}), ...ops, healthy };
-    })
+/** Whether the instance at `origin` answers GET /api/health with ok, in 8 seconds. Null: no answer. */
+export const healthOf = (origin: string, site: Site): Promise<boolean | null> =>
+  site(`${origin}/api/health`, { signal: AbortSignal.timeout(8000), headers: { "Cache-Control": "no-cache" } }).then(
+    async (r) => r.status == 200 && ((await r.json().catch(() => null)) as { ok?: unknown } | null)?.ok === true,
+    () => null
   );
+
+/**
+ * What an instance answers now: the commit it runs (GET /api/ops, with its ops token, in 8 seconds) and its health.
+ * For `bun erga status`, the ops page, and a deploy of a primary with no commit named.
+ */
+export async function askInstance(e: Entry, site: Site = fetch): Promise<Answer> {
+  const origin = entryOrigin(e);
+  const [ops, healthy] = await Promise.all([
+    // An instance that setup has not registered yet has no token.
+    (e.token
+      ? readOps(origin, e.token, (url, init) => site(url, { ...init, signal: AbortSignal.timeout(8000) }))
+      : Promise.reject(new Error("no token"))
+    ).then(
+      (f) => ({ version: f.version }),
+      (err: Error) => ({
+        version: null,
+        error: !e.token
+          ? `not registered yet: bun erga setup ${e.host}`
+          : /refused/.test(err.message)
+            ? `refuses its ops token: bun erga login ${e.host}`
+            : "no answer",
+      })
+    ),
+    healthOf(origin, site),
+  ]);
+  return { ...ops, healthy };
 }
 
+/** What each registered instance answers now. */
+const instancesOf = (config: Config, site?: Site): Promise<Instance[]> =>
+  Promise.all(
+    config.instances.map(async (e) => ({
+      host: e.host,
+      ...(e.stagingOf ? { stagingOf: e.stagingOf } : {}),
+      ...(await askInstance(e, site)),
+    }))
+  );
+
 /** Everything `bun erga status` shows. It only reads: no fetch; GitHub's branch list leaves out the ones it deleted. */
-export async function readState(config: Config, site?: typeof fetch): Promise<State> {
+export async function readState(config: Config, site?: Site): Promise<State> {
   const live = await githubHeads();
   return stateOf({
     github: live != null,

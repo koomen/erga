@@ -4,6 +4,7 @@
 // tab. A click outside, or Escape, closes it. The tree's last answer is kept for the tab (the key Documents and the
 // editor use), so it shows at once and is read again behind.
 
+import { runTool } from "../common/tools";
 import type { mountTree, TreeHandle } from "../pages/pages-tree";
 
 type Initial = Parameters<typeof mountTree>[1]["initial"];
@@ -34,14 +35,8 @@ export default function viewerTree(script: string, id: string, base: string, que
   const read = () => {
     if (tree || Date.now() - readAt < 2000) return;
     readAt = Date.now();
-    fetch("/api/tools/ls" + query, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ document: id }),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((b) => {
-        const a = b?.result;
+    runTool("ls", { document: id })
+      .then((a) => {
         if (a?.entries) sessionStorage.setItem(key, JSON.stringify({ entries: a.entries, canEdit: !!a.canEdit, kind: a.kind }));
       })
       .catch(() => {

@@ -4,19 +4,20 @@
 // tree with a record (.erga/tests/, test-run.ts: the ops page ran it for the branch's row) runs no test here; a tree with
 // none runs them now. A branch that conflicts stays out. When the tests fail on several branches, they go one by
 // one, each with its own gate, and a branch that fails stays out. No flag skips the gate. It holds the lock
-// .erga/jobs/staging.lock, and writes its job record (deploy.ts, startJob) on the first staging instance, so the ops
+// .erga/jobs/staging.lock, and writes its job record (jobs.ts, startJob) on the first staging instance, so the ops
 // page shows its output as it comes.
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readConfig } from "./config";
-import { deployStaging, type From, startJob, takeLock } from "./deploy";
+import { deployStaging } from "./deploy";
 import { type Merge, mergeRefusal, squashMessage } from "./flow";
 import { testRun, type Suite } from "./test-run";
 import { gateRefusal } from "./gate";
-import { commitsIn, fetchOrigin, sh } from "./observe";
-import { ROOT } from "../root";
+import { type From, startJob, takeLock } from "./jobs";
+import { commitsIn, fetchOrigin } from "./observe";
+import { ROOT, sh } from "../root";
 
 /** What a merge did: the commits on staging, in their order, and the branches that stay out, each with its reason. */
 export interface Merged {

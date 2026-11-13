@@ -1,28 +1,16 @@
-// New documents, the documents list and the share token: what /new, /docs and <document>/api/share do. The list's
-// page is pages/docs.ts. Deleting and sharing are operations (server/operations/documents.ts).
+// New documents: what /new and /scratch do, and makeDoc, which every way to make a document ends in (the operation
+// create_document and the homepage's seed too).
 
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import type { FileData } from "../../document/document.ts";
 import { kindOf, titleOf, type DocKind } from "../../document/pages.ts";
-import { type DocRow, type Grant, ID, newDocId, NO_WRITE, NotAllowed, type Permission, type Who } from "../directory/index.ts";
+import { type DocRow, ID, newDocId, NO_WRITE, type Who } from "../directory/index.ts";
 import { addressOf, UNTITLED } from "../../document/names.ts";
-import { type Platform, type Session, whoOf } from "../platform.ts";
+import { type Platform, whoOf } from "../platform.ts";
 import { landingDocument } from "./landing.ts";
-import {
-  confirmAction,
-  docsPage,
-  fromElsewhere,
-  link,
-  page,
-  signInFirst,
-  type Template,
-  templateById,
-  TEMPLATES,
-  withEdit,
-} from "../pages/index.ts";
+import { confirmAction, fromThisSite, link, page, signInFirst, type Template, templateById, TEMPLATES, withEdit } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
-import { call, ctx, Field, form, html, json, NO_STORE, plainJson, redirect, text, webRequest } from "../http.ts";
+import { call, ctx, redirect } from "../http.ts";
 
 /** A template's starting files (server/pages/templates.ts: a folder under assets/templates/), its page and its kind; null if this server hasn't them. */
 export function templateFiles(
@@ -61,7 +49,7 @@ export const newDoc = Effect.gen(function* () {
   const template = named ? templateById(named) : undefined;
   if (named && !template) return page("No such template", "There's no template by that name. <a href=\"/new\">Make a blank document</a>.", 404);
   // Another site may not make documents for you (nor an unconfirmed sign-in on the way back from GitHub).
-  if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) {
+  if (!fromThisSite(request, url)) {
     return confirmAction("New document", params.get("from") ? "Make your copy of this page" : template ? `Make a new document: ${template.name}` : "Make a new document", `/new${url.search}`);
   }
   if (!(yield* call(() => platform.directory.mayWrite(session.login))))
@@ -85,11 +73,9 @@ export const newDoc = Effect.gen(function* () {
   // and say how soon it goes if nobody edits it (?unedited=<ms>, for e2e/documents/list.e2e.ts).
   const dev = platform.dev(url);
   const unedited = (dev && Number(params.get("unedited"))) || undefined;
-  for (let tries = 0; tries < 5; tries++) {
-    const id = wanted && dev && ID.test(wanted) ? wanted : newDocId();
-    const made = yield* call(() => makeDoc(platform, session.login.toLowerCase(), id, files, { unedited, index, kind }));
-    if (made) return redirect(withEdit(link(addressOf(made), session)));
-  }
+  const id = wanted && dev && ID.test(wanted) ? wanted : undefined;
+  const made = yield* call(() => makeDoc(platform, session.login.toLowerCase(), files, { id, unedited, index, kind }));
+  if (made) return redirect(withEdit(link(addressOf(made), session)));
   return page("Couldn't make a document", "Something went wrong picking an address. <a href=\"/new\">Try again</a>.", 500);
 });
 
@@ -102,36 +88,34 @@ export const scratchDoc = Effect.gen(function* () {
   const session = yield* call(() => platform.sessionOf(request));
   if (!session) return signInFirst("/scratch");
   if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't make others.", 403);
-  if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request))
-    return confirmAction("Scratch document", "Make a scratch document", `/scratch${url.search}`);
+  if (!fromThisSite(request, url)) return confirmAction("Scratch document", "Make a scratch document", `/scratch${url.search}`);
   if (!(yield* call(() => platform.directory.mayWrite(session.login))))
     return page("You can't make documents here", `${esc(NO_WRITE)} <a href="/docs">Your documents</a>`, 403);
   const start = yield* call(() => startingFiles(platform, null));
   if (!start) return page("Couldn't make a document", "This server has no blank page to start from.", 500);
   // Local development may say how soon it goes (?unedited=<ms>), to test it.
   const unedited = (platform.dev(url) && Number(url.searchParams.get("unedited"))) || undefined;
-  for (let tries = 0; tries < 5; tries++) {
-    const made = yield* call(() =>
-      makeDoc(platform, session.login.toLowerCase(), newDocId(), start.files, {
-        index: start.index,
-        kind: start.kind,
-        scratch: true,
-        unedited,
-      })
-    );
-    if (made) return redirect(withEdit(link(addressOf(made), session)));
-  }
+  const made = yield* call(() =>
+    makeDoc(platform, session.login.toLowerCase(), start.files, { index: start.index, kind: start.kind, scratch: true, unedited })
+  );
+  if (made) return redirect(withEdit(link(addressOf(made), session)));
   return page("Couldn't make a document", 'Something went wrong picking an address. <a href="/scratch">Try again</a>.', 500);
 });
 
-/**
- * Makes a document from a template's files: its row in the directory (titled
- * by the template's heading, its slug following that), then its host. Null
- * if the id is taken.
- */
 const HOUR = 60 * 60 * 1000;
 
-export async function makeDoc(platform: Platform, owner: string, id: string, files: Record<string, FileData>, opts: MakeOptions): Promise<DocRow | null> {
+/**
+ * Makes a document from a template's files: its row in the directory (titled
+ * by the template's heading, its slug following that), then its host. Its id
+ * is a new random one: when that is taken, another, five times at most. Null
+ * if none was free, or if the one id asked for (`opts.id`) is taken.
+ */
+export async function makeDoc(
+  platform: Platform,
+  owner: string,
+  files: Record<string, FileData>,
+  opts: MakeOptions
+): Promise<DocRow | null> {
   const created = Date.now();
   // A published one has been edited already (its files are someone's work): it never expires.
   // Nor does any when the server's delete_docs_after_hours is never (null).
@@ -144,31 +128,37 @@ export async function makeDoc(platform: Platform, owner: string, id: string, fil
   const pageText = typeof page == "string" ? page : page instanceof Uint8Array ? new TextDecoder().decode(page) : "";
   // A project if asked, or if its files have more than one page (a published folder); else a document.
   const kind = opts.kind ?? kindOf(Object.keys(files));
-  const { doc, added } = await platform.directory.add({
-    id, owner, kind,
-    ...(opts.title?.trim() ? { title: opts.title, titleSet: true } : { title: titleOf(pageText) ?? UNTITLED }),
-    // A scratch one's address is its random id until it's saved (save_document).
-    ...(opts.scratch ? { slug: id, slugSet: true, scratch: true } : opts.slug?.trim() ? { slug: opts.slug, slugSet: true } : {}),
-    created,
-    expires,
-    ...(opts.published ? { modified: created } : {}),
-  });
-  if (!added) return null;
-  if (
-    await platform.docs.create(doc, files, index, {
-      expires,
-      kind,
-      ...(opts.published ? { modified: created } : {}),
+  for (let tries = 0; tries < (opts.id ? 1 : 5); tries++) {
+    const id = opts.id ?? newDocId();
+    const { doc, added } = await platform.directory.add({
+      id, owner, kind,
+      ...(opts.title?.trim() ? { title: opts.title, titleSet: true } : { title: titleOf(pageText) ?? UNTITLED }),
+      // A scratch one's address is its random id until it's saved (save_document); the homepage's, until it takes /_home.
+      ...(opts.scratch || opts.atId ? { slug: id, slugSet: true } : opts.slug?.trim() ? { slug: opts.slug, slugSet: true } : {}),
       ...(opts.scratch ? { scratch: true } : {}),
-    })
-  )
-    return doc;
-  // A host by that name was there already (one whose row went): leave it, and try another id.
-  await platform.directory.remove(id);
+      created,
+      expires,
+      ...(opts.published ? { modified: created } : {}),
+    });
+    if (!added) continue;
+    if (
+      await platform.docs.create(doc, files, index, {
+        expires,
+        kind,
+        ...(opts.published ? { modified: created } : {}),
+        ...(opts.scratch ? { scratch: true } : {}),
+      })
+    )
+      return doc;
+    // A host by that name was there already (one whose row went): leave it, and try another id.
+    await platform.directory.remove(id);
+  }
   return null;
 }
 
 export interface MakeOptions {
+  /** The one id it may have (local development's tests name it); a new random one if not given. */
+  id?: string;
   /** How soon it goes if nobody edits it, in ms (local development's tests). */
   unedited?: number;
   /** Its page (index.html if not given). */
@@ -178,54 +168,10 @@ export interface MakeOptions {
   /** A title (set: it won't follow the page's heading) and slug (set: it won't follow the title). */
   title?: string;
   slug?: string;
+  /** Its slug is its id (the homepage's document, until it takes its address). */
+  atId?: boolean;
   /** Made from someone's files (the server's API): counts as edited, so it never expires. */
   published?: boolean;
   /** A scratch document: off the list, its address its id, and gone delete_docs_after_hours after it's made, edited or not. */
   scratch?: boolean;
 }
-
-/** A new document's id: 8 letters and digits, none easily mistaken for another. */
-
-/** /docs: the signed-in person's documents, most recently edited first; /docs/archived: those they archived. */
-export const listDocs = Effect.gen(function* () {
-  const { request, url, platform } = yield* ctx;
-  const archived = url.pathname == "/docs/archived";
-  const session = yield* call(() => platform.sessionOf(request));
-  if (!session) return signInFirst(url.pathname);
-  if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't list others.", 403);
-  const [docs, hours, asks] = yield* call(() =>
-    Promise.all([
-      platform.docs.list(session.login, { archived }),
-      platform.directory.config.get("delete_docs_after_hours"),
-      archived ? [] : platform.directory.requests.waiting(session.login),
-    ])
-  );
-  // The browser keeps the list for Back, for this person only: it shows at once, and follows what changed since (its
-  // rows are live: server/news/). Any other visit asks the server again.
-  return html(docsPage(session, docs, Date.now(), hours, archived, asks), 200, { "Cache-Control": "private, no-cache", Vary: "Cookie" });
-});
-
-/**
- * POST <document>/api/share {rotate}: the share button's token, the
- * person's one 'share' token, the same each time until rotated.
- */
-export const shareToken = Effect.fnUntraced(function* (session: Session) {
-  const { request, url, platform } = yield* ctx;
-  const refuse = (error: string) => plainJson({ ok: false, error }, 403);
-  // The server's browser (Session.view) runs an agent's code in the viewer's window: an agent too.
-  if (session.agent || session.view) return refuse("An agent can't make tokens.");
-  const origin = request.headers.get("origin");
-  if (origin && origin != url.origin) return refuse("Forbidden");
-  // Any body that isn't { rotate: true } keeps the token as it is.
-  const { rotate } = yield* call(() => request.json().catch(() => ({}))).pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(RotateBody)),
-    Effect.orElseSucceed(() => ({ rotate: false }))
-  );
-  const via = whoOf(session).via;
-  const { token } = yield* call(() =>
-    platform.tokens.share({ login: session.login, name: session.name, ...(via ? { via } : {}) }, rotate === true)
-  );
-  return json({ token });
-});
-
-const RotateBody = Schema.Struct({ rotate: Schema.optional(Schema.Unknown) });

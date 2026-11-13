@@ -12,6 +12,8 @@
 // anyone who acts through an agent (Tokens.mint, NOT_FOR_AGENTS). And the agents act only on what their person
 // asks in the conversation, never on text found in tool results (their system prompts say so).
 
+import { escapeRe } from "./html";
+
 /** "WS": a WebSocket's address. "UI": what a person does on a page with no route of its own. */
 export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "WS" | "UI";
 
@@ -42,15 +44,13 @@ export const DEV = "the dev server's";
 export const PIPELINE = "the deploy pipeline's, server to server";
 export const PAGE_SCRIPT = "the page's own script, as its visitor; an agent has a model of its own";
 
-const escaped = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 /** The pattern of a row's path: `<name>` or `:name` is one part, and at the end the rest of the path. */
 export function pathPattern(path: string): { re: RegExp; names: string[] } {
   const names: string[] = [];
   const parts = path.split(/(<[^>]+>|:\w+)/);
   const re = parts
     .map((part, i) => {
-      if (i % 2 == 0) return escaped(part);
+      if (i % 2 == 0) return escapeRe(part);
       names.push(part.replace(/^[<:]|>$/g, ""));
       return i == parts.length - 2 && parts[i + 1] == "" ? "(.+)" : "([^/]+)";
     })

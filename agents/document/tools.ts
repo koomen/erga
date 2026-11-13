@@ -10,10 +10,12 @@ import { Base64 } from "effect/encoding";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { AgentTool } from "../run";
-import type { ViewRequest, ViewResult } from "../../shared/agent-log";
+import type { ViewRequest, ViewResult } from "../../shared/view-page";
 import type { LiveAnswer, LiveRequest } from "../../shared/live-page";
 import { readableSize } from "../../shared/bytes";
 import { globToRegExp } from "../../shared/glob";
+import { escapeRe } from "../../shared/html";
+import { IMAGE_TYPES } from "../../shared/attach";
 import { unifiedDiff } from "../../document/versions";
 import { EDITORS_READ_VERSIONS } from "../../document/content";
 import { EDITS, WorkspaceError, modelPath, type Workspace } from "./workspace";
@@ -30,7 +32,6 @@ import { apiPathOf } from "../../shared/page-ops";
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
-const MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
 /** The biggest image read gives the model (its limit is 5 MB of base64). */
 const IMAGE_READ_MAX = 3_750_000;
 /** The most bytes a write of bytes takes in one call (base64 in the tool's arguments). */
@@ -108,7 +109,7 @@ export function makeTools(
           `${path} is ${readableSize(bytes.length)}: too big to see (an image can have up to ${readableSize(IMAGE_READ_MAX)}).`
         );
       return {
-        content: [{ type: "image" as const, data: Base64.encode(bytes), mimeType: MIME[path.split(".").pop()!.toLowerCase()] }],
+        content: [{ type: "image" as const, data: Base64.encode(bytes), mimeType: IMAGE_TYPES[path.split(".").pop()!.toLowerCase()] }],
         details: {},
       };
     }
@@ -351,7 +352,11 @@ export function makeTools(
       }),
       execute: async (_id, p: { pattern: string; glob?: string; ignoreCase?: boolean; literal?: boolean }) => {
         let re: RegExp;
-        try { re = new RegExp(p.literal ? p.pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : p.pattern, p.ignoreCase ? "i" : ""); } catch (e) { throw new Error(`bad pattern: ${(e as Error).message}`); }
+        try {
+          re = new RegExp(p.literal ? escapeRe(p.pattern) : p.pattern, p.ignoreCase ? "i" : "");
+        } catch (e) {
+          throw new Error(`bad pattern: ${(e as Error).message}`);
+        }
         const only = p.glob ? globToRegExp(p.glob) : null;
         const out: string[] = [];
         const cut = (line: string) => (line.length > 300 ? line.slice(0, 300) + "…" : line);

@@ -8,6 +8,7 @@ import { requestUrl, respond, text } from "../server/http.ts";
 import { forgetHome, serveHome, serveHomeSite } from "../server/home/index.ts";
 import type { LivePage } from "../server/home/snapshot.ts";
 import type { Platform } from "../server/platform.ts";
+import { until } from "./helpers/until.ts";
 
 const page: LivePage = {
   gen: "g1",
@@ -48,11 +49,6 @@ function platform(): Platform {
       ensure: async () => {},
     },
   } as unknown as Platform;
-}
-
-async function until(ok: () => boolean) {
-  for (let i = 0; i < 200 && !ok(); i++) await new Promise((r) => setTimeout(r, 5));
-  expect(ok()).toBe(true);
 }
 
 const site = serveHomeSite({ notFound: false, taken: async () => false });

@@ -28,7 +28,10 @@ export const latency: Test[] = [
     async run(ctx) {
       const d = await ctx.doc();
       const [a, b] = [await Participant.join(d, "Ada"), await Participant.join(d, "Bo")];
-      ctx.defer(() => { a.destroy(); b.destroy(); });
+      ctx.defer(() => {
+        a.leave();
+        b.leave();
+      });
       const samples: number[] = [];
       for (let i = 0; i < (ctx.long ? 300 : 40); i++) {
         const tok = `⟦l${i}⟧`;
@@ -54,7 +57,10 @@ export const latency: Test[] = [
       const a = await Participant.join(d, "Ada");
       const crowd: Participant[] = [];
       crowd.push(...(await Promise.all(Array.from({ length: 20 }, (_, i) => Participant.join(d, `C${i}`)))));
-      ctx.defer(() => { a.destroy(); crowd.forEach((p) => p.destroy()); });
+      ctx.defer(() => {
+        a.leave();
+        crowd.forEach((p) => p.leave());
+      });
       const lasts: number[] = [];
       for (let i = 0; i < 15; i++) {
         const tok = `⟦f${i}⟧`;
@@ -80,7 +86,7 @@ export const latency: Test[] = [
         const t0 = performance.now();
         const p = await Participant.join(d, `J${i}`);
         times.push(performance.now() - t0);
-        p.destroy();
+        p.leave();
       }
       const p95 = percentile(times, 95);
       ctx.metric("join p50", percentile(times, 50));
@@ -97,7 +103,10 @@ export const latency: Test[] = [
       const ps: Participant[] = [];
       ps.push(...(await Promise.all(Array.from({ length: 5 }, (_, i) => Participant.join(d, `T${i}`)))));
       const watcher = await Participant.join(d, "Watcher");
-      ctx.defer(() => { ps.forEach((p) => p.destroy()); watcher.destroy(); });
+      ctx.defer(() => {
+        ps.forEach((p) => p.leave());
+        watcher.leave();
+      });
       const lags: number[] = [];
       const sent = new Map<string, number>();
       watcher.text()!.observe((ev) => {

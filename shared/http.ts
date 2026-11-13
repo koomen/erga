@@ -1,12 +1,8 @@
-// The answers every route table gives the same way, and where a request came from. Here, not in server/, so that
-// document/ has them too.
+// Where a request came from, and whether its host is this machine. Here, not in server/, so that every layer has them.
 
-/** The header of an answer that no cache keeps. */
-const NO_STORE = { "Cache-Control": "no-store" };
-
-/** `body` as JSON, that no cache keeps; `headers` add to that. */
-export const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
-  Response.json(body, { status, headers: { ...NO_STORE, ...headers } });
+/** Whether `url` is on this machine: localhost, a name under it (a document's pages in local development), or a loopback address. */
+export const isLocal = (url: URL) =>
+  url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1" || url.hostname == "[::1]";
 
 /**
  * The address a request came from, as the edge in front of the server saw it: Cloudflare's header (which can't be

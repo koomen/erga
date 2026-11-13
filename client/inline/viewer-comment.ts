@@ -5,8 +5,9 @@
 // the last one ends. The page answers "erga-commenting" once its comments are up: from then on it shows each change in
 // place, and the viewer's own reload stops (viewer-live.ts reads the class).
 
+import { asUser } from "../common/tools";
+
 export default function viewerComment(base: string, me: { user: string; name: string; color: string; avatar?: string }): void {
-  const user = new URLSearchParams(location.search).get("user");
   const tab = Math.random().toString(36).slice(2);
   let key = "";
   const say = () => {
@@ -24,7 +25,7 @@ export default function viewerComment(base: string, me: { user: string; name: st
     });
   };
   async function fresh() {
-    const r = await fetch(base + "/api/key" + (user ? "?user=" + encodeURIComponent(user) : ""), { method: "POST" }).catch(() => null);
+    const r = await fetch(asUser(base + "/api/key"), { method: "POST" }).catch(() => null);
     const k = r && r.ok ? ((await r.json().catch(() => null)) as { key?: string; expires?: number } | null) : null;
     if (k?.key) {
       key = k.key;

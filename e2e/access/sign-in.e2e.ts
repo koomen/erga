@@ -6,10 +6,9 @@
 // server: the username step, the account corner, the editor's Share card and pencil, sign out and sign in.
 // Sign-ins go through local development's pretend provider (/auth/dev), which takes the same steps as GitHub's and
 // Google's answers. The admin is DEV_LOGIN ("tester").
-import { expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
+import { agentClosed, expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
 import { runTool } from "../helpers/tools";
 import {
-  agentClosed,
   corner,
   editorUp,
   getter,

@@ -69,7 +69,7 @@ setup's status shows a template that changed since it was applied.
     has it stores it in Secrets Manager as `erga/<stack>/oidc-client-secret` (plain text), and the stack reads it there.
   - Without the sign-in pass only: a document's own address (its files by their token; a frame can't sign in); on the
     app's address, what Erga's tokens guard (MCP and its OAuth, the operations, the CLI's token request, the deploy's
-    checks: `shared/proxy-paths.ts`), a page's keyed requests to its room, and the server's own browser, by the NAT's fixed
+    checks: `deploy/proxy-paths.ts`), a page's keyed requests to its room, and the server's own browser, by the NAT's fixed
     address. A person approves an agent on a page behind the sign-in.
   - The proxy refuses a request that brings its own `X-Forwarded-Host`, which celld would take for the host.
   - One certificate, in the stack and its region, for the app's name and the pages' wildcard. The pages' name may be

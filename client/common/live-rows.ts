@@ -9,14 +9,13 @@
 //
 // A hidden tab waits until it shows. A dropped socket comes back by itself and says the last version it heard, so it
 // hears what changed meanwhile. One ask at a time, so a later answer is never older than one before it. The socket's
-// phase (shared/socket-phase.ts) owns its reconnect timer: once the last list stops, no socket opens.
+// owner (client/live/socket.ts) has its reconnect timer: once the last list stops, no socket opens.
 //
 // Trap: a live list gets new rows after the page loaded, and a changed row is a new element. Attach a row's listeners
 // in its `wire(row)`, never in a loop over the rows at load: a row that comes later would have none.
 
-import { backoff, live } from "../live/client";
-import { socketStep, type PhaseEvent, type SocketPhase } from "../../shared/socket-phase";
-import { PING, PONG } from "../../shared/room-socket";
+import { liveSocket } from "../live/socket";
+import { asUser } from "./tools";
 
 type Row = { html: string; sort: number | string } | null;
 
@@ -33,82 +32,15 @@ const lists = new Map<HTMLElement, LiveList>();
 const pending = new Set<string>();
 /** The rows the page's own change asked for (refresh): they come in even where its field has the focus. */
 const own = new Set<string>();
-let since = 0,
-  socket: WebSocket | null = null,
-  phase: SocketPhase = { at: "stopped" },
-  retry: ReturnType<typeof setTimeout> | undefined,
-  heard = 0;
+let since = 0;
 
-/** An event of the socket's: its new phase, and what that asks for. */
-const step = socketStep();
-
-function go(e: PhaseEvent): void {
-  const next = step(phase, e);
-  phase = next.phase;
-  if (phase.at != "backoff") clearTimeout(retry);
-  for (const f of next.effects) {
-    if (f.do == "connect") connect();
-    else if (f.do == "up") {
-      socket?.send(JSON.stringify({ since }));
-      live((l) => l.connection("news", "up"));
-    } else if (f.do == "down") live((l) => l.connection("news", "down"));
-    else if (f.do == "retry") retry = setTimeout(() => go({ type: "timer" }), backoff(f.tries));
-    else if (f.do == "shut") {
-      const ws = socket;
-      socket = null;
-      ws?.close();
-      live((l) => l.connection("news", null));
-    }
-  }
-}
-
-/** The page's ?user= (local development: who is signed in), for its asks. */
-const user = () => new URLSearchParams(location.search).get("user");
-
-/** Keeps `el`'s rows live, until `signal` aborts (an admin page the shell leaves: window.ergaView). */
-export function liveList(el: HTMLElement, o: LiveList, signal?: AbortSignal): void {
-  lists.set(el, o);
-  // A little before the page was made, as the server's clock goes: a change in between is heard twice, never missed.
-  since = Math.max(since, Number(el.dataset.liveAt || 0) - 5000);
-  signal?.addEventListener("abort", () => {
-    lists.delete(el);
-    if (!lists.size) stop?.();
-  });
-  if (lists.size > 1) return;
-  go({ type: "start" });
-  // An idle socket can die without a close: a ping now and then, and one with no answer for a while is closed.
-  const ping = setInterval(() => {
-    if (!socket || socket.readyState != WebSocket.OPEN) return;
-    if (Date.now() - heard > 75_000) return socket.close();
-    socket.send(PING);
-  }, 30_000);
-  const shown = () => {
-    if (!document.hidden) ask();
-  };
-  document.addEventListener("visibilitychange", shown);
-  stop = () => {
-    stop = null;
-    clearInterval(ping);
-    document.removeEventListener("visibilitychange", shown);
-    go({ type: "stop" });
-  };
-}
-
-let stop: (() => void) | null = null;
-
-function connect() {
-  const u = user();
-  const ws = new WebSocket(
-    `${location.protocol == "https:" ? "wss" : "ws"}://${location.host}/api/news${u ? `?user=${encodeURIComponent(u)}` : ""}`
-  );
-  socket = ws;
-  heard = Date.now();
-  ws.onopen = () => {
-    if (socket == ws) go({ type: "opened" });
-  };
-  ws.onmessage = (e) => {
-    heard = Date.now();
-    if (e.data == PONG) return;
+/** The page's one socket (/api/news): which of its person's rows changed. As it opens it says the last version it heard. */
+const news = liveSocket({
+  name: "news",
+  path: "/api/news",
+  ping: true,
+  up: (ws) => ws.send(JSON.stringify({ since })),
+  message(e) {
     let said: { changed?: { key: string; v: number }[]; reset?: boolean };
     try {
       said = JSON.parse(String(e.data));
@@ -122,13 +54,32 @@ function connect() {
       if (listOf(c.key)) pending.add(c.key);
     }
     ask();
+  },
+});
+
+/** Keeps `el`'s rows live, until `signal` aborts (an admin page the shell leaves: window.ergaView). */
+export function liveList(el: HTMLElement, o: LiveList, signal?: AbortSignal): void {
+  lists.set(el, o);
+  // A little before the page was made, as the server's clock goes: a change in between is heard twice, never missed.
+  since = Math.max(since, Number(el.dataset.liveAt || 0) - 5000);
+  signal?.addEventListener("abort", () => {
+    lists.delete(el);
+    if (!lists.size) stop?.();
+  });
+  if (lists.size > 1) return;
+  news.start();
+  const shown = () => {
+    if (!document.hidden) ask();
   };
-  ws.onclose = () => {
-    if (socket != ws) return;
-    socket = null;
-    go({ type: "closed" });
+  document.addEventListener("visibilitychange", shown);
+  stop = () => {
+    stop = null;
+    document.removeEventListener("visibilitychange", shown);
+    news.stop();
   };
 }
+
+let stop: (() => void) | null = null;
 
 /**
  * The page's own change: these rows as they are now, asked for at once (not waiting for the socket, nor needing it).
@@ -178,8 +129,7 @@ async function askOnce(): Promise<void> {
     const mine = keys.filter((k) => shows(el, k));
     if (!mine.length) continue;
     const q = new URLSearchParams({ view: el.dataset.liveView!, keys: mine.join(",") });
-    if (user()) q.set("user", user()!);
-    const r = await fetch(`/api/news/rows?${q}`, { headers: { Accept: "application/json" } }).catch(() => null);
+    const r = await fetch(asUser(`/api/news/rows?${q}`), { headers: { Accept: "application/json" } }).catch(() => null);
     if (!r?.ok) {
       // Asked again with the next change, or after the socket comes back.
       mine.forEach((k) => pending.add(k));

@@ -16,7 +16,7 @@ import {
   type StepShown,
   type ViewRequest,
   type ViewResult,
-} from "../../shared/agent-log";
+} from "../../shared/view-page";
 import {
   CONSOLE_LEVELS,
   describeAct,

@@ -14,7 +14,7 @@ import type { ToolAsk } from "../common/reader-api";
 import { copyOf } from "../../libs/text/ui/clipboard-read";
 import { linkTarget, placeOf } from "../common/link-target";
 import { topRoom, type Seat } from "../common/top-room";
-import { isAppShortcut } from "../common/app-keys";
+import { isAppShortcut, isMac } from "../common/app-keys";
 import { catchZoomGestures } from "../common/zoom";
 import { makeErgaLLM, type LlmAnswer, type LlmOp } from "../common/page-llm";
 
@@ -77,7 +77,6 @@ export default function reader(C: ReaderConfig): void {
         );
       })
   );
-  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   // The viewer's own keys, pressed here. Reading, ⌘K (Ctrl+K off a Mac) opens the viewer's quick search
   // (client/common/quick-search.ts). Editing, each of the viewer's shortcuts goes to it (client/common/app-keys.ts),
   // which the editor in the page leaves be; Escape stays the editor's too (the focus off the text).
@@ -87,13 +86,13 @@ export default function reader(C: ReaderConfig): void {
       if (e.isComposing) return;
       // Print (⌘P; Ctrl+P off a Mac): this page alone, whole. The browser's own would print the viewer around it, with
       // Erga's bars and only the part of the page on the screen.
-      if ((mac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() == "p") {
+      if ((isMac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() == "p") {
         e.preventDefault();
         print();
         return;
       }
       // The editor, opened or closed (⌘⇧E; Ctrl+Shift+E off a Mac): the viewer does it, for whoever may edit (viewer-edit-boot.ts).
-      if ((mac ? e.metaKey : e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() == "e") {
+      if ((isMac ? e.metaKey : e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() == "e") {
         e.preventDefault();
         e.stopPropagation();
         tell({ type: "erga-edit-key" });
@@ -101,12 +100,12 @@ export default function reader(C: ReaderConfig): void {
       }
       if (editing()) {
         tell({ type: "erga-activity", kind: "key" });
-        if (!isAppShortcut(e, mac)) return;
+        if (!isAppShortcut(e, isMac)) return;
         if (e.key != "Escape") e.preventDefault();
         tell({ type: "erga-key", keys: { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey } });
         return;
       }
-      const mod = mac ? e.metaKey : e.ctrlKey;
+      const mod = isMac ? e.metaKey : e.ctrlKey;
       if (!mod || e.shiftKey || e.altKey || e.key.toLowerCase() != "k") return;
       e.preventDefault();
       tell({ type: "erga-quick-search" });

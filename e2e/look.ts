@@ -9,7 +9,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 import { openEditor } from "./helpers/editor";
 import { ROOT } from "./helpers/env";
-import { descendants, startServer, type Server } from "./helpers/server";
+import { copyFixture, descendants, startServer, type Server } from "./helpers/server";
 
 const HELP = `bun run look [--doc <fixture | file.html | folder>] [--out <file.png>] [--source] [--latency <ms>] [--keep | --stop] [step ...]
 bun run look --view [--doc ...] [--out <file.png>]     the document as a reader sees it, with no editor and no steps
@@ -135,7 +135,8 @@ else {
 const server = {
   async fixture() {
     const dir = join(scratch, "docs", `look-${Date.now()}`);
-    cpSync(isDir ? path : dirname(path), dir, { recursive: true });
+    if (path == fixtureDir) copyFixture(isDir ? docArg : dirname(docArg), dir);
+    else cpSync(isDir ? path : dirname(path), dir, { recursive: true });
     const r = await fetch(`${root}/__erga/open`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

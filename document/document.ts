@@ -42,7 +42,7 @@ import { nameOf, UNTITLED, type NamedRow, type NamesDirectory } from "./names.ts
 import { DocumentAccess, personOf, type Asker, type Person, type Role } from "./access.ts";
 import { DocumentView, type ViewAnswer } from "./view.ts";
 import type { DocumentAgents, RenderJob } from "./agent.ts";
-import type { ViewResult } from "../shared/agent-log.ts";
+import type { ViewResult } from "../shared/view-page.ts";
 import { docFile, typeOf, type EditorCalls } from "./host.ts";
 import { blobPointer, isBlobRef, storeBlob, type BlobRef, type BlobStore } from "./blobs.ts";
 import type { DocName } from "./api.ts";

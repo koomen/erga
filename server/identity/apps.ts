@@ -16,8 +16,8 @@
 //     staging's values and bring in production's. The Durable Object is each
 //     server's own.
 //   - The secret is encrypted with AES-GCM, a fresh IV each time, under a key
-//     derived from FACTORY_KEY (as server/directory/api-keys.ts does, with its own
-//     derivation), with the provider, the target and the client ID as the
+//     derived from FACTORY_KEY (KeyBox of server/directory/api-keys.ts, with a
+//     derivation of its own), with the provider, the target and the client ID as the
 //     additional data, so it opens only for that app on that server.
 //   - Nothing answers the secret to a page or an agent: only whether one is set.
 //   - The change log gets who changed the app and its client ID (public),
@@ -49,11 +49,10 @@
 // Each provider has its own app, and the same rules.
 
 import * as Base64 from "effect/encoding/Base64";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { Act } from "../../shared/attribution.ts";
-import { randomBytes, sha256 } from "../../shared/bytes.ts";
-import type { SignInChange } from "../directory/index.ts";
+import { sha256 } from "../../shared/bytes.ts";
+import { KeyBox, type SignInChange } from "../directory/index.ts";
 import { type AppCheck, type AppValues, type Provider, PROVIDERS } from "./providers.ts";
 import type { ProxyStatus } from "./proxy.ts";
 
@@ -101,21 +100,19 @@ interface Record_ { active?: Kept; pending?: Kept & { test?: TestResult } }
 /** Values set on the page, as an admin sees them: never the secret. */
 export interface KeptView { clientId: string; updated: number; updatedBy: string; updatedVia?: string | null; test?: TestResult }
 
-const enc = new TextEncoder();
 const view = (k: Kept & { test?: TestResult }): KeptView => ({ clientId: k.clientId, updated: k.updated, updatedBy: k.updatedBy, ...(k.updatedVia ? { updatedVia: k.updatedVia } : {}), ...(k.test ? { test: k.test } : {}) });
 
 export class AuthApps {
-  private aesKey: Promise<CryptoKey> | null;
+  private box: KeyBox | null;
 
   /** `secret`: FACTORY_KEY (null: this server can't keep values). `target`: this server's deploy target ("" for none). */
   constructor(private storage: AuthStorage, secret: string | null, private target: string) {
-    this.aesKey = secret ? (async () => {
-          const raw = await sha256(`erga-auth-apps:${secret}`);
-      return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
-    })() : null;
+    this.box = secret ? new KeyBox(secret, "erga-auth-apps") : null;
   }
 
-  get canStore(): boolean { return !!this.aesKey; }
+  get canStore(): boolean {
+    return !!this.box;
+  }
 
   private async record(p: Provider): Promise<Record_> {
     return ((await this.storage.get(`auth:${p}`)) as Record_ | undefined) ?? {};
@@ -126,7 +123,8 @@ export class AuthApps {
     else await this.storage.delete(`auth:${p}`);
   }
 
-  private aad = (p: Provider, clientId: string) => enc.encode(`erga-auth:${p}:${this.target}:${clientId}`);
+  /** What a secret is bound to: it opens only for that app on that server. */
+  private label = (p: Provider, clientId: string) => `erga-auth:${p}:${this.target}:${clientId}`;
 
   /** What the page set, without secrets. */
   async read(p: Provider): Promise<{ active: KeptView | null; pending: KeptView | null }> {
@@ -137,39 +135,23 @@ export class AuthApps {
   /** The values themselves, for the server's own sign-in; null if none, or they don't open (another key, another server). */
   async values(p: Provider, which: "active" | "pending"): Promise<AppValues | null> {
     const k = (await this.record(p))[which];
-    if (!k || !this.aesKey) return null;
-    try {
-      const secret = new TextDecoder().decode(
-        await crypto.subtle.decrypt(
-          {
-            name: "AES-GCM",
-            iv: Result.getOrThrow(Base64.decode(k.iv)) as Uint8Array<ArrayBuffer>,
-            additionalData: this.aad(p, k.clientId),
-          },
-          await this.aesKey,
-          Result.getOrThrow(Base64.decode(k.data)) as Uint8Array<ArrayBuffer>
-        )
-      );
-      return { clientId: k.clientId, secret };
-    } catch {
-      return null;
-    }
+    if (!k || !this.box) return null;
+    const secret = await this.box.open(this.label(p, k.clientId), k);
+    return secret == null ? null : { clientId: k.clientId, secret };
   }
 
   /** Keeps values, as the ones in use (active) or waiting for a test sign-in (pending). */
   async keep(p: Provider, which: "active" | "pending", v: AppValues, by: Act): Promise<void> {
-    if (!this.aesKey)
+    if (!this.box)
       throw new AuthError({
         message:
           "This server has no FACTORY_KEY to encrypt the secret with, so it can't keep values from this page: set them in the deploy.",
       });
-    const iv = randomBytes(12);
-    const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: this.aad(p, v.clientId) }, await this.aesKey, enc.encode(v.secret)));
+    const sealed = await this.box.seal(this.label(p, v.clientId), v.secret);
     const r = await this.record(p);
     r[which] = {
       clientId: v.clientId,
-      iv: Base64.encode(iv),
-      data: Base64.encode(data),
+      ...sealed,
       updated: Date.now(),
       updatedBy: by.login.toLowerCase(),
       updatedVia: by.via ?? null,

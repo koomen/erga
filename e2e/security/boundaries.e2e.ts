@@ -5,7 +5,7 @@
 // frames /docs, a document's file at the editor's own address, and the server's own browser, which reaches no private
 // address. Each check is literal: the header's exact value, the exact refusal.
 import { editor } from "../helpers/editor";
-import { expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
+import { agentClosed, expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
 import { framed } from "../helpers/pages-fetch";
 import { idOf, runTool } from "../helpers/tools";
 import { FIX_REPORTED } from "../../shared/page-report";
@@ -27,17 +27,6 @@ import {
 } from "./hostile";
 
 const s = await servers.main();
-
-/** Someone who keeps the agent pane closed: it opens only when it has something to ask. */
-const agentClosed = (page: Page) =>
-  page.addInitScript(() => {
-    if (window.top == window)
-      try {
-        localStorage.setItem("erga:settings:v1", '{"agent":false}');
-      } catch {
-        /* no storage */
-      }
-  });
 
 // The page's blocked attempts print errors of their own (CORS, security errors): these two journeys' tabs are not strict.
 journey("a hostile page, opened by a reader", () => {

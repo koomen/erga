@@ -91,20 +91,6 @@ export async function person(s: Server, login = freshLogin()) {
 export type Person = Awaited<ReturnType<typeof person>>;
 export type Agent = Awaited<ReturnType<Person["agent"]>>;
 
-/** As someone who keeps the agent pane closed (it opens by itself in the editor otherwise, and takes the focus). */
-export const agentClosed = (page: Page) =>
-  page.addInitScript(() => {
-    if (window.top != window) return;
-    try {
-      if (!sessionStorage.getItem("erga-test:agent-seeded")) {
-        sessionStorage.setItem("erga-test:agent-seeded", "1");
-        if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}');
-      }
-    } catch {
-      /* no storage */
-    }
-  });
-
 /** The middle of the first element that matches `selector`, once it is on the page with nothing over it. */
 export const middle = (page: Page, selector: string) =>
   until(

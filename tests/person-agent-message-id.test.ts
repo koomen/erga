@@ -2,24 +2,19 @@
 // has the id, even when the server cuts a long message, and a second message with the same id (Try again, after the
 // first got there late) is not sent again. The panel matches its dimmed message by that id (client/agent/sends.ts).
 
-import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { PersonAgents } from "../agents/person/sessions";
 import type { Platform } from "../server/platform";
+import { objectSql } from "./helpers/memory-sql";
 
 const script = { own: {}, server: {}, mode: "server" as const, off: [], model: "script" as const, effort: "medium" as const };
 
 function agents() {
-  const db = new Database(":memory:", { strict: true });
-  const sql = {
-    exec: <T>(q: string, ...p: (string | number | null)[]) => db.query(q).all(...p) as T[],
-    transaction: <T>(f: () => T) => db.transaction(f)(),
-  };
   const platform = {
     agentSettings: async () => script,
     directory: { users: { isAdmin: async () => false, actsAsAdmin: async () => false } },
   };
-  return new PersonAgents({ sql, platform: platform as unknown as Platform });
+  return new PersonAgents({ sql: objectSql(), platform: platform as unknown as Platform });
 }
 
 const users = async (a: PersonAgents) =>

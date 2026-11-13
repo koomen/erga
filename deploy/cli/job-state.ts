@@ -1,4 +1,4 @@
-// A job's state, from its record's own fields (.erga/jobs/<id>.jsonl, deploy.ts startJob), and the ops page's own run:
+// A job's state, from its record's own fields (.erga/jobs/<id>.jsonl, jobs.ts startJob), and the ops page's own run:
 // the command it started, until that command ends. Pure: the page's server (ops-page.ts) does the IO, and its view
 // (ops-view.ts) draws the buttons from these states, never from a command's text.
 

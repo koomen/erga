@@ -24,8 +24,7 @@
 
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { findDatabase } from "../pipeline/pipeline";
-import { d1 } from "../pipeline/account";
+import { d1, findDatabase } from "../pipeline/account";
 import { SETUP_SKILL } from "./skill";
 import { Tokens } from "../../server/identity/tokens";
 import type { Sql } from "../../server/directory/index";

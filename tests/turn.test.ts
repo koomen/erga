@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { lockPath, takeLock } from "../deploy/cli/deploy";
+import { lockPath, takeLock } from "../deploy/cli/jobs";
 import { ownStart } from "../deploy/cli/pid";
 import { takeTurn } from "../dev/turn";
 

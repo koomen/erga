@@ -1,35 +1,17 @@
 // A document's room, for the sync journeys (trimmed from the old multiplayer suite):
 //
 //   roomOf(address)   what the server stores and serves for the document's files, and its room's address
-//   Person            a person with no browser: a Yjs replica joined to the room over a real WebSocket, with the
-//                     messages and the habits of a tab (it names itself, it marks its deletions)
+//   Person            a person with no browser (a Replica, e2e/helpers/room.ts), whom the others see in the room
 //   crowd()           the people of one test: join() makes each one, leave() closes them all at the test's end
 //   secondPage        the document in another page of the test's browser, for a second person
 //
 // Trap: a Person's edit is on its own replica at once, and in the room a moment later. A check of the room, of a tab
 // or of another Person waits for it (until, converged).
 
-import * as Y from "yjs";
-import { colorFor, files, introduce, roomInfo, stamp, type Author } from "../../document/content";
-import {
-  applyAwarenessUpdate,
-  Awareness,
-  type AwarenessChange,
-  Decoder,
-  Encoder,
-  encodeAwarenessUpdate,
-  readSyncMessage,
-  removeAwarenessStates,
-  SYNC_STEP2,
-  writeSyncStep1,
-  writeUpdate,
-} from "../../shared/yjs-protocol";
+import type { Author } from "../../document/content";
 import { editor, TIMESCALE, type Editor } from "../helpers/editor";
-import { until, type Tab } from "../helpers/fixtures";
-
-const MSG_SYNC = 0,
-  MSG_AWARENESS = 1,
-  MSG_QUERY_AWARENESS = 3;
+import { agentClosed, until, type Tab } from "../helpers/fixtures";
+import { Replica, roomUrl } from "../helpers/room";
 
 export interface Room {
   /** The document's address (no ?edit): its API is under it. */
@@ -49,7 +31,7 @@ const enc = (path: string) => path.split("/").map(encodeURIComponent).join("/");
 export function roomOf(address: string): Room {
   return {
     base: address,
-    socket: `${address.replace(/^http/, "ws")}/api/room/doc`,
+    socket: roomUrl(address),
     async stored(path = "index.html") {
       const r = await fetch(`${address}/api/stored/${enc(path)}`);
       if (r.status == 404) return null;
@@ -65,179 +47,13 @@ export function roomOf(address: string): Room {
   };
 }
 
-/** A replica's socket to the room: the sync and awareness messages, as a tab sends them. It connects again after a close. */
-class RoomSocket {
-  readonly awareness: Awareness;
-  ws: WebSocket | null = null;
-  connected = false;
-  /** The room's answer to this replica's state vector is in. */
-  synced = false;
-  /** The room refused this replica (its history is not the room's). */
-  refused = false;
-  shouldConnect = true;
-  private failures = 0;
-  private again: ReturnType<typeof setTimeout> | null = null;
-
-  constructor(
-    private readonly url: string,
-    private readonly doc: Y.Doc,
-    readonly params: Record<string, string>
-  ) {
-    this.awareness = new Awareness(doc);
-    doc.on("update", this.onUpdate);
-    this.awareness.on("update", this.onAwareness);
-    this.connect();
+/** A person of the sync journeys: shown to the others in the room, as a tab's person is. */
+export class Person extends Replica {
+  constructor(room: Room, name: string) {
+    super(room.socket, name);
+    this.present();
   }
 
-  private onUpdate = (update: Uint8Array, origin: unknown) => {
-    if (origin === this) return;
-    const e = new Encoder();
-    e.writeUint(MSG_SYNC);
-    writeUpdate(e, update);
-    this.send(e.toBytes());
-  };
-  private onAwareness = ({ added, updated, removed }: AwarenessChange) => this.sendAwareness([...added, ...updated, ...removed]);
-
-  private send(bytes: Uint8Array<ArrayBuffer>) {
-    if (this.connected && this.ws?.readyState == WebSocket.OPEN) this.ws.send(bytes);
-  }
-  private sendAwareness(clients: number[]) {
-    const e = new Encoder();
-    e.writeUint(MSG_AWARENESS);
-    e.writeBytes(encodeAwarenessUpdate(this.awareness, clients));
-    this.send(e.toBytes());
-  }
-
-  connect() {
-    this.shouldConnect = true;
-    if (this.ws) return;
-    const ws = new WebSocket(`${this.url}?${new URLSearchParams(this.params)}`);
-    ws.binaryType = "arraybuffer";
-    this.ws = ws;
-    ws.onopen = () => {
-      this.connected = true;
-      const e = new Encoder();
-      e.writeUint(MSG_SYNC);
-      writeSyncStep1(e, this.doc);
-      this.send(e.toBytes());
-      if (this.awareness.getLocalState()) this.sendAwareness([this.doc.clientID]);
-    };
-    ws.onmessage = (m) => {
-      const d = new Decoder(new Uint8Array(m.data as ArrayBuffer));
-      const type = d.readUint();
-      if (type == MSG_SYNC) {
-        const reply = new Encoder();
-        reply.writeUint(MSG_SYNC);
-        if (readSyncMessage(d, reply, this.doc, this) == SYNC_STEP2) {
-          this.synced = true;
-          this.failures = 0;
-        }
-        if (reply.length > 1) this.send(reply.toBytes());
-      } else if (type == MSG_AWARENESS) applyAwarenessUpdate(this.awareness, d.readBytes(), this);
-      else if (type == MSG_QUERY_AWARENESS) this.sendAwareness([...this.awareness.getStates().keys()]);
-    };
-    ws.onerror = () => {};
-    ws.onclose = (e) => this.closed(ws, e.code);
-  }
-
-  /** The socket is gone (closed by the room, or here): the others' carets go, and it connects again if it should. */
-  private closed(ws: WebSocket, code: number | null) {
-    if (this.ws != ws) return;
-    this.ws = null;
-    ws.onmessage = ws.onopen = ws.onclose = null;
-    ws.close();
-    this.failures++;
-    if (this.connected)
-      removeAwarenessStates(
-        this.awareness,
-        [...this.awareness.getStates().keys()].filter((c) => c != this.doc.clientID),
-        this
-      );
-    this.connected = this.synced = false;
-    if (code == 4409) {
-      this.refused = true;
-      this.shouldConnect = false;
-    }
-    if (this.shouldConnect) this.again = setTimeout(() => this.shouldConnect && this.connect(), Math.min(2 ** this.failures * 100, 500));
-  }
-
-  /** Closes the socket, and does not connect again: the room sees the close, and tells the others. */
-  disconnect() {
-    this.shouldConnect = false;
-    if (this.again) clearTimeout(this.again);
-    if (this.ws) this.closed(this.ws, null);
-  }
-
-  destroy() {
-    this.disconnect();
-    this.doc.off("update", this.onUpdate);
-    this.awareness.off("update", this.onAwareness);
-    this.awareness.destroy();
-  }
-}
-
-export class Person {
-  readonly ydoc = new Y.Doc();
-  readonly socket: RoomSocket;
-  readonly me: Author;
-  private local = { person: true };
-  private gone = false;
-
-  constructor(
-    readonly room: Room,
-    readonly name: string
-  ) {
-    const id = name.toLowerCase();
-    this.me = { user: id, name, color: colorFor(id), kind: "person" };
-    this.socket = new RoomSocket(room.socket, this.ydoc, { user: name });
-    this.socket.awareness.setLocalState({ user: this.me, cursor: null });
-  }
-
-  /** Whether the room refused this replica. */
-  get refused(): boolean {
-    return this.socket.refused;
-  }
-  get connected(): boolean {
-    return this.socket.connected;
-  }
-  /** Connected, with the room's answer to its state in. */
-  get synced(): boolean {
-    return this.socket.connected && this.socket.synced;
-  }
-  get epoch(): string | undefined {
-    return roomInfo(this.ydoc).get("epoch");
-  }
-
-  text(path = "index.html"): Y.Text | undefined {
-    return files(this.ydoc).get(path);
-  }
-  str(path = "index.html"): string {
-    return this.text(path)?.toString() ?? "";
-  }
-
-  /** One local edit, as this person's. */
-  edit(f: (t: Y.Text) => void, path = "index.html"): void {
-    const t = this.text(path);
-    if (!t) throw new Error(`${this.name} has no ${path}`);
-    this.ydoc.transact(() => {
-      const before = Y.getState(this.ydoc.store, this.ydoc.clientID);
-      f(t);
-      // Deletions alone carry no client id: stamp them.
-      if (Y.getState(this.ydoc.store, this.ydoc.clientID) == before) stamp(this.ydoc, this.me);
-    }, this.local);
-  }
-  insert(pos: number, s: string) {
-    this.edit((t) => t.insert(pos, s));
-  }
-  delete(pos: number, len: number) {
-    this.edit((t) => t.delete(pos, len));
-  }
-  /** Inserts after the first `anchor` in the text. */
-  insertAfter(anchor: string, s: string) {
-    const i = this.str().indexOf(anchor);
-    if (i < 0) throw new Error(`${this.name}: "${anchor}" is not in the text`);
-    this.insert(i + anchor.length, s);
-  }
   /** Inserts before the first `anchor` in the text. */
   insertBefore(anchor: string, s: string) {
     const i = this.str().indexOf(anchor);
@@ -277,14 +93,6 @@ export class Person {
       check();
     });
   }
-
-  /** Leaves the room for good: the socket closes, and the room tells the others. */
-  leave() {
-    if (this.gone) return;
-    this.gone = true;
-    this.socket.destroy();
-    this.ydoc.destroy();
-  }
 }
 
 /** The people with no browser of one test. */
@@ -292,14 +100,10 @@ export function crowd() {
   const all: Person[] = [];
   return {
     /** A person joins the room: with the room's text, and its name on its edits, as a tab's. */
-    async join(room: Room, name: string): Promise<Person> {
+    join(room: Room, name: string): Promise<Person> {
       const p = new Person(room, name);
       all.push(p);
-      await until(() => p.synced || p.refused, 10_000, `${name} joins the room`);
-      if (p.refused) return p;
-      introduce(p.ydoc, p.me);
-      p.socket.params.epoch = p.epoch ?? "";
-      return p;
+      return p.joined();
     },
     /** Everyone leaves (at the end of a test, also one that failed). */
     leave() {
@@ -349,15 +153,11 @@ export async function secondPage(tab: Tab, first: Editor, user?: string): Promis
   const size = tab.page.viewportSize();
   if (size) await page.setViewportSize(size);
   // As openEditor's page: fast timers, the check that the page shows its HTML, and the agent pane closed.
+  await agentClosed(page);
   await page.addInitScript((timescale) => {
     if (window.top != window) return;
     (window as any).__ergaTimescale = timescale;
     (window as any).__ergaCheck = true;
-    try {
-      if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}');
-    } catch {
-      /* no storage */
-    }
   }, TIMESCALE);
   await page.goto(`${first.address}${user ? `?user=${encodeURIComponent(user)}&edit` : "?edit"}`);
   const ed = editor(page, { address: first.address, dir: first.dir, file: first.file });

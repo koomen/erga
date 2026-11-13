@@ -2,37 +2,19 @@
 // a tree that never runs twice, one run at a time, a failed run, and a run whose process is gone.
 
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { takeLock } from "../deploy/cli/deploy";
+import { takeLock } from "../deploy/cli/jobs";
 import { mergeTree } from "../deploy/cli/observe";
 import { failedOf, readRuns, runPath, type Suite, testRun, treeOf } from "../deploy/cli/test-run";
+import { commit, gitWorld, sh } from "./helpers/git-world.ts";
 import { runOf } from "./helpers/pass.ts";
-
-const sh = (cwd: string, ...cmd: string[]) => {
-  const r = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe" });
-  if (r.exitCode != 0) throw new Error(`${cmd.join(" ")}: ${r.stderr.toString()}`);
-  return r.stdout.toString().trim();
-};
 
 /** A clone whose origin has staging (a.txt) and a branch `feature` with one more file. */
 function world() {
-  const top = realpathSync(mkdtempSync(join(tmpdir(), "erga-testrun-")));
-  const [origin, clone] = [join(top, "origin.git"), join(top, "clone")];
-  sh(top, "git", "init", "--quiet", "--bare", "-b", "staging", origin);
-  sh(top, "git", "clone", "--quiet", origin, clone);
-  sh(clone, "git", "switch", "--quiet", "-c", "staging");
-  const commit = (file: string, text: string) => {
-    writeFileSync(join(clone, file), text);
-    sh(clone, "git", "add", "-A");
-    sh(clone, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", text);
-    return sh(clone, "git", "rev-parse", "HEAD");
-  };
-  const staging = commit("a.txt", "one");
-  sh(clone, "git", "push", "--quiet", "origin", "staging");
+  const { clone, base: staging } = gitWorld("erga-testrun-");
   sh(clone, "git", "switch", "--quiet", "-c", "feature");
-  commit("b.txt", "two");
+  commit(clone, "b.txt", "two");
   sh(clone, "git", "push", "--quiet", "origin", "feature");
   return { clone, dir: join(clone, ".erga"), staging, tree: mergeTree("origin/staging", "origin/feature", clone).tree! };
 }

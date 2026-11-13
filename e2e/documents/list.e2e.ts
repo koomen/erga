@@ -9,8 +9,8 @@ import { join } from "node:path";
 import type { Route } from "playwright-core";
 import { editor, type Editor } from "../helpers/editor";
 import { ROOT } from "../helpers/env";
-import { expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
-import { agentClosed, listenNews, middle, pane, person, quietLogin, type Agent, type Person } from "./people";
+import { agentClosed, expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
+import { listenNews, middle, pane, person, quietLogin, type Agent, type Person } from "./people";
 import { clickOn } from "../helpers/press";
 
 const s = await servers.main();

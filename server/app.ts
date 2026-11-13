@@ -57,7 +57,7 @@
 
 import * as Effect from "effect/Effect";
 import { adminGate, isAdminPath } from "./admin/index.ts";
-import { agentApi, isAgentPath } from "../agents/person/sessions.ts";
+import { agentApi, isAgentPath } from "../agents/person/routes.ts";
 import { HOME_LLM_PATH, homeDomainLlmApi, isPageLlmPath, pageLlmApi } from "../agents/page-llm.ts";
 import { serverApi } from "./api.ts";
 import { adoptLanding, documentRoutes, ergaAddress, isPagesSite, makeHomeRoute, workerHere } from "./documents/index.ts";

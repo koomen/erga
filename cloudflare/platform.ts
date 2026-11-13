@@ -20,6 +20,7 @@ import { documentOf } from "./objects/document-stub";
 import { blobsOf } from "./blobs";
 import { kvCache, type EdgeCache } from "./kv-cache";
 import { BLOB_HEADER, serveBlob } from "../document/blobs";
+import { isLocal } from "../shared/http";
 
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
@@ -93,12 +94,6 @@ const appOf = (facts: unknown): string | null => {
 /** The landing project's files. They are large (its fonts), and only the making of the homepage needs them: they load then. */
 const LANDING: NonNullable<Platform["landing"]> = { files: () => import("./landing-files.ts").then((m) => m.LANDING) };
 
-/**
- * The app on Cloudflare: people sign in with GitHub, the
- * directory is in D1, and a document is a Durable Object
- * named by its id.
- */
-const local = (url: URL) => url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1";
 /** The edge's cache: the Cache API, where the runtime has one, or the KV namespace a host binds in its place (kv-cache.ts). */
 export const edgeCache = (env: Pick<Env, "EDGE_CACHE">): EdgeCache | null => {
   if (env.EDGE_CACHE) return kvCache(env.EDGE_CACHE);
@@ -133,8 +128,8 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     dev: (url) => isDev(env, url),
     // Locally (vite dev) each document's page runs on <id>-<owner>.localhost, which browsers send to this machine.
     // Elsewhere an origin each under PAGES_DOMAIN, or the one PAGES_HOST: the deploy sets one of them.
-    pagesDomain: (url) => (local(url) || !settings.pagesDomain ? "localhost" : settings.pagesDomain),
-    pagesShared: (url) => (local(url) ? null : settings.pagesHost || null),
+    pagesDomain: (url) => (isLocal(url) || !settings.pagesDomain ? "localhost" : settings.pagesDomain),
+    pagesShared: (url) => (isLocal(url) ? null : settings.pagesHost || null),
     secret: env.SESSION_SECRET,
     // Staging runs on a copy of its primary's data: for admins only (server/identity/admins-only.ts).
     adminsOnly: target == "staging",
@@ -204,5 +199,9 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
   return p;
 };
 
-/** Local development (DEV_LOGIN set, on localhost): sign-in without GitHub, for trying things and for the test suite. */
+/**
+ * Local development (DEV_LOGIN set, on localhost): sign-in without GitHub, for trying things and for the test suite.
+ * Not isLocal: this decides who is signed in, so it stays narrow. A name under localhost is a document's pages origin
+ * (its authors' code), which gets no dev login.
+ */
 export const isDev = (env: Env, url: URL) => !!env.DEV_LOGIN && (url.hostname == "localhost" || url.hostname == "127.0.0.1");

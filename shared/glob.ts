@@ -1,5 +1,7 @@
 // A glob pattern as a RegExp over a document's paths: ls's `glob` (server/operations/editor.ts), grep's (agents/document/tools.ts).
 
+import { escapeRe } from "./html";
+
 /** "**" any folders, "*" any name part, "?" one character, "{a,b}" either; a pattern without a slash matches at any depth, like find -name. */
 export function globToRegExp(glob: string): RegExp {
   let re = "";
@@ -28,5 +30,3 @@ export function globToRegExp(glob: string): RegExp {
   }
   return new RegExp(glob.includes("/") ? `^${re}$` : `(?:^|/)${re}$`);
 }
-
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

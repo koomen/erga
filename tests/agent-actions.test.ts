@@ -37,7 +37,7 @@ const ROUTE_FILES = [
   "server/identity/mcp-oauth.ts",
   "server/identity/tokens-page.ts",
   "server/news/routes.ts",
-  "agents/person/sessions.ts",
+  "agents/person/routes.ts",
   "agents/page-llm.ts",
   "cloudflare/deploy-routes.ts",
   "cloudflare/dev.ts",

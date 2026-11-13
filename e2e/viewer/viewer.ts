@@ -3,23 +3,13 @@
 // and editing alike (the editor runs in it). `inDoc` evaluates in that page.
 
 import type { Frame, Page } from "playwright-core";
-import { settle, until, type Server } from "../helpers/fixtures";
+import { agentClosed, settle, until, type Server } from "../helpers/fixtures";
 import { idOf, runTool } from "../helpers/tools";
 
 /** Opens `url` in the tab at this size, as someone who keeps the agent pane closed unless `agent`. */
 export async function openViewer(page: Page, url: string, opts: { width?: number; height?: number; agent?: boolean } = {}) {
   await page.setViewportSize({ width: opts.width ?? 1200, height: opts.height ?? 760 });
-  await page.addInitScript((agent) => {
-    if (window.top != window || agent) return;
-    try {
-      if (!sessionStorage.getItem("erga-test:agent-seeded")) {
-        sessionStorage.setItem("erga-test:agent-seeded", "1");
-        if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}');
-      }
-    } catch {
-      /* no storage */
-    }
-  }, opts.agent ?? false);
+  if (!opts.agent) await agentClosed(page);
   await page.goto(url);
 }
 

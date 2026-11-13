@@ -55,7 +55,7 @@ import {
   type TreeOp,
 } from "./pages";
 import { isTextPath as isTextFile } from "./content";
-import type { ViewRequest, ViewResult } from "../shared/agent-log";
+import type { ViewRequest, ViewResult } from "../shared/view-page";
 import { liveWait, type LiveAnswer, type LiveRequest } from "../shared/live-page";
 import { aimEdits, applySpans } from "../shared/text-edits";
 import type { RenderJob } from "./agent";
@@ -162,8 +162,6 @@ export function docFile(rel: string, bytes: Uint8Array, ifNoneMatch?: string | n
   }
   return { status: 200, type, headers: { ...headers, "Server-Timing": timing(` bytes 0-${Math.max(0, bytes.length - 1)}/${bytes.length}`) }, body: bytes };
 }
-
-export { byteRange };
 
 /** HttpApi's platform needs, none of which a document served from storage uses. */
 const fromStorage = Layer.mergeAll(

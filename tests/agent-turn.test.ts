@@ -1,7 +1,6 @@
 // The agent's turn (agents/turn.ts, run by agents/run.ts): Stop clears the queue, a tool call ends before "stopped",
 // a resume never says "not busy" over a run that a new message started, and a Stop with no live agent ends the run kept.
 
-import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import * as Schema from "effect/Schema";
 import { startAgent } from "../agents/person/agent";
@@ -11,17 +10,10 @@ import type { StoredChat } from "../agents/checkpoint";
 import type { AgentTool } from "../agents/run";
 import type { Platform } from "../server/platform";
 import { IDLE, next, type Turn, type TurnEvent } from "../agents/turn";
+import { objectSql } from "./helpers/memory-sql";
 import { until } from "./helpers/until";
 
 const script = { own: {}, server: {}, mode: "server" as const, off: [], model: "script" as const, effort: "medium" as const };
-
-function db() {
-  const d = new Database(":memory:", { strict: true });
-  return {
-    exec: <T>(q: string, ...p: (string | number | null)[]) => d.query(q).all(...p) as T[],
-    transaction: <T>(f: () => T) => d.transaction(f)(),
-  };
-}
 
 /** The busy events an agent says, as they come. */
 function busyOf(agent: ReturnType<typeof startAgent>) {
@@ -33,7 +25,7 @@ function busyOf(agent: ReturnType<typeof startAgent>) {
 }
 
 test("Stop clears the queue: a message sent during the run is never answered, after a restart too", async () => {
-  const t = new ChatTables(db()),
+  const t = new ChatTables(objectSql()),
     store = tableStore(t, "you:ada");
   const a = startAgent({ cfg: script, owner: "ada", admin: false, tools: [], store });
   const busy = busyOf(a);
@@ -92,7 +84,7 @@ test("Stop waits for the tool call that runs: its edit lands before the run says
 });
 
 test("a message sent while the agent resumes runs, and the resume never says the agent is idle meanwhile", async () => {
-  const t = new ChatTables(db());
+  const t = new ChatTables(objectSql());
   // A run that a restart cut off just after its last turn: nothing is left to do.
   const stored: StoredChat = {
     messages: [
@@ -116,7 +108,7 @@ test("a message sent while the agent resumes runs, and the resume never says the
 });
 
 test("Stop with no live agent (the object restarted) ends the run kept: the alarm wakes nothing", async () => {
-  const sql = db(),
+  const sql = objectSql(),
     t = new ChatTables(sql);
   t.save("you:ada", {
     messages: { from: 0, items: [{ role: "user", content: "Hi" }] },
@@ -309,7 +301,7 @@ test("Deny, a new message and Stop each close the call unrun, and the model hear
 
 test("a call that needs no approval runs at once; a restart closes a question that waits", async () => {
   const ran: string[] = [];
-  const t = new ChatTables(db()),
+  const t = new ChatTables(objectSql()),
     store = tableStore(t, "you:ada");
   const a = startAgent({ cfg: script, owner: "ada", admin: false, tools: [asker(ran)], store });
   const busy = busyOf(a);

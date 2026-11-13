@@ -25,6 +25,7 @@
 // (server/documents/routes.ts: which page an address is) and the browser (the editor and
 // the tree's UI), so it holds only plain functions and the operations' shape.
 
+import { decodeEntities } from "../shared/html.ts";
 import type { PageHead } from "../shared/page-head.ts";
 
 /** One entry in the tree: a page (.html), any other file, or a folder. */
@@ -285,7 +286,3 @@ export function titleOf(text: string): string | null {
     heading = /<h([2-6])\b[^>]*>([\s\S]*?)<\/h\1>/i.exec(text);
   return (h1 && clean(h1[1])) || (named && named.toLowerCase() != "untitled" ? named : null) || (heading && clean(heading[2])) || null;
 }
-
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
-const decodeEntities = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) =>
-  e[0] == "#" ? String.fromCodePoint(parseInt(e[1] == "x" || e[1] == "X" ? e.slice(2) : e.slice(1), e[1] == "x" || e[1] == "X" ? 16 : 10)) : ENTITIES[e.toLowerCase()] ?? m);

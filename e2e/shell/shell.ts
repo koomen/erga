@@ -1,11 +1,11 @@
 // Helpers for the shell's journeys (the editor's way in and out, its panels and bars, offline): a document's page in
 // the viewer or the editor without openEditor's wait, and what the shell shows around the page.
-import { cpSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Frame, Page } from "playwright-core";
 import { TIMESCALE } from "../helpers/editor";
-import { ROOT } from "../helpers/env";
-import { expect, settle, until, type Server } from "../helpers/fixtures";
+import { agentClosed, expect, settle, until, type Server } from "../helpers/fixtures";
+import { copyFixture } from "../helpers/server";
 
 /** expect.poll that looks again every 20 ms (its own pause is 100 ms): for a state that comes within a frame or two. */
 export const soon = <T>(read: () => T | Promise<T>, timeout?: number) =>
@@ -16,7 +16,7 @@ let copies = 0;
 /** A copy of e2e/fixtures/<name> with `files` put over it, linked as a document: its folder and address. */
 export async function fixtureWith(server: Server, name: string, files: Record<string, string>) {
   const dir = join(server.scratch, "docs", `shell-${name}-${process.pid}-${++copies}`);
-  cpSync(join(ROOT, "e2e/fixtures", name), dir, { recursive: true });
+  copyFixture(name, dir);
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(dirname(join(dir, path)), { recursive: true });
     writeFileSync(join(dir, path), text);
@@ -28,20 +28,14 @@ export async function fixtureWith(server: Server, name: string, files: Record<st
  * What openEditor sets in the tab before a page loads: the editor's timers at `timescale`, its check that the page
  * shows its HTML, and the agent pane kept closed. For a page that a journey opens itself (a held start, the viewer).
  */
-export const asTester = (page: Page, timescale = TIMESCALE) =>
-  page.addInitScript((timescale) => {
+export const asTester = async (page: Page, timescale = TIMESCALE) => {
+  await agentClosed(page);
+  await page.addInitScript((timescale) => {
     if (window.top != window) return;
     (window as any).__ergaTimescale = timescale;
     (window as any).__ergaCheck = true;
-    try {
-      if (!sessionStorage.getItem("erga-test:agent-seeded")) {
-        sessionStorage.setItem("erga-test:agent-seeded", "1");
-        if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}');
-      }
-    } catch {
-      /* no storage */
-    }
   }, timescale);
+};
 
 /** Opens `url` in the tab and waits for its fonts: the viewer (or any page that openEditor does not open). */
 export async function openPage(page: Page, url: string) {

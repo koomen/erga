@@ -26,13 +26,12 @@
 // it (or goes up), Home and End, Enter opens a page or a folder, F2 renames,
 // Delete deletes, and Shift-F10 (or the context-menu key) opens a row's menu.
 
-import { baseName, encodePath, joinPath, pageUrl, parentOf, readable, slugify } from "../../document/pages";
+import { baseName, encodePath, joinPath, pageUrl, parentOf, readable, slugify, type DocKind } from "../../document/pages";
 import { runTool } from "../common/tools";
 import { ICONS, STYLE } from "./pages-tree-style";
 
 export type EntryType = "page" | "folder" | "file";
 export interface Entry { path: string; type: EntryType; title?: string }
-export type DocKind = "document" | "project";
 export interface TreeAnswer { entries: Entry[]; canEdit?: boolean; kind?: DocKind }
 
 export interface TreeOptions {

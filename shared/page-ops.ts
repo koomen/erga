@@ -17,6 +17,7 @@
 //
 // New HTML is indented to match the code around it. All of it is pure.
 
+import { escapeAttr, escapeRe } from "./html";
 import * as M from "./manuscript";
 import { selectInSource } from "./source-select";
 
@@ -191,9 +192,9 @@ const within = (inner: M.ElementNode, outer: M.ElementNode) => inner.from >= out
 /** A source element's open tag with an attribute set (value) or removed (null). */
 function setAttr(src: string, el: M.ElementNode, name: string, value: string | null): Change {
   const open = src.slice(el.from, el.openTo);
-  const re = new RegExp(`(\\s+)${name.replace(/[.:]/g, "\\$&")}(?:\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s>]+))?(?=[\\s/>])`, "i");
+  const re = new RegExp(`(\\s+)${escapeRe(name)}(?:\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s>]+))?(?=[\\s/>])`, "i");
   const m = re.exec(open);
-  const written = value == null ? "" : ` ${name}="${value.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}"`;
+  const written = value == null ? "" : ` ${name}="${escapeAttr(value)}"`;
   if (m) return { from: el.from + m.index, to: el.from + m.index + m[0].length, insert: written };
   if (value == null) return { from: el.from, to: el.from, insert: "" };
   const end = open.endsWith("/>") ? el.openTo - 2 : el.openTo - 1;

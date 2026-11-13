@@ -5,7 +5,7 @@
 // the key, but the editor's model hears of it later (selectionchange). `stop` asks the editor for the selection now
 // (selectionNow: the one an edit would apply to), so a walk needs no wait between its keys.
 import { editor, F, type Editor } from "../helpers/editor";
-import { expect, type Server, settle, type Tab } from "../helpers/fixtures";
+import { agentClosed, expect, type Server, settle, type Tab } from "../helpers/fixtures";
 
 /** The drawn caret: whether it shows, its size, how far it is from the selection's own place, and where that is. */
 export const CARET = `(() => {
@@ -142,14 +142,7 @@ export async function openNew(tab: Tab, server: Server, template: string, size: 
   const address = server.root + (made.headers.get("location") ?? "").replace(/[?&]edit=?$/, "");
   tab.strict = true;
   await tab.page.setViewportSize(size);
-  await tab.page.addInitScript(() => {
-    if (window.top != window) return;
-    try {
-      if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}');
-    } catch {
-      /* no storage */
-    }
-  });
+  await agentClosed(tab.page);
   await tab.page.goto(`${address}?edit`);
   const ed = editor(tab.page, { address, dir: "", file: "" });
   await ed.loaded();

@@ -17,6 +17,7 @@
 // tell where the caret is, it lets the native caret show instead.
 
 import { watchMoves } from "./moves";
+import { isMac } from "../../../client/common/app-keys";
 import { listenAsEditor } from "./text-guard";
 
 /** The caret's width on the screen: this fraction of the text's size there, from MIN_WIDTH to MAX_WIDTH screen px. */
@@ -205,10 +206,9 @@ function attach(doc: Document, win: Window & typeof globalThis, zoomOf: () => nu
   };
   on(doc, "selectionchange");
   const keyed = (e: Event) => {
-    const k = e as KeyboardEvent,
-      mac = /Mac|iPhone|iPad/.test(navigator.platform);
+    const k = e as KeyboardEvent;
     if (["Shift", "Meta", "Control", "Alt"].includes(k.key)) return;
-    lineEnd = k.key == "End" || (mac && k.metaKey && k.key == "ArrowRight") || (mac && k.ctrlKey && k.key == "e");
+    lineEnd = k.key == "End" || (isMac && k.metaKey && k.key == "ArrowRight") || (isMac && k.ctrlKey && k.key == "e");
     clickY = null;
   };
   const clicked = (e: Event) => {

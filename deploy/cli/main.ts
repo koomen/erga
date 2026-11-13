@@ -41,8 +41,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { latestTag, mergeArgs, nextVersion, releaseNotes, releaseRefusal, statusText } from "./flow";
 import { gateRefusal } from "./gate";
-import { commitsOf, fetchOrigin, headOf, readState, repoOf, sh, tagsOf } from "./observe";
-import { fail, pass, ROOT, say } from "../root";
+import { commitsOf, fetchOrigin, headOf, readState, repoOf, tagsOf } from "./observe";
+import { fail, pass, ROOT, say, sh } from "../root";
 
 
 /** Where this command was typed: ERGA_JOB_FROM=page when the ops page runs it (ops-page.ts), else a terminal. */

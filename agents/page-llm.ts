@@ -27,6 +27,7 @@ import * as Stream from "effect/Stream";
 import { LanguageModel, Prompt } from "effect/ai";
 import { call, ctx, json, type Route } from "../server/http.ts";
 import { PAGE_SCRIPT, routeFor, type RouteRow } from "../shared/routes.ts";
+import { hex, sha256 } from "../shared/bytes.ts";
 import { callerAddress } from "../shared/http.ts";
 import {
   callStep,
@@ -91,8 +92,7 @@ async function decide(
 /** Who a signed-out visitor is counted as: "ip:" and a hash of their IP address (the log never keeps the address). */
 async function guestOf(request: Request): Promise<string> {
   const ip = callerAddress(request.headers) ?? "unknown";
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ip)));
-  return "ip:" + Array.from(hash.slice(0, 8), (b) => b.toString(16).padStart(2, "0")).join("");
+  return "ip:" + hex((await sha256(ip)).slice(0, 8));
 }
 
 /** The tokens a call may answer: what the page asks, within 1 and the cap. */

@@ -13,7 +13,7 @@
 // A key or a token is never in the page's address, its storage or the conversation. Its class names stay clear of the
 // app pages' own (client/inline/app.css: header, .new, .empty): the dialog is on all of them.
 
-import { runTool } from "../common/tools";
+import { asUser, runTool } from "../common/tools";
 import { showCopied } from "../common/copied";
 import { esc } from "../../shared/html";
 
@@ -41,11 +41,6 @@ const SCOPES: Record<string, string> = {
   documents: "All my documents",
   admin: "Admin",
   ops: "Ops (deploy facts)",
-};
-/** In local development the page's ?user= says who is signed in: the calls go as them too. */
-const user = () => {
-  const u = new URLSearchParams(location.search).get("user");
-  return u ? `?user=${encodeURIComponent(u)}` : "";
 };
 const day = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "Never";
@@ -133,7 +128,7 @@ async function keys() {
       e.preventDefault();
       const field = form.elements.namedItem("value") as HTMLInputElement;
       said("Saving…");
-      const r = await fetch(`/api/agent/keys${user()}`, {
+      const r = await fetch(asUser("/api/agent/keys"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, value: field.value }),
@@ -256,7 +251,7 @@ async function makeToken(form: HTMLFormElement) {
   const hint = form.querySelector(".hint")!;
   const f = new FormData(form);
   hint.textContent = "Making it…";
-  const r = await fetch(`/tokens/new${user()}`, {
+  const r = await fetch(asUser("/tokens/new"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

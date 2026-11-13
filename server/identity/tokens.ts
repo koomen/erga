@@ -35,7 +35,7 @@
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Schema from "effect/Schema";
 import { mac } from "../signed.ts";
-import type { Directory, Param, Sql } from "../directory/index.ts";
+import { ALPHABET, type Directory, type Param, type Sql } from "../directory/index.ts";
 import { changeLogEntry } from "../../shared/attribution";
 import { base64url, randomString, randomToken, sha256, sha256Hex } from "../../shared/bytes.ts";
 import { type Status, type Step, step } from "./token-request.ts";
@@ -125,7 +125,6 @@ const TOUCH_MS = 5 * 60 * 1000;
  * revoked on another copy of the server works that long at most; on this copy it stops at once.
  */
 const REMEMBER_MS = 10_000;
-const ID_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 const CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
 
 const clipLabel = (s: string | null | undefined, fallback: string) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, LABEL_MAX) || fallback;
@@ -235,7 +234,7 @@ export class Tokens {
     inPerson(who);
     const { scope, docId, expires } = await this.check(who, grant);
     const info: AgentToken = {
-      id: randomString(12, ID_ALPHABET),
+      id: randomString(12, ALPHABET),
       login: who.login.toLowerCase(),
       name: who.name || who.login,
       label: clipLabel(label, "Agent"),

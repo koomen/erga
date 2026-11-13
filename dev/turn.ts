@@ -8,7 +8,7 @@
 
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { lockPath, takeLock } from "../deploy/cli/deploy";
+import { lockPath, takeLock } from "../deploy/cli/jobs";
 import { alive, ownStart } from "../deploy/cli/pid";
 
 /** The time of the last run, in seconds (60 before the first), for the wait to expect: e2e/run.ts notes it. */

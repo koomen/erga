@@ -7,7 +7,7 @@
 // viewer's (client/inline/viewer-full.ts): it says when it's on, and the bar's way out asks it to leave.
 
 import type {} from "../../../client/common/reader-api";
-import type { StepShown } from "../../../shared/agent-log";
+import type { StepShown } from "../../../shared/view-page";
 import { goToStep, labelOf, slidesOf, STEP_MAX, stepNumber, type Steps, whole } from "../api/steps";
 
 declare global {

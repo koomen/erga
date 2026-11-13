@@ -45,17 +45,18 @@
 // Worker.
 
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { adminRoutes, isAdminPath } from "../admin/index.ts";
 import { ID, OWNER, type Route, type Who } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { HOME_OWNER, HOME_SLUG } from "../../document/names.ts";
-import { listDocs, newDoc, scratchDoc, shareToken } from "./make.ts";
+import { newDoc, scratchDoc } from "./make.ts";
 import { adoptLanding } from "./landing.ts";
 import { pagesOrigin, pagesRoutes, pagesHost } from "./pages-origin.ts";
 import { editKey, type KeyPerson, keyWho, readEditKey } from "./edit-key.ts";
 import { locating, viewAddress, viewLanding, viewPublic } from "./view.ts";
-import { OWN_ACCOUNT, page, signInFirst } from "../pages/index.ts";
-import { call, ctx, fromWeb, plainJson, text, type Route as HttpRoute } from "../http.ts";
+import { docsPage, notFound, OWN_ACCOUNT, page, signInFirst } from "../pages/index.ts";
+import { call, ctx, fromWeb, html, json, plainJson, text, type Route as HttpRoute } from "../http.ts";
 import { routeAt, routeFor, SECRET, type RouteRow } from "../../shared/routes.ts";
 
 /** The app's answer to a request, for any path (a page saying so when there's nothing there). */
@@ -76,7 +77,7 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   const routed = home ? `/${HOME_OWNER}/${HOME_SLUG}${home[1] ?? ""}` : path;
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(routed) ?? [];
   const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
-  if (!first || (first != "d" && !OWNER.test(first))) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
+  if (!first || (first != "d" && !OWNER.test(first))) return notFound();
   // A document's page: its row is asked for while the session is found (view.ts, locating).
   const viewing = !/^\/(api|doc)(\/|$)/.test(rest ?? "");
   const located = viewing ? locating(platform, url, first, second) : null;
@@ -173,7 +174,49 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   return fromWeb(new Response(answer.body, { status: answer.status, statusText: answer.statusText, headers }));
 });
 
+/** /docs: the signed-in person's documents, most recently edited first; /docs/archived: those they archived. */
+const listDocs = Effect.gen(function* () {
+  const { request, url, platform } = yield* ctx;
+  const archived = url.pathname == "/docs/archived";
+  const session = yield* call(() => platform.sessionOf(request));
+  if (!session) return signInFirst(url.pathname);
+  if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't list others.", 403);
+  const [docs, hours, asks] = yield* call(() =>
+    Promise.all([
+      platform.docs.list(session.login, { archived }),
+      platform.directory.config.get("delete_docs_after_hours"),
+      archived ? [] : platform.directory.requests.waiting(session.login),
+    ])
+  );
+  // The browser keeps the list for Back, for this person only: it shows at once, and follows what changed since (its
+  // rows are live: server/news/). Any other visit asks the server again.
+  return html(docsPage(session, docs, Date.now(), hours, archived, asks), 200, { "Cache-Control": "private, no-cache", Vary: "Cookie" });
+});
 
+/**
+ * POST <document>/api/share {rotate}: the share button's token, the
+ * person's one 'share' token, the same each time until rotated.
+ */
+const shareToken = Effect.fnUntraced(function* (session: Session) {
+  const { request, url, platform } = yield* ctx;
+  const refuse = (error: string) => plainJson({ ok: false, error }, 403);
+  // The server's browser (Session.view) runs an agent's code in the viewer's window: an agent too.
+  if (session.agent || session.view) return refuse("An agent can't make tokens.");
+  const origin = request.headers.get("origin");
+  if (origin && origin != url.origin) return refuse("Forbidden");
+  // Any body that isn't { rotate: true } keeps the token as it is.
+  const { rotate } = yield* call(() => request.json().catch(() => ({}))).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(RotateBody)),
+    Effect.orElseSucceed(() => ({ rotate: false }))
+  );
+  const via = whoOf(session).via;
+  const { token } = yield* call(() =>
+    platform.tokens.share({ login: session.login, name: session.name, ...(via ? { via } : {}) }, rotate === true)
+  );
+  return json({ token });
+});
+
+const RotateBody = Schema.Struct({ rotate: Schema.optional(Schema.Unknown) });
 
 /** The pages of the documents list, and a new document. (Each function answers any method.) */
 export const PAGES: readonly RouteRow<HttpRoute>[] = [

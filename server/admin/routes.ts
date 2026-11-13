@@ -32,7 +32,7 @@ import * as Schema from "effect/Schema";
 import type { HttpServerResponse } from "effect/http";
 import { routeFor, SECRET, type RouteRow } from "../../shared/routes.ts";
 import { ConfigError, CredentialError, NotAllowed, roleValue, type UserRole } from "../directory/index.ts";
-import { page } from "../pages/index.ts";
+import { notFound } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { authOps, AuthError, providerOf, ScopeError } from "../identity/index.ts";
 import type { Who } from "../directory/index.ts";
@@ -233,5 +233,3 @@ function refusal(e: unknown): NotAllowed | ScopeError | ConfigError | Credential
     return e;
   throw e;
 }
-
-const notFound = () => page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);

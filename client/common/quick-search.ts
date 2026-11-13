@@ -8,7 +8,8 @@
 
 import { readable } from "../../document/pages";
 import { esc } from "../../shared/html";
-import { runTool } from "./tools";
+import { isMac } from "./app-keys";
+import { asUser, runTool } from "./tools";
 
 interface Found {
   group: string;
@@ -54,13 +55,11 @@ export function match(all: Found[], query: string): Found[] {
     .map((x) => x.f);
 }
 
-const mac = /Mac|iPhone|iPad/.test(navigator.platform);
-
 /** An account menu's "Go to…" (`a`, with a <kbd> for the key): it shows this system's key, and a click opens the pane after `close` closes the menu. */
 export function quickLink(a: HTMLElement | null | undefined, close: () => void): void {
   if (!a) return;
   const kbd = a.querySelector("kbd");
-  if (kbd) kbd.textContent = mac ? "⌘K" : "Ctrl K";
+  if (kbd) kbd.textContent = isMac ? "⌘K" : "Ctrl K";
   a.addEventListener("click", (e) => {
     e.preventDefault();
     close();
@@ -77,11 +76,9 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
   let reading: Promise<void> | null = null;
   let shown: Found[] = [];
   let at = 0;
-  // In local development the page's ?user= says who is signed in: the pages it opens keep it.
-  const user = new URLSearchParams(location.search).get("user");
-  // "#settings" opens the Settings dialog on this page (client/agent/settings-dialog.ts): it keeps the page's address.
-  const href = (path: string) =>
-    path.startsWith("#") || !user ? path : `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(user)}`;
+  // The pages it opens keep local development's ?user=. "#settings" opens the Settings dialog on this page
+  // (client/agent/settings-dialog.ts): it keeps the page's address.
+  const href = (path: string) => (path.startsWith("#") ? path : asUser(path));
 
   // On a document's page: the document (its project's pages come first).
   const doc = document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')?.content;
@@ -204,7 +201,7 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
     "keydown",
     (e) => {
       // On a Mac, Ctrl+K stays the editor's (it deletes to the end of the line).
-      if ((mac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() == "k") {
+      if ((isMac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() == "k") {
         e.preventDefault();
         e.stopPropagation();
         open();

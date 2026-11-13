@@ -7,7 +7,7 @@
 
 import * as Effect from "effect/Effect";
 import { HttpServerResponse } from "effect/http";
-import { confirmAction, fromElsewhere, inlineScript, page, safeNext } from "../pages/index.ts";
+import { confirmAction, fromThisSite, inlineScript, page, safeNext } from "../pages/index.ts";
 import type { Platform, Session } from "../platform.ts";
 import { call, ctx, redirect, type Route } from "../http.ts";
 import { cookies, withCookie } from "./cookies.ts";
@@ -82,16 +82,13 @@ export const signInFailed = (reason: string) => {
   return page("Sign-in didn't work", '<a href="/auth/sign-in">Try again</a>. If it keeps failing, tell your Erga admin.', 400);
 };
 
-/** A sign-in route that this server's mode doesn't have. */
-export const noSuchSignIn = () => page("Not found", 'There\'s nothing here. <a href="/">Back to the start</a>.', 404);
-
 /**
  * /auth/logout (another site's link to it asks first): ends every sign-in of the person, on every device
  * (Users.endSessions), so a cookie that someone copied stops too.
  */
 export const signOut: Route = Effect.gen(function* () {
   const { platform, request, url } = yield* ctx;
-  if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) return confirmAction("Sign out", "Sign out of Erga", "/auth/logout");
+  if (!fromThisSite(request, url)) return confirmAction("Sign out", "Sign out of Erga", "/auth/logout");
   const session = yield* call(() => sessionOf(platform, request));
   // Only a browser's own sign-in ends them: not an agent's token, the server's browser, or local development's
   // person with no cookie.

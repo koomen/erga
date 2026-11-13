@@ -2,8 +2,9 @@
 // on, as you type.
 
 import * as M from "../../../shared/manuscript";
+import { escapeAttr } from "../../../shared/html";
 import { isolateHistory } from "@codemirror/commands";
-import { attrOf, escapeAttr, setChecked, TODO_BOX, TODO_ITEM, textIn, todoBox } from "../api/source";
+import { attrOf, setChecked, TODO_BOX, TODO_ITEM, textIn, todoBox } from "../api/source";
 import { EditorFormat } from "./format";
 
 export abstract class EditorMarkdown extends EditorFormat {

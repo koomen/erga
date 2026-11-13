@@ -166,13 +166,14 @@ export function checkKey(name: CredentialName, value: string): string {
 
 /**
  * AES-GCM under a key derived from the deploy-time secret: a value sealed with a fresh IV, bound to its `label` (the
- * additional data), so a row opens only under the same label: a key's name, or a person and a provider.
+ * additional data), so a row opens only under the same label: a key's name, a person and a provider, or a sign-in app.
+ * `purpose` is in the derivation: each kind of value has a key of its own from the one secret.
  */
-class KeyBox {
+export class KeyBox {
   private key: Promise<CryptoKey>;
-  constructor(secret: string) {
+  constructor(secret: string, purpose: "erga-credentials" | "erga-auth-apps") {
     this.key = (async () =>
-      crypto.subtle.importKey("raw", await sha256(`erga-credentials:${secret}`), "AES-GCM", false, ["encrypt", "decrypt"]))();
+      crypto.subtle.importKey("raw", await sha256(`${purpose}:${secret}`), "AES-GCM", false, ["encrypt", "decrypt"]))();
   }
   async seal(label: string, value: string): Promise<{ iv: string; data: string }> {
     const iv = randomBytes(12);
@@ -206,7 +207,7 @@ export class Credentials {
    * by name (e.g. ANTHROPIC_API_KEY), so the page can say one stands in.
    */
   constructor(private sql: Sql, private users: Users, secret: string | null, private fallback: (env: string) => boolean = () => false) {
-    this.box = secret ? new KeyBox(secret) : null;
+    this.box = secret ? new KeyBox(secret, "erga-credentials") : null;
   }
 
   /** Every key, as an admin sees it. Admins only. */
@@ -343,7 +344,7 @@ export class PersonKeys {
     private sql: Sql,
     secret: string | null
   ) {
-    this.box = secret ? new KeyBox(secret) : null;
+    this.box = secret ? new KeyBox(secret, "erga-credentials") : null;
   }
 
   private label = (login: string, name: CredentialName) => `person:${login.toLowerCase()}:${name}`;

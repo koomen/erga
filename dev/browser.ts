@@ -7,9 +7,11 @@ import { chromium, type Browser } from "playwright-core";
 
 let started: Promise<{ browser: Browser; port: number }> | null = null;
 
-const freePort = () =>
+/** A port that nothing listens on right now: for this browser, for dev/start.ts and for the tests' servers. */
+export const freePort = () =>
   new Promise<number>((resolve, reject) => {
     const s = createServer();
+    s.unref();
     s.once("error", reject);
     s.listen(0, "127.0.0.1", () => {
       const { port } = s.address() as { port: number };

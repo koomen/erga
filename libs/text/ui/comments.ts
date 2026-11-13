@@ -1,5 +1,5 @@
 // The comments on the page, in the editor: erga/text's own drawing of the document's comment table. Highlights are CSS
-// highlights over the text (erga-comment, erga-comment-on: page-style.ts), never written into the page. The cards, the
+// highlights over the text (erga-comment, erga-comment-on: render.ts), never written into the page. The cards, the
 // new comment's box and the "Resolved · Undo" pill draw in a shadow root of their own on the page's <html>, in the
 // controls' look (controls.ts), and their events stay theirs. Wide, the threads stand in a rail at the right, each
 // beside its text; narrow (a phone), a tap on a highlight opens its thread in a sheet at the bottom.
@@ -8,6 +8,7 @@
 // (through `o.call`), the undo's timer, the focus.
 
 import type * as Y from "yjs";
+import { esc } from "../../../shared/html";
 import { anchorFromJSON, anchorOf, anchorToJSON, resolveAnchor, type Anchor } from "../api/anchors";
 import { editKey, initial, step, type Comment, type CommentEvent, type Effect, type Thread } from "./comments-state";
 import { KEPT, LOOK } from "./controls";
@@ -113,7 +114,10 @@ const ICON = {
 };
 const svg = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
 
-/** When, as short as the card has room for: "now", "5 min", "2 h", "yesterday", "3 d", then the date. */
+/**
+ * When, as short as the card has room for: "now", "5 min", "2 h", "yesterday", "3 d", then the date. Not timeAgo
+ * (shared/time.ts): its "5 minutes ago" is too long for the card's first line, beside the name and the buttons.
+ */
 export function shortTime(at: string, now = Date.now()): string {
   const s = (now - Date.parse(at)) / 1000;
   if (s < 60) return "now";
@@ -359,7 +363,6 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     return el;
   }
 
-  const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
   /**
    * A comment's first line: who, how (an agent), when (as it shows), "· edited" (`edited`: when), ✎ to edit it
    * (`edit`: the comment's id), and ✓ to resolve its thread.

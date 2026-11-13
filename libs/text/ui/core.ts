@@ -8,8 +8,6 @@ import type { HeldInput, PageEditorConfig, PageUpdate } from "./types";
 import { HEADING, placeholderBr, same, textIn } from "../api/source";
 import type { Mirror } from "./mirror";
 
-export const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-
 export const noHistory = () => Transaction.addToHistory.of(false);
 
 /**

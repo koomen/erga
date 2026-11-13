@@ -1,10 +1,11 @@
 // The page editor's paste, cut and copy: plain text and basic formatting, in and out; pasted files go into the document.
 
 import * as M from "../../../shared/manuscript";
+import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import * as C from "../api/clipboard";
 import * as R from "./clipboard-read";
 import { placeOf, publicHref, type Place } from "../../../client/common/link-target";
-import { escapeAttr, HEADING } from "../api/source";
+import { HEADING } from "../api/source";
 import { EditorMarkdown } from "./markdown";
 import { editableAt } from "../api/rules";
 import { LOADING_AGAIN, showDropNote } from "./drop";
@@ -42,7 +43,7 @@ export abstract class EditorClipboard extends EditorMarkdown {
       /^(https?:\/\/|mailto:)\S+$/i.test(url) &&
       !M.inlineStackAt(this.src, u, sel.from).some((t) => t.tag == "a" || t.tag == "code")
     )
-      return this.pasteBlocks([{ tag: "p", html: `<a href="${escapeAttr(url)}">${M.escapeHtmlText(url)}</a>`, text: url, md: url }]);
+      return this.pasteBlocks([{ tag: "p", html: `<a href="${escapeAttr(url)}">${escapeHtmlText(url)}</a>`, text: url, md: url }]);
     // A link to a place in this page, copied from it (as its public address), is #id again.
     const place = this.place(),
       self = place?.address ? pageUrl(place.address, place.page) + "#" : null;

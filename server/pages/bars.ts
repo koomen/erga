@@ -160,6 +160,9 @@ const plainPage = (title: string, body: string, o: Plain = {}) =>
  */
 export const page = (title: string, body: string, status: number, o?: Plain) => html(plainPage(title, body, o), status, NO_STORE);
 
+/** The page for an address with nothing at it. */
+export const notFound = () => page("Not found", 'There\'s nothing here. <a href="/">Back to the start</a>.', 404);
+
 /**
  * For an action another site may not take on someone's behalf: asks them to
  * confirm it with a button, which posts back from this site.

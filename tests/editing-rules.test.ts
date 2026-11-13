@@ -6,16 +6,7 @@ import { ChangeSet, Text } from "@codemirror/state";
 import * as M from "../shared/manuscript";
 import { blockRange, caretNear, joinBlocks, rules, type Intent, type Page, type Step } from "../libs/text/api/rules";
 import type { Change } from "../libs/text/api/lists";
-import { keys } from "./helpers/page-keys";
-
-function parse(marked: string): { src: string; anchor: number; head: number } {
-  const caret = marked.indexOf("|");
-  if (caret >= 0) return { src: marked.slice(0, caret) + marked.slice(caret + 1), anchor: caret, head: caret };
-  const a = marked.indexOf("["),
-    h = marked.indexOf("]");
-  const src = marked.replace("[", "").replace("]", "");
-  return { src, anchor: a < h ? a : a - 1, head: h < a ? h : h - 1 };
-}
+import { keys, parse } from "./helpers/page-keys";
 
 /** A page with every block editable; as on a page, a block of another parse is none of its blocks. */
 const pageOf = (src: string): Page => {

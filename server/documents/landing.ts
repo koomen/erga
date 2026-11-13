@@ -8,7 +8,7 @@
 // the same files and id, a new address (the old one redirects there).
 
 import { SYSTEM } from "../../shared/attribution.ts";
-import { type DocRow, newDocId } from "../directory/index.ts";
+import type { DocRow } from "../directory/index.ts";
 import { json, platform, type Route } from "../http.ts";
 import { type Platform } from "../platform.ts";
 import { makeDoc } from "./make.ts";
@@ -74,17 +74,12 @@ export function makeHome(platform: Platform): Promise<HomeMade> {
     const files = await platform.landing?.files();
     const index = files?.["index.html"] != null ? "index.html" : null;
     if (!files || !index) return "none";
-    let made: DocRow | null = null;
-    for (let tries = 0; !made && tries < 5; tries++) {
-      const id = newDocId();
-      made = await makeDoc(
-        platform,
-        HOME_OWNER,
-        id,
-        { ...files },
-        { index, slug: id, published: true, kind: "project", title: HOME_TITLE }
-      );
-    }
+    const made = await makeDoc(
+      platform,
+      HOME_OWNER,
+      { ...files },
+      { index, atId: true, published: true, kind: "project", title: HOME_TITLE }
+    );
     if (!made) return "none";
     if (!(await dir.takeHome(made.id))) {
       if (!(await platform.docs.delete(made))) await dir.remove(made.id);

@@ -20,7 +20,7 @@
 
 import * as Effect from "effect/Effect";
 import { call, ctx, html, NO_STORE, plainJson, redirect } from "../http.ts";
-import { appPage, asset, AGENT_ICON, inlineScript, link, pageBars, page, scriptTag } from "../pages/index.ts";
+import { appPage, asset, AGENT_ICON, inlineScript, link, notFound, pageBars, scriptTag } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import type { Platform, Session } from "../platform.ts";
 import { actingAdmin } from "../identity/index.ts";
@@ -153,6 +153,6 @@ export const adminGate = Effect.gen(function* () {
   }
   const admin = !session.agent && (yield* call(() => actingAdmin(platform.directory.users, session)));
   if (admin) return null;
-  if (read) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
+  if (read) return notFound();
   return plainJson({ error: "Only an admin can do that." }, 403);
 });

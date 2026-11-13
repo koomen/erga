@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { evaluateIn } from "../client/page-tools/evaluate";
 import { describeView } from "../agents/document/page-tools";
-import { renderTimes } from "../shared/agent-log";
+import { renderTimes } from "../shared/view-page";
 import { setup } from "./helpers/files-fixture";
 
 const shot = (o: object) => ({ png: "x", width: 1100, height: 800, at: 600, ...o });

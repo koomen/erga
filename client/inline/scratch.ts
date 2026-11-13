@@ -3,6 +3,8 @@
 // it does (`tip`). A click keeps the document (save_document); saved, both buttons go, and the address bar takes the
 // document's new address (the editor follows a rename by itself; the viewer doesn't). An error shows in the tip.
 
+import { runTool } from "../common/tools";
+
 export default function scratch(doc: string, tip: string): void {
   const make = () => {
     const b = Object.assign(document.createElement("button"), { type: "button", className: "erga-scratch-save", textContent: "Save" });
@@ -35,23 +37,18 @@ export default function scratch(doc: string, tip: string): void {
       b.disabled = true;
       b.textContent = "Saving…";
     });
-    const r = await fetch("/api/tools/save_document", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ document: doc }),
-    }).catch(() => null);
-    const body = r ? await r.json().catch(() => ({})) : {};
+    const saved = await runTool<{ saved?: { address?: unknown } }>("save_document", { document: doc }).catch((e: Error) => e);
     busy = false;
-    if (!r?.ok || body.ok === false) {
+    if (saved instanceof Error) {
       all().forEach((b) => {
         b.disabled = false;
         b.textContent = "Save";
       });
-      show(body.error || "Couldn't reach the server: try again.", true);
+      show(saved.message, true);
       return;
     }
     all().forEach((b) => b.remove());
-    const address = body.result?.saved?.address;
+    const address = saved?.saved?.address;
     const meta = document.querySelector<HTMLMetaElement>('meta[name="erga-address"]');
     if (typeof address == "string" && meta && !document.body.classList.contains("erga-editing")) {
       meta.content = address;

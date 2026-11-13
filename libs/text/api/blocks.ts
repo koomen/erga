@@ -13,8 +13,9 @@
 // | summary | at the end: a paragraph in the open details, or after the closed one | joins | nothing |
 
 import * as M from "../../../shared/manuscript";
+import { escapeAttr } from "../../../shared/html";
 import { ChangeSet } from "@codemirror/state";
-import { attrOf, emptyIn, escapeAttr, HEADING, placeholderBr, setAttr, unitsIn } from "./source";
+import { attrOf, emptyIn, HEADING, placeholderBr, setAttr, unitsIn } from "./source";
 import { elements, itemOf, type Change, type ListEdit } from "./lists";
 
 /** One indent step of Tab in a paragraph, a heading or a quote, as Google Docs steps (and as a list's own indent). */

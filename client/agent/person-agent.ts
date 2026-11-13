@@ -22,12 +22,13 @@ import { canSend, type SendPath } from "./send-gate";
 import type { Log, LogEvent } from "../../shared/agent-log";
 import type { CommentAsk } from "../../shared/attribution";
 import { backoff, live, transient } from "../live/client";
-import { socketStep, type PhaseEvent, type SocketPhase } from "../../shared/socket-phase";
+import { liveSocket } from "../live/socket";
 import { restoredFor } from "../live/restore";
 import { sleep } from "../../shared/time";
 import { ms } from "../../libs/text/ui/timescale";
 import { agentPrompt } from "../common/agent-prompt";
 import { showCopied } from "../common/copied";
+import { asUser } from "../common/tools";
 import { panelStep, savePanel, type PanelPhase } from "../common/agent-panel";
 import { mountTurn, type TurnFacts } from "./turn-summary";
 
@@ -41,9 +42,6 @@ interface AgentState {
 }
 
 const $ = (id: string) => document.getElementById(id)!;
-/** An address of the agent's API, as whoever this tab is (local development's ?user=, kept). */
-const USER = new URLSearchParams(location.search).get("user")?.trim();
-const asUser = (path: string) => (USER ? `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(USER)}` : path);
 /** A request to the agent's API, as whoever this tab is. */
 const call = (path: string, init?: RequestInit) => fetch(asUser(path), { ...init, credentials: "same-origin" });
 const store = {
@@ -443,29 +441,11 @@ async function load(tries = 0, fresh = false): Promise<void> {
 // WebSocket, not an EventSource: over HTTP/1.1 an EventSource holds one of the browser's six connections to the host
 // while the page is open, and with a few tabs open every later request waits. A socket that closes (the server
 // restarts) is made again, a little later each time.
-let socketPhase: SocketPhase = { at: "stopped" };
-let retry = 0;
-const socketNext = socketStep();
-/** An event of the socket's: its new phase, and what that asks for (shared/socket-phase.ts). */
-function go(e: PhaseEvent): void {
-  const next = socketNext(socketPhase, e);
-  socketPhase = next.phase;
-  if (socketPhase.at != "backoff") clearTimeout(retry);
-  for (const f of next.effects) {
-    if (f.do == "connect") connect();
-    else if (f.do == "retry") retry = window.setTimeout(() => go({ type: "timer" }), backoff(f.tries));
-    else if (f.do == "up" || f.do == "down") {
-      const state = f.do;
-      live((l) => l.connection("agent", state));
-      if (state == "up") load();
-    }
-  }
-}
-function connect() {
-  const ws = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${asUser("/api/agent/events")}`);
-  ws.onopen = () => go({ type: "opened" });
-  ws.onclose = () => go({ type: "closed" });
-  ws.onmessage = (e) => {
+const events = liveSocket({
+  name: "agent",
+  path: "/api/agent/events",
+  up: () => void load(),
+  message(e) {
     let m: { type?: string; ev?: LogEvent; ask?: CommentAsk } & Partial<AgentState>;
     try { m = JSON.parse(String(e.data)); } catch { return; }
     // The model switched, from another tab of the person's. (Heard, as the agent's events are: load() asks again, so
@@ -482,9 +462,9 @@ function connect() {
       // A tool call done: the document open may have changed (Undo's count).
       if (m.ev.t == "tool" && m.ev.status != "running") window.dispatchEvent(new Event("erga:agent-tool"));
     }
-  };
-}
-// The start. The socket's opening reads the conversation (`go`, "up"): what the agent did before the socket heard it.
+  },
+});
+// The start. The socket's opening reads the conversation (`up`): what the agent did before the socket heard it.
 // With the panel closed, that is the one read, and it waits until the page has loaded and the browser is idle, or
 // until the panel opens: the page never waits for a panel nobody looks at. With the panel open, the conversation is
 // read at once too; the socket still waits for the idle browser, so the editor's own sockets connect first (a browser
@@ -493,7 +473,7 @@ let begun = false;
 function begin() {
   if (begun) return;
   begun = true;
-  go({ type: "start" });
+  events.start();
 }
 if (document.body.classList.contains("agent-open")) void load();
 else
