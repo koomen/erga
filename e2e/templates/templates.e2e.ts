@@ -597,5 +597,6 @@ journey("a presentation opened outside Erga", () => {
     await rawKey(page, "ArrowRight");
     await expect.poll(async () => (await stepBar()).at).toBe(`2 / ${count}`);
     expect(await page.evaluate(() => [...document.querySelectorAll(".frame")].findIndex((f) => f.classList.contains("current")))).toBe(1);
+    expect(new URL(page.url()).hash).toBe("#2");
   });
 });

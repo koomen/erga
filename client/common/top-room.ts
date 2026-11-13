@@ -39,7 +39,13 @@ export function fillsWindow(d: Document): boolean {
   const w = d.defaultView!,
     root = d.documentElement,
     body = d.body;
-  if (root.scrollHeight > w.innerHeight + 1) return false;
+  // Erga's own layers on the page (the editor's caret, the others' carets, a drop's marks: position absolute, under
+  // <html>) are not the page's: one below the window's bottom would count as the page's overflow.
+  const layers = [...d.querySelectorAll<HTMLElement>("erga-caret, erga-peers, erga-drop-caret, erga-drop-image, erga-drop-note")];
+  for (const l of layers) l.style.display = "none";
+  const tall = root.scrollHeight > w.innerHeight + 1;
+  for (const l of layers) l.style.display = "";
+  if (tall) return false;
   const own = w.getComputedStyle(root).overflowY;
   // (The body's overflow is the window's when the root's is visible.)
   const y = own == "visible" && body ? w.getComputedStyle(body).overflowY : own;
