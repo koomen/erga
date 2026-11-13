@@ -56,7 +56,6 @@ export function pageLlmSection(u: PageLlmUsage, session: Session): string {
   return `
   <section class="llm-use" aria-labelledby="llm-use-head">
     <h3 class="sub-head" id="llm-use-head">Pages' models today</h3>
-    <p class="lede">Calls since midnight UTC. The cost is an estimate from each call's tokens.</p>
     ${meter}
     <dl class="use-totals">
       <div><dt>Calls</dt><dd>${count(u.calls)}</dd></div>

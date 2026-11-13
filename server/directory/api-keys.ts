@@ -76,7 +76,7 @@ export const DEPLOY_SECRETS = [
   {
     env: "SESSION_SECRET",
     service: "Erga",
-    description: "Signs sessions, agent tokens and admin tokens. If it changes, everyone is signed out.",
+    description: "Signs sessions and tokens. A change signs everyone out.",
     why: "It is the root key of every sign-in.",
   },
   {
@@ -88,14 +88,13 @@ export const DEPLOY_SECRETS = [
   {
     env: "GITHUB_CLIENT_SECRET",
     service: "GitHub",
-    description: "The secret of the GitHub OAuth app that signs people in. Authentication shows whether it works.",
+    description: "The secret of the GitHub OAuth app that signs people in.",
     why: "A wrong value stops every sign-in, the admin's too: the Authentication page checks values with GitHub before it uses them.",
   },
   {
     env: "GITHUB_ISSUES_TOKEN",
     service: "GitHub",
-    description:
-      "Opens an issue for each feedback people send, in the repository of the setting Feedback's repository. A fine-grained token with only Issues: read and write on that repository.",
+    description: "Opens an issue for each feedback message. It needs only Issues: read and write.",
     why: "It writes to a repository on GitHub.",
   },
   {

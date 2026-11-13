@@ -95,8 +95,8 @@ export interface AdminLayout {
   title: string;
   /** Which sidebar link is this page. */
   here?: AdminSection;
-  /** One short line under the page's heading: what the page is for. */
-  lede: string;
+  /** One short line under the page's heading: only what the page itself doesn't show. */
+  lede?: string;
   /** What goes in <main>, after the heading and the lede. */
   body: string;
 }
@@ -120,7 +120,7 @@ ${bars}
 <div class="admin-body">
 ${side}
 <main class="admin-main" id="admin-panes">
-<header class="page-head"><h2 id="page-head">${esc(o.title)}</h2><p class="lede">${esc(o.lede)}</p></header>
+<header class="page-head"><h2 id="page-head">${esc(o.title)}</h2>${o.lede ? `<p class="lede">${esc(o.lede)}</p>` : ""}</header>
 ${o.body}
 </main>
 </div>

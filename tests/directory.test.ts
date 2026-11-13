@@ -317,7 +317,7 @@ test("server config: what the deploy fixes is locked, with its deployed value", 
   expect(await config.entry("delete_docs_after_hours")).toEqual({
     key: "delete_docs_after_hours",
     label: SETTINGS.delete_docs_after_hours.label,
-    description: SETTINGS.delete_docs_after_hours.description,
+    values: SETTINGS.delete_docs_after_hours.values,
     default: 24,
     value: 72,
     source: "locked",
