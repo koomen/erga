@@ -43,7 +43,7 @@ export interface Answers {
   /** AWS: the machine's way out to the internet: a NAT machine, a NAT gateway, or "<vpc id>/<private subnet id>" of the person's own. */
   egress: string;
   /**
-   * The proxy mode on AWS: the proxy is a load balancer (not CloudFront) with the company's OIDC sign-in: its issuer's
+   * The proxy mode on AWS: the proxy is an Application Load Balancer (not CloudFront) with the company's OIDC sign-in: its issuer's
    * URL, and Erga's client ID there.
    */
   oidc: string;
@@ -54,32 +54,20 @@ export interface Answers {
    */
   accessTeam: string;
   accessAud: string;
-  /**
-   * The proxy mode: the claim that holds each person's email address, then (after a space) the text before the
-   * address in it, if any.
-   */
-  proxyEmail: string;
 }
-
-/** The proxyEmail answer's parts: the claim, and the text before the address in it. */
-export const emailClaim = (answer: string) => {
-  const [claim, prefix = ""] = answer.split(" ");
-  return { claim, prefix };
-};
 
 /** Whether a proxy in front signs people in (the proxy mode), on either host. */
 export const proxySignIn = (a: Pick<Answers, "signIn">) => a.signIn == "proxy";
 
 /**
  * The proxy mode's setting for the server (PROXY_SIGN_IN: server/identity/proxy.ts), from the answers; null in the
- * oauth mode. `signer`: on AWS, the load balancer's ARN (the stack's output). A proxy whose values aren't all known
+ * oauth mode. `signer`: on AWS, the proxy's ARN (the stack's output). A proxy whose values aren't all known
  * yet gives "{}", which the server reads as no proxy: then nobody signs in, and no other sign-in stands in.
  */
 export function proxySetting(a: Answers, signer?: string): string | null {
   if (!proxySignIn(a)) return null;
-  const email = emailClaim(a.proxyEmail);
-  if (a.provider == "aws") return signer ? JSON.stringify({ kind: "aws-alb", signer, issuer: a.oidc, client: a.oidcClient, email }) : "{}";
-  return JSON.stringify({ kind: "cloudflare-access", team: a.accessTeam, aud: a.accessAud, email });
+  if (a.provider == "aws") return signer ? JSON.stringify({ kind: "aws-alb", signer, issuer: a.oidc, client: a.oidcClient }) : "{}";
+  return JSON.stringify({ kind: "cloudflare-access", team: a.accessTeam, aud: a.accessAud });
 }
 
 export type PresetName = "website" | "company";
@@ -124,7 +112,7 @@ export const QUESTIONS: { key: keyof Answers; ask: string; help: string; aws?: t
   {
     key: "signIn",
     ask: "Sign-in mode",
-    help: "oauth (Erga signs people in itself, with GitHub and, if you choose, Google) or proxy (a proxy in front of the server signs each person in with your company's sign-in, and Erga takes that as its own: no GitHub, no Google). The proxy is a load balancer on AWS (oidc, oidcClient), and Cloudflare Access on Cloudflare (accessTeam, accessAud). Default: oauth.",
+    help: "oauth (Erga signs people in itself, with GitHub and, if you choose, Google) or proxy (a proxy in front of the server signs each person in with your company's sign-in, and Erga takes that as its own: no GitHub, no Google). The proxy is an Application Load Balancer on AWS (oidc, oidcClient), and Cloudflare Access on Cloudflare (accessTeam, accessAud). Default: oauth.",
   },
   { key: "providers", ask: "Sign-in providers (oauth)", help: "github, or github,google. The first admin signs in with GitHub." },
   { key: "preset", ask: "Server preset", help: `website (${PRESETS.website.summary}) or company (${PRESETS.company.summary})` },
@@ -164,7 +152,7 @@ export const QUESTIONS: { key: keyof Answers; ask: string; help: string; aws?: t
   {
     key: "oidc",
     ask: "Your company's sign-in (signIn=proxy on aws: its OIDC issuer's URL)",
-    help: "A public load balancer (not CloudFront) signs each person in with your company's sign-in before Erga. It needs a domain for the app (the sign-in's callback is https://<host>/oauth2/idpresponse), and the client's secret in Secrets Manager. Default: no.",
+    help: "A public Application Load Balancer (not CloudFront) signs each person in with your company's sign-in before Erga. It needs a domain for the app (the sign-in's callback is https://<host>/oauth2/idpresponse), and the client's secret in Secrets Manager. Default: no.",
     aws: true,
   },
   {
@@ -186,11 +174,6 @@ export const QUESTIONS: { key: keyof Answers; ask: string; help: string; aws?: t
       PROXY_FREE_PATHS.join(", ") +
       ".",
   },
-  {
-    key: "proxyEmail",
-    ask: "The claim with each person's email address (signIn=proxy)",
-    help: "Erga knows each person by the email address the sign-in gives. Default: email, the standard claim. A sign-in that gives it elsewhere: that claim's name, then the text before the address in it, e.g. \"username SSO_\" for SSO_you@example.com. If it is wrong, the sign-in's page names the claims it got.",
-  },
 ];
 
 export const defaultAnswers = (admin = ""): Answers => ({
@@ -211,7 +194,6 @@ export const defaultAnswers = (admin = ""): Answers => ({
   oidcClient: "",
   accessTeam: "",
   accessAud: "",
-  proxyEmail: "email",
 });
 
 const HOST = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -286,10 +268,6 @@ export function parseAnswer(key: keyof Answers, raw: string): { value: Answers[k
       return off || /^[0-9a-f]{32,128}$/i.test(v)
         ? { value: off ? "" : v.toLowerCase() }
         : { problem: `"${v}" isn't an Access application's audience (AUD) tag.` };
-    case "proxyEmail":
-      return off || /^[\w.:/~-]{1,128}( \S{1,64})?$/.test(v)
-        ? { value: off ? "email" : v }
-        : { problem: `"${v}" isn't a claim's name, or a claim's name, a space and the text before the address.` };
     case "company":
       return off
         ? { value: "" }
@@ -323,20 +301,19 @@ export function answersProblem(a: Answers, zones: string[]): string | null {
       ? "With signIn=proxy, the first admin is an email address: yours, as your company's sign-in gives it (admin=you@example.com)."
       : "The first admin is a GitHub login.";
   // Each host has its own proxy, with its own answers: the other host's, or the oauth mode's, say what to change.
-  const balancer = proxy && a.provider == "aws";
-  if (a.oidc && !balancer) return "oidc is for signIn=proxy on AWS (a load balancer signs people in): answer signIn=proxy, or oidc=no.";
+  const awsProxy = proxy && a.provider == "aws";
+  if (a.oidc && !awsProxy) return "oidc is for signIn=proxy on AWS: answer signIn=proxy, or oidc=no.";
   if (a.accessTeam && !(proxy && a.provider == "cloudflare"))
     return "accessTeam is for signIn=proxy on Cloudflare (Cloudflare Access signs people in): answer signIn=proxy, or accessTeam=no.";
   if (proxy && a.provider == "cloudflare" && !(a.accessTeam && a.accessAud))
     return "With signIn=proxy on Cloudflare, give the Zero Trust team's name and the Access application's audience tag (accessTeam=... accessAud=...).";
   if (a.provider == "aws") {
     if (a.staging) return "Staging on AWS isn't there yet: answer staging=no.";
-    if (balancer) {
+    if (awsProxy) {
       if (!a.oidc) return "With signIn=proxy on AWS, give your company's sign-in: its OIDC issuer's URL (oidc=https://...).";
       if (!a.oidcClient) return "Give Erga's client ID at the sign-in (oidcClient=...): its admin has it.";
-      if (isName(a.host)) return "A load balancer in front needs a domain for the app: the sign-in sends each person back to it.";
-      if (a.egress.includes("/"))
-        return "A load balancer in front needs the stack's own network: answer egress=nat-instance or nat-gateway.";
+      if (isName(a.host)) return "A proxy in front needs a domain for the app: the sign-in sends each person back to it.";
+      if (a.egress.includes("/")) return "A proxy in front needs the stack's own network: answer egress=nat-instance or nat-gateway.";
     }
     if (isName(a.host) != (a.pages == "shared"))
       return isName(a.host)
@@ -351,9 +328,9 @@ export function answersProblem(a: Answers, zones: string[]): string | null {
     if (!zoneOf(h))
       return `${h} isn't on one of the ${account} (${zones.join(", ") || "it has none"}). Add the domain first, or pick a name on one of these.`;
   if (a.staging && a.staging == a.host) return "Staging needs an address of its own.";
-  // A load balancer's certificate and rules are the stack's own, so the pages take any name on a zone, also one under
+  // A proxy's certificate and rules are the stack's own, so the pages take any name on a zone, also one under
   // the app's (the person's decision: under one registrable domain, a page's script can set a cookie for that domain).
-  if (a.pages != "shared" && balancer) {
+  if (a.pages != "shared" && awsProxy) {
     if (!zoneOf(a.pages)) return `${a.pages} isn't on one of the ${account} (${zones.join(", ") || "it has none"}).`;
     if (a.pages == a.host || a.host.endsWith(`.${a.pages}`))
       return "Documents' pages need a name of their own: not the app's, and not one above it.";
@@ -418,7 +395,7 @@ export function firstRows(a: Answers, now = Date.now()): FirstRow[] {
 /**
  * The proxy mode: what a browser that isn't signed in must be sent to by the proxy in front of `host`, for the check
  * after a deploy (facts.ts, proxySignInCheck). Each host's proxy has its own: Cloudflare Access sends to the team's
- * address; an AWS load balancer names Erga's client and its own callback.
+ * address; AWS's proxy names Erga's client and its own callback.
  */
 export const proxyExpects = (a: Answers, host: string): { to?: string; clientId?: string; callback?: string } =>
   a.provider == "aws"
@@ -447,7 +424,7 @@ export const callbackOf = (host: string, provider: "github" | "google") => `http
 
 /**
  * The bindings of a target that aren't secrets: its sign-in (the oauth mode's apps' ids, or the proxy mode's proxy),
- * the preset. No admin: the database holds them. `signer`: on AWS in the proxy mode, the load balancer's ARN.
+ * the preset. No admin: the database holds them. `signer`: on AWS in the proxy mode, the proxy's ARN.
  */
 export function varsOf(a: Answers, ids: { github?: string; google?: string }, signer?: string): Record<string, string> {
   const proxy = proxySetting(a, signer);
@@ -641,8 +618,8 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
   });
   if (!a || problem) return out;
   const proxy = proxySignIn(a);
-  const balancer = proxy && a.provider == "aws";
-  if (balancer)
+  const awsProxy = proxy && a.provider == "aws";
+  if (awsProxy)
     add({
       id: "secret",
       title: "The sign-in's client secret (Secrets Manager)",
@@ -740,7 +717,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
           : typeof tf?.signIn == "object" && tf.signIn
             ? tf.signIn.bad
             : "not checked",
-      next: balancer
+      next: awsProxy
         ? `Fix what the detail names (the client ID, or the callback https://${host}/oauth2/idpresponse at the sign-in), then: ${cmd} stack`
         : proxy
           ? `Fix what the detail names (the Access application for https://${host}, or the team's name), then: ${cmd}`
@@ -756,7 +733,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
       who: "person",
       ok: !!f.targets[t]?.registered,
       detail: f.targets[t]?.registered ? "registered in .erga/config.json, with an ops token" : "no ops token yet",
-      next: proxy
+      next: awsProxy
         ? `The agent runs ${cmd}: it prints a link. The person opens it, signs in with the company's sign-in as ${a.admin} (the first time, they choose a username: they are the admin), and approves.`
         : `The agent runs ${cmd}: it prints a link. The person opens it, signs in with GitHub as ${a.admin}, and approves.`,
     });
@@ -775,7 +752,7 @@ export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { gi
 }
 
 export const summary = (a: Answers) =>
-  `${a.provider == "aws" ? `on AWS (${a.awsProfile || "the default profile"}, ${a.awsRegion}, way out: ${a.egress}): ${isName(a.host) ? `${a.host}, at CloudFront's own address` : `https://${a.host}`}` : `https://${a.host}`}${a.staging ? `, staging https://${a.staging}` : ", no staging"}; sign-in ${proxySignIn(a) ? `proxy (${a.provider == "aws" ? `a load balancer, ${a.oidc}` : `Cloudflare Access, ${a.accessTeam}`}${a.proxyEmail == "email" ? "" : `, email in ${a.proxyEmail}`})` : `oauth (${a.providers.join(" + ")})`}; preset ${a.preset}${a.company ? ` (${a.company})` : ""}; admin ${a.admin}; pages ${a.pages == "shared" ? `on one shared ${a.provider == "aws" ? "CloudFront" : "workers.dev"} address` : `on *.${a.pages}`}; feedback ${a.feedback ? `to ${a.feedback}` : "kept on the server"}`;
+  `${a.provider == "aws" ? `on AWS (${a.awsProfile || "the default profile"}, ${a.awsRegion}, way out: ${a.egress}): ${isName(a.host) ? `${a.host}, at CloudFront's own address` : `https://${a.host}`}` : `https://${a.host}`}${a.staging ? `, staging https://${a.staging}` : ", no staging"}; sign-in ${proxySignIn(a) ? `proxy (${a.provider == "aws" ? `an Application Load Balancer, ${a.oidc}` : `Cloudflare Access, ${a.accessTeam}`})` : `oauth (${a.providers.join(" + ")})`}; preset ${a.preset}${a.company ? ` (${a.company})` : ""}; admin ${a.admin}; pages ${a.pages == "shared" ? `on one shared ${a.provider == "aws" ? "CloudFront" : "workers.dev"} address` : `on *.${a.pages}`}; feedback ${a.feedback ? `to ${a.feedback}` : "kept on the server"}`;
 
 /** The step to do now: the first that isn't done (null: all done). */
 export const nextStep = (s: Step[]) => s.find((x) => x.state != "done") ?? null;

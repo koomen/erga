@@ -47,7 +47,7 @@ export interface Vouched {
   provider: SignInProvider;
   /** The provider's stable id for them (GitHub's account id, as text; Google's sub; the proxy's sign-in's sub). */
   subject: string;
-  /** What the provider calls them (a GitHub login; a Google email; the email the proxy's sign-in gives). */
+  /** What the provider calls them (a GitHub login; a Google email; the email the proxy's sign-in gives, "" when it gives none). */
   handle: string;
   /** Their display name, if the provider gives one. */
   name: string | null;
@@ -231,11 +231,23 @@ export class Identities {
     return Number(row?.n ?? 0) > 0;
   }
 
-  /** A username to offer first: the provider's name for them, made valid, with a number when it's taken. */
-  async suggest(v: Vouched): Promise<string> {
-    const from = v.handle.split("@")[0];
-    let base = from.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32).replace(/-+$/, "");
-    if (!base || base.startsWith("test-")) base = "me";
+  /**
+   * A username to offer first: the provider's name for them (an address's part before the @), made valid, with a number
+   * when it's taken; without one, their display name ("Ada Lovelace": ada-lovelace). Never the provider's id for them.
+   * "": nothing to offer, or nothing free.
+   */
+  async suggest(v: Pick<Vouched, "handle" | "name">): Promise<string> {
+    const valid = (from: string) =>
+      from
+        .normalize("NFKD")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 32)
+        .replace(/-+$/, "");
+    const base = valid(v.handle.split("@")[0]) || valid(v.name ?? "");
+    if (!base || base.startsWith("test-")) return "";
     for (let i = 1; i < 50; i++) {
       const name = i == 1 ? base : `${base}${i}`;
       if (!(await this.usernameProblem(name))) return name;

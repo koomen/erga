@@ -86,15 +86,11 @@ export interface Platform {
   /** The templates' text files, by template then path ("doc" → { "index.html": "..." }): assets/templates/doc is a blank document. */
   templates: Record<string, Record<string, string>>;
   /**
-   * The repo's landing project (assets/landing/, built into the Worker), which the
-   * server makes the homepage by itself when landing_document is unset or
-   * names a document that's gone (seedLanding): its files by path (read only then: they are large), whose
-   * document becomes the homepage project (nobody's), and `owner` (locally
-   * DEV_LOGIN; null: the server's first admin) claims the setting, and
-   * gets the homepage project from before when it's made again. No owner
-   * (no admin yet): / is a plain start page.
+   * The repo's landing project (assets/landing/, built into the Worker), which the deploy makes the homepage project
+   * from when the server has none (server/documents/landing.ts, makeHome): its files by path (read only then: they are
+   * large).
    */
-  landing?: { files: () => Promise<Record<string, string | Uint8Array>>; owner: string | null };
+  landing?: { files: () => Promise<Record<string, string | Uint8Array>> };
   /** The app's own static files (the editor's page and scripts, their builds, the release): the answer for this request. */
   assets(request: Request): Promise<Response>;
   /**

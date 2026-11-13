@@ -8,6 +8,7 @@
 // changes the whole server.
 import { framed, pagesFetch } from "../helpers/pages-fetch";
 import { expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
+import { deployHome } from "../helpers/server";
 import { runTool } from "../helpers/tools";
 import { agentClosed, editorUp, getter, joinRoom, newDoc, share, signedOut, signIn, soon, unique } from "./access";
 import { clickOn } from "../helpers/press";
@@ -368,9 +369,8 @@ journey("the admin's switch: users can share content publicly", () => {
 
   // (Cut list, brought back.) The homepage project has no owner: only an owner shares.
   test("an admin in the homepage project's editor sees Share off, from the first frame on", async () => {
-    // A fresh homepage project: the first / after the reset makes it.
-    await runTool(root, "set_setting", { key: "landing_document", reset: true });
-    expect((await stranger("/")).status).toBe(200);
+    // The homepage project, as a deploy makes it.
+    await deployHome(own);
     await page.setViewportSize({ width: 1200, height: 800 });
     await agentClosed(page);
     await watchShare(page);

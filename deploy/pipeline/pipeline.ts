@@ -23,9 +23,8 @@
 // bindings, secrets and Durable Objects, give it its address (workers.dev,
 // or a custom domain), give documents' pages theirs, wait for it to answer,
 // copy the source's documents into it, and delete the old copies of the
-// database (a snapshot's: only once the new version answers). A new server makes its own front
-// page from the landing project built into it, the first time someone opens
-// it, owned by its first admin.
+// database (a snapshot's: only once the new version answers). Once the server answers, the deploy asks it
+// for the homepage project (askHomepage): a server with none makes it from the landing project built into it.
 
 import * as Effect from "effect/Effect";
 import { copyDocuments } from "./copy-documents";
@@ -36,6 +35,7 @@ import {
   PAGES_PROXY,
   WORKER_TAG,
   answeredVersion,
+  askHomepage,
   d1,
   ensureBuckets,
   exportD1,
@@ -547,12 +547,15 @@ export async function runPipeline(
     },
 
     // Up: a new workers.dev address or certificate can take a minute or two. With checkVersion, until this release is the
-    // one answering, and then its health check says it works (GET /api/health: the database, a document).
+    // one answering, and then its health check says it works (GET /api/health: the database, a document). Then the
+    // homepage project, if the server has none.
     live: () =>
       runWith(
         opts.sleep,
         Effect.gen(function* () {
           const want = carry.version;
+          // A target that copies its primary's data (staging: for admins only) has its primary's homepage: not asked.
+          const homepage = target.snapshot ? Effect.succeed("") : Effect.map(askHomepage(site, host), (said) => `; ${said}`);
           if (!(target.checkVersion && want)) {
             // Up when its logo answers.
             const answers = Effect.promise(() =>
@@ -565,7 +568,7 @@ export async function runPipeline(
               return yield* new DeployError({
                 message: `The Worker is deployed, but https://${host} hasn't answered yet (a new address can take a few minutes). Open it in a little while; if it still doesn't answer, deploy again.`,
               });
-            return `https://${host}`;
+            return `https://${host}${yield* homepage}`;
           }
           // Until this release is the one answering, and then its health check says it works.
           let seen = "";
@@ -586,7 +589,7 @@ export async function runPipeline(
             return yield* Effect.fail(
               new Unhealthy(`Release ${want} is up at https://${host}, but its health check fails: ${h.why}`, h.why)
             );
-          return `https://${host}, release ${want}, healthy (${h.summary})`;
+          return `https://${host}, release ${want}, healthy (${h.summary})${yield* homepage}`;
         })
       ),
 

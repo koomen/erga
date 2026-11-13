@@ -3,10 +3,11 @@
 // The app is an Effect (server/http.ts): cloudflare/index.ts turns it into the
 // Worker's fetch handler, and the unit tests may run it on a Platform in memory.
 //
-//   /                          the homepage: the homepage served from its last deploy, else the viewer on the
-//                              landing document (a setting), with an Edit button for those who may. Someone signed
-//                              in goes to /docs instead (homeGoesToDocs); /_home is the homepage project for them.
-//                              When the homepage has a domain of its own (deploy.home), a small page with Sign in
+//   /                          the homepage, if this domain has one: served from its last deploy, else the viewer on
+//                              the landing document (a setting), with an Edit button for those who may. None (none
+//                              set, it is gone, or it has a domain of its own: deploy.home): the page in the server's
+//                              code, with Sign in (pages/home.ts). Someone signed in goes to /docs instead
+//                              (homeGoesToDocs); /_home is the homepage project for them.
 //   <the homepage's domain>/*  the homepage's site alone, from its last deploy, as its files are (server/home/site.ts)
 //   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the homepage's
 //   /scratch                   a scratch document for you: off your list, deleted delete_docs_after_hours after it's
@@ -22,6 +23,7 @@
 //   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
 //   /auth/home-pass            the homepage's own domain's sign-in, through here (server/identity/home-pass.ts)
+//   /api/deploys/home          the deploy makes the homepage project, when the server has none (documents/landing.ts)
 //   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent; /llms.txt points agents to /mcp
 //   /.well-known/oauth-..., /oauth/...
 //                              MCP's sign-in: an agent's app gets a token through its person's browser (server/identity/mcp-oauth.ts)
@@ -58,7 +60,7 @@ import { adminGate, isAdminPath } from "./admin/index.ts";
 import { agentApi, isAgentPath } from "../agents/person/sessions.ts";
 import { HOME_LLM_PATH, homeDomainLlmApi, isPageLlmPath, pageLlmApi } from "../agents/page-llm.ts";
 import { serverApi } from "./api.ts";
-import { adoptLanding, documentRoutes, ergaAddress, isPagesSite, workerHere } from "./documents/index.ts";
+import { adoptLanding, documentRoutes, ergaAddress, isPagesSite, makeHomeRoute, workerHere } from "./documents/index.ts";
 import { serveHome, serveHomeDomain, serveHomeFile, serveHomeSite } from "./home/index.ts";
 import {
   adminsOnlyGate,
@@ -80,8 +82,8 @@ import { releaseApi, withLive } from "./live.ts";
 import { newsRoutes } from "./news/index.ts";
 import {
   accountOf,
-  frontPage,
   homeGoesToDocs,
+  homePage,
   isAssetPath,
   libraryOf,
   serveLibrary,
@@ -98,7 +100,7 @@ import { whoOf } from "./platform.ts";
 import { withSecurity } from "./security.ts";
 import { HttpServerResponse } from "effect/http";
 import { call, fromWeb, platform, redirect, text, toWeb, webRequest, type Needs, type Route } from "./http.ts";
-import { DEV, routeAt, routeFor, SIGN_IN, type RouteRow } from "../shared/routes.ts";
+import { DEV, PIPELINE, routeAt, routeFor, SIGN_IN, type RouteRow } from "../shared/routes.ts";
 
 /** The routes that live outside the app (on Cloudflare, or in the dev server): the answer, or null for a path that isn't theirs. */
 export type Outside = (url: URL) => Effect.Effect<HttpServerResponse.HttpServerResponse | null, never, Needs>;
@@ -149,7 +151,7 @@ export const app = (outside: Outside): Route =>
 
 const SIGN = { domain: "none", exempt: SIGN_IN } as const;
 
-/** The routes this file answers itself: signing in, and the release an open page follows. */
+/** The routes this file answers itself: signing in, the deploy's homepage, and the release an open page follows. */
 export const ROUTES: readonly RouteRow<Route>[] = [
   { method: "GET", path: "/auth/sign-in", run: chooseSignIn, action: "Choose a way to sign in that is on here", ...SIGN },
   // The OAuth mode (server/identity/oauth.ts): one flow, a start and a callback for each provider.
@@ -187,6 +189,15 @@ export const ROUTES: readonly RouteRow<Route>[] = [
     exempt: DEV,
   },
   { method: "GET", path: "/auth/home-pass", run: homePass, action: "Sign in on the homepage's own domain, through this one", ...SIGN },
+  // Each deploy asks, once its release answers: {home: "made" | "there" | "none"}. Asked again, it does nothing.
+  {
+    method: "POST",
+    path: "/api/deploys/home",
+    run: makeHomeRoute,
+    action: "The deploy makes the homepage project from the release's files, when the server has none",
+    domain: "none",
+    exempt: PIPELINE,
+  },
   // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
   {
     method: "GET",
@@ -242,13 +253,14 @@ const route = (url: URL, outside: Outside): Route =>
     const read = request.method == "GET" || request.method == "HEAD";
     // MCP's sign-in: the metadata, an app's registration, the person's approval, the token.
     if (isOAuthPath(path)) return yield* oauthRoutes;
-    // The homepage, served directly from its last deploy; the viewer on it until there's one.
+    // The homepage, served directly from its last deploy; the viewer on it until there's one; with no homepage, the
+    // page in the server's code (documents/view.ts, landingView).
     if (path == "/" && read) {
       // Someone signed in goes to their documents; the homepage project is at /_home for them.
       yield* call(() => adoptLanding(p));
       if (homeGoesToDocs(yield* call(() => p.sessionOf(request)))) return redirect(`/docs${url.search}`);
-      // The homepage on a domain of its own: here, a small page with the way in, and no link to the site.
-      if (p.deploy.home) return frontPage();
+      // The homepage on a domain of its own: this domain has none.
+      if (p.deploy.home) return homePage();
       const home = yield* serveHome;
       if (home) return home;
     }

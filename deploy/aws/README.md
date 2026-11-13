@@ -30,7 +30,7 @@ name or domain: each instance takes its names from its name in setup, and the AW
 | Blobs (FILES) | R2 | celld's R2: the instance's bucket, under `fleet/r2/` |
 | The editor's files (ASSETS) | Static assets | celld's static assets: the bucket, cached on the disk |
 | A page's own API (LOADER) | Worker Loader | celld's Dynamic Workers |
-| HTTPS | Cloudflare's edge | CloudFront: an ACM certificate for a domain, or CloudFront's own name. Or a load balancer with the company's sign-in (below) |
+| HTTPS | Cloudflare's edge | CloudFront: an ACM certificate for a domain, or CloudFront's own name. Or a proxy with the company's sign-in (below) |
 | Each document's pages origin | A Worker route and a wildcard DNS record | With domains: a second CloudFront with a wildcard certificate, `*.<pages domain>`. Without: one shared CloudFront name |
 | view_page's browser (BROWSER) | Browser Rendering | headless Chrome on the same machine (`ERGA_CHROME`), on the loopback only |
 | The Cache API | Cloudflare's cache | celld's KV, namespace EDGE_CACHE (`cloudflare/kv-cache.ts`): celld's own Cache API always misses |
@@ -55,23 +55,23 @@ setup's status shows a template that changed since it was applied.
   path and the query.
 - **Domains.** Each must have a Route 53 hosted zone in the account, and the pages' domain must not be under the
   app's. The certificates are in a second stack in us-east-1, where CloudFront needs them; DNS validates them.
-- **Or a load balancer, with the company's sign-in**: the proxy mode (`signIn=proxy oidc=<issuer's URL>
+- **Or a proxy, with the company's sign-in**: the proxy mode (`signIn=proxy oidc=<issuer's URL>
   oidcClient=<client ID>`; `server/identity/mode.ts` has the two modes). A public Application Load Balancer takes
   CloudFront's place. It sends each browser to the company's OIDC sign-in first, and that sign-in is Erga's own: no
-  GitHub, no Google (`server/identity/proxy.ts` reads the balancer's signed header; the setup writes which balancer
+  GitHub, no Google (`server/identity/proxy.ts` reads the proxy's signed header; the setup writes which proxy
   and which client as `PROXY_SIGN_IN`). The first admin is an email address: a person added before their first
   sign-in, as an admin adds one on the Users page. With the company preset, everybody who passes the sign-in may make
   an account.
-  - Erga knows each person by the email address the sign-in gives: the `email` claim, or the one `proxyEmail` names
-    (`proxyEmail="username SSO_"` for a sign-in that gives `SSO_you@example.com` as `username`). A sign-in that gives
-    none there makes no account, and its page names the claims that came.
+  - Erga takes each person's email address from the sign-in: the first of the claims `email`, `upn` and
+    `preferred_username` that looks like one. A sign-in that gives none still signs in, by its ID (`sub`); the first
+    admin needs the address in `email` (verified) or `upn`.
   - The setup reads the sign-in's endpoints from its issuer. The client's secret is never in a file: the person who
     has it stores it in Secrets Manager as `erga/<stack>/oidc-client-secret` (plain text), and the stack reads it there.
   - Without the sign-in pass only: a document's own address (its files by their token; a frame can't sign in); on the
     app's address, what Erga's tokens guard (MCP and its OAuth, the operations, the CLI's token request, the deploy's
     checks: `shared/proxy-paths.ts`), a page's keyed requests to its room, and the server's own browser, by the NAT's fixed
     address. A person approves an agent on a page behind the sign-in.
-  - The balancer refuses a request that brings its own `X-Forwarded-Host`, which celld would take for the host.
+  - The proxy refuses a request that brings its own `X-Forwarded-Host`, which celld would take for the host.
   - One certificate, in the stack and its region, for the app's name and the pages' wildcard. The pages' name may be
     under the app's (`pages.erga.example.com`): the person decides, since under one registrable domain a page's script
     can set a cookie for that domain.
@@ -107,7 +107,7 @@ authority, and no Caddy.
 | KV writes of the edge cache (S3 requests) | under $3 |
 | Route 53 hosted zones, with domains | $0.50 each |
 
-Total: about $23 each month. With a load balancer in place of CloudFront: its hours ($16.43), its use (a few
+Total: about $23 each month. With a proxy in place of CloudFront: its hours ($16.43), its use (a few
 dollars), its two public addresses ($7.30) and the secret ($0.40) more: about $52 to $56.
 
 ## What the first run showed (EC2, 2026-11-06)
@@ -135,6 +135,6 @@ That run used an earlier deploy script, Caddy and temporary names, with the same
 - A deploy reaches the machine about 10 s after `celld deploy`. An editor that opens in those seconds can fail to
   load; a reload fixes it.
 - An admin of the account can still change the key's policy or the bucket's.
-- With a load balancer: no edge cache and no compression but celld's own; the balancer's sign-in lasts 7 days, and an
+- With a proxy: no edge cache and no compression but celld's own; the proxy's sign-in lasts 7 days, and an
   editor that is open when it ends gets errors until a reload; Erga's sign-out doesn't end the company's sign-in;
-  `check.ts`'s browser can't pass the sign-in. The load balancer was not deployed for real yet.
+  `check.ts`'s browser can't pass the sign-in. The proxy was not deployed for real yet.

@@ -166,7 +166,10 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
       expect(new URL(page.url()).pathname).toBe("/tokens/approve");
       expect(await page.locator("#agent, .agent-fab").count()).toBe(0);
       const card = await page.evaluate(() => document.querySelector(".approve")?.textContent ?? "");
-      for (const part of ["Claude Code (erga)", "all your documents, and admin power", "the app, on this computer"])
+      for (const part of [
+        "Claude Code (erga) wants a token for reading and editing your documents, and admin power.",
+        "the app, on this computer",
+      ])
         expect(card).toContain(part);
       // Documents only is the default: one click on Approve never gives admin power. The card says when each choice ends.
       expect(await page.getByLabel(/Documents only/).isChecked()).toBe(true);
@@ -210,7 +213,7 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
       cookie = await signIn(root, login);
       const theirs = (await fetch(authorize, { redirect: "manual", headers: { Cookie: cookie } })).headers.get("location")!;
       const plain = await (await fetch(new URL(theirs, root), { headers: { Cookie: cookie } })).text();
-      expect(plain).toContain("all your documents: everything you can do with documents, but no admin power");
+      expect(plain).toContain("wants a token for reading and editing your documents.</h2>");
       expect(plain).not.toContain("Documents only");
     } finally {
       app.close();

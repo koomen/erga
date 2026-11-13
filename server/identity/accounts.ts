@@ -10,10 +10,14 @@
 //      account with no identity at all (one from before identities) claims
 //      it, once: the accounts from before keep that login as their username.
 //      An account that has an identity is never claimed by a login: a login
-//      that changed hands is refused, and the page says so.
-//   3. Anyone else who may join makes a new account: they choose a username
-//      first (/auth/username). Until they do, who they are waits in a signed
-//      cookie for half an hour, and nothing is written.
+//      that changed hands is taken, and its person gets another username.
+//   3. Anyone else who may join makes a new account. Where this sign-in is the
+//      server's one way in and its names are one person's each, Erga names the
+//      account itself, at once (namesItself). Else they choose a username first
+//      (/auth/username): until they do, who they are waits in a signed cookie
+//      for half an hour, and nothing is written.
+//   4. Anyone who may not join sees one page (refusedPage), which says nothing
+//      of who may: the server's access rules are private.
 //
 // The emails a provider verified are kept to match a person an admin added
 // by an email (server/directory/people.ts), never to find an account.
@@ -27,12 +31,13 @@ import type { Platform, Session } from "../platform.ts";
 import { inlineScript, inlineStyle, page, safeNext } from "../pages/index.ts";
 import { call, ctx, Field, form, json, plainJson, redirect, text, type Route } from "../http.ts";
 import { esc } from "../../shared/html.ts";
-import { type Directory, groupOf, KIND_PEOPLE, label, NotAllowed, type RuleKind, type Vouched } from "../directory/index.ts";
+import { type Directory, groupOf, label, NotAllowed, type RuleKind, type Vouched } from "../directory/index.ts";
 import { safeAvatar } from "../../shared/avatars.ts";
-import { SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
+import { SIGN_IN_PROVIDERS, signedInWith } from "../../shared/sign-in.ts";
 import { cookies, withCookie } from "./cookies.ts";
 import { noteOf, readOnce, seeOther } from "./flash.ts";
 import { signed } from "../signed.ts";
+import { signInChoices } from "./settings.ts";
 import { clearState, signIn } from "./sign-in.ts";
 import type { TestEnd } from "./app-test.ts";
 
@@ -43,7 +48,7 @@ const JOIN_SECONDS = 30 * 60;
 export type Outcome =
   | { kind: "in"; login: string; claimed?: boolean }
   | { kind: "new"; suggestion: string; taken?: string }
-  | { kind: "refused"; login?: string; taken?: string };
+  | { kind: "refused"; login?: string };
 
 /**
  * Whether someone a provider vouched for may make a new account here: an admin added them (Users), or a group rule
@@ -88,7 +93,7 @@ export async function resolve(dir: Directory, v: Vouched, o: { join: boolean; cr
     }
     if (row) taken = row.login;
   }
-  if (!o.join) return taken ? { kind: "refused", taken } : { kind: "refused" };
+  if (!o.join) return { kind: "refused" };
   return taken ? { kind: "new", suggestion: await identities.suggest(v), taken } : { kind: "new", suggestion: await identities.suggest(v) };
 }
 
@@ -113,11 +118,16 @@ export const vouchedSignIn = Effect.fnUntraced(function* (
   const outcome = yield* call(() => resolve(platform.directory, v, { join, create: dev, onlyAdmins: o.onlyAdmins }));
   if (outcome.kind == "refused") {
     yield* tested({ kind: "refused", who: outcome.login ?? v.handle });
-    return outcome.taken ? takenPage(v, outcome.taken) : yield* refusedPage(platform, v, outcome.login);
+    return refusedPage(v);
   }
   if (outcome.kind == "new") {
     yield* tested({ kind: "new", handle: v.handle });
-    return yield* toUsernameStep(platform, request, v, next, outcome.taken);
+    // One way in: Erga names the account, and they go on at once. A name it can't have: they choose one.
+    const named =
+      outcome.suggestion && (yield* call(() => namesItself(platform, v))) ? yield* makeAccount(platform, outcome.suggestion, v) : null;
+    if (typeof named != "string") return yield* toUsernameStep(platform, request, v, next, outcome.taken);
+    if (after) yield* call(() => after(named));
+    return yield* signIn(platform, request, sessionFor(named, v), safeNext(next));
   }
   const admin = yield* call(() => platform.directory.users.isAdmin(outcome.login));
   yield* tested({ kind: "in", login: outcome.login, admin });
@@ -134,35 +144,61 @@ export const vouchedSignIn = Effect.fnUntraced(function* (
 
 const sessionFor = (login: string, v: Vouched): Session => ({ login, name: v.name?.trim().split(/\s+/)[0] || login });
 
-/** A login whose Erga account is someone else's (another account of the provider, or another provider). */
-const takenNote = (v: Vouched, login: string) =>
-  `The Erga account <b>${esc(login)}</b> is someone else's: it doesn't sign in with this ${esc(label(v.provider))} account. A ${esc(label(v.provider))} login that changes hands never brings its Erga account with it.`;
-
-function takenPage(v: Vouched, login: string) {
-  return page(
-    "Not your account",
-    `${takenNote(v, login)} You signed in with ${esc(label(v.provider))} as <b>${esc(v.handle)}</b>, and this server is invite-only: ask an admin to add you under another username.`,
-    403
+/**
+ * Whether Erga names a new account itself, with no username step: this sign-in is the server's one way in, and what it
+ * calls people is one person's each. A provider's logins are. Its email addresses are only when one group rule lets
+ * people in, of this provider's kind (one Google Workspace), and this person is in that group: the part before the @
+ * is then one person's. The server's only sign-in (the proxy) names nobody: its people choose.
+ */
+async function namesItself(platform: Pick<Platform, "own" | "signIn" | "directory">, v: Vouched): Promise<boolean> {
+  const info = SIGN_IN_PROVIDERS[v.provider];
+  const ways = await signInChoices(platform);
+  if (!info || info.only || ways.length != 1 || ways[0].id != v.provider) return false;
+  if (info.handle == "login") return true;
+  const open = (await platform.directory.rules.all()).filter((r) => r.access != "none");
+  const [rule] = open;
+  return (
+    open.length == 1 && rule.kind != "everybody" && rule.kind == info.groups?.kind && !!v.groups?.includes(groupOf(rule.kind, rule.value))
   );
 }
 
-/** Who the access rules let in, and why this person isn't one of them: in place, so they know what to ask for. */
-const refusedPage = Effect.fnUntraced(function* (platform: Platform, v: Vouched, login?: string) {
-  const who = login ?? v.handle;
-  const rules = yield* call(() => platform.directory.rules.all().catch(() => []));
-  type Kind = Exclude<RuleKind, "everybody">;
-  const kinds = [...new Set(rules.flatMap((r) => (r.kind != "everybody" && r.access != "none" ? [r.kind] : [])))] as Kind[];
-  const valuesOf = (kind: Kind) => rules.filter((r) => r.kind == kind && r.access != "none").map((r) => `<b>${esc(r.value)}</b>`);
-  const ways = ["the people an admin added", ...kinds.map((kind) => KIND_PEOPLE[kind](valuesOf(kind)))];
-  let why = `<b>${esc(who)}</b> (${esc(label(v.provider))}) isn't one of them.`;
-  // What the provider said of their groups, where a rule reads that kind of group.
-  const groups = SIGN_IN_PROVIDERS[v.provider]?.groups;
-  if (groups && kinds.some((kind) => kind == groups.kind)) {
-    const prefix = groupOf(groups.kind as Kind, "");
-    why += ` ${groups.said((v.groups ?? []).filter((g) => g.startsWith(prefix)).map((g) => esc(g.slice(prefix.length))))}`;
-  }
-  return page("Not on this server", `This server lets in ${ways.join(", ")}. ${why} An admin can add you on the Users page.`, 403);
-});
+/**
+ * A new account under `username` for whoever `v` is: its login, or why not (the name has a problem). The role an admin
+ * added them with (their wait ends), or none (a group's rule let them in), or local development's (everyone may
+ * there): write.
+ */
+const makeAccount = (platform: Platform, username: string, v: Vouched) =>
+  Effect.tryPromise({
+    try: async () => {
+      const dir = platform.directory;
+      const { may, person } = await dir.joining(v);
+      return dir.identities.createAccount(username, v, person ? { role: person.role, waited: person.id } : may ? {} : { role: "write" });
+    },
+    catch: (e) => e,
+  }).pipe(
+    Effect.catchIf(
+      (e): e is NotAllowed => e instanceof NotAllowed,
+      (e) => Effect.succeed(e)
+    ),
+    Effect.orDie
+  );
+
+/**
+ * Someone who may not make an account here: how they signed in, and what to do. It never says who may join (no rule,
+ * no domain): the server's access rules are private. The server's only sign-in that gave no address: its ID, for the
+ * admin.
+ */
+function refusedPage(v: Vouched) {
+  const title = "You need permission to join";
+  if (!v.handle)
+    return page(title, `Ask an admin of this Erga server to add you, and give them your sign-in ID: <b>${esc(v.subject)}</b>.`, 403);
+  const another = SIGN_IN_PROVIDERS[v.provider]?.only ? "" : ' Or <a href="/auth/sign-in">sign in with another account</a>.';
+  return page(
+    title,
+    `You signed in with ${signedInWith(v.provider, v.handle)}. Ask an admin of this Erga server to add you, then sign in again.${another}`,
+    403
+  );
+}
 
 // ------------------------------------------------------------ the username step
 
@@ -212,7 +248,7 @@ export const usernameStep: Route = Effect.gen(function* () {
   const { v } = pending;
   if (request.method == "GET") {
     // Who may join is asked again: a rule could have changed while they chose.
-    if (!(yield* call(() => mayJoin(platform, url, v)))) return yield* refusedPage(platform, v);
+    if (!(yield* call(() => mayJoin(platform, url, v)))) return refusedPage(v);
     // A POST that didn't make the account came back here (flash.ts): its name, and why not.
     const note = yield* call(() => noteOf(platform, request));
     const shown = note?.error
@@ -226,35 +262,29 @@ export const usernameStep: Route = Effect.gen(function* () {
   const wanted = username.trim().toLowerCase();
   // Never a page in answer to the form (flash.ts): the GET above shows the refusal, or the error.
   if (!(yield* call(() => mayJoin(platform, url, v)))) return redirect("/auth/username", 303);
-  // The role an admin added them with (their wait ends), or none (a group's rule let them in), or local
-  // development's (everyone may there): write.
-  const dir = platform.directory;
-  const login = yield* Effect.tryPromise({
-    try: async () => {
-      const { may, person } = await dir.joining(v);
-      return dir.identities.createAccount(wanted, v, person ? { role: person.role, waited: person.id } : may ? {} : { role: "write" });
-    },
-    catch: (e) => e,
-  }).pipe(
-    Effect.catchIf(
-      (e): e is NotAllowed => e instanceof NotAllowed,
-      (e) => Effect.succeed(e)
-    ),
-    Effect.orDie
-  );
+  const login = yield* makeAccount(platform, wanted, v);
   if (login instanceof NotAllowed) return yield* seeOther(platform, request, "/auth/username", { error: login.message, value: wanted });
   return withJoin(yield* signIn(platform, request, sessionFor(login, v), pending.next), request, "", 0);
 });
 
 const UsernameForm = Schema.Struct({ username: Field });
 
+/**
+ * The username page. Under the field, in the field's error style: why the form came back (`error`), else that the
+ * login they came with is another account's (`taken`), else what a username is.
+ */
 function usernamePage(v: Vouched, value: string, error: string | null, taken?: string) {
-  const body = `${taken ? `${takenNote(v, taken)}</p><p>` : ""}Welcome. You signed in with ${esc(label(v.provider))} as <b>${esc(v.handle)}</b>. Choose a username for your Erga account: it is in the address of each of your documents (/<i>username</i>/…).</p>
+  const hint = error
+    ? esc(error)
+    : taken
+      ? `The Erga account <b>${esc(taken)}</b> is already taken.`
+      : "Lowercase letters, digits and dashes.";
+  const body = `Welcome. You signed in with ${signedInWith(v.provider, v.handle)}. Choose a username for your Erga account: it is in the address of each of your documents (/<i>username</i>/…).</p>
 <form method="post" action="/auth/username" class="username" novalidate>
   <label for="username">Username</label>
   <p class="row"><input class="input" id="username" name="username" value="${esc(value)}" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" maxlength="39" required autofocus>
   <button class="new" type="submit">Make my account</button></p>
-  <p class="hint${error ? " error" : ""}" role="status" id="username-hint">${error ? esc(error) : "Lowercase letters, digits and dashes."}</p>
+  <p class="hint${error || taken ? " error" : ""}" role="status" id="username-hint">${hint}</p>
 </form>
 <style>${inlineStyle("username")}</style>
 ${inlineScript("username")}<p>`;
@@ -271,8 +301,9 @@ export const devSignIn: Route = Effect.gen(function* () {
   const provider = q.get("provider") ?? "";
   const info = SIGN_IN_PROVIDERS[provider];
   const subject = q.get("subject")?.trim();
+  // (handle= with nothing: a sign-in that names nobody, as the proxy's with no email address.)
   const handle = q.get("handle")?.trim();
-  if (!info || !subject || !handle) return page("Not enough", "Give the pretend identity's provider=, subject= and handle=.", 400);
+  if (!info || !subject || handle == null) return page("Not enough", "Give the pretend identity's provider=, subject= and handle=.", 400);
   const emails = q.getAll("email").filter(Boolean).map((email) => ({ email: email.toLowerCase(), verified: q.get("verified") != "0" }));
   // As the provider's own sign-in gives them (providers.ts): its groups (group=), its picture, the login an old account has.
   const kind = info.groups?.kind as Exclude<RuleKind, "everybody"> | undefined;

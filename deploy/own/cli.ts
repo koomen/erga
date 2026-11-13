@@ -429,8 +429,8 @@ async function home(folder: string | undefined, t: TargetName) {
   walk(folder!);
   if (!files["index.html"]) fail(`${folder} has no index.html.`, "The homepage starts at index.html.");
   const host = hostOf(answersOf(loadOwn()), t);
-  await (await connect()).net(`https://${host}/`, { redirect: "manual" }); // The server makes the homepage project at its first visit.
-  // It makes it in the background: until it's there, the write says there's no such document.
+  // The deploy made the homepage project; a server from before that step makes it now (POST /api/deploys/home).
+  await (await connect()).net(`https://${host}/api/deploys/home`, { method: "POST" });
   await tool(t, "edit", { op: "write", document: "/_home", files, replace: true }, /no document|not found|isn't there/i);
   // A new version of the homepage serves only once it's deployed (server/home/deploys.ts).
   await tool(t, "deploy_homepage", {});

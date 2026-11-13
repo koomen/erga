@@ -9,8 +9,8 @@ export const json = (body: unknown, status = 200, headers: Record<string, string
   Response.json(body, { status, headers: { ...NO_STORE, ...headers } });
 
 /**
- * The address a request came from, as the front in front of the server saw it: Cloudflare's header (which can't be
- * sent from outside), else the last address of X-Forwarded-For, which the front adds itself (AWS's load balancer,
+ * The address a request came from, as the edge in front of the server saw it: Cloudflare's header (which can't be
+ * sent from outside), else the last address of X-Forwarded-For, which the edge adds itself (AWS's proxy,
  * CloudFront: the server's port is open to them only). Null with neither (local development).
  */
 export const callerAddress = (headers: Headers): string | null =>

@@ -50,7 +50,7 @@ import { ID, OWNER, type Route, type Who } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { HOME_OWNER, HOME_SLUG } from "../../document/names.ts";
 import { listDocs, newDoc, scratchDoc, shareToken } from "./make.ts";
-import { adoptLanding, landingDocument } from "./landing.ts";
+import { adoptLanding } from "./landing.ts";
 import { pagesOrigin, pagesRoutes, pagesHost } from "./pages-origin.ts";
 import { editKey, type KeyPerson, keyWho, readEditKey } from "./edit-key.ts";
 import { locating, viewAddress, viewLanding, viewPublic } from "./view.ts";
@@ -71,12 +71,8 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
 
   // The homepage project's address, /_home[/<page>], is its row's /<HOME_OWNER>/<HOME_SLUG> (document/names.ts).
   const home = /^\/_home(\/.*)?$/.exec(path);
-  // There's one from the first time anyone asks (made, or the homepage from before made the project: landing.ts).
-  if (home)
-    yield* call(async () => {
-      await adoptLanding(platform);
-      if (!(await platform.directory.locate(HOME_OWNER, HOME_SLUG))) await landingDocument(platform);
-    });
+  // The deploy makes it, or the homepage from before becomes it (landing.ts).
+  if (home) yield* call(() => adoptLanding(platform));
   const routed = home ? `/${HOME_OWNER}/${HOME_SLUG}${home[1] ?? ""}` : path;
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(routed) ?? [];
   const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);

@@ -139,16 +139,26 @@ export function pageBars(
  */
 const PAGE_TONE = `(()=>{const m=matchMedia("(prefers-color-scheme: dark)"),tone=()=>{const c=document.documentElement.classList;c.toggle("page-dark",m.matches);c.toggle("page-light",!m.matches);c.toggle("page-white",!m.matches)};tone();m.addEventListener("change",tone)})();`;
 
+/** What a plain page may have besides its title and lines: another heading than the title, and HTML right under it. */
+interface Plain {
+  heading?: string;
+  lead?: string;
+}
+
 /** The plain page's HTML: the app's look and bars (erga › its title; who you are, as the Worker adds it), a title and a few lines. */
-const plainPage = (title: string, body: string) =>
-  appPage(title, inlineStyle("plain"), `${pageBars(null, [{ label: title }])}<main class="plain"><h1>${title}</h1><p>${body}</p></main>`);
+const plainPage = (title: string, body: string, o: Plain = {}) =>
+  appPage(
+    title,
+    inlineStyle("plain"),
+    `${pageBars(null, [{ label: title }])}<main class="plain"><h1>${o.heading ?? title}</h1>${o.lead ?? ""}<p>${body}</p></main>`
+  );
 
 /**
  * A small page for when there's nothing to show, or something about signing in goes wrong: the app's look (its type and
  * colours, light or dark with the system), a title and a few lines, in a column. It needs no session: the stylesheet and
  * the typeface are the app's own files (pages/assets.ts).
  */
-export const page = (title: string, body: string, status: number) => html(plainPage(title, body), status, NO_STORE);
+export const page = (title: string, body: string, status: number, o?: Plain) => html(plainPage(title, body, o), status, NO_STORE);
 
 /**
  * For an action another site may not take on someone's behalf: asks them to

@@ -140,7 +140,7 @@ export function server(o: ServerOptions = {}) {
     directory: dir,
     sessionOf: (request) => sessionOf(p, request),
     templates: templatesOf(),
-    landing: { files: async () => LANDING, owner: "tester" },
+    landing: { files: async () => LANDING },
     assets: async (request) =>
       new URL(request.url).pathname == "/manifest.json" ? Response.json(MANIFEST) : new Response("Not found", { status: 404 }),
     dev: (url) => url.hostname == "localhost" || url.hostname == "127.0.0.1",

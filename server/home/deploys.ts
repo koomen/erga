@@ -11,7 +11,7 @@
 // another homepage (the landing_document setting, however it's set) drops
 // the snapshot and deploys the new one at once; until it's done, / is the
 // viewer on it, as it is when there's no snapshot at all (a fresh server,
-// whose first / makes the homepage from assets/landing/ and starts its first
+// whose deploy made the homepage from assets/landing/, which starts its first
 // deploy). Every change to the deploy's state is told to everyone who has
 // the homepage document open ({ type: "home" } on its /api/events).
 

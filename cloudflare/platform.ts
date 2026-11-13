@@ -90,12 +90,8 @@ const appOf = (facts: unknown): string | null => {
   return null;
 };
 
-/** Whose the homepage is when the server makes it: locally DEV_LOGIN, else (null) the server's first admin. */
-const landingOf = ({ devLogin }: { devLogin: string }): NonNullable<Platform["landing"]> => {
-  const dev = devLogin.toLowerCase();
-  // The project's files are large (its fonts), and only the making of the homepage needs them: they load then.
-  return { files: () => import("./landing-files.ts").then((m) => m.LANDING), owner: dev && OWNER.test(dev) ? dev : null };
-};
+/** The landing project's files. They are large (its fonts), and only the making of the homepage needs them: they load then. */
+const LANDING: NonNullable<Platform["landing"]> = { files: () => import("./landing-files.ts").then((m) => m.LANDING) };
 
 /**
  * The app on Cloudflare: people sign in with GitHub, the
@@ -132,7 +128,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     directory,
     sessionOf: (request) => sessionOf(p, request),
     templates: TEMPLATES,
-    landing: landingOf(settings),
+    landing: LANDING,
     assets: (request) => env.ASSETS.fetch(request),
     dev: (url) => isDev(env, url),
     // Locally (vite dev) each document's page runs on <id>-<owner>.localhost, which browsers send to this machine.

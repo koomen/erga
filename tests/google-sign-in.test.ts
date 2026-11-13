@@ -106,7 +106,7 @@ test("Google is off until an admin turns it on: its sign-in says so in place and
   expect(Object.fromEntries(start.searchParams)).toMatchObject({ client_id: APP.clientId, redirect_uri: `${ORIGIN}/auth/google/callback`, response_type: "code", scope: "openid email profile" });
 });
 
-test("the sign-in page says what the person will open: the address asked for, and how a new person starts", async () => {
+test("the sign-in page says what the person will open, or that they canceled; the same page whoever may join", async () => {
   const { platform, directory } = server(),
     koomen = { login: "koomen", admin: true };
   await authOps(platform, ORIGIN).setProvider(koomen, "google", true);
@@ -121,17 +121,30 @@ test("the sign-in page says what the person will open: the address asked for, an
   expect(main(await pageOf(`next=${encodeURIComponent("/a/<b>x")}&open=document`))).toContain(
     '<p class="asked">erga.example/a/&lt;b&gt;x</p>'
   );
-  // From anywhere else: Sign in, and no address.
+  // No empty paragraph before the address: it sits right under the heading.
+  expect(doc).toContain('</h1><p class="asked">');
+  // From anywhere else: Sign in to Erga, and no address.
   const list = main(await pageOf("next=%2Fdocs"));
-  expect(list).toContain("<h1>Sign in</h1>");
+  expect(list).toContain("<h1>Sign in to Erga</h1><p><style>");
   expect(list).not.toContain('class="asked"');
-  // Only where everybody may make an account does the page say that the buttons make one.
-  const NEW = "New here? The same buttons make your account.";
-  expect(doc).not.toContain(NEW);
-  expect(list).not.toContain(NEW);
+  // The same page where everybody may make an account: it says nothing of who may join.
   await directory.rules.change(koomen, (await directory.rules.list(koomen)).find((r) => r.kind == "everybody")!.id, "read");
-  expect(main(await pageOf("next=%2Fdocs"))).toContain(NEW);
-  expect(main(await pageOf("next=%2Fkoomen%2Ftrip&open=document"))).toContain(NEW);
+  expect(main(await pageOf("next=%2Fdocs"))).toBe(list);
+  // After Cancel on a provider's page: the same page, which says so, and keeps the way back.
+  const canceled = main(await pageOf("next=%2Fkoomen%2Ftrip&canceled"));
+  expect(canceled).toContain(
+    '<h1>Sign in to Erga</h1><p class="said">You canceled the sign-in attempt. Try again or choose another way.</p>'
+  );
+  expect(canceled).toContain('href="/auth/google?next=%2Fkoomen%2Ftrip"');
+  // With one way in too: the page shows it, and does not send them straight back to the provider.
+  await authOps(platform, ORIGIN).setProvider(koomen, "google", false);
+  expect((await respond(chooseSignIn, new Request(`${ORIGIN}/auth/sign-in?next=%2Fdocs`), platform)).headers.get("location")).toBe(
+    "/auth/github?next=%2Fdocs"
+  );
+  const one = main(await pageOf("next=%2Fdocs&canceled"));
+  expect(one).toContain("You canceled the sign-in attempt.");
+  expect(one).toContain('href="/auth/github?next=%2Fdocs"');
+  expect(one).not.toContain("/auth/google");
 });
 
 test("the switch's rules: on only with a working client; off only with the other on and the admin able to sign in with it", async () => {
@@ -161,10 +174,18 @@ test("the switch's rules: on only with a working client; off only with the other
 test("a sign-in from start to session, by the sub; someone unknown is refused; Google off lets only an admin through", async () => {
   const { platform, directory } = server();
   await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", true);
-  // Nobody has this Google account yet, and this server is invite-only.
+  // Nobody has this Google account yet, and no rule lets it in: the page says how she signed in and what to do, and
+  // nothing of who may join (a rule's domain stays private).
+  await directory.rules.add({ login: "koomen", admin: true }, { kind: "workspace", value: "secret-corp.example", access: "write" });
   const refused = await signInWithGoogle(platform);
   expect(refused.status).toBe(403);
-  expect(await refused.text()).toContain("Not on this server");
+  const said = await refused.text();
+  expect(said).toContain("<h1>You need permission to join</h1>");
+  expect(said).toContain(
+    'You signed in with Google as <b>ada@example.com</b>. Ask an admin of this Erga server to add you, then sign in again. Or <a href="/auth/sign-in">sign in with another account</a>.'
+  );
+  expect(said).not.toContain("secret-corp");
+  expect(said).not.toContain("Workspace");
   await directory.identities.createAccount("ada", { provider: "google", subject: "1001", handle: "ada@example.com", name: "Ada", emails: [] }, writes("ada"));
   const ok = await signInWithGoogle(platform);
   expect(ok.status).toBe(302);
@@ -180,6 +201,80 @@ test("a sign-in from start to session, by the sub; someone unknown is refused; G
   const test = await signInWithGoogle(platform, "&app=test");
   expect(test.status).toBe(403);
   expect(await test.text()).toContain("sign-in is off");
+});
+
+test("Cancel on the provider's page goes back to Sign in; any other refusal is one page, with the reason in the log only", async () => {
+  const { platform } = server();
+  await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", true);
+  /** The provider's answer to a sign-in that started here: the callback with `query`, and the start's state. */
+  const back = async (query: string) => {
+    const start = await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/koomen/trip`), platform);
+    const state = new URL(start.headers.get("location")!).searchParams.get("state");
+    return respond(
+      finishGoogleSignIn,
+      new Request(`${ORIGIN}/auth/google/callback?state=${state}&${query}`, { headers: { cookie: cookieOf(start) } }),
+      platform
+    );
+  };
+  const canceled = await back("error=access_denied");
+  expect(canceled.status).toBe(302);
+  expect(canceled.headers.get("location")).toBe("/auth/sign-in?next=%2Fkoomen%2Ftrip&canceled");
+  // Refused for another reason, or a code the provider won't trade: the same page, and the provider's words stay in the log.
+  const logged: string[] = [];
+  const log = console.log;
+  console.log = (...a: unknown[]) => void logged.push(a.join(" "));
+  try {
+    for (const query of ["error=server_error&error_description=Their+own+words", "code=not-a-code"]) {
+      const failed = await back(query);
+      expect(failed.status).toBe(400);
+      const html = await failed.text();
+      expect(html).toContain("<h1>Sign-in didn't work</h1>");
+      expect(html).toContain('<p><a href="/auth/sign-in">Try again</a>. If it keeps failing, tell your Erga admin.</p>');
+      expect(html.slice(html.indexOf("<main"))).not.toMatch(/Google|Their own words|server_error|invalid_grant/);
+    }
+  } finally {
+    console.log = log;
+  }
+  expect(logged.join("\n")).toContain("sign-in failed: Google: server_error: Their own words");
+  expect(logged.length).toBe(2);
+});
+
+test("one way in: Erga names the account itself, from the address, when the one rule lets in her Workspace; else she chooses", async () => {
+  const koomen = { login: "koomen", admin: true };
+  const only = async (rules: (d: Directory) => Promise<unknown>) => {
+    const s = server();
+    await s.own.put("auth:providers", { github: false, google: true });
+    await rules(s.directory);
+    return s;
+  };
+  // Only Google, and one rule: her Workspace. ada@example.com is ada, at once, and she goes on to where she was going.
+  google = mockGoogle({
+    clientId: APP.clientId,
+    clientSecret: APP.secret,
+    redirects: [`${ORIGIN}/auth/google/callback`],
+    user: { ...ADA, hd: "example.com" },
+  });
+  const one = await only((d) => d.rules.add(koomen, { kind: "workspace", value: "example.com", access: "write" }));
+  const named = await signInWithGoogle(one.platform);
+  expect(named.headers.get("location")).toBe("/docs");
+  expect(named.headers.get("set-cookie")).toContain("erga_session=");
+  expect((await one.directory.identities.find("google", "1001"))?.login).toBe("ada");
+  // A name that is taken gets a number.
+  google.state.user = { ...ADA, sub: "1002", email: "Ada@example.com", hd: "example.com" };
+  expect((await signInWithGoogle(one.platform)).headers.get("location")).toBe("/docs");
+  expect((await one.directory.identities.find("google", "1002"))?.login).toBe("ada2");
+  // Open to two Workspaces: the part before the @ is not one person's, so she chooses.
+  google.state.user = { ...ADA, hd: "example.com" };
+  const two = await only(async (d) => {
+    await d.rules.add(koomen, { kind: "workspace", value: "example.com", access: "write" });
+    await d.rules.add(koomen, { kind: "workspace", value: "other.example", access: "write" });
+  });
+  expect((await signInWithGoogle(two.platform)).headers.get("location")).toBe("/auth/username");
+  // Both providers on: she chooses.
+  const both = await only((d) => d.rules.add(koomen, { kind: "workspace", value: "example.com", access: "write" }));
+  await both.own.put("auth:providers", { github: true, google: true });
+  expect((await signInWithGoogle(both.platform)).headers.get("location")).toBe("/auth/username");
+  expect(await both.directory.identities.find("google", "1001")).toBeNull();
 });
 
 test("new values for the client wait for an admin's test sign-in with them, as GitHub's do", async () => {

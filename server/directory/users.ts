@@ -346,12 +346,6 @@ export class Users {
     await this.pagesChanged([`user:${login}`]);
   }
 
-  /** The server's first admin (the oldest admin row), or null if it has none: the homepage's owner on a deployed server. */
-  async firstAdmin(): Promise<string | null> {
-    const [row] = await this.sql.all<{ login: string }>("SELECT login FROM users WHERE role = 'admin' ORDER BY created, login LIMIT 1");
-    return row?.login ?? null;
-  }
-
   /** Throws NotAllowed if `login` is the server's last admin (bootstrap admins count, signed in or not). */
   private async mustKeepAnAdmin(by: Actor, login: string): Promise<void> {
     const rows = await this.sql.all<{ login: string }>("SELECT login FROM users WHERE role = 'admin'");

@@ -371,7 +371,6 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 .agent-head .model select:focus-visible:not(.by-pointer) { outline: 2px solid var(--caret); outline-offset: -2px; }
 .agent-head .model select.by-pointer { outline: none; }
 .agent-log { flex: 1; overflow-y: auto; padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
-.agent-log:empty::before { content: attr(data-empty); color: var(--chrome); margin: auto; text-align: center; padding: 0 24px; }
 .msg-user.pending { opacity: 0.55; }
 .msg-user.failed { box-shadow: inset 0 0 0 1px #d0453a; }
 .send-failed { display: block; margin-top: 4px; color: #d0453a; font-size: 12.5px; }

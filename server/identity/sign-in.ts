@@ -40,32 +40,50 @@ export const signIn = Effect.fnUntraced(function* (
 });
 
 /**
- * /auth/sign-in: the ways to sign in here, to choose from (one: straight there). From a document's address
- * (&open=document, signInFirst), it says so and shows the address asked for: the same whether there's a document there
- * or not. Where everybody may make an account, it says that the same buttons make one.
+ * /auth/sign-in: the ways to sign in here, to choose from (one: straight there). The same page whoever may join. From a
+ * document's address (&open=document, signInFirst), it says so and shows the address asked for: the same whether
+ * there's a document there or not. After Cancel on a provider's page (&canceled, oauth.ts), it says so, and with one
+ * way in it shows that one too: it does not send them straight back.
  */
 export const chooseSignIn: Route = Effect.gen(function* () {
   const { platform, url } = yield* ctx;
   const next = safeNext(url.searchParams.get("next"));
+  const canceled = url.searchParams.has("canceled");
   const choices = yield* call(() => signInChoices(platform));
-  if (choices.length == 1) return redirect(`/auth/${choices[0].id}?next=${encodeURIComponent(next)}`, 302, { "Cache-Control": "no-store" });
+  if (choices.length == 1 && !canceled)
+    return redirect(`/auth/${choices[0].id}?next=${encodeURIComponent(next)}`, 302, { "Cache-Control": "no-store" });
   const buttons = providerButtons(choices, next);
   if (!buttons) return page("Sign in", "No sign-in is on here.", 200);
-  const document = url.searchParams.get("open") == "document";
-  const rules = yield* call(() => platform.directory.rules.all().catch(() => []));
-  const open =
-    rules.some((r) => r.kind == "everybody" && r.access != "none") || (platform.dev(url) && platform.directory.defaultRules(rules));
+  const document = !canceled && url.searchParams.get("open") == "document";
+  const lead = canceled
+    ? `<p class="said">You canceled the sign-in attempt. Try again or choose another way.</p>`
+    : document
+      ? `<p class="asked">${esc(url.host + next.split(/[?#]/)[0])}</p>`
+      : "";
   return page(
     document ? "Sign in to open this document" : "Sign in",
-    `<style>${PROVIDER_CSS}${SIGN_IN_CSS}</style>${document ? `</p><p class="asked">${esc(url.host + next.split(/[?#]/)[0])}</p><p>` : ""}<span class="providers">${buttons}</span>${open ? `</p><p class="new-here">New here? The same buttons make your account.` : ""}`,
-    200
+    `<style>${PROVIDER_CSS}${SIGN_IN_CSS}</style><span class="providers">${buttons}</span>`,
+    200,
+    { ...(document ? {} : { heading: "Sign in to Erga" }), lead }
   );
 });
 
-/** The sign-in page's two lines: the address asked for, above the buttons, and the line for a new person, below them. */
+/** The line under the sign-in page's heading (the address asked for, or what happened): at body size, close under it. */
 const SIGN_IN_CSS = `
-main.plain .asked, main.plain .new-here { font-size: 14px; color: var(--soft); overflow-wrap: anywhere; }
-main.plain .new-here { margin-top: 18px; }`;
+main.plain h1:has(+ :is(.asked, .said)) { margin-bottom: 6px; }
+main.plain :is(.asked, .said) { margin-bottom: 22px; font-size: 16px; color: var(--fg); overflow-wrap: anywhere; }`;
+
+/**
+ * A sign-in that didn't work, whatever refused it (a provider, the proxy): one page, with no reason on it. The reason
+ * goes to the log here, never to the person.
+ */
+export const signInFailed = (reason: string) => {
+  console.log(`sign-in failed: ${reason}`);
+  return page("Sign-in didn't work", '<a href="/auth/sign-in">Try again</a>. If it keeps failing, tell your Erga admin.', 400);
+};
+
+/** A sign-in route that this server's mode doesn't have. */
+export const noSuchSignIn = () => page("Not found", 'There\'s nothing here. <a href="/">Back to the start</a>.', 404);
 
 /**
  * /auth/logout (another site's link to it asks first): ends every sign-in of the person, on every device

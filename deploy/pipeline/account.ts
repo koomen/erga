@@ -233,6 +233,20 @@ export const settledHealth = (site: Fetch, host: string, want: string, o: { quer
   checkHealth(site, host, want, o).pipe(Effect.repeat({ schedule: Schedule.spaced("5 seconds"), times: 2, until: (h) => h.ok }));
 
 /**
+ * The deploy's ask for the homepage project, once the release answers (POST /api/deploys/home): the server makes it from
+ * the release's assets/landing/ when it has none (server/documents/landing.ts). What the server said, for the step's
+ * detail. No answer is no failure: / is then the page in the server's code.
+ */
+export const askHomepage = (site: Fetch, host: string): Effect.Effect<string> =>
+  Effect.promise(async () => {
+    const r = await site(`https://${host}/api/deploys/home`, { method: "POST" }).catch(() => null);
+    const home = r?.ok ? ((await r.json().catch(() => null)) as { home?: string } | null)?.home : null;
+    if (home == "made") return "made the homepage project (/_home)";
+    if (home == "there") return "the homepage project (/_home) is there";
+    return `no homepage project made (POST /api/deploys/home: ${r ? r.status : "no answer"})`;
+  });
+
+/**
  * The wait for a new release to answer, for at most `ms`: a second, then half
  * a second longer each time, at most five seconds apart (a new workers.dev
  * address or certificate can take a minute or two).

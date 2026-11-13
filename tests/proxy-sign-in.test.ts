@@ -8,7 +8,7 @@ import { Directory } from "../server/directory/index.ts";
 import { usernameStep } from "../server/identity/accounts";
 import { providersOf, signInOf } from "../server/identity/mode";
 import { finishOAuth, startOAuth } from "../server/identity/oauth";
-import { claimsOf, NoEmail, type Proxy, proxyOf, proxySignIn, readProxy, vouchedOf } from "../server/identity/proxy";
+import { claimsOf, type Proxy, proxyOf, proxySignIn, readProxy, vouchedOf } from "../server/identity/proxy";
 import { sessionOf } from "../server/identity/session";
 import { authOps } from "../server/identity/settings";
 import { chooseSignIn } from "../server/identity/sign-in";
@@ -22,20 +22,19 @@ const AWS = {
   signer: "arn:aws:elasticloadbalancing:us-west-2:123456789012:loadbalancer/app/erga/50dc6c495c0c9188",
   issuer: "https://idp.example.com/pool",
   client: "client-1",
-  email: { claim: "email", prefix: "" },
 } satisfies Proxy;
 const KID = "11111111-2222-3333-4444-555555555555";
 const ECDSA = { name: "ECDSA", namedCurve: "P-256" } as const;
 const pair = (await crypto.subtle.generateKey(ECDSA, true, ["sign", "verify"])) as CryptoKeyPair;
 const other = (await crypto.subtle.generateKey(ECDSA, true, ["sign", "verify"])) as CryptoKeyPair;
 
-/** Base64url with its padding, as the balancer writes each part. */
+/** Base64url with its padding, as the proxy writes each part. */
 const part = (value: unknown) =>
   base64(new TextEncoder().encode(JSON.stringify(value)))
     .replace(/\+/g, "-")
     .replace(/\//g, "_");
 
-/** The header a balancer adds for `claims`: its own head (`head` changes it), signed with `key`. */
+/** The header a proxy adds for `claims`: its own head (`head` changes it), signed with `key`. */
 async function headerFor(claims: Record<string, unknown>, head: Record<string, unknown> = {}, key = pair.privateKey): Promise<string> {
   const h = part({
     alg: "ES256",
@@ -54,7 +53,7 @@ async function headerFor(claims: Record<string, unknown>, head: Record<string, u
 const ADA = { sub: "sub-ada", email: "Ada@Example.com", email_verified: "true" };
 const key = async () => pair.publicKey;
 
-test("an AWS load balancer's header counts only from this balancer: its signature, its signer, its issuer and client, its time", async () => {
+test("the header of AWS's proxy counts only from this proxy: its signature, its signer, its issuer and client, its time", async () => {
   expect(await readProxy(await headerFor(ADA), AWS, { key })).toEqual({
     provider: "proxy",
     subject: "sub-ada",
@@ -63,7 +62,7 @@ test("an AWS load balancer's header counts only from this balancer: its signatur
     emails: [{ email: "ada@example.com", verified: true }],
     groups: [],
   });
-  // Another balancer's header has AWS's signature too: its signer is not ours.
+  // Another proxy's header has AWS's signature too: its signer is not ours.
   expect(await readProxy(await headerFor(ADA, { signer: AWS.signer.replace("erga", "theirs") }), AWS, { key })).toBeNull();
   expect(await readProxy(await headerFor(ADA, { iss: "https://idp.example.com/other" }), AWS, { key })).toBeNull();
   expect(await readProxy(await headerFor(ADA, { client: "client-2" }), AWS, { key })).toBeNull();
@@ -87,7 +86,6 @@ const ACCESS = {
   kind: "cloudflare-access",
   team: "example-team",
   aud: "aud-of-this-application",
-  email: { claim: "email", prefix: "" },
 } satisfies Proxy;
 const ACCESS_KID = "access-key-1";
 const RSA = { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" } as const;
@@ -142,7 +140,7 @@ test("Cloudflare Access's header counts only for this team's application: its si
   );
   expect(await claimsOf(`${h}.${changed}.${s}`, ACCESS, o)).toBeNull();
   expect(await claimsOf(`${h}.${p}`, ACCESS, o)).toBeNull();
-  // An AWS balancer's header is nothing to a server behind Access, and Access's nothing to one behind a balancer.
+  // An AWS proxy's header is nothing to a server behind Access, and Access's nothing to one behind a proxy.
   expect(await claimsOf(await headerFor(ADA), ACCESS, { key })).toBeNull();
   expect(await claimsOf(await accessHeader(), AWS, o)).toBeNull();
 });
@@ -165,12 +163,10 @@ test("the deploy's PROXY_SIGN_IN: a proxy of a kind this reads; any other value 
       issuer: "https://idp.example.com/pool",
       client: "client-1",
       admin: "ada@example.com",
-      email: AWS.email,
     }),
     JSON.stringify({ ...AWS, kind: "another-proxy" }),
     JSON.stringify({ ...AWS, signer: "" }),
     JSON.stringify({ ...ACCESS, team: "https://example-team.cloudflareaccess.com" }),
-    JSON.stringify({ ...ACCESS, email: { claim: "", prefix: "" } }),
   ]) {
     expect(proxyOf(unreadable)).toBeNull();
     // The deploy's OAuth apps beside it change nothing: nobody signs in with them.
@@ -186,7 +182,7 @@ const realFetch = globalThis.fetch;
 let asked: string[] = [];
 beforeEach(() => {
   asked = [];
-  // Each proxy's public key, at its own address: AWS's as a PEM for the balancer's region, the Access team's as a JWKS.
+  // Each proxy's public key, at its own address: AWS's as a PEM for the proxy's region, the Access team's as a JWKS.
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = String(input instanceof Request ? input.url : input);
     asked.push(url);
@@ -257,10 +253,15 @@ test("the proxy mode: sign-in goes straight to the proxy, a person added by thei
     await respond(startOAuth("google"), new Request(`${ORIGIN}/auth/google`), platform),
   ]) {
     expect([closed.status, closed.headers.get("location")]).toEqual([404, null]);
-    expect(await closed.text()).toContain("<h1>Not this way</h1>");
+    expect(await closed.text()).toContain("<h1>Not found</h1>");
   }
-  // No header (a path that passed the balancer with no sign-in), or one that isn't the balancer's: nobody.
-  expect((await respond(proxySignIn, new Request(`${ORIGIN}/auth/proxy`), platform)).status).toBe(400);
+  // No header (a path that passed the proxy with no sign-in), or one that isn't the proxy's: nobody. The page is the
+  // one for any sign-in that didn't work, with no reason on it.
+  const none = await respond(proxySignIn, new Request(`${ORIGIN}/auth/proxy`), platform);
+  expect(none.status).toBe(400);
+  expect(await none.text()).toContain(
+    '<h1>Sign-in didn\'t work</h1><p><a href="/auth/sign-in">Try again</a>. If it keeps failing, tell your Erga admin.</p>'
+  );
   const forged = await headerFor(ADA, {}, other.privateKey);
   expect(
     (await respond(proxySignIn, new Request(`${ORIGIN}/auth/proxy`, { headers: { "x-amzn-oidc-data": forged } }), platform)).status
@@ -291,7 +292,7 @@ test("the proxy mode: sign-in goes straight to the proxy, a person added by thei
   // Their wait ended: the email makes no second admin.
   const admin = { login: "ada", admin: true };
   expect(await directory.people.list(admin)).toEqual([]);
-  // The key came from AWS, for the balancer's region, one time.
+  // The key came from AWS, for the proxy's region, one time.
   expect(asked).toEqual([`https://public-keys.auth.elb.us-west-2.amazonaws.com/${KID}`]);
   // The next time, the same subject is the same account, also with another email.
   const again = await signUp(platform, await aws({ ...ADA, email: "ada.l@example.com" }), "-");
@@ -302,7 +303,9 @@ test("the proxy mode: sign-in goes straight to the proxy, a person added by thei
   const bo = { sub: "sub-bo", email: "bo@example.com", email_verified: "true" };
   const refused = await signUp(platform, await aws(bo), "bo");
   expect(refused.answer.status).toBe(403);
-  expect(await refused.answer.text()).toContain("<b>bo@example.com</b>");
+  expect(await refused.answer.text()).toContain(
+    "<h1>You need permission to join</h1><p>You signed in with <b>bo@example.com</b>. Ask an admin of this Erga server to add you, then sign in again.</p>"
+  );
   await directory.rules.change(admin, (await directory.rules.list(admin)).find((r) => r.kind == "everybody")!.id, "write");
   expect((await signUp(platform, await aws(bo), "bo")).answer.headers.get("location")).toBe("/docs");
   expect(await directory.users.isAdmin("bo")).toBe(false);
@@ -315,7 +318,10 @@ test("the proxy mode: sign-in goes straight to the proxy, a person added by thei
   });
   // The Authentication page's status is the proxy's, with no secret and no provider; what changes an OAuth app refuses.
   const status = await authOps(platform, ORIGIN).status(admin);
-  expect(status).toMatchObject({ mode: "proxy", proxy: { kind: "aws-alb", label: "AWS load balancer", header: "x-amzn-oidc-data" } });
+  expect(status).toMatchObject({
+    mode: "proxy",
+    proxy: { kind: "aws-alb", label: "AWS Application Load Balancer", header: "x-amzn-oidc-data" },
+  });
   await expect(authOps(platform, ORIGIN).setProvider(admin, "google", true)).rejects.toThrow("it has no OAuth providers");
 });
 
@@ -328,7 +334,7 @@ test("behind Cloudflare Access: the team's key signs a person in, by the applica
   expect((await directory.identities.of("cy"))[0]).toMatchObject({ provider: "proxy", subject: "sub-cy", handle: "cy@example.com" });
   // The key came from the team's own address.
   expect(asked).toEqual([`${TEAM}/cdn-cgi/access/certs`]);
-  // Another application's header, and a balancer's: nobody.
+  // Another application's header, and a proxy's: nobody.
   for (const header of [{ "cf-access-jwt-assertion": await accessHeader({ aud: ["aud-of-another-application"] }) }, await aws(ADA)]) {
     const no = await respond(proxySignIn, new Request(`${ORIGIN}/auth/proxy`, { headers: header }), platform);
     expect([no.status, no.headers.get("set-cookie")]).toEqual([400, null]);
@@ -358,34 +364,50 @@ test("a PROXY_SIGN_IN this server can't read: /auth/proxy says so, and nobody si
   });
 });
 
-test("a sign-in that gives the email in another claim: the deploy says where, and none there makes no account", async () => {
-  // As a Cognito pool that federates gives it: no email claim, the address in username after the provider's name.
-  const claims = { sub: "0a1b2c3d-1111-2222-3333-444455556666", username: "SSO_Ada@Example.com" };
-  const header = await aws(claims);
-  // The deploy's answer is the standard claim: the page says what is wrong and which claims came, and nobody is in.
-  const plain = server();
-  const none = await respond(proxySignIn, new Request(`${ORIGIN}/auth/proxy`, { headers: header }), plain.platform);
-  expect(none.status).toBe(400);
-  expect(await none.text()).toContain("didn't give your email address in <code>email</code>. It gave: sub, username.");
-  expect(none.headers.get("set-cookie")).toBeNull();
+test("the email address: the first of email, upn and preferred_username that looks like one; none: she signs in by her ID, which no page shows", async () => {
+  const sub = "0a1b2c3d-1111-2222-3333-444455556666";
+  const emailOf = (claims: Record<string, unknown>) => vouchedOf({ sub, ...claims }, AWS);
+  // The first that looks like an address. `email` is verified as the proxy's sign-in says, `upn` is, and
+  // `preferred_username` (which a person may choose) never is: it names her, and matches nobody an admin added.
+  expect(emailOf({ email: "Ada@Example.com", email_verified: "true", upn: "a@other.example" })).toMatchObject({
+    handle: "ada@example.com",
+    emails: [{ email: "ada@example.com", verified: true }],
+  });
+  expect(emailOf({ email: "not an address", upn: "Ada@Example.com" })?.emails).toEqual([{ email: "ada@example.com", verified: true }]);
+  expect(emailOf({ preferred_username: "ada@example.com" })?.emails).toEqual([{ email: "ada@example.com", verified: false }]);
+  // None: no handle (never the ID), and no email. Without a `sub`, nobody.
+  expect(emailOf({ username: "SSO_ada@example.com", preferred_username: "ada" })).toMatchObject({ subject: sub, handle: "", emails: [] });
+  expect(vouchedOf({ email: "ada@example.com" }, AWS)).toBeNull();
 
-  // The deploy names the claim and the text before the address: the person is their email, and the first admin.
-  const there: Proxy = { ...AWS, email: { claim: "username", prefix: "SSO_" } };
-  const { platform, directory, firstAdmin } = server(there);
-  await firstAdmin("ada@example.com");
-  const at = await respond(proxySignIn, new Request(`${ORIGIN}/auth/proxy`, { headers: header }), platform);
-  expect(at.headers.get("location")).toBe("/auth/username");
-  const step = await (
-    await respond(usernameStep, new Request(`${ORIGIN}/auth/username`, { headers: { cookie: cookieOf(at) } }), platform)
-  ).text();
-  expect(step).toContain("as <b>ada@example.com</b>");
-  expect(step).toContain('name="username" value="ada"');
-  expect((await signUp(platform, header, "ada")).answer.headers.get("location")).toBe("/docs");
-  expect(await directory.users.isAdmin("ada")).toBe(true);
-  // Text other than the prefix before the address, or no address after it: none.
-  expect(vouchedOf({ sub: "s", username: "Other_ada@example.com" }, there)).toBeInstanceOf(NoEmail);
-  expect(vouchedOf({ sub: "s", username: "SSO_ada" }, there)).toBeInstanceOf(NoEmail);
-  expect(vouchedOf({ username: "SSO_ada@example.com" }, there)).toBeNull();
+  // A sign-in with no address still signs in. Refused, the page gives her ID for the admin, and nothing else.
+  const { platform, directory } = server(AWS, ["root"]);
+  const admin = { login: "root", admin: true };
+  const header = await aws({ sub, name: "Ada Lovelace" });
+  const refused = await respond(proxySignIn, new Request(`${ORIGIN}/auth/proxy`, { headers: header }), platform);
+  expect(refused.status).toBe(403);
+  expect(await refused.text()).toContain(
+    `<h1>You need permission to join</h1><p>Ask an admin of this Erga server to add you, and give them your sign-in ID: <b>${sub}</b>.</p>`
+  );
+  // Where everybody may join: the username page never shows or suggests the ID. Her name, if the sign-in gives one.
+  await directory.rules.change(admin, (await directory.rules.list(admin)).find((r) => r.kind == "everybody")!.id, "write");
+  const step = async (h: Record<string, string>) => {
+    const at = await respond(proxySignIn, new Request(`${ORIGIN}/auth/proxy`, { headers: h }), platform);
+    expect(at.headers.get("location")).toBe("/auth/username");
+    return (await respond(usernameStep, new Request(`${ORIGIN}/auth/username`, { headers: { cookie: cookieOf(at) } }), platform)).text();
+  };
+  const named = await step(header);
+  expect(named).toMatch(/Welcome\. You signed in with your company(&#39;|')s sign-in\. Choose a username/);
+  expect(named).toContain('name="username" value="ada-lovelace"');
+  expect(named).not.toContain(sub);
+  const bare = await step(await aws({ sub }));
+  expect(bare).toContain('name="username" value=""');
+  expect(bare).not.toContain(sub);
+  // With an address: the address alone, and its part before the @.
+  const withEmail = await step(await aws(ADA));
+  expect(withEmail).toContain("Welcome. You signed in with <b>ada@example.com</b>. Choose a username");
+  expect(withEmail).toContain('name="username" value="ada"');
+  expect((await signUp(platform, header, "ada-l")).answer.headers.get("location")).toBe("/docs");
+  expect((await directory.identities.of("ada-l"))[0]).toMatchObject({ provider: "proxy", subject: sub, handle: null });
 });
 
 test("the OAuth mode (no PROXY_SIGN_IN): /auth/proxy is nothing and GitHub's way is open", async () => {

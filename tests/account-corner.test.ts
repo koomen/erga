@@ -46,8 +46,9 @@ test("a document's own files, and the homepage's document on its pages origin, h
   const s = server();
   const { id } = await newDoc(s);
   expect(await (await s.fetch(`/d/${id}/doc/index.html`)).text()).not.toContain("data-erga-account");
-  // The homepage (signed out: someone signed in goes to /docs). Until its first deploy is done it is the viewer, whose
-  // frame is the page on its pages origin.
+  // The homepage, which the deploy makes (signed out: someone signed in goes to /docs). Until its first deploy is done it
+  // is the viewer, whose frame is the page on its pages origin.
+  await s.fetch("/api/deploys/home", { method: "POST" });
   const viewer = await (await s.fetch("/", { headers: signedOut() })).text();
   expect(viewer).toContain('<iframe id="frame" class="erga-view"');
   const pages = /name="erga-pages" content="([^"]+)"/.exec(viewer)![1];

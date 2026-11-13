@@ -105,9 +105,9 @@ test("paths and page addresses: one set of helpers for the server and the browse
   ]);
 });
 
-test("the caller's address: Cloudflare's header, else the last one the front added to X-Forwarded-For", () => {
+test("the caller's address: Cloudflare's header, else the last one the edge added to X-Forwarded-For", () => {
   expect(callerAddress(new Headers({ "cf-connecting-ip": "203.0.113.7", "x-forwarded-for": "198.51.100.1" }))).toBe("203.0.113.7");
-  // A caller's own entry comes first; the load balancer adds the address it saw last.
+  // A caller's own entry comes first; the proxy adds the address it saw last.
   expect(callerAddress(new Headers({ "x-forwarded-for": "10.0.0.1, 203.0.113.9" }))).toBe("203.0.113.9");
   expect(callerAddress(new Headers())).toBeNull();
 });

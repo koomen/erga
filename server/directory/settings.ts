@@ -103,7 +103,7 @@ export const SETTINGS = {
   landing_document: setting<string | null>({
     label: "Homepage",
     description: "The document or project shown at /.",
-    values: "A document's address or id, or null: the demo page.",
+    values: "A document's address or id, or null: no homepage (/ is a page with Sign in).",
     default: null,
     parse: (v) => (v === null || v === "" ? null : text(300)(v) || null),
     kind: "document",

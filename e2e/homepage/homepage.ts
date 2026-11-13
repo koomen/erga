@@ -53,8 +53,8 @@ export const landingSetting = async (server: Server) =>
 
 /** Makes a document the homepage, as an admin does on /admin/settings (landing_document): the tool's answer. */
 export const setLanding = (server: Server, id: string) => runTool(server.root, "set_setting", { key: "landing_document", value: id });
-/** Unsets landing_document: the next / makes a fresh homepage from assets/landing/. */
-export const resetLanding = (server: Server) => runTool(server.root, "set_setting", { key: "landing_document", reset: true });
+/** Makes the homepage project (/_home, which the deploy's step made) the homepage again. */
+export const projectHome = (server: Server) => setLanding(server, "/_home");
 
 /** The homepage's state, as ls answers it to `user` (the dev server's ?user=; none: its own person); not the homepage: { isHome: false }. */
 export const homeOf = async (server: Server, id: string, user?: string) =>

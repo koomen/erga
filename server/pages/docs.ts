@@ -100,9 +100,7 @@ export function docsPage(
   const count = plural(docs.length, "document");
   const [title, other, otherLabel] = archived ? ["Archived", "/docs", "Documents"] : ["Documents", "/docs/archived", "Archived"];
   const trail = archived ? [{ label: "Documents", href: "/docs" }, { label: "Archived" }] : [{ label: "Documents" }];
-  const empty = archived
-    ? "No archived documents. A document you archive leaves your list and waits here."
-    : `No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${plural(hours, "hour")} if you never edit it.`}`;
+  const empty = archived ? "No archived documents. A document you archive leaves your list and waits here." : "No documents yet.";
   return appPage(
     title,
     inlineStyle("docs") + inlineStyle("scratch"),

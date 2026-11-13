@@ -13,7 +13,7 @@ const shape: AwsShape = {
   stack: "erga",
   egress: { kind: "nat-instance" },
   domains: null,
-  front: { kind: "cloudfront", prefixList: "pl-82a045eb" },
+  edge: { kind: "cloudfront", prefixList: "pl-82a045eb" },
 };
 const resources = (s: AwsShape) => stackTemplate(s).Resources as Record<string, { Type: string; Properties: Record<string, any> }>;
 
@@ -121,7 +121,7 @@ test("the first admin goes only into a database with no admin, and a quote can't
   expect(sql).toContain(`'"ada/it''s"'`);
 });
 
-// ------------------------------------------------------------------ the proxy mode: the company's sign-in at a load balancer
+// ------------------------------------------------------------------ the proxy mode: the company's sign-in at a proxy
 
 const oidc = {
   issuer: "https://idp.example.com/pool",
@@ -134,7 +134,7 @@ const balanced: AwsShape = {
   stack: "erga-example-com",
   egress: { kind: "nat-instance" },
   domains: { app: "erga.example.com", appZone: "Z1", pages: "pages.erga.example.com", pagesZone: "Z1" },
-  front: { kind: "balancer", oidc },
+  edge: { kind: "proxy", oidc },
 };
 type Rule = { Properties: { Priority: number; Conditions: Record<string, any>[]; Actions: Record<string, any>[] } };
 const rulesOf = (s: AwsShape) =>
@@ -146,20 +146,20 @@ const rulesOf = (s: AwsShape) =>
 const valuesOf = (c: Record<string, any>): unknown[] =>
   (c.HostHeaderConfig ?? c.PathPatternConfig ?? c.HttpHeaderConfig ?? c.QueryStringConfig ?? c.SourceIpConfig).Values;
 
-test("a load balancer in front: the sign-in on the app's address, and no CloudFront", () => {
+test("a proxy in front: the sign-in on the app's address, and no CloudFront", () => {
   const r = resources(balanced);
   expect(Object.values(r).filter((x) => x.Type.startsWith("AWS::CloudFront::"))).toEqual([]);
-  // The machine lets in the balancer only; the balancer is public, in two zones.
+  // The machine lets in the proxy only; the proxy is public, in two zones.
   expect(r.Firewall.Properties.SecurityGroupIngress).toEqual([
     {
       IpProtocol: "tcp",
       FromPort: 8080,
       ToPort: 8080,
-      SourceSecurityGroupId: { Ref: "BalancerFirewall" },
-      Description: "The load balancer",
+      SourceSecurityGroupId: { Ref: "ProxyFirewall" },
+      Description: "The proxy",
     },
   ]);
-  expect(r.Balancer.Properties).toMatchObject({ Scheme: "internet-facing", Subnets: [{ Ref: "PublicSubnet" }, { Ref: "PublicSubnetB" }] });
+  expect(r.Proxy.Properties).toMatchObject({ Scheme: "internet-facing", Subnets: [{ Ref: "PublicSubnet" }, { Ref: "PublicSubnetB" }] });
   expect(r.Machine.Properties.SubnetId).toEqual({ Ref: "PrivateSubnet" });
   // Its health check asks the machine itself, a path with no sign-in.
   expect(r.Targets.Properties).toMatchObject({
@@ -167,15 +167,15 @@ test("a load balancer in front: the sign-in on the app's address, and no CloudFr
     HealthCheckPath: "/api/deploys/version",
     Targets: [{ Id: { Ref: "Machine" } }],
   });
-  // One certificate, in this stack and region: the app's name and the pages' wildcard. The names point at the balancer.
+  // One certificate, in this stack and region: the app's name and the pages' wildcard. The names point at the proxy.
   expect(r.Certificate.Properties).toMatchObject({ DomainName: "erga.example.com", SubjectAlternativeNames: ["*.pages.erga.example.com"] });
   expect(r.PagesRecord.Properties).toMatchObject({ HostedZoneId: "Z1", Name: "*.pages.erga.example.com", Type: "A" });
-  expect(r.AppRecord.Properties.AliasTarget.DNSName).toEqual({ "Fn::GetAtt": ["Balancer", "DNSName"] });
+  expect(r.AppRecord.Properties.AliasTarget.DNSName).toEqual({ "Fn::GetAtt": ["Proxy", "DNSName"] });
   // Any other host: nothing.
   expect(r.Listener.Properties.DefaultActions[0]).toMatchObject({ Type: "fixed-response", FixedResponseConfig: { StatusCode: "404" } });
   const t = stackTemplate(balanced) as { Parameters: Record<string, unknown>; Outputs: Record<string, unknown> };
   expect(t.Parameters.AppCertificate).toBeUndefined();
-  expect(t.Outputs.Balancer).toEqual({ Value: { Ref: "Balancer" } });
+  expect(t.Outputs.Proxy).toEqual({ Value: { Ref: "Proxy" } });
 
   // The last rule: everything else on the app's address signs in first. The client's secret is a reference: never a value.
   const rules = rulesOf(balanced);
@@ -195,7 +195,7 @@ test("a load balancer in front: the sign-in on the app's address, and no CloudFr
   expect(t.Parameters.OidcSecret).toMatchObject({ Default: "erga/erga-example-com/oidc-client-secret" });
 });
 
-test("what passes the load balancer without the sign-in: the pages by their token, the token paths, a keyed request, the server's browser", () => {
+test("what passes the proxy without the sign-in: the pages by their token, the token paths, a keyed request, the server's browser", () => {
   const rules = rulesOf(balanced);
   // First, a caller's own X-Forwarded-Host is refused: celld would take it for the host.
   expect(rules[0]).toMatchObject({ name: "RefuseForwardedHost", Priority: 1 });
@@ -219,7 +219,7 @@ test("what passes the load balancer without the sign-in: the pages by their toke
   expect(by.OwnBrowserRule).toEqual([["erga.example.com"], [{ "Fn::Sub": "${NatAddress.PublicIp}/32" }]]);
   expect(resources(balanced).NatAddress.Properties.InstanceId).toEqual({ Ref: "Nat" });
   expect(resources({ ...balanced, egress: { kind: "nat-gateway" } }).NatAddress.Type).toBe("AWS::EC2::EIP");
-  // No more rules than these, and each within a balancer's limits: 5 values a rule, 3 a condition, 5 wildcards.
+  // No more rules than these, and each within a proxy's limits: 5 values a rule, 3 a condition, 5 wildcards.
   expect(open.length + 2).toBe(rules.length);
   for (const r of rules) {
     const values = r.Conditions.flatMap(valuesOf);
@@ -229,7 +229,7 @@ test("what passes the load balancer without the sign-in: the pages by their toke
   }
 });
 
-const front = {
+const viaProxy = {
   ...defaultAnswers("ada@example.com"),
   provider: "aws" as const,
   host: "erga.example.com",
@@ -245,22 +245,22 @@ test("setup in the proxy mode on AWS: an email for the admin, pages under the ap
   const zones = ["erga.example.com"];
   expect(parseAnswer("oidc", "https://idp.example.com/pool/")).toEqual({ value: "https://idp.example.com/pool" });
   expect("problem" in parseAnswer("oidc", "http://idp.example.com")).toBe(true);
-  expect(answersProblem(front, zones)).toBeNull();
-  expect(answersProblem({ ...front, admin: "ada" }, zones)).toContain("email address");
-  expect(answersProblem({ ...front, oidcClient: "" }, zones)).toContain("client ID");
-  expect(answersProblem({ ...front, egress: "vpc-0a1/subnet-0b2" }, zones)).toContain("own network");
-  expect(answersProblem({ ...front, host: "erga", pages: "shared" }, zones)).toContain("needs a domain");
-  expect(answersProblem({ ...front, pages: "erga.example.com" }, zones)).toContain("name of their own");
-  expect(answersProblem({ ...front, pages: "pages.other.org" }, zones)).toContain("Route 53");
-  expect(answersProblem({ ...front, oidc: "" }, zones)).toContain("issuer's URL");
+  expect(answersProblem(viaProxy, zones)).toBeNull();
+  expect(answersProblem({ ...viaProxy, admin: "ada" }, zones)).toContain("email address");
+  expect(answersProblem({ ...viaProxy, oidcClient: "" }, zones)).toContain("client ID");
+  expect(answersProblem({ ...viaProxy, egress: "vpc-0a1/subnet-0b2" }, zones)).toContain("own network");
+  expect(answersProblem({ ...viaProxy, host: "erga", pages: "shared" }, zones)).toContain("needs a domain");
+  expect(answersProblem({ ...viaProxy, pages: "erga.example.com" }, zones)).toContain("name of their own");
+  expect(answersProblem({ ...viaProxy, pages: "pages.other.org" }, zones)).toContain("Route 53");
+  expect(answersProblem({ ...viaProxy, oidc: "" }, zones)).toContain("issuer's URL");
   // The mode is an answer of its own: the proxy's values with the oauth mode, or on the other host, say what to change.
-  expect(answersProblem({ ...front, signIn: "oauth", admin: "ada" }, zones)).toContain("signIn=proxy");
-  expect(answersProblem({ ...front, provider: "cloudflare" }, zones)).toContain("on AWS");
+  expect(answersProblem({ ...viaProxy, signIn: "oauth", admin: "ada" }, zones)).toContain("signIn=proxy");
+  expect(answersProblem({ ...viaProxy, provider: "cloudflare" }, zones)).toContain("on AWS");
   // In the oauth mode, the pages still need a zone apart from the app's.
-  expect(answersProblem({ ...front, signIn: "oauth", oidc: "", admin: "ada" }, zones)).toContain("whole zone");
+  expect(answersProblem({ ...viaProxy, signIn: "oauth", oidc: "", admin: "ada" }, zones)).toContain("whole zone");
 
   const f = facts({ zones, proxySecret: false });
-  const list = steps(front, f, { ids: {} });
+  const list = steps(viaProxy, f, { ids: {} });
   expect(list.map((s) => s.id)).toEqual([
     "tools",
     "login",
@@ -274,14 +274,14 @@ test("setup in the proxy mode on AWS: an email for the admin, pages under the ap
   const secret = list.find((s) => s.id == "secret")!;
   expect(secret).toMatchObject({ who: "person", state: "todo" });
   expect(secret.next).toContain("erga/erga-example-com/oidc-client-secret");
-  expect(steps(front, facts({ zones, proxySecret: true }), { ids: {} }).find((s) => s.state != "done")?.id).toBe("stack");
+  expect(steps(viaProxy, facts({ zones, proxySecret: true }), { ids: {} }).find((s) => s.state != "done")?.id).toBe("stack");
 
-  // The server learns whose header is the sign-in from the stack's balancer: the proxy mode's setting.
+  // The server learns whose header is the sign-in from the stack's proxy: the proxy mode's setting.
   const entry = awsEntry(
-    front,
+    viaProxy,
     "production",
     "123456789012",
-    { AppHost: "erga.example.com", Balancer: "arn:aws:elasticloadbalancing:us-west-2:1:loadbalancer/app/x/1" },
+    { AppHost: "erga.example.com", Proxy: "arn:aws:elasticloadbalancing:us-west-2:1:loadbalancer/app/x/1" },
     {}
   );
   expect(JSON.parse(entry.vars.PROXY_SIGN_IN)).toEqual({
@@ -289,21 +289,14 @@ test("setup in the proxy mode on AWS: an email for the admin, pages under the ap
     signer: "arn:aws:elasticloadbalancing:us-west-2:1:loadbalancer/app/x/1",
     issuer: "https://idp.example.com/pool",
     client: "client-1",
-    email: { claim: "email", prefix: "" },
   });
   expect(entry.vars.GITHUB_CLIENT_ID).toBe("");
-  // No balancer known yet: a value the server reads as no proxy (nobody signs in), never the oauth mode.
-  expect(awsEntry(front, "production", "1", { AppHost: "erga.example.com" }, {}).vars.PROXY_SIGN_IN).toBe("{}");
-  // A sign-in that gives the address in another claim, after some text: the answer names both.
-  expect(parseAnswer("proxyEmail", "username SSO_")).toEqual({ value: "username SSO_" });
-  expect(parseAnswer("proxyEmail", "")).toEqual({ value: "email" });
-  expect("problem" in parseAnswer("proxyEmail", "a b c")).toBe(true);
-  const elsewhere = awsEntry({ ...front, proxyEmail: "username SSO_" }, "production", "1", { Balancer: "arn:b" }, {});
-  expect(JSON.parse(elsewhere.vars.PROXY_SIGN_IN).email).toEqual({ claim: "username", prefix: "SSO_" });
+  // No proxy known yet: a value the server reads as no proxy (nobody signs in), never the oauth mode.
+  expect(awsEntry(viaProxy, "production", "1", { AppHost: "erga.example.com" }, {}).vars.PROXY_SIGN_IN).toBe("{}");
   expect(awsEntry(aws, "production", "123456789012", { AppHost: "d1.cloudfront.net" }, {}).vars.PROXY_SIGN_IN).toBeUndefined();
   // The first deploy writes no user's row (the admin has no username yet): they wait as a person added by their email,
   // with the role admin; and everybody who passes the sign-in may write.
-  const sql = firstSql(front);
+  const sql = firstSql(viaProxy);
   expect(sql).toContain("INSERT INTO people (provider, handle, role, created) SELECT 'proxy', 'ada@example.com', 'admin'");
   expect(sql).toContain("INSERT INTO access_rules (kind, value, access, created) SELECT 'everybody', '', 'write'");
   expect(sql).toContain("WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')");
@@ -312,7 +305,7 @@ test("setup in the proxy mode on AWS: an email for the admin, pages under the ap
   expect(firstSql(aws)).toMatch(/^INSERT INTO users \(login, name, role, created\) SELECT 'ada', 'ada', 'admin', \d+ WHERE NOT EXISTS/);
 });
 
-test("the sign-in's endpoints come from its issuer, and the check sees the load balancer send a browser there", async () => {
+test("the sign-in's endpoints come from its issuer, and the check sees the proxy send a browser there", async () => {
   const document = {
     issuer: oidc.issuer,
     authorization_endpoint: oidc.authorize,
@@ -332,12 +325,12 @@ test("the sign-in's endpoints come from its issuer, and the check sees the load 
   );
   await expect(discoverOidc("https://none.example.com", issuer(document))).rejects.toThrow("didn't answer");
 
-  const balancer = (location: string) => (async () => new Response("", { status: 302, headers: { location } })) as unknown as typeof fetch;
+  const proxy = (location: string) => (async () => new Response("", { status: 302, headers: { location } })) as unknown as typeof fetch;
   const to = (client: string, back: string) =>
     `${oidc.authorize}?client_id=${client}&redirect_uri=${encodeURIComponent(back)}&response_type=code`;
   const alb = { clientId: "client-1", callback: "https://erga.example.com/oauth2/idpresponse" };
   const check = (location: string, expects: { to?: string; clientId?: string; callback?: string } = alb) =>
-    proxySignInCheck(balancer(location), "erga.example.com", expects);
+    proxySignInCheck(proxy(location), "erga.example.com", expects);
   expect(await check(to("client-1", "https://erga.example.com/oauth2/idpresponse"))).toBe("ok");
   expect(await check(to("client-2", "https://erga.example.com/oauth2/idpresponse"))).toMatchObject({
     bad: expect.stringContaining("client-2"),

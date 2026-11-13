@@ -56,12 +56,6 @@ export const KIND_LABEL: Record<RuleKind, string> = {
   github_org: "GitHub organization",
 };
 
-/** The people a kind's rules let in, for a sentence; `values`: the rules' values, as the page shows them. */
-export const KIND_PEOPLE: Record<Exclude<RuleKind, "everybody">, (values: string[]) => string> = {
-  workspace: (v) => `Google Workspace accounts of ${v.join(" or ")}`,
-  github_org: (v) => `members of the GitHub organization${v.length > 1 ? "s" : ""} ${v.join(" or ")}`,
-};
-
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 const NAME = /^[a-z0-9](?:[a-z0-9-]{0,38})$/;
 

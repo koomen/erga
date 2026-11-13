@@ -26,7 +26,7 @@ import type { TestEnd } from "./app-test.ts";
 import { cookies, withCookie } from "./cookies.ts";
 import { type Provider, PROVIDERS, type Token } from "./providers.ts";
 import { providersOn, signInApp, testedSignIn } from "./settings.ts";
-import { signIn, STATE } from "./sign-in.ts";
+import { clearState, noSuchSignIn, signIn, signInFailed, STATE } from "./sign-in.ts";
 
 /** A state that starts so is a test sign-in with the pending values ("." is never in base64url). */
 const TESTING = "p.";
@@ -39,10 +39,6 @@ async function readState(secret: string, saved: string | undefined): Promise<{ s
   const s = await State.open(secret, saved);
   return s ? { ...s, next: s.next || "/" } : {};
 }
-
-/** Where a server in the proxy mode has no OAuth sign-in: a route of this file says so. */
-const notThisWay = () =>
-  page("Not this way", 'This server signs in with your company\'s sign-in. <a class="new" href="/auth/sign-in">Sign in</a>', 404);
 
 /** Sign-in with a provider that's off here: the page says so and offers Sign in (another one), in place. */
 const providerOff = Effect.fnUntraced(function* (platform: Platform, provider: Provider, next: string) {
@@ -90,7 +86,7 @@ export const startOAuth = (provider: Provider): Route =>
   Effect.gen(function* () {
     const { platform, request, url } = yield* ctx;
     const mode = platform.signIn;
-    if (mode.mode != "oauth") return notThisWay();
+    if (mode.mode != "oauth") return noSuchSignIn();
     const next = safeNext(url.searchParams.get("next"));
     // Local development: sign in as the dev login (or ?as=, for the test suite's people), never on a real hostname.
     if (platform.dev(url)) {
@@ -128,7 +124,7 @@ export const finishOAuth = (provider: Provider): Route =>
   Effect.gen(function* () {
     const { platform, request, url } = yield* ctx;
     const mode = platform.signIn;
-    if (mode.mode != "oauth") return notThisWay();
+    if (mode.mode != "oauth") return noSuchSignIn();
     const p = PROVIDERS[provider];
     const origin = mode.origins[provider];
     const { state, tests, next } = yield* call(() => readState(platform.secret, cookies(request).get(STATE)));
@@ -138,37 +134,35 @@ export const finishOAuth = (provider: Provider): Route =>
     if (!state || state != url.searchParams.get("state"))
       return page("Sign-in expired", 'That sign-in link is stale. <a href="/">Start again</a>.', 400);
     if (testing && app.clientId != tests) return valuesChanged();
-    // The person said no on the provider's page, or the provider refused: nothing changes.
+    // Cancel on the provider's page: back to the ways to sign in, which says so. Nothing changes.
     const refused = url.searchParams.get("error");
-    // The token: the code traded here.
+    if (refused == "access_denied" && !testing)
+      return clearState(
+        redirect(`/auth/sign-in?next=${encodeURIComponent(next ?? "/")}&canceled`, 302, { "Cache-Control": "no-store" }),
+        request
+      );
+    // The token: the code traded here. Any other refusal of the provider's: no token.
     const token: Token = refused
-      ? { error: refused, error_description: refused == "access_denied" ? "you didn't allow it" : refused }
+      ? { error: refused, error_description: url.searchParams.get("error_description")?.slice(0, 300) ?? refused }
       : yield* call(() => p.token(origin, app, url.searchParams.get("code") ?? "", `${url.origin}${p.callbackPath}`));
-    if (!token.access_token) {
-      // The provider's own reason (e.g. incorrect_client_credentials: a wrong client secret) goes to the logs and the page.
-      console.log(`${p.label} sign-in failed: ${token.error}: ${token.error_description}`);
-      const why = token.error ? ` (${esc(token.error_description ?? token.error)})` : "";
-      if (testing) {
-        yield* call(() =>
-          testedSignIn(
-            platform,
-            app.clientId,
-            { kind: "provider", error: `${p.label} refused the sign-in: ${token.error_description ?? token.error ?? "no reason given"}.` },
-            provider
-          )
-        );
-        return page(
-          "Test sign-in failed",
-          `${p.label} didn't sign you in with the new values${why}. Sign-in still uses the values that worked before. <a href="/admin/auth">Authentication</a>`,
-          400
-        );
-      }
-      return page("Sign-in failed", `${p.label} didn't let you in${why}. <a href="/auth/sign-in">Try again</a>.`, 400);
-    }
     // The provider's access token reads who they are, once, and is never stored.
     const groups = yield* call(() => wantsGroups(platform, provider));
-    const v = yield* call(() => p.who(origin, token.access_token!, { groups }));
-    if (!v) return page("Sign-in failed", `${p.label} didn't say who you are. <a href="/auth/sign-in">Try again</a>.`, 400);
+    const v = token.access_token ? yield* call(() => p.who(origin, token.access_token!, { groups })) : null;
+    if (!v) {
+      // The provider's own reason (e.g. incorrect_client_credentials: a wrong client secret) goes to the logs, and a
+      // test sign-in's to /admin/auth: never to the page.
+      const why = token.access_token ? "it didn't say who signed in" : (token.error_description ?? token.error ?? "no reason given");
+      if (!testing) return signInFailed(`${p.label}: ${token.error ?? "no person"}: ${why}`);
+      console.log(`${p.label} test sign-in failed: ${token.error ?? "no person"}: ${why}`);
+      yield* call(() =>
+        testedSignIn(platform, app.clientId, { kind: "provider", error: `${p.label} refused the sign-in: ${why}.` }, provider)
+      );
+      return page(
+        "Test sign-in failed",
+        `${p.label} didn't sign you in with the new values. Sign-in still uses the values that worked before. <a href="/admin/auth">Authentication</a> says why.`,
+        400
+      );
+    }
     // The provider turned off on /admin/auth: only an admin's sign-in (a test) goes through.
     const onlyAdmins = !(yield* call(() => providersOn(platform)))[provider];
     // A test sign-in with the pending values: each end has a result; an admin's sign-in puts them in use.

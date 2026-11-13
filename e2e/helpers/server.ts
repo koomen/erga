@@ -99,6 +99,15 @@ export interface Server {
   pid(): number | undefined;
 }
 
+/**
+ * The deploy's step, which a test's server has not had: the homepage project (/_home), made from assets/landing/, and
+ * the homepage (POST /api/deploys/home: server/documents/landing.ts). Without it, / is the page in the server's code.
+ */
+export async function deployHome(server: Pick<Server, "root">): Promise<void> {
+  const r = await fetch(`${server.root}/api/deploys/home`, { method: "POST" });
+  if (!r.ok) throw new Error(`POST /api/deploys/home: ${r.status}`);
+}
+
 /** A port nothing listens on right now (dev/start.ts refuses a taken one, and we try again). */
 export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {

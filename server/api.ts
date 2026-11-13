@@ -388,7 +388,7 @@ const TokenAsk = Schema.Struct({
 
 /** POST /api/auth/request {label, scope, doc?, expires?}: a link for the person to approve, and a code to poll with. */
 const askForToken = Effect.fnUntraced(function* (platform: Platform, origin: string) {
-  // The address the front saw the request come from; none in local development.
+  // The address the edge saw the request come from; none in local development.
   const from = callerAddress((yield* webRequest).headers);
   const asked = yield* body(TokenAsk);
   const b = asked._tag == "Some" ? asked.value : {};

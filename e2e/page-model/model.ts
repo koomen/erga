@@ -107,9 +107,8 @@ export const usage = (admin: Page) => admin.locator("section.llm-use").innerText
 
 // The homepage (server/home/): / as served to someone signed out, and its project, published with an admin's token.
 
-/** Makes a document the homepage (the setting landing_document), or with no `id` unsets it: the next / makes a fresh one. */
-export const setLanding = (s: Server, id?: string) =>
-  owner(s, "set_setting", id ? { key: "landing_document", value: id } : { key: "landing_document", reset: true });
+/** Makes a document the homepage (the setting landing_document); with no `id`, the homepage project (/_home) again. */
+export const setLanding = (s: Server, id?: string) => owner(s, "set_setting", { key: "landing_document", value: id ?? "/_home" });
 
 /** / as served to someone signed out. */
 export const front = async (s: Server, path = "/") => (await get(s, path, { headers: { Cookie: `${signedOutCookie(s)}=1` } })).text();

@@ -4,7 +4,7 @@
 //   1. What setup observes: the AWS CLI's login, the account's Route 53 zones, the stack, and the server it made.
 //   2. `stack`: the templates into .erga/aws/ (only if they aren't there: the person's changes stay), then AWS's change
 //      sets; with --yes, it applies them (the certificates first, in us-east-1, when CloudFront has domains). With the
-//      company's sign-in at a load balancer (the proxy mode), its endpoints come from its issuer, and its client's secret must be in Secrets Manager.
+//      company's sign-in at a proxy (the proxy mode), its endpoints come from its issuer, and its client's secret must be in Secrets Manager.
 //   3. The first deploy: the entry from the stack's outputs, the secrets into Parameter Store (encrypted with the stack's
 //      key), the programs into the bucket and onto the machine, then `bun erga deploy`'s code, with the first admin.
 
@@ -41,7 +41,7 @@ const templatesOf = (dir: string, a: Answers) => {
 };
 
 /**
- * The sign-in's endpoints, as its issuer publishes them (OpenID Connect discovery): the load balancer sends each person
+ * The sign-in's endpoints, as its issuer publishes them (OpenID Connect discovery): the proxy sends each person
  * to them, so each must be https, and the document must be this issuer's.
  */
 export async function discoverOidc(issuer: string, net: Fetch = fetch): Promise<Omit<Oidc, "clientId">> {
@@ -76,8 +76,8 @@ export async function shapeOf(a: Answers, net: Fetch = fetch): Promise<AwsShape>
     stack: stackOf(a, "production"),
     egress: vpcId ? { kind: "vpc", vpcId, subnetId } : { kind: a.egress as "nat-instance" | "nat-gateway" },
     domains,
-    front: proxySignIn(a)
-      ? { kind: "balancer", oidc: { ...(await discoverOidc(a.oidc, net)), clientId: a.oidcClient } }
+    edge: proxySignIn(a)
+      ? { kind: "proxy", oidc: { ...(await discoverOidc(a.oidc, net)), clientId: a.oidcClient } }
       : { kind: "cloudfront", prefixList: await cloudFrontPrefixList(aws) },
   };
 }
@@ -183,11 +183,11 @@ export async function stackStep(dir: string, a: Answers, yes: boolean, applied: 
   for (const p of writeTemplates(dir, shape)) if (fresh) log(`wrote ${p}`);
   const where = whereOf(a);
   const params: Record<string, string> = {};
-  if (shape.front.kind == "balancer" && !(await secretThere(awsCli(where), secretOf(templatePath(dir, shape.stack), shape.stack))))
+  if (shape.edge.kind == "proxy" && !(await secretThere(awsCli(where), secretOf(templatePath(dir, shape.stack), shape.stack))))
     throw new Error(
       `The sign-in's client secret isn't in Secrets Manager (${where.region}) as ${secretOf(templatePath(dir, shape.stack), shape.stack)}: the stack reads it there. The person who has it stores it (plain text, only the secret), then run this again.`
     );
-  if (shape.domains && shape.front.kind == "cloudfront") {
+  if (shape.domains && shape.edge.kind == "cloudfront") {
     const certs = `${shape.stack}-certs`;
     const file = templatePath(dir, shape.stack, true);
     const plan = await planStack({ ...where, region: CERT_REGION }, certs, file);
@@ -237,8 +237,8 @@ export function awsEntry(
       app: outputs.AppHost,
       pages: isName(a.host) ? { kind: "shared", host: outputs.PagesHost } : { kind: "domain", domain: a.pages },
     },
-    // In the proxy mode: whose signed header is the sign-in (server/identity/proxy.ts): this balancer's, for this client.
-    vars: varsOf(a, ids, outputs.Balancer),
+    // In the proxy mode: whose signed header is the sign-in (server/identity/proxy.ts): this proxy's, for this client.
+    vars: varsOf(a, ids, outputs.Proxy),
   };
 }
 

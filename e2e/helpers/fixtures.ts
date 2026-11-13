@@ -13,7 +13,8 @@
 // was killed. Hooks get config.timeout (90 s, e2e.config.ts) as a backstop; each test gets ERGA_TEST_MS (15 s,
 // which `test` below gives it).
 //
-//   servers.main()     the suite's one server (ONE, below): signed in as DEV_LOGIN, the scripted agent model
+//   servers.main()     the suite's one server (ONE, below): signed in as DEV_LOGIN, the scripted agent model, with
+//                      the homepage project that a deploy makes (deployHome)
 //   servers.of(key, o) a server one file needs alone (its own settings, or one it changes or restarts), started
 //                      with ServerOptions `o`: `const own = await servers.of("homepage");` (the worker keeps the
 //                      last file's only)
@@ -35,7 +36,7 @@ import { surfaceOf, test as web } from "@e2e-dev/web";
 import { describe, expect as e2eExpect } from "e2e";
 import type { Page } from "playwright-core";
 import { engine } from "./engine";
-import { startServer, type Server, type ServerOptions } from "./server";
+import { deployHome, startServer, type Server, type ServerOptions } from "./server";
 
 /**
  * e2e's expect, with an `expect.poll` that reads again every 20 ms. e2e's own pause is 100 ms: a state that comes
@@ -90,7 +91,11 @@ const ONE = {
 };
 
 export const servers = {
-  main: once("main", () => startServer({ env: ONE })),
+  main: once("main", async () => {
+    const s = await startServer({ env: ONE });
+    await deployHome(s);
+    return s;
+  }),
   /**
    * A kind of server one file needs (`key`, its own), started with `opts` the first time. A worker keeps one such
    * server: the next file's (another key) disposes of it, as files run one after another. So one key for each file.

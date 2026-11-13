@@ -6,6 +6,7 @@ import { expect, test } from "bun:test";
 import { Directory, type Vouched } from "../server/directory/index.ts";
 import { resolve } from "../server/identity/accounts.ts";
 import { githubAvatar } from "../shared/avatars.ts";
+import { server } from "./helpers/app.ts";
 import { memory } from "./helpers/memory-sql.ts";
 
 const ADMIN = { login: "koomen", admin: true };
@@ -47,8 +48,8 @@ test("a linked identity signs in to its account by its id, whatever its GitHub l
   expect(await resolve(dir, github(7, "ada"), { join: false })).toEqual({ kind: "in", claimed: true, login: "ada" });
   // Ada renames herself on GitHub: still ada here. Someone else who takes the login "ada" on GitHub is not her.
   expect(await resolve(dir, github(7, "ada-lovelace"), { join: false })).toEqual({ kind: "in", login: "ada" });
-  // A stranger who took the login "ada" on GitHub is refused, and told the account is another GitHub account's.
-  expect(await resolve(dir, github(8, "ada"), { join: false })).toEqual({ kind: "refused", taken: "ada" });
+  // A stranger who took the login "ada" on GitHub is refused, as anyone who may not join.
+  expect(await resolve(dir, github(8, "ada"), { join: false })).toEqual({ kind: "refused" });
   expect((await dir.identities.find("github", "7"))?.handle).toBe("ada-lovelace");
 });
 
@@ -65,13 +66,13 @@ test("an account with no identity (from before, or added by an admin) is claimed
   // Its picture from the first sign-in on, though the bootstrap admin had no row before it.
   expect((await dir.users.get("koomen"))?.avatar).toBe("https://avatars.githubusercontent.com/u/1?s=64");
   // Claimed once: another GitHub account with that login later is a stranger.
-  expect(await resolve(dir, github(21, "bo"), { join: false })).toEqual({ kind: "refused", taken: "bo" });
+  expect(await resolve(dir, github(21, "bo"), { join: false })).toEqual({ kind: "refused" });
 });
 
 test("an account made with Google is never claimed by a GitHub login of the same name", async () => {
   const dir = new Directory(memory());
   expect(await dir.identities.createAccount("carol", google("g-1", "carol@example.com"), writes("carol"))).toBe("carol");
-  expect(await resolve(dir, github(30, "carol"), { join: false })).toEqual({ kind: "refused", taken: "carol" });
+  expect(await resolve(dir, github(30, "carol"), { join: false })).toEqual({ kind: "refused" });
   expect((await resolve(dir, github(30, "carol"), { join: true })).kind).toBe("new");
 });
 
@@ -129,7 +130,7 @@ test("takeover by a login that changed hands: a row with a GitHub id never goes 
   } });
   const dir = new Directory(sql);
   // ann renamed or deleted her GitHub account, and a stranger registered "ann": refused, or a new account under another name.
-  expect(await resolve(dir, github(999, "ann"), { join: false })).toEqual({ kind: "refused", taken: "ann" });
+  expect(await resolve(dir, github(999, "ann"), { join: false })).toEqual({ kind: "refused" });
   const joined = await resolve(dir, github(999, "ann"), { join: true });
   expect(joined).toMatchObject({ kind: "new", taken: "ann" });
   expect((joined as { suggestion: string }).suggestion).not.toBe("ann");
@@ -137,7 +138,7 @@ test("takeover by a login that changed hands: a row with a GitHub id never goes 
   // ben: his login matches one last time, which keeps his id; after that only the id does.
   expect(await resolve(dir, github(600, "ben"), { join: false })).toEqual({ kind: "in", claimed: true, login: "ben" });
   expect((await dir.identities.find("github", "600"))?.login).toBe("ben");
-  expect(await resolve(dir, github(601, "ben"), { join: false })).toEqual({ kind: "refused", taken: "ben" });
+  expect(await resolve(dir, github(601, "ben"), { join: false })).toEqual({ kind: "refused" });
 });
 
 test("Google: the sub, never the email, after the first link", async () => {
@@ -179,4 +180,30 @@ test("a person who waits as an email an account verified later waits no more onc
   expect(await resolve(dir, google("g-5", "erin@b.example"), { join: false })).toEqual({ kind: "in", login: "erin" });
   expect(await dir.people.list(ADMIN)).toEqual([]);
   expect((await dir.users.get("erin"))?.role).toBe("user");
+});
+
+// On the whole app in memory (tests/helpers/app.ts), through local development's pretend provider (/auth/dev).
+test("a login that is another account's: with one way in Erga gives the name a number; else the username page says so under the field", async () => {
+  const s = server();
+  const signIn = (subject: number, handle: string) => s.fetch(`/auth/dev?provider=github&subject=${subject}&handle=${handle}&next=/docs`);
+  // GitHub alone is on: the first Ada is ada, at once, with no username step.
+  expect((await signIn(501, "Ada")).headers.get("location")).toBe("/docs");
+  expect((await s.platform.directory.identities.find("github", "501"))?.login).toBe("ada");
+  // Another GitHub account has the login now: ada2, at once.
+  expect((await signIn(502, "ada")).headers.get("location")).toBe("/docs");
+  expect((await s.platform.directory.identities.find("github", "502"))?.login).toBe("ada2");
+  // Two ways in: she chooses. The page says only that the account is taken, under the field, as the field's error.
+  await s.platform.own.put("auth:providers", { github: true, google: true });
+  const at = await signIn(503, "ada");
+  expect(at.headers.get("location")).toBe("/auth/username");
+  const cookie = at.headers
+    .getSetCookie()
+    .map((c) => c.split(";")[0])
+    .join("; ");
+  const page = await (await s.fetch("/auth/username", { headers: { Cookie: cookie } })).text();
+  const main = page.slice(page.indexOf("<main"), page.indexOf("</main>"));
+  expect(main).toContain("<h1>Choose a username</h1><p>Welcome. You signed in with GitHub as <b>ada</b>. Choose a username");
+  expect(main).toContain('<p class="hint error" role="status" id="username-hint">The Erga account <b>ada</b> is already taken.</p>');
+  expect(main).toContain('name="username" value="ada3"');
+  expect(await s.platform.directory.identities.find("github", "503")).toBeNull();
 });

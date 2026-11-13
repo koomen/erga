@@ -386,19 +386,14 @@ test("on staging a token works only while its person is an admin: refused once t
   const admin = (await mint(s, null, { label: "Admin", scope: "admin" })).token;
   expect(admin).toBeTruthy();
   // Added by their GitHub login, as an admin, before their first sign-in; then that sign-in (the pretend provider, with
-  // the id the pretend GitHub gives the login) and the username step make their account, an admin's.
+  // the id the pretend GitHub gives the login) makes their account, an admin's. GitHub is the one way in here, so Erga
+  // names the account by the login, with no username step.
   const login = freshLogin("bo");
   expect((await tool(s, admin, "set_user", { action: "add", provider: "github", handle: login, role: "admin" })).status).toBe(200);
   const joining = await s.fetch(`/auth/dev?provider=github&subject=${mockGithubId(login)}&handle=${login}&next=/docs`);
-  expect(joining.headers.get("location")).toBe("/auth/username");
+  expect(joining.headers.get("location")).toBe("/docs");
   const cookies = (r: Response) => r.headers.getSetCookie().map((x) => x.split(";")[0]);
-  const join = cookies(joining).find((x) => x.includes("erga_join"))!;
-  const made = await s.fetch("/auth/username", {
-    method: "POST",
-    headers: { Cookie: join, Origin: s.root },
-    body: new URLSearchParams({ username: login }),
-  });
-  const cookie = cookies(made).find((x) => /^erga_session(_\d+)?=/.test(x))!;
+  const cookie = cookies(joining).find((x) => /^erga_session(_\d+)?=/.test(x))!;
   expect(cookie).toBeTruthy();
   const theirs = (await mint(s, cookie, { label: "Bo's", scope: "documents" })).token;
   expect(theirs).toBeTruthy();
