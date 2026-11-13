@@ -10,8 +10,8 @@ import { esc } from "./html";
  * `name`: its name in a list; `label`: what its sign-in is called, in a sentence to the person who signs in.
  * `handle`: what an admin adds a person by before their first sign-in: a login (its account is looked up at once), or an
  * email address (the first sign-in with that verified address matches). `profile`: a profile's address, pasted for a
- * login. `groups`: the kind of access rule its groups
- * match, and what the page says of them to a person no rule lets in.
+ * login. `groups`: the kind of access rule its groups match. `only`: the server's only sign-in, with no name of its
+ * own to say: a page names the person by the address it gave, and offers no other account.
  */
 export const SIGN_IN_PROVIDERS: Record<
   string,
@@ -20,7 +20,8 @@ export const SIGN_IN_PROVIDERS: Record<
     label: string;
     handle: "login" | "email";
     profile?: RegExp;
-    groups?: { kind: string; said: (groups: string[]) => string };
+    groups?: { kind: string };
+    only?: true;
   }
 > = {
   github: {
@@ -28,29 +29,28 @@ export const SIGN_IN_PROVIDERS: Record<
     label: "GitHub",
     handle: "login",
     profile: /^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/?#]+)\/?$/,
-    groups: {
-      kind: "github_org",
-      said: (orgs) =>
-        `GitHub says this account is an active member of ${orgs.length ? orgs.join(", ") : "no organization Erga can see"}. If you are a member, the organization may not let Erga see it yet: an owner of the organization approves Erga on GitHub.`,
-    },
+    groups: { kind: "github_org" },
   },
   google: {
     name: "Google",
     label: "Google",
     handle: "email",
-    groups: {
-      kind: "workspace",
-      said: (workspaces) =>
-        workspaces.length
-          ? `Google says this account is in the Workspace ${workspaces.join(", ")}.`
-          : "This is a personal Google account: it's in no Google Workspace organization.",
-    },
+    groups: { kind: "workspace" },
   },
-  proxy: { name: "Proxy", label: "your company's sign-in", handle: "email" },
+  proxy: { name: "Proxy", label: "your company's sign-in", handle: "email", only: true },
 };
 
 /** What a provider's sign-in is called, in a sentence to the person who signs in. */
 export const providerLabel = (provider: string) => SIGN_IN_PROVIDERS[provider]?.label ?? provider;
+/**
+ * How a page says what someone signed in with, after "You signed in with": "GitHub as <b>ada</b>"; for the server's only
+ * sign-in, the address it gave alone, or its label when it gave none. `handle`: "" for none (never the sign-in's ID).
+ */
+export const signedInWith = (provider: string, handle: string) => {
+  const who = handle ? `<b>${esc(handle)}</b>` : "";
+  if (SIGN_IN_PROVIDERS[provider]?.only) return who || esc(providerLabel(provider));
+  return who ? `${esc(providerLabel(provider))} as ${who}` : esc(providerLabel(provider));
+};
 /** A provider's name, in a list or on an admin page. */
 export const providerName = (provider: string) => SIGN_IN_PROVIDERS[provider]?.name ?? provider;
 

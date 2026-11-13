@@ -110,7 +110,7 @@ export async function signInCheck(net: Fetch, host: string, clientId: string | u
 /**
  * The proxy mode: where the proxy in front sends a browser that isn't signed in. To the company's sign-in, away from
  * this host, or what's wrong. `to`: the host it must send to (Cloudflare Access: the team's). `clientId`, `callback`:
- * the client and the callback it must name there (an AWS load balancer's own, /oauth2/idpresponse).
+ * the client and the callback it must name there (AWS's proxy has its own, /oauth2/idpresponse).
  */
 export async function proxySignInCheck(
   net: Fetch,

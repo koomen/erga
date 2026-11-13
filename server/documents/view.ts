@@ -34,19 +34,18 @@ import type { Role } from "../../document/access.ts";
 import type { DocKind } from "../../document/pages.ts";
 import { BUILD_HEADER, CHECK_HEADER, pageBuild } from "../live.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
-import { frontDocument, landingPage } from "./landing.ts";
 import { pagesOrigin, pagesToken } from "./pages-origin.ts";
 import {
   accountHtml,
   accountOf,
   editButton,
   hasAgent,
+  homePage,
   inlineScript,
   link,
   OWN_ACCOUNT,
   page,
   scriptTag,
-  startPage,
   viewerPage,
   withEdit,
 } from "../pages/index.ts";
@@ -309,8 +308,9 @@ async function publicView(
 }
 
 /**
- * The homepage: the viewer on the landing document (the landing_document setting), for anyone, signed in or not.
- * Made from the repo's assets/landing/ if there's none (landing.ts).
+ * The homepage: the viewer on the landing document (the landing_document setting), for anyone, signed in or not. None
+ * set, or one that is gone: the page in the server's code (pages/home.ts). No request makes a homepage: the deploy
+ * does (landing.ts).
  */
 export const viewLanding = Effect.gen(function* () {
   const { platform, request } = yield* ctx;
@@ -320,23 +320,15 @@ export const viewLanding = Effect.gen(function* () {
 async function landingView(platform: Platform, request: Request, session: Session | null): Promise<HttpServerResponse.HttpServerResponse> {
   const url = new URL(request.url);
   // (Which document the setting names is part of the key: another one is another decision.)
-  // None set yet: nothing kept (the seed below sets one).
   const home = await platform.directory.homeId();
-  const key = home ? `${decisionKey(url, whoKey(session))}&home=${home}` : null;
-  let d = key ? await keptDecision(platform, key) : null;
+  if (!home) return homePage();
+  const key = `${decisionKey(url, whoKey(session))}&home=${home}`;
+  let d = await keptDecision(platform, key);
   if (!d) {
     const who = session ? whoOf(session) : null;
-    const doc = await frontDocument(platform);
-    let answer = doc ? await platform.docs.view(doc.id, who, { page: "", anyone: true }) : null;
-    let row = answer?.file != null ? doc : null;
-    if (!row) {
-      // None yet, or one that's gone: made (or found) afresh.
-      const made = await landingPage(platform);
-      if (!made) return startPage(platform, session);
-      answer = await platform.docs.view(made.doc.id, who, { page: "", anyone: true });
-      row = answer?.file != null ? made.doc : null;
-    }
-    if (!row || !answer || answer.file == null || answer.ver == null) return nothing();
+    const row = await platform.directory.landing();
+    const answer = row ? await platform.docs.view(row.id, who, { page: "", anyone: true }) : null;
+    if (!row || !answer || answer.file == null || answer.ver == null) return homePage();
     d = {
       id: row.id,
       owner: row.owner,
@@ -350,7 +342,7 @@ async function landingView(platform: Platform, request: Request, session: Sessio
       head: answer.head,
       readers: row.readers,
     };
-    if (answer.quiet && key && row.id == home) keepDecision(platform, key, d);
+    if (answer.quiet) keepDecision(platform, key, d);
   }
   return render(platform, request, session, d, true);
 }

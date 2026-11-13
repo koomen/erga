@@ -197,14 +197,24 @@ async function approvalCard(
     () => null,
     (e) => (e instanceof ScopeError ? e.message : "This request can't be approved.")
   );
-  const what =
+  // The card's heading is the request itself; `more`: what else that scope means.
+  const [what, more] =
     g.scope == "document"
-      ? `one document: ${await docLabel(platform, g.docId)}. It can do there what you can do, and nothing anywhere else.`
+      ? [
+          `reading and editing one document: ${await docLabel(platform, g.docId)}.`,
+          "It can do there what you can do, and nothing anywhere else.",
+        ]
       : g.scope == "documents"
-        ? "all your documents: everything you can do with documents, but no admin power."
+        ? ["reading and editing your documents.", ""]
         : g.scope == "ops"
-          ? "this server's deploy facts: the commit it runs, and its Cloudflare account, Worker, database and domains. It reads nothing else: no documents, and no admin power."
-        : "all your documents, and admin power: everything you can do in Erga, the server's settings, users, source and deploys included, while you're an admin.";
+          ? [
+              "reading this server's deploy facts.",
+              "The commit it runs, and its Cloudflare account, Worker, database and domains. It reads nothing else: no documents, and no admin power.",
+            ]
+          : [
+              "reading and editing your documents, and admin power.",
+              "Admin power is everything you can do in Erga, the server's settings, users, source and deploys included, while you're an admin.",
+            ];
   // An admin request the person may approve: they choose documents only (the default) or admin power, on purpose.
   const choose = g.scope == "admin" && !may;
   const choice = choose
@@ -220,13 +230,12 @@ async function approvalCard(
       : choose
         ? `Documents only: ${asked}<br>Admin power: ${g.expires && g.expires < adminEnd(null) ? day(g.expires) : `${ADMIN_DAYS} days from now`}`
         : day(adminEnd(g.expires));
-  return `<section class="card approve"><h2>An agent asks to act as you</h2>
-<p><b>${esc(waiting.label)}</b> wants a token for ${what}</p>
-<dl class="grant">${choose ? "" : `<dt>Scope</dt><dd class="scope-${g.scope}">${SCOPE_NAMES[g.scope]}</dd>`}<dt>Expires</dt><dd>${ends}</dd></dl>
+  return `<section class="card approve"><h2><b>${esc(waiting.label)}</b> wants a token for ${what}</h2>
+${more ? `<p>${more}</p>` : ""}<dl class="grant">${choose ? "" : `<dt>Scope</dt><dd class="scope-${g.scope}">${SCOPE_NAMES[g.scope]}</dd>`}<dt>Expires</dt><dd>${ends}</dd></dl>
 ${
   waiting.oauth
     ? `<p>Approve only if you just added Erga to this app. Approve sends you back to <b>${esc(whereBack(waiting.oauth.redirectUri))}</b>, and the app gets the token.</p>`
-    : `<p>Approve only if you started this and the code matches:</p>
+    : `<p>Approve only if you initiated this and the code matches:</p>
 <p class="code">${esc(code)}</p>`
 }
 ${may ? `<p class="notice error">${esc(may)}</p>` : ""}

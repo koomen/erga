@@ -50,7 +50,7 @@ The rules:
 | A4 | `e2e/access/admin.e2e.ts` | An admin page does not save a setting, or shows old values. | 6 |
 | C1 | `e2e/comments/comments.e2e.ts` | A comment is lost, lands on the wrong text, or a commenter changes the text. | 9 |
 | R1 | `e2e/versions/versions.e2e.ts` | A version is not cut; Restore gives the wrong text; the homepage deploys by itself. | 13 |
-| H1 | `e2e/homepage/homepage.e2e.ts` | The homepage is blank on a new server, shows the wrong document, or a deploy breaks it. | 7 |
+| H1 | `e2e/homepage/homepage.e2e.ts` | The homepage is blank on a new server, shows the wrong document, or a deploy breaks it; with no homepage, / has no Sign in. | 7 |
 | P1 | `e2e/page-model/page-model.e2e.ts` | A page spends the owner's model budget for a visitor who may not, or past the limit. | 4 |
 | X1 | `e2e/security/boundaries.e2e.ts` | A page's script reaches the editor, the cookies or a token; another site frames Erga; a hostile page takes the tab. | 6 |
 

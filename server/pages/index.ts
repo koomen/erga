@@ -1,5 +1,5 @@
 // The HTML the server renders, and nothing of the routing: the viewer's scripts and styles,
-// the documents list, the start page, the page's own script (reader.ts), the account corner, the
+// the documents list, the homepage in the server's code, the page's own script (reader.ts), the account corner, the
 // templates, and what every page shares (pages/chrome.ts). The rest of the app imports
 // pages through this file.
 
@@ -17,7 +17,7 @@ export {
 } from "./chrome.ts";
 export { docsPage, docsRows } from "./docs.ts";
 export { readerPage, readerVersion } from "./reader.ts";
-export { frontPage, startPage } from "./start.ts";
+export { homePage } from "./home.ts";
 export { scratchMakeTip, scratchSave } from "./scratch.ts";
 export { hasAgent } from "./agent.ts";
 export { editButton, RESTORE_KEY, VIEW_STYLE, viewerPage } from "./viewer.ts";

@@ -27,7 +27,7 @@ const PANEL = `<div class="agent-glass">
 <button type="button" class="icon-btn" id="agent-reset" aria-label="New conversation" data-tip="New conversation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
 <button type="button" class="icon-btn" id="agent-close" aria-label="Collapse (Esc)" data-tip="Collapse  Esc"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 19.5 10 14M10 14H5.5M10 14v4.5M19.5 4.5 14 10M14 10h4.5M14 10V5.5"/></svg></button>
 </div>
-<div class="agent-log" id="agent-log" data-empty="Ask for anything you can do in Erga: make or change a document, share it, find one. It sees the page you have open." aria-live="polite" tabindex="-1"></div>
+<div class="agent-log" id="agent-log" aria-live="polite" tabindex="-1"></div>
 <button type="button" class="agent-jump" id="agent-jump" hidden>↓ Jump to latest</button>
 <p class="agent-turn" id="agent-turn" role="status" hidden></p>
 <p class="agent-hint" id="agent-hint" role="status" hidden></p>

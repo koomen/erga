@@ -1,24 +1,29 @@
-// The homepage's document (the landing_document setting), and making it from the repo's
-// assets/landing/ when there's none (seedLanding). The viewer on it at / is view.ts's.
+// The homepage's document (the landing_document setting), and the homepage project, which the deploy makes.
 //
-// The homepage project: every server has one, the project "Erga Homepage" at /_home, which nobody owns and every admin
-// may edit (document/names.ts, server/directory/ homeLimit). A server made before it had one makes the homepage it has
-// the project, once (adoptLanding): the same files and id, a new address (the old one redirects there).
+// The homepage project: the project "Erga Homepage" at /_home, which nobody owns and every admin may edit
+// (document/names.ts, server/directory/ homeLimit). Each deploy asks the server for it once its release answers
+// (POST /api/deploys/home: makeHome), and the server makes it from the repo's assets/landing/ when it has none. No
+// request for a page makes it, and it needs no admin. Where there's no homepage, / is the page in the server's code
+// (server/pages/home.ts). A server made before the project makes the homepage it has the project, once (adoptLanding):
+// the same files and id, a new address (the old one redirects there).
 
+import { SYSTEM } from "../../shared/attribution.ts";
 import { type DocRow, newDocId } from "../directory/index.ts";
+import { json, platform, type Route } from "../http.ts";
 import { type Platform } from "../platform.ts";
 import { makeDoc } from "./make.ts";
+import * as Effect from "effect/Effect";
 import { HOME_OWNER, HOME_SLUG, HOME_TITLE } from "../../document/names.ts";
 
-/** Where seedLanding put the homepage before the project: /<owner>/landing. */
+/** Where the server put the homepage before the project: /<owner>/landing. */
 const OLD_SLUG = "landing";
 
 /** Adoptions under way or done, by directory (one per database): each isolate checks once. */
 const adopting = new WeakMap<object, Promise<void>>();
 
 /**
- * Makes the homepage the homepage project, if it's the one the server made before the project (seedLanding put it at
- * /<owner>/landing) and there's no homepage project yet: a server's first deploy with it. A document an admin chose
+ * Makes the homepage the homepage project, if it's the one the server made before the project (at /<owner>/landing)
+ * and there's no homepage project yet: a server's first deploy with it. A document an admin chose
  * as the homepage stays theirs. It becomes nobody's, at /_home, a project
  * called "Erga Homepage", and deploys again (its snapshot names its address). Its files stay as they are.
  */
@@ -40,83 +45,35 @@ export function adoptLanding(platform: Platform): Promise<void> {
   return run;
 }
 
-/**
- * The document the homepage shows now: the setting's (and, while a seed in this isolate has claimed it but not yet
- * moved it to /<owner>/landing, that seed's answer, at its address). Null when there's none yet (landingPage makes one).
- */
-export async function frontDocument(platform: Platform): Promise<DocRow | null> {
-  const named = await platform.directory.landing();
-  const running = seeding.get(platform.directory);
-  if (named && running && named.slug == named.id) return (await running) ?? named;
-  return named;
-}
-
-/**
- * The homepage's document: the one landing_document names, else (unset,
- * or naming a document that's gone) a new one made from the repo's assets/landing/
- * (seedLanding). Null only when the deploy locks the setting to a document
- * that isn't there, or there's nobody to own one.
- */
+/** The homepage's document, if the setting names one that is there with its page; else null (/new?from=landing copies it). */
 export async function landingDocument(platform: Platform): Promise<DocRow | null> {
-  return (await landingPage(platform))?.doc ?? null;
-}
-
-/** The homepage's document (landingDocument) and its page: the one round trip to its host tells both that it's there and which file to show. */
-export async function landingPage(platform: Platform): Promise<{ doc: DocRow; index: string } | null> {
-  await adoptLanding(platform);
   const doc = await platform.directory.landing();
-  const index = doc && (await platform.docs.index(doc));
-  if (doc && index != null) return { doc, index };
-  const made = await seedLanding(platform);
-  const madeIndex = made && (await platform.docs.index(made));
-  return made && madeIndex != null ? { doc: made, index: madeIndex } : null;
+  return doc && (await platform.docs.index(doc)) != null ? doc : null;
 }
 
-/** Seeds under way, by directory (one per database), so a burst of first requests in one isolate makes one document. */
-const seeding = new WeakMap<object, Promise<DocRow | null>>();
+/** What makeHome did: it made the homepage project, there is one already, or this server has no files to make it from. */
+export type HomeMade = "made" | "there" | "none";
+
+/** Makings under way, by directory (one per database): asks at once in one isolate share one. */
+const making = new WeakMap<object, Promise<HomeMade>>();
 
 /**
- * Makes the homepage from the repo's assets/landing/ (built into the Worker) the
- * first time anyone asks for it, and again when the one it named was deleted
- * or an admin reset the setting: the homepage project, "Erga Homepage" at /_home,
- * and sets landing_document to it. A homepage project there already (the setting
- * was reset) becomes an ordinary document of the landing owner's, at its id. No deploy step does this; the server does.
- * Requests at once in one isolate share one seed; across isolates the setting
- * is claimed compare-and-set (ServerConfig.claim), and a seed that loses
- * deletes its document and takes the winner's. Each seed makes its document
- * at its id, and only the winner moves to /_home,
- * once it has won: so a loser never holds "landing" while the winner looks
- * for a free slug, which gave the winner "landing-2". A setting an admin
- * chose (a document that's there) is never touched, nor one the deploy locks.
+ * The deploy's step: makes the homepage project (/_home) from the repo's assets/landing/ (built into the Worker), when
+ * the server has none. It is the homepage (the server's own write of landing_document) unless the setting names a
+ * document that is there, or the deploy locks it. Asked again, it does nothing. Two isolates at once: each makes its
+ * project at its id, the one that gets /_home keeps it, and the other deletes its own.
  */
-export function seedLanding(platform: Platform): Promise<DocRow | null> {
+export function makeHome(platform: Platform): Promise<HomeMade> {
   const key = platform.directory;
-  const running = seeding.get(key);
+  const running = making.get(key);
   if (running) return running;
-  const run = (async () => {
-    const config = platform.directory.config;
-    const project = platform.landing;
-    if (config.isLocked("landing_document") || !project) return null;
-    // Locally DEV_LOGIN; on a deployed server its first admin (none yet: no homepage).
-    const owner = (project.owner ?? (await platform.directory.users.firstAdmin()))?.toLowerCase();
-    if (!owner) return null;
-    // Read afresh (settings are remembered a few seconds): another isolate may have seeded it just now.
-    const live = async (stored: string | null) => {
-      let ref: unknown = null;
-      try { ref = stored == null ? null : JSON.parse(stored); } catch { /* not JSON: dangling */ }
-      const doc = typeof ref == "string" && ref ? await platform.directory.find(ref) : null;
-      return doc && !doc.test && (await platform.docs.index(doc)) != null ? doc : null;
-    };
-    // The winner's document, still at its id, takes its address. A loser does it too, so the document it answers with
-    // has its address already.
-    const settle = async (doc: DocRow | null) =>
-      doc && doc.slug == doc.id ? ((await platform.directory.reslug(doc.id, HOME_SLUG)) ?? doc) : doc;
-    const stored = await config.stored("landing_document");
-    const there = await live(stored);
-    if (there) return there;
-    const files = await project.files();
-    const index = files["index.html"] != null ? "index.html" : null;
-    if (!index) return null;
+  const run = (async (): Promise<HomeMade> => {
+    await adoptLanding(platform);
+    const dir = platform.directory;
+    if (await dir.locate(HOME_OWNER, HOME_SLUG)) return "there";
+    const files = await platform.landing?.files();
+    const index = files?.["index.html"] != null ? "index.html" : null;
+    if (!files || !index) return "none";
     let made: DocRow | null = null;
     for (let tries = 0; !made && tries < 5; tries++) {
       const id = newDocId();
@@ -128,16 +85,21 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
         { index, slug: id, published: true, kind: "project", title: HOME_TITLE }
       );
     }
-    if (!made) return null;
-    if (!(await config.claim("landing_document", stored, made.id, owner))) {
-      // Another seed won: theirs is the homepage, and this one goes.
-      if (!(await platform.docs.delete(made))) await platform.directory.remove(made.id);
-      return settle(await live(await config.stored("landing_document")));
+    if (!made) return "none";
+    if (!(await dir.takeHome(made.id))) {
+      if (!(await platform.docs.delete(made))) await dir.remove(made.id);
+      return "there";
     }
-    // The homepage project from before (the setting was reset) gives up /_home to the new one.
-    await platform.directory.releaseHome(made.id, owner);
-    return (await settle(made)) ?? made;
-  })().finally(() => seeding.delete(key));
-  seeding.set(key, run);
+    if (!dir.config.isLocked("landing_document") && !(await dir.landing()))
+      await dir.config.claim("landing_document", await dir.config.stored("landing_document"), made.id, SYSTEM);
+    return "made";
+  })().finally(() => making.delete(key));
+  making.set(key, run);
   return run;
 }
+
+/** POST /api/deploys/home: the deploy asks for the homepage project ({ home: "made" | "there" | "none" }). */
+export const makeHomeRoute: Route = Effect.gen(function* () {
+  const p = yield* platform;
+  return json({ home: yield* Effect.promise(() => makeHome(p)) });
+});

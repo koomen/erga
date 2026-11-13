@@ -12,39 +12,34 @@
 // sign-in.
 //
 // A header counts only when all of this holds: its signature is the proxy's, for the key it names; it is for this
-// server; it has not ended. Trap: an AWS load balancer's header has AWS's signature whichever balancer wrote it, so
-// without the check of `signer` anyone with a load balancer of their own signs in as anyone. Cloudflare Access's
+// server; it has not ended. Trap: the header of AWS's proxy has AWS's signature whichever proxy wrote it, so
+// without the check of `signer` anyone with a proxy of their own signs in as anyone. Cloudflare Access's
 // has the team's signature whichever application it is for: the check of `aud` is the same guard. Some paths pass the
 // proxy with no sign-in (an agent's, with its token: shared/proxy-paths.ts): they carry no header, and this route is
 // not one of them.
 //
-// The account is kept by the sign-in's `sub`, never by the email. Trap: not every sign-in gives the address in the
-// `email` claim (a Cognito pool that federates may give only `username`, as "<provider>_<address>"). The deploy says
-// where it is (the setup's `proxyEmail`), and a sign-in that gives none there makes no account: the page says which
-// claims came.
+// The account is kept by the sign-in's `sub`, never by the email. The email address is the first of the claims `email`,
+// `upn` and `preferred_username` that looks like one. A sign-in that gives none still signs in, by its `sub`: no page
+// ever shows the `sub` as a name, and nobody is the first admin without an address (the deploy names them by email).
 
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { fromBase64, fromBase64url } from "../../shared/bytes.ts";
-import { esc } from "../../shared/html.ts";
 import type { Vouched } from "../directory/index.ts";
 import { call, ctx, type Route } from "../http.ts";
 import { page, safeNext } from "../pages/index.ts";
 import { vouchedSignIn } from "./accounts.ts";
+import { noSuchSignIn, signInFailed } from "./sign-in.ts";
 
-/** Where the sign-in gives each person's email address: the claim, and the text before the address in it ("": none). */
-const Email = Schema.Struct({ claim: Schema.NonEmptyString, prefix: Schema.String });
-
-/** An AWS load balancer with an OIDC sign-in (deploy/aws/template.ts). */
+/** AWS's proxy: an Application Load Balancer with an OIDC sign-in (deploy/aws/template.ts). */
 const AwsAlb = Schema.Struct({
   kind: Schema.Literal("aws-alb"),
-  /** The load balancer whose header counts: its ARN. */
+  /** The proxy whose header counts: its ARN. */
   signer: Schema.NonEmptyString,
   /** The sign-in's issuer, and this server's client there. */
   issuer: Schema.NonEmptyString,
   client: Schema.NonEmptyString,
-  email: Email,
 });
 
 /** Cloudflare Access: an Access application in front of the server's address. */
@@ -54,7 +49,6 @@ const CloudflareAccess = Schema.Struct({
   team: Schema.String.check(Schema.isPattern(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/)),
   /** The Access application whose header counts: its audience tag. */
   aud: Schema.NonEmptyString,
-  email: Email,
 });
 
 const Proxy = Schema.Union([AwsAlb, CloudflareAccess]);
@@ -82,7 +76,7 @@ interface Kind<C extends Proxy> {
   head(head: Record<string, unknown>, c: C, now: number): boolean;
   /** Whether the claims say so: asked once the signature holds. */
   claims(claims: Record<string, unknown>, c: C, now: number): boolean;
-  /** Whether the proxy's sign-in verified the address in the `email` claim (another claim's is the deploy's word for it). */
+  /** Whether the proxy's sign-in verified the address in the `email` claim. */
   verified(claims: Record<string, unknown>): boolean;
   /** Its values, for the admin page: none is a secret. */
   shown(c: C): { name: string; value: string }[];
@@ -104,11 +98,11 @@ const kept = (at: string, get: () => Promise<CryptoKey>): Promise<CryptoKey> => 
 const regionOf = (c: typeof AwsAlb.Type) => c.signer.split(":")[3] ?? "";
 
 const awsAlb: Kind<typeof AwsAlb.Type> = {
-  label: "AWS load balancer",
+  label: "AWS Application Load Balancer",
   header: "x-amzn-oidc-data",
   alg: "ES256",
   verify: { name: "ECDSA", hash: "SHA-256" },
-  // AWS's public key: a PEM at its fixed address, of the balancer's region.
+  // AWS's public key: a PEM at its fixed address, of the proxy's region.
   key: (kid, c) =>
     kept(`aws:${regionOf(c)}/${kid}`, async () => {
       const r = await fetch(`https://public-keys.auth.elb.${regionOf(c)}.amazonaws.com/${kid}`);
@@ -116,7 +110,7 @@ const awsAlb: Kind<typeof AwsAlb.Type> = {
       const der = fromBase64((await r.text()).replace(/-----[A-Z ]+-----|\s+/g, ""));
       return crypto.subtle.importKey("spki", der, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
     }),
-  // The balancer writes these in the JWT's header.
+  // The proxy writes these in the JWT's header.
   head: (h, c, now) =>
     /^[a-z0-9-]+$/.test(regionOf(c)) &&
     h.signer == c.signer &&
@@ -128,7 +122,7 @@ const awsAlb: Kind<typeof AwsAlb.Type> = {
   // Cognito gives email_verified as text.
   verified: (claims) => claims.email_verified === true || claims.email_verified === "true",
   shown: (c) => [
-    { name: "Load balancer", value: c.signer },
+    { name: "ARN", value: c.signer },
     { name: "Issuer", value: c.issuer },
     { name: "Client ID", value: c.client },
   ],
@@ -183,10 +177,7 @@ export const proxyStatus = (proxy: Proxy | null): ProxyStatus =>
         kind: proxy.kind,
         label: kindOf(proxy).label,
         header: kindOf(proxy).header,
-        values: [
-          ...kindOf(proxy).shown(proxy),
-          { name: "Email claim", value: `${proxy.email.claim}${proxy.email.prefix ? ` (after "${proxy.email.prefix}")` : ""}` },
-        ],
+        values: kindOf(proxy).shown(proxy),
       }
     : { kind: null, label: "Not set up", header: null, values: [] };
 
@@ -217,31 +208,28 @@ export async function claimsOf(token: string, proxy: Proxy, o: { now?: number; k
   }
 }
 
-/** The sign-in gave no email address where the deploy says it is: the names of the claims it did give. */
-export class NoEmail {
-  constructor(readonly claims: string[]) {}
-}
-
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** The claims that may hold the person's email address, in the order they are tried. */
+const EMAIL_CLAIMS = ["email", "upn", "preferred_username"];
 
 /**
- * The person the claims are; null without a `sub`. The `email` claim's address is verified when the proxy's kind says
- * so; another claim's is the deploy's word for it.
+ * The person the claims are; null without a `sub`. Their email address: the first of EMAIL_CLAIMS that looks like one.
+ * The `email` claim's is verified when the proxy's kind says so, and `upn`'s is (a directory gives it); never
+ * `preferred_username`'s, which a person may choose: it names them, and matches nobody an admin added. Without an
+ * address, `handle` is "": the `sub` is never a name.
  */
-export function vouchedOf(claims: Record<string, unknown>, proxy: Proxy): Vouched | NoEmail | null {
+export function vouchedOf(claims: Record<string, unknown>, proxy: Proxy): Vouched | null {
   const text = (claim: string) => (typeof claims[claim] == "string" ? claims[claim].trim() : "");
   const subject = text("sub");
   if (!subject) return null;
-  const where = proxy.email;
-  const at = text(where.claim);
-  const email = at.startsWith(where.prefix) ? at.slice(where.prefix.length).toLowerCase() : "";
-  if (!EMAIL.test(email)) return new NoEmail(Object.keys(claims).sort());
-  const verified = where.claim != "email" || kindOf(proxy).verified(claims);
-  return { provider: "proxy", subject, handle: email, name: text("name") || null, emails: [{ email, verified }], groups: [] };
+  const claim = EMAIL_CLAIMS.find((c) => EMAIL.test(text(c)));
+  const email = claim ? text(claim).toLowerCase() : "";
+  const verified = claim == "email" ? kindOf(proxy).verified(claims) : claim == "upn";
+  return { provider: "proxy", subject, handle: email, name: text("name") || null, emails: email ? [{ email, verified }] : [], groups: [] };
 }
 
 /** Who a header says signed in: its proof, then its person. */
-export async function readProxy(token: string, proxy: Proxy, o: { now?: number; key?: Key } = {}): Promise<Vouched | NoEmail | null> {
+export async function readProxy(token: string, proxy: Proxy, o: { now?: number; key?: Key } = {}): Promise<Vouched | null> {
   const claims = await claimsOf(token, proxy, o);
   return claims ? vouchedOf(claims, proxy) : null;
 }
@@ -250,23 +238,15 @@ export async function readProxy(token: string, proxy: Proxy, o: { now?: number; 
 export const proxySignIn: Route = Effect.gen(function* () {
   const { platform, request, url } = yield* ctx;
   const signIn = platform.signIn;
-  if (signIn.mode != "proxy") return page("Not found", 'There\'s nothing here. <a href="/">Back to the start</a>.', 404);
+  if (signIn.mode != "proxy") return noSuchSignIn();
   const proxy = signIn.proxy;
   if (!proxy)
     return page(
       "Sign-in isn't set up",
-      "This server signs in with a proxy in front of it, and its setting for that proxy (<code>PROXY_SIGN_IN</code>) isn't one it can read. The person who deployed this server sets it.",
+      "This server signs in with your company's sign-in, and its setting for it (<code>PROXY_SIGN_IN</code>) isn't one it can read. The person who deployed this server sets it.",
       503
     );
   const v = yield* call(() => readProxy(request.headers.get(kindOf(proxy).header) ?? "", proxy));
-  // (No link to try again from here: the same request gives the same answer.)
-  if (!v)
-    return page("Sign-in failed", "Your company's sign-in didn't say who you are. Reload the page; if this stays, tell an admin.", 400);
-  if (v instanceof NoEmail)
-    return page(
-      "No email address",
-      `Your company's sign-in didn't give your email address in <code>${esc(proxy.email.claim)}</code>. It gave: ${esc(v.claims.join(", "))}. Tell the person who set this server up: the setup's answer <code>proxyEmail</code> says where the address is.`,
-      400
-    );
+  if (!v) return signInFailed(`the proxy's header (${kindOf(proxy).header}) is missing, not this proxy's, or old`);
   return yield* vouchedSignIn(platform, request, v, safeNext(url.searchParams.get("next")), {});
 });

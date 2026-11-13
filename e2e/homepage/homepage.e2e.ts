@@ -27,7 +27,7 @@ import {
   onHome,
   openHome,
   redeploy,
-  resetLanding,
+  projectHome,
   setLanding,
   signedOut,
   siteHome,
@@ -79,7 +79,8 @@ journey("the homepage on a domain of its own, from a new server on", () => {
     });
     expect(made.error).toBeUndefined();
     expect((await setLanding(own, made.result!.id)).error).toBeUndefined();
-    // The server's first / adopts it (server/documents/landing.ts adoptLanding).
+    // The server's first / adopts it (server/documents/landing.ts adoptLanding): this server has had no deploy's step,
+    // so it has no homepage project yet.
     await front(own);
     const admin = await get(own, "/_home");
     const page = await admin.text();
@@ -234,13 +235,16 @@ journey("the homepage on a domain of its own, from a new server on", () => {
     expect((await p.context().cookies(origin)).map((c) => c.name)).not.toContain(visitor);
   });
 
-  test("on the Erga domain, / is a page with Sign in and no link to the site; the site's files are not there", async ({ tab }) => {
-    // The tab is on Erga's /, signed out, after the sign-out of the step before.
-    const button = tab.page.locator("main a.new");
+  test("on the Erga domain, / is the page in the server's code: Erga's headline, Sign in, and no link to the site; the site's files are not there", async ({
+    tab,
+  }) => {
+    // The tab is on Erga's /, signed out, after the sign-out of the step before. This domain has no homepage: the
+    // hard-coded page, with Erga's bars.
+    expect(await tab.page.locator(".hero h1").innerText()).toBe("Erga is an AI document editor for people who care about every word");
+    const button = tab.page.locator(".hero .cta a.go");
     expect(await button.textContent()).toBe("Sign in");
     expect(await button.isVisible()).toBe(true);
-    // One way in: no account corner beside it.
-    expect(await tab.page.locator(".erga-account").count()).toBe(0);
+    expect(await tab.page.locator(".erga-crumbs .erga-brand").count()).toBe(1);
     const r = await get(own, "/", { headers: signedOut(own) });
     const page = await r.text();
     expect(r.status).toBe(200);
@@ -328,10 +332,10 @@ journey("the homepage on the Erga domain", () => {
       async () => (await front(main)).html.slice(0, 300)
     );
 
-  test.afterAll(async () => void (await resetLanding(main)));
+  test.afterAll(async () => void (await projectHome(main)));
 
   test("landing_document makes another document the homepage, deployed at once, and its tabs hear of it", async () => {
-    // The homepage until now (the server makes one from assets/landing/ for its first /).
+    // The homepage until now (the homepage project, which the deploy's step made from assets/landing/).
     const before = (await until(async () => docOf((await front(main)).html), 5_000, "/ names its document"))!;
     site = await makeSite(main, files);
     expect(await homeOf(main, site.id)).toEqual({ isHome: false });
@@ -565,32 +569,38 @@ journey("the homepage on the Erga domain", () => {
     expect(await homeOf(main, target.id)).toMatchObject({ isHome: true });
     expect(await homeOf(main, site.id)).toEqual({ isHome: false });
 
-    // Reset: back to the default (none: the repo's demo page).
+    // Reset: back to the default (none: no homepage).
     await page.click(`${row} .reset`);
     await page.waitForSelector(`${row} .meta a.open-doc`, { state: "detached" });
     expect(await page.locator(`${row} .reset`).count()).toBe(0);
     expect(await landingSetting(main)).toBe("");
   });
 
-  test("a reset landing_document clears it: the next / makes a fresh homepage from assets/landing/ and deploys it", async () => {
+  test("a reset landing_document clears it: / is the page in the server's code, with Sign in; the homepage project, chosen again, deploys", async () => {
     expect(await homeOf(main, target.id)).toEqual({ isHome: false });
-    // The viewer on the new homepage at first, then its deployed page, with Erga's controls.
-    const logo = `<h1 class="logo"`;
+    // No homepage is assigned: no request makes one. / is the hard-coded page, with Erga's headline and one way in.
     await until(
       async () => {
         const f = (await front(main)).html;
-        return !f.includes(target.title) && (f.includes(logo) || f.includes('<iframe id="frame"'));
+        return (
+          !f.includes(target.title) &&
+          f.includes("<h1>Erga is an AI document editor for people who care about every word</h1>") &&
+          f.includes('<a class="go" href="/auth/sign-in?next=%2Fdocs">Sign in</a>')
+        );
       },
       5_000,
-      "/ is a fresh homepage"
+      "/ is the page in the server's code"
     );
+    // The homepage project is still at /_home: an admin makes it the homepage again, and it deploys, with Erga's controls.
+    expect((await projectHome(main)).error).toBeUndefined();
+    const logo = `<h1 class="logo"`;
     await until(
       async () => {
         const f = await front(main);
         return f.direct && f.html.includes(logo);
       },
       5_000,
-      "the fresh homepage is deployed"
+      "the homepage project is deployed again"
     );
     expect(await landingSetting(main)).toBe("/_home");
   });

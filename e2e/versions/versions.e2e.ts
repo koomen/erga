@@ -82,7 +82,7 @@ journey("versions in the editor's settings", () => {
   };
 
   // The journey makes its document the server's homepage for a while: put back, also when a step fails.
-  test.afterAll(async () => void (await runTool(s.root, "set_setting", { key: "landing_document", reset: true })));
+  test.afterAll(async () => void (await runTool(s.root, "set_setting", { key: "landing_document", value: "/_home" })));
 
   test("the popover hangs from the gear, with the latest ten versions of twelve", async ({ tab }) => {
     // Twelve versions with no wait: the first, one by an agent's turn (draft B), and ten restores of the two in turn.

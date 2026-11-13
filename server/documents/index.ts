@@ -5,6 +5,6 @@
 
 export { forwarded, forwardedAs, documentRoutes, ergaAddress, keyedOp, keyedPerson } from "./routes.ts";
 export { forgetDecisions } from "./view.ts";
-export { adoptLanding, landingDocument } from "./landing.ts";
+export { adoptLanding, landingDocument, makeHome, makeHomeRoute } from "./landing.ts";
 export { makeDoc, startingFiles } from "./make.ts";
 export { isPagesSite, pagesHost, pagesOrigin, pagesToken, readPagesClaims, readPagesToken, workerHere } from "./pages-origin.ts";

@@ -23,7 +23,7 @@ export const templatePath = (dir: string, stack: string, certs = false) => join(
 export function writeTemplates(dir: string, shape: AwsShape, fresh = false): string[] {
   mkdirSync(templatesDir(dir), { recursive: true });
   const out: [string, unknown][] = [[templatePath(dir, shape.stack), stackTemplate(shape)]];
-  if (shape.domains && shape.front.kind == "cloudfront")
+  if (shape.domains && shape.edge.kind == "cloudfront")
     out.unshift([templatePath(dir, shape.stack, true), certificatesTemplate(shape.stack, shape.domains)]);
   for (const [path, t] of out) if (fresh || !existsSync(path)) writeFileSync(path, `${JSON.stringify(t, null, 2)}\n`);
   return out.map(([p]) => p);

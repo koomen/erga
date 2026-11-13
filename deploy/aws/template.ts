@@ -6,11 +6,11 @@
 //     NAT gateway), or a private subnet of a VPC the person names, which has its own way out;
 //   - the machine (celld and Chrome, deploy/aws/machine.ts): no public address, and only CloudFront may reach its port;
 //   - the bucket (celld's state, the releases, the programs), the KMS key (the bucket and the secrets), the role;
-//   - the front, one of two:
+//   - the edge (what answers the internet), one of two:
 //       CloudFront: two distributions, the app's and the pages', each with the machine as its VPC origin; with domains,
 //       a second stack in us-east-1 holds the ACM certificates, where CloudFront needs them (certificatesTemplate);
-//       a load balancer (an ALB, public): it signs each person in with the company's OIDC sign-in before Erga, and
-//       lets pass without it only what Erga's own tokens guard (balancer, below). Its certificate is in this stack;
+//       a proxy (an Application Load Balancer, public): it signs each person in with the company's OIDC sign-in before Erga, and
+//       lets pass without it only what Erga's own tokens guard (proxy, below). Its certificate is in this stack;
 //   - with domains: the Route 53 records of the app's name and the pages' wildcard name.
 //
 // The structure follows the answers (the way out, the domains); the sizes and the machine image are the template's
@@ -28,10 +28,10 @@ export interface AwsShape {
   domains: { app: string; appZone: string; pages: string; pagesZone: string } | null;
   /**
    * What answers the internet. CloudFront, with the region's origin-facing prefix list
-   * (com.amazonaws.global.cloudfront.origin-facing); or a load balancer with a sign-in in front of Erga: it needs
+   * (com.amazonaws.global.cloudfront.origin-facing); or a proxy with a sign-in in front of Erga: it needs
    * domains, and the stack's own network.
    */
-  front: { kind: "cloudfront"; prefixList: string } | { kind: "balancer"; oidc: Oidc };
+  edge: { kind: "cloudfront"; prefixList: string } | { kind: "proxy"; oidc: Oidc };
 }
 
 /** The company's OIDC sign-in, as its issuer publishes it (/.well-known/openid-configuration), and Erga's client there. */
@@ -43,7 +43,7 @@ export interface Oidc {
   clientId: string;
 }
 
-/** The port celld answers on, on the machine. Only the front reaches it. */
+/** The port celld answers on, on the machine. Only the edge reaches it. */
 export const CELLD_PORT = 8080;
 /** Where the instance's secrets are in Parameter Store: /erga/<stack>/<NAME>. */
 export const paramPath = (stack: string) => `/erga/${stack}/`;
@@ -95,7 +95,7 @@ export const NAT_USER_DATA = [
 export const oidcSecretName = (stack: string) => `erga/${stack}/oidc-client-secret`;
 
 /**
- * What passes the load balancer without the sign-in, on the app's address (shared/proxy-paths.ts says what and why),
+ * What passes the proxy without the sign-in, on the app's address (shared/proxy-paths.ts says what and why),
  * as the listener's rules take them: three paths a rule (a rule takes five values, and the host is one).
  */
 export const TOKEN_PATHS: readonly (readonly string[])[] = Array.from({ length: Math.ceil(PROXY_FREE_PATHS.length / 3) }, (_, i) =>
@@ -173,8 +173,8 @@ function network(s: AwsShape): { subnet: unknown; vpc: unknown; resources: Json 
       },
     },
   };
-  // A load balancer needs two zones. Its rule for the server's own browser names the NAT's address: a fixed one.
-  if (s.front.kind == "balancer") {
+  // A proxy needs two zones. Its rule for the server's own browser names the NAT's address: a fixed one.
+  if (s.edge.kind == "proxy") {
     r.PublicSubnetB = {
       Type: "AWS::EC2::Subnet",
       Properties: {
@@ -287,7 +287,7 @@ function distribution(s: AwsShape, which: "App" | "Pages"): Json {
 /** The main stack's template. */
 export function stackTemplate(s: AwsShape): Json {
   const net = network(s);
-  const front = s.front.kind == "balancer" ? balancer(s, s.front.oidc, net.vpc) : cloudFront(s, s.front.prefixList);
+  const edge = s.edge.kind == "proxy" ? proxy(s, s.edge.oidc, net.vpc) : cloudFront(s, s.edge.prefixList);
   const role = att("Role", "Arn");
   const resources: Json = {
     ...net.resources,
@@ -430,13 +430,13 @@ export function stackTemplate(s: AwsShape): Json {
       },
     },
     Profile: { Type: "AWS::IAM::InstanceProfile", Properties: { Roles: [ref("Role")] } },
-    // Only the front reaches celld's port; nothing else comes in.
+    // Only the edge reaches celld's port; nothing else comes in.
     Firewall: {
       Type: "AWS::EC2::SecurityGroup",
       Properties: {
-        GroupDescription: `Erga ${s.stack}: celld, from ${s.front.kind == "balancer" ? "the load balancer" : "CloudFront"} only`,
+        GroupDescription: `Erga ${s.stack}: celld, from ${s.edge.kind == "proxy" ? "the proxy" : "CloudFront"} only`,
         VpcId: net.vpc,
-        SecurityGroupIngress: [{ IpProtocol: "tcp", FromPort: CELLD_PORT, ToPort: CELLD_PORT, ...front.ingress }],
+        SecurityGroupIngress: [{ IpProtocol: "tcp", FromPort: CELLD_PORT, ToPort: CELLD_PORT, ...edge.ingress }],
         Tags: tags(s.stack, "machine"),
       },
     },
@@ -454,11 +454,11 @@ export function stackTemplate(s: AwsShape): Json {
         Tags: tags(s.stack, "machine"),
       },
     },
-    ...front.resources,
+    ...edge.resources,
   };
   return {
     AWSTemplateFormatVersion: "2010-09-09",
-    Description: `Erga ${s.stack}: one celld machine, its bucket, and ${s.front.kind == "balancer" ? "a load balancer with the sign-in" : "CloudFront"} in front (written by bun erga setup)`,
+    Description: `Erga ${s.stack}: one celld machine, its bucket, and ${s.edge.kind == "proxy" ? "a proxy with the sign-in" : "CloudFront"} in front (written by bun erga setup)`,
     Parameters: {
       MachineType: {
         Type: "String",
@@ -474,15 +474,15 @@ export function stackTemplate(s: AwsShape): Json {
       ...(s.egress.kind == "nat-instance"
         ? { NatType: { Type: "String", Default: "t4g.nano", Description: "The NAT machine: the Erga machine's way out" } }
         : {}),
-      ...front.parameters,
+      ...edge.parameters,
     },
     Resources: resources,
-    Outputs: { Bucket: { Value: ref("Bucket") }, Machine: { Value: ref("Machine") }, Key: { Value: att("Key", "Arn") }, ...front.outputs },
+    Outputs: { Bucket: { Value: ref("Bucket") }, Machine: { Value: ref("Machine") }, Key: { Value: att("Key", "Arn") }, ...edge.outputs },
   };
 }
 
-/** A front's part of the stack: who may reach the machine's port, and its own resources, parameters and outputs. */
-interface Front {
+/** An edge's part of the stack: who may reach the machine's port, and its own resources, parameters and outputs. */
+interface Edge {
   ingress: Json;
   resources: Json;
   parameters: Json;
@@ -490,7 +490,7 @@ interface Front {
 }
 
 /** CloudFront in front: two distributions with the machine as their VPC origin, and with domains their names in Route 53. */
-function cloudFront(s: AwsShape, prefixList: string): Front {
+function cloudFront(s: AwsShape, prefixList: string): Edge {
   const machineArn = sub("arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Machine}");
   const resources: Json = {
     Origin: {
@@ -567,21 +567,21 @@ function cloudFront(s: AwsShape, prefixList: string): Front {
 }
 
 /**
- * A load balancer in front (an ALB, public), with the company's sign-in. Its listener's rules, first match wins:
+ * A proxy in front (an Application Load Balancer, public), with the company's sign-in. Its listener's rules, first match wins:
  *
  *    1  a request that brings X-Forwarded-Host: refused. celld trusts that header (CELLD_TRUST_FORWARDED_HEADERS) for
- *       https (the balancer's X-Forwarded-Proto), and the balancer passes a caller's own; without it celld reads Host.
+ *       https (the proxy's X-Forwarded-Proto), and the proxy passes a caller's own; without it celld reads Host.
  *    2  a document's own address (*.<pages>), its files and its worker only: no sign-in. The page's token is the pass
  *       (a frame can't follow a sign-in, and that address has no cookie).
  *   10+ the app's address, what Erga's tokens guard (TOKEN_PATHS): no sign-in.
  *   20  the app's address, a request with a key (?key=): what a document's page asks of its room, from its own address.
  *   30  the app's address, from the NAT's address: the server's own browser (view_page), which holds Erga's view cookie.
- *  100  the app's address, anything else: the sign-in (OIDC) first. The balancer then adds x-amzn-oidc-data, which says
+ *  100  the app's address, anything else: the sign-in (OIDC) first. The proxy then adds x-amzn-oidc-data, which says
  *       who signed in, signed by AWS (server/identity/proxy.ts reads it).
- * Any other host: 404. The machine lets in only the balancer.
+ * Any other host: 404. The machine lets in only the proxy.
  */
-function balancer(s: AwsShape, oidc: Oidc, vpc: unknown): Front {
-  if (!s.domains || s.egress.kind == "vpc") throw new Error("A load balancer in front needs domains, and the stack's own network.");
+function proxy(s: AwsShape, oidc: Oidc, vpc: unknown): Edge {
+  if (!s.domains || s.egress.kind == "vpc") throw new Error("A proxy in front needs domains, and the stack's own network.");
   const d = s.domains;
   const forward = { Type: "forward", TargetGroupArn: ref("Targets") };
   const host = (name: string) => ({ Field: "host-header", HostHeaderConfig: { Values: [name] } });
@@ -596,7 +596,7 @@ function balancer(s: AwsShape, oidc: Oidc, vpc: unknown): Front {
       HostedZoneId: zone,
       Name: name,
       Type: "A",
-      AliasTarget: { DNSName: att("Balancer", "DNSName"), HostedZoneId: att("Balancer", "CanonicalHostedZoneID") },
+      AliasTarget: { DNSName: att("Proxy", "DNSName"), HostedZoneId: att("Proxy", "CanonicalHostedZoneID") },
     },
   });
   const resources: Json = {
@@ -613,30 +613,30 @@ function balancer(s: AwsShape, oidc: Oidc, vpc: unknown): Front {
         Tags: [{ Key: "erga", Value: s.stack }],
       },
     },
-    BalancerFirewall: {
+    ProxyFirewall: {
       Type: "AWS::EC2::SecurityGroup",
       Properties: {
-        GroupDescription: `Erga ${s.stack}: the load balancer, from the internet`,
+        GroupDescription: `Erga ${s.stack}: the proxy, from the internet`,
         VpcId: vpc,
         SecurityGroupIngress: [443, 80].map((port) => ({ IpProtocol: "tcp", FromPort: port, ToPort: port, CidrIp: "0.0.0.0/0" })),
-        Tags: tags(s.stack, "balancer"),
+        Tags: tags(s.stack, "proxy"),
       },
     },
-    Balancer: {
+    Proxy: {
       Type: "AWS::ElasticLoadBalancingV2::LoadBalancer",
       DependsOn: "PublicDefault",
       Properties: {
         Type: "application",
         Scheme: "internet-facing",
         Subnets: [ref("PublicSubnet"), ref("PublicSubnetB")],
-        SecurityGroups: [ref("BalancerFirewall")],
+        SecurityGroups: [ref("ProxyFirewall")],
         LoadBalancerAttributes: [
           // A quiet socket of the editor stays open.
           { Key: "idle_timeout.timeout_seconds", Value: "3600" },
           { Key: "routing.http.preserve_host_header.enabled", Value: "true" },
           { Key: "routing.http.drop_invalid_header_fields.enabled", Value: "true" },
         ],
-        Tags: tags(s.stack, "balancer"),
+        Tags: tags(s.stack, "proxy"),
       },
     },
     // The health check goes to the machine itself: no rule, so no sign-in.
@@ -659,7 +659,7 @@ function balancer(s: AwsShape, oidc: Oidc, vpc: unknown): Front {
     Listener: {
       Type: "AWS::ElasticLoadBalancingV2::Listener",
       Properties: {
-        LoadBalancerArn: ref("Balancer"),
+        LoadBalancerArn: ref("Proxy"),
         Port: 443,
         Protocol: "HTTPS",
         SslPolicy: "ELBSecurityPolicy-TLS13-1-2-2021-06",
@@ -672,7 +672,7 @@ function balancer(s: AwsShape, oidc: Oidc, vpc: unknown): Front {
     PlainListener: {
       Type: "AWS::ElasticLoadBalancingV2::Listener",
       Properties: {
-        LoadBalancerArn: ref("Balancer"),
+        LoadBalancerArn: ref("Proxy"),
         Port: 80,
         Protocol: "HTTP",
         DefaultActions: [{ Type: "redirect", RedirectConfig: { Protocol: "HTTPS", Port: "443", StatusCode: "HTTP_301" } }],
@@ -721,7 +721,7 @@ function balancer(s: AwsShape, oidc: Oidc, vpc: unknown): Front {
     PagesRecord: alias(d.pagesZone, `*.${d.pages}`),
   };
   return {
-    ingress: { SourceSecurityGroupId: ref("BalancerFirewall"), Description: "The load balancer" },
+    ingress: { SourceSecurityGroupId: ref("ProxyFirewall"), Description: "The proxy" },
     resources,
     parameters: {
       OidcSecret: {
@@ -733,8 +733,8 @@ function balancer(s: AwsShape, oidc: Oidc, vpc: unknown): Front {
     outputs: {
       AppHost: { Value: d.app },
       PagesHost: { Value: d.pages },
-      // Who signs x-amzn-oidc-data: Erga takes the header only from this balancer.
-      Balancer: { Value: ref("Balancer") },
+      // Who signs x-amzn-oidc-data: Erga takes the header only from this proxy.
+      Proxy: { Value: ref("Proxy") },
     },
   };
 }

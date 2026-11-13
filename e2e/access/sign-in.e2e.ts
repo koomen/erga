@@ -78,8 +78,16 @@ journey("who may sign in, on a server of its own", () => {
         expect(b.color, `${scheme}, ${b.text}: its text shows on its background`).not.toBe(b.background);
       }
     }
-    expect(await page.textContent("main h1")).toBe("Sign in");
+    expect(await page.textContent("main h1")).toBe("Sign in to Erga");
     expect(await page.textContent("main")).not.toContain("same account");
+    // After Cancel on a provider's page (the callback sends her back here): the page says so, above the same buttons.
+    await page.goto(`${root}/auth/sign-in?next=%2Fdocs&canceled`);
+    expect((await page.innerText("main")).split("\n").filter(Boolean)).toEqual([
+      "Sign in to Erga",
+      "You canceled the sign-in attempt. Try again or choose another way.",
+      "Continue with GitHub",
+      "Continue with Google",
+    ]);
   });
 
   test("signed out, a private document and an address with no document give the same page; the GitHub button signs in", async () => {
@@ -95,7 +103,6 @@ journey("who may sign in, on a server of its own", () => {
         `${new URL(root).host}${address}`,
         "Continue with GitHub",
         "Continue with Google",
-        "New here? The same buttons make your account.",
       ]);
       shown.push((await page.innerHTML("main")).replaceAll(address, "ADDRESS").replaceAll(encodeURIComponent(address), "ADDRESS"));
     }
@@ -142,7 +149,7 @@ journey("who may sign in, on a server of its own", () => {
     expect(await makes()).toMatch(new RegExp(`^/ann${id}/`));
   });
 
-  test("rules: a Workspace with write, a GitHub organization with read; anyone else is refused and told why", async () => {
+  test("rules: a Workspace with write, a GitHub organization with read; anyone else is refused, and the page says nothing of the rules", async () => {
     const hint = () => page.textContent("#rules-hint");
     const addRule = async (kind: string, value: string, access: "read" | "write") => {
       await page.selectOption("form.add-rule select[name=kind]", kind);
@@ -166,18 +173,24 @@ journey("who may sign in, on a server of its own", () => {
     await signIn(AMY(id));
     await join(`amy${id}`);
     expect(await makes()).toMatch(new RegExp(`^/amy${id}/`));
-    // The same email domain with no Workspace is a personal account: refused, and told so.
+    // The same email domain with no Workspace is a personal account: refused. The page says how she signed in and what
+    // to do, and nothing of who may join: no Workspace, no domain, no organization.
     await signIn(BOB(id));
-    expect(await page.textContent("h1")).toBe("Not on this server");
-    expect(await page.textContent("main")).toContain("personal Google account");
-    // A member of acme: read, so no new document.
-    await signIn(`provider=github&subject=${Date.now()}&handle=dee-${id}&group=acme`);
-    await join(`dee${id}`);
+    expect((await page.innerText("main")).split("\n").filter(Boolean)).toEqual([
+      "You need permission to join",
+      `You signed in with Google as bob.${id}@example.org. Ask an admin of this Erga server to add you, then sign in again. Or sign in with another account.`,
+    ]);
+    // A member of acme: read, so no new document. GitHub is the one way in here (Google is off), so Erga names her
+    // account by her login, and she is on her documents at once: no username step.
+    await signIn(`provider=github&subject=${Date.now()}&handle=Dee-${id}&group=acme`);
+    await until(() => path() == "/docs", 10_000, "dee's account made, with no username step");
+    expect((await corner(page)).label).toBe(`You (dee-${id})`);
     expect((await page.goto(`${root}/new`))?.status()).toBe(403);
     expect(await page.textContent("main")).toContain("not make or edit documents");
-    // Not a member: refused, told what GitHub said.
+    // Not a member: refused, with the same page.
     await signIn(`provider=github&subject=${Date.now() + 1}&handle=eve-${id}&group=other`);
-    expect(await page.textContent("main")).toContain("an active member of other");
+    expect(await page.innerText("main")).toContain(`You signed in with GitHub as eve-${id}. Ask an admin of this Erga server to add you`);
+    expect(await page.innerText("main")).not.toMatch(/acme|example\.org|organization|Workspace/);
   });
 
   test("rules: everybody's select lets a refused person in; a rule removed lets nobody in any more", async () => {

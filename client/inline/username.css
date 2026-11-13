@@ -5,3 +5,5 @@ form.username .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: cent
 form.username .input { flex: 1; min-width: 180px; font: inherit; padding: 8px 10px; border: 1px solid var(--line, #8886); border-radius: 8px; background: transparent; color: inherit; }
 form.username .hint { font-size: 13px; color: var(--chrome); margin-top: 8px; }
 form.username .hint.error { color: #c0392b; }
+/* A name in the error line keeps the error's color. */
+main.plain form.username .hint.error b { color: inherit; }

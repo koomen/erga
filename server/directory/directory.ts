@@ -244,12 +244,13 @@ export class Directory {
   }
 
   /**
-   * Why a document can't be the homepage, or null if it can: the front
-   * page runs its scripts on this site itself, where they
+   * Why a document can't be the homepage, or null if it can: the homepage
+   * runs its scripts on this site itself, where they
    * act as whoever views it, so everyone who may edit it must be an admin.
+   * (The homepage project's owner is nobody: only admins edit it, homeLimit.)
    */
   async homeBlocked(id: string): Promise<string | null> {
-    const editors = (await this.permissions(id)).filter((p) => p.role == "owner" || p.role == "editor");
+    const editors = (await this.permissions(id)).filter((p) => (p.role == "owner" || p.role == "editor") && p.login != HOME_OWNER);
     const others: string[] = [];
     for (const p of editors) if (p.login == ANYONE || !(await this.users.isAdmin(p.login))) others.push(p.login == ANYONE ? "anyone with the link" : p.login);
     if (!others.length) return null;
@@ -442,16 +443,22 @@ export class Directory {
   }
 
   /**
-   * Moves a document to the slug `base`, or base-2, base-3... if another of
-   * its owner's has that: the server's own naming (the homepage it makes,
-   * server/documents/landing.ts seedLanding), not a person's, so it never refuses. The slug
-   * stays set.
+   * Gives the homepage project's address (/_home) to a document the server just made as nobody's
+   * (server/documents/landing.ts, makeHome), only if no document has it. Whether it got it: of several at once, one does
+   * (an address is one document's).
    */
-  async reslug(id: string, base: string): Promise<DocRow | null> {
-    const doc = await this.get(id);
-    if (!doc) return null;
-    if (doc.slug == base) return doc;
-    return (await this.write(doc, { title: doc.title, titleSet: doc.titleSet, slug: base, slugSet: true, explicit: false })).doc;
+  async takeHome(id: string): Promise<boolean> {
+    try {
+      await this.sql.batch([
+        ["DELETE FROM slug_history WHERE owner = ?1 AND slug = ?2", HOME_OWNER, HOME_SLUG],
+        ["UPDATE documents SET slug = ?2, slug_set = 1 WHERE id = ?1 AND owner = ?3", id, HOME_SLUG, HOME_OWNER],
+      ]);
+    } catch (e) {
+      if (!unique(e)) throw e;
+      return false;
+    }
+    await this.docChanged(id);
+    return true;
   }
 
   /** Writes a new title and slug (null: keep the slug), keeping the old slug as history. */
@@ -533,25 +540,6 @@ export class Directory {
     await this.tell(id, await this.permissions(id));
     await this.docChanged(id, [doc.owner]);
     return this.get(id);
-  }
-
-  /**
-   * The homepage project made again (the setting was reset: server/documents/landing.ts): the one from before, any but
-   * `keep`, becomes an ordinary document of `owner`'s, at its id. Nothing of it is deleted.
-   */
-  async releaseHome(keep: string, owner: string): Promise<void> {
-    const old = await this.sql.all<{ id: string }>("SELECT id FROM documents WHERE owner = ?1 AND id != ?2", HOME_OWNER, keep);
-    for (const { id } of old) {
-      await this.sql.batch([
-        ["DELETE FROM slug_history WHERE doc_id = ?1", id],
-        ["DELETE FROM permissions WHERE doc_id = ?1 AND login = ?2", id, owner.toLowerCase()],
-        ["UPDATE permissions SET login = ?2 WHERE doc_id = ?1 AND role = 'owner'", id, owner.toLowerCase()],
-        ["UPDATE documents SET owner = ?2, slug = ?1, slug_set = 1 WHERE id = ?1", id, owner.toLowerCase()],
-      ]);
-      this.routes.delete(id);
-      await this.tell(id, await this.permissions(id));
-      await this.docChanged(id);
-    }
   }
 
   async setKind(id: string, kind: DocKind): Promise<void> {

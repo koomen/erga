@@ -118,6 +118,9 @@ const url = `http://localhost:${port}`;
 (async () => {
   while (vite.exitCode == null) {
     if (await fetch(`http://127.0.0.1:${port}/logo.png`).then((r) => r.ok, () => false)) {
+      // As a deploy does once its release answers: the homepage project, when this server has none
+      // (server/documents/landing.ts). A test's server has had no deploy: a test that needs the homepage asks for it.
+      if (ownState) await fetch(`http://127.0.0.1:${port}/api/deploys/home`, { method: "POST" }).catch(() => {});
       if (ownState) writeFileSync(URL_FILE, url + "\n");
       console.log(`\n  Erga is running at ${url}${ownState ? " (in .dev-url)" : ""}\n`);
       return;

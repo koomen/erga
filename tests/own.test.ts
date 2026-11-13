@@ -88,7 +88,6 @@ test("the proxy mode on Cloudflare: Cloudflare Access's team and application, an
     kind: "cloudflare-access",
     team: "example",
     aud: "0123456789abcdef0123456789abcdef",
-    email: { claim: "email", prefix: "" },
   });
   expect(vars.GITHUB_CLIENT_ID).toBe("");
   expect(varsOf(answers, { github: "Iv1.x" }).PROXY_SIGN_IN).toBeUndefined();

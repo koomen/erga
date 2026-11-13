@@ -346,8 +346,8 @@ test("list_documents' all is an admin's: someone else is refused", async () => {
 
 test("an admin changes the readers' options on the homepage project (/_home), which has no owner", async () => {
   const s = server();
-  // (The first / makes the homepage project.)
-  await s.fetch("/", { headers: signedOut() });
+  // (The deploy makes the homepage project.)
+  await s.fetch("/api/deploys/home", { method: "POST" });
   const on = async () => ((await overHttp(s, "ls", { document: "/_home" })).result?.access as { pageLlm?: { on: boolean } })?.pageLlm?.on;
   const was = await on();
   expect(was).toBe(false);

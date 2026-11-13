@@ -296,7 +296,7 @@ test("the MCP sign-in gives the person's own power: an admin's app gets admin po
   // The admin (the dev login) who chooses admin power: the card says what the app gets, and the token is admin scope,
   // for 30 days at most.
   const admin = await signInOver(s, null, "admin");
-  expect(admin.card).toContain("all your documents, and admin power");
+  expect(admin.card).toContain("wants a token for reading and editing your documents, and admin power.</h2>");
   expect(admin.scope).toBe("admin");
   const mine = await whoami(s, admin.token);
   expect(mine).toMatchObject({ adminPower: true, token: { scope: "admin" } });
@@ -310,7 +310,7 @@ test("the MCP sign-in gives the person's own power: an admin's app gets admin po
   // A person who isn't an admin: documents scope, no admin tools.
   const { cookie } = await signIn(s, freshLogin("mcp"));
   const plain = await signInOver(s, cookie);
-  expect(plain.card).toContain("all your documents: everything you can do with documents, but no admin power");
+  expect(plain.card).toContain("wants a token for reading and editing your documents.</h2>");
   expect(plain.scope).toBe("documents");
   expect(await whoami(s, plain.token)).toMatchObject({ adminPower: false, token: { scope: "documents" } });
   const theirs = (await mcp(s, plain.token, "tools/list")).result.tools.map((t: { name: string }) => t.name);

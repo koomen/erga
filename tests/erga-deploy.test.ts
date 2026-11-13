@@ -262,9 +262,6 @@ describe("bun erga deploy --fresh", () => {
     await expect(deployInstance({ dir, host: "example.com", commit: "HEAD", fresh: true, net: mock.fetch })).rejects.toThrow(
       "--fresh is only for a staging instance"
     );
-    // An entry from before the proxy mode names its sign-in FRONT_SIGN_IN, which the server no longer reads: refused.
-    fresh({ ...primary, vars: { ...primary.vars, FRONT_SIGN_IN: "{}" } });
-    await expect(deployInstance({ dir, host: "example.com", commit: "HEAD", net: mock.fetch })).rejects.toThrow("PROXY_SIGN_IN");
   }, 60_000);
 });
 

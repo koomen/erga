@@ -98,7 +98,7 @@ export function settingRow(e: Shown, session: Session, never: boolean, place: nu
   // Reset where the control can't simply pick the default (a switch, a choice can): in the line that says who set it.
   const reset =
     e.source == "set" && !e.locked && control != "switch" && control != "choice"
-      ? ` · <button type="button" class="reset" title="Back to ${esc(e.kind == "document" ? "the demo page" : shown(e.default, e.kind))}">Reset</button>`
+      ? ` · <button type="button" class="reset" title="Back to ${esc(e.kind == "document" ? "no homepage: / is a page with Sign in" : shown(e.default, e.kind))}">Reset</button>`
       : "";
   // Under each setting: when it was last set, and by whom (its default on hover).
   const set =
