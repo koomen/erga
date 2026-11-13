@@ -13,7 +13,7 @@ import type { ReaderConfig } from "../../shared/page-html";
 import type { ToolAsk } from "../common/reader-api";
 import { copyOf } from "../../libs/text/ui/clipboard-read";
 import { linkTarget, placeOf } from "../common/link-target";
-import { topRoom } from "../common/top-room";
+import { topRoom, type Seat } from "../common/top-room";
 import { isAppShortcut } from "../common/app-keys";
 import { catchZoomGestures } from "../common/zoom";
 import { makeErgaLLM, type LlmAnswer, type LlmOp } from "../common/page-llm";
@@ -184,11 +184,13 @@ export default function reader(C: ReaderConfig): void {
   (document.head || root).append(still);
   // The room for the bars at the top of a scrolling page (client/common/top-room.ts), measured again when the page's
   // styles may have changed (its head, its root's attributes), as it loads, the window's size, or the room the viewer asks for (its
-  // band's height at its zoom); and whether the page fills the window, for the viewer, which keeps its frame below the
-  // bars then.
+  // band's height at its zoom); and the page's seat, for the viewer, which places its frame by it: below the bars for a
+  // page that fills the window, over the whole window for one that keeps clear of the bars itself (window.ergaInset,
+  // which gets what they cover, and again as it changes).
   const room = topRoom(document);
   let roomDirty = true,
-    fillsSaid: boolean | null = null;
+    seatSaid: Seat | null = null,
+    insetGiven = "";
   // A check of what the viewer hears of the page (`check`, below), on the next screen frame: one for all that changed.
   let due = false;
   function soon() {
@@ -204,6 +206,8 @@ export default function reader(C: ReaderConfig): void {
   styles.observe(root, { attributes: true, attributeFilter: ["style", "class"] });
   addEventListener("resize", dirty);
   addEventListener("load", dirty);
+  // (The page's own scripts have run: window.ergaInset is there, if the page has one.)
+  document.addEventListener("DOMContentLoaded", dirty);
   // (At once as the page is parsed, before its deferred scripts and the editor run and measure it.)
   document.addEventListener("readystatechange", () => {
     dirty();
@@ -213,10 +217,19 @@ export default function reader(C: ReaderConfig): void {
     if (!roomDirty || !ready()) return;
     roomDirty = false;
     if (document.head) styles.observe(document.head, { childList: true, subtree: true, characterData: true, attributes: true });
-    const fills = room.update();
-    if (fills !== fillsSaid) {
-      fillsSaid = fills;
-      tell({ type: "erga-fills", fills });
+    const inset = (window as Window & { ergaInset?: unknown }).ergaInset,
+      seat = room.update(typeof inset == "function");
+    if (seat !== seatSaid) {
+      seatSaid = seat;
+      tell({ type: "erga-seat", seat });
+    }
+    const given = JSON.stringify(room.inset);
+    if (seat != "whole" || typeof inset != "function" || given == insetGiven) return;
+    insetGiven = given;
+    try {
+      inset({ ...room.inset });
+    } catch (err) {
+      console.error("window.ergaInset threw:", err);
     }
   }
   // Reloaded in the editor scrolled down the page (?erga-y=, viewer.ts): it opens where it was, out of sight until it's
@@ -593,7 +606,10 @@ export default function reader(C: ReaderConfig): void {
       if (typeof e.data.id == "number") askTools(e.data as ToolAsk);
     }
     else if (type == "erga-room" && typeof e.data.px == "number" && e.data.px >= 0 && e.data.px <= 400) {
+      const side = (n: unknown) => (typeof n == "number" && n >= 0 && n <= 4000 ? n : 0),
+        i = e.data.inset || {};
       room.room = e.data.px;
+      room.inset = { top: side(i.top), right: side(i.right), bottom: side(i.bottom), left: side(i.left) };
       dirty();
     }
     // The tab's address got another hash (typed, Back, a link): the page's place follows, and the page gets its

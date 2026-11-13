@@ -1,7 +1,9 @@
 /* The band at the top of a document's page (server/pages/viewer.ts, BAND_STYLE), where the controls are, and the
    frame and canvas. A scrolling page's frame starts at the top of the window, behind the controls, and the page keeps
    room for them at its top (client/common/top-room.ts); a page that fills the window (erga-fills, as the page says:
-   client/inline/viewer-band.ts) has its frame below the band (--frame-t). */
+   client/inline/viewer-band.ts) has its frame below the band (--frame-t). A page that keeps clear of the controls
+   itself (erga-whole: a canvas, which gets what they cover: client/common/top-room.ts) has the whole window: the
+   controls and the agent's panel float over the page, with no band and no room beside it. */
 
 :root { --band-h: calc(max(12px, env(safe-area-inset-top)) + 44px); --frame-t: 0px; }
 :root.erga-fills { --frame-t: var(--band-h); }
@@ -22,3 +24,4 @@ body { background: transparent; }
    the agent opens and closes. Editing, client/styles/editor.css places it. */
 body:not(.erga-editing) :is(#frame, .erga-canvas) { left: var(--frame-l, 0px); width: calc(100% - var(--frame-l, 0px) - var(--frame-r, 0px));
   transition: left 560ms cubic-bezier(0.45, 0, 0.15, 1), width 560ms cubic-bezier(0.45, 0, 0.15, 1); }
+html.erga-whole body :is(#frame, .erga-canvas) { left: 0; width: 100%; transition: none; }
