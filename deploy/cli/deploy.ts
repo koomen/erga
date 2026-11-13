@@ -9,42 +9,25 @@
 // SNAPSHOT_FROM (its primary's address) over its entry's vars; its primary's names are its guard. With --fresh, or when it
 // has no copy yet, it gets a new copy: the pipeline's snapshot of the primary's database and documents, with the primary's
 // SNAPSHOT_TOKEN (the environment, or .erga/secrets.json). Each deploy or
-// rollback holds the lock .erga/jobs/<host>.lock and writes its job record in .erga/jobs/. A deploy runs only a commit
+// rollback holds the lock .erga/jobs/<host>.lock and writes its job record in .erga/jobs/ (jobs.ts). A deploy runs only a commit
 // whose tests passed (gate.ts: bun run test): the record .erga/tests/<tree>.json of the commit's tree, which its merge wrote.
 //
 // ERGA_DEPLOY_MOCK=1: against the mock Cloudflare's example account (dev/mock-cloudflare.ts, the fleet), with
 // .build/release/ for the build: nothing real is touched. No branch moves on origin, but in a clone a test gives.
 
-import {
-  appendFileSync,
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-  writeSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rollbackTo } from "../pipeline/account";
+import { Cloudflare, DeployError, type Fetch, Unhealthy } from "../pipeline/cloudflare-api";
 import {
   ALL_STEPS,
   boundDatabase,
   type Carry,
-  Cloudflare,
   copiesOf,
-  DeployError,
-  type Fetch,
   guardTarget,
-  rollbackTo,
   runPipeline,
   type Target,
   targetHost,
   targetPagesShown,
   targetSharedPagesHost,
-  Unhealthy,
 } from "../pipeline/pipeline";
 import {
   type CloudflareEntry,
@@ -60,20 +43,17 @@ import {
   withEntry,
   writeConfig,
 } from "./config";
-import { previousVersion } from "./flow";
+import { type Instance, previousVersion } from "./flow";
 import { testRun, type Suite, treeOf } from "./test-run";
 import { gateRefusal } from "./gate";
+import { type From, startJob, takeLock } from "./jobs";
+import { askInstance, healthOf } from "./observe";
 import { readOps } from "./ops";
-import { alive, ownStart } from "./pid";
-import { ROOT } from "../root";
+import { ROOT, sh } from "../root";
 
 /** git in a clone. `push`: as `bun erga`, which the pre-push hook lets through (deploy/cli/pre-push.ts). */
-const gitIn = (clone: string, args: string[], push = false) => {
-  const env = push ? { ...process.env, ERGA_CLI_PUSH: "1" } : process.env;
-  const r = Bun.spawnSync(["git", ...args], { cwd: clone, env, stdout: "pipe", stderr: "pipe" });
-  return { ok: r.exitCode == 0, out: r.stdout.toString().trim(), err: r.stderr.toString().trim() };
-};
-const git = (...args: string[]) => gitIn(ROOT, args);
+const gitIn = (clone: string, args: string[], push = false) =>
+  sh(["git", ...args], { cwd: clone, env: push ? { ...process.env, ERGA_CLI_PUSH: "1" } : process.env });
 
 // ------------------------------------------------------------------ the target
 
@@ -121,108 +101,16 @@ export function entryTarget(config: Config, entry: CloudflareEntry, copy?: { tok
   };
 }
 
-// ------------------------------------------------------------------ the lock and the job record
-
-const jobsDir = (dir: string) => join(dir, "jobs");
-export const lockPath = (dir: string, host: string) => join(jobsDir(dir), `${host}.lock`);
-
-interface Held {
-  pid: number;
-  /** The process's start time (pid.ts): with the pid, it names the process, even after the system reuses the pid. */
-  pidStart: string | null;
-  command: string;
-  started: string;
-}
-
-const heldBy = (path: string): Held | null => {
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as Held;
-  } catch {
-    return null;
-  }
-};
-
-/** Takes the instance's lock, or throws which job holds it. A lock of a process that stopped (or of its reused pid) is free. The result frees it. */
-export function takeLock(dir: string, host: string, command: string): () => void {
-  mkdirSync(jobsDir(dir), { recursive: true });
-  const path = lockPath(dir, host);
-  for (let tries = 0; tries < 3; tries++) {
-    try {
-      const fd = openSync(path, "wx", 0o600);
-      writeSync(fd, JSON.stringify({ pid: process.pid, pidStart: ownStart(), command, started: new Date().toISOString() } satisfies Held));
-      closeSync(fd);
-      return () => {
-        if (heldBy(path)?.pid == process.pid) rmSync(path, { force: true });
-      };
-    } catch (e) {
-      if ((e as { code?: string }).code != "EEXIST") throw e;
-    }
-    const held = heldBy(path);
-    // A lock with no text yet: another process makes it now.
-    const young = !held && existsSync(path) && Date.now() - statSync(path).mtimeMs < 5000;
-    if ((held && alive(held.pid, held.pidStart)) || young)
-      throw new Error(
-        `${host} is locked: ${held ? `${held.command} (process ${held.pid}) runs since ${held.started}` : "a job starts on it now"}. Wait for it to end (the lock: ${path}).`
-      );
-    rmSync(path, { force: true });
-  }
-  throw new Error(`${host}'s lock (${path}) changed while this command took it. Run the command again.`);
-}
-
-export interface Job {
-  path: string;
-  /** One line of the job's output: printed, and added to the record. */
-  log: (line: string) => void;
-  /** A fact of the job, added to the record. */
-  note: (fact: Record<string, unknown>) => void;
-  end: (result: "ok" | "failed", error?: string) => void;
-}
-
-/** A job's record, .erga/jobs/<when>-<host>.jsonl: its start, its output as it comes, and its result, one JSON per line. */
-/** Where a job's command was typed: a terminal, or the ops page (ops-page.ts runs the CLI with ERGA_JOB_FROM=page). */
-export type From = "terminal" | "page";
-
-/** This process's environment without ERGA_JOB_FROM: for the tests a merge or a deploy runs, which are no job of the page. */
-export const testEnv = () => {
-  const env = { ...process.env };
-  delete env.ERGA_JOB_FROM;
-  return env;
-};
-
-export function startJob(dir: string, o: { command: string; host: string; from?: From; print?: (line: string) => void }): Job {
-  mkdirSync(jobsDir(dir), { recursive: true });
-  const started = new Date().toISOString();
-  const path = join(jobsDir(dir), `${started.replace(/[:.]/g, "-")}-${o.host.replace(/[^\w.-]/g, "_")}-${process.pid}.jsonl`);
-  const add = (x: Record<string, unknown>) => appendFileSync(path, `${JSON.stringify(x)}\n`, { mode: 0o600 });
-  add({ command: o.command, host: o.host, from: o.from ?? "terminal", pid: process.pid, pidStart: ownStart(), started });
-  const print = o.print ?? console.log;
-  return {
-    path,
-    log: (line) => {
-      print(line);
-      add({ out: line });
-    },
-    note: add,
-    end: (result, error) => add({ result, ...(error ? { error } : {}), ended: new Date().toISOString() }),
-  };
-}
-
 // ------------------------------------------------------------------ the commit of a primary's staging instances
 
-export interface Answer {
-  host: string;
-  version: string | null;
-  healthy: boolean;
-}
-
 /** The one commit that `primary`'s staging instances run, healthy, or why there is none (the CLI never guesses one). */
-export function stagingCommit(primary: string, answers: Answer[]): { version: string } | { problem: string } {
+export function stagingCommit(primary: string, answers: Instance[]): { version: string } | { problem: string } {
   if (!answers.length)
     return { problem: `${primary} has no staging instance in .erga/config.json. Name the commit: bun erga deploy <commit> ${primary}` };
   const sick = answers.filter((a) => !a.healthy || !a.version);
   if (sick.length)
     return {
-      problem: `Not healthy, or no known commit: ${sick.map((a) => `${a.host} (${a.version ?? "no commit"})`).join(", ")}. Name the commit, or fix staging first.`,
+      problem: `Not healthy, or no known commit: ${sick.map((a) => `${a.host} (${a.version ?? a.error ?? "no commit"})`).join(", ")}. Name the commit, or fix staging first.`,
     };
   const versions = [...new Set(answers.map((a) => a.version!))];
   if (versions.length > 1)
@@ -232,26 +120,9 @@ export function stagingCommit(primary: string, answers: Answer[]): { version: st
   return { version: versions[0] };
 }
 
-/** Whether the instance at `origin` answers GET /api/health with ok. */
-export const healthOf = async (origin: string, site: Fetch) => {
-  const r = await site(`${origin}/api/health`, { signal: AbortSignal.timeout(8000), headers: { "Cache-Control": "no-cache" } }).catch(
-    () => null
-  );
-  return !!r && r.status == 200 && ((await r.json().catch(() => null)) as { ok?: unknown } | null)?.ok === true;
-};
-
 /** Asks each staging instance of `primary` for its commit (its ops token) and its health. */
-async function stagingAnswers(config: Config, primary: string, site: Fetch): Promise<Answer[]> {
-  return Promise.all(
-    config.instances
-      .filter((e) => e.stagingOf == primary)
-      .map(async (e) => {
-        const origin = entryOrigin(e);
-        const [version, healthy] = await Promise.all([readOps(origin, e.token, site).then((f) => f.version), healthOf(origin, site)]);
-        return { host: e.host, version, healthy };
-      })
-  );
-}
+const stagingAnswers = (config: Config, primary: string, site: Fetch): Promise<Instance[]> =>
+  Promise.all(config.instances.filter((e) => e.stagingOf == primary).map(async (e) => ({ host: e.host, ...(await askInstance(e, site)) })));
 
 /** The full commit of a name or a short sha, in the clone, or an error that says to fetch. */
 export function commitOf(name: string, clone = ROOT): string {

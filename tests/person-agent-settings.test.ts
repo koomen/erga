@@ -2,20 +2,15 @@
 // seconds, reads them from the database at most once in 5 s; a turn, and the panel after a key changed, read them
 // again, so a key or a setting that changes reaches the next turn.
 
-import { Database } from "bun:sqlite";
 import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { PersonAgents } from "../agents/person/sessions";
 import type { Platform } from "../server/platform";
+import { objectSql } from "./helpers/memory-sql";
 
 afterEach(() => setSystemTime());
 
 function agents(read: () => Promise<{ missing: string }>) {
-  const db = new Database(":memory:", { strict: true });
-  const sql = {
-    exec: <T>(q: string, ...p: (string | number | null)[]) => db.query(q).all(...p) as T[],
-    transaction: <T>(f: () => T) => db.transaction(f)(),
-  };
-  return new PersonAgents({ sql, platform: { agentSettings: read } as unknown as Platform });
+  return new PersonAgents({ sql: objectSql(), platform: { agentSettings: read } as unknown as Platform });
 }
 
 test("the panel's state reads the settings once in 5 s; a turn reads them at once", async () => {

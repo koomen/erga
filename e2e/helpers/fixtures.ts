@@ -296,3 +296,20 @@ export async function goto(page: Page, url: string) {
 
 /** Two animation frames in the tab: input just sent has been handled and painted. */
 export const settle = (page: Page) => page.evaluate(() => new Promise((r) => { const t = setTimeout(r, 100); requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(t); r(true); })); }));
+
+/**
+ * From now on, the tab's person keeps the agent pane closed (a new person's starts open on a wide window: it slides
+ * the page over, takes the focus, and covers a phone's). Set one time, in the tab itself, and only where the browser
+ * keeps no choice yet: the tab can still open the pane after.
+ */
+export const agentClosed = (page: Page) =>
+  page.addInitScript(() => {
+    if (window.top != window) return;
+    try {
+      if (sessionStorage.getItem("erga-test:agent-seeded")) return;
+      sessionStorage.setItem("erga-test:agent-seeded", "1");
+      if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}');
+    } catch {
+      /* no storage */
+    }
+  });

@@ -60,13 +60,15 @@ ${footer ? siteFooter() : ""}
 export const safeNext = (next: string | null) => (next && next.startsWith("/") && !/[\\\x00-\x1f\x7f]/.test(next) && !next.startsWith("//") ? next : "/");
 
 /**
- * A request that another site started (its link, form or image), as the
- * browser reports it. Clients that don't say (scripts, tests) aren't
- * browsers carrying someone's cookie, so they count as this site.
+ * Whether a request comes from this site, not from another site's link, form or image: the check before an action
+ * that another site may not take on someone's behalf. A POST says where it comes from (its Origin). Of any other, the
+ * browser reports it (Sec-Fetch-Site); clients that don't say (scripts, tests) aren't browsers carrying someone's
+ * cookie, so they count as this site.
  */
-export const fromElsewhere = (request: Request) => {
+export const fromThisSite = (request: Request, url: URL) => {
+  if (request.method == "POST") return request.headers.get("origin") == url.origin;
   const site = request.headers.get("sec-fetch-site");
-  return site != null && site != "same-origin" && site != "none";
+  return site == null || site == "same-origin" || site == "none";
 };
 
 /**

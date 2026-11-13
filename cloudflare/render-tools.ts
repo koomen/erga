@@ -1,7 +1,7 @@
 // The render tools (window.__ergaRender, client/inline/page-render.ts) as the server's browser calls them in a page
 // (cloudflare/render.ts): put into the page before the first call.
 
-import type { PageRender } from "../shared/agent-log";
+import type { PageRender } from "../shared/view-page";
 import { inlineCall } from "../server/pages/index";
 
 /** Runs an expression in a page, and gives its value. */

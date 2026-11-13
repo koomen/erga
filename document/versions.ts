@@ -28,7 +28,7 @@ import { FetchHttpClient } from "effect/http";
 import { TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
 import { sha256Hex } from "../shared/bytes.ts";
 import { isTextPath } from "./content.ts";
-import { StoreError } from "./room.ts";
+import { io, type StoreError } from "./room.ts";
 
 /** A version as the API shows it (the contract shared with the settings UI, client/pages/versions.ts, and the homepage deploy, server/home/deploys.ts). */
 export interface Version {
@@ -74,10 +74,6 @@ export function versionNumber(ref: unknown): number | null {
 }
 
 export const publicVersion = (v: StoredVersion): Version => ({ id: v.id, n: v.n, at: v.at, authors: v.authors, description: v.description });
-
-const storeError = (e: unknown) => new StoreError({ message: e instanceof Error ? e.message : String(e) });
-/** A call to the KV or the blob store (both Promise-based: the Durable Object's storage, R2), its failure a StoreError. */
-const io = <T>(f: () => Promise<T>) => Effect.tryPromise({ try: f, catch: storeError });
 
 export class Versions {
   /** Versions already read, by number: they never change, except their description. */

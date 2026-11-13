@@ -15,7 +15,7 @@
 // server; it has not ended. Trap: the header of AWS's proxy has AWS's signature whichever proxy wrote it, so
 // without the check of `signer` anyone with a proxy of their own signs in as anyone. Cloudflare Access's
 // has the team's signature whichever application it is for: the check of `aud` is the same guard. Some paths pass the
-// proxy with no sign-in (an agent's, with its token: shared/proxy-paths.ts): they carry no header, and this route is
+// proxy with no sign-in (an agent's, with its token: deploy/proxy-paths.ts): they carry no header, and this route is
 // not one of them.
 //
 // The account is kept by the sign-in's `sub`, never by the email. The email address is the first of the claims `email`,
@@ -28,9 +28,9 @@ import * as Schema from "effect/Schema";
 import { fromBase64, fromBase64url } from "../../shared/bytes.ts";
 import type { Vouched } from "../directory/index.ts";
 import { call, ctx, type Route } from "../http.ts";
-import { page, safeNext } from "../pages/index.ts";
+import { notFound, page, safeNext } from "../pages/index.ts";
 import { vouchedSignIn } from "./accounts.ts";
-import { noSuchSignIn, signInFailed } from "./sign-in.ts";
+import { signInFailed } from "./sign-in.ts";
 
 /** AWS's proxy: an Application Load Balancer with an OIDC sign-in (deploy/aws/template.ts). */
 const AwsAlb = Schema.Struct({
@@ -238,7 +238,7 @@ export async function readProxy(token: string, proxy: Proxy, o: { now?: number; 
 export const proxySignIn: Route = Effect.gen(function* () {
   const { platform, request, url } = yield* ctx;
   const signIn = platform.signIn;
-  if (signIn.mode != "proxy") return noSuchSignIn();
+  if (signIn.mode != "proxy") return notFound();
   const proxy = signIn.proxy;
   if (!proxy)
     return page(

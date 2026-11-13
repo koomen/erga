@@ -6,6 +6,8 @@
 // The transcript keeps only a small thumbnail of each image (FileRef), so
 // the conversation shows what was attached without carrying the pictures.
 
+import { escapeAttr } from "./html";
+
 /** One attachment as sent: an image (base64, no data: prefix) or a text file's contents. */
 export interface Attachment {
   name: string;
@@ -91,8 +93,7 @@ type Part = { type: "text"; text: string } | { type: "file"; mediaType: string; 
 /** A message for the model: the text, each text file after it, and each image; a plain string when nothing's attached. */
 export function messageContent(text: string, files: Attachment[] = []): string | Part[] {
   if (!files.length) return text;
-  const attr = (s: string) => s.replace(/[&"<>]/g, (c) => ({ "&": "&amp;", '"': "&quot;", "<": "&lt;", ">": "&gt;" })[c]!);
-  const texts = files.filter((f) => f.kind == "text").map((f) => `<file name="${attr(f.name)}">\n${f.data}\n</file>`);
+  const texts = files.filter((f) => f.kind == "text").map((f) => `<file name="${escapeAttr(f.name)}">\n${f.data}\n</file>`);
   const images = files.filter((f) => f.kind == "image");
   const names = images.map((f) => f.name).join(", ");
   // A kept image can go into a document as it is: write's files take it by its hash.

@@ -15,10 +15,10 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isRealKey } from "../../dev/agent-key";
+import { freePort } from "../../dev/browser";
 import { cleanEnv, ROOT } from "./env";
 
 /** Settings the Worker reads from .dev.vars; anything else in `env` goes to the server's environment. */
@@ -108,16 +108,6 @@ export async function deployHome(server: Pick<Server, "root">): Promise<void> {
   if (!r.ok) throw new Error(`POST /api/deploys/home: ${r.status}`);
 }
 
-/** A port nothing listens on right now (dev/start.ts refuses a taken one, and we try again). */
-export function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.unref();
-    s.on("error", reject);
-    s.listen(0, "127.0.0.1", () => { const { port } = s.address() as { port: number }; s.close(() => resolve(port)); });
-  });
-}
-
 /** Every process under `pid`. */
 export function descendants(pid: number): number[] {
   const out: number[] = [];
@@ -135,6 +125,15 @@ const live = new Set<Server>();
 process.on("exit", () => { for (const s of live) s.dispose(); });
 
 let fixtures = 0;
+
+/**
+ * Copies e2e/fixtures/<name> to `dir`. The slides fixture is the slides template with a text of its own: it keeps
+ * only its page, and its two scripts come from the template (assets/templates/slides).
+ */
+export function copyFixture(name: string, dir: string) {
+  cpSync(join(ROOT, "e2e/fixtures", name), dir, { recursive: true });
+  if (name == "slides") for (const f of ["slides.js", "api.js"]) cpSync(join(ROOT, "assets/templates/slides", f), join(dir, f));
+}
 
 export async function startServer(opts: ServerOptions = {}): Promise<Server> {
   // The run's mark in its name: what a simulated VM starts gets a clean environment, without ERGA_TEST_RUN, but its command
@@ -192,7 +191,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
     },
     async fixture(name) {
       const dir = join(scratch, "docs", `${name}-${++fixtures}`);
-      cpSync(join(ROOT, "e2e/fixtures", name), dir, { recursive: true });
+      copyFixture(name, dir);
       return { dir, address: await server.open(dir) };
     },
     stop() {
@@ -245,6 +244,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
   async function launch(fixed?: number, again = false) {
     const until = Date.now() + (opts.startMs ?? 90_000);
     for (let attempt = 0; ; attempt++) {
+      // A port that is free now: dev/start.ts refuses a taken one, and we try again.
       const at = fixed ?? await freePort();
       const root = `http://127.0.0.1:${at}`;
       writeVars(root);

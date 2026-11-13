@@ -14,21 +14,19 @@
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { git, ROOT } from "../deploy/root.ts";
 import { diffLists } from "../shared/diff.ts";
 
-const ROOT = resolve(import.meta.dirname, "..");
 const BIOME = join(ROOT, "node_modules/.bin/biome");
 const write = process.argv.includes("--write");
 const CODE = /\.(ts|js)$/;
 
-const git = (...args: string[]) => spawnSync("git", args, { cwd: ROOT, encoding: "utf8", maxBuffer: 64 << 20 });
-
-/** The commit a change is measured from, or undefined when there's none to measure from. */
-function base(): string | undefined {
+/** The commit a change is measured from (for the quick check too, dev/check.ts), or undefined when there's none to measure from. */
+export function changeBase(): string | undefined {
   for (const ref of ["origin/staging", "origin/main"]) {
     const mb = git("merge-base", "HEAD", ref);
-    if (mb.status == 0) return mb.stdout.trim();
+    if (mb.ok) return mb.out;
   }
   return undefined;
 }
@@ -46,7 +44,7 @@ function changes(from: string): Map<string, Set<number>> {
   const diff = git(...COLORS, "diff", ...flags, "--color-moved-ws=allow-indentation-change", from, "--");
   let set: Set<number> | undefined;
   let at = 0;
-  for (const raw of diff.stdout.split("\n")) {
+  for (const raw of diff.out.split("\n")) {
     const line = plain(raw);
     if (line.startsWith("+++ ")) {
       const file = line.startsWith("+++ b/") ? line.slice(6) : "";
@@ -60,7 +58,7 @@ function changes(from: string): Map<string, Set<number>> {
       at++;
     }
   }
-  for (const file of git("ls-files", "--others", "--exclude-standard").stdout.split("\n")) {
+  for (const file of git("ls-files", "--others", "--exclude-standard").out.split("\n")) {
     if (!CODE.test(file)) continue;
     const lines = readFileSync(join(ROOT, file), "utf8").split("\n").length;
     out.set(file, new Set(Array.from({ length: lines }, (_, i) => i + 1)));
@@ -68,7 +66,10 @@ function changes(from: string): Map<string, Set<number>> {
   return out;
 }
 
-/** The file as Biome formats it; undefined when Biome leaves it alone (ignored) or can't parse it (the typecheck says why). */
+/**
+ * The file as Biome formats it; undefined when Biome leaves it alone (ignored) or can't parse it (the typecheck says why).
+ * Its own spawn: it needs Biome's exact text, and deploy/root.ts's sh trims what a command prints.
+ */
 function formatted(file: string, text: string): string | undefined {
   const r = spawnSync(BIOME, ["format", `--stdin-file-path=${file}`], { cwd: ROOT, input: text, encoding: "utf8", maxBuffer: 64 << 20 });
   return r.status == 0 && r.stdout ? r.stdout : undefined;
@@ -222,7 +223,7 @@ export const touches = (r: Region, changed: Set<number>) =>
 if (import.meta.main) main();
 
 function main() {
-  const from = base();
+  const from = changeBase();
   if (!from) {
     console.log("format: no origin/staging or origin/main to compare with, so nothing to check");
     process.exit(0);
@@ -236,7 +237,7 @@ function main() {
     if (pretty == undefined || pretty == text) continue;
     const before = text.split("\n");
     // A new file is all the change's own: Biome's whole text. In parts, its indentation came out broken.
-    if (changed.size >= before.length - 1 && git("cat-file", "-e", `${from}:${file}`).status != 0) {
+    if (changed.size >= before.length - 1 && !git("cat-file", "-e", `${from}:${file}`).ok) {
       found++;
       if (write) {
         writeFileSync(path, pretty);

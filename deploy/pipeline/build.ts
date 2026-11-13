@@ -5,14 +5,20 @@
 //   1. bun install --frozen-lockfile    (or the checkout's own node_modules, linked)
 //   2. bun run build                     (the client's files, into .build/)
 //   3. bun run release                   (cf build: the Worker and its config, into .build/release/)
-//   4. pack .build/release/ as one bundle (bundle.ts reads it)
+//   4. pack .build/release/ as one bundle
+//
+// The bundle is a release (deploy/release.ts's .build/release/) as one file, the way a build hands a built commit back
+// to the pipeline: JSON, {index: release.json, files: {"bundle/index.js": base64, ...}}. packRelease writes it and
+// unpackRelease reads it, with loadRelease.
 
 import { readdirSync, readFileSync, existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import * as Result from "effect/Result";
+import { Base64 } from "effect/encoding";
 import { ROOT } from "../root";
-import { unpackRelease } from "./bundle";
-import { loadRelease, type Release } from "./release-format";
+import { DeployError } from "./cloudflare-api";
+import { loadRelease, type Release, type ReleaseIndex } from "./release-format";
 
 
 /** Builds `commit` of this clone in a scratch worktree: the release. Under the mock, the checkout's own .build/release/, stamped. */
@@ -72,6 +78,33 @@ export function packRelease(dir: string): Uint8Array {
   };
   for (const e of readdirSync(dir, { withFileTypes: true })) if (e.isDirectory()) walk(join(dir, e.name));
   return new TextEncoder().encode(JSON.stringify({ index, files }));
+}
+
+interface Bundle {
+  index: ReleaseIndex;
+  files: Record<string, string>;
+}
+
+/** A bundle's bytes as a release, stamped with `version` (the commit) if given. */
+async function unpackRelease(bytes: Uint8Array | string, version?: string): Promise<Release> {
+  let bundle: Bundle;
+  try {
+    bundle = JSON.parse(typeof bytes == "string" ? bytes : new TextDecoder().decode(bytes)) as Bundle;
+    bytes = "";
+  } catch {
+    throw new DeployError({ message: "The build's release isn't readable (not a release bundle)." });
+  }
+  if (!bundle?.index || !bundle.files) throw new DeployError({ message: "The build's release isn't readable (no release.json in it)." });
+  const release = await loadRelease(async (p) => {
+    if (p == "release.json") return new TextEncoder().encode(JSON.stringify(bundle.index));
+    const f = bundle.files[p];
+    if (f == null) return null;
+    // Each file's base64 let go as soon as it's decoded.
+    delete bundle.files[p];
+    return Result.getOrThrow(Base64.decode(f));
+  });
+  if (!release) throw new DeployError({ message: "The build's release is empty." });
+  return version ? { ...release, version } : release;
 }
 
 /** Bun.spawn, with every line it prints logged (a secret in it, as it is or as HTTP Basic auth's base64, replaced by ***). */

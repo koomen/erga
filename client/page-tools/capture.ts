@@ -5,7 +5,7 @@
 // picture itself, of the whole window: the viewer's bars over the page too.
 
 import { evaluateIn } from "./evaluate";
-import type { Clip, PageRender, RenderedFont, StepShown } from "../../shared/agent-log";
+import type { Clip, PageRender, RenderedFont, StepShown } from "../../shared/view-page";
 import type {} from "../../libs/steps/ui/steps";
 import { sleep } from "../../shared/time";
 

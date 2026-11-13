@@ -10,6 +10,7 @@ import { keyFor, type AgentConfig } from "../agents/models";
 import { piModel } from "../agents/pi-model";
 import { startLoop, type AgentTool } from "../agents/run";
 import type { LogEvent } from "../shared/agent-log";
+import { until } from "./helpers/until";
 
 const setup = (k: Partial<KeySetup>): KeySetup => ({ own: [], server: [], mode: "server", off: [], ...k });
 const names = (k: Partial<KeySetup>) => usableModels(setup(k)).map((u) => `${u.choice}:${u.key}`);
@@ -121,11 +122,6 @@ function messages(text: string) {
     ev({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 5 } }) +
     ev({ type: "message_stop" });
   return new Response(body, { headers: { "content-type": "text/event-stream" } });
-}
-
-async function until(ok: () => boolean) {
-  for (let i = 0; i < 500 && !ok(); i++) await new Promise((r) => setTimeout(r, 10));
-  expect(ok()).toBe(true);
 }
 
 test("a turn on Kimi K3 through Pi, with a tool call; then Sonnet goes on with the same conversation", async () => {

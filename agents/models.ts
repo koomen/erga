@@ -355,15 +355,3 @@ const scriptModel = (model: string) =>
       streamText: (options) => Stream.unwrap(Effect.map(scriptStep(options.prompt, model), (parts) => Stream.fromIterable(parts))),
     })
   );
-
-/** A tool result's image (view_page's screenshot), as a data URL for the panel. */
-export function resultImage(result: unknown): string | undefined {
-  const r = result as { content?: { type: string; data?: string; mimeType?: string }[] } | null;
-  const img = r?.content?.find((c) => c.type == "image" && c.data && (c.mimeType ?? "image/").startsWith("image/"));
-  return img ? `data:${img.mimeType ?? "image/png"};base64,${img.data}` : undefined;
-}
-
-export function resultText(result: unknown): string {
-  const r = result as { content?: { type: string; text?: string }[] } | null;
-  return (r?.content ?? []).map((c) => c.text ?? "").join("\n").trim();
-}

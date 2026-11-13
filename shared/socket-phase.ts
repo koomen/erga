@@ -1,9 +1,10 @@
 // The phase of a page's live connection (a WebSocket that connects again after a failure): one value, and what each
 // event does to it. Pure: the socket's owner does the effects it returns, and clears the backoff's timer each time the
-// phase leaves backoff, so a timer that fires in any other phase does nothing. Every live connection uses it: the
-// editor's room (libs/text/ui/collab.ts), the viewer's (client/inline/viewer-live.ts), the live lists'
-// (client/common/live-rows.ts) and the agent panel's (client/agent/person-agent.ts). Each gives its rules: which close
-// codes are final; its owner chooses the wait before the next try.
+// phase leaves backoff, so a timer that fires in any other phase does nothing. Every live connection uses it. There
+// are two owners: the editor's room (libs/text/ui/collab.ts), and client/live/socket.ts for the viewer's
+// (client/inline/viewer-live.ts), the live lists' (client/common/live-rows.ts) and the agent panel's
+// (client/agent/person-agent.ts). Each gives its rules: which close codes are final; its owner chooses the wait before
+// the next try.
 //
 //   stopped --start--> connecting --opened--> open --ready--> open, ready
 //   connecting | open --closed--> backoff --timer--> connecting

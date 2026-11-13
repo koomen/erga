@@ -173,8 +173,8 @@ export function linkEnding(u: M.Unit, pos: number): M.ElementNode | null {
   return found;
 }
 
+/** An attribute's value as text: only the references escapeAttr and esc write (decodeEntities makes &nbsp; a plain space). */
 export const decodeAttr = (v: string) => v.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
-export const escapeAttr = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 export const attrPattern = (name: string) => new RegExp(`\\s${name}\\s*=\\s*("[^"]*"|'[^']*'|[^\\s>]*)`, "i");
 
 /** An attribute's value in an opening tag, decoded; null without it. */

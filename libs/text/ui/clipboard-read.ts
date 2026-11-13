@@ -2,12 +2,11 @@
 // read the DOM (DOMParser, a page's selection and pictures). They run in the browser only.
 
 import { publicHref, type Place } from "../../../client/common/link-target";
+import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import {
   BLOCK,
   clipboardOf,
   DROP,
-  escapeAttr,
-  escapeHtmlText,
   LINK,
   nest,
   NONE,

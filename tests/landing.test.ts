@@ -5,29 +5,36 @@
 // with no homepage, / is the page in the server's code. A server's homepage from before the project becomes the
 // project, once (adoptLanding).
 
-import { Database } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Route, type Sql } from "../server/directory/index.ts";
 import { makeHome } from "../server/documents/index.ts";
 import { HOME_OWNER } from "../document/names.ts";
 import type { Platform } from "../server/platform";
 import { runTool, server, signedOut, type Server } from "./helpers/app";
+import { memory as steady } from "./helpers/memory-sql";
 
-const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const LANDING = { "index.html": "<!doctype html><title>Erga</title><h1>Erga</h1>" };
 
+/**
+ * The database, where each call waits a short random time first: requests at once interleave as they would against D1.
+ * Without the wait the calls go in one fixed order, and a claim of the setting that does not compare passes the first test.
+ */
 function memory(): Sql {
-  const db = new Database(":memory:", { strict: true });
-  db.exec("PRAGMA foreign_keys = ON");
-  for (const name of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(MIGRATIONS + name, "utf8"));
-  const bind = (params: Param[]) => params as (string | number | null)[];
-  // Each call yields first, so requests at once interleave as they would against D1.
+  const sql = steady();
   const tick = () => new Promise((r) => setTimeout(r, Math.random() * 3));
   return {
-    all: async <T>(q: string, ...params: Param[]) => { await tick(); return db.query(q).all(...bind(params)) as T[]; },
-    run: async (q, ...params) => { await tick(); db.query(q).run(...bind(params)); },
-    batch: async (statements) => { await tick(); db.transaction(() => { for (const [q, ...params] of statements) db.query(q).run(...bind(params)); })(); },
+    all: async <T>(q: string, ...params: Param[]) => {
+      await tick();
+      return sql.all<T>(q, ...params);
+    },
+    run: async (q, ...params) => {
+      await tick();
+      await sql.run(q, ...params);
+    },
+    batch: async (statements) => {
+      await tick();
+      await sql.batch(statements);
+    },
   };
 }
 

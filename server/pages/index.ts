@@ -6,7 +6,7 @@
 export {
   appPage,
   crumbsFont,
-  fromElsewhere,
+  fromThisSite,
   homeGoesToDocs,
   ICON,
   link,
@@ -21,7 +21,7 @@ export { homePage } from "./home.ts";
 export { scratchMakeTip, scratchSave } from "./scratch.ts";
 export { hasAgent } from "./agent.ts";
 export { editButton, RESTORE_KEY, VIEW_STYLE, viewerPage } from "./viewer.ts";
-export { AGENT_ICON, barsHtml, confirmAction, page, pageBars } from "./bars.ts";
+export { AGENT_ICON, barsHtml, confirmAction, notFound, page, pageBars } from "./bars.ts";
 export {
   type Account,
   ACCOUNT_STYLE,

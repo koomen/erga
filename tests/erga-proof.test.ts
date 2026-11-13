@@ -3,37 +3,21 @@
 // links it beside the branch's Merge button (tests/ops-view.test.ts: an old proof, and no proof).
 
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { serveOpsPage } from "../deploy/cli/ops-page";
 import { type Look, lookArgs, makeProof, proofDir, proofRefusal, readProofs } from "../deploy/cli/proof";
-
-const sh = (cwd: string, ...cmd: string[]) => {
-  const r = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe" });
-  if (r.exitCode != 0) throw new Error(`${cmd.join(" ")}: ${r.stderr.toString()}`);
-  return r.stdout.toString().trim();
-};
+import { commit, gitWorld, sh } from "./helpers/git-world.ts";
 
 /** A clone on the branch `task`, one commit ahead of origin/staging, pushed or not. */
 function world(pushed = true) {
-  const top = realpathSync(mkdtempSync(join(tmpdir(), "erga-proof-test-")));
-  const [origin, root] = [join(top, "origin.git"), join(top, "clone")];
-  sh(top, "git", "init", "--quiet", "--bare", "-b", "staging", origin);
-  sh(top, "git", "clone", "--quiet", origin, root);
-  const commit = (file: string, text: string) => {
-    writeFileSync(join(root, file), text);
-    sh(root, "git", "add", "-A");
-    sh(root, "git", "-c", "user.name=Pete", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", text);
-    return sh(root, "git", "rev-parse", "HEAD");
-  };
-  sh(root, "git", "switch", "--quiet", "-c", "staging");
-  const base = commit("page.txt", "old page");
+  const root = gitWorld("erga-proof-test-").clone;
+  const base = commit(root, "page.txt", "old page");
   sh(root, "git", "push", "--quiet", "origin", "staging");
   sh(root, "git", "switch", "--quiet", "-c", "task");
-  const head = commit("page.txt", "new page");
+  const head = commit(root, "page.txt", "new page");
   if (pushed) sh(root, "git", "push", "--quiet", "origin", "task");
-  return { root, dir: join(root, ".erga"), base, head, commit };
+  return { root, dir: join(root, ".erga"), base, head };
 }
 
 /** A fake look: its picture is the text of page.txt in the folder it ran in, so before and after differ. */

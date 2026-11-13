@@ -9,7 +9,7 @@
 // of a person's edits is cut. So nothing here uses a token on the journey's document.
 import type { Page } from "playwright-core";
 import { editor } from "../helpers/editor";
-import { settle, until, type Server } from "../helpers/fixtures";
+import { agentClosed, settle, until, type Server } from "../helpers/fixtures";
 import { pressOn } from "../helpers/press";
 import { runTool } from "../helpers/tools";
 
@@ -87,15 +87,10 @@ export const scripted = (server: Server, id: string, steps: unknown[]) =>
 /** The editor on a document, at its ?edit address, as someone who keeps the agent pane closed; once the gear shows. */
 export async function openDocEditor(page: Page, server: Server, address: string, user?: string) {
   await page.setViewportSize(WIDE);
+  await agentClosed(page);
   await page.addInitScript(() => {
-    if (window.top != window) return;
     // The page editor checks after each change that the page shows its HTML (libs/text/ui/check.ts).
-    (window as any).__ergaCheck = true;
-    try {
-      if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}');
-    } catch {
-      /* no storage */
-    }
+    if (window.top == window) (window as any).__ergaCheck = true;
   });
   await page.goto(`${server.root}${address}${user ? `?user=${user}&edit` : "?edit"}`);
   await until(() => rect(page, "#btn-settings"), 10_000, "the gear shows");

@@ -1,4 +1,4 @@
-// A person's picture: the one place that makes and checks an avatar's address, for the server and the editor.
+// A person's picture: the one place that makes and checks an avatar's address, for the server and its pages.
 //
 // A GitHub account's picture is GitHub's, found by its numeric id (/u/<id>), never by a login: a login can change hands,
 // and an Erga username is not a GitHub login. A Google account's is the `picture` Google gave at its last sign-in, on

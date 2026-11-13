@@ -6,7 +6,7 @@ import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { branchRefusal, failureOf } from "./flow";
-import { sh } from "./observe";
+import { sh } from "../root";
 
 /** Runs one step's command in the checkout: whether it passed, and all it printed. */
 export type Run = (cmd: string[]) => { ok: boolean; out: string };

@@ -39,8 +39,8 @@ import { liveReload, type LiveReload } from "./reload.ts";
 import { delayRooms, latencyOf } from "./latency.ts";
 import { sleep } from "../shared/time.ts";
 import { localBrowser, stopLocalBrowser } from "./browser.ts";
+import { ROOT } from "../deploy/root.ts";
 
-const ROOT = resolve(import.meta.dirname, "..");
 /** The largest file a document on disk takes: the room reads each whole when it opens, over a WebSocket. */
 const MAX_FILE = 10_000_000;
 

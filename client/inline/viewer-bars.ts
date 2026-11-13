@@ -2,6 +2,7 @@
 // the quick actions: the page is in the frame, on its own origin, which says so (pages/reader.ts: erga-pointer with tap),
 // and a click there takes the focus from this window. And ⌘P, which prints the page.
 
+import { isMac } from "../common/app-keys";
 import { mountBars } from "../common/bars";
 
 export default function viewerBars(): void {
@@ -12,10 +13,9 @@ export default function viewerBars(): void {
     if (ergaFrames.from(e) && e.data?.type == "erga-pointer" && e.data.tap === true) toggle(false);
   });
   // Print (⌘P; Ctrl+P off a Mac): the page in the frame prints itself, whole and without Erga's bars (reader.ts).
-  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   addEventListener("keydown", (e) => {
     if (
-      !(mac ? e.metaKey : e.ctrlKey) ||
+      !(isMac ? e.metaKey : e.ctrlKey) ||
       e.shiftKey ||
       e.altKey ||
       e.key.toLowerCase() != "p" ||

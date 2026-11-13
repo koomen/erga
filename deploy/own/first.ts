@@ -13,7 +13,7 @@ import { type CloudflareEntry, type Config, entryOf, entryOrigin, readConfig, wi
 import { type DeployOptions, deployInstance } from "../cli/deploy";
 import { askOpsToken, readOps } from "../cli/ops";
 import { d1 } from "../pipeline/account";
-import { Cloudflare, type Fetch } from "../pipeline/pipeline";
+import { Cloudflare, type Fetch } from "../pipeline/cloudflare-api";
 import { type Answers, firstRows, hostOf, SETUP_COMMIT, setupEntry, type TargetName, targetsOf } from "./plan";
 import { loadSecrets, saveSecrets } from "./store";
 

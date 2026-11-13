@@ -11,6 +11,8 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { git } from "../deploy/root";
+import { changeBase } from "./format";
 import { reached, ROOT, sourceFiles } from "./graph";
 import { runUnit } from "./unit";
 
@@ -34,30 +36,22 @@ const RULES = [
 
 const t0 = performance.now();
 const since = () => Math.round(performance.now() - t0);
+/** A step's command: it does not block (the steps run at once), and its answer is all that it printed. */
 const run = async (cmd: string[]) => {
   const p = Bun.spawn(cmd, { cwd: ROOT, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const [a, b, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
   return { ok: code == 0, out: (a + b).trim() };
 };
-const lines = async (cmd: string[]) => (await run(cmd)).out.split("\n").filter(Boolean);
+const lines = (...args: string[]) =>
+  git(...args)
+    .out.split("\n")
+    .filter(Boolean);
 
 const named = process.argv.slice(2);
-let base = "";
-for (const ref of ["origin/staging", "origin/main"]) {
-  const r = await run(["git", "merge-base", "HEAD", ref]);
-  if (r.ok) {
-    base = r.out;
-    break;
-  }
-}
+const base = changeBase();
 const changed = named.length
   ? named
-  : [
-      ...new Set([
-        ...(base ? await lines(["git", "diff", "--name-only", base, "--"]) : []),
-        ...(await lines(["git", "ls-files", "--others", "--exclude-standard"])),
-      ]),
-    ];
+  : [...new Set([...(base ? lines("diff", "--name-only", base, "--") : []), ...lines("ls-files", "--others", "--exclude-standard")])];
 console.log(
   `quick check: ${changed.length} changed file${changed.length == 1 ? "" : "s"}${named.length ? " (named)" : base ? ` since ${base.slice(0, 8)}` : ""}`
 );

@@ -10,11 +10,11 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { takeLock, testEnv } from "./deploy";
 import { failureOf } from "./flow";
 import { gateRefusal, type TestRun } from "./gate";
-import { sh } from "./observe";
+import { takeLock, testEnv } from "./jobs";
 import { alive, ownStart } from "./pid";
+import { sh } from "../root";
 
 export const runPath = (dir: string, tree: string) => join(dir, "tests", `${tree}.json`);
 

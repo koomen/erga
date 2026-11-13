@@ -4,10 +4,11 @@
 // the document's object for an agent's edit (edits.ts).
 
 import * as M from "../../../shared/manuscript";
+import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import { ChangeSet, Text } from "@codemirror/state";
 import type { Page } from "./rules";
 import type { Change } from "./lists";
-import { attrOf, escapeAttr, FORMAT_TAGS, linkEnding, setAttr, STYLE_TAGS, textIn, unitsIn, type InlineStyle } from "./source";
+import { attrOf, FORMAT_TAGS, linkEnding, setAttr, STYLE_TAGS, textIn, unitsIn, type InlineStyle } from "./source";
 
 export type Segment = { u: M.Unit; from: number; to: number };
 
@@ -259,6 +260,6 @@ export function applyLink(
   // New text replaces the link's (and any styling inside it).
   const text = edit.text?.replace(/\s+/g, " ").trim();
   const replaced = !!edit.url && !!text && text != textIn(page.units, textFrom, textTo);
-  if (replaced) changes.push({ from: textFrom, to: textTo, insert: M.escapeHtmlText(text!) });
+  if (replaced) changes.push({ from: textFrom, to: textTo, insert: escapeHtmlText(text!) });
   return { changes, text: { from: textFrom, to: textTo, replaced } };
 }

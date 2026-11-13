@@ -9,7 +9,7 @@
 import { Collab, type EarlySocket, type SocketEvent } from "../../libs/text/ui/collab";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { mountPageFrame } from "./page-frame";
-import type { Keys } from "../common/app-keys";
+import { isMac, type Keys } from "../common/app-keys";
 import { describeProblem } from "./problems";
 import { colorFor, files, roomInfo, type Author } from "../../document/content";
 import type { Attachment } from "../../shared/attach";
@@ -18,8 +18,9 @@ import { live } from "../live/client";
 import { restoredFor } from "../live/restore";
 import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type ZoomBy } from "../common/zoom";
 import { fastClick } from "../common/fast-click";
+import { asUser } from "../common/tools";
 import { mountLayout } from "../agent/layout";
-import { BASE, $, isMac, store, type Shell } from "./shell";
+import { BASE, $, store, type Shell } from "./shell";
 import { mountEditor } from "./editor";
 import { mountNaming } from "./naming";
 import { mountRoom } from "./room";
@@ -96,8 +97,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // someone else, ?user=Ada (only the dev server honours it), so every
   // request it makes says so. Tabs that are the same person share an agent
   // and its conversation.
-  const asked = new URLSearchParams(location.search).get("user")?.trim();
-  const as = asked ? `?user=${encodeURIComponent(asked)}` : "";
+  const as = asUser("");
   // What this page kept of itself before it reloaded for a new release, if it did.
   const back = restoredFor<EditorKept>("editor");
 
@@ -125,7 +125,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   );
   const collab: Collab = new Collab({
     url: (q) =>
-      `${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${BASE}/api/room?${new URLSearchParams({ events: "1", ...(asked ? { user: asked } : {}), ...Object.fromEntries(q) })}`,
+      `${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${asUser(`${BASE}/api/room?${new URLSearchParams({ events: "1", ...Object.fromEntries(q) })}`)}`,
     start,
     early,
     // (Kept in this browser, as this person: the document opens from it with no connection.)

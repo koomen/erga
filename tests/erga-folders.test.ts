@@ -2,32 +2,16 @@
 // at GitHub's newest staging, and clean removes only what the merge records say is merged, and production has.
 
 import { expect, test } from "bun:test";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanFolders, cleanPlan, folderOf, startFolder } from "../deploy/cli/folders";
-
-const sh = (cwd: string, ...cmd: string[]) => {
-  const r = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe" });
-  if (r.exitCode != 0) throw new Error(`${cmd.join(" ")}: ${r.stderr.toString()}`);
-  return r.stdout.toString().trim();
-};
-const commit = (at: string, file: string, text: string) => {
-  writeFileSync(join(at, file), text);
-  sh(at, "git", "add", "-A");
-  sh(at, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", text);
-  return sh(at, "git", "rev-parse", "HEAD");
-};
+import { commit, gitWorld, sh } from "./helpers/git-world.ts";
 
 /** A clone of a bare origin with one commit on staging and main, and another clone that moves the origin. */
 function world() {
-  const top = realpathSync(mkdtempSync(join(tmpdir(), "erga-folders-")));
-  const [origin, clone, other, dir] = [join(top, "origin.git"), join(top, "clone"), join(top, "other"), join(top, "clone", ".erga")];
-  sh(top, "git", "init", "--quiet", "--bare", "-b", "staging", origin);
-  sh(top, "git", "clone", "--quiet", origin, clone);
-  sh(clone, "git", "switch", "--quiet", "-c", "staging");
-  commit(clone, "a.txt", "one");
-  sh(clone, "git", "push", "--quiet", "origin", "staging", "staging:main");
+  const { top, origin, clone } = gitWorld("erga-folders-");
+  const [other, dir] = [join(top, "other"), join(clone, ".erga")];
+  sh(clone, "git", "push", "--quiet", "origin", "staging:main");
   sh(top, "git", "clone", "--quiet", origin, other);
   mkdirSync(join(dir, "jobs"), { recursive: true });
   /** A merge record: `branch` is on staging as `sha`, since `at`. */

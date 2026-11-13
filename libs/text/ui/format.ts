@@ -3,6 +3,7 @@
 // to the selection, with the editor's history.
 
 import * as M from "../../../shared/manuscript";
+import { escapeHtmlText } from "../../../shared/html";
 import { EditorSelection, type SelectionRange, type ChangeSet, type Text } from "@codemirror/state";
 import type { LinkEdit, LinkInfo } from "./types";
 import type { InlineStyle } from "../api/source";
@@ -77,7 +78,7 @@ export abstract class EditorFormat extends EditorEdit {
       }
     }
     if (at == pos && !before && !open) return false;
-    const head = before + open + M.escapeHtmlText(text);
+    const head = before + open + escapeHtmlText(text);
     const drops = placeholderDrops(src, [u], pos, pos, true);
     this.dispatch({
       changes: [{ from: at, insert: head + close + after }, ...drops],
@@ -230,8 +231,8 @@ export abstract class EditorFormat extends EditorEdit {
     const plain = end ? text.slice(join.length) : text.slice(0, text.length - join.length);
     const [inside, outside] = end ? [el.closeFrom, el.to] : [el.openTo, el.from];
     const changes = [];
-    if (plain) changes.push({ from: outside, insert: M.escapeHtmlText(plain) });
-    if (join) changes.push({ from: inside, insert: M.escapeHtmlText(join) });
+    if (plain) changes.push({ from: outside, insert: escapeHtmlText(plain) });
+    if (join) changes.push({ from: inside, insert: escapeHtmlText(join) });
     const set = this.state.changes(changes);
     const caret = set.mapPos(end ? (plain ? outside : inside) : join ? inside : outside, 1);
     this.dispatch({ changes: set, selection: { anchor: caret }, userEvent, scrollIntoView: true });

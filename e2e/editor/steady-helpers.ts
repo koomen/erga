@@ -1,7 +1,7 @@
 // Helpers of the steady journeys (steady.e2e.ts): the agent's box and its scripted run, and files dropped or pasted
 // on a page of a document that the server keeps.
 import { editor, F, type Editor } from "../helpers/editor";
-import { expect, settle, until, type Server, type Tab } from "../helpers/fixtures";
+import { agentClosed, expect, settle, until, type Server, type Tab } from "../helpers/fixtures";
 import { idOf, runTool } from "../helpers/tools";
 
 /** The agent's box: what it holds, whether the panel is open, and how many messages went. */
@@ -66,14 +66,9 @@ export async function openDropPage(tab: Tab, server: Server, files: Record<strin
   for (const [path, body] of Object.entries({ "index.html": DROP_PAGE, "blog/post.html": DROP_PAGE, ...files }))
     expect((await fetch(`${server.root}/d/${id}/api/files/${path}`, { method: "PUT", body })).status).toBe(200);
   // Someone who keeps the agent pane closed, and the editor's check that the page shows its HTML (as openEditor).
+  await agentClosed(tab.page);
   await tab.page.addInitScript(() => {
-    if (window.top != window) return;
-    (window as unknown as { __ergaCheck: boolean }).__ergaCheck = true;
-    try {
-      if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}');
-    } catch {
-      /* no storage */
-    }
+    if (window.top == window) (window as unknown as { __ergaCheck: boolean }).__ergaCheck = true;
   });
   tab.strict = true;
   await tab.page.goto(`${server.root}${address}/blog/post?edit`);

@@ -5,6 +5,7 @@
 import { fastClick } from "../common/fast-click";
 import { findRows } from "../common/find-rows";
 import { liveList } from "../common/live-rows";
+import { shareList } from "../common/share-list";
 import { runTool } from "../common/tools";
 import type { TreeHandle } from "../pages/pages-tree";
 import times from "./times";
@@ -18,19 +19,6 @@ export interface DocsConfig {
   query: string;
   /** The editor's scripts, to fetch ahead for a document you may edit. */
   editor: string[];
-}
-
-interface Permission {
-  login: string;
-  role: string;
-}
-
-interface ShareAnswer {
-  permissions: Permission[];
-  notUsers?: string[];
-  avatars?: Record<string, string>;
-  publicSharing?: boolean;
-  error?: string;
 }
 
 export default function docs(c: DocsConfig): void {
@@ -79,127 +67,42 @@ export default function docs(c: DocsConfig): void {
   function wireArchive(b: HTMLButtonElement) {
     b.addEventListener("click", () => gone(b.closest("li")!, b.dataset.op!, b.dataset.id));
   }
-  // Sharing: each change is saved as it's made (the operation share_document); the row follows, as any change does.
+  // Sharing: each change is saved as it's made (client/common/share-list.ts); the row follows, as any change does.
   const share = document.getElementById("share") as HTMLDialogElement,
-    me = share.dataset.me;
-  const people = share.querySelector(".people")!,
-    adder = share.querySelector<HTMLFormElement>("form.add")!,
     anyone = document.getElementById("share-anyone") as HTMLSelectElement;
-  const shareHint = document.getElementById("share-hint")!;
-  const tell = (text: string, error?: boolean) => {
-    shareHint.textContent = text;
-    shareHint.classList.toggle("error", !!error);
-  };
-  const field = (name: string) => adder.elements.namedItem(name) as HTMLInputElement;
   let doc: { id: string; title: string; address: string } | null = null;
-  const el = (tag: string, props: Record<string, unknown> = {}, ...kids: (Node | string)[]): any => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids);
-    return e;
-  };
-  const ROLES = [
-    ["editor", "Can edit"],
-    ["commenter", "Can comment"],
-    ["viewer", "Can view"],
-  ];
-  const roleSelect = (role: string, label: string) => {
-    const s: HTMLSelectElement = el("select", { ariaLabel: label });
-    for (const [v, t] of ROLES) s.append(el("option", { value: v, textContent: t, selected: v == role }));
-    return s;
-  };
-  function render({ permissions, notUsers, avatars, publicSharing }: ShareAnswer) {
-    people.replaceChildren();
-    const pending = new Set(notUsers || []);
-    let all = "none";
-    for (const p of permissions) {
-      if (p.login == "*") {
-        all = p.role;
-        continue;
-      }
-      const who = el("span", { className: "who", textContent: p.login });
-      if (p.login == me) who.append(el("small", { textContent: "you" }));
-      if (pending.has(p.login))
-        who.append(
-          el("small", { className: "pending", textContent: "can't sign in yet", title: "Not a user of this server: an admin can add them" })
-        );
-      const face = el("span", { className: "face", ariaHidden: "true", textContent: p.login[0] });
-      const pic = avatars?.[p.login];
-      if (pic) {
-        const img = el("img", { src: pic, alt: "", draggable: false, referrerPolicy: "no-referrer" });
-        img.addEventListener("error", () => img.remove());
-        face.append(img);
-      }
-      const li = el("li", {}, face, who);
-      if (p.role == "owner") li.append(el("span", { className: "fixed", textContent: "Owner" }));
-      else {
-        const s = roleSelect(p.role, "Role for " + p.login);
-        s.addEventListener("change", () => change(p.login, s.value));
-        const x = el("button", {
-          type: "button",
-          className: "act",
-          title: "Stop sharing with " + p.login,
-          ariaLabel: "Stop sharing with " + p.login,
-          innerHTML: c.close,
-        });
-        x.addEventListener("click", () => change(p.login, "none"));
-        li.append(s, x);
-      }
-      people.append(li);
-    }
-    anyone.value = all;
-    // Anyone with the link, only while the server lets users share content publicly; a share made before stays, to stop.
-    anyone.closest<HTMLElement>(".anyone")!.hidden = !publicSharing && all == "none";
-    for (const o of anyone.options) o.disabled = !publicSharing && o.value != "none" && o.value != all;
-    document.getElementById("share-anyone-note")!.textContent = publicSharing
-      ? "Signed in or not; people who aren't signed in view it"
-      : "Public sharing is off here: only people who sign in can open it";
-  }
-  /** Who it's shared with (ls's access), or that after a change (share_document). */
-  const call = (change?: { login: string; role: string }): Promise<ShareAnswer> =>
-    change
-      ? runTool("share_document", { document: doc!.id, ...change })
-      : runTool<{ access: ShareAnswer }>("ls", { document: doc!.id }).then((r) => r.access);
-  async function change(login: string, role: string) {
-    tell("Saving…");
-    try {
-      render(await call({ login, role }));
-      tell("");
-      return true;
-    } catch (e) {
-      tell((e as Error).message, true);
-      return false;
-    }
-  }
+  const sharing = shareList({
+    doc: () => doc?.id ?? "",
+    me: () => share.dataset.me,
+    people: share.querySelector(".people")!,
+    add: share.querySelector<HTMLFormElement>("form.add")!,
+    anyone,
+    status: document.getElementById("share-hint")!,
+    shown: () => share.open,
+    look: { row: "", role: "", remove: { className: "act", innerHTML: c.close } },
+    link(offered, publicSharing) {
+      anyone.closest<HTMLElement>(".anyone")!.hidden = !offered;
+      document.getElementById("share-anyone-note")!.textContent = publicSharing
+        ? "Signed in or not; people who aren't signed in view it"
+        : "Public sharing is off here: only people who sign in can open it";
+    },
+  });
   /** A row's Share: the dialog, with who it's shared with. */
   const wireShare = (b: HTMLElement) =>
-    b.addEventListener("click", async () => {
+    b.addEventListener("click", () => {
       doc = { id: b.dataset.id!, title: b.dataset.title!, address: b.dataset.address! };
       share.querySelector("h2")!.textContent = "Share “" + doc.title + "”";
-      people.replaceChildren();
-      adder.reset();
-      tell("Loading…");
       share.showModal();
-      field("who").focus();
-      try {
-        render(await call());
-        tell("");
-      } catch (e) {
-        tell((e as Error).message, true);
-      }
+      sharing.open();
+      void sharing.read();
     });
-  adder.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const login = field("who").value.trim().replace(/^@/, "");
-    if (login && (await change(login, (adder.elements.namedItem("role") as HTMLSelectElement).value))) field("who").value = "";
-  });
-  anyone.addEventListener("change", () => change("*", anyone.value));
   share.querySelector(".copy")!.addEventListener("click", async () => {
     const url = location.origin + doc!.address;
     try {
       await navigator.clipboard.writeText(url);
-      tell("Link copied: " + url);
+      sharing.tell("Link copied: " + url);
     } catch {
-      tell(url);
+      sharing.tell(url);
     }
   });
   share.querySelector(".done")!.addEventListener("click", () => share.close());

@@ -2,11 +2,13 @@
 // keys held while the editor can't take them.
 
 import * as M from "../../../shared/manuscript";
+import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
-import { contentIn, escapeAttr, findDiff, norm, placeholderBr, setChecked } from "../api/source";
+import { contentIn, findDiff, norm, placeholderBr, setChecked } from "../api/source";
 import { draggedImages, hasFiles, type ImageSpot, inDropGap, LOADING_AGAIN, showDropCaret, showDropImage, showDropNote } from "./drop";
-import { isMac, pageOwnBox } from "./core";
+import { pageOwnBox } from "./core";
+import { isMac } from "../../../client/common/app-keys";
 import { TEXT_ATTR } from "../../../shared/page-html";
 import { leaveCode } from "../api/blocks";
 import { blockRange, editableAt, placeholderDrops } from "../api/rules";
@@ -223,7 +225,7 @@ export abstract class EditorInput extends EditorClipboard {
     const html = items.map((i) =>
       i.image
         ? `<img src="${escapeAttr(i.href)}" alt="${escapeAttr(i.name)}">`
-        : `<a href="${escapeAttr(i.href)}">${M.escapeHtmlText(i.name)}</a>`
+        : `<a href="${escapeAttr(i.href)}">${escapeHtmlText(i.name)}</a>`
     );
     const before = contentIn(src, u, u.contentFrom, at),
       after = contentIn(src, u, at, u.contentTo);
@@ -694,7 +696,7 @@ export abstract class EditorInput extends EditorClipboard {
         br = placeholderBr(src, u);
       const head = this.state.selection.main.head;
       const at = br ? br.from : head >= u.contentFrom && head <= u.contentTo ? head : u.contentFrom;
-      const insert = M.escapeHtmlText(text);
+      const insert = escapeHtmlText(text);
       this.dispatch({ changes: { from: at, to: br ? br.to : at, insert }, selection: { anchor: at + insert.length }, userEvent });
       return;
     }
@@ -725,7 +727,7 @@ export abstract class EditorInput extends EditorClipboard {
     if (diff) {
       const from = toPos(diff.from),
         to = toPos(diff.toA);
-      const insert = M.escapeHtmlText(after.slice(diff.from, diff.toB));
+      const insert = escapeHtmlText(after.slice(diff.from, diff.toB));
       this.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, userEvent });
     }
     const now = own && this.unitByEl.get(el);

@@ -25,6 +25,7 @@
 
 import * as Base64 from "effect/encoding/Base64";
 import { randomBytes } from "../shared/bytes.ts";
+import { isLocal } from "../shared/http.ts";
 
 /** HTTPS only, for a year, here and on every subdomain. */
 export const HSTS = "max-age=31536000; includeSubDomains";
@@ -40,8 +41,6 @@ export const scriptPolicy = (nonce: string) => `script-src 'nonce-${nonce}' 'str
 
 /** Whose answer: the site's own origin's, or a document's pages origin's. */
 export type Kind = "site" | "pages";
-
-const isLocal = (url: URL) => url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1" || url.hostname == "[::1]";
 
 /** The answer with the headers above, and with `scripts`, the script rule on a page. A WebSocket's (101) goes as it is. */
 export function withSecurity(response: Response, url: URL, kind: Kind, scripts = false): Response {

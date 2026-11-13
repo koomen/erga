@@ -29,8 +29,6 @@ export const BASE = (document.querySelector<HTMLMetaElement>('meta[name="erga-ba
 
 export const $ = (id: string) => document.getElementById(id)!;
 
-export const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-
 /** This browser's storage, which may refuse (private mode): a read gives null, a write false. */
 export const store = {
   get(key: string) { try { return localStorage.getItem(key); } catch { return null; } },

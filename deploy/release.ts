@@ -13,11 +13,11 @@
 // (The landing project is built into the Worker itself.)
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { join, relative } from "node:path";
 import type { ReleaseIndex } from "./pipeline/release-format.ts";
 import { releaseBindings } from "./pipeline/bindings.ts";
+import { ROOT } from "./root.ts";
 
-const ROOT = resolve(import.meta.dirname, "..");
 const SITE = join(ROOT, ".build"), OUT = join(SITE, "release");
 
 /** Every file under `dir`, relative to it, dotfiles left out. */

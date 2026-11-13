@@ -400,8 +400,8 @@ test("the page's server: Merge and Deploy start their `bun erga` command, one jo
 });
 
 test("the tests that a merge or a deploy runs get no ERGA_JOB_FROM, so their own job records say a terminal", async () => {
-  const { testEnv } = await import("../deploy/cli/deploy");
-  const { sh } = await import("../deploy/cli/observe");
+  const { testEnv } = await import("../deploy/cli/jobs");
+  const { sh } = await import("../deploy/root");
   const page = process.env.ERGA_JOB_FROM;
   process.env.ERGA_JOB_FROM = "page";
   try {

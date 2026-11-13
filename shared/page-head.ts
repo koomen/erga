@@ -4,7 +4,7 @@
 // details (client/pages/page-head.ts) and the set_head tool rewrite those tags. The viewer puts them on its own
 // page too (server/pages/viewer.ts), since the page itself is in a frame, and the homepage serves the page's own.
 
-import { esc } from "./html.ts";
+import { decodeEntities, esc } from "./html.ts";
 
 export interface PageHead {
   title?: string;
@@ -44,20 +44,12 @@ const TAGS: Record<
   },
 };
 
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
-const decode = (s: string) =>
-  s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) =>
-    e[0] == "#"
-      ? String.fromCodePoint(parseInt(/^#x/i.test(e) ? e.slice(2) : e.slice(1), /^#x/i.test(e) ? 16 : 10))
-      : (ENTITIES[e.toLowerCase()] ?? m)
-  );
-
 /** A tag's attributes, by lower-case name, decoded. */
 function attrsOf(tag: string): Record<string, string> {
   const out: Record<string, string> = {};
   // (The first match is the tag's name.)
   for (const m of [...tag.matchAll(/([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g)].slice(1))
-    out[m[1].toLowerCase()] = decode(m[2] ?? m[3] ?? m[4] ?? "");
+    out[m[1].toLowerCase()] = decodeEntities(m[2] ?? m[3] ?? m[4] ?? "");
   return out;
 }
 
@@ -75,7 +67,8 @@ function find(html: string, field: HeadField): { at: number; end: number; value:
   const { from, to } = headRange(html);
   const t = TAGS[field];
   for (const m of html.slice(from, to).matchAll(t.find)) {
-    if (field == "title") return { at: from + m.index, end: from + m.index + m[0].length, value: decode(m[1].replace(/\s+/g, " ").trim()) };
+    if (field == "title")
+      return { at: from + m.index, end: from + m.index + m[0].length, value: decodeEntities(m[1].replace(/\s+/g, " ").trim()) };
     const attrs = attrsOf(m[0]);
     if (t.is!(attrs)) return { at: from + m.index, end: from + m.index + m[0].length, value: (attrs[t.value!] ?? "").trim() };
   }

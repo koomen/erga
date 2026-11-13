@@ -7,14 +7,13 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Frame, Route } from "playwright-core";
-import { expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
+import { agentClosed, expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
 import { newToken } from "../helpers/new-token";
 import { clickOn } from "../helpers/press";
 import { idOf, runTool, treeOp } from "../helpers/tools";
 import { listenNews, person } from "./people";
 import {
   act,
-  agentClosed,
   answered,
   changing,
   edges,

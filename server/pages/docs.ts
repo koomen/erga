@@ -9,21 +9,8 @@ import { esc } from "../../shared/html.ts";
 import { newDocButton, PLUS } from "./templates.ts";
 import { scratchMakeTip } from "./scratch.ts";
 import { inlineScript, inlineStyle } from "./inline.ts";
-import { plural } from "../../shared/time.ts";
+import { plural, timeAgo } from "../../shared/time.ts";
 import { addressOf, HOME_ADDRESS, HOME_OWNER } from "../../document/names.ts";
-
-/** "just now", "5 minutes ago", "3 hours ago", "yesterday", "12 days ago", or the date (the page's script redoes it in the reader's zone). */
-export function ago(t: number, now: number): string {
-  const min = Math.round((now - t) / 60000);
-  if (min < 1) return "just now";
-  if (min < 60) return `${plural(min, "minute")} ago`;
-  const hours = Math.round(min / 60);
-  if (hours < 24) return `${plural(hours, "hour")} ago`;
-  const days = Math.round(hours / 24);
-  if (days == 1) return "yesterday";
-  if (days < 30) return `${days} days ago`;
-  return new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-}
 
 /** Who a document is shared with, as its row in the list says it (the owner's own view). */
 function sharedNote(d: Listed): string {
@@ -64,7 +51,7 @@ export function docRow(session: Session, d: Listed, now: number, hours: number |
   // The whole row opens the document (the link stretches over it); its buttons sit on top.
   return `  <li data-live="doc:${esc(d.id)}" data-sort="${d.modified}">
     <div class="name">${twist}<a class="doc" href="${esc(withEdit(link(addressOf(d), session)))}"><span class="title">${esc(d.title)}</span></a>${d.kind == "project" ? `<span class="note kind" title="A folder of pages, each with its own address">Project</span>` : ""}${note}${mine ? sharedNote(d) : ""}</div>
-    <time datetime="${when}">${ago(d.modified, now)}</time>
+    <time datetime="${when}">${timeAgo(d.modified, now, "en-US", "UTC")}</time>
     <div class="acts">${archive}${
       mine
         ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" data-tip="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="${esc(addressOf(d))}">${ICON.share}</button>

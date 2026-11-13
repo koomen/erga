@@ -84,7 +84,8 @@ const Polled = Schema.Struct({
   error: Schema.optionalKey(Schema.String),
 });
 
-type Site = (url: string, init?: RequestInit) => Promise<Response>;
+/** fetch, or a test's stand-in for an instance. */
+export type Site = (url: string, init?: RequestInit) => Promise<Response>;
 
 const post = (url: string, body: object, site: Site = fetch) =>
   site(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

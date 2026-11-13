@@ -10,6 +10,7 @@
 // picks the one a key needs.
 
 import * as M from "../../../shared/manuscript";
+import { escapeHtmlText } from "../../../shared/html";
 import { ChangeSet, EditorSelection, findClusterBreak } from "@codemirror/state";
 import {
   BLOCK_SPLIT,
@@ -255,7 +256,7 @@ export function replace(page: Page, from: number, to: number, text: string, user
     return replace(page, whole ? a.contentFrom : from, whole ? a.contentTo : M.textEnd(units[b.id - 1]), text, userEvent);
   }
   if (!editableAt(a, from)) return null;
-  const insert = text ? M.escapeHtmlText(text) : "";
+  const insert = text ? escapeHtmlText(text) : "";
   if (a == b) {
     // Text typed, pasted or composed into an empty block takes the place of the <br> that held it open.
     // The same for the <br> that holds an empty last line open, typed on.

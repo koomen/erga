@@ -2,6 +2,7 @@
 // (agents/document/workspace.ts) applies them to the document; view_page's and eval_in_page's preview
 // (client/shell/page-requests.ts) to a copy, for the render only. Pure: it runs on the server and in the browser.
 
+import { escapeRe } from "./html";
 import { findInSource } from "./source-select";
 
 /**
@@ -87,8 +88,10 @@ export function aimEdits(
 function looseMatch(text: string, old: string): { from: number; to: number } | null {
   const core = old.trim();
   if (!core) return null;
-  const esc = core.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const re = new RegExp(`${/^\s/.test(old) ? "[ \\t]*" : ""}${esc.join("\\s+")}${/\s$/.test(old) ? "[ \\t]*\\n?" : ""}`, "g");
+  const re = new RegExp(
+    `${/^\s/.test(old) ? "[ \\t]*" : ""}${core.split(/\s+/).map(escapeRe).join("\\s+")}${/\s$/.test(old) ? "[ \\t]*\\n?" : ""}`,
+    "g"
+  );
   const found = [...text.matchAll(re)];
   return found.length == 1 ? { from: found[0].index, to: found[0].index + found[0][0].length } : null;
 }

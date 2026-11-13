@@ -18,6 +18,7 @@ export function setsHooksPath(c: Checkout): boolean {
   return c.gitDir != null && c.gitDir == c.commonDir && c.toplevel == c.dir && c.hook && c.hooksPath == "";
 }
 
+// Its own git, not deploy/root.ts's: it imports no file of the repository, so that it runs where little else is.
 function git(dir: string, ...args: string[]) {
   const r = Bun.spawnSync(["git", ...args], { cwd: dir, stdout: "pipe", stderr: "ignore" });
   return { ok: r.exitCode == 0, out: r.stdout.toString().trim() };

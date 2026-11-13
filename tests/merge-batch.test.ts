@@ -4,13 +4,13 @@
 // ops page's run for the branch's row) runs no test, and a failed run refuses the merge with the tests' names.
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeConfig } from "../deploy/cli/config";
 import { testRun, readRuns, type Suite, treeOf } from "../deploy/cli/test-run";
 import { mergeTree } from "../deploy/cli/observe";
 import { mergeBranches } from "../deploy/cli/merge";
+import { gitWorld, sh } from "./helpers/git-world.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 
 quietConsole();
@@ -19,7 +19,7 @@ let tmp = "";
 let clone = "";
 let dir = "";
 let base = "";
-const run = (...cmd: string[]) => Bun.spawnSync(cmd, { cwd: clone, stdout: "pipe", stderr: "pipe" }).stdout.toString().trim();
+const run = (...cmd: string[]) => sh(clone, ...cmd);
 /** A branch from staging's first commit with one commit that writes `files`, pushed to origin. */
 const branch = (name: string, files: Record<string, string>) => {
   run("git", "checkout", "-q", "--detach", base);
@@ -50,20 +50,11 @@ const fakes = { suite, deploy: async (sha: string) => (deploys.push(sha), ["stag
 const merge = (...names: string[]) => mergeBranches({ dir, clone, merges: names.map((b) => ({ branch: b })), print: () => {}, ...fakes });
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), "erga-batch-"));
-  clone = join(tmp, "clone");
+  ({ top: tmp, clone, base } = gitWorld("erga-batch-"));
   dir = join(tmp, ".erga");
   writeConfig(dir, { instances: [] });
-  Bun.spawnSync(["git", "init", "-q", "--bare", join(tmp, "origin.git")]);
-  Bun.spawnSync(["git", "init", "-q", "-b", "work", clone]);
   run("git", "config", "user.name", "t");
   run("git", "config", "user.email", "t@t");
-  writeFileSync(join(clone, "shared.txt"), "one\n");
-  run("git", "add", "-A");
-  run("git", "commit", "-q", "-m", "C1");
-  base = run("git", "rev-parse", "HEAD");
-  run("git", "remote", "add", "origin", join(tmp, "origin.git"));
-  run("git", "push", "-q", "origin", `${base}:refs/heads/staging`);
   tests = 0;
   deploys = [];
 });

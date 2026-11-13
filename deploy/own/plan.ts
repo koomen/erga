@@ -3,7 +3,7 @@
 // acts). `bun erga setup skill` is the manual; `bun erga setup <host> status` prints these steps, and the Setup tab of the
 // ops page (deploy/own/page.ts) shows them.
 
-import { PROXY_FREE_PATHS } from "../../shared/proxy-paths";
+import { PROXY_FREE_PATHS } from "../proxy-paths";
 import { oidcSecretName } from "../aws/template";
 import type { CloudflareEntry } from "../cli/config";
 import { deployFacts } from "../pipeline/account";

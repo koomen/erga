@@ -9,7 +9,9 @@
 // Viewing, it fetches the editor's files while the browser is idle, so that first time is quick too. `built`: the
 // editor's files this page uses that its elements don't name (client/live/live.ts compares them with the server's).
 
+import { isMac } from "../common/app-keys";
 import { type EditEvent, type Effect, looks, next, start } from "../common/edit-phase";
+import { asUser } from "../common/tools";
 
 /** The editor, once it runs (client/shell/main.ts, window.ergaPage): what this script asks of it. */
 type Editor = { pagePath: string; setEditing(on: boolean): void };
@@ -21,9 +23,8 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
   const shown = () => document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || "";
   // Viewing, its room is woken ahead (prefetch): asking for its details opens it.
   const base = document.querySelector<HTMLMetaElement>('meta[name="erga-base"]')!.content;
-  const user = new URLSearchParams(location.search).get("user")?.trim();
   const wake = () =>
-    fetch(base + "/api/doc" + (user ? "?user=" + encodeURIComponent(user) : "")).then(
+    fetch(asUser(base + "/api/doc")).then(
       (r) => r.body?.cancel(),
       () => {}
     );
@@ -117,13 +118,12 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
   });
   // ⌘⇧E (Ctrl+Shift+E off a Mac) opens and closes the editor, as a click on the pencil does: pressed here, or in the page
   // (its first script says so: client/inline/reader.ts).
-  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   const pencil = () => {
     const on = looks(state.state).editing && !looks(state.state).closing;
     document.querySelector<HTMLElement>(on ? "#btn-edit" : ".erga-edit-button")?.click();
   };
   addEventListener("keydown", (e) => {
-    if (!(mac ? e.metaKey : e.ctrlKey) || !e.shiftKey || e.altKey || e.key.toLowerCase() != "e" || e.isComposing) return;
+    if (!(isMac ? e.metaKey : e.ctrlKey) || !e.shiftKey || e.altKey || e.key.toLowerCase() != "e" || e.isComposing) return;
     e.preventDefault();
     pencil();
   });

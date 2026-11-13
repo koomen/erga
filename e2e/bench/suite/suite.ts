@@ -2,9 +2,7 @@
 // participants and their agents (e2e/bench/suite/target.ts has the contract). The
 // tests themselves are e2e/bench/suite/latency.ts, written against a Target, so
 // one test runs against a worker's dev server here and against a deployment;
-// each e2e/bench/latency.e2e.ts file registers some of them with
-// `register`. The browser tests are e2e files of their own (browser-*.e2e.ts,
-// with `openAs` below), and the latency tests are a bench (e2e/bench/latency.e2e.ts).
+// e2e/bench/latency.e2e.ts registers them with `register`: a bench, in no suite.
 //
 // The target:
 //   local (the default)   documents on the worker's suite server (its own server: the scripted agent, a short
@@ -17,13 +15,12 @@
 // Randomised tests are seeded: ERGA_SUITE_SEED=n replays one (a failure names its seed). ERGA_SUITE_LONG=1 runs the
 // long versions (bigger crowds, longer fuzzing, real idle-eviction waits), with longer time limits.
 
-import { mkdtempSync, readFileSync, realpathSync, rmSync, cpSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { servers, settle, test, until, type Page, type Tab } from "../../helpers/fixtures";
-import { editor } from "../../helpers/editor";
-import { startServer, type Server } from "../../helpers/server";
-import { FIXTURES, makeDoc, readFixture, RemoteTarget, type Capability, type Doc, type Target } from "./target";
+import { servers, test } from "../../helpers/fixtures";
+import { copyFixture, startServer, type Server } from "../../helpers/server";
+import { makeDoc, readFixture, RemoteTarget, type Capability, type Doc, type Target } from "./target";
 import { rng, type Ctx, type Test } from "./harness";
 import { runTool } from "../../helpers/tools";
 
@@ -41,7 +38,7 @@ class LocalTarget implements Target {
 
   async newDoc(fixture: string, needs: Capability[] = []): Promise<Doc> {
     const dir = mkdtempSync(join(realpathSync(tmpdir()), "erga-suite-"));
-    cpSync(join(FIXTURES, fixture), dir, { recursive: true });
+    copyFixture(fixture, dir);
     const writeDisk = (p: string, data: string | Uint8Array) => { const full = join(dir, p); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, data); };
     const own = needs.includes("restart") || needs.includes("kill");
     // Its own server opens the folder as it starts, so the document keeps its address across restarts, even one that lost the state.
@@ -132,9 +129,6 @@ async function seeded(file: string, name: string, body: () => Promise<void>) {
   }
 }
 
-/** Part `i` of `n` of a suite's tests (every nth, so a test added anywhere lands in exactly one part): one file each, for parallel workers. */
-export const part = (tests: Test[], i: number, n: number) => tests.filter((_, k) => k % n == i - 1);
-
 /** Registers the suite's tests (some of e2e/bench/suite/latency.ts) as this file's e2e tests. */
 export function register(file: string, suite: string, tests: Test[]) {
   for (const t of tests) {
@@ -145,87 +139,8 @@ export function register(file: string, suite: string, tests: Test[]) {
   }
 }
 
-/** A browser test of the suite: registered as `register` does, with the test's tab. */
-export function browserTest(file: string, name: string, opts: { needs?: Capability[] }, run: (ctx: Ctx, tab: Tab) => Promise<void>) {
-  const needs: Capability[] = ["browser", ...(opts.needs ?? [])];
-  // Two or three editor tabs open at once, each a second or two to load on an idle Mac: as long as a slow test.
-  test(name, { timeout: limit({ needs, slow: true }), skip: lacks({ needs }) }, async ({ tab }) => {
-    const { ctx, end } = context("browser", name, needs);
-    try { await seeded(file, name, () => run(ctx, tab)); } finally { await end(); }
-  });
-}
-
-export type Person = ReturnType<typeof editor> & { errors: string[] };
-
-/**
- * Opens the document's shell as a person: the test's tab first, then more tabs in its browser context (one person's
- * tabs share it; so do the test's people, each named by ?user= or their own headers). The tab keeps the agent pane
- * closed until it's asked for, as someone who closed it would.
- */
-export async function openAs(tab: Tab, ctx: Ctx, d: Doc, user: string): Promise<Person> {
-  const used = opened.get(tab) ?? 0;
-  opened.set(tab, used + 1);
-  const page: Page = used == 0 ? tab.page : await tab.page.context().newPage();
-  const errors = used == 0 ? tab.errors : [];
-  if (used > 0) {
-    page.on("pageerror", (e) => errors.push(e.stack ?? e.message));
-    page.on("console", (m) => { if (m.type() == "error") errors.push(`console.error: ${m.text()}`); });
-    ctx.defer(() => page.close());
-  }
-  await page.setViewportSize({ width: 1100, height: 800 });
-  const headers = d.headersFor(user);
-  if (Object.keys(headers).length) await page.setExtraHTTPHeaders(headers);
-  await page.addInitScript(() => {
-    if (window.top != window) return;
-    try {
-      if (!sessionStorage.getItem("erga-test:agent-seeded")) {
-        sessionStorage.setItem("erga-test:agent-seeded", "1");
-        if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}');
-      }
-    } catch { /* no storage */ }
-  });
-  await page.goto(d.pageUrl(user));
-  const ed = editor(page, { address: d.base, dir: "", file: "" });
-  await until(
-    async () => (await ed.eval<boolean>("!!window.ergaPage")) && (await ed.frame<boolean>(`!!${ed.F}?.querySelector("[data-erga-text]")`)),
-    10_000,
-    `${user}'s page renders`
-  );
-  await ed.frame(`${ed.F}.fonts.ready.then(() => true)`);
-  await settle(page);
-  return Object.assign(ed, { errors });
-}
-const opened = new WeakMap<Tab, number>();
-
 function hash(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return h >>> 0;
 }
-
-/** The names on the carets drawn on a person's page, "|"-joined. */
-export const peerNames = (p: Person) => p.frame<string>(`[...${p.F}.querySelectorAll("erga-peer-name")].map((e) => e.textContent).join("|")`);
-/** Whether a caret drawn on the page sits in the element. */
-export const caretIn = (p: Person, selector: string) => p.frame<boolean>(`(() => { const w = ${p.W}, r = ${p.F}.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return [...${p.F}.querySelectorAll("erga-peer")].some((c) => { const y = parseFloat(c.style.top) - w.scrollY; return y >= r.top - 2 && y < r.bottom; }); })()`);
-/** Fails unless the person's tab had no errors. */
-export const noErrors = (p: Person, who: string) => { if (p.errors.length) throw new Error(`page errors (${who}):\n${p.errors.join("\n")}`); };
-/**
- * From now on, at each frame and each change of the page, records what marks changed text on a person's page: the CSS
- * highlights by name, and any element or class that marks it. Read it with `seenMarks`.
- */
-export const watchMarks = (p: Person) =>
-  p.frame<boolean>(`(() => {
-    const w = ${p.W}, F = ${p.F}, seen = w.__marks = new Set();
-    const look = () => {
-      for (const name of w.CSS.highlights.keys()) seen.add("highlight " + name);
-      for (const el of F.querySelectorAll("erga-marks, erga-del, .erga-flash, #erga-authors")) seen.add("element " + (el.id || el.localName + "." + el.className));
-    };
-    const frame = () => { look(); w.requestAnimationFrame(frame); };
-    frame();
-    new w.MutationObserver(look).observe(F.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
-    return true;
-  })()`);
-/** What `watchMarks` has seen mark changed text so far. */
-export const seenMarks = (p: Person) => p.frame<string[]>(`[...(${p.W}.__marks ?? [])]`);
-/** The marks on a person's page now: the CSS highlights by name. */
-export const marksNow = (p: Person) => p.frame<string[]>(`[...${p.W}.CSS.highlights.keys()]`);

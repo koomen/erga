@@ -1,9 +1,10 @@
 // The rules for files attached to an agent message.
-import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { agentApi, PersonAgents } from "../agents/person/sessions";
+import { agentApi } from "../agents/person/routes";
+import { PersonAgents } from "../agents/person/sessions";
 import { respond } from "../server/http";
 import type { Platform } from "../server/platform";
+import { objectSql } from "./helpers/memory-sql";
 import { checkAttachments, classify, fileRefs, MAX_FILES, MAX_IMAGE_DATA, MAX_TEXT_BYTES, messageContent, refusal } from "../shared/attach";
 
 test("images and text-like files can be attached; others can't", () => {
@@ -54,13 +55,8 @@ test("the model gets images as images and text files as text, after the message"
   expect(kept[0].text).toContain(`{"images/s.png": {"blob": "…"}}`);
 });
 
-// The agent's API (agents/person/sessions.ts) with a person's agent that is on (the scripted model): the route's answer.
+// The agent's API (agents/person/routes.ts) with a person's agent that is on (the scripted model): the route's answer.
 test("the server refuses what the panel would: a PDF sent straight to the agent's API, with a reason", async () => {
-  const db = new Database(":memory:", { strict: true });
-  const sql = {
-    exec: <T>(q: string, ...p: (string | number | null)[]) => db.query(q).all(...p) as T[],
-    transaction: <T>(f: () => T) => db.transaction(f)(),
-  };
   const script = { own: {}, server: {}, mode: "server" as const, off: [], model: "script" as const, effort: "medium" as const };
   const platform = {
     agentSettings: async () => script,
@@ -68,7 +64,7 @@ test("the server refuses what the panel would: a PDF sent straight to the agent'
     sessionOf: async () => ({ login: "ada", name: "Ada" }),
     personAgent: () => agents,
   } as unknown as Platform;
-  const agents = new PersonAgents({ sql, platform });
+  const agents = new PersonAgents({ sql: objectSql(), platform });
   const send = (body: unknown) =>
     respond(
       agentApi,

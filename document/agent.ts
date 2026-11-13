@@ -4,7 +4,8 @@
 // session for its person: their own agent's (agents/person/) and an outside agent's. The agents themselves, their
 // models and their tools are in agents/: the document only holds this side of it.
 
-import type { LogEvent, ViewRequest, ViewResult } from "../shared/agent-log.ts";
+import type { LogEvent } from "../shared/agent-log.ts";
+import type { ViewRequest, ViewResult } from "../shared/view-page.ts";
 import type { LiveAnswer, LiveRequest } from "../shared/live-page.ts";
 
 /** A render of one of the document's pages in the server's browser (view_page, eval_in_page: cloudflare/render.ts). */

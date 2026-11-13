@@ -15,8 +15,6 @@ import { newToken } from "../helpers/new-token";
 import { clickOn } from "../helpers/press";
 import { runTool, textOf } from "../helpers/tools";
 
-export { agentClosed } from "./people";
-
 /** Evaluates an expression in the tab, its value as any (for expect.poll, whose matchers need a type). */
 export const js = (page: Page, expr: string) => page.evaluate(expr) as Promise<any>;
 

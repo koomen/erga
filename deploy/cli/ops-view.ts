@@ -9,18 +9,12 @@ import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo";
 import { esc } from "../../shared/html";
 import { plural, timeAgo } from "../../shared/time";
 import type { Config, Entry } from "./config";
+import type { Answer, Branch as StatusBranch, Commit as StatusCommit } from "./flow";
 import { secondsOf, TARGET_S, type Test, type TestRun, testOf, testText } from "./gate";
 import { type Alive, activeJobs, deploysTo, type JobState, jobState, type Line, type Run } from "./job-state";
 import { GITHUB, isStale, type Polls } from "./poll-state";
 
-/** What an instance answered last: the commit it runs and its health, or why it gave none. */
-export interface Answer {
-  version: string | null;
-  healthy: boolean | null;
-  error?: string;
-}
-
-/** A job's record in .erga/jobs/ (deploy/cli/deploy.ts, startJob), as the page reads it: its state, and what it says. */
+/** A job's record in .erga/jobs/ (deploy/cli/jobs.ts, startJob), as the page reads it: its state, and what it says. */
 export interface JobRecord extends JobState {
   /** Its file's name, without .jsonl. */
   id: string;
@@ -35,21 +29,9 @@ export interface JobRecord extends JobState {
 
 const OUT_LINES = 2000;
 
-export interface Commit {
-  sha: string;
-  subject: string;
-  author: string;
-  at: number;
-}
-
-export interface Branch extends Commit {
-  name: string;
-  ahead: number;
-  behind: number;
-  conflicts: string[];
-  /** The tree that its merge makes: the key of its tests' record. Null: it has no merge (a conflict, or nothing ahead). */
-  tree: string | null;
-}
+/** A commit and a branch (flow.ts), with the fields that the page shows and `bun erga status` does not: git gives them all. */
+export type Commit = StatusCommit & { author: string; at: number };
+export type Branch = StatusBranch & { author: string; tree: string | null };
 
 /** What the clone shows, as the last fetch left it. */
 export interface Git {

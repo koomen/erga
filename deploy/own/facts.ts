@@ -6,8 +6,8 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { entryOf, readConfig } from "../cli/config";
 import { mocked, netOf } from "../cli/deploy";
-import { Cloudflare, type Fetch, findDatabase } from "../pipeline/pipeline";
-import { d1 } from "../pipeline/account";
+import { Cloudflare, type Fetch } from "../pipeline/cloudflare-api";
+import { d1, findDatabase } from "../pipeline/account";
 import { machineCredential } from "../local-credential";
 import {
   type Answers,
@@ -22,12 +22,7 @@ import {
   targetsOf,
 } from "./plan";
 import { DIR, loadSecrets, type Own, secretNames } from "./store";
-import { ROOT } from "../root";
-
-const git = (...args: string[]) => {
-  const r = Bun.spawnSync(["git", ...args], { cwd: ROOT });
-  return r.exitCode == 0 ? r.stdout.toString().trim() : null;
-};
+import { git, ROOT } from "../root";
 
 export interface Connection {
   cf: Cloudflare;
@@ -88,7 +83,7 @@ export const site: typeof fetch = Object.assign(
 );
 
 /** Reads a site's JSON answer, or null. */
-async function getJson<T>(net: Fetch, url: string): Promise<T | null> {
+export async function getJson<T>(net: Fetch, url: string): Promise<T | null> {
   const r = await net(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
   return r?.ok ? ((await r.json().catch(() => null)) as T | null) : null;
 }
@@ -235,10 +230,15 @@ async function heldBy(cf: Cloudflare, acc: string, worker: string): Promise<Targ
 
 /** Everything `bun erga setup <host> status` decides from. */
 export async function observe(own: Own, a: Answers | null): Promise<Facts & { zoneIds: { id: string; name: string }[] }> {
-  const head = git("rev-parse", "--verify", "--quiet", `${SETUP_COMMIT}^{commit}`);
+  /** What git prints, or null when it fails. */
+  const ask = (...args: string[]) => {
+    const r = git(...args);
+    return r.ok ? r.out : null;
+  };
+  const head = ask("rev-parse", "--verify", "--quiet", `${SETUP_COMMIT}^{commit}`);
   const facts: Facts & { zoneIds: { id: string; name: string }[] } = {
     bun: Bun.version,
-    origin: git("remote", "get-url", "origin"),
+    origin: ask("remote", "get-url", "origin"),
     installed: installed(),
     head,
     login: { ok: false, why: "" },

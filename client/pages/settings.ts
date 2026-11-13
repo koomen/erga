@@ -31,10 +31,12 @@
 // { type: "versions" }, { type: "home" } and { type: "tree" } (main.ts passes them on), open or not.
 // Someone who can't edit sees it all read-only.
 
-import { ago, clock, RECENT, type Version, type Versions } from "./versions";
+import { clock, RECENT, type Version, type Versions } from "./versions";
 import { runTool } from "../common/tools";
 import { esc } from "../../shared/html";
+import { timeAgo } from "../../shared/time";
 import { EDITORS_READ_VERSIONS } from "../../document/content";
+import type { DocKind } from "../../document/pages";
 import { isModelChoice, MODELS, PROVIDER_LABEL } from "../../shared/models";
 import { openPageHead } from "./page-head";
 import { headUrl, tabTitle, type PageHead } from "../../shared/page-head";
@@ -53,7 +55,6 @@ export interface Home {
   domain?: string | null;
   deploy: Deploy;
 }
-export type DocKind = "document" | "project";
 /** ls's answer, as far as this panel reads it. */
 interface Tree {
   entries: { path: string; type: string; head?: PageHead }[];
@@ -556,7 +557,7 @@ function mount(host: SettingsHost): Settings {
   // ------------------------------------------------------------ rendering
 
   const desc = (v: Version) => (v.description ? esc(v.description) : `<span class="ds-desc-none">Describing the changes…</span>`);
-  const whoWhen = (v: Version) => [ago(v.at), v.authors.join(", ")].filter(Boolean).join(" · ");
+  const whoWhen = (v: Version) => [timeAgo(Date.parse(v.at)), v.authors.join(", ")].filter(Boolean).join(" · ");
 
   function render() {
     if (!data) {
@@ -751,7 +752,7 @@ function mount(host: SettingsHost): Settings {
     renderAgent();
     renderPage();
     if (!data) loadVersions();
-    // Relative times ("4 min ago") move on while it's open, every 30 seconds.
+    // Relative times ("4 minutes ago") move on while it's open, every 30 seconds.
     ticker = window.setInterval(() => { render(); renderHome(); }, 30_000);
     pop.tabIndex = -1;
     pop.focus();

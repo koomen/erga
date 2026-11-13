@@ -3,13 +3,22 @@
 import { expect, test } from "bun:test";
 import { base64, base64url, fromBase64, fromBase64url, hex, randomToken, readableSize, sha256, sha256Hex } from "../shared/bytes";
 import { baseName, joinPath, pageUrl, parentOf, slugify } from "../document/pages";
-import { dateTag, esc, jsonInScript } from "../shared/html";
-import { callerAddress, json } from "../shared/http";
+import { dateTag, decodeEntities, esc, escapeAttr, escapeHtmlText, escapeRe, jsonInScript } from "../shared/html";
+import { callerAddress, isLocal } from "../shared/http";
 import { plural, sleep, timeAgo } from "../shared/time";
 
 test("esc escapes the five characters HTML gives a meaning, in text and in either quote", () => {
   expect(esc(`<a href="x" title='y'>Tom & Jerry</a>`)).toBe("&lt;a href=&quot;x&quot; title=&#39;y&#39;&gt;Tom &amp; Jerry&lt;/a&gt;");
   expect(esc("plain")).toBe("plain");
+});
+
+test("a page's source keeps the quotes of its text, and the apostrophe of an attribute", () => {
+  expect(escapeHtmlText(`Tom & "Jerry's" <b>`)).toBe(`Tom &amp; "Jerry's" &lt;b&gt;`);
+  expect(escapeAttr(`Tom & "Jerry's" <b>`)).toBe("Tom &amp; &quot;Jerry's&quot; &lt;b&gt;");
+  expect(decodeEntities("Tom &amp; &quot;Jerry&#39;s&#x22;&nbsp;&lt;b&gt; &copy;")).toBe(`Tom & "Jerry's" <b> &copy;`);
+  expect(decodeEntities("&#x1F600; &#x110000;")).toBe("\u{1F600} &#x110000;");
+  expect(new RegExp(`^${escapeRe("a.b*(c)[d]\\$")}$`).test("a.b*(c)[d]\\$")).toBe(true);
+  expect(new RegExp(escapeRe("a.b")).test("axb")).toBe(false);
 });
 
 test("jsonInScript can't end its <script> element", () => {
@@ -60,14 +69,20 @@ test("plural, sleep and timeAgo", async () => {
   expect(timeAgo(now - 10_000, now)).toBe("just now");
   expect(timeAgo(now - 5 * 60_000, now)).toBe(new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(-5, "minute"));
   expect(timeAgo(now - 86_400_000, now)).toBe(new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(-1, "day"));
+  // The server's: a language and a zone it names.
+  expect(timeAgo(now - 5 * 60_000, now, "en-US", "UTC")).toBe("5 minutes ago");
+  expect(timeAgo(Date.UTC(2026, 0, 1, 0, 30), Date.UTC(2026, 5, 1), "en-US", "UTC")).toBe("Jan 1, 2026");
 });
 
-test("json is never cached, and takes more headers", async () => {
-  const r = json({ ok: true }, 201, { "X-A": "1" });
-  expect(r.status).toBe(201);
-  expect(r.headers.get("cache-control")).toBe("no-store");
-  expect(r.headers.get("x-a")).toBe("1");
-  expect(await r.json()).toEqual({ ok: true });
+test("a local host is localhost, a name under it, or a loopback address", () => {
+  const local = (url: string) => isLocal(new URL(url));
+  expect(["http://localhost:4400/x", "http://ab12cd34-ada.localhost:4400", "http://127.0.0.1", "http://[::1]:8787"].map(local)).toEqual([
+    true,
+    true,
+    true,
+    true,
+  ]);
+  expect(["https://erga.dev", "https://localhost.example.com", "http://notlocalhost"].map(local)).toEqual([false, false, false]);
 });
 
 test("readableSize: bytes, then one decimal under 10 of a unit", () => {

@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AwsFacts, CloudflareFacts } from "./ops";
+import { sh } from "../root";
 
 const Own = {
   host: Schema.String,
@@ -34,9 +35,9 @@ export type Config = typeof ConfigFile.Type;
 
 /** .erga/ in the main clone, from the clone or any of its worktrees: the folder above git's common directory. */
 export function ergaDir(cwd = process.cwd()): string {
-  const r = Bun.spawnSync(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, stdout: "pipe", stderr: "pipe" });
-  if (r.exitCode != 0) throw new Error(`${cwd} is not in a git clone: ${r.stderr.toString().trim()}`);
-  return join(dirname(r.stdout.toString().trim()), ".erga");
+  const r = sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd });
+  if (!r.ok) throw new Error(`${cwd} is not in a git clone: ${r.err}`);
+  return join(dirname(r.out), ".erga");
 }
 
 export const configPath = (dir: string) => join(dir, "config.json");

@@ -7,7 +7,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync }
 import { tmpdir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { PROTECTED } from "./flow";
-import { sh } from "./observe";
+import { sh } from "../root";
 import { proofDir } from "./proof";
 
 /** Where a task's folder is: worktrees/<branch> in the main clone (git ignores /worktrees/). */

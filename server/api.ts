@@ -7,7 +7,7 @@
 //
 // The app (server/app.ts) sends those paths here: each answer is an Effect
 // (server/http.ts), with the platform that knows agent tokens. The share button's token
-// (<document>/api/share) is server/documents/make.ts's.
+// (<document>/api/share) is server/documents/routes.ts's.
 //
 // The tools are agents/tools.ts's: the operations (server/operations/), and every document
 // tool (read, edit, write, ...) with a `document` argument, run in that document's host as the person's agent. A

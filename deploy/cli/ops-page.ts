@@ -10,60 +10,19 @@
 
 import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Entry, entryOrigin, readConfig } from "./config";
+import { type Entry, readConfig } from "./config";
+import type { Answer } from "./flow";
 import { readRuns } from "./test-run";
 import { type Queue, stepQueue, testOf } from "./gate";
 import { readProofs } from "./proof";
-import { fetchGitHub, mergeTree, rememberedBranches } from "./observe";
-import { readOps } from "./ops";
-import {
-  type Answer,
-  type Branch,
-  busyWith,
-  type Commit,
-  type Facts,
-  type Git,
-  type JobRecord,
-  jobOf,
-  mergeBlock,
-  pageHtml,
-  viewHtml,
-} from "./ops-view";
+import { askInstance, branchesOf, commitsIn, fetchGitHub } from "./observe";
+import { busyWith, type Facts, type Git, type JobRecord, jobOf, mergeBlock, pageHtml, viewHtml } from "./ops-view";
 import { alive } from "./pid";
 import { type JobState, stepRun } from "./job-state";
 import { GITHUB, type PollEvent, startPolls, stepPolls } from "./poll-state";
-import { ROOT } from "../root";
+import { ROOT, sh } from "../root";
 
-
-/** What an instance answers now: the commit it runs (with its ops token) and its health. */
-export async function askInstance(e: Entry): Promise<Answer> {
-  const origin = entryOrigin(e);
-  const site = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
-  const [ops, health] = await Promise.all([
-    // An instance that setup has not registered yet has no token.
-    (e.token ? readOps(origin, e.token, site) : Promise.reject(new Error("no token"))).then(
-      (f) => ({ version: f.version }),
-      (err: Error) => ({
-        version: null,
-        error: !e.token
-          ? `not registered yet: bun erga setup ${e.host}`
-          : /refused/.test(err.message)
-            ? `refuses the ops token: bun erga login ${e.host}`
-            : "no answer",
-      })
-    ),
-    site(`${origin}/api/health`, { headers: { "Cache-Control": "no-cache" } }).then(
-      async (r) => r.status == 200 && ((await r.json().catch(() => null)) as { ok?: unknown } | null)?.ok === true,
-      () => null
-    ),
-  ]);
-  return { ...ops, healthy: health };
-}
-
-const git = (cwd: string, ...args: string[]) => {
-  const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-  return { ok: r.exitCode == 0, code: r.exitCode, out: r.stdout.toString().trim() };
-};
+const git = (cwd: string, ...args: string[]) => sh(["git", ...args], { cwd });
 
 /** The origin's branches in the clone, with their commits: the key that says when to read git again. */
 const refsOf = (cwd: string) => git(cwd, "for-each-ref", "refs/remotes/origin", "--format=%(objectname) %(refname:short)").out;
@@ -74,19 +33,8 @@ export function readGit(cwd: string, versions: string[]): Git {
   const heads = ["origin/staging", "origin/main"].filter(has);
   const base = heads[0] ?? "HEAD";
   const head = (ref: string) => (has(ref) ? git(cwd, "rev-parse", ref).out : null);
-  const out = git(cwd, "log", "--topo-order", "-n", "200", "--format=%H%x1f%s%x1f%ct%x1f%an", ...(heads.length ? heads : ["HEAD"])).out;
-  const log: Commit[] = out
-    .split("\n")
-    .filter(Boolean)
-    .map((l) => {
-      const [sha, subject, at, author] = l.split("\x1f");
-      return { sha, subject, at: Number(at) * 1000, author };
-    });
-  const branches: Branch[] = rememberedBranches(cwd, null).map((b) => {
-    const [behind, ahead] = git(cwd, "rev-list", "--left-right", "--count", `${base}...origin/${b.name}`).out.split(/\s+/).map(Number);
-    const m = ahead ? mergeTree(base, `origin/${b.name}`, cwd) : { tree: null, conflicts: [] };
-    return { ...b, ahead: ahead || 0, behind: behind || 0, ...m };
-  });
+  const log = commitsIn(cwd, "--topo-order", "-n", "200", ...(heads.length ? heads : ["HEAD"]));
+  const branches = branchesOf(null, cwd, base);
   const elsewhere: Record<string, boolean> = {};
   for (const v of versions) if (!log.some((c) => c.sha.startsWith(v))) elsewhere[v] = has(v);
   return { log, branches, base: base.replace(/^origin\//, ""), main: head("origin/main"), staging: head("origin/staging"), elsewhere };
@@ -147,7 +95,7 @@ export interface OpsPageOptions {
   /** Where git reads the clone. */
   cwd: string;
   port: number;
-  /** askInstance, or a fake in the tests. */
+  /** askInstance (observe.ts), or a fake in the tests. */
   ask?: (e: Entry) => Promise<Answer>;
   /** fetchGitHub (null: it worked, else why not), or a fake in the tests. */
   fetch?: (cwd: string) => Promise<string | null>;

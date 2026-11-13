@@ -19,7 +19,7 @@ import {
   type ActResult, type Activation, type ConsoleLevel, type Consumer, type EventEntry, type HookedRequest, type LiveRequest, type LiveResult, type NetworkEntry,
 } from "../../shared/live-page";
 import { evaluateIn, toJSON } from "./evaluate";
-import { EVAL_MAX_JSON, evalTimeout } from "../../shared/agent-log";
+import { EVAL_MAX_JSON, evalTimeout } from "../../shared/view-page";
 import { sleep } from "../../shared/time";
 
 type LiveWindow = Window & typeof globalThis & { __ergaLiveInstalled?: boolean; __ergaLiveTake?: (sink: Sink) => void };

@@ -30,6 +30,7 @@ declare global {
 
 import type { SignInChoice } from "../../shared/sign-in";
 import { showSignIn } from "./sign-in-dialog";
+import { asUser } from "./tools";
 
 const CODES: LlmCode[] = ["sign_in", "off", "limit", "error"];
 
@@ -80,15 +81,10 @@ async function route(
   token?: string,
   base = ""
 ): Promise<LlmAnswer & { providers?: SignInChoice[] }> {
-  // (Local development's ?user=, the person this tab is.)
-  const user = new URLSearchParams(location.search).get("user");
-  const as = user ? "user=" + encodeURIComponent(user) : "";
   const r =
     o.op == "status"
-      ? await fetch(base + "/api/llm?document=" + encodeURIComponent(doc) + (as ? "&" + as : ""), { credentials: "same-origin" }).catch(
-          () => null
-        )
-      : await fetch(base + "/api/llm" + (as ? "?" + as : ""), {
+      ? await fetch(asUser(base + "/api/llm?document=" + encodeURIComponent(doc)), { credentials: "same-origin" }).catch(() => null)
+      : await fetch(asUser(base + "/api/llm"), {
           method: "POST",
           credentials: "same-origin",
           headers: { "Content-Type": "application/json" },

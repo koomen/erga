@@ -2,7 +2,6 @@
 // op comments and the edit tool's op comment, from their tool lists, on the real directory and the tables on
 // bun:sqlite (the Durable Object's SQLite in the Worker). Who may: an owner or editor any thread, a viewer nothing.
 
-import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { PersonAgents } from "../agents/person/sessions";
 import { agentTools, toolOf, toolsFor } from "../agents/tools";
@@ -15,7 +14,7 @@ import { Directory } from "../server/directory/index.ts";
 import type { Caller } from "../server/operations/index.ts";
 import type { Platform } from "../server/platform";
 import { VIA } from "../shared/attribution";
-import { memory } from "./helpers/memory-sql";
+import { memory, objectSql } from "./helpers/memory-sql";
 
 async function world() {
   const dir = new Directory(memory(), { admins: ["ada"] });
@@ -23,12 +22,7 @@ async function world() {
   for (const login of ["bo", "cy"]) await dir.users.add({ login: "ada", admin: true }, login);
   await dir.share({ login: "ada" }, "doc12345", "bo", "editor");
   await dir.share({ login: "ada" }, "doc12345", "cy", "viewer");
-  const db = new Database(":memory:", { strict: true });
-  const tables = new CommentTables({
-    exec: <T>(q: string, ...p: (string | number | null | ArrayBuffer)[]) =>
-      db.query(q).all(...p.map((v) => (v instanceof ArrayBuffer ? new Uint8Array(v) : v))) as T[],
-    transaction: <T>(f: () => T) => db.transaction(f)(),
-  });
+  const tables = new CommentTables(objectSql());
   // The room's pages, as the document's object has them: an add with a quote finds its place there.
   const room = new Y.Doc();
   const page = new Y.Text("<p>We go to Lisbon in May. Lisbon is warm.</p>");
@@ -209,12 +203,7 @@ test("@erga in a comment sent with the page's edit key starts no agent: the pane
 
 // The question was lost when no panel of the person's listened: a panel that connects a moment later, or again.
 test("the panel's question about a comment waits for the person's panel when none listens", async () => {
-  const db = new Database(":memory:", { strict: true });
-  const sql = {
-    exec: <T>(q: string, ...p: (string | number | null)[]) => db.query(q).all(...p) as T[],
-    transaction: <T>(f: () => T) => db.transaction(f)(),
-  };
-  const agents = new PersonAgents({ sql, platform: {} as Platform });
+  const agents = new PersonAgents({ sql: objectSql(), platform: {} as Platform });
   const heard: unknown[] = [];
   const panel = (login: string) =>
     agents.join(new Request("http://x", { headers: { "x-erga-login": login } }), (text) => heard.push(JSON.parse(text)));

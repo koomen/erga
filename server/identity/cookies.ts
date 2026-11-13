@@ -8,14 +8,14 @@
 import * as Duration from "effect/Duration";
 import * as Cookies from "effect/http/Cookies";
 import { HttpServerResponse } from "effect/http";
+import { isLocal } from "../../shared/http.ts";
 
 const urlOf = (at: Request | URL) => (at instanceof URL ? at : new URL(at.url));
 
 /** The suffix this server's cookies carry: "_<port>" on a loopback host with a port, else "". */
 function suffix(at: Request | URL): string {
   const url = urlOf(at);
-  const local = url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1" || url.hostname == "[::1]";
-  return local && url.port ? `_${url.port}` : "";
+  return isLocal(url) && url.port ? `_${url.port}` : "";
 }
 
 /** A cookie's name on this server (`name`, or `name_<port>` locally). */

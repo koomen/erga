@@ -8,7 +8,7 @@
 //   main   the suite's server, with no such domain: there / is the homepage itself. Deploys and their answers, what
 //          wins at an address, who may edit, the bars, the picker on /admin/settings, and the homepage made afresh.
 // Both journeys change which document is the server's homepage; the main server gets its own back at the end.
-import { expect, journey, servers, test, until } from "../helpers/fixtures";
+import { agentClosed, expect, journey, servers, test, until } from "../helpers/fixtures";
 import { pressOn } from "../helpers/press";
 import { runTool } from "../helpers/tools";
 import {
@@ -271,14 +271,7 @@ journey("the homepage on a domain of its own, from a new server on", () => {
 
   test("the homepage's settings show its domain, a link that opens the site there", async ({ tab }) => {
     const p = tab.page;
-    await p.addInitScript(() => {
-      if (window.top != window) return;
-      try {
-        if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}');
-      } catch {
-        /* no storage */
-      }
-    });
+    await agentClosed(p);
     await p.goto(`${own.root}${site.address}?edit`);
     // The gear, once the editor's controls are in (they fade in as it comes up).
     const gear = () =>
@@ -633,14 +626,7 @@ journey("the homepage on the Erga domain", () => {
     };
     const indexRow = `#pages .et-row[data-path="index.html"]`;
     await page.setViewportSize({ width: 1200, height: 800 });
-    await page.addInitScript(() => {
-      if (window.top != window) return;
-      try {
-        if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}');
-      } catch {
-        /* no storage */
-      }
-    });
+    await agentClosed(page);
     await page.goto(`${main.root}/_home?edit`);
     await editorUp();
     await clickOn("#doc-title");

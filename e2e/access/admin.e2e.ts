@@ -5,9 +5,10 @@
 // menu comes to the Feedback page, with its issue on the pretend GitHub. Analytics shows the day's counts. Then the
 // editor (the admin pages' bars look as its bars, and Send feedback works from a document), and the pages in dark mode.
 import { openEditor } from "../helpers/editor";
-import { expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
+import { agentClosed, expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
+import { joinRoom } from "../helpers/room";
 import { runTool } from "../helpers/tools";
-import { agentClosed, editorUp, joinRoom, mint, newDoc, soon, unique } from "./access";
+import { editorUp, mint, newDoc, soon, unique } from "./access";
 import { clickOn } from "../helpers/press";
 
 // (The scripted model: the agent's pane is on the pages.)

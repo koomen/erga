@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { esc } from "../../shared/html";
 import { branchRefusal } from "./flow";
-import { sh } from "./observe";
+import { sh } from "../root";
 
 export const WIDTHS = [
   { name: "desktop", width: 1280, height: 800 },

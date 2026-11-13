@@ -5,6 +5,9 @@
 /** The branches that `bun erga` moves: staging (merge) and main (a deploy of a primary). */
 export const PROTECTED = ["staging", "main"] as const;
 
+// A commit, a branch and an instance's answer, for `bun erga status` and for the ops page (ops-view.ts). git gives every
+// field (observe.ts); the ones that status does not read are optional here, and the page asks for them (ops-view.ts).
+
 export interface Commit {
   sha: string;
   subject: string;
@@ -14,15 +17,20 @@ export interface Commit {
   author?: string;
 }
 
-/** A registered instance (.erga/config.json) as it answers now: the commit it runs (GET /api/ops) and its health. */
-export interface Instance {
-  host: string;
-  /** The primary of a staging instance. */
-  stagingOf?: string;
+/** What an instance answers now (observe.ts, askInstance): the commit it runs (GET /api/ops) and its health. */
+export interface Answer {
   version: string | null;
+  /** Null: no answer. */
   healthy: boolean | null;
   /** Why it gave no commit. */
   error?: string;
+}
+
+/** A registered instance (.erga/config.json), with its answer. */
+export interface Instance extends Answer {
+  host: string;
+  /** The primary of a staging instance. */
+  stagingOf?: string;
 }
 
 export interface Branch {
@@ -30,9 +38,8 @@ export interface Branch {
   sha: string;
   ahead: number;
   behind: number;
-  /** Null: not checked. */
-  conflicts: string[] | null;
-  /** The tree that its merge onto staging makes (observe.ts, mergeTree): the key of its tests' record. */
+  conflicts: string[];
+  /** The tree that its merge onto staging makes (observe.ts, mergeTree): the key of its tests' record. Null: it has no merge (a conflict, or nothing ahead). */
   tree?: string | null;
   /** Its tests (gate.ts), in words: the state, then each failed test of a failed run, for the task's agent to repair. */
   tests?: string[];
@@ -200,7 +207,7 @@ export function statusText(s: State, has: (sha: string) => boolean = () => true)
   for (const b of s.branches) {
     const test = b.tests?.length ? ` ${b.tests[0]}.` : "";
     out.push(
-      `- ${b.name}: ${b.ahead} ahead, ${b.behind} behind staging; ${b.ahead == 0 ? "nothing to merge" : b.conflicts == null ? "not checked" : b.conflicts.length ? `conflicts in ${b.conflicts.join(", ")}` : "merges cleanly"}.${test} ${b.subject}`
+      `- ${b.name}: ${b.ahead} ahead, ${b.behind} behind staging; ${b.ahead == 0 ? "nothing to merge" : b.conflicts.length ? `conflicts in ${b.conflicts.join(", ")}` : "merges cleanly"}.${test} ${b.subject}`
     );
     out.push(...(b.tests ?? []).slice(1).map((l) => `    ${l}`));
   }

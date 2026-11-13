@@ -26,6 +26,8 @@
 // database (a snapshot's: only once the new version answers). Once the server answers, the deploy asks it
 // for the homepage project (askHomepage): a server with none makes it from the landing project built into it.
 
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { copyDocuments } from "./copy-documents";
 import { Cloudflare, DeployError, Unhealthy, type Fetch } from "./cloudflare-api";
@@ -51,10 +53,6 @@ import {
   workerMetadata,
   zoneIdOf,
 } from "./account";
-import { runWith } from "./clock";
-export * from "./cloudflare-api";
-export * from "./release-format";
-export * from "./account";
 
 /** The steps of a target that copies no data, in order. */
 export const STEPS = [
@@ -261,6 +259,31 @@ export function guardTarget(t: Target): string | null {
   return null;
 }
 
+/** How a caller waits: by default, the real time. */
+type Sleep = (ms: number) => Promise<void>;
+
+/**
+ * The Clock that tells the real time and sleeps with `sleep`. The pipeline's waits (polls, retries, a deploy's wait for
+ * its new version) are Effect Schedules, and they wait on Effect's Clock. A test, and the mock Cloudflare, give a sleep
+ * of their own so the waits go by at once.
+ */
+function clockOf(sleep: Sleep): Clock.Clock {
+  const real = Clock.Clock.defaultValue();
+  return {
+    currentTimeMillisUnsafe: () => real.currentTimeMillisUnsafe(),
+    currentTimeMillis: real.currentTimeMillis,
+    currentTimeNanosUnsafe: () => real.currentTimeNanosUnsafe(),
+    currentTimeNanos: real.currentTimeNanos,
+    monotonicTimeNanosUnsafe: () => real.monotonicTimeNanosUnsafe(),
+    monotonicTimeNanos: real.monotonicTimeNanos,
+    sleep: (d) => Effect.promise(() => sleep(Duration.toMillis(d))),
+  };
+}
+
+/** Runs `effect` as a promise; with `sleep`, on the Clock that sleeps with it. */
+const runWith = <A, E>(sleep: Sleep | undefined, effect: Effect.Effect<A, E>): Promise<A> =>
+  Effect.runPromise(sleep ? Effect.provideService(effect, Clock.Clock, clockOf(sleep)) : effect);
+
 /**
  * The deploy pipeline: puts `release` on `target`, step by step, reporting
  * each as it starts and ends. The one pipeline for every deploy, each from a machine
@@ -274,7 +297,7 @@ export async function runPipeline(
   opts: {
     report: Report;
     site?: Fetch;
-    sleep?: (ms: number) => Promise<void>;
+    sleep?: Sleep;
     waitMs?: number;
     carry?: Carry;
   }

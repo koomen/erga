@@ -1,8 +1,8 @@
-// The addresses the server's own browser refuses (shared/private-address.ts): the machine, private networks, a
+// The addresses the server's own browser refuses (cloudflare/private-address.ts): the machine, private networks, a
 // cloud's metadata service; and Erga's own two addresses, which it always reaches.
 
 import { expect, test } from "bun:test";
-import { privateHost, reachable } from "../shared/private-address";
+import { privateHost, reachable } from "../cloudflare/private-address";
 
 const OWN = ["http://127.0.0.1:4712", "http://abc-ada.localhost:4712"];
 

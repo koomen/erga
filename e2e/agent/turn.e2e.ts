@@ -3,7 +3,7 @@
 // documents' list: the agent's delete waits for Approve; the day's token limit; the panel from page to page.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
+import { agentClosed, expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
 import { editor, F, openEditor, type Editor } from "../helpers/editor";
 import { runTool } from "../helpers/tools";
 import { agentOn, answered, answers, button, edit, paneOpen, say, script, turnEnded, turnLine } from "./panel";
@@ -76,9 +76,7 @@ journey("a turn of the agent in the editor", () => {
     other.on("console", (m) => {
       if (m.type() == "error") errors.push(`console.error: ${m.text()}`);
     });
-    await other.addInitScript(() => {
-      if (window.top == window) localStorage.setItem("erga:settings:v1", '{"agent":false}');
-    });
+    await agentClosed(other);
     await other.goto(`${ada.address}?user=${BO}&edit`);
     const bo = editor(other, { address: ada.address, dir: ada.dir, file: ada.file });
     await bo.loaded();
@@ -517,12 +515,7 @@ journey("the agent on the documents' list", () => {
     page.on("request", (r) => {
       if (r.url().includes("/api/agent/conversation")) reads++;
     });
-    // Someone who keeps the panel closed: set one time, in the tab itself, so the tab can open it after.
-    await page.addInitScript(() => {
-      if (window.top != window || sessionStorage.getItem("erga-test:agent-seeded")) return;
-      sessionStorage.setItem("erga-test:agent-seeded", "1");
-      localStorage.setItem("erga:settings:v1", '{"agent":false}');
-    });
+    await agentClosed(page);
     await page.addInitScript(FIRST_PAINT);
     await page.goto(docs());
     await until(

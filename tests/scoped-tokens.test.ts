@@ -286,7 +286,7 @@ test("only the pages for people call the code that makes a token", async () => {
   // Each file that calls Tokens.mint, share, approve or exchange, with why an agent can't use it.
   const MAKERS: Record<string, string> = {
     "server/identity/tokens-page.ts": "/tokens/new and /tokens/approve: a person's session only, with how they act",
-    "server/documents/make.ts": "the share button's token: a person's session only, with how they act",
+    "server/documents/routes.ts": "the share button's token: a person's session only, with how they act",
     "server/identity/mcp-oauth.ts": "trades a code that a person's approval on /tokens/approve made",
   };
   const found = new Set<string>();

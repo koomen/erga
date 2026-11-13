@@ -33,7 +33,7 @@ import { baseName, encodePath } from "../../../document/pages";
 import { assets, authors, colorFor, files, roomInfo, type Author } from "../../../document/content";
 import { sourceDigest } from "../../../shared/page-html";
 import { sleep } from "../../../shared/time";
-import { isAppShortcut } from "../../../client/common/app-keys";
+import { isAppShortcut, isMac } from "../../../client/common/app-keys";
 import { placeOf } from "../../../client/common/link-target";
 import { keepOffline } from "../../../client/common/offline";
 import { keepPage } from "./offline-page";
@@ -57,7 +57,6 @@ declare global {
 performance.mark("erga:frame-js");
 const docExtensions: Extension[] = [history()];
 
-const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 // (Only in a document's page on Erga: its first script is there, and says where the viewer is.)
 if (!window.__ergaReader) throw new Error("erga/text runs in a document's page on Erga");
 const reader = window.__ergaReader.config;

@@ -7,7 +7,7 @@ import { afterAll, expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
 import { Directory } from "../server/directory/index.ts";
 import { agentSettingsFrom, keyFor, usable, type AgentConfig, type KeySource } from "../agents/models.ts";
-import { agentApi } from "../agents/person/sessions.ts";
+import { agentApi } from "../agents/person/routes.ts";
 import { OPERATIONS, runOperation } from "../server/operations/index.ts";
 import type { Platform, Session } from "../server/platform.ts";
 import { respond } from "../server/http.ts";

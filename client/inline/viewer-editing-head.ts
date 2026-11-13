@@ -8,6 +8,8 @@
 // layout and its controls, as the editor kept them (client/shell/main.ts, "shell"; client/live/restore.ts, under `restoreKey`).
 // Only for the window's same size, and at the same address.
 
+import { asUser } from "../common/tools";
+
 type Kept = {
   url: string;
   at: number;
@@ -26,15 +28,14 @@ export default function viewerEditingHead(scripts: string[], restoreKey: string)
     // them over (the socket with what came on it before then).
     const was = window.ergaSocket;
     if (was && was.readyState < 2) return was;
-    const base = document.querySelector<HTMLMetaElement>('meta[name="erga-base"]')!.content,
-      user = new URLSearchParams(location.search).get("user")?.trim();
-    window.ergaStart = fetch(base + "/api/start" + (user ? "?user=" + encodeURIComponent(user) : "")).then(
+    const base = document.querySelector<HTMLMetaElement>('meta[name="erga-base"]')!.content;
+    window.ergaStart = fetch(asUser(base + "/api/start")).then(
       (r) => (r.ok ? r.arrayBuffer() : null),
       () => null
     );
     // The edit key for the page's editor (client/shell/editor.ts takes it over), asked for now too, not after the first
     // sync: unless this tab holds one that lasts (the editor's RENEW_MS).
-    const q = user ? "?user=" + encodeURIComponent(user) : "";
+    const q = asUser("");
     let held: { expires?: number } | null = null;
     try {
       held = JSON.parse(sessionStorage.getItem("erga:edit-key:" + base.replace(/\/+$/, "") + q) || "null");
@@ -42,11 +43,7 @@ export default function viewerEditingHead(scripts: string[], restoreKey: string)
     if (!(held && held.expires! - Date.now() > 300_000))
       window.ergaKey = fetch(base + "/api/key" + q, { method: "POST" }).catch(() => null);
     const ws: WebSocket & { early?: (string | ArrayBuffer)[] } = new WebSocket(
-      (location.protocol == "https:" ? "wss://" : "ws://") +
-        location.host +
-        base +
-        "/api/room?events=1" +
-        (user ? "&user=" + encodeURIComponent(user) : "")
+      (location.protocol == "https:" ? "wss://" : "ws://") + location.host + asUser(base + "/api/room?events=1")
     );
     ws.binaryType = "arraybuffer";
     const early: (string | ArrayBuffer)[] = (ws.early = []);

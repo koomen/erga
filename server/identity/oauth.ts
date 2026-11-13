@@ -18,7 +18,7 @@ import { randomToken } from "../../shared/bytes.ts";
 import { esc } from "../../shared/html.ts";
 import { SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
 import { call, ctx, redirect, type Route } from "../http.ts";
-import { page, safeNext } from "../pages/index.ts";
+import { notFound, page, safeNext } from "../pages/index.ts";
 import type { Platform } from "../platform.ts";
 import { signed } from "../signed.ts";
 import { vouchedSignIn } from "./accounts.ts";
@@ -26,7 +26,7 @@ import type { TestEnd } from "./app-test.ts";
 import { cookies, withCookie } from "./cookies.ts";
 import { type Provider, PROVIDERS, type Token } from "./providers.ts";
 import { providersOn, signInApp, testedSignIn } from "./settings.ts";
-import { clearState, noSuchSignIn, signIn, signInFailed, STATE } from "./sign-in.ts";
+import { clearState, signIn, signInFailed, STATE } from "./sign-in.ts";
 
 /** A state that starts so is a test sign-in with the pending values ("." is never in base64url). */
 const TESTING = "p.";
@@ -86,7 +86,7 @@ export const startOAuth = (provider: Provider): Route =>
   Effect.gen(function* () {
     const { platform, request, url } = yield* ctx;
     const mode = platform.signIn;
-    if (mode.mode != "oauth") return noSuchSignIn();
+    if (mode.mode != "oauth") return notFound();
     const next = safeNext(url.searchParams.get("next"));
     // Local development: sign in as the dev login (or ?as=, for the test suite's people), never on a real hostname.
     if (platform.dev(url)) {
@@ -124,7 +124,7 @@ export const finishOAuth = (provider: Provider): Route =>
   Effect.gen(function* () {
     const { platform, request, url } = yield* ctx;
     const mode = platform.signIn;
-    if (mode.mode != "oauth") return noSuchSignIn();
+    if (mode.mode != "oauth") return notFound();
     const p = PROVIDERS[provider];
     const origin = mode.origins[provider];
     const { state, tests, next } = yield* call(() => readState(platform.secret, cookies(request).get(STATE)));

@@ -5,11 +5,9 @@
 // Trap: a browser that signed in as someone (`/auth/dev`, `/auth/github?as=`) keeps that person's cookie. A later
 // page of the admin's names the admin (`?user=tester`).
 
-import * as Y from "yjs";
-import { colorFor, files, introduce } from "../../document/content";
-import { Decoder, Encoder, readSyncMessage, SYNC_STEP2, writeSyncStep1, writeUpdate } from "../../shared/yjs-protocol";
 import { expect, settle, until, type Page, type Server } from "../helpers/fixtures";
 import { newToken } from "../helpers/new-token";
+import type { Replica } from "../helpers/room";
 import { runTool, textOf } from "../helpers/tools";
 
 /**
@@ -33,17 +31,6 @@ export const servePictures = (page: Page) =>
   page.route(/^https:\/\/(avatars\.githubusercontent\.com|[a-z0-9]+\.googleusercontent\.com)\//, (r) =>
     r.fulfill({ contentType: "image/png", body: PNG })
   );
-
-/** The tab's person keeps the agent's pane closed (a new person's starts open on a wide window, and covers a phone's). */
-export const agentClosed = (page: Page) =>
-  page.addInitScript(() => {
-    if (window.top != window) return;
-    try {
-      if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}');
-    } catch {
-      /* no storage */
-    }
-  });
 
 /** A document's address without the editor's mark. */
 export const plain = (at: string) => at.replace(/[?&]edit=?$/, "");
@@ -156,54 +143,5 @@ export const signedOutCookie = (s: Server) => `erga_signed_out_${s.port}`;
 /** What someone who is not signed in sends. */
 export const signedOut = (s: Server) => ({ Cookie: `${signedOutCookie(s)}=1` });
 
-const MSG_SYNC = 0;
-
-/**
- * A person with no browser in a document's room (`address`: the document's, or its host /d/<id>), as `user`: a Yjs
- * replica on a real WebSocket, which sends its edits as a tab does. An edit is on the replica at once, and in the room
- * a moment later: a check of the room waits for it.
- */
-export async function joinRoom(address: string, user: string) {
-  const ydoc = new Y.Doc();
-  const ws = new WebSocket(`${address.replace(/^http/, "ws")}/api/room/doc?user=${user}`);
-  ws.binaryType = "arraybuffer";
-  let synced = false;
-  const send = (write: (e: Encoder) => void) => {
-    const e = new Encoder();
-    e.writeUint(MSG_SYNC);
-    write(e);
-    if (ws.readyState == WebSocket.OPEN) ws.send(e.toBytes());
-  };
-  ws.onopen = () => send((e) => writeSyncStep1(e, ydoc));
-  ws.onmessage = (m) => {
-    const d = new Decoder(new Uint8Array(m.data as ArrayBuffer));
-    if (d.readUint() != MSG_SYNC) return;
-    const reply = new Encoder();
-    reply.writeUint(MSG_SYNC);
-    if (readSyncMessage(d, reply, ydoc, ws) == SYNC_STEP2) synced = true;
-    if (reply.length > 1) ws.send(reply.toBytes());
-  };
-  ydoc.on("update", (update: Uint8Array, origin: unknown) => {
-    if (origin !== ws) send((e) => writeUpdate(e, update));
-  });
-  await until(() => synced, 10_000, `${user} joins the room`);
-  introduce(ydoc, { user: user.toLowerCase(), name: user, color: colorFor(user.toLowerCase()), kind: "person" });
-  const text = () => files(ydoc).get("index.html")?.toString() ?? "";
-  return {
-    text,
-    /** Inserts after the first `anchor` in the page's text. */
-    insertAfter(anchor: string, s: string) {
-      const i = text().indexOf(anchor);
-      if (i < 0) throw new Error(`${user}: "${anchor}" is not in the text`);
-      files(ydoc)
-        .get("index.html")!
-        .insert(i + anchor.length, s);
-    },
-    /** Whether all that this person sent has left for the room. */
-    sent: () => ws.bufferedAmount === 0,
-    leave() {
-      ws.close();
-      ydoc.destroy();
-    },
-  };
-}
+/** Whether all that a person in a room with no browser (joinRoom, e2e/helpers/room.ts) sent has left for the room. */
+export const sent = (r: Replica) => r.socket.ws?.bufferedAmount === 0;

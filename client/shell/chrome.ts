@@ -4,7 +4,8 @@
 import type { Settings } from "../pages/settings";
 import { live } from "../live/client";
 import { mountQuick } from "../common/quick";
-import { $, isMac, type Shell } from "./shell";
+import { $, type Shell } from "./shell";
+import { isMac } from "../common/app-keys";
 
 export function mountChrome(shell: Shell) {
 

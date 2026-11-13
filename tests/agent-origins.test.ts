@@ -1,8 +1,8 @@
-// Each person's agent panel (agents/person/sessions.ts) answers this site's own pages, with the person's cookie, and no
+// Each person's agent panel (agents/person/routes.ts) answers this site's own pages, with the person's cookie, and no
 // other origin, not even to listen.
 
 import { afterAll, expect, test } from "bun:test";
-import { agentApi } from "../agents/person/sessions.ts";
+import { agentApi } from "../agents/person/routes.ts";
 import type { Platform } from "../server/platform.ts";
 import { respond } from "../server/http.ts";
 

@@ -1,6 +1,9 @@
 // The viewer's own shortcuts, as a key pressed in the page must be known there: the page's first script
 // (client/inline/reader.ts) passes them on to the viewer while editing, and the editor in the page leaves them be.
 
+/** A Mac, an iPhone or an iPad: its shortcuts take ⌘, the others' Ctrl. */
+export const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
 /** The parts of a keydown the shortcuts look at. */
 export interface Keys {
   key: string;

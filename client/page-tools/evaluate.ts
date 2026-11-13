@@ -2,7 +2,7 @@
 // result as JSON (eval_in_page): in view_page's throwaway render (capture.ts),
 // or with live, in the live page (live-page-tab.ts).
 
-import { EVAL_MAX_JSON } from "../../shared/agent-log";
+import { EVAL_MAX_JSON } from "../../shared/view-page";
 
 // eval_in_page: the agent's expression runs in the same throwaway render
 // view_page draws (in the server's browser), so it sees computed styles, fonts and sizes as the page

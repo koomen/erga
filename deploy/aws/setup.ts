@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { type AwsEntry, type Config, entryOf, entryOrigin, readConfig, withEntry, writeConfig } from "../cli/config";
 import { type DeployOptions, deployInstance } from "../cli/deploy";
-import type { Fetch } from "../pipeline/pipeline";
+import type { Fetch } from "../pipeline/cloudflare-api";
 import type { Answers, Facts, TargetFacts, TargetName } from "../own/plan";
 import { firstRows, hostOf, isName, proxySignIn, SETUP_COMMIT, stackOf, varsOf } from "../own/plan";
 import { type Aws, awsCli, whoAmI, type Where } from "./cli";
@@ -131,11 +131,6 @@ const secretThere = (aws: Aws, name: string) =>
     () => false
   );
 
-async function getJson<T>(net: Fetch, url: string): Promise<T | null> {
-  const r = await net(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
-  return r?.ok ? ((await r.json().catch(() => null)) as T | null) : null;
-}
-
 /** The server the stack made: what it answers, and what it holds (the secrets' names in Parameter Store). */
 async function targetFacts(dir: string, a: Answers, outputs: Record<string, string>, net: Fetch, githubId?: string): Promise<TargetFacts> {
   const host = outputs.AppHost;
@@ -151,12 +146,12 @@ async function targetFacts(dir: string, a: Answers, outputs: Record<string, stri
     held: null,
   };
   if (!host) return facts;
+  const { checkSignIn, getJson } = await import("../own/facts");
   const v = await getJson<{ version?: string }>(net, `https://${host}/api/deploys/version`);
   facts.version = v?.version ?? null;
   if (v) {
     const h = await getJson<{ ok?: boolean; checks?: unknown }>(net, `https://${host}/api/health`);
     facts.health = h?.ok ? "ok" : { bad: h ? JSON.stringify(h.checks ?? h).slice(0, 200) : "no answer" };
-    const { checkSignIn } = await import("../own/facts");
     facts.signIn = await checkSignIn(net, host, a, githubId);
   }
   const params = await awsCli(whereOf(a))<{ Parameters: { Name: string }[] }>(

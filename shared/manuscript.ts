@@ -764,11 +764,6 @@ export function inlineStackAt(src: string, unit: Unit, pos: number): OpenTag[] {
 export const closeTags = (stack: OpenTag[]) => stack.map((t) => `</${t.tag}>`).reverse().join("");
 export const openTags = (stack: OpenTag[]) => stack.map((t) => t.open).join("");
 
-/** Escapes text typed into HTML source. */
-export function escapeHtmlText(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
 /** Leading whitespace of the line `pos` is on. */
 export function lineIndent(src: string, pos: number): string {
   const start = src.lastIndexOf("\n", pos - 1) + 1;

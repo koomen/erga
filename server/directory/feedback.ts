@@ -3,7 +3,7 @@
 // keeps the issue's number; `list` is for the admins (/admin/feedback, the feedback operation).
 
 import { randomString } from "../../shared/bytes.ts";
-import type { Sql } from "./model.ts";
+import { ALPHABET, type Sql } from "./model.ts";
 import type { Actor, Users } from "./index.ts";
 
 /** The most characters one feedback keeps. */
@@ -24,8 +24,6 @@ export interface FeedbackRow {
   issue: number | null;
 }
 
-const ID_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789";
-
 export class Feedback {
   constructor(
     private sql: Sql,
@@ -34,7 +32,7 @@ export class Feedback {
 
   /** Keeps one feedback from `by`, sent from `page` on the server `target`: answers its id. */
   async add(by: Actor, f: { text: string; page?: string | null; target: string; at?: number }): Promise<string> {
-    const id = `fb-${randomString(8, ID_ALPHABET)}`;
+    const id = `fb-${randomString(8, ALPHABET)}`;
     await this.sql.run(
       "INSERT INTO feedback (id, text, login, via, page, target, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
       id,

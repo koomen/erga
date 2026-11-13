@@ -24,9 +24,7 @@
 //
 // This part needs no DOM: the reading of HTML and the copy of a page's selection are the UI's (ui/clipboard-read.ts).
 
-/** Text as HTML text (the quotes as they are: it goes into the page's source as typed). */
-export const escapeHtmlText = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-export const escapeAttr = (text: string) => escapeHtmlText(text).replace(/"/g, "&quot;");
+import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 
 /** An inline piece of text: what it is, and the formatting it has. */
 export interface Marks {
@@ -148,7 +146,7 @@ export function render(runs: Run[], pre: boolean, noBold: boolean): { html: stri
   const tags = (m: Marks) =>
     [m.href ? `a ${m.href}` : "", m.strong ? "strong" : "", m.em ? "em" : "", m.strike ? "s" : "", m.code ? "code" : ""].filter(Boolean);
   const close = (k: string) => `</${k.split(" ")[0]}>`;
-  const open = (k: string) => (k.startsWith("a ") ? `<a href="${k.slice(2).replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">` : `<${k}>`);
+  const open = (k: string) => (k.startsWith("a ") ? `<a href="${escapeAttr(k.slice(2))}">` : `<${k}>`);
   let prev: Marks | null = null;
   for (const r of out) {
     // A line break ends the formatting around it: a link or bold never holds one.

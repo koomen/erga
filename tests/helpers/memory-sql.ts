@@ -1,4 +1,5 @@
-// An in-memory SQLite database with the migrations D1 gets, for the tests that need the server's tables.
+// In-memory SQLite for the tests: a database with the migrations D1 gets, for the tests that need the server's tables,
+// and the stand-in for a Durable Object's SQLite, for the tests of an object's own tables.
 
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
@@ -20,5 +21,15 @@ export function memory(before?: { at: string; run: (db: Database) => void }): Sq
     all: async <T>(q: string, ...params: Param[]) => db.query(q).all(...bind(params)) as T[],
     run: async (q, ...params) => { db.query(q).run(...bind(params)); },
     batch: async (statements) => { db.transaction(() => { for (const [q, ...params] of statements) db.query(q).run(...bind(params)); })(); },
+  };
+}
+
+/** A stand-in for a Durable Object's SQLite (`exec` and `transaction`), empty: the object's code makes its tables. */
+export function objectSql() {
+  const db = new Database(":memory:", { strict: true });
+  return {
+    exec: <T>(q: string, ...p: (string | number | null | ArrayBuffer)[]) =>
+      db.query(q).all(...p.map((v) => (v instanceof ArrayBuffer ? new Uint8Array(v) : v))) as T[],
+    transaction: <T>(f: () => T) => db.transaction(f)(),
   };
 }

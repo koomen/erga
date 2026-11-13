@@ -11,7 +11,7 @@ import type { DocName } from "./api.ts";
 import { assets, files as texts } from "./content.ts";
 import { resolvePage } from "./pages.ts";
 import { headOf, type PageHead } from "../shared/page-head.ts";
-import { digest, NoSuchDocument, StoreError } from "./room.ts";
+import { digest, io, NoSuchDocument, type StoreError } from "./room.ts";
 import { throttle } from "../shared/time.ts";
 import type { Storage } from "./storage.ts";
 import type { Role } from "./access.ts";
@@ -113,8 +113,6 @@ export class DocumentView {
    */
   private now(info: { index: string; disk?: unknown }): Effect.Effect<ViewState, StoreError | NoSuchDocument> {
     const self = this;
-    const io = <A>(f: () => Promise<A>) =>
-      Effect.tryPromise({ try: f, catch: (e) => new StoreError({ message: e instanceof Error ? e.message : String(e) }) });
     return Effect.gen(function* () {
       if (self.latest && self.latest.index == info.index) return self.latest;
       if (!self.o.isOpen() && !info.disk) {
