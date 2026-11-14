@@ -42,8 +42,9 @@ export default function pageProblems(): void {
     },
     true
   );
-  // A file that loads after all (it was on its way: an upload) is no problem any more.
-  addEventListener(
+  // A file that loads after all (it was on its way: an upload) is no problem any more. (On the document: an element's
+  // load never comes to the window.)
+  document.addEventListener(
     "load",
     (e) => {
       const el = e.target as Element | null,

@@ -531,8 +531,12 @@ journey("files dropped and pasted on a page in a folder", () => {
     // The bytes are there: the image shows them, in both tabs, with no page loaded again; nothing moved.
     await expect.poll(() => images(ed), UPLOAD).toEqual([{ ...pin, ...LOADED }]);
     await expect.poll(() => pendingParts(ed)).toEqual([]);
+    // And it shows its own picture: nothing stands in for it any more (the page's style for an image on its way).
+    const SHOWN = `[...document.querySelectorAll("body img")].map((i) => getComputedStyle(i).content).join()`;
+    await expect.poll(() => ed.frame<string>(SHOWN)).toBe("normal");
     await expect.poll(there).toEqual([]);
     await expect.poll(() => inOther<string>(image)).toBe("200 150 200");
+    await expect.poll(() => inOther<string>(`window.ergaFrame && ${SHOWN}`)).toBe("normal");
     await other.close();
     await tab.page.bringToFront();
     expect(await tail()).toBe(moved);
