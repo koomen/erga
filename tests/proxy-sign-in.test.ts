@@ -377,8 +377,10 @@ test("the email address: the first of email, upn and preferred_username that loo
     handle: "ada@example.com",
     emails: [{ email: "ada@example.com", verified: true }],
   });
-  expect(emailOf({ email: "not an address", upn: "Ada@Example.com" })?.emails).toEqual([{ email: "ada@example.com", verified: true }]);
-  expect(emailOf({ preferred_username: "ada@example.com" })?.emails).toEqual([{ email: "ada@example.com", verified: false }]);
+  expect(emailOf({ email: "not an address", upn: "Ada@Example.com" })).toMatchObject({
+    emails: [{ email: "ada@example.com", verified: true }],
+  });
+  expect(emailOf({ preferred_username: "ada@example.com" })).toMatchObject({ emails: [{ email: "ada@example.com", verified: false }] });
   // None: no handle (never the ID), and no email. Without a `sub`, nobody.
   expect(emailOf({ username: "SSO_ada@example.com", preferred_username: "ada" })).toMatchObject({ subject: sub, handle: "", emails: [] });
   expect(vouchedOf({ email: "ada@example.com" }, AWS)).toBeNull();
@@ -412,6 +414,45 @@ test("the email address: the first of email, upn and preferred_username that loo
   expect(withEmail).toContain('name="username" value="ada"');
   expect((await signUp(platform, header, "ada-l")).answer.headers.get("location")).toBe("/docs");
   expect((await directory.identities.of("ada-l"))[0]).toMatchObject({ provider: "proxy", subject: sub, handle: null });
+});
+
+test("an organization's sign-in with the address after a prefix in preferred_username: the deploy names the claim, and the person an admin added matches", async () => {
+  // A Cognito pool behind AWS's proxy, that federates the organization's sign-in: no `email`; the address after "corp|".
+  const CORP = { ...AWS, email: { claim: "preferred_username", prefix: "corp|" } } satisfies Proxy;
+  expect(proxyOf(JSON.stringify(CORP))).toEqual(CORP);
+  const grace = { sub: "5f0e7a1c-sub", preferred_username: "corp|Grace@Example.com", username: "corp_5f0e7a1c", exp: 9e9, iss: AWS.issuer };
+  expect(await readProxy(await headerFor(grace), CORP, { key })).toEqual({
+    provider: "proxy",
+    subject: "5f0e7a1c-sub",
+    handle: "grace@example.com",
+    name: null,
+    emails: [{ email: "grace@example.com", verified: true }],
+    groups: [],
+  });
+  // Only that claim, only after that prefix, only an address: else refused, with what the sign-in gave.
+  for (const claims of [
+    { sub: "s", preferred_username: "grace@example.com" },
+    { sub: "s", preferred_username: "other|grace@example.com" },
+    { sub: "s", preferred_username: "corp|grace" },
+    { sub: "s", email: "grace@example.com", email_verified: "true" },
+  ])
+    expect(await readProxy(await headerFor(claims), CORP, { key })).toEqual({
+      refused: 'Your organization\'s sign-in gave no email address in preferred_username after "corp|".',
+    });
+
+  // An admin adds a user by email: at the first sign-in, that user is the one who waits.
+  const { platform, directory, firstAdmin } = server(CORP);
+  await firstAdmin("grace@example.com");
+  const signedIn = await signUp(platform, await aws(grace), "grace");
+  expect([signedIn.answer.status, signedIn.answer.headers.get("location")]).toEqual([302, "/docs"]);
+  expect(await directory.users.isAdmin("grace")).toBe(true);
+  const refused = await respond(
+    proxySignIn,
+    new Request(`${ORIGIN}/auth/proxy`, { headers: await aws({ sub: "s", preferred_username: "grace" }) }),
+    platform
+  );
+  expect(refused.status).toBe(403);
+  expect(await refused.text()).toContain("email address in preferred_username after &quot;corp|&quot;. Tell your Erga admin.");
 });
 
 test("the OAuth mode (no PROXY_SIGN_IN): /auth/proxy is nothing and GitHub's way is open", async () => {

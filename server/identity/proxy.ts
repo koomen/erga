@@ -21,11 +21,16 @@
 // The account is kept by the sign-in's `sub`, never by the email. The email address is the first of the claims `email`,
 // `upn` and `preferred_username` that looks like one. A sign-in that gives none still signs in, by its `sub`: no page
 // ever shows the `sub` as a name, and nobody is the first admin without an address (the deploy names them by email).
+// Trap: a Cognito pool that federates an organization's sign-in may give no `email`, only the address after a
+// prefix in another claim ("corp|ada@example.com" in `preferred_username`). Then AWS's proxy names that claim and
+// prefix (`email`, the setup's --email-claim): the address comes from there only, verified on the deploy's word, and
+// a sign-in without it there is refused.
 
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { fromBase64, fromBase64url } from "../../shared/bytes.ts";
+import { esc } from "../../shared/html.ts";
 import type { Vouched } from "../directory/index.ts";
 import { call, ctx, type Route } from "../http.ts";
 import { notFound, page, safeNext } from "../pages/index.ts";
@@ -40,6 +45,8 @@ const AwsAlb = Schema.Struct({
   /** The sign-in's issuer, and this server's client there. */
   issuer: Schema.NonEmptyString,
   client: Schema.NonEmptyString,
+  /** Where the sign-in gives the address, when not in a claim of EMAIL_CLAIMS: the claim, and the text before it. */
+  email: Schema.optionalKey(Schema.Struct({ claim: Schema.NonEmptyString, prefix: Schema.String })),
 });
 
 /** Cloudflare Access: an Access application in front of the server's address. */
@@ -125,6 +132,7 @@ const awsAlb: Kind<typeof AwsAlb.Type> = {
     { name: "ARN", value: c.signer },
     { name: "Issuer", value: c.issuer },
     { name: "Client ID", value: c.client },
+    ...(c.email ? [{ name: "Email", value: `${c.email.claim}, after "${c.email.prefix}"` }] : []),
   ],
 };
 
@@ -212,24 +220,37 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** The claims that may hold the person's email address, in the order they are tried. */
 const EMAIL_CLAIMS = ["email", "upn", "preferred_username"];
 
+/** The sign-in gave no address where the deploy says it is: why, as plain text. */
+export interface Refused {
+  refused: string;
+}
+
 /**
  * The person the claims are; null without a `sub`. Their email address: the first of EMAIL_CLAIMS that looks like one.
  * The `email` claim's is verified when the proxy's kind says so, and `upn`'s is (a directory gives it); never
  * `preferred_username`'s, which a person may choose: it names them, and matches nobody an admin added. Without an
- * address, `handle` is "": the `sub` is never a name.
+ * address, `handle` is "": the `sub` is never a name. A proxy that names the claim (`email`): only there, after its
+ * prefix, verified; else Refused.
  */
-export function vouchedOf(claims: Record<string, unknown>, proxy: Proxy): Vouched | null {
+export function vouchedOf(claims: Record<string, unknown>, proxy: Proxy): Vouched | Refused | null {
   const text = (claim: string) => (typeof claims[claim] == "string" ? claims[claim].trim() : "");
   const subject = text("sub");
   if (!subject) return null;
+  const name = text("name") || null;
+  if (proxy.kind == "aws-alb" && proxy.email) {
+    const { claim, prefix } = proxy.email;
+    const email = text(claim).startsWith(prefix) ? text(claim).slice(prefix.length).toLowerCase() : "";
+    if (!EMAIL.test(email)) return { refused: `Your organization's sign-in gave no email address in ${claim} after "${prefix}".` };
+    return { provider: "proxy", subject, handle: email, name, emails: [{ email, verified: true }], groups: [] };
+  }
   const claim = EMAIL_CLAIMS.find((c) => EMAIL.test(text(c)));
   const email = claim ? text(claim).toLowerCase() : "";
   const verified = claim == "email" ? kindOf(proxy).verified(claims) : claim == "upn";
-  return { provider: "proxy", subject, handle: email, name: text("name") || null, emails: email ? [{ email, verified }] : [], groups: [] };
+  return { provider: "proxy", subject, handle: email, name, emails: email ? [{ email, verified }] : [], groups: [] };
 }
 
 /** Who a header says signed in: its proof, then its person. */
-export async function readProxy(token: string, proxy: Proxy, o: { now?: number; key?: Key } = {}): Promise<Vouched | null> {
+export async function readProxy(token: string, proxy: Proxy, o: { now?: number; key?: Key } = {}): Promise<Vouched | Refused | null> {
   const claims = await claimsOf(token, proxy, o);
   return claims ? vouchedOf(claims, proxy) : null;
 }
@@ -248,5 +269,6 @@ export const proxySignIn: Route = Effect.gen(function* () {
     );
   const v = yield* call(() => readProxy(request.headers.get(kindOf(proxy).header) ?? "", proxy));
   if (!v) return signInFailed(`the proxy's header (${kindOf(proxy).header}) is missing, not this proxy's, or old`);
+  if ("refused" in v) return page("No email address", `${esc(v.refused)} Tell your Erga admin.`, 403);
   return yield* vouchedSignIn(platform, request, v, safeNext(url.searchParams.get("next")), {});
 });

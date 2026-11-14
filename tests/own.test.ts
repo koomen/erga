@@ -170,6 +170,35 @@ test("AWS: the profile, the region from it, the stack as the plan, and the compa
     at: "stop",
     why: "Several AWS profiles: default, work. Add --profile with one of them.",
   });
+  // A sign-in with no email claim: where the address is, after its prefix, reaches the server's setting.
+  const corp = options(
+    "--host",
+    "aws",
+    "--sign-in",
+    "sso",
+    "--issuer",
+    "https://idp.example.com/pool",
+    "--client",
+    "c",
+    "--email-claim",
+    "preferred_username:corp|"
+  );
+  expect(JSON.parse(proxySetting(corp.answers, "arn:p")!)).toEqual({
+    kind: "aws-alb",
+    signer: "arn:p",
+    issuer: "https://idp.example.com/pool",
+    client: "c",
+    email: { claim: "preferred_username", prefix: "corp|" },
+  });
+  expect(planText({ ...r.answers, emailClaim: "preferred_username:corp|" }, seen(AWS))).toContain(
+    '• your company\'s sign-in, at a load balancer in front (you type its client secret on a page that opens); the email address in preferred_username, after "corp|"'
+  );
+  expect(options("--email-claim", "preferred_username corp|").problems).toEqual([
+    '--email-claim: "preferred_username corp|" isn\'t <claim>:<prefix>, like preferred_username:corp| for "corp|ada@example.com".',
+  ]);
+  expect(missing({ ...sso, where: "cloudflare", team: "acme", aud: "f".repeat(64), emailClaim: "upn" })).toEqual([
+    "--email-claim is only for --sign-in sso on AWS: leave it out.",
+  ]);
   // The client's secret is the page's alone: the app step.
   expect(run(r.answers, AWS).state).toEqual({ at: "app", kind: "oidc" });
   expect(planText(r.answers, seen(AWS))).toContain(`• the documents' pages on pages.${HOST}`);

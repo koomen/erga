@@ -41,7 +41,9 @@ git. Give your coding agent this prompt:
         for the address (and staging's), with a Bypass policy for the
         paths that need no sign-in.
       - AWS: the OpenID Connect issuer URL, and Erga's client ID there
-        (its callback: `https://<address>/oauth2/idpresponse`).
+        (its callback: `https://<address>/oauth2/idpresponse`). Which claim
+        gives the email address, after what prefix? Not the `email` claim:
+        `--email-claim <claim>:<prefix>` (`preferred_username:corp|`).
    5. AWS without single sign-on: a second Route 53 domain, not the
       address's, for the documents' pages.
 3. Run this with the answers, with a 10-minute timeout. It makes nothing

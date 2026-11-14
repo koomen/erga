@@ -13,6 +13,8 @@
 //       --company <org|domain> --sign-in company: a GitHub organization, or an email domain
 //       --team <name> --aud <tag>        --sign-in sso on Cloudflare: Cloudflare Access
 //       --issuer <URL> --client <ID>     --sign-in sso on AWS: the company's sign-in (OpenID Connect)
+//       --email-claim <claim>:<prefix>   --sign-in sso on AWS, when the sign-in gives no email claim: where the
+//                                        address is, e.g. preferred_username:corp| for "corp|ada@example.com"
 //       --pages <domain>       AWS without single sign-on: a second Route 53 domain, for the documents' pages
 //       --egress <way>         AWS: nat-instance (the default), nat-gateway, or <vpc id>/<private subnet id>
 //       --commit <ref>         deploys that commit, not origin/main; main never moves
@@ -53,6 +55,7 @@ const OPTIONS: Record<string, keyof Answers> = {
   "--aud": "aud",
   "--issuer": "issuer",
   "--client": "client",
+  "--email-claim": "emailClaim",
   "--pages": "pages",
   "--egress": "egress",
 };

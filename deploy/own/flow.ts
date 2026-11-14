@@ -10,7 +10,7 @@
 // observes again; a run again goes on from where the last one stopped. A dry run stops before the first step that
 // makes something, and prints the plan.
 
-import { type Answers, namesOf, pagesOf, pagesProblem, sso, zoneOf } from "./plan";
+import { type Answers, emailOf, namesOf, pagesOf, pagesProblem, sso, zoneOf } from "./plan";
 
 /** What the command observed (facts.ts; deploy/aws/setup.ts on AWS). */
 export interface Seen {
@@ -76,6 +76,7 @@ export function missing(a: Answers): string[] {
   if (sso(a) && !aws && !a.aud) need.push("--aud <tag>: the Access application's Audience tag.");
   if (sso(a) && aws && !a.issuer) need.push("--issuer <URL>: the issuer URL of the company's sign-in (OpenID Connect).");
   if (sso(a) && aws && !a.client) need.push("--client <ID>: Erga's client ID at the company's sign-in.");
+  if (a.emailClaim && !(sso(a) && aws)) need.push("--email-claim is only for --sign-in sso on AWS: leave it out.");
   if (aws && !pagesOf(a)) need.push("--pages <domain>: a second Route 53 domain of the account, for the documents' pages.");
   if (aws && a.staging) need.push("Staging is not on AWS yet: leave out --staging.");
   if (a.staging && a.staging == a.host) need.push("--staging needs an address of its own.");
@@ -161,9 +162,10 @@ export function checksOf(a: Answers, s: Seen): string[] {
 
 /** The plan, as the agent says it before the person's yes. */
 export function planText(a: Answers, s: Seen): string[] {
+  const email = emailOf(a);
   const signIn = sso(a)
     ? a.where == "aws"
-      ? "• your company's sign-in, at a load balancer in front (you type its client secret on a page that opens)"
+      ? `• your company's sign-in, at a load balancer in front (you type its client secret on a page that opens)${email ? `; the email address in ${email.claim}, after "${email.prefix}"` : ""}`
       : "• your company's sign-in, with Cloudflare Access"
     : a.stagingOf
       ? `• sign-in with the GitHub App of ${a.stagingOf}`

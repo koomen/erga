@@ -35,6 +35,8 @@ export interface Answers {
   /** sso on AWS (an Application Load Balancer): the company's OIDC issuer's URL, and Erga's client ID there. */
   issuer: string;
   client: string;
+  /** sso on AWS, when the sign-in gives no `email`: the claim with the address, and the text before it ("preferred_username:corp|"). */
+  emailClaim: string;
   /** Documents' pages: "shared", or a domain. "": the default (pagesOf). */
   pages: string;
 }
@@ -54,6 +56,7 @@ export const noAnswers = (host: string): Answers => ({
   aud: "",
   issuer: "",
   client: "",
+  emailClaim: "",
   pages: "",
 });
 
@@ -119,6 +122,12 @@ export function parseAnswer(key: keyof Answers, raw: string): { value: string } 
       );
     case "client":
       return is(/^[\w.~-]{1,128}$/.test(v), v, `"${v}" isn't a client ID.`);
+    case "emailClaim":
+      return is(
+        /^[A-Za-z_][\w.-]{0,63}(:[^\s@:]{0,64})?$/.test(v),
+        v,
+        `"${v}" isn't <claim>:<prefix>, like preferred_username:corp| for "corp|ada@example.com".`
+      );
     case "pages":
       return is(low == "shared" || HOST.test(low), low, "pages is shared, or a domain.");
   }
@@ -148,6 +157,12 @@ export function pagesProblem(a: Answers, zones: string[]): string | null {
 /** The settings' defaults that the answer sets (SERVER_DEFAULTS): an admin can change each on /admin/settings. */
 export const defaultsOf = (a: Pick<Answers, "signIn">) => ({ public_sharing: a.signIn == "invite", delete_docs_after_hours: null });
 
+/** --email-claim's parts: the claim with the address, and the text before the address; null: not answered. */
+export const emailOf = (a: Pick<Answers, "emailClaim">): { claim: string; prefix: string } | null => {
+  const [claim, prefix = ""] = a.emailClaim.split(":");
+  return claim ? { claim, prefix } : null;
+};
+
 /**
  * Single sign-on: the server's setting for the proxy in front (PROXY_SIGN_IN: server/identity/proxy.ts); null without
  * it. `signer`: on AWS, the proxy's ARN (the stack's output). A proxy whose values aren't all known yet gives "{}",
@@ -155,7 +170,10 @@ export const defaultsOf = (a: Pick<Answers, "signIn">) => ({ public_sharing: a.s
  */
 export function proxySetting(a: Answers, signer?: string): string | null {
   if (!sso(a)) return null;
-  if (a.where == "aws") return signer ? JSON.stringify({ kind: "aws-alb", signer, issuer: a.issuer, client: a.client }) : "{}";
+  if (a.where == "aws") {
+    const email = emailOf(a);
+    return signer ? JSON.stringify({ kind: "aws-alb", signer, issuer: a.issuer, client: a.client, ...(email ? { email } : {}) }) : "{}";
+  }
   return JSON.stringify({ kind: "cloudflare-access", team: a.team, aud: a.aud });
 }
 
