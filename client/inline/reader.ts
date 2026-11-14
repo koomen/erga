@@ -5,6 +5,9 @@
 // document to the viewer, which opens them. `C`: the viewer's origin, where the document's files are, and the editor's
 // half for whoever may edit.
 //
+// Trap: an element's load event never comes to the window, though its error event does (the browser stops a load at the
+// document). A listener for an image that loads is on the document.
+//
 // Trap: the page that loads again in this one's place (its address says erga-keep) is out of sight until it shows the
 // view this one had (`place`), and the viewer shows it only when it says so (erga-placed). A new wait there needs its
 // end, and its event for `soon`: `check` runs on no frame without one.
@@ -829,8 +832,9 @@ export default function reader(C: ReaderConfig): void {
     if (!boxSheet) document.adoptedStyleSheets = [...document.adoptedStyleSheets, (boxSheet = new CSSStyleSheet())];
     boxSheet.replaceSync([...boxes.values()].join("\n"));
   };
-  addEventListener("error", sized, true);
-  addEventListener("load", sized, true);
+  // (On the document: an image's load never comes to the window, though its error does.)
+  document.addEventListener("error", sized, true);
+  document.addEventListener("load", sized, true);
   addEventListener("message", (e) => {
     if (e.source != P || e.origin != C.shell || !e.data) return;
     const type = e.data.type;
