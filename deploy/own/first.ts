@@ -9,7 +9,7 @@
 //    it, and no later deploy sends one.
 // 3. After the health check: the access rule that the answers name (plan.ts, firstRows), written into the new
 //    database with the Cloudflare D1 API. A database that has an admin already gets nothing.
-// 4. The ops token (register): the server asks for one, the person approves it from the link that setup opens (a
+// 4. The ops token (register): the server asks for one, the user approves it from the link that setup opens (a
 //    new server: as they claim it, server/identity/claim.ts), and the entry gets it.
 
 import { randomBytes } from "node:crypto";
@@ -144,8 +144,8 @@ export async function writeFirstRows(cf: Cloudflare, acc: string, worker: string
 
 /**
  * The ops token of the setup's server: the server asks for one, `asked` gets the request's code (the link that setup opens
- * carries it), and the call waits until the person approves it. The entry gets the token and the instance's own deploy
- * facts. The result: the person's login.
+ * carries it), and the call waits until the user approves it. The entry gets the token and the instance's own deploy
+ * facts. The result: the user's login.
  */
 export async function register(dir: string, host: string, o: { site?: Fetch; asked: (code: string) => void }): Promise<string> {
   const known = entryOf(readConfig(dir), host);
@@ -157,10 +157,10 @@ export async function register(dir: string, host: string, o: { site?: Fetch; ask
     asked: (url) => o.asked(new URL(url).searchParams.get("code") ?? ""),
   });
   const facts = await readOps(origin, token, o.site);
-  // Read the file again: another terminal can have changed it while the person approved.
+  // Read the file again: another terminal can have changed it while the user approved.
   const config = readConfig(dir);
   const entry = entryOf(config, host);
-  if (!entry) throw new Error(`${host}'s entry left .erga/config.json while the person approved.`);
+  if (!entry) throw new Error(`${host}'s entry left .erga/config.json while the user approved.`);
   writeConfig(dir, withEntry(config, { ...entry, ...(facts.deploy ?? {}), token }));
   return login;
 }

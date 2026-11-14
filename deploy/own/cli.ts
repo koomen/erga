@@ -1,18 +1,18 @@
-// A new Erga instance, set up by a person with their coding agent: `bun erga setup <host>` (deploy/cli/main.ts). The
-// agent asks the person every question first (README.md, Setup), then runs this command with each answer as an option:
-// first with --dry-run (the checks and the plan; nothing is made), then, after the person's yes, without it. The
-// command does all the work: it signs in, makes the GitHub App, builds, and makes the person the admin. It opens the
-// browser only for the person's own steps, and waits for each. The agent never makes a resource, sees a secret or
+// A new Erga instance, set up by a user with their coding agent: `bun erga setup <host>` (deploy/cli/main.ts). The
+// agent asks the user every question first (README.md, Setup), then runs this command with each answer as an option:
+// first with --dry-run (the checks and the plan; nothing is made), then, after the user's yes, without it. The
+// command does all the work: it signs in, makes the GitHub App, builds, and makes the user the admin. It opens the
+// browser only for the user's own steps, and waits for each. The agent never makes a resource, sees a secret or
 // makes a token.
 //
-//   bun erga setup <host> --host cloudflare|aws --sign-in invite|company|sso [<options>] [--dry-run]
+//   bun erga setup <host> --host cloudflare|aws --sign-in invite|organization|sso [<options>] [--dry-run]
 //       --staging <address>    a staging instance too, on a copy of the data, for admins only (Cloudflare only).
 //                              On a registered instance it makes only the staging instance.
 //       --account <name|id>    Cloudflare: the account, when two hold the domain
 //       --profile <name>       AWS: the AWS CLI's profile, when there are several (the region is the profile's)
-//       --company <org|domain> --sign-in company: a GitHub organization, or an email domain
+//       --organization <org|domain>      --sign-in organization: a GitHub organization, or an email domain
 //       --team <name> --aud <tag>        --sign-in sso on Cloudflare: Cloudflare Access
-//       --issuer <URL> --client <ID>     --sign-in sso on AWS: the company's sign-in (OpenID Connect)
+//       --issuer <URL> --client <ID>     --sign-in sso on AWS: the organization's sign-in (OpenID Connect)
 //       --email-claim <claim>:<prefix>   --sign-in sso on AWS, when the sign-in gives no email claim: where the
 //                                        address is, e.g. preferred_username:corp| for "corp|ada@example.com"
 //       --pages <domain>       AWS without single sign-on: a second Route 53 domain, for the documents' pages
@@ -22,7 +22,7 @@
 //   bun erga setup <host> remove --yes       deletes the server: its Workers, database and bucket (AWS: its stacks
 //                                            and secrets; the bucket stays, with the data)
 //
-// Each run ends in one of these lines: DRY RUN (the plan), DONE, WAIT (the person's step is still open: run the same
+// Each run ends in one of these lines: DRY RUN (the plan), DONE, WAIT (the user's step is still open: run the same
 // command again) or FAIL (what is wrong, and what to do). A run again goes on from where the last one stopped.
 //
 // Trap: nothing here prints a secret, or a link that signs someone in: the agent reads this command's output. The
@@ -40,7 +40,7 @@ import { checksOf, missing, planText, type Seen, type State, stagingOf, step } f
 import { type Answers, noAnswers, parseAnswer } from "./plan";
 import { DIR, githubIdOf, loadSecrets, namesAt, saveSecrets } from "./store";
 
-/** How long one run waits for the person: under the ten minutes that an agent's command may take. */
+/** How long one run waits for the user: under the ten minutes that an agent's command may take. */
 const WAIT_MS = 8 * 60_000;
 
 /** The options that are answers, by the answer's key. */
@@ -50,7 +50,7 @@ const OPTIONS: Record<string, keyof Answers> = {
   "--staging": "staging",
   "--account": "account",
   "--profile": "profile",
-  "--company": "company",
+  "--organization": "organization",
   "--team": "team",
   "--aud": "aud",
   "--issuer": "issuer",
@@ -85,13 +85,13 @@ const connect = async (): Promise<Connection> => {
   return "why" in c ? fail(c.why, "bunx cf auth login") : c;
 };
 
-/** The host's own login, which the person finishes in the browser. */
+/** The host's own login, which the user finishes in the browser. */
 function login(a: Answers) {
   if (a.where == "aws") {
-    say(`WAIT  An AWS sign-in tab opens. The person signs in there. (aws sso login --profile ${a.profile})`);
+    say(`WAIT  An AWS sign-in tab opens. The user signs in there. (aws sso login --profile ${a.profile})`);
     Bun.spawnSync(["aws", "sso", "login", "--profile", a.profile], { stdio: ["ignore", "inherit", "inherit"], timeout: WAIT_MS });
   } else {
-    say("WAIT  A Cloudflare tab opens. The person signs in there, then clicks Allow. (bunx cf auth login)");
+    say("WAIT  A Cloudflare tab opens. The user signs in there, then clicks Allow. (bunx cf auth login)");
     Bun.spawnSync(["bunx", "cf", "auth", "login"], { cwd: ROOT, stdio: ["ignore", "inherit", "inherit"], timeout: WAIT_MS });
   }
 }
@@ -131,15 +131,15 @@ async function build(a: Answers, seen: Seen, o: Run) {
   } catch (e) {
     fail(
       (e as Error).message,
-      `Fix what it names (the person decides anything about the account), then: ${o.again}. Every step is safe to run again.`
+      `Fix what it names (the user decides anything about the account), then: ${o.again}. Every step is safe to run again.`
     );
   }
 }
 
 /**
  * The admin's step: the server asks for the ops token, and the browser opens the one-time link that carries its code.
- * A new server: the link makes the person its admin as they sign in (server/identity/claim.ts). A staging instance
- * has its primary's people: an admin approves. The result: the person's login, or "" when the wait ended first.
+ * A new server: the link makes the user its admin as they sign in (server/identity/claim.ts). A staging instance
+ * has its primary's users: an admin approves. The result: the user's login, or "" when the wait ended first.
  */
 async function admin(a: Answers, o: Run): Promise<string> {
   const net = a.where == "aws" ? site : (await connect()).net;
@@ -152,8 +152,8 @@ async function admin(a: Answers, o: Run): Promise<string> {
   };
   say(
     a.stagingOf
-      ? `WAIT  A tab opens on ${a.host}. The person approves there, as an admin of ${a.stagingOf}.`
-      : `WAIT  A tab opens on ${a.host}, with a link that works one time. The person signs in there, and becomes the admin.`
+      ? `WAIT  A tab opens on ${a.host}. The user approves there, as an admin of ${a.stagingOf}.`
+      : `WAIT  A tab opens on ${a.host}, with a link that works one time. The user signs in there, and becomes the admin.`
   );
   const approved = register(DIR, a.host, { site: net, asked: (code) => void opened(code) });
   return Promise.race([approved, Bun.sleep(WAIT_MS).then(() => "")]).catch((e: Error) => fail(e.message, o.again));
@@ -167,7 +167,7 @@ function printPlan(a: Answers, seen: Seen, resources: string[]) {
 }
 
 /**
- * One instance, from where its setup is: each step, until it is done, the person's step is still open (the wait
+ * One instance, from where its setup is: each step, until it is done, the user's step is still open (the wait
  * ended), or (a dry run) the first step that would make something.
  */
 async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
@@ -189,7 +189,7 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
     }
     switch (state.at) {
       case "stop":
-        return fail(state.why, `Ask the person, then: ${o.again}`);
+        return fail(state.why, `Ask the user, then: ${o.again}`);
       case "login":
         if (again) return fail(state.why ?? "The sign-in did not finish.", o.again);
         login(a);
@@ -198,9 +198,9 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
         if (again) return fail("The app step did not finish.", o.again);
         const ended =
           state.kind == "github"
-            ? (say("WAIT  A GitHub tab opens. The person clicks Create GitHub App there. Its secret goes to this command, never to you."),
+            ? (say("WAIT  A GitHub tab opens. The user clicks Create GitHub App there. Its secret goes to this command, never to you."),
               await githubApp(a, WAIT_MS))
-            : (say("WAIT  A page opens. The person types the client secret of the company's sign-in there, and clicks Save."),
+            : (say("WAIT  A page opens. The user types the client secret of the organization's sign-in there, and clicks Save."),
               await oidcSecret(a, async (v) => (await import("../aws/setup")).putOidcSecret(a, v), WAIT_MS));
         if (ended == null) return "wait";
         if (ended) return fail(ended, o.again);
@@ -229,28 +229,28 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
 async function run(a: Answers, o: Run) {
   const need = missing(a);
   if (need.length)
-    return fail(`The command needs: ${need.join(" ")}`, "Ask the person what the README's setup asks, then run the command again.");
+    return fail(`The command needs: ${need.join(" ")}`, "Ask the user what the README's setup asks, then run the command again.");
   const end = await setUp(a, o);
-  if (end == "wait") return say(`WAIT  The person's step is still open. Run the same command again: ${o.again}`);
+  if (end == "wait") return say(`WAIT  The user's step is still open. Run the same command again: ${o.again}`);
   if (a.staging) {
     const primary = entryOf(readConfig(DIR), a.host);
     const s = stagingOf({ ...a, account: primary && !isAws(primary) ? primary.account : a.account });
     // The staging instance shares the GitHub App when it was made with both addresses; else it makes one of its own.
     const sEnd = await setUp(s, o);
-    if (sEnd == "wait") return say(`WAIT  The person's step is still open. Run the same command again: ${o.again}`);
+    if (sEnd == "wait") return say(`WAIT  The user's step is still open. Run the same command again: ${o.again}`);
   }
   if (o.dryRun)
     return say(
-      "DRY RUN  Nothing is made. Tell the person the plan, and ask: Shall I make it? On yes, run the same command without --dry-run."
+      "DRY RUN  Nothing is made. Tell the user the plan, and ask: Shall I make it? On yes, run the same command without --dry-run."
     );
   say(
-    `DONE  Tell the person: Erga is live at https://${a.host}${a.staging ? `, and staging at https://${a.staging}` : ""}, and they are the admin. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page). Settings has the rest: Google sign-in, a feedback repository, the homepage.`
+    `DONE  Tell the user: Erga is live at https://${a.host}${a.staging ? `, and staging at https://${a.staging}` : ""}, and they are the admin. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page). Settings has the rest: Google sign-in, a feedback repository, the homepage.`
   );
 }
 
 async function remove(host: string, yes: boolean) {
   const entry = entryOf(readConfig(DIR), host);
-  const only = `Only if the person said yes: bun erga setup ${host} remove --yes`;
+  const only = `Only if the user said yes: bun erga setup ${host} remove --yes`;
   if (entry && isAws(entry)) {
     const { awsCli } = await import("../aws/cli");
     const { CERT_REGION, stackState } = await import("../aws/stack");
@@ -367,11 +367,12 @@ export async function setupMain(argv: string[]) {
   const flag = (f: string) => args.includes(f);
   try {
     if (rest[0] == "remove") return await remove(host, flag("--yes"));
+    // An unknown option first: its value is no setup command.
+    if (problems.length) return fail(problems.join(" "), "bun erga setup --help lists the options.");
     if (rest.length) {
       say(`No setup command ${rest[0]}.`);
       return usage(2);
     }
-    if (problems.length) return fail(problems.join(" "), "bun erga setup --help lists the options.");
     const commit = flag("--commit") ? args[args.indexOf("--commit") + 1] : undefined;
     const again = ["bun erga setup", host, ...args].join(" ");
     await run(answers, { dryRun: flag("--dry-run"), noTests: flag("--no-tests"), commit, again });

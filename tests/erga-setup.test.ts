@@ -50,7 +50,7 @@ const jobs = () =>
 /** What the build takes from the flow, for `host`: the answers, and what the command saw in the mock account. */
 const first = (mock: { state: MockState; fetch: First["net"] }, host: string, more: Partial<First["answers"]> = {}): First => ({
   dir,
-  answers: { ...noAnswers(host), where: "cloudflare", account: ACCOUNT_ID, signIn: "company", company: "acme-inc", ...more },
+  answers: { ...noAnswers(host), where: "cloudflare", account: ACCOUNT_ID, signIn: "organization", organization: "acme-inc", ...more },
   seen: {
     zones: mock.state.zones.map((z) => z.name),
     subdomain: mock.state.subdomain,
@@ -90,7 +90,7 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
     delete_docs_after_hours: null,
   });
   expect(await (await mock.fetch(`https://${HOST}/api/health`)).json()).toMatchObject({ ok: true, version: HEAD.slice(0, 12) });
-  // The database: the company's rule, and no user at all. The person who claims the server becomes its admin.
+  // The database: the organization's rule, and no user at all. The user who claims the server becomes its admin.
   const rows = rowsOf(mock.state, "erga-ada-example-com");
   expect(rows).toContainEqual(
     expect.stringMatching(/^INSERT INTO access_rules \(kind, value, access, created\) VALUES \('github_org', 'acme-inc', 'write', \d+\)/)
@@ -136,7 +136,7 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
   ).toStartWith("erga-staging-ada-example-com-");
 }, 120_000);
 
-test("the setup ends with the ops token: the page gets the request's code, the person approves, and the entry gets the token", async () => {
+test("the setup ends with the ops token: the page gets the request's code, the user approves, and the entry gets the token", async () => {
   const asked: string[] = [];
   const server = Bun.serve({
     // (Its own address: with all addresses, a test server of the browser tests can take the same port on 127.0.0.1.)
@@ -163,7 +163,7 @@ test("the setup ends with the ops token: the page gets the request's code, the p
     writeConfig(dir, withEntry(readConfig(dir), entry));
     const codes: string[] = [];
     expect(await register(dir, host, { asked: (code) => codes.push(code) })).toBe("ada");
-    // Only the code that the person's link carries goes to the page: the code that collects the token stays here.
+    // Only the code that the user's link carries goes to the page: the code that collects the token stays here.
     expect(codes).toEqual(["ABCD-EFGH"]);
     expect(asked).toEqual(["/api/auth/request", "/api/auth/poll", "/api/ops"]);
     expect(readConfig(dir).instances.find((e) => e.host == host)).toEqual({ ...entry, token: "erga_ops_new" });

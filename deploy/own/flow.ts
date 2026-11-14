@@ -3,7 +3,7 @@
 //
 //   login > (stop) > app > build > admin > done
 //
-// The answers are the command's options (plan.ts): the agent asked the person every question first (README, Setup),
+// The answers are the command's options (plan.ts): the agent asked the user every question first (README, Setup),
 // and `missing` says which option is still needed. The state is the first step that the answers and what the command
 // observed (Seen) leave open. `step` folds an observation in: it fills what the code can find (the one account that
 // holds the domain, the profile's region) and gives the state. The owner (cli.ts) observes, does the state's step, and
@@ -54,14 +54,14 @@ export const nothingSeen: Seen = {
 };
 
 export type State =
-  /** The command runs the host's login; the person finishes it in the browser. */
+  /** The command runs the host's login; the user finishes it in the browser. */
   | { at: "login"; why?: string }
-  /** Only the person can go on: the command says why, and ends. */
+  /** Only the user can go on: the command says why, and ends. */
   | { at: "stop"; why: string }
-  /** The person's step in the browser: the GitHub App, or (single sign-on on AWS) the client's secret. */
+  /** The user's step in the browser: the GitHub App, or (single sign-on on AWS) the client's secret. */
   | { at: "app"; kind: "github" | "oidc" }
   | { at: "build" }
-  /** The person signs in to the new server with a one-time link: they become its admin, and approve the ops token. */
+  /** The user signs in to the new server with a one-time link: they become its admin, and approve the ops token. */
   | { at: "admin" }
   | { at: "done" };
 
@@ -70,12 +70,13 @@ export function missing(a: Answers): string[] {
   const aws = a.where == "aws";
   const need: string[] = [];
   if (!a.where) need.push("--host cloudflare or --host aws: where Erga runs.");
-  if (!a.signIn) need.push("--sign-in invite, company or sso: who may sign in.");
-  if (a.signIn == "company" && !a.company) need.push("--company <GitHub organization or email domain>: whose people may sign in.");
+  if (!a.signIn) need.push("--sign-in invite, organization or sso: who may sign in.");
+  if (a.signIn == "organization" && !a.organization)
+    need.push("--organization <GitHub organization or email domain>: whose users may sign in.");
   if (sso(a) && !aws && !a.team) need.push("--team <name>: the Cloudflare Zero Trust team, the part before .cloudflareaccess.com.");
   if (sso(a) && !aws && !a.aud) need.push("--aud <tag>: the Access application's Audience tag.");
-  if (sso(a) && aws && !a.issuer) need.push("--issuer <URL>: the issuer URL of the company's sign-in (OpenID Connect).");
-  if (sso(a) && aws && !a.client) need.push("--client <ID>: Erga's client ID at the company's sign-in.");
+  if (sso(a) && aws && !a.issuer) need.push("--issuer <URL>: the issuer URL of the organization's sign-in (OpenID Connect).");
+  if (sso(a) && aws && !a.client) need.push("--client <ID>: Erga's client ID at the organization's sign-in.");
   if (a.emailClaim && !(sso(a) && aws)) need.push("--email-claim is only for --sign-in sso on AWS: leave it out.");
   if (aws && !pagesOf(a)) need.push("--pages <domain>: a second Route 53 domain of the account, for the documents' pages.");
   if (aws && a.staging) need.push("Staging is not on AWS yet: leave out --staging.");
@@ -83,7 +84,7 @@ export function missing(a: Answers): string[] {
   return need;
 }
 
-/** What the code can find, so the person need not say it: the one account or profile that fits, the profile's region. */
+/** What the code can find, so the user need not say it: the one account or profile that fits, the profile's region. */
 function filled(a: Answers, s: Seen): Partial<Answers> {
   const fill: Partial<Answers> = {};
   if (a.where == "cloudflare" && s.login?.ok) {
@@ -144,7 +145,7 @@ export const stagingOf = (a: Answers): Answers => ({
   staging: "",
 });
 
-/** The name of the account that Erga goes into, for the person. */
+/** The name of the account that Erga goes into, for the user. */
 export const accountName = (a: Answers, s: Seen) =>
   a.where == "aws"
     ? s.account || s.choices.find((c) => c.id == a.profile)?.name || ""
@@ -160,13 +161,13 @@ export function checksOf(a: Answers, s: Seen): string[] {
   ];
 }
 
-/** The plan, as the agent says it before the person's yes. */
+/** The plan, as the agent says it before the user's yes. */
 export function planText(a: Answers, s: Seen): string[] {
   const email = emailOf(a);
   const signIn = sso(a)
     ? a.where == "aws"
-      ? `• your company's sign-in, at a load balancer in front (you type its client secret on a page that opens)${email ? `; the email address in ${email.claim}, after "${email.prefix}"` : ""}`
-      : "• your company's sign-in, with Cloudflare Access"
+      ? `• your organization's sign-in, at a load balancer in front (you type its client secret on a page that opens)${email ? `; the email address in ${email.claim}, after "${email.prefix}"` : ""}`
+      : "• your organization's sign-in, with Cloudflare Access"
     : a.stagingOf
       ? `• sign-in with the GitHub App of ${a.stagingOf}`
       : "• a GitHub App, for sign-in (you click one button)";

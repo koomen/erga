@@ -43,8 +43,16 @@ function run(a: Answers, ...looks: Partial<Seen>[]) {
 }
 
 test("each answer is an option of the command; a bad one, or an unknown one, says why", () => {
-  const { answers, problems, rest } = options("--host", "Cloudflare", "--sign-in", "company", "--company", "Acme.com", "--dry-run");
-  expect([answers.where, answers.signIn, answers.company, problems, rest]).toEqual(["cloudflare", "company", "acme.com", [], []]);
+  const { answers, problems, rest } = options(
+    "--host",
+    "Cloudflare",
+    "--sign-in",
+    "organization",
+    "--organization",
+    "Acme.com",
+    "--dry-run"
+  );
+  expect([answers.where, answers.signIn, answers.organization, problems, rest]).toEqual(["cloudflare", "organization", "acme.com", [], []]);
   expect(options("--staging", "Staging.Example.com").answers.staging).toBe("staging.example.com");
   // An account is a name or an id.
   expect(options("--account", "Ada Lovelace").answers.account).toBe("Ada Lovelace");
@@ -68,10 +76,10 @@ test("each answer is an option of the command; a bad one, or an unknown one, say
 test("the command says each option it still needs, before it looks at anything", () => {
   expect(missing(noAnswers(HOST))).toEqual([
     "--host cloudflare or --host aws: where Erga runs.",
-    "--sign-in invite, company or sso: who may sign in.",
+    "--sign-in invite, organization or sso: who may sign in.",
   ]);
-  expect(missing(options("--host", "cloudflare", "--sign-in", "company").answers)).toEqual([
-    "--company <GitHub organization or email domain>: whose people may sign in.",
+  expect(missing(options("--host", "cloudflare", "--sign-in", "organization").answers)).toEqual([
+    "--organization <GitHub organization or email domain>: whose users may sign in.",
   ]);
   expect(missing(options("--host", "cloudflare", "--sign-in", "sso", "--team", "acme").answers)).toEqual([
     "--aud <tag>: the Access application's Audience tag.",
@@ -88,7 +96,7 @@ test("the command says each option it still needs, before it looks at anything",
 
 test("the main path: the login, the one account that holds the domain, the GitHub App, the build, the admin", () => {
   const a = options("--host", "cloudflare", "--sign-in", "invite").answers;
-  // Not signed in: the command runs the login, and the person finishes it in the browser.
+  // Not signed in: the command runs the login, and the user finishes it in the browser.
   expect(run(a, { login: { ok: false, why: "Not logged in to Cloudflare." } }).state).toEqual({
     at: "login",
     why: "Not logged in to Cloudflare.",
@@ -111,7 +119,7 @@ test("the main path: the login, the one account that holds the domain, the GitHu
   ]);
 });
 
-test("the command stops where only the person can go on: two accounts, no domain, an address in use", () => {
+test("the command stops where only the user can go on: two accounts, no domain, an address in use", () => {
   const a = options("--host", "cloudflare", "--sign-in", "invite").answers;
   const two = { login: { ok: true as const }, choices: [{ id: "b".repeat(32), name: "Acme Inc" }, CF.choices![0]] };
   expect(run(a, two).state).toEqual({
@@ -135,17 +143,17 @@ test("who may sign in decides the settings, the access rule and the app step", (
   const a = (signIn: string, more = {}) => ({ ...noAnswers(HOST), where: "cloudflare" as const, signIn: signIn as "invite", ...more });
   expect(JSON.parse(varsOf(a("invite"), "Iv1.x").SERVER_DEFAULTS)).toEqual({ public_sharing: true, delete_docs_after_hours: null });
   expect(firstRows(a("invite"))).toEqual([]);
-  expect(JSON.parse(varsOf(a("company"), "Iv1.x").SERVER_DEFAULTS).public_sharing).toBe(false);
-  expect(firstRows(a("company", { company: "acme-inc" }), 5)).toEqual([
+  expect(JSON.parse(varsOf(a("organization"), "Iv1.x").SERVER_DEFAULTS).public_sharing).toBe(false);
+  expect(firstRows(a("organization", { organization: "acme-inc" }), 5)).toEqual([
     {
       table: "access_rules",
       row: { kind: "github_org", value: "acme-inc", access: "write", created: 5 },
       onConflict: "(kind, value) DO UPDATE SET access = 'write'",
     },
   ]);
-  expect(firstRows(a("company", { company: "acme.com" }))[0].row).toMatchObject({ kind: "workspace", value: "acme.com" });
-  // No row names an admin: the person who opens the one-time link becomes it.
-  expect(JSON.stringify([firstRows(a("company", { company: "acme-inc" })), firstRows(a("sso"))])).not.toContain("admin");
+  expect(firstRows(a("organization", { organization: "acme.com" }))[0].row).toMatchObject({ kind: "workspace", value: "acme.com" });
+  // No row names an admin: the user who opens the one-time link becomes it.
+  expect(JSON.stringify([firstRows(a("organization", { organization: "acme-inc" })), firstRows(a("sso"))])).not.toContain("admin");
   // Single sign-on on Cloudflare: the team and the Audience tag are options; no GitHub App, no app step.
   const sso = options("--host", "cloudflare", "--sign-in", "sso", "--team", "acme", "--aud", "f".repeat(64)).answers;
   expect(run(sso, CF, CF).state).toEqual({ at: "build" });
@@ -157,7 +165,7 @@ test("who may sign in decides the settings, the access rule and the app step", (
   expect(proxySetting(a("invite"))).toBeNull();
 });
 
-test("AWS: the profile, the region from it, the stack as the plan, and the company's sign-in on a page of its own", () => {
+test("AWS: the profile, the region from it, the stack as the plan, and the organization's sign-in on a page of its own", () => {
   const sso = options("--host", "aws", "--sign-in", "sso", "--issuer", "https://idp.example.com/pool", "--client", "client-1").answers;
   // One profile: it is taken; its region comes from the profile.
   let r = run(sso, { choices: AWS.choices });
@@ -165,7 +173,7 @@ test("AWS: the profile, the region from it, the stack as the plan, and the compa
   r = run(r.answers, { ...AWS, login: { ok: false, why: "expired" } });
   expect([r.answers.region, r.look]).toEqual(["us-west-2", true]);
   expect(run(r.answers, { ...AWS, login: { ok: false, why: "expired" } }).state).toEqual({ at: "login", why: "expired" });
-  // Several profiles, and none named: the person decides.
+  // Several profiles, and none named: the user decides.
   expect(run(sso, { choices: [{ id: "default", name: "" }, ...AWS.choices!] }).state).toEqual({
     at: "stop",
     why: "Several AWS profiles: default, work. Add --profile with one of them.",
@@ -191,7 +199,7 @@ test("AWS: the profile, the region from it, the stack as the plan, and the compa
     email: { claim: "preferred_username", prefix: "corp|" },
   });
   expect(planText({ ...r.answers, emailClaim: "preferred_username:corp|" }, seen(AWS))).toContain(
-    '• your company\'s sign-in, at a load balancer in front (you type its client secret on a page that opens); the email address in preferred_username, after "corp|"'
+    '• your organization\'s sign-in, at a load balancer in front (you type its client secret on a page that opens); the email address in preferred_username, after "corp|"'
   );
   expect(options("--email-claim", "preferred_username corp|").problems).toEqual([
     '--email-claim: "preferred_username corp|" isn\'t <claim>:<prefix>, like preferred_username:corp| for "corp|ada@example.com".',

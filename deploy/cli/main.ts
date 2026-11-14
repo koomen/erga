@@ -37,7 +37,7 @@
 //                                       adds it to .erga/config.json: its deploy facts, its plain settings, an ops token
 //   bun erga login <host>               a new ops token for a registered instance, when its token runs out
 //   bun erga setup <host> --host ... --sign-in ... [--dry-run]
-//                                       a new instance, on Cloudflare or AWS, from the person's answers: the checks and
+//                                       a new instance, on Cloudflare or AWS, from the user's answers: the checks and
 //                                       the plan (--dry-run), then the build and the first admin (bun erga setup --help)
 
 import { readFileSync } from "node:fs";

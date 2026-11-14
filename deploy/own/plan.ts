@@ -1,4 +1,4 @@
-// A new Erga instance (`bun erga setup <host> --host ... --sign-in ...`): the person's answers, which the agent asked
+// A new Erga instance (`bun erga setup <host> --host ... --sign-in ...`): the user's answers, which the agent asked
 // first and gives as the command's options, and what follows from them alone: the instance's names, its entry in
 // .erga/config.json, its plain settings, its database's first rows, its GitHub App. Pure: no network, no files. The
 // flow (what the command does next) is deploy/own/flow.ts.
@@ -8,12 +8,12 @@ import { deployFacts } from "../pipeline/account";
 import type { Target } from "../pipeline/pipeline";
 
 export type Where = "cloudflare" | "aws";
-/** Who may sign in: people the admin invites, they and a company's people, or everyone the company's single sign-on lets pass. */
-export type SignIn = "invite" | "company" | "sso";
+/** Who may sign in: users the admin invites, they and an organization's users, or everyone the organization's single sign-on lets pass. */
+export type SignIn = "invite" | "organization" | "sso";
 
-/** The person's answers. "" is "not answered yet". No secret is ever in here. */
+/** The user's answers. "" is "not answered yet". No secret is ever in here. */
 export interface Answers {
-  /** The instance's address: a hostname on a domain of the person's account ("erga.example.com"). The command's. */
+  /** The instance's address: a hostname on a domain of the user's account ("erga.example.com"). The command's. */
   host: string;
   /** A staging instance's setup: its primary's host, which has an entry in .erga/config.json (setup sets it itself). */
   stagingOf: string;
@@ -27,12 +27,12 @@ export interface Answers {
   region: string;
   egress: string;
   signIn: SignIn | "";
-  /** company: a GitHub organization's login, or a Google Workspace's domain. */
-  company: string;
+  /** organization: a GitHub organization's login, or a Google Workspace's domain. */
+  organization: string;
   /** sso on Cloudflare (Cloudflare Access): the Zero Trust team's name, and the Access application's audience tag (typed on the page). */
   team: string;
   aud: string;
-  /** sso on AWS (an Application Load Balancer): the company's OIDC issuer's URL, and Erga's client ID there. */
+  /** sso on AWS (an Application Load Balancer): the organization's OIDC issuer's URL, and Erga's client ID there. */
   issuer: string;
   client: string;
   /** sso on AWS, when the sign-in gives no `email`: the claim with the address, and the text before it ("preferred_username:corp|"). */
@@ -51,7 +51,7 @@ export const noAnswers = (host: string): Answers => ({
   region: "",
   egress: "nat-instance",
   signIn: "",
-  company: "",
+  organization: "",
   team: "",
   aud: "",
   issuer: "",
@@ -65,14 +65,14 @@ export const sso = (a: Pick<Answers, "signIn">) => a.signIn == "sso";
 /**
  * Where documents' pages run. Cloudflare: one shared workers.dev address (safe for one author; a domain of their own
  * is a later change). AWS: a domain. With single sign-on it is pages.<host>: the proxy's certificate is the stack's
- * own, and the person's sign-on guards both. Without it, the pages need a whole zone that isn't the app's (a page's
- * script must not share the app's site), so the person names one ("": not answered).
+ * own, and the user's sign-on guards both. Without it, the pages need a whole zone that isn't the app's (a page's
+ * script must not share the app's site), so the user names one ("": not answered).
  */
 export const pagesOf = (a: Answers): string => a.pages || (a.where != "aws" ? "shared" : sso(a) ? `pages.${a.host}` : "");
 
 const HOST = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
-/** Reads one answer as the person gave it: its value, or why it isn't one. */
+/** Reads one answer as the user gave it: its value, or why it isn't one. */
 export function parseAnswer(key: keyof Answers, raw: string): { value: string } | { problem: string } {
   const v = raw.trim();
   const low = v.toLowerCase();
@@ -97,8 +97,8 @@ export function parseAnswer(key: keyof Answers, raw: string): { value: string } 
         "egress is nat-instance, nat-gateway, or <vpc id>/<private subnet id>."
       );
     case "signIn":
-      return is(low == "invite" || low == "company" || low == "sso", low, "signIn is invite, company or sso.");
-    case "company":
+      return is(low == "invite" || low == "organization" || low == "sso", low, "signIn is invite, organization or sso.");
+    case "organization":
       return is(
         /^[a-z0-9][a-z0-9.-]{0,99}$/.test(low),
         low,
@@ -204,9 +204,9 @@ export interface FirstRow {
 
 /**
  * The rows a new server's database gets with its first deploy, only while it has no admin (each host writes them in its
- * own way: first.ts, deploy/aws/setup.ts): the access rule that the answer names. A company's people may sign in and
+ * own way: first.ts, deploy/aws/setup.ts): the access rule that the answer names. An organization's users may sign in and
  * write: a GitHub organization's members, or a Google Workspace's (once Google sign-in is on). With single sign-on,
- * everybody who passes the proxy may. No admin: the person who opens setup's one-time link becomes it
+ * everybody who passes the proxy may. No admin: the user who opens setup's one-time link becomes it
  * (server/identity/claim.ts).
  */
 export function firstRows(a: Answers, now = Date.now()): FirstRow[] {
@@ -216,7 +216,8 @@ export function firstRows(a: Answers, now = Date.now()): FirstRow[] {
     onConflict: "(kind, value) DO UPDATE SET access = 'write'",
   });
   if (sso(a)) return [rule("everybody", "")];
-  if (a.signIn == "company" && a.company) return [rule(a.company.includes(".") ? "workspace" : "github_org", a.company)];
+  if (a.signIn == "organization" && a.organization)
+    return [rule(a.organization.includes(".") ? "workspace" : "github_org", a.organization)];
   return [];
 }
 

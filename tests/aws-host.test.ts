@@ -39,7 +39,7 @@ test("the machine is private: CloudFront's prefix list is its only way in, and i
   expect((stackTemplate(shape).Resources as any).Bucket.DeletionPolicy).toBe("Retain");
 });
 
-test("the way out: a NAT machine, a NAT gateway, or the person's VPC with no network of ours", () => {
+test("the way out: a NAT machine, a NAT gateway, or the user's VPC with no network of ours", () => {
   expect(resources(shape).Nat.Type).toBe("AWS::EC2::Instance");
   expect(resources(shape).PrivateDefault.Properties.InstanceId).toEqual({ Ref: "Nat" });
   const gw = resources({ ...shape, egress: { kind: "nat-gateway" } });
@@ -67,8 +67,8 @@ const aws = {
   where: "aws" as const,
   profile: "work",
   region: "eu-west-1",
-  signIn: "company" as const,
-  company: "it's",
+  signIn: "organization" as const,
+  organization: "it's",
 };
 
 test("on AWS the entry comes from the stack's outputs, and the pages need a domain that fits the edge", () => {
@@ -96,7 +96,7 @@ test("on AWS the entry comes from the stack's outputs, and the pages need a doma
   expect(entry.vars.PROXY_SIGN_IN).toBeUndefined();
   // The CLI's default profile is no profile of the entry.
   expect("profile" in awsEntry({ ...aws, profile: "default" }, "1", {}, undefined)).toBe(false);
-  // CloudFront in front: the pages take a whole zone that is not the app's. With the company's sign-in: a name under it too.
+  // CloudFront in front: the pages take a whole zone that is not the app's. With the organization's sign-in: a name under it too.
   const zones = ["example.com", "example-pages.com"];
   expect(pagesProblem({ ...aws, pages: "example-pages.com" }, zones)).toBeNull();
   expect(pagesProblem({ ...aws, pages: "pages.erga.example.com" }, zones)).toContain("whole zone");
@@ -111,12 +111,12 @@ test("the first rows go only into a database with no admin, and a quote can't le
   expect(sql).toMatch(
     /^INSERT INTO access_rules \(kind, value, access, created\) SELECT 'github_org', 'it''s', 'write', \d+ WHERE NOT EXISTS \(SELECT 1 FROM users WHERE role = 'admin'\) ON CONFLICT/
   );
-  // Nobody is named an admin: the person who opens setup's one-time link becomes it.
+  // Nobody is named an admin: the user who opens setup's one-time link becomes it.
   expect(sql).not.toContain("INSERT INTO users");
   expect(firstSql({ ...aws, signIn: "invite" })).toBe("");
 });
 
-// ------------------------------------------------------------------ the proxy mode: the company's sign-in at a proxy
+// ------------------------------------------------------------------ the proxy mode: the organization's sign-in at a proxy
 
 const oidc = {
   issuer: "https://idp.example.com/pool",
@@ -207,7 +207,7 @@ test("what passes the proxy without the sign-in: the pages by their token, the t
   expect(paths).toEqual(TOKEN_PATHS.flat());
   for (const p of ["/mcp", "/oauth/token", "/oauth/register", "/api/tools/*", "/api/auth/poll", "/api/ops", "/api/health"])
     expect(paths).toContain(p);
-  // Where a person approves an agent, signs in or is an admin stays behind the sign-in.
+  // Where a user approves an agent, signs in or is an admin stays behind the sign-in.
   expect(paths.filter((p) => /^\/(oauth\/authorize|tokens|auth|admin)\b/.test(p) || p == "/*")).toEqual([]);
   expect(by.KeyRule).toEqual([["erga.example.com"], ["/d/*/api/*"], [{ Key: "key", Value: "*" }]]);
   // The server's own browser comes from the NAT's address: a fixed one.
@@ -229,12 +229,12 @@ const viaProxy = {
   host: "erga.example.com",
   region: "us-west-2",
   signIn: "sso" as const,
-  company: "",
+  organization: "",
   issuer: "https://idp.example.com/pool",
   client: "client-1",
 };
 
-test("the company's sign-in on AWS: the server learns its proxy from the stack, and everybody who passes it may write", () => {
+test("the organization's sign-in on AWS: the server learns its proxy from the stack, and everybody who passes it may write", () => {
   // The server learns whose header is the sign-in from the stack's proxy.
   const entry = awsEntry(
     viaProxy,

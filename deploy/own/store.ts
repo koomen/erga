@@ -5,7 +5,7 @@
 //                         FACTORY_KEY, the GitHub App's secret, SNAPSHOT_TOKEN under a primary with a staging
 //                         instance), and the GitHub App's client id. Never printed.
 //
-// A person who loses .erga/ keeps a working server: the secrets stay on the server. Keep a copy of secrets.json in a
+// A user who loses .erga/ keeps a working server: the secrets stay on the server. Keep a copy of secrets.json in a
 // password manager.
 
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";

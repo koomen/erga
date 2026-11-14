@@ -1,20 +1,20 @@
 // The AWS infrastructure of one Erga instance, as CloudFormation templates: what `bun erga setup` writes into
-// .erga/aws/ for the person to read and change, before it makes the stacks (deploy/aws/stack.ts). Pure: no network.
+// .erga/aws/ for the user to read and change, before it makes the stacks (deploy/aws/stack.ts). Pure: no network.
 //
 // The main stack, in the instance's region:
 //   - the network: a new VPC with a private subnet for the machine and a public one for its way out (a NAT machine or a
-//     NAT gateway), or a private subnet of a VPC the person names, which has its own way out;
+//     NAT gateway), or a private subnet of a VPC the user names, which has its own way out;
 //   - the machine (celld and Chrome, deploy/aws/machine.ts): no public address, and only CloudFront may reach its port;
 //   - the bucket (celld's state, the releases, the programs), the KMS key (the bucket and the secrets), the role;
 //   - the edge (what answers the internet), one of two:
 //       CloudFront: two distributions, the app's and the pages', each with the machine as its VPC origin; with domains,
 //       a second stack in us-east-1 holds the ACM certificates, where CloudFront needs them (certificatesTemplate);
-//       a proxy (an Application Load Balancer, public): it signs each person in with the company's OIDC sign-in before Erga, and
+//       a proxy (an Application Load Balancer, public): it signs each user in with the organization's OIDC sign-in before Erga, and
 //       lets pass without it only what Erga's own tokens guard (proxy, below). Its certificate is in this stack;
 //   - with domains: the Route 53 records of the app's name and the pages' wildcard name.
 //
 // The structure follows the answers (the way out, the domains); the sizes and the machine image are the template's
-// parameters, with defaults, which the person may change in the file.
+// parameters, with defaults, which the user may change in the file.
 
 import { PROXY_FREE_PATHS } from "../proxy-paths";
 
@@ -22,7 +22,7 @@ import { PROXY_FREE_PATHS } from "../proxy-paths";
 export interface AwsShape {
   /** The instance's own name: the stack's, and every name in it. */
   stack: string;
-  /** How the machine reaches the internet (the model APIs, sign-in): a NAT machine, a NAT gateway, or the person's VPC. */
+  /** How the machine reaches the internet (the model APIs, sign-in): a NAT machine, a NAT gateway, or the user's VPC. */
   egress: { kind: "nat-instance" } | { kind: "nat-gateway" } | { kind: "vpc"; vpcId: string; subnetId: string };
   /** The domains, each with its Route 53 hosted zone; none: CloudFront's own names (the pages on one shared name). */
   domains: { app: string; appZone: string; pages: string; pagesZone: string } | null;
@@ -34,7 +34,7 @@ export interface AwsShape {
   edge: { kind: "cloudfront"; prefixList: string } | { kind: "proxy"; oidc: Oidc };
 }
 
-/** The company's OIDC sign-in, as its issuer publishes it (/.well-known/openid-configuration), and Erga's client there. */
+/** The organization's OIDC sign-in, as its issuer publishes it (/.well-known/openid-configuration), and Erga's client there. */
 export interface Oidc {
   issuer: string;
   authorize: string;
@@ -53,7 +53,7 @@ export const paramPath = (stack: string) => `/erga/${stack}/`;
  */
 export const paramFolder = (stack: string) => paramPath(stack).slice(0, -1);
 /**
- * The Secrets Manager secret that holds the OIDC client's secret, as plain text: the person who has the secret stores
+ * The Secrets Manager secret that holds the OIDC client's secret, as plain text: the user who has the secret stores
  * it there, and the stack reads it by this name (a dynamic reference). It is never in a file, a command or a chat.
  */
 /**
@@ -567,7 +567,7 @@ function cloudFront(s: AwsShape, prefixList: string): Edge {
 }
 
 /**
- * A proxy in front (an Application Load Balancer, public), with the company's sign-in. Its listener's rules, first match wins:
+ * A proxy in front (an Application Load Balancer, public), with the organization's sign-in. Its listener's rules, first match wins:
  *
  *    1  a request that brings X-Forwarded-Host: refused. celld trusts that header (CELLD_TRUST_FORWARDED_HEADERS) for
  *       https (the proxy's X-Forwarded-Proto), and the proxy passes a caller's own; without it celld reads Host.

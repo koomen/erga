@@ -1,4 +1,4 @@
-// What `bun erga setup` observes before each step of the flow (deploy/own/flow.ts, Seen): the login, the person's
+// What `bun erga setup` observes before each step of the flow (deploy/own/flow.ts, Seen): the login, the user's
 // account, and the server as the world sees it. The dry run's checks are these. It looks at what the answers so far name, and no further. AWS's side
 // is deploy/aws/setup.ts. Under ERGA_DEPLOY_MOCK=1, the account and the servers are a mock Cloudflare's
 // (dev/mock-cloudflare.ts): nothing real.
@@ -71,7 +71,7 @@ export async function getJson<T>(net: Fetch, url: string): Promise<T | null> {
 
 type SignIn = NonNullable<Seen["live"]>["signIn"];
 
-/** Where /auth/github sends a person: GitHub, with this client id and this host's callback, or what's wrong. */
+/** Where /auth/github sends a user: GitHub, with this client id and this host's callback, or what's wrong. */
 export async function signInCheck(net: Fetch, host: string, clientId: string | undefined): Promise<SignIn> {
   const r = await net(`https://${host}/auth/github`, { redirect: "manual", signal: AbortSignal.timeout(8000) }).catch(() => null);
   if (!r) return null;
@@ -86,7 +86,7 @@ export async function signInCheck(net: Fetch, host: string, clientId: string | u
 }
 
 /**
- * The proxy mode: where the proxy in front sends a browser that isn't signed in. To the company's sign-in, away from
+ * The proxy mode: where the proxy in front sends a browser that isn't signed in. To the organization's sign-in, away from
  * this host, or what's wrong. `to`: the host it must send to (Cloudflare Access: the team's). `clientId`, `callback`:
  * the client and the callback it must name there (AWS's proxy has its own, /oauth2/idpresponse).
  */

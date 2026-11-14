@@ -1,10 +1,10 @@
-// The person's steps in the browser that `bun erga setup` opens: a page on this machine's loopback, for one step, that
+// The user's steps in the browser that `bun erga setup` opens: a page on this machine's loopback, for one step, that
 // stops when the step is done. No agent sees these pages or what goes through them.
 //
 //   githubApp     the page posts the app's manifest to GitHub (GitHub's manifest flow needs a form POST); GitHub makes
 //                 the app and comes back with a code; the page changes it for the app's id and secret, into
 //                 .erga/secrets.json (with a staging address: under both hosts, since they share the app)
-//   oidcSecret    single sign-on on AWS: one field for the client secret of the company's sign-in, into Secrets Manager
+//   oidcSecret    single sign-on on AWS: one field for the client secret of the organization's sign-in, into Secrets Manager
 //
 // Trap: a page here never shows a secret, and the command never prints one.
 
@@ -13,7 +13,7 @@ import { esc } from "../../shared/html";
 import { type Answers, githubManifest } from "./plan";
 import { DIR, putSecret } from "./store";
 
-/** Opens `url` in the person's browser. */
+/** Opens `url` in the user's browser. */
 export const openBrowser = (url: string) =>
   void Bun.spawn([process.platform == "darwin" ? "open" : "xdg-open", url], { stdout: "ignore", stderr: "ignore" });
 
@@ -54,7 +54,7 @@ async function step(
   }
 }
 
-/** The GitHub App of `a`: the person clicks Create on GitHub. Its id and secret go into .erga/secrets.json. */
+/** The GitHub App of `a`: the user clicks Create on GitHub. Its id and secret go into .erga/secrets.json. */
 export function githubApp(
   a: Answers,
   ms: number,
@@ -95,10 +95,10 @@ export function githubApp(
   );
 }
 
-/** Single sign-on on AWS: the person types the client secret, and `put` stores it (Secrets Manager). */
+/** Single sign-on on AWS: the user types the client secret, and `put` stores it (Secrets Manager). */
 export function oidcSecret(a: Answers, put: (secret: string) => Promise<void>, ms: number): Promise<string | null> {
   const form = (problem = "") =>
-    html(`<h1 style="font-size:20px">The client secret of your company's sign-in</h1>
+    html(`<h1 style="font-size:20px">The client secret of your organization's sign-in</h1>
 <p>Erga's client <code>${esc(a.client)}</code> at ${esc(a.issuer)}. The secret goes to AWS Secrets Manager, never to your agent.</p>
 ${problem ? `<p style="color:#b42318">${esc(problem)}</p>` : ""}<form method="post" action="/"><input name="secret" type="password" autocomplete="off" style="width:100%;padding:6px 8px" autofocus>
 <p><button>Save</button></p></form>`);

@@ -4,7 +4,7 @@
 //   2. The plan: the templates into .erga/aws/, from the answers (the review shows their resources).
 //   3. The build: AWS's change sets, applied (the certificates first, in us-east-1, when CloudFront is in front); the
 //      entry from the stack's outputs; the secrets into Parameter Store (encrypted with the stack's key); the programs
-//      into the bucket and onto the machine; then `bun erga deploy`'s code, with the first rows. With the company's
+//      into the bucket and onto the machine; then `bun erga deploy`'s code, with the first rows. With the organization's
 //      sign-in at a proxy, its endpoints come from its issuer, and its client's secret is in Secrets Manager (the
 //      page that setup opens puts it there: deploy/own/browser.ts).
 
@@ -45,7 +45,7 @@ const templatesOf = (dir: string, a: Answers) => {
 };
 
 /**
- * The sign-in's endpoints, as its issuer publishes them (OpenID Connect discovery): the proxy sends each person
+ * The sign-in's endpoints, as its issuer publishes them (OpenID Connect discovery): the proxy sends each user
  * to them, so each must be https, and the document must be this issuer's.
  */
 export async function discoverOidc(issuer: string, net: Fetch = fetch): Promise<Omit<Oidc, "clientId">> {
@@ -64,7 +64,7 @@ export async function discoverOidc(issuer: string, net: Fetch = fetch): Promise<
 
 /**
  * The shape of the instance's stack, from the answers and what the account has (its zones, CloudFront's prefix list),
- * and with the company's sign-in what its issuer publishes.
+ * and with the organization's sign-in what its issuer publishes.
  */
 export async function shapeOf(a: Answers, net: Fetch = fetch): Promise<AwsShape> {
   const aws = awsCli(whereOf(a));
@@ -158,7 +158,7 @@ const secretThere = (aws: Aws, name: string) =>
   );
 
 /**
- * The client secret of the company's sign-in, from setup's page into Secrets Manager, where the stack reads it by
+ * The client secret of the organization's sign-in, from setup's page into Secrets Manager, where the stack reads it by
  * its name. It goes through a file of this user's only, never a command line, and the file goes at once.
  */
 export async function putOidcSecret(a: Answers, value: string, dir = DIR) {
@@ -181,7 +181,7 @@ export async function putOidcSecret(a: Answers, value: string, dir = DIR) {
 export const writePlan = async (dir: string, a: Answers) => writeTemplates(dir, await shapeOf(a));
 
 /**
- * The stacks, after the person's yes: each change set, shown in the log and applied. The certificates' stack comes
+ * The stacks, after the user's yes: each change set, shown in the log and applied. The certificates' stack comes
  * first (the main one takes their ARNs). The result: the main stack's outputs.
  */
 export async function applyStacks(dir: string, a: Answers, log: (l: string) => void) {
@@ -230,7 +230,7 @@ export function awsEntry(a: Answers, account: string, outputs: Record<string, st
       app: outputs.AppHost,
       pages: { kind: "domain", domain: pagesOf(a) },
     },
-    // With the company's sign-in: whose signed header is the sign-in (server/identity/proxy.ts): this proxy's, for this client.
+    // With the organization's sign-in: whose signed header is the sign-in (server/identity/proxy.ts): this proxy's, for this client.
     vars: varsOf(a, github, outputs.Proxy),
   };
 }

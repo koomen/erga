@@ -1,6 +1,6 @@
 # Erga on AWS
 
-`bun erga` deploys Erga to Cloudflare or to AWS. The person chooses the host one time, in `bun erga setup`
+`bun erga` deploys Erga to Cloudflare or to AWS. The user chooses the host one time, in `bun erga setup`
 (`provider=aws`). After that, `bun erga deploy`, `rollback`, `status` and the ops page work on both hosts.
 
 On AWS, [celld](https://github.com/denoland/celld) (Deno, Apache-2.0) runs Erga's own Cloudflare release, with no
@@ -25,12 +25,12 @@ name or domain: each instance takes its names from its name in setup, and the AW
 | Part of Erga | On Cloudflare | On AWS |
 | --- | --- | --- |
 | The Worker (`cloudflare/index.ts`) | Workers | celld, on one EC2 machine (t4g.small) in a private subnet |
-| Each document, the homepage, each person's agent, the news hub | Durable Objects | celld cells: SQLite on the machine's disk, copied to S3 |
+| Each document, the homepage, each user's agent, the news hub | Durable Objects | celld cells: SQLite on the machine's disk, copied to S3 |
 | The database (users, settings, the directory) | D1 | celld's D1: a cell, copied to S3 |
 | Blobs (FILES) | R2 | celld's R2: the instance's bucket, under `fleet/r2/` |
 | The editor's files (ASSETS) | Static assets | celld's static assets: the bucket, cached on the disk |
 | A page's own API (LOADER) | Worker Loader | celld's Dynamic Workers |
-| HTTPS | Cloudflare's edge | CloudFront: an ACM certificate for a domain, or CloudFront's own name. Or a proxy with the company's sign-in (below) |
+| HTTPS | Cloudflare's edge | CloudFront: an ACM certificate for a domain, or CloudFront's own name. Or a proxy with the organization's sign-in (below) |
 | Each document's pages origin | A Worker route and a wildcard DNS record | With domains: a second CloudFront with a wildcard certificate, `*.<pages domain>`. Without: one shared CloudFront name |
 | view_page's browser (BROWSER) | Browser Rendering | headless Chrome on the same machine (`ERGA_CHROME`), on the loopback only |
 | The Cache API | Cloudflare's cache | celld's KV, namespace EDGE_CACHE (`cloudflare/kv-cache.ts`): celld's own Cache API always misses |
@@ -39,11 +39,11 @@ name or domain: each instance takes its names from its name in setup, and the AW
 ## The stack
 
 `bun erga setup <host> --host aws ...` writes `.erga/aws/<stack>.json` (and `<stack>-certs.json` with CloudFront in
-front) from the person's answers. The dry run (`--dry-run`) lists each resource, and the agent asks for the person's
+front) from the user's answers. The dry run (`--dry-run`) lists each resource, and the agent asks for the user's
 yes. Then the build writes the templates again, makes AWS's change sets, shows them in its log, and applies them.
 
 - **The network.** A new VPC: a private subnet for the machine, a public one for its way out. The way out is a NAT
-  machine (t4g.nano) or a NAT gateway. Or the person names a VPC and a private subnet of their own, with its own way
+  machine (t4g.nano) or a NAT gateway. Or the user names a VPC and a private subnet of their own, with its own way
   out and an internet gateway (`--egress vpc-.../subnet-...`): the stack then makes no network.
 - **The machine.** No public address. Its firewall lets in only CloudFront's origin-facing prefix list, on celld's
   port. Systems Manager runs each deploy's commands: no SSH.
@@ -54,23 +54,24 @@ yes. Then the build writes the templates again, makes AWS's change sets, shows t
   path and the query.
 - **Domains.** Each must have a Route 53 hosted zone in the account, and the pages' domain must not be under the
   app's. The certificates are in a second stack in us-east-1, where CloudFront needs them; DNS validates them.
-- **Or a proxy, with the company's sign-in**: the proxy mode (`--sign-in sso --issuer <issuer's URL>
+- **Or a proxy, with the organization's sign-in**: the proxy mode (`--sign-in sso --issuer <issuer's URL>
   --client <client ID>`; `server/identity/mode.ts` has the two modes). A public Application Load Balancer takes
-  CloudFront's place. It sends each browser to the company's OIDC sign-in first, and that sign-in is Erga's own: no
+  CloudFront's place. It sends each browser to the organization's OIDC sign-in first, and that sign-in is Erga's own: no
   GitHub, no Google (`server/identity/proxy.ts` reads the proxy's signed header; the setup writes which proxy
-  and which client as `PROXY_SIGN_IN`). The first admin is the person who opens setup's one-time link and signs in
+  and which client as `PROXY_SIGN_IN`). The first admin is the user who opens setup's one-time link and signs in
   (`server/identity/claim.ts`). Everybody who passes the sign-in may make an account.
-  - Erga takes each person's email address from the sign-in: the first of the claims `email`, `upn` and
-    `preferred_username` that looks like one. A sign-in that gives none still signs in, by its ID (`sub`).
-  - The setup reads the sign-in's endpoints from its issuer. The client's secret is never in a file: the person types
+  - Erga takes each user's email address from the sign-in: the first of the claims `email`, `upn` and
+    `preferred_username` that looks like one. A sign-in that gives none still signs in, by its ID (`sub`). A sign-in
+    with the address after a prefix in another claim: `--email-claim <claim>:<prefix>`, and only that claim counts.
+  - The setup reads the sign-in's endpoints from its issuer. The client's secret is never in a file: the user types
     it on a page that setup opens on this machine, which stores it in Secrets Manager as `erga/<stack>/oidc-client-secret`, and the stack reads it there.
   - Without the sign-in pass only: a document's own address (its files by their token; a frame can't sign in); on the
     app's address, what Erga's tokens guard (MCP and its OAuth, the operations, the CLI's token request, the deploy's
     checks: `deploy/proxy-paths.ts`), a page's keyed requests to its room, and the server's own browser, by the NAT's fixed
-    address. A person approves an agent on a page behind the sign-in.
+    address. A user approves an agent on a page behind the sign-in.
   - The proxy refuses a request that brings its own `X-Forwarded-Host`, which celld would take for the host.
   - One certificate, in the stack and its region, for the app's name and the pages' wildcard. The pages' name may be
-    under the app's (`pages.erga.example.com`): the person decides, since under one registrable domain a page's script
+    under the app's (`pages.erga.example.com`): the user decides, since under one registrable domain a page's script
     can set a cookie for that domain.
   - It needs a domain, and the stack's own network (two public subnets; the NAT gets an Elastic IP).
 - **The bucket** holds celld's state, the releases and the programs. Its key (KMS) lets only the machine's role read;
@@ -81,7 +82,7 @@ yes. Then the build writes the templates again, makes AWS's change sets, shows t
 
 The machine reaches only its bucket (S3's gateway endpoint), Parameter Store, Systems Manager, and, for Erga's own
 features, the model APIs and the sign-in providers. celld and Chrome come from the bucket: the CLI downloads each one
-time on the person's machine, checks its SHA-256, and puts it there. There is no outside DNS, no outside certificate
+time on the user's machine, checks its SHA-256, and puts it there. There is no outside DNS, no outside certificate
 authority, and no Caddy.
 
 ## Deploy and rollback
@@ -123,7 +124,7 @@ That run used an earlier deploy script, Caddy and temporary names, with the same
 ## Limits
 
 - Staging on AWS isn't there yet: `--staging` takes a primary on Cloudflare only.
-- The app has a domain in Route 53. The documents' pages have a zone of their own; with the company's sign-in, a name
+- The app has a domain in Route 53. The documents' pages have a zone of their own; with the organization's sign-in, a name
   under the app's (pages.<host>).
 - A secret set in Parameter Store reaches the Worker at the next deploy.
 - One machine: each write waits for S3 (about 90 ms by celld's docs). A second machine on the same bucket makes
@@ -132,5 +133,5 @@ That run used an earlier deploy script, Caddy and temporary names, with the same
   load; a reload fixes it.
 - An admin of the account can still change the key's policy or the bucket's.
 - With a proxy: no edge cache and no compression but celld's own; the proxy's sign-in lasts 7 days, and an
-  editor that is open when it ends gets errors until a reload; Erga's sign-out doesn't end the company's sign-in;
+  editor that is open when it ends gets errors until a reload; Erga's sign-out doesn't end the organization's sign-in;
   `check.ts`'s browser can't pass the sign-in. The proxy was not deployed for real yet.

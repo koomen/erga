@@ -49,8 +49,8 @@ git. Give your coding agent this prompt:
 3. Run this with the answers, with a 10-minute timeout. It makes nothing
    and prints the plan:
 
-       bun erga setup <address> --host cloudflare|aws --sign-in invite|company|sso \
-         [--staging <address>] [--profile <name>] [--company <org or domain>] \
+       bun erga setup <address> --host cloudflare|aws --sign-in invite|organization|sso \
+         [--staging <address>] [--profile <name>] [--organization <org or domain>] \
          [--team <name> --aud <tag>] [--issuer <URL> --client <ID>] [--pages <domain>] --dry-run
 
    Show the user the plan. On their yes, run it again without `--dry-run`.
