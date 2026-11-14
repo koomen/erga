@@ -13,6 +13,8 @@ declare global {
       config: ReaderConfig;
       /** The editor put the page back where it was. */
       placed?(): void;
+      /** Stylesheets of the document changed (their paths in it): their new rules, in the page as it is. False: it can't. */
+      restyle?(paths: string[]): Promise<boolean>;
       /** The viewer's last word on editing (erga-mode), which the editor reads as it loads, and hears after. */
       mode?: unknown;
       /** The viewer's last word on comments (erga-comments: shown or hidden), for the editor as it loads. */

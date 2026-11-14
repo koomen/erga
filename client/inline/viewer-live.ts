@@ -1,8 +1,8 @@
 // The viewer, live (server/pages/viewer.ts): the document's page shows each change while it's open, whoever makes it
 // (an editor, their agent, an agent over the API). The page listens on the document's own socket as a watcher
 // (<base>/api/room?watch=view: it never joins the room), which says the version viewers see now as it opens and as it
-// changes (Document.tellView, at most every 2 s). A version other than the one shown loads the page again in its frame,
-// where it was scrolled to (?erga-y: the reader puts it back there). Not while the editor is open in this page, nor in
+// changes (document/view.ts, at most every 2 s). A version other than the one shown loads the page again with its view
+// kept (ergaFrames.reload: the old page shows until the new one has the same view). Not while the editor is open in this page, nor in
 // a hidden tab: it catches up when it shows. A dropped socket comes back by itself, and hears the version first. A
 // deleted document (4404), or one no longer theirs (4403), never comes back, and the page says so (shared/socket-phase.ts).
 //
@@ -18,13 +18,11 @@ export default function viewerLive(base: string): void {
   const ver = document.querySelector<HTMLMetaElement>('meta[name="erga-ver"]')!.content;
   let shown = ver,
     wanted = ver,
-    y = 0,
+    // The files that changed since the version shown; null: not known (a version heard as the socket opened).
+    changed: Set<string> | null = new Set(),
+    asks = 0,
     last = 0,
     timer: ReturnType<typeof setTimeout> | undefined;
-  // Where the reader is scrolled to, as the page in the frame tells (server/pages/reader.ts).
-  addEventListener("message", (e) => {
-    if (window.ergaFrames.from(e) && e.data?.type == "erga-scroll") y = Number(e.data.y) || 0;
-  });
   // (erga-commenting: a commenter's page shows each change in place itself, viewer-comment.ts.)
   const editing = () => document.body.classList.contains("erga-editing") || document.body.classList.contains("erga-commenting");
   /** Loads the version wanted, if it isn't the one shown: now, or once the last load is 2 s old. */
@@ -41,11 +39,26 @@ export default function viewerLive(base: string): void {
     // A reader's files are at an address with the version in it (server/documents/view.ts): the new version's address.
     const pages = document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]');
     if (pages) pages.content = pages.content.replace(/\/@[^/]+\/$/, "/@" + wanted + "/");
-    // In place of the entry shown (location.replace; the frame's src would add an entry to the tab's history, and Back
-    // would show the old version of the same page). ?erga-v: a new address for each version (the trap above).
-    window.ergaFrames.frame.contentWindow!.location.replace(
-      window.ergaFrames.src() + "?erga-v=" + wanted + (y > 0 ? "&erga-y=" + y : "") + location.hash
-    );
+    // With no new entry in the tab's history (Back would show the old version of the same page). ?erga-v: a new
+    // address for each version (the trap above).
+    const reload = () => window.ergaFrames.reload("?erga-v=" + shown);
+    const paths = changed ? [...changed] : [];
+    changed = new Set();
+    // Stylesheets only: the page takes their new rules in place (client/inline/reader.ts, restyle), and keeps its view
+    // and its scripts' state. If it can't, or doesn't answer, it loads again.
+    if (!paths.length || !paths.every((p) => /\.css$/i.test(p)) || !pages) return reload();
+    const id = ++asks;
+    const done = (ok: boolean) => {
+      removeEventListener("message", heard);
+      clearTimeout(late);
+      if (!ok) reload();
+    };
+    const heard = (e: MessageEvent) => {
+      if (window.ergaFrames.from(e) && e.data?.type == "erga-restyled" && e.data.id === id) done(e.data.ok === true);
+    };
+    const late = setTimeout(() => done(false), 3000);
+    addEventListener("message", heard);
+    window.ergaFrames.send({ type: "erga-restyle", id, paths, files: pages.content });
   }
   document.addEventListener("visibilitychange", show);
   // Who writes (an experiment): a small pill at the top of the page while changes come, then "Updated now", then gone
@@ -77,11 +90,12 @@ export default function viewerLive(base: string): void {
     message(e) {
       if (typeof e.data != "string") return;
       try {
-        const m = JSON.parse(e.data) as { type?: string; ver?: string; by?: string };
+        const m = JSON.parse(e.data) as { type?: string; ver?: string; by?: string; paths?: string[] };
         if (m.type == "view" && m.ver) {
           // Someone changed it (not the version it hears as the socket opens): the pill says who writes.
           if (m.ver != wanted && typeof m.by == "string" && m.by && !editing())
             writer({ type: "change", by: writerName(m.by.slice(0, 200)) });
+          if (m.ver != wanted) changed = changed && Array.isArray(m.paths) ? new Set([...changed, ...m.paths]) : null;
           wanted = m.ver;
           show();
         }

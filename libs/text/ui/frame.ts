@@ -5,8 +5,9 @@
 // replica of the room (collab.ts), sends every edit there and applies everyone else's, shows where the others' carets
 // are and shows its own to them. It does everything that needs the page's DOM: typing, selections, marks and carets,
 // its own controls (controls.ts: the style bar, the link bar), the comments (comments.ts), files dropped on the page
-// (uploads.ts), on the page as it is, which the pages origin served from the text (shared/page-html.ts). It sends the
-// viewer nothing. When the viewer says "view", it stops, and the page carries on as it is.
+// (uploads.ts), on the page as it is, which the pages origin served from the text (shared/page-html.ts). It asks the
+// viewer for one thing: the page loaded again (erga-reload), for a change it can't show in place. When the viewer says
+// "view", it stops, and the page carries on as it is.
 //
 // Trap: in the frame, a `setTimeout` can wait for seconds in a tab that isn't in front. Code that must run soon after
 // an edit here (the replica kept in IndexedDB, the page in the copy) runs at once, and joins what comes meanwhile.
@@ -99,6 +100,7 @@ let zoom = 1;
 window.addEventListener("message", (e: MessageEvent) => {
   if (e.source != window.parent || e.origin != SHELL) return;
   if (e.data?.type == "erga-mode") setMode(e.data as EditMode);
+  else if (e.data?.type == "erga-leave") leave();
   else if (e.data?.type == "erga-full") wasFull ||= e.data.on === true && !!page;
   else if (e.data?.type == "erga-comments") {
     commentsShown = e.data.show !== false;
@@ -239,11 +241,17 @@ function join(run: number) {
       if (page.stale) refreshSoon();
       queuePeers();
     },
-    // Another file of the folder (a stylesheet, a script, an image) changed: the page is made again from its files.
+    // Another file of the folder (a stylesheet, a script, an image) changed: a stylesheet's new rules go into the page
+    // as it is (the page's first script: restyle), at once; for anything else the page is made again from its files.
     // Not another page's text, which this page doesn't show, nor a file this editor puts in for a drop (`sent`): the
     // page doesn't use it until the editor puts it on the page.
     onFiles: (paths) => {
-      if (paths.filter((p) => !/\.(html?|md)$/i.test(p) && !sent.delete(p)).length) refreshSoon();
+      const changed = paths.filter((p) => !/\.(html?|md)$/i.test(p) && !sent.delete(p));
+      if (!changed.length) return;
+      void (window.__ergaReader?.restyle?.(changed) ?? Promise.resolve(false)).then((done) => {
+        if (!done) refreshSoon();
+        else controls?.queue();
+      });
     },
     onPresence: () => queuePeers(),
     onStatus: () => {},
@@ -407,7 +415,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
           watchDark();
           queuePeers();
           performance.mark("erga:rendered");
-          // Made afresh: the line the reader was on, where it was (the viewer's script had it near there: ?erga-y).
+          // Made afresh: the line the reader was on, where it was (the page's first script had it near there: erga-keep).
           if (view) {
             window.__ergaReader?.placed?.();
             page.restoreView(view);
@@ -601,13 +609,7 @@ function refreshSoon() {
 // Leaving the page (the tab reloads for a new release, or closes): what the editor holds goes with the tab, for the
 // page that comes in its place.
 addEventListener("pagehide", () => {
-  // Loading again: the keys typed since it handed its state over (the new page can take long to come) go with it too.
-  if (state.phase == "reloading" && leaving && page) {
-    leaving.held = [...(leaving.held ?? []), ...page.takeHeld()];
-    carry(leaving);
-    return;
-  }
-  if (!page || !collab || state.phase != "editing") return;
+  if (leave() || !page || !collab || state.phase != "editing") return;
   carry({
     path: state.mode.path,
     state: stateJSON(page.state),
@@ -615,6 +617,19 @@ addEventListener("pagehide", () => {
     room: collab.held(),
   });
 });
+
+/**
+ * Loading again: the keys typed since it handed its state over go with it too. As this page goes, and before, when
+ * the page that loads in its place is up and has the keys from then on (the viewer's erga-leave: this page still shows,
+ * client/common/frame-swap.ts). False if it isn't loading again.
+ */
+function leave() {
+  if (state.phase != "reloading") return false;
+  // (One time: the page that comes takes what this one kept as its editor starts, and nothing after that.)
+  if (leaving && page) carry({ ...leaving, held: [...(leaving.held ?? []), ...page.takeHeld()] });
+  leaving = null;
+  return true;
+}
 
 /**
  * The page made afresh from the text (a change the editor can't patch in, or a page made from another text): once the
@@ -646,11 +661,9 @@ function flush(run: number) {
 function reloadNow() {
   const path = editing()!.path;
   if (page) carry((leaving = { path, state: stateJSON(page.state), view: reloadView, held: page.takeHeld(), focus: document.hasFocus() }));
-  const y = Math.round(scrollY);
-  // With the page's place in its own address (#3: agents/document/PROMPT.md, rule 11). (A reload: going to the same
-  // address with a hash only goes to the place.)
-  window.history.replaceState(null, "", location.pathname + "?erga-edit" + (y > 0 ? `&erga-y=${y}` : "") + location.hash);
-  location.reload();
+  // The viewer loads the page again, with its view kept (client/inline/viewer-frames.ts): this page shows until the
+  // new one has the same view.
+  window.parent.postMessage({ type: "erga-reload" }, SHELL);
 }
 
 /**

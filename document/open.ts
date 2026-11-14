@@ -64,8 +64,8 @@ export interface RoomHost {
   putFile(path: string, bytes: Uint8Array, by: string): Promise<{ kind: "text" | "file"; replaced: boolean }>;
   kind(): DocKind;
   setKind(kind: DocKind): Effect.Effect<void, StoreError>;
-  /** An edit to the files reached the room, by `author` (null: unknown). */
-  edited(author: string | null): void;
+  /** An edit to the files reached the room, by `author` (null: unknown): `paths`, the files it changed. */
+  edited(author: string | null, paths: string[]): void;
 }
 
 /** Opens the room on the document's storage, for as long as the document lives. */
@@ -142,9 +142,10 @@ export async function openRoom(h: RoomHost): Promise<Opened> {
   });
   // Every edit to the files, and who made it: a version is cut once a burst of them ends (History.noteEdit).
   room.doc.on("afterTransaction", (tr: Y.Transaction) => {
-    if (!touchesFiles(room.doc, tr)) return;
+    const paths = filesTouched(room.doc, tr);
+    if (!paths) return;
     const a = authorOf(room.doc, tr);
-    h.edited(a ? (a.kind == "disk" ? (info.disk ? "on disk" : (room.by ?? "files published")) : editorOf(a)) : null);
+    h.edited(a ? (a.kind == "disk" ? (info.disk ? "on disk" : (room.by ?? "files published")) : editorOf(a)) : null, paths);
   });
   // Its name from its record once the directory has said it; a rename goes to the directory, and what it answers is kept.
   const named = namingFor(deps.directory, info.id, () => titleOf(room.text(info.index) ?? ""));
@@ -204,14 +205,21 @@ export async function openRoom(h: RoomHost): Promise<Opened> {
   };
 }
 
-/** Whether a transaction changed a file: a text's content, or the list of files or other files (images). */
-function touchesFiles(doc: Y.Doc, tr: Y.Transaction): boolean {
+/**
+ * The files a transaction changed: each text whose content changed, and each file added, taken away or replaced
+ * (texts and other files: images). Null if it changed none, nor the list of folders.
+ */
+function filesTouched(doc: Y.Doc, tr: Y.Transaction): string[] | null {
   const fileMap = texts(doc) as Y.AbstractType<any>,
     assetMap = assets(doc) as Y.AbstractType<any>,
     folderMap = folders(doc) as Y.AbstractType<any>;
-  for (const type of tr.changed.keys()) {
-    if (type === fileMap || type === assetMap || type === folderMap) return true;
-    if (type._item?.parent === fileMap) return true;
+  const paths = new Set<string>();
+  let any = false;
+  for (const [type, keys] of tr.changed) {
+    const path = type._item?.parent === fileMap ? type._item.parentSub : null;
+    if (type === fileMap || type === assetMap) for (const k of keys) if (k != null) paths.add(k);
+    if (path) paths.add(path);
+    any ||= type === fileMap || type === assetMap || type === folderMap || type._item?.parent === fileMap;
   }
-  return false;
+  return any ? [...paths] : null;
 }

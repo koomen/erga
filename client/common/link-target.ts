@@ -65,7 +65,7 @@ function page(path: string, frame: string, p: Place, tail: string): LinkTarget {
   return { kind: "page", path, frame, public: p.address ? pageUrl(p.address, fileOf(path)) + publicTail(tail) : null };
 }
 
-/** A query and hash for a page's public address: without the viewer's own parameters for the frame (?erga-edit, ?erga-y=). */
+/** A query and hash for a page's public address: without the viewer's own parameters for the frame (?erga-edit, ?erga-keep=). */
 function publicTail(tail: string): string {
   const at = tail.indexOf("#"),
     q = (at < 0 ? tail : tail.slice(0, at))

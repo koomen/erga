@@ -2,12 +2,15 @@
 // cut; only people who can edit read the versions. And a document's page loads one time: its scripts run one time
 // and its media load one time, in the viewer, in the editor, after a reload and through the pencil; in the editor
 // the document is where it stays from the first frame.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { editor, type Editor } from "../helpers/editor";
+import { ROOT } from "../helpers/env";
 import { expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
 import { newToken } from "../helpers/new-token";
 import { framed, pagesFetch } from "../helpers/pages-fetch";
 import { idOf, runTool, textOf } from "../helpers/tools";
-import { moved, painted, still, watch, type Spot } from "./frames";
+import { moved, painted, still, views, watch, type Spot } from "./frames";
 import { docFrame, inDoc, openViewer, signIn, viewing } from "./viewer";
 
 const s = await servers.main();
@@ -168,23 +171,91 @@ journey("a reader's open page shows an agent's change", () => {
     expect((await runTool(s.root, "versions", { document: id }, { token: "erga_forged" })).status).toBe(401);
   });
 
-  // The owner's open page stayed as it was until a reload by hand: the files' address of someone who can edit has no
-  // version, and with a place in the address (#), the same address again only moved the page to its place.
-  test("someone who can edit, at a place in the page (#), sees an agent's change to a linked stylesheet alone", async () => {
-    // (A document of its own: the first one's viewers hear of a change at most every 2 s.)
-    const made = await runTool(s.root, "create_document", {
-      title: "Live edit",
-      kind: "project",
-      files: { "index.html": FIRST, "style.css": "h1 { color: rgb(200, 0, 0) }" },
-    });
+  /** A document of its own (the first one's viewers hear of a change at most every 2 s), open in the tab at #place. */
+  const openOwn = async (title: string, files: Record<string, string>) => {
+    const made = await runTool(s.root, "create_document", { title, kind: "project", files });
     expect(made.ok, made.error).toBe(true);
     const own = JSON.parse(textOf(made.result)) as { id: string; address: string };
     await page.goto(`${s.root}${own.address}#place`);
-    expect((await seen())!.at).toMatch(/^\/t\/[^/]+\/index\.html$/);
-    const changed = await agent("edit", { document: own.id, path: "style.css", edits: [{ oldText: "200, 0, 0", newText: "0, 0, 200" }] });
-    expect(changed.ok, changed.text).toBe(true);
-    await expect.poll(() => inDoc<string>(page, `getComputedStyle(document.querySelector("h1")).color`)).toBe("rgb(0, 0, 200)");
+    // (With its stylesheet. The files' address of someone who can edit has no version in it.)
+    const at = `performance.getEntriesByType("resource").some((r) => r.name.endsWith("/style.css")) && document.readyState == "complete" ? location.pathname : null`;
+    expect(await until(() => inDoc<string>(page, at), 10_000, "the page with its stylesheet")).toMatch(/^\/t\/[^/]+\/index\.html$/);
+    return own;
+  };
+  /** The mouse's wheel, over a point of the document's page. */
+  const wheel = async (x: number, y: number, dx: number, dy: number) => {
+    const at = await page.evaluate(() => document.getElementById("frame")!.getBoundingClientRect());
+    await page.mouse.move(at.left + x, at.top + y);
+    await page.mouse.wheel(dx, dy);
+  };
+  /** The page that shows is the only one, and it is in sight (a page that loads again is out of sight until it has its view). */
+  const shows = async () =>
+    (await page.evaluate(() => document.querySelectorAll("iframe.erga-view").length)) == 1 &&
+    (await inDoc<string>(page, `getComputedStyle(document.documentElement).visibility`)) == "visible";
+
+  // Was a bug (Pete's): each time the page loaded again, the reader saw its start, then a jump to where they were;
+  // loaded again by the person, a page in the viewer opened at its top.
+  test("someone who can edit, scrolled down a long page: an agent's change to the page, and the tab loaded again, show the page where it was on every frame the tab paints", async () => {
+    const own = await openOwn("Live scroll", {
+      "index.html": `${LONG.replace("<h1>", `<link rel="stylesheet" href="style.css"><h1>`)}<p>The last line.</p>`,
+      "style.css": "h1 { color: rgb(200, 0, 0) }",
+    });
+    await wheel(300, 300, 0, 900);
+    await expect.poll(() => inDoc<number>(page, "scrollY")).toBe(900);
+    await inDoc(page, "window.__first = true");
+    // The change is to a line out of sight: the picture must stay the same. The page loads again in a second frame,
+    // and the first one shows until the new page is where the old one was.
+    const edited = await views(page, async () => {
+      const changed = await agent("edit", {
+        document: own.id,
+        path: "index.html",
+        edits: [{ oldText: "The last line.", newText: WRITTEN }],
+      });
+      expect(changed.ok, changed.text).toBe(true);
+      await expect
+        .poll(async () => !(await inDoc(page, "window.__first")) && (await shown()).includes(WRITTEN) && (await shows()))
+        .toBe(true);
+      expect(await inDoc<number>(page, "scrollY")).toBe(900);
+    });
+    expect(edited, "the agent's change: no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
+    // The person loads the tab again (⌘R): the page is out of sight until it is where it was.
+    const again = await views(page, async () => {
+      await page.reload();
+      await expect.poll(async () => (await inDoc<number>(page, "scrollY")) == 900 && (await shows())).toBe(true);
+    });
+    expect(again.moved, "⌘R: no frame with another view").toEqual([]);
     expect(await inDoc<string>(page, "location.hash")).toBe("#place");
+  });
+
+  // The owner's open page stayed as it was until a reload by hand: the files' address of someone who can edit has no
+  // version, and with a place in the address (#), the same address again only moved the page to its place. Then the
+  // page loaded again for the stylesheet, and a canvas written by hand (its camera is its script's alone) lost its view.
+  test("a canvas written by hand, moved, with a pane scrolled: an agent's change to its stylesheet shows in the page as it is, which loads nothing again; the tab loaded again keeps the pane's scroll", async () => {
+    const pan = readFileSync(join(ROOT, "e2e/fixtures/pan/index.html"), "utf8").replace(
+      "</head>",
+      `<link rel="stylesheet" href="style.css"></head>`
+    );
+    const own = await openOwn("Live board", { "index.html": pan, "style.css": "h2 { color: rgb(200, 0, 0) }" });
+    await wheel(300, 300, -140, -110);
+    await wheel(1100, 300, 0, 420);
+    const view = () =>
+      inDoc<unknown[]>(
+        page,
+        `[document.querySelector(".board").style.transform, document.querySelector(".side").scrollTop, location.hash, !!window.__first]`
+      );
+    await inDoc(page, "window.__first = true");
+    await expect.poll(view).toEqual(["translate(140px, 110px)", 420, "#place", true]);
+    const edited = await views(page, async () => {
+      const changed = await agent("edit", { document: own.id, path: "style.css", edits: [{ oldText: "200, 0, 0", newText: "0, 0, 200" }] });
+      expect(changed.ok, changed.text).toBe(true);
+      await expect.poll(() => inDoc<string>(page, `getComputedStyle(document.querySelector("h2")).color`)).toBe("rgb(0, 0, 200)");
+    });
+    expect(edited, "no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
+    expect(await view(), "the same page: its camera, its pane, its place").toEqual(["translate(140px, 110px)", 420, "#place", true]);
+    // Loaded again by the person: Erga brings back what the browser holds (the pane's scroll, the address). The
+    // board's camera is two variables of the page's script: it starts again (agents/document/PROMPT.md, rule 11).
+    await page.reload();
+    await expect.poll(view).toEqual(["", 420, "#place", false]);
   });
 });
 

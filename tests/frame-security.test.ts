@@ -48,7 +48,7 @@ test("the document's page is in one frame on its pages origin, for everyone: nev
   expect(editing.tag).not.toContain("src=");
   expect(editing.tag).toContain(`allow="${EDITOR_ALLOW}"`);
   expect(editing.page).toMatch(/\.src\s*=\s*[\w$.]*ergaFrames\.src\(\)\s*\+/);
-  expect(editing.page).toContain('"?erga-edit"');
+  expect(editing.page).toContain('"erga-edit"');
   expect(EDITOR_ALLOW, "no full screen").toContain("fullscreen 'none'");
   expect(PAGE_SANDBOX).not.toMatch(/allow-top-navigation|allow-popups-to-escape-sandbox/);
 });

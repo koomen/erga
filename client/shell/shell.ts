@@ -44,7 +44,7 @@ export interface Shell {
   as: string;
   /** The host's endpoints, as this person. */
   api: (path: string) => string;
-  frame: HTMLIFrameElement;
+  readonly frame: HTMLIFrameElement;
   docId: string;
 
   info: DocInfo;

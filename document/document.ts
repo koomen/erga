@@ -239,7 +239,7 @@ export class Document {
       },
       info: () => this.readInfo(),
       // (`by`: who changed it last, for the pill that tells a reader who writes: client/inline/viewer-live.ts.)
-      tell: (ver) => this.opened?.broadcast({ type: "view", ver, ...(this.lastAuthor ? { by: this.lastAuthor } : {}) }),
+      tell: (ver, paths) => this.opened?.broadcast({ type: "view", ver, paths, by: this.lastAuthor ?? undefined }),
     });
   }
 
@@ -1029,9 +1029,9 @@ export class Document {
       putFile: (path, bytes, by) => this.uploads.putFile(path, bytes, by),
       kind: () => this.info?.kind ?? "project",
       setKind: (kind) => this.setKind(kind),
-      edited: (author) => {
+      edited: (author, paths) => {
         this.lastAuthor = author;
-        this.views.changed();
+        this.views.changed(paths);
         this.history.noteEdit(author);
       },
     }).catch((e) => {

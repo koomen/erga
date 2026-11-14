@@ -1,7 +1,8 @@
 // The document's page, in the viewer's one frame on its own origin: the viewer's one word to the editor in it (edit,
 // with the edit key, or view: libs/text/ui/mode.ts), the zoom the frame is drawn at, and what the page's first script
 // (client/inline/reader.ts, Erga's) tells the viewer while editing: the viewer's shortcuts pressed in the page, a press
-// on it, a zoom gesture, a link to another of the document's pages, the page's problems. The editor itself says nothing.
+// on it, a zoom gesture, a link to another of the document's pages, the page's problems. The editor itself asks for one
+// thing: the page loaded again (erga-reload), which the viewer does with the page's view kept (viewer-frames.ts).
 // Everything that comes from the page is checked: the page itself could have sent it.
 
 import type { EditMode } from "../../libs/text/ui/mode";
@@ -14,7 +15,8 @@ import type { RawProblem } from "./problems";
 export type EditWord = Omit<Extract<EditMode, { mode: "edit" }>, "type" | "mode" | "zoom" | "timescale" | "check">;
 
 export interface PageFrameConfig {
-  frame: HTMLIFrameElement;
+  /** The frame now: a load of the page again puts a new one in its place (client/inline/viewer-frames.ts). */
+  frame: () => HTMLIFrameElement;
   /** The frame's origin: messages from anywhere else are ignored. */
   origin: string;
   /** The address of the document's files there (with the token that opens them): another of its pages is at its path under it. */
@@ -39,18 +41,16 @@ export interface PageFrameConfig {
 }
 
 export function mountPageFrame(c: PageFrameConfig) {
-  const frame = c.frame;
   /** In the editor: the page in the frame runs the editor. */
   const active = () => c.told().mode == "edit";
   /** The level the page is drawn at (zoom.ts). */
   let zoom = 1;
   /** The page zooms itself (window.ergaZoom), so the viewer's zoom goes to it, not to the frame. */
   let zoomsItself = false;
-  /** Where the page is scrolled to, as it last said. */
-  let scrollY = 0;
 
   const post = (m: unknown) => {
     // A frame whose page hasn't come yet (its first, empty document is this origin's): the page says hello when it comes.
+    const frame = c.frame();
     try {
       void frame.contentWindow?.location.href;
       return;
@@ -80,6 +80,7 @@ export function mountPageFrame(c: PageFrameConfig) {
 
   const num = (n: unknown): n is number => typeof n == "number" && Number.isFinite(n);
   window.addEventListener("message", (e) => {
+    const frame = c.frame();
     if (e.source != frame.contentWindow || e.origin != c.origin || typeof e.data?.type != "string") return;
     const m = e.data as Record<string, unknown> & { type: string };
     // A page in the frame (again: it loaded again, or went to another page): the editor in it, if in the editor.
@@ -90,7 +91,6 @@ export function mountPageFrame(c: PageFrameConfig) {
       if (active() && document.activeElement == frame) frame.focus();
       return;
     }
-    if (m.type == "erga-scroll" && num(m.y)) scrollY = Math.max(0, m.y);
     if (m.type == "erga-zooms" && zoomsItself != (m.on === true)) {
       zoomsItself = m.on === true;
       c.onZooms();
@@ -119,6 +119,10 @@ export function mountPageFrame(c: PageFrameConfig) {
     }
     if (!active()) return;
     switch (m.type) {
+      // The page's editor asks for the page made again from its files (libs/text/ui/frame.ts, reloadNow): with its view kept.
+      case "erga-reload":
+        window.ergaFrames.reload("?erga-edit");
+        return;
       case "erga-key": {
         const k = m.keys as Record<string, unknown> | undefined;
         if (k && typeof k.key == "string")
@@ -162,14 +166,10 @@ export function mountPageFrame(c: PageFrameConfig) {
      * editor starts afresh there.
      */
     load(path: string) {
-      scrollY = 0;
-      frame.contentWindow?.location.replace(c.files + path.split("/").map(encodeURIComponent).join("/"));
+      c.frame().contentWindow?.location.replace(c.files + path.split("/").map(encodeURIComponent).join("/"));
     },
     focus() {
-      frame.focus();
-    },
-    get scrollY() {
-      return scrollY;
+      c.frame().focus();
     },
     get zoomsItself() {
       return zoomsItself;
@@ -187,7 +187,8 @@ export function mountPageFrame(c: PageFrameConfig) {
       if (z == zoom) return;
       zoom = z;
       // At once, as the browser's own zoom: not the frame's move as the agent's panel opens (its width's transition).
-      const root = document.documentElement;
+      const root = document.documentElement,
+        frame = c.frame();
       frame.style.transition = "none";
       if (z == 1) root.style.removeProperty("--erga-zoom");
       else root.style.setProperty("--erga-zoom", String(z));

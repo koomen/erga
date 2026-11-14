@@ -50,8 +50,6 @@ declare global {
 interface EditorKept {
   /** The page it was on: the rest applies only to the same one. */
   path: string;
-  /** Where the page was scrolled to (the page opens there again: server/pages/viewer.ts, ?erga-y). */
-  scroll: number;
   mode: "text" | "html";
   pages: boolean;
   settings: boolean;
@@ -92,7 +90,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
 
   // ---------------------------------------------------------------- load
 
-  const frame = $("frame") as HTMLIFrameElement;
   // Who this tab is: whoever's signed in. In local development a tab can be
   // someone else, ?user=Ada (only the dev server honours it), so every
   // request it makes says so. Tabs that are the same person share an agent
@@ -287,7 +284,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     me,
     as,
     api,
-    frame,
     docId: BASE.replace(/^\/d\//, ""),
     addressOf,
     goTo,
@@ -296,6 +292,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     currentSelection,
     currentState,
   });
+  // (Asked each time: a load of the page again puts a new frame in its place, client/inline/viewer-frames.ts.)
+  Object.defineProperty(shell, "frame", { get: () => window.ergaFrames.frame });
   // Editing, as the viewer says (client/inline/viewer-edit-boot.ts: it tells setEditing from now on), and full screen.
   shell.editor = mountEditor(
     shell,
@@ -320,7 +318,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   const pagesUrl = document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]')?.content ?? "";
   const pagesOrigin = new URL(pagesUrl, location.href).origin;
   const page = (shell.page = mountPageFrame({
-    frame,
+    frame: () => window.ergaFrames.frame,
     origin: pagesOrigin,
     files: pagesUrl,
     told: () => shell.editor.state.told,
@@ -541,7 +539,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       "editor",
       (): EditorKept => ({
         path: shell.pagePath,
-        scroll: shell.editor.state.view == "text" ? page.scrollY : 0,
         mode: shell.editor.state.view,
         pages: !$("pages").hidden,
         settings: !!shell.docSettings?.isOpen(),

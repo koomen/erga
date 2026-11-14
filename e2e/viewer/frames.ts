@@ -135,3 +135,80 @@ export function still(r: Painted, want: Spot, what: string) {
     `${what}: frames without the whole document (of ${r.ink.join(" ")})`
   ).toEqual([]);
 }
+
+/** What the tab painted while something ran: how many frames, those with another view of the document, those without it. */
+export type Views = { frames: number; moved: number[]; empty: number };
+
+/**
+ * Records every frame that the tab paints while `act` runs, and compares each with the picture before `act`: inside
+ * the document's frame, below Erga's bars, without the bottom middle (Erga's notes and a deck's steps). `moved`: the
+ * frames that show the document in another view (how much of the picture differs, in parts of 1000). `empty`: the
+ * frames that show no document (one flat colour: the page was not there).
+ */
+export async function views(page: Page, act: () => Promise<void>): Promise<Views> {
+  const cdp = await page.context().newCDPSession(page);
+  const before = (await cdp.send("Page.captureScreenshot", { format: "png" })).data;
+  const frames: string[] = [];
+  cdp.on("Page.screencastFrame", (f) => {
+    frames.push(f.data);
+    cdp.send("Page.screencastFrameAck", { sessionId: f.sessionId }).catch(() => {});
+  });
+  const { width, height } = page.viewportSize()!;
+  await cdp.send("Page.startScreencast", { format: "png", everyNthFrame: 1, maxWidth: width, maxHeight: height });
+  try {
+    await act();
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null)))));
+  } finally {
+    await cdp.send("Page.stopScreencast").catch(() => {});
+    await cdp.detach().catch(() => {});
+  }
+  const seen = await page.evaluate(
+    async ({ before, frames }) => {
+      const pixels = async (b64: string) => {
+        const img = new Image();
+        img.src = `data:image/png;base64,${b64}`;
+        await img.decode();
+        const c = document.createElement("canvas");
+        c.width = img.width;
+        c.height = img.height;
+        const g = c.getContext("2d", { willReadFrequently: true })!;
+        g.drawImage(img, 0, 0);
+        return g.getImageData(0, 0, img.width, img.height);
+      };
+      const r = document.getElementById("frame")!.getBoundingClientRect();
+      const ref = await pixels(before),
+        w = ref.width,
+        k = w / innerWidth;
+      const x0 = Math.round(r.left * k),
+        x1 = Math.round(r.right * k),
+        y0 = Math.round((Math.max(r.top, 0) + 64) * k),
+        y1 = Math.round(r.bottom * k);
+      const out: { diff: number; flat: number }[] = [];
+      for (const f of frames) {
+        const d = (await pixels(f)).data;
+        const tones = new Map<number, number>();
+        let n = 0,
+          diff = 0;
+        for (let y = y0; y < y1; y += 2)
+          for (let x = x0; x < x1; x += 2) {
+            // (The bottom middle: Erga's notes on the page, a deck's steps.)
+            if (y > y1 - 90 * k && x > w * 0.3 && x < w * 0.8) continue;
+            const i = (y * w + x) * 4;
+            n++;
+            if (Math.abs(d[i] - ref.data[i]) + Math.abs(d[i + 1] - ref.data[i + 1]) + Math.abs(d[i + 2] - ref.data[i + 2]) > 48) diff++;
+            const tone = (d[i] >> 3) | ((d[i + 1] >> 3) << 5) | ((d[i + 2] >> 3) << 10);
+            tones.set(tone, (tones.get(tone) ?? 0) + 1);
+          }
+        out.push({ diff: diff / n, flat: Math.max(...tones.values()) / n });
+      }
+      return out;
+    },
+    { before, frames }
+  );
+  const other = seen.filter((f) => f.diff > 0.004);
+  return {
+    frames: seen.length,
+    moved: other.filter((f) => f.flat <= 0.985).map((f) => Math.round(f.diff * 1000)),
+    empty: other.filter((f) => f.flat > 0.985).length,
+  };
+}
