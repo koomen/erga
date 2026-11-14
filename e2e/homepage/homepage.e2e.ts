@@ -53,7 +53,7 @@ journey("the homepage on a domain of its own, from a new server on", () => {
   const files = {
     "index.html": html("Site home", HOME_BODY),
     "about.html": html("About me"),
-    "blog/index.html": html("The blog"),
+    "blog/index.html": html("The blog", `<script type="module" src="/erga/steps/editor.js"></script>`),
     "docs.html": html("My docs page"),
     "404.html": html("Lost"),
     "style.css": "h1 { color: rgb(1, 2, 3); }",
@@ -112,6 +112,8 @@ journey("the homepage on a domain of its own, from a new server on", () => {
     expect(home.csp).toBe("frame-ancestors 'self'");
     expect(await at("/about")).toMatchObject({ status: 200, page: files["about.html"] });
     expect(await at("/blog")).toMatchObject({ status: 301, location: "/blog/" });
+    // Only a library of Erga's that a page imports (/erga/<name>/editor.js) is named anew: it is on the Erga domain.
+    expect((await at("/blog/")).page).toContain(`<script type="module" src="${own.root}/erga/steps/editor.js"></script>`);
     expect(await at("/old")).toMatchObject({ status: 301, location: "/about" });
     expect(await at("/img/dot.svg")).toMatchObject({ status: 200, text: DOT });
     // Erga's paths are the site's here.

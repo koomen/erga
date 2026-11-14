@@ -1,6 +1,6 @@
 // New documents from the templates: the picker on the documents page, in the viewer and on the homepage makes each
 // one. A deck of slides steps by its buttons, the arrow keys and its list, viewing and editing; it goes full screen
-// and comes back at the same step; and a presentation keeps working outside Erga.
+// and comes back at the same step; and a presentation keeps working served as it is, with no viewer.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { F, openEditor, type Editor } from "../helpers/editor";
@@ -531,9 +531,9 @@ journey("full screen in the editor, on a deck that steps by its own keys", () =>
   });
 });
 
-journey("a presentation opened outside Erga", () => {
+journey("a presentation served as it is, with no viewer", () => {
   let page: Page;
-  const SITE = "https://exported.example/";
+  const SITE = "https://site.example/";
   /** The step bar (erga/steps' shadow root), as the page shows it. */
   const stepBar = () =>
     page.evaluate(() => {
@@ -550,18 +550,19 @@ journey("a presentation opened outside Erga", () => {
 
   test("the slides template: the bar shows the steps; → and the bar's buttons step; the list names the slides", async ({ tab }) => {
     page = tab.page;
-    // A template's files at SITE, as a person opens an exported presentation; Erga's libraries come from the test's server.
+    // A template's files at SITE, as a server gives its homepage's site: each page as it is, and Erga's libraries at
+    // their paths there (/erga/<name>/editor.js, and the build it imports). The page's text names no server.
     await page.route(/^https:\/\/fonts\.(googleapis|gstatic)\.com\//, (r) => r.abort());
-    await page.route(/^https:\/\/erga\.dev\//, async (r) => {
-      const res = await fetch(r.request().url().replace("https://erga.dev", s.root));
-      await r.fulfill({
-        status: res.status,
-        contentType: res.headers.get("content-type") ?? "text/javascript",
-        headers: { "access-control-allow-origin": "*" },
-        body: Buffer.from(await res.arrayBuffer()),
-      });
-    });
-    await page.route(`${SITE}**`, (r) => {
+    await page.route(`${SITE}**`, async (r) => {
+      const path = new URL(r.request().url()).pathname;
+      if (/^\/_?erga\//.test(path)) {
+        const res = await fetch(s.root + path);
+        return r.fulfill({
+          status: res.status,
+          contentType: res.headers.get("content-type") ?? "text/javascript",
+          body: Buffer.from(await res.arrayBuffer()),
+        });
+      }
       const [template, file = "index.html"] = new URL(r.request().url()).pathname.slice(1).split("/");
       try {
         return r.fulfill({
@@ -584,7 +585,7 @@ journey("a presentation opened outside Erga", () => {
     await expect.poll(async () => (await stepBar()).at).toBe("1 / 2");
     await control(".toggle");
     await expect.poll(async () => (await stepBar()).steps).toEqual(["Untitled presentation", "Second slide"]);
-    // No editor outside Erga: the deck's bar for the slides stays hidden.
+    // No editor without the viewer: the deck's bar for the slides stays hidden.
     expect(await page.evaluate(() => document.querySelector("slide-bar")?.shadowRoot?.querySelector<HTMLElement>(".bar")?.hidden)).toBe(
       true
     );

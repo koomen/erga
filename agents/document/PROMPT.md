@@ -147,9 +147,10 @@ attributes, new elements of other kinds.
 A presentation is a page with steps: it defines `window.ergaSteps` and
 imports erga/steps, Erga's one presentation library. erga/steps draws the
 steps in the page itself (back and forward buttons, the arrow keys, the list
-of steps with each one drawn small) and answers `view_page`'s `step`. It works
-in Erga and in a page opened outside Erga. The page's own code shows each
-step. A page without `window.ergaSteps` and erga/steps has no steps.
+of steps with each one drawn small) and answers `view_page`'s `step`. Its
+address is a path with no host (`/erga/steps/editor.js`): each Erga server
+serves its own. The page's own code shows each step. A page without
+`window.ergaSteps` and erga/steps has no steps.
 
 For a deck, start from the `slides` template; for frames on one large
 canvas, start from the `canvas` template. Each holds its own code, which
@@ -161,7 +162,7 @@ To make another page a presentation, import erga/steps in its `<head>` and
 define the steps in its own script:
 
 ```html
-<script type="module" src="https://erga.dev/erga/steps/editor.js"></script>
+<script type="module" src="/erga/steps/editor.js"></script>
 <script type="module">
   const parts = [...document.querySelectorAll("section.part")];
   let at = 0;

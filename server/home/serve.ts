@@ -23,6 +23,7 @@ import { HOME_FILES, homeHeader, pageInter, withHomeLlm, withToken } from "./ren
 import { pageToken } from "./llm-token.ts";
 import { actingAdmin } from "../identity/index.ts";
 import { fileOf, NOT_FOUND, redirectOf } from "./site.ts";
+import { localLibraries } from "../../shared/page-html.ts";
 
 /** The snapshot as this isolate last had it, and when it last asked whether it's still current. */
 let memo: Copy | null = null;
@@ -239,9 +240,12 @@ async function siteFile(
   };
   // An HTML page gets the homepage's model (window.ergaLLM), as the homepage's own page does; on its own domain, at
   // that domain's /_erga/ (agents/page-llm.ts, homeDomainLlmApi).
+  // On its own domain, a page's libraries of Erga's (/erga/<name>/editor.js) are at the Erga domain (the facts' `app`).
+  const app = new URL(request.url);
+  if (direct && platform.deploy.app) app.hostname = platform.deploy.app;
   const body = /^text\/html/i.test(file.type)
     ? withHomeLlm(
-        new TextDecoder().decode(file.bytes),
+        localLibraries(new TextDecoder().decode(file.bytes), direct && platform.deploy.app ? app.origin : ""),
         page.docId,
         await pageToken(platform.secret, page.docId, Date.now()),
         direct ? "/_erga" : ""

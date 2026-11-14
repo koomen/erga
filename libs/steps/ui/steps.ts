@@ -2,7 +2,7 @@
 // list of the steps that opens over its right side, with each step drawn small where the page draws them. The arrow keys
 // step too, except in text. A page with window.ergaSteps imports erga/steps (library.ts). It draws in a shadow root of
 // its own on the page's <html> (an erga- element: the editor's walks and the steps' pictures pass it by), in Erga's
-// viewer (window.__ergaReader) and in a page opened outside Erga alike. It shows the step the agent asks for
+// viewer (window.__ergaReader) and in a page served as it is alike. It shows the step the agent asks for
 // (window.ergaStepTo); the agent's pictures leave the bar out (client/page-tools/capture.ts). Full screen is the
 // viewer's (client/inline/viewer-full.ts): it says when it's on, and the bar's way out asks it to leave.
 
