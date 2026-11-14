@@ -10,10 +10,15 @@
 // 14 runs of 40 failed. The browser has nothing to keep by then (each attempt closed its own context), so its close
 // kills it first, and finds it gone. (The engine's own hooks are read-only: so the launch is wrapped, which the engine
 // calls on the same module.)
+//
+// Trap: a person's browser has a process for each site, and the document's page is on another site than the viewer.
+// This Chromium has one process for both, and a frame in its own process differs: as it goes, it says it is scrolled
+// to 0 (client/inline/reader.ts), and that bug passed here. With a process for each site (--site-per-process) the
+// suite was slower than its budgets, and 7 journeys failed: so only `sitesPage` has it, for the step that needs it.
 
 import { spawnSync } from "node:child_process";
 import { web } from "@e2e-dev/web";
-import { chromium } from "playwright-core";
+import { chromium, type Page } from "playwright-core";
 
 const launch = chromium.launch.bind(chromium);
 chromium.launch = async (options) => {
@@ -35,3 +40,12 @@ chromium.launch = async (options) => {
 };
 
 export const engine = web({ browser: "chromium", viewport: { width: 1100, height: 800 } });
+
+/**
+ * A page in a browser of its own, with a process for each site (the trap above), and its end. (Not through `launch`:
+ * that browser's close kills the engine's too. Its own close is not waited for: the worker's end kills what is left.)
+ */
+export async function sitesPage(): Promise<{ page: Page; close: () => void }> {
+  const context = await chromium.launchPersistentContext("", { args: ["--site-per-process"], viewport: { width: 1100, height: 800 } });
+  return { page: context.pages()[0] ?? (await context.newPage()), close: () => void context.close().catch(() => {}) };
+}
