@@ -71,7 +71,7 @@ export async function apiKeysPage(platform: Platform, session: Session) {
   <section aria-labelledby="page-head" class="credentials">
     <ol class="rows settings">
       <li class="setting">
-        <div class="about"><label class="key" for="agent-keys" title="agent_keys">Whose keys the agents use</label><p class="desc">A person's own key always wins for its provider.</p></div>
+        <div class="about"><label class="key" for="agent-keys" title="agent_keys">Whose keys the agents use</label><p class="desc">A user's own key always wins for its provider.</p></div>
         <div class="value"><select id="agent-keys" class="keys-mode">
           <option value="server"${own ? "" : " selected"}>Server will provide keys</option>
           <option value="own"${own ? " selected" : ""}>Users provide their own keys</option>
@@ -79,7 +79,7 @@ export async function apiKeysPage(platform: Platform, session: Session) {
         <p class="hint" id="keys-mode-hint" role="status"></p>
       </li>
     </ol>
-    <p class="empty own-note"${own ? "" : " hidden"}>Each person adds their own keys in their Settings.</p>
+    <p class="empty own-note"${own ? "" : " hidden"}>Each user adds their own keys in their Settings.</p>
     <ol class="rows providers" data-live-kind="apikey" data-live-view="api-keys" data-live-order="asc" data-live-at="${Date.now()}"${own ? " hidden" : ""}>
 ${credentials.map((c, place) => credentialRow(c, session, place, off)).join("\n")}
     </ol>

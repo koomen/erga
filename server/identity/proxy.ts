@@ -1,13 +1,13 @@
-// The proxy mode (mode.ts): a proxy in front of Erga signs each person in, with the company's own sign-in, before any
+// The proxy mode (mode.ts): a proxy in front of Erga signs each user in, with the organization's own sign-in, before any
 // request reaches the server. It then adds a header to each request: who signed in, as a JWT that the proxy signs.
 // That sign-in is this server's only one: no OAuth provider.
 //
 //   /auth/proxy[?next=]   reads the header, and goes on as after any provider (accounts.ts): the account of this
-//                         subject, or the username step for a new person. /auth/sign-in comes straight here.
+//                         subject, or the username step for a new user. /auth/sign-in comes straight here.
 //
 // This file does not ask which proxy it is. A proxy is an entry of KINDS: its header's name, where its keys are, and
 // what shows that a header is for this server. The deploy says which one is in front, with its values (PROXY_SIGN_IN,
-// a `Proxy`). Two steps, apart: the proxy's proof (claimsOf: whose claims these are), then the person the claims are
+// a `Proxy`). Two steps, apart: the proxy's proof (claimsOf: whose claims these are), then the user the claims are
 // (vouchedOf), as every provider gives one (Vouched, server/directory/identities.ts): the app knows nothing else of a
 // sign-in.
 //
@@ -159,7 +159,7 @@ const cloudflareAccess: Kind<typeof CloudflareAccess.Type> = {
     (Array.isArray(claims.aud) ? claims.aud : [claims.aud]).includes(c.aud) &&
     typeof claims.exp == "number" &&
     claims.exp * 1000 > now,
-  // Access lets a person through only by the address their sign-in gave it.
+  // Access lets a user through only by the address their sign-in gave it.
   verified: () => true,
   shown: (c) => [
     { name: "Team", value: teamOrigin(c) },
@@ -217,7 +217,7 @@ export async function claimsOf(token: string, proxy: Proxy, o: { now?: number; k
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-/** The claims that may hold the person's email address, in the order they are tried. */
+/** The claims that may hold the user's email address, in the order they are tried. */
 const EMAIL_CLAIMS = ["email", "upn", "preferred_username"];
 
 /** The sign-in gave no address where the deploy says it is: why, as plain text. */
@@ -226,9 +226,9 @@ export interface Refused {
 }
 
 /**
- * The person the claims are; null without a `sub`. Their email address: the first of EMAIL_CLAIMS that looks like one.
+ * The user the claims are; null without a `sub`. Their email address: the first of EMAIL_CLAIMS that looks like one.
  * The `email` claim's is verified when the proxy's kind says so, and `upn`'s is (a directory gives it); never
- * `preferred_username`'s, which a person may choose: it names them, and matches nobody an admin added. Without an
+ * `preferred_username`'s, which a user may choose: it names them, and matches nobody an admin added. Without an
  * address, `handle` is "": the `sub` is never a name. A proxy that names the claim (`email`): only there, after its
  * prefix, verified; else Refused.
  */
@@ -249,13 +249,13 @@ export function vouchedOf(claims: Record<string, unknown>, proxy: Proxy): Vouche
   return { provider: "proxy", subject, handle: email, name, emails: email ? [{ email, verified }] : [], groups: [] };
 }
 
-/** Who a header says signed in: its proof, then its person. */
+/** Who a header says signed in: its proof, then its user. */
 export async function readProxy(token: string, proxy: Proxy, o: { now?: number; key?: Key } = {}): Promise<Vouched | Refused | null> {
   const claims = await claimsOf(token, proxy, o);
   return claims ? vouchedOf(claims, proxy) : null;
 }
 
-/** /auth/proxy: signs in whoever the proxy says signed in at the company's sign-in. */
+/** /auth/proxy: signs in whoever the proxy says signed in at the organization's sign-in. */
 export const proxySignIn: Route = Effect.gen(function* () {
   const { platform, request, url } = yield* ctx;
   const signIn = platform.signIn;
@@ -264,7 +264,7 @@ export const proxySignIn: Route = Effect.gen(function* () {
   if (!proxy)
     return page(
       "Sign-in isn't set up",
-      "This server signs in with your company's sign-in, and its setting for it (<code>PROXY_SIGN_IN</code>) isn't one it can read. The person who deployed this server sets it.",
+      "This server signs in with your organization's sign-in, and its setting for it (<code>PROXY_SIGN_IN</code>) isn't one it can read. The user who deployed this server sets it.",
       503
     );
   const v = yield* call(() => readProxy(request.headers.get(kindOf(proxy).header) ?? "", proxy));

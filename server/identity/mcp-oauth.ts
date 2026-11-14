@@ -211,7 +211,7 @@ const authorize = ({ request, platform, url, origin, read }: Asked): Route =>
       return back("invalid_target", `This server signs in for ${origin}/mcp only.`);
     const session = yield* call(() => platform.sessionOf(request));
     if (!session) return signInFirst(url.pathname + url.search);
-    if (session.agent) return page("Sign in as yourself", "Only a person, signed in as themselves, can let an app act for them.", 403);
+    if (session.agent) return page("Sign in as yourself", "Only a user, signed in as themselves, can let an app act for them.", 403);
     const admin = yield* call(() => platform.directory.users.isAdmin(session.login));
     const asked = yield* call(() =>
       platform.tokens.request(
@@ -273,7 +273,7 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
     method: "GET",
     path: "/oauth/authorize",
     run: authorize,
-    action: "The person, in their browser, lets an MCP app act for them (approved on /tokens/approve)",
+    action: "The user, in their browser, lets an MCP app act for them (approved on /tokens/approve)",
     domain: "none",
     exempt: `${SECRET} (it hands a new token to an outside agent)`,
   },

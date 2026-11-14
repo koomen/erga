@@ -168,7 +168,7 @@ export async function analyticsPage(platform: Platform, session: Session, days: 
     session,
     title: "Analytics",
     here: "analytics",
-    lede: "A person is active on a day (UTC) when they open a document, edit one, or use a model.",
+    lede: "A user is active on a day (UTC) when they open a document, edit one, or use a model.",
     body: `
   <nav class="range" aria-label="Days shown">${range}</nav>
   <div class="charts">

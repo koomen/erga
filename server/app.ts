@@ -158,15 +158,15 @@ export const ROUTES: readonly RouteRow<Route>[] = [
   // The OAuth mode (server/identity/oauth.ts): one flow, a start and a callback for each provider.
   // ?app=pending: a test sign-in with the values that wait on /admin/auth.
   { method: "GET", path: "/auth/github", run: startOAuth("github"), action: "Sign in with GitHub", ...SIGN },
-  { method: "GET", path: "/auth/github/callback", run: finishOAuth("github"), action: "GitHub sends the person back, signed in", ...SIGN },
+  { method: "GET", path: "/auth/github/callback", run: finishOAuth("github"), action: "GitHub sends the user back, signed in", ...SIGN },
   { method: "GET", path: "/auth/google", run: startOAuth("google"), action: "Sign in with Google", ...SIGN },
-  { method: "GET", path: "/auth/google/callback", run: finishOAuth("google"), action: "Google sends the person back, signed in", ...SIGN },
+  { method: "GET", path: "/auth/google/callback", run: finishOAuth("google"), action: "Google sends the user back, signed in", ...SIGN },
   // The proxy mode (server/identity/proxy.ts): the signed header of the proxy in front of the server.
   {
     method: "GET",
     path: "/auth/proxy",
     run: proxySignIn,
-    action: "Sign in with the company's sign-in at the proxy in front of the server",
+    action: "Sign in with the organization's sign-in at the proxy in front of the server",
     ...SIGN,
   },
   { method: "POST", path: "/auth/logout", run: signOut, action: "Sign out", ...SIGN },
@@ -190,7 +190,7 @@ export const ROUTES: readonly RouteRow<Route>[] = [
     exempt: DEV,
   },
   // A new server's first admin: setup's one-time link (server/identity/claim.ts).
-  { method: "GET", path: "/auth/claim", run: claimRoute, action: "A new server's first person signs in, to become its admin", ...SIGN },
+  { method: "GET", path: "/auth/claim", run: claimRoute, action: "A new server's first user signs in, to become its admin", ...SIGN },
   {
     method: "POST",
     path: "/auth/claim",

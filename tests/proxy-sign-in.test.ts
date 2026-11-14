@@ -306,7 +306,7 @@ test("the proxy mode: sign-in goes straight to the proxy, a person added by thei
   expect(again.answer.headers.get("location")).toBe("/documents");
   expect((await directory.identities.of("ada")).length).toBe(1);
 
-  // Anyone else waits for a rule: none yet, so no account; with everybody's rule (the setup's company preset), an account that isn't an admin's.
+  // Anyone else waits for a rule: none yet, so no account; with everybody's rule (the setup's organization preset), an account that isn't an admin's.
   const bo = { sub: "sub-bo", email: "bo@example.com", email_verified: "true" };
   const refused = await signUp(platform, await aws(bo), "bo");
   expect(refused.answer.status).toBe(403);
@@ -405,7 +405,7 @@ test("the email address: the first of email, upn and preferred_username that loo
     return (await respond(usernameStep, new Request(`${ORIGIN}/auth/username`, { headers: { cookie: cookieOf(at) } }), platform)).text();
   };
   const named = await step(header);
-  expect(named).toMatch(/Welcome\. You signed in with your company(&#39;|')s sign-in\. Choose a username/);
+  expect(named).toMatch(/Welcome\. You signed in with your organization(&#39;|')s sign-in\. Choose a username/);
   expect(named).toContain('name="username" value="ada-lovelace"');
   expect(named).not.toContain(sub);
   const bare = await step(await aws({ sub }));

@@ -228,7 +228,7 @@ const github: OAuthProvider = {
       });
     }
     if (body.type && body.type != "User")
-      throw new NotAllowed({ message: `"${body.login}" is a GitHub ${body.type.toLowerCase()}, not a person's account.` });
+      throw new NotAllowed({ message: `"${body.login}" is a GitHub ${body.type.toLowerCase()}, not a user's account.` });
     return { subject: String(body.id), handle: body.login };
   },
 };

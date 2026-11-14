@@ -67,7 +67,7 @@ export default function adminUsers(c: UsersConfig): void {
         !confirm(
           login == me
             ? "Remove yourself? You'll be signed out, and can't sign in again unless an admin adds you or a group lets you in."
-            : "Remove " + (login || "this person") + "? They can't sign in unless a group lets them in. Their documents stay."
+            : "Remove " + (login || "this user") + "? They can't sign in unless a group lets them in. Their documents stay."
         )
       )
         return;

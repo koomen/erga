@@ -26,6 +26,7 @@ then saves a screenshot and prints the page as a person sees it: "|" is the care
             a server left running with --keep has the delay it started with
   --keep    leave the dev server running, for the next look (a new server takes about 10 s)
   --stop    stop the server that --keep left running
+  --proxy   the server signs in with a proxy (PROXY_SIGN_IN: this JSON; "x": one it can't read)
 
 Steps, one argument each, in order:
   type:<text>          types the text, a character at a time
@@ -104,6 +105,7 @@ const keep = flag("--keep"),
   source = flag("--source"),
   view = flag("--view");
 const pathArg = option("--path");
+const proxy = option("--proxy");
 const viewport = { width: Number(option("--width")) || 1100, height: Number(option("--height")) || 800 };
 const unknown = args.find((a) => a.startsWith("--"));
 if (unknown) {
@@ -133,7 +135,10 @@ else {
   const s = await startServer({
     keep,
     latency,
-    ...(args.some((a) => a.startsWith("say:")) ? { env: { ERGA_AGENT_MODEL: "script" } } : {}),
+    env: {
+      ...(args.some((a) => a.startsWith("say:")) ? { ERGA_AGENT_MODEL: "script" } : {}),
+      ...(proxy ? { ERGA_PROXY_SIGN_IN: proxy } : {}),
+    },
   });
   ({ root, scratch } = s);
   if (keep) {

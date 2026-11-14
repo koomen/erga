@@ -7,11 +7,11 @@ import { esc } from "./html";
 /**
  * Each way to sign in, as the app names it. The app reads this table by a provider's id and never asks which provider it
  * is: an OAuth provider (server/identity/providers.ts), or the proxy in front of the server (server/identity/proxy.ts).
- * `name`: its name in a list; `label`: what its sign-in is called, in a sentence to the person who signs in.
- * `handle`: what an admin adds a person by before their first sign-in: a login (its account is looked up at once), or an
+ * `name`: its name in a list; `label`: what its sign-in is called, in a sentence to the user who signs in.
+ * `handle`: what an admin adds a user by before their first sign-in: a login (its account is looked up at once), or an
  * email address (the first sign-in with that verified address matches). `profile`: a profile's address, pasted for a
  * login. `groups`: the kind of access rule its groups match. `only`: the server's only sign-in, with no name of its
- * own to say: a page names the person by the address it gave, and offers no other account.
+ * own to say: a page names the user by the address it gave, and offers no other account.
  */
 export const SIGN_IN_PROVIDERS: Record<
   string,
@@ -37,10 +37,10 @@ export const SIGN_IN_PROVIDERS: Record<
     handle: "email",
     groups: { kind: "workspace" },
   },
-  proxy: { name: "Proxy", label: "your company's sign-in", handle: "email", only: true },
+  proxy: { name: "Proxy", label: "your organization's sign-in", handle: "email", only: true },
 };
 
-/** What a provider's sign-in is called, in a sentence to the person who signs in. */
+/** What a provider's sign-in is called, in a sentence to the user who signs in. */
 export const providerLabel = (provider: string) => SIGN_IN_PROVIDERS[provider]?.label ?? provider;
 /**
  * How a page says what someone signed in with, after "You signed in with": "GitHub as <b>ada</b>"; for the server's only
