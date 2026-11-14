@@ -1,8 +1,9 @@
 // The document's page, in the viewer's one frame on its own origin: the viewer's one word to the editor in it (edit,
 // with the edit key, or view: libs/text/ui/mode.ts), the zoom the frame is drawn at, and what the page's first script
 // (client/inline/reader.ts, Erga's) tells the viewer while editing: the viewer's shortcuts pressed in the page, a press
-// on it, a zoom gesture, a link to another of the document's pages, the page's problems. The editor itself asks for one
-// thing: the page loaded again (erga-reload), which the viewer does with the page's view kept (viewer-frames.ts).
+// on it, a zoom gesture, the wheel sideways on a zoomed page, a link to another of the document's pages, the page's
+// problems. The editor itself asks for one thing: the page loaded again (erga-reload), which the viewer does with the
+// page's view kept (viewer-frames.ts).
 // Everything that comes from the page is checked: the page itself could have sent it.
 
 import type { EditMode } from "../../libs/text/ui/mode";
@@ -12,7 +13,7 @@ import { clampZoom, type ZoomBy } from "../common/zoom";
 import type { RawProblem } from "./problems";
 
 /** What "edit" says, but the zoom and the tests' settings, which this adds. */
-export type EditWord = Omit<Extract<EditMode, { mode: "edit" }>, "type" | "mode" | "zoom" | "timescale" | "check">;
+export type EditWord = Omit<Extract<EditMode, { mode: "edit" }>, "type" | "mode" | "zoom" | "tall" | "pinched" | "timescale" | "check">;
 
 export interface PageFrameConfig {
   /** The frame now: a load of the page again puts a new one in its place (client/inline/viewer-frames.ts). */
@@ -31,7 +32,10 @@ export interface PageFrameConfig {
   /** The pointer moved over the page, in the viewer's coordinates. */
   onPointer: (x: number, y: number) => void;
   onActivity: (kind: "focus" | "key") => void;
-  onZoom: (zoom: ZoomBy) => void;
+  /** A zoom gesture on the page, at `x` in the viewer's coordinates. */
+  onZoom: (zoom: ZoomBy, x: number) => void;
+  /** The wheel went sideways on the zoomed page, which has nothing to scroll that way: `dx` px on the screen. */
+  onPan: (dx: number) => void;
   /** A link on the page to another of the document's pages was followed (its path in the document). */
   onOpen: (path: string) => void;
   /** The page said whether it zooms itself (window.ergaZoom). */
@@ -45,6 +49,10 @@ export function mountPageFrame(c: PageFrameConfig) {
   const active = () => c.told().mode == "edit";
   /** The level the page is drawn at (zoom.ts). */
   let zoom = 1;
+  /** The height of the frame's place on the screen: what the frame, scaled, covers. */
+  let tall = 0;
+  /** The browser has the whole window zoomed (its own pinch): the page leaves a pinch to it (zoom.ts, the trap). */
+  let pinched = false;
   /** The page zooms itself (window.ergaZoom), so the viewer's zoom goes to it, not to the frame. */
   let zoomsItself = false;
 
@@ -73,6 +81,8 @@ export function mountPageFrame(c: PageFrameConfig) {
       mode: "edit",
       ...c.edit(told.key),
       zoom,
+      tall,
+      pinched,
       ...(timescale ? { timescale } : {}),
       ...(check ? { check } : {}),
     } satisfies EditMode);
@@ -143,10 +153,14 @@ export function mountPageFrame(c: PageFrameConfig) {
         return;
       case "erga-zoom": {
         const z = m.zoom as { step?: unknown; by?: unknown } | undefined;
-        if (z?.step === 1 || z?.step === -1) c.onZoom({ step: z.step });
-        else if (typeof z?.by == "number" && z.by > 0.5 && z.by < 2) c.onZoom({ by: z.by });
+        const x = frame.getBoundingClientRect().left + (num(m.x) ? m.x : frame.offsetWidth / 2) * zoom;
+        if (z?.step === 1 || z?.step === -1) c.onZoom({ step: z.step }, x);
+        else if (typeof z?.by == "number" && z.by > 0.5 && z.by < 2) c.onZoom({ by: z.by }, x);
         return;
       }
+      case "erga-pan":
+        if (num(m.dx) && Math.abs(m.dx) < 5000) c.onPan(m.dx * zoom);
+        return;
       case "erga-open":
         if (typeof m.path == "string" && m.path.length < 1000) c.onOpen(m.path);
         return;
@@ -179,23 +193,24 @@ export function mountPageFrame(c: PageFrameConfig) {
       post({ type: "erga-page-zoom", by });
     },
     /**
-     * Draws the page at `level` (1 is 100%): its frame scaled (client/styles/editor.css, html.erga-zoomed), and the
-     * editor in it told, for its controls (they keep their own size).
+     * Draws the page at `level` (1 is 100%), moved `x` px sideways from the middle: its frame scaled (client/styles/editor.css,
+     * html.erga-zoomed), and the editor in it told the level, for its controls (they keep their own size) and its place
+     * (client/inline/reader.ts). `pinching`: a pinch is going on. `windowZoomed`: the browser has the window zoomed itself.
      */
-    setZoom(level: number) {
-      const z = clampZoom(level);
-      if (z == zoom) return;
+    setZoom(level: number, x: number, pinching: boolean, windowZoomed: boolean) {
+      const z = clampZoom(level),
+        root = document.documentElement,
+        was = `${zoom} ${tall} ${pinched}`;
       zoom = z;
-      // At once, as the browser's own zoom: not the frame's move as the agent's panel opens (its width's transition).
-      const root = document.documentElement,
-        frame = c.frame();
-      frame.style.transition = "none";
+      pinched = windowZoomed;
       if (z == 1) root.style.removeProperty("--erga-zoom");
       else root.style.setProperty("--erga-zoom", String(z));
+      if (x) root.style.setProperty("--erga-x", `${Math.round(x * 100) / 100}px`);
+      else root.style.removeProperty("--erga-x");
       root.classList.toggle("erga-zoomed", z != 1);
-      void frame.offsetWidth;
-      frame.style.transition = "";
-      if (active()) say();
+      root.classList.toggle("erga-zooming", pinching);
+      tall = Math.round(c.frame().getBoundingClientRect().height * 100) / 100;
+      if (was != `${zoom} ${tall} ${pinched}` && active()) say();
     },
   };
 }

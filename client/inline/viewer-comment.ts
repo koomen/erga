@@ -22,6 +22,8 @@ export default function viewerComment(base: string, me: { user: string; name: st
       path: document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || "index.html",
       tab,
       zoom: 1,
+      tall: innerHeight,
+      pinched: false,
     });
   };
   async function fresh() {

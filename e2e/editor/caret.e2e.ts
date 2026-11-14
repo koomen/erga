@@ -319,7 +319,8 @@ journey("the caret and a selection on a board that pans", () => {
     /** Pans the board by a drag on its empty part, then by the wheel; the caret is on its text after each. */
     const pans = async () => {
       const start = await drawn(ed);
-      const a = await onPage(ed, 40, 380);
+      // (An empty part that is in sight zoomed in too: the page is then wider than the window.)
+      const a = await onPage(ed, 200, 500);
       await ed.drag(a.x, a.y, a.x + 90, a.y + 60, 6);
       const dragged = await drawn(ed, (c) => Math.abs(c.x - start.x) > 40);
       await ed.page.mouse.wheel(30, 50);
@@ -339,10 +340,13 @@ journey("the caret and a selection on a board that pans", () => {
     await clickEnd(".card h2");
     await pans();
 
-    // The side column scrolls (an element's scroll, not the window's).
+    // The side column scrolls (an element's scroll, not the window's). At 100%: zoomed in, the column at the window's
+    // right is out of sight until the page moves sideways.
+    await ed.press("ControlOrMeta+Digit0");
+    await expect.poll(() => zoom(ed)).toBe(1);
     await clickEnd(".side p.aside");
     const before = await drawn(ed);
-    const side = await onPage(ed, 700, 300);
+    const side = await onPage(ed, 960, 300);
     await ed.page.mouse.move(side.x, side.y);
     await ed.page.mouse.wheel(0, 120);
     await drawn(ed, (c) => c.y < before.y - 40);

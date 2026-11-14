@@ -32,7 +32,7 @@ The rules:
 | E5 | `e2e/editor/format.e2e.ts` | The format bar, the link bar, a Markdown shortcut or the slash menu changes the wrong text. | 9 |
 | E6 | `e2e/editor/steady.e2e.ts` | Keys are lost while the page renders again; a browser extension, broken HTML or an edit on disk corrupts the document. | 11 |
 | S1 | `e2e/shell/open.e2e.ts` | The editor does not open, opens twice, flashes, or loses its place after a reload, a page switch or a slow start. | 11 |
-| S2 | `e2e/shell/panels.e2e.ts` | A panel or a bar covers the text, or a control is out of reach on a phone or at a zoom. | 7 |
+| S2 | `e2e/shell/panels.e2e.ts` | A panel or a bar covers the text, or a control is out of reach on a phone or at a zoom. A pinch moves the page from under the pointer; a zoomed page has an edge out of reach; the browser's own zoom of the window has no way back. | 10 |
 | S3 | `e2e/shell/offline.e2e.ts` | Edits made offline are lost or doubled; a signed-out tab keeps writing. | 7 |
 | Y1 | `e2e/sync/two-people.e2e.ts` | Two people lose or double text; they end with different documents; undo takes the other person's text. | 10 |
 | Y2 | `e2e/sync/restart.e2e.ts` | A deploy or a crash loses edits, doubles the document, or loses pages. | 10 |
