@@ -243,10 +243,14 @@ export function mountSteps(): void {
     if (open() && (always || now != marked)) items()[now]?.scrollIntoView({ block: "nearest" });
     marked = now;
   }
+  /** The viewer hears whether the bar shows: its alerts sit over it (client/shell/page-frame.ts). */
+  const tellBar = () => shell && parent.postMessage({ type: "erga-steps", on: !!steps }, shell);
   /** Reads the page's steps again, and shows them. */
   function update() {
+    const had = !!steps;
     steps = read();
     bar.hidden = !steps;
+    if (had != !!steps) tellBar();
     if (!steps) {
       show(false);
       shape = "";
@@ -327,7 +331,11 @@ export function mountSteps(): void {
   addEventListener("message", (e) => {
     if (!shell || e.source != parent || e.origin != shell || !e.data) return;
     if (e.data.type == "erga-full") full(e.data.on === true);
-    else if (e.data.type == "erga-mode") look();
+    // (The editor's shell starts after the page: it hears of the bar with its first word.)
+    else if (e.data.type == "erga-mode") {
+      look();
+      tellBar();
+    }
     // An arrow pressed in the viewer, outside its text (client/inline/viewer-full.ts): as if pressed here.
     else if (e.data.type == "erga-arrow" && steps) go({ by: e.data.key == "ArrowLeft" ? -1 : 1 });
   });

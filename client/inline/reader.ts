@@ -301,7 +301,7 @@ export default function reader(C: ReaderConfig): void {
   still.setAttribute("data-erga", "");
   // (And the editor's own parts on the page never print.)
   still.textContent =
-    "html { overscroll-behavior: none; } @media print { erga-controls, erga-comments, erga-caret, erga-peers, erga-note, erga-drop-caret, erga-drop-note, erga-drop-image { display: none !important; } }";
+    "html { overscroll-behavior: none; } @media print { erga-controls, erga-comments, erga-caret, erga-peers, erga-note, erga-drop-caret, erga-drop-image { display: none !important; } }";
   (document.head || root).append(still);
   // The room for the bars at the top of a scrolling page (client/common/top-room.ts), measured again when the page's
   // styles may have changed (its head, its root's attributes), as it loads, the window's size, or the room the viewer asks for (its

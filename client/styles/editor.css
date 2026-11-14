@@ -37,6 +37,15 @@ html.page-dark body:not(.source) :is(.agent, .ds-menu, .help) {
   --shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
   color-scheme: dark;
 }
+/* The notes move aside with the agent's panel. The alerts, the editor's own card: on a dark page, the dark theme's. */
+.notes { transition: left var(--agent-ms) var(--agent-ease); }
+/* They are the editor's: out of the editor they don't show (the alerts keep, for the way back in). */
+body:not(.erga-editing) .notes { display: none; }
+html.page-dark body:not(.source) .alerts {
+  --bg: #18181b; --fg: #cacad2; --fg-strong: #ececf1; --soft: #8f8f99; --chrome: #6c6c75; --rule: #2c2c31; --caret: #6aa1ff;
+  --panel-bg: rgba(32, 32, 36, 0.94); --panel-border: #2f2f35; --shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+  --bad: #ff8a65; --ok: #4cc38a; color-scheme: dark;
+}
 /* The note while the room can't be reached (client/live/live.ts): on a dark page, the dark theme's. */
 html.page-dark body:not(.source) .erga-live-note { --soft: #8f8f99; --panel-bg: rgba(32, 32, 36, 0.94); --panel-border: #2f2f35; }
 /* (The controls' tones on the page's colour are client/inline/bars.css's.) */
@@ -265,7 +274,7 @@ body:not(.layout-narrow) .agent-head { cursor: grab; user-select: none; touch-ac
    the title takes the room the breadcrumbs' bar has. */
 @media (max-width: 759.98px) { .nav-title { max-width: none; } }
 @media (max-width: 520px) {
-  .toast { bottom: calc(max(var(--agent-inset), env(safe-area-inset-bottom)) + var(--agent-fab) + 12px); }
+  .notes { bottom: calc(max(var(--agent-inset), env(safe-area-inset-bottom)) + var(--agent-fab) + 12px); }
   #source .cm-scroller { padding-top: 24px; padding-left: 16px; }
 }
 /* Touch. A finger needs more room than the controls are drawn with, so

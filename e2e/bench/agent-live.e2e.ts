@@ -80,9 +80,18 @@ test("a paragraph broken on disk: clicking it offers the agent's help, and Fix w
   writeFileSync(ed.file, readFileSync(ed.file, "utf8").replace("things &amp; ship them.", "things</h2> &amp; ship them."));
   await expect.poll(() => ed.frame<boolean>(`!!${F}.querySelector("p.lede.erga-locked")`)).toBe(true);
   const at = await ed.rectOf("p.lede", 0.3);
-  // (Clicked again until it shows: a toast already up keeps its minimum time first.)
-  await expect.poll(async () => { await ed.click(at.x, at.y); return ed.eval<boolean>(`!!document.querySelector("#toast.show .toast-fix") && /h2/.test(document.getElementById("toast").textContent)`); }, { timeout: 10_000 }).toBe(true);
-  await ed.eval(`document.querySelector("#toast .toast-fix").click()`);
+  await expect
+    .poll(
+      async () => {
+        await ed.click(at.x, at.y);
+        return ed.eval<boolean>(
+          `!!document.querySelector('#alerts .alert [data-action="fix"]') && /h2/.test(document.getElementById("alerts").textContent)`
+        );
+      },
+      { timeout: 10_000 }
+    )
+    .toBe(true);
+  await ed.eval(`document.querySelector('#alerts .alert [data-action="fix"]').click()`);
   await expect.poll(() => working(ed)).toBe(true);
   await expect.poll(() => working(ed), { timeout: TURN_MS }).toBe(false);
   await expect.poll(() => ed.frame<boolean>(`!!${F}.querySelector("p.lede") && !${F}.querySelector("p.lede").classList.contains("erga-locked")`)).toBe(true);

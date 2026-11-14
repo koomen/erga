@@ -292,29 +292,94 @@ kbd {
   color: var(--fg);
 }
 
+/* The notes: at the bottom, in the middle of the page's part of the window (beside the agent's panel, not under it). A
+   confirmation (the toast) sits over the alerts, so neither covers the other. */
+.notes {
+  position: fixed; z-index: 21;
+  left: calc((var(--frame-l, 0px) + 100vw - var(--frame-r, 0px)) / 2);
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 32px);
+  transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  pointer-events: none;
+}
+/* A presentation has its steps bar at the bottom centre (36 px high, 14 px up): the notes sit 8 px over it. */
+body.has-steps .notes { bottom: 58px; }
 .toast {
-  left: 50%; bottom: calc(max(12px, env(safe-area-inset-bottom)) + 32px);
-  transform: translate(-50%, 6px);
+  position: relative;
+  max-width: calc(100vw - 32px); box-sizing: border-box;
   padding: 7px 14px;
   border-radius: 999px;
   color: var(--soft);
-  opacity: 0; pointer-events: none;
+  opacity: 0; transform: translateY(6px);
   transition: opacity 200ms ease, transform 200ms var(--ease);
 }
-.toast.show { opacity: 1; transform: translate(-50%, 0); }
-/* An explanation with a fix: takes clicks, and the button sits beside the text. */
-.toast:not(.show) { pointer-events: none !important; }
-.toast.actionable { pointer-events: auto; display: flex; align-items: center; gap: 12px; border-radius: 16px; padding: 8px 8px 8px 16px; max-width: min(680px, calc(100vw - 32px)); }
-.toast-fix {
-  flex: none; border: 0; border-radius: 10px; padding: 7px 12px; cursor: pointer;
-  font: 600 13px var(--font-text); background: var(--fg-strong); color: var(--bg);
+.toast.show { opacity: 1; transform: none; }
+
+/* ---------- Alerts (client/shell/alerts.ts) ---------- */
+
+.alerts { --bad: #c2410c; --ok: #1f7a4d; pointer-events: auto; font: 13.5px/1.5 var(--font-text); color: var(--fg); text-align: left; }
+.alerts:empty { display: none; }
+:root[data-theme="dark"] .alerts { --bad: #ff8a65; --ok: #4cc38a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .alerts { --bad: #ff8a65; --ok: #4cc38a; } }
+.alerts-pill, .alerts-card {
+  background: var(--panel-bg); border: 1px solid var(--panel-border); box-shadow: var(--shadow);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
 }
-.toast-fix[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
-.toast-close {
-  flex: none; border: 0; background: none; color: var(--soft); cursor: pointer;
-  font: 400 20px/1 var(--font-text); width: 28px; height: 28px; border-radius: 8px; margin-left: -4px;
+/* Progress alone: one line. A click opens the card. */
+.alerts-pill { display: flex; align-items: center; margin: 0; padding: 7px 14px; border-radius: 999px; color: var(--soft); font: inherit; white-space: nowrap; }
+button.alerts-pill { cursor: pointer; }
+.alerts-seg { display: inline-flex; align-items: center; gap: 7px; }
+.alert-mark { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--bad); }
+.alert-mark.progress {
+  width: 13px; height: 13px;
+  background: conic-gradient(var(--caret) calc(var(--p) * 360deg), color-mix(in srgb, var(--chrome) 34%, transparent) 0);
+  -webkit-mask: radial-gradient(circle, transparent 3.6px, #000 4.2px); mask: radial-gradient(circle, transparent 3.6px, #000 4.2px);
 }
-.toast-close:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+/* (It can't tell how far it is: a quarter of the ring, turning.) */
+.alert-mark.progress.unknown { --p: 0.25; animation: alert-turn 900ms linear infinite; }
+@keyframes alert-turn { to { transform: rotate(360deg); } }
+.alert-mark.done { width: 13px; height: 13px; background: none; color: var(--ok); }
+.alert-mark.done svg { display: block; width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.alerts-pill .chev { width: 12px; height: 12px; margin-left: 8px; fill: none; stroke: var(--chrome); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+/* The card: every alert, one block each. */
+.alerts-card { display: flex; flex-direction: column; width: min(440px, calc(100vw - 32px)); max-height: min(60vh, 480px); border-radius: 16px; overflow: hidden; }
+.alerts-head { display: flex; align-items: center; gap: 8px; box-sizing: border-box; min-height: 40px; padding: 6px 6px 6px 16px; }
+.alerts-head h2 { flex: 1; margin: 0; font: 600 13px/1.5 var(--font-text); color: var(--fg-strong); }
+.alerts-all { flex: none; margin-right: 2px; padding: 0 6px; border: 0; background: none; color: var(--caret); font: 500 12.5px/1.6 var(--font-text); cursor: pointer; }
+.alerts-close { flex: none; width: 28px; height: 28px; border: 0; border-radius: 8px; background: none; color: var(--soft); font: 400 20px/1 var(--font-text); cursor: pointer; }
+.alerts-close:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+.alerts-list { margin: 0; padding: 0; list-style: none; overflow-y: auto; overscroll-behavior: contain; }
+.alert { display: grid; grid-template-columns: 13px minmax(0, 1fr) auto; align-items: center; column-gap: 10px; padding: 10px 10px 10px 16px; border-top: 1px solid var(--rule); }
+.alert > .alert-mark { align-self: start; justify-self: center; margin-top: 7px; }
+.alert > .alert-mark.progress, .alert > .alert-mark.done { margin-top: 4px; }
+.alert-text { min-width: 0; }
+.alert-title { margin: 0; font-weight: 500; color: var(--fg-strong); overflow-wrap: anywhere; }
+.alert-count { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--chrome) 18%, transparent); color: var(--soft); font: 600 11.5px/1.55 var(--font-text); vertical-align: 1px; font-variant-numeric: tabular-nums; }
+.alert-detail { margin: 0; font-size: 12.5px; color: var(--soft); overflow-wrap: anywhere; }
+.alert-actions { display: flex; gap: 6px; }
+/* Two actions or more: on a line of their own, under the text. */
+.alert-actions.under { grid-column: 2 / -1; margin-top: 8px; }
+.alert-action { flex: none; border: 1px solid var(--panel-border); border-radius: 10px; padding: 6px 11px; background: transparent; color: var(--fg); font: 600 13px var(--font-text); cursor: pointer; }
+.alert-action.primary { border-color: transparent; background: var(--fg-strong); color: var(--bg); }
+:is(.alert-action, .alerts-all)[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+/* A batch: one row for each file. Its numbers change many times a second: only --p and the row's detail. */
+.alert-rows { grid-column: 2 / -1; display: grid; gap: 9px; margin: 8px 0 2px; padding: 0; list-style: none; }
+.alert-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; column-gap: 10px; row-gap: 4px; font-size: 12.5px; }
+.alert-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.alert-row .detail { color: var(--soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.alert-row-action { margin-left: 8px; padding: 0; border: 0; background: none; color: var(--caret); font: 500 12.5px/1.5 var(--font-text); cursor: pointer; }
+.alert-bar { grid-column: 1 / 3; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--chrome) 24%, transparent); overflow: hidden; }
+.alert-bar::before { content: ""; display: block; width: calc(var(--p) * 100%); height: 100%; border-radius: 2px; background: var(--caret); }
+.alert-row[data-state="waiting"] .alert-bar::before { background: var(--chrome); }
+.alert-bar.unknown::before { width: 30%; animation: alert-run 1100ms ease-in-out infinite alternate; }
+@keyframes alert-run { from { transform: translateX(0); } to { transform: translateX(233%); } }
+.alert-row[data-state="done"] .detail { color: var(--ok); }
+.alert-row[data-state="error"] .why { grid-column: 1 / -1; color: var(--bad); overflow-wrap: anywhere; }
+/* A phone: the actions always under the text. */
+@media (max-width: 520px) {
+  .alerts-card { width: calc(100vw - 16px); max-height: 50vh; }
+  .alert-actions { grid-column: 2 / -1; margin-top: 8px; }
+}
 
 @keyframes pop { from { opacity: 0; transform: translateY(-4px); } }
 
@@ -325,11 +390,11 @@ kbd {
 
 @media (prefers-reduced-motion: reduce) {
   :root { --hide-ms: 0ms; --show-ms: 0ms; }
-  body, .toast, .help, button.copied { transition: none; animation: none; }
+  body, .toast, .help, button.copied, .alert-mark, .alert-bar::before { transition: none; animation: none; }
 }
 
 @media print {
-  .chrome, .help, .toast { display: none !important; }
+  .chrome, .help, .notes { display: none !important; }
 }
 
 /* Resizing and docking an agent panel: the editor's and the admin pages'. The grip on the

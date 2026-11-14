@@ -75,10 +75,10 @@ button.tab { width: 100%; height: 28px; display: flex; align-items: center; just
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: translate 160ms var(--ease); }
 .tab[aria-checked="true"] .switch { background: var(--caret); }
 .tab[aria-checked="true"] .switch::after { translate: 12px 0; }
-.pill { left: 50%; bottom: 20px; transform: translateX(-50%); width: auto; height: auto; padding: 8px 14px; border-radius: 999px;
+.pill { left: 50%; bottom: calc(20px + var(--lift, 0px)); transform: translateX(-50%); width: auto; height: auto; padding: 8px 14px; border-radius: 999px;
   font: 13px/1.3 var(--font); color: var(--fg); white-space: nowrap; }
 .pill b { color: var(--caret); font-weight: 600; }
-.note { left: 50%; bottom: 20px; transform: translateX(-50%); max-width: min(480px, calc(100vw - 32px)); padding: 10px 14px;
+.note { left: 50%; bottom: calc(20px + var(--lift, 0px)); transform: translateX(-50%); max-width: min(480px, calc(100vw - 32px)); padding: 10px 14px;
   border-radius: 10px; font: 13px/1.45 var(--font); animation: appear 140ms ease both; }
 @media (pointer: coarse) {
   .fmt button { width: 38px; height: 36px; }
@@ -488,6 +488,10 @@ export function mountControls(win: Window, page: ControlsPage, o: { place: () =>
     closeLink,
     explain,
     waiting,
+    /** The viewer's alerts take `px` of the window's bottom: the note and the pill sit over them. */
+    lift(px: number) {
+      box.style.setProperty("--lift", `${px}px`);
+    },
     /** The page's colours: the controls take their dark look on a dark page. */
     dark(on: boolean) {
       box.classList.toggle("dark", on);

@@ -1,14 +1,11 @@
 // Catches the page's script errors and files that fail to load, from before its first script, and tells the viewer
 // each (erga-problem: client/shell/problems.ts says it in words). The viewer asks again for those it may have missed
-// as it goes into the editor (its word, erga-mode). window.__ergaReport reports one more (the editor's: a
-// notice about the page). In a document's page, for whoever may edit (server/pages/reader.ts).
+// as it goes into the editor (its word, erga-mode). In a document's page, for whoever may edit (server/pages/reader.ts).
 
 import type { RawProblem as Problem } from "../shell/problems";
 
-type ProblemWindow = Window & { __ergaReport?: (p: Problem) => void };
-
 export default function pageProblems(): void {
-  const w = window as ProblemWindow;
+  const w = window;
   const all: Problem[] = [];
   // (The viewer's origin: the page's first script, before this one, has it.)
   const shell = (w as Window & { __ergaReader?: { config: { shell: string } } }).__ergaReader?.config.shell;
@@ -20,11 +17,9 @@ export default function pageProblems(): void {
       } catch {}
   };
   function r(p: Problem) {
-    // (A notice answers a click: told once, never again as the viewer asks for what it missed.)
-    if (p.kind != "notice" && all.length < 100) all.push(p);
+    if (all.length < 100) all.push(p);
     tell(p);
   }
-  w.__ergaReport = r;
   addEventListener("message", (e) => {
     if (e.source == parent && e.origin == shell && e.data?.type == "erga-mode" && e.data.mode == "edit") all.forEach(tell);
   });

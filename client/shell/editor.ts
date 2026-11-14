@@ -27,8 +27,17 @@ export function mountEditor(shell: Shell, editing: boolean, full: boolean) {
     if (effects.ask) void ask();
     if (effects.retry) setTimeout(() => send({ type: "retry" }), ms(effects.retry));
     if (effects.note == "failed")
-      shell.toast.explain("The editor can't start: the server didn't give it an edit key. It asks again in a few seconds.");
-    if (effects.note == "started") shell.toast.flash("The editor started.", 2200);
+      shell.alerts.raise({
+        key: "edit-key",
+        kind: "error",
+        source: "editor",
+        title: "The editor can't start",
+        detail: "The server didn't give it an edit key. It asks again in a few seconds.",
+      });
+    if (effects.note == "started") {
+      shell.alerts.end("edit-key");
+      shell.toast.flash("The editor started.", 2200);
+    }
   }
   async function ask() {
     // The first one was asked for as the page connected (client/inline/viewer-editing-head.ts, ergaConnect).

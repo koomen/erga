@@ -39,6 +39,7 @@ import { barEdge } from "../common/quick";
 import { mountChrome } from "./chrome";
 import { mountSharing } from "./sharing";
 import { mountToast } from "./toast";
+import { mountAlerts } from "./alerts";
 import { mountViews } from "./views";
 import { mountPageRequests } from "./page-requests";
 import { awaitHello } from "./opening";
@@ -315,7 +316,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   shell.people = mountPeople(shell);
   shell.chrome = mountChrome(shell);
   shell.sharing = mountSharing(shell);
-  shell.toast = mountToast(shell);
+  shell.toast = mountToast();
+  shell.alerts = mountAlerts(shell);
   // Focusing or using this tab makes it the one you're shown by. Focus
   // lands on the frame's window when the caret is in the page.
   const activate = () => collab.activate();
@@ -336,22 +338,21 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     onKey: (keys) => {
       appShortcut(keys, true);
     },
-    // A notice the agent can fix (the editor's, through the page's problem watch), or the page's own problem: each once,
-    // until someone asks the agent to fix it (if it's still broken after, it says so again).
+    // The page's own problem, as an alert: once in a view of the page, until someone asks the agent to fix it (if it's
+    // still broken after, it says so again).
     onProblem: (raw, base) => {
-      if (raw.kind == "notice") {
-        shell.toast.explain(raw.message, raw.fix, undefined, raw.draft);
-        return;
-      }
       const p = describeProblem(raw, base, pagesOrigin);
-      if (!p || shell.room.shownProblems.has(p.key)) return;
-      shell.room.shownProblems.add(p.key);
-      shell.toast.reportProblem(p.message, p.fix, p.key);
+      if (p) shell.alerts.raise({ ...p, kind: "error", source: "page", once: true, life: "page" });
     },
+    onAlert: (event) => shell.alerts.fromPage(event),
+    onLoad: () => {
+      shell.alerts.loaded();
+      document.body.classList.remove("has-steps");
+    },
+    onSteps: (on) => document.body.classList.toggle("has-steps", on),
     onPointer: (x, y) => shell.chrome.pointerMoved(new MouseEvent("mousemove", { clientX: x, clientY: y })),
     // A press on the page: as one anywhere else in the shell would.
     onPress: () => {
-      shell.toast.dismissExplanation(null);
       activate();
       // (Also a card that's waiting for what it shows, to open.)
       shell.chrome.closeCards();
@@ -363,7 +364,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       if (kind == "key") {
         live((l) => l.activity());
         shell.chrome.keyPressed();
-        shell.toast.dismissExplanation(null);
       }
     },
     onOpen: (path) => openPage(path),
@@ -502,7 +502,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       shell.toast.flash(shell.room.connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200);
       return true;
     }
-    if (e.key == "Escape" && shell.toast.closeProblem()) return true;
+    if (e.key == "Escape" && shell.alerts.close()) return true;
     if (e.key == "Escape") {
       // Naming something in the pages tree, a question in it or one of its menus: Escape is theirs to cancel.
       if (document.activeElement?.closest(".et-input, .et-row.confirm, .et-menu")) return false;
@@ -648,8 +648,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     if (text == null) { goTo(addressOf(path)); return; }
     page.load(path);
     // What was said of the last page was of it alone.
-    shell.room.shownProblems.clear();
-    shell.toast.clearProblems();
+    shell.alerts.left();
     shell.naming.togglePages(false);
     // The new page has the focus for its editor, unless the agent's box has it.
     if (!$("agent").contains(document.activeElement)) page.focus();

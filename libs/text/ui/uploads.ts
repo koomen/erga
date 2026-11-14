@@ -2,7 +2,7 @@
 // top, an image in images/ and any other file in files/, under its own name or, if a file has that name already, the
 // name with -2, -3, ... before its extension. The editor puts them there itself, from the page's origin, with its edit
 // key (PUT /d/<id>/api/files/<path>?key=: server/documents/routes.ts), then on the page where they were dropped: an
-// image as an image, another file as a link to it.
+// image as an image, another file as a link to it. One file at a time; a file that fails doesn't stop the others.
 
 import { encodePath } from "../../../document/pages";
 import { sha256Hex } from "../../../shared/bytes";
@@ -17,34 +17,30 @@ const folderFor = (file: File) => (file.type.startsWith("image/") ? "images" : "
 const cleanName = (name: string) => name.replace(/[/\\]/g, "-").replace(/^\.+/, "").trim() || "file";
 
 /**
- * Adds `files` to the document's files: `doc` is the document's address (https://erga.dev/d/<id>), `key` the edit key,
- * `taken` the paths the document has (any case); `sending` hears each path before its file goes. Returns the paths they
- * got, in order, up to the first that couldn't be added, and why it couldn't.
+ * Adds `file` to the document's files: `doc` is the document's address (https://erga.dev/d/<id>), `key` the edit key,
+ * `taken` the paths the document has (any case), which gets the file's; `sending` hears its path before it goes.
+ * Returns the path it got, or why it couldn't be added.
  */
-export async function addFiles(
+export async function addFile(
   doc: string,
   key: string,
-  files: File[],
+  file: File,
   taken: Set<string>,
   sending: (path: string) => void
-): Promise<{ paths: string[]; error: string | null }> {
-  const paths: string[] = [];
-  for (const file of files) {
-    const dir = folderFor(file);
-    const path = `${dir}/${unique(cleanName(file.name), (n) => taken.has(`${dir}/${n}`.toLowerCase()))}`;
-    const headers: Record<string, string> = {};
-    if (file.size > HASH_FROM) headers["x-erga-sha256"] = await sha256Hex(await file.arrayBuffer());
-    sending(path);
-    const r = await fetch(`${doc}/api/files/${encodePath(path)}?key=${encodeURIComponent(key)}`, {
-      method: "PUT",
-      body: file,
-      headers,
-    }).catch(() => null);
-    if (!r?.ok) return { paths, error: await why(r, file.name) };
-    taken.add(path.toLowerCase());
-    paths.push(path);
-  }
-  return { paths, error: null };
+): Promise<{ path: string } | { error: string }> {
+  const dir = folderFor(file);
+  const path = `${dir}/${unique(cleanName(file.name), (n) => taken.has(`${dir}/${n}`.toLowerCase()))}`;
+  const headers: Record<string, string> = {};
+  if (file.size > HASH_FROM) headers["x-erga-sha256"] = await sha256Hex(await file.arrayBuffer());
+  sending(path);
+  const r = await fetch(`${doc}/api/files/${encodePath(path)}?key=${encodeURIComponent(key)}`, {
+    method: "PUT",
+    body: file,
+    headers,
+  }).catch(() => null);
+  if (!r?.ok) return { error: await why(r) };
+  taken.add(path.toLowerCase());
+  return { path };
 }
 
 /** `name`, or with -2, -3, ... before its extension, the first that isn't `taken`. */
@@ -56,8 +52,8 @@ function unique(name: string, taken: (name: string) => boolean): string {
   for (let i = 2; ; i++) if (!taken(`${stem}-${i}${ext}`)) return `${stem}-${i}${ext}`;
 }
 
-async function why(r: Response | null, what: string): Promise<string> {
-  if (!r) return `Couldn't add ${what}: the server didn't answer. Check the connection and drop it again.`;
+async function why(r: Response | null): Promise<string> {
+  if (!r) return "The server didn't answer. Check the connection.";
   const body = (await r.json().catch(() => null)) as { error?: string } | null;
-  return `Couldn't add ${what}: ${body?.error ?? `the server answered ${r.status}.`}`;
+  return body?.error ?? `The server answered ${r.status}.`;
 }

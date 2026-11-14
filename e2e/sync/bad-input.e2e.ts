@@ -199,19 +199,18 @@ test("a paragraph that bad markup breaks says what is wrong, and its button asks
   await until(() => ed.frame<boolean>(`!!${ed.F}.querySelector("figcaption.erga-locked")`), 5000, "the paragraph locks");
   const at = await ed.rectOf("figcaption", 0.2);
   await ed.click(at.x, at.y);
-  await until(() => ed.eval<boolean>(`!!document.querySelector("#toast.show .toast-fix")`), 5000, "the note offers a fix");
+  await until(async () => (await ed.alerts()).alerts[0]?.buttons.includes("Fix with agent"), 5000, "the alert offers a fix");
   // It names the stray tag, and does not send the person to the HTML.
-  const note = await ed.eval<string>(`document.querySelector("#toast .toast-text").textContent`);
-  expect(note).toMatch(/stray <\/h2>/);
-  expect(note).not.toMatch(/HTML view|⌘⇧P/);
+  const [alert] = (await ed.alerts()).alerts;
+  expect(alert.title).toBe("This <figcaption> can't be edited");
+  expect(alert.detail).toMatch(/^Editor · its HTML has a stray <\/h2>/);
+  expect(alert.detail).not.toMatch(/HTML view|⌘⇧P/);
   expect(await ed.eval<boolean>(`document.body.classList.contains("agent-open")`)).toBe(false);
-  // The note, frame by frame, as it goes: it fades as it is, and nothing jumps.
-  await ed.eval(
-    `window.__frames = []; (function tick(n) { const t = document.getElementById("toast"); const r = t.getBoundingClientRect(); __frames.push({ op: +getComputedStyle(t).opacity, btn: !!t.querySelector(".toast-fix"), w: Math.round(r.width), h: Math.round(r.height) }); if (n < 40) requestAnimationFrame(() => tick(n + 1)); })(0)`
-  );
   const sent = tab.page.waitForRequest((r) => r.method() == "POST" && new URL(r.url()).pathname.endsWith("/api/agent"));
-  await ed.eval(`document.querySelector("#toast .toast-fix").click()`);
+  await tab.page.click('#alerts .alert [data-action="fix"]');
   await until(() => ed.eval<boolean>(`document.body.classList.contains("agent-open")`), 5000, "the agent pane opens");
+  // The agent has it: its alert is gone.
+  expect((await ed.alerts()).view).toBe("none");
   await until(
     () =>
       ed.eval<boolean>(
@@ -243,11 +242,4 @@ test("a paragraph that bad markup breaks says what is wrong, and its button asks
     5000,
     "the agent's answer comes into the pane, as for any message"
   );
-  await until(() => ed.eval<boolean>(`__frames.length > 40`), 5000, "the note's frames are in");
-  const frames = await ed.eval<{ op: number; btn: boolean; w: number; h: number }[]>(`__frames`);
-  const visible = frames.filter((f) => f.op > 0.01);
-  expect(
-    visible.filter((f) => !f.btn || f.w != visible[0].w || f.h != visible[0].h),
-    "the note keeps its shape and its button until it is gone"
-  ).toEqual([]);
 });

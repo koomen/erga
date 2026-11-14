@@ -3,8 +3,9 @@
 // socket and its files are), the edit key that opens them (server/documents/edit-key.ts; the viewer gives a new one
 // before the last ends, for the next socket), who this tab is (`me`: the room attributes the edits to the key's person;
 // this is how the editor shows them), which of the document's pages this is (`path`), this tab's own mark (`tab`: its
-// presence in the room carries it, so the viewer knows its own page's caret), the zoom the viewer draws the page at, and
-// what the tests set (`timescale`, `check`). `comment`: for a person who may comment and not edit (a commenter:
+// presence in the room carries it, so the viewer knows its own page's caret), the zoom the viewer draws the page at, how
+// much of the window's bottom the viewer's alerts take (`notes`, in px: the editor's own notes sit over them; when it
+// changes, the viewer says "erga-notes" with the new height), and what the tests set (`timescale`, `check`). `comment`: for a person who may comment and not edit (a commenter:
 // client/inline/viewer-comment.ts sends it): the comments alone, on a page that nothing here changes.
 
 import type { Author } from "../../../document/content";
@@ -23,6 +24,7 @@ export type EditMode =
       tall: number;
       /** The browser has the whole window zoomed (its own pinch): a pinch on the page stays the browser's. */
       pinched: boolean;
+      notes: number;
       timescale?: number;
       check?: boolean;
       comment?: true;

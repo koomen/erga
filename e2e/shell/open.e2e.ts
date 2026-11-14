@@ -442,18 +442,19 @@ journey("a deck in the editor", () => {
   const shell = (cls: string) => ed.eval<boolean>(`document.body.classList.contains(${JSON.stringify(cls)})`);
   const toast = () => ed.page.evaluate(() => document.getElementById("toast")?.textContent ?? "");
 
-  test("the host refuses the edit key: a note says so, the shell asks again, and the editor starts", async ({ tab }) => {
+  test("the host refuses the edit key: an alert says so, the shell asks again, the editor starts and the alert goes", async ({ tab }) => {
     let refuse = true;
     await tab.page.route("**/api/key*", (r) => (refuse ? r.fulfill({ status: 500, body: "no" }) : r.continue()));
     const opening = openEditor(tab, s, "deck", { allowErrors: true });
     opening.catch(() => {});
-    await soon(() => tab.page.evaluate(() => document.getElementById("toast")?.textContent ?? ""), 8000).toContain(
+    await soon(() => tab.page.evaluate(() => document.querySelector("#alerts .alert-title")?.textContent ?? ""), 8000).toBe(
       "The editor can't start"
     );
     refuse = false;
     ed = await opening;
     expect(await runs()).toBe(true);
     await soon(toast).toContain("The editor started");
+    expect((await ed.alerts()).view).toBe("none");
     // (The refused key, as the browser reports it: on purpose.) From here on, an error on the page fails its step.
     tab.errors.splice(0, tab.errors.length, ...tab.errors.filter((e) => !/status of 500/.test(e)));
     tab.strict = true;

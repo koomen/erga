@@ -109,7 +109,11 @@
 
   <!-- Your agent is the page's, viewing and editing alike (server/pages/agent.ts): not the editor's. -->
 
-  <div id="toast" class="toast" aria-hidden="true"></div>
+  <!-- At the bottom of the page's part of the window: a confirmation (the toast), over the alerts' card or line. -->
+  <div class="notes">
+    <div id="toast" class="toast" aria-hidden="true"></div>
+    <div id="alerts" class="alerts" aria-live="polite"></div>
+  </div>
 
   <script src="/page.js"></script>
 </body>

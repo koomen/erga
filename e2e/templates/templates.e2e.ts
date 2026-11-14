@@ -317,6 +317,8 @@ journey("a page with steps: its controls, viewing and editing, and full screen",
     await page.locator(".erga-edit-button").click();
     await editorReady(page);
     await expect.poll(async () => (await bar(page)).shown && (await inPage<number>(page, "ergaSteps.current()")) == 1).toBe(true);
+    // The editor's notes (a confirmation, the alerts) sit over the steps bar, not on it.
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector(".notes")!).bottom)).toBe("58px");
     // The list open first: a click on its toggle later would take the caret out of the page.
     await clickOn(page, ".toggle");
     await expect.poll(async () => (await bar(page)).open).toBe(true);

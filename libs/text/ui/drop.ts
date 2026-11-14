@@ -1,6 +1,6 @@
 // Files dropped or pasted on the page's text (input.ts and clipboard.ts take them): while they're dragged over the text,
-// a line shows where they will go; if they can't go in, a note says why at that place. Both are the editor's own elements on the
-// page (like its caret: caret.ts), on the page's <html>, outside the text.
+// a line shows where they will go, the editor's own element on the page (like its caret: caret.ts), on the page's <html>,
+// outside the text. If they can't go in, an alert says why (alerts.ts).
 //
 // Images go between blocks, never inside a line of text: while they're dragged, the text opens a gap before or after the
 // block under the pointer, and a faint image shows in it, centred, where they will go. After the drop the gap stays, with
@@ -14,13 +14,12 @@ erga-drop-image { all: initial; position: absolute; z-index: 2147483646; pointer
 erga-drop-image img { all: initial; display: block; height: 100%; max-width: 100%; object-fit: contain; border-radius: 4px; }
 erga-drop-image span { all: initial; display: block; height: 100%; aspect-ratio: 4 / 3; box-sizing: border-box; border-radius: 6px;
   border: 2px dashed #2563eb; background: rgba(37, 99, 235, 0.12); }
-erga-drop-note { all: initial; position: absolute; z-index: 2147483647; max-width: 320px; padding: 8px 10px; border-radius: 6px;
-  background: #fef2f2; color: #991b1b; border: 1px solid #fca5a5; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  font: 13px/1.4 system-ui, sans-serif; white-space: pre-wrap; cursor: default; }
 `;
 
 /** Why files dropped or pasted while the page loads again (made afresh) don't go in. */
 export const LOADING_AGAIN = "The page is loading again. Drop or paste the file again in a moment.";
+/** Why files dropped where the text can't take them don't go in. */
+export const NOT_HERE = "A file can go only into the text you can edit. Drop it on a paragraph.";
 
 /** Whether a drag carries files (from outside the page: the computer). */
 export const hasFiles = (e: DragEvent) => [...(e.dataTransfer?.types ?? [])].includes("Files");
@@ -57,28 +56,6 @@ export function showDropCaret(doc: Document, range: Range | null): void {
   }
   const win = doc.defaultView!;
   caret.style.cssText = `left:${at.left + win.scrollX - 1}px;top:${at.top + win.scrollY}px;height:${at.height}px`;
-}
-
-/** Says at `point` (the window's coordinates when it was dropped) why the drop didn't go in; a click, a key or 10 s takes it away. */
-export function showDropNote(doc: Document, point: { x: number; y: number }, message: string): void {
-  styleOnce(doc);
-  doc.querySelector("erga-drop-note")?.remove();
-  const note = doc.createElement("erga-drop-note");
-  note.setAttribute("role", "alert");
-  note.textContent = message;
-  const win = doc.defaultView!;
-  note.style.left = `${Math.max(8, Math.min(point.x, win.innerWidth - 330)) + win.scrollX}px`;
-  note.style.top = `${point.y + win.scrollY + 8}px`;
-  doc.documentElement.append(note);
-  const done = () => {
-    note.remove();
-    clearTimeout(timer);
-    doc.removeEventListener("pointerdown", done, true);
-    doc.removeEventListener("keydown", done, true);
-  };
-  const timer = setTimeout(done, 10_000);
-  doc.addEventListener("pointerdown", done, true);
-  doc.addEventListener("keydown", done, true);
 }
 
 /** Where dragged images go: before or after a block of text (its element). */

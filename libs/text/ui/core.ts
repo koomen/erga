@@ -316,7 +316,7 @@ export abstract class EditorCore {
         };
     }
     return {
-      message: `This text was changed by the page's script after it loaded, so it can't be edited here.`,
+      message: `This ${what} can't be edited here: the page's script changed its text after the page loaded.`,
       fix: `The ${what} “${quote}” (line ${line}) is changed by the page's script after the page loads, so I can't edit it on the page. Change the page so that this text can be edited by hand: a script must not change text that is in the source. Give the script an empty element to fill, or mark the text data-erga-noedit if a script must own it.`,
     };
   }

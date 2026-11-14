@@ -42,11 +42,12 @@ test("an error in Erga's own code is not the page's problem: no message, no fix 
   expect(isOwnError(own)).toBe(false);
   expect(describeProblem(own, BASE, ORIGIN)).toEqual({
     key: "script:Uncaught Error: the page's own error",
-    message: "The page's script hit an error: Uncaught Error: the page's own error (index.html, line 3). Parts of the page may not work.",
+    title: "The page's script hit an error",
+    detail: "Uncaught Error: the page's own error (index.html, line 3)",
     fix: "The page's script throws an error in the browser: “Uncaught Error: the page's own error” (index.html, line 3). Find the cause and fix it.",
   });
   // The page's code called by the editor's: the first file of the stack is the page's, so it is the page's problem.
   const called = { ...own, file: "", stack: `Error: the page's own error\n    at render (${page}:3:9)\n    at run (${OWN}:7:1)` };
   expect(isOwnError(called)).toBe(false);
-  expect(describeProblem(called, BASE, ORIGIN)?.message).toMatch(/the page's own error/);
+  expect(describeProblem(called, BASE, ORIGIN)?.detail).toMatch(/the page's own error/);
 });

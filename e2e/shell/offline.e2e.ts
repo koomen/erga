@@ -11,7 +11,7 @@ import { soon } from "./shell";
 
 const s = await servers.main();
 
-const NOTE = "Edits not saved yet. Erga saves them when the connection is back.";
+const NOTE = "Edits not saved yet";
 
 /** What an origin keeps for offline, as a frame of it sees it: the worker's copy, the replicas, Erga's worker. */
 const KEPT = `(async () => ({
@@ -69,9 +69,12 @@ function withoutOffline(tab: Tab) {
   tab.errors.splice(0, tab.errors.length, ...left);
 }
 
-/** The note for edits that are not on the server yet, at the bottom right of the page (libs/text/ui/unsaved.ts); null: none. */
+/** The note for edits that are not on the server yet: the alerts' one line (libs/text/ui/unsaved.ts raises it); null: none. */
 const note = (ed: Editor) =>
-  ed.frame<string | null>(`document.querySelector("erga-unsaved")?.shadowRoot?.querySelector("p")?.textContent ?? null`).catch(() => null);
+  ed
+    .alerts()
+    .then((a) => (a.view == "line" ? a.head : null))
+    .catch(() => null);
 
 journey("offline, and back; then sign-out", () => {
   let ed: Editor, other: Editor;
@@ -122,11 +125,13 @@ journey("offline, and back; then sign-out", () => {
     expect(await note(ed)).toBeNull();
     await ed.type(" Eggs.");
     await soon(() => note(ed), 10_000).toBe(NOTE);
-    // At the bottom right of the page.
-    const at = await ed.frame<{ right: number; bottom: number }>(
-      `(() => { const r = document.querySelector("erga-unsaved").shadowRoot.querySelector("p").getBoundingClientRect(); return { right: innerWidth - r.right, bottom: innerHeight - r.bottom }; })()`
-    );
-    expect([Math.round(at.right), Math.round(at.bottom)]).toEqual([16, 16]);
+    // A click on the line opens the card, which says more; Escape gives the line back: it stops nothing.
+    await ed.page.click("#alerts .alerts-pill");
+    expect((await ed.alerts()).alerts).toEqual([
+      { title: NOTE, count: "", detail: "Connection · Erga saves them when the connection is back.", rows: [], buttons: [] },
+    ]);
+    await ed.press("Escape");
+    await soon(() => note(ed)).toBe(NOTE);
     // Meanwhile someone else changes the title (on disk: the room takes it in).
     ed.write(ed.disk().replace("<h1>Field guide</h1>", "<h1>Field guide, second edition</h1>"));
 

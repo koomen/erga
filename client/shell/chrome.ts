@@ -117,8 +117,17 @@ export function mountChrome(shell: Shell) {
   for (const type of ["pointerenter", "focus"]) settingsBtn.addEventListener(type, () => void loadSettings(), { once: true });
   settingsBtn.addEventListener("click", async () => {
     const s = await loadSettings();
-    if (s) s.toggle();
-    else shell.toast.explain("Couldn't load the document's settings. Check your connection and try again.");
+    if (s) {
+      shell.alerts.end("settings");
+      s.toggle();
+    } else
+      shell.alerts.raise({
+        key: "settings",
+        kind: "error",
+        source: "editor",
+        title: "Couldn't load the document's settings",
+        detail: "Check your connection and try again.",
+      });
   });
   if (!isMac) {
     for (const k of help.querySelectorAll("kbd")) {
