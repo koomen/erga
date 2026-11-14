@@ -20,6 +20,7 @@ import { join } from "node:path";
 import type { Frame, Page } from "playwright-core";
 import { ROOT } from "./env";
 import { agentClosed, expect, goto, servers, settle, until, type Server, type Tab } from "./fixtures";
+import { pointerOnPage } from "./press";
 import { VISIBLE } from "./visible";
 
 /** A template literal's text without its first newline and its common indent. */
@@ -174,14 +175,15 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     },
     /**
      * After a (re)load: the shell is up, the editor on the page (its text blocks editable), the agent's status in. Not
-     * the old page that is about to load again (ergaFrame.reloading): it stays editable until the new one comes.
+     * the old page that is about to load again (ergaFrame.reloading): it stays editable until the new one comes. And
+     * the page is in sight: one that loads again is out of sight until it has its view (client/inline/reader.ts).
      */
     loaded: () =>
       until(
         async () =>
           (await page.evaluate(`!!window.ergaPage && !!document.getElementById("agent-model")?.textContent`)) &&
           (await ed.frame<boolean>(
-            `!!window.ergaFrame?.page && !ergaFrame.reloading && !!${F}.querySelector("[data-erga-text]") && ${F}.documentElement.hasAttribute("data-erga-editing")`
+            `!!window.ergaFrame?.page && !ergaFrame.reloading && !!${F}.querySelector("[data-erga-text]") && ${F}.documentElement.hasAttribute("data-erga-editing") && getComputedStyle(${F}.documentElement).visibility == "visible"`
           )),
         10_000,
         "the editor loads"
@@ -200,7 +202,7 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     /** Whether the page's text has the focus, with the caret (the selection's focus) in an element that matches `sel`. */
     caretIn: (sel: string) =>
       ed.frame<boolean>(
-        `(() => { const n = ${F}.getSelection().focusNode, e = n && (n.nodeType == 1 ? n : n.parentElement); return ${F}.hasFocus() && ${F}.activeElement == ${F}.body && ${F}.body.isContentEditable && !!e?.closest(${JSON.stringify(sel)}); })()`
+        `(() => { const n = ${F}.getSelection().focusNode, e = n && (n.nodeType == 1 ? n : n.parentElement); return ${F}.hasFocus() && ${F}.body.matches(":focus") && ${F}.body.isContentEditable && !!e?.closest(${JSON.stringify(sel)}); })()`
       ),
     /**
      * The page is rendered and has the caret in a unit. Keys never need it (the editor holds keys that come while it
@@ -212,7 +214,7 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
       await until(
         () =>
           ed.frame<boolean>(
-            `!!window.ergaFrame?.page && !ergaFrame.page.rendering && ${F}.activeElement == ${F}.body && (() => { const n = ${F}.getSelection().focusNode; return !!(n && (n.nodeType == 1 ? n : n.parentElement)?.closest("[data-erga-text]")); })()`
+            `!!window.ergaFrame?.page && !ergaFrame.page.rendering && ${F}.body.matches(":focus") && (() => { const n = ${F}.getSelection().focusNode; return !!(n && (n.nodeType == 1 ? n : n.parentElement)?.closest("[data-erga-text]")); })()`
           ),
         5000,
         "the editor to settle"
@@ -280,6 +282,7 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     },
     /** Clicks at a point in the tab, then lets the page catch up. */
     async click(x: number, y: number, opts: { clickCount?: number; modifiers?: ("Shift" | "Alt" | "ControlOrMeta")[] } = {}) {
+      await pointerOnPage(page, x, y);
       for (const m of opts.modifiers ?? []) await page.keyboard.down(m);
       await page.mouse.click(x, y, { clickCount: opts.clickCount ?? 1 });
       for (const m of opts.modifiers ?? []) await page.keyboard.up(m);
@@ -291,7 +294,7 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
       await ed.click(r.x + 2, r.y);
     },
     async drag(x1: number, y1: number, x2: number, y2: number, steps = 8) {
-      await page.mouse.move(x1, y1);
+      await pointerOnPage(page, x1, y1);
       await page.mouse.down();
       await page.mouse.move(x2, y2, { steps });
       await page.mouse.up();

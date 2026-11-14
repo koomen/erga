@@ -18,6 +18,8 @@ import { until } from "./fixtures";
 /** The check of a press, in the page: whether it landed (null: no press yet), what to say of it, and its end. */
 interface Press {
   on: boolean | null;
+  /** The pointer moved on the element since the aim: the browser has this document's element under it. */
+  over: boolean;
   said: string;
   stop(): void;
 }
@@ -37,13 +39,32 @@ const aim = ([selector, events]: [string, string[]]) => {
     r = el?.getBoundingClientRect();
   const say = (e: EventTarget | null | undefined) =>
     e instanceof Element ? `<${e.tagName.toLowerCase()} id="${e.id}" class="${e.className}">` : String(e);
+  const move = (e: Event) => {
+    if (el && e.composedPath().includes(el)) press.over = true;
+  };
   const press: Press = {
     on: null,
+    over: false,
     said: `${selector}: not on the page`,
-    stop: () => events.forEach((n) => removeEventListener(n, hear, true)),
+    stop: () => {
+      events.forEach((n) => removeEventListener(n, hear, true));
+      removeEventListener("mousemove", move, true);
+    },
   };
   w.__press = press;
   if (!el || !r?.width) return null;
+  // The document's frame is on its way to another place or size (the agent's pane slides it aside): until it rests,
+  // the browser's picture of what is under a point is old, and a press beside the frame goes to the page in it, or
+  // its start to one and its end to the other (the trap at pointerOnPage).
+  const frame = document.getElementById("frame");
+  const sliding = (a: Animation) => {
+    const on = (a.effect as KeyframeEffect | null)?.target;
+    return a.playState == "running" && !!on && (on.contains(frame) || on.id == "agent");
+  };
+  if (frame && document.getAnimations().some(sliding)) {
+    press.said = `${selector}: the document's frame is on its way`;
+    return null;
+  }
   const x = r.x + r.width / 2,
     y = r.y + r.height / 2,
     top = document.elementFromPoint(x, y);
@@ -66,7 +87,9 @@ const aim = ([selector, events]: [string, string[]]) => {
     e.stopImmediatePropagation();
     e.preventDefault();
   }
+  press.said = `at ${x},${y}, the pointer did not come on it`;
   events.forEach((n) => addEventListener(n, hear, true));
+  addEventListener("mousemove", move, true);
   return { x, y, shows: true };
 };
 
@@ -105,7 +128,12 @@ export function pressOn(page: Page, selector: string, drawn = false) {
         if (tries++) await page.mouse.move(at.x + (tries % 2 ? 3 : 0), at.y, { steps: 2 });
         return false;
       }
+      // (Again: from beside the point, so that the pointer moves.)
+      if (tries++) await page.mouse.move(at.x + 1, at.y);
       await page.mouse.move(at.x, at.y);
+      // The browser has the element under the pointer (the trap below, at pointerOnPage: the other way round, a press
+      // on the viewer's element beside the page's frame, or over it, goes to the page).
+      if (!(await page.evaluate(() => (window as unknown as { __press?: Press }).__press?.over))) return false;
       await page.mouse.down();
       await page.mouse.up();
       // (A press that left the page landed: there is no page to ask.)
@@ -119,3 +147,35 @@ export function pressOn(page: Page, selector: string, drawn = false) {
 
 /** Presses the element, then waits until the tab has drawn what the press did. */
 export const clickOn = (page: Page, selector: string) => pressOn(page, selector, true);
+
+/** In a frame: how many moves of the pointer its page has heard, from the first ask on. */
+const MOVES = `(window.__moves ??= (addEventListener("mousemove", () => window.__moves.n++, true), { n: 0 })).n`;
+
+/**
+ * Puts the pointer at a point of the tab that is on the document's page, and waits until the page has it: before a
+ * press or the wheel there, as a person's pointer is there first.
+ *
+ * Trap: the page is in a process of its own (e2e/helpers/engine.ts), and the browser knows from the last picture it
+ * drew which process is under a point. Just after the frame came, showed again or got another size, a press or the
+ * wheel on the page goes to the viewer, on its frame element: the page hears nothing, and loses the focus. A move that
+ * the page hears says that the browser has the page there.
+ */
+export async function pointerOnPage(page: Page, x: number, y: number) {
+  const heard = async () => {
+    let n = 0;
+    for (const f of page.frames()) if (f != page.mainFrame()) n += await f.evaluate<number>(MOVES).catch(() => 0);
+    return n;
+  };
+  const was = await heard();
+  let tries = 0;
+  await until(
+    async () => {
+      // (Again: from beside the point, so that the pointer moves.)
+      if (tries++) await page.mouse.move(x + 1, y);
+      await page.mouse.move(x, y);
+      return (await heard()) > was;
+    },
+    5000,
+    `the pointer is on the page at ${x},${y}`
+  );
+}

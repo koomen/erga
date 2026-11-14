@@ -8,7 +8,7 @@ import { newToken } from "../helpers/new-token";
 import { runTool, textOf } from "../helpers/tools";
 import { diff, layout, layoutOk, type Layout } from "./band";
 import { bars, docFrame, docShows, editorUp, GLASS, inDoc, openViewer, site, styled, viewing, where, type Box } from "./viewer";
-import { clickOn } from "../helpers/press";
+import { clickOn, pointerOnPage } from "../helpers/press";
 
 const s = await servers.main();
 
@@ -121,6 +121,7 @@ journey("a reader opens a document with several pages", () => {
     await page.locator(".erga-crumbs").click({ position: { x: 4, y: 4 } });
     await page.keyboard.press("ControlOrMeta+p");
     await expect.poll(printed).toBe(1);
+    await pointerOnPage(page, 600, 600);
     await page.mouse.click(600, 600);
     await page.keyboard.press("ControlOrMeta+p");
     await expect.poll(printed).toBe(2);
@@ -293,6 +294,7 @@ journey("a reader opens a document with several pages", () => {
       .toBe(true);
     expect((await bars(page, "view")).parts.me, "the avatar stays where it is").toEqual(me);
     // A tap on the page (in its frame) closes them.
+    await pointerOnPage(page, 195, 500);
     await page.mouse.click(195, 500);
     await expect.poll(() => shown("view")).toEqual(["left", "right", "me"]);
     // ?edit opens the editor as the page loads. Its bars at rest: the same.

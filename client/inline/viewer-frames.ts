@@ -98,6 +98,10 @@ export default function viewerFrames(pages: string): void {
     if (!window.ergaFrames.from(e)) return;
     if (e.data?.type == "erga-hello") {
       deep = e.data.deep === true;
+      // The frame has the focus, and a page came in it: the page takes it (client/inline/reader.ts). The frame took the
+      // focus before the page came, and the page has a process of its own, which was not told: its document has no
+      // focus, and the page's editor shows no caret. (focus() on the frame does nothing: the frame has the focus.)
+      if (document.activeElement == frame()) window.ergaFrames.send({ type: "erga-focus" });
       // The new page is up: the keys are its own from now on, and the old page hands over what it holds (its editor's
       // keys typed meanwhile: libs/text/ui/frame.ts).
       if (!old) return;

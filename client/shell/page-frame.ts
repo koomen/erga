@@ -125,9 +125,8 @@ export function mountPageFrame(c: PageFrameConfig) {
     if (m.type == "erga-hello") {
       zoomsItself = false;
       c.onLoad();
+      // (A frame with the focus: the page that came in it has it, for its editor: client/inline/viewer-frames.ts.)
       if (active()) say();
-      // (The frame had the focus: the page that came in it has it, for its editor.)
-      if (active() && document.activeElement == frame) frame.focus();
       return;
     }
     if (m.type == "erga-zooms" && zoomsItself != (m.on === true)) {

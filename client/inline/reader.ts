@@ -394,6 +394,8 @@ export default function reader(C: ReaderConfig): void {
     keeping = false;
     want = null;
     placing?.remove();
+    // (For the editor, which may be up already: what is out of sight takes no focus. libs/text/ui/frame.ts.)
+    dispatchEvent(new Event("ergaplaced"));
     // (Two frames on: the page has painted its view.)
     requestAnimationFrame(() => requestAnimationFrame(() => tell({ type: "erga-placed", keep })));
     soon();
@@ -862,6 +864,8 @@ export default function reader(C: ReaderConfig): void {
     }
     // ⌘P in the viewer: this page prints itself.
     else if (type == "erga-print") print();
+    // The viewer's frame has the focus: this page takes it (client/inline/viewer-frames.ts).
+    else if (type == "erga-focus") focus();
     // The viewer says that stylesheets changed (client/inline/viewer-live.ts): in place, and whether that worked.
     else if (type == "erga-restyle" && Array.isArray(e.data.paths) && typeof e.data.files == "string") {
       const ok = e.data.files.indexOf(location.origin + "/") == 0 && e.data.paths.every((p: unknown) => typeof p == "string");

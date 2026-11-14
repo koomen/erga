@@ -234,7 +234,15 @@ export async function act(page: Page, path: string, which: "add" | "more" | "ren
   await page.mouse.move(r.x, r.y);
   await clickOn(page, `${sel} [data-act="${which}"]`);
   if (which != "rename")
-    await until(() => page.evaluate(`!!document.querySelector(".et-menu")`), 3000, `${which} on ${path} opens its menu`);
+    await until(
+      () => page.evaluate(`!!document.querySelector(".et-menu")`),
+      3000,
+      `${which} on ${path} opens its menu`,
+      () =>
+        page.evaluate(
+          `[window.__press?.said, window.__press?.on, !!document.querySelector(${JSON.stringify(sel)}), document.activeElement?.tagName + "#" + document.activeElement?.id, document.hasFocus()]`
+        )
+    );
 }
 
 /** The open menu's items. */

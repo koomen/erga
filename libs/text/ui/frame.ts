@@ -481,7 +481,15 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
           // caret in its text: it had the focus as it loaded again, or has it now, for the keys held meanwhile.
           // (Not after full screen: the text is left, as after Escape, until a click on it.)
           if (wasFull) page.leaveText();
-          else if (!m.comment && (focus || document.hasFocus())) page.focus();
+          else if (!m.comment && (focus || document.hasFocus())) {
+            page.focus();
+            // A page that loads again is out of sight until it has its view (client/inline/reader.ts), and the browser
+            // gives no focus to what is out of sight: the text takes it as the page shows. Without it, text that comes
+            // with no key (an input method, dictation) goes into the page past the editor.
+            const shown = () => document.hasFocus() && page?.focus();
+            addEventListener("ergaplaced", shown, { once: true });
+            unwatch.push(() => removeEventListener("ergaplaced", shown));
+          }
           wasFull = false;
           // (The viewer stops its own reloads of the page: this shows each change in place. client/inline/viewer-live.ts.)
           if (m.comment) window.parent.postMessage({ type: "erga-commenting" }, SHELL);

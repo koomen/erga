@@ -375,7 +375,9 @@ journey("two people on one page", () => {
     expect(["Bo", "Cy"]).toContain(one.name);
     expect(tip.text).toBe(`"${one.name}"`);
     expect(tip.color).toBe(tip.own);
-    // The pointer away: they stack again.
+    // The pointer away: they stack again. (By the breadcrumbs: DevTools does not tell the viewer of a pointer that goes
+    // straight into the page's frame, as a browser does: e2e/helpers/engine.ts.)
+    await a.page.hover("#nav-brand");
     await a.page.mouse.move(600, 400);
     await until(
       async () => {

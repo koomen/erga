@@ -4,6 +4,7 @@
 
 import type { Page } from "playwright-core";
 import { agentClosed, goto, settle, until, type Server, type Tab } from "../helpers/fixtures";
+import { pointerOnPage } from "../helpers/press";
 
 /** Makes a document from a template (/new?template=<id>): the answer's status, and the document's address (no ?edit). */
 export async function newDoc(server: Server, template: string) {
@@ -145,6 +146,7 @@ export async function clickTextEnd(page: Page, selector: string, back = 2) {
     page,
     `(() => { const g = document.createRange(); g.selectNodeContents([...document.querySelectorAll(${JSON.stringify(selector)})].find((e) => e.offsetParent)); const r = g.getBoundingClientRect(); return { x: r.right - ${back}, y: r.top + r.height / 2 }; })()`
   );
+  await pointerOnPage(page, f.x + r.x, f.y + r.y);
   await page.mouse.click(f.x + r.x, f.y + r.y);
   await settle(page);
 }
@@ -152,6 +154,7 @@ export async function clickTextEnd(page: Page, selector: string, back = 2) {
 /** A click in the page away from its text, and nothing selected: the page has the keys. */
 export async function clickAway(page: Page, x: number, y: number) {
   const f = await frameAt(page);
+  await pointerOnPage(page, f.x + x, f.y + y);
   await page.mouse.click(f.x + x, f.y + y);
   await settle(page);
 }
