@@ -177,7 +177,7 @@ export function server(o: ServerOptions = {}) {
     docs: {
       create: (doc, files, index, opts) => host(doc).create(doc.owner, doc.id, files, index, opts),
       keep: (doc) => host(doc).keep(),
-      publish: (doc, files, remove, by) => host(doc).publish(files, remove, by),
+      publish: (doc, files, remove, by, writer) => host(doc).publish(files, remove, by, writer),
       paths: (doc) => hold(doc, (d) => d.paths()),
       index: (doc) => host(doc).index(),
       snapshot: (doc) => hold(doc, (d) => d.snapshot()),

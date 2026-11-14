@@ -11,6 +11,8 @@ import type { Role } from "../document/access.ts";
 import type { RestoreResult, Version, VersionsState } from "../document/versions.ts";
 import type { FileList, NameAnswer, TreeAnswer, TreeState } from "../document/host.ts";
 import type { FileData } from "../document/document.ts";
+import type { Published } from "../document/uploads.ts";
+import type { Writer } from "../document/waits.ts";
 import type { ViewAnswer } from "../document/view.ts";
 import type { CommentAnswer, CommentCall } from "../document/comments.ts";
 import type { DocKind, TreeOp } from "../document/pages.ts";
@@ -186,8 +188,9 @@ export interface Platform {
     /**
      * Files arriving whole into an existing document (a publish): written,
      * and merged into its room as edits; `remove` deletes files; `by`: who, as a version records it (byLine).
+     * `writer`: who wrote, when their write may wait for a file's bytes (document/waits.ts).
      */
-    publish(doc: Route, files: Record<string, FileData>, remove: string[], by?: string): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }>;
+    publish(doc: Route, files: Record<string, FileData>, remove: string[], by?: string, writer?: Writer): Promise<Published>;
     /** Every file a document holds. */
     paths(doc: Route): Promise<string[]>;
     /** A document's page, or null if it has no host. */
