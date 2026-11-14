@@ -13,6 +13,10 @@
 // (a test's own fonts server). The check reads the address as written: a public name that resolves to a
 // private address, and a WebSocket, still pass.
 //
+// Trap: a clip that Chrome draws past the window (cdp.ts, screenshot: captureBeyondViewport) shows the page's frame
+// blank once the window grew for the picture. A clip that is all in the window is taken from the window as drawn
+// (`inWindow`): a tall element, and each part of a tall capture (shared/picture.ts).
+//
 // Each render logs its time in the browser (Cloudflare bills Browser Rendering by the browser's time): one JSON line,
 // {"render": ...}.
 //
@@ -34,6 +38,7 @@ import {
   type ViewResult,
 } from "../shared/view-page";
 import { sourceDigest } from "../shared/page-html";
+import { PICTURE, pictureParts } from "../shared/picture";
 import { reachable } from "./private-address";
 import { pagesOrigin, readPagesClaims } from "../server/documents/index";
 import { cookieName, SESSION_COOKIE, viewCookie } from "../server/identity/index";
@@ -48,7 +53,7 @@ import { platform } from "./platform";
 const LOAD_MS = 10_000;
 /** How long the editor may take to start in the frame, once the page has loaded. */
 const EDITOR_MS = 8_000;
-/** The tallest window a picture of the whole page takes (the page's 4000 px, and the viewer's room above it). */
+/** The tallest window a picture of the whole page takes (the page's 4000 px, and the viewer's room above it): it goes in parts (shared/picture.ts). */
 const MAX_WINDOW = 4200;
 /** The longest a render takes: then the page closes, even one whose script never yields (while (true)). */
 const RENDER_MS = 60_000;
@@ -399,16 +404,31 @@ async function shown(
         // The window, or an element: the frame's coordinates, moved to the window's.
         const at = held.clip ? await shell<{ x: number; y: number }>(FRAME_RECT) : null;
         const clip = held.clip && at ? { ...held.clip, x: held.clip.x + at.x, y: held.clip.y + at.y } : undefined;
-        const png = await page.screenshot(clip);
-        shots.push({
-          png,
-          width: clip?.width ?? width,
-          height: clip?.height ?? (grown || height),
-          at: held.at,
-          ...(place.selector ? { selector: place.selector } : {}),
-          ...(stepShown ? { step: stepShown } : {}),
-          ...(held.note ? { note: held.note } : {}),
-        });
+        // A capture taller than the model reads whole goes in parts, from its top (shared/picture.ts).
+        const whole = clip ?? { x: 0, y: 0, width, height: grown || height };
+        const parts = pictureParts(whole.width, whole.height);
+        let top = 0;
+        for (const [i, tall] of parts.entries()) {
+          const part = parts.length > 1 ? { ...whole, y: whole.y + top, height: tall } : clip;
+          // The window grew to show the capture: a clip all in it is taken from the window as drawn (cdp.ts, screenshot).
+          const inWindow = whole.y >= 0 && whole.y + whole.height <= (grown || height) && whole.x >= 0 && whole.x + whole.width <= width;
+          let data = await page.screenshot(part, { inWindow });
+          // A PNG of more bytes than the model takes (photographs): the same picture as a JPEG.
+          const jpeg = data.length > PICTURE.data;
+          if (jpeg) data = await page.screenshot(part, { inWindow, format: "jpeg" });
+          shots.push({
+            data,
+            type: jpeg ? "image/jpeg" : "image/png",
+            width: whole.width,
+            height: tall,
+            at: held.at,
+            ...(parts.length > 1 ? { part: { index: i + 1, count: parts.length, top } } : {}),
+            ...(place.selector ? { selector: place.selector } : {}),
+            ...(stepShown ? { step: stepShown } : {}),
+            ...(held.note && !i ? { note: held.note } : {}),
+          });
+          top += tall;
+        }
       } finally {
         await call("release");
         if (grown) await page.setViewport(width, height);

@@ -33,6 +33,9 @@ Steps, one argument each, in order:
                        Shift+Enter, ControlOrMeta+z (undo), ControlOrMeta+Shift+z (redo), ...
   <key>*<n>            presses it n times: Backspace*3
   click:<selector>     clicks at the end of the element's text (a CSS selector in the page)
+  say:<text>           sends the text to the agent in its panel, and waits for the turn's end. The agent is the
+                       scripted test model (agents/models.ts): "@script [steps]" in the text plays the steps.
+                       (A server that --keep left running before a look with say: has no agent.)
   shot:<file.png>      a screenshot at this step, too
 
 Example:
@@ -125,7 +128,12 @@ let root: string, scratch: string, stop: (() => void) | undefined;
 const k = await kept();
 if (k) ({ root, scratch } = k);
 else {
-  const s = await startServer({ keep, latency });
+  // (With a say: step, the agent is on, on the scripted model.)
+  const s = await startServer({
+    keep,
+    latency,
+    ...(args.some((a) => a.startsWith("say:")) ? { env: { ERGA_AGENT_MODEL: "script" } } : {}),
+  });
   ({ root, scratch } = s);
   if (keep) {
     writeFileSync(KEPT, JSON.stringify({ pid: s.pid()!, root, scratch } satisfies Kept));
@@ -173,9 +181,30 @@ try {
   await ed.clickEnd("[data-erga-text]:not(.erga-locked)");
   await ed.idle();
   for (const step of args) {
-    const [, verb, rest] = /^(type|click|shot):([\s\S]*)$/.exec(step) ?? [];
+    const [, verb, rest] = /^(type|click|shot|say):([\s\S]*)$/.exec(step) ?? [];
     if (verb == "type") await ed.type(rest);
-    else if (verb == "click") {
+    else if (verb == "say") {
+      // The turn's end: one more answer or error in the panel, and the agent no longer at work.
+      const ended = () =>
+        page.evaluate(() =>
+          document.getElementById("agent-fab")!.classList.contains("busy") || document.querySelector("#agent-log .msg-user.pending")
+            ? -1
+            : document.querySelectorAll("#agent-log .msg-assistant, #agent-log .msg-error").length
+        );
+      const before = await ended();
+      if (!(await page.evaluate(() => document.body.classList.contains("agent-open")))) await page.click("#agent-fab");
+      await page.focus("#agent-input");
+      await page.keyboard.insertText(rest);
+      await page.keyboard.press("Enter");
+      await page.waitForFunction(
+        (n) =>
+          !document.getElementById("agent-fab")!.classList.contains("busy") &&
+          !document.querySelector("#agent-log .msg-user.pending") &&
+          document.querySelectorAll("#agent-log .msg-assistant, #agent-log .msg-error").length > n,
+        Math.max(0, before),
+        { timeout: 15_000 }
+      );
+    } else if (verb == "click") {
       await ed.clickEnd(rest);
       await ed.idle();
     } else if (verb == "shot") {

@@ -64,11 +64,20 @@ export interface RenderedFont {
   tags: string[];
 }
 
-/** One picture: a PNG (base64), its size, and where and when it was taken. */
+/**
+ * One picture (base64), its size, and where and when it was taken. A PNG; a JPEG when the PNG is more than the model
+ * takes (shared/picture.ts).
+ */
 export interface Shot {
-  png: string;
+  data: string;
+  type: "image/png" | "image/jpeg";
   width: number;
   height: number;
+  /**
+   * A capture taller than the model reads whole goes in parts, from its top (shared/picture.ts): which part this is,
+   * of how many, and where its top is in the capture, in px.
+   */
+  part?: { index: number; count: number; top: number };
   /** ms after the step (or the load). */
   at: number;
   /** The element it shows, if one. */

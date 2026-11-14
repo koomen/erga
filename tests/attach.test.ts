@@ -5,6 +5,7 @@ import { PersonAgents } from "../agents/person/sessions";
 import { respond } from "../server/http";
 import type { Platform } from "../server/platform";
 import { objectSql } from "./helpers/memory-sql";
+import { pngOf } from "./helpers/png";
 import { checkAttachments, classify, fileRefs, MAX_FILES, MAX_IMAGE_DATA, MAX_TEXT_BYTES, messageContent, refusal } from "../shared/attach";
 
 test("images and text-like files can be attached; others can't", () => {
@@ -31,6 +32,10 @@ test("the server checks what it's sent", () => {
   expect(checkAttachments([{ name: "a.pdf", kind: "pdf", mimeType: "application/pdf", data: "", size: 1 }])).toContain("neither an image nor a text file");
   expect(checkAttachments([{ name: "a.bmp", kind: "image", mimeType: "image/bmp", data: "AAAA", size: 3 }])).toContain("isn't a PNG");
   expect(checkAttachments([{ name: "a.png", kind: "image", mimeType: "image/png", data: "A".repeat(MAX_IMAGE_DATA + 4), size: 1 }])).toContain("too big");
+  // A picture of more px a side than the model takes in a long conversation (shared/picture.ts); 3000 px passes.
+  const png = (w: number, h: number) => [{ name: "a.png", kind: "image", mimeType: "image/png", data: pngOf(w, h), size: 1 }];
+  expect(checkAttachments(png(3001, 800))).toBe("“a.png” is 3001×800 px: more than the 3000 px a side that the model takes");
+  expect(checkAttachments(png(3000, 3000))).toMatchObject([{ name: "a.png" }]);
   expect(checkAttachments([{ name: "a.png", kind: "image", mimeType: "image/png", data: "not base64!", size: 1 }])).toContain("not base64");
   expect(checkAttachments([{ name: "a.txt", kind: "text", mimeType: "text/plain", data: "x".repeat(MAX_TEXT_BYTES + 1), size: 1 }])).toContain("too big");
   const ok = checkAttachments([{ name: "a.png", kind: "image", mimeType: "image/png", data: "AAAA", size: 3, thumb: "javascript:alert(1)" }]);

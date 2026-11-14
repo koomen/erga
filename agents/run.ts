@@ -16,6 +16,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { type AiError, LanguageModel, Prompt, Tool, type Response, type Toolkit } from "effect/ai";
@@ -36,7 +37,21 @@ import {
   type ToolResultMessage,
 } from "./checkpoint";
 import { IDLE, next, type Turn, type TurnEffect, type TurnEvent } from "./turn";
-import { fit, isModelChoice, languageModel, messagesFor, modelError, MODELS, usable, type AgentConfig, type ModelChoice } from "./models";
+import {
+  cutShort,
+  fit,
+  fitPictures,
+  isModelChoice,
+  languageModel,
+  messagesFor,
+  modelError,
+  MODELS,
+  passing,
+  TRIES,
+  usable,
+  type AgentConfig,
+  type ModelChoice,
+} from "./models";
 import type { Usable } from "../shared/models";
 
 /** What a tool answers: content for the model (and the panel). */
@@ -221,12 +236,16 @@ function toolkitOf(tools: AgentTool[]): Toolkit.WithHandler<Record<string, Tool.
 
 const CACHED = { anthropic: { cacheControl: { type: "ephemeral" } } } as const;
 
-/** The prompt for a turn, as the model of `choice` takes it: the system prompt, then the messages; both ends marked for the prompt cache. */
+/**
+ * The prompt for a turn, as the model of `choice` takes it: the system prompt, then the messages, each picture inside
+ * the model's limits (fitPictures); both ends marked for the prompt cache.
+ */
 function promptOf(side: ModelSide, messages: readonly ChatMessage[], choice: ModelChoice | null): Prompt.RawInput {
-  const last = messages.length - 1;
+  const fitted = messagesFor(choice, fitPictures(messages));
+  const last = fitted.length - 1;
   return [
     { role: "system", content: side.systemPrompt, options: CACHED },
-    ...messagesFor(choice, messages).map((m, i) => (i == last ? ({ ...m, options: CACHED } as ChatMessage) : m)),
+    ...fitted.map((m, i) => (i == last ? ({ ...m, options: CACHED } as ChatMessage) : m)),
   ];
 }
 
@@ -350,34 +369,61 @@ export function startLoop(opts: LoopOptions): AgentLoop {
   /** Whether the person's own key runs the model now (else the server's, with its limits). */
   const ownKey = (c: AgentConfig) => choice != null && usable(c).find((u) => u.choice == choice)?.key == "own";
 
-  /** One model turn: streamed into the transcript, then into the messages. Fails with the model's error, in its words. */
+  /**
+   * One model turn: streamed into the transcript, then into the messages. Fails with why it has no whole answer, in
+   * words for the panel that say how to go on (agents/models.ts: modelError, cutShort): the run ends there, always.
+   * An error that may pass (`passing`) is asked again first, TRIES times in all, while nothing of the turn shows yet.
+   */
   const turn = (s: ModelSide, c: AgentConfig): Effect.Effect<boolean, string> =>
     Effect.gen(function* () {
       const parts: Response.AnyPart[] = [];
+      /** Text or thinking of this turn is in the transcript: the model is not asked for it again. */
+      let shown = false;
+      let asked = 0;
       const prompt = promptOf(s, messages, choice);
       const stream = s.tools.length
         ? LanguageModel.streamText({ prompt, toolkit: toolkitOf(s.tools), disableToolCallResolution: true, toolCallValidation: "deferred" })
         : LanguageModel.streamText({ prompt });
-      yield* (stream as Stream.Stream<Response.AnyPart, AiError.AiError, LanguageModel.LanguageModel>).pipe(
-        Stream.runForEach((part) =>
-          Effect.sync(() => {
-            parts.push(part);
-            if (part.type == "text-delta" && part.delta) emit({ t: "text", delta: part.delta });
-            else if (part.type == "reasoning-delta" && part.delta) emit({ t: "thinking", delta: part.delta });
-          })
-        ),
-        Effect.provide(languageModel(c, choice)),
+      const ask = Effect.suspend(() => {
+        parts.length = 0;
+        asked++;
+        return (stream as Stream.Stream<Response.AnyPart, AiError.AiError, LanguageModel.LanguageModel>).pipe(
+          Stream.runForEach((part) =>
+            Effect.sync(() => {
+              parts.push(part);
+              if (part.type == "text-delta" && part.delta) emit({ t: "text", delta: part.delta });
+              else if (part.type == "reasoning-delta" && part.delta) emit({ t: "thinking", delta: part.delta });
+              else return;
+              shown = true;
+            })
+          ),
+          Effect.provide(languageModel(c, choice)),
+          // An error in the middle of the answer comes as a part of it, not as a failure.
+          Effect.andThen(
+            Effect.suspend((): Effect.Effect<void, unknown> => {
+              const failed = parts.find((p) => p.type == "error");
+              return failed ? Effect.fail(failed.error) : Effect.void;
+            })
+          )
+        );
+      });
+      yield* ask.pipe(
+        Effect.retry({ schedule: Schedule.exponential("500 millis"), times: TRIES - 1, while: (e) => !shown && passing(e) }),
         // A defect too (a bug, a provider's surprise): the person sees what went wrong, and the run ends.
-        Effect.catchCause((cause) => Effect.fail(modelError(Cause.squash(cause))))
+        Effect.catchCause((cause) => Effect.fail(modelError(Cause.squash(cause), asked)))
       );
       const finish = parts.find((p) => p.type == "finish");
+      const cut = cutShort(parts);
+      if (!finish) return yield* Effect.fail(cut!);
       // (The scripted model's too, with no model chosen: its tokens count as the server's, for a test of the limit.)
-      if (finish)
-        hooks.used?.({ input: finish.usage.inputTokens.total ?? 0, output: finish.usage.outputTokens.total ?? 0, own: ownKey(c) });
+      hooks.used?.({ input: finish.usage.inputTokens.total ?? 0, output: finish.usage.outputTokens.total ?? 0, own: ownKey(c) });
       const answer = encodeMessages(Prompt.fromResponseParts(parts)).content.filter((m) => m.role == "assistant");
       messages = [...messages, ...answer];
       yield* Effect.promise(() => checkpoints.answered());
-      return answer.some((m) => typeof m.content != "string" && m.content.some((p) => p.type == "tool-call"));
+      // What came of an answer cut short stays; the person hears why it stops.
+      if (cut) return yield* Effect.fail(cut);
+      // (A paused turn goes on with the next request.)
+      return finish.reason == "pause" || answer.some((m) => typeof m.content != "string" && m.content.some((p) => p.type == "tool-call"));
     }) as Effect.Effect<boolean, string>;
 
   /**

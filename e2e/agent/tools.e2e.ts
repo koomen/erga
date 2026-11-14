@@ -5,6 +5,8 @@
 import { expect, journey, servers, test, until } from "../helpers/fixtures";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
 import { idOf, runTool } from "../helpers/tools";
+import { fromBase64 } from "../../shared/bytes";
+import { pictureSize } from "../../shared/picture";
 import { apisOf, edit, person, pixel, toolsOf, valueOf, type DocTools, type Person, type Tools } from "./panel";
 import { eventsOf, joinRoom, type Joined } from "./room";
 import { CODE, docOf, pdf, PLAYER, PNG, probe, SITE, slideBar, tone, viewButton, type LiveFacts } from "./samples";
@@ -232,6 +234,42 @@ journey("the agents' tools on a page that a person has open", () => {
     expect(out.origin).not.toBe(new URL(s.root).origin);
     // The render is a copy: the person's page did not count the clicks.
     expect(await ed.textOf("#count")).toBe("0");
+  });
+
+  test("a capture taller than the model reads whole comes in parts, each at full size: the whole page, and a tall element", async () => {
+    const tall = (html: string) => [{ oldText: "</body>", newText: `${html}</body>` }];
+    const sizes = (images: string[]) => images.map((i) => pictureSize(fromBase64(i)));
+    const view = await t.ok("view_page", {
+      ...SOON,
+      full_page: true,
+      edits: tall('<div style="height: 5000px; background: linear-gradient(#fff, rgb(200, 0, 0))"></div>'),
+    });
+    // The window grows to the page's top 4000 px for the picture: two parts of 2000 px.
+    expect(sizes(view.images)).toEqual([
+      { width: 1280, height: 2000 },
+      { width: 1280, height: 2000 },
+    ]);
+    expect(view.text).toMatch(
+      /part 1 of 2 \(0 to 2000 px from its top\), at \d+ ms, 1280×2000px; part 2 of 2 \(2000 to 4000 px from its top\)/
+    );
+    expect(view.text).toContain("comes in parts, from its top down, each at full size");
+    // The second part goes on where the first ends: the page's red grows down the page.
+    const [above, below] = [await pixel(ed.page, view.images[0], 640, 1990), await pixel(ed.page, view.images[1], 640, 10)];
+    expect(Math.abs(above[1] - below[1]), `the parts meet: ${above} then ${below}`).toBeLessThanOrEqual(3);
+    expect((await pixel(ed.page, view.images[1], 640, 1900))[1]).toBeLessThan(above[1] - 50);
+
+    // An element taller than the window: its parts show the page (blue at its top), not a blank frame.
+    const el = await t.ok("view_page", {
+      ...SOON,
+      selector: "#tall",
+      edits: tall('<div id="tall" style="height: 3000px; background: linear-gradient(#00f, rgb(200, 0, 0))"></div>'),
+    });
+    expect(sizes(el.images)).toEqual([
+      { width: 640, height: 1500 },
+      { width: 640, height: 1500 },
+    ]);
+    const top = await pixel(ed.page, el.images[0], 320, 5);
+    expect(top[2], `the element's top is blue: ${top}`).toBeGreaterThan(240);
   });
 
   test("editor: true opens the page in the editor, with its controls; code in that window can't get the person's Share token", async () => {

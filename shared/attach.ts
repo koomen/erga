@@ -7,6 +7,7 @@
 // the conversation shows what was attached without carrying the pictures.
 
 import { escapeAttr } from "./html";
+import { base64PictureSize, tooLarge } from "./picture";
 
 /** One attachment as sent: an image (base64, no data: prefix) or a text file's contents. */
 export interface Attachment {
@@ -30,7 +31,7 @@ export const MAX_FILES = 8;
 export const MAX_TEXT_BYTES = 256 * 1024;
 /** An image file's limit as picked; bigger pictures are scaled down to fit MAX_IMAGE_DATA before they're sent. */
 export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
-/** An image as the model takes it: base64 characters (the model's limit is 5 MB). */
+/** An image as Erga sends it: base64 characters (the model takes 10 MB, and 3000 px a side: shared/picture.ts). */
 export const MAX_IMAGE_DATA = 5 * 1024 * 1024;
 const MAX_THUMB = 200 * 1024;
 
@@ -75,6 +76,9 @@ export function checkAttachments(v: unknown): Attachment[] | string {
     if (a.kind == "image") {
       if (!Object.values(IMAGE_TYPES).includes(a.mimeType)) return `“${name}” isn't a PNG, JPEG, GIF or WebP image`;
       if (a.data.length > MAX_IMAGE_DATA || !/^[A-Za-z0-9+/]*={0,2}$/.test(a.data)) return `“${name}” is too big, or not base64`;
+      // (The panel scales a picture down to 2000 px a side before it sends it: client/agent/attach-ui.ts.)
+      const large = tooLarge(base64PictureSize(a.data), 0);
+      if (large) return `“${name}” is ${large}`;
       const thumb = typeof a.thumb == "string" && /^data:image\/(png|jpeg|webp|gif);base64,/.test(a.thumb) && a.thumb.length <= MAX_THUMB ? a.thumb : undefined;
       out.push({ name, kind: "image", mimeType: a.mimeType, data: a.data, size, thumb });
     } else if (a.kind == "text") {

@@ -242,12 +242,21 @@ export class Page {
     return r.result.value as T;
   }
 
-  /** A PNG, base64: of the viewport, or of `clip` in the page's coordinates. */
-  async screenshot(clip?: { x: number; y: number; width: number; height: number }): Promise<string> {
+  /**
+   * A PNG (or a JPEG), base64: of the viewport, or of `clip` in the page's coordinates. `inWindow`: the clip is all in
+   * the window, and the picture is of the window as it is drawn. (Without it Chrome draws the page again past the
+   * window, and a frame of the page comes out blank in a clip that starts above it.)
+   */
+  async screenshot(
+    clip?: { x: number; y: number; width: number; height: number },
+    o: { format?: "png" | "jpeg"; inWindow?: boolean } = {}
+  ): Promise<string> {
+    const format = o.format ?? "png";
     await this.send("Page.bringToFront");
     const round = clip && { x: Math.round(clip.x), y: Math.round(clip.y) };
     const r = await this.send("Page.captureScreenshot", {
-      format: "png",
+      format,
+      ...(format == "jpeg" ? { quality: 85 } : {}),
       ...(clip && round
         ? {
             clip: {
@@ -256,7 +265,7 @@ export class Page {
               height: Math.round(clip.height + clip.y - round.y),
               scale: 1,
             },
-            captureBeyondViewport: true,
+            captureBeyondViewport: !o.inWindow,
           }
         : { captureBeyondViewport: false }),
     });
