@@ -48,7 +48,7 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>, live:
         ),
         full_page: Schema.optionalKey(
           Schema.Boolean.annotate({
-            description: "Not only the top screenful.",
+            description: "Not only the top screenful: the page's top 4000 px, a tall page in parts.",
           })
         ),
         ...RENDER,
@@ -88,7 +88,7 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>, live:
           content: [
             ...v.shots.flatMap((s, i) => [
               ...(many ? [{ type: "text" as const, text: `${names[i]}:` }] : []),
-              { type: "image" as const, data: s.png, mimeType: "image/png" },
+              { type: "image" as const, data: s.data, mimeType: s.type },
             ]),
             { type: "text" as const, text: describeView(v, p.full_page) },
           ],
@@ -343,7 +343,12 @@ function shotNames(shots: readonly Shot[]): string[] {
   const bySelector = vary((s) => s.selector),
     byStep = vary((s) => s.step?.index);
   return shots.map((s) =>
-    [bySelector ? s.selector : "", byStep && s.step ? describeStep(s.step) : "", `at ${s.at} ms`]
+    [
+      bySelector ? s.selector : "",
+      byStep && s.step ? describeStep(s.step) : "",
+      s.part ? `part ${s.part.index} of ${s.part.count} (${s.part.top} to ${s.part.top + s.height} px from its top)` : "",
+      `at ${s.at} ms`,
+    ]
       .filter(Boolean)
       .join(", ")
       .replace(/^at/, "At")
@@ -379,6 +384,10 @@ export function describeView(v: ViewResult, fullPage?: boolean): string {
       );
   }
   if (v.pending?.length) lines.push(`Still loading when the picture was taken: ${v.pending.join(", ")}.`);
+  if (shots.some((s) => s.part))
+    lines.push(
+      "A capture taller than the model reads whole comes in parts, from its top down, each at full size: nothing is scaled or left out."
+    );
   for (const s of shots) if (s.note) lines.push(s.note);
   if (v.note) lines.push(v.note);
   if (v.preview) lines.push(describePreview(v.preview));

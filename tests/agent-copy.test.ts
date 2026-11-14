@@ -6,6 +6,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { person, server, tool, type Server } from "./helpers/app";
+import { pngOf } from "./helpers/png";
 import { until } from "./helpers/until";
 
 const GLIDE = new URL("../e2e/fixtures/glide/", import.meta.url).pathname;
@@ -28,7 +29,7 @@ async function agent(s: Server, label: string) {
 }
 
 test("Pete's task in three calls: the notes to notes.html, the deck and its images into the project, the old slides page gone", async () => {
-  const { p, ok } = await agent(server(), "Copy test");
+  const { p, ok, call } = await agent(server(), "Copy test");
   const deck = await p.make(),
     project = await p.make();
   // The presentation, a document with an image; the project, its notes as its page and an old copy of the slides.
@@ -51,6 +52,13 @@ test("Pete's task in three calls: the notes to notes.html, the deck and its imag
   expect((await ok("read", { document: project, path: "notes.html" })).text).toBe(NOTES);
   const image = await ok("read", { document: project, path: "shots/one.png" });
   expect((image.result as { type: string; data?: string }[]).find((c) => c.type == "image")?.data).toBe(PNG);
+  // An image of more px a side than the model takes (shared/picture.ts): read says its size, and how to see it.
+  await ok("write", { document: project, path: "shots/wide.png", content_base64: pngOf(3001, 800) });
+  const wide = await call("read", { document: project, path: "shots/wide.png" });
+  expect([wide.ok, wide.text]).toEqual([
+    false,
+    "shots/wide.png is 3001×800 px: more than the 3000 px a side that the model takes. To see it scaled down, take view_page with a preview (edits) that puts it in the page as an <img>, and with that <img>'s selector.",
+  ]);
   const pages = JSON.parse((await ok("ls", { document: project })).text);
   expect(
     pages.entries

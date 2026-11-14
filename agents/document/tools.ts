@@ -16,6 +16,7 @@ import { readableSize } from "../../shared/bytes";
 import { globToRegExp } from "../../shared/glob";
 import { escapeRe } from "../../shared/html";
 import { IMAGE_TYPES } from "../../shared/attach";
+import { pictureSize, tooLarge } from "../../shared/picture";
 import { unifiedDiff } from "../../document/versions";
 import { EDITORS_READ_VERSIONS } from "../../document/content";
 import { EDITS, WorkspaceError, modelPath, type Workspace } from "./workspace";
@@ -32,7 +33,7 @@ import { apiPathOf } from "../../shared/page-ops";
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
-/** The biggest image read gives the model (its limit is 5 MB of base64). */
+/** The biggest image read gives the model: 5 MB of base64 (the model takes 10 MB: shared/picture.ts). */
 const IMAGE_READ_MAX = 3_750_000;
 /** The most bytes a write of bytes takes in one call (base64 in the tool's arguments). */
 const WRITE_BYTES_MAX = 25_000_000;
@@ -107,6 +108,11 @@ export function makeTools(
       if (bytes.length > IMAGE_READ_MAX)
         throw new Error(
           `${path} is ${readableSize(bytes.length)}: too big to see (an image can have up to ${readableSize(IMAGE_READ_MAX)}).`
+        );
+      const large = tooLarge(pictureSize(bytes), 0);
+      if (large)
+        throw new Error(
+          `${path} is ${large}. To see it scaled down, take view_page with a preview (edits) that puts it in the page as an <img>, and with that <img>'s selector.`
         );
       return {
         content: [{ type: "image" as const, data: Base64.encode(bytes), mimeType: IMAGE_TYPES[path.split(".").pop()!.toLowerCase()] }],

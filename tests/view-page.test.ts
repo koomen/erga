@@ -11,7 +11,7 @@ import { describeView } from "../agents/document/page-tools";
 import { renderTimes } from "../shared/view-page";
 import { setup } from "./helpers/files-fixture";
 
-const shot = (o: object) => ({ png: "x", width: 1100, height: 800, at: 600, ...o });
+const shot = (o: object) => ({ data: "x", type: "image/png" as const, width: 1100, height: 800, at: 600, ...o });
 
 describe("describeView", () => {
   test("says the size, the mode and the fonts", () => {

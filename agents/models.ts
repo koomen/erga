@@ -26,6 +26,7 @@ import {
   type Provider,
   type Usable,
 } from "../shared/models.ts";
+import { base64PictureSize, PICTURES, tooLarge } from "../shared/picture.ts";
 import type { piLanguageModel } from "./pi-model.ts";
 
 export { DEFAULT_MODEL, isModelChoice, MODELS, type ModelChoice } from "../shared/models.ts";
@@ -271,8 +272,126 @@ const withBeta = (beta: string) =>
     return HttpClientRequest.setHeader(req, "anthropic-beta", had ? `${had},${beta}` : beta);
 });
 
-/** An error of the model's, as the panel says it: the provider's own words. */
-export const modelError = (e: unknown): string => (AiError.isAiError(e) ? e.reason.message : e instanceof Error ? e.message : String(e));
+type Piece = { type?: string; mediaType?: string; data?: unknown; modelOutput?: readonly Piece[] };
+const isPicture = (p: Piece) => p.type == "file" && typeof p.mediaType == "string" && p.mediaType.startsWith("image/");
+/** The pictures of a message: a person's, and those in a tool's result. */
+const picturesOf = (m: { content: unknown }): Piece[] =>
+  Array.isArray(m.content)
+    ? (m.content as Piece[]).flatMap((p) => (isPicture(p) ? [p] : p.type == "tool-result" ? (p.modelOutput ?? []).filter(isPicture) : []))
+    : [];
+
+/** Each picture measured one time (every request passes every picture of the conversation): why it's too large, and its base64 length. */
+const measured = new WeakMap<Piece, { large: string | null; length: number }>();
+function measure(p: Piece) {
+  let m = measured.get(p);
+  if (!m) {
+    const data = typeof p.data == "string" ? p.data : "";
+    m = { large: tooLarge(base64PictureSize(data), data.length), length: data.length };
+    measured.set(p, m);
+  }
+  return m;
+}
+
+const OLD_PICTURE = "[An old picture was here. It left the conversation, which has many pictures. Take it again if you need it.]";
+
+/**
+ * The messages with every picture inside the rule (shared/picture.ts): what each request carries, so the model never
+ * refuses one for a picture. A picture too large (one from before the rule: view_page, read and the panel give none
+ * now) has words in its place, with its size. Over PICTURES.high together, the oldest have words in their place until
+ * PICTURES.low is left. The same messages give the same answer, and more messages only take more pictures away at
+ * the next `high`: so the request's start stays as the model's cache has it.
+ *
+ * A model's thinking holds only with the messages before it as it saw them (Anthropic refuses it otherwise): the
+ * turns before the last time pictures left go without their thinking; all of them, with a picture too large.
+ */
+export function fitPictures<M extends { role: string; content: unknown }>(messages: readonly M[]): readonly M[] {
+  const gone = new Map<Piece, string>();
+  const kept: { part: Piece; length: number }[] = [];
+  let data = 0,
+    cut = 0;
+  messages.forEach((m, i) => {
+    for (const part of picturesOf(m)) {
+      const { large, length } = measure(part);
+      if (large) {
+        gone.set(part, `[A picture was here. It is ${large}. Take it again if you need it: view_page gives a tall page in parts.]`);
+        cut = Infinity;
+        continue;
+      }
+      kept.push({ part, length });
+      data += length;
+      if (data <= PICTURES.high.data && kept.length <= PICTURES.high.count) continue;
+      while (data > PICTURES.low.data || kept.length > PICTURES.low.count) {
+        const old = kept.shift()!;
+        data -= old.length;
+        gone.set(old.part, OLD_PICTURE);
+      }
+      cut = Math.max(cut, i);
+    }
+  });
+  if (!gone.size) return messages;
+  const words = (p: Piece): Piece => (gone.has(p) ? ({ type: "text", text: gone.get(p)! } as Piece) : p);
+  return messages.flatMap((m, i) => {
+    if (!Array.isArray(m.content)) return [m];
+    const content = (m.content as Piece[])
+      .filter((p) => !(m.role == "assistant" && i < cut && p.type == "reasoning"))
+      .map((p) => (p.type == "tool-result" && p.modelOutput ? { ...p, modelOutput: p.modelOutput.map(words) } : words(p)));
+    return content.length ? [{ ...m, content }] : [];
+  });
+}
+
+/** An error that Anthropic sends in the middle of its answer (the stream's "error" event): its type and words. */
+const streamed = (e: unknown): { type: string; message: string } | null => {
+  const x = e as { type?: unknown; message?: unknown } | null;
+  return x && typeof x == "object" && !(e instanceof Error) && typeof x.type == "string"
+    ? { type: x.type, message: typeof x.message == "string" ? x.message : x.type }
+    : null;
+};
+
+/**
+ * Whether the same request may pass a moment later: the model's service is overloaded or failed, a rate limit, a lost
+ * connection. The loop asks again then (agents/run.ts); every other error ends the turn at once.
+ */
+export const passing = (e: unknown): boolean =>
+  AiError.isAiError(e)
+    ? e.isRetryable
+    : ["overloaded_error", "api_error", "rate_limit_error", "timeout_error"].includes(streamed(e)?.type ?? "");
+
+/** After an error, how the person goes on: the last words of each error in the panel. */
+const GO_ON = 'Say "go on" to try again.';
+const NEW = 'Say "go on" to try again. If the same error comes back, start a new conversation (the + above).';
+
+/** An error of the model's, as the panel says it: the provider's own words, then how to go on. `asked`: how many times the loop asked. */
+export function modelError(e: unknown, asked = 1): string {
+  const words = (AiError.isAiError(e) ? e.reason.message : (streamed(e)?.message ?? (e instanceof Error ? e.message : String(e)))).trim();
+  const tag = AiError.isAiError(e) ? e.reason._tag : "";
+  const on =
+    tag == "AuthenticationError" || tag == "QuotaExhaustedError"
+      ? `Check the API key and its account (Settings, Agent), then say "go on".`
+      : passing(e)
+        ? `${asked > 1 ? `The agent asked ${asked} times. ` : ""}${GO_ON}`
+        : tag == "InvalidRequestError"
+          ? `The model refused the request. ${NEW}`
+          : GO_ON;
+  return `${words || "The request failed"}${/[.!?]$/.test(words) ? "" : "."} ${on}`;
+}
+
+/** How many times the loop asks the model for one turn, when the error may pass (`passing`). */
+export const TRIES = 3;
+
+/**
+ * A model's turn that did not end as a whole answer, from its parts: why, in words for the panel, with how to go on;
+ * null for a whole turn. An error in the middle of the stream is a part, not a failure, and a connection that closes
+ * leaves no "finish": without this, such a turn ends with no word.
+ */
+export function cutShort(parts: readonly Response.AnyPart[]): string | null {
+  const finish = parts.find((p) => p.type == "finish");
+  if (!finish) return `The connection to the model closed before its answer ended. ${GO_ON}`;
+  if (finish.reason == "length") return `The model's answer reached its length limit, and stops here. Say "go on" to continue.`;
+  if (finish.reason == "content-filter")
+    return "The model declined to answer this. Ask in another way, or start a new conversation (the + above).";
+  if (finish.reason == "error" || finish.reason == "unknown") return `The model's answer ended with no reason given. ${GO_ON}`;
+  return null;
+}
 
 /**
  * The scripted model, for tests. A message containing `@script` followed by
