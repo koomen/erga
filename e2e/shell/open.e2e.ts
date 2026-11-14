@@ -8,7 +8,7 @@ import { editor, F, openEditor, type Editor } from "../helpers/editor";
 import { ROOT } from "../helpers/env";
 import { expect, journey, servers, test, until } from "../helpers/fixtures";
 import { newToken } from "../helpers/new-token";
-import { pointerOnPage } from "../helpers/press";
+import { clickInPage, pointerOnPage } from "../helpers/press";
 import { idOf, runTool, textOf } from "../helpers/tools";
 import {
   agentTurn,
@@ -369,7 +369,7 @@ journey("a document of several pages: the pencil, Back, and an agent's open_page
         () => !!document.querySelector(".erga-crumbs > .erga-here")?.checkVisibility({ visibilityProperty: true, opacityProperty: true })
       )
     ).toBe(true);
-    await page.frameLocator("#frame").getByRole("link", { name: "About" }).click();
+    await clickInPage(page, page.frameLocator("#frame").getByRole("link", { name: "About" }));
     await soon(async () => `${await where(page)} ${await h1Of(page)}`).toBe(`${path()}/about About us`);
     await page.goBack();
     await soon(async () => `${await where(page)} ${await h1Of(page)}`).toBe(`${path()} Field guide`);
@@ -392,7 +392,7 @@ journey("a document of several pages: the pencil, Back, and an agent's open_page
   test("the eye, a link to another page, then two entries back at once: the first page in the editor, its address kept", async () => {
     await page.locator("#btn-edit").click();
     await soon(() => viewing(page)).toBe(true);
-    await page.frameLocator("#frame").getByRole("link", { name: "About" }).click();
+    await clickInPage(page, page.frameLocator("#frame").getByRole("link", { name: "About" }));
     await soon(async () => `${await where(page)} ${await h1Of(page)}`).toBe(`${path()}/about About us`);
     // Two entries back at once (the Back button's menu): the frame's history and the tab's go back together.
     await page.evaluate(() => history.go(-2));

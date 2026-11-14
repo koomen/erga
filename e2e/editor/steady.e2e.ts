@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { expect, journey, servers, test, until, type Tab } from "../helpers/fixtures";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
 import { dragAt, dragTo, folderOnDisk, onDisk, SIGN } from "../helpers/drops";
-import { pointerOnPage } from "../helpers/press";
+import { clickOn, pointerOnPage, pressOn } from "../helpers/press";
 import { runTool } from "../helpers/tools";
 import { WAIT_MS } from "../../client/common/frame-swap";
 import {
@@ -19,6 +19,7 @@ import {
   CENTRED,
   clickBadge,
   DRAWN_PAGE,
+  fixButton,
   newConversation,
   drag,
   drop,
@@ -187,10 +188,19 @@ journey("a page with parts of its own: keys go where the caret is", () => {
     await ed.click(r.x, r.y);
     // The same problem as before (another no-edit part): its block counts.
     await expect.poll(async () => (await ed.alerts()).alerts.find((a) => /not editable by hand/.test(a.title))?.count).toBe("×2");
-    await ed.page.click('#alerts .alert:has-text("not editable by hand") [data-action="fix"]');
-    await expect.poll(() => agentBox(ed)).toEqual({ text: "Change the text “42” to: ", open: true, sent: 0 });
+    // Was a bug: news drew the card again (a new alert, or the agent's state, which its panel reads as its socket
+    // opens), with new buttons. A click whose press was on the old button and whose release was on the new one did
+    // nothing. Here the agent's state comes during the press: the card waits for the release (client/common/pressed.ts).
+    await ed.eval(
+      `(document.addEventListener("mousedown", () => window.dispatchEvent(new Event("erga:agent-state")), { capture: true, once: true }), true)`
+    );
+    // (clickOn: the press is checked as it lands, and made again if it missed.)
+    await clickOn(ed.page, await fixButton(ed, /not editable by hand/));
+    // (The alerts with the box: a click that the agent could not take says so in an alert of its own.)
+    await expect
+      .poll(async () => ({ ...(await agentBox(ed)), alerts: (await ed.alerts()).alerts.map((a) => a.title) }))
+      .toEqual({ text: "Change the text “42” to: ", open: true, sent: 0, alerts: ["This paragraph can't be edited"] });
     expect(await ed.eval<boolean>(`document.activeElement == document.getElementById("agent-input")`)).toBe(true);
-    expect((await ed.alerts()).alerts.map((a) => a.title)).toEqual(["This paragraph can't be edited"]);
   });
 
   test("text that the page's script changed: its Fix with agent asks the agent to make it editable by hand; Escape closes the card with what is left", async () => {
@@ -208,7 +218,7 @@ journey("a page with parts of its own: keys go where the caret is", () => {
       `document.querySelector("#alerts .alerts-card").getBoundingClientRect().left >= document.getElementById("agent").getBoundingClientRect().right`
     );
     expect(clear).toBe(true);
-    await ed.page.click('#alerts .alert:has-text("edited here") [data-action="fix"]');
+    await clickOn(ed.page, await fixButton(ed, /edited here/));
     await expect.poll(async () => (await agentBox(ed)).sent).toBe(1);
     expect(await ed.eval<string>(`document.querySelector(".msg-user").textContent`)).toContain(
       "Fix the problem with this page that the editor reported"
@@ -222,7 +232,9 @@ journey("a page with parts of its own: keys go where the caret is", () => {
 
   test("the agent stops on an error while its panel is closed: an alert says so, and its Show opens the panel", async () => {
     await agentPlays(ed, [{ error: "overloaded", delay: 300 }]);
-    await ed.page.click("#agent-close");
+    // (pressOn, not Playwright's click, which waits first until the button has stopped: the panel closes before the
+    // agent's error comes, 300 ms after the message.)
+    await pressOn(ed.page, "#agent-close");
     const stopped = {
       title: "Your agent stopped",
       count: "",

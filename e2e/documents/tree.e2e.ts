@@ -10,7 +10,7 @@ import type { Frame, Route } from "playwright-core";
 import { agentClosed, expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
 import { dragAt, onDisk } from "../helpers/drops";
 import { newToken } from "../helpers/new-token";
-import { clickOn } from "../helpers/press";
+import { clickInPage, clickOn } from "../helpers/press";
 import { idOf, runTool, treeOp } from "../helpers/tools";
 import { listenNews, person } from "./people";
 import {
@@ -104,7 +104,7 @@ journey("a project's tree in the editor", () => {
   test("the tree, opened right after the shell gives the page the focus, keeps the focus, on the page you're on", async () => {
     await treeUp(page);
     // A click on the page closes the card, and the page has the focus: the editor as a person sees it ready.
-    await page.frameLocator("#frame").locator("h1").click();
+    await clickInPage(page, page.frameLocator("#frame").locator("h1"));
     await editorFocused(page);
     await expect.poll(() => js(page, `document.getElementById("pages").hidden`)).toBe(true);
     const frame = (await until(
@@ -194,6 +194,34 @@ journey("a project's tree in the editor", () => {
   });
 
   test("a folder's name that the server refuses (a # in it): its words show in place, and nothing changes", async ({ tab }) => {
+    // Was a bug (a flaky failure of this step): the server's answer drew the rows again between a press and its
+    // release. The press was on the old button and the release on the new one, so the browser gave no click, and the
+    // menu did not open. The rows now wait for the release (client/common/pressed.ts). Here: a press, the tree's news
+    // and the server's answer, then the release.
+    const more = `${row("notes")} [data-act="more"]`;
+    const held = await page.evaluate(async (sel) => {
+      const w = window as unknown as { __more: Element };
+      w.__more = document.querySelector(sel)!;
+      // (The answer's body, read: what the tree does with it comes before the next task.)
+      const answered = new Promise<void>((done) => {
+        const json = Response.prototype.json;
+        Response.prototype.json = function (this: Response) {
+          Response.prototype.json = json;
+          const body = json.call(this);
+          void body.finally(() => setTimeout(done));
+          return body;
+        };
+      });
+      w.__more.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      window.dispatchEvent(new CustomEvent("erga-tree", { detail: {} }));
+      await answered;
+      const during = w.__more.isConnected;
+      w.__more.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+      return during;
+    }, more);
+    expect(held, "the pressed button is still in the tree when the answer has come").toBe(true);
+    // After the release, the answer's rows come.
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __more: Element }).__more.isConnected)).toBe(false);
     await act(page, "notes", "more");
     await menuItem(page, "Rename folder");
     await page.evaluate(`document.activeElement.select()`);

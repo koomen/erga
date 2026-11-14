@@ -8,7 +8,7 @@ import { editor, type Editor } from "../helpers/editor";
 import { ROOT } from "../helpers/env";
 import { expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
 import { newToken } from "../helpers/new-token";
-import { pointerOnPage } from "../helpers/press";
+import { clickInPage, pointerOnPage } from "../helpers/press";
 import { framed, pagesFetch } from "../helpers/pages-fetch";
 import { idOf, runTool, textOf } from "../helpers/tools";
 import { moved, painted, still, views, watch, type Spot } from "./frames";
@@ -95,7 +95,7 @@ journey("a reader's open page shows an agent's change", () => {
         if (e.data?.type == "erga-scroll") (window as any).heardY = e.data.y;
       });
     });
-    await page.frameLocator("#frame").getByRole("link", { name: "Second" }).click();
+    await clickInPage(page, page.frameLocator("#frame").getByRole("link", { name: "Second" }));
     await expect.poll(shown).toContain("Paragraph 80.");
     await expect.poll(() => new URL(page.url()).pathname).toBe(`${path}/second`);
     await docFrame(page)!.evaluate(`scrollTo(0, 1200)`);
