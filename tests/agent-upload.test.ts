@@ -95,6 +95,14 @@ test("an agent's write of a file on its disk waits for the bytes; a PUT with no 
   expect(none.status).toBe(404);
   // (A document that isn't there answers the same: the address tells nothing of one.)
   expect(await (await s.fetch(`/d/zzzzzzzz/api/blobs/${hash}`, { method: "PUT", headers: signedOut() })).text()).toBe(await none.text());
+  // A new document takes no such file: its answer says the way.
+  const made = await tool(s, token, "create_document", {
+    files: { "index.html": "<p>Hi</p>", "shot.png": { blob: hash, size: png.length } },
+  });
+  expect([made.ok, made.text]).toEqual([
+    false,
+    `shot.png: a new document takes no {"blob"}. Make it without this file, then add the file with edit's write.`,
+  ]);
   // Without its size, the write doesn't wait.
   expect((await write(s, token, id, { "images/shot.png": { blob: hash } })).refused[0].why).toContain("give its size in bytes too");
   const waited = await write(s, token, id, {

@@ -587,6 +587,11 @@ function decodeFiles(raw: unknown, blobs = false): Record<string, FileData> {
       out[rel] = { hash, size: typeof size == "number" && Number.isInteger(size) && size > 0 ? size : 0, at: Date.now() };
       continue;
     } else if (v && typeof v == "object" && typeof (v as { text?: unknown }).text == "string") data = (v as { text: string }).text;
+    else if (v && typeof v == "object" && "blob" in v)
+      throw new OperationError({
+        message: `${path}: a new document takes no {"blob"}. Make it without this file, then add the file with edit's write.`,
+        status: 400,
+      });
     else throw new OperationError({ message: `${path}: give its text as a string, or {"base64": "..."}.`, status: 400 });
     total = addFile(out, rel, data, total);
   }
