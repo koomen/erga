@@ -6,7 +6,7 @@ import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
 import { contentIn, findDiff, norm, placeholderBr, setChecked } from "../api/source";
-import { draggedImages, hasFiles, type ImageSpot, inDropGap, LOADING_AGAIN, NOT_HERE, showDropCaret, showDropImage } from "./drop";
+import { draggedFiles, draggedImages, hasFiles, type ImageSpot, LOADING_AGAIN, NOT_HERE, showDropSign } from "./drop";
 import { pageOwnBox } from "./core";
 import { isMac } from "../../../client/common/app-keys";
 import { TEXT_ATTR } from "../../../shared/page-html";
@@ -98,26 +98,22 @@ export abstract class EditorInput extends EditorClipboard {
     on("dragover", (e) => {
       if (!hasFiles(e)) return;
       e.preventDefault();
-      // Images: a gap between blocks, with a faint image where they go; other files: a line in the text.
+      // Images: a line between two blocks; other files: a caret in the line. Nothing in the text moves.
       const images = draggedImages(e),
         spot = images ? this.imageDropAt(e) : null;
       const at = spot ? null : this.dropAt(e);
       e.dataTransfer!.dropEffect = spot || at ? "copy" : "none";
-      showDropImage(doc, spot?.spot ?? null, images);
-      showDropCaret(doc, at?.range ?? null);
+      showDropSign(doc, spot ? { spot: spot.spot, count: images } : at ? { range: at.range, count: draggedFiles(e) } : null);
     });
     on("dragleave", (e) => {
       if (!hasFiles(e) || e.relatedTarget) return;
-      showDropCaret(doc, null);
-      showDropImage(doc, null);
-      this.imageDrop = null;
+      showDropSign(doc, null);
     });
     on("drop", (e) => {
       if (hasFiles(e)) {
         e.preventDefault();
-        showDropCaret(doc, null);
-        if (this.readOnly) showDropImage(doc, null);
-        else this.dropFiles(e);
+        showDropSign(doc, null);
+        if (!this.readOnly) this.dropFiles(e);
       } else if (this.ours(e)) e.preventDefault();
     });
     on("mousedown", (e) => this.mousedown(e));
@@ -166,74 +162,61 @@ export abstract class EditorInput extends EditorClipboard {
     return pos != null && editableAt(u!, pos) ? { pos, range } : null;
   }
 
-  /** Where dragged images go (the last place, while the pointer is in the gap it opened). */
-  private imageDrop: { pos: number; spot: ImageSpot } | null = null;
-
   /**
    * Where images dragged over the page go: before or after the paragraph or heading under the pointer (its upper half:
    * before), never inside its text. Null on any other block: they go in at the pointer, as other files do.
    */
   protected imageDropAt(e: DragEvent): { pos: number; spot: ImageSpot } | null {
-    if (this.imageDrop?.spot.el.isConnected && inDropGap(this.doc!, e.clientX, e.clientY)) return this.imageDrop;
     const at = this.dropAt(e),
       u = at && M.unitAt(this.units, at.pos),
       el = u && this.elOf(u);
-    if (!u || !el || !/^(p|h[1-6])$/.test(u.tag)) return (this.imageDrop = null);
+    if (!u || !el || !/^(p|h[1-6])$/.test(u.tag)) return null;
     const r = el.getBoundingClientRect(),
       side = e.clientY < r.top + r.height / 2 ? "before" : "after";
-    return (this.imageDrop = { pos: side == "before" ? u.contentFrom : u.contentTo, spot: { el, side } });
+    return { pos: side == "before" ? u.contentFrom : u.contentTo, spot: { el, side } };
   }
 
-  /** Files dropped on the text: to the caller, which adds them to the document's files (onDropFiles). */
+  /** Files dropped on the text (a folder's files with it): to the caller, which puts them in the document (onDropFiles). */
   protected dropFiles(e: DragEvent): void {
-    const files = [...(e.dataTransfer?.files ?? [])];
-    const images = files.length && files.every((f) => f.type.startsWith("image/"));
+    const dt = e.dataTransfer,
+      plain = [...(dt?.files ?? [])];
+    // (The entries are the event's: read now. A folder's files come a moment later.)
+    const entries = [...(dt?.items ?? [])].filter((i) => i.kind == "file").map((i) => i.webkitGetAsEntry?.() ?? null);
+    const images = plain.length && plain.every((f) => f.type.startsWith("image/"));
     const spot = images ? this.imageDropAt(e) : null;
-    this.imageDrop = null;
-    const none = (why: string) => {
-      showDropImage(this.doc!, null);
-      this.config.onDropRefused?.(why);
-    };
-    if (!files.length) return showDropImage(this.doc!, null);
-    if (this.rendering) return none(LOADING_AGAIN);
+    if (!plain.length) return;
+    if (this.rendering) return this.config.onDropRefused?.(LOADING_AGAIN);
     const at = spot ?? this.dropAt(e);
-    if (!at) return none(NOT_HERE);
-    // The images themselves wait in the gap until they're in the text (insertFiles), or can't be (dropEnd).
-    if (spot)
-      showDropImage(
-        this.doc!,
-        spot.spot,
-        files.length,
-        files.map((f) => URL.createObjectURL(f))
-      );
-    else showDropImage(this.doc!, null);
-    this.config.onDropFiles?.(files, at.pos);
+    if (!at) return this.config.onDropRefused?.(NOT_HERE);
+    if (!entries.some((x) => x?.isDirectory)) return this.config.onDropFiles?.(plain, at.pos);
+    void Promise.all(entries.map((x, i) => (x?.isDirectory ? filesIn(x as FileSystemDirectoryEntry) : [plain[i]].filter(Boolean)))).then(
+      (all) => this.config.onDropFiles?.(all.flat(), at.pos)
+    );
   }
 
   /**
-   * Puts the files dropped or pasted at `at` (dropFiles, pasteFiles) there, in order: an image as an `<img>`, another
-   * file as a link to it with its name as the text. Images at the start or end of a paragraph or heading go in as
-   * paragraphs of their own, before or after it; in the middle of the text, or into an empty line, as they are. The
-   * caret stays where it is. False if the text there can't take them (it changed meanwhile).
+   * Puts the files dropped or pasted at `at` (dropFiles, pasteFiles) there, in order: an image as an `<img>` (with its
+   * size, if known: the page keeps its place while the bytes come), another file as a link to it with its name as the
+   * text. Images at the start or end of a paragraph or heading go in as paragraphs of their own, before or after it;
+   * in the middle of the text, or into an empty line, as they are. No image is wider than the text. The caret stays
+   * where it is. False if the text there can't take them (it changed meanwhile).
    */
-  insertFiles(at: number, items: { href: string; name: string; image: boolean }[]): boolean {
-    if (this.doc) showDropImage(this.doc, null);
+  insertFiles(at: number, items: { href: string; name: string; image: boolean; width?: number; height?: number }[]): boolean {
     const u = M.unitAt(this.units, at);
     if (!items.length || !u || !this.verify(u) || !editableAt(u, at)) return false;
     const src = this.src;
+    const size = (i: { width?: number; height?: number }) => (i.width && i.height ? ` width="${i.width}" height="${i.height}"` : "");
     const html = items.map((i) =>
       i.image
-        ? `<img src="${escapeAttr(i.href)}" alt="${escapeAttr(i.name)}">`
+        ? `<img style="max-width: 100%; height: auto" src="${escapeAttr(i.href)}"${size(i)} alt="${escapeAttr(i.name)}">`
         : `<a href="${escapeAttr(i.href)}">${escapeHtmlText(i.name)}</a>`
     );
     const before = contentIn(src, u, u.contentFrom, at),
       after = contentIn(src, u, at, u.contentTo);
     if (items.some((i) => i.image) && /^(p|h[1-6])$/.test(u.tag) && before != after) {
-      // Each image centred, in a paragraph of its own, no wider than the text.
+      // Each image centred, in a paragraph of its own.
       const sep = "\n" + M.lineIndent(src, u.openFrom),
-        blocks = html
-          .map((h) => `<p style="text-align: center">${h.replace(/^<img /, '<img style="max-width: 100%; height: auto" ')}</p>`)
-          .join(sep);
+        blocks = html.map((h) => (h.startsWith("<img ") ? `<p style="text-align: center">${h}</p>` : `<p>${h}</p>`)).join(sep);
       this.dispatch({
         changes: before ? { from: u.to, insert: sep + blocks } : { from: u.from, insert: blocks + sep },
         userEvent: "input.drop",
@@ -246,11 +229,6 @@ export abstract class EditorInput extends EditorClipboard {
     const insert = split ? M.closeTags(stack) + html.join("") + M.openTags(stack) : html.join("");
     this.dispatch({ changes: [{ from: at, to: at, insert }, ...placeholderDrops(src, [u], at, at, true)], userEvent: "input.drop" });
     return true;
-  }
-
-  /** The files dropped didn't go in (the caller says why, in an alert): the gap they waited in closes. */
-  dropEnd(): void {
-    if (this.doc) showDropImage(this.doc, null);
   }
 
   /**
@@ -734,4 +712,27 @@ export abstract class EditorInput extends EditorClipboard {
       this.syncDOMSelection(true);
     } else if (!diff) this.syncDOMSelection(true);
   }
+}
+
+/** Every file in a dropped folder, by name, the folders in it too: each with its path from the folder (`rel`). */
+async function filesIn(dir: FileSystemDirectoryEntry, under = ""): Promise<File[]> {
+  const entries: FileSystemEntry[] = [];
+  const reader = dir.createReader();
+  // (A reader gives a folder's entries in parts, until a part is empty.)
+  for (;;) {
+    const part = await new Promise<FileSystemEntry[]>((done) => reader.readEntries(done, () => done([])));
+    if (!part.length) break;
+    entries.push(...part);
+  }
+  const out: File[] = [];
+  const here = `${under}${dir.name}/`;
+  for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (e.name.startsWith(".")) continue;
+    if (e.isDirectory) out.push(...(await filesIn(e as FileSystemDirectoryEntry, here)));
+    else {
+      const file = await new Promise<File | null>((done) => (e as FileSystemFileEntry).file(done, () => done(null)));
+      if (file) out.push(Object.assign(file, { rel: here }));
+    }
+  }
+  return out;
 }

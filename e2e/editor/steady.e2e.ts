@@ -4,22 +4,30 @@
 //
 // Four journeys, each one page: a page with parts of its own (e2e/fixtures/steady), a deck that changes on disk
 // and by an agent while the person types, a page that takes dropped files, and a broken page.
-import { appendFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, journey, servers, test, until } from "../helpers/fixtures";
+import { expect, journey, servers, test, until, type Tab } from "../helpers/fixtures";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
+import { runTool } from "../helpers/tools";
 import {
   agentBox,
   agentPlays,
   CENTRED,
+  clickBadge,
   newConversation,
+  drag,
   drop,
+  dropSign,
+  folderOnDisk,
   images,
   IMG,
   lockNote,
+  onDisk,
   openDropPage,
   pageStill,
   pasteFiles,
+  pendingParts,
   png,
   UPLOAD,
 } from "./steady-helpers";
@@ -447,126 +455,280 @@ journey("a deck that changes on disk and by an agent while the person types", ()
 
 journey("files dropped and pasted on a page in a folder", () => {
   let ed: Editor;
+  let id: string;
+  let address: string;
   let files: () => Promise<string[]>;
   let loaded: number;
   const LOADED = { loaded: true };
+  /**
+   * The browser logs an error for each file that an element asked for before its bytes were there (and for each write
+   * the server refused): the only errors this page may have.
+   */
+  const expected = (tab: Tab) => tab.errors.splice(0, tab.errors.length, ...tab.errors.filter((e) => !/Failed to load resource/.test(e)));
+  /** Where the last paragraph is on the page: it moves when the text above it does. */
+  const tail = () => ed.frame<number>(`Math.round(${F}.querySelector("p.tail").getBoundingClientRect().top + scrollY)`);
+  /** Holds the bytes of the uploads back (the write that names them goes), until `go`. */
+  const held = async () => {
+    let go!: () => void;
+    const wait = new Promise<void>((done) => (go = done));
+    const going: Promise<void>[] = [];
+    await ed.page.route(/\/api\/blobs\//, (r) => void going.push(wait.then(() => r.continue())));
+    return async () => {
+      go();
+      await Promise.all(going);
+      await ed.page.unroute(/\/api\/blobs\//);
+    };
+  };
 
-  test("from a page in a folder, a dropped image is in the document's images/, and its src reaches it", async ({ tab }) => {
+  test("a dragged image shows a line between two blocks and moves no text; dropped, it is on the page at once at its final size, and nothing moves when its bytes come; another tab shows a box of its size meanwhile", async ({
+    tab,
+  }) => {
     // A folder has an image's name, and a file has another's: the steps below meet both.
-    ({ ed, files } = await openDropPage(tab, s, { "images/clash.png/a.txt": "x", "images/dot.png": "old" })); // page load 1
+    ({ ed, id, address, files } = await openDropPage(tab, s, { "images/clash.png/a.txt": "x", "images/dot.png": "old" })); // page load 1
     loaded = await ed.frame<number>(`performance.timeOrigin`);
-    await drop(ed, "p.lede", 6, png("pin.png"));
-    await expect.poll(() => images(ed), UPLOAD).toEqual([{ src: "../images/pin.png", alt: "pin.png", loaded: true }]);
+    const go = await held();
+    const before = await tail();
+    const over = await drag(ed, "p.lede", 6, [onDisk("pin.png")], "bottom");
+    // During the drag: where it lands and what it will be; the text stays where it is (before: a gap of 144 px opened).
+    expect(over.sign).toEqual(["line", "chip Imageas wide as the text"]);
+    expect(await tail()).toBe(before);
+    await over.drop();
+    // At the drop: the image, 200 by 150 px as its file is, with how far its bytes are on it. (Before: a small copy,
+    // and the image only when the upload ended, which moved the text below it then.)
+    const pin = { src: "../images/pin.png", alt: "pin.png", size: "200x150" };
+    await expect.poll(() => images(ed), UPLOAD).toEqual([{ ...pin, loaded: false }]);
+    await expect.poll(() => pendingParts(ed)).toEqual(["ph", expect.stringMatching(/^badge \d+%.*×$/)]);
+    expect(await dropSign(ed)).toEqual([]);
+    const moved = await tail();
+    expect(moved).toBeGreaterThan(before + 150);
+    expect(await ed.source()).toContain(`ship them.</p>\n  ${CENTRED("../images/pin.png")}\n  <p`);
+    // Someone else with the document open: a box of the image's size, and whose file it is. No problem is said of it.
+    const other = await tab.page.context().newPage(); // page load 2
+    await other.goto(`${s.root}${address}/blog/post?edit`);
+    // (A tab draws only while it is in front.)
+    await other.bringToFront();
+    const inOther = <T>(js: string) =>
+      Promise.all(other.frames().map((f) => (f == other.mainFrame() ? null : f.evaluate<T>(js).catch(() => null)))).then(
+        (all) => all.find((x) => x != null) ?? null
+      );
+    const there = () =>
+      inOther<string[]>(
+        `window.ergaFrame && [...(document.querySelector("erga-pending")?.shadowRoot?.querySelectorAll(".c > *:not([hidden])") ?? [])].map((x) => (x.className + " " + x.textContent).trim())`
+      );
+    await expect.poll(there, UPLOAD).toEqual(["ph wait", expect.stringMatching(/^badge plain 0%pin\.png · from \S/)]);
+    const image = `window.ergaFrame && [...document.querySelectorAll("body img")].map((i) => [i.clientWidth, i.clientHeight, i.naturalWidth].join(" ")).join()`;
+    expect(await inOther<string>(image)).toBe("200 150 0");
+    expect(await other.evaluate(() => document.getElementById("alerts")!.dataset.view ?? "none")).toBe("none");
+    await go();
+    // The bytes are there: the image shows them, in both tabs, with no page loaded again; nothing moved.
+    await expect.poll(() => images(ed), UPLOAD).toEqual([{ ...pin, ...LOADED }]);
+    await expect.poll(() => pendingParts(ed)).toEqual([]);
+    await expect.poll(there).toEqual([]);
+    await expect.poll(() => inOther<string>(image)).toBe("200 150 200");
+    await other.close();
+    await tab.page.bringToFront();
+    expect(await tail()).toBe(moved);
     expect(await files()).toEqual(expect.arrayContaining(["images/pin.png"]));
+    expected(tab);
   });
 
-  test("a dropped file that isn't an image goes into files/, as a link to it with its name", async () => {
-    expect(await drop(ed, "p.lede", 6, [{ name: "notes.txt", type: "text/plain" }])).toEqual({ stopped: true, shown: true });
+  test("a dragged file that isn't an image shows a caret in the line, and goes into files/ as a link there with its name; a folder's files go in, each in the folder", async ({
+    tab,
+  }) => {
+    const over = await drag(ed, "p.lede", 6, [onDisk("notes.txt")]);
+    expect(over.sign).toEqual(["bar", "chip Link to the filein this line"]);
+    await over.drop();
     await expect.poll(() => ed.source(), UPLOAD).toContain(`<p class="lede">Build <a href="../files/notes.txt">notes.txt</a><em>cool</em>`);
-    expect(await files()).toEqual(expect.arrayContaining(["files/notes.txt"]));
     // The link opens the file.
-    expect(await ed.frame<string>(`fetch(${F}.querySelector('a[href="../files/notes.txt"]').href).then((r) => r.text())`)).toBe(
-      "some notes"
-    );
+    await expect
+      .poll(() => ed.frame<string>(`fetch(${F}.querySelector('a[href="../files/notes.txt"]').href).then((r) => r.text())`), UPLOAD)
+      .toContain("some notes");
+    // A folder (before: "the server didn't answer"): its image and its other file, in order, under its name.
+    // (Not at the line's start: the agent's button is over the window's corner there, and takes no drop.)
+    await drop(ed, "p.tail", 13, [folderOnDisk("brand", ["logo.png", "terms.txt"])]);
+    await expect
+      .poll(() => ed.source(), UPLOAD)
+      .toContain(`<p class="tail">We came down ${IMG("../images/brand/logo.png")}<a href="../files/brand/terms.txt">terms.txt</a>before`);
+    await expect.poll(files, UPLOAD).toEqual(expect.arrayContaining(["files/notes.txt", "images/brand/logo.png", "files/brand/terms.txt"]));
+    expected(tab);
   });
 
-  test("an image dropped on the upper half of a paragraph goes before it, wherever in the line; on an empty line, it fills it", async () => {
-    await drop(ed, "p.lede", 4, png("start.png"), "top");
+  test("images go before or after the paragraph under the pointer, in order, each a paragraph of its own; on an empty line, into it; a name that is taken gets -2; an upload under a second shows no alert", async ({
+    tab,
+  }) => {
+    await drop(ed, "p.lede", 4, [onDisk("start.png")], "top");
     await expect.poll(() => ed.source(), UPLOAD).toContain(`${CENTRED("../images/start.png")}\n  <p class="lede">Build`);
-    await drop(ed, "p.tail", 3, png("end.png"), "bottom");
-    await expect.poll(() => ed.source(), UPLOAD).toContain(`before the rain.</p>\n  ${CENTRED("../images/end.png")}\n</body>`);
-    await drop(ed, "p.empty", 0, png("empty.png"));
+    await drop(ed, "p.empty", 0, [onDisk("empty.png")]);
     await expect.poll(() => ed.source(), UPLOAD).toContain(`<p class="empty">${IMG("../images/empty.png")}</p>`);
-    await expect.poll(async () => (await images(ed)).every((i) => i.loaded) && (await images(ed)).length, UPLOAD).toBe(4);
-  });
-
-  test("images dropped on the lower half of a paragraph go after it, in order, centred, each a paragraph of its own, into images/", async () => {
     // A file of that name is there already: the new one gets the next name.
-    expect(await drop(ed, "p.lede", 6, [...png("dot.png"), ...png("two.png")], "bottom")).toEqual({ stopped: true, shown: true });
+    await drop(ed, "h1", 3, [onDisk("dot.png"), onDisk("two.png")], "bottom");
     await expect
       .poll(async () => (await images(ed)).filter((i) => /dot|two/.test(i.src)), UPLOAD)
       .toEqual([
-        { src: "../images/dot-2.png", alt: "dot-2.png", ...LOADED },
-        { src: "../images/two.png", alt: "two.png", ...LOADED },
+        { src: "../images/dot-2.png", alt: "dot-2.png", size: "200x150", ...LOADED },
+        { src: "../images/two.png", alt: "two.png", size: "200x150", ...LOADED },
       ]);
-    expect(await ed.frame<boolean>(`!${F}.querySelector("erga-drop-caret, erga-drop-image")`)).toBe(true);
-    // An upload that ends within its first second shows nothing.
     expect((await ed.alerts()).view).toBe("none");
-    expect(await ed.source()).toContain(`ship them.</p>\n  ${CENTRED("../images/dot-2.png")}\n  ${CENTRED("../images/two.png")}\n  <p`);
-    expect(await files()).toEqual(expect.arrayContaining(["images/dot.png", "images/dot-2.png", "images/two.png"]));
+    expect(await ed.source()).toContain(`Launch notes</h1>\n  ${CENTRED("../images/dot-2.png")}\n  ${CENTRED("../images/two.png")}\n  <p`);
+    expect(await files()).toEqual(expect.arrayContaining(["images/dot.png", "images/dot-2.png", "images/two.png", "images/empty.png"]));
+    expected(tab);
   });
 
-  test("a pasted screenshot goes in at the caret", async () => {
+  test("a pasted screenshot goes in at the caret, no wider than the text", async ({ tab }) => {
     const at = await ed.charAt("p.lede", 3);
     await ed.click(at.x, at.y);
     await pasteFiles(ed, png("image.png"));
     await expect
       .poll(async () => (await images(ed)).find((i) => i.alt == "image.png"), UPLOAD)
-      .toEqual({ src: "../images/image.png", alt: "image.png", ...LOADED });
-    expect(await ed.source()).toMatch(/<p class="lede">Bu[a-z]*<img src="\.\.\/images\/image.png" alt="image.png">[a-z]* <a /);
-    expect(await files()).toEqual(expect.arrayContaining(["images/image.png"]));
+      .toEqual({ src: "../images/image.png", alt: "image.png", size: "40x30", ...LOADED });
+    expect(await ed.source()).toMatch(
+      /<p class="lede">Bu[a-z]*<img style="max-width: 100%; height: auto" src="\.\.\/images\/image.png" width="40" height="30" alt="image.png">[a-z]* <a /
+    );
+    expected(tab);
   });
 
-  test("a file that can't be added is a problem in the card, with the file and why; Try again tries it; nothing goes into the text", async ({
+  test("a file over the limit is refused at the drop, before a byte goes, on the file and in the card; the page's own button only opens the card; the card's Raise the limit sends it", async ({
     tab,
   }) => {
-    // A folder has the image's name: the server refuses the file.
-    const before = await ed.source();
-    expect((await drop(ed, "h1", 3, png("clash.png"))).stopped).toBe(true);
-    const failed = {
-      title: "Couldn't add “clash.png”",
+    await runTool(s.root, "set_setting", { key: "max_file_mb", value: 1 });
+    const sent: string[] = [];
+    const watch = (r: { method(): string; url(): string }) => void (r.method() == "PUT" && sent.push(r.url()));
+    ed.page.on("request", watch);
+    await drop(ed, "p.tail", 13, [onDisk("film.mov", 1_200_000)]);
+    const problem = {
+      title: "“film.mov” is too large",
       count: "",
-      detail: "Upload",
-      rows: ["error clash.png: There's a folder at images/clash.png: a file can't take its place."],
-      buttons: ["Try again"],
+      detail: "Upload · it has 1.2 MB. The limit here is 1 MB.",
+      rows: [],
+      buttons: ["Raise the limit to 50 MB", "Remove"],
     };
-    await expect.poll(async () => (await ed.alerts()).alerts).toEqual([failed]);
-    // Again, from the card: the server refuses it again, and the card says so again.
-    const again = ed.page.waitForResponse((r) => r.request().method() == "PUT" && /clash\.png/.test(r.url()));
-    await ed.page.click('#alerts .alert [data-action="retry"]');
-    expect((await again).status()).toBe(409);
-    await expect.poll(async () => (await ed.alerts()).alerts).toEqual([failed]);
-    expect(await ed.source()).toBe(before);
-    // (The browser logs each refused upload as an error: the only errors this page may have.)
-    const refused = (e: string) => /Failed to load resource/.test(e);
-    await until(() => tab.errors.filter(refused).length == 2, 3000, "the browser logs the refused uploads");
-    tab.errors.splice(0, tab.errors.length, ...tab.errors.filter((e) => !refused(e)));
-  });
-
-  test("a slow upload beside the problem: the card lists both; Close dismisses the problem and the upload goes on as one line, which says when it is done", async () => {
-    // (The alerts' times, five times as fast: the quiet second, and the two seconds that the end shows.)
-    await ed.eval(`window.__ergaTimescale = 0.2`);
-    let hold!: () => void;
-    const held = new Promise<void>((done) => (hold = done));
-    await ed.page.route(/\/api\/files\/images\/slow\.png/, async (r) => {
-      await held;
-      await r.continue();
-    });
-    await drop(ed, "p.tail", 3, png("slow.png"), "top");
-    await expect.poll(async () => (await ed.alerts()).head).toBe("Uploading “slow.png” · 1 problem");
-    expect((await ed.alerts()).alerts.map((a) => [a.title, a.rows])).toEqual([
-      ["Uploading “slow.png”", ["running slow.png: 1 kB"]],
-      ["Couldn't add “clash.png”", ["error clash.png: There's a folder at images/clash.png: a file can't take its place."]],
-    ]);
-    // ×: the problem is dismissed, and the upload is not stopped.
+    await expect.poll(async () => (await ed.alerts()).alerts).toEqual([problem]);
+    await expect
+      .poll(() => pendingParts(ed))
+      .toEqual([
+        "ph link error small",
+        "badge error Too large. film.mov has 1.2 MB. The limit here is 1 MB.Raise the limit to 50 MBRemove",
+      ]);
+    expect(sent).toEqual([]);
+    // Closed, the problem stays on the file. Its button there asks for the card: a page's script can't raise a limit.
     await ed.page.click("#alerts .alerts-close");
-    expect(await ed.alerts()).toMatchObject({ view: "line", head: "Uploading “slow.png”" });
-    hold();
-    await expect.poll(async () => (await ed.alerts()).head).toBe("“slow.png” uploaded");
-    await expect.poll(async () => (await ed.alerts()).view).toBe("none");
-    await expect.poll(async () => (await images(ed)).some((i) => i.src == "../images/slow.png" && i.loaded), UPLOAD).toBe(true);
-    await ed.page.unroute(/\/api\/files\/images\/slow\.png/);
-    await ed.eval(`delete window.__ergaTimescale`);
+    expect((await ed.alerts()).view).toBe("none");
+    await clickBadge(ed, "raise");
+    await expect.poll(async () => (await ed.alerts()).alerts).toEqual([problem]);
+    expect((await runTool(s.root, "settings")).result.settings.find((x: { key: string }) => x.key == "max_file_mb").value).toBe(1);
+    await ed.page.click('#alerts [data-action="raise"]');
+    await expect.poll(files, UPLOAD).toEqual(expect.arrayContaining(["files/film.mov"]));
+    await expect.poll(() => pendingParts(ed)).toEqual([]);
+    expect(sent.length).toBe(1);
+    ed.page.off("request", watch);
+    await runTool(s.root, "set_setting", { key: "max_file_mb", reset: true });
+    expected(tab);
   });
 
-  test("the page did not load again for the new files; after a reload, every image is there", async () => {
+  test("a file the server refuses says why on the file and in the card; Remove takes its element out of the text", async ({ tab }) => {
+    // A folder has the image's name.
+    const before = await ed.source();
+    await drop(ed, "h1", 3, [onDisk("clash.png")], "top");
+    const why = "There's a folder at images/clash.png: a file can't take its place.";
+    await expect
+      .poll(async () => (await ed.alerts()).alerts)
+      .toEqual([{ title: "“clash.png” was not added", count: "", detail: `Upload · ${why}`, rows: [], buttons: ["Remove"] }]);
+    await expect.poll(() => pendingParts(ed)).toEqual(["ph error", `badge error Not added. ${why}Remove`]);
+    await ed.page.click('#alerts [data-action="remove"]');
+    await expect.poll(() => ed.source()).toBe(before);
+    await expect.poll(async () => [(await ed.alerts()).view, await pendingParts(ed)]).toEqual(["none", []]);
+    // (The folder that has its name stays.)
+    expect(await files()).toEqual(expect.arrayContaining(["images/clash.png/a.txt"]));
+    expected(tab);
+  });
+
+  test("a slow upload shows as one line after a second, with what is left; × on the image stops it and takes the image out; so does Undo", async ({
+    tab,
+  }) => {
+    // (The alerts' times, five times as fast: the quiet second.)
+    await ed.eval(`window.__ergaTimescale = 0.2`);
+    const before = await ed.source();
+    const go = await held();
+    await drop(ed, "p.tail", 13, [onDisk("slow.png")], "top");
+    await expect.poll(async () => (await ed.alerts()).head).toBe("slow.png");
+    await ed.page.click("#alerts .alerts-pill");
+    expect((await ed.alerts()).alerts).toEqual([
+      {
+        title: "Uploading slow.png",
+        count: "",
+        detail: "Upload · by you",
+        rows: [expect.stringMatching(/^running slow\.png: 1 KB/)],
+        buttons: ["×"],
+      },
+    ]);
+    await clickBadge(ed, "cancel");
+    await expect.poll(() => ed.source()).toBe(before);
+    await expect.poll(async () => [(await ed.alerts()).view, await pendingParts(ed)]).toEqual(["none", []]);
+    // Undo, after another drop.
+    await drop(ed, "p.tail", 13, [onDisk("undone.png")], "top");
+    await expect.poll(() => ed.source()).toContain("images/undone.png");
+    await ed.page.keyboard.press("ControlOrMeta+z");
+    await expect.poll(() => ed.source()).toBe(before);
+    await expect.poll(() => pendingParts(ed)).toEqual([]);
+    await go();
+    expect(await files()).not.toEqual(expect.arrayContaining(["images/slow.png"]));
+    expect(await files()).not.toEqual(expect.arrayContaining(["images/undone.png"]));
+    await ed.eval(`delete window.__ergaTimescale`);
+    expected(tab);
+  });
+
+  test("an agent's file on its way: a box of its size on the page with the agent's name, and its line in the alerts; when its bytes come, the image shows them", async ({
+    tab,
+  }) => {
+    const token = (
+      (await (
+        await fetch(`${s.root}${address}/api/share`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Origin: s.root },
+          body: "{}",
+        })
+      ).json()) as { token: string }
+    ).token;
+    const bytes = readFileSync(onDisk("chart.png"));
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const agent = (name: string, args: Record<string, unknown>) => runTool(s.root, name, { document: id, ...args }, { token });
+    expect((await agent("write", { files: { "images/chart.png": { blob: hash, size: bytes.length } } })).result.waiting).toEqual([
+      "images/chart.png",
+    ]);
+    await agent("edit", {
+      path: "blog/post.html",
+      edits: [{ oldText: "<h1>Launch notes</h1>", newText: `<h1>Launch notes</h1>\n  ${CENTRED("../images/chart.png")}` }],
+    });
+    await expect.poll(() => pendingParts(ed), UPLOAD).toEqual(["ph wait", expect.stringMatching(/^badge plain 0%chart\.png · from /)]);
+    await expect
+      .poll(async () => (await images(ed)).find((i) => i.alt == "chart.png"))
+      .toEqual({ src: "../images/chart.png", alt: "chart.png", size: "200x150", loaded: false });
+    await expect.poll(async () => (await ed.alerts()).head).toBe("chart.png");
+    await ed.page.click("#alerts .alerts-pill");
+    expect((await ed.alerts()).alerts).toEqual([
+      {
+        title: "Uploading chart.png",
+        count: "",
+        detail: expect.stringMatching(/^Upload · by .*your agent$/),
+        rows: ["waiting chart.png: 1 KB"],
+        buttons: ["Cancel", "×"],
+      },
+    ]);
+    expect((await fetch(`${s.root}/d/${id}/api/blobs/${hash}`, { method: "PUT", body: bytes })).status).toBe(200);
+    await expect.poll(async () => (await images(ed)).find((i) => i.alt == "chart.png")?.loaded, UPLOAD).toBe(true);
+    await expect.poll(() => pendingParts(ed)).toEqual([]);
+    expected(tab);
+  });
+
+  test("the page did not load again for the new files; after a reload, every image is there", async ({ tab }) => {
     // (The shell makes the page afresh for a stylesheet or a script that changes, not for a file.)
     expect(await ed.frame<number>(`performance.timeOrigin`)).toBe(loaded);
     const before = await images(ed);
     expect(before.length).toBe(8);
-    await ed.page.reload(); // page load 2
+    await ed.page.reload(); // page load 3
     await ed.loaded();
     await expect.poll(() => images(ed), UPLOAD).toEqual(before);
+    expected(tab);
   });
 });
 

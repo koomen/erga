@@ -40,6 +40,8 @@ import { mountChrome } from "./chrome";
 import { mountSharing } from "./sharing";
 import { mountToast } from "./toast";
 import { mountAlerts } from "./alerts";
+import { mountUploads } from "./uploads";
+import { ms } from "../../libs/text/ui/timescale";
 import { mountViews } from "./views";
 import { mountPageRequests } from "./page-requests";
 import { awaitHello } from "./opening";
@@ -318,6 +320,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   shell.sharing = mountSharing(shell);
   shell.toast = mountToast();
   shell.alerts = mountAlerts(shell);
+  shell.uploads = mountUploads(shell);
   // Focusing or using this tab makes it the one you're shown by. Focus
   // lands on the frame's window when the caret is in the page.
   const activate = () => collab.activate();
@@ -342,9 +345,22 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     // still broken after, it says so again).
     onProblem: (raw, base) => {
       const p = describeProblem(raw, base, pagesOrigin);
-      if (p) shell.alerts.raise({ ...p, kind: "error", source: "page", once: true, life: "page" });
+      if (!p) return;
+      const say = () => shell.alerts.raise({ ...p, kind: "error", source: "page", once: true, life: "page" });
+      // A file of the document that the page couldn't load may be on its way (an upload): then it is no problem. One
+      // the document doesn't have at all may be an upload whose element came before its record: a moment tells.
+      const files = new URL(pagesUrl, location.href);
+      const url = raw.kind == "resource" && URL.canParse(raw.url, pagesOrigin + base) ? new URL(raw.url, pagesOrigin + base) : null;
+      if (!url || url.origin != files.origin || !url.pathname.startsWith(files.pathname)) return say();
+      const path = decodeURIComponent(url.pathname.slice(files.pathname.length));
+      const comes = shell.uploads.awaits(path);
+      if (comes == "no") say();
+      else if (comes == "maybe") window.setTimeout(() => shell.uploads.awaits(path) == "maybe" && say(), ms(3000));
     },
     onAlert: (event) => shell.alerts.fromPage(event),
+    onUpload: (files) => shell.uploads.add(files),
+    onUploadAct: (path, action) => shell.uploads.act(path, action),
+    onUploadsAsk: () => shell.uploads.asked(),
     onLoad: () => {
       shell.alerts.loaded();
       document.body.classList.remove("has-steps");

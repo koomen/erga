@@ -42,6 +42,17 @@ export default function pageProblems(): void {
     },
     true
   );
+  // A file that loads after all (it was on its way: an upload) is no problem any more.
+  addEventListener(
+    "load",
+    (e) => {
+      const el = e.target as Element | null,
+        u = el?.getAttribute?.("src");
+      if (!u) return;
+      for (let i = all.length; i--; ) if (all[i].kind == "resource" && (all[i] as { url: string }).url == u) all.splice(i, 1);
+    },
+    true
+  );
   addEventListener("unhandledrejection", (e: PromiseRejectionEvent) => {
     r({
       kind: "script",

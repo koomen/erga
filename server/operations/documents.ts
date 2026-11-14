@@ -432,7 +432,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     label: "Write",
     activity: "writing",
     loose: true,
-    ui: "An HTTP client's publish (POST /api/publish); the page tree's upload (PUT /api/files/<path>)",
+    ui: "An HTTP client's publish (POST /api/publish); the page tree's upload (PUT /api/files/<path>); a file dropped, pasted or picked in the editor (its bytes follow: PUT /api/blobs/<sha-256>)",
     description: "Writes one file (path), or many (files).",
     parameters: Schema.Struct({
       document: DOCUMENT,

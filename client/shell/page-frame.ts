@@ -3,7 +3,8 @@
 // (client/inline/reader.ts, Erga's) tells the viewer while editing: the viewer's shortcuts pressed in the page, a press
 // on it, a zoom gesture, the wheel sideways on a zoomed page, a link to another of the document's pages, the page's
 // problems. The editor itself asks for one thing: the page loaded again (erga-reload), which the viewer does with the
-// page's view kept (viewer-frames.ts). And it raises its alerts (client/common/alerts.ts), and hears their buttons.
+// page's view kept (viewer-frames.ts). And it raises its alerts (client/common/alerts.ts), and hears their buttons; it
+// hands over the files a person dropped on the page (erga-upload), and hears each one's state (erga-uploads).
 // Everything that comes from the page is checked: the page itself could have sent it.
 
 import type { EditMode } from "../../libs/text/ui/mode";
@@ -12,6 +13,9 @@ import type { Keys } from "../common/app-keys";
 import { clampZoom, type ZoomBy } from "../common/zoom";
 import type { RawProblem } from "./problems";
 import { readMessage, type AlertAct, type Event as AlertEvent } from "../common/alerts";
+import type { PageFile } from "../common/uploads";
+import type { Pending } from "../../shared/room-socket";
+import type { NewFile } from "./uploads";
 
 /** What the keys of the page's alerts start with here: the page can't name one of the viewer's own. */
 const PAGE_KEY = "page/";
@@ -51,6 +55,12 @@ export interface PageFrameConfig {
   onProblem: (problem: RawProblem, base: string) => void;
   /** The editor in the page raised an alert, changed it or ended it. */
   onAlert: (event: Extract<AlertEvent, { t: "raise" | "row" | "end" }>) => void;
+  /** The editor in the page has files for the document, each at a path it chose. */
+  onUpload: (files: NewFile[]) => void;
+  /** A button on a file in the page (cancel, remove, retry, raise). */
+  onUploadAct: (path: string, action: string) => void;
+  /** The editor in the page needs to know which files are on their way: it is new there and asks, or it was told to edit. */
+  onUploadsAsk: () => void;
   /** A page came into the frame: this one again, or another. */
   onLoad: () => void;
   /** The page shows its steps bar (a presentation), at the bottom centre. */
@@ -102,6 +112,8 @@ export function mountPageFrame(c: PageFrameConfig) {
       ...(timescale ? { timescale } : {}),
       ...(check ? { check } : {}),
     } satisfies EditMode);
+    // (An editor that started before the viewer was ready asked in vain: frame.ts.)
+    c.onUploadsAsk();
   }
 
   const num = (n: unknown): n is number => typeof n == "number" && Number.isFinite(n);
@@ -160,6 +172,19 @@ export function mountPageFrame(c: PageFrameConfig) {
         if (event) c.onAlert(event);
         return;
       }
+      case "erga-upload": {
+        const list = (Array.isArray(m.files) ? m.files : []).slice(0, 50) as { file?: unknown; path?: unknown }[];
+        c.onUpload(
+          list.flatMap((f) => (f?.file instanceof File && typeof f.path == "string" ? [{ file: f.file, path: f.path.slice(0, 500) }] : []))
+        );
+        return;
+      }
+      case "erga-uploads-ask":
+        c.onUploadsAsk();
+        return;
+      case "erga-upload-act":
+        if (typeof m.path == "string" && typeof m.action == "string") c.onUploadAct(m.path.slice(0, 500), m.action.slice(0, 20));
+        return;
       case "erga-pointer": {
         if (!num(m.x) || !num(m.y) || m.tap) return;
         const r = frame.getBoundingClientRect();
@@ -214,6 +239,17 @@ export function mountPageFrame(c: PageFrameConfig) {
       if (!key.startsWith(PAGE_KEY)) return false;
       post({ type: "erga-alert-act", key: key.slice(PAGE_KEY.length), action, ...(row ? { row } : {}) } satisfies AlertAct);
       return true;
+    },
+    /**
+     * The files on their way from this tab, for their elements on the page (`file`: its bytes, the first time), and
+     * those that arrived since it was told last.
+     */
+    uploads(files: (PageFile & { file?: File })[], landed: string[]) {
+      if (active()) post({ type: "erga-uploads", files, landed });
+    },
+    /** The files on their way from anyone, as the room says (the page's own socket doesn't hear it). */
+    uploadsOf(files: Record<string, Pending>) {
+      if (active()) post({ type: "erga-uploads-of", files });
     },
     get zoomsItself() {
       return zoomsItself;

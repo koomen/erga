@@ -114,22 +114,15 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
       },
       404
     );
-  // From the document's own page, on its pages origin (which has no cookies), with an edit key (edit-key.ts): its socket,
-  // the files dropped on it (PUT /api/files/<path>), and the browser's preflight. As the person the key
-  // names, never as a cookie that came with it; the document decides what they may do.
+  // From the document's own page, on its pages origin (which has no cookies), with an edit key (edit-key.ts): its socket
+  // and its start. As the person the key names, never as a cookie that came with it; the document decides what they
+  // may do. (The files dropped on the page go from the viewer, with the person's session: client/shell/uploads.ts.)
   const key = url.searchParams.get("key");
   if (key != null && keyed(request, rest)) {
     const doc = yield* call(() => platform.directory.route(route.id));
     const origin = doc ? pagesOrigin(doc.owner, doc.id, url, platform) : "";
     if (!doc || request.headers.get("origin") != origin) return text("Not from this document's page", 403);
     const cors = { "Access-Control-Allow-Origin": origin, Vary: "Origin" };
-    if (request.method == "OPTIONS")
-      return plainJson(null, 204, {
-        ...cors,
-        "Access-Control-Allow-Methods": "PUT, POST",
-        "Access-Control-Allow-Headers": "content-type, x-erga-sha256",
-        "Access-Control-Max-Age": "600",
-      });
     const person = yield* call(() => readEditKey(platform.secret, key, doc.owner, doc.id));
     if (!person) return text("This key has expired: reload the page.", 403, cors);
     const headers = new Headers(request.headers);
@@ -317,13 +310,12 @@ export const ROUTES: readonly RouteRow<(a: Asked) => HttpRoute>[] = [
 ];
 
 /**
- * What an edit key opens, from the document's page: its socket, the room's text in one answer (the editor starts from
- * it while the socket connects), and a file put into its files (and its preflight).
+ * What an edit key opens, from the document's page: its socket, and the room's text in one answer (the editor starts
+ * from it while the socket connects).
  */
 const keyed = (request: Request, rest: string) =>
   (rest == "/api/room" && request.headers.get("upgrade")?.toLowerCase() == "websocket") ||
-  (rest == "/api/start" && request.method == "GET") ||
-  (rest.startsWith("/api/files/") && (request.method == "PUT" || request.method == "OPTIONS"));
+  (rest == "/api/start" && request.method == "GET");
 
 /** PUT <document>/api/blobs/<sha-256>: the bytes of a file that a write waits for. */
 const AWAITED = /^\/api\/blobs\/[0-9a-f]{64}$/;

@@ -87,6 +87,8 @@ export const DocInfo = Schema.Struct({
   canEdit: Schema.optional(Schema.Boolean),
   /** Its title and address, where the platform keeps a directory (both hosts do). */
   docName: Schema.optional(DocName),
+  /** The largest file anyone can add here, in MB (an admin's setting): the editor refuses a larger one before it sends a byte. */
+  maxFileMb: Schema.optional(Schema.Number),
 });
 export type DocInfo = typeof DocInfo.Type;
 

@@ -112,7 +112,8 @@ export abstract class EditorEdit extends EditorRender {
     }
     this.syncDOMSelection(true);
     if (tr.docChanged) this.changed();
-    if (tr.docChanged || tr.scrollIntoView) this.scrollCaretIntoView();
+    // (Dropped files go in where the pointer was, away from the caret: the page stays where the person looks.)
+    if ((tr.docChanged && !tr.isUserEvent("input.drop")) || tr.scrollIntoView) this.scrollCaretIntoView();
     this.notify({
       docChanged: tr.docChanged,
       selectionSet: !!tr.selection,

@@ -22,7 +22,8 @@ import type { Opened } from "./open.ts";
 import { cleanRel, pageRefusal, parentsOf } from "./pages.ts";
 import { io, NoSuchDocument, type StoreError } from "./room.ts";
 import { KEYS } from "./storage.ts";
-import { NO_WAIT, step, waitingFor, type Wait, type WaitEvent, type Waits, type Writer } from "./waits.ts";
+import type { UploadsMessage } from "../shared/room-socket.ts";
+import { NO_WAIT, pendingOf, step, waitingFor, type Wait, type WaitEvent, type Waits, type Writer } from "./waits.ts";
 
 const { file: FILE, ref: REF, wait: WAIT } = KEYS;
 
@@ -30,10 +31,48 @@ const { file: FILE, ref: REF, wait: WAIT } = KEYS;
 export interface Published {
   written: string[];
   removed: string[];
-  refused: { path: string; why: string }[];
+  /** `limit`: the admin's setting that refused it, and its value now (the editor offers to raise it). */
+  refused: { path: string; why: string; limit?: Limit }[];
   /** Files whose write waits for its bytes (waits.ts), when there are some. */
   waiting?: string[];
 }
+
+/** A limit an admin sets, which a file passed: the setting and its value. */
+export interface Limit {
+  setting: "max_file_mb" | "max_project_gb";
+  value: number;
+  /** max_project_gb: the bytes the project's files have now. */
+  used?: number;
+}
+
+/** What keeps the waits: the document's storage. */
+type WaitStore = DocumentDeps["storage"];
+/** The writes that wait for their bytes, by path (waits.ts). */
+async function waitsIn(storage: WaitStore): Promise<Waits> {
+  const kept = await storage.list<Wait>({ prefix: WAIT });
+  return Object.fromEntries([...kept].map(([k, w]) => [k.slice(WAIT.length), w]));
+}
+/** The waits' owner: takes an event, keeps the waits after it, and answers the files to put. */
+export async function stepWaits(storage: WaitStore, event: WaitEvent): Promise<[string, Wait][]> {
+  const had = await waitsIn(storage);
+  const { waits, put } = step(had, event);
+  const gone = Object.keys(had).filter((p) => !(p in waits));
+  if (gone.length) await storage.delete(gone.map((p) => WAIT + p));
+  const changed = Object.entries(waits).filter(([p, w]) => had[p] !== w);
+  if (changed.length) await storage.put(Object.fromEntries(changed.map(([p, w]) => [WAIT + p, w])));
+  return put;
+}
+/** Takes back the write that waits at `path` (a cancel: the tree's delete, host.ts): whether one waited there. */
+export async function unwait(storage: WaitStore, path: string): Promise<boolean> {
+  if (!(path in (await waitsIn(storage)))) return false;
+  await stepWaits(storage, { on: "remove", path, now: Date.now() });
+  return true;
+}
+/** The bytes that came so far of each file on its way, by hash: this server's memory only (a PUT that runs). */
+const got = new Map<string, number>();
+/** What an open tab hears of the files on their way (a tab that joins hears it first: open.ts). */
+export const uploadsNow = async (storage: WaitStore): Promise<UploadsMessage> =>
+  pendingOf(await waitsIn(storage), Date.now(), (hash) => got.get(hash));
 
 /** A file that PUT /api/files refused: the status, and what to do about it. */
 class UploadRefused extends Schema.TaggedError<UploadRefused>()("UploadRefused", { status: Schema.Number, error: Schema.String }) {}
@@ -61,7 +100,7 @@ export const isText = (path: string, bytes: Uint8Array) => {
 };
 
 /** A body's bytes, if it has exactly `size` of them: it reads no more than that. */
-async function exactly(body: ReadableStream<Uint8Array> | null, size: number): Promise<Uint8Array | null> {
+async function exactly(body: ReadableStream<Uint8Array> | null, size: number, count?: (n: number) => void): Promise<Uint8Array | null> {
   const out = new Uint8Array(size);
   let n = 0;
   const reader = body?.getReader();
@@ -72,8 +111,22 @@ async function exactly(body: ReadableStream<Uint8Array> | null, size: number): P
     }
     out.set(part.value, n);
     n += part.value.length;
+    count?.(n);
   }
   return n == size ? out : null;
+}
+
+/** A body as it is, which says how many bytes passed, as they pass. */
+function counted(body: ReadableStream<Uint8Array>, count: (n: number) => void): ReadableStream<Uint8Array> {
+  let n = 0;
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(part, to) {
+        count((n += part.length));
+        to.enqueue(part);
+      },
+    })
+  );
 }
 
 /** PUT /api/files/<path>: one file, from a person or an HTTP client (Uploads.upload). */
@@ -178,6 +231,7 @@ export class Uploads {
           else
             out.refused.push({
               path,
+              ...(check && !check.ok && check.limit ? { limit: check.limit } : {}),
               why: check
                 ? check.error
                 : writer
@@ -241,28 +295,16 @@ export class Uploads {
     // In the history now, with the files (an image's bytes went straight to storage).
     if (out.written.length || out.removed.length) await Promise.all([Effect.runPromise(opened.room.flush), this.host.touch()]);
     if (writer && Object.keys(waiting).length) {
-      await this.stepWaits({ on: "write", files: waiting, by: writer, now: Date.now() });
+      await stepWaits(this.host.deps.storage, { on: "write", files: waiting, by: writer, now: Date.now() });
       out.waiting = Object.keys(waiting);
+      await this.tell(opened);
     }
     return out;
   }
 
-  /** The writes that wait for their bytes, by path (waits.ts). */
-  private async waits(): Promise<Waits> {
-    const kept = await this.host.deps.storage.list<Wait>({ prefix: WAIT });
-    return Object.fromEntries([...kept].map(([k, w]) => [k.slice(WAIT.length), w]));
-  }
-
-  /** The waits' owner: takes an event, keeps the waits after it, and answers the files to put. */
-  private async stepWaits(event: WaitEvent): Promise<[string, Wait][]> {
-    const storage = this.host.deps.storage;
-    const had = await this.waits();
-    const { waits, put } = step(had, event);
-    const gone = Object.keys(had).filter((p) => !(p in waits));
-    if (gone.length) await storage.delete(gone.map((p) => WAIT + p));
-    const changed = Object.entries(waits).filter(([p, w]) => had[p] !== w);
-    if (changed.length) await storage.put(Object.fromEntries(changed.map(([p, w]) => [WAIT + p, w])));
-    return put;
+  /** Every open tab hears the files on their way, as they are now. */
+  private async tell(opened: Opened): Promise<void> {
+    opened.broadcast(await uploadsNow(this.host.deps.storage));
   }
 
   /**
@@ -289,7 +331,7 @@ export class Uploads {
     return io(async () => {
       const url = new URL(request.url);
       const hash = url.pathname.slice("/api/blobs/".length);
-      const waiting = waitingFor(await self.waits(), hash, url.origin, Date.now());
+      const waiting = waitingFor(await waitsIn(self.host.deps.storage), hash, url.origin, Date.now());
       const opened = waiting.length ? await self.host.room() : null;
       if (!opened) return fail(404, NO_WAIT);
       const size = Number(request.headers.get("content-length") ?? NaN);
@@ -316,25 +358,45 @@ export class Uploads {
       if (!takers.size) return fail(status, refused[0].why);
       // The bytes: the wait's size of them, and only those of its hash. Small ones whole (a text may be one).
       const wrong = (why = "") => fail(400, `These aren't the bytes the write named: their sha-256 or their size differs.${why}`);
+      // Each open tab hears how many came, a few times a second.
+      let told = 0;
+      const count = (n: number) => {
+        got.set(hash, n);
+        if (Date.now() - told < 200) return;
+        told = Date.now();
+        void self.tell(opened);
+      };
+      const done = () => {
+        got.delete(hash);
+        return self.tell(opened);
+      };
       let bytes: Uint8Array | null = null;
       if (!blobs || size <= TEXT_MAX) {
-        bytes = await exactly(request.body, size);
-        if (!bytes || (await sha256Hex(bytes)) != hash) return wrong();
+        bytes = await exactly(request.body, size, count);
+        if (!bytes || (await sha256Hex(bytes)) != hash) {
+          await done();
+          return wrong();
+        }
       } else {
         // A big one streams to the store, which checks the bytes against the hash and the size: wrong ones store nothing.
         const there = await blobs.head(hash);
         if (there && there.size != size) return wrong();
         const stored = there
           ? null
-          : await blobs.put(hash, request.body ?? new Uint8Array(), size).then(
+          : await blobs.put(hash, request.body ? counted(request.body, count) : new Uint8Array(), size).then(
               () => null,
               (e) => String(e).split("\n")[0]
             );
-        if (stored != null) return wrong(` (${stored})`);
+        if (stored != null) {
+          await done();
+          return wrong(` (${stored})`);
+        }
         if (there) void request.body?.cancel().catch(() => {});
       }
       const written: string[] = [];
-      for (const [path, w] of await self.stepWaits({ on: "bytes", hash, origin: url.origin, now: Date.now() })) {
+      const put = await stepWaits(self.host.deps.storage, { on: "bytes", hash, origin: url.origin, now: Date.now() });
+      got.delete(hash);
+      for (const [path, w] of put) {
         if (!takers.has(path)) continue;
         const by = byLine(w.who.login, w.who.via);
         if (bytes) {
@@ -347,6 +409,8 @@ export class Uploads {
           written.push(path);
         }
       }
+      // (The files are there: now the tabs hear that they wait no more.)
+      await self.tell(opened);
       if (!written.length) return fail(409, refused[0]?.why ?? "The write waits no more.");
       return Effect.succeed({ ok: true, written, size, ...(refused.length ? { refused } : {}) });
     }).pipe(Effect.flatten);
@@ -440,13 +504,14 @@ export class Uploads {
     opened: Opened,
     path: string,
     size: number
-  ): Promise<{ ok: true; replaced: boolean } | { ok: false; status: number; error: string }> {
+  ): Promise<{ ok: true; replaced: boolean } | { ok: false; status: number; error: string; limit?: Limit }> {
     const config = this.host.deps.directory.config;
     const maxMb = (await config.get("max_file_mb")) as number;
     if (size > maxMb * MB)
       return {
         ok: false,
         status: 413,
+        limit: { setting: "max_file_mb", value: maxMb },
         error: `${path} is ${megabytes(size)}: a file can have at most ${maxMb} MB here (an admin sets it: max_file_mb).`,
       };
     const room = opened.room;
@@ -464,6 +529,7 @@ export class Uploads {
       return {
         ok: false,
         status: 413,
+        limit: { setting: "max_project_gb", value: maxGb, used },
         error: `The files here have ${megabytes(used)} together: with ${path} (${megabytes(size)}) they'd pass the ${maxGb} GB a project can have (an admin sets it: max_project_gb).`,
       };
     return { ok: true, replaced: at == "file" };

@@ -6,13 +6,18 @@
 //   none     --write-->  waiting   (the path, the bytes' sha-256 and size, who wrote, the server, when it ends)
 //   waiting  --write-->  waiting   (the newer write's)
 //   waiting  --bytes-->  none      (effect: put the file, as who wrote it)
+//   waiting  --remove-->  none      (the person or the agent took it back: a cancel)
 //   waiting  --time--->  none      (past `until`: every event drops those)
+//
+// A person's drop in the editor waits the same way (client/shell/uploads.ts): the write, then the bytes. Every open tab
+// hears the files that wait and how many bytes each has ({ type: "uploads" }: `pendingOf`), and shows them as on their way.
 //
 // Trap: a wait is no credential, and must never become one. The PUT's address holds no secret: whoever sends it does
 // only what the write said (these bytes, at this path), so a wait names the bytes' hash and size, and uploads.ts
 // takes no others. Never add a wait that takes bytes it can't check.
 
 import type { Asker } from "./access.ts";
+import type { UploadsMessage } from "../shared/room-socket.ts";
 
 /** How long a write waits for its bytes. */
 export const WAIT_MINUTES = 15;
@@ -42,7 +47,31 @@ export type Waits = Readonly<Record<string, Wait>>;
 
 export type WaitEvent =
   | { on: "write"; files: Readonly<Record<string, { hash: string; size: number }>>; by: Writer; now: number }
-  | { on: "bytes"; hash: string; origin: string; now: number };
+  | { on: "bytes"; hash: string; origin: string; now: number }
+  | { on: "remove"; path: string; now: number };
+
+/** The files on their way now; `got`: the bytes that came of a hash, so far. */
+export const pendingOf = (waits: Waits, now: number, got: (hash: string) => number | undefined = () => undefined): UploadsMessage => ({
+  type: "uploads",
+  files: Object.fromEntries(
+    Object.entries(waits)
+      .filter(([, w]) => w.until > now)
+      .map(([path, w]) => {
+        const n = got(w.hash);
+        return [
+          path,
+          {
+            size: w.size,
+            login: w.who.login,
+            name: w.name,
+            ...(w.who.via ? { via: w.who.via } : {}),
+            until: w.until,
+            ...(n == null ? {} : { got: n }),
+          },
+        ];
+      })
+  ),
+});
 
 /** The waits for the bytes `hash` on the server `origin`, now. */
 export const waitingFor = (waits: Waits, hash: string, origin: string, now: number): [string, Wait][] =>
@@ -54,6 +83,10 @@ export function step(waits: Waits, event: WaitEvent): { waits: Waits; put: [stri
   if (event.on == "write") {
     const until = event.now + WAIT_MINUTES * 60_000;
     for (const [path, { hash, size }] of Object.entries(event.files)) current[path] = { ...event.by, hash, size, until };
+    return { waits: current, put: [] };
+  }
+  if (event.on == "remove") {
+    delete current[event.path];
     return { waits: current, put: [] };
   }
   const put = waitingFor(current, event.hash, event.origin, event.now);

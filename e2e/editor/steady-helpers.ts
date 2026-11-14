@@ -1,5 +1,9 @@
 // Helpers of the steady journeys (steady.e2e.ts): the agent's box and its scripted run, and files dropped or pasted
 // on a page of a document that the server keeps.
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { crc32, deflateSync } from "node:zlib";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { editor, F, type Editor } from "../helpers/editor";
 import { agentClosed, expect, settle, until, type Server, type Tab } from "../helpers/fixtures";
 import { idOf, runTool } from "../helpers/tools";
@@ -77,6 +81,9 @@ export async function openDropPage(tab: Tab, server: Server, files: Record<strin
   await settle(tab.page);
   return {
     ed,
+    id,
+    /** The document's address on the server. */
+    address,
     /** The document's files, by their paths. */
     files: async () =>
       ((await runTool(server.root, "ls", { document: id })).result as { entries: { path: string; type: string }[] }).entries
@@ -92,8 +99,55 @@ const make = (files: Made[]) => `
     const dt = new DataTransfer();
     for (const f of ${JSON.stringify(files)}) dt.items.add(new File([f.png ? await png() : "some notes"], f.name, { type: f.type }));`;
 
-/** A PNG image, for a drop or a paste. */
+/** A PNG image, for a paste. */
 export const png = (name: string): Made[] => [{ name, type: "image/png", png: true }];
+
+/** A folder for the files a test drags, on this machine's disk. */
+const DISK = mkdtempSync(join(tmpdir(), "erga-drop-"));
+let made = 0;
+/** A PNG of 200 by 150 px, one colour. */
+const PNG = (() => {
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type), data]),
+      out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(crc32(body), body.length + 4);
+    return out;
+  };
+  const head = Buffer.alloc(13);
+  head.writeUInt32BE(200, 0);
+  head.writeUInt32BE(150, 4);
+  head.set([8, 2, 0, 0, 0], 8);
+  // (Each row: no filter, then its pixels.)
+  const rows = Buffer.concat(Array.from({ length: 150 }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(600, 0x6f)])));
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk("IHDR", head),
+    chunk("IDAT", deflateSync(rows)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+})();
+
+/**
+ * A file on disk to drag: `name` is a PNG of 200 by 150 px if it ends in .png (with bytes of its own after the image:
+ * Erga sends no bytes it keeps already), else text of `bytes` or more, in a folder of its own, or in `folder`.
+ */
+export function onDisk(name: string, bytes = 10, folder?: string): string {
+  const dir = folder ?? join(DISK, String(++made));
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, name);
+  const own = `${Date.now()}-${Math.random()}`;
+  if (name.endsWith(".png")) writeFileSync(path, Buffer.concat([PNG, Buffer.from(own)]));
+  else writeFileSync(path, `some notes ${own} `.repeat(Math.ceil(bytes / (own.length + 12))));
+  return path;
+}
+/** A folder on disk to drag, with `files` in it. */
+export function folderOnDisk(name: string, files: string[]): string {
+  const dir = join(DISK, String(++made), name);
+  for (const f of files) onDisk(f, 10, dir);
+  return dir;
+}
 
 /**
  * The editor takes a drop: it's on the page, which isn't loading again (an edit the editor can't patch in makes the
@@ -107,27 +161,55 @@ const takesDrop = (ed: Editor) =>
   );
 
 /**
- * Drops files made in the page's frame at boundary `i` of the first text of `selector` (0: before its first character;
- * an element with no text: at its start), in the middle of its line, or near the top or bottom of the element
- * (`half`): a dragover, then the drop. Returns whether the page stopped the browser's own drop (which would open the
- * file) both times, and whether the dragover showed where the drop goes.
+ * A point of the page (its frame's coordinates): boundary `i` of the first text of `selector` (0: before its first
+ * character; an element with no text: at its start), in the middle of its line, or near the top or bottom of the
+ * element (`half`). The element comes into view, as for a person who drags there.
  */
-export const drop = async (ed: Editor, selector: string, i: number, files: Made[], half?: "top" | "bottom") => {
-  await takesDrop(ed);
-  return ed.frame<{ stopped: boolean; shown: boolean }>(`(async () => {${make(files)}
+const pointAt = (ed: Editor, selector: string, i: number, half?: "top" | "bottom") =>
+  ed.frame<{ x: number; y: number }>(`(() => {
     const el = ${F}.querySelector(${JSON.stringify(selector)}), t = ${F}.createTreeWalker(el, 4).nextNode();
+    el.scrollIntoView({ block: "center" });
     const rg = ${F}.createRange(), first = ${i} == 0;
     if (t) { rg.setStart(t, first ? 0 : ${i} - 1); rg.setEnd(t, first ? 1 : ${i}); } else rg.selectNodeContents(el);
     const r = t ? rg.getBoundingClientRect() : el.getBoundingClientRect(), x = first ? r.left + 1 : r.right - 1, box = el.getBoundingClientRect();
-    const y = ${JSON.stringify(half ?? "")} == "top" ? box.top + 3 : ${JSON.stringify(half ?? "")} == "bottom" ? box.bottom - 3 : r.top + r.height / 2, at = ${F}.elementFromPoint(x, y);
-    const over = new DragEvent("dragover", { dataTransfer: dt, clientX: x, clientY: y, bubbles: true, cancelable: true });
-    at.dispatchEvent(over);
-    const shown = !!${F}.querySelector("erga-drop-caret, erga-drop-image");
-    const dropped = new DragEvent("drop", { dataTransfer: dt, clientX: x, clientY: y, bubbles: true, cancelable: true });
-    at.dispatchEvent(dropped);
-    return { stopped: over.defaultPrevented && dropped.defaultPrevented, shown };
+    return { x, y: ${JSON.stringify(half ?? "")} == "top" ? box.top + 3 : ${JSON.stringify(half ?? "")} == "bottom" ? box.bottom - 3 : r.top + r.height / 2 };
   })()`);
+
+/** The sign that shows where dragged files will land: its parts, each with its text. */
+export const dropSign = (ed: Editor) =>
+  ed.frame<string[]>(
+    `[...(${F}.querySelector("erga-drop")?.shadowRoot?.querySelectorAll(".c > *") ?? [])].map((e) => (e.className + " " + e.textContent).trim())`
+  );
+
+/**
+ * Drags `files` (paths on this machine) from the computer over the page, as the browser does it (a real drag: the
+ * browser itself makes the events, and tells the page only the files' kinds until the drop), to the point of `selector`
+ * that `pointAt` names. Answers the sign the page shows there, and `drop`, which lets them go.
+ */
+export const drag = async (ed: Editor, selector: string, i: number, files: string[], half?: "top" | "bottom") => {
+  await takesDrop(ed);
+  const at = await pointAt(ed, selector, i, half);
+  const frame = await ed.page.evaluate(() => {
+    const r = document.getElementById("frame")!.getBoundingClientRect();
+    return { x: r.left, y: r.top };
+  });
+  const cdp = await ed.page.context().newCDPSession(ed.page);
+  const send = (type: "dragEnter" | "dragOver" | "drop") =>
+    cdp.send("Input.dispatchDragEvent", { type, x: frame.x + at.x, y: frame.y + at.y, data: { items: [], files, dragOperationsMask: 1 } });
+  await send("dragEnter");
+  await send("dragOver");
+  await send("dragOver");
+  return {
+    sign: await dropSign(ed),
+    async drop() {
+      await send("drop");
+      await cdp.detach();
+    },
+  };
 };
+/** Drags the files to the point, and drops them. */
+export const drop = async (ed: Editor, selector: string, i: number, files: string[], half?: "top" | "bottom") =>
+  (await drag(ed, selector, i, files, half)).drop();
 
 /** Pastes files made in the page's frame (a clipboard with files only, as a screenshot is) where the caret is. */
 export const pasteFiles = async (ed: Editor, files: Made[]) => {
@@ -138,10 +220,27 @@ export const pasteFiles = async (ed: Editor, files: Made[]) => {
   })()`);
 };
 
-/** The images on the page: their src as written, and whether each has loaded. */
+/** The files on their way, as the page shows them on their elements: each placeholder and badge, with its text. */
+export const pendingParts = (ed: Editor) =>
+  ed.frame<string[]>(
+    `[...(${F}.querySelector("erga-pending")?.shadowRoot?.querySelectorAll(".c > *:not([hidden])") ?? [])].map((e) => (e.className + " " + e.textContent).trim())`
+  );
+/** Clicks a button of a file's badge on the page (its action: "cancel", "remove", "raise", "retry"), scrolled into view. */
+export const clickBadge = async (ed: Editor, action: string) => {
+  const at = await ed.frame<{ x: number; y: number }>(
+    `(() => { const b = ${F}.querySelector("erga-pending").shadowRoot.querySelector('[data-action="${action}"]'); b.scrollIntoView({ block: "center" }); const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`
+  );
+  const frame = await ed.page.evaluate(() => {
+    const r = document.getElementById("frame")!.getBoundingClientRect();
+    return { x: r.left, y: r.top };
+  });
+  await ed.page.mouse.click(frame.x + at.x, frame.y + at.y);
+};
+
+/** The images on the page: their src as written, whether each has loaded, and the size each has on the page. */
 export const images = (ed: Editor) =>
-  ed.frame<{ src: string; alt: string; loaded: boolean }[]>(
-    `[...${F}.querySelectorAll("body img")].map((i) => ({ src: i.getAttribute("src"), alt: i.alt, loaded: i.complete && i.naturalWidth > 0 }))`
+  ed.frame<{ src: string; alt: string; loaded: boolean; size: string }[]>(
+    `[...${F}.querySelectorAll("body img")].map((i) => ({ src: i.getAttribute("src"), alt: i.alt, loaded: i.complete && i.naturalWidth > 0, size: Math.round(i.getBoundingClientRect().width) + "x" + Math.round(i.getBoundingClientRect().height) }))`
   );
 
 /**
@@ -150,8 +249,8 @@ export const images = (ed: Editor) =>
  */
 export const UPLOAD = { timeout: 10_000 };
 
-/** An image in a line of text, as the source has it. */
-export const IMG = (path: string) => `<img src="${path}" alt="${path.slice(path.lastIndexOf("/") + 1)}">`;
+/** An image in a line of text, as the source has it: no wider than the text, with its size (a dragged PNG's: onDisk). */
+export const IMG = (path: string) =>
+  `<img style="max-width: 100%; height: auto" src="${path}" width="200" height="150" alt="${path.slice(path.lastIndexOf("/") + 1)}">`;
 /** An image dropped between blocks, as the source has it: centred, a paragraph of its own. */
-export const CENTRED = (path: string) =>
-  `<p style="text-align: center"><img style="max-width: 100%; height: auto" src="${path}" alt="${path.slice(path.lastIndexOf("/") + 1)}"></p>`;
+export const CENTRED = (path: string) => `<p style="text-align: center">${IMG(path)}</p>`;

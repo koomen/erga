@@ -77,6 +77,10 @@ export interface HostOptions {
   };
   /** The document's id. */
   readonly docId: string;
+  /** Takes back a file on its way at the path (uploads.ts, unwait): whether there was one. */
+  readonly unwait?: (path: string) => Promise<boolean>;
+  /** The largest file anyone can add, in MB (the setting max_file_mb). */
+  readonly maxFileMb?: () => Promise<number | null>;
   /** Each person's agent's session here (DocumentDeps.agents), where every agent's document tools run for them. */
   readonly agents: DocumentAgents;
   /** Who a request is from. */
@@ -188,7 +192,14 @@ export function makeHost(opts: HostOptions) {
   /** Does a tree operation, as a person or their agent; open tabs hear what moved or went, to follow a page that did. */
   const tree = async (op: unknown) => {
     const done = await Effect.runPromise(
-      runTreeOp(room, op, { index: doc.path, only: opts.only, newPage: opts.newPage, kind: kindNow(), setKind: opts.setKind })
+      runTreeOp(room, op, {
+        index: doc.path,
+        only: opts.only,
+        newPage: opts.newPage,
+        kind: kindNow(),
+        setKind: opts.setKind,
+        unwait: opts.unwait,
+      })
     );
     if (done.op == "move") {
       moves.push({ from: done.from, to: done.to });
@@ -381,6 +392,7 @@ export function makeHost(opts: HostOptions) {
       writeDelay: room.writeDelay,
       canEdit: opts.canEdit?.(user) ?? true,
       docName,
+      maxFileMb: (await opts.maxFileMb?.()) ?? undefined,
     };
   };
   const docApi = HttpApiBuilder.group(Api, "doc", (h) =>
@@ -690,7 +702,14 @@ export type TreeDone = TreeOp;
 export function runTreeOp(
   room: Room,
   raw: unknown,
-  o: { index: string; only?: string; newPage?: string; kind?: DocKind; setKind?: (kind: DocKind) => Effect.Effect<void, StoreError> }
+  o: {
+    index: string;
+    only?: string;
+    newPage?: string;
+    kind?: DocKind;
+    setKind?: (kind: DocKind) => Effect.Effect<void, StoreError>;
+    unwait?: (path: string) => Promise<boolean>;
+  }
 ): Effect.Effect<TreeDone, TreeError> {
   const fail = (message: string, status?: number) => Effect.fail(new TreeError(message, status));
   /** One of pages.ts's checks, which throw a TreeError. */
@@ -760,6 +779,8 @@ export function runTreeOp(
       case "delete": {
         const path = yield* check(() => cleanTreePath(op.path));
         if (path == o.index) return yield* fail(`${path} is the document's own page: it can't be deleted.`);
+        // (A file on its way there, whose bytes haven't come: it's taken back.)
+        if (!exists(path) && (yield* Effect.promise(async () => (await o.unwait?.(path)) ?? false))) return { op: "delete", path } as const;
         if (!exists(path)) return yield* fail(`There's nothing at ${path}.`, 404);
         yield* done(room.remove(path));
         return { op: "delete", path } as const;
