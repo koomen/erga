@@ -10,7 +10,11 @@
 //   connecting | open --closed--> backoff --timer--> connecting
 //                     --closed, a final code--> ended (it never comes back by itself)
 //   connecting --closed, never in, after `refuseAfter` failures--> ended, "refused"
+//   backoff --out--> ended, "signed-out";  connecting | open --closed, out--> ended, "signed-out"
 //   any --stop--> stopped
+//
+// Signed out (the server answered 401 to this browser: client/live/live.ts), a socket that is open stays: it works
+// until it closes. But no new try is made: each one was refused, every few seconds, for as long as the tab was open.
 
 export type SocketPhase =
   | { at: "stopped" }
@@ -24,8 +28,10 @@ export type PhaseEvent =
   | { type: "start" }
   | { type: "opened" }
   | { type: "ready" }
-  /** The socket closed. `known`: the owner was in once (else a refusal looks the same as a failure). */
-  | { type: "closed"; code?: number; known?: boolean }
+  /** The socket closed. `known`: the owner was in once (else a refusal looks the same as a failure). `out`: this browser is signed out. */
+  | { type: "closed"; code?: number; known?: boolean; out?: boolean }
+  /** This browser is signed out. */
+  | { type: "out" }
   | { type: "timer" }
   | { type: "stop" };
 
@@ -36,7 +42,7 @@ export type PhaseEffect =
   | { do: "down"; open: boolean }
   /** Connect again after the owner's wait for try number `tries` (from 0). */
   | { do: "retry"; tries: number }
-  /** It ended for good, and why: a final close code's reason, or "refused". */
+  /** It ended for good, and why: a final close code's reason, "refused", or "signed-out" (SIGNED_OUT). */
   | { do: "end"; why: string; open: boolean }
   /** Close the socket, if there is one. */
   | { do: "shut" };
@@ -47,6 +53,9 @@ export interface PhaseRules {
   /** A socket that was never in ends as "refused" on the failure after this many. */
   readonly refuseAfter?: number;
 }
+
+/** Why a connection ended when this browser is signed out: its owner says nothing (the page says "Sign in": client/live/live.ts). */
+export const SIGNED_OUT = "signed-out";
 
 export type SocketStep = (p: SocketPhase, e: PhaseEvent) => { phase: SocketPhase; effects: PhaseEffect[] };
 
@@ -67,10 +76,15 @@ export const socketStep =
         return p.at == "backoff" ? { phase: { at: "connecting", tries: p.tries }, effects: [{ do: "connect" }] } : same;
       case "stop":
         return p.at == "stopped" ? same : { phase: { at: "stopped" }, effects: [{ do: "shut" }] };
+      case "out":
+        return p.at == "backoff"
+          ? { phase: { at: "ended", why: SIGNED_OUT }, effects: [{ do: "end", why: SIGNED_OUT, open: false }] }
+          : same;
       case "closed": {
         if (!live) return same;
         const why = e.code == null ? undefined : rules.final?.[e.code];
         if (why) return { phase: { at: "ended", why }, effects: [{ do: "end", why, open }] };
+        if (e.out) return { phase: { at: "ended", why: SIGNED_OUT }, effects: [{ do: "end", why: SIGNED_OUT, open }] };
         const tries = p.at == "connecting" ? p.tries : 0;
         if (rules.refuseAfter != null && !open && !e.known && tries >= rules.refuseAfter)
           return { phase: { at: "ended", why: "refused" }, effects: [{ do: "end", why: "refused", open }] };

@@ -17,6 +17,14 @@ body.erga-editing:not(.erga-editor-ready) .erga-view-button[aria-pressed] svg { 
 .erga-edit-failed { position: fixed; top: calc(var(--band-h, 48px) + 28px); right: 12px; z-index: 2147483000; margin: 0; padding: 8px 12px; border-radius: 10px;
   font: 13px/1.35 system-ui, sans-serif; background: #fff; color: #1c1c1f; box-shadow: 0 2px 12px rgba(0, 0, 0, .18); }
 html.page-dark .erga-edit-failed { background: #1f1f23; color: #ececf1; }
+/* The frame's page was refused, and the server gave no new one (viewer-refused.ts): said in the page's place. */
+.erga-refused { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 2147483000; width: min(340px, calc(100vw - 48px)); box-sizing: border-box;
+  padding: 16px 18px; border-radius: 12px; font: 14px/1.4 system-ui, sans-serif; background: #fff; color: #1c1c1f; box-shadow: 0 2px 12px rgba(0, 0, 0, .18); }
+.erga-refused p { margin: 0 0 12px; }
+.erga-refused button { font: inherit; font-weight: 500; padding: 6px 12px; border: 0; border-radius: 8px; background: #1c1c1f; color: #fff; cursor: pointer; }
+.erga-refused button:focus-visible { outline: 2px solid #3b7cf0; outline-offset: 2px; }
+html.page-dark .erga-refused { background: #1f1f23; color: #ececf1; }
+html.page-dark .erga-refused button { background: #ececf1; color: #1c1c1f; }
 /* Full screen (viewer-full.ts), viewing and editing: only where the page's frame can go full screen (not an iPhone). */
 html:not(.erga-can-full) .erga-full-button { display: none !important; }
 /* In full screen the page's frame fills it, over everything else of Erga's (a presentation draws its own controls: libs/steps),

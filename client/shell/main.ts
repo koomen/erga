@@ -323,6 +323,13 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   shell.uploads = mountUploads(shell);
   // Focusing or using this tab makes it the one you're shown by. Focus
   // lands on the frame's window when the caret is in the page.
+  // Signed out (client/live/live.ts): the room's sockets, this one and the page's own, try no more.
+  live((l) =>
+    l.signedOut(() => {
+      collab.signedOut();
+      page.signedOut();
+    })
+  );
   const activate = () => collab.activate();
   for (const type of ["focus", "pointerdown", "keydown"]) window.addEventListener(type, activate, true);
 

@@ -57,7 +57,7 @@ import { base64, fromBase64 } from "../../../shared/bytes";
 import { sleep } from "../../../shared/time";
 import { claimKept, keepReplica, readKept, type Keeper, type Kept } from "./kept";
 import { afterPause } from "./pause";
-import { socketStep, type PhaseEffect, type PhaseEvent, type SocketPhase } from "../../../shared/socket-phase";
+import { SIGNED_OUT, socketStep, type PhaseEffect, type PhaseEvent, type SocketPhase } from "../../../shared/socket-phase";
 import { holdsState, replicaStep, STARTING, type Replica, type ReplicaEvent } from "./replica-state";
 
 /** What the page shows of the socket. */
@@ -381,6 +381,13 @@ export class Collab {
     return this.opts.url(new URLSearchParams(this.epoch ? { epoch: this.epoch } : {}));
   }
 
+  /** This browser is signed out: the socket that is open stays, and no new one is tried (shared/socket-phase.ts). */
+  private out = false;
+  signedOut(): void {
+    this.out = true;
+    this.go({ type: "out" });
+  }
+
   /** Leaves the room for good: the socket closes, and this replica's presence goes with it. */
   close(): void {
     this.listening.abort();
@@ -439,6 +446,8 @@ export class Collab {
         // (Never in: no such document, or not theirs to open. One that was in keeps trying.)
         if (f.why == "refused") return this.noHello(new Error("the host refused the connection"));
         if (f.open) this.opts.onStatus("down");
+        // (Signed out: the replica keeps what it has, and the page says "Sign in".)
+        if (f.why == SIGNED_OUT) return;
         // Its person may no longer open it: the page opens again, and says so.
         return f.why == "reload" ? location.reload() : this.stale();
     }
@@ -479,7 +488,7 @@ export class Collab {
       [...this.awareness.getStates().keys()].filter((c) => c != this.doc.clientID),
       this
     );
-    this.go({ type: "closed", code, known: this.greeted || this.live || holdsState(this.replica) });
+    this.go({ type: "closed", code, known: this.greeted || this.live || holdsState(this.replica), out: this.out });
   }
 
   /** An idle socket that no longer answers (a laptop woken from sleep, a network that changed) is closed, and opens again. */

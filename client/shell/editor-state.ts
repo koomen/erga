@@ -19,11 +19,12 @@ export interface Held {
 
 /**
  * The edit key. `held`: the last one the host gave, if any. The status: none asked for (idle), a request on its way
- * (asking), the host refused it (failed: a note says so, and the shell asks again after RETRY_MS), or no answer
- * (offline: the editor runs from its copy with what it has, and the shell asks again after RETRY_MS or once the room is back).
+ * (asking), the host refused it (failed: a note says so, and the shell asks again after RETRY_MS), no answer
+ * (offline: the editor runs from its copy with what it has, and the shell asks again after RETRY_MS or once the room is
+ * back), or this browser is signed out (out: the shell asks no more; the page says "Sign in", client/live/live.ts).
  */
 export interface Key {
-  status: "idle" | "asking" | "failed" | "offline";
+  status: "idle" | "asking" | "failed" | "offline" | "out";
   held: Held | null;
   /** The note says that the editor can't start. */
   noted: boolean;
@@ -58,6 +59,8 @@ export type EditorEvent =
   | { type: "retry" }
   /** The room is back. */
   | { type: "online" }
+  /** The server said that this browser is signed out (a 401). */
+  | { type: "signed-out" }
   /** A look again (the first as the shell starts, then each minute): a key near its end is renewed. */
   | { type: "tick" };
 
@@ -115,7 +118,11 @@ export function step(s: EditorState, e: EditorEvent, now: number): { state: Edit
       if (key.noted) effects.note = "started";
       key = { status: "idle", held: e.held, noted: false };
       break;
+    case "signed-out":
+      key = { ...key, status: "out" };
+      break;
     case "refused": {
+      if (key.status == "out") break;
       // (Only when the editor waits for it: one that holds still does, a while.)
       const noted = runs(s) && !usable(key.held, now);
       if (noted) effects.note = "failed";
@@ -124,6 +131,7 @@ export function step(s: EditorState, e: EditorEvent, now: number): { state: Edit
       break;
     }
     case "unreachable":
+      if (key.status == "out") break;
       key = { ...key, status: "offline" };
       effects.retry = RETRY_MS;
       break;

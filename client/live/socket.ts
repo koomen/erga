@@ -6,7 +6,7 @@
 
 import { asUser } from "../common/tools";
 import { PING, PONG } from "../../shared/room-socket";
-import { socketStep, type PhaseEvent, type PhaseRules, type SocketPhase } from "../../shared/socket-phase";
+import { SIGNED_OUT, socketStep, type PhaseEvent, type PhaseRules, type SocketPhase } from "../../shared/socket-phase";
 import { backoff, live } from "./client";
 
 export interface LiveSocket {
@@ -31,7 +31,11 @@ export function liveSocket(o: LiveSocket): { start(): void; stop(): void } {
   const step = socketStep(o.rules);
   let phase: SocketPhase = { at: "stopped" },
     socket: WebSocket | null = null,
-    retry: ReturnType<typeof setTimeout> | undefined;
+    retry: ReturnType<typeof setTimeout> | undefined,
+    // This browser is signed out (live.ts): no new try. And when this socket last asked why it didn't open.
+    out = false,
+    asked = 0,
+    hears = false;
   /** An event of the socket's: its new phase, and what that asks for. */
   function go(e: PhaseEvent): void {
     const next = step(phase, e);
@@ -44,7 +48,8 @@ export function liveSocket(o: LiveSocket): { start(): void; stop(): void } {
         if (socket) o.up?.(socket);
         live((l) => l.connection(o.name, "up"));
       } else if (f.do == "down") live((l) => l.connection(o.name, "down"));
-      else if (f.do == "end") live((l) => l.connection(o.name, "gone", o.ended?.(f.why)));
+      else if (f.do == "end")
+        live((l) => (f.why == SIGNED_OUT ? l.connection(o.name, null) : l.connection(o.name, "gone", o.ended?.(f.why))));
       else if (f.do == "shut") {
         const ws = socket;
         socket = null;
@@ -56,7 +61,8 @@ export function liveSocket(o: LiveSocket): { start(): void; stop(): void } {
   function connect() {
     const ws = new WebSocket(`${location.protocol == "https:" ? "wss" : "ws"}://${location.host}${asUser(o.path)}`);
     socket = ws;
-    let heard = Date.now();
+    let heard = Date.now(),
+      opened = false;
     // An idle socket can die without a close: a ping now and then, and one with no answer for a while is closed.
     const ping = o.ping
       ? setInterval(() => {
@@ -66,6 +72,7 @@ export function liveSocket(o: LiveSocket): { start(): void; stop(): void } {
         }, 30_000)
       : undefined;
     ws.onopen = () => {
+      opened = true;
       if (socket == ws) go({ type: "opened" });
     };
     ws.onmessage = (e) => {
@@ -76,8 +83,32 @@ export function liveSocket(o: LiveSocket): { start(): void; stop(): void } {
       clearInterval(ping);
       if (socket != ws) return;
       socket = null;
-      go({ type: "closed", code: e.code });
+      // It never opened, and the browser doesn't say why. The server does, to a plain request of the same address: 401
+      // when this browser is signed out, which live.ts hears (at most one such request a minute; X-Erga-Check: the
+      // worker leaves it to the network, client/inline/offline-sw.ts).
+      if (!opened && !out && navigator.onLine && Date.now() - asked > 60_000) {
+        asked = Date.now();
+        void fetch(asUser(o.path), { credentials: "same-origin", headers: { "X-Erga-Check": "socket" } }).then(
+          (r) => r.body?.cancel(),
+          () => {}
+        );
+      }
+      go({ type: "closed", code: e.code, out });
     };
   }
-  return { start: () => go({ type: "start" }), stop: () => go({ type: "stop" }) };
+  return {
+    start: () => {
+      // (From its first start: a socket may be made where there is no window yet.)
+      if (!hears)
+        live((l) =>
+          l.signedOut(() => {
+            out = true;
+            go({ type: "out" });
+          })
+        );
+      hears = true;
+      go({ type: "start" });
+    },
+    stop: () => go({ type: "stop" }),
+  };
 }

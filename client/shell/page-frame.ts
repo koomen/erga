@@ -80,6 +80,8 @@ export function mountPageFrame(c: PageFrameConfig) {
   let zoomsItself = false;
   /** How much of the window's bottom the alerts take, in px. */
   let notes = 0;
+  /** This browser is signed out: each page that comes is told (its editor's socket tries no more: libs/text/ui/frame.ts). */
+  let out = false;
 
   const post = (m: unknown) => {
     // A frame whose page hasn't come yet (its first, empty document is this origin's): the page says hello when it comes.
@@ -127,6 +129,7 @@ export function mountPageFrame(c: PageFrameConfig) {
       c.onLoad();
       // (A frame with the focus: the page that came in it has it, for its editor: client/inline/viewer-frames.ts.)
       if (active()) say();
+      if (out) post({ type: "erga-out" });
       return;
     }
     if (m.type == "erga-zooms" && zoomsItself != (m.on === true)) {
@@ -238,6 +241,10 @@ export function mountPageFrame(c: PageFrameConfig) {
     },
     focus() {
       c.frame().focus();
+    },
+    signedOut() {
+      out = true;
+      post({ type: "erga-out" });
     },
     /** The alerts take `px` of the window's bottom: the editor in the page keeps its own notes over them. */
     setNotes(px: number) {

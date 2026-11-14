@@ -642,7 +642,9 @@ journey("the admin: / opens the documents, ⌘K finds Erga's pages, the Home pag
   });
 
   test("signed out, / stays the homepage, and the logo of the homepage project goes to /", async () => {
+    // (The sign-out page goes on to / by itself: a goto in the middle of that is refused, "interrupted".)
     await page.goto(`${s.root}/auth/logout`);
+    await page.waitForURL(`${s.root}/`);
     await page.goto(`${s.root}/`);
     expect(new URL(page.url()).pathname).toBe("/");
     // Signed out, /_home is the homepage project too, to view.

@@ -120,3 +120,24 @@ test("news: the socket fails to come back three times, then a link to another ad
 test("with no final codes, any close code is retried", () => {
   expect(news({ at: "open", ready: false }, { type: "closed", code: 4404 }).phase).toEqual({ at: "backoff", tries: 1 });
 });
+
+// Before, a tab that was signed out tried its sockets again every few seconds, for as long as it was open.
+test("signed out: an open socket stays, and no new try is made; a wait for the next try ends at once", () => {
+  const up = room(start, { type: "opened" }, { type: "ready" });
+  // Open: nothing changes, until it closes.
+  expect(room(up.phase, { type: "out" })).toEqual({ phase: up.phase, effects: [] });
+  expect(room(up.phase, { type: "closed", code: 1006, known: true, out: true })).toEqual({
+    phase: { at: "ended", why: "signed-out" },
+    effects: [{ do: "end", why: "signed-out", open: true }],
+  });
+  // In the wait: it ends, and the wait's timer does nothing.
+  const waiting = room(start, drop);
+  expect(waiting.phase).toEqual({ at: "backoff", tries: 1 });
+  expect(room(waiting.phase, { type: "out" }, { type: "timer" })).toEqual({
+    phase: { at: "ended", why: "signed-out" },
+    effects: [{ do: "end", why: "signed-out", open: false }],
+  });
+  // On its way: the try under way is the last one. (A final code keeps its own reason.)
+  expect(room(start, { type: "out" }, { type: "closed", code: 1006, out: true }).phase).toEqual({ at: "ended", why: "signed-out" });
+  expect(room(start, { type: "closed", code: 4404, out: true }).phase).toEqual({ at: "ended", why: "gone" });
+});

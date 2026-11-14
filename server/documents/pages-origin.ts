@@ -150,20 +150,35 @@ export const pagesRoutes = (doc: { owner: string; id: string }) =>
     )
   );
 
+/**
+ * A pass that opens nothing (it ended, a share ended, or this release reads no pass of an old one). As a frame's page it
+ * tells its viewer, which gets a new page with a new pass (client/inline/viewer-refused.ts). It names no viewer: any
+ * window may frame it, and it says nothing but that.
+ */
+function refused(page: boolean): Response {
+  const said = "This link has expired: reload the page.";
+  const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
+  if (!page) return new Response(said, { status: 403, headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" } });
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><title>Erga</title><body style="margin: 0; padding: 96px 24px; font: 15px/1.4 system-ui, sans-serif; background: #fff; color: #1c1c1f">${said}<script>parent.postMessage({ type: "erga-refused" }, "*")</script>`,
+    { status: 403, headers: { ...headers, "Content-Type": "text/html; charset=utf-8" } }
+  );
+}
+
 /** The answer of pagesRoutes, as a web Response: mostly the document's own, passed on. */
 async function pageFile(request: Request, url: URL, doc: { owner: string; id: string }, platform: Platform): Promise<Response> {
   const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   // (/t/<token>/@<ver>/<path>: a reader's address, with the version of the document that the viewer showed.)
   const [, token, ver, rest] = /^\/t\/([^/]+)(?:\/@([^/]+))?(\/.*)$/.exec(url.pathname) ?? [];
   if (!token || (request.method != "GET" && request.method != "HEAD")) return notFound();
-  const claims = await readPagesClaims(platform.secret, token, doc.owner, doc.id);
-  const shell = claims?.shell;
-  if (!claims || !shell) return new Response("This link has expired: reload the page.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   // A frame's document (Sec-Fetch-Dest says so: a page's own fetch of an HTML file gets the file as it is), or the page's
   // editor asking for its page as the frame got it (libs/text/ui/offline-page.ts: for the browser's copy).
   const page =
     request.method == "GET" &&
     (/^(iframe|frame|document)$/.test(request.headers.get("sec-fetch-dest") ?? "") || request.headers.get(PAGE_HEADER) == "1");
+  const claims = await readPagesClaims(platform.secret, token, doc.owner, doc.id);
+  const shell = claims?.shell;
+  if (!claims || !shell) return refused(page);
   // Its ETag is the file's with what goes in it (this code's version and the token's kind), so the browser's copy is
   // checked against the file's: the file's own (stripped of ours) goes to the document.
   const ours = `.${readerVersion()}${claims.edit ? "w" : ""}`;
@@ -189,6 +204,11 @@ async function pageFile(request: Request, url: URL, doc: { owner: string; id: st
   inner.headers.set("x-erga-shares", String(claims.shares));
   const [route, answer] = await Promise.all([platform.directory.route(doc.id), platform.docs.fetch(at, inner)]);
   if (!route || route.owner != at.owner) { await answer.body?.cancel(); return notFound(); }
+  // The document refused the pass (a share ended since: document/access.ts): the frame's page tells its viewer, too.
+  if (page && answer.status == 403) {
+    await answer.body?.cancel();
+    return refused(true);
+  }
   const type = answer.headers.get("content-type") ?? "";
   const now = versioned ? answer.headers.get("x-erga-ver") : null;
   const found = answer.status == 200 || answer.status == 304;

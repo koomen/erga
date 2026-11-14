@@ -165,6 +165,7 @@ journey("a new document from the picker", () => {
       .map((c) => c.split(";")[0])
       .join("; ");
     await page.goto(`${s.root}/auth/logout`);
+    await page.waitForURL(`${s.root}/`);
     await openTab(tab, `${s.root}/`);
     await clickIn(".erga-view-buttons .erga-new-btn");
     expect(await picker()).toMatchObject({ open: true, rows: [...ROWS, "Clone"] });
