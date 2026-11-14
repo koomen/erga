@@ -14,7 +14,6 @@ import {
 } from "../server/directory/index.ts";
 import { NameError } from "../document/names.ts";
 import { slugify } from "../document/pages.ts";
-import serverConfig from "../deploy/locked-settings";
 import { memory } from "./helpers/memory-sql";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
@@ -339,9 +338,7 @@ test("server config: what the deploy fixes is locked, with its deployed value", 
   expect(await after.reset(admin, "delete_docs_after_hours")).toMatchObject({ value: 24, source: "default", locked: false });
 });
 
-test("server config: the deploy's values, from deploy/locked-settings.ts and SERVER_CONFIG", () => {
-  // The repo's own file is a config the deploy takes.
-  expect(() => deployedSettings(serverConfig)).not.toThrow();
+test("server config: the deploy's values, from SERVER_CONFIG", () => {
   // The binding is JSON; empty or missing locks nothing.
   expect(parseDeployed(undefined)).toEqual({});
   expect(parseDeployed("")).toEqual({});

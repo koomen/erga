@@ -106,7 +106,7 @@ test("the ops page links the proof beside Merge, and serves its files and nothin
     JSON.stringify({
       instances: [
         {
-          host: "erga.dev",
+          host: "example.net",
           account: "a",
           worker: "w",
           database: "d",
@@ -126,7 +126,7 @@ test("the ops page links the proof beside Merge, and serves its files and nothin
     fetch: async () => null,
   });
   const at = `http://127.0.0.1:${page.server.port}`;
-  const view = async () => (await fetch(`${at}/view?hash=erga.dev`)).text();
+  const view = async () => (await fetch(`${at}/view?hash=example.net`)).text();
   const until = async (text: string) => {
     for (let i = 0; i < 200 && !(await view()).includes(text); i++) await Bun.sleep(20);
     return view();

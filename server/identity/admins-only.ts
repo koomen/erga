@@ -1,12 +1,12 @@
 // Staging is for Erga's admins only. A staging instance runs on a copy of
 // its primary's data (frozen: only a deploy with a fresh copy replaces it),
-// so a server whose deploy says DEPLOY_TARGET=staging
-// (Platform.adminsOnly; each deploy of a staging instance sets it, so no
+// so a server whose deploy names its primary (SNAPSHOT_FROM:
+// Platform.adminsOnly; each deploy of a staging instance sets it, so no
 // setting turns this off) lets a request in only with admin power: an
 // admin's signed-in session, or an admin-scope token (tokens.ts;
 // Users.actsAsAdmin). Anyone else gets a page (signed out: sign in; signed in:
-// admins only, with a link to its primary) or a JSON 403. This is the one guard, at the app, before every route; production and a fork's servers
-// never run it.
+// admins only, with a link to its primary) or a JSON 403. This is the one guard, at the app, before every route; a server that is not a staging
+// instance never runs it.
 //
 // What gets in without an admin, and why (each one checks its own credential):
 //
@@ -32,7 +32,7 @@
 //                                   the CLI's sign-in (deploy/cli/ops.ts) asks for a token with no session: the request
 //                                   holds no data, and only an admin approves it, on /tokens/approve, which is behind
 //                                   this guard; the poll's own credential is the request's code
-//   /api/snapshot/...               the deploy copying production's documents in, and staging reading a blob its copy
+//   /api/snapshot/...               the deploy copying its primary's documents in, and staging reading a blob its copy
 //                                   lacks (/api/snapshot/blob/<sha-256>), both with SNAPSHOT_TOKEN
 //   /__erga/...                     local development only, behind the dev server's secret
 //   MCP's sign-in (mcp-oauth.ts)        an agent's app signs in with no cookie, so it must reach these without one:
@@ -47,15 +47,15 @@
 //   PUT /d/<id>/api/blobs/<sha-256> the bytes of a file that an agent's write waits for (document/waits.ts), from its
 //                                   shell, which has no session. It gives no data out. The document takes the bytes
 //                                   only where a write named their sha-256 and size in the last minutes, on this
-//                                   server (a wait that came in production's copy names production, and takes
+//                                   server (a wait that came in its primary's copy names its primary, and takes
 //                                   none): a write is a tool's, behind this guard, so only an admin's
 //   the API, MCP and documents' own routes with an admin's token of another scope (document, documents)
 //                                   an admin shares a document with an outside agent (the editor's Share card) and it
-//                                   must work here as on production: /mcp, /api/publish,
+//                                   must work here as on its primary: /mcp, /api/publish,
 //                                   /api/tools/..., and /<owner or d>/<doc>/(api|doc)/..., and
 //                                   nothing else. The token's person must be an admin at each request, as
 //                                   for the pages origin. Past this guard the token's
-//                                   own scope decides, as on production: no admin
+//                                   own scope decides, as on its primary: no admin
 //                                   power, so no /admin, settings, users or credentials
 //
 //   a document's viewer and API with a view cookie (session.ts, viewCookie)

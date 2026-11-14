@@ -212,7 +212,7 @@ function server(proxy: Proxy | string = AWS, admins: string[] = []) {
     own: { get: async () => undefined },
     directory,
     signIn: { ...signIn, devLogin: null, encryptionKey: null },
-    deploy: { target: null, version: null, primary: null },
+    deploy: { version: null, primary: null },
   } as unknown as Platform;
   /** The server's first admin, as its deploy adds one: a person who waits, by their email at the proxy's sign-in. */
   const firstAdmin = (email: string) =>

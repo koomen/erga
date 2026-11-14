@@ -6,9 +6,6 @@
 // start`, dev/start.ts) the same Worker runs under Vite.
 import { bindings, defineConfig, exports } from "cf/config";
 import * as entrypoint from "./cloudflare/index.ts" with { type: "cf-worker" };
-// The server settings the deploy fixes (locks): deploy/locked-settings.ts, with ERGA_SERVER_CONFIG
-// (JSON, from the environment) over them. client/build.ts and dev/start.ts check them first (`bun deploy/locked-settings.ts`).
-import { deployed } from "./deploy/locked-settings.ts";
 import { hasDevSecret, localAgentKey } from "./dev/agent-key.ts";
 
 // Neutral names only: no instance's domain, route or settings. The deploy pipeline gives each instance its own Worker,
@@ -51,31 +48,14 @@ export default defineConfig(({ mode }) => ({
     exports: {
       // Each document (cloudflare/objects/document.ts), named by its id.
       DocumentObject: exports.durableObject({ storage: "sqlite" }),
-      // The deploy page's sessions (/deploy, which installed Erga in other accounts): gone, with what they held (2026-11-04).
-      Deployer: exports.durableObject({ state: "deleted" }),
-      // Erga's repository and the deploys, which the control Worker held before: gone, with what they held (the old
-      // history and index, until 2026-10-13).
-      SourceHost: exports.durableObject({ state: "deleted" }),
-      Pipeline: exports.durableObject({ state: "deleted" }),
       // The homepage's deploys and the snapshot / serves: one object, "home".
       Home: exports.durableObject({ storage: "sqlite" }),
       // The server's own small storage (the sign-in values set on /admin/auth): one object, "own", which no copy of another server's data replaces.
       OwnStorage: exports.durableObject({ storage: "sqlite" }),
       // Live pages' hub (server/news/): the open pages' sockets and which rows changed. One object, "news".
       NewsHub: exports.durableObject({ storage: "sqlite" }),
-      // Each document's site on its person's own Cloudflare account (a document at a domain of its own): gone, with what it held.
-      SiteHost: exports.durableObject({ state: "deleted" }),
-      // The admins' agents before each person had one (PersonAgent): gone, with their conversations (2026-11-01).
-      AdminAgentHost: exports.durableObject({ state: "deleted" }),
       // Each person's agent (agents/person/): one object per person, named by their login.
       PersonAgent: exports.durableObject({ storage: "sqlite" }),
-      // The factory (its task queue) and its VMs: gone, with what they held.
-      Factory: exports.durableObject({ state: "deleted" }),
-      FactoryVm: exports.durableObject({ state: "deleted" }),
-      // Each person's list of documents before the directory: gone, with what it held.
-      DocList: exports.durableObject({ state: "deleted" }),
-      // The documents' namespace from before the storage cutover of 2026-10-11: gone, with what it held.
-      DocHost: exports.durableObject({ state: "deleted" }),
     },
     env: {
       DOCUMENTS: bindings.durableObject({ worker: WORKER, exportName: "DocumentObject" }),
@@ -96,13 +76,15 @@ export default defineConfig(({ mode }) => ({
       // Documents' blobs: their files that aren't text, by sha-256 (cloudflare/blobs.ts). Each target has a bucket of its
       // own, named after its Worker (the pipeline binds <worker>-files); locally, Miniflare's R2.
       FILES: bindings.r2({ name: `${WORKER}-files` }),
-      // The settings the deploy fixes, as JSON. Admins set the rest.
-      SERVER_CONFIG: bindings.text(JSON.stringify(deployed())),
+      // The settings the deploy fixes (locks), as JSON: each instance's own, from its entry's vars (`bun erga deploy`
+      // checks them first). Admins set the rest. Locally: ERGA_SERVER_CONFIG (dev/start.ts checks it first).
+      SERVER_CONFIG: mode == "development" ? local(process.env.ERGA_SERVER_CONFIG ?? "") : bindings.text(""),
       // The GitHub OAuth app's client ID: each instance's own, from its entry's vars. Locally, ERGA_GITHUB_CLIENT_ID only.
       GITHUB_CLIENT_ID: mode == "development" ? local(process.env.ERGA_GITHUB_CLIENT_ID ?? "") : bindings.text(""),
 
-      // "staging" on a staging instance (admins only): `bun erga deploy` sets it. Locally: ERGA_DEPLOY_TARGET.
-      DEPLOY_TARGET: mode == "development" ? local(process.env.ERGA_DEPLOY_TARGET ?? "") : bindings.text(""),
+      // A staging instance's primary (https://<host>): `bun erga deploy` sets it from the entry's stagingOf, and the
+      // server is then for admins only. Locally: ERGA_SNAPSHOT_FROM.
+      SNAPSHOT_FROM: mode == "development" ? local(process.env.ERGA_SNAPSHOT_FROM ?? "") : bindings.text(""),
       ...optionalSecret(mode, "GITHUB_CLIENT_SECRET"),
       // Opens an issue in Erga's repository for each feedback (server/feedback.ts). Locally the pretend GitHub takes its own.
       ...optionalSecret(mode, "GITHUB_ISSUES_TOKEN"),

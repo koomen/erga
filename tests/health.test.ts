@@ -14,14 +14,18 @@ function directory(): Directory {
 const platform = (dir: Directory, exists: (id: string) => Promise<boolean>): Platform =>
   ({
     directory: dir,
-    deploy: { target: "staging", version: "abcdef123456", primary: null },
+    deploy: { version: "abcdef123456", primary: null },
     docs: { index: async (doc: { id: string }) => ((await exists(doc.id)) ? "index.html" : null) },
 } as unknown as Platform);
 
 test("healthy: the database answers and the homepage's document opens; with no homepage, nothing to open and still healthy", async () => {
   const dir = directory();
   let h = await health(platform(dir, async () => true));
-  expect(h).toMatchObject({ ok: true, version: "abcdef123456", target: "staging", checks: { db: { ok: true }, documents: { ok: true, note: "no homepage document: nothing to open" } } });
+  expect(h).toMatchObject({
+    ok: true,
+    version: "abcdef123456",
+    checks: { db: { ok: true }, documents: { ok: true, note: "no homepage document: nothing to open" } },
+  });
   expect(h.checks.db.ms).toBeGreaterThanOrEqual(0);
   const { doc } = await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Home", created: 1 });
   await dir.config.set({ login: "ada", admin: true }, "landing_document", doc.id);

@@ -2,8 +2,8 @@
 // what server/platform.ts calls `own`. It holds the sign-in values an admin
 // sets on /admin/auth (server/identity/apps.ts, keys "auth:<provider>", the
 // secret in them encrypted). Its own object, apart from the database (a copy
-// of production's data replaces staging's database, and must not replace
-// staging's sign-in).
+// of a primary's data replaces a staging instance's database, and must not replace
+// its sign-in).
 
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../env";

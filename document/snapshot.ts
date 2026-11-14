@@ -1,17 +1,17 @@
 // A document's storage as one value, to copy documents' Durable Objects from
-// one server to another: how staging gets production's documents when it
+// one server to another: how a staging instance gets its primary's documents when it
 // copies its data (the pipeline's "documents" step, deploy/pipeline/pipeline.ts,
 // with deploy/pipeline/copy-documents.ts). The database is copied by D1 itself (export
 // and import); a Durable Object's storage can only be read from inside the
-// Worker that owns it, so production serves a read-only snapshot endpoint and
-// staging an import one, both behind a shared secret (SNAPSHOT_TOKEN, on both Workers; `bun erga snapshot-secret
-// <host>` replaces it on both). With it staging can read every production document, so it is at least 32 characters,
+// Worker that owns it, so every server serves a read-only snapshot endpoint and
+// a staging instance an import one, both behind a shared secret (SNAPSHOT_TOKEN, on both Workers; `bun erga snapshot-secret
+// <host>` replaces it on both). With it a staging instance can read every document of its primary, so it is at least 32 characters,
 // and it never travels: each request is signed with it (snapshotAuth: the time, the method, the path and the body),
 // and a signature holds for SNAPSHOT_MINUTES, for that one request. A request someone kept opens nothing later.
 //
 //   POST /api/snapshot/docs          {ids, after?}  → {docs: [{id, entries, alarm, more?}], done, failed}
 //                                                     any server with SNAPSHOT_TOKEN: read-only
-//   POST /api/snapshot/docs/import   {docs, wipe}   → {imported, wiped}   only with SNAPSHOT_IMPORT=1 and never on production
+//   POST /api/snapshot/docs/import   {docs, wipe}   → {imported, wiped}   only on a staging instance (SNAPSHOT_FROM)
 //
 // A document's snapshot is every key in its storage (its files, folders,
 // meta, its versions and the room's journal: document/storage.ts) and its
@@ -144,7 +144,7 @@ export async function snapshotRefused(request: Request, token: string | undefine
 /**
  * The snapshot endpoints, or null for any other path. `token`: this server's
  * SNAPSHOT_TOKEN (none: the endpoints aren't there). `importAllowed`: this
- * server takes snapshots in (staging); production never does.
+ * server takes snapshots in (a staging instance); no other server does.
  */
 export async function snapshotRoutes(
   request: Request,

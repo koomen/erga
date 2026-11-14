@@ -1,4 +1,4 @@
-// One document, as a Durable Object (on erga.dev, and in local development
+// One document, as a Durable Object (on a deployed instance, and in local development
 // alike): the Cloudflare side of document/document.ts. It gives the
 // Document its storage, the server around it (the directory in D1, the
 // other objects, the agent's settings), takes its WebSockets, wakes it for

@@ -39,7 +39,12 @@ export async function makeRelease(): Promise<ReleaseIndex> {
   if (!existsSync(join(SITE, "manifest.json"))) throw new Error(".build isn't built: run bun run build first");
   // The build copies .build into its assets: last run's release mustn't go in.
   rmSync(OUT, { recursive: true, force: true });
-  const build = Bun.spawn(["bunx", "cf", "build"], { cwd: ROOT, env: { ...process.env, CF_QUIET: "1", NO_COLOR: "1", ERGA_SERVER_CONFIG: "" }, stdout: "pipe", stderr: "pipe" });
+  const build = Bun.spawn(["bunx", "cf", "build"], {
+    cwd: ROOT,
+    env: { ...process.env, CF_QUIET: "1", NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [out, err, code] = await Promise.all([new Response(build.stdout).text(), new Response(build.stderr).text(), build.exited]);
   if (code != 0) throw new Error(`cf build failed:\n${out}\n${err}`);
   const built = join(ROOT, ".cloudflare/output/v0/workers/default");

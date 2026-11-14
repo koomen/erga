@@ -1,13 +1,15 @@
-// `bun erga deploy [<commit>] <host>` and `bun erga rollback <host>`: a registered instance (.erga/config.json), deployed
+// `bun erga deploy [<commit>] <host>` and `bun erga rollback <host>`: an instance of .erga/config.json, deployed
 // or rolled back from this machine, with nothing from the instance but, for a primary with no commit named, the commit
 // its staging instances run. Every deploy runs on a machine: a push deploys nothing. After a healthy deploy of a primary,
 // main on origin moves forward to its commit; `bun erga merge` deploys its commit to each staging instance, then moves
-// staging (deployStaging). The build and the pipeline are today's (buildHere, runPipeline); the target
-// comes from the entry only: its names, its vars, the secrets the Worker keeps. No secret goes out.
+// staging (deployStaging). The build and the pipeline are today's (buildHere, runPipeline). Every instance's target
+// comes from its entry only (entryTarget): its names, its vars, the secrets the Worker keeps. No secret goes out. No
+// instance has a path of its own: the entries differ, the code does not.
 //
-// A staging instance keeps its copy of its primary's data (as GitHub's deploy does), and gets DEPLOY_TARGET=staging and
-// SNAPSHOT_FROM (its primary's address) over its entry's vars; its primary's names are its guard. With --fresh, or when it
-// has no copy yet, it gets a new copy: the pipeline's snapshot of the primary's database and documents, with the primary's
+// A staging instance is an entry that names its primary (stagingOf). It gets SNAPSHOT_FROM (its primary's address)
+// over its entry's vars, which makes its server one for admins only; its primary's names are its guard. It keeps its
+// copy of its primary's data. With --fresh, or when it
+// has no copy yet, it gets a new copy of the primary's database and documents, with the primary's
 // SNAPSHOT_TOKEN (the environment, or .erga/secrets.json). Each deploy or
 // rollback holds the lock .erga/jobs/<host>.lock and writes its job record in .erga/jobs/ (jobs.ts). A deploy runs only a commit
 // whose tests passed (gate.ts: bun run test): the record .erga/tests/<tree>.json of the commit's tree, which its merge wrote.
@@ -49,6 +51,8 @@ import { gateRefusal } from "./gate";
 import { type From, startJob, takeLock } from "./jobs";
 import { askInstance, healthOf } from "./observe";
 import { readOps } from "./ops";
+import { stagingCommitRefusal } from "./staging-commit";
+import { parseDeployed } from "../../server/directory/index.ts";
 import { ROOT, sh } from "../root";
 
 /** git in a clone. `push`: as `bun erga`, which the pre-push hook lets through (deploy/cli/pre-push.ts). */
@@ -57,7 +61,7 @@ const gitIn = (clone: string, args: string[], push = false) =>
 
 // ------------------------------------------------------------------ the target
 
-/** The pipeline's names of an entry, with no vars and no guard. */
+/** The pipeline's names of an entry, with no vars. */
 const namesOf = (e: CloudflareEntry) => ({
   label: e.host,
   accountId: e.account,
@@ -70,13 +74,14 @@ const namesOf = (e: CloudflareEntry) => ({
 });
 
 /**
- * What the pipeline deploys for `entry`: its names and vars, no secret (the Worker keeps its own). A staging instance
- * gets DEPLOY_TARGET=staging and SNAPSHOT_FROM over its vars, and may not touch its primary's names. It keeps its copy
- * of its primary's data, unless `copy` is given: then the pipeline copies the primary's database and documents.
+ * What the pipeline deploys for `entry`, any entry: its names and vars, no secret (the Worker keeps its own). An entry
+ * that names a primary (stagingOf) is a staging instance: it gets SNAPSHOT_FROM over its vars, and may not touch its
+ * primary's names. It keeps its copy of its primary's data, unless `copy` is given: then the pipeline copies the
+ * primary's database and documents.
  */
 export function entryTarget(config: Config, entry: CloudflareEntry, copy?: { token: string; fresh: boolean }): Target {
   const own = { ...namesOf(entry), secrets: {}, keepSecrets: true, checkVersion: true };
-  if (!entry.stagingOf) return { ...own, vars: { ...entry.vars }, production: true };
+  if (!entry.stagingOf) return { ...own, vars: { ...entry.vars } };
   const primary = entryOf(config, entry.stagingOf);
   if (!primary)
     throw new Error(
@@ -87,16 +92,18 @@ export function entryTarget(config: Config, entry: CloudflareEntry, copy?: { tok
       `${entry.host} is on Cloudflare, and its primary ${primary.host} is on AWS: a staging instance is on its primary's host.`
     );
   const p = namesOf(primary);
+  const origin = originOf(primary.host);
   return {
     ...own,
-    vars: { ...entry.vars, DEPLOY_TARGET: "staging", SNAPSHOT_FROM: originOf(primary.host), SNAPSHOT_IMPORT: "1" },
-    ...(copy ? { snapshot: { databaseName: primary.database, origin: originOf(primary.host), token: copy.token, fresh: copy.fresh } } : {}),
-    guard: {
+    vars: { ...entry.vars, SNAPSHOT_FROM: origin },
+    stagingOf: {
+      accountId: p.accountId,
       worker: p.workerName,
       database: p.databaseName,
       host: targetHost(p),
       pages: p.pages.kind == "zone" ? (p.pages.domain ?? p.pages.zoneName) : targetSharedPagesHost(p),
-      accountId: p.accountId,
+      origin,
+      ...(copy ? { copy } : {}),
     },
   };
 }
@@ -283,6 +290,13 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   };
   const badHome = o.home ? homeRefusal(o.home.toLowerCase()) : null;
   if (badHome) throw new Error(badHome);
+  // The settings the entry locks, and its defaults (server/directory/settings.ts): a bad one stops here, not the server.
+  for (const key of ["SERVER_CONFIG", "SERVER_DEFAULTS"])
+    try {
+      parseDeployed(entry.vars[key]);
+    } catch (e) {
+      throw new Error(`${o.host}'s ${key} in .erga/config.json: ${(e as Error).message}`);
+    }
   let target: Target | null = aws ? null : { ...entryTarget(config, entry as CloudflareEntry), ...own };
   const sent = Object.keys(target?.secrets ?? {});
   const wrong = target && guardTarget(target);
@@ -308,6 +322,8 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       log(`The staging instances of ${o.host} run ${chosen.version}, healthy: that commit deploys.`);
     }
     job.note({ commit: sha, ...(sent.length ? { secrets: sent } : {}) });
+    const old = entry.stagingOf ? stagingCommitRefusal(clone, sha, o.host) : null;
+    if (old) throw new Error(old);
     // A primary: main must have the commit, or move forward to it. Checked before the build, so a deploy never leaves main behind.
     const main = entry.stagingOf ? null : mocked() && !o.clone ? "mock" : mainMove(clone, sha);
     // Before the tests and the build: a copy that needs a token it does not have stops here.

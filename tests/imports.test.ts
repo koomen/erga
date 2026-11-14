@@ -16,9 +16,7 @@
 //   8. deploy/, dev/, tests/, e2e/, client/build.ts and the scripts at the top: anything. Nothing imports them.
 //
 // And:
-//   - An area of server/ is imported from outside only through its index.ts. Tools may look inside, and so may
-//     deploy/locked-settings.ts, which the Worker's config loads before anything else and which reads the settings'
-//     definitions alone.
+//   - An area of server/ is imported from outside only through its index.ts. Tools may look inside.
 //   - Only cloudflare/ imports cloudflare:workers: the Worker's bindings and types stay there.
 //   - A layer adds its part of server/platform.ts's Platform with a `declare module`, not an import the other way.
 //
@@ -115,7 +113,6 @@ test("every import keeps the layers", () => {
   const code = ["shared", "libs", "document", "server", "agents", "cloudflare", "client", "deploy", "dev"];
   for (const f of files(code)) {
     const from = f.replace(/\.ts$/, "");
-    if (from == "deploy/locked-settings") continue;
     for (const { spec, type } of imports(f)) {
       const why = wrong(from, spec, type);
       if (why) found.push(`${f} imports ${spec}: ${why}`);

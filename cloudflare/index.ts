@@ -1,4 +1,4 @@
-// erga.dev's Worker: the entry point. It builds the app's Platform from the
+// The app's Worker: the entry point. It builds the app's Platform from the
 // Worker's bindings (platform.ts), hands every request to the app
 // (server/app.ts, the one route table), answers the few routes that run only
 // here, and exports the Durable Objects. The same Worker runs in local

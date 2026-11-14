@@ -4,12 +4,12 @@
 import { expect, test } from "bun:test";
 import { activeJobs, deploysTo, jobStart, jobState, type Run, stepRun } from "../deploy/cli/job-state";
 
-const head = { command: "bun erga deploy erga.dev --no-tests", host: "erga.dev", pid: 7, pidStart: "Fri Nov  6 09:00:00 2026" };
+const head = { command: "bun erga deploy example.net --no-tests", host: "example.net", pid: 7, pidStart: "Fri Nov  6 09:00:00 2026" };
 const C = "c".repeat(40);
 
 test("a record: running, then its commit, then its result; with no result, a process that ended has stopped", () => {
   const lives = () => true;
-  expect(jobState([head], lives)).toEqual({ kind: "deploy", host: "erga.dev", commit: null, branch: null, phase: "running" });
+  expect(jobState([head], lives)).toEqual({ kind: "deploy", host: "example.net", commit: null, branch: null, phase: "running" });
   expect(jobState([head, { out: "x" }, { commit: C }], lives)).toMatchObject({ commit: C, phase: "running" });
   expect(jobState([head, { commit: C }, { result: "failed", error: "e" }], lives)).toMatchObject({ commit: C, phase: "failed" });
   // After its result, nothing changes it.
@@ -23,13 +23,13 @@ test("a record: running, then its commit, then its result; with no result, a pro
 });
 
 test("the kind comes from the command's verb; a merge's branch follows it; anything else is no job", () => {
-  expect(jobStart({ command: "bun erga merge sm-ops-jobs", host: "staging.erga.dev" })).toMatchObject({
+  expect(jobStart({ command: "bun erga merge sm-ops-jobs", host: "staging.example.net" })).toMatchObject({
     kind: "merge",
     branch: "sm-ops-jobs",
   });
-  expect(jobStart({ command: "bun erga rollback erga.dev", host: "erga.dev" })).toMatchObject({ kind: "rollback", branch: null });
-  expect(jobStart({ command: "rm -rf /", host: "erga.dev" })).toBeNull();
-  expect(jobStart({ command: "bun erga deploy erga.dev" })).toBeNull();
+  expect(jobStart({ command: "bun erga rollback example.net", host: "example.net" })).toMatchObject({ kind: "rollback", branch: null });
+  expect(jobStart({ command: "rm -rf /", host: "example.net" })).toBeNull();
+  expect(jobStart({ command: "bun erga deploy example.net" })).toBeNull();
   expect(jobStart(undefined)).toBeNull();
 });
 
@@ -41,7 +41,7 @@ test("a job deploys a commit to its host; a merge, to each staging instance", ()
   expect(deploysTo({ ...deploy, commit: null }, C, "s.dev", true)).toBe(false);
   const merge = { ...deploy, kind: "merge" as const };
   expect(deploysTo(merge, C, "t.dev", true)).toBe(true);
-  expect(deploysTo(merge, C, "erga.dev", false)).toBe(false);
+  expect(deploysTo(merge, C, "example.net", false)).toBe(false);
 });
 
 test("the page's run: it starts, then it ends; it stops before its record, with its last words", () => {

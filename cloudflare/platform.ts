@@ -42,8 +42,7 @@ const origin = (name: string) => text(name).pipe(Config.map((v) => v.replace(/\/
 /** The Worker's settings that are plain text (its vars and secrets), as the Platform takes them. */
 const SETTINGS = Config.all({
   devLogin: text("DEV_LOGIN"),
-  target: text("DEPLOY_TARGET"),
-  /** Staging: its primary's origin (https://<host>), whose documents and images it copies. */
+  /** A staging instance: its primary's origin (https://<host>), whose documents and images it copies. */
   snapshotFrom: origin("SNAPSHOT_FROM"),
   pagesDomain: text("PAGES_DOMAIN"),
   version: text("ERGA_VERSION"),
@@ -107,8 +106,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
   const directory = directoryOf(env);
   const host = (doc: Route) => documentOf(env, doc.id);
   const settings = settingsOf(env);
-  const target = settings.target;
-  // Local development only (the tests): stand-ins for GitHub and for the other target's server.
+  // Local development only (the tests): a stand-in for GitHub.
   const standIn = (value: string) => (env.DEV_LOGIN && value ? value : null);
   // The server's own storage: its object.
   const own = () => env.OWN.getByName("own");
@@ -131,11 +129,10 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     pagesDomain: (url) => (isLocal(url) || !settings.pagesDomain ? "localhost" : settings.pagesDomain),
     pagesShared: (url) => (isLocal(url) ? null : settings.pagesHost || null),
     secret: env.SESSION_SECRET,
-    // Staging runs on a copy of its primary's data: for admins only (server/identity/admins-only.ts).
-    adminsOnly: target == "staging",
+    // A staging instance runs on a copy of its primary's data: for admins only (server/identity/admins-only.ts).
+    adminsOnly: !!settings.snapshotFrom,
     tokens: tokensOf(env),
     deploy: {
-      target: target == "production" || target == "staging" ? target : null,
       version: settings.version || null,
       facts: settings.deployFacts,
       primary: settings.snapshotFrom || null,

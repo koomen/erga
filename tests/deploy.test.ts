@@ -1,4 +1,5 @@
-// The deploy pipeline on a new server in someone's own account (as `bun erga setup` deploys one), against the pretend
+// The deploy pipeline on a new instance (as `bun erga setup` deploys one; tests/deploy-targets.test.ts has an instance
+// that runs already, and its staging instance: the same pipeline), against the pretend
 // Cloudflare, with the release this checkout builds (deploy/release.ts, made here if there's none): every step, what
 // it asks Cloudflare for, a second deploy, what it refuses, its errors, and the pieces around it (the assets' hash,
 // the shared pages host).
@@ -58,7 +59,7 @@ const plan = (over: Partial<Target> = {}): Target => ({
   subdomain: "ada-mock",
   app: { kind: "workers.dev" },
   pages: { kind: "shared" },
-  vars: { GITHUB_CLIENT_ID: "", SERVER_CONFIG: "{}", DEPLOY_TARGET: "" },
+  vars: { GITHUB_CLIENT_ID: "" },
   secrets: { SESSION_SECRET: "a-secret-for-the-new-server-0123456789" },
   ...over,
 });
@@ -75,7 +76,7 @@ async function run(token: string, t: Target, mock = mockCloudflare()) {
 }
 
 describe("deploying", () => {
-  test("the release is erga.dev's own build", () => {
+  test("the release is this checkout's build, the same for every instance", () => {
     expect(release.worker.name).toBe("erga");
     expect(release.modules[release.mainModule]).toBeDefined();
     // The client's build (client/build.ts): its files by their hashes, the list of them, and their headers.
@@ -111,13 +112,14 @@ describe("deploying", () => {
     expect(b.DB).toMatchObject({ type: "d1", database_id: db.uuid });
     expect(b.ASSETS.type).toBe("assets");
     expect(b.GITHUB_CLIENT_ID.text).toBe("");
-    expect(b.SERVER_CONFIG.text).toBe("{}");
+    // Nothing locked, and no primary: the build's defaults, which an entry's vars may set.
+    expect(b.SERVER_CONFIG.text).toBe("");
+    expect(b.SNAPSHOT_FROM.text).toBe("");
     expect(b.SESSION_SECRET.type).toBe("secret_text");
     expect(b.GITHUB_CLIENT_SECRET).toBeUndefined();
     expect(b.ANTHROPIC_API_KEY).toBeUndefined();
     expect(b.PAGES_HOST.text).toBe("erga-pages.ada-mock.workers.dev");
-    // Durable Objects as declarative exports (as cf deploy sends them), never migrations; erga.dev's tombstones (DocList, Factory,
-    // FactoryVm, SiteHost, Deployer, SourceHost and Pipeline) left out.
+    // Durable Objects as declarative exports (as cf deploy sends them), never migrations: the build's, all of them.
     expect(worker.metadata.exports).toEqual({
       DocumentObject: { type: "durable-object", storage: "sqlite" },
       OwnStorage: { type: "durable-object", storage: "sqlite" },
@@ -125,8 +127,8 @@ describe("deploying", () => {
       Home: { type: "durable-object", storage: "sqlite" },
       PersonAgent: { type: "durable-object", storage: "sqlite" },
     });
-    // Not one of Erga's own branch-deploy targets, and no secrets kept from before: its own, new.
-    expect(b.DEPLOY_TARGET.text).toBe("");
+    // No flag names a kind of instance. No secrets kept from before: its own, new.
+    expect(b.DEPLOY_TARGET).toBeUndefined();
     expect(worker.metadata.keep_bindings).toBeUndefined();
     expect(worker.metadata.migrations).toBeUndefined();
     expect(worker.tags).toEqual(["erga-deploy"]);

@@ -40,10 +40,8 @@ function oauthOf(platform: Pick<Platform, "signIn">): OAuthSignIn {
   return platform.signIn;
 }
 
-const targetOf = (platform: SignInPlatform) => platform.deploy.target;
-
 /** The page's values, in this server's own storage (not D1: apps.ts says why). */
-const appsOf = (platform: SignInPlatform) => new AuthApps(platform.own, platform.signIn.encryptionKey, targetOf(platform) ?? "");
+const appsOf = (platform: SignInPlatform) => new AuthApps(platform.own, platform.signIn.encryptionKey);
 
 // One per isolate and provider: a page that opens often asks a provider at most once a minute for the same values.
 const checks = new Map<Provider, { origin: string | null; check: (v: AppValues) => Promise<AppCheck> }>();
@@ -104,7 +102,7 @@ export async function testedSignIn(platform: SignInPlatform, clientId: string, e
   const { effect } = testEnded(now, { clientId, end, at: Date.now() });
   if (effect.do == "promote") {
     if (!(await c.apps.promote(provider, clientId))) return false;
-    await c.log({ login: effect.login }, { provider, target: targetOf(platform) ?? "", event: "tested", clientId });
+    await c.log({ login: effect.login }, { provider, event: "tested", clientId });
     return true;
   }
   // Nothing changed, so the change log has no line for it: the page shows it beside the pending values.
@@ -199,17 +197,15 @@ async function setProvider(platform: SignInPlatform, by: Act, provider: Provider
   }
   const next = { ...now, [provider]: on };
   await platform.own.put(ON_KEY, next);
-  await contextOf(platform, provider).log(by, { provider, target: targetOf(platform) ?? "", event: on ? "on" : "off" });
+  await contextOf(platform, provider).log(by, { provider, event: on ? "on" : "off" });
   return next;
 }
 
 /** This server's own status. `origin`: where it's reached (the callback URL is under it). */
 async function localStatus(platform: SignInPlatform, origin: string, provider: Provider): Promise<AuthStatus> {
-  const target = targetOf(platform);
   const pagePlace = `on this server's Authentication page (${origin}/admin/auth)`;
   return statusOf(contextOf(platform, provider), {
     origin,
-    target,
     dev: platform.dev(new URL(origin)),
     pagePlace,
   });
@@ -221,7 +217,6 @@ async function localStatus(platform: SignInPlatform, origin: string, provider: P
  */
 export function authOps(platform: SignInPlatform, origin: string): AuthOps {
   const mustAdmin = (by: Act & { admin?: boolean }) => platform.directory.users.mustAdmin({ login: by.login, admin: by.admin, via: by.via ?? undefined });
-  const target = () => targetOf(platform) ?? "";
   return {
     async status(by) {
       await mustAdmin(by);
@@ -235,15 +230,15 @@ export function authOps(platform: SignInPlatform, origin: string): AuthOps {
     },
     async save(by, input, provider) {
       await mustAdmin(by);
-      return saveApp(contextOf(platform, provider), target(), input, by);
+      return saveApp(contextOf(platform, provider), input, by);
     },
     async discard(by, provider) {
       await mustAdmin(by);
-      return discardApp(contextOf(platform, provider), target(), by);
+      return discardApp(contextOf(platform, provider), by);
     },
     async clear(by, force, provider) {
       await mustAdmin(by);
-      return clearApp(contextOf(platform, provider), target(), by, force);
+      return clearApp(contextOf(platform, provider), by, force);
     },
   };
 }

@@ -58,7 +58,7 @@ test("a branch that GitHub deleted after the last fetch shows on neither the ops
     const error = await fetchGitHub(clone);
     expect(error).toContain("nowhere.git");
     const entry = {
-      host: "erga.dev",
+      host: "example.net",
       account: "a",
       worker: "w",
       database: "d",
@@ -81,7 +81,7 @@ test("a branch that GitHub deleted after the last fetch shows on neither the ops
         runs: [],
         proofs: {},
       },
-      "erga.dev",
+      "example.net",
       2000
     );
     expect(html).toContain('<li class="source bad" data-source="github">');

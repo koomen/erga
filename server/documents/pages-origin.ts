@@ -1,4 +1,4 @@
-// A document's pages origin (<id>-<owner>.erga-pages.dev, or one shared host): where the
+// A document's pages origin (<id>-<owner>.<pages domain>, or one shared host): where the
 // document's page runs, for readers and editors alike, apart from the app's origin. The
 // viewer (view.ts) holds it in its one frame; the page editor runs inside it there (the
 // page needs an origin of its own for that, holding nothing but this one document). A
@@ -168,7 +168,7 @@ async function pageFile(request: Request, url: URL, doc: { owner: string; id: st
   // checked against the file's: the file's own (stripped of ours) goes to the document.
   const ours = `.${readerVersion()}${claims.edit ? "w" : ""}`;
   const asked = new Headers(request.headers);
-  // This origin has no cookies of its own. Until erga-pages.dev is on the Public Suffix List (a request to publicsuffix.org),
+  // This origin has no cookies of its own. Unless the pages domain is on the Public Suffix List (its owner asks publicsuffix.org),
   // one document's page can set a cookie for all of them: it goes no further than here.
   asked.delete("cookie");
   // A reader's address with a version: the document says its version now with the file. An address then always means the

@@ -29,7 +29,8 @@ const DEV_VARS = new Set(["DEV_LOGIN", "SESSION_SECRET", "ANTHROPIC_API_KEY", "E
  */
 const LOCAL: Record<string, string> = {
   GITHUB_CLIENT_ID: "ERGA_GITHUB_CLIENT_ID",
-  DEPLOY_TARGET: "ERGA_DEPLOY_TARGET",
+  SNAPSHOT_FROM: "ERGA_SNAPSHOT_FROM",
+  SERVER_CONFIG: "ERGA_SERVER_CONFIG",
   PROXY_SIGN_IN: "ERGA_PROXY_SIGN_IN",
   ...Object.fromEntries(
     [
@@ -144,8 +145,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
   const vars: Record<string, string> = { DEV_LOGIN: "tester", SESSION_SECRET: crypto.randomUUID(), ...opts.env };
   const plain = Object.fromEntries(Object.entries(opts.env ?? {}).filter(([k]) => !DEV_VARS.has(k)));
   // The tests' built Worker (ERGA_PREVIEW_ROOT, worker-build.ts), unless the server needs what only a dev server
-  // reads as it starts: settings that the deploy fixes, or an environment of its own.
-  const preview = !!process.env.ERGA_PREVIEW_ROOT && !opts.dev && !opts.processEnv && !("ERGA_SERVER_CONFIG" in plain);
+  // reads as it starts: an environment of its own.
+  const preview = !!process.env.ERGA_PREVIEW_ROOT && !opts.dev && !opts.processEnv;
   const linkSecret = randomBytes(24).toString("hex");
   /** .dev.vars for a server at `root`: under `vite preview`, with all that the Worker would read from the environment. */
   const writeVars = (root: string) => {

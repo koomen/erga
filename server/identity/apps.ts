@@ -11,14 +11,14 @@
 // Where the page's values are kept, and how:
 //
 //   - In the server's own Pipeline Durable Object, not in
-//     D1: staging's D1 is replaced by a copy of production's when an admin asks
+//     D1: a staging instance's D1 is replaced by a copy of its primary's when an admin asks
 //     for a fresh copy, which would drop
-//     staging's values and bring in production's. The Durable Object is each
+//     its values and bring in its primary's. The Durable Object is each
 //     server's own.
 //   - The secret is encrypted with AES-GCM, a fresh IV each time, under a key
 //     derived from FACTORY_KEY (KeyBox of server/directory/api-keys.ts, with a
-//     derivation of its own), with the provider, the target and the client ID as the
-//     additional data, so it opens only for that app on that server.
+//     derivation of its own), with the provider and the client ID as the
+//     additional data, so it opens only for that app.
 //   - Nothing answers the secret to a page or an agent: only whether one is set.
 //   - The change log gets who changed the app and its client ID (public),
 //     never the secret.
@@ -105,8 +105,11 @@ const view = (k: Kept & { test?: TestResult }): KeptView => ({ clientId: k.clien
 export class AuthApps {
   private box: KeyBox | null;
 
-  /** `secret`: FACTORY_KEY (null: this server can't keep values). `target`: this server's deploy target ("" for none). */
-  constructor(private storage: AuthStorage, secret: string | null, private target: string) {
+  /** `secret`: FACTORY_KEY (null: this server can't keep values). */
+  constructor(
+    private storage: AuthStorage,
+    secret: string | null
+  ) {
     this.box = secret ? new KeyBox(secret, "erga-auth-apps") : null;
   }
 
@@ -123,8 +126,8 @@ export class AuthApps {
     else await this.storage.delete(`auth:${p}`);
   }
 
-  /** What a secret is bound to: it opens only for that app on that server. */
-  private label = (p: Provider, clientId: string) => `erga-auth:${p}:${this.target}:${clientId}`;
+  /** What a secret is bound to: it opens only for that app. (Each server has its own FACTORY_KEY and its own storage.) */
+  private label = (p: Provider, clientId: string) => `erga-auth:${p}:${clientId}`;
 
   /** What the page set, without secrets. */
   async read(p: Provider): Promise<{ active: KeptView | null; pending: KeptView | null }> {
@@ -206,7 +209,7 @@ export async function inUse(c: Pick<AppContext, "apps" | "provider" | "deploy">)
 export interface SaveResult { kept: "active" | "pending"; message: string }
 
 /** Saves pasted values, with the lockout rules (the top of this file). */
-export async function saveApp(c: AppContext, target: string, input: { clientId?: unknown; secret?: unknown }, by: Act): Promise<SaveResult> {
+export async function saveApp(c: AppContext, input: { clientId?: unknown; secret?: unknown }, by: Act): Promise<SaveResult> {
   const v = checkValues(input, c.provider);
   const name = PROVIDERS[c.provider].label;
   if (!c.apps.canStore)
@@ -220,20 +223,20 @@ export async function saveApp(c: AppContext, target: string, input: { clientId?:
   const working = now.clientId ? (await c.check(now)).state == "working" : false;
   if (working && !(now.clientId == v.clientId && now.secret == v.secret)) {
     await c.apps.keep(c.provider, "pending", v, by);
-    await c.log(by, { provider: c.provider, target, event: "pending", clientId: v.clientId });
+    await c.log(by, { provider: c.provider, event: "pending", clientId: v.clientId });
     return { kept: "pending", message: `${name} accepts the new values. Sign-in keeps the values that work now until an admin signs in with the new ones: use Test sign-in.` };
   }
   await c.apps.keep(c.provider, "active", v, by);
-  await c.log(by, { provider: c.provider, target, event: "set", clientId: v.clientId });
+  await c.log(by, { provider: c.provider, event: "set", clientId: v.clientId });
   return { kept: "active", message: working ? "These are the values in use already." : `${name} accepts the values, and sign-in uses them now. Sign in with them to check the callback URL.` };
 }
 
 /** Drops values that wait for a test sign-in. */
-export async function discardApp(c: AppContext, target: string, by: Act): Promise<{ discarded: boolean }> {
+export async function discardApp(c: AppContext, by: Act): Promise<{ discarded: boolean }> {
   const { pending } = await c.apps.read(c.provider);
   if (!pending) return { discarded: false };
   await c.apps.drop(c.provider, "pending");
-  await c.log(by, { provider: c.provider, target, event: "discarded", clientId: pending.clientId });
+  await c.log(by, { provider: c.provider, event: "discarded", clientId: pending.clientId });
   return { discarded: true };
 }
 
@@ -241,7 +244,7 @@ export async function discardApp(c: AppContext, target: string, by: Act): Promis
  * Clears the page's values: the server goes back to the deploy's. Refuses (unless `force`) when the page's values
  * work and the deploy's don't, which would stop sign-in for everyone.
  */
-export async function clearApp(c: AppContext, target: string, by: Act, force = false): Promise<{ cleared: boolean; message: string }> {
+export async function clearApp(c: AppContext, by: Act, force = false): Promise<{ cleared: boolean; message: string }> {
   const { active, pending } = await c.apps.read(c.provider);
   if (!active && !pending) return { cleared: false, message: "This server has no values from the page: it uses the deploy's." };
   if (active && !force) {
@@ -254,7 +257,7 @@ export async function clearApp(c: AppContext, target: string, by: Act, force = f
     }
   }
   await c.apps.drop(c.provider, "both");
-  await c.log(by, { provider: c.provider, target, event: "cleared", clientId: null });
+  await c.log(by, { provider: c.provider, event: "cleared", clientId: null });
   return { cleared: true, message: "Cleared: sign-in uses the deploy's values." };
 }
 
@@ -263,8 +266,6 @@ export async function clearApp(c: AppContext, target: string, by: Act, force = f
 /** One server's sign-in, as the Authentication page shows it. Never a secret. */
 export interface AuthStatus {
   provider: Provider;
-  /** The deploy target ("production", "staging"), or null for a server that isn't one. */
-  target: string | null;
   origin: string;
   /** The URLs to enter on the provider's page. */
   homepageUrl: string;
@@ -286,24 +287,20 @@ export interface AuthStatus {
 }
 
 /** The steps to make a provider's OAuth app for a server, and where its values go. */
-export function setupSteps(o: { origin: string; target: string | null; pagePlace: string; provider: Provider }): string[] {
+export function setupSteps(o: { origin: string; pagePlace: string; provider: Provider }): string[] {
   const p = PROVIDERS[o.provider];
   return [
-    ...p.setup({ name: o.target ? `Erga (${o.target})` : "Erga", origin: o.origin, pagePlace: o.pagePlace }),
+    ...p.setup({ name: `Erga (${new URL(o.origin).host})`, origin: o.origin, pagePlace: o.pagePlace }),
     `Or set them in the deploy: ${p.idEnv} as a text binding, and ${p.secretEnv} as a Worker secret.`,
   ];
 }
 
 /** One server's status: what it uses, what the page set, and a live check of each. */
-export async function statusOf(
-  c: AppContext,
-  o: { origin: string; target: string | null; dev: boolean; pagePlace: string }
-): Promise<AuthStatus> {
+export async function statusOf(c: AppContext, o: { origin: string; dev: boolean; pagePlace: string }): Promise<AuthStatus> {
   const [now, kept, pendingValues] = await Promise.all([inUse(c), c.apps.read(c.provider), c.apps.values(c.provider, "pending")]);
   const [check, pendingCheck] = await Promise.all([c.check(now), pendingValues ? c.check(pendingValues) : null]);
   return {
     provider: c.provider,
-    target: o.target,
     origin: o.origin,
     homepageUrl: o.origin,
     callbackUrl: `${o.origin}${PROVIDERS[c.provider].callbackPath}`,
@@ -315,8 +312,7 @@ export async function statusOf(
     canStore: c.apps.canStore,
     check,
     pendingCheck,
-    setup:
-      check.state == "working" ? null : setupSteps({ origin: o.origin, target: o.target, pagePlace: o.pagePlace, provider: c.provider }),
+    setup: check.state == "working" ? null : setupSteps({ origin: o.origin, pagePlace: o.pagePlace, provider: c.provider }),
   };
 }
 

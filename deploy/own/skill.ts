@@ -1,4 +1,4 @@
-// `bun erga setup skill`: the manual for a coding agent that sets up a new Erga instance. The person decides; the agent
+// `bun erga setup skill`: the manual for a coding agent that sets up an Erga instance. The person decides; the agent
 // runs `bun erga setup <host>`; the Setup tab of the ops page on the person's machine shows each step (deploy/own/page.ts).
 
 export const SETUP_SKILL = `# Set up a new Erga instance
@@ -36,15 +36,16 @@ minutes.
 6. Tell the person what you will make (status names it), and wait for
    their yes. Then run bun erga setup <host>. It does the agent's steps,
    in order, and stops at a step of the person's:
-   - It writes the entries into .erga/config.json (the staging server's
-     too), with no token yet.
+   - It writes the entries into .erga/config.json (the staging
+     instance's too), with no token yet. An instance that is registered
+     already keeps its entry as it is: the steps run on it.
    - It deploys origin/main's commit (run git fetch first) with
      bun erga deploy's code: the Worker, the D1 database, the R2 bucket,
      the address and the pages address, in 3 to 6 minutes. It runs the commit's tests first (about
      a minute), unless they passed before (--no-tests skips them, and
      the job record says so).
    - It sends each secret one time: SESSION_SECRET, FACTORY_KEY, the
-     sign-in apps' secrets, and SNAPSHOT_TOKEN with a staging server. They
+     sign-in apps' secrets, and SNAPSHOT_TOKEN with a staging instance. They
      are also in .erga/secrets.json. No later deploy sends a secret.
    - After the health check, it writes the first admin, and the feedback
      repository if the person gave one, into the new database.
@@ -69,9 +70,11 @@ minutes.
   types it on the Setup tab, or puts it in a file.
 - Don't curl or open a new address before bun erga setup says it answers:
   this machine would remember "no such host" for up to 30 minutes.
-- Setup refuses a name or an address that something else uses, and a host
-  that is registered with other names. Tell the person what is there, and
-  let them decide.
+- Setup refuses a name or an address that something else uses. Tell the
+  person what is there, and let them decide.
+- A staging instance is any instance's choice (staging=<address>). It runs
+  on a copy of its primary's data, for admins only. Its pages are shared,
+  or on a domain of their own (stagingPages).
 - Bun installs into ~/.bun/bin, which a new shell may not have on its PATH.
 
 ## When it fails

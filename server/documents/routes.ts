@@ -1,5 +1,5 @@
 // The app for documents (server/app.ts hands it every document address,
-// on erga.dev and in local development alike). It's written against web
+// on a deployed instance and in local development alike). It's written against web
 // Requests and Responses, and the Worker supplies the rest (`Platform`):
 // who's signed in, the templates, the directory of documents (server/directory/,
 // in D1) and the documents themselves (Durable Objects).
@@ -403,7 +403,7 @@ export async function documentRoute(platform: Pick<Platform, "directory">, first
 
 // A document's page never runs as this site: its scripts, whoever wrote
 // them, can't act as the person viewing it. It runs on an origin of its own,
-// <id>-<owner>.erga-pages.dev (or <id>-<owner>.localhost:<port> on this
+// <id>-<owner>.<pages domain> (or <id>-<owner>.localhost:<port> on this
 // machine), for readers and editors alike, in the viewer's one frame
 // (view.ts), and the page editor reaches into it there (see libs/text/ui/bridge.ts).
 // That origin has no cookies. It serves the document's files under a token,

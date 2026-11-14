@@ -10,7 +10,7 @@ import { pageUrl } from "../../document/pages";
 
 /**
  * Where a page is: its origin, the path its document's files are under there (/t/<token>/), its own path in the
- * document, the shell's origin, and the document's public address (https://erga.dev/<owner>/<slug>), once the viewer
+ * document, the shell's origin, and the document's public address (https://<host>/<owner>/<slug>), once the viewer
  * has said it (client/inline/reader.ts).
  */
 export interface Place {
@@ -92,7 +92,7 @@ function decode(s: string): string | null {
 /**
  * A link's address where a copy goes. The document's files have their address under a token, which opens the
  * document to whoever has it: a link to a page goes to its public address instead (a place in it, #id, too), an Erga
- * address written root-relative to erga.dev, and a link to any other file of the document goes. Before the viewer has
+ * address written root-relative to the shell's origin, and a link to any other file of the document goes. Before the viewer has
  * said the address, a place in this page stays #id, and links to other pages go.
  */
 export function publicHref(a: Element, p: Place | null): string | null {

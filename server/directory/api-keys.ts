@@ -100,8 +100,8 @@ export const DEPLOY_SECRETS = [
   {
     env: "SNAPSHOT_TOKEN",
     service: "Erga",
-    description: "Lets staging copy production's documents.",
-    why: "Production and staging must have the same value.",
+    description: "Lets a staging instance copy its primary's documents.",
+    why: "An instance and its staging instances must have the same value.",
   },
 ] as const;
 

@@ -45,22 +45,44 @@ test("the answers are read as the person types them, and a bad one says why", ()
   expect(answersProblem(answers, ["example.com"])).toBeNull();
 });
 
-test("the names come from the address, so they never take erga.dev's own (erga)", () => {
+test("an instance's names: its entry's when it has one, whatever they are; a new instance's from its address", () => {
   expect(namesOf("erga.example.org")).toEqual({
     worker: "erga-example-org",
     database: "erga-example-org",
     bucket: "erga-example-org-files",
     pagesWorker: "erga-example-org-pages",
   });
+  // An instance that runs already keeps the names its entry says: setup, status and remove act on these.
+  expect(namesOf("example.com", { worker: "erga", database: "erga-data" })).toEqual({
+    worker: "erga",
+    database: "erga-data",
+    bucket: "erga-files",
+    pagesWorker: "erga-pages",
+  });
+});
+
+test("a staging instance's pages: shared, or a domain of its own, never its primary's or the app's", () => {
+  const zones = ["example.com", "pages.example", "staging-pages.example"];
+  const a = { ...answers, staging: "staging.example.com", pages: "pages.example" };
+  expect(answersProblem(a, zones)).toBeNull();
+  expect(answersProblem({ ...a, stagingPages: "staging-pages.example" }, zones)).toBeNull();
+  expect(answersProblem({ ...a, stagingPages: "pages.example" }, zones)).toContain("not its primary's pages domain");
+  expect(answersProblem({ ...a, stagingPages: "example.com" }, zones)).toContain("different domain");
+  expect(answersProblem({ ...a, stagingPages: "other.example" }, zones)).toContain("isn't one of the domains");
+  const o = { account: "a".repeat(32), zones, subdomain: "me", ids: {} };
+  expect(setupEntry(a, "primary", o).pages).toEqual({ kind: "zone", zoneName: "pages.example" });
+  expect(setupEntry(a, "staging", o).pages).toEqual({ kind: "shared" });
+  expect(setupEntry({ ...a, stagingPages: "staging-pages.example" }, "staging", o).pages).toEqual({
+    kind: "zone",
+    zoneName: "staging-pages.example",
+  });
 });
 
 test("a preset sets defaults the server takes, and locks nothing", () => {
   const vars = varsOf({ ...answers, preset: "company" }, { github: "Iv1.x" });
-  expect(vars.SERVER_CONFIG).toBe("{}");
   expect(parseDeployed(vars.SERVER_DEFAULTS)).toEqual({ public_sharing: false, delete_docs_after_hours: null });
-  expect(vars).toMatchObject({ GITHUB_CLIENT_ID: "Iv1.x", DEPLOY_TARGET: "" });
-  // No admin in the deploy: bun erga own writes the first admin into the database (firstAdmin).
-  expect(vars.ADMINS).toBeUndefined();
+  // Only what the answers decide: the sign-in app and the preset. No lock, no admin (the database has them), no flag.
+  expect(vars).toEqual({ GITHUB_CLIENT_ID: "Iv1.x", SERVER_DEFAULTS: vars.SERVER_DEFAULTS });
 });
 
 test("the proxy mode on Cloudflare: Cloudflare Access's team and application, an email for the admin, no GitHub app", () => {
@@ -110,7 +132,7 @@ test("the proxy mode on Cloudflare: Cloudflare Access's team and application, an
   const ids = steps(access, facts({ zones }), { ids: {} }).map((s) => s.id);
   expect(ids).not.toContain("github");
   expect(ids).not.toContain("rule");
-  expect(ids).toContain("signin-production");
+  expect(ids).toContain("signin-primary");
 });
 
 test("the steps go in order, each with who does it, and the next one is the first not done", () => {
@@ -123,7 +145,7 @@ test("the steps go in order, each with who does it, and the next one is the firs
     facts({
       secrets: ["erga.example.com:GITHUB_CLIENT_SECRET"],
       targets: {
-        production: {
+        primary: {
           worker: "missing",
           address: "free",
           version: null,
@@ -138,7 +160,7 @@ test("the steps go in order, each with who does it, and the next one is the firs
     { ids }
   );
   expect(nextStep(ready)).toMatchObject({
-    id: "deploy-production",
+    id: "deploy-primary",
     who: "agent",
     next: expect.stringContaining("Run: bun erga setup erga.example.com "),
   });
@@ -147,7 +169,7 @@ test("the steps go in order, each with who does it, and the next one is the firs
     facts({
       secrets: ["erga.example.com:GITHUB_CLIENT_SECRET"],
       targets: {
-        production: {
+        primary: {
           worker: "missing",
           address: { taken: "DNS already has CNAME x" },
           version: null,
@@ -167,7 +189,7 @@ test("the steps go in order, each with who does it, and the next one is the firs
     facts({
       secrets: ["erga.example.com:GITHUB_CLIENT_SECRET"],
       targets: {
-        production: {
+        primary: {
           worker: "ours",
           address: "ours",
           version: "abcdef123456",
@@ -182,14 +204,14 @@ test("the steps go in order, each with who does it, and the next one is the firs
     { ids }
   );
   // Deployed and healthy: the admin signs in and approves the ops token, which registers the server.
-  expect(nextStep(up)).toMatchObject({ id: "register-production", who: "person" });
+  expect(nextStep(up)).toMatchObject({ id: "register-primary", who: "person" });
   // A new machine has no secrets file: the app's secret on the server's Worker is enough, and a deploy keeps it.
   const held = { secrets: ["GITHUB_CLIENT_SECRET", "SESSION_SECRET", "FACTORY_KEY"], vars: { GITHUB_CLIENT_ID: "Iv1.x" } };
   const elsewhere = steps(
     answers,
     facts({
       targets: {
-        production: {
+        primary: {
           worker: "ours",
           address: "ours",
           version: "0123456789ab",
@@ -203,13 +225,13 @@ test("the steps go in order, each with who does it, and the next one is the firs
     }),
     { ids }
   );
-  expect(nextStep(elsewhere)).toMatchObject({ id: "deploy-production", who: "agent" });
+  expect(nextStep(elsewhere)).toMatchObject({ id: "deploy-primary", who: "agent" });
 });
 
 test("the entries come from the answers alone: the names, the plain settings, the primary of a staging server, no token", () => {
   const o = { account: "a".repeat(32), zones: ["example.com"], subdomain: "me", ids: { github: "Iv1.x" } };
   const a = { ...answers, staging: "erga-staging.example.com" };
-  expect(setupEntry(a, "production", o)).toEqual({
+  expect(setupEntry(a, "primary", o)).toEqual({
     host: "erga.example.com",
     account: "a".repeat(32),
     worker: "erga-example-com",

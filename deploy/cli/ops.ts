@@ -67,10 +67,9 @@ export type AwsFacts = typeof AwsFacts.Type;
 export const DeployFacts = Schema.Union([CloudflareFacts, AwsFacts]);
 export type DeployFacts = typeof DeployFacts.Type;
 
-/** What GET /api/ops answers: the commit the instance runs, its target, its host, and its deploy facts (null locally). */
+/** What GET /api/ops answers: the commit the instance runs, its host, and its deploy facts (null locally). */
 const OpsFacts = Schema.Struct({
   version: Schema.NullOr(Schema.String),
-  target: Schema.NullOr(Schema.String),
   host: Schema.String,
   deploy: Schema.NullOr(DeployFacts),
 });

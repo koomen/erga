@@ -238,12 +238,12 @@ test("an ops token: for an admin only, OPS_DAYS at most; it signs no one in, and
 
   // GET /api/ops: the release, the target, the host and the deploy facts, from the Worker's own vars.
   const deploy = { account: "a1", worker: "w", database: "d", app: { kind: "workers.dev" }, pages: { kind: "shared" } };
-  const deployed = { ...platform, deploy: { target: null, version: "abc123def456", facts: deploy } } as unknown as Platform;
+  const deployed = { ...platform, deploy: { version: "abc123def456", facts: deploy } } as unknown as Platform;
   const ops = async (bearer?: string) =>
     respond(serverApi, new Request(`${ORIGIN}/api/ops`, { headers: bearer ? { Authorization: `Bearer ${bearer}` } : {} }), deployed);
   const r = await ops(token);
   expect(r.status).toBe(200);
-  expect(await r.json()).toEqual({ version: "abc123def456", target: null, host: "erga.test", deploy });
+  expect(await r.json()).toEqual({ version: "abc123def456", host: "erga.test", deploy });
   // Any other token, none, or this one once its person is no admin: refused.
   expect((await ops((await tokens.mint(ada, "Admin", { scope: "admin" })).token)).status).toBe(401);
   expect((await ops()).status).toBe(401);

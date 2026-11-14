@@ -7,8 +7,8 @@
 // Reading a setting is for anyone (the server reads them to do its work);
 // listing them and changing them is for admins.
 //
-// A key can also be fixed by the deploy (deploy/locked-settings.ts, and
-// ERGA_SERVER_CONFIG over it): then its deployed value wins over the table,
+// A key can also be fixed by the deploy (the instance's SERVER_CONFIG, in its entry's vars in .erga/config.json;
+// locally, ERGA_SERVER_CONFIG): then its deployed value wins over the table,
 // and nobody can change it here (admin page, API or agent): it's `locked`,
 // and shows its deployed value. A key the deploy leaves out is the admins'
 // to set. To add a setting, add it to SETTINGS; nothing in the database
@@ -230,7 +230,7 @@ export interface ConfigEntry {
 /**
  * The values a deploy fixes, checked against `settings`: each key must be
  * one there is, and each value one it takes. Throws a ConfigError saying
- * what's wrong. `bun deploy/locked-settings.ts` runs it on what the deploy fixes, so a
+ * what's wrong. `bun erga deploy` and `bun start` run it on what the deploy fixes, so a
  * bad one fails the deploy or `bun start`, not the server.
  */
 export function deployedSettings(values: Record<string, unknown>, settings: Settings = SETTINGS): Record<string, unknown> {
@@ -255,8 +255,7 @@ export function deployedSettings(values: Record<string, unknown>, settings: Sett
 
 /**
  * The deploy's values as the Worker gets them: the SERVER_CONFIG binding, a
- * JSON object (cloudflare.config.ts makes it from deploy/locked-settings.ts and
- * ERGA_SERVER_CONFIG). Empty or missing: nothing is locked. A bad one
+ * JSON object (the instance's entry's vars; locally, ERGA_SERVER_CONFIG). Empty or missing: nothing is locked. A bad one
  * throws, as the server starts (but the deploy checks it first).
  */
 export function parseDeployed(json: string | undefined, settings: Settings = SETTINGS): Record<string, unknown> {
@@ -304,8 +303,6 @@ export interface SettingChange {
 /** A server's sign-in app changed (server/identity/apps.ts): its line in the change log. */
 export interface SignInChange {
   provider: SignInProvider;
-  /** The server whose app changed ("" for one that isn't a deploy target). */
-  target: string;
   event: "set" | "pending" | "tested" | "discarded" | "cleared" | "on" | "off";
   /** The client ID it changed to (public), if any. */
   clientId?: string | null;
@@ -407,7 +404,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     const s = this.setting(key);
     if (this.isLocked(key))
       throw new NotAllowed({
-        message: `${key} is fixed by the deploy (deploy/locked-settings.ts), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`,
+        message: `${key} is fixed by the deploy (its SERVER_CONFIG), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`,
       });
     let parsed: unknown;
     try {
@@ -460,7 +457,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     this.setting(key);
     if (this.isLocked(key))
       throw new NotAllowed({
-        message: `${key} is fixed by the deploy (deploy/locked-settings.ts), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`,
+        message: `${key} is fixed by the deploy (its SERVER_CONFIG), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`,
       });
     await this.write(key, null, by.login.toLowerCase(), by.via ?? null);
     this.rows = null;

@@ -13,7 +13,7 @@ import type { Route } from "playwright-core";
 import { agentClosed, expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
 import { getter, mint, publish, signIn, soon, tool, unique } from "./access";
 
-const [s, own] = await Promise.all([servers.main(), servers.of("tokens", { env: { ERGA_DEPLOY_TARGET: "staging" } })]);
+const [s, own] = await Promise.all([servers.main(), servers.of("tokens", { env: { ERGA_SNAPSHOT_FROM: "https://primary.example.com" } })]);
 
 const b64url = (b: ArrayBuffer | Uint8Array) => Buffer.from(b instanceof Uint8Array ? b : new Uint8Array(b)).toString("base64url");
 const pkce = async () => {

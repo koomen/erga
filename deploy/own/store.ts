@@ -4,7 +4,7 @@
 //   .erga/setup.json      the person's answers for the setup in progress, the account, the sign-in apps' public ids
 //   .erga/secrets.json    mode 600: by host, the secrets `bun erga setup` gave that server's Worker one time
 //                         (SESSION_SECRET, FACTORY_KEY, the sign-in apps' secrets, SNAPSHOT_TOKEN under a primary with
-//                         a staging server), and the agent's admin token (ADMIN_TOKEN). Never printed: status names the
+//                         a staging instance), and the agent's admin token (ADMIN_TOKEN). Never printed: status names the
 //                         keys only.
 //   .erga/inbox.jsonl     the Setup tab's conversation: the person's messages and the agent's answers
 //
@@ -13,11 +13,17 @@
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ergaDir } from "../cli/config";
+import { entryOf, ergaDir, isAws, readConfig } from "../cli/config";
 import { ROOT } from "../root";
-import { type Answers, defaultAnswers } from "./plan";
+import { type Answers, defaultAnswers, namesOf } from "./plan";
 
 export const DIR = ergaDir(ROOT);
+
+/** The names of the instance at `host`: its entry's in .erga/config.json, or a new instance's from its address (plan.ts, namesOf). */
+export function namesAt(host: string, dir = DIR) {
+  const entry = entryOf(readConfig(dir), host);
+  return namesOf(host, entry && !isAws(entry) ? entry : null);
+}
 
 export interface Own {
   answers: Answers | null;

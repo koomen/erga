@@ -97,9 +97,9 @@ test("on AWS a short name needs no domain, and the address comes with the stack"
     "decide",
     "stack",
     "github",
-    "deploy-production",
-    "signin-production",
-    "register-production",
+    "deploy-primary",
+    "signin-primary",
+    "register-primary",
   ]);
   expect(before.find((s) => s.state != "done")).toMatchObject({ id: "stack", who: "person" });
   expect(githubManifest(aws, facts(), "http://localhost/created")).toBeNull();
@@ -107,7 +107,7 @@ test("on AWS a short name needs no domain, and the address comes with the stack"
   const made = facts({
     stack: { name: "erga", status: "CREATE_COMPLETE", outputs: { AppHost: "d1.cloudfront.net" }, template: "applied" },
   });
-  expect(addressOf(aws, "production", made)).toBe("d1.cloudfront.net");
+  expect(addressOf(aws, "primary", made)).toBe("d1.cloudfront.net");
   expect(steps(aws, made, { ids: {} }).find((s) => s.state != "done")?.id).toBe("github");
   expect(githubManifest(aws, made, "http://localhost/created")?.callback_urls).toEqual(["https://d1.cloudfront.net/auth/github/callback"]);
   // A template changed on disk since it was applied: the stack step is to do again.
@@ -267,9 +267,9 @@ test("setup in the proxy mode on AWS: an email for the admin, pages under the ap
     "decide",
     "secret",
     "stack",
-    "deploy-production",
-    "signin-production",
-    "register-production",
+    "deploy-primary",
+    "signin-primary",
+    "register-primary",
   ]);
   const secret = list.find((s) => s.id == "secret")!;
   expect(secret).toMatchObject({ who: "person", state: "todo" });
@@ -279,7 +279,7 @@ test("setup in the proxy mode on AWS: an email for the admin, pages under the ap
   // The server learns whose header is the sign-in from the stack's proxy: the proxy mode's setting.
   const entry = awsEntry(
     viaProxy,
-    "production",
+    "primary",
     "123456789012",
     { AppHost: "erga.example.com", Proxy: "arn:aws:elasticloadbalancing:us-west-2:1:loadbalancer/app/x/1" },
     {}
@@ -292,8 +292,8 @@ test("setup in the proxy mode on AWS: an email for the admin, pages under the ap
   });
   expect(entry.vars.GITHUB_CLIENT_ID).toBe("");
   // No proxy known yet: a value the server reads as no proxy (nobody signs in), never the oauth mode.
-  expect(awsEntry(viaProxy, "production", "1", { AppHost: "erga.example.com" }, {}).vars.PROXY_SIGN_IN).toBe("{}");
-  expect(awsEntry(aws, "production", "123456789012", { AppHost: "d1.cloudfront.net" }, {}).vars.PROXY_SIGN_IN).toBeUndefined();
+  expect(awsEntry(viaProxy, "primary", "1", { AppHost: "erga.example.com" }, {}).vars.PROXY_SIGN_IN).toBe("{}");
+  expect(awsEntry(aws, "primary", "123456789012", { AppHost: "d1.cloudfront.net" }, {}).vars.PROXY_SIGN_IN).toBeUndefined();
   // The first deploy writes no user's row (the admin has no username yet): they wait as a person added by their email,
   // with the role admin; and everybody who passes the sign-in may write.
   const sql = firstSql(viaProxy);

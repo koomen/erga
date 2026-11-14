@@ -13,7 +13,7 @@ export interface BuiltWorker {
   assets?: { htmlHandling?: string; notFoundHandling?: string; runWorkerFirst?: boolean | string[] };
   observability?: { enabled?: boolean; logs?: { enabled?: boolean; invocationLogs?: boolean } };
   env: Record<string, BuiltBinding>;
-  exports?: Record<string, { type: string; storage?: string; state?: string }>;
+  exports?: Record<string, { type: string; storage?: string }>;
   manifest?: { mainModule?: string };
 }
 

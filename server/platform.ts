@@ -102,7 +102,7 @@ export interface Platform {
    */
   dev(url: URL): boolean;
   /**
-   * Where documents' pages run (see pagesOrigin): "erga-pages.dev", or
+   * Where documents' pages run (see pagesOrigin): "example-pages.com", or
    * "localhost" for a request that came to this machine.
    */
   pagesDomain(url: URL): string;
@@ -116,7 +116,7 @@ export interface Platform {
   /** Signs the tokens that open a document's files on its pages origin. */
   secret: string;
   /**
-   * A server for its admins alone (staging: DEPLOY_TARGET=staging, which the deploy sets; server/identity/admins-only.ts guards every
+   * A server for its admins alone (a staging instance: the deploy names its primary, SNAPSHOT_FROM; server/identity/admins-only.ts guards every
    * request). Its pages tokens name the admin they were made for, so its pages origin can check them again.
    */
   adminsOnly?: boolean;
@@ -124,10 +124,8 @@ export interface Platform {
   directory: Directory;
   /** Agent tokens. */
   tokens: Tokens;
-  /** Which deploy target this server is, and what it runs. */
+  /** What this server runs, and where its deploy put it. */
   deploy: {
-    /** "production", "staging", or null where the deploy named none (DEPLOY_TARGET; local development). */
-    target: "production" | "staging" | null;
     /** The release this server runs (the commit), or null where no deploy named one. */
     version: string | null;
     /**
@@ -136,7 +134,7 @@ export interface Platform {
      * answers it, to an admin's ops token only.
      */
     facts: unknown;
-    /** A staging server's primary: the origin it copies documents and images from (SNAPSHOT_FROM), or null. */
+    /** A staging instance's primary: the origin it copies documents and images from (SNAPSHOT_FROM), or null on any other server. */
     primary: string | null;
     /**
      * The homepage's own domain (the deploy facts' home: `bun erga deploy <host> --home <domain>` sets it), or null: the

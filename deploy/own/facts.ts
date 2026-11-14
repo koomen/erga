@@ -7,13 +7,12 @@ import { join } from "node:path";
 import { entryOf, readConfig } from "../cli/config";
 import { mocked, netOf } from "../cli/deploy";
 import { Cloudflare, type Fetch } from "../pipeline/cloudflare-api";
-import { d1, findDatabase } from "../pipeline/account";
+import { d1, findDatabase, WORKER_TAG } from "../pipeline/account";
 import { machineCredential } from "../local-credential";
 import {
   type Answers,
   type Facts,
   hostOf,
-  namesOf,
   proxyExpects,
   proxySignIn,
   SETUP_COMMIT,
@@ -21,7 +20,7 @@ import {
   type TargetName,
   targetsOf,
 } from "./plan";
-import { DIR, loadSecrets, type Own, secretNames } from "./store";
+import { DIR, loadSecrets, namesAt, type Own, secretNames } from "./store";
 import { git, ROOT } from "../root";
 
 export interface Connection {
@@ -141,18 +140,18 @@ async function targetFacts(
   own: Own
 ): Promise<TargetFacts> {
   const host = hostOf(a, t),
-    n = namesOf(host),
+    n = namesAt(host),
     acc = `/accounts/${account}`;
   const scripts =
     (await cf
       .call<{ id: string; tags?: string[]; named_handlers?: { name?: string }[] }[]>("GET", `${acc}/workers/scripts`, "list your Workers")
       .catch(() => [])) ?? [];
   const found = scripts.find((s) => s.id == n.worker);
-  const worker = !found
+  const worker: TargetFacts["worker"] = !found
     ? "missing"
-    : found.tags?.includes("erga") || found.named_handlers?.some((h) => h.name == "DocumentObject")
+    : found.tags?.includes(WORKER_TAG) || found.named_handlers?.some((h) => h.name == "DocumentObject")
       ? "ours"
-      : "other";
+      : { other: n.worker };
   const domains =
     (await cf
       .call<{ hostname: string; service: string }[]>(

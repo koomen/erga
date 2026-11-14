@@ -24,9 +24,9 @@
 //
 // Zones, custom domains and Registrar: dev/mock-cloudflare-zones.ts.
 //
-// With `fleet`, the account is an example primary's, as its deploys
+// With `fleet`, the account is an example instance's, as its deploys
 // see it: the zones example.com and example-pages.com, the
-// primary's Worker "erga" already there (on example.com
+// instance's Worker "erga" already there (on example.com
 // and *.example-pages.com) with its database "erga" (tables, rows and
 // migrations) and three documents in its Durable Objects. D1's export and import work on
 // it (the SQL as text), secrets are kept per Worker (keep_bindings, the
@@ -123,11 +123,11 @@ const COMPLETE = jwt({ kind: "complete" });
 
 /** The example account in the fleet mock (the deploy tests, and `bun erga deploy` with ERGA_DEPLOY_MOCK). */
 export const FLEET_ACCOUNT = ACCOUNT_ID;
-export const PROD_DB = "0b0d0b0d-0000-4000-8000-00000000e9a0";
-/** Production's SNAPSHOT_TOKEN in the fleet mock (the tests give staging the same). */
+export const PRIMARY_DB = "0b0d0b0d-0000-4000-8000-00000000e9a0";
+/** The example instance's SNAPSHOT_TOKEN in the fleet mock (the tests give its staging instance the same). */
 export const MOCK_SNAPSHOT_TOKEN = "mock-snapshot-token-0123456789abcdef0123456789";
-/** Production's documents in the fleet mock: their ids, and what each holds. */
-export const PROD_DOCS = ["abcd2345", "efgh6789", "jkmn2345"];
+/** The example instance's documents in the fleet mock: their ids, and what each holds. */
+export const PRIMARY_DOCS = ["abcd2345", "efgh6789", "jkmn2345"];
 
 export function mockCloudflare(
   opts: {
@@ -453,7 +453,7 @@ export function mockCloudflare(
         302
       );
     if (url.pathname == "/logo.png") return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "Content-Type": "image/png" } });
-    if (url.pathname == "/api/deploys/version") return Response.json({ version: text("ERGA_VERSION") ?? null, target: text("DEPLOY_TARGET") || null });
+    if (url.pathname == "/api/deploys/version") return Response.json({ version: text("ERGA_VERSION") ?? null });
     // The homepage project: made the first time a deploy asks, there from then on.
     if (url.pathname == "/api/deploys/home" && req.method == "POST") {
       const homes = (state.homes ??= []);
@@ -465,7 +465,6 @@ export function mockCloudflare(
     if (url.pathname == "/api/ops")
       return Response.json({
         version: text("ERGA_VERSION") ?? null,
-        target: text("DEPLOY_TARGET") || null,
         host,
         deploy: JSON.parse(text("ERGA_DEPLOY") || "null"),
       });
@@ -473,11 +472,21 @@ export function mockCloudflare(
     if (url.pathname == "/api/health") {
       const version = text("ERGA_VERSION") ?? null;
       const bad = !!version && (state.unhealthy ?? []).includes(version);
-      return Response.json({ ok: !bad, version, target: text("DEPLOY_TARGET") || null, checks: { db: { ok: true, ms: 1 }, documents: bad ? { ok: false, error: "a document didn't open (the mock says this release is unhealthy)" } : { ok: true, ms: 2 } } }, { status: bad ? 503 : 200 });
+      return Response.json(
+        {
+          ok: !bad,
+          version,
+          checks: {
+            db: { ok: true, ms: 1 },
+            documents: bad ? { ok: false, error: "a document didn't open (the mock says this release is unhealthy)" } : { ok: true, ms: 2 },
+          },
+        },
+        { status: bad ? 503 : 200 }
+      );
     }
     const snap = await snapshotRoutes(req, {
       token: state.secrets[name]?.SNAPSHOT_TOKEN,
-      importAllowed: text("SNAPSHOT_IMPORT") == "1" && text("DEPLOY_TARGET") != "production",
+      importAllowed: !!text("SNAPSHOT_FROM"),
       store: (state.docs[name] ??= memoryStore()) as DocStore,
       budget: state.snapshotBudget,
     });

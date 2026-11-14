@@ -2,7 +2,7 @@
 // directory and the tokens on bun:sqlite, each document a real Document (document/document.ts) on MemoryStorage with
 // MemoryBlobs, as cloudflare/platform.ts and cloudflare/objects/document.ts wire them on Cloudflare. No socket, no
 // browser, no model. It is local development's server (DEV_LOGIN "tester", an admin; ?user=Ada and /auth/github?as=
-// sign anyone in), on http://localhost; `staging: true` makes it a server for admins only (DEPLOY_TARGET=staging).
+// sign anyone in), on http://localhost; `staging: true` makes it a staging instance: a server for admins only (its deploy names its primary).
 //
 // Trap: every server made here has the one origin (ROOT), so two of them alive in one test share what the app keeps
 // by origin and address for a few seconds (who may see what: server/documents/view.ts). Give two servers' people
@@ -79,7 +79,7 @@ const LANDING = { "index.html": "<!doctype html><html><head><title>Erga</title><
 export const ROOT = "http://localhost";
 
 export interface ServerOptions {
-  /** A server for admins only (DEPLOY_TARGET=staging). */
+  /** A staging instance: a server for admins only (the deploy names its primary, SNAPSHOT_FROM). */
   staging?: boolean;
   /** The documents' timers (the versions' pause, the write delay): short unless said. */
   timing?: DocumentDeps["timing"];
@@ -149,7 +149,7 @@ export function server(o: ServerOptions = {}) {
     secret: "session-secret",
     adminsOnly: !!o.staging,
     tokens: new Tokens(sql, "session-secret", dir),
-    deploy: { target: o.staging ? "staging" : null, version: null, facts: null, primary: null, home: null, app: null },
+    deploy: { version: null, facts: null, primary: o.staging ? "https://primary.example.com" : null, home: null, app: null },
     signIn: {
       mode: "oauth",
       apps: { github: { clientId: "", secret: "" }, google: { clientId: "", secret: "" } },

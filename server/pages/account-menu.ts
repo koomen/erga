@@ -1,4 +1,4 @@
-// Who you are, in the upper right of every page erga.dev serves: your
+// Who you are, in the upper right of every page the app serves: your
 // avatar (your picture, shared/avatars.ts, or your initial on your colour if
 // you have none or it doesn't load), which opens a small menu (your name, Go to… with its key ⌘K, Documents, Settings,
 // Admin settings for admins, Send feedback, Sign out); or, signed out, a person in a circle whose

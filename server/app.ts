@@ -51,7 +51,7 @@
 //
 // The routes that run only on Cloudflare (what the deploy pipeline asks, the
 // dev server's) are `outside`'s: cloudflare/index.ts answers them, at their place
-// in the table. On staging (DEPLOY_TARGET=staging, from the deploy) every route, and
+// in the table. On a staging instance (the deploy names its primary: SNAPSHOT_FROM) every route, and
 // the documents' pages origin, is for Erga's admins only: one guard before
 // them all (server/identity/admins-only.ts lists what's exempt, and why).
 
