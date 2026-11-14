@@ -230,7 +230,7 @@ test("the documents list: the document agent lists, makes (blank, a template, a 
   await dir.add({ id: "bbbbbbbb", owner: "cy", title: "Secret", created: 1 });
   const ada: Caller = { dir, who: { login: "ada" }, here: "aaaaaaaa", platform, origin: "https://erga.test" };
   let r = await run(ada, "list_documents");
-  expect(r.map((d: { address: string; here?: boolean }) => [d.address, !!d.here])).toEqual([["/ada/plan", true]]);
+  expect(r.documents.map((d: { address: string; here?: boolean }) => [d.address, !!d.here])).toEqual([["/ada/plan", true]]);
   r = await run(ada, "create_document", { title: "Notes" });
   expect([r.address, made.length]).toEqual(["/ada/notes", 1]);
   r = await run(ada, "create_document", { template: "slides", slug: "deck" });
@@ -239,11 +239,21 @@ test("the documents list: the document agent lists, makes (blank, a template, a 
   expect([r.url, r.from]).toEqual(["https://erga.test/ada/plan-copy", "aaaaaaaa"]);
   expect((await failure(run(ada, "create_document", { template: "nope" }))).message).toMatch(/slides/);
   expect((await failure(run(ada, "create_document", { from: "bbbbbbbb" }))).status).toBe(403);
-  expect((await run(ada, "list_documents")).length).toBe(4);
+  // limit: that many from the top of the list, 20 when left out; moreDocuments: how many it left out.
+  const listed = async (args = {}) => {
+    const l = await run(ada, "list_documents", args);
+    return [l.documents.map((d: { address: string }) => d.address), l.moreDocuments] as [string[], number];
+  };
+  const [four, none] = await listed();
+  expect([four.length, none]).toEqual([4, 0]);
+  expect(await listed({ limit: 3 })).toEqual([four.slice(0, 3), 1]);
+  expect((await listed({ limit: 1, query: "plan" }))[1]).toBe(1);
+  for (let i = 0; i < 20; i++) await dir.add({ id: `cccccc${String(i).padStart(2, "0")}`, owner: "ada", title: `Old ${i}`, created: 1 });
+  expect([(await listed())[0].length, (await listed())[1], (await listed({ limit: 100 }))[1]]).toEqual([20, 4, 0]);
   // Deleting: one of theirs, never the one the agent is in, never someone else's.
   r = await run(ada, "delete_document", { document: "/ada/deck" });
   expect(r.deleted.address).toBe("/ada/deck");
-  expect((await run(ada, "list_documents")).map((d: { address: string }) => d.address)).not.toContain("/ada/deck");
+  expect((await listed({ limit: 100 }))[0]).not.toContain("/ada/deck");
   expect((await failure(run(ada, "delete_document", { document: "/ada/plan" }))).status).toBe(409);
   expect((await failure(run(ada, "delete_document", { document: "bbbbbbbb" }))).status).toBe(403);
   expect((await failure(run(ada, "delete_document", {}))).status).toBe(400);
@@ -334,8 +344,11 @@ test("list_documents' all is an admin's: someone else is refused", async () => {
   await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1 });
   // (A signed-in session comes with admin power; the directory says whether its person is an admin.)
   expect((await failure(run({ dir, who: { login: "someone-else", admin: true } }, "list_documents", { all: true }))).status).toBe(403);
-  const found = await run({ dir, who: { login: "root", admin: true } }, "list_documents", { all: true });
-  expect(found.length).toBeGreaterThan(0);
+  await dir.add({ id: "bbbbbbbb", owner: "ada", title: "Notes", created: 1 });
+  const root: Caller = { dir, who: { login: "root", admin: true } };
+  const { documents: found, moreDocuments } = await run(root, "list_documents", { all: true });
+  expect([found.length, moreDocuments]).toEqual([2, 0]);
+  expect((await run(root, "list_documents", { all: true, limit: 1 })).moreDocuments).toBe(1);
   expect(found[0]).toMatchObject({
     address: expect.stringMatching(/^\/[^/]+\/[^/]+$/),
     kind: expect.stringMatching(/^(document|project)$/),

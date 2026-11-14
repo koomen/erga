@@ -335,7 +335,8 @@ journey("a person's documents", () => {
     await page.bringToFront();
     await expect.poll(() => shown(page)).toBe("1 document | Old minutes");
     // The agent finds it in the archive, and not on the list. Its page still opens by its address.
-    const listed = async (args = {}) => (await p.tool<{ id: string }[]>("list_documents", args)).result!.map((d) => d.id);
+    const listed = async (args = {}) =>
+      (await p.tool<{ documents: { id: string }[] }>("list_documents", args)).result!.documents.map((d) => d.id);
     expect(await listed()).not.toContain(doc);
     expect(await listed({ archived: true })).toEqual([doc]);
     expect((await p.get(`/d/${doc}`)).status).toBeLessThan(400);
@@ -448,7 +449,9 @@ journey("a person's documents", () => {
     await page.mouse.move(600, 500);
     // Not on the person's list, nor their agent's.
     const listed = async () =>
-      (await p.tool<{ id: string; title: string; expires?: string }[]>("list_documents")).result!.find((d) => d.id == doc);
+      (await p.tool<{ documents: { id: string; title: string; expires?: string }[] }>("list_documents")).result!.documents.find(
+        (d) => d.id == doc
+      );
     expect(await p.docs()).not.toContain(doc);
     expect(await listed()).toBeUndefined();
 
@@ -566,7 +569,8 @@ journey("a person's documents", () => {
       await until(async () => !(await bo.exists(life.gone)), UNEDITED_MS + 6000, "the unedited document goes");
       // The open one's time was put off by an hour: its alarm has come.
       const expiresOf = async (doc: string) =>
-        (await bo.tool<{ id: string; expires?: string }[]>("list_documents")).result!.find((d) => d.id == doc)?.expires;
+        (await bo.tool<{ documents: { id: string; expires?: string }[] }>("list_documents")).result!.documents.find((d) => d.id == doc)
+          ?.expires;
       await until(
         async () => Date.parse((await expiresOf(life.open)) ?? "0") - Date.now() > 30 * 60_000,
         5000,

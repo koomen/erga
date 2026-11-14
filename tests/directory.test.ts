@@ -386,7 +386,7 @@ test("search: an admin finds any of the server's documents and projects by title
   await dir.add(doc("bbbbbbbb", "Garden notes", { owner: "bo", modified: 30, kind: "project" }));
   await dir.add(doc("cccccccc", "100% done_now", { owner: "bo", modified: 20 }));
   await dir.add(doc("tttttttt", "Garden test", { test: true }));
-  const ids = async (q: string) => (await dir.lists.search(ada, q)).map((d) => d.id);
+  const ids = async (q: string) => (await dir.lists.search(ada, q)).documents.map((d) => d.id);
   // Nothing typed: the most recently edited first; never a test document.
   expect(await ids("")).toEqual(["bbbbbbbb", "cccccccc", "aaaaaaaa"]);
   // By title (any case), owner, address (or a URL with it) and id.
@@ -398,10 +398,13 @@ test("search: an admin finds any of the server's documents and projects by title
   // % and _ are only themselves.
   expect(await ids("0% d")).toEqual(["cccccccc"]);
   expect(await ids("e_n")).toEqual(["cccccccc"]);
-  expect(await dir.lists.search(ada, "garden")).toEqual([
-    { id: "bbbbbbbb", title: "Garden notes", owner: "bo", address: "/bo/garden-notes", kind: "project" },
-  ]);
-  expect((await dir.lists.search(ada, "", 1)).length).toBe(1);
+  expect(await dir.lists.search(ada, "garden")).toEqual({
+    documents: [{ id: "bbbbbbbb", title: "Garden notes", owner: "bo", address: "/bo/garden-notes", kind: "project" }],
+    total: 1,
+  });
+  // At most `limit` of them; `total`: all that match.
+  expect(await dir.lists.search(ada, "", 1)).toMatchObject({ documents: [{ id: "bbbbbbbb" }], total: 3 });
+  expect((await dir.lists.search(ada, "bo", 1)).total).toBe(2);
   // Admins only: a user, or an admin without admin power (a documents token), may not.
   await expect(dir.lists.search({ login: "bo" }, "")).rejects.toThrow(NotAllowed);
   await expect(dir.lists.search({ login: "ada" }, "")).rejects.toThrow(NotAllowed);

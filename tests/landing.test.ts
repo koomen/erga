@@ -237,7 +237,9 @@ test("rename_document renames the homepage project for an admin, and refuses a n
   const r = await runTool(s, "rename_document", { document: id, title: "Home, renamed" });
   expect(r.error).toBeUndefined();
   expect(r.result).toMatchObject({ title: "Home, renamed", address: "/_home" });
-  const listed = (await runTool(s, "list_documents", { query: "Home, renamed" })).result as { address: string; url?: string }[];
+  const listed = (
+    (await runTool(s, "list_documents", { query: "Home, renamed" })).result as { documents: { address: string; url?: string }[] }
+  ).documents;
   expect(listed.map((d) => [d.address, d.url && new URL(d.url).pathname])).toEqual([["/_home", "/_home"]]);
   const slug = await runTool(s, "rename_document", { document: id, slug: "other" });
   expect(slug.error).toMatch(/\/_home/);
