@@ -1,6 +1,7 @@
 // The page editor's events: the keys, input, composition, the pointer and the selection, turned into edits; and the
 // keys held while the editor can't take them.
 
+import { droppedFiles } from "../../../client/common/dropped";
 import * as M from "../../../shared/manuscript";
 import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import { listenAsEditor } from "./text-guard";
@@ -225,10 +226,7 @@ export abstract class EditorInput extends EditorClipboard {
    * with the place in the text they go to, or the point of the drop where the page places them itself or has no place.
    */
   protected dropFiles(e: DragEvent): void {
-    const dt = e.dataTransfer,
-      plain = [...(dt?.files ?? [])];
-    // (The entries are the event's: read now. A folder's files come a moment later.)
-    const entries = [...(dt?.items ?? [])].filter((i) => i.kind == "file").map((i) => i.webkitGetAsEntry?.() ?? null);
+    const { plain, all } = droppedFiles(e.dataTransfer);
     if (!plain.length) return;
     if (this.rendering) return this.config.onDropRefused?.(LOADING_AGAIN);
     const point = { x: e.clientX, y: e.clientY };
@@ -236,10 +234,8 @@ export abstract class EditorInput extends EditorClipboard {
     const images = plain.every((f) => f.type.startsWith("image/"));
     const at = this.placeAt(point.x, point.y, kinds, false) ? null : ((images ? this.imageDropAt(e) : null) ?? this.dropAt(e));
     const to = at ? { at: at.pos } : { point };
-    if (!entries.some((x) => x?.isDirectory)) return this.config.onDropFiles?.(plain, to);
-    void Promise.all(entries.map((x, i) => (x?.isDirectory ? filesIn(x as FileSystemDirectoryEntry) : [plain[i]].filter(Boolean)))).then(
-      (all) => this.config.onDropFiles?.(all.flat(), to)
-    );
+    if (!all) return this.config.onDropFiles?.(plain, to);
+    void all.then((files) => this.config.onDropFiles?.(files, to));
   }
 
   /**
@@ -760,27 +756,4 @@ export abstract class EditorInput extends EditorClipboard {
       this.syncDOMSelection(true);
     } else if (!diff) this.syncDOMSelection(true);
   }
-}
-
-/** Every file in a dropped folder, by name, the folders in it too: each with its path from the folder (`rel`). */
-async function filesIn(dir: FileSystemDirectoryEntry, under = ""): Promise<File[]> {
-  const entries: FileSystemEntry[] = [];
-  const reader = dir.createReader();
-  // (A reader gives a folder's entries in parts, until a part is empty.)
-  for (;;) {
-    const part = await new Promise<FileSystemEntry[]>((done) => reader.readEntries(done, () => done([])));
-    if (!part.length) break;
-    entries.push(...part);
-  }
-  const out: File[] = [];
-  const here = `${under}${dir.name}/`;
-  for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (e.name.startsWith(".")) continue;
-    if (e.isDirectory) out.push(...(await filesIn(e as FileSystemDirectoryEntry, here)));
-    else {
-      const file = await new Promise<File | null>((done) => (e as FileSystemFileEntry).file(done, () => done(null)));
-      if (file) out.push(Object.assign(file, { rel: here }));
-    }
-  }
-  return out;
 }

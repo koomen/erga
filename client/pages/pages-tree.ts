@@ -63,6 +63,15 @@ export interface TreeOptions {
   run?: <T>(name: string, args: Record<string, unknown>) => Promise<T>;
   /** The label for the tree, for screen readers. */
   label?: string;
+  /** Files dragged from the computer (the editor's: client/shell/tree-files.ts): over a folder (`row`), dropped into it; and those on their way. */
+  files?: {
+    over(dir: string, row: Element | null, e: DragEvent): void;
+    drop(dir: string, e: DragEvent): void;
+    /** `list`, with the files on their way that it lacks. */
+    with(list: Entry[]): Entry[];
+    /** Marks the row of a file on its way. */
+    mark(row: HTMLElement, path: string): void;
+  };
 }
 
 export interface TreeHandle {
@@ -286,9 +295,11 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     entries = list;
     canEdit = edit;
     if (k) kind = k;
-    tree = buildTree(list);
-    // The page you're on is in view.
-    if (current) for (let d = parentOf(current); d; d = parentOf(d)) open.add(d);
+    const all = opts.files?.with(list) ?? list;
+    tree = buildTree(all);
+    // The page you're on is in view, and each file on its way.
+    for (const p of [current, ...all.slice(list.length).map((e) => e.path)])
+      if (p) for (let d = parentOf(p); d; d = parentOf(d)) open.add(d);
     opts.onChange?.({ entries: list, canEdit: edit, kind });
   }
 
@@ -584,6 +595,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
       r.append(acts);
       if (!isRoot) r.draggable = true;
     }
+    opts.files?.mark(r, n.path);
     return r;
   }
   const actButton = (act: string, icon: string, label: string) => {
@@ -855,7 +867,20 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     closeMenu();
     requestAnimationFrame(() => r.classList.add("dragging"));
   });
+  /** Files from the computer, over a folder or dropped into it (opts.files): true if the drag is one. */
+  const ofFiles = (e: DragEvent, drop: boolean) => {
+    if (!opts.files || !canEdit || !e.dataTransfer?.types.includes("Files")) return false;
+    const dir = dropDir(e.target as HTMLElement);
+    clearDrop();
+    if (dir == null) return true;
+    e.preventDefault();
+    const at = dir ? rows.querySelector(`[data-path="${CSS.escape(dir)}"]`) : foot;
+    if (drop) opts.files.drop(dir, e);
+    else at?.classList.add("drop"), opts.files.over(dir, at, e);
+    return true;
+  };
   root.addEventListener("dragover", (e) => {
+    if (ofFiles(e, false)) return;
     const dir = dropDir(e.target as HTMLElement);
     clearDrop();
     if (!okDrop(dir)) return;
@@ -867,6 +892,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   });
   root.addEventListener("dragleave", (e) => { if (!root.contains(e.relatedTarget as globalThis.Node)) clearDrop(); });
   root.addEventListener("drop", (e) => {
+    if (ofFiles(e, true)) return;
     const dir = dropDir(e.target as HTMLElement);
     const from = dragFrom;
     clearDrop();

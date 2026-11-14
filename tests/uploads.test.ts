@@ -2,6 +2,7 @@
 // it says the alerts and the page show; and where a file's element is in a page's HTML.
 
 import { expect, test } from "bun:test";
+import { placeIn } from "../client/common/dropped";
 import * as U from "../client/common/uploads";
 
 const MB = 1_000_000;
@@ -241,6 +242,18 @@ test("a file with no place on the page: a problem that names where the file is, 
   expect(refused.fix).toBe(
     "The file images/a.png of this document was dropped on the page deck.html, which has no place of its own for it. Put it on the page where it fits."
   );
+});
+
+test("a file's path in a folder of the document: its own name, the next one if that is taken, and a dropped folder's files in the folder", () => {
+  const file = (name: string, rel?: string) => Object.assign(new File(["x"], name), rel ? { rel } : {});
+  const taken = new Set(["images/sunrise.jpg", "notes.txt"]);
+  expect(placeIn("images", file("sunrise.jpg"), taken)).toBe("images/sunrise-2.jpg");
+  // (The path it got is taken from then on, in any case of letters.)
+  expect(placeIn("images", file("Sunrise.JPG"), taken)).toBe("images/Sunrise-3.JPG");
+  expect(placeIn("", file("notes.txt"), taken)).toBe("notes-2.txt");
+  expect(placeIn("files/", file("a/b\\c.pdf"), taken)).toBe("files/a-b-c.pdf");
+  expect(placeIn("images", file("logo.png", "brand/dark/"), taken)).toBe("images/brand/dark/logo.png");
+  expect(placeIn("blog", file(".env"), taken)).toBe("blog/env");
 });
 
 test("a file's element in a page's HTML: an image in a paragraph of its own goes with it, an image in a line and a link alone", () => {

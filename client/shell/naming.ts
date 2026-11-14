@@ -1,5 +1,6 @@
 // The document's title and address, the naming card that renames it, and the pages card with its tree.
 
+import { treeFiles } from "./tree-files";
 import type { DocName } from "../../document/api";
 import { files } from "../../document/content";
 import { pageUrl, slugify, titleOf } from "../../document/pages";
@@ -171,6 +172,7 @@ export function mountNaming(shell: Shell) {
         initial: kept(),
         onChange: keep,
         onRenameRoot: () => toggleNaming(true),
+        files: treeFiles(shell, () => tree),
         navigate: (url, o) => { if (o.replace || !o.path || !shell.swapPage(o.path)) shell.goTo(url, o.replace); },
       }));
       },

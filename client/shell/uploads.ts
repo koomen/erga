@@ -15,6 +15,7 @@ import { encodePath } from "../../document/pages";
 import { ms } from "../../libs/text/ui/timescale";
 import type { Pending } from "../../shared/room-socket";
 import { DISMISS, type Raise } from "../common/alerts";
+import { placeIn } from "../common/dropped";
 import { asUser, runTool } from "../common/tools";
 import * as U from "../common/uploads";
 import { BASE, type Shell } from "./shell";
@@ -35,6 +36,15 @@ interface Refused {
   limit?: { setting: "max_file_mb" | "max_project_gb"; value: number; used?: number };
 }
 
+declare global {
+  interface Window {
+    /** The editor's uploads, for the agent's panel (client/agent/person-agent.ts): a file into a folder of the document. */
+    ergaUploads?: { addIn(dir: string, files: File[]): string[] };
+  }
+}
+
+/** How long the server has to answer the check of a file. */
+const CHECK_MS = 30_000;
 const PATH = /^(images|files)\/[^\\]{1,400}$/;
 
 export function mountUploads(shell: Shell) {
@@ -94,12 +104,11 @@ export function mountUploads(shell: Shell) {
   const hashOf = (id: string, file: File): Promise<string | null> => {
     const known = hashes.get(id);
     if (known) return Promise.resolve(known);
-    const next = hashing.then(() =>
-      file.arrayBuffer().then(
-        (bytes) => sha256Hex(bytes),
-        () => null
-      )
-    );
+    // (A file that can't be read, or hashed, answers null: the next file's turn comes all the same.)
+    const next = hashing
+      .then(() => file.arrayBuffer())
+      .then((bytes) => sha256Hex(bytes))
+      .catch(() => null);
     hashing = next;
     return next.then((h) => {
       if (h) hashes.set(id, h);
@@ -123,6 +132,8 @@ export function mountUploads(shell: Shell) {
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       // (A file with no bytes has nothing to send after.)
       body: JSON.stringify({ document: shell.docId, files: { [id]: file.size ? { blob: hash, size: file.size } : { base64: "" } } }),
+      // (A server that gives no answer in this time is a lost connection: the file waits and is asked about again.)
+      signal: AbortSignal.timeout(CHECK_MS),
     }).catch(() => null);
     if (!r) return answer({ t: "lost", id });
     const body = (await r.json().catch(() => null)) as {
@@ -315,21 +326,17 @@ export function mountUploads(shell: Shell) {
     );
     for (const f of page) given.add(f.path);
     state = U.swept(state);
+    // (The file tree shows them too: client/shell/tree-files.ts.)
+    window.dispatchEvent(new Event("erga-uploads"));
     // (The time left changes while nothing else does.)
     window.clearTimeout(painting);
     if (state.files.some((u) => u.state.t == "sending")) painting = window.setTimeout(show, 500);
   }
 
-  return {
-    /**
-     * Files for the document, each at its path: a new batch. One with no place on the page is a problem in the card,
-     * with the way on (`point`: where it was dropped). False: none of them can be one (a path that is none).
-     */
-    add(list: NewFile[], point?: { x: number; y: number }): boolean {
-      const ok = list
-        .filter((f) => f.file instanceof File && PATH.test(f.path) && !f.path.split("/").some((p) => p.startsWith(".")))
-        .slice(0, 50);
-      if (!ok.length) return false;
+  /** A new batch of files, each at its path. False: there is none. */
+  function start(list: NewFile[], point?: { x: number; y: number }): boolean {
+    const ok = list.slice(0, 50);
+    if (!ok.length) return false;
       for (const f of ok) blobs.set(f.path, f.file);
       for (const f of ok) hashes.delete(f.path);
       send({
@@ -342,8 +349,41 @@ export function mountUploads(shell: Shell) {
           shell.alerts.raise(U.noPlace(f.path, f.noPlace, shell.pagePath, point), (action) => {
             if (action == "copy") void navigator.clipboard?.writeText(f.path).then(() => shell.toast.flash("Copied"));
           });
-      return true;
+    return true;
+  }
+
+  const api = {
+    /**
+     * Files for the document from the page's editor, each at the path it chose (images/…, files/…): a new batch. One
+     * with no place on the page is a problem in the card, with the way on (`point`: where it was dropped). False: none
+     * of them can be one (a path that is none).
+     */
+    add(list: NewFile[], point?: { x: number; y: number }): boolean {
+      return start(
+        list.filter((f) => f.file instanceof File && PATH.test(f.path) && !f.path.split("/").some((p) => p.startsWith("."))),
+        point
+      );
     },
+    /**
+     * Files for a folder of the document ("": its top), from the file tree or the agent's panel: each under its own
+     * name there (or with -2, -3 before its extension), a dropped folder's files in the folder. Answers their paths.
+     */
+    addIn(dir: string, list: File[]): string[] {
+      const doc = shell.collab.doc;
+      const taken = new Set(
+        [...files(doc).keys(), ...assets(doc).keys(), ...state.files.map((u) => u.id), ...Object.keys(others)].map((p) => p.toLowerCase())
+      );
+      const named = list.slice(0, 50).map((file) => ({ file, path: placeIn(dir, file, taken) }));
+      start(named);
+      return named.map((f) => f.path);
+    },
+    /** The files on their way, each with how far it is (0 to 1): this tab's, and those the room tells of. */
+    pending(): Record<string, number> {
+      const theirs = Object.entries(others).map(([path, f]): [string, number] => [path, f.size ? Math.min(1, (f.got ?? 0) / f.size) : 0]);
+      const mine = U.pageOf(state, performance.now(), false).map((f): [string, number] => [f.path, f.p]);
+      return Object.fromEntries([...theirs, ...mine]);
+    },
+
     /**
      * A button on a file in the page: cancel, remove or retry act; "raise" only opens the card, where the person does
      * it. "gone": the file's element left the text (Undo), which cancels it.
@@ -386,6 +426,8 @@ export function mountUploads(shell: Shell) {
       return assets(shell.collab.doc).has(path) || files(shell.collab.doc).has(path) ? "no" : "maybe";
     },
   };
+  window.ergaUploads = { addIn: api.addIn };
+  return api;
 }
 
 export type Uploads = ReturnType<typeof mountUploads>;

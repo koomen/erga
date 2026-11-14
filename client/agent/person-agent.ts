@@ -16,7 +16,7 @@
 // it. Built by client/build.ts to agent.js.
 
 import { chat } from "./agent-chat";
-import { fileRefs, type Attachment } from "../../shared/attach";
+import { classify, fileRefs, type Attachment } from "../../shared/attach";
 import { attachments } from "./attach-ui";
 import { canSend, type SendPath } from "./send-gate";
 import type { Log, LogEvent } from "../../shared/agent-log";
@@ -124,6 +124,37 @@ const att = attachments({
   form: $("agent-form"),
   input,
   hint: (t) => showHint(t),
+  // In the editor, a file that a message can't take (a PDF, a video) can go into the document's files, where the
+  // agent reads it: an alert offers that (client/shell/uploads.ts sends it). Its path goes into the message.
+  refuse(file, name) {
+    const alerts = window.ergaAlerts,
+      uploads = window.ergaUploads;
+    if (!alerts || !uploads) return false;
+    const key = `attach:${name}`;
+    alerts.raise(
+      {
+        key,
+        kind: "error",
+        source: "agent",
+        title: `“${name}” is not attached`,
+        detail: classify(name, file.type) ? "it is too large for a message." : "a message takes images and text files only.",
+        actions: [
+          { id: "add", label: "Add it to the document for the agent", primary: true },
+          { id: "remove", label: "Remove" },
+        ],
+      },
+      (action) => {
+        if (action == "add") {
+          const [path] = uploads.addIn(file.type.startsWith("image/") ? "images" : "files", [new File([file], name, { type: file.type })]);
+          input.value = `${input.value}${input.value && !/\s$/.test(input.value) ? " " : ""}${path} `;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.focus();
+        }
+        if (action == "add" || action == "remove") alerts.end(key);
+      }
+    );
+    return true;
+  },
   changed: () => {
     renderBusy();
     if (voice?.due) voiceSend();

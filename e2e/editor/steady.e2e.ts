@@ -9,7 +9,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, journey, servers, test, until, type Tab } from "../helpers/fixtures";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
-import { dragTo, folderOnDisk, onDisk, SIGN } from "../helpers/drops";
+import { dragAt, dragTo, folderOnDisk, onDisk, SIGN } from "../helpers/drops";
 import { pointerOnPage } from "../helpers/press";
 import { runTool } from "../helpers/tools";
 import { WAIT_MS } from "../../client/common/frame-swap";
@@ -775,6 +775,36 @@ journey("files dropped and pasted on a page in a folder", () => {
     expect((await fetch(`${s.root}/d/${id}/api/blobs/${hash}`, { method: "PUT", body: bytes })).status).toBe(200);
     await expect.poll(async () => (await images(ed)).find((i) => i.alt == "chart.png")?.loaded, UPLOAD).toBe(true);
     await expect.poll(() => pendingParts(ed)).toEqual([]);
+    expected(tab);
+  });
+
+  test("a file that a message can't take, dropped on the agent's panel: a problem says why, and Add it to the document for the agent puts it in the document's files, with its path in the message", async ({
+    tab,
+  }) => {
+    // (Before: only the image attached; of the PDF, no word.)
+    await ed.page.keyboard.press("ControlOrMeta+j");
+    await expect.poll(() => ed.eval<boolean>(`document.body.classList.contains("agent-open")`)).toBe(true);
+    await pageStill(ed);
+    const at = await ed.page.evaluate(() => {
+      const r = document.getElementById("agent")!.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    await (await dragAt(ed.page, at, [onDisk("report.pdf", 2000)])).drop();
+    await expect
+      .poll(async () => (await ed.alerts()).alerts)
+      .toEqual([
+        {
+          title: "“report.pdf” is not attached",
+          count: "",
+          detail: "Agent · a message takes images and text files only.",
+          rows: [],
+          buttons: ["Add it to the document for the agent", "Remove"],
+        },
+      ]);
+    await ed.page.click('#alerts [data-action="add"]');
+    await expect.poll(() => ed.eval<string>(`document.getElementById("agent-input").value`)).toBe("files/report.pdf ");
+    await expect.poll(files, UPLOAD).toEqual(expect.arrayContaining(["files/report.pdf"]));
+    await expect.poll(async () => (await ed.alerts()).alerts).toEqual([]);
     expected(tab);
   });
 });

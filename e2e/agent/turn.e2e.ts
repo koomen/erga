@@ -188,7 +188,7 @@ journey("a turn of the agent in the editor", () => {
     );
   const lit = () => ada.eval<boolean>(`document.getElementById("agent").classList.contains("agent-drop")`);
 
-  test("files dragged over the panel light it up; a dropped CSV waits as a chip; a PDF and a too-big file are refused, with why", async () => {
+  test("files dragged over the panel light it up; a dropped CSV waits as a chip; a PDF and a too-big file are refused, each a problem with why and a way on", async () => {
     // Files made in the tab: __dt(...names) holds them, as a drop, a paste or the file picker gives them.
     await ada.eval(`(async () => {
       const pic = async (w, h, colour) => { const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d"); g.fillStyle = colour; g.fillRect(0, 0, w, h); g.fillStyle = "#fff"; g.font = "bold " + (h / 4) + "px sans-serif"; g.fillText("Hi", w / 8, h / 2); return new Promise((r) => c.toBlob(r, "image/png")); };
@@ -214,11 +214,19 @@ journey("a turn of the agent in the editor", () => {
     await drag("drop", "csv", "pdf", "huge");
     await expect.poll(chips).toEqual(["data.csv (38 B)"]);
     expect(await lit()).toBe(false);
-    const hint = await ada.eval<string>(
-      `document.getElementById("agent-hint").hidden ? "" : document.getElementById("agent-hint").textContent`
-    );
-    expect(hint).toContain("“report.pdf” can't be attached: only images");
-    expect(hint).toContain("“huge.json” is too big (300 KB): text files can be up to 256 KB");
+    // In the editor, each file that a message can't take is a problem in the card: why, and the way to give it to the
+    // agent all the same, in the document's files (the journey of dropped files adds one: e2e/editor/steady.e2e.ts).
+    const WAYS = ["Add it to the document for the agent", "Remove"];
+    await expect
+      .poll(async () => (await ada.alerts()).alerts.map((a) => [a.title, a.detail, a.buttons]))
+      .toEqual([
+        ["“huge.json” is not attached", "Agent · it is too large for a message.", WAYS],
+        ["“report.pdf” is not attached", "Agent · a message takes images and text files only.", WAYS],
+      ]);
+    // Remove: the file is let go, and its problem with it.
+    await ada.page.click('#alerts [data-action="remove"]');
+    await ada.page.click('#alerts [data-action="remove"]');
+    await expect.poll(async () => (await ada.alerts()).view).toBe("none");
   });
 
   const paste = (...names: string[]) =>
