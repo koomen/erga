@@ -1,362 +1,197 @@
-// An Erga instance (`bun erga setup <host>`): what the person decides, the names that follow from it, and the steps
-// from a clone to a registered instance. Every instance takes these steps, a new one and one that runs already: an
-// instance with an entry in .erga/config.json keeps its entry's names, and its steps show what is done. Pure: no network, no files (deploy/own/facts.ts observes; deploy/own/cli.ts
-// acts). `bun erga setup skill` is the manual; `bun erga setup <host> status` prints these steps, and the Setup tab of the
-// ops page (deploy/own/page.ts) shows them.
+// A new Erga instance (`bun erga setup <host>`): the person's answers, and what follows from them alone: the
+// instance's names, its entry in .erga/config.json, its plain settings, its database's first rows, its GitHub App.
+// Pure: no network, no files. The flow (which answer is asked when, and who does each step) is deploy/own/flow.ts.
 
-import { PROXY_FREE_PATHS } from "../proxy-paths";
-import { oidcSecretName } from "../aws/template";
 import type { CloudflareEntry } from "../cli/config";
 import { deployFacts } from "../pipeline/account";
 import type { Target } from "../pipeline/pipeline";
 
-/** The person's decisions, asked all at once (`bun erga setup <host> ask`), with these defaults. No secret is ever in here. */
+export type Where = "cloudflare" | "aws";
+/** Who may sign in: people the admin invites, they and a company's people, or everyone the company's single sign-on lets pass. */
+export type SignIn = "invite" | "company" | "sso";
+
+/** The person's answers. "" is "not answered yet". No secret is ever in here. */
 export interface Answers {
-  /** Where the instance runs: the person's Cloudflare account, or their AWS account. */
-  provider: Provider;
-  /**
-   * The instance's address: a hostname on a zone in the account ("erga.example.com"). On AWS it may also be a short
-   * name ("erga"): then the app and the pages have CloudFront's own names, and no domain is needed.
-   */
+  /** The instance's address: a hostname on a domain of the person's account ("erga.example.com"). The command's. */
   host: string;
-  /** A staging instance too, at its own address (empty: none). Any instance on Cloudflare may have one. */
-  staging: string;
-  /**
-   * How people sign in (server/identity/mode.ts). oauth: Erga signs them in itself, with the providers below. proxy: a
-   * proxy in front of the server signs them in, with the company's own sign-in. The mode does not follow the host.
-   */
-  signIn: "oauth" | "proxy";
-  /** The oauth mode: who may sign in with what: GitHub always (the first admin signs in with it); Google too if chosen. */
-  providers: ("github" | "google")[];
-  /** What the server is for: its settings' defaults (PRESETS). */
-  preset: PresetName;
-  /** The first admin: their GitHub login (oauth), or their email address as the company's sign-in gives it (proxy). */
-  admin: string;
-  /** "company" only: a Google Workspace domain or GitHub organization whose people may sign in. */
-  company: string;
-  /** Documents' pages: "shared" (one workers.dev host) or a second zone of the account's, never the app's own. */
-  pages: string;
-  /** The staging instance's documents' pages: "shared", or a zone of its own, never its primary's. */
-  stagingPages: string;
-  /** The GitHub repository (owner/name) where feedback opens issues: the setting feedback_repository (empty: none). */
-  feedback: string;
-  /** AWS: the AWS CLI's profile (the account; empty: the CLI's default), and the region. */
-  awsProfile: string;
-  awsRegion: string;
-  /** AWS: the machine's way out to the internet: a NAT machine, a NAT gateway, or "<vpc id>/<private subnet id>" of the person's own. */
+  /** A staging instance's setup: its primary's host, which has an entry in .erga/config.json. */
+  stagingOf: string;
+  where: Where | "";
+  /** Cloudflare: the account that holds the host's domain (found; asked only when two accounts hold it). */
+  account: string;
+  /** AWS: the AWS CLI's profile (asked only with more than one), its region, and the machine's way out to the internet. */
+  profile: string;
+  region: string;
   egress: string;
-  /**
-   * The proxy mode on AWS: the proxy is an Application Load Balancer (not CloudFront) with the company's OIDC sign-in: its issuer's
-   * URL, and Erga's client ID there.
-   */
-  oidc: string;
-  oidcClient: string;
-  /**
-   * The proxy mode on Cloudflare: the proxy is Cloudflare Access: the Zero Trust team's name (its sign-in is at
-   * https://<team>.cloudflareaccess.com), and the audience tag of the Access application in front of the app.
-   */
-  accessTeam: string;
-  accessAud: string;
+  signIn: SignIn | "";
+  /** company: a GitHub organization's login, or a Google Workspace's domain. */
+  company: string;
+  /** sso on Cloudflare (Cloudflare Access): the Zero Trust team's name, and the Access application's audience tag (typed on the page). */
+  team: string;
+  aud: string;
+  /** sso on AWS (an Application Load Balancer): the company's OIDC issuer's URL, and Erga's client ID there. */
+  issuer: string;
+  client: string;
+  /** Documents' pages: "shared", or a domain. "": the default (pagesOf). */
+  pages: string;
+  /** The person's yes to the plan: the plan it was said to (planKey). Another answer after it asks again. */
+  confirm: string;
 }
 
-/** Whether a proxy in front signs people in (the proxy mode), on either host. */
-export const proxySignIn = (a: Pick<Answers, "signIn">) => a.signIn == "proxy";
-
-/**
- * The proxy mode's setting for the server (PROXY_SIGN_IN: server/identity/proxy.ts), from the answers; null in the
- * oauth mode. `signer`: on AWS, the proxy's ARN (the stack's output). A proxy whose values aren't all known
- * yet gives "{}", which the server reads as no proxy: then nobody signs in, and no other sign-in stands in.
- */
-export function proxySetting(a: Answers, signer?: string): string | null {
-  if (!proxySignIn(a)) return null;
-  if (a.provider == "aws") return signer ? JSON.stringify({ kind: "aws-alb", signer, issuer: a.oidc, client: a.oidcClient }) : "{}";
-  return JSON.stringify({ kind: "cloudflare-access", team: a.accessTeam, aud: a.accessAud });
-}
-
-export type PresetName = "website" | "company";
-export type Provider = "cloudflare" | "aws";
-
-/**
- * What each preset sets. `defaults` go to the server as SERVER_DEFAULTS: defaults that the admins can still change on
- * /admin/settings (not locked). `open` says who may sign in besides the admins and people they add.
- */
-export const PRESETS: Record<PresetName, { title: string; summary: string; defaults: Record<string, unknown>; open: string }> = {
-  website: {
-    title: "A website",
-    summary:
-      "Your homepage is public. Documents you share with anyone with the link open for everyone. Only you (and people you add) sign in.",
-    defaults: { public_sharing: true, delete_docs_after_hours: null },
-    open: "Only the admins, and the people an admin adds on /admin/users.",
-  },
-  company: {
-    title: "Sharing docs in my company",
-    summary: "Documents stay inside: nothing opens for people who are not signed in. People of your company sign in by themselves.",
-    defaults: { public_sharing: false, delete_docs_after_hours: null },
-    open: "The admins, people an admin adds, and everyone in the company's domain or GitHub organization (an access rule).",
-  },
-};
-
-export const QUESTIONS: { key: keyof Answers; ask: string; help: string; aws?: true }[] = [
-  {
-    key: "provider",
-    ask: "Host",
-    help: "cloudflare (your Cloudflare account, Workers Paid plan) or aws (your AWS account: one machine, its bucket, CloudFront in front).",
-  },
-  {
-    key: "host",
-    ask: "Address",
-    help: "A name on a domain of your account, e.g. erga.example.com (Cloudflare: a zone on the account; AWS: a Route 53 hosted zone). On AWS, a short name (erga) instead: the app gets CloudFront's own address, and no domain is needed. Nothing may use it yet.",
-  },
-  {
-    key: "staging",
-    ask: "Staging instance (address, or no)",
-    help: "A second server for trying updates first, on a copy of this one's data, for admins only, e.g. staging.example.com. Default: no.",
-  },
-  {
-    key: "signIn",
-    ask: "Sign-in mode",
-    help: "oauth (Erga signs people in itself, with GitHub and, if you choose, Google) or proxy (a proxy in front of the server signs each person in with your company's sign-in, and Erga takes that as its own: no GitHub, no Google). The proxy is an Application Load Balancer on AWS (oidc, oidcClient), and Cloudflare Access on Cloudflare (accessTeam, accessAud). Default: oauth.",
-  },
-  { key: "providers", ask: "Sign-in providers (oauth)", help: "github, or github,google. The first admin signs in with GitHub." },
-  { key: "preset", ask: "Server preset", help: `website (${PRESETS.website.summary}) or company (${PRESETS.company.summary})` },
-  {
-    key: "admin",
-    ask: "Admin (your GitHub login)",
-    help: "You become the first admin. With signIn=proxy: your email address, as your company's sign-in gives it.",
-  },
-  {
-    key: "company",
-    ask: "Company domain or GitHub org (company preset only)",
-    help: "e.g. example.com or my-org. Empty: only people an admin adds.",
-  },
-  {
-    key: "pages",
-    ask: "Documents' pages",
-    help: "shared (one address for all of them: workers.dev, or on AWS CloudFront's; no domain needed) or a second domain on your account (never the app's): each document gets an origin of its own. Shared is safe for one author only: there, a script in one document can reach what another document's page keeps in the browser. On AWS: shared with a short name, a domain with a domain. With signIn=proxy on AWS, any name on a zone of the account that is not the app's, also one under it (pages.erga.example.com).",
-  },
-  {
-    key: "stagingPages",
-    ask: "The staging instance's documents' pages",
-    help: "shared, or a domain on your account that is not the pages domain above, and not the app's. Default: shared.",
-  },
-  {
-    key: "feedback",
-    ask: "Feedback's repository (owner/name, or no)",
-    help: "Send feedback opens a GitHub issue there, without the sender's name. Default: no. An admin can change it later.",
-  },
-  {
-    key: "awsProfile",
-    ask: "AWS profile (aws only)",
-    help: "The AWS CLI's profile for the account (aws configure list-profiles). Empty: the CLI's default.",
-    aws: true,
-  },
-  { key: "awsRegion", ask: "AWS region (aws only)", help: "Where the machine and its bucket are, e.g. us-east-1 or eu-west-1.", aws: true },
-  {
-    key: "egress",
-    ask: "The machine's way out (aws only)",
-    help: "nat-instance (a small NAT machine, about $7 a month), nat-gateway (AWS's managed NAT, about $33 a month), or <vpc id>/<private subnet id> of a VPC of yours that has its own way out and an internet gateway. The machine never has a public address.",
-    aws: true,
-  },
-  {
-    key: "oidc",
-    ask: "Your company's sign-in (signIn=proxy on aws: its OIDC issuer's URL)",
-    help: "A public Application Load Balancer (not CloudFront) signs each person in with your company's sign-in before Erga. It needs a domain for the app (the sign-in's callback is https://<host>/oauth2/idpresponse), and the client's secret in Secrets Manager. Default: no.",
-    aws: true,
-  },
-  {
-    key: "oidcClient",
-    ask: "Erga's client ID at that sign-in (signIn=proxy on aws)",
-    help: "The sign-in's admin gives it, with the secret.",
-    aws: true,
-  },
-  {
-    key: "accessTeam",
-    ask: "Your Zero Trust team's name (signIn=proxy on cloudflare)",
-    help: "The name before .cloudflareaccess.com (Zero Trust > Settings > Custom Pages shows the team domain). Cloudflare Access signs each person in before Erga.",
-  },
-  {
-    key: "accessAud",
-    ask: "The Access application's audience tag (signIn=proxy on cloudflare)",
-    help:
-      "Make the application first: Zero Trust > Access > Applications > Add an application > Self-hosted, for the app's address (and staging's), with a policy for who may pass. Its Application Audience (AUD) Tag is on its Overview. Then add a second application for the paths that need no sign-in, with a Bypass policy for Everyone: " +
-      PROXY_FREE_PATHS.join(", ") +
-      ".",
-  },
-];
-
-export const defaultAnswers = (admin = ""): Answers => ({
-  provider: "cloudflare",
-  host: "",
-  staging: "",
-  signIn: "oauth",
-  providers: ["github"],
-  preset: "website",
-  admin,
-  company: "",
-  pages: "shared",
-  stagingPages: "shared",
-  feedback: "",
-  awsProfile: "",
-  awsRegion: "us-east-1",
+export const noAnswers = (host: string): Answers => ({
+  host,
+  stagingOf: "",
+  where: "",
+  account: "",
+  profile: "",
+  region: "",
   egress: "nat-instance",
-  oidc: "",
-  oidcClient: "",
-  accessTeam: "",
-  accessAud: "",
+  signIn: "",
+  company: "",
+  team: "",
+  aud: "",
+  issuer: "",
+  client: "",
+  pages: "",
+  confirm: "",
 });
 
-const HOST = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
-/** An AWS instance's short name, when it has no domain: CloudFront gives its addresses. */
-const NAME = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
-/** Whether the setup's host is a short name (no domain) rather than an address. */
-export const isName = (host: string) => NAME.test(host);
-const LOGIN = /^[a-z0-9](?:[a-z0-9-]{0,38})$/i;
-const EMAIL = /^[^\s@']+@[^\s@']+\.[a-z]{2,63}$/i;
+export const sso = (a: Pick<Answers, "signIn">) => a.signIn == "sso";
 
-/** Reads one answer as the person typed it: the value, or why it isn't one. */
-export function parseAnswer(key: keyof Answers, raw: string): { value: Answers[keyof Answers] } | { problem: string } {
+/**
+ * Where documents' pages run. Cloudflare: one shared workers.dev address (safe for one author; a domain of their own
+ * is a later change). AWS: a domain. With single sign-on it is pages.<host>: the proxy's certificate is the stack's
+ * own, and the person's sign-on guards both. Without it, the pages need a whole zone that isn't the app's (a page's
+ * script must not share the app's site), so the person names one ("": not answered).
+ */
+export const pagesOf = (a: Answers): string => a.pages || (a.where != "aws" ? "shared" : sso(a) ? `pages.${a.host}` : "");
+
+/** The plan that a yes is said to: every answer that decides what is made. */
+export const planKey = (a: Answers): string =>
+  [
+    a.host,
+    a.stagingOf,
+    a.where,
+    a.account,
+    a.profile,
+    a.region,
+    a.egress,
+    a.signIn,
+    a.company,
+    a.team,
+    a.issuer,
+    a.client,
+    pagesOf(a),
+  ].join("|");
+
+const HOST = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+/** Reads one answer as the person gave it: its value, or why it isn't one. */
+export function parseAnswer(key: keyof Answers, raw: string): { value: string } | { problem: string } {
   const v = raw.trim();
-  const off = /^(no|none|off|false|-)?$/i.test(v);
+  const low = v.toLowerCase();
+  const is = (ok: boolean, value: string, problem: string) => (ok ? { value } : { problem });
   switch (key) {
-    case "provider":
-      return v == "cloudflare" || v == "aws" ? { value: v } : { problem: "The host is cloudflare or aws." };
     case "host":
-      return HOST.test(v.toLowerCase()) || NAME.test(v.toLowerCase())
-        ? { value: v.toLowerCase() }
-        : { problem: `"${v}" isn't a hostname like erga.example.com, or a short name like erga (AWS).` };
-    case "awsProfile":
-      return off || /^[\w.+@-]{1,64}$/.test(v) ? { value: off ? "" : v } : { problem: `"${v}" isn't an AWS CLI profile name.` };
-    case "awsRegion":
-      return /^[a-z]{2}(-[a-z]+)+-\d$/.test(v) ? { value: v } : { problem: `"${v}" isn't an AWS region like us-east-1.` };
+    case "stagingOf":
+      return is(HOST.test(low), low, `"${v}" isn't an address like erga.example.com.`);
+    case "where":
+      return is(low == "cloudflare" || low == "aws", low, "where is cloudflare or aws.");
+    case "account":
+      return is(/^[0-9a-f]{32}$/.test(low), low, "account is the Cloudflare account's id: 32 hex digits.");
+    case "profile":
+      return is(/^[\w.+@-]{1,64}$/.test(v), v, `"${v}" isn't an AWS CLI profile's name.`);
+    case "region":
+      return is(/^[a-z]{2}(-[a-z]+)+-\d$/.test(low), low, `"${v}" isn't an AWS region like us-east-1.`);
     case "egress":
-      return v == "nat-instance" || v == "nat-gateway" || /^vpc-[0-9a-f]+\/subnet-[0-9a-f]+$/.test(v)
-        ? { value: v }
-        : { problem: "The way out is nat-instance, nat-gateway, or <vpc id>/<subnet id> (vpc-.../subnet-...)." };
+      return is(
+        low == "nat-instance" || low == "nat-gateway" || /^vpc-[0-9a-f]+\/subnet-[0-9a-f]+$/.test(low),
+        low,
+        "egress is nat-instance, nat-gateway, or <vpc id>/<private subnet id>."
+      );
     case "signIn":
-      return off || v == "oauth"
-        ? { value: "oauth" }
-        : v == "proxy"
-          ? { value: "proxy" }
-          : { problem: "The sign-in mode is oauth or proxy." };
-    case "staging":
-      if (off) return { value: "" };
-      return HOST.test(v.toLowerCase()) ? { value: v.toLowerCase() } : { problem: `"${v}" isn't a hostname, or "no".` };
-    case "providers": {
-      const list = [
-        ...new Set(
-          v
-            .toLowerCase()
-            .split(/[\s,+]+/)
-            .filter(Boolean)
-        ),
-      ];
-      if (list.some((p) => p != "github" && p != "google")) return { problem: "Sign-in is github, or github,google." };
-      return { value: ["github", ...(list.includes("google") ? ["google" as const] : [])] as Answers["providers"] };
-    }
-    case "preset":
-      return v == "website" || v == "company" ? { value: v } : { problem: "The preset is website or company." };
-    case "admin":
-      return LOGIN.test(v) || EMAIL.test(v)
-        ? { value: v.toLowerCase() }
-        : { problem: `"${v}" isn't a GitHub login (or, with signIn=proxy, an email address).` };
-    case "oidc":
-      return off
-        ? { value: "" }
-        : /^https:\/\/[a-z0-9.-]+(:\d+)?(\/[\w.~/-]*)?$/i.test(v)
-          ? { value: v.replace(/\/+$/, "") }
-          : { problem: `"${v}" isn't an issuer's URL (https://...), or "no".` };
-    case "oidcClient":
-      return off || /^[\w.~-]{1,128}$/.test(v) ? { value: off ? "" : v } : { problem: `"${v}" isn't a client ID.` };
-    case "accessTeam": {
-      const team = v.toLowerCase().replace(/\.cloudflareaccess\.com$/, "");
-      return off || /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(team)
-        ? { value: off ? "" : team }
-        : { problem: `"${v}" isn't a Zero Trust team's name (the name before .cloudflareaccess.com).` };
-    }
-    case "accessAud":
-      return off || /^[0-9a-f]{32,128}$/i.test(v)
-        ? { value: off ? "" : v.toLowerCase() }
-        : { problem: `"${v}" isn't an Access application's audience (AUD) tag.` };
+      return is(low == "invite" || low == "company" || low == "sso", low, "signIn is invite, company or sso.");
     case "company":
-      return off
-        ? { value: "" }
-        : /^[a-z0-9.-]{1,100}$/i.test(v)
-          ? { value: v.toLowerCase() }
-          : { problem: `"${v}" isn't a domain or an organization.` };
-    case "pages":
-    case "stagingPages":
-      return off || v == "shared"
-        ? { value: "shared" }
-        : HOST.test(v.toLowerCase())
-          ? { value: v.toLowerCase() }
-          : { problem: "Pages are shared, or a domain." };
-    case "feedback": {
-      const repo = v.replace(/^https:\/\/github\.com\//, "").replace(/\/+$/, "");
-      return off
-        ? { value: "" }
-        : /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(repo)
-          ? { value: repo }
-          : { problem: `"${v}" isn't a GitHub repository: owner/name, or no.` };
+      return is(
+        /^[a-z0-9][a-z0-9.-]{0,99}$/.test(low),
+        low,
+        `"${v}" isn't a GitHub organization (acme-inc) or an email domain (acme.com).`
+      );
+    case "team": {
+      const team = low.replace(/\.cloudflareaccess\.com$/, "");
+      return is(
+        /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(team),
+        team,
+        `"${v}" isn't a Zero Trust team's name: the part before .cloudflareaccess.com.`
+      );
     }
+    case "aud":
+      return is(/^[0-9a-f]{32,128}$/.test(low), low, "The Audience tag is 64 letters and digits.");
+    case "issuer":
+      return is(
+        /^https:\/\/[a-z0-9.-]+(:\d+)?(\/[\w.~/-]*)?$/i.test(v),
+        v.replace(/\/+$/, ""),
+        `"${v}" isn't an issuer's URL (https://...).`
+      );
+    case "client":
+      return is(/^[\w.~-]{1,128}$/.test(v), v, `"${v}" isn't a client ID.`);
+    case "pages":
+      return is(low == "shared" || HOST.test(low), low, "pages is shared, or a domain.");
+    case "confirm":
+      return is(low == "yes", low, "confirm is yes.");
   }
 }
 
-/** What's still wrong with the answers as a whole (each one on its own is parsed already); null if nothing. */
-export function answersProblem(a: Answers, zones: string[]): string | null {
-  if (!a.host) return "Answer the questions first (bun erga setup <host> ask).";
-  const proxy = proxySignIn(a);
-  if (!a.admin) return `Name the first admin: your ${proxy ? "email address" : "GitHub login"}.`;
-  if (proxy != EMAIL.test(a.admin))
-    return proxy
-      ? "With signIn=proxy, the first admin is an email address: yours, as your company's sign-in gives it (admin=you@example.com)."
-      : "The first admin is a GitHub login.";
-  // Each host has its own proxy, with its own answers: the other host's, or the oauth mode's, say what to change.
-  const awsProxy = proxy && a.provider == "aws";
-  if (a.oidc && !awsProxy) return "oidc is for signIn=proxy on AWS: answer signIn=proxy, or oidc=no.";
-  if (a.accessTeam && !(proxy && a.provider == "cloudflare"))
-    return "accessTeam is for signIn=proxy on Cloudflare (Cloudflare Access signs people in): answer signIn=proxy, or accessTeam=no.";
-  if (proxy && a.provider == "cloudflare" && !(a.accessTeam && a.accessAud))
-    return "With signIn=proxy on Cloudflare, give the Zero Trust team's name and the Access application's audience tag (accessTeam=... accessAud=...).";
-  if (a.provider == "aws") {
-    if (a.staging) return "Staging on AWS isn't there yet: answer staging=no.";
-    if (awsProxy) {
-      if (!a.oidc) return "With signIn=proxy on AWS, give your company's sign-in: its OIDC issuer's URL (oidc=https://...).";
-      if (!a.oidcClient) return "Give Erga's client ID at the sign-in (oidcClient=...): its admin has it.";
-      if (isName(a.host)) return "A proxy in front needs a domain for the app: the sign-in sends each person back to it.";
-      if (a.egress.includes("/")) return "A proxy in front needs the stack's own network: answer egress=nat-instance or nat-gateway.";
-    }
-    if (isName(a.host) != (a.pages == "shared"))
-      return isName(a.host)
-        ? "With a short name, the pages share CloudFront's own address: answer pages=shared, or give the app a domain."
-        : "With a domain for the app, the pages need a domain of their own too (pages=<domain>).";
-    if (isName(a.host)) return null;
-  } else if (isName(a.host))
-    return `${a.host} is a short name: on Cloudflare the app needs an address on a zone of the account (erga.example.com).`;
-  const account = a.provider == "aws" ? "Route 53 hosted zones of this AWS account" : "domains of this Cloudflare account";
-  const zoneOf = (h: string) => zones.filter((z) => h == z || h.endsWith(`.${z}`)).sort((x, y) => y.length - x.length)[0] ?? null;
-  for (const h of [a.host, a.staging].filter(Boolean))
-    if (!zoneOf(h))
-      return `${h} isn't on one of the ${account} (${zones.join(", ") || "it has none"}). Add the domain first, or pick a name on one of these.`;
-  if (a.staging && a.staging == a.host) return "Staging needs an address of its own.";
-  // A proxy's certificate and rules are the stack's own, so the pages take any name on a zone, also one under
-  // the app's (the person's decision: under one registrable domain, a page's script can set a cookie for that domain).
-  if (a.pages != "shared" && awsProxy) {
-    if (!zoneOf(a.pages)) return `${a.pages} isn't on one of the ${account} (${zones.join(", ") || "it has none"}).`;
-    if (a.pages == a.host || a.host.endsWith(`.${a.pages}`))
-      return "Documents' pages need a name of their own: not the app's, and not one above it.";
-  } else if (a.pages != "shared") {
-    if (!zones.includes(a.pages)) return `${a.pages} isn't one of the ${account}: pages need a whole zone of their own.`;
-    if ([a.host, a.staging].some((h) => h && zoneOf(h) == a.pages))
-      return "Documents' pages need a different domain from the app's: a page's scripts must not share the app's site.";
-  }
-  if (a.staging && a.stagingPages != "shared") {
-    if (!zones.includes(a.stagingPages)) return `${a.stagingPages} isn't one of the ${account}: pages need a whole zone of their own.`;
-    if (a.stagingPages == a.pages)
-      return "The staging instance's pages need a domain of their own: not its primary's pages domain (stagingPages=shared, or another domain).";
-    if ([a.host, a.staging].some((h) => zoneOf(h) == a.stagingPages))
-      return "Documents' pages need a different domain from the app's: a page's scripts must not share the app's site.";
-  }
-  return null;
+/** The zone (of `zones`) that holds `host`: the longest one, or null. */
+export const zoneOf = (host: string, zones: string[]): string | null =>
+  zones.filter((z) => host == z || host.endsWith(`.${z}`)).sort((x, y) => y.length - x.length)[0] ?? null;
+
+/** Why the pages' domain can't be `pages`, on AWS, or null. `zones`: the account's Route 53 zones. */
+export function pagesProblem(a: Answers, zones: string[]): string | null {
+  const pages = pagesOf(a);
+  if (a.where != "aws" || !pages) return null;
+  if (pages == "shared") return "On AWS the documents' pages need a domain.";
+  if (sso(a))
+    return !zoneOf(pages, zones)
+      ? `${pages} isn't on a Route 53 zone of this account.`
+      : pages == a.host || a.host.endsWith(`.${pages}`)
+        ? "The documents' pages need a name of their own: not the app's, and not one above it."
+        : null;
+  if (!zones.includes(pages)) return `${pages} isn't a Route 53 zone of this account: the pages need a whole zone of their own.`;
+  return zoneOf(a.host, zones) == pages
+    ? "The documents' pages need another domain than the app's: a page's script must not share the app's site."
+    : null;
+}
+
+/** The settings' defaults that the answer sets (SERVER_DEFAULTS): an admin can change each on /admin/settings. */
+export const defaultsOf = (a: Pick<Answers, "signIn">) => ({ public_sharing: a.signIn == "invite", delete_docs_after_hours: null });
+
+/**
+ * Single sign-on: the server's setting for the proxy in front (PROXY_SIGN_IN: server/identity/proxy.ts); null without
+ * it. `signer`: on AWS, the proxy's ARN (the stack's output). A proxy whose values aren't all known yet gives "{}",
+ * which the server reads as no proxy: then nobody signs in, and no other sign-in stands in.
+ */
+export function proxySetting(a: Answers, signer?: string): string | null {
+  if (!sso(a)) return null;
+  if (a.where == "aws") return signer ? JSON.stringify({ kind: "aws-alb", signer, issuer: a.issuer, client: a.client }) : "{}";
+  return JSON.stringify({ kind: "cloudflare-access", team: a.team, aud: a.aud });
+}
+
+/**
+ * Single sign-on: what a browser that isn't signed in must be sent to by the proxy in front, for the check after a
+ * deploy (facts.ts). Cloudflare Access sends to the team's address; AWS's proxy names Erga's client and its own callback.
+ */
+export const proxyExpects = (a: Answers): { to?: string; clientId?: string; callback?: string } =>
+  a.where == "aws" ? { clientId: a.client, callback: `https://${a.host}/oauth2/idpresponse` } : { to: `${a.team}.cloudflareaccess.com` };
+
+/** The instance's plain settings: its sign-in (the GitHub App's id, or the proxy), and the settings' defaults. */
+export function varsOf(a: Answers, github: string | undefined, signer?: string): Record<string, string> {
+  const proxy = proxySetting(a, signer);
+  return {
+    GITHUB_CLIENT_ID: proxy == null ? (github ?? "") : "",
+    ...(proxy == null ? {} : { PROXY_SIGN_IN: proxy }),
+    SERVER_DEFAULTS: JSON.stringify(defaultsOf(a)),
+  };
 }
 
 /** A row of a new server's database: its table, its values by column, what happens if it is there already. */
@@ -365,63 +200,29 @@ export interface FirstRow {
   row: Record<string, string | number>;
   /** After ON CONFLICT. */
   onConflict: string;
-  /** Only into a database with no admin yet. */
-  noAdmin: boolean;
 }
 
 /**
- * The rows a new server's database gets with its first deploy, the same on every host (each host writes them in its
- * own way: first.ts, deploy/aws/setup.ts): the first admin, and feedback's repository. In the oauth mode the first
- * admin is a user, by their GitHub login. In the proxy mode they have no username before their first sign-in, so they
- * are a person an admin added (the people table: server/directory/people.ts), by their email; and with the company
- * preset, everybody who passes the proxy may make an account and write.
+ * The rows a new server's database gets with its first deploy, only while it has no admin (each host writes them in its
+ * own way: first.ts, deploy/aws/setup.ts): the access rule that the answer names. A company's people may sign in and
+ * write: a GitHub organization's members, or a Google Workspace's (once Google sign-in is on). With single sign-on,
+ * everybody who passes the proxy may. No admin: the person who opens the setup page's link becomes it
+ * (server/identity/claim.ts).
  */
 export function firstRows(a: Answers, now = Date.now()): FirstRow[] {
-  const rows: FirstRow[] = [];
-  if (proxySignIn(a)) {
-    rows.push({
-      table: "people",
-      row: { provider: "proxy", handle: a.admin, role: "admin", created: now },
-      onConflict: "(provider, handle) DO UPDATE SET role = 'admin'",
-      noAdmin: true,
-    });
-    if (a.preset == "company")
-      rows.push({
-        table: "access_rules",
-        row: { kind: "everybody", value: "", access: "write", created: now },
-        onConflict: "(kind, value) DO UPDATE SET access = 'write'",
-        noAdmin: true,
-      });
-  } else
-    rows.push({
-      table: "users",
-      row: { login: a.admin, name: a.admin, role: "admin", created: now },
-      onConflict: "(login) DO UPDATE SET role = 'admin'",
-      noAdmin: true,
-    });
-  if (a.feedback)
-    rows.push({
-      table: "server_config",
-      row: { key: "feedback_repository", value: JSON.stringify(a.feedback), updated: now, updated_by: a.admin },
-      onConflict: "(key) DO NOTHING",
-      noAdmin: false,
-    });
-  return rows;
+  const rule = (kind: string, value: string): FirstRow => ({
+    table: "access_rules",
+    row: { kind, value, access: "write", created: now },
+    onConflict: "(kind, value) DO UPDATE SET access = 'write'",
+  });
+  if (sso(a)) return [rule("everybody", "")];
+  if (a.signIn == "company" && a.company) return [rule(a.company.includes(".") ? "workspace" : "github_org", a.company)];
+  return [];
 }
 
 /**
- * The proxy mode: what a browser that isn't signed in must be sent to by the proxy in front of `host`, for the check
- * after a deploy (facts.ts, proxySignInCheck). Each host's proxy has its own: Cloudflare Access sends to the team's
- * address; AWS's proxy names Erga's client and its own callback.
- */
-export const proxyExpects = (a: Answers, host: string): { to?: string; clientId?: string; callback?: string } =>
-  a.provider == "aws"
-    ? { clientId: a.oidcClient, callback: `https://${host}/oauth2/idpresponse` }
-    : { to: `${a.accessTeam}.cloudflareaccess.com` };
-
-/**
- * An instance's names. With an entry (.erga/config.json), the entry's: an instance is what its entry says. Without one,
- * a new instance's, from its address: erga.example.com → Worker and database erga-example-com. The bucket and the
+ * An instance's names. With an entry (.erga/config.json), the entry's. Without one, a new instance's, from its
+ * address: erga.example.com gives the Worker and the database erga-example-com (on AWS, the stack). The bucket and the
  * shared pages Worker have the Worker's name (deploy/pipeline/account.ts, bucketName).
  */
 export function namesOf(
@@ -438,362 +239,50 @@ export function namesOf(
   return { worker, database: entry?.database ?? worker, bucket: `${worker}-files`, pagesWorker: `${worker}-pages` };
 }
 
-/** The setup's servers: the instance itself (the primary), and its staging instance if it has one. */
-export type TargetName = "primary" | "staging";
+/** The stack's name of the instance on AWS. */
+export const stackOf = (a: Answers) => namesOf(a.host).worker;
+
 /**
  * The commit a new instance gets: origin's main, as this clone knows it (git fetch to update it). A primary's deploy moves
  * main to its commit (deploy/cli/deploy.ts), so a setup from a feature branch never puts that branch on main.
  */
 export const SETUP_COMMIT = "origin/main";
-export const hostOf = (a: Answers, t: TargetName) => (t == "primary" ? a.host : a.staging);
-export const targetsOf = (a: Answers): TargetName[] => (a.staging ? ["primary", "staging"] : ["primary"]);
-export const callbackOf = (host: string, provider: "github" | "google") => `https://${host}/auth/${provider}/callback`;
+export const callbackOf = (host: string) => `https://${host}/auth/github/callback`;
 
 /**
- * The bindings of a target that aren't secrets: its sign-in (the oauth mode's apps' ids, or the proxy mode's proxy),
- * the preset. No admin: the database holds them. `signer`: on AWS in the proxy mode, the proxy's ARN.
- */
-export function varsOf(a: Answers, ids: { github?: string; google?: string }, signer?: string): Record<string, string> {
-  const proxy = proxySetting(a, signer);
-  return {
-    GITHUB_CLIENT_ID: proxy == null ? (ids.github ?? "") : "",
-    ...(proxy == null && a.providers.includes("google") && ids.google ? { GOOGLE_CLIENT_ID: ids.google } : {}),
-    ...(proxy == null ? {} : { PROXY_SIGN_IN: proxy }),
-    SERVER_DEFAULTS: JSON.stringify(PRESETS[a.preset].defaults),
-  };
-}
-
-/**
- * The pipeline's target for a new instance, from the answers: only to make its entry (setupEntry). Every deploy, the
- * first one too, makes its target from the entry (deploy/cli/deploy.ts, entryTarget).
- */
-function ownTarget(
-  a: Answers,
-  t: TargetName,
-  o: {
-    account: string;
-    zones: string[];
-    subdomain: string | null;
-    ids: { github?: string; google?: string };
-  }
-): Target {
-  const host = hostOf(a, t),
-    n = namesOf(host);
-  const zoneName = o.zones.filter((z) => host == z || host.endsWith(`.${z}`)).sort((x, y) => y.length - x.length)[0];
-  const pages = t == "staging" ? a.stagingPages : a.pages;
-  return {
-    label: host,
-    accountId: o.account,
-    workerName: n.worker,
-    databaseName: n.database,
-    ...(pages == "shared" ? { subdomain: o.subdomain ?? n.worker.slice(0, 40), createSubdomain: !o.subdomain } : {}),
-    app: { kind: "domain", zoneName, hostname: host },
-    pages: pages == "shared" ? { kind: "shared" } : { kind: "zone", zoneName: pages },
-    vars: varsOf(a, o.ids),
-    secrets: {},
-  };
-}
-
-/**
- * The entry of `.erga/config.json` for a new instance, from the answers alone: its names, its plain settings,
- * and no token yet (the token comes at the end, when the admin approves it). A staging instance names its primary.
+ * The entry of `.erga/config.json` for a new instance on Cloudflare, from the answers alone: its names, its plain
+ * settings, and no token yet (the token comes at the end, when the admin approves it). A staging instance names its
+ * primary, and takes the settings' defaults from it (`base`: the primary's vars).
  */
 export function setupEntry(
   a: Answers,
-  t: TargetName,
-  o: { account: string; zones: string[]; subdomain: string | null; ids: { github?: string; google?: string } }
+  o: { zones: string[]; subdomain: string | null; github?: string; base?: Record<string, string> }
 ): CloudflareEntry {
-  return {
-    host: hostOf(a, t),
-    ...(t == "staging" ? { stagingOf: a.host } : {}),
-    ...deployFacts(ownTarget(a, t, o)),
-    token: "",
+  const n = namesOf(a.host);
+  const pages = pagesOf(a);
+  const target: Target = {
+    label: a.host,
+    accountId: a.account,
+    workerName: n.worker,
+    databaseName: n.database,
+    ...(pages == "shared" ? { subdomain: o.subdomain ?? n.worker.slice(0, 40), createSubdomain: !o.subdomain } : {}),
+    app: { kind: "domain", zoneName: zoneOf(a.host, o.zones)!, hostname: a.host },
+    pages: pages == "shared" ? { kind: "shared" } : { kind: "zone", zoneName: pages },
+    vars: { ...varsOf(a, o.github), ...(o.base?.SERVER_DEFAULTS ? { SERVER_DEFAULTS: o.base.SERVER_DEFAULTS } : {}) },
+    secrets: {},
   };
+  return { host: a.host, ...(a.stagingOf ? { stagingOf: a.stagingOf } : {}), ...deployFacts(target), token: "" };
 }
 
-// ------------------------------------------------------------------ the steps
-
-/** What the CLI observed (deploy/own/facts.ts): each field is a thing it looked at, or null if it couldn't look. */
-export interface Facts {
-  bun: string | null;
-  /** The checkout's origin, and whether node_modules matches the lockfile. */
-  origin: string | null;
-  installed: boolean;
-  /** The commit setup deploys: origin's main, as this clone knows it (SETUP_COMMIT). */
-  head: string | null;
-  /** The cf CLI's login: its accounts, or why not. */
-  login: { ok: true; accounts: { id: string; name: string }[] } | { ok: false; why: string };
-  account: string | null;
-  zones: string[];
-  workersSubdomain: string | null;
-  /** AWS: the instance's stack as AWS has it (null: not looked at), and whether the templates on disk are the ones applied. */
-  stack: { name: string; status: string | null; outputs: Record<string, string>; template: "none" | "new" | "changed" | "applied" } | null;
-  /** The proxy mode on AWS: whether the sign-in's client secret is in Secrets Manager (null: not looked at). */
-  proxySecret: boolean | null;
-  /** By target: what's there now. */
-  targets: Partial<Record<TargetName, TargetFacts>>;
-  /** Which secrets the secrets file holds, as host:NAME (names only). */
-  secrets: string[];
-}
-
-export interface TargetFacts {
-  /** A Worker by the instance's name (its entry's, or a new instance's from its address): missing, Erga's (ours), or someone else's, with that name. */
-  worker: "missing" | "ours" | { other: string };
-  /** The address: free, ours (this Worker's custom domain), or taken (a DNS record or another Worker). */
-  address: "free" | "ours" | { taken: string };
-  /** What /api/deploys/version and /api/health answer. */
-  version: string | null;
-  health: "ok" | { bad: string } | null;
-  /** Where /auth/github sends a person: GitHub with our client id and callback, or why not. */
-  signIn: "ok" | { bad: string } | null;
-  /** Its entry in .erga/config.json has an ops token: the admin approved it, and the instance is registered. */
-  registered: boolean;
-  /** The company preset's access rule is there. */
-  rule: boolean | null;
-  /** What Erga's Worker holds now: its secrets' names, and its plain values (the sign-in apps' ids). Null: no Worker of ours. */
-  held: { secrets: string[]; vars: Record<string, string> } | null;
-}
-
-export type Who = "agent" | "person";
-export type State = "done" | "todo" | "blocked" | "fail";
-export interface Step {
-  id: string;
-  title: string;
-  who: Who;
-  state: State;
-  detail: string;
-  next: string;
-  target?: TargetName;
-}
-
-/** The stack's name of a setup's server on AWS: its name from its address (namesOf). */
-export const stackOf = (a: Answers, t: TargetName) => namesOf(hostOf(a, t)).worker;
-
-/** Where a setup's server answers: its address; on AWS with a short name, CloudFront's, known once the stack is made (else null). */
-export const addressOf = (a: Answers, t: TargetName, f: Pick<Facts, "stack">): string | null =>
-  a.provider == "aws" && isName(hostOf(a, t)) ? (f.stack?.outputs.AppHost ?? null) : hostOf(a, t);
-
-/** The address, or what stands in for it in a step's text until the stack gives it. */
-const shown = (a: Answers, t: TargetName, f: Pick<Facts, "stack">) => addressOf(a, t, f) ?? "<the app's CloudFront address>";
-
-/** The secret is in the secrets file under `host`, or on a server's Worker already: a deploy keeps a secret it doesn't send. */
-export const hasSecret = (f: Facts, host: string, key: string) =>
-  f.secrets.includes(`${host}:${key}`) || Object.values(f.targets).some((t) => t?.held?.secrets.includes(key));
-
-/**
- * Every step, in order, with its state from what was observed. The first step that isn't done is the next one; each
- * says who does it (the agent, or the person) and exactly how. `bun erga setup <host>` runs the agent's steps by itself
- * (the deploys, and the ops token) and stops at a step of the person's.
- */
-export function steps(a: Answers | null, f: Facts, o: { port?: number; ids: { github?: string; google?: string } }): Step[] {
-  const out: Step[] = [];
-  const cmd = `bun erga setup ${a?.host || "<host>"}`;
-  const page = o.port ? `http://127.0.0.1:${o.port}/#${a?.host ?? ""}/setup` : `the ops page's Setup tab (${cmd} start)`;
-  const add = (s: Omit<Step, "state"> & { ok: boolean | null; failed?: boolean }) => {
-    const before = out.length && out.some((x) => x.state != "done");
-    out.push({
-      id: s.id,
-      title: s.title,
-      who: s.who,
-      detail: s.detail,
-      next: s.next,
-      target: s.target,
-      state: s.ok ? "done" : s.failed ? "fail" : before ? "blocked" : "todo",
-    });
-  };
-  add({
-    id: "tools",
-    title: "Bun, and the packages",
-    who: "agent",
-    ok: !!f.bun && f.installed,
-    detail: f.bun ? `bun ${f.bun}${f.installed ? ", packages installed" : ""}` : "bun is missing",
-    next: !f.bun ? "Install Bun 1.4 or newer: curl -fsSL https://bun.sh/install | bash" : "Run: bun install --frozen-lockfile",
-  });
-  if (a?.provider == "aws")
-    add({
-      id: "login",
-      title: "Log in to AWS",
-      who: "person",
-      ok: f.login.ok && !!f.account,
-      detail: f.login.ok ? `account ${f.account} (${f.login.accounts[0]?.name}), region ${a.awsRegion}` : f.login.why,
-      next: `The person logs the AWS CLI in to their account (aws sso login${a.awsProfile ? ` --profile ${a.awsProfile}` : ""}, or keys with aws configure), and names the profile: ${cmd} set awsProfile=<profile> awsRegion=<region>.`,
-    });
-  else
-    add({
-      id: "login",
-      title: "Log in to Cloudflare",
-      who: "person",
-      ok: f.login.ok && !!f.account,
-      detail: f.login.ok ? `${f.login.accounts.length} account(s)${f.account ? `; using ${f.account}` : ""}` : f.login.why,
-      next: !f.login.ok
-        ? "The agent runs `bunx cf auth login`: a browser opens; the person signs in to Cloudflare and clicks Allow."
-        : `Several accounts: the agent asks which one, then runs: ${cmd} set account=<id>`,
-    });
-  const problem = a ? answersProblem(a, f.zones) : "Answer the questions first.";
-  add({
-    id: "decide",
-    title: "The person's decisions",
-    who: "person",
-    ok: !problem,
-    detail: a && !problem ? summary(a) : (problem ?? ""),
-    next: `The agent asks all of them in one message (${cmd} ask shows them, with defaults), then records the answers with ${cmd} set key=value ... The person can also answer on ${page}.`,
-  });
-  if (!a || problem) return out;
-  const proxy = proxySignIn(a);
-  const awsProxy = proxy && a.provider == "aws";
-  if (awsProxy)
-    add({
-      id: "secret",
-      title: "The sign-in's client secret (Secrets Manager)",
-      who: "person",
-      ok: f.proxySecret,
-      detail: f.proxySecret
-        ? `the secret ${oidcSecretName(stackOf(a, "primary"))} is there`
-        : f.proxySecret == null
-          ? "not looked at"
-          : "not there yet",
-      next: `The person who has the client secret stores it in Secrets Manager, in this account and region (${a.awsRegion}), as plain text, with the name ${oidcSecretName(stackOf(a, "primary"))} (console: Secrets Manager, Store a new secret, Other type of secret, Plaintext; only the secret, no JSON). Never in the chat, a file or a command. The stack reads it by its name.`,
-    });
-  if (a.provider == "aws") {
-    const st = f.stack;
-    const done = !!st?.status && /_COMPLETE$/.test(st.status) && !/ROLLBACK|DELETE/.test(st.status) && st.template == "applied";
-    add({
-      id: "stack",
-      title: "The AWS infrastructure (CloudFormation)",
-      who: "person",
-      ok: done,
-      detail: !st
-        ? "not looked at"
-        : `stack ${st.name}: ${st.status ?? "not made yet"}${st.template == "changed" ? "; the template on disk changed since it was applied" : st.template == "new" ? "; the template is written, not applied" : ""}`,
-      next: `The agent runs ${cmd} stack: it writes the templates into .erga/aws/ (the first time) and shows AWS's change set: what it will make. The person reads them, and may change the template (then the agent runs ${cmd} stack again). After the person's yes: ${cmd} stack --yes. CloudFront takes 5 to 15 minutes.`,
-    });
-  }
-  const ghSecret = hasSecret(f, a.host, "GITHUB_CLIENT_SECRET");
-  if (!proxy)
-    add({
-      id: "github",
-      title: "GitHub sign-in app",
-      who: "person",
-      ok: !!o.ids.github && ghSecret,
-      detail: o.ids.github ? `client id ${o.ids.github}${ghSecret ? ", secret stored" : ", no secret yet"}` : "none yet",
-      next: `On ${page}, the person clicks "Create the GitHub App", then "Create GitHub App" on GitHub. Erga stores its id and secret by itself. (Already have an app? ${cmd} signin github --from-file <file with GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET>, and add the callback ${targetsOf(
-        a
-      )
-        .map((t) => callbackOf(shown(a, t, f), "github"))
-        .join(" and ")} to it.)`,
-    });
-  if (!proxy && a.providers.includes("google"))
-    add({
-      id: "google",
-      title: "Google sign-in client",
-      who: "person",
-      ok: !!o.ids.google && hasSecret(f, a.host, "GOOGLE_CLIENT_SECRET"),
-      detail: o.ids.google ? `client id ${o.ids.google}` : "none yet",
-      next: `The person makes an OAuth client at https://console.cloud.google.com/auth/clients/create (type: Web application; authorized redirect URI${a.staging ? "s" : ""}: ${targetsOf(
-        a
-      )
-        .map((t) => callbackOf(shown(a, t, f), "google"))
-        .join(", ")}), then types its id and secret on ${page} (never in the chat).`,
-    });
-  for (const t of targetsOf(a)) {
-    const host = shown(a, t, f),
-      tf = f.targets[t];
-    const live = !!tf && tf.health == "ok" && !!tf.version && tf.version == f.head?.slice(0, 12);
-    const clash =
-      tf &&
-      (typeof tf.worker == "object"
-        ? `A Worker called ${tf.worker.other} is already there, and it isn't Erga.`
-        : typeof tf.address == "object"
-          ? `${host} is taken: ${tf.address.taken}.`
-          : null);
-    add({
-      id: `deploy-${t}`,
-      target: t,
-      title: `Deploy ${t == "staging" ? "the staging instance" : "the instance"} to https://${host}`,
-      who: "agent",
-      ok: live,
-      failed: !!clash,
-      detail:
-        clash ??
-        (!tf
-          ? "not looked at"
-          : tf.version
-            ? `release ${tf.version}${f.head && tf.version != f.head.slice(0, 12) ? ` (origin/main is at ${f.head.slice(0, 12)})` : ""}, health ${tf.health == "ok" ? "ok" : ((tf.health as { bad: string } | null)?.bad ?? "unknown")}`
-            : "not deployed yet"),
-      next: clash
-        ? `The person decides: free ${host} or pick another address (${cmd} set host=...).`
-        : `Run: ${cmd} (it deploys, then writes the first admin${a.feedback ? " and the feedback repository" : ""} into the database).`,
-    });
-    add({
-      id: `signin-${t}`,
-      target: t,
-      title: `Sign-in works on ${host}`,
-      who: "agent",
-      ok: tf?.signIn == "ok",
-      detail:
-        tf?.signIn == "ok"
-          ? proxy
-            ? "a browser goes to your company's sign-in first"
-            : "/auth/github goes to GitHub with your app"
-          : typeof tf?.signIn == "object" && tf.signIn
-            ? tf.signIn.bad
-            : "not checked",
-      next: awsProxy
-        ? `Fix what the detail names (the client ID, or the callback https://${host}/oauth2/idpresponse at the sign-in), then: ${cmd} stack`
-        : proxy
-          ? `Fix what the detail names (the Access application for https://${host}, or the team's name), then: ${cmd}`
-          : `Fix what the detail names (the app's callback URL, or its id), then: ${cmd}`,
-    });
-  }
-  for (const t of targetsOf(a)) {
-    const host = shown(a, t, f);
-    add({
-      id: `register-${t}`,
-      target: t,
-      title: `${a.admin} signs in to ${host}, and approves the ops token`,
-      who: "person",
-      ok: !!f.targets[t]?.registered,
-      detail: f.targets[t]?.registered ? "registered in .erga/config.json, with an ops token" : "no ops token yet",
-      next: awsProxy
-        ? `The agent runs ${cmd}: it prints a link. The person opens it, signs in with the company's sign-in as ${a.admin} (the first time, they choose a username: they are the admin), and approves.`
-        : `The agent runs ${cmd}: it prints a link. The person opens it, signs in with GitHub as ${a.admin}, and approves.`,
-    });
-  }
-  // In the proxy mode, the company is whoever passes the proxy: the first deploy writes that rule (firstRows).
-  if (!proxy && a.preset == "company" && a.company)
-    add({
-      id: "rule",
-      title: `People of ${a.company} may sign in`,
-      who: "agent",
-      ok: !!f.targets.primary?.rule,
-      detail: f.targets.primary?.rule ? "the access rule is there" : "no rule yet",
-      next: `Run: ${cmd} preset (it adds the access rule with your admin token).`,
-    });
-  return out;
-}
-
-export const summary = (a: Answers) =>
-  `${a.provider == "aws" ? `on AWS (${a.awsProfile || "the default profile"}, ${a.awsRegion}, way out: ${a.egress}): ${isName(a.host) ? `${a.host}, at CloudFront's own address` : `https://${a.host}`}` : `https://${a.host}`}${a.staging ? `, staging instance https://${a.staging}` : ", no staging instance"}; sign-in ${proxySignIn(a) ? `proxy (${a.provider == "aws" ? `an Application Load Balancer, ${a.oidc}` : `Cloudflare Access, ${a.accessTeam}`})` : `oauth (${a.providers.join(" + ")})`}; preset ${a.preset}${a.company ? ` (${a.company})` : ""}; admin ${a.admin}; pages ${a.pages == "shared" ? `on one shared ${a.provider == "aws" ? "CloudFront" : "workers.dev"} address` : `on *.${a.pages}`}${a.staging && a.stagingPages != "shared" ? ` (the staging instance's on *.${a.stagingPages})` : ""}; feedback ${a.feedback ? `to ${a.feedback}` : "kept on the server"}`;
-
-/** The step to do now: the first that isn't done (null: all done). */
-export const nextStep = (s: Step[]) => s.find((x) => x.state != "done") ?? null;
-
-/**
- * The GitHub App's manifest (GitHub makes the app from it in one click): sign-in only, no permissions, every target's
- * callback. Null while the address isn't known (AWS with a short name, before the stack).
- */
-export function githubManifest(a: Answers, f: Pick<Facts, "stack">, redirect: string): Record<string, unknown> | null {
-  const app = addressOf(a, "primary", f);
-  if (!app || targetsOf(a).some((t) => !addressOf(a, t, f))) return null;
-  return {
-    name: `Erga ${a.host}`.slice(0, 34),
-    url: `https://${app}`,
-    redirect_url: redirect,
-    callback_urls: targetsOf(a).map((t) => callbackOf(addressOf(a, t, f)!, "github")),
-    description: `Sign-in for the Erga at https://${app}`,
-    public: false,
-    request_oauth_on_install: false,
-    hook_attributes: { url: `https://${app}/`, active: false },
-    default_permissions: {},
-  };
-}
+/** The GitHub App's manifest (GitHub makes the app from it in one click): sign-in only, no permissions. */
+export const githubManifest = (a: Answers, redirect: string): Record<string, unknown> => ({
+  name: `Erga ${a.host}`.slice(0, 34),
+  url: `https://${a.host}`,
+  redirect_url: redirect,
+  callback_urls: [callbackOf(a.host)],
+  description: `Sign-in for the Erga at https://${a.host}`,
+  public: false,
+  request_oauth_on_install: false,
+  hook_attributes: { url: `https://${a.host}/`, active: false },
+  default_permissions: {},
+});

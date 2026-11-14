@@ -95,16 +95,18 @@ const failed = async (r: Response, what: string) =>
 
 /**
  * Asks `origin` for an ops token: `say` gets the link an admin opens to approve it, and the call waits until they
- * approve (the token and their login) or deny it, or the request lapses (an error).
+ * approve (the token and their login) or deny it, or the request lapses (an error). `asked`: takes the link in place
+ * of `say` (setup shows it on its page only).
  */
 export async function askOpsToken(
   origin: string,
-  o: { label?: string; say?: (line: string) => void; site?: Site } = {}
+  o: { label?: string; say?: (line: string) => void; asked?: (approveUrl: string) => void; site?: Site } = {}
 ): Promise<{ token: string; login: string }> {
   const r = await post(`${origin}/api/auth/request`, { label: o.label ?? "bun erga", scope: "ops" }, o.site);
   if (!r.ok) throw await failed(r, `${origin} gave no sign-in`);
   const asked = Schema.decodeUnknownSync(Asked)(await r.json());
-  (o.say ?? console.log)(`Open ${asked.approve_url} as an admin, and approve it.`);
+  if (o.asked) o.asked(asked.approve_url);
+  else (o.say ?? console.log)(`Open ${asked.approve_url} as an admin, and approve it.`);
   const until = Date.now() + asked.expires_in * 1000;
   while (Date.now() < until) {
     await new Promise((done) => setTimeout(done, asked.interval * 1000));

@@ -17,18 +17,29 @@ Try it at [erga.dev](https://erga.dev).
 
 ![The editor: the agent's panel on the left, a document on the right](docs/screenshot.png)
 
-## Run your own Erga
+## Setup
 
-Erga runs on your own Cloudflare account and domain. You need Bun, git, a
-GitHub account and a Cloudflare account on the Workers Paid plan.
+Run your own Erga on your own domain, in your Cloudflare account (the
+Workers Paid plan) or your AWS account (the domain in Route 53). You also
+need a GitHub account, Bun and git. Give your coding agent this prompt, in
+any folder:
 
-    git clone https://github.com/koomen/erga.git && cd erga && bun install
-    bun erga setup erga.example.com start   # the ops page's Setup tab shows each step, live
+> Set up my own Erga at erga.example.com. Follow https://github.com/koomen/erga#setup.
 
-Or give your coding agent this prompt in an empty folder: "Set up my own Erga
-from https://github.com/koomen/erga at <your address>. Clone it, run
-`bun install`, then follow `bun erga setup skill`." Every deploy runs on your
-machine, from your clone: `git pull`, then `bun erga deploy <commit> <host>`.
+The agent runs three commands:
+
+    git clone https://github.com/koomen/erga && cd erga
+    bun install
+    bun erga setup erga.example.com
+
+The last command does all the work. It opens a setup page in your browser,
+and tells the agent what to ask you: where Erga runs, who may sign in, and
+your yes to the plan. Your sign-ins, clicks and secrets go on the setup
+page, never to the agent. The agent runs the command again after each
+answer, as it says (`bun erga setup skill` is the agent's manual).
+
+Later deploys run on your machine, from your clone: `git pull`, then
+`bun erga deploy <commit> <host>`.
 
 ## Develop
 

@@ -1,136 +1,127 @@
-// `bun erga setup <host>`'s own work around `bun erga deploy`'s code (deploy/cli/deploy.ts, deployInstance):
+// The build of a new instance on Cloudflare (`bun erga setup <host>`, the flow's build and admin steps), around
+// `bun erga deploy`'s code (deploy/cli/deploy.ts, deployInstance):
 //
-// 1. The entries in .erga/config.json: a new instance's from the answers alone, before the first deploy (no token yet).
-//    A registered instance's entry stays as it is: an instance is what its entry says.
+// 1. The entry in .erga/config.json, from the answers alone, with no token yet. A registered instance's entry stays
+//    as it is: an instance is what its entry says.
 // 2. The first deploy, with the secrets that the Worker doesn't hold yet: its own SESSION_SECRET and FACTORY_KEY, the
-//    sign-in apps' secrets, and SNAPSHOT_TOKEN when the setup has a staging instance. Each is made one time and kept in
-//    .erga/secrets.json under its host; a Worker that holds a secret keeps it, and no later deploy sends one.
-// 3. After the health check: the first admin and feedback_repository (plan.ts, firstRows), written into the new
+//    GitHub App's secret, and for a staging instance its primary's SNAPSHOT_TOKEN (a primary with none gets one
+//    first). Each is made one time and kept in .erga/secrets.json under its host; a Worker that holds a secret keeps
+//    it, and no later deploy sends one.
+// 3. After the health check: the access rule that the answers name (plan.ts, firstRows), written into the new
 //    database with the Cloudflare D1 API. A database that has an admin already gets nothing.
-// 4. At the end, register's ops token: the admin signs in and approves it in the browser, and the entry gets it.
+// 4. The ops token (register): the server asks for one, the person approves it from the setup page's link (a new
+//    server: as they claim it, server/identity/claim.ts), and the entry gets it.
 
 import { randomBytes } from "node:crypto";
-import { type CloudflareEntry, type Config, entryOf, entryOrigin, readConfig, withEntry, writeConfig } from "../cli/config";
+import { type CloudflareEntry, type Config, entryOf, entryOrigin, isAws, readConfig, withEntry, writeConfig } from "../cli/config";
 import { type DeployOptions, deployInstance } from "../cli/deploy";
 import { askOpsToken, readOps } from "../cli/ops";
+import { replaceSnapshotSecret } from "../cli/snapshot-secret";
 import { d1 } from "../pipeline/account";
 import { Cloudflare, type Fetch } from "../pipeline/cloudflare-api";
-import { type Answers, firstRows, hostOf, SETUP_COMMIT, setupEntry, type TargetName, targetsOf } from "./plan";
+import type { Seen } from "./flow";
+import { type Answers, firstRows, SETUP_COMMIT, setupEntry } from "./plan";
 import { loadSecrets, saveSecrets } from "./store";
 
-export interface Setup {
+export interface First {
   /** .erga/ in the main clone. */
   dir: string;
   answers: Answers;
-  account: string;
-  zones: string[];
-  /** The account's workers.dev subdomain, or null: the first deploy makes one. */
-  subdomain: string | null;
-  ids: { github?: string; google?: string };
+  seen: Pick<Seen, "zones" | "subdomain" | "held">;
+  /** The GitHub App's client id. */
+  github?: string;
   /** The Cloudflare API and the servers, and the credential. */
   net: Fetch;
   token: string;
   print?: (line: string) => void;
   noTests?: boolean;
   suite?: DeployOptions["suite"];
-  /** The commit to deploy (default: SETUP_COMMIT, origin's main). */
+  /** --commit: the commit to deploy in place of SETUP_COMMIT (origin's main). Main never moves to it. */
   commit?: string;
-  /** --home: the homepage's own domain, for the primary (deployInstance's home). */
-  home?: string;
 }
 
 /**
- * Writes the setup's entries (the primary, and its staging instance) into .erga/config.json. A registered instance (its
- * entry has an ops token) keeps its entry as it is, whatever its names: its facts are the server's (GET /api/ops). An
- * instance that is not registered yet gets its entry from the answers; an entry with other names is not this setup's,
- * and stops it.
+ * Writes the setup's entry into .erga/config.json. A registered instance (its entry has an ops token) keeps its entry
+ * as it is. An entry with other names is not this setup's, and stops it. A staging instance's primary must be there.
  */
-export function writeEntries(o: Setup): Config {
-  let config = readConfig(o.dir);
-  for (const t of targetsOf(o.answers)) {
-    const want = setupEntry(o.answers, t, o);
-    const had = entryOf(config, want.host) as CloudflareEntry | null;
-    if (had && "aws" in had) throw new Error(`${want.host} has an entry already, on AWS.`);
-    if (had?.token) continue;
-    if (had && (had.account != want.account || had.worker != want.worker || had.database != want.database))
-      throw new Error(
-        `${want.host} has an entry already, with the Worker ${had.worker} and the database ${had.database}, and no ops token. Register it (bun erga register ${want.host}), or take its entry out of .erga/config.json.`
-      );
-    // The homepage's domain is the server's (a deploy with --home set it): the entry keeps its copy.
-    config = withEntry(config, { ...want, ...(had?.home ? { home: had.home } : {}), token: "" });
-  }
-  writeConfig(o.dir, config);
-  return config;
+export function writeEntry(o: First): Config {
+  const config = readConfig(o.dir);
+  const primary = o.answers.stagingOf ? entryOf(config, o.answers.stagingOf) : null;
+  if (o.answers.stagingOf && (!primary || isAws(primary)))
+    throw new Error(`${o.answers.stagingOf} has no entry on Cloudflare in .erga/config.json: a staging instance needs its primary there.`);
+  const want = setupEntry(o.answers, { ...o.seen, github: o.github, ...(primary ? { base: primary.vars } : {}) });
+  const had = entryOf(config, want.host) as CloudflareEntry | null;
+  if (had && "aws" in had) throw new Error(`${want.host} has an entry already, on AWS.`);
+  if (had?.token) return config;
+  if (had && (had.account != want.account || had.worker != want.worker || had.database != want.database))
+    throw new Error(
+      `${want.host} has an entry already, with the Worker ${had.worker} and the database ${had.database}, and no ops token. Register it (bun erga register ${want.host}), or take its entry out of .erga/config.json.`
+    );
+  const next = withEntry(config, want);
+  writeConfig(o.dir, next);
+  return next;
 }
 
 const random = () => randomBytes(32).toString("hex");
 
 /**
- * The secrets that `t`'s Worker gets with its first deploy: each one it doesn't hold yet (`held`). The server's own are
- * made one time, under its host; the sign-in apps' and SNAPSHOT_TOKEN (a primary and its staging instance share it) are
- * under the primary's host. New ones go into the file before the deploy, so a deploy that fails sends the same again.
+ * The secrets that the server gets with its first deploy: each one it doesn't hold yet (`held`). Its own are made one
+ * time, under its host. New ones go into the file before the deploy, so a deploy that fails sends the same again.
+ * `snapshot`: a staging instance's copy of its primary's SNAPSHOT_TOKEN.
  */
-export function secretsFor(dir: string, a: Answers, t: TargetName, held: string[]): Record<string, string> {
+export function secretsFor(dir: string, a: Answers, held: string[], snapshot?: string): Record<string, string> {
   const file = loadSecrets(dir);
-  const host = hostOf(a, t);
-  const own = (file[host] ??= {});
+  const own = (file[a.host] ??= {});
   // A new SESSION_SECRET would sign everyone out, and a new FACTORY_KEY would make the values encrypted with the old one
-  // unreadable: a Worker that has them keeps them.
+  // unreadable: a server that has them keeps them.
   for (const k of ["SESSION_SECRET", "FACTORY_KEY"]) if (!own[k] && !held.includes(k)) own[k] = random();
-  const primary = (file[a.host] ??= {});
-  if (a.staging && !primary.SNAPSHOT_TOKEN && !held.includes("SNAPSHOT_TOKEN")) primary.SNAPSHOT_TOKEN = random();
   saveSecrets(file, dir);
-  const want: Record<string, string | undefined> = {
+  const want = {
     SESSION_SECRET: own.SESSION_SECRET,
     FACTORY_KEY: own.FACTORY_KEY,
-    GITHUB_CLIENT_SECRET: primary.GITHUB_CLIENT_SECRET,
-    ...(a.providers.includes("google") ? { GOOGLE_CLIENT_SECRET: primary.GOOGLE_CLIENT_SECRET } : {}),
-    ...(a.staging ? { SNAPSHOT_TOKEN: primary.SNAPSHOT_TOKEN } : {}),
+    GITHUB_CLIENT_SECRET: own.GITHUB_CLIENT_SECRET,
+    SNAPSHOT_TOKEN: snapshot,
   };
   return Object.fromEntries(Object.entries(want).filter((e): e is [string, string] => !!e[1] && !held.includes(e[0])));
 }
 
-/** The first deploy of `t`, then its first rows. The result: the commit it deployed. */
-export async function firstDeploy(o: Setup, t: TargetName): Promise<string> {
+/** The first deploy, then the first rows. The result: the commit it deployed. */
+export async function firstDeploy(o: First): Promise<string> {
   const print = o.print ?? console.log;
-  const entry = entryOf(writeEntries(o), hostOf(o.answers, t)) as CloudflareEntry;
+  const a = o.answers;
+  // A staging instance reads its primary's documents with the secret they share: a primary with none here gets a new
+  // one first, before the new instance has an entry (it gets the secret with its deploy).
+  if (a.stagingOf && !loadSecrets(o.dir)[a.stagingOf]?.SNAPSHOT_TOKEN)
+    await replaceSnapshotSecret({ dir: o.dir, host: a.stagingOf, net: o.net, token: o.token, print });
+  const entry = entryOf(writeEntry(o), a.host) as CloudflareEntry;
   const cf = new Cloudflare(o.token, o.net);
-  const acc = `/accounts/${o.account}`;
-  const held = (
-    (await cf.call<{ name: string }[]>(
-      "GET",
-      `${acc}/workers/scripts/${entry.worker}/secrets`,
-      `read ${entry.worker}'s secrets (their names)`,
-      undefined,
-      {
-        allow404: true,
-      }
-    )) ?? []
-  ).map((s) => s.name);
+  const acc = `/accounts/${entry.account}`;
   const sha = await deployInstance({
     dir: o.dir,
-    host: entry.host,
+    host: a.host,
     commit: o.commit ?? SETUP_COMMIT,
-    command: `bun erga setup ${o.answers.host}`,
+    keepMain: !!o.commit,
+    command: `bun erga setup ${a.host}${o.commit ? ` --commit ${o.commit}` : ""}`,
     noTests: o.noTests,
     suite: o.suite,
     net: o.net,
     token: o.token,
     print,
-    secrets: secretsFor(o.dir, o.answers, t, held),
-    createSubdomain: !!entry.subdomain && !o.subdomain,
-    ...(o.home && t == "primary" ? { home: o.home } : {}),
+    secrets: secretsFor(o.dir, a, o.seen.held, a.stagingOf ? loadSecrets(o.dir)[a.stagingOf]?.SNAPSHOT_TOKEN : undefined),
+    createSubdomain: !!entry.subdomain && !o.seen.subdomain,
   });
-  await writeFirstRows(cf, acc, entry.worker, o.answers, print);
+  // A staging instance's database is a copy of its primary's: the rules are there.
+  if (!a.stagingOf) await writeFirstRows(cf, acc, entry.worker, a, print);
   return sha;
 }
 
 /**
- * The first admin and, if the person gave one, feedback_repository (plan.ts, firstRows): written only into
- * a database with no admin yet, the one `worker` binds as DB. A staging instance's is a copy of its primary's (it has the
- * admin already), and a run again, or an admin's later change, stays as it is.
+ * The access rule that the answers name (plan.ts, firstRows): written only into a database with no admin yet, the one
+ * `worker` binds as DB. A run again, or an admin's later change, stays as it is.
  */
 export async function writeFirstRows(cf: Cloudflare, acc: string, worker: string, a: Answers, print: (line: string) => void) {
+  const rows = firstRows(a);
+  if (!rows.length) return;
   const settings = await cf.call<{ bindings?: { type: string; name: string; database_id?: string }[] }>(
     "GET",
     `${acc}/workers/scripts/${worker}/settings`,
@@ -138,38 +129,38 @@ export async function writeFirstRows(cf: Cloudflare, acc: string, worker: string
   );
   const db = settings?.bindings?.find((b) => b.type == "d1" && b.name == "DB")?.database_id;
   if (!db) throw new Error(`The Worker ${worker} binds no database (DB) after the deploy.`);
-  const database = `${worker}'s database (${db})`;
-  const q = (sql: string, ...p: (string | number)[]) => d1(cf, acc, db, sql, p, "write the first admin");
+  const q = (sql: string, ...p: (string | number)[]) => d1(cf, acc, db, sql, p, "write the access rule");
   const [admin] = (await q("SELECT login FROM users WHERE role = 'admin' LIMIT 1")) ?? [];
-  if (admin) {
-    print(`The database ${database} has an admin already (${admin.login}): setup writes nothing into it.`);
-    return;
-  }
-  for (const { table, row, onConflict } of firstRows(a))
+  if (admin) return print(`The database of ${worker} has an admin already (${admin.login}): setup writes nothing into it.`);
+  for (const { table, row, onConflict } of rows)
     await q(
       `INSERT INTO ${table} (${Object.keys(row).join(", ")}) VALUES (${Object.keys(row)
         .map((_, i) => `?${i + 1}`)
         .join(", ")}) ON CONFLICT ${onConflict}`,
       ...Object.values(row)
     );
-  print(`${a.admin} is the first admin, in the database ${database}.`);
-  if (a.feedback) print(`Feedback opens issues in ${a.feedback} (the setting feedback_repository).`);
+  print(`The access rule is in the database of ${worker}: ${rows.map((r) => `${r.row.kind} ${r.row.value}`.trim()).join(", ")} may write.`);
 }
 
 /**
- * register's ops token for a setup's server: it prints the link, the admin signs in and approves it, and the entry gets
- * the token and the instance's own deploy facts. The result: the admin's login.
+ * The ops token of the setup's server: the server asks for one, `asked` gets the request's code (the setup page's link
+ * carries it), and the call waits until the person approves it. The entry gets the token and the instance's own deploy
+ * facts. The result: the person's login.
  */
-export async function registerSetup(dir: string, host: string, o: { site?: Fetch; say?: (line: string) => void } = {}): Promise<string> {
+export async function register(dir: string, host: string, o: { site?: Fetch; asked: (code: string) => void }): Promise<string> {
   const known = entryOf(readConfig(dir), host);
   if (!known) throw new Error(`${host} has no entry in .erga/config.json yet: its first deploy writes it.`);
   const origin = entryOrigin(known);
-  const { token, login } = await askOpsToken(origin, { label: "bun erga setup", say: o.say, site: o.site });
+  const { token, login } = await askOpsToken(origin, {
+    label: "bun erga setup",
+    site: o.site,
+    asked: (url) => o.asked(new URL(url).searchParams.get("code") ?? ""),
+  });
   const facts = await readOps(origin, token, o.site);
-  // Read the file again: another terminal can have changed it while the admin approved.
+  // Read the file again: another terminal can have changed it while the person approved.
   const config = readConfig(dir);
   const entry = entryOf(config, host);
-  if (!entry) throw new Error(`${host}'s entry left .erga/config.json while the admin approved.`);
+  if (!entry) throw new Error(`${host}'s entry left .erga/config.json while the person approved.`);
   writeConfig(dir, withEntry(config, { ...entry, ...(facts.deploy ?? {}), token }));
   return login;
 }

@@ -1,5 +1,5 @@
-// The AWS host of bun erga (deploy/aws/): the stacks' templates, setup's answers and steps on AWS, the first admin's SQL.
-// No AWS here: the templates and the steps are pure.
+// The AWS host of bun erga (deploy/aws/): the stacks' templates, the instance's entry from the answers, the first rows'
+// SQL. No AWS here: the templates are pure. (The flow's AWS lane: tests/own.test.ts.)
 import { expect, test } from "bun:test";
 import type { Aws } from "../deploy/aws/cli";
 import { deployScript, provisionScript, putObject } from "../deploy/aws/machine";
@@ -7,7 +7,7 @@ import { awsEntry, discoverOidc, firstSql } from "../deploy/aws/setup";
 import { changeSetKind } from "../deploy/aws/stack";
 import { type AwsShape, certificatesTemplate, NAT_USER_DATA, stackTemplate, TOKEN_PATHS } from "../deploy/aws/template";
 import { proxySignInCheck } from "../deploy/own/facts";
-import { addressOf, answersProblem, defaultAnswers, type Facts, githubManifest, parseAnswer, steps } from "../deploy/own/plan";
+import { noAnswers, pagesProblem } from "../deploy/own/plan";
 
 const shape: AwsShape = {
   stack: "erga",
@@ -62,63 +62,58 @@ test("with domains: the certificates in us-east-1's stack, the names in Route 53
   expect(certs.PagesCertificate.Properties).toMatchObject({ DomainName: "*.pages.example", ValidationMethod: "DNS" });
 });
 
-const facts = (over: Partial<Facts> = {}): Facts => ({
-  bun: "1.4.2",
-  origin: "https://github.com/koomen/erga.git",
-  installed: true,
-  head: "abcdef1234567890",
-  login: { ok: true, accounts: [{ id: "123456789012", name: "arn:aws:sts::123456789012:assumed-role/admin/ada" }] },
-  account: "123456789012",
-  zones: [],
-  workersSubdomain: null,
-  stack: null,
-  proxySecret: null,
-  targets: {},
-  secrets: [],
-  ...over,
-});
-const aws = { ...defaultAnswers("ada"), provider: "aws" as const, host: "erga", awsProfile: "work", awsRegion: "eu-west-1" };
+const aws = {
+  ...noAnswers("erga.example.com"),
+  where: "aws" as const,
+  profile: "work",
+  region: "eu-west-1",
+  signIn: "company" as const,
+  company: "it's",
+};
 
-test("on AWS a short name needs no domain, and the address comes with the stack", () => {
-  expect(parseAnswer("host", "erga")).toEqual({ value: "erga" });
-  expect(parseAnswer("egress", "vpc-0a1/subnet-0b2")).toEqual({ value: "vpc-0a1/subnet-0b2" });
-  expect("problem" in parseAnswer("awsRegion", "west")).toBe(true);
-  expect(answersProblem(aws, [])).toBeNull();
-  expect(answersProblem({ ...aws, pages: "pages.example" }, [])).toContain("pages=shared");
-  expect(answersProblem({ ...aws, staging: "erga-staging" }, [])).toContain("Staging on AWS");
-  expect(answersProblem({ ...aws, provider: "cloudflare" }, [])).toContain("short name");
-  expect(answersProblem({ ...aws, host: "erga.example.com", pages: "pages.example" }, ["example.com"])).toContain("Route 53");
-
-  // Before the stack: the stack is the next step (the person's), and there is no address for the GitHub app yet.
-  const before = steps(aws, facts(), { ids: {} });
-  expect(before.map((s) => s.id)).toEqual([
-    "tools",
-    "login",
-    "decide",
-    "stack",
-    "github",
-    "deploy-primary",
-    "signin-primary",
-    "register-primary",
-  ]);
-  expect(before.find((s) => s.state != "done")).toMatchObject({ id: "stack", who: "person" });
-  expect(githubManifest(aws, facts(), "http://localhost/created")).toBeNull();
-  // After it: the GitHub app's callback is CloudFront's address.
-  const made = facts({
-    stack: { name: "erga", status: "CREATE_COMPLETE", outputs: { AppHost: "d1.cloudfront.net" }, template: "applied" },
+test("on AWS the entry comes from the stack's outputs, and the pages need a domain that fits the edge", () => {
+  const entry = awsEntry(
+    { ...aws, pages: "example-pages.com" },
+    "123456789012",
+    { AppHost: "erga.example.com", Bucket: "b", Machine: "i-1" },
+    "Iv1.ada"
+  );
+  expect(entry).toMatchObject({
+    host: "erga.example.com",
+    token: "",
+    profile: "work",
+    aws: {
+      account: "123456789012",
+      region: "eu-west-1",
+      stack: "erga-example-com",
+      bucket: "b",
+      machine: "i-1",
+      app: "erga.example.com",
+      pages: { kind: "domain", domain: "example-pages.com" },
+    },
   });
-  expect(addressOf(aws, "primary", made)).toBe("d1.cloudfront.net");
-  expect(steps(aws, made, { ids: {} }).find((s) => s.state != "done")?.id).toBe("github");
-  expect(githubManifest(aws, made, "http://localhost/created")?.callback_urls).toEqual(["https://d1.cloudfront.net/auth/github/callback"]);
-  // A template changed on disk since it was applied: the stack step is to do again.
-  const changed = facts({ stack: { ...made.stack!, template: "changed" } });
-  expect(steps(aws, changed, { ids: {} }).find((s) => s.state != "done")?.id).toBe("stack");
+  expect(entry.vars).toMatchObject({ GITHUB_CLIENT_ID: "Iv1.ada" });
+  expect(entry.vars.PROXY_SIGN_IN).toBeUndefined();
+  // The CLI's default profile is no profile of the entry.
+  expect("profile" in awsEntry({ ...aws, profile: "default" }, "1", {}, undefined)).toBe(false);
+  // CloudFront in front: the pages take a whole zone that is not the app's. With the company's sign-in: a name under it too.
+  const zones = ["example.com", "example-pages.com"];
+  expect(pagesProblem({ ...aws, pages: "example-pages.com" }, zones)).toBeNull();
+  expect(pagesProblem({ ...aws, pages: "pages.erga.example.com" }, zones)).toContain("whole zone");
+  expect(pagesProblem({ ...aws, pages: "example.com" }, zones)).toContain("another domain than the app's");
+  expect(pagesProblem({ ...aws, signIn: "sso" }, zones)).toBeNull();
+  expect(pagesProblem({ ...aws, signIn: "sso", pages: "example.com" }, zones)).toContain("name of their own");
+  expect(pagesProblem({ ...aws, signIn: "sso", pages: "pages.other.org" }, zones)).toContain("Route 53");
 });
 
-test("the first admin goes only into a database with no admin, and a quote can't leave its string", () => {
-  const sql = firstSql({ ...aws, admin: "ada", feedback: "ada/it's" });
-  expect(sql).toContain("WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')");
-  expect(sql).toContain(`'"ada/it''s"'`);
+test("the first rows go only into a database with no admin, and a quote can't leave its string", () => {
+  const sql = firstSql(aws);
+  expect(sql).toMatch(
+    /^INSERT INTO access_rules \(kind, value, access, created\) SELECT 'github_org', 'it''s', 'write', \d+ WHERE NOT EXISTS \(SELECT 1 FROM users WHERE role = 'admin'\) ON CONFLICT/
+  );
+  // Nobody is named an admin: the person who opens the setup page's link becomes it.
+  expect(sql).not.toContain("INSERT INTO users");
+  expect(firstSql({ ...aws, signIn: "invite" })).toBe("");
 });
 
 // ------------------------------------------------------------------ the proxy mode: the company's sign-in at a proxy
@@ -230,59 +225,22 @@ test("what passes the proxy without the sign-in: the pages by their token, the t
 });
 
 const viaProxy = {
-  ...defaultAnswers("ada@example.com"),
-  provider: "aws" as const,
+  ...aws,
   host: "erga.example.com",
-  pages: "pages.erga.example.com",
-  preset: "company" as const,
-  awsRegion: "us-west-2",
-  signIn: "proxy" as const,
-  oidc: "https://idp.example.com/pool",
-  oidcClient: "client-1",
+  region: "us-west-2",
+  signIn: "sso" as const,
+  company: "",
+  issuer: "https://idp.example.com/pool",
+  client: "client-1",
 };
 
-test("setup in the proxy mode on AWS: an email for the admin, pages under the app's name, no GitHub app", () => {
-  const zones = ["erga.example.com"];
-  expect(parseAnswer("oidc", "https://idp.example.com/pool/")).toEqual({ value: "https://idp.example.com/pool" });
-  expect("problem" in parseAnswer("oidc", "http://idp.example.com")).toBe(true);
-  expect(answersProblem(viaProxy, zones)).toBeNull();
-  expect(answersProblem({ ...viaProxy, admin: "ada" }, zones)).toContain("email address");
-  expect(answersProblem({ ...viaProxy, oidcClient: "" }, zones)).toContain("client ID");
-  expect(answersProblem({ ...viaProxy, egress: "vpc-0a1/subnet-0b2" }, zones)).toContain("own network");
-  expect(answersProblem({ ...viaProxy, host: "erga", pages: "shared" }, zones)).toContain("needs a domain");
-  expect(answersProblem({ ...viaProxy, pages: "erga.example.com" }, zones)).toContain("name of their own");
-  expect(answersProblem({ ...viaProxy, pages: "pages.other.org" }, zones)).toContain("Route 53");
-  expect(answersProblem({ ...viaProxy, oidc: "" }, zones)).toContain("issuer's URL");
-  // The mode is an answer of its own: the proxy's values with the oauth mode, or on the other host, say what to change.
-  expect(answersProblem({ ...viaProxy, signIn: "oauth", admin: "ada" }, zones)).toContain("signIn=proxy");
-  expect(answersProblem({ ...viaProxy, provider: "cloudflare" }, zones)).toContain("on AWS");
-  // In the oauth mode, the pages still need a zone apart from the app's.
-  expect(answersProblem({ ...viaProxy, signIn: "oauth", oidc: "", admin: "ada" }, zones)).toContain("whole zone");
-
-  const f = facts({ zones, proxySecret: false });
-  const list = steps(viaProxy, f, { ids: {} });
-  expect(list.map((s) => s.id)).toEqual([
-    "tools",
-    "login",
-    "decide",
-    "secret",
-    "stack",
-    "deploy-primary",
-    "signin-primary",
-    "register-primary",
-  ]);
-  const secret = list.find((s) => s.id == "secret")!;
-  expect(secret).toMatchObject({ who: "person", state: "todo" });
-  expect(secret.next).toContain("erga/erga-example-com/oidc-client-secret");
-  expect(steps(viaProxy, facts({ zones, proxySecret: true }), { ids: {} }).find((s) => s.state != "done")?.id).toBe("stack");
-
-  // The server learns whose header is the sign-in from the stack's proxy: the proxy mode's setting.
+test("the company's sign-in on AWS: the server learns its proxy from the stack, and everybody who passes it may write", () => {
+  // The server learns whose header is the sign-in from the stack's proxy.
   const entry = awsEntry(
     viaProxy,
-    "primary",
     "123456789012",
     { AppHost: "erga.example.com", Proxy: "arn:aws:elasticloadbalancing:us-west-2:1:loadbalancer/app/x/1" },
-    {}
+    undefined
   );
   expect(JSON.parse(entry.vars.PROXY_SIGN_IN)).toEqual({
     kind: "aws-alb",
@@ -291,18 +249,13 @@ test("setup in the proxy mode on AWS: an email for the admin, pages under the ap
     client: "client-1",
   });
   expect(entry.vars.GITHUB_CLIENT_ID).toBe("");
-  // No proxy known yet: a value the server reads as no proxy (nobody signs in), never the oauth mode.
-  expect(awsEntry(viaProxy, "primary", "1", { AppHost: "erga.example.com" }, {}).vars.PROXY_SIGN_IN).toBe("{}");
-  expect(awsEntry(aws, "primary", "123456789012", { AppHost: "d1.cloudfront.net" }, {}).vars.PROXY_SIGN_IN).toBeUndefined();
-  // The first deploy writes no user's row (the admin has no username yet): they wait as a person added by their email,
-  // with the role admin; and everybody who passes the sign-in may write.
+  expect(entry.aws.pages).toEqual({ kind: "domain", domain: "pages.erga.example.com" });
+  // No proxy known yet: a value the server reads as no proxy (nobody signs in), never GitHub's sign-in.
+  expect(awsEntry(viaProxy, "1", { AppHost: "erga.example.com" }, undefined).vars.PROXY_SIGN_IN).toBe("{}");
   const sql = firstSql(viaProxy);
-  expect(sql).toContain("INSERT INTO people (provider, handle, role, created) SELECT 'proxy', 'ada@example.com', 'admin'");
   expect(sql).toContain("INSERT INTO access_rules (kind, value, access, created) SELECT 'everybody', '', 'write'");
   expect(sql).toContain("WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')");
-  expect(sql).not.toContain("INSERT INTO users");
-  // The oauth mode's first admin is a user, by their GitHub login.
-  expect(firstSql(aws)).toMatch(/^INSERT INTO users \(login, name, role, created\) SELECT 'ada', 'ada', 'admin', \d+ WHERE NOT EXISTS/);
+  expect(sql).not.toContain("INSERT INTO people");
 });
 
 test("the sign-in's endpoints come from its issuer, and the check sees the proxy send a browser there", async () => {

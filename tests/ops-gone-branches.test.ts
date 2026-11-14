@@ -75,7 +75,7 @@ test("a branch that GitHub deleted after the last fetch shows on neither the ops
         answers: {},
         git: readGit(clone, []),
         jobs: [],
-        setup: "",
+        setup: null,
         run: { at: "idle" },
         polls,
         runs: [],

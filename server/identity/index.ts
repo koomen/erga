@@ -6,6 +6,7 @@ export { actingAdmin, SESSION_COOKIE, sessionCookie, sessionOf, viewCookie } fro
 export { chooseSignIn, signOut } from "./sign-in.ts";
 export { finishOAuth, startOAuth } from "./oauth.ts";
 export { devSignIn, usernameStep } from "./accounts.ts";
+export { Claim, claimRoute } from "./claim.ts";
 export { providersOf, type SignIn, signInOf } from "./mode.ts";
 export { proxySignIn, type ProxyStatus } from "./proxy.ts";
 export { accountLookup, authOps, signInChoices } from "./settings.ts";

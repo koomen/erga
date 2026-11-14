@@ -1,27 +1,16 @@
-// What `bun erga setup` observes before it decides anything: this machine, the person's Cloudflare account, and each
-// server as the world sees it. Each fact is what was seen, or null when it couldn't look (deploy/own/plan.ts decides).
-// Under ERGA_DEPLOY_MOCK=1, the account and the servers are a mock Cloudflare's (dev/mock-cloudflare.ts): nothing real.
+// What `bun erga setup` observes before each step of the flow (deploy/own/flow.ts, Seen): the login, the person's
+// account, and the server as the world sees it. It looks at what the answers so far name, and no further. AWS's side
+// is deploy/aws/setup.ts. Under ERGA_DEPLOY_MOCK=1, the account and the servers are a mock Cloudflare's
+// (dev/mock-cloudflare.ts): nothing real.
 
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { entryOf, readConfig } from "../cli/config";
 import { mocked, netOf } from "../cli/deploy";
 import { Cloudflare, type Fetch } from "../pipeline/cloudflare-api";
-import { d1, findDatabase, WORKER_TAG } from "../pipeline/account";
+import { WORKER_TAG } from "../pipeline/account";
 import { machineCredential } from "../local-credential";
-import {
-  type Answers,
-  type Facts,
-  hostOf,
-  proxyExpects,
-  proxySignIn,
-  SETUP_COMMIT,
-  type TargetFacts,
-  type TargetName,
-  targetsOf,
-} from "./plan";
-import { DIR, loadSecrets, namesAt, type Own, secretNames } from "./store";
-import { git, ROOT } from "../root";
+import { nothingSeen, type Seen } from "./flow";
+import { type Answers, proxyExpects, sso, zoneOf } from "./plan";
+import { DIR, loadSecrets, namesAt, type Setup } from "./store";
 
 export interface Connection {
   cf: Cloudflare;
@@ -41,13 +30,6 @@ export async function cloudflare(): Promise<Connection | { why: string }> {
   const c = machineCredential();
   if (!c) return { why: "Not logged in to Cloudflare: run `bunx cf auth login`." };
   return (connection = { cf: new Cloudflare(c.token), net: site, token: c.token });
-}
-
-/** Whether node_modules is what the lockfile says: bun's own check, with nothing written. */
-function installed(): boolean {
-  if (!existsSync(join(ROOT, "node_modules/effect"))) return false;
-  const r = Bun.spawnSync(["bun", "install", "--frozen-lockfile", "--dry-run"], { cwd: ROOT, stdout: "ignore", stderr: "ignore" });
-  return r.exitCode == 0;
 }
 
 /**
@@ -87,8 +69,10 @@ export async function getJson<T>(net: Fetch, url: string): Promise<T | null> {
   return r?.ok ? ((await r.json().catch(() => null)) as T | null) : null;
 }
 
+type SignIn = NonNullable<Seen["live"]>["signIn"];
+
 /** Where /auth/github sends a person: GitHub, with this client id and this host's callback, or what's wrong. */
-export async function signInCheck(net: Fetch, host: string, clientId: string | undefined): Promise<TargetFacts["signIn"]> {
+export async function signInCheck(net: Fetch, host: string, clientId: string | undefined): Promise<SignIn> {
   const r = await net(`https://${host}/auth/github`, { redirect: "manual", signal: AbortSignal.timeout(8000) }).catch(() => null);
   if (!r) return null;
   const to = r.headers.get("location") ?? "";
@@ -110,7 +94,7 @@ export async function proxySignInCheck(
   net: Fetch,
   host: string,
   o: { to?: string; clientId?: string; callback?: string }
-): Promise<TargetFacts["signIn"]> {
+): Promise<SignIn> {
   const r = await net(`https://${host}/auth/sign-in`, { redirect: "manual", signal: AbortSignal.timeout(8000) }).catch(() => null);
   if (!r) return null;
   const to = r.headers.get("location") ?? "";
@@ -126,162 +110,98 @@ export async function proxySignInCheck(
   return "ok";
 }
 
-/** Whether sign-in works on `host`, in the setup's mode: the OAuth app's, or the proxy's. */
-export const checkSignIn = (net: Fetch, host: string, a: Answers, githubId: string | undefined) =>
-  proxySignIn(a) ? proxySignInCheck(net, host, proxyExpects(a, host)) : signInCheck(net, host, githubId);
+/** Whether sign-in works on the instance: the GitHub App's, or with single sign-on the proxy's. */
+export const checkSignIn = (net: Fetch, a: Answers, githubId: string | undefined) =>
+  sso(a) ? proxySignInCheck(net, a.host, proxyExpects(a)) : signInCheck(net, a.host, githubId);
 
-/** One server: its Worker, its address, what it answers, its entry, and (with the database) the company's access rule. */
-async function targetFacts(
-  { cf, net }: Connection,
-  account: string,
-  zones: { id: string; name: string }[],
-  a: Answers,
-  t: TargetName,
-  own: Own
-): Promise<TargetFacts> {
-  const host = hostOf(a, t),
-    n = namesAt(host),
-    acc = `/accounts/${account}`;
+/** The server as the world sees it: the commit it answers with, its health, and its sign-in. */
+export async function liveOf(net: Fetch, a: Answers, githubId: string | undefined): Promise<Seen["live"]> {
+  const v = await getJson<{ version?: string }>(net, `https://${a.host}/api/deploys/version`);
+  if (!v) return { version: null, healthy: false, signIn: null };
+  const h = await getJson<{ ok?: boolean }>(net, `https://${a.host}/api/health`);
+  return { version: v.version ?? null, healthy: !!h?.ok, signIn: await checkSignIn(net, a, githubId) };
+}
+
+/** What the flow decides from, on Cloudflare: the login, the accounts that hold the domain, and the server. */
+export async function observe(setup: Setup, dir = DIR): Promise<Seen> {
+  const a = setup.flow.answers;
+  // The person who claimed the server: the setup's own record, while the entry has their token.
+  const seen: Seen = { ...nothingSeen, admin: entryOf(readConfig(dir), a.host)?.token ? setup.flow.seen.admin || "an admin" : "" };
+  if (!a.where) return seen;
+  if (a.where == "aws") return (await import("../aws/setup")).observeAws(dir, setup, seen, site);
+  const c = await cloudflare();
+  if ("why" in c) return { ...seen, login: { ok: false, why: c.why } };
+  const { cf, net } = c;
+  const accounts = await cf.call<{ id: string; name: string }[]>("GET", "/accounts", "list your accounts").catch((e: Error) => e);
+  if (accounts instanceof Error || !accounts)
+    return { ...seen, login: { ok: false, why: accounts?.message ?? "Cloudflare listed no account." } };
+  seen.login = { ok: true };
+  const zonesOf = async (account: string) =>
+    (await cf
+      .call<{ id: string; name: string }[]>("GET", `/zones?account.id=${account}&per_page=50`, "list your domains")
+      .catch(() => [])) ?? [];
+  // The account comes from the address: each account with a domain that holds it.
+  const all = await Promise.all(accounts.map(async (x) => ({ ...x, zones: await zonesOf(x.id) })));
+  seen.choices = all
+    .filter((x) =>
+      zoneOf(
+        a.host,
+        x.zones.map((z) => z.name)
+      )
+    )
+    .map(({ id, name }) => ({ id, name }));
+  const account = all.find((x) => x.id == a.account);
+  if (!account) return seen;
+  seen.account = account.id;
+  seen.zones = account.zones.map((z) => z.name);
+  const acc = `/accounts/${account.id}`;
+  seen.subdomain =
+    (
+      await cf
+        .call<{ subdomain: string }>("GET", `${acc}/workers/subdomain`, "read your workers.dev subdomain", undefined, { allow404: true })
+        .catch(() => null)
+    )?.subdomain ?? null;
+  const n = namesAt(a.host, dir);
   const scripts =
     (await cf
       .call<{ id: string; tags?: string[]; named_handlers?: { name?: string }[] }[]>("GET", `${acc}/workers/scripts`, "list your Workers")
       .catch(() => [])) ?? [];
-  const found = scripts.find((s) => s.id == n.worker);
-  const worker: TargetFacts["worker"] = !found
-    ? "missing"
-    : found.tags?.includes(WORKER_TAG) || found.named_handlers?.some((h) => h.name == "DocumentObject")
-      ? "ours"
-      : { other: n.worker };
+  const found = scripts.find((x) => x.id == n.worker);
+  const ours = !!found && (!!found.tags?.includes(WORKER_TAG) || !!found.named_handlers?.some((h) => h.name == "DocumentObject"));
+  if (found && !ours) seen.taken = `a Worker called ${n.worker} is there, and it isn't Erga`;
   const domains =
     (await cf
       .call<{ hostname: string; service: string }[]>(
         "GET",
-        `${acc}/workers/domains?hostname=${encodeURIComponent(host)}`,
+        `${acc}/workers/domains?hostname=${encodeURIComponent(a.host)}`,
         "read custom domains"
       )
       .catch(() => [])) ?? [];
-  const domain = domains.find((d) => d.hostname == host);
-  let address: TargetFacts["address"] = "free";
-  if (domain) address = domain.service == n.worker ? "ours" : { taken: `it's the address of the Worker ${domain.service}` };
-  else {
-    const zone = zones.filter((z) => host == z.name || host.endsWith(`.${z.name}`)).sort((x, y) => y.name.length - x.name.length)[0];
-    const records = zone
-      ? ((await cf
-          .call<{ type: string; content: string }[]>(
-            "GET",
-            `/zones/${zone.id}/dns_records?name=${encodeURIComponent(host)}`,
-            "read DNS records"
-          )
-          .catch(() => [])) ?? [])
-      : [];
-    if (records.length) address = { taken: `DNS already has ${records.map((r) => `${r.type} ${r.content}`).join(", ")} for it` };
+  const domain = domains.find((d) => d.hostname == a.host);
+  if (domain && domain.service != n.worker) seen.taken = `it is the address of the Worker ${domain.service}`;
+  const zone = account.zones.find((z) => z.name == zoneOf(a.host, seen.zones));
+  if (!domain && zone) {
+    const records =
+      (await cf
+        .call<{ type: string; content: string }[]>(
+          "GET",
+          `/zones/${zone.id}/dns_records?name=${encodeURIComponent(a.host)}`,
+          "read DNS records"
+        )
+        .catch(() => [])) ?? [];
+    if (records.length) seen.taken = `DNS has ${records.map((r) => `${r.type} ${r.content}`).join(", ")} for it`;
   }
-  const v = worker == "ours" ? await getJson<{ version?: string }>(net, `https://${host}/api/deploys/version`) : null;
-  const h = v
-    ? await getJson<{ ok?: boolean; checks?: Record<string, { ok: boolean; error?: string }> }>(net, `https://${host}/api/health`)
-    : null;
-  const health: TargetFacts["health"] = !v ? null : h?.ok ? "ok" : { bad: h ? JSON.stringify(h.checks ?? h).slice(0, 200) : "no answer" };
-  const signIn = v ? await checkSignIn(net, host, a, own.github?.clientId) : null;
-  let rule: boolean | null = null;
-  if (worker == "ours") {
-    const db = await findDatabase(cf, acc, n.database).catch(() => null);
-    if (db) {
-      if (a.preset == "company" && a.company) {
-        const r = await d1(
-          cf,
-          acc,
-          db,
-          "SELECT id FROM access_rules WHERE value = ?1 AND access IN ('read','write')",
-          [a.company],
-          "look for the access rule"
-        ).catch(() => null);
-        rule = r ? r.length > 0 : null;
-      }
-    }
+  if (ours) {
+    const settings = await cf
+      .call<{ bindings?: { type: string; name: string }[] }>(
+        "GET",
+        `${acc}/workers/scripts/${n.worker}/settings`,
+        "read the Worker's settings"
+      )
+      .catch(() => null);
+    seen.held = (settings?.bindings ?? []).filter((b) => b.type == "secret_text").map((b) => b.name);
+    seen.live = await liveOf(net, a, setup.github?.clientId);
   }
-  return {
-    worker,
-    address,
-    version: v?.version ?? null,
-    health,
-    signIn,
-    registered: !!entryOf(readConfig(DIR), host)?.token,
-    rule,
-    held: worker == "ours" ? await heldBy(cf, acc, n.worker) : null,
-  };
-}
-
-/** The Worker's bindings now: the names of its secrets (never their values), and its plain values. */
-async function heldBy(cf: Cloudflare, acc: string, worker: string): Promise<TargetFacts["held"]> {
-  const r = await cf
-    .call<{ bindings?: { type: string; name: string; text?: string }[] }>(
-      "GET",
-      `${acc}/workers/scripts/${worker}/settings`,
-      "read the Worker's settings"
-    )
-    .catch(() => null);
-  if (!r?.bindings) return null;
-  return {
-    secrets: r.bindings.filter((b) => b.type == "secret_text").map((b) => b.name),
-    vars: Object.fromEntries(r.bindings.filter((b) => b.type == "plain_text").map((b) => [b.name, b.text ?? ""])),
-  };
-}
-
-/** Everything `bun erga setup <host> status` decides from. */
-export async function observe(own: Own, a: Answers | null): Promise<Facts & { zoneIds: { id: string; name: string }[] }> {
-  /** What git prints, or null when it fails. */
-  const ask = (...args: string[]) => {
-    const r = git(...args);
-    return r.ok ? r.out : null;
-  };
-  const head = ask("rev-parse", "--verify", "--quiet", `${SETUP_COMMIT}^{commit}`);
-  const facts: Facts & { zoneIds: { id: string; name: string }[] } = {
-    bun: Bun.version,
-    origin: ask("remote", "get-url", "origin"),
-    installed: installed(),
-    head,
-    login: { ok: false, why: "" },
-    account: null,
-    zones: [],
-    zoneIds: [],
-    workersSubdomain: null,
-    stack: null,
-    proxySecret: null,
-    targets: {},
-    secrets: secretNames(loadSecrets()),
-  };
-  if (a?.provider == "aws") {
-    const { observeAws } = await import("../aws/setup");
-    await observeAws(DIR, a, own.applied ?? {}, facts, site, own.github?.clientId);
-    return facts;
-  }
-  const c = await cloudflare();
-  if ("why" in c) {
-    facts.login = { ok: false, why: c.why };
-    return facts;
-  }
-  const accounts =
-    (await c.cf.call<{ id: string; name: string }[]>("GET", "/accounts", "list your accounts").catch((e: Error) => {
-      facts.login = { ok: false, why: e.message };
-      return null;
-    })) ?? null;
-  if (!accounts) return facts;
-  facts.login = { ok: true, accounts: accounts.map((x) => ({ id: x.id, name: x.name })) };
-  facts.account = own.account ?? (accounts.length == 1 ? accounts[0].id : null);
-  if (!facts.account) return facts;
-  const acc = `/accounts/${facts.account}`;
-  facts.zoneIds = (
-    (await c.cf
-      .call<{ id: string; name: string }[]>("GET", `/zones?account.id=${facts.account}&per_page=50`, "list your domains")
-      .catch(() => [])) ?? []
-  ).map((z) => ({ id: z.id, name: z.name }));
-  facts.zones = facts.zoneIds.map((z) => z.name);
-  facts.workersSubdomain =
-    (
-      await c.cf
-        .call<{ subdomain: string }>("GET", `${acc}/workers/subdomain`, "read your workers.dev subdomain", undefined, { allow404: true })
-        .catch(() => null)
-    )?.subdomain ?? null;
-  if (a?.host) for (const t of targetsOf(a)) facts.targets[t] = await targetFacts(c, facts.account, facts.zoneIds, a, t, own);
-  return facts;
+  seen.app = !!setup.github && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
+  return seen;
 }

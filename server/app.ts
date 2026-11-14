@@ -65,6 +65,7 @@ import { serveHome, serveHomeDomain, serveHomeFile, serveHomeSite } from "./home
 import {
   adminsOnlyGate,
   chooseSignIn,
+  claimRoute,
   HOME_ERGA,
   homeDomainSignIn,
   homePass,
@@ -187,6 +188,15 @@ export const ROUTES: readonly RouteRow<Route>[] = [
     action: "Local development's pretend provider signs someone in",
     domain: "none",
     exempt: DEV,
+  },
+  // A new server's first admin: the setup page's link (server/identity/claim.ts).
+  { method: "GET", path: "/auth/claim", run: claimRoute, action: "A new server's first person signs in, to become its admin", ...SIGN },
+  {
+    method: "POST",
+    path: "/auth/claim",
+    run: claimRoute,
+    action: "Become a new server's first admin, and connect the setup's ops page",
+    ...SIGN,
   },
   { method: "GET", path: "/auth/home-pass", run: homePass, action: "Sign in on the homepage's own domain, through this one", ...SIGN },
   // Each deploy asks, once its release answers: {home: "made" | "there" | "none"}. Asked again, it does nothing.
