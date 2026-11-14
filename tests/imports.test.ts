@@ -18,11 +18,12 @@
 // And:
 //   - An area of server/ is imported from outside only through its index.ts. Tools may look inside.
 //   - Only cloudflare/ imports cloudflare:workers: the Worker's bindings and types stay there.
+//   - `bun erga` reaches no file of .build/ (git ignores it): it runs in a new clone, after only `bun install`.
 //   - A layer adds its part of server/platform.ts's Platform with a `declare module`, not an import the other way.
 //
 // Type-only imports count too: a type from the wrong place is a dependency on it.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { expect, test } from "bun:test";
 
@@ -119,6 +120,22 @@ test("every import keeps the layers", () => {
     }
   }
   expect(found).toEqual([]);
+});
+
+test("bun erga reaches no file of the build: it runs in a new clone", () => {
+  const seen = new Set<string>();
+  const todo = ["deploy/cli/main"];
+  const built: string[] = [];
+  for (let from = todo.pop(); from; from = todo.pop()) {
+    const file = [`${from}.ts`, `${from}/index.ts`].find((f) => !seen.has(f) && existsSync(join(ROOT, f)));
+    if (!file) continue;
+    seen.add(file);
+    for (const { spec, type } of imports(file)) {
+      if (spec.startsWith(".build/")) built.push(`${file} imports ${spec}`);
+      else if (!type && REPO.includes(spec.split("/")[0])) todo.push(spec);
+    }
+  }
+  expect(built).toEqual([]);
 });
 
 test("the rules catch what they are for", () => {

@@ -16,15 +16,11 @@ import { esc } from "../../shared/html.ts";
 import { call, ctx, Field, form, redirect, type Route, text } from "../http.ts";
 import { page } from "../pages/index.ts";
 import type { Platform } from "../platform";
-import { signed } from "../signed.ts";
+import { CLAIM_SECONDS, Claim } from "./claim-link.ts";
 import { cookies, withCookie } from "./cookies.ts";
 import { normalCode } from "./tokens.ts";
 
-const SECONDS = 30 * 60;
 const COOKIE = "erga_claim";
-
-/** A claim: nothing but this server's signature and its end. Setup (deploy/own/cli.ts) seals one with the server's SESSION_SECRET. */
-export const Claim = signed("claim", Schema.Struct({}), SECONDS);
 
 const good = async (platform: Pick<Platform, "secret" | "directory">, claim: string | null | undefined) =>
   !!(await Claim.open(platform.secret, claim)) && !(await platform.directory.users.hasAdmin());
@@ -54,7 +50,7 @@ export const claimRoute: Route = Effect.gen(function* () {
   const session = yield* call(() => platform.sessionOf(request));
   // The sign-in comes first, with the claim in a cookie: it lets this person make their account.
   if (!session || session.agent)
-    return withCookie(redirect(`/auth/sign-in?next=${encodeURIComponent(here)}`), request, COOKIE, f.t, SECONDS, "/auth");
+    return withCookie(redirect(`/auth/sign-in?next=${encodeURIComponent(here)}`), request, COOKIE, f.t, CLAIM_SECONDS, "/auth");
   if (!post)
     return page(
       "Become the admin",

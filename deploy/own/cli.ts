@@ -29,7 +29,7 @@
 // admin's link goes to the browser only.
 
 import { readFileSync } from "node:fs";
-import { Claim } from "../../server/identity/claim";
+import { Claim } from "../../server/identity/claim-link";
 import { entryOf, isAws, originOf, readConfig } from "../cli/config";
 import { findDatabase } from "../pipeline/account";
 import { fail, pass, ROOT, say } from "../root";
