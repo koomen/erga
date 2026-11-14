@@ -33,6 +33,7 @@ Steps, one argument each, in order:
                        Shift+Enter, ControlOrMeta+z (undo), ControlOrMeta+Shift+z (redo), ...
   <key>*<n>            presses it n times: Backspace*3
   click:<selector>     clicks at the end of the element's text (a CSS selector in the page)
+  tap:<selector>       clicks a control of Erga's window around the page: tap:#btn-settings opens the settings
   say:<text>           sends the text to the agent in its panel, and waits for the turn's end. The agent is the
                        scripted test model (agents/models.ts): "@script [steps]" in the text plays the steps.
                        (A server that --keep left running before a look with say: has no agent.)
@@ -181,7 +182,7 @@ try {
   await ed.clickEnd("[data-erga-text]:not(.erga-locked)");
   await ed.idle();
   for (const step of args) {
-    const [, verb, rest] = /^(type|click|shot|say):([\s\S]*)$/.exec(step) ?? [];
+    const [, verb, rest] = /^(type|click|tap|shot|say):([\s\S]*)$/.exec(step) ?? [];
     if (verb == "type") await ed.type(rest);
     else if (verb == "say") {
       // The turn's end: one more answer or error in the panel, and the agent no longer at work.
@@ -207,6 +208,9 @@ try {
     } else if (verb == "click") {
       await ed.clickEnd(rest);
       await ed.idle();
+    } else if (verb == "tap") {
+      await page.click(rest);
+      await ed.settle();
     } else if (verb == "shot") {
       await ed.settle();
       await page.screenshot({ path: resolve(rest) });

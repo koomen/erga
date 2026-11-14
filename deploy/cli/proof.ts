@@ -2,13 +2,14 @@
 // step, after `bun erga push`: one sentence that says what changed, a picture of the screen before and after the
 // change at desktop width and at phone width, the result of the tests, and the changed files. The pictures come from
 // `bun run look` (e2e/look.ts): the same arguments run in this folder (after) and in a scratch folder at the commit
-// the branch started from (before). A task with nothing to show says which tests prove it (--no-picture).
+// the branch started from (before). Both sides run this folder's e2e/look.ts, so a new step of look works before too.
+// A task with nothing to show says which tests prove it (--no-picture).
 //
 // The page is a folder in the main clone, .erga/proofs/<branch>/ (index.html, the pictures, proof.json). The ops page
 // serves it at /proof/<branch>/ and links it beside the branch's Merge button (ops-page.ts, ops-view.ts). It is not an
 // Erga document: the CLI has no token that makes documents, and an agent never makes one.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { esc } from "../../shared/html";
@@ -174,6 +175,7 @@ export function makeProof(o: {
       before = join(tmpdir(), `erga-proof-${process.pid}`);
       const add = at("worktree", "add", "--quiet", "--detach", before, base);
       const install = add.ok && !o.look ? sh(["bun", "install", "--frozen-lockfile"], { cwd: before }) : null;
+      if (add.ok && !o.look) copyFileSync(join(o.root, "e2e/look.ts"), join(before, "e2e/look.ts"));
       const broke = !add.ok
         ? `git worktree add failed: ${add.err}`
         : install && !install.ok

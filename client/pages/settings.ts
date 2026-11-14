@@ -19,8 +19,8 @@
 //     the document is newer than the live page. Nothing deploys by itself. The homepage is chosen on /admin/settings
 //     (the landing_document setting), never here.
 //   - Versions: the latest ten, each with its number, the model's five-word
-//     description (a quiet placeholder until it arrives), when and who; the
-//     current one marked, and on the homepage the deployed one. A deployed version older than the latest ten shows
+//     description (a quiet placeholder until it arrives), when and who; on the
+//     homepage, the deployed one marked. A deployed version older than the latest ten shows
 //     in its own place: the latest five, a gap, then five around it (two newer, it, two older); only those five are
 //     read. Show older versions loads the ten before the oldest one shown. Restore, on hover or
 //     focus, makes a copy of a version the current one (restore_version). Then "Restored v3. Undo" shows for 10
@@ -575,10 +575,7 @@ function mount(host: SettingsHost): Settings {
     const vs = visible(),
       d = apart();
     const row = (v: Version) => {
-      const tags = [v.id == current.id ? "Current" : "", v.n == deployed() ? "Deployed" : ""]
-        .filter(Boolean)
-        .map((t) => `<span class="ds-tag">${t}</span>`)
-        .join("");
+      const tags = v.n == deployed() ? `<span class="ds-tag">Deployed</span>` : "";
       const edit =
         v.id == current.id || !data!.canEdit
           ? ""

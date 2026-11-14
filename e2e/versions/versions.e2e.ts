@@ -103,8 +103,8 @@ journey("versions in the editor's settings", () => {
     expect(await st.eval<boolean>(`!!document.querySelector("#ds-mode, #ds-pick, #ds-explain")`)).toBe(false);
     const rows = await st.rows();
     expect(rows).toHaveLength(10);
-    expect(rows[0]).toMatch(/^v12 ?Restored version 2 ?Current.*tester$/);
-    expect(rows.join(" ")).not.toContain("Published");
+    expect(rows[0]).toMatch(/^v12 ?Restored version 2.*tester$/);
+    expect(rows.join(" ")).not.toMatch(/Published|Current/);
     expect(await st.text("#ds-total")).toBe("12 in all");
     expect(await st.text("#ds-foot-text")).toBe("The latest 10 of 12.");
     expect(await st.draft()).toBe("Draft B");
@@ -182,12 +182,7 @@ journey("versions in the editor's settings", () => {
     byAgent = await served(s, id);
     expect(byAgent).toContain("still says which draft");
     // The new row, and then its description.
-    await until(
-      async () => /^v14 ?Edited index\.html ?Current/.test((await st.rows())[0]),
-      5_000,
-      "the version's description shows",
-      st.rows
-    );
+    await until(async () => /^v14 ?Edited index\.html/.test((await st.rows())[0]), 5_000, "the version's description shows", st.rows);
   });
 
   test("someone whose right to edit goes while their editor is open: no versions, a line that says why, and nothing to press", async ({
@@ -240,12 +235,7 @@ journey("versions in the editor's settings", () => {
     await readerSees("Draft D");
     await until(async () => (await current()) == 15, SHORT.idle * 5, "the edit is a version");
     await st.open();
-    await until(
-      async () => /^v15 ?Edited index\.html ?Current.*tester$/.test((await st.rows())[0]),
-      5_000,
-      "the list has version 15",
-      st.rows
-    );
+    await until(async () => /^v15 ?Edited index\.html.*tester$/.test((await st.rows())[0]), 5_000, "the list has version 15", st.rows);
   });
 
   test("Restore shows on the row under the pointer and on focus, never on the current version; a copy becomes current, live in the editor and the room, and for a viewer; Undo puts the document back", async ({
@@ -267,12 +257,7 @@ journey("versions in the editor's settings", () => {
     expect(await st.text(restoreOf(13))).toBe("Restore");
     await tab.page.keyboard.press("Enter");
     await until(async () => (await current()) == 16, 5_000, "the restore is version 16");
-    await until(
-      async () => /^v16 ?Restored version 13 ?Current.*tester$/.test((await st.rows())[0]),
-      5_000,
-      "the list has the restore",
-      st.rows
-    );
+    await until(async () => /^v16 ?Restored version 13.*tester$/.test((await st.rows())[0]), 5_000, "the list has the restore", st.rows);
     await expect.poll(() => st.draft()).toBe("Draft A");
     expect(await served(s, id)).toContain("Draft A");
     await readerSees("Draft A");
@@ -390,7 +375,6 @@ journey("versions in the editor's settings", () => {
     await expect.poll(() => st.listed()).toEqual([at, at - 1, at - 2, at - 3, at - 4, ...around]);
     const r = await st.rows();
     expect(r[5]).toBe("… 9 more");
-    expect(r[0]).toContain("Current");
     expect(r[8].startsWith(`v${deployed}`)).toBe(true);
     expect(r[8]).toContain("Deployed");
     expect(r.filter((x) => x.includes("Deployed"))).toHaveLength(1);
