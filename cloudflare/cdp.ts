@@ -187,7 +187,9 @@ export class Page {
     this.on((method, p) => {
       if (method == "Runtime.exceptionThrown") error(exceptionMessage(p.exceptionDetails));
       else if (method == "Runtime.consoleAPICalled") console(p.type, consoleText(p.args));
-      else if (method == "Log.entryAdded") console(p.entry.level, p.entry.text);
+      // (The browser's "Failed to load resource" never names the address: this does, beside it.)
+      else if (method == "Log.entryAdded")
+        console(p.entry.level, p.entry.source == "network" && p.entry.url ? `${p.entry.text} (${p.entry.url})` : p.entry.text);
     });
   }
 
