@@ -226,9 +226,14 @@ export const checkHealth = (site: Fetch, host: string, want: string | null, o: {
     return { ok: true, why: "", summary: Object.entries(body.checks ?? {}).map(([n, c]) => `${n} ok${c.ms != null ? ` ${c.ms} ms` : ""}`).join(", ") || "no checks" };
   });
 
-/** A release that answers its version: healthy, or unhealthy three times over ten seconds (one slow cold start isn't a broken release). */
+/**
+ * A release that answers its version: healthy, or unhealthy for two minutes (25 checks, 5 seconds apart). Cloudflare
+ * gives a Durable Object the new code seconds to minutes after the Worker: until then the new Worker calls the old
+ * object, and a call that the old code does not have fails (2026-11-14: 42 seconds, on the first release with the
+ * document's door; ten seconds of checks had rolled a good release back).
+ */
 export const settledHealth = (site: Fetch, host: string, want: string, o: { query?: string } = {}): Effect.Effect<Checked> =>
-  checkHealth(site, host, want, o).pipe(Effect.repeat({ schedule: Schedule.spaced("5 seconds"), times: 2, until: (h) => h.ok }));
+  checkHealth(site, host, want, o).pipe(Effect.repeat({ schedule: Schedule.spaced("5 seconds"), times: 24, until: (h) => h.ok }));
 
 /**
  * The deploy's ask for the homepage project, once the release answers (POST /api/deploys/home): the server makes it from

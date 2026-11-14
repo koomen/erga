@@ -11,7 +11,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type CloudflareEntry, type Entry, entryOf, readConfig, secretsPath, withEntry, writeConfig } from "../deploy/cli/config";
-import { deployInstance, deployStaging, entryTarget, rollbackInstance, stagingCommit } from "../deploy/cli/deploy";
+import { commitOf, deployInstance, deployStaging, entryTarget, rollbackInstance, stagingCommit } from "../deploy/cli/deploy";
 import { lockPath, takeLock } from "../deploy/cli/jobs";
 import { replaceSnapshotSecret } from "../deploy/cli/snapshot-secret";
 import { snapshotAuth } from "../document/snapshot";
@@ -475,6 +475,10 @@ describe("the branches move only after a healthy deploy", () => {
       await deployInstance({ dir, host: "example.com", commit: c2, clone, net: mock.fetch, print: (l) => lines.push(l) });
       expect(lines).toContain(`main has ${c2.slice(0, 12)} already: main stays.`);
       expect(records().some((r) => r.some((x) => x.main == "kept"))).toBe(true);
+
+      // `main` and `staging` name origin's branches: the clone's own main, which nothing moves, is still at C1.
+      run("git", "branch", "main", c1);
+      expect([commitOf("main", clone), commitOf("staging", clone)]).toEqual([c2, c2]);
 
       // A commit apart from main does not deploy: nothing is built or uploaded.
       run("git", "checkout", "-q", "--detach", c1);

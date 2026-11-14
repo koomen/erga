@@ -131,8 +131,17 @@ export function stagingCommit(primary: string, answers: Instance[]): { version: 
 const stagingAnswers = (config: Config, primary: string, site: Fetch): Promise<Instance[]> =>
   Promise.all(config.instances.filter((e) => e.stagingOf == primary).map(async (e) => ({ host: e.host, ...(await askInstance(e, site)) })));
 
-/** The full commit of a name or a short sha, in the clone, or an error that says to fetch. */
+/**
+ * The full commit of a name or a short sha, in the clone, or an error that says to fetch. `main` and `staging` name
+ * origin's branches: `bun erga` moves them there only, so the clone's own branch of that name stays where it was made
+ * (on 2026-11-13 a deploy of `main` took a commit of 18 commits before the instance's release).
+ */
 export function commitOf(name: string, clone = ROOT): string {
+  if (name == "main" || name == "staging") {
+    const head = originHead(clone, name);
+    if (!head) throw new Error(`origin has no branch ${name}. Name a commit.`);
+    return head;
+  }
   const r = gitIn(clone, ["rev-parse", "--verify", "--quiet", `${name}^{commit}`]);
   if (!r.ok || !r.out) throw new Error(`This clone has no commit ${name}. Fetch it (git fetch origin), or name another.`);
   return r.out;
@@ -149,15 +158,22 @@ function remoteHead(clone: string, branch: string): string | null {
   return r.out.split(/\s/)[0] || null;
 }
 
+/** `remoteHead`, with the commit fetched into the clone. */
+function originHead(clone: string, branch: string): string | null {
+  const head = remoteHead(clone, branch);
+  if (!head) return null;
+  const f = gitIn(clone, ["fetch", "--quiet", "origin", branch]);
+  if (!f.ok) throw new Error(`git fetch origin ${branch} failed: ${f.err}`);
+  return head;
+}
+
 /**
  * What a deploy of `sha` to a primary does to main on origin: "has" (main has the commit: main stays), or "forward"
  * (main moves to it after the deploy). A commit apart from main does not deploy: main would lose commits.
  */
 export function mainMove(clone: string, sha: string): "has" | "forward" {
-  const main = remoteHead(clone, "main");
+  const main = originHead(clone, "main");
   if (!main) return "forward";
-  const f = gitIn(clone, ["fetch", "--quiet", "origin", "main"]);
-  if (!f.ok) throw new Error(`git fetch origin main failed: ${f.err}`);
   if (isAncestor(clone, sha, main)) return "has";
   if (isAncestor(clone, main, sha)) return "forward";
   throw new Error(
@@ -171,12 +187,8 @@ export function mainMove(clone: string, sha: string): "has" | "forward" {
  * staging).
  */
 function onStaging(clone: string, sha: string) {
-  const staging = remoteHead(clone, "staging");
-  if (staging) {
-    const f = gitIn(clone, ["fetch", "--quiet", "origin", "staging"]);
-    if (!f.ok) throw new Error(`git fetch origin staging failed: ${f.err}`);
-    if (isAncestor(clone, sha, staging)) return;
-  }
+  const staging = originHead(clone, "staging");
+  if (staging && isAncestor(clone, sha, staging)) return;
   throw new Error(
     `The staging instances run ${sha.slice(0, 12)}, but staging on origin${staging ? ` (${staging.slice(0, 12)})` : ""} does not have it: its merge did not end. Merge it again, or name the commit.`
   );
