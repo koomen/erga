@@ -21,10 +21,10 @@ import type { ReaderConfig } from "../../shared/page-html";
 import type { ToolAsk } from "../common/reader-api";
 import { copyOf } from "../../libs/text/ui/clipboard-read";
 import { linkTarget, placeOf } from "../common/link-target";
-import { topRoom, type Seat } from "../common/top-room";
+import { TOP_ROOM, topRoom, type Seat } from "../common/top-room";
 import { readView, showView, viewOf, type View } from "../common/page-view";
 import { isAppShortcut, isMac } from "../common/app-keys";
-import { catchZoomGestures } from "../common/zoom";
+import { catchZoomGestures, drawnLevel, REST_MS, zoomKey } from "../common/zoom";
 import { makeErgaLLM, type LlmAnswer, type LlmOp } from "../common/page-llm";
 
 /** The page's canvas, as it goes to the viewer (client/inline/viewer-band.ts draws it). */
@@ -110,7 +110,11 @@ export default function reader(C: ReaderConfig): void {
       if (editing()) {
         tell({ type: "erga-activity", kind: "key" });
         if (!isAppShortcut(e, isMac)) return;
-        if (e.key != "Escape") e.preventDefault();
+        // A zoom key: the page keeps its middle (keepZoomPlace, below). ⌘0 on a window the browser has zoomed itself is the
+        // browser's too, for its own way back.
+        const zoomed = zoomKey(e, isMac);
+        if (zoomed) aimAt(innerWidth / 2, innerHeight / 2);
+        if (e.key != "Escape" && !(zoomed == "reset" && pinched())) e.preventDefault();
         tell({ type: "erga-key", keys: { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey } });
         return;
       }
@@ -125,7 +129,107 @@ export default function reader(C: ReaderConfig): void {
   // zoom (libs/text/ui/zoom.ts); whether the page zooms itself (window.ergaZoom: a canvas's camera), as the viewer's
   // zoom goes to it then.
   addEventListener("focus", () => editing() && tell({ type: "erga-activity", kind: "focus" }), true);
-  catchZoomGestures(window, (by) => tell({ type: "erga-zoom", zoom: by }), editing);
+  const said = () => window.__ergaReader?.mode as { mode?: string; zoom?: number; tall?: number; pinched?: boolean } | undefined;
+  /** The browser has the whole window zoomed (its own pinch): a pinch stays the browser's (client/common/zoom.ts, the trap). */
+  const pinched = () => said()?.pinched === true;
+  catchZoomGestures(
+    window,
+    (by, e) => {
+      aimAt(e.clientX, e.clientY);
+      tell({ type: "erga-zoom", zoom: by, x: e.clientX, y: e.clientY });
+    },
+    (by) => editing() && !(pinched() && (!by || "by" in by))
+  );
+  // The editor's zoom (client/common/zoom.ts): the viewer draws this page's frame larger, and shorter by as much. The
+  // page's point under the pointer (`aim`: of the pinch or the key that zooms, `y` px below the frame's top on the screen,
+  // `part` of the way down its element `el`; else the middle) stays where it is on the screen, whatever the page lays
+  // out again for its window's new height (the room at its top, a size in vh): the page scrolls as its window gets its
+  // new height, before the browser paints it (a ResizeObserver's time, on a box of the window's size). `drawn`: the
+  // level this page's scroll is for.
+  //
+  // Trap: the viewer's word (the level) and the window's new height come apart, in either order, and several levels may
+  // pass between two of either. So the word says the height too (`tall`: the frame's place on the screen), and
+  // drawnLevel (zoom.ts) says which level the page is at.
+  let drawn: number | null = null,
+    tall = 0,
+    high = innerHeight,
+    wide = innerWidth,
+    aim: { y: number; el: Element; part: number; t: number } | null = null;
+  const fresh = () => !!aim && performance.now() - aim.t < 400 && aim.el.isConnected;
+  /** The zoom's point, from here on: the page's point at (x, y) in this window. One pinch keeps the point it began with. */
+  function aimAt(x: number, y: number) {
+    const on = y * (drawn ?? 1),
+      t = performance.now();
+    if (fresh() && Math.abs(aim!.y - on) < 3) return void (aim!.t = t);
+    const el = document.elementFromPoint(x, y) ?? root,
+      r = el.getBoundingClientRect();
+    aim = { y: on, el, part: r.height ? (y - r.top) / r.height : 0, t };
+  }
+  /** Scrolls the zoom's point back to its place on the screen, with the page at `level`. */
+  function holdAim(level: number) {
+    const r = aim!.el.getBoundingClientRect();
+    scrollBy({ top: r.top + aim!.part * r.height - aim!.y / level, behavior: "instant" });
+  }
+  const view = document.createElement("erga-view");
+  view.style.cssText = "all: initial; position: fixed; inset: 0; visibility: hidden; pointer-events: none";
+  function keepZoomPlace() {
+    const h = innerHeight,
+      m = said(),
+      level = m?.mode == "edit" && m.zoom ? m.zoom : 1;
+    if (m?.mode == "edit" && m.tall) tall = m.tall;
+    if (drawn == null) {
+      // (The first word: the frame is at its level from the start.)
+      if (m) zoomRoom((drawn = level), true);
+    } else {
+      const pinch = fresh(),
+        to = drawnLevel({ height: h, said: level, tall, drawn, pinch: pinch && h != high && innerWidth == wide });
+      if (to != drawn) {
+        if (pinch) holdAim(to);
+        else scrollBy({ top: tall / 2 / drawn - tall / 2 / to, behavior: "instant" });
+        // (Where the room at the page's top is in sight, at once. Else it waits for the zoom to rest: it lays out the whole page.)
+        zoomRoom((drawn = to), scrollY < room.room);
+      }
+    }
+    high = h;
+    wide = innerWidth;
+  }
+  // The room for the bars at the page's top (below): the band's height on the screen, in this page's px at its level.
+  let bars = TOP_ROOM,
+    roomWait = 0;
+  function zoomRoom(level: number, now: boolean) {
+    clearTimeout(roomWait);
+    if (!now) return void (roomWait = window.setTimeout(() => zoomRoom(drawn ?? 1, true), REST_MS));
+    const px = Math.round((bars / level) * 100) / 100;
+    if (px == room.room) return;
+    roomShift += px - room.room;
+    room.room = px;
+    dirty();
+    keepRoom();
+  }
+  new ResizeObserver(keepZoomPlace).observe(view);
+  addEventListener("resize", keepZoomPlace);
+  // Zoomed, the page is not as wide as its place in the viewer, which moves it sideways: the wheel that way, where the
+  // page itself has nothing to scroll.
+  addEventListener(
+    "wheel",
+    (e) => {
+      // (A scroll: the zoom's point is where it was no more.)
+      if (!e.ctrlKey) aim = null;
+      const dx = (e.deltaX || (e.shiftKey ? e.deltaY : 0)) * (e.deltaMode == 1 ? 16 : 1);
+      if (!dx || e.ctrlKey || e.defaultPrevented || !editing() || (drawn ?? 1) == 1) return;
+      for (let el = e.target instanceof Element ? e.target : null; el; el = el.parentElement) {
+        const more = el.scrollWidth - el.clientWidth;
+        if (
+          more > 1 &&
+          (dx > 0 ? el.scrollLeft < more - 1 : el.scrollLeft > 1) &&
+          (el == document.scrollingElement || /auto|scroll/.test(getComputedStyle(el).overflowX))
+        )
+          return;
+      }
+      tell({ type: "erga-pan", dx });
+    },
+    { passive: true }
+  );
   let zoomsSaid: boolean | null = null;
   const zooms = (again = false) => {
     const on = typeof (window as Window & { ergaZoom?: unknown }).ergaZoom == "function";
@@ -206,6 +310,7 @@ export default function reader(C: ReaderConfig): void {
   // which gets what they cover, and again as it changes).
   const room = topRoom(document);
   let roomDirty = true,
+    roomShift = 0,
     seatSaid: Seat | null = null,
     insetGiven = "",
     // The page's scripts have run (a canvas's window.ergaInset is there), and the viewer has said what its bars cover.
@@ -244,6 +349,13 @@ export default function reader(C: ReaderConfig): void {
     if (document.head) styles.observe(document.head, { childList: true, subtree: true, characterData: true, attributes: true });
     const inset = (window as Window & { ergaInset?: unknown }).ergaInset,
       seat = room.update(typeof inset == "function");
+    // The room got another height (the editor's zoom): the zoom's point stays where it is on the screen, and so does a
+    // page scrolled down. (The browser's own scroll anchoring leaves a change of the root's padding alone.)
+    if (roomShift && seat == "under") {
+      if (fresh() && drawn) holdAim(drawn);
+      else if (scrollY > 0) scrollBy({ top: roomShift, behavior: "instant" });
+    }
+    roomShift = 0;
     if (seat !== seatSaid) {
       seatSaid = seat;
       tell({ type: "erga-seat", seat, early: !parsed });
@@ -706,6 +818,8 @@ export default function reader(C: ReaderConfig): void {
     // The viewer's word on editing (libs/text/ui/bridge.ts, EditMode): kept for the editor, which loads on the first edit.
     else if (type == "erga-mode") {
       window.__ergaReader!.mode = e.data;
+      if (!view.isConnected) root.append(view);
+      keepZoomPlace();
       if (e.data.mode == "edit") {
         load();
         zooms(true);
@@ -714,7 +828,7 @@ export default function reader(C: ReaderConfig): void {
     // The viewer's word on comments (libs/text/ui/frame.ts hears it too, once it's loaded): kept for the editor.
     else if (type == "erga-comments") window.__ergaReader!.comments = e.data;
     // The viewer's zoom, for a page that zooms itself (window.ergaZoom): `by` times closer, or 0 for its own first view.
-    else if (type == "erga-page-zoom" && typeof e.data.by == "number" && isFinite(e.data.by)) {
+    else if (type == "erga-page-zoom" && typeof e.data.by == "number" && Number.isFinite(e.data.by)) {
       const z = (window as Window & { ergaZoom?: unknown }).ergaZoom;
       if (typeof z == "function")
         try {
@@ -737,7 +851,10 @@ export default function reader(C: ReaderConfig): void {
     else if (type == "erga-room" && typeof e.data.px == "number" && e.data.px >= 0 && e.data.px <= 400) {
       const side = (n: unknown) => (typeof n == "number" && n >= 0 && n <= 4000 ? n : 0),
         i = e.data.inset || {};
-      room.room = e.data.px;
+      if (bars != e.data.px) {
+        bars = e.data.px;
+        zoomRoom(drawn ?? 1, true);
+      }
       room.inset = { top: side(i.top), right: side(i.right), bottom: side(i.bottom), left: side(i.left) };
       roomGiven = true;
       dirty();

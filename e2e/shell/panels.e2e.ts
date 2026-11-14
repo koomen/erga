@@ -70,9 +70,16 @@ journey("the panels and the bars over a page", () => {
     })()`);
     return { x: f.x + r.x, y: f.y + r.y };
   };
+  /** A click just after the end of an element's text, on the page as it is drawn (scaled, and moved sideways). */
   const clickEndZoomed = async (selector: string) => {
-    const r = await pointOn(selector, 0.98);
-    await ed.click(r.x, r.y);
+    const f = await ed.frameAt();
+    const r = await ed.frame<{ x: number; y: number }>(`(() => {
+      const k = window.ergaFrame?.zoom ?? 1, range = ${F}.createRange();
+      range.selectNodeContents(${F}.querySelector(${JSON.stringify(selector)}));
+      const r = [...range.getClientRects()].at(-1);
+      return { x: r.right * k + 2, y: (r.top + r.height / 2) * k };
+    })()`);
+    await ed.click(f.x + r.x, f.y + r.y);
   };
   /** The zoom action's text in the bar, or null where it is not in sight. */
   const zoomAction = () =>
@@ -243,6 +250,107 @@ journey("the panels and the bars over a page", () => {
     expect((await zoomed()).height).toBeCloseTo(start.height, 0);
   });
 
+  test("a pinch zooms around the pointer, with the page under it in each frame; zoomed, the page scrolls to its right edge and its bottom; the keys reach both limits and 100%, under the bars", async () => {
+    /** The frame's sides against its place's (the window beside the agent's pane): 0 where the page ends at the place's edge. */
+    const edges = () =>
+      ed.eval<{ left: number; right: number }>(`(() => {
+        const f = document.getElementById("frame"), r = f.getBoundingClientRect();
+        return { left: Math.round(r.left - f.offsetLeft), right: Math.round(r.right - f.offsetLeft - f.offsetWidth) };
+      })()`);
+    /** The bars are in sight, at their own size, and the window itself is not zoomed. */
+    const bars = async () => ({
+      ...(await chrome()),
+      top: await ed.eval<boolean>(`(() => {
+      const h = document.querySelector(".chrome-top"), r = h.getBoundingClientRect();
+      return visualViewport.scale == 1 && r.top >= 0 && r.right <= innerWidth && h.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+    })()`),
+    });
+    const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+    // At 150%, where this short page has room to scroll. From here on, each time the page's window gets another height
+    // (a level of the zoom), as the browser paints it: where the lede is on the screen, down from the frame's top.
+    for (let i = 0; i < 3; i++) await ed.press("ControlOrMeta+Equal");
+    await soon(scale).toBe(1.5);
+    await ed.frame(`(() => {
+      const tall = innerHeight * 1.5, at = () => document.querySelector("p.lede").getBoundingClientRect().top * tall / innerHeight;
+      const seen = (window.__ledeAt = [at()]);
+      new ResizeObserver(() => seen.push(at())).observe(document.querySelector("erga-view") ?? document.documentElement);
+      return true;
+    })()`);
+    // A trackpad's pinch on the lede's top edge: ctrl with the wheel, in many small moves. That point stays under the pointer.
+    const lede = async () => ({
+      x: (await pointOn("p.lede", 0.25)).x,
+      y:
+        (await ed.frameAt()).y +
+        (await ed.frame<number>(`document.querySelector("p.lede").getBoundingClientRect().top * (window.ergaFrame?.zoom ?? 1)`)),
+    });
+    const p = await lede();
+    await page.mouse.move(p.x, p.y);
+    await page.keyboard.down("Control");
+    for (let i = 0; i < 10; i++) await page.mouse.wheel(0, -5.5);
+    await soon(scale).toBeCloseTo(1.5 * Math.exp(0.55), 2);
+    await soon(async () => dist(await lede(), p)).toBeLessThan(3);
+    // Back out to 150%: the same point, still, and at every level between.
+    for (let i = 0; i < 10; i++) await page.mouse.wheel(0, 5.5);
+    await soon(scale).toBeCloseTo(1.5, 2);
+    await soon(async () => dist(await lede(), p)).toBeLessThan(3);
+    const seen = await ed.frame<number[]>(`window.__ledeAt`);
+    expect(seen.length, "the page's levels during the pinch").toBeGreaterThan(5);
+    expect(
+      Math.max(...seen.map((y) => Math.abs(y - seen[0]))),
+      "the lede, up or down from its place, at any level of the pinch"
+    ).toBeLessThan(3);
+    // And on, to the least: the pinch stops at 50%.
+    for (let i = 0; i < 3; i++) await page.mouse.wheel(0, 49.5);
+    await page.keyboard.up("Control");
+    await soon(zoomAction).toBe("50%");
+    expect(await bars()).toEqual({ ...shell, top: true });
+
+    // Zoomed in, the page is wider than its place: the wheel takes it to its right edge and back to its left one, and down to its bottom.
+    await ed.press("ControlOrMeta+Digit0");
+    for (let i = 0; i < 5; i++) await ed.press("ControlOrMeta+Equal");
+    await soon(scale).toBe(2);
+    expect(await edges(), "around the middle").toEqual({ left: -(await edges()).right, right: (await edges()).right });
+    await page.mouse.move(p.x, p.y);
+    for (let i = 0; i < 4; i++) await page.mouse.wheel(600, 0);
+    await soon(async () => (await edges()).right).toBe(0);
+    for (let i = 0; i < 8; i++) await page.mouse.wheel(-600, 0);
+    await soon(async () => (await edges()).left).toBe(0);
+    await page.mouse.wheel(0, 20000);
+    await soon(() => ed.frame<boolean>(`scrollY > 0 && scrollY + innerHeight >= document.documentElement.scrollHeight - 1`)).toBe(true);
+
+    // The keys, to both limits and back to 100%: the bars stay where they are, at their size.
+    for (let i = 0; i < 3; i++) await ed.press("ControlOrMeta+Equal");
+    await soon(zoomAction).toBe("300%");
+    for (let i = 0; i < 13; i++) await ed.press("ControlOrMeta+Minus");
+    await soon(zoomAction).toBe("50%");
+    expect(await bars()).toEqual({ ...shell, top: true });
+    await ed.press("ControlOrMeta+Digit0");
+    await soon(scale).toBe(1);
+    await soon(zoomAction).toBe(null);
+    expect(await edges()).toEqual({ left: 0, right: 0 });
+  });
+
+  test("a window the browser zoomed itself keeps its pinch in the editor: a pinch out brings the bars back, and the next one zooms the page", async () => {
+    // The browser's own pinch (a reader's, or one before the editor was up): the window is 2 times larger, and the bars out of sight.
+    const cdp = await page.context().newCDPSession(page);
+    const windowZoom = () => page.evaluate(() => Math.round(visualViewport!.scale * 100) / 100);
+    const pinch = (by: number) =>
+      cdp.send("Input.synthesizePinchGesture", { x: 300, y: 250, scaleFactor: by, relativeSpeed: 2000, gestureSourceType: "mouse" });
+    await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
+    await soon(windowZoom).toBe(2);
+    // A pinch out, on the page: the window's, all the way, and not the page's too.
+    await pinch(0.25);
+    await soon(windowZoom).toBe(1);
+    expect(await scale()).toBe(1);
+    // The next one is the page's.
+    await pinch(0.8);
+    await soon(scale).toBeCloseTo(0.8, 1);
+    expect(await windowZoom()).toBe(1);
+    await ed.press("ControlOrMeta+Digit0");
+    await soon(scale).toBe(1);
+    await cdp.detach();
+  });
+
   test("Share with an agent's tooltip has its name back after its moment", async () => {
     // (1.6 s after the copy, which the steps since took.)
     await soon(agentTip).toBe("Share with an agent");
@@ -278,7 +386,11 @@ journey("the panels and the bars over a page", () => {
     await soon(() => ed.source(), DISK_MS).toContain("/erga/text/editor.js");
     expect(await ed.eval<boolean>(`document.body.classList.contains("agent-open")`), "on a desktop the agent is open").toBe(true);
     // (A page of text stays beside the agent's pane, where nothing covers it: only a canvas goes under it, below.)
-    expect(await ed.eval<number[]>(FRAME), "a text page's frame starts at the pane's side").toEqual([await ed.eval<number>(PANE), 0]);
+    // (Its place: zoomed, the frame is drawn wider than its place, and shows only there.)
+    expect(
+      await ed.eval<number[]>(`(() => { const f = document.getElementById("frame"); return [f.offsetLeft, f.offsetTop]; })()`),
+      "a text page's frame starts at the pane's side"
+    ).toEqual([await ed.eval<number>(PANE), 0]);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
     await ed.loaded();

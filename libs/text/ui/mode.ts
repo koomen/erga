@@ -19,6 +19,10 @@ export type EditMode =
       path: string;
       tab: string;
       zoom: number;
+      /** The height of the frame's place on the screen, px: at `zoom`, the page's window is `tall / zoom` high. */
+      tall: number;
+      /** The browser has the whole window zoomed (its own pinch): a pinch on the page stays the browser's. */
+      pinched: boolean;
       timescale?: number;
       check?: boolean;
       comment?: true;

@@ -130,8 +130,8 @@ export default function viewerBand(): void {
     const kept = JSON.parse(localStorage.getItem(KEY) || "null");
     if (kept) paintCanvas(kept, []);
   } catch {}
-  // The room a scrolling page keeps at its top for the bars (client/common/top-room.ts): the band's height, in the page's
-  // own pixels (the editor's zoom), told to the page as it starts and when either changes (in full screen too: the page
+  // The room a scrolling page keeps at its top for the bars (client/common/top-room.ts): the band's height on
+  // the screen (the page takes it at its own level, the editor's zoom), told to the page as it starts and when it changes (in full screen too: the page
   // doesn't move as it goes in and out). With it, what the bars and the agent's panel cover of a frame over the whole
   // window (insetOf), for a page that keeps clear of them itself. The page says its seat (client/common/top-room.ts), and
   // its frame is below the band (erga-fills) or over the whole window (erga-whole: viewer-band.css), here and next time.
@@ -146,7 +146,7 @@ export default function viewerBand(): void {
       band = probe.offsetHeight,
       cs = getComputedStyle(probe),
       inset = insetOf(band, parseFloat(cs.paddingLeft), parseFloat(cs.paddingRight), scale, root.classList.contains("erga-full")),
-      room = { type: "erga-room", px: Math.round((band / scale) * 100) / 100, inset },
+      room = { type: "erga-room", px: band, inset },
       said = JSON.stringify(room);
     if (!again && said == roomSaid) return;
     roomSaid = said;

@@ -135,10 +135,8 @@ function send(e: FrameEvent) {
 function setZoom(level: number) {
   const next = clampZoom(level);
   if (next == zoom) return;
-  // The same place in the page stays at the top, as near as the page's new layout allows, once it has it.
-  const el = document.documentElement, at = el.scrollHeight > 0 ? scrollY / el.scrollHeight : 0;
+  // (The page keeps its place itself, as its frame gets its new height: client/inline/reader.ts.)
   zoom = next;
-  if (at) addEventListener("resize", () => scrollTo(scrollX, at * el.scrollHeight), { once: true });
   controls?.queue();
 }
 

@@ -4,6 +4,8 @@
 // tests/layout.test.ts checks the two agree), and the document's zoom (client/shell/main.ts, ZOOM_KEY), which the frame takes
 // (client/styles/editor.css, html.erga-zoomed).
 
+import { clampZoom } from "../common/zoom";
+
 type Item = "agent" | "doc";
 
 export default function viewerLayoutEarly(): void {
@@ -59,10 +61,11 @@ export default function viewerLayoutEarly(): void {
     body.classList.toggle("layout-narrow", narrow);
   } catch {}
   try {
-    const z = Number(
-      localStorage.getItem("erga:zoom:v1:" + document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')!.content) || 1
+    // (Within the zoom's limits, whatever the browser kept.)
+    const z = clampZoom(
+      Number(localStorage.getItem("erga:zoom:v1:" + document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')!.content) || 1)
     );
-    if (Number.isFinite(z) && z > 0 && z != 1) {
+    if (z != 1) {
       document.documentElement.style.setProperty("--erga-zoom", String(z));
       document.documentElement.classList.add("erga-zoomed");
     }

@@ -11,6 +11,8 @@ const mode = (key = "k1"): Editing => ({
   path: "index.html",
   tab: "t",
   zoom: 1,
+  tall: 800,
+  pinched: false,
 });
 
 /** The steps in turn, from idle: the state after the last, and every effect on the way. */

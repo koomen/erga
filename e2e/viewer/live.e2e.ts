@@ -410,7 +410,8 @@ journey("a document's page loads one time, for a reader and in the editor", () =
     await page.evaluate((doc) => localStorage.setItem(`erga:zoom:v1:${doc}`, "1.5"), await idOf(light));
     const want = { l: 0, r: WIDTH };
     const r = await open("load", want, up, light);
-    still(r, want, "zoomed, load");
+    // (Zoomed, the frame is drawn wider than the window, around its middle: a quarter of the window out at each side.)
+    still({ ...r, spots: r.spots.map((at) => ({ l: at.l + WIDTH / 4, r: at.r - WIDTH / 4 })) }, want, "zoomed, load");
     expect(r.scales.length, "the frame showed").toBeGreaterThan(0);
     expect([...new Set(r.scales)], "the frame's scale").toEqual([1.5]);
   });

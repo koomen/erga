@@ -103,11 +103,20 @@ body.erga-editing .erga-crumbs a.nav-back:hover { opacity: 1; }
    and the bottom row's --cb-l and
    --cb-r); their defaults, its usual place, are client/style.css's. */
 :is(#frame, .erga-canvas) { left: var(--frame-l); width: calc(100% - var(--frame-l) - var(--frame-r)); transition: left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease); }
-/* The editor's zoom (zoom.ts): the page's frame drawn larger, with a viewport that much smaller, as the browser's own
-   zoom would (remote.ts, setZoom; from the first frame, server/pages/viewer.ts, LAYOUT_EARLY). */
-html.erga-zoomed #frame { width: calc((100% - var(--frame-l) - var(--frame-r)) / var(--erga-zoom)); height: calc((100% - var(--frame-t) - var(--kb, 0px)) / var(--erga-zoom)); transform: scale(var(--erga-zoom)); transform-origin: 0 0; }
-/* (A page over the whole window, under the panel: client/inline/viewer-band.css, erga-whole.) */
-html.erga-whole.erga-zoomed body #frame { width: calc(100% / var(--erga-zoom)); }
+/* The editor's zoom (client/common/zoom.ts): a magnifier. The page's frame keeps its width (the page stays laid out for
+   the window), and is drawn --erga-zoom times larger and that much shorter: it fills its place's height, and the page
+   scrolls itself. Sideways it sits in the middle of its place, moved by --erga-x (main.ts: the point under the pointer
+   stays there), and shows only in its place, not under the agent's panel. From the first frame
+   (client/inline/viewer-layout-early.ts). The page's canvas goes with it. */
+html.erga-zoomed { --erga-tx: calc((1 - var(--erga-zoom)) * 50% + var(--erga-x, 0px)); }
+html.erga-zoomed #frame {
+  height: calc((100% - var(--frame-t) - var(--kb, 0px)) / var(--erga-zoom));
+  transform: translateX(var(--erga-tx)) scale(var(--erga-zoom)); transform-origin: 0 0;
+  clip-path: inset(0 calc(100% - (100% - var(--erga-tx)) / var(--erga-zoom)) 0 calc(var(--erga-tx) / var(--erga-zoom) * -1));
+}
+html.erga-zoomed .erga-canvas > div { left: var(--erga-tx); }
+/* A pinch is going on: the frame keeps its picture and only scales it, until the pinch rests. */
+html.erga-zooming #frame { will-change: transform; }
 #source { left: var(--frame-l); right: var(--frame-r); transition: left var(--agent-ms) var(--agent-ease), right var(--agent-ms) var(--agent-ease); }
 .chrome-bottom { transition: opacity var(--show-ms) var(--ease), padding var(--agent-ms) var(--agent-ease); padding-left: var(--cb-l); padding-right: var(--cb-r); }
 /* The buttons' bar and its cards keep clear of a panel on the right, 14px from it, as the breadcrumbs' bar on the left. */
