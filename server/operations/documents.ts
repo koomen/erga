@@ -71,6 +71,8 @@ export const PAGE_RULES =
 
 /** How many tokens whoami lists, if not told. */
 const TOKENS_SHOWN = 20;
+/** How many documents list_documents gives, if not told (all: at most 100). */
+const DOCUMENTS_SHOWN = 20;
 
 const bool = (description: string) => Schema.optionalKey(Schema.Boolean.annotate({ description }));
 
@@ -154,13 +156,15 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     run: async (args, caller) => {
       const { dir, who } = caller;
       const query = typeof args.query == "string" ? args.query : "";
+      const limit = Math.max(Number(args.limit) || DOCUMENTS_SHOWN, 1);
       if (args.all === true) {
         if (!(await dir.users.actsAsAdmin(who)))
           throw new OperationError({ message: "Only an admin with admin power can list everyone's documents (all).", status: 403 });
-        return await dir.lists.search(who, query, Number(args.limit) || 20);
+        const { documents, total } = await dir.lists.search(who, query, limit);
+        return { documents, moreDocuments: total - documents.length };
       }
       const q = query.trim().toLowerCase();
-      return (await platformOf(caller).docs.list(who.login.toLowerCase(), { archived: args.archived === true }))
+      const listed = (await platformOf(caller).docs.list(who.login.toLowerCase(), { archived: args.archived === true }))
         .map((d) => ({
           id: d.id,
           title: d.title,
@@ -175,6 +179,8 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
           ...(d.id == caller.here ? { here: true } : {}),
         }))
         .filter((d) => !q || `${d.title} ${d.address} ${d.id}`.toLowerCase().includes(q));
+      // Newest first, `limit` of them; `moreDocuments`: how many come after these.
+      return { documents: listed.slice(0, limit), moreDocuments: Math.max(listed.length - limit, 0) };
     },
   },
   {

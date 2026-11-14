@@ -548,7 +548,13 @@ test("the document tools work on any of your documents, named by address, URL, s
   expect(r.status).toBe(400);
   expect(r.text.length).toBeGreaterThan(0);
   expect((await t.call("read", { document: "/nobody/nothing", path: "index.html" })).status).toBe(404);
-  expect((JSON.parse((await t.call("list_documents")).text) as { id: string }[]).some((d) => d.id == pub.id)).toBe(true);
+  type Listed = { documents: { id: string }[]; moreDocuments: number };
+  const all = JSON.parse((await t.call("list_documents")).text) as Listed;
+  expect([all.documents.map((d) => d.id), all.moreDocuments]).toEqual([[pub.id], 0]);
+  // limit: that many of the list, and how many it left out (the bug: an agent that asked for 5 got all 12).
+  const few = await (await mine()).call("documents", { op: "list_documents", limit: 2 });
+  const { documents, moreDocuments } = JSON.parse(few.text) as Listed;
+  expect([documents.length, moreDocuments > 0], few.text.slice(0, 200)).toEqual([2, true]);
   // There is no second route by the document's URL: the old one, and the host's own, point to /api/tools.
   for (const path of [`/d/${pub.id}/api/tools/read`, `${pub.address}/api/ext/tools/read`]) {
     const old = await fetch(`${s.root}${path}`, {

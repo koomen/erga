@@ -195,9 +195,9 @@ export default function adminSettings(c: SettingsConfig): void {
       const search = async () => {
         const n = ++asked;
         try {
-          const body = await runTool<Found[]>("list_documents", { all: true, query: find.value });
+          const body = await runTool<{ documents: Found[] }>("list_documents", { all: true, query: find.value });
           if (n != asked) return;
-          found = body;
+          found = body.documents;
           show();
         } catch (err) {
           if (n == asked) say(hint, (err as Error).message, true);

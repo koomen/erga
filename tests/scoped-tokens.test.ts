@@ -94,7 +94,7 @@ test("a documents token: every document, but not the admin tools, even an admin'
   const { token } = await tokens.mint(ada, "Docs", { scope: "documents" });
   const list = await call(token, "list_documents");
   expect(list.status).toBe(200);
-  expect(list.body.result.map((d: { id: string }) => d.id).sort()).toEqual(["oneoneon", "twotwotw"]);
+  expect(list.body.result.documents.map((d: { id: string }) => d.id).sort()).toEqual(["oneoneon", "twotwotw"]);
   expect((await call(token, "share_document", { document: "twotwotw", reader_bars: true })).status).toBe(200);
   const users = await call(token, "people");
   expect(users.status).toBe(403);

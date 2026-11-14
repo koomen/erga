@@ -13,7 +13,7 @@
 // A key or a token is never in the page's address, its storage or the conversation. Its class names stay clear of the
 // app pages' own (client/inline/app.css: header, .new, .empty): the dialog is on all of them.
 
-import { asUser, runTool } from "../common/tools";
+import { asUser, runTool, WHOLE_LIST } from "../common/tools";
 import { showCopied } from "../common/copied";
 import { esc } from "../../shared/html";
 
@@ -172,7 +172,10 @@ async function tokens() {
   moreButton().disabled = true;
   const [me, docs] = await Promise.all([
     runTool<Mine>("whoami", { limit: SHOWN }).catch((e: Error) => e),
-    runTool<{ id: string; title: string; address: string }[]>("list_documents").catch(() => []),
+    runTool<{ documents: { id: string; title: string; address: string }[] }>("list_documents", WHOLE_LIST).then(
+      (l) => l.documents,
+      () => []
+    ),
   ]);
   // (A newer load draws the list.)
   if (load != loads) return;

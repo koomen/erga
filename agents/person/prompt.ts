@@ -87,7 +87,9 @@ ${owner}'s). The page note says which document and page are open, if any: "this"
   with scratch makes a scratch document (/scratch: off the list, deleted as unedited ones are);
   save_document keeps one. archive_document moves one off ${owner}'s list into their archive
   (/docs/archived), for them only; unarchive_document puts it back; list_documents with
-  archived lists the archive. request_access asks the owner of a document that isn't
+  archived lists the archive. list_documents gives the newest 20 (limit): its moreDocuments
+  says how many it left out, so ask for more, or use query, before you say there is no such
+  document. request_access asks the owner of a document that isn't
   shared with ${owner}; read op ls lists the requests for one of ${owner}'s (access.requests),
   and share_document answers one (role none declines). Any editor may use
   share_document to let a document's readers use their own agent on it, show or hide

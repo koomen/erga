@@ -9,7 +9,7 @@
 import { readable } from "../../document/pages";
 import { esc } from "../../shared/html";
 import { isMac } from "./app-keys";
-import { asUser, runTool } from "./tools";
+import { asUser, runTool, WHOLE_LIST } from "./tools";
 
 interface Found {
   group: string;
@@ -86,7 +86,10 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
   const read = () =>
     (reading ??= Promise.all([
       doc ? runTool<Ls>("ls", { document: doc }).catch(() => null) : null,
-      runTool<{ title: string; address: string }[]>("list_documents").catch(() => []),
+      runTool<{ documents: { title: string; address: string }[] }>("list_documents", WHOLE_LIST).then(
+        (l) => l.documents,
+        () => []
+      ),
       runTool<{ pages?: { group: string; label: string; path: string }[] }>("whoami").then(
         (w) => w.pages ?? [],
         () => []

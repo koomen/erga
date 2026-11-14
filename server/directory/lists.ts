@@ -50,11 +50,11 @@ export class Lists {
   /**
    * The server's documents and projects (test ones aside) whose title, owner,
    * address (/<owner>/<slug>, or a URL with it) or id has `query` in it, most
-   * recently edited first, at most `limit`; with no query, the most recent.
+   * recently edited first, at most `limit` (and at most 100); with no query, the most recent. `total`: how many match.
    * For an admin choosing one (the homepage, the landing_document setting):
    * admins only, since it names everyone's documents.
    */
-  async search(by: Actor, query: string, limit = 20): Promise<DocFound[]> {
+  async search(by: Actor, query: string, limit = 20): Promise<{ documents: DocFound[]; total: number }> {
     await this.users.mustAdmin(by);
     let q = query.trim();
     try {
@@ -64,15 +64,23 @@ export class Lists {
     }
     q = q.replace(/^\/+|\/+$/g, "").toLowerCase();
     const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    const rows = await this.sql.all<Row>(
-      `SELECT * FROM documents WHERE test = 0 AND scratch = 0 AND (?1 = '' OR LOWER(title) LIKE ?2 ESCAPE '\\' OR owner LIKE ?2 ESCAPE '\\'
-         OR (owner || '/' || slug) LIKE ?2 ESCAPE '\\' OR id = ?1)
-       ORDER BY COALESCE(modified, created) DESC LIMIT ?3`,
-      q,
-      like,
-      Math.max(1, Math.min(100, Math.floor(limit)))
-    );
-    return rows.map(fromRow).map((d) => ({ id: d.id, title: d.title, owner: d.owner, address: addressOf(d), kind: d.kind ?? "document" }));
+    const match = `test = 0 AND scratch = 0 AND (?1 = '' OR LOWER(title) LIKE ?2 ESCAPE '\\' OR owner LIKE ?2 ESCAPE '\\'
+         OR (owner || '/' || slug) LIKE ?2 ESCAPE '\\' OR id = ?1)`;
+    const [rows, [count]] = await Promise.all([
+      this.sql.all<Row>(
+        `SELECT * FROM documents WHERE ${match} ORDER BY COALESCE(modified, created) DESC LIMIT ?3`,
+        q,
+        like,
+        Math.max(1, Math.min(100, Math.floor(limit)))
+      ),
+      this.sql.all<{ n: number }>(`SELECT COUNT(*) AS n FROM documents WHERE ${match}`, q, like),
+    ]);
+    return {
+      documents: rows
+        .map(fromRow)
+        .map((d) => ({ id: d.id, title: d.title, owner: d.owner, address: addressOf(d), kind: d.kind ?? "document" })),
+      total: Number(count?.n ?? 0),
+    };
   }
 
   /** Moves a document off `login`'s list into their archive (/docs/archived), or back: theirs only, by their own permission. */

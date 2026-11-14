@@ -11,6 +11,9 @@ export function asUser(path: string): string {
   return user ? `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(user)}` : path;
 }
 
+/** For list_documents, where a page needs the person's whole list: it gives 20 if not told how many. */
+export const WHOLE_LIST = { limit: 1000 };
+
 /** Runs operation `name` with `args`: its result; the server's error, or a line about the network, as an Error. */
 export async function runTool<T = any>(name: string, args: Record<string, unknown> = {}): Promise<T> {
   const r = await fetch(asUser("/api/tools/" + encodeURIComponent(name)), {
