@@ -1,5 +1,5 @@
-// The documents list's script (/docs, server/pages/docs.ts): times in the reader's own language and zone, the New
-// document picker, a question before deleting, Archive (Unarchive on /docs/archived), the share dialog, and each
+// The documents list's script (/documents, server/pages/documents.ts): times in the reader's own language and zone, the New
+// document picker, a question before deleting, Archive (Unarchive on /documents/archived), the share dialog, and each
 // document's pages beneath its row.
 
 import { fastClick } from "../common/fast-click";
@@ -308,18 +308,18 @@ export default function docs(c: DocsConfig): void {
     const n = list.querySelectorAll(":scope > li[data-live]:not([hidden])").length,
       q = find.query(),
       m = q ? list.querySelectorAll(":scope > li[data-live]:not(.miss, [hidden])").length : n;
-    const count = document.getElementById("docs-count")!;
+    const count = document.getElementById("documents-count")!;
     const of = (k: number) => k + (k == 1 ? " document" : " documents");
     count.textContent = q ? `${m} of ${of(n)}` : of(n);
     count.hidden = list.hidden = !n;
     document.querySelector<HTMLElement>(".labels")!.hidden = !m;
     document.querySelector<HTMLElement>("p.empty")!.hidden = !!n;
-    const none = document.getElementById("docs-none")!;
+    const none = document.getElementById("documents-none")!;
     none.hidden = !n || !!m;
     none.textContent = `No documents match “${q}”.`;
     findBox.hidden = !n && !q;
   }
-  // The requests for access (server/pages/docs.ts): Share gives the person the role "Can view", Decline gives none; both
+  // The requests for access (server/pages/documents.ts): Share gives the person the role "Can view", Decline gives none; both
   // are share_document, as an agent's are, and the request's row goes.
   for (const b of document.querySelectorAll<HTMLButtonElement>("ul.asks button")) {
     b.addEventListener("click", async () => {

@@ -86,7 +86,7 @@ journey("an owner shares a document with a reader", () => {
     expect(made.result?.permissions.map((x) => `${x.login}:${x.role}`)).toEqual([`${owner}:owner`, `${ada}:viewer`]);
     expect((await as(ada, doc.address)).status).toBe(200);
     expect((await as(ada, `/d/${doc.id}/doc/index.html`)).ok).toBe(true);
-    const list = await (await as(ada, "/docs")).text();
+    const list = await (await as(ada, "/documents")).text();
     expect(list).toContain(`href="${doc.address}?user=${ada}&amp;edit"`);
     expect(list).toContain(`${owner} · view only`);
     expect(list).not.toContain(`value="${doc.id}"`);
@@ -121,7 +121,7 @@ journey("an owner shares a document with a reader", () => {
     const forged = url.replace(/\/t\/([^/.]+)\.[^/]+\//, "/t/$1.forged/");
     expect((await pagesFetch(`${forged}index.html`)).status).toBe(403);
     expect((await pagesFetch(`${at.origin.replace(doc.id, "aaaaaaaa")}${at.pathname}index.html`)).status).toBe(403);
-    expect((await pagesFetch(`${at.origin}/docs`)).status).toBe(404);
+    expect((await pagesFetch(`${at.origin}/documents`)).status).toBe(404);
   });
 
   test("in the room, a viewer sees every edit and theirs reach nobody, nor storage; made an editor, their edits land", async () => {
@@ -204,7 +204,7 @@ journey("an owner shares a document with a reader", () => {
     ]);
     expect(await page.locator("main .ways a").evaluateAll((l) => l.map((a) => new URL((a as HTMLAnchorElement).href).pathname))).toEqual([
       "/auth/logout",
-      "/docs",
+      "/documents",
     ]);
     await page.locator("#ask-access").click();
     await soon(() => page.locator("#ask-access").innerText()).toBe("Asked");
@@ -222,7 +222,7 @@ journey("an owner shares a document with a reader", () => {
   test("the owner sees the requests at the top of the documents list, and shares or declines there", async () => {
     const asks = () =>
       page.locator("ul.asks li").evaluateAll((l) => l.map((li) => (li as HTMLElement).innerText.replace(/\s+/g, " ").trim()));
-    await page.goto(`${root}/auth/github?as=${owner}&next=/docs`);
+    await page.goto(`${root}/auth/github?as=${owner}&next=/documents`);
     expect((await asks()).sort()).toEqual(
       [`${ada} asks for access to Untitled Share Decline`, `${bo} asks for access to Untitled Share Decline`].sort()
     );
@@ -355,7 +355,7 @@ journey("the admin's switch: users can share content publicly", () => {
   });
 
   test("off: the Share dialog does not offer anyone with the link, and shows a share made before, to stop it; on again: it opens", async () => {
-    await page.goto(`${root}/docs`);
+    await page.goto(`${root}/documents`);
     await page.click(`button.share[data-id="${closed.id}"]`);
     await until(async () => (await page.textContent("#share-hint")) == "", 5000, "the share dialog loaded");
     expect(await page.isVisible("#share .anyone")).toBe(false);

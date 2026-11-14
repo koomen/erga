@@ -9,7 +9,7 @@
 // left running under the scratch folder): tests don't
 // need the documents flushed to disk on the way out.
 //
-// Trap: test files share a dev server, so another file's new document reaches an open /docs page as a live row, and
+// Trap: test files share a dev server, so another file's new document reaches an open /documents page as a live row, and
 // the rows can change under a test. Read a row's place with `until`, not once.
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -271,8 +271,21 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
       // Up once a page that reads the database answers (the server migrates it as it starts), and the folder it opens is open.
       while (Date.now() < until && exited == null) {
         const doc = opts.open ? new RegExp(`editing .*: http://localhost:${at}(/[a-z0-9-]+/[a-z0-9-]+)`).exec(output)?.[1] : "";
-        const ok = doc != null && await fetch(opts.open ? `${root}${doc}/api/doc` : `${root}/docs`, { redirect: "manual", signal: AbortSignal.timeout(5000) }).then((r) => r.ok, () => false);
-        if (ok) { up = true; port = at; Object.assign(server, { root, port, base: root + doc }); return; }
+        const ok =
+          doc != null &&
+          (await fetch(opts.open ? `${root}${doc}/api/doc` : `${root}/documents`, {
+            redirect: "manual",
+            signal: AbortSignal.timeout(5000),
+          }).then(
+            (r) => r.ok,
+            () => false
+          ));
+        if (ok) {
+          up = true;
+          port = at;
+          Object.assign(server, { root, port, base: root + doc });
+          return;
+        }
         await new Promise((r) => setTimeout(r, 50));
       }
       // Another server took the port between freePort and dev/start.ts: once more, on another. (A restart keeps its port: the

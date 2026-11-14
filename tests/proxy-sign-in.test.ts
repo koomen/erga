@@ -232,7 +232,7 @@ const cookieOf = (r: Response) =>
 
 /** /auth/proxy as the proxy passes it on (its `header`), then the username step: the last answer, and the cookies. */
 async function signUp(platform: Platform, header: Record<string, string>, username: string) {
-  const at = await respond(proxySignIn, new Request(`${ORIGIN}/auth/proxy?next=/docs`, { headers: header }), platform);
+  const at = await respond(proxySignIn, new Request(`${ORIGIN}/auth/proxy?next=/documents`, { headers: header }), platform);
   if (at.headers.get("location") != "/auth/username") return { answer: at, cookie: cookieOf(at) };
   const made = await respond(
     usernameStep,
@@ -249,8 +249,8 @@ const aws = async (claims: Record<string, unknown>) => ({ "x-amzn-oidc-data": aw
 
 test("the proxy mode: sign-in goes straight to the proxy, a person added by their email as an admin is one at their first sign-in, OAuth's way is closed", async () => {
   const { platform, directory, firstAdmin } = server();
-  const choose = await respond(chooseSignIn, new Request(`${ORIGIN}/auth/sign-in?next=/docs`), platform);
-  expect([choose.status, choose.headers.get("location")]).toEqual([302, "/auth/proxy?next=%2Fdocs"]);
+  const choose = await respond(chooseSignIn, new Request(`${ORIGIN}/auth/sign-in?next=/documents`), platform);
+  expect([choose.status, choose.headers.get("location")]).toEqual([302, "/auth/proxy?next=%2Fdocuments"]);
   // The deploy has a GitHub app too: no matter, its routes are not this server's way in.
   for (const closed of [
     await respond(startOAuth("github"), new Request(`${ORIGIN}/auth/github`), platform),
@@ -290,9 +290,11 @@ test("the proxy mode: sign-in goes straight to the proxy, a person added by thei
   expect(await directory.users.get("eve")).toBeNull();
   // The person the sign-in gives that verified email for: they choose a username, and are in, as an admin.
   const ada = await signUp(platform, await aws(ADA), "ada");
-  expect([ada.answer.status, ada.answer.headers.get("location")]).toEqual([302, "/docs"]);
+  expect([ada.answer.status, ada.answer.headers.get("location")]).toEqual([302, "/documents"]);
   expect(await directory.users.isAdmin("ada")).toBe(true);
-  expect(await sessionOf(platform, new Request(`${ORIGIN}/docs`, { headers: { cookie: ada.cookie } }))).toMatchObject({ login: "ada" });
+  expect(await sessionOf(platform, new Request(`${ORIGIN}/documents`, { headers: { cookie: ada.cookie } }))).toMatchObject({
+    login: "ada",
+  });
   expect((await directory.identities.of("ada"))[0]).toMatchObject({ provider: "proxy", subject: "sub-ada", handle: "ada@example.com" });
   // Their wait ended: the email makes no second admin.
   const admin = { login: "ada", admin: true };
@@ -301,7 +303,7 @@ test("the proxy mode: sign-in goes straight to the proxy, a person added by thei
   expect(asked).toEqual([`https://public-keys.auth.elb.us-west-2.amazonaws.com/${KID}`]);
   // The next time, the same subject is the same account, also with another email.
   const again = await signUp(platform, await aws({ ...ADA, email: "ada.l@example.com" }), "-");
-  expect(again.answer.headers.get("location")).toBe("/docs");
+  expect(again.answer.headers.get("location")).toBe("/documents");
   expect((await directory.identities.of("ada")).length).toBe(1);
 
   // Anyone else waits for a rule: none yet, so no account; with everybody's rule (the setup's company preset), an account that isn't an admin's.
@@ -312,7 +314,7 @@ test("the proxy mode: sign-in goes straight to the proxy, a person added by thei
     "<h1>You need permission to join</h1><p>You signed in with <b>bo@example.com</b>. Ask an admin of this Erga server to add you, then sign in again.</p>"
   );
   await directory.rules.change(admin, (await directory.rules.list(admin)).find((r) => r.kind == "everybody")!.id, "write");
-  expect((await signUp(platform, await aws(bo), "bo")).answer.headers.get("location")).toBe("/docs");
+  expect((await signUp(platform, await aws(bo), "bo")).answer.headers.get("location")).toBe("/documents");
   expect(await directory.users.isAdmin("bo")).toBe(false);
   // An admin adds a person here by their email at the proxy's sign-in only: no OAuth provider's account.
   await expect(directory.addUser(admin, { provider: "github", handle: "cy" }, "admin")).rejects.toThrow("isn't a provider here: proxy.");
@@ -334,7 +336,7 @@ test("behind Cloudflare Access: the team's key signs a person in, by the applica
   const { platform, directory, firstAdmin } = server(ACCESS);
   await firstAdmin("cy@example.com");
   const cy = await signUp(platform, { "cf-access-jwt-assertion": await accessHeader() }, "cy");
-  expect([cy.answer.status, cy.answer.headers.get("location")]).toEqual([302, "/docs"]);
+  expect([cy.answer.status, cy.answer.headers.get("location")]).toEqual([302, "/documents"]);
   expect(await directory.users.isAdmin("cy")).toBe(true);
   expect((await directory.identities.of("cy"))[0]).toMatchObject({ provider: "proxy", subject: "sub-cy", handle: "cy@example.com" });
   // The key came from the team's own address.
@@ -355,7 +357,7 @@ test("a PROXY_SIGN_IN this server can't read: /auth/proxy says so, and nobody si
   );
   const headers: Record<string, string>[] = [await aws(ADA), { "cf-access-jwt-assertion": await accessHeader() }, {}];
   for (const header of headers) {
-    const answer = await respond(proxySignIn, new Request(`${ORIGIN}/auth/proxy?next=/docs`, { headers: header }), platform);
+    const answer = await respond(proxySignIn, new Request(`${ORIGIN}/auth/proxy?next=/documents`, { headers: header }), platform);
     expect([answer.status, answer.headers.get("location"), answer.headers.get("set-cookie")]).toEqual([503, null, null]);
     expect(await answer.text()).toContain("<code>PROXY_SIGN_IN</code>");
   }
@@ -413,7 +415,7 @@ test("the email address: the first of email, upn and preferred_username that loo
   const withEmail = await step(await aws(ADA));
   expect(withEmail).toContain("Welcome. You signed in with <b>ada@example.com</b>. Choose a username");
   expect(withEmail).toContain('name="username" value="ada"');
-  expect((await signUp(platform, header, "ada-l")).answer.headers.get("location")).toBe("/docs");
+  expect((await signUp(platform, header, "ada-l")).answer.headers.get("location")).toBe("/documents");
   expect((await directory.identities.of("ada-l"))[0]).toMatchObject({ provider: "proxy", subject: sub, handle: null });
 });
 
@@ -445,7 +447,7 @@ test("an organization's sign-in with the address after a prefix in preferred_use
   const { platform, directory, firstAdmin } = server(CORP);
   await firstAdmin("grace@example.com");
   const signedIn = await signUp(platform, await aws(grace), "grace");
-  expect([signedIn.answer.status, signedIn.answer.headers.get("location")]).toEqual([302, "/docs"]);
+  expect([signedIn.answer.status, signedIn.answer.headers.get("location")]).toEqual([302, "/documents"]);
   expect(await directory.users.isAdmin("grace")).toBe(true);
   const refused = await respond(
     proxySignIn,
@@ -547,7 +549,7 @@ test("the link approves only the setup's own request: a wider one stays for the 
   const asked = await platform.tokens.request("an agent", { scope: "admin" });
   const signed = await respond(
     proxySignIn,
-    new Request(`${ORIGIN}/auth/proxy?next=/docs`, { headers: { ...(await aws(ADA)), cookie: `erga_claim=${claim}` } }),
+    new Request(`${ORIGIN}/auth/proxy?next=/documents`, { headers: { ...(await aws(ADA)), cookie: `erga_claim=${claim}` } }),
     platform
   );
   const made = await respond(

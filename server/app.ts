@@ -6,13 +6,13 @@
 //   /                          the homepage, if this domain has one: served from its last deploy, else the viewer on
 //                              the landing document (a setting), with an Edit button for those who may. None (none
 //                              set, it is gone, or it has a domain of its own: deploy.home): the page in the server's
-//                              code, with Sign in (pages/home.ts). Someone signed in goes to /docs instead
-//                              (homeGoesToDocs); /_home is the homepage project for them.
+//                              code, with Sign in (pages/home.ts). Someone signed in goes to /documents instead
+//                              (homeGoesToDocuments); /_home is the homepage project for them.
 //   <the homepage's domain>/*  the homepage's site alone, from its last deploy, as its files are (server/home/site.ts)
 //   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the homepage's
 //   /scratch                   a scratch document for you: off your list, deleted delete_docs_after_hours after it's
 //                              made unless you save it (signs you in first)
-//   /docs                      your documents (the directory), latest edit first
+//   /documents                      your documents (the directory), latest edit first
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with), the editor at ?edit; /d/<id>,
 //                              /<owner>/<id> and old slugs redirect here
 //   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets (also under the other addresses)
@@ -83,7 +83,7 @@ import { releaseApi, withLive } from "./live.ts";
 import { newsRoutes } from "./news/index.ts";
 import {
   accountOf,
-  homeGoesToDocs,
+  homeGoesToDocuments,
   homePage,
   isAssetPath,
   libraryOf,
@@ -268,7 +268,7 @@ const route = (url: URL, outside: Outside): Route =>
     if (path == "/" && read) {
       // Someone signed in goes to their documents; the homepage project is at /_home for them.
       yield* call(() => adoptLanding(p));
-      if (homeGoesToDocs(yield* call(() => p.sessionOf(request)))) return redirect(`/docs${url.search}`);
+      if (homeGoesToDocuments(yield* call(() => p.sessionOf(request)))) return redirect(`/documents${url.search}`);
       // The homepage on a domain of its own: this domain has none.
       if (p.deploy.home) return homePage();
       const home = yield* serveHome;

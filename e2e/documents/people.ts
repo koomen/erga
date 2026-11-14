@@ -30,7 +30,7 @@ export const quietLogin = () => `w${String(Date.now() * 100 + ++people).replace(
 /** A person on server `s` (a fresh login unless given), signed in by a cookie, and what they do with their documents. */
 export async function person(s: Server, login = freshLogin()) {
   const base = s.root;
-  const r = await fetch(`${base}/auth/github?as=${login}&next=/docs`, { redirect: "manual" });
+  const r = await fetch(`${base}/auth/github?as=${login}&next=/documents`, { redirect: "manual" });
   const cookie = r.headers
     .getSetCookie()
     .map((c) => c.split(";")[0])
@@ -48,9 +48,9 @@ export async function person(s: Server, login = freshLogin()) {
     get,
     tool,
     /** The address that signs the browser in as this person, and goes on to `next`. */
-    signIn: (next = "/docs") => `${base}/auth/github?as=${login}&next=${encodeURIComponent(next)}`,
-    /** The list (/docs) as the server sends it. */
-    docs: async () => (await get("/docs")).text(),
+    signIn: (next = "/documents") => `${base}/auth/github?as=${login}&next=${encodeURIComponent(next)}`,
+    /** The list (/documents) as the server sends it. */
+    documents: async () => (await get("/documents")).text(),
     /** A document's title and address. */
     nameOf: async (id: string): Promise<Name> => (await tool<Name>("ls", { document: id })).result!,
     /** Makes a document with /new, which sends its maker to its editor at its address: the document's id. */
@@ -85,7 +85,7 @@ export async function person(s: Server, login = freshLogin()) {
     },
   };
   // Their first request with the cookie gives them a user's row, as when they open their list.
-  expect((await get("/docs")).ok).toBe(true);
+  expect((await get("/documents")).ok).toBe(true);
   return p;
 }
 export type Person = Awaited<ReturnType<typeof person>>;

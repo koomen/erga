@@ -1,4 +1,4 @@
-/* The look the app's own pages share (/docs, /admin; server/pages/chrome.ts, appPage): the editor's type and colours,
+/* The look the app's own pages share (/documents, /admin; server/pages/chrome.ts, appPage): the editor's type and colours,
    light or dark with the system, a column of rows, small icon buttons that show on hover, and dialogs as small cards. */
 
 body { font-size: 15px; line-height: 1.5; background: var(--bg); -webkit-font-smoothing: antialiased; }

@@ -41,7 +41,7 @@ export const tokensRoutes: Route = Effect.gen(function* () {
   if (!found)
     return page(
       "Not found",
-      `There's nothing here. Your tokens are in Settings (the menu at your picture): <a href="/docs#settings">open it</a>.`,
+      `There's nothing here. Your tokens are in Settings (the menu at your picture): <a href="/documents#settings">open it</a>.`,
       404
     );
   // How they act goes along: the tokens refuse anyone who isn't there in person (Tokens.mint).

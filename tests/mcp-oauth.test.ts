@@ -1,6 +1,6 @@
 // MCP's sign-in (server/identity/mcp-oauth.ts) on an in-memory database: the metadata, PKCE, the clients' redirect URIs,
 // and the whole flow (register, authorize, approve, trade the code, call /mcp with the token). And where / sends
-// someone signed in (homeGoesToDocs).
+// someone signed in (homeGoesToDocuments).
 
 import { expect, test } from "bun:test";
 import { Directory } from "../server/directory/index.ts";
@@ -18,7 +18,7 @@ import {
 } from "../server/identity/mcp-oauth";
 import { serverApi } from "../server/api";
 import { respond } from "../server/http";
-import { homeGoesToDocs } from "../server/pages/index.ts";
+import { homeGoesToDocuments } from "../server/pages/index.ts";
 import { base64url, sha256 } from "../shared/bytes.ts";
 import { freshLogin, mcp as mcpCall, server as app, signIn, type Server } from "./helpers/app";
 import { memory } from "./helpers/memory-sql.ts";
@@ -173,11 +173,11 @@ test("a wrong verifier uses the code up; Deny sends the person back to the app w
   expect(await tokens.deny(two.userCode)).toEqual({ oauth: { redirectUri: oauth.redirectUri, state: "s" } });
 });
 
-test("/ sends someone signed in to /docs, however they came; not an agent, or someone signed out", () => {
+test("/ sends someone signed in to /documents, however they came; not an agent, or someone signed out", () => {
   const ada: Session = { login: "ada", name: "Ada" };
-  expect(homeGoesToDocs(ada)).toBe(true);
-  expect(homeGoesToDocs(null)).toBe(false);
-  expect(homeGoesToDocs({ ...ada, agent: {} as Session["agent"] })).toBe(false);
+  expect(homeGoesToDocuments(ada)).toBe(true);
+  expect(homeGoesToDocuments(null)).toBe(false);
+  expect(homeGoesToDocuments({ ...ada, agent: {} as Session["agent"] })).toBe(false);
 });
 
 // The whole app, in memory (tests/helpers/app.ts): the sign-in as an MCP app does it over HTTP, the person's approval

@@ -1,7 +1,7 @@
 // The homepage in the server's code: what / shows on a domain that has no homepage. None is assigned (the
 // landing_document setting names no document that is there: server/documents/landing.ts), or the homepage has a domain
 // of its own (Platform's deploy.home), and this is the Erga domain. Erga's headline and one way in, Sign in. Someone
-// signed in never sees it: / sends them to /docs.
+// signed in never sees it: / sends them to /documents.
 
 import { html, NO_STORE } from "../http.ts";
 import { pageFonts } from "./assets.ts";
@@ -35,7 +35,7 @@ export const homePage = () =>
       `${pageBars(null, [])}<div class="home"><section class="hero">
   <h1>Erga is an AI document editor for people who care about every word</h1>
   <p>Erga gives you the expressive power of a coding agent without forcing you to give up control over your text</p>
-  <p class="cta"><a class="go" href="/auth/sign-in?next=%2Fdocs">Sign in</a></p>
+  <p class="cta"><a class="go" href="/auth/sign-in?next=%2Fdocuments">Sign in</a></p>
 </section></div>`
     ),
     200,

@@ -529,7 +529,7 @@ journey("a project's tree in the editor", () => {
     const at = (await until(
       () =>
         page.evaluate(
-          `(() => { const t = document.getElementById("doc-title"), r = t.getBoundingClientRect(), nav = document.getElementById("nav-docs").getBoundingClientRect(); const p = { x: Math.max(r.left, nav.left + 8) + 8, y: r.top + r.height / 2 }; return t.contains(document.elementFromPoint(p.x, p.y)) ? p : null; })()`
+          `(() => { const t = document.getElementById("doc-title"), r = t.getBoundingClientRect(), nav = document.getElementById("nav-documents").getBoundingClientRect(); const p = { x: Math.max(r.left, nav.left + 8) + 8, y: r.top + r.height / 2 }; return t.contains(document.elementFromPoint(p.x, p.y)) ? p : null; })()`
         ) as Promise<{ x: number; y: number } | null>,
       5000,
       "the title can be clicked"
@@ -615,7 +615,7 @@ journey("a project on Documents and in the viewer; a document becomes a project 
     await agentClosed(page);
     await watchTree(page);
     news = listenNews(page);
-    await page.goto(`${s.root}/docs`);
+    await page.goto(`${s.root}/documents`);
     // The rows just made come in once more as the page opens: from here they stay.
     await news.caughtUp();
     // A document's row has no chevron.
@@ -874,7 +874,7 @@ journey("a project on Documents and in the viewer; a document becomes a project 
   });
 
   test("on Documents the document that became a project has its chevron, and says Project", async () => {
-    await page.goto(`${s.root}/docs`);
+    await page.goto(`${s.root}/documents`);
     await until(() => has(chevron(plain)), 5000, "a project's row has its chevron");
     expect(await js(page, `document.querySelector('${chevron(plain)}').closest(".name").querySelector(".note.kind").textContent`)).toBe(
       "Project"

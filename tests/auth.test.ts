@@ -288,5 +288,7 @@ test("sign-in's next= stays on the site, however the address is dressed up", asy
     expect(res.headers.get("location"), JSON.stringify(next)).toBe("/");
   }
   // (An address of the site's own is where sign-in goes: the answers above are no accident of the route.)
-  expect((await s.fetch(`/auth/github?as=someone&next=${encodeURIComponent("/docs?x=1")}`)).headers.get("location")).toBe("/docs?x=1");
+  expect((await s.fetch(`/auth/github?as=someone&next=${encodeURIComponent("/documents?x=1")}`)).headers.get("location")).toBe(
+    "/documents?x=1"
+  );
 });

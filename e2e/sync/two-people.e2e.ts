@@ -403,7 +403,7 @@ journey("two people on one page", () => {
     const rest = await atRest(a, 5);
     const crumbs = await a.page.evaluate(() => {
       const r = (id: string) => document.getElementById(id)!.getBoundingClientRect();
-      return { nav: r("nav-docs"), brand: r("nav-brand"), title: r("doc-title") };
+      return { nav: r("nav-documents"), brand: r("nav-brand"), title: r("doc-title") };
     });
     expect(rest.faces.filter((f) => f.shown).length).toBe(2);
     expect(rest.more).toBe("+3");
@@ -435,7 +435,7 @@ journey("two people on one page", () => {
     expect(rest.inBar).toBe(false);
     expect(rest.stack!.r).toBeLessThanOrEqual(rest.bar.l - 4);
     // The breadcrumbs end before the stack.
-    expect(await a.page.evaluate(() => document.getElementById("nav-docs")!.getBoundingClientRect().right)).toBeLessThanOrEqual(
+    expect(await a.page.evaluate(() => document.getElementById("nav-documents")!.getBoundingClientRect().right)).toBeLessThanOrEqual(
       rest.stack!.l
     );
     // A tap on the stack spreads it, and opens no quick actions. (A finger: no hover; the tap is the browser's own touch.)

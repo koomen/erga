@@ -228,7 +228,7 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
         if (!(await mint(root, cookie, { label: `T${i}`, scope: "documents" }))) throw new Error(`no token T${i}`);
     })();
     tokens.catch(() => {});
-    await page.goto(`${root}/auth/github?as=${login}&next=/docs`);
+    await page.goto(`${root}/auth/github?as=${login}&next=/documents`);
     await openSettings(page);
     await page.fill("#erga-settings li[data-name=openai] input", OPENROUTER);
     await page.press("#erga-settings li[data-name=openai] input", "Enter");
@@ -415,7 +415,7 @@ journey("on a staging server with no agent key: a token's reach, the agent's pan
       ["GET", "/settings"],
       ["GET", "/tokens"],
       ["POST", "/tokens/new"],
-      ["GET", "/docs"],
+      ["GET", "/documents"],
       ["GET", "/new"],
       ["POST", "/api/tools/deploy_homepage"],
       ["GET", one.address],
@@ -436,14 +436,14 @@ journey("on a staging server with no agent key: a token's reach, the agent's pan
   }) => {
     page = tab.page;
     await page.setViewportSize({ width: 1200, height: 760 });
-    await page.goto(`${root}/docs`);
+    await page.goto(`${root}/documents`);
     // Open, by its circle if it starts closed.
     if (!(await page.evaluate(() => document.body.classList.contains("agent-open")))) await page.click("#agent-fab");
     const panel = () => page.evaluate(() => document.getElementById("agent-hint")?.innerText ?? "");
     await soon(panel, 10_000).toBe("To enable the agent, add an LLM provider key. Or connect your own agent.");
     await page.click("#agent-hint >> text=connect your own agent");
     await soon(() => page.evaluate(() => document.querySelector("#agent-hint .agent-connect pre")?.textContent ?? "")).toBe(
-      `Add Erga's MCP server, ${root}/mcp, then open ${root}/docs.`
+      `Add Erga's MCP server, ${root}/mcp, then open ${root}/documents.`
     );
 
     await page.click("#agent-hint >> text=add an LLM provider key");
@@ -458,7 +458,7 @@ journey("on a staging server with no agent key: a token's reach, the agent's pan
       "Ask the agent…"
     );
     expect(await page.evaluate(() => document.getElementById("agent-hint")!.hidden)).toBe(true);
-    expect(new URL(page.url()).pathname).toBe("/docs");
+    expect(new URL(page.url()).pathname).toBe("/documents");
   });
 
   test("the server's keys: a saved key shows its models under it; a box saves as it changes; own keys hide the providers", async () => {

@@ -1,4 +1,4 @@
-// A person's lists of documents: those on /docs, those they archived (/docs/archived), and an admin's search of
+// A person's lists of documents: those on /documents, those they archived (/documents/archived), and an admin's search of
 // everyone's. The archive is each person's own, on their permission (server/migrations/0390_archived.sql): it
 // changes only their own lists, never the document or anyone else's.
 
@@ -83,7 +83,7 @@ export class Lists {
     };
   }
 
-  /** Moves a document off `login`'s list into their archive (/docs/archived), or back: theirs only, by their own permission. */
+  /** Moves a document off `login`'s list into their archive (/documents/archived), or back: theirs only, by their own permission. */
   async archive(id: string, login: string, archived: boolean): Promise<void> {
     const who = login.toLowerCase();
     const [row] = await this.sql.all<{ archived: number | null }>(

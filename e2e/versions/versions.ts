@@ -38,7 +38,7 @@ export const unique = (name: string) => `${name}${crypto.randomUUID().replace(/-
 
 /** Signs in as someone by the dev sign-in (/auth/github?as=): their session cookie. */
 export async function signIn(server: Server, as: string): Promise<string> {
-  const r = await fetch(`${server.root}/auth/github?as=${as}&next=/docs`, { redirect: "manual" });
+  const r = await fetch(`${server.root}/auth/github?as=${as}&next=/documents`, { redirect: "manual" });
   const cookie = r.headers
     .getSetCookie()
     .map((c) => c.split(";")[0])
@@ -72,7 +72,7 @@ export const homeOf = async (server: Server, id: string) =>
 /** What the room holds for the document's page now, as the server serves it. */
 export const served = async (server: Server, id: string) => (await fetch(`${server.root}/d/${id}/doc/index.html`)).text();
 
-/** / as served to someone signed out (someone signed in goes to /docs): the homepage's live page. */
+/** / as served to someone signed out (someone signed in goes to /documents): the homepage's live page. */
 export const front = async (server: Server) =>
   (await fetch(`${server.root}/`, { headers: { Cookie: `erga_signed_out_${server.port}=1` } })).text();
 

@@ -7,7 +7,7 @@ export {
   appPage,
   crumbsFont,
   fromThisSite,
-  homeGoesToDocs,
+  homeGoesToDocuments,
   ICON,
   link,
   safeNext,
@@ -15,7 +15,7 @@ export {
   TIMES_SCRIPT,
   withEdit,
 } from "./chrome.ts";
-export { docsPage, docsRows } from "./docs.ts";
+export { documentsPage, documentsRows } from "./documents.ts";
 export { readerPage, readerVersion } from "./reader.ts";
 export { homePage } from "./home.ts";
 export { scratchMakeTip, scratchSave } from "./scratch.ts";

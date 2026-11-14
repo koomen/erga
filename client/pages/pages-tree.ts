@@ -2,7 +2,7 @@
 // other files, from the operation ls, changed through new,
 // mv and rm (server/operations/editor.ts, over POST /api/tools/<name>). One component, in two places:
 // the editor (a card under the document's title, top left: main.ts) and
-// Documents (beneath a document's row: server/pages/docs.ts). It's built on its own
+// Documents (beneath a document's row: server/pages/documents.ts). It's built on its own
 // and loaded only when someone opens it, so it costs the
 // viewer nothing.
 //

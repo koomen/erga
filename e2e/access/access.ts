@@ -111,7 +111,7 @@ export async function editorUp(page: Page) {
 
 /** Signs in as someone by the dev sign-in (no `as`: DEV_LOGIN, an admin): their session cookie. */
 export async function signIn(root: string, as: string | null): Promise<string> {
-  const r = await getter(root)(`/auth/github?${as ? `as=${as}&` : ""}next=/docs`);
+  const r = await getter(root)(`/auth/github?${as ? `as=${as}&` : ""}next=/documents`);
   return r.headers
     .getSetCookie()
     .map((x) => x.split(";")[0])

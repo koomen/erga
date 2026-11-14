@@ -23,8 +23,8 @@ async function newDoc(s: Server): Promise<{ at: string; id: string }> {
 test("every page of the site's own has your avatar in its corner", async () => {
   const s = server();
   const picture = await githubPicture(s);
-  // (/ is /docs for someone signed in; the homepage project's page is /_home.)
-  for (const path of ["/_home", "/docs", "/admin", "/settings", "/nobody-here"]) {
+  // (/ is /documents for someone signed in; the homepage project's page is /_home.)
+  for (const path of ["/_home", "/documents", "/admin", "/settings", "/nobody-here"]) {
     const html = await (await s.fetch(path)).text();
     expect(html, path).toContain('data-erga-account="in"');
     expect(html, path).toContain(`<img src="${picture}" alt="" draggable="false"`);
@@ -46,7 +46,7 @@ test("a document's own files, and the homepage's document on its pages origin, h
   const s = server();
   const { id } = await newDoc(s);
   expect(await (await s.fetch(`/d/${id}/doc/index.html`)).text()).not.toContain("data-erga-account");
-  // The homepage, which the deploy makes (signed out: someone signed in goes to /docs). Until its first deploy is done it
+  // The homepage, which the deploy makes (signed out: someone signed in goes to /documents). Until its first deploy is done it
   // is the viewer, whose frame is the page on its pages origin.
   await s.fetch("/api/deploys/home", { method: "POST" });
   const viewer = await (await s.fetch("/", { headers: signedOut() })).text();
@@ -77,20 +77,20 @@ test("a document's own files, and the homepage's document on its pages origin, h
 });
 
 test("someone who isn't an admin has no Admin, and a local tab's ?user= stays on the links", async () => {
-  const html = await (await server().fetch("/docs?user=Ada")).text();
+  const html = await (await server().fetch("/documents?user=Ada")).text();
   expect(html).toContain('data-erga-account="in"');
-  expect(html).toContain('href="/docs?user=Ada"');
+  expect(html).toContain('href="/documents?user=Ada"');
   expect(html).not.toContain('href="/admin');
 });
 
-test("signed out, /docs asks you to sign in first, and the homepage's corner offers it", async () => {
+test("signed out, /documents asks you to sign in first, and the homepage's corner offers it", async () => {
   const s = server();
   const out = await s.fetch("/auth/logout", { method: "POST", headers: { Origin: s.root } });
   const cookie = out.headers
     .getSetCookie()
     .map((c) => c.split(";")[0])
     .join("; ");
-  expect((await s.fetch("/docs", { headers: { Cookie: cookie } })).headers.get("location")).toBe("/auth/sign-in?next=%2Fdocs");
+  expect((await s.fetch("/documents", { headers: { Cookie: cookie } })).headers.get("location")).toBe("/auth/sign-in?next=%2Fdocuments");
   const front = await (await s.fetch("/", { headers: { Cookie: cookie } })).text();
   expect(front).toContain('data-erga-account="out"');
   expect(front).toContain('href="/auth/sign-in?next=%2F"');

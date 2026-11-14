@@ -308,7 +308,7 @@ export async function mint(s: Server, cookie: string | null, fields: Record<stri
 }
 
 /** Signs in as `login` by local development's sign-in (none: the dev login, an admin): their session cookie. */
-export async function signIn(s: Server, login: string | null, next = "/docs") {
+export async function signIn(s: Server, login: string | null, next = "/documents") {
   const r = await s.fetch(`/auth/github?${login ? `as=${login}&` : ""}next=${encodeURIComponent(next)}`);
   const cookie = cookieOf(r, /^erga_session(_\d+)?=/);
   if (!cookie) throw new Error(`signing in as ${login}: ${r.status}`);
@@ -328,8 +328,8 @@ export async function person(s: Server, login = freshLogin()) {
     cookie,
     origin: ROOT,
     get,
-    /** Their list (/docs), without what is new at each answer (the script nonce, the live pages' time). */
-    docs: async () => (await (await get("/docs")).text()).replace(/ nonce="[^"]*"/g, "").replace(/ data-live-at="\d+"/g, ""),
+    /** Their list (/documents), without what is new at each answer (the script nonce, the live pages' time). */
+    docs: async () => (await (await get("/documents")).text()).replace(/ nonce="[^"]*"/g, "").replace(/ data-live-at="\d+"/g, ""),
     /** Makes a document with /new: its id. */
     async make(query = ""): Promise<string> {
       const r = await get(`/new${query}`);
@@ -359,7 +359,7 @@ export async function person(s: Server, login = freshLogin()) {
       const r = await get(path);
       return r.status == 302 ? r.headers.get("location") : `(${r.status})`;
     },
-    /** A document's row on the list (/docs), or "(not listed)". */
+    /** A document's row on the list (/documents), or "(not listed)". */
     row: (id: string, html: string) => html.split(/<li[ >]/).find((li) => li.includes(`value="${id}"`)) ?? "(not listed)",
     /** An agent token of theirs, made as Settings makes one. */
     async token(label = "Test token", scope = "documents") {
@@ -369,7 +369,7 @@ export async function person(s: Server, login = freshLogin()) {
     },
   };
   // Their first request with the cookie gives them a user's row, as opening their list does.
-  if (!(await get("/docs")).ok) throw new Error(`${login} has no list`);
+  if (!(await get("/documents")).ok) throw new Error(`${login} has no list`);
   return p;
 }
 export type Person = Awaited<ReturnType<typeof person>>;

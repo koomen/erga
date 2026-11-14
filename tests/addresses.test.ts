@@ -16,7 +16,12 @@ test("the canonical address is the viewer (the page, Edit, Clone, a way back to 
   const p = await person(server());
   const id = await p.make();
   const html = await (await p.get(`/${p.login}/untitled`)).text();
-  for (const want of ['<iframe id="frame" class="erga-view"', `href="/${p.login}/untitled?edit"`, `href="/new?from=${id}"`, 'href="/docs"'])
+  for (const want of [
+    '<iframe id="frame" class="erga-view"',
+    `href="/${p.login}/untitled?edit"`,
+    `href="/new?from=${id}"`,
+    'href="/documents"',
+  ])
     expect(html, want).toContain(want);
   expect(html).toContain(`<meta name="erga-base" content="/d/${id}">`);
   expect(html).toContain("<title>Untitled</title>");

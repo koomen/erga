@@ -50,7 +50,7 @@ test("a proof: the sentence, before and after at both widths, the tests' result,
     dir: w.dir,
     root: w.root,
     sentence: "The page says new.",
-    looks: ["--path /docs", "--fails"],
+    looks: ["--path /documents", "--fails"],
     log: () => {},
     look,
   });
@@ -63,7 +63,12 @@ test("a proof: the sentence, before and after at both widths, the tests' result,
       readFileSync(join(out, f), "utf8")
     )
   ).toEqual(["old page", "new page", "old page", "new page"]);
-  expect(looks.slice(0, 4)).toEqual(["--path /docs @1280", "--path /docs @1280", "--path /docs @390", "--path /docs @390"]);
+  expect(looks.slice(0, 4)).toEqual([
+    "--path /documents @1280",
+    "--path /documents @1280",
+    "--path /documents @390",
+    "--path /documents @390",
+  ]);
   const html = readFileSync(join(out, "index.html"), "utf8");
   for (const text of [
     "The page says new.",
@@ -100,7 +105,7 @@ test("a commit that is not pushed has no test result; no picture at all is an er
 
 test("the ops page links the proof beside Merge, and serves its files and nothing else", async () => {
   const w = world();
-  makeProof({ dir: w.dir, root: w.root, sentence: "The page says new.", looks: ["--path /docs"], log: () => {}, look });
+  makeProof({ dir: w.dir, root: w.root, sentence: "The page says new.", looks: ["--path /documents"], log: () => {}, look });
   writeFileSync(
     join(w.dir, "config.json"),
     JSON.stringify({

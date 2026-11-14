@@ -1,5 +1,5 @@
 // Live pages, the page's side (server/news/ has the design). A list on the page says which rows it shows
-// (data-live-kind="doc", or "user person" for two kinds), which page's rows they are (data-live-view="docs"), their
+// (data-live-kind="doc", or "user person" for two kinds), which page's rows they are (data-live-view="documents"), their
 // order (data-live-order: "asc", else the highest first) and when the server made it (data-live-at); each row says its
 // key (data-live="doc:<id>") and its place (data-sort: a number, or text). One socket for the page (/api/news) hears
 // which of its person's rows changed, whoever changed them; the page then asks for those rows only (/api/news/rows),

@@ -341,7 +341,7 @@ journey("an admin on the admin pages", () => {
   }) => {
     await openEditor(tab, own, "top/white");
     await editorUp(page);
-    const editor = await looks(page, { left: "#nav-docs", right: ".chrome-top" });
+    const editor = await looks(page, { left: "#nav-documents", right: ".chrome-top" });
     // A white document's glass: tinted.
     expect(editor.left.background).toContain("0.035");
     expect(admin).toEqual(editor);

@@ -154,7 +154,7 @@ const refused = (session: Session, doc: { id: string; owner: string }, asked: bo
   page(
     "Not shared with you",
     `<b>${esc(doc.owner)}</b> has not shared this document with <b>${esc(session.login)}</b>.</p>
-<p class="ways"><button type="button" class="new" id="ask-access" data-doc="${esc(doc.id)}"${asked ? " disabled" : ""}>${asked ? "Asked" : `Ask ${esc(doc.owner)} for access`}</button><a class="way" href="/auth/logout">Use another account</a><a class="way" href="${esc(link("/docs", session))}">Your documents</a></p>
+<p class="ways"><button type="button" class="new" id="ask-access" data-doc="${esc(doc.id)}"${asked ? " disabled" : ""}>${asked ? "Asked" : `Ask ${esc(doc.owner)} for access`}</button><a class="way" href="/auth/logout">Use another account</a><a class="way" href="${esc(link("/documents", session))}">Your documents</a></p>
 <p id="ask-note" role="status" data-asked="${esc(doc.owner)} sees your request on their documents list.">${asked ? `${esc(doc.owner)} sees your request on their documents list.` : ""}${inlineScript("ask-access")}`,
     403
   );
@@ -350,7 +350,7 @@ async function landingView(platform: Platform, request: Request, session: Sessio
 /** What the editor's menu on your avatar needs to know that the document doesn't: the links it offers. */
 const accountMeta = (session: Session, admin: boolean) => {
   const links = {
-    docs: link("/docs", session),
+    docs: link("/documents", session),
     settings: "#settings",
     ...(admin ? { admin: link("/admin", session) } : {}),
     feedback: "#feedback",

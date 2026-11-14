@@ -73,7 +73,7 @@
 //                                   the page's editor sends them from the pages origin, with no cookie; the key
 //                                   (documents/edit-key.ts) names its person, who must be an admin at each request
 //
-// Everything else needs an admin: documents and their sockets, /docs, the homepage and the homepage, /new,
+// Everything else needs an admin: documents and their sockets, /documents, the homepage and the homepage, /new,
 // /tokens, the APIs and MCP, and the documents' pages origin
 // (*.<staging's pages domain>). That origin has no cookies: on this server its tokens name the admin they were made for
 // (server/documents/pages-origin.ts, pagesToken's `by`), and a file is served only while that person is still an admin. A token without a name
@@ -164,7 +164,7 @@ async function refusal(request: Request, base: Platform, url: URL) {
   const why = !session
     ? "Staging is for Erga's admins only: sign in as an admin, or send an admin-scope token (Authorization: Bearer erga_…)."
     : adminsToken
-      ? "Staging is for Erga's admins only, with admin power: this token has no admin scope, so it reaches only the API, MCP and documents here. Make one with the admin scope in Settings (/docs#settings)."
+      ? "Staging is for Erga's admins only, with admin power: this token has no admin scope, so it reaches only the API, MCP and documents here. Make one with the admin scope in Settings (/documents#settings)."
     : "Staging is for Erga's admins only.";
   if (!wantsPage(request, url)) return json({ error: why, adminsOnly: true }, 403);
   // The primary this server copies (SNAPSHOT_FROM, from the deploy), where the deploy named it.

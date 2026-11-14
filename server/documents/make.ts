@@ -53,7 +53,7 @@ export const newDoc = Effect.gen(function* () {
     return confirmAction("New document", params.get("from") ? "Make your copy of this page" : template ? `Make a new document: ${template.name}` : "Make a new document", `/new${url.search}`);
   }
   if (!(yield* call(() => platform.directory.mayWrite(session.login))))
-    return page("You can't make documents here", `${esc(NO_WRITE)} <a href="/docs">Your documents</a>`, 403);
+    return page("You can't make documents here", `${esc(NO_WRITE)} <a href="/documents">Your documents</a>`, 403);
   const wanted = params.get("id");
   const from = params.get("from");
   const start = yield* call(() => startingFiles(platform, from, whoOf(session), template));
@@ -90,7 +90,7 @@ export const scratchDoc = Effect.gen(function* () {
   if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't make others.", 403);
   if (!fromThisSite(request, url)) return confirmAction("Scratch document", "Make a scratch document", `/scratch${url.search}`);
   if (!(yield* call(() => platform.directory.mayWrite(session.login))))
-    return page("You can't make documents here", `${esc(NO_WRITE)} <a href="/docs">Your documents</a>`, 403);
+    return page("You can't make documents here", `${esc(NO_WRITE)} <a href="/documents">Your documents</a>`, 403);
   const start = yield* call(() => startingFiles(platform, null));
   if (!start) return page("Couldn't make a document", "This server has no blank page to start from.", 500);
   // Local development may say how soon it goes (?unedited=<ms>), to test it.

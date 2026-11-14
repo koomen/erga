@@ -178,7 +178,7 @@ export function mountPeople(shell: Shell) {
     $("account-name").textContent = shell.me.name;
     $("account-login").textContent = shell.me.name.toLowerCase() == shell.me.user ? "" : shell.me.user;
     const set = (id: string, href: string | undefined) => { const a = $(id) as HTMLAnchorElement; a.hidden = !href; if (href) a.href = href; };
-    set("account-docs", shell.me.user.startsWith("test-") ? undefined : accountLinks!.docs);
+    set("account-documents", shell.me.user.startsWith("test-") ? undefined : accountLinks!.docs);
     set("account-settings", shell.me.user.startsWith("test-") ? undefined : accountLinks!.settings);
     set("account-admin", accountLinks!.admin);
     set("account-feedback", shell.me.user.startsWith("test-") ? undefined : accountLinks!.feedback);

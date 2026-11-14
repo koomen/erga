@@ -2,7 +2,7 @@
 // (hostile.ts) is opened by the person who edits it, with the editor in it, and by a reader: its script must not reach
 // the tab's window, the cookies, the site or the person's agent, must not send the tab to another site, and its forged
 // messages go nowhere. Then the site's own addresses: the security headers of each kind of page, another site that
-// frames /docs, a document's file at the editor's own address, and the server's own browser, which reaches no private
+// frames /documents, a document's file at the editor's own address, and the server's own browser, which reaches no private
 // address. Each check is literal: the header's exact value, the exact refusal.
 import { editor } from "../helpers/editor";
 import { agentClosed, expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
@@ -99,7 +99,7 @@ journey("a hostile page, opened by a reader", () => {
     expect(page.url()).toBe(before);
     // Erga's own address: the whole tab, as the author set it.
     await frame().locator("#inside").click();
-    await expect.poll(() => page.url()).toContain(`${s.root}/docs`);
+    await expect.poll(() => page.url()).toContain(`${s.root}/documents`);
   });
 });
 
@@ -239,9 +239,20 @@ journey("a hostile page, opened in the editor by the person it attacks", () => {
 
 /**
  * The pages of the site's own, one of each kind (the test server's person is signed in, and an admin; / is the
- * homepage only signed out: signed in, it goes to /docs, and the homepage project's page is /_home).
+ * homepage only signed out: signed in, it goes to /documents, and the homepage project's page is /_home).
  */
-const PAGES = ["/", "/_home", "/docs", "/settings", "/tokens", "/admin", "/admin/users", "/admin/auth", "/admin/changes", "/no/such-page"];
+const PAGES = [
+  "/",
+  "/_home",
+  "/documents",
+  "/settings",
+  "/tokens",
+  "/admin",
+  "/admin/users",
+  "/admin/auth",
+  "/admin/changes",
+  "/no/such-page",
+];
 
 test("every kind of the site's own page sends frame-ancestors 'self', X-Frame-Options, and its policy; a document's page names its viewer", async () => {
   const { address } = await s.fixture("page");
@@ -285,21 +296,21 @@ test("every kind of the site's own page sends frame-ancestors 'self', X-Frame-Op
 });
 
 journey("the site's own addresses, in a browser", () => {
-  test("a page of another site can't frame /docs; one of its own frames loads", async ({ tab }) => {
+  test("a page of another site can't frame /documents; one of its own frames loads", async ({ tab }) => {
     const page = tab.page;
-    const other = await otherSite(`${s.root}/docs`);
+    const other = await otherSite(`${s.root}/documents`);
     try {
       await page.goto(other.address);
       // (By its element: a frame that the browser refused, in a process of its own, has no name and no address in page.frames().)
       const frame = async (name: string) => (await page.$(`iframe[name="${name}"]`))?.contentFrame();
-      // Its own frame loads (so frames load here at all); /docs's is the browser's error page, with nothing of /docs in it.
+      // Its own frame loads (so frames load here at all); /documents's is the browser's error page, with nothing of /documents in it.
       await until(
         async () => (await frame("own"))?.evaluate(() => document.querySelector("h1")?.textContent == "Its own").catch(() => false),
         10_000,
         "the page's own frame loads"
       );
       const refused = async () => (await frame("docs"))?.evaluate(() => location.href).catch(() => "");
-      await until(async () => (await refused())?.startsWith("chrome-error:"), 10_000, "the browser refuses to frame /docs", refused);
+      await until(async () => (await refused())?.startsWith("chrome-error:"), 10_000, "the browser refuses to frame /documents", refused);
       expect(await (await frame("docs"))!.evaluate(() => document.querySelectorAll("a[href^='/']").length).catch(() => 0)).toBe(0);
     } finally {
       other.close();

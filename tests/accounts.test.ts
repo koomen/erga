@@ -185,12 +185,13 @@ test("a person who waits as an email an account verified later waits no more onc
 // On the whole app in memory (tests/helpers/app.ts), through local development's pretend provider (/auth/dev).
 test("a login that is another account's: with one way in Erga gives the name a number; else the username page says so under the field", async () => {
   const s = server();
-  const signIn = (subject: number, handle: string) => s.fetch(`/auth/dev?provider=github&subject=${subject}&handle=${handle}&next=/docs`);
+  const signIn = (subject: number, handle: string) =>
+    s.fetch(`/auth/dev?provider=github&subject=${subject}&handle=${handle}&next=/documents`);
   // GitHub alone is on: the first Ada is ada, at once, with no username step.
-  expect((await signIn(501, "Ada")).headers.get("location")).toBe("/docs");
+  expect((await signIn(501, "Ada")).headers.get("location")).toBe("/documents");
   expect((await s.platform.directory.identities.find("github", "501"))?.login).toBe("ada");
   // Another GitHub account has the login now: ada2, at once.
-  expect((await signIn(502, "ada")).headers.get("location")).toBe("/docs");
+  expect((await signIn(502, "ada")).headers.get("location")).toBe("/documents");
   expect((await s.platform.directory.identities.find("github", "502"))?.login).toBe("ada2");
   // Two ways in: she chooses. The page says only that the account is taken, under the field, as the field's error.
   await s.platform.own.put("auth:providers", { github: true, google: true });

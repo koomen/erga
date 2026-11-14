@@ -38,7 +38,7 @@ export async function awaitHello(hello: Promise<Hello>, missing: Promise<boolean
   });
   clearTimeout(slow);
   clearTimeout(stuck);
-  if (first == "missing") say(["Nothing to edit here.", `Open one from <a href="/docs">your documents</a>.`]);
+  if (first == "missing") say(["Nothing to edit here.", `Open one from <a href="/documents">your documents</a>.`]);
   else if (first == "refused") say(["The document didn't open: the server refused the connection."], true);
   else {
     $("welcome").hidden = true;

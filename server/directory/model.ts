@@ -100,6 +100,7 @@ export interface Permission {
 export const RESERVED = new Set([
   "d",
   "docs",
+  "documents",
   "new",
   "scratch",
   "auth",

@@ -23,7 +23,7 @@
 // edits are written back to it, and changes made to it on disk (another
 // editor, git) show up in the page as they happen. A single
 // file is synced on its own, and no other files can be made beside it. More
-// can be opened from /docs while it runs. With nothing named, the browser
+// can be opened from /documents while it runs. With nothing named, the browser
 // opens on your documents.
 //
 // It builds the editor first, makes .dev.vars if there isn't one (you're

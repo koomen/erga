@@ -86,8 +86,8 @@ journey("the homepage on a domain of its own, from a new server on", () => {
     const page = await admin.text();
     expect({ status: admin.status, refused: page.includes("Not shared with you") }).toEqual({ status: 200, refused: false });
     expect(page).toContain('erga-edit-button"');
-    // The home page link on /docs goes there.
-    expect(await (await get(own, "/docs")).text()).toMatch(
+    // The home page link on /documents goes there.
+    expect(await (await get(own, "/documents")).text()).toMatch(
       /class="erga-view-button erga-home-button"[^>]*href="\/_home"|href="\/_home"[^>]*class="erga-view-button erga-home-button"/
     );
     // Signed out, anyone views it. It is the old document, now called "Erga Homepage" (adoptLanding renames it).
@@ -250,12 +250,12 @@ journey("the homepage on a domain of its own, from a new server on", () => {
     const r = await get(own, "/", { headers: signedOut(own) });
     const page = await r.text();
     expect(r.status).toBe(200);
-    expect(page).toContain('href="/auth/sign-in?next=%2Fdocs"');
+    expect(page).toContain('href="/auth/sign-in?next=%2Fdocuments"');
     expect(page).not.toContain(HOME);
     expect(page).not.toContain("Site home");
     expect((await get(own, "/about", { headers: signedOut(own) })).status).toBe(404);
     // Signed in, / is their documents, as before.
-    expect((await get(own, "/")).headers.get("location")).toBe("/docs");
+    expect((await get(own, "/")).headers.get("location")).toBe("/documents");
   });
 
   test("on its own domain, a homepage for signed-in viewers only asks a guest to sign in, there", async ({ tab }) => {
@@ -383,7 +383,10 @@ journey("the homepage on the Erga domain", () => {
     expect((await redeploy(main)).result!.deploy.state).toBe("deployed");
     // (The site's other pages are there, at their clean addresses.)
     expect((await out("/about")).text).toContain("<h1>About me</h1>");
-    expect((await out("/docs")).text).not.toContain("My docs page");
+    // /docs is no page of Erga's: it is the site's docs.html. The documents list is /documents.
+    expect((await out("/docs")).text).toContain("<h1>My docs page</h1>");
+    expect((await out("/documents")).text).not.toContain("My docs page");
+    expect(await (await get(main, "/documents")).text()).toContain('data-live-view="documents"');
     const doc = await (await get(main, site.address)).text();
     expect(doc).not.toContain("Not the document");
     expect(doc).toContain('<meta name="erga-doc"');
@@ -580,7 +583,7 @@ journey("the homepage on the Erga domain", () => {
         return (
           !f.includes(target.title) &&
           f.includes("<h1>Erga is an AI document editor for people who care about every word</h1>") &&
-          f.includes('<a class="go" href="/auth/sign-in?next=%2Fdocs">Sign in</a>')
+          f.includes('<a class="go" href="/auth/sign-in?next=%2Fdocuments">Sign in</a>')
         );
       },
       5_000,

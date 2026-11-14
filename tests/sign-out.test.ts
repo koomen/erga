@@ -29,7 +29,7 @@ async function server() {
     const r = await respond(
       Effect.flatMap(
         Effect.sync(() => new Request(`${ORIGIN}/auth/x`)),
-        (request) => signIn(platform, request, { login, name: login }, "/docs")
+        (request) => signIn(platform, request, { login, name: login }, "/documents")
       ),
       new Request(`${ORIGIN}/auth/x`),
       platform
@@ -39,7 +39,8 @@ async function server() {
       .map((c) => c.split(";")[0])
       .find((c) => c.startsWith("erga_session="))!;
   };
-  const who = async (cookie: string) => (await sessionOf(platform, new Request(`${ORIGIN}/docs`, { headers: { cookie } })))?.login ?? null;
+  const who = async (cookie: string) =>
+    (await sessionOf(platform, new Request(`${ORIGIN}/documents`, { headers: { cookie } })))?.login ?? null;
   const out = (cookie: string) =>
     respond(signOut, new Request(`${ORIGIN}/auth/logout`, { method: "POST", headers: { cookie, origin: ORIGIN } }), platform);
   const elsewhere = (cookie: string, method: string) =>

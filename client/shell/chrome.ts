@@ -53,7 +53,7 @@ export function mountChrome(shell: Shell) {
   const toggleQuick = mountQuick({
     quick: $("quick"),
     me: $("me"),
-    nav: $("nav-docs"),
+    nav: $("nav-documents"),
     bar: document.querySelector<HTMLElement>(".chrome-top")!,
     stack: $("people"),
     // (After the avatar's own click, which opened or closed its menu: people.ts.)

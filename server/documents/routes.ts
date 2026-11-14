@@ -8,8 +8,8 @@
 //   /new                       a blank document for you, in the editor (signs you in first); /new?template=<id> one from
 //                              a template; /new?from=landing a copy
 //                              of the homepage's, /new?from=<id> of another you may open (the viewer's Clone)
-//   /docs                      your documents, latest edit first (archive, delete and share are operations: POST /api/tools/<name>)
-//   /docs/archived             the documents you archived, the same rows (unarchive is an operation too)
+//   /documents                      your documents, latest edit first (archive, delete and share are operations: POST /api/tools/<name>)
+//   /documents/archived             the documents you archived, the same rows (unarchive is an operation too)
 //   /admin                     the server's analytics, settings and users, for admins (each change an operation: POST /api/tools/<name>)
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with; for people not signed in, a
 //                              document shared with anyone with the link while the server lets people share publicly): its canonical address;
@@ -56,7 +56,7 @@ import { adoptLanding } from "./landing.ts";
 import { pagesOrigin, pagesRoutes, pagesHost } from "./pages-origin.ts";
 import { editKey, type KeyPerson, keyWho, readEditKey } from "./edit-key.ts";
 import { locating, viewAddress, viewLanding, viewPublic } from "./view.ts";
-import { docsPage, notFound, OWN_ACCOUNT, page, signInFirst } from "../pages/index.ts";
+import { documentsPage, notFound, OWN_ACCOUNT, page, signInFirst } from "../pages/index.ts";
 import { call, ctx, fromWeb, html, json, plainJson, text, type Route as HttpRoute } from "../http.ts";
 import { routeAt, routeFor, SECRET, type RouteRow } from "../../shared/routes.ts";
 
@@ -176,10 +176,10 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   return fromWeb(new Response(answer.body, { status: answer.status, statusText: answer.statusText, headers }));
 });
 
-/** /docs: the signed-in person's documents, most recently edited first; /docs/archived: those they archived. */
-const listDocs = Effect.gen(function* () {
+/** /documents: the signed-in person's documents, most recently edited first; /documents/archived: those they archived. */
+const listDocuments = Effect.gen(function* () {
   const { request, url, platform } = yield* ctx;
-  const archived = url.pathname == "/docs/archived";
+  const archived = url.pathname == "/documents/archived";
   const session = yield* call(() => platform.sessionOf(request));
   if (!session) return signInFirst(url.pathname);
   if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't list others.", 403);
@@ -192,7 +192,10 @@ const listDocs = Effect.gen(function* () {
   );
   // The browser keeps the list for Back, for this person only: it shows at once, and follows what changed since (its
   // rows are live: server/news/). Any other visit asks the server again.
-  return html(docsPage(session, docs, Date.now(), hours, archived, asks), 200, { "Cache-Control": "private, no-cache", Vary: "Cookie" });
+  return html(documentsPage(session, docs, Date.now(), hours, archived, asks), 200, {
+    "Cache-Control": "private, no-cache",
+    Vary: "Cookie",
+  });
 });
 
 /**
@@ -223,11 +226,18 @@ const RotateBody = Schema.Struct({ rotate: Schema.optional(Schema.Unknown) });
 /** The pages of the documents list, and a new document. (Each function answers any method.) */
 export const PAGES: readonly RouteRow<HttpRoute>[] = [
   // Latest edit first (archive, delete and share are operations: POST /api/tools/<name>).
-  { method: "GET", path: "/docs", run: listDocs, action: "Read your documents (Documents)", domain: "document", tool: "list_documents" },
   {
     method: "GET",
-    path: "/docs/archived",
-    run: listDocs,
+    path: "/documents",
+    run: listDocuments,
+    action: "Read your documents (Documents)",
+    domain: "document",
+    tool: "list_documents",
+  },
+  {
+    method: "GET",
+    path: "/documents/archived",
+    run: listDocuments,
     action: "Read your archived documents (Archived)",
     domain: "document",
     tool: "list_documents",
@@ -354,7 +364,7 @@ export async function keyedPerson(platform: Platform, request: Request, url: URL
 }
 
 /** The pages documentRoutes answers by name, whatever the homepage has. */
-const ERGA_PAGES = /^\/(new|scratch|docs|admin|_home|d)(\/|$)/;
+const ERGA_PAGES = /^\/(new|scratch|documents|admin|_home|d)(\/|$)/;
 
 /**
  * Whether an address is Erga's, not the homepage site's (Erga's paths win, server/home/site.ts): one of the pages

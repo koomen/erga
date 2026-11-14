@@ -20,9 +20,9 @@ export const AGENT_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><g transf
 /** Share with an agent, as the editor's (client/editor.html, #btn-agent-share): its menu (client/common/agent-menu.ts): the MCP prompt for anyone who can read the page, and a prompt with a token for someone signed in. */
 export const AGENT_SHARE_BUTTON = `<button type="button" class="erga-view-button erga-agent-share" aria-label="Share with an agent" data-tip="Share with an agent">${AGENT_ICON}</button>`;
 
-/** Documents, as the editor's (client/editor.html, #btn-docs), at `href`: for someone signed in who has documents. */
-export const docsButton = (href: string) =>
-  `<a href="${esc(href)}" class="erga-view-button erga-docs-button" draggable="false" aria-label="Documents" data-tip="Documents"><svg viewBox="0 0 24 24" aria-hidden="true"><g stroke-width="1.5"><rect x="4.75" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="4.75" y="13.5" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="13.5" width="5.75" height="5.75" rx="1.25"/></g></svg></a>`;
+/** Documents, as the editor's (client/editor.html, #btn-documents), at `href`: for someone signed in who has documents. */
+export const documentsButton = (href: string) =>
+  `<a href="${esc(href)}" class="erga-view-button erga-documents-button" draggable="false" aria-label="Documents" data-tip="Documents"><svg viewBox="0 0 24 24" aria-hidden="true"><g stroke-width="1.5"><rect x="4.75" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="4.75" y="13.5" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="13.5" width="5.75" height="5.75" rx="1.25"/></g></svg></a>`;
 
 /** The homepage (the homepage project at /_home: document/names.ts), at `href`: on Documents, in the Documents button's place, where / is for someone signed in. */
 export const homeButton = (href: string) =>
@@ -42,7 +42,7 @@ const SEP_EDIT = `<span class="erga-sep edit-only" aria-hidden="true">›</span>
  * .chrome-nav and the ids: the editor's names for it and its parts). `editor`: with the editor's own title too.
  */
 const crumbsBar = (session: Session | null, home: string, steps: string[], editor = false, editOnly = false) =>
-  `<nav class="erga-crumbs erga-bar erga-bar-l${editor ? ' chrome chrome-nav" id="nav-docs' : ""}" aria-label="Breadcrumbs"><a class="erga-brand${editor ? ' nav-brand" id="nav-brand' : ""}" href="${esc(link(`${home}${session ? "/docs" : "/"}`, session))}" draggable="false"><span>${WORDMARK}</span></a>${steps.map((s) => (editOnly ? SEP_EDIT : SEP) + s).join("")}${editor ? (editOnly ? SEP_EDIT : "") + EDITOR_TITLE : ""}</nav>`;
+  `<nav class="erga-crumbs erga-bar erga-bar-l${editor ? ' chrome chrome-nav" id="nav-documents' : ""}" aria-label="Breadcrumbs"><a class="erga-brand${editor ? ' nav-brand" id="nav-brand' : ""}" href="${esc(link(`${home}${session ? "/documents" : "/"}`, session))}" draggable="false"><span>${WORDMARK}</span></a>${steps.map((s) => (editOnly ? SEP_EDIT : SEP) + s).join("")}${editor ? (editOnly ? SEP_EDIT : "") + EDITOR_TITLE : ""}</nav>`;
 
 /**
  * The editor's title, in the place of the page's own while someone edits (client/inline/viewer.css): it opens the
@@ -89,7 +89,7 @@ export function barsHtml(o: {
     ? `<button type="button" class="erga-here erga-tree-btn" aria-expanded="false" aria-controls="erga-tree" aria-label="${esc(o.title ?? "")}: its pages"><span>${esc(o.title ?? "")}</span><svg class="erga-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></button>`
     : `<span class="erga-here" aria-current="page"><span>${esc(o.title ?? "")}</span></span>`;
   const documents = (only = "") =>
-    `<a class="erga-crumb${o.editor ? ` nav-back${only}" id="nav-back` : ""}" href="${esc(link("/docs", s))}">${o.editor ? "<span>Documents</span>" : "Documents"}</a>`;
+    `<a class="erga-crumb${o.editor ? ` nav-back${only}" id="nav-back` : ""}" href="${esc(link("/documents", s))}">${o.editor ? "<span>Documents</span>" : "Documents"}</a>`;
   // (The homepage has no steps while viewing; editing, the editor's own: Documents and its title, .edit-only.)
   const steps = o.title != null ? [...(mine ? [documents()] : []), crumb] : o.editor ? [documents(" edit-only")] : [];
   const card = tree ? `<div id="erga-tree" class="erga-tree-card" role="dialog" aria-label="Pages" hidden></div>` : "";
@@ -98,7 +98,7 @@ export function barsHtml(o: {
   // (.icon-btn, client/style.css): editing, it takes the editor's focus ring and its look while its menu is open.
   const id = (button: string, name: string) =>
     button.replace(/^<(button|a) /, `<$1 id="${name}" `).replace('class="erga-view-button', 'class="erga-view-button icon-btn');
-  const actions = `${editor ? ZOOM_BUTTON : ""}${id(newDocButton("erga-view-button"), "btn-new")}${o.full ? id(FULL_BUTTON, "btn-full") : ""}${editor ? EDIT_GROUP : ""}${o.edit.replace('class="erga-view-button', 'class="erga-view-button icon-btn')}${id(AGENT_SHARE_BUTTON, "btn-agent-share")}${mine ? id(docsButton(link("/docs", s)), "btn-docs") : ""}`;
+  const actions = `${editor ? ZOOM_BUTTON : ""}${id(newDocButton("erga-view-button"), "btn-new")}${o.full ? id(FULL_BUTTON, "btn-full") : ""}${editor ? EDIT_GROUP : ""}${o.edit.replace('class="erga-view-button', 'class="erga-view-button icon-btn')}${id(AGENT_SHARE_BUTTON, "btn-agent-share")}${mine ? id(documentsButton(link("/documents", s)), "btn-documents") : ""}`;
   return `${s?.agent ? "" : crumbsBar(s, "", steps, editor, o.title == null)}${card}${buttonsBar(actions, o.corner, editor)}`;
 }
 
@@ -108,7 +108,7 @@ export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-f
 /**
  * The header of the app's own pages (appPage: Documents, Settings, the admin pages, the start page, sign-in, the error
  * pages): erga › each step of `trail` (the last is this page, in a `here` tag: the admin
- * pages' is their <h1>), and the quick actions: New document, the page's own (`actions`), Documents (`docs` puts
+ * pages' is their <h1>), and the quick actions: New document, the page's own (`actions`), Documents (`documents` puts
  * another button in its place: Documents itself has Home page there), then who you are. Share with an agent is on every page, before
  * Documents (`share`: a page's own, as the admin pages' with its admin token). The account corner goes in `corner`, or where the
  * Worker puts it (ACCOUNT_SLOT: withAccount). Your agent comes with them (server/pages/agent.ts), except where
@@ -117,7 +117,7 @@ export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-f
 export function pageBars(
   session: Session | null,
   trail: Crumb[],
-  o: { here?: string; actions?: string; share?: string; docs?: string; corner?: string; agent?: false } = {}
+  o: { here?: string; actions?: string; share?: string; documents?: string; corner?: string; agent?: false } = {}
 ): string {
   const here = o.here ?? "span";
   const steps = trail
@@ -128,7 +128,7 @@ export function pageBars(
   );
   const mine = !!session && !session.agent;
   const at = (path: string) => link(path, session);
-  const actions = `${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${o.share ?? AGENT_SHARE_BUTTON}${mine ? (o.docs ?? docsButton(at("/docs"))) : ""}`;
+  const actions = `${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${o.share ?? AGENT_SHARE_BUTTON}${mine ? (o.documents ?? documentsButton(at("/documents"))) : ""}`;
   return `<script>${PAGE_TONE}</script>${crumbsBar(session, "", steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${o.agent === false ? "" : agentPanel(session)}`;
 }
 

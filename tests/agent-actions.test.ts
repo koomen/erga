@@ -83,7 +83,7 @@ const PAGE_SCRIPTS = [
   "server/documents/make.ts",
   "server/pages/viewer.ts",
   "server/pages/reader.ts",
-  "server/pages/docs.ts",
+  "server/pages/documents.ts",
   "server/pages/chrome.ts",
   "server/api.ts",
   "server/home/render.ts",
@@ -139,7 +139,9 @@ test("every route a page's script calls is in the audit", () => {
   const calls: string[] = [];
   let seen = 0;
   for (const file of PAGE_SCRIPTS) {
-    for (const m of read(file).matchAll(/(?:fetch|call)\(\s*["'`](\/(?:api|admin|docs|tokens|deploy|new|d)\b[^"'`$?]*)|action="(?:\$\{esc\(link\(")?(\/(?:api|admin|docs|tokens|deploy|new)\b[^"'`$?]*)/g)) {
+    for (const m of read(file).matchAll(
+      /(?:fetch|call)\(\s*["'`](\/(?:api|admin|documents|tokens|deploy|new|d)\b[^"'`$?]*)|action="(?:\$\{esc\(link\(")?(\/(?:api|admin|documents|tokens|deploy|new)\b[^"'`$?]*)/g
+    )) {
       const p = (m[1] ?? m[2]).replace(/\/$/, "");
       seen++;
       if (!covered(p)) calls.push(`${file}: ${p}`);

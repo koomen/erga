@@ -1,5 +1,5 @@
 // The operations on documents as wholes: who you are (your tokens, keys and Erga's pages too), the documents list
-// (/docs: list, make, delete; an admin's search of everyone's), sharing (the Share dialogs of the list and the editor,
+// (/documents: list, make, delete; an admin's search of everyone's), sharing (the Share dialogs of the list and the editor,
 // and the readers' options), writing files into one, and revoking a token or a key. What a person does inside one
 // document (its name, pages, files and versions) is editor.ts's; its text is edited over the room's socket, and by the
 // document tools (agents/document/tools.ts), which agents/tools.ts offers for any document.
@@ -145,7 +145,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     label: "List documents",
     activity: "listing the documents",
     wide: true,
-    ui: "Documents (/docs): the list; Settings (/admin/settings): the Homepage picker (an admin's search of everyone's)",
+    ui: "Documents (/documents): the list; Settings (/admin/settings): the Homepage picker (an admin's search of everyone's)",
     description: "Your documents and those shared with you, newest first.",
     parameters: Schema.Struct({
       query: Schema.optionalKey(Schema.String),
@@ -189,7 +189,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     activity: "making a document",
     wide: true,
     loose: true,
-    ui: "Documents (/docs): New, from a template or a copy, and + Scratch (/scratch); the viewer's Clone; publishing a folder of files",
+    ui: "Documents (/documents): New, from a template or a copy, and + Scratch (/scratch); the viewer's Clone; publishing a folder of files",
     description: "Makes a document from files, a template or a copy.",
     parameters: Schema.Struct({
       files: Schema.optionalKey(FILES),
@@ -300,7 +300,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     name: "delete_document",
     label: "Delete a document",
     activity: "deleting a document",
-    ui: "Documents (/docs): Delete",
+    ui: "Documents (/documents): Delete",
     description: "Deletes a document for good (owner only).",
     parameters: Schema.Struct({ document: ANY_DOCUMENT }),
     asks: (args) => `Delete the document ${named(args.document)} for good`,
@@ -308,7 +308,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       const doc = await findDocument({ ...caller, here: undefined }, args.document, "delete");
       if (doc.id == caller.here)
         throw new OperationError({
-          message: "That's the document open on the person's page: they delete it on the documents list (/docs).",
+          message: "That's the document open on the person's page: they delete it on the documents list (/documents).",
           status: 409,
         });
       const platform = platformOf(caller);
@@ -322,10 +322,10 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       name: archived ? "archive_document" : "unarchive_document",
       label: archived ? "Archive a document" : "Unarchive a document",
       activity: archived ? "archiving a document" : "unarchiving a document",
-      ui: archived ? "Documents (/docs): Archive" : "Archived documents (/docs/archived): Unarchive",
+      ui: archived ? "Documents (/documents): Archive" : "Archived documents (/documents/archived): Unarchive",
       description: archived
-        ? "Moves a document off your list into your archive (/docs/archived), for you only."
-        : "Moves a document from your archive (/docs/archived) back onto your list.",
+        ? "Moves a document off your list into your archive (/documents/archived), for you only."
+        : "Moves a document from your archive (/documents/archived) back onto your list.",
       parameters: Schema.Struct({ document: DOCUMENT }),
       run: async (args, caller) => {
         const doc = await findDocument(caller, args.document, "open");

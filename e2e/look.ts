@@ -13,7 +13,7 @@ import { copyFixture, descendants, startServer, type Server } from "./helpers/se
 
 const HELP = `bun run look [--doc <fixture | file.html | folder>] [--out <file.png>] [--source] [--latency <ms>] [--keep | --stop] [step ...]
 bun run look --view [--doc ...] [--out <file.png>]     the document as a reader sees it, with no editor and no steps
-bun run look --path /docs [--out <file.png>]           a page of the server by its path, signed in
+bun run look --path /documents [--out <file.png>]           a page of the server by its path, signed in
 
 Opens a copy of the document in the editor, clicks at the end of its first text block, runs the steps,
 then saves a screenshot and prints the page as a person sees it: "|" is the caret, "[" "]" a selection.
@@ -65,7 +65,7 @@ const kept = async (): Promise<Kept | null> => {
   if (!existsSync(KEPT)) return null;
   const k = JSON.parse(readFileSync(KEPT, "utf8")) as Kept;
   if (
-    await fetch(`${k.root}/docs`, { redirect: "manual", signal: AbortSignal.timeout(5000) }).then(
+    await fetch(`${k.root}/documents`, { redirect: "manual", signal: AbortSignal.timeout(5000) }).then(
       (r) => r.ok,
       () => false
     )

@@ -64,7 +64,7 @@ const cookieOf = (r: Response) => (r.headers.get("set-cookie") ?? "").split(/,(?
 
 /** A whole sign-in: /auth/google, Google's page, the callback. The callback's answer. */
 async function signInWithGoogle(platform: Platform, q = ""): Promise<Response> {
-  const start = await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/docs${q}`), platform);
+  const start = await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/documents${q}`), platform);
   expect(start.status).toBe(302);
   const atGoogle = await google.fetch(new Request(start.headers.get("location")!));
   expect(atGoogle.status).toBe(302);
@@ -86,21 +86,21 @@ test("the live check tells a working client from an unknown client ID, a wrong s
 test("Google is off until an admin turns it on: its sign-in says so in place and offers Sign in; the choice page offers both once on", async () => {
   const { platform } = server();
   expect(await providersOn(platform)).toEqual({ github: true, google: false });
-  const off = await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/docs`), platform);
+  const off = await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/documents`), platform);
   expect(off.status).toBe(403);
-  expect(await off.text()).toContain('href="/auth/sign-in?next=%2Fdocs"');
-  expect((await respond(chooseSignIn, new Request(`${ORIGIN}/auth/sign-in?next=/docs`), platform)).headers.get("location")).toBe(
-    "/auth/github?next=%2Fdocs"
+  expect(await off.text()).toContain('href="/auth/sign-in?next=%2Fdocuments"');
+  expect((await respond(chooseSignIn, new Request(`${ORIGIN}/auth/sign-in?next=/documents`), platform)).headers.get("location")).toBe(
+    "/auth/github?next=%2Fdocuments"
   );
   await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", true);
-  const choose = await (await respond(chooseSignIn, new Request(`${ORIGIN}/auth/sign-in?next=/docs`), platform)).text();
-  expect(choose).toContain('href="/auth/github?next=%2Fdocs"');
-  expect(choose).toContain('href="/auth/google?next=%2Fdocs"');
+  const choose = await (await respond(chooseSignIn, new Request(`${ORIGIN}/auth/sign-in?next=/documents`), platform)).text();
+  expect(choose).toContain('href="/auth/github?next=%2Fdocuments"');
+  expect(choose).toContain('href="/auth/google?next=%2Fdocuments"');
   expect(choose).toContain("Continue with GitHub");
   expect(choose).toContain("Continue with Google");
   expect(choose).not.toContain("same account");
   const start = new URL(
-    (await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/docs`), platform)).headers.get("location")!
+    (await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/documents`), platform)).headers.get("location")!
   );
   expect(start.origin + start.pathname).toBe(`${GOOGLE}/o/oauth2/v2/auth`);
   expect(Object.fromEntries(start.searchParams)).toMatchObject({ client_id: APP.clientId, redirect_uri: `${ORIGIN}/auth/google/callback`, response_type: "code", scope: "openid email profile" });
@@ -124,12 +124,12 @@ test("the sign-in page says what the person will open, or that they canceled; th
   // No empty paragraph before the address: it sits right under the heading.
   expect(doc).toContain('</h1><p class="asked">');
   // From anywhere else: Sign in to Erga, and no address.
-  const list = main(await pageOf("next=%2Fdocs"));
+  const list = main(await pageOf("next=%2Fdocuments"));
   expect(list).toContain("<h1>Sign in to Erga</h1><p><style>");
   expect(list).not.toContain('class="asked"');
   // The same page where everybody may make an account: it says nothing of who may join.
   await directory.rules.change(koomen, (await directory.rules.list(koomen)).find((r) => r.kind == "everybody")!.id, "read");
-  expect(main(await pageOf("next=%2Fdocs"))).toBe(list);
+  expect(main(await pageOf("next=%2Fdocuments"))).toBe(list);
   // After Cancel on a provider's page: the same page, which says so, and keeps the way back.
   const canceled = main(await pageOf("next=%2Fkoomen%2Ftrip&canceled"));
   expect(canceled).toContain(
@@ -138,12 +138,12 @@ test("the sign-in page says what the person will open, or that they canceled; th
   expect(canceled).toContain('href="/auth/google?next=%2Fkoomen%2Ftrip"');
   // With one way in too: the page shows it, and does not send them straight back to the provider.
   await authOps(platform, ORIGIN).setProvider(koomen, "google", false);
-  expect((await respond(chooseSignIn, new Request(`${ORIGIN}/auth/sign-in?next=%2Fdocs`), platform)).headers.get("location")).toBe(
-    "/auth/github?next=%2Fdocs"
+  expect((await respond(chooseSignIn, new Request(`${ORIGIN}/auth/sign-in?next=%2Fdocuments`), platform)).headers.get("location")).toBe(
+    "/auth/github?next=%2Fdocuments"
   );
-  const one = main(await pageOf("next=%2Fdocs&canceled"));
+  const one = main(await pageOf("next=%2Fdocuments&canceled"));
   expect(one).toContain("You canceled the sign-in attempt.");
-  expect(one).toContain('href="/auth/github?next=%2Fdocs"');
+  expect(one).toContain('href="/auth/github?next=%2Fdocuments"');
   expect(one).not.toContain("/auth/google");
 });
 
@@ -189,7 +189,7 @@ test("a sign-in from start to session, by the sub; someone unknown is refused; G
   await directory.identities.createAccount("ada", { provider: "google", subject: "1001", handle: "ada@example.com", name: "Ada", emails: [] }, writes("ada"));
   const ok = await signInWithGoogle(platform);
   expect(ok.status).toBe(302);
-  expect(ok.headers.get("location")).toBe("/docs");
+  expect(ok.headers.get("location")).toBe("/documents");
   expect(ok.headers.get("set-cookie")).toContain("erga_session=");
   // Her email changes at Google: the sub still signs her in.
   google.state.user = { ...ADA, email: "ada@new.example.com" };
@@ -256,12 +256,12 @@ test("one way in: Erga names the account itself, from the address, when the one 
   });
   const one = await only((d) => d.rules.add(koomen, { kind: "workspace", value: "example.com", access: "write" }));
   const named = await signInWithGoogle(one.platform);
-  expect(named.headers.get("location")).toBe("/docs");
+  expect(named.headers.get("location")).toBe("/documents");
   expect(named.headers.get("set-cookie")).toContain("erga_session=");
   expect((await one.directory.identities.find("google", "1001"))?.login).toBe("ada");
   // A name that is taken gets a number.
   google.state.user = { ...ADA, sub: "1002", email: "Ada@example.com", hd: "example.com" };
-  expect((await signInWithGoogle(one.platform)).headers.get("location")).toBe("/docs");
+  expect((await signInWithGoogle(one.platform)).headers.get("location")).toBe("/documents");
   expect((await one.directory.identities.find("google", "1002"))?.login).toBe("ada2");
   // Open to two Workspaces: the part before the @ is not one person's, so she chooses.
   google.state.user = { ...ADA, hd: "example.com" };
@@ -326,7 +326,7 @@ test("values that change during a test sign-in: its end tests nothing, and the n
   const NEWER = { clientId: "123456789012-newernewernewer.apps.googleusercontent.com", secret: "GOCSPX-newernewernewernew" };
   await apps.keep("google", "pending", NEW, { login: "koomen" });
   google = mockGoogle({ clientId: NEW.clientId, clientSecret: NEW.secret, redirects: [`${ORIGIN}/auth/google/callback`], user: ADA });
-  const start = await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/docs&app=pending`), platform);
+  const start = await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/documents&app=pending`), platform);
   const atGoogle = await google.fetch(new Request(start.headers.get("location")!));
   // Another admin saves other values while this test is at Google.
   await apps.keep("google", "pending", NEWER, { login: "koomen" });

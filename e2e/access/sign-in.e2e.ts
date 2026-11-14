@@ -30,14 +30,14 @@ journey("who may sign in, on a server of its own", () => {
   let page: Page, root: string;
   const id = unique("");
   const path = () => new URL(page.url()).pathname;
-  /** A sign-in through the pretend provider, which comes back to /docs. */
-  const signIn = (q: string) => page.goto(`${root}/auth/dev?${q}&next=/docs`);
+  /** A sign-in through the pretend provider, which comes back to /documents. */
+  const signIn = (q: string) => page.goto(`${root}/auth/dev?${q}&next=/documents`);
   /** The username step: the person chooses `name`, and the account is made. */
   const join = async (name: string) => {
     expect(path()).toBe("/auth/username");
     await page.fill("#username", name);
     await page.click("form.username button");
-    await until(() => path() == "/docs", 10_000, `${name}'s account made`);
+    await until(() => path() == "/documents", 10_000, `${name}'s account made`);
   };
   /** What /new answers to the person signed in on the page: where it goes, or its status. */
   const makes = async () => {
@@ -48,12 +48,12 @@ journey("who may sign in, on a server of its own", () => {
   test("one provider on: the sign-in page goes straight to it; two on: a button for each, readable in light and dark", async ({ tab }) => {
     page = tab.page;
     root = own.root;
-    const one = await getter(root)("/auth/sign-in?next=%2Fdocs");
+    const one = await getter(root)("/auth/sign-in?next=%2Fdocuments");
     expect(one.status).toBe(302);
-    expect(one.headers.get("location")).toBe("/auth/github?next=%2Fdocs");
+    expect(one.headers.get("location")).toBe("/auth/github?next=%2Fdocuments");
 
     expect((await runTool(root, "set_sign_in", { provider: "google", action: "on" })).status).toBe(200);
-    await page.goto(`${root}/auth/sign-in?next=%2Fdocs`);
+    await page.goto(`${root}/auth/sign-in?next=%2Fdocuments`);
     for (const scheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme: scheme });
       const buttons = await page.$$eval("a.provider", (as) =>
@@ -69,8 +69,8 @@ journey("who may sign in, on a server of its own", () => {
         })
       );
       expect(buttons.map((b) => [b.text, b.href])).toEqual([
-        ["Continue with GitHub", "/auth/github?next=%2Fdocs"],
-        ["Continue with Google", "/auth/google?next=%2Fdocs"],
+        ["Continue with GitHub", "/auth/github?next=%2Fdocuments"],
+        ["Continue with Google", "/auth/google?next=%2Fdocuments"],
       ]);
       for (const b of buttons) {
         expect(b.logo, `${scheme}, ${b.text}: its logo shows`).toBeGreaterThan(0);
@@ -80,7 +80,7 @@ journey("who may sign in, on a server of its own", () => {
     expect(await page.textContent("main h1")).toBe("Sign in to Erga");
     expect(await page.textContent("main")).not.toContain("same account");
     // After Cancel on a provider's page (the callback sends her back here): the page says so, above the same buttons.
-    await page.goto(`${root}/auth/sign-in?next=%2Fdocs&canceled`);
+    await page.goto(`${root}/auth/sign-in?next=%2Fdocuments&canceled`);
     expect((await page.innerText("main")).split("\n").filter(Boolean)).toEqual([
       "Sign in to Erga",
       "You canceled the sign-in attempt. Try again or choose another way.",
@@ -182,7 +182,7 @@ journey("who may sign in, on a server of its own", () => {
     // A member of acme: read, so no new document. GitHub is the one way in here (Google is off), so Erga names her
     // account by her login, and she is on her documents at once: no username step.
     await signIn(`provider=github&subject=${Date.now()}&handle=Dee-${id}&group=acme`);
-    await until(() => path() == "/docs", 10_000, "dee's account made, with no username step");
+    await until(() => path() == "/documents", 10_000, "dee's account made, with no username step");
     expect((await corner(page)).label).toBe(`You (dee-${id})`);
     expect((await page.goto(`${root}/new`))?.status()).toBe(403);
     expect(await page.textContent("main")).toContain("not make or edit documents");
@@ -206,7 +206,7 @@ journey("who may sign in, on a server of its own", () => {
     await signIn(BOB(id));
     await join(`bob${id}`);
     await signIn(AMY(id));
-    await until(() => path() == "/docs", 10_000, "Amy signs in");
+    await until(() => path() == "/documents", 10_000, "Amy signs in");
     expect(await makes()).toBe("403");
   });
 
@@ -268,7 +268,7 @@ journey("a new person signs in, uses the account corner, signs out and signs in"
   const PICTURE = "https://lh3.googleusercontent.com/a/nia";
   // (Her picture's address as Google's sign-in gives it: at the pages' size.)
   const signIn = () =>
-    `${root}/auth/dev?provider=google&subject=${sub}&handle=${encodeURIComponent(`Nia.Ray.${sub}@example.com`)}&email=${encodeURIComponent(`nia.${sub}@example.com`)}&name=Nia&picture=${encodeURIComponent(`${PICTURE}=s64-c`)}&next=/docs`;
+    `${root}/auth/dev?provider=google&subject=${sub}&handle=${encodeURIComponent(`Nia.Ray.${sub}@example.com`)}&email=${encodeURIComponent(`nia.${sub}@example.com`)}&name=Nia&picture=${encodeURIComponent(`${PICTURE}=s64-c`)}&next=/documents`;
   const path = () => new URL(page.url()).pathname;
   /** Her document: its editor address (a path, with ?edit). */
   let at: string;
@@ -299,7 +299,7 @@ journey("a new person signs in, uses the account corner, signs out and signs in"
     await page.fill("#username", name);
     await until(async () => (await hint())?.includes("is free"), 5000, "a free name is free");
     await page.click("form.username button");
-    await until(() => path() == "/docs", 10_000, "made, and on to where they were going");
+    await until(() => path() == "/documents", 10_000, "made, and on to where they were going");
     await soon(async () => (await corner(page)).label).toBe("You (Nia)");
   });
 
@@ -315,7 +315,7 @@ journey("a new person signs in, uses the account corner, signs out and signs in"
     expect(c.who).toContain(name);
     // She is no admin: her menu has no admin pages. It ends with the way out.
     const links = c.links.map((l) => l.href);
-    expect(links).toEqual(expect.arrayContaining(["/docs", "#settings", "#feedback"]));
+    expect(links).toEqual(expect.arrayContaining(["/documents", "#settings", "#feedback"]));
     expect(links).not.toContain("/admin");
     expect(links.at(-1)).toBe("/auth/logout");
     await page.keyboard.press("Escape");
@@ -388,7 +388,7 @@ journey("a new person signs in, uses the account corner, signs out and signs in"
       }));
     const open = await menu();
     expect([open.hidden, open.expanded]).toEqual([false, "true"]);
-    expect(open.links).toEqual(expect.arrayContaining(["/docs", "#settings", "#feedback", "/auth/logout"]));
+    expect(open.links).toEqual(expect.arrayContaining(["/documents", "#settings", "#feedback", "/auth/logout"]));
     expect(open.links).not.toContain("/admin");
     // Stays open: the same after the frames that follow the click.
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))));
@@ -440,7 +440,7 @@ journey("a new person signs in, uses the account corner, signs out and signs in"
     // document settings, shortcuts), edit, share with an agent, Documents.
     expect(
       await page.evaluate(() => [...document.querySelectorAll(".chrome-top .icon-btn:not([hidden])")].map((e) => e.id).join(" "))
-    ).toBe("btn-new btn-full btn-share btn-settings btn-help btn-edit btn-agent-share btn-docs");
+    ).toBe("btn-new btn-full btn-share btn-settings btn-help btn-edit btn-agent-share btn-documents");
     await page.keyboard.press("Escape");
   });
 
@@ -492,7 +492,7 @@ journey("a new person signs in, uses the account corner, signs out and signs in"
 
   test("the next sign-in asks for no username; Sign out leaves nobody signed in, and Sign in comes back to the same page", async () => {
     await page.goto(signIn());
-    await until(() => path() == "/docs", 10_000, "no username step the second time");
+    await until(() => path() == "/documents", 10_000, "no username step the second time");
     await soon(async () => (await corner(page)).label).toBe("You (Nia)");
     await clickOn(page, "[data-erga-account] button");
     await clickOn(page, `.erga-account-menu a[href="/auth/logout"]`);

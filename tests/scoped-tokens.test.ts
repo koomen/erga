@@ -232,7 +232,7 @@ test("an ops token: for an admin only, OPS_DAYS at most; it signs no one in, and
   // No session: no tool, no MCP, no document.
   const asked = (path: string, init: RequestInit = {}) =>
     new Request(`${ORIGIN}${path}`, { ...init, headers: { Authorization: `Bearer ${token}`, ...init.headers } });
-  expect(await platform.sessionOf(asked("/docs"))).toBeNull();
+  expect(await platform.sessionOf(asked("/documents"))).toBeNull();
   for (const tool of ["whoami", "list_documents", "people", "settings"]) expect((await call(token, tool)).status).toBe(401);
   expect((await respond(serverApi, asked("/mcp", { method: "POST", body: "{}" }), platform)).status).toBe(401);
 
@@ -392,8 +392,8 @@ test("on staging a token works only while its person is an admin: refused once t
   // names the account by the login, with no username step.
   const login = freshLogin("bo");
   expect((await tool(s, admin, "set_user", { action: "add", provider: "github", handle: login, role: "admin" })).status).toBe(200);
-  const joining = await s.fetch(`/auth/dev?provider=github&subject=${mockGithubId(login)}&handle=${login}&next=/docs`);
-  expect(joining.headers.get("location")).toBe("/docs");
+  const joining = await s.fetch(`/auth/dev?provider=github&subject=${mockGithubId(login)}&handle=${login}&next=/documents`);
+  expect(joining.headers.get("location")).toBe("/documents");
   const cookies = (r: Response) => r.headers.getSetCookie().map((x) => x.split(";")[0]);
   const cookie = cookies(joining).find((x) => /^erga_session(_\d+)?=/.test(x))!;
   expect(cookie).toBeTruthy();

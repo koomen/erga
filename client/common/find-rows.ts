@@ -1,4 +1,4 @@
-// Find as you type on a list of documents (/docs, and each page made the same way): each key hides the rows whose title
+// Find as you type on a list of documents (/documents, and each page made the same way): each key hides the rows whose title
 // and address don't hold every word typed, in the browser, at once. A row that comes in later (a live row,
 // client/common/live-rows.ts) obeys the same words: the page calls `apply` from its `wire`.
 

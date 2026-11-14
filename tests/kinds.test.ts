@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";
 import { Document } from "../document/document";
 import { kindOf, pageRefusal, type TreeOp } from "../document/pages";
-import { docsPage } from "../server/pages/docs";
+import { documentsPage } from "../server/pages/documents";
 import type { Listed, Session } from "../server/platform";
 import { setup } from "./helpers/files-fixture";
 import { promised } from "./helpers/promised";
@@ -95,8 +95,24 @@ test("make_document: a project with one page becomes a document again; with more
 
 test("the documents list: a project's row has its chevron and says so; a document's has none", () => {
   const session = { login: "ada", name: "Ada" } as unknown as Session;
-  const row = (id: string, title: string, kind?: "document" | "project"): Listed => ({ id, owner: "ada", slug: id, title, titleSet: false, slugSet: false, created: 1, modified: 1, role: "owner", ...(kind ? { kind } : {}) });
-  const html = docsPage(session, [row("aaaaaaaa", "Taxes", "document"), row("bbbbbbbb", "Site", "project"), row("cccccccc", "Old")], 2, null);
+  const row = (id: string, title: string, kind?: "document" | "project"): Listed => ({
+    id,
+    owner: "ada",
+    slug: id,
+    title,
+    titleSet: false,
+    slugSet: false,
+    created: 1,
+    modified: 1,
+    role: "owner",
+    ...(kind ? { kind } : {}),
+  });
+  const html = documentsPage(
+    session,
+    [row("aaaaaaaa", "Taxes", "document"), row("bbbbbbbb", "Site", "project"), row("cccccccc", "Old")],
+    2,
+    null
+  );
   expect(html).not.toContain('data-id="aaaaaaaa" data-base');
   expect(html).toContain('data-id="bbbbbbbb" data-base');
   expect(html).toContain('data-id="cccccccc" data-base');

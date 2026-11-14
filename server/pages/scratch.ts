@@ -4,7 +4,7 @@
 import { inlineCall, inlineStyle } from "./inline.ts";
 
 /** Unsaved, a scratch document goes `hours` after it's made (the setting delete_docs_after_hours). */
-const deleted = (hours: number) => `Unsaved scratch docs are deleted in ${hours}h`;
+const deleted = (hours: number) => `Unsaved scratch documents are deleted in ${hours}h`;
 
 /** Save's tip: `hours`, as deleted; null: never deleted, and the tip says nothing of it. */
 export const scratchTip = (hours: number | null) => `Save to your documents list.${hours == null ? "" : ` ${deleted(hours)}`}`;

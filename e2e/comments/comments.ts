@@ -8,7 +8,7 @@ export const unique = (name: string) => `${name}${crypto.randomUUID().replace(/-
 
 /** Signs in as someone by the dev sign-in (/auth/github?as=): their session cookie. */
 export async function signIn(root: string, as: string): Promise<string> {
-  const r = await fetch(`${root}/auth/github?as=${as}&next=/docs`, { redirect: "manual" });
+  const r = await fetch(`${root}/auth/github?as=${as}&next=/documents`, { redirect: "manual" });
   const cookie = r.headers
     .getSetCookie()
     .map((c) => c.split(";")[0])

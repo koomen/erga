@@ -9,7 +9,7 @@ import { backspaceAt, burst, editable, html, joins, list, moves, textNow, weight
 const s = await servers.main();
 
 test("the homepage and the documents list answer", async () => {
-  for (const path of ["/", "/docs"]) expect((await fetch(`${s.root}${path}`)).status, path).toBe(200);
+  for (const path of ["/", "/documents"]) expect((await fetch(`${s.root}${path}`)).status, path).toBe(200);
 });
 
 journey("typing on a page", () => {

@@ -34,7 +34,7 @@ test("each field that looks like a sign-in field tells password managers to igno
   // The scan finds the fields it must: the share fields, the username step, the admin's fields, the keys.
   for (const f of [
     "client/editor.html",
-    "server/pages/docs.ts",
+    "server/pages/documents.ts",
     "server/identity/accounts.ts",
     "server/admin/users.ts",
     "server/admin/settings.ts",

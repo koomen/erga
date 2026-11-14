@@ -89,7 +89,7 @@ test("the archive is each person's own: off their list, on their archived list, 
   expect([await ids("ada"), await ids("ada", true)]).toEqual([["bbbbbbbb"], ["aaaaaaaa"]]);
   // Bo's list keeps it: Ada's archive is hers.
   expect([await ids("bo"), await ids("bo", true)]).toEqual([["aaaaaaaa"], []]);
-  // A live list asks for rows by id: an archived one is off /docs and on /docs/archived.
+  // A live list asks for rows by id: an archived one is off /documents and on /documents/archived.
   expect((await dir.lists.list("ada", { ids: ["aaaaaaaa"] })).length).toBe(0);
   expect((await dir.lists.list("ada", { ids: ["aaaaaaaa"], archived: true })).length).toBe(1);
   await dir.lists.archive("aaaaaaaa", "ada", false);

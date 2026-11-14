@@ -58,7 +58,7 @@ export const viewing = async (page: Page) =>
 
 /** Signs `login` in on the dev server (/auth/github?as=): the session's cookie, for requests as that person. */
 export async function signIn(server: Server, login: string): Promise<string> {
-  const r = await fetch(`${server.root}/auth/github?as=${login}&next=/docs`, { redirect: "manual" });
+  const r = await fetch(`${server.root}/auth/github?as=${login}&next=/documents`, { redirect: "manual" });
   const cookie = r.headers
     .getSetCookie()
     .map((c) => c.split(";")[0])
@@ -78,18 +78,18 @@ const PARTS = {
     full: ".erga-full-button",
     edit: ".erga-edit-button",
     agent: ".erga-agent-share",
-    docs: ".erga-docs-button",
+    documents: ".erga-documents-button",
     me: ".erga-account-btn",
   },
   edit: {
-    left: "#nav-docs",
+    left: "#nav-documents",
     right: ".chrome-top",
     brand: "#nav-brand",
     new: "#btn-new",
     full: "#btn-full",
     edit: "#btn-edit",
     agent: "#btn-agent-share",
-    docs: "#btn-docs",
+    documents: "#btn-documents",
     me: ".me-slot .avatar",
   },
 };
@@ -158,7 +158,7 @@ export async function site(server: Server) {
       ),
       "blog/index.html": PAGE(
         "The blog",
-        `${nav(`<a href="${path}/about">About</a> · <a href="/docs">Docs</a> · <a href="${server.root}/docs">Full docs</a>`)}\n    <h1>The blog</h1>\n    <p>Every post, newest first.</p>\n    <p>Read <a href="../about.html">about us</a> here.</p>`,
+        `${nav(`<a href="${path}/about">About</a> · <a href="/documents">Docs</a> · <a href="${server.root}/documents">Full docs</a>`)}\n    <h1>The blog</h1>\n    <p>Every post, newest first.</p>\n    <p>Read <a href="../about.html">about us</a> here.</p>`,
         "../",
         true
       ),

@@ -1,7 +1,7 @@
 // Who a document is shared with, as a list a person changes: the people and their roles, "Anyone with the link", and
 // the form that adds someone. Each change is saved as it's made (the operation share_document, as an agent's is; ls
 // reads the list), and shows before the server answers. Two pages have it, each with its own elements and look: the
-// documents list's Share dialog (client/inline/docs.ts) and the editor's Share card (client/shell/sharing.ts).
+// documents list's Share dialog (client/inline/documents.ts) and the editor's Share card (client/shell/sharing.ts).
 
 import { safeAvatar } from "../../shared/avatars";
 import { runTool } from "./tools";

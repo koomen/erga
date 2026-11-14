@@ -208,7 +208,7 @@ test("no request for a page makes a homepage: / is the page in the server's code
   const s = server();
   const plain = await front(s);
   expect(plain).toContain("<h1>Erga is an AI document editor for people who care about every word</h1>");
-  expect(plain).toContain('<a class="go" href="/auth/sign-in?next=%2Fdocs">Sign in</a>');
+  expect(plain).toContain('<a class="go" href="/auth/sign-in?next=%2Fdocuments">Sign in</a>');
   expect((await s.fetch("/_home")).status).toBe(404);
   expect(await s.platform.directory.landing()).toBeNull();
   // The deploy asks: made, from the landing project's files. Asked again: it is there.
@@ -223,7 +223,7 @@ test("no request for a page makes a homepage: / is the page in the server's code
   expect(await docOnFront(s)).toBe(id);
   // The setting reset: no homepage is assigned, so / is the page in the server's code again. The project stays.
   await runTool(s, "set_setting", { key: "landing_document", reset: true });
-  expect(await front(s)).toContain('<a class="go" href="/auth/sign-in?next=%2Fdocs">Sign in</a>');
+  expect(await front(s)).toContain('<a class="go" href="/auth/sign-in?next=%2Fdocuments">Sign in</a>');
   expect((await s.fetch("/_home")).status).toBe(200);
   // An admin chooses the homepage project again, by its address.
   expect((await runTool(s, "set_setting", { key: "landing_document", value: "/_home" })).error).toBeUndefined();

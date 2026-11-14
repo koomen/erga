@@ -38,7 +38,7 @@ export const ICON = {
   chevron: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.75 7.5 4.5 4.5-4.5 4.5"/></svg>`,
 };
 
-/** The page around a view (/docs, /admin): its title, the shared look and the view's own style. */
+/** The page around a view (/documents, /admin): its title, the shared look and the view's own style. */
 export const appPage = (title: string, style: string, body: string, footer = true) => `<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
@@ -75,7 +75,7 @@ export const fromThisSite = (request: Request, url: URL) => {
  * / sends someone signed in to their documents, however they came; the homepage project is at /_home for them. Not an
  * agent's token; signed out, always the homepage.
  */
-export const homeGoesToDocs = (session: Session | null) => !!session && !session.agent;
+export const homeGoesToDocuments = (session: Session | null) => !!session && !session.agent;
 
 
 /** Off to sign in, and back to `next`. `open`: what `next` is, which the sign-in page then says ("document": a document's address). */

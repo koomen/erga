@@ -1,4 +1,4 @@
-// The documents page (/docs) and the archive (/docs/archived): a person makes, finds, archives and deletes documents,
+// The documents page (/documents) and the archive (/documents/archived): a person makes, finds, archives and deletes documents,
 // and the open list follows what an agent or another person changes, with no reload. Then the admin's side: / opens
 // the list, ⌘K finds Erga's pages, the Home page button and the logo.
 //
@@ -21,7 +21,7 @@ const UNEDITED_MS = 3000;
 /** The count and each row's title, as the person sees them. */
 const shown = (page: Page) =>
   page.evaluate<string>(
-    `[document.getElementById("docs-count")].filter((c) => c.checkVisibility()).map((c) => c.innerText).concat([...document.querySelectorAll("ol.rows > li[data-live] .title")].filter((t) => t.checkVisibility()).map((t) => t.innerText)).join(" | ")`
+    `[document.getElementById("documents-count")].filter((c) => c.checkVisibility()).map((c) => c.innerText).concat([...document.querySelectorAll("ol.rows > li[data-live] .title")].filter((t) => t.checkVisibility()).map((t) => t.innerText)).join(" | ")`
   );
 /** Each row's title, the left edge of its name and the row's height, in CSS px. */
 const boxes = (page: Page) =>
@@ -214,7 +214,7 @@ journey("a person's documents", () => {
     /** The count, each row that shows, and the line that says that none match. */
     const found = () =>
       page.evaluate<string>(
-        `[document.getElementById("docs-count"), ...document.querySelectorAll("ol.rows > li[data-live] .title"), document.getElementById("docs-none")].filter((e) => e.checkVisibility()).map((e) => e.innerText).join(" | ")`
+        `[document.getElementById("documents-count"), ...document.querySelectorAll("ol.rows > li[data-live] .title"), document.getElementById("documents-none")].filter((e) => e.checkVisibility()).map((e) => e.innerText).join(" | ")`
       );
     const all = "Garden plan, spring | Tax notes 2026 | A project | Old minutes";
     // The box is left of New and Scratch, on the same line.
@@ -275,7 +275,7 @@ journey("a person's documents", () => {
     expect(await sameLoad(page)).toBe(true);
 
     await clickOn(page, "a.other-list");
-    await page.waitForURL(/\/docs\/archived$/);
+    await page.waitForURL(/\/documents\/archived$/);
     expect(await page.innerText("h1")).toBe("Archived");
     expect(await shown(page)).toBe("1 document | Tax notes 2026");
   });
@@ -293,7 +293,7 @@ journey("a person's documents", () => {
     expect(new Set(r.map((x) => x.height)).size, JSON.stringify(r)).toBe(1);
     expect(r[0].height, JSON.stringify(r)).toBeLessThanOrEqual(46);
     // The archive is each person's own: bo's list still has theirs.
-    expect(await bo.docs()).toContain(`data-live="doc:${id.theirs}"`);
+    expect(await bo.documents()).toContain(`data-live="doc:${id.theirs}"`);
     expect(await page.locator(`${rowOf("Untitled")} button.delete`).count()).toBe(0);
     expect(await page.locator(`${rowOf("Untitled")} button[aria-label="Unarchive Untitled"]`).count()).toBe(1);
 
@@ -322,7 +322,7 @@ journey("a person's documents", () => {
 
   test("an agent's archive and unarchive move the rows of open tabs, with no reload; the link after the heading goes back to the list", async () => {
     const list = await page.context().newPage();
-    await list.goto(`${s.root}/docs`);
+    await list.goto(`${s.root}/documents`);
     await mark(list);
     await expect
       .poll(async () => (await shown(list)).split(" | ").sort().join(" | "))
@@ -351,7 +351,7 @@ journey("a person's documents", () => {
     await list.close();
     await page.bringToFront();
     await clickOn(page, "a.other-list");
-    await page.waitForURL(/\/docs$/);
+    await page.waitForURL(/\/documents$/);
     await expect
       .poll(async () => (await shown(page)).split(" | ").sort().join(" | "))
       .toBe("4 documents | A project | Garden plan, spring | Old minutes | Untitled");
@@ -412,10 +412,10 @@ journey("a person's documents", () => {
         const s = getComputedStyle(b, "::after");
         return { text: s.content, shown: s.opacity, card: [s.backgroundColor, s.borderRadius, s.fontSize, s.boxShadow].join(" ") };
       });
-    const deleted = '"Unsaved scratch docs are deleted in 24h"';
+    const deleted = '"Unsaved scratch documents are deleted in 24h"';
     // No line under the buttons: + Scratch says when a scratch document goes in its tip, on hover or focus.
     expect(await page.locator(".scratch-note").count()).toBe(0);
-    expect(await page.getAttribute("a.pill.scratch", "aria-description")).toBe("Unsaved scratch docs are deleted in 24h");
+    expect(await page.getAttribute("a.pill.scratch", "aria-description")).toBe("Unsaved scratch documents are deleted in 24h");
     expect((await tipOf("a.pill.scratch")).shown).toBe("0");
     await over("a.pill.scratch");
     await expect.poll(async () => (await tipOf("a.pill.scratch")).shown).toBe("1");
@@ -452,7 +452,7 @@ journey("a person's documents", () => {
       (await p.tool<{ documents: { id: string; title: string; expires?: string }[] }>("list_documents")).result!.documents.find(
         (d) => d.id == doc
       );
-    expect(await p.docs()).not.toContain(doc);
+    expect(await p.documents()).not.toContain(doc);
     expect(await listed()).toBeUndefined();
 
     // A heading typed, then Save: the button goes, and the address follows the heading, still in the editor.
@@ -472,8 +472,8 @@ journey("a person's documents", () => {
     expect(kept).toMatchObject({ title: "Groceries" });
     expect(kept?.expires).toBeUndefined();
     // The logo goes back to the list, which has it now, at its address.
-    await clickOn(page, "#nav-docs .erga-brand, .erga-crumbs .erga-brand");
-    await page.waitForURL(/\/docs$/);
+    await clickOn(page, "#nav-documents .erga-brand, .erga-crumbs .erga-brand");
+    await page.waitForURL(/\/documents$/);
     expect(await page.getAttribute(`li[data-live="doc:${doc}"] a.doc`, "href")).toBe(`/${p.login}/groceries?edit`);
   });
 
@@ -541,7 +541,7 @@ journey("a person's documents", () => {
     expect(await page.locator(".erga-view-buttons .quick-inner > *").first().getAttribute("class")).toBe("erga-scratch-save");
     await view.hover();
     await expect.poll(() => view.evaluate((b) => getComputedStyle(b, "::after").opacity)).toBe("1");
-    expect(await p.docs()).not.toContain(`doc:${id["Zebra scratch"]}"`);
+    expect(await p.documents()).not.toContain(`doc:${id["Zebra scratch"]}"`);
 
     await clickOn(page, ".erga-edit-button");
     await editor(page, { address: `${s.root}${scratch}`, dir: "", file: "" }).loaded();
@@ -549,7 +549,7 @@ journey("a person's documents", () => {
     await expect.poll(() => save.isVisible()).toBe(true);
     await clickOn(page, "#quick .erga-scratch-save");
     await expect.poll(() => page.locator(".erga-scratch-save").count()).toBe(0);
-    await until(async () => (await p.docs()).includes(`doc:${id["Zebra scratch"]}"`), 5000, "the saved document is on the list");
+    await until(async () => (await p.documents()).includes(`doc:${id["Zebra scratch"]}"`), 5000, "the saved document is on the list");
   });
 
   test("the pencil goes back to the viewer, where the saved document has no Save", async () => {
@@ -577,7 +577,7 @@ journey("a person's documents", () => {
         "the open document's time put off"
       );
       expect([await bo.exists(life.kept), await bo.exists(life.open)]).toEqual([true, true]);
-      const list = await bo.docs();
+      const list = await bo.documents();
       expect(list).not.toContain(`doc:${life.gone}"`);
       expect(list).toContain(`href="${(await bo.nameOf(life.kept)).address}?edit"`);
     } finally {
@@ -589,20 +589,20 @@ journey("a person's documents", () => {
 journey("the admin: / opens the documents, ⌘K finds Erga's pages, the Home page button and the logo", () => {
   let page: Page;
 
-  test("signed in, / opens /docs, whose last quick action is Home page", async ({ tab }) => {
+  test("signed in, / opens /documents, whose last quick action is Home page", async ({ tab }) => {
     page = tab.page;
     tab.strict = true;
     await page.setViewportSize({ width: 1200, height: 800 });
     await page.goto(`${s.root}/`);
-    expect(new URL(page.url()).pathname).toBe("/docs");
+    expect(new URL(page.url()).pathname).toBe("/documents");
     // The Home page button is the last quick action, in the place where other pages have Documents.
     const order = await page.evaluate(() =>
       [...document.querySelectorAll(".erga-view-buttons .quick-inner > *")].map((e) => e.getAttribute("aria-label") ?? e.className)
     );
     expect(order.at(-1)).toBe("Home page");
     expect(order).not.toContain("Documents");
-    // The logo on /docs itself goes to /docs too.
-    expect(await page.getAttribute(".erga-crumbs .erga-brand", "href")).toBe("/docs");
+    // The logo on /documents itself goes to /documents too.
+    expect(await page.getAttribute(".erga-crumbs .erga-brand", "href")).toBe("/documents");
   });
 
   test("⌘K opens the quick search with Erga's pages and the admin ones; typing narrows it, ↓ and Enter open one, Escape closes it", async () => {
@@ -633,12 +633,12 @@ journey("the admin: / opens the documents, ⌘K finds Erga's pages, the Home pag
 
   test("the Home page button opens the homepage project, and the logo there goes back to the documents", async () => {
     await page.goBack();
-    await page.waitForURL((u) => u.pathname == "/docs");
+    await page.waitForURL((u) => u.pathname == "/documents");
     await Promise.all([page.waitForURL((u) => u.pathname == "/_home"), page.click(".erga-home-button")]);
     await expect
       .poll(() => page.evaluate(() => document.querySelector(".erga-crumbs .erga-here")?.textContent ?? ""))
       .toBe("Erga Homepage");
-    await Promise.all([page.waitForURL((u) => u.pathname == "/docs"), page.click(".erga-crumbs .erga-brand")]);
+    await Promise.all([page.waitForURL((u) => u.pathname == "/documents"), page.click(".erga-crumbs .erga-brand")]);
   });
 
   test("signed out, / stays the homepage, and the logo of the homepage project goes to /", async () => {

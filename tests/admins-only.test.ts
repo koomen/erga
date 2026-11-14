@@ -37,7 +37,7 @@ test("a pages token names its admin only when asked to (staging), and it can't b
 test("no GitHub OAuth app (GITHUB_CLIENT_ID empty): sign-in says so, rather than sending people to GitHub's 404", async () => {
   const env = serverWith("");
   for (const answer of [
-    await respond(startOAuth("github"), new Request("https://staging.erga.dev/auth/github?next=/docs"), env),
+    await respond(startOAuth("github"), new Request("https://staging.erga.dev/auth/github?next=/documents"), env),
     await respond(finishOAuth("github"), new Request("https://staging.erga.dev/auth/github/callback?code=1&state=2"), env),
   ]) {
     expect(answer.status).toBe(503);
@@ -85,7 +85,7 @@ test("an admin's token without the admin scope reaches only the API, MCP and doc
     "/api/docs/abcd2345/home",
     "/settings",
     "/tokens/new",
-    "/docs",
+    "/documents",
     "/new",
     "/deploy/x/api",
     "/tokens/x/api",
@@ -98,7 +98,7 @@ test("an admin's token without the admin scope reaches only the API, MCP and doc
 
 test("a staging instance (its deploy names its primary) is for admins only: signed out, a page asks to sign in, and the API refuses", async () => {
   const s = app({ staging: true });
-  const page = await s.fetch("/docs", { headers: { ...signedOut(), Accept: "text/html" } });
+  const page = await s.fetch("/documents", { headers: { ...signedOut(), Accept: "text/html" } });
   expect(page.status).toBe(403);
   const html = await page.text();
   expect(html).toContain("Staging is for admins: sign in");
@@ -108,5 +108,5 @@ test("a staging instance (its deploy names its primary) is for admins only: sign
   expect(api.status).toBe(403);
   expect(((await api.json()) as { adminsOnly?: boolean }).adminsOnly).toBe(true);
   // (The same server lets its admin in: the guard, not a broken route, refused those.)
-  expect((await s.fetch("/docs", { headers: { Accept: "text/html" } })).status).toBe(200);
+  expect((await s.fetch("/documents", { headers: { Accept: "text/html" } })).status).toBe(200);
 });

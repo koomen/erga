@@ -2,7 +2,7 @@
 // Worker can't do from inside workerd because it needs this machine.
 //
 //   - Files on disk as documents. A file or folder (named to `bun start`,
-//     or opened from /docs) is linked to a document of its own, at an
+//     or opened from /documents) is linked to a document of its own, at an
 //     address that comes from its path, so it's the same every time. A
 //     Mirror then serves the document its files over the document's
 //     /api/mirror WebSocket: the room lists, reads and
@@ -170,7 +170,7 @@ export function ergaDev(opts: DevOptions): Plugin {
       /** The local database brought up to date, which linking needs: set once the server's listening. */
       let migrated: Promise<void> | null = null;
 
-      /** /__erga/open: the form on /docs (or a test) links a path for the person asking, then goes there. */
+      /** /__erga/open: the form on /documents (or a test) links a path for the person asking, then goes there. */
       async function open(req: IncomingMessage, res: ServerResponse, url: URL) {
         // Only this site's own pages (and clients that aren't browsers, which send no Origin).
         const origin = req.headers.origin;
@@ -216,7 +216,7 @@ export function ergaDev(opts: DevOptions): Plugin {
             const at = `${shown}/${l.owner}/${l.slug}?edit`;
             log(`editing ${target.shown}${target.only ? "" : ` (${target.index})`}: ${at}`);
             if (opts.browser) openBrowser(at);
-          } else if (opts.browser) openBrowser(`${shown}/docs`);
+          } else if (opts.browser) openBrowser(`${shown}/documents`);
         })().catch((e) => log(`couldn't link: ${(e as Error).message}`));
       });
 
@@ -243,7 +243,7 @@ interface Resolved {
   id: string;
   /** Its address: the folder's name, or the file's without its extension. */
   slug: string;
-  /** Its path as /docs shows it (~ for your home). */
+  /** Its path as /documents shows it (~ for your home). */
   shown: string;
 }
 
@@ -333,7 +333,7 @@ class Mirror {
     };
     ws.onclose = (e) => {
       if (this.ws !== ws || this.stopped) return;
-      // Deleted (from /docs): the files stay as they are, and the link goes.
+      // Deleted (from /documents): the files stay as they are, and the link goes.
       if (e.code == 4404) { this.log(`unlinked ${this.link.folder}: the document was deleted`); this.stop(); return this.gone(); }
       setTimeout(() => { if (!this.stopped) this.connect().catch(() => {}); }, 500);
     };
@@ -519,7 +519,7 @@ function openBrowser(url: string): void {
 }
 
 function reply(res: ServerResponse, status: number, message: string, user?: string | null): void {
-  const back = `/docs${user ? `?user=${encodeURIComponent(user)}` : ""}`;
+  const back = `/documents${user ? `?user=${encodeURIComponent(user)}` : ""}`;
   res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" }).end(`<!doctype html><meta charset="utf-8"><title>Erga</title>
 <p style="font:17px/1.6 system-ui,sans-serif;max-width:32rem;margin:20vh auto;padding:0 16px">${message.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`)} <a href="${back}">Back to your documents</a>.</p>`);
 }

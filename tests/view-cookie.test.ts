@@ -38,7 +38,7 @@ test("what it does is an agent's: the server's browser runs an agent's code", as
 
 test("anywhere else, or expired, it signs in nobody, not even the dev login", async () => {
   const cookie = await viewCookie(SECRET, "ada", DOC);
-  for (const path of ["/docs", "/api/agent", "/api/agent/conversation", "/ada/other", `/d/zzzz9999`, "/tokens", "/admin"])
+  for (const path of ["/documents", "/api/agent", "/api/agent/conversation", "/ada/other", `/d/zzzz9999`, "/tokens", "/admin"])
     for (const dev of [false, true]) expect(await ask(path, cookie, dev), `${path} ${dev ? "(dev)" : ""}`).toBeNull();
   const old = await viewCookie(SECRET, "ada", DOC, Date.now() - 3_600_000);
   expect(await ask(`/d/${DOC}`, old, true)).toBeNull();

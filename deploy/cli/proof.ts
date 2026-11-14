@@ -57,7 +57,7 @@ export function proofRefusal(o: {
   if (no) return no;
   if (!o.sentence?.trim()) return 'Say what changed, in one sentence: bun erga proof "<sentence>" --look "<bun run look arguments>".';
   if (!o.looks && !o.noPicture?.trim())
-    return 'Give a picture (--look "<bun run look arguments>", for example --look "--path /docs"), or say which tests prove a change with nothing to show (--no-picture "<the tests>").';
+    return 'Give a picture (--look "<bun run look arguments>", for example --look "--path /documents"), or say which tests prove a change with nothing to show (--no-picture "<the tests>").';
   return null;
 }
 

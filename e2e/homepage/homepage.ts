@@ -104,7 +104,7 @@ export async function events(server: Server, id: string) {
   return Object.assign(seen, { close: () => ws.close(), of: (type: string) => seen.filter((m) => m.type == type) });
 }
 
-/** Opens / signed out, as the homepage is served: someone signed in goes to /docs (server/app.ts). The tab stays signed out. */
+/** Opens / signed out, as the homepage is served: someone signed in goes to /documents (server/app.ts). The tab stays signed out. */
 export async function openHome(page: Page, server: Server) {
   await page.context().addCookies([{ name: `erga_signed_out_${server.port}`, value: "1", url: server.root }]);
   await page.goto(`${server.root}/`);

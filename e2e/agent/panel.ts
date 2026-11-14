@@ -167,7 +167,7 @@ export const apisOf = async (t: DocTools) =>
  */
 export async function person(server: Server, login: string) {
   const root = server.root;
-  const r = await fetch(`${root}/auth/github?as=${login}&next=/docs`, { redirect: "manual" });
+  const r = await fetch(`${root}/auth/github?as=${login}&next=/documents`, { redirect: "manual" });
   const cookie = r.headers
     .getSetCookie()
     .map((c) => c.split(";")[0])

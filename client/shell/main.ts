@@ -82,7 +82,7 @@ interface EditorKept {
 interface ShellKept { width: number; height: number; html: string[]; body: string[]; style: string; parts: Record<string, string> }
 const SHELL_HTML = ["page-dark", "page-light", "page-white"],
   SHELL_BODY = ["agent-open", "agent-right", "layout-narrow"];
-const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
+const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me"];
 
 
 (async () => {
@@ -207,9 +207,9 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   const me: Author = { user: info.userId, name: info.user, color: colorFor(info.userId), kind: "person", ...(info.avatar ? { avatar: info.avatar } : {}) };
   // Your documents to go back to, as whoever this tab is; the wordmark goes there too.
   $("nav-back").hidden = false;
-  ($("nav-back") as HTMLAnchorElement).href = `/docs${as}`;
-  ($("btn-docs") as HTMLAnchorElement).href = `/docs${as}`;
-  ($("nav-brand") as HTMLAnchorElement).href = `/docs${as}`;
+  ($("nav-back") as HTMLAnchorElement).href = `/documents${as}`;
+  ($("btn-documents") as HTMLAnchorElement).href = `/documents${as}`;
+  ($("nav-brand") as HTMLAnchorElement).href = `/documents${as}`;
   // The editor's own page actions (client/editor.html, .edit-group) open out of the pencil while editing and close back into it: they
   // clip sideways while they move, and not once they're open and still (settled), so their tooltips reach past the group.
   const editGroup = $("edit-group"), body = document.body;
@@ -243,7 +243,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   const phone = matchMedia("(max-width: 759.98px)");
   let backWidth = 0;
   function tighten(top: HTMLElement) {
-    const nav = $("nav-docs"),
+    const nav = $("nav-documents"),
       back = $("nav-back");
     if (body.classList.contains("quick-open")) return;
     if (!phone.matches || back.hidden) return void nav.classList.remove("tight");
@@ -255,9 +255,9 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   phone.addEventListener("change", navRoom);
   new ResizeObserver(navRoom).observe(document.querySelector(".chrome-top")!);
   new ResizeObserver(navRoom).observe($("people"));
-  new ResizeObserver(navRoom).observe($("nav-docs"));
+  new ResizeObserver(navRoom).observe($("nav-documents"));
   addEventListener("resize", navRoom);
-  $("nav-docs").addEventListener("transitionend", navRoom);
+  $("nav-documents").addEventListener("transitionend", navRoom);
   /** The host's endpoints, as this person. */
   const api = (path: string) => `${BASE}${path}${as}`;
 

@@ -8,7 +8,7 @@ import type { Caller } from "./operation.ts";
 export async function sitePages({ dir, who }: Caller): Promise<{ group: string; label: string; path: string }[]> {
   const admin = await dir.users.actsAsAdmin(who);
   return [
-    { group: "Pages", label: "Documents", path: "/docs" },
+    { group: "Pages", label: "Documents", path: "/documents" },
     { group: "Pages", label: "Settings", path: "#settings" },
     ...(admin ? ADMIN_PAGES.map((p) => ({ group: "Admin", label: p.label, path: p.path })) : []),
   ];

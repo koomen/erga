@@ -1,4 +1,4 @@
-/* The documents list (/docs, server/pages/docs.ts): its rows, the pages under a project, and the share dialog. */
+/* The documents list (/documents, server/pages/documents.ts): its rows, the pages under a project, and the share dialog. */
 
 /* Rows, and the labels over them, in three columns: the name (its title and what's special about it), when it was edited, its buttons. */
   .labels, ol.rows > li { display: grid; grid-template-columns: minmax(0, 1fr) 10rem 96px; align-items: center; column-gap: 16px; }
@@ -66,7 +66,7 @@
   #share .buttons { justify-content: space-between; }
   /* The New menu (server/pages/templates.ts) follows the system, as this page does (:root: over its own style, which comes after this). */
   @media (prefers-color-scheme: dark) { :root .erga-new-menu { --nm-bg: #1f1f23; --nm-fg: #ececf1; --nm-soft: #8f8f99; --nm-ring: #2f2f35; --nm-hover: rgba(161, 161, 169, .16); } }
-  /* The heading, and the small link to the other list after it (/docs/archived, or back to /docs). */
+  /* The heading, and the small link to the other list after it (/documents/archived, or back to /documents). */
   .heading { display: flex; align-items: baseline; gap: 12px; }
   .other-list { font-size: 13px; font-weight: 500; color: var(--soft); text-decoration: none; transition: color 120ms ease; }
   .other-list:hover { color: var(--link); }
@@ -75,13 +75,13 @@
   /* Find as you type (client/common/find-rows.ts): a row that doesn't match hides, and its pages with it. */
   .find { width: 220px; }
   .find[hidden], ol.rows > li.miss, ol.rows > li.miss + li.sub { display: none; }
-  #docs-none { margin: 0; padding: 14px 0; font-size: 14px; color: var(--soft); }
-  #docs-none[hidden] { display: none; }
+  #documents-none { margin: 0; padding: 14px 0; font-size: 14px; color: var(--soft); }
+  #documents-none[hidden] { display: none; }
   @media (max-width: 520px) { .find { width: 0; flex: 1; } .make, .make-buttons { width: 100%; } header { flex-wrap: wrap; } }
   .pill.scratch { position: relative; text-decoration: none; }
   /* Its tip (client/inline/scratch.css) opens to the left: the button is at the page's right. */
   .pill.scratch::after { left: auto; right: 0; }
-/* Requests for access to your documents (server/pages/docs.ts): each with Share and Decline. */
+/* Requests for access to your documents (server/pages/documents.ts): each with Share and Decline. */
 ul.asks { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; }
 ul.asks li { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; border: 1px solid var(--panel-border); border-radius: 10px; font-size: 14px; }
 ul.asks li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }

@@ -1,6 +1,6 @@
 /* A scratch document's Save (client/inline/scratch.ts): orange, at the start of the quick actions, in the viewer's bar and the
    editor's. Its tip is a small card under it, on hover or focus; an error stays in sight. + Scratch on the documents page
-   (server/pages/docs.ts, .erga-scratch-tip) has the same card. */
+   (server/pages/documents.ts, .erga-scratch-tip) has the same card. */
 .erga-scratch-save { position: relative; flex: none; align-self: center; height: 28px; margin: 0 6px 0 2px; padding: 0 12px; border: 0;
   border-radius: 8px; font: 500 13px/1 Inter, system-ui, sans-serif; color: #fff; background: #ea580c; cursor: pointer; }
 .erga-scratch-save:hover:not(:disabled) { background: #c2410c; }

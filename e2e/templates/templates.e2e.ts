@@ -117,7 +117,7 @@ journey("a new document from the picker", () => {
     page.on("request", (r) => {
       if (/fonts\.(googleapis|gstatic)\.com/.test(r.url())) askedGoogle.push(r.url());
     });
-    await openTab(tab, `${s.root}/docs`);
+    await openTab(tab, `${s.root}/documents`);
     await clickIn("header .erga-new-btn");
     expect(await picker()).toEqual({ open: true, rows: ROWS, expanded: "New document", icons: false });
     await sameTypeface();
@@ -127,7 +127,7 @@ journey("a new document from the picker", () => {
     await clickIn("header .erga-new-btn");
     // (Not clickIn: the page leaves at once, before its settle.)
     await page.click('.erga-new-menu a[data-template="project"]');
-    expect(await fileOf(await inNewEditor("/docs"))).toBe(template("project"));
+    expect(await fileOf(await inNewEditor("/documents"))).toBe(template("project"));
   });
 
   test("the viewer's + opens the picker, in one typeface, with Clone last; Escape closes it; Document makes a blank document and opens it in the editor", async () => {

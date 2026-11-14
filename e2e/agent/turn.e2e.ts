@@ -504,7 +504,7 @@ const FIRST_PAINT = `(() => {
 journey("the agent on the documents' list", () => {
   let page: Page;
   /** (Not read where the runner only lists the steps: there is no server there.) */
-  const docs = () => `${s.root}/docs?user=${LISA}`;
+  const docs = () => `${s.root}/documents?user=${LISA}`;
   let address = "";
   /** Whether Lisa still has the document. */
   const has = async () => (await runTool(s.root, "ls", { document: address }, { user: LISA })).ok;
@@ -656,7 +656,7 @@ journey("the agent on the documents' list", () => {
 
     // Another person in this tab (local development's ?user=) never sees the copy: their panel starts empty.
     expect(await page.evaluate(() => sessionStorage.getItem("erga:agent-panel")), "Lisa's copy").toContain("Left alone.");
-    await page.goto(`${s.root}/docs?user=${OTHER}`);
+    await page.goto(`${s.root}/documents?user=${OTHER}`);
     await until(() => page.evaluate(() => !!(window as any).__firstPaint), 5000, "the other person's page paints");
     expect(await page.evaluate(() => (window as any).__firstPaint.n), "the other person's panel at the first paint").toBe(0);
 

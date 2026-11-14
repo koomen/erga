@@ -42,7 +42,7 @@ const SEE = "p:nth-of-type(3)";
 const A = `${SEE} a`;
 const LINK = `<a href="https://example.com">`;
 /** Another Erga address, for a link that opens in this tab. */
-const away = () => new URL("/docs?went=1", s.root).href;
+const away = () => new URL("/documents?went=1", s.root).href;
 
 journey("the format bar, the link bar, Markdown and the slash menu", () => {
   let ed: Editor;

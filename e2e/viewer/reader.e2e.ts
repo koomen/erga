@@ -48,7 +48,7 @@ journey("a reader opens a document with several pages", () => {
     await expect.poll(() => styled(page)).toEqual({ h1: "Spring migration", color: "rgb(180, 40, 30)", width: "608px" });
     const view = await bars(page, "view");
     expect(view.glass).toEqual([GLASS, GLASS]);
-    expect(Object.keys(view.parts)).toEqual(["left", "right", "brand", "new", "full", "edit", "agent", "docs", "me"]);
+    expect(Object.keys(view.parts)).toEqual(["left", "right", "brand", "new", "full", "edit", "agent", "documents", "me"]);
     // The editor's places: 6px and 8px from the sides, 8px from the top, 42px high.
     expect(view.parts.left).toMatchObject({ l: 6, t: 8, b: 50 });
     expect(view.parts.right).toMatchObject({ r: 1192, t: 8, b: 50 });
@@ -85,7 +85,7 @@ journey("a reader opens a document with several pages", () => {
     await expect.poll(async () => (await bars(page, "edit")).parts.left?.l).toBe(6);
     const edit = await bars(page, "edit");
     expect(edit.glass).toEqual([GLASS, GLASS]);
-    for (const part of ["brand", "edit", "agent", "docs", "me"] as const) expect(edit.parts[part], part).toEqual(owner[part]);
+    for (const part of ["brand", "edit", "agent", "documents", "me"] as const) expect(edit.parts[part], part).toEqual(owner[part]);
     expect(edit.parts.right.r).toBe(owner.right.r);
     expect([edit.parts.left.t, edit.parts.left.b, edit.parts.right.t, edit.parts.right.b]).toEqual([8, 50, 8, 50]);
   });
@@ -96,8 +96,8 @@ journey("a reader opens a document with several pages", () => {
     await expect.poll(() => ed.caretIn("a")).toBe(true);
     expect(page.context().pages()).toHaveLength(1);
     expect(await opened(() => link("about us").click({ modifiers: ["ControlOrMeta"] }))).toBe(`${doc.address}/about`);
-    // Out of the document (/docs, and with the server's name): Erga's page, never in the frame.
-    for (const name of ["Docs", "Full docs"]) expect(await opened(() => link(name).click()), name).toBe(`${s.root}/docs`);
+    // Out of the document (/documents, and with the server's name): Erga's page, never in the frame.
+    for (const name of ["Docs", "Full docs"]) expect(await opened(() => link(name).click()), name).toBe(`${s.root}/documents`);
     expect(`${await where(page)} ${await ed.textOf("h1")}`).toBe(`${doc.path}/blog?edit The blog`);
   });
 
@@ -280,7 +280,7 @@ journey("a reader opens a document with several pages", () => {
     const atRest = (await bars(page, "view")).parts;
     const me = atRest.me;
     await page.mouse.click((me.l + me.r) / 2, (me.t + me.b) / 2);
-    await expect.poll(() => shown("view")).toEqual(["left", "right", "new", "full", "edit", "agent", "docs", "me"]);
+    await expect.poll(() => shown("view")).toEqual(["left", "right", "new", "full", "edit", "agent", "documents", "me"]);
     expect(await page.evaluate(() => !document.querySelector<HTMLElement>(".erga-account-menu")!.hidden)).toBe(true);
     // (The breadcrumbs' bar gets narrower as the buttons' bar opens: it ends before it once both are at rest.)
     await expect
@@ -328,8 +328,8 @@ journey("a reader opens a document with several pages", () => {
     expect((await view("reader")).bars, "a reader, the bars on again").toBe(true);
     const reader = await bars(page, "view");
     expect(reader.glass).toEqual([GLASS, GLASS]);
-    expect(Object.keys(reader.parts)).toEqual(["left", "right", "brand", "new", "full", "agent", "docs", "me"]);
-    for (const part of ["brand", "agent", "docs", "me"] as const) expect(reader.parts[part], part).toEqual(owner[part]);
+    expect(Object.keys(reader.parts)).toEqual(["left", "right", "brand", "new", "full", "agent", "documents", "me"]);
+    for (const part of ["brand", "agent", "documents", "me"] as const) expect(reader.parts[part], part).toEqual(owner[part]);
     // Signed out: the breadcrumbs are Erga › the document; the sign-in circle where the avatar is.
     const cookie = `erga_signed_out_${new URL(s.root).port}`;
     await page.context().addCookies([{ name: cookie, value: "1", url: s.root }]);
@@ -360,12 +360,12 @@ journey("a reader opens a document with several pages", () => {
   });
 
   test("every app page has Share with an agent in its bar: on Documents it copies the prompt for Documents", async () => {
-    await page.goto(`${s.root}/docs`);
+    await page.goto(`${s.root}/documents`);
     await clickOn(page, ".erga-agent-share");
     await clickOn(page, ".erga-agent-menu:not([hidden]) .am-mcp");
     await expect.poll(() => page.evaluate(() => document.querySelector<HTMLElement>(".erga-agent-share")!.dataset.tip)).toBe("Copied ✓");
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-      `Add Erga's MCP server, ${s.root}/mcp, then open ${s.root}/docs.`
+      `Add Erga's MCP server, ${s.root}/mcp, then open ${s.root}/documents.`
     );
     // On an admin page, Admin is picked for the token.
     await page.goto(`${s.root}/admin`);

@@ -1,7 +1,7 @@
 // Where a link on a document's page goes (docs: the Links plan). The page is in a frame on its pages origin, under a
 // token (/t/<token>/), and the viewer around it is on Erga's origin (the shell). A link names a page of this document
 // when it is under the token, or when it is the document's Erga address or under it (/<owner>/<slug>/<page>, on either
-// origin): "page". Any other path on the pages origin is an Erga address too, written root-relative ("/docs"), and so is
+// origin): "page". Any other path on the pages origin is an Erga address too, written root-relative ("/documents"), and so is
 // any link to the shell's origin: "erga", on Erga. Another site: "out". The viewer (client/inline/reader.ts), the
 // editor (libs/text/ui/frame.ts), the copy (publicHref) and the link bar (libs/text/ui/controls.ts) read links
 // with it.

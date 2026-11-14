@@ -127,7 +127,7 @@ export class Directory {
   readonly rules: AccessRules;
   /** The people an admin added before their first sign-in (the Users page). */
   readonly people: People;
-  /** A person's lists of documents (/docs, /docs/archived), and an admin's search of everyone's. */
+  /** A person's lists of documents (/documents, /documents/archived), and an admin's search of everyone's. */
   readonly lists: Lists;
   /** Requests for access to a document, for its owner to answer (requests.ts). */
   readonly requests: Requests;

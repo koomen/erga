@@ -1,4 +1,4 @@
-// The documents list page (/docs): a person's documents, latest edit first.
+// The documents list page (/documents): a person's documents, latest edit first.
 
 import type { Listed, LiveRow, LiveRows, Session } from "../platform.ts";
 import type { AccessRequest } from "../directory/index.ts";
@@ -42,7 +42,7 @@ export function docRow(session: Session, d: Listed, now: number, hours: number |
   // before kinds that hasn't opened since has it, as before).
   const twist = d.kind == "document" ? `<span class="twist none" aria-hidden="true"></span>`
       : `<button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="${esc(addressOf(d))}" data-title="${esc(d.title)}"${d.role == "owner" || d.role == "editor" ? " data-edit" : ""}>${ICON.chevron}</button>`;
-  // Archive (Unarchive on /docs/archived): each person's own, on their permission; the homepage has none of theirs.
+  // Archive (Unarchive on /documents/archived): each person's own, on their permission; the homepage has none of theirs.
   const [op, tip] = archived ? ["unarchive_document", "Unarchive"] : ["archive_document", "Archive"];
   const archive =
     d.owner == HOME_OWNER
@@ -63,9 +63,9 @@ export function docRow(session: Session, d: Listed, now: number, hours: number |
 
 /**
  * The documents view: yours and those shared with you, with new, open, archive, share and delete; or, `archived`
- * (/docs/archived), those you archived, the same rows with Unarchive. Each heading links to the other list.
+ * (/documents/archived), those you archived, the same rows with Unarchive. Each heading links to the other list.
  */
-export function docsPage(
+export function documentsPage(
   session: Session,
   docs: Listed[],
   now: number,
@@ -74,7 +74,7 @@ export function docsPage(
   /** The requests for access to the person's documents that wait for an answer (server/directory/requests.ts). */
   asks: AccessRequest[] = []
 ): string {
-  // Each request: who asks, for which document, and the owner's two answers (client/inline/docs.ts: share_document).
+  // Each request: who asks, for which document, and the owner's two answers (client/inline/documents.ts: share_document).
   const asking = asks.length
     ? `<ul class="asks" aria-label="Requests for access">${asks
         .map(
@@ -85,22 +85,22 @@ export function docsPage(
     : "";
   const rows = docs.map((d) => docRow(session, d, now, hours, archived)).join("\n");
   const count = plural(docs.length, "document");
-  const [title, other, otherLabel] = archived ? ["Archived", "/docs", "Documents"] : ["Documents", "/docs/archived", "Archived"];
-  const trail = archived ? [{ label: "Documents", href: "/docs" }, { label: "Archived" }] : [{ label: "Documents" }];
+  const [title, other, otherLabel] = archived ? ["Archived", "/documents", "Documents"] : ["Documents", "/documents/archived", "Archived"];
+  const trail = archived ? [{ label: "Documents", href: "/documents" }, { label: "Archived" }] : [{ label: "Documents" }];
   const empty = archived ? "No archived documents. A document you archive leaves your list and waits here." : "No documents yet.";
   return appPage(
     title,
-    inlineStyle("docs") + inlineStyle("scratch"),
-    `${pageBars(session, trail, { docs: homeButton(link(HOME_ADDRESS, session)) })}<main>
+    inlineStyle("documents") + inlineStyle("scratch"),
+    `${pageBars(session, trail, { documents: homeButton(link(HOME_ADDRESS, session)) })}<main>
   <header>
-    <div><div class="heading"><h1>${title}</h1><a class="other-list" href="${esc(link(other, session))}">${otherLabel}</a></div><p class="sub" id="docs-count"${docs.length ? "" : " hidden"}>${count}</p></div>
+    <div><div class="heading"><h1>${title}</h1><a class="other-list" href="${esc(link(other, session))}">${otherLabel}</a></div><p class="sub" id="documents-count"${docs.length ? "" : " hidden"}>${count}</p></div>
     <div class="make">
       <div class="make-buttons"><input type="search" class="input find" placeholder="Find" aria-label="Find documents by title or address" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false"${docs.length ? "" : " hidden"}>${newDocButton("pill", "New")}<a class="pill scratch erga-scratch-tip" href="${esc(link("/scratch", session))}" draggable="false" data-tip="${esc(scratchMakeTip(hours))}" aria-description="${esc(scratchMakeTip(hours))}">${PLUS}Scratch</a></div>
     </div>
   </header>
-  ${asking}<p class="none" id="docs-none" role="status" hidden></p>
+  ${asking}<p class="none" id="documents-none" role="status" hidden></p>
   <div class="labels" aria-hidden="true"${docs.length ? "" : " hidden"}><span>Name</span><span>Edited</span><span></span></div>
-  <ol class="rows" data-live-kind="doc" data-live-view="${archived ? "docs-archived" : "docs"}" data-live-at="${now}"${docs.length ? "" : " hidden"}>\n${rows}\n  </ol>
+  <ol class="rows" data-live-kind="doc" data-live-view="${archived ? "documents-archived" : "documents"}" data-live-at="${now}"${docs.length ? "" : " hidden"}>\n${rows}\n  </ol>
   <p class="empty"${docs.length ? " hidden" : ""}>${empty}</p>
 </main>
 <dialog id="share" aria-labelledby="share-title" data-me="${esc(session.login.toLowerCase())}">
@@ -119,15 +119,15 @@ export function docsPage(
   <p class="hint" id="share-hint" role="status"></p>
   <div class="buttons"><button type="button" class="copy">Copy link</button><button type="button" class="primary done">Done</button></div>
 </dialog>
-${inlineScript("docs", { close: ICON.close, tree: asset("pages-tree.js"), query: session.as ? `?user=${encodeURIComponent(session.as)}` : "", editor: assetScripts("page.js") })}`
+${inlineScript("documents", { close: ICON.close, tree: asset("pages-tree.js"), query: session.as ? `?user=${encodeURIComponent(session.as)}` : "", editor: assetScripts("page.js") })}`
   );
 }
 
 /**
- * The rows of /docs (or, `archived`, of /docs/archived) that `keys` name ("doc:<id>"), as the person's list has them now
+ * The rows of /documents (or, `archived`, of /documents/archived) that `keys` name ("doc:<id>"), as the person's list has them now
  * (null: off it, archived or back), for an open list (server/news/).
  */
-export const docsRows =
+export const documentsRows =
   (archived: boolean): LiveRows =>
   async (platform, session, keys) => {
   const ids = keys.map((k) => k.slice("doc:".length));

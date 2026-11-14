@@ -37,7 +37,7 @@ export const hostile = (s: Server) => `<!doctype html>
 <h1>Quarterly notes</h1>
 <p>Nothing to see here.</p>
 <p><a id="outside" href="${outside(s)}?by=link" target="_self">Sign in again</a></p>
-<p><a id="inside" href="${s.root}/docs" target="_self">My documents</a></p>
+<p><a id="inside" href="${s.root}/documents" target="_self">My documents</a></p>
 <p id="trap">Click anywhere to continue.</p>
 <pre id="loot"></pre>
 <script>
@@ -71,7 +71,7 @@ export const hostile = (s: Server) => `<!doctype html>
   await tryIt("topLocation", () => window.top.location.href);
   await tryIt("cookie", () => document.cookie);
   await tryIt("origin", () => self.origin);
-  await tryIt("docs", async () => (await fetch("${s.root}/docs", { credentials: "include" })).status);
+  await tryIt("docs", async () => (await fetch("${s.root}/documents", { credentials: "include" })).status);
   await tryIt("agent", async () => (await fetch("${s.root}/me/x/api/agent", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "hi" }) })).status);
   // Forged messages to the editor, as the page editor would send them: from the page's own window, then through its frame's.
   window.top.postMessage({ type: "push", version: 0, changes: [0, [0, "STOLEN"]] }, "*");

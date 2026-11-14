@@ -46,7 +46,7 @@ and `main`. There are no pull requests.
 3. A push deploys nothing. Make the branch's proof page, so that Pete sees
    the change before the merge:
 
-       bun erga proof "<what changed, one sentence>" --look "--path /docs"
+       bun erga proof "<what changed, one sentence>" --look "--path /documents"
 
    Each `--look` has the arguments of `bun run look` (`--path <path>`: a
    page of the server; `--view --doc <fixture>`: a document as a reader

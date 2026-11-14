@@ -223,7 +223,7 @@ function platformOf(dir: Directory) {
   return { platform, made };
 }
 
-test("the documents list: the document agent lists, makes (blank, a template, a copy) and deletes the person's documents, as /docs does", async () => {
+test("the documents list: the document agent lists, makes (blank, a template, a copy) and deletes the person's documents, as /documents does", async () => {
   const dir = fresh();
   const { platform, made } = platformOf(dir);
   await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1 });
@@ -419,17 +419,17 @@ test("scratch documents follow delete_docs_after_hours: one made while it is 7 g
     return expires ? Math.round((Date.parse(expires.split(",")[0]) - Date.now()) / 3_600_000) : null;
   };
   expect(await set(7)).toBe(200);
-  expect(await p.docs()).toContain(`data-tip="Unsaved scratch docs are deleted in 7h"`);
+  expect(await p.docs()).toContain(`data-tip="Unsaved scratch documents are deleted in 7h"`);
   expect(await madeFor()).toBe(7);
-  expect((await scratch()).page).toContain("Unsaved scratch docs are deleted in 7h");
+  expect((await scratch()).page).toContain("Unsaved scratch documents are deleted in 7h");
 
   expect(await set(null)).toBe(200);
   const docs = await p.docs();
   expect(docs).toContain(`data-tip="Not on your documents list until you save it"`);
-  expect(docs).not.toContain("Unsaved scratch docs are deleted");
+  expect(docs).not.toContain("Unsaved scratch documents are deleted");
   expect(await madeFor()).toBe(null);
   const never = await scratch();
   expect(never.page).toContain("Save to your documents list.");
-  expect(never.page).not.toContain("Unsaved scratch docs are deleted");
+  expect(never.page).not.toContain("Unsaved scratch documents are deleted");
   expect(p.row(never.id, await p.docs())).toBe("(not listed)");
 });

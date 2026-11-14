@@ -5,15 +5,15 @@
 import * as Effect from "effect/Effect";
 import { NotAllowed } from "../directory/index.ts";
 import { accessRows, apiKeysRows, authRows, changesRows, settingsRows, usersRows } from "../admin/index.ts";
-import { docsRows } from "../pages/index.ts";
+import { documentsRows } from "../pages/index.ts";
 import { type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
 import { call, ctx, fromWeb, json, text, type Route } from "../http.ts";
 import { routeFor, STREAM, type RouteRow } from "../../shared/routes.ts";
 
 /** Each live list's rows, by its data-live-view: the page's own (each checks who may see them, as its page does). */
 const VIEWS: Record<string, LiveRows> = {
-  docs: docsRows(false),
-  "docs-archived": docsRows(true),
+  documents: documentsRows(false),
+  "documents-archived": documentsRows(true),
   users: usersRows,
   settings: settingsRows,
   access: accessRows,

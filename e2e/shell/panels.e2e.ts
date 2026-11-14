@@ -99,7 +99,7 @@ journey("the panels and the bars over a page", () => {
       titleIn: boolean;
       brandOut: boolean;
     }>(`(() => {
-      const top = document.querySelector(".chrome-top").getBoundingClientRect(), nav = document.getElementById("nav-docs").getBoundingClientRect();
+      const top = document.querySelector(".chrome-top").getBoundingClientRect(), nav = document.getElementById("nav-documents").getBoundingClientRect();
       const title = document.getElementById("doc-title").getBoundingClientRect(), brand = document.getElementById("nav-brand").getBoundingClientRect();
       const shown = [...document.querySelectorAll(".chrome-top :is(.icon-btn, .avatar)")].filter((b) => {
         const r = b.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
@@ -409,7 +409,7 @@ journey("the panels and the bars over a page", () => {
     await soon(resting).toEqual({ quick: 0, shown: ["me"], open: false });
     await pressOn(page, ".me-slot .avatar");
     await soon(async () => (await look()).shown).toEqual(
-      expect.arrayContaining(["btn-new", "btn-full", "btn-settings", "btn-edit", "btn-agent-share", "btn-docs", "me"])
+      expect.arrayContaining(["btn-new", "btn-full", "btn-settings", "btn-edit", "btn-agent-share", "btn-documents", "me"])
     );
     // (The bars slide: the look, once they rest.)
     await soon(async () => {
