@@ -25,6 +25,7 @@ import {
   welcome,
   where,
 } from "./shell";
+import { views } from "../viewer/frames";
 
 const s = await servers.main();
 
@@ -257,9 +258,10 @@ journey("a page that keeps its view in its address, in the viewer and in the edi
     expect(await entries(), "replaceState: a replace, as at the top").toBe(before);
   });
 
-  // Was a bug (Pete's): the page loads again for an agent's change to its script or stylesheet, and a canvas's camera
-  // went back to a frame. And the editor's caret below the window counted as the page's overflow: the frame moved up.
-  test("editor: a canvas dragged away, its caret out of the window, stays as it is when an agent changes its script: the camera, the frame, the history", async () => {
+  // Was a bug (Pete's): the page loads again for an agent's change to its script, and a canvas's camera went back to
+  // a frame; then the page showed its start for a moment before the camera came back. And the editor's caret below
+  // the window counted as the page's overflow: the frame moved up.
+  test("editor: a canvas dragged away, its caret out of the window, stays as it is when an agent changes its script, and when the person loads the tab again: the camera, the frame, the history, on every frame the tab paints", async () => {
     const made = await fetch(`${s.root}/new?template=canvas`, { redirect: "manual" });
     const canvas = s.root + (made.headers.get("location") ?? "").replace(/[?&]edit=?$/, "");
     await page.goto(`${canvas}?edit`);
@@ -287,13 +289,25 @@ journey("a page that keeps its view in its address, in the viewer and in the edi
     expect(before.camera).not.toBe(first.camera);
     expect({ ...before, camera: "", hash: "" }).toEqual({ ...first, camera: "", hash: "" });
     await ed.frame(`window.__before = true`);
-    const calls = await agentTurn(s, await idOf(canvas), "Glide further", [
-      { tool: "edit", args: { path: "canvas.js", edits: [{ oldText: "const RHO = 1.1;", newText: "const RHO = 1.2;" }] } },
-    ]);
-    expect(calls.map((c) => c.status)).toEqual(["done"]);
-    await soon(() => ed.frame<boolean>(`!window.__before`), 10_000).toBe(true);
-    await ed.loaded();
-    await soon(view).toEqual(before);
+    // The page loads again in a second frame: the first one shows until the new page has the same view.
+    const edited = await views(page, async () => {
+      const calls = await agentTurn(s, await idOf(canvas), "Glide further", [
+        { tool: "edit", args: { path: "canvas.js", edits: [{ oldText: "const RHO = 1.1;", newText: "const RHO = 1.2;" }] } },
+      ]);
+      expect(calls.map((c) => c.status)).toEqual(["done"]);
+      await soon(() => ed.frame<boolean>(`!window.__before`), 10_000).toBe(true);
+      await ed.loaded();
+      await soon(view).toEqual(before);
+      await soon(() => page.evaluate(() => document.querySelectorAll("iframe.erga-view").length)).toBe(1);
+    });
+    expect(edited, "the agent's change: no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
+    // The person loads the tab again (⌘R): the page is out of sight until its camera is where it was.
+    const again = await views(page, async () => {
+      await page.reload();
+      await ed.loaded();
+      await soon(view).toEqual(before);
+    });
+    expect(again.moved, "⌘R: no frame with another view").toEqual([]);
     // A canvas made before it had the whole window (no window.ergaInset) sits below the bars, as a page that fills
     // its window does. The editor's caret, below the window's bottom, is not the page's overflow: measured again (a
     // resize), the page still fills its window.

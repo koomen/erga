@@ -5,6 +5,10 @@
 // document to the viewer, which opens them. `C`: the viewer's origin, where the document's files are, and the editor's
 // half for whoever may edit.
 //
+// Trap: the page that loads again in this one's place (its address says erga-keep) is out of sight until it shows the
+// view this one had (`place`), and the viewer shows it only when it says so (erga-placed). A new wait there needs its
+// end, and its event for `soon`: `check` runs on no frame without one.
+//
 // Trap: `check` (the colour, the canvas, the scroll, the hash) runs only after an event that `soon` hears (a DOM change,
 // a size, a load, a transition's start), never on each frame. A new thing the viewer must hear of needs its event
 // there. A change made only through the CSSOM (`insertRule`) reaches the viewer at the next such event.
@@ -14,6 +18,7 @@ import type { ToolAsk } from "../common/reader-api";
 import { copyOf } from "../../libs/text/ui/clipboard-read";
 import { linkTarget, placeOf } from "../common/link-target";
 import { topRoom, type Seat } from "../common/top-room";
+import { readView, showView, viewOf, type View } from "../common/page-view";
 import { isAppShortcut, isMac } from "../common/app-keys";
 import { catchZoomGestures } from "../common/zoom";
 import { makeErgaLLM, type LlmAnswer, type LlmOp } from "../common/page-llm";
@@ -127,6 +132,7 @@ export default function reader(C: ReaderConfig): void {
   addEventListener("load", () => zooms());
   window.__ergaReader = {
     config: C,
+    restyle,
     // (The editor puts the page back where it was: with its room for the bars.)
     placed: () => {
       keepRoom();
@@ -150,7 +156,15 @@ export default function reader(C: ReaderConfig): void {
     toolsLoading = true;
     addScript(tools);
   }
-  tell({ type: "erga-hello" });
+  // Up. `deep`: this frame has entries of its own in the tab's history (a link to another of the document's pages was
+  // followed in it), which a new frame in its place would lose: the viewer loads the page again in this one then.
+  let entries = history.length;
+  try {
+    entries = (window as Window & { navigation?: { entries(): unknown[] } }).navigation?.entries().length ?? entries;
+  } catch {
+    /* as many as the tab has */
+  }
+  tell({ type: "erga-hello", deep: entries > 1 });
   // Which of the document's pages this is ("" for its own page).
   let page = location.pathname.indexOf(C.prefix) == 0 ? location.pathname.slice(C.prefix.length) : "";
   try {
@@ -189,7 +203,10 @@ export default function reader(C: ReaderConfig): void {
   const room = topRoom(document);
   let roomDirty = true,
     seatSaid: Seat | null = null,
-    insetGiven = "";
+    insetGiven = "",
+    // The page's scripts have run (a canvas's window.ergaInset is there), and the viewer has said what its bars cover.
+    parsed = false,
+    roomGiven = false;
   // A check of what the viewer hears of the page (`check`, below), on the next screen frame: one for all that changed.
   let due = false;
   function soon() {
@@ -205,8 +222,13 @@ export default function reader(C: ReaderConfig): void {
   styles.observe(root, { attributes: true, attributeFilter: ["style", "class"] });
   addEventListener("resize", dirty);
   addEventListener("load", dirty);
-  // (The page's own scripts have run: window.ergaInset is there, if the page has one.)
-  document.addEventListener("DOMContentLoaded", dirty);
+  // (The page's own scripts have run: window.ergaInset is there, if the page has one. The seat is said again: the one
+  // said before them was `early`, a guess that the viewer takes only for a page it never saw.)
+  document.addEventListener("DOMContentLoaded", () => {
+    parsed = true;
+    seatSaid = null;
+    dirty();
+  });
   // (At once as the page is parsed, before its deferred scripts and the editor run and measure it.)
   document.addEventListener("readystatechange", () => {
     dirty();
@@ -220,7 +242,7 @@ export default function reader(C: ReaderConfig): void {
       seat = room.update(typeof inset == "function");
     if (seat !== seatSaid) {
       seatSaid = seat;
-      tell({ type: "erga-seat", seat });
+      tell({ type: "erga-seat", seat, early: !parsed });
     }
     const given = JSON.stringify(room.inset);
     if (seat != "whole" || typeof inset != "function" || given == insetGiven) return;
@@ -231,28 +253,124 @@ export default function reader(C: ReaderConfig): void {
       console.error("window.ergaInset threw:", err);
     }
   }
-  // Reloaded in the editor scrolled down the page (?erga-y=, viewer.ts): it opens where it was, out of sight until it's
-  // there (its content may still be coming), or as far as it goes once it has loaded (a shorter page now), or after a moment.
-  let startY = Number((/[?&]erga-y=(\d+)/.exec(location.search) || [])[1]) || 0,
+  // The page's view (client/common/page-view.ts): where the window and each element are scrolled to, and its
+  // history.state. Kept in this tab as it changes; the page that loads in this one's place (erga-keep in its address:
+  // an edit that needs the load, a reload by the person) opens with it. That page is out of sight until its own
+  // scripts have run (a canvas's camera is where its address says), the viewer has said what its bars cover, and the
+  // view is there (its content may still be coming), or as far as it goes once it has loaded, or after a moment. Then
+  // it tells the viewer (erga-placed), which shows it in place of the old page (client/common/frame-swap.ts).
+  const VIEW = "erga:view:" + page,
+    moved = new Set<Element>();
+  // (The load's key, which goes back to the viewer with erga-placed: it shows the page of its last load only.)
+  const keep = (/[?&]erga-keep=([^&]*)/.exec(location.search) || [])[1];
+  let keeping = keep !== undefined,
+    want: View | null = null,
     placing: HTMLStyleElement | null = null;
+  try {
+    if (keeping) want = readView(sessionStorage.getItem(VIEW));
+    else sessionStorage.removeItem(VIEW);
+    if (want && want.state !== undefined) History.prototype.replaceState.call(history, want.state, "", location.href);
+  } catch {
+    /* no storage: the page opens at its start */
+  }
   function placed() {
-    startY = 0;
-    if (placing) {
-      placing.remove();
-      placing = null;
-    }
+    if (!keeping) return;
+    keeping = false;
+    want = null;
+    placing?.remove();
+    // (Two frames on: the page has painted its view.)
+    requestAnimationFrame(() => requestAnimationFrame(() => tell({ type: "erga-placed", keep })));
+    soon();
   }
   function place() {
-    if (!startY || !document.body) return;
-    scrollTo(0, startY);
-    if (Math.abs(scrollY - startY) < 2 || (document.readyState == "complete" && scrollY + innerHeight >= root.scrollHeight - 2)) placed();
+    if (!keeping || !parsed || !roomGiven) return;
+    if (!want || showView(window, want, moved) || document.readyState == "complete") placed();
   }
-  if (startY) {
+  if (keeping) {
     placing = document.createElement("style");
     placing.setAttribute("data-erga", "");
     placing.textContent = "html { visibility: hidden !important; }";
     (document.head || root).append(placing);
     setTimeout(placed, 1500);
+  }
+  let saving = false;
+  function save() {
+    saving = false;
+    if (keeping) return;
+    try {
+      sessionStorage.setItem(VIEW, JSON.stringify(viewOf(window, moved)));
+    } catch {
+      /* no storage, or it is full: the next page opens at its start */
+    }
+  }
+  function saveSoon() {
+    if (saving) return;
+    saving = true;
+    requestAnimationFrame(save);
+  }
+  document.addEventListener(
+    "scroll",
+    (e) => {
+      if (e.target instanceof Element) moved.add(e.target);
+      saveSoon();
+    },
+    { capture: true, passive: true }
+  );
+  // (A tab that isn't in front has no frames: the view as the page goes.)
+  addEventListener("pagehide", save);
+  // Stylesheets of the document changed (`paths`, in the document): their new rules take the old ones' place in the
+  // page as it is, at once, so the page keeps its view and its scripts' state. `files`: where the document's files are
+  // now (a reader's address has the version in it), else where this page's are. False when it can't (a path that is no
+  // stylesheet linked from this page, or one with an @import): then the page loads again.
+  let styling: Promise<boolean> = Promise.resolve(true);
+  function restyle(paths: string[], files = location.origin + C.prefix): Promise<boolean> {
+    // (One change after another: the newest rules go in last.)
+    styling = styling.then(() => styled(paths, files));
+    return styling;
+  }
+  async function styled(paths: string[], files: string): Promise<boolean> {
+    const fileOf = (href: string) => {
+      try {
+        const u = new URL(href, location.href);
+        return u.origin == location.origin && u.pathname.indexOf(C.prefix) == 0
+          ? decodeURIComponent(u.pathname.slice(C.prefix.length))
+          : null;
+      } catch {
+        return null;
+      }
+    };
+    const links = [...document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet" i][href]')];
+    const jobs: Promise<[CSSStyleSheet, string[]] | null>[] = [];
+    for (const path of paths) {
+      const hit = links.filter((l) => fileOf(l.href) == path);
+      if (!/\.css$/i.test(path) || !hit.length) return false;
+      const text = fetch(files + path.split("/").map(encodeURIComponent).join("/"), { cache: "no-store" }).then((r) =>
+        r.ok ? r.text() : null
+      );
+      for (const l of hit)
+        jobs.push(
+          text.then((t) => {
+            if (t == null || !l.sheet || /@import/i.test(t)) return null;
+            // (Parsed apart, as a sheet at the same address: a rule's own addresses mean the same.)
+            const fresh = new CSSStyleSheet({ baseURL: l.href });
+            fresh.replaceSync(t);
+            return [l.sheet, [...fresh.cssRules].map((r) => r.cssText)];
+          })
+        );
+    }
+    try {
+      const done = await Promise.all(jobs);
+      if (done.some((d) => !d)) return false;
+      for (const [sheet, rules] of done as [CSSStyleSheet, string[]][]) {
+        while (sheet.cssRules.length) sheet.deleteRule(0);
+        rules.forEach((r, i) => sheet.insertRule(r, i));
+      }
+    } catch {
+      return false;
+    }
+    // (Through the CSSOM: no event says it. The room, the colour and the canvas may have changed.)
+    dirty();
+    return true;
   }
   // The editor's half, into this page: at once when the viewer opened the page in the editor (?erga-edit), else when it
   // asks. (Its chunks' integrity is the import map's, before this script: readerPage puts it there.)
@@ -290,6 +408,8 @@ export default function reader(C: ReaderConfig): void {
   let scrolled: string | null = null,
     pointer: { x: number; y: number } | null = null;
   function report() {
+    // (Out of sight, on its way to its view: the viewer hears where it is once it is there.)
+    if (keeping) return;
     // (A page's camera moves as a scroll does: whether it zooms itself may have changed with it.)
     if (editing()) zooms();
     const at = scrollX + "," + scrollY;
@@ -485,6 +605,7 @@ export default function reader(C: ReaderConfig): void {
   const doc = (u: string | URL) => new URL(String(u), location.href).href.split("#")[0];
   history.pushState = function (state: unknown, title: string, url?: string | URL | null) {
     soon();
+    saveSoon();
     if (url == null || doc(url) != doc(location.href)) return History.prototype.pushState.call(this, state, title, url);
     History.prototype.replaceState.call(this, state, title, url);
     push = true;
@@ -492,6 +613,7 @@ export default function reader(C: ReaderConfig): void {
   history.replaceState = function (state: unknown, title: string, url?: string | URL | null) {
     History.prototype.replaceState.call(this, state, title, url);
     soon();
+    saveSoon();
   };
   type Navigate = Event & { navigationType: string; hashChange: boolean; destination: { url: string } };
   (window as Window & { navigation?: EventTarget }).navigation?.addEventListener("navigate", (ev) => {
@@ -507,7 +629,7 @@ export default function reader(C: ReaderConfig): void {
     due = false;
     try {
       keepRoom();
-      if (startY) place();
+      place();
       const c = colour(),
         cv = c != null ? canvas() : null;
       if (cv) {
@@ -531,7 +653,7 @@ export default function reader(C: ReaderConfig): void {
       push = false;
       // On the way to where it was scrolled, or its background changing over time: again on the next frame.
       const moving = (el: Element | null) => !!el && el.getAnimations().some((a) => a.playState == "running");
-      if (startY || moving(root) || moving(document.body)) soon();
+      if (keeping || moving(root) || moving(document.body)) soon();
     } catch {}
   }
   // The page's content, attributes and styles; its size; a stylesheet or a picture that loaded (a load doesn't bubble:
@@ -601,7 +723,13 @@ export default function reader(C: ReaderConfig): void {
     }
     // ⌘P in the viewer: this page prints itself.
     else if (type == "erga-print") print();
-    else if (type == "erga-live") {
+    // The viewer says that stylesheets changed (client/inline/viewer-live.ts): in place, and whether that worked.
+    else if (type == "erga-restyle" && Array.isArray(e.data.paths) && typeof e.data.files == "string") {
+      const ok = e.data.files.indexOf(location.origin + "/") == 0 && e.data.paths.every((p: unknown) => typeof p == "string");
+      void (ok ? restyle(e.data.paths, e.data.files) : Promise.resolve(false)).then((done) =>
+        tell({ type: "erga-restyled", id: e.data.id, ok: done })
+      );
+    } else if (type == "erga-live") {
       if (typeof e.data.id == "number") askTools(e.data as ToolAsk);
     }
     else if (type == "erga-room" && typeof e.data.px == "number" && e.data.px >= 0 && e.data.px <= 400) {
@@ -609,6 +737,7 @@ export default function reader(C: ReaderConfig): void {
         i = e.data.inset || {};
       room.room = e.data.px;
       room.inset = { top: side(i.top), right: side(i.right), bottom: side(i.bottom), left: side(i.left) };
+      roomGiven = true;
       dirty();
     }
     // The tab's address got another hash (typed, Back, a link): the page's place follows, and the page gets its

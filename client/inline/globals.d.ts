@@ -11,13 +11,15 @@ interface ErgaFrames {
   src(): string;
   /** How much larger than its own size the frame shows (the editor's zoom: libs/text/ui/zoom.ts). */
   scale(): number;
+  /** Loads the page again at `query` ("" or "?..."), with its view kept: the old page shows until the new one has it. */
+  reload(query: string): void;
 }
 
 /** What the editor kept for its reload, as the page opens with it (viewer-editing-head.ts; client/shell/main.ts keeps it). */
 interface ErgaRestored {
   body: string[];
   parts?: Record<string, string>;
-  editor?: { mode?: string; scroll: number };
+  editor?: { mode?: string };
 }
 
 declare var ergaFrames: ErgaFrames;

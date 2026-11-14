@@ -152,12 +152,17 @@ export default function viewerBand(): void {
     roomSaid = said;
     ergaFrames.send(room);
   }
+  // (Now too: a page that was up before this script heard its hello waits for the room, client/inline/reader.ts.)
+  tellRoom(true);
   new MutationObserver(() => tellRoom()).observe(root, { attributes: true, attributeFilter: ["style", "class"] });
   addEventListener("resize", () => tellRoom());
   addEventListener("message", (e) => {
     if (!ergaFrames.from(e)) return;
     if (e.data?.type == "erga-hello") return tellRoom(true);
     if (e.data?.type == "erga-seat") {
+      // (Said before the page's scripts ran: a canvas has no window.ergaInset yet. For a page seen before, the seat it
+      // had then holds until the page says it for good, so its frame moves at most one time.)
+      if (e.data.early === true && (root.classList.contains("erga-fills") || root.classList.contains("erga-whole"))) return;
       const seat = seatOf(e.data.seat == "below", e.data.seat == "whole");
       root.classList.toggle("erga-fills", seat == "below");
       root.classList.toggle("erga-whole", seat == "whole");

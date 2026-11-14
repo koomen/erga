@@ -16,7 +16,7 @@ liveWatch({ events: false, net: false, types: [] });
 
 export function mountPageRequests(shell: Shell) {
   const tools = new PageTools(
-    shell.frame,
+    () => shell.frame,
     new URL(document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]')!.content, location.href).origin
   );
 

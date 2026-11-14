@@ -20,7 +20,7 @@ export const PAGE_HEADER = "x-erga-page";
 export const KEPT_AT = "x-erga-kept";
 
 /**
- * The address a page (a navigation) is kept under: without the editor's own marks in its query (?erga-edit, erga-y) or
+ * The address a page (a navigation) is kept under: without the viewer's own marks in its query (?erga-edit, erga-keep) or
  * its hash, and with a mark of its own, so a script's fetch of the same file (the file as it is) is kept apart.
  */
 export function keptAddress(url: string): string {

@@ -46,7 +46,7 @@ export interface ViewAnswer {
 /** How long with no file changed before a viewer's answer may be kept (ViewAnswer.quiet). */
 const QUIET_MS = 60_000;
 
-/** How often, at most, the open viewers' pages hear that what they show changed (each then loads the page again). */
+/** How often, at most, the open viewers' pages hear that what they show changed (each then shows the change: client/inline/viewer-live.ts). */
 const TELL_EVERY_MS = 2000;
 
 /** Where what viewers see is kept in the document's storage, while no file changes. */
@@ -67,8 +67,8 @@ export interface ViewOptions {
   changedAfterQuiet?: () => void;
   /** The document's page and where it is, now (null: no document): the version viewers see is worked out from it. */
   info: () => Promise<{ index: string; disk?: unknown } | null>;
-  /** Tells the open viewers' pages the version they should show (client/inline/viewer-live.ts loads it). */
-  tell: (ver: string) => void;
+  /** Tells the open viewers' pages the version they should show, and the files that changed since the last time (client/inline/viewer-live.ts). */
+  tell: (ver: string, paths?: string[]) => void;
   log: (line: string) => void;
 }
 
@@ -80,6 +80,8 @@ export class DocumentView {
   private kept = true;
   /** When a file last changed while this object ran (0: not since it started). */
   private lastChange = 0;
+  /** The files that changed since the viewers' pages were last told. */
+  private touched = new Set<string>();
 
   constructor(private o: ViewOptions) {}
 
@@ -89,8 +91,9 @@ export class DocumentView {
     this.kept = true;
   }
 
-  /** A file changed: what viewers see is worked out again. */
-  changed(): void {
+  /** Files changed (`paths`): what viewers see is worked out again. */
+  changed(paths: string[]): void {
+    for (const p of paths) this.touched.add(p);
     // The first change after a quiet while: a viewer's answer kept meanwhile (view's `quiet`) is out of date.
     if (Date.now() - this.lastChange > QUIET_MS) this.o.changedAfterQuiet?.();
     this.lastChange = Date.now();
@@ -183,7 +186,10 @@ export class DocumentView {
   /** The open viewers' pages hear the version now, at most every TELL_EVERY_MS however fast the files change; the last always lands. */
   private news = throttle(async () => {
     const ver = await this.current();
-    if (ver) this.o.tell(ver);
+    if (!ver) return;
+    // (A change to very many files, a folder published again, say: no list, and each page loads again.)
+    this.o.tell(ver, this.touched.size > 100 ? undefined : [...this.touched]);
+    this.touched.clear();
   }, TELL_EVERY_MS);
 
   /** The answer for someone who may view (`role`, or anyone: the homepage): which file the address `page` is, in what viewers see now, and that version. */

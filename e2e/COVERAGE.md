@@ -40,7 +40,7 @@ The rules:
 | G1 | `e2e/agent/turn.e2e.ts` | The agent's turn is not shown, cannot be undone, or acts without the person's Approve. | 15 |
 | G2 | `e2e/agent/tools.e2e.ts` | An agent tool edits the wrong file, shows a wrong picture, or works on a document it may not open. | 21 |
 | V1 | `e2e/viewer/reader.e2e.ts` | A reader gets a blank or wrong page, links leave the viewer, or the bars hide the text. | 9 |
-| V2 | `e2e/viewer/live.e2e.ts` | A reader sees an old page; the page's scripts run twice. | 8 |
+| V2 | `e2e/viewer/live.e2e.ts` | A reader sees an old page; the page's scripts run twice; a page that loads again shows its start, or loses its view. | 8 |
 | T1 | `e2e/templates/templates.e2e.ts` | A template makes a broken document; a deck does not step or leaves full screen in a bad state. | 11 |
 | D1 | `e2e/documents/list.e2e.ts` | A person cannot make, find, archive or delete a document; the list shows old rows. | 14 |
 | D2 | `e2e/documents/tree.e2e.ts` | A page or folder cannot be made, renamed, moved or deleted; the tree shows old rows. | 13 |

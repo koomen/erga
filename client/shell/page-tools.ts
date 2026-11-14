@@ -9,11 +9,11 @@ export class PageTools {
 
   /** `origin`: the frame's (the document's pages origin); a message from anywhere else is not the page's. */
   constructor(
-    private readonly frame: HTMLIFrameElement,
+    private readonly frame: () => HTMLIFrameElement,
     private readonly origin: string
   ) {
     window.addEventListener("message", (e) => {
-      if (e.source != frame.contentWindow || e.origin != origin) return;
+      if (e.source != frame().contentWindow || e.origin != origin) return;
       const m = e.data as { type?: unknown; id?: unknown; result?: unknown } | null;
       if (m?.type != "erga-lived" || typeof m.id != "number") return;
       this.waiting.get(m.id)?.(m.result);
@@ -32,13 +32,13 @@ export class PageTools {
         clearTimeout(timer);
         resolve(r);
       });
-      this.frame.contentWindow?.postMessage({ ...m, id }, this.origin);
+      this.frame().contentWindow?.postMessage({ ...m, id }, this.origin);
     });
   }
 
   /** The agent's request to the live page (shared/live-page.ts): the page answers from its logs, or acts. */
   async live(req: LiveRequest, wait: number): Promise<LiveResult> {
-    const frame = { sandbox: this.frame.getAttribute("sandbox"), allow: this.frame.getAttribute("allow") };
+    const frame = { sandbox: this.frame().getAttribute("sandbox"), allow: this.frame().getAttribute("allow") };
     const r = (await this.ask({ type: "erga-live", req, frame }, wait)) as LiveResult | null;
     // (The page could have sent anything: it goes to the agent as data, cut to size by the host.)
     return r && typeof r == "object" ? r : { error: "The page didn't answer in time." };
