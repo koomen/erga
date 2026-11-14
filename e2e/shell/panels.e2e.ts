@@ -7,7 +7,7 @@ import type { Page } from "playwright-core";
 import { openNew } from "../editor/caret-helpers";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
 import { expect, journey, servers, test } from "../helpers/fixtures";
-import { pressOn } from "../helpers/press";
+import { pointerOnPage, pressOn } from "../helpers/press";
 import { atRest, soon } from "./shell";
 
 const s = await servers.main();
@@ -229,7 +229,7 @@ journey("the panels and the bars over a page", () => {
 
     // Ctrl with the wheel, over the page and over the controls: a step out each time.
     const p = await pointOn("p.lede");
-    await page.mouse.move(p.x, p.y);
+    await pointerOnPage(page, p.x, p.y);
     await page.keyboard.down("Control");
     await page.mouse.wheel(0, 100);
     await soon(scale).toBeCloseTo(1.1, 2);
@@ -284,7 +284,7 @@ journey("the panels and the bars over a page", () => {
         (await ed.frame<number>(`document.querySelector("p.lede").getBoundingClientRect().top * (window.ergaFrame?.zoom ?? 1)`)),
     });
     const p = await lede();
-    await page.mouse.move(p.x, p.y);
+    await pointerOnPage(page, p.x, p.y);
     await page.keyboard.down("Control");
     for (let i = 0; i < 10; i++) await page.mouse.wheel(0, -5.5);
     await soon(scale).toBeCloseTo(1.5 * Math.exp(0.55), 2);
@@ -310,7 +310,7 @@ journey("the panels and the bars over a page", () => {
     for (let i = 0; i < 5; i++) await ed.press("ControlOrMeta+Equal");
     await soon(scale).toBe(2);
     expect(await edges(), "around the middle").toEqual({ left: -(await edges()).right, right: (await edges()).right });
-    await page.mouse.move(p.x, p.y);
+    await pointerOnPage(page, p.x, p.y);
     for (let i = 0; i < 4; i++) await page.mouse.wheel(600, 0);
     await soon(async () => (await edges()).right).toBe(0);
     for (let i = 0; i < 8; i++) await page.mouse.wheel(-600, 0);

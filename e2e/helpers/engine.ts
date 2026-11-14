@@ -12,17 +12,26 @@
 // calls on the same module.)
 //
 // Trap: a person's browser has a process for each site, and the document's page is on another site than the viewer.
-// This Chromium has one process for both, and a frame in its own process differs: as it goes, it says it is scrolled
-// to 0 (client/inline/reader.ts), and that bug passed here. With a process for each site (--site-per-process) the
-// suite was slower than its budgets, and 7 journeys failed: so only `sitesPage` has it, for the step that needs it.
+// By itself this Chromium has one process for both, and a frame in its own process differs (as it goes, it says it is
+// scrolled to 0: client/inline/reader.ts; its document has the focus only when its process is told), so bugs passed
+// here. So it runs with a process for each site (--site-per-process), for every test and for `bun run look`. What
+// DevTools does differently from a person's browser then, and what a test does about it:
+// - The browser finds the process under a point from the last picture it drew. Just after the page's frame came,
+//   showed again or got another size, a press or the wheel on the page goes to the viewer (on its frame element): the
+//   pointer goes there first, until the page has it (pointerOnPage, e2e/helpers/press.ts; `ed.click` does).
+// - The viewer is not told that the pointer went into the page's frame: what it had under the pointer keeps its hover.
+//   The pointer leaves by a place of the viewer's own first.
+// - In full screen the page's frame takes presses only inside the browser's real window (800 by 600 by itself, not
+//   the viewport that a test sets): so the window is larger than any test's viewport (--window-size).
+// - A frame that the browser refused has no name and no address in page.frames(): find it by its element.
 
 import { spawnSync } from "node:child_process";
 import { web } from "@e2e-dev/web";
-import { chromium, type Page } from "playwright-core";
+import { chromium } from "playwright-core";
 
 const launch = chromium.launch.bind(chromium);
 chromium.launch = async (options) => {
-  const browser = await launch(options);
+  const browser = await launch({ ...options, args: [...(options?.args ?? []), "--site-per-process", "--window-size=2560,1440"] });
   const close = browser.close.bind(browser);
   browser.close = (o) => {
     // The worker's own children whose command names Chromium: the browser's main process (its own process group).
@@ -40,12 +49,3 @@ chromium.launch = async (options) => {
 };
 
 export const engine = web({ browser: "chromium", viewport: { width: 1100, height: 800 } });
-
-/**
- * A page in a browser of its own, with a process for each site (the trap above), and its end. (Not through `launch`:
- * that browser's close kills the engine's too. Its own close is not waited for: the worker's end kills what is left.)
- */
-export async function sitesPage(): Promise<{ page: Page; close: () => void }> {
-  const context = await chromium.launchPersistentContext("", { args: ["--site-per-process"], viewport: { width: 1100, height: 800 } });
-  return { page: context.pages()[0] ?? (await context.newPage()), close: () => void context.close().catch(() => {}) };
-}

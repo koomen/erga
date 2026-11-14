@@ -457,10 +457,12 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     if (page.zoomsItself) page.zoomItself(zoomFactor(by));
     else zoomSend({ type: "zoom", by, at: x == null ? null : x - shell.frame.offsetLeft, width: shell.frame.offsetWidth });
   }
-  // (A pinch over the controls zooms around the middle; one on a window the browser has zoomed is the browser's.)
+  // (A pinch over the controls zooms around the middle; one on a window the browser has zoomed is the browser's. One on
+  // the page comes here, not to the page, when the browser can't say yet that the page is under the pointer, as its
+  // frame gets another size: around the pointer, as the page's own.)
   catchZoomGestures(
     window,
-    (by) => zoomPage(by),
+    (by, at) => zoomPage(by, document.elementFromPoint(at.clientX, at.clientY) == shell.frame ? at.clientX : null),
     (by) => editing() && !(windowZoomed() && (!by || "by" in by))
   );
   // The page's place got another width (the window, the agent's panel as it rests): the page stays within it.

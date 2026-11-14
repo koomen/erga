@@ -8,6 +8,7 @@ import { editor, F, openEditor, type Editor } from "../helpers/editor";
 import { ROOT } from "../helpers/env";
 import { expect, journey, servers, test, until } from "../helpers/fixtures";
 import { newToken } from "../helpers/new-token";
+import { pointerOnPage } from "../helpers/press";
 import { idOf, runTool, textOf } from "../helpers/tools";
 import {
   agentTurn,
@@ -88,7 +89,7 @@ journey("a document that is slow to open", () => {
         `[...${F}.querySelectorAll("body > :is(h1, h2, p, div)")].some((el) => { const r = el.getBoundingClientRect(); return r.height > 0 && r.top < ${b.bottom} - 10 && r.bottom > 10; })`
       );
     expect(await under(), "at the top, nothing of the page is under the bars").toBe(false);
-    await page.mouse.move(550, 400);
+    await pointerOnPage(page, 550, 400);
     await page.mouse.wheel(0, 120);
     await soon(under).toBe(true);
     expect((await bars(page)).frame).toBe(0);
@@ -184,6 +185,7 @@ journey("a page that keeps its view in its address, in the viewer and in the edi
       return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
     }, selector);
     const at = await page.evaluate(() => document.getElementById("frame")!.getBoundingClientRect());
+    await pointerOnPage(page, at.left + r.x, at.top + r.y);
     await page.mouse.click(at.left + r.x, at.top + r.y);
   };
 

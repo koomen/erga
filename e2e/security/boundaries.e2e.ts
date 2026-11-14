@@ -6,6 +6,7 @@
 // address. Each check is literal: the header's exact value, the exact refusal.
 import { editor } from "../helpers/editor";
 import { agentClosed, expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
+import { clickOn } from "../helpers/press";
 import { framed } from "../helpers/pages-fetch";
 import { idOf, runTool } from "../helpers/tools";
 import { FIX_REPORTED } from "../../shared/page-report";
@@ -189,7 +190,7 @@ journey("a hostile page, opened in the editor by the person it attacks", () => {
     expect(forged == "blocked" || forged == 401 || forged == 403, String(forged)).toBe(true);
     expect((await conversation()).log.items).toEqual([]);
     // Their own click: the comment is their request, in their conversation.
-    await page.click("#agent-ask-run");
+    await clickOn(page, "#agent-ask-run");
     await until(async () => (await page.locator("#agent-log .msg-assistant").count()) == 1, 10_000, "the agent's answer");
     expect(await page.locator("#agent-log .msg-assistant").innerText()).toBe("Shared with mallory.");
     expect(await page.locator("#agent-log .msg-user").innerText()).toContain(
@@ -289,27 +290,17 @@ journey("the site's own addresses, in a browser", () => {
     const other = await otherSite(`${s.root}/docs`);
     try {
       await page.goto(other.address);
-      const frame = (name: string) => page.frames().find((f) => f.name() == name);
+      // (By its element: a frame that the browser refused, in a process of its own, has no name and no address in page.frames().)
+      const frame = async (name: string) => (await page.$(`iframe[name="${name}"]`))?.contentFrame();
       // Its own frame loads (so frames load here at all); /docs's is the browser's error page, with nothing of /docs in it.
       await until(
-        () =>
-          frame("own")
-            ?.evaluate(() => document.querySelector("h1")?.textContent == "Its own")
-            .catch(() => false),
+        async () => (await frame("own"))?.evaluate(() => document.querySelector("h1")?.textContent == "Its own").catch(() => false),
         10_000,
         "the page's own frame loads"
       );
-      await until(
-        () => frame("docs")?.url().startsWith("chrome-error:"),
-        10_000,
-        "the browser refuses to frame /docs",
-        () => frame("docs")?.url()
-      );
-      expect(
-        await frame("docs")!
-          .evaluate(() => document.querySelectorAll("a[href^='/']").length)
-          .catch(() => 0)
-      ).toBe(0);
+      const refused = async () => (await frame("docs"))?.evaluate(() => location.href).catch(() => "");
+      await until(async () => (await refused())?.startsWith("chrome-error:"), 10_000, "the browser refuses to frame /docs", refused);
+      expect(await (await frame("docs"))!.evaluate(() => document.querySelectorAll("a[href^='/']").length).catch(() => 0)).toBe(0);
     } finally {
       other.close();
     }

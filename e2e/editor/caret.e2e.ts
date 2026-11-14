@@ -5,6 +5,7 @@
 // the real layout: they read where the page draws the text.
 import { expect, journey, servers, settle, test, until } from "../helpers/fixtures";
 import { F, openEditor, type Editor } from "../helpers/editor";
+import { pointerOnPage } from "../helpers/press";
 import {
   board,
   CARET,
@@ -272,7 +273,7 @@ journey("the caret and a selection on a board that pans", () => {
     await expect.poll(async () => (await bar()).shown).toBe(true);
     const before = await bar();
     const p = await onPage(ed, 40, 380);
-    await ed.page.mouse.move(p.x, p.y);
+    await pointerOnPage(ed.page, p.x, p.y);
     await ed.page.mouse.wheel(-40, -70);
     await expect
       .poll(async () => {
@@ -328,7 +329,7 @@ journey("the caret and a selection on a board that pans", () => {
     };
     // The board back where the page first had it (the steps before moved it): the card is clear of the side column.
     const p = await onPage(ed, 40, 380);
-    await ed.page.mouse.move(p.x, p.y);
+    await pointerOnPage(ed.page, p.x, p.y);
     await ed.page.mouse.wheel(210, 30);
     await expect.poll(() => board(ed)).toBe("translate(0px, 0px)");
     await clickEnd(".card p.note");
@@ -347,7 +348,7 @@ journey("the caret and a selection on a board that pans", () => {
     await clickEnd(".side p.aside");
     const before = await drawn(ed);
     const side = await onPage(ed, 960, 300);
-    await ed.page.mouse.move(side.x, side.y);
+    await pointerOnPage(ed.page, side.x, side.y);
     await ed.page.mouse.wheel(0, 120);
     await drawn(ed, (c) => c.y < before.y - 40);
   });

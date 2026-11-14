@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { F, openEditor, type Editor } from "../helpers/editor";
 import { ROOT } from "../helpers/env";
 import { expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
+import { pointerOnPage } from "../helpers/press";
 import { idOf } from "../helpers/tools";
 import {
   atStep,
@@ -258,6 +259,7 @@ journey("a page with steps: its controls, viewing and editing, and full screen",
   /** Clicks the bar's way out of full screen, with the mouse. */
   async function exit() {
     const at = await controlAt(page, ".exit");
+    await pointerOnPage(page, at.x, at.y);
     await page.mouse.click(at.x, at.y);
   }
   /** The pointer moves over the page. */

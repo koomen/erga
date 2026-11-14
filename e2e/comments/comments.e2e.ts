@@ -4,6 +4,7 @@
 import { expect, journey, servers, test, until } from "../helpers/fixtures";
 import { editor, openEditor, type Editor } from "../helpers/editor";
 import { newToken } from "../helpers/new-token";
+import { clickOn } from "../helpers/press";
 import { runTool } from "../helpers/tools";
 import { cards, conversation, draftBox, selectText, signIn, threadsOf, unique } from "./comments";
 
@@ -230,13 +231,16 @@ journey("comments in the editor", () => {
       )
       .toEqual(asked);
     expect((await conversation(s.root)).items.length).toBe(before);
-    await page.click("#agent-ask-run");
+    await clickOn(page, "#agent-ask-run");
     const card = async () => (await cards(ed))?.find((c) => c.includes("June, then.")) ?? "";
     await until(
       async () => (await card()).includes("T tester via their agent now Yes: May has fewer people."),
       10_000,
       "the agent's reply shows",
-      card
+      async () => [
+        await card(),
+        await page.evaluate(`[window.__press?.said, window.__press?.on, document.getElementById("agent-ask").hidden]`),
+      ]
     );
     expect((await threadsOf(s.root, id)).find((t) => t.id == thread)!.comments.at(-1)).toMatchObject({
       by: "tester",

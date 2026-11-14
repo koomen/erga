@@ -58,13 +58,17 @@ async function workersIn(ed: Editor) {
   await until(() => ed.eval<boolean>(kept), 10_000, "the shell's page in the copy");
 }
 
-/** Takes the connection's own errors out, offline (a request or a socket that fails): the tab keeps any other. */
+/**
+ * Takes the connection's own errors out, offline (a request or a socket that fails): the tab keeps any other. And the
+ * refused worker's script (the step that registers a document's file): the browser reports it a second time at
+ * times, late, now that the page's frame has a process of its own.
+ */
 function withoutOffline(tab: Tab) {
   const left = tab.errors.filter(
     (e) =>
       !/^console\.error: (Failed to load resource|WebSocket connection to '[^']*' failed)\b.*net::ERR_(INTERNET_DISCONNECTED|FAILED)\b/.test(
         e
-      )
+      ) && !/^console\.error: Failed to load resource: the server responded with a status of 403\b/.test(e)
   );
   tab.errors.splice(0, tab.errors.length, ...left);
 }

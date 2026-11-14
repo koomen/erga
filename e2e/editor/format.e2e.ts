@@ -4,6 +4,7 @@
 // where its links open.
 import { expect, journey, servers, test } from "../helpers/fixtures";
 import { F, openEmpty, type Editor } from "../helpers/editor";
+import { pointerOnPage } from "../helpers/press";
 
 const s = await servers.main();
 
@@ -388,6 +389,7 @@ journey("the format bar, the link bar, Markdown and the slash menu", () => {
     const r = (await inPage<{ x: number; y: number }>(
       `(() => { const b = document.querySelector("h2 a").getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`
     ))!;
+    await pointerOnPage(page, box.x + r.x, box.y + r.y);
     await page.mouse.click(box.x + r.x, box.y + r.y);
     await expect.poll(() => page.url()).toContain("went=1");
   });

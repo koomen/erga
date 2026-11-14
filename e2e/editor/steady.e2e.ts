@@ -9,7 +9,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, journey, servers, test, until, type Tab } from "../helpers/fixtures";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
-import { sitesPage } from "../helpers/engine";
+import { pointerOnPage } from "../helpers/press";
 import { runTool } from "../helpers/tools";
 import { WAIT_MS } from "../../client/common/frame-swap";
 import {
@@ -359,6 +359,7 @@ journey("a deck that changes on disk and by an agent while the person types", ()
     // Keys change nothing meanwhile.
     await pageStill(ed);
     const title = await ed.rectOf(TITLE);
+    await pointerOnPage(ed.page, title.x, title.y);
     await ed.page.mouse.click(title.x, title.y);
     await ed.page.keyboard.type("X");
     expect(await ed.textOf(TITLE)).toBe("Third slide one two three now!");
@@ -736,23 +737,6 @@ journey("files dropped and pasted on a page in a folder", () => {
     await ed.loaded();
     await expect.poll(() => images(ed), UPLOAD).toEqual(before);
     expected(tab);
-  });
-  // Was a bug, in a browser with a process for each site (every person's: e2e/helpers/engine.ts): the page, in a
-  // process of its own, gave the dropped file to the viewer, which sent the file itself. A browser reads a file of the
-  // disk by its path, the viewer's process may not read it, and Chrome ended that process: the tab crashed as the
-  // upload began.
-  test("in a browser with a process for each site, a dropped image's bytes reach the server, and the image shows", async ({ tab }) => {
-    const sites = await sitesPage();
-    try {
-      const own = await openDropPage({ ...tab, page: sites.page, errors: [] }, s);
-      await drop(own.ed, "p.lede", 6, [onDisk("pin.png")], "bottom");
-      await expect
-        .poll(() => images(own.ed), UPLOAD)
-        .toEqual([{ src: "../images/pin.png", alt: "pin.png", size: "200x150", loaded: true }]);
-      expect(await own.files()).toContain("images/pin.png");
-    } finally {
-      sites.close();
-    }
   });
 });
 

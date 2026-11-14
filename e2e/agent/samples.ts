@@ -2,6 +2,7 @@
 // own controls (the deck's slide bar, the views' buttons).
 import { F, type Editor } from "../helpers/editor";
 import { expect } from "../helpers/fixtures";
+import { pointerOnPage } from "../helpers/press";
 import type { DocTools } from "./panel";
 
 /** A 1×1 PNG. */
@@ -121,6 +122,7 @@ export async function slideBar(ed: Editor, act: string) {
   );
   expect(r, `the slide bar shows its ${act} button`).not.toBeNull();
   const f = await ed.frameAt();
+  await pointerOnPage(ed.page, f.x + r!.x, f.y + r!.y);
   await ed.page.mouse.click(f.x + r!.x, f.y + r!.y);
 }
 
