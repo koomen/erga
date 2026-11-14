@@ -241,6 +241,15 @@ export const ACTIONS: readonly Action[] = [
     domain: "document",
     tool: "write",
   },
+  // The second step of an agent's write of a file on its own disk ({"blob", "size"}): the bytes, with no session
+  // (uploads.ts, arrive). The write's wait decides, not who sends them.
+  {
+    method: "PUT",
+    path: "/api/blobs/<sha-256>",
+    action: "Send the bytes of a file that a write waits for (an agent's shell, after its write named their sha-256 and size)",
+    domain: "document",
+    tool: "write",
+  },
   // The live page in the person's tab (shared/live-page.ts).
   { method: "UI", path: "/d/<id>#page-click", action: "Click on the page as it runs (editor)", domain: "document", tool: "page_input" },
   { method: "UI", path: "/d/<id>#page-key", action: "Press a key on the page as it runs (editor)", domain: "document", tool: "page_input" },

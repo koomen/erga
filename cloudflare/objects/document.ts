@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import { DurableObject } from "cloudflare:workers";
 import { Document, type DocumentDeps, type FileData, type OnDisk } from "../../document/document";
 import type { ViewAnswer } from "../../document/view";
+import type { Writer } from "../../document/waits";
 import type { DocKind, TreeOp } from "../../document/pages";
 import type { FileList, NameAnswer, TreeAnswer, TreeState } from "../../document/host";
 import { Tabs, type Tab } from "../../document/tabs";
@@ -151,8 +152,8 @@ export class DocumentObject extends DurableObject<Env> {
     return run(this.document.link(owner, id, index, disk));
   }
   // (Each call that opens the document holds it open until it's done: it doesn't close for being idle meanwhile.)
-  publish(files: Record<string, FileData>, remove: string[], by?: string) {
-    return run(this.document.publish(files, remove, by));
+  publish(files: Record<string, FileData>, remove: string[], by?: string, writer?: Writer) {
+    return run(this.document.publish(files, remove, by, writer));
   }
   paths(): Promise<string[]> {
     return run(this.document.hold(this.document.paths()));

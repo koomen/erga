@@ -50,6 +50,7 @@ import { adminRoutes, isAdminPath } from "../admin/index.ts";
 import { ID, OWNER, type Route, type Who } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { HOME_OWNER, HOME_SLUG } from "../../document/names.ts";
+import { NO_WAIT } from "../../document/waits.ts";
 import { newDoc, scratchDoc } from "./make.ts";
 import { adoptLanding } from "./landing.ts";
 import { pagesOrigin, pagesRoutes, pagesHost } from "./pages-origin.ts";
@@ -151,6 +152,14 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
     const out = new Headers(answer.headers);
     for (const [k, v] of Object.entries(cors)) out.set(k, v);
     return fromWeb(new Response(answer.body, { status: answer.status, headers: out }));
+  }
+  // The bytes of a file that an agent's write waits for (document/uploads.ts, arrive): from its shell, which has no
+  // session. The document takes them only where a write named their sha-256 and size, as the person who wrote; so
+  // nobody is forwarded, whoever asks. A document there is, before its host is asked.
+  if (request.method == "PUT" && AWAITED.test(rest)) {
+    if (!(yield* call(() => platform.directory.route(route.id))))
+      return plainJson({ ok: false, error: NO_WAIT }, 404, { "Cache-Control": "no-store" });
+    return fromWeb(yield* call(() => platform.docs.fetch(route, forwardedAs(request, url, rest, null, null))));
   }
   if (!session) return text("Sign in first", 401);
   const own = routeFor(ROUTES, request.method, `/d/${route.id}${rest}`);
@@ -315,6 +324,9 @@ const keyed = (request: Request, rest: string) =>
   (rest == "/api/room" && request.headers.get("upgrade")?.toLowerCase() == "websocket") ||
   (rest == "/api/start" && request.method == "GET") ||
   (rest.startsWith("/api/files/") && (request.method == "PUT" || request.method == "OPTIONS"));
+
+/** PUT <document>/api/blobs/<sha-256>: the bytes of a file that a write waits for. */
+const AWAITED = /^\/api\/blobs\/[0-9a-f]{64}$/;
 
 /** The comment ops a document's page calls with its edit key (server/api.ts): POST /api/tools/<op>?doc=<id>&key=<key>. */
 const KEYED_OPS = /^\/api\/tools\/(comment|comments)$/;

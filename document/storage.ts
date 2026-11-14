@@ -42,7 +42,7 @@ export interface Storage {
  * bytes are in the blob store, document/blobs.ts), when a text file was
  * last written (ms: TimeIndex; a blob's time is in its ref), a folder made as one
  * (empty ones too), what the document is, the room's journal and the files
- * whose latest text storage doesn't have yet (in it).
+ * whose latest text storage doesn't have yet (in it), and a write that waits for its bytes (waits.ts).
  *
  * A file with a ref is a blob: its bytes are only in the blob store (a
  * `files/` value an older server left beside the ref is never read). A file
@@ -56,6 +56,7 @@ export const KEYS = {
   meta: "info",
   room: "room/",
   unwritten: "room/unwritten",
+  wait: "waits/",
 } as const;
 
 /**

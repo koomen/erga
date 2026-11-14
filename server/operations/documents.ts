@@ -31,6 +31,7 @@ import {
 } from "./operation.ts";
 import { sitePages } from "./pages.ts";
 import { addressOf } from "../../document/names.ts";
+import { WAIT_MINUTES } from "../../document/waits.ts";
 import {
   DEFAULT_PAGE_LLM_MODEL,
   isPageLlmModel,
@@ -45,13 +46,20 @@ import {
 const FILES = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Struct({ base64: Schema.String })])).annotate({
   description: 'Each path\'s text, or {"base64": "..."} for bytes.',
 });
-/** Files to write: as FILES, or a file Erga keeps already, by its sha-256 (an image sent to your agent). */
+/**
+ * Files to write: as FILES, or a file by the sha-256 of its bytes: one Erga keeps already (an image sent to your
+ * agent), or, with its size, one on the agent's own disk, whose bytes it then sends (document/waits.ts).
+ */
 const WRITE_FILES = Schema.Record(
   Schema.String,
-  Schema.Union([Schema.String, Schema.Struct({ base64: Schema.String }), Schema.Struct({ blob: Schema.String })])
+  Schema.Union([
+    Schema.String,
+    Schema.Struct({ base64: Schema.String }),
+    Schema.Struct({ blob: Schema.String, size: Schema.optionalKey(Schema.Finite) }),
+  ])
 ).annotate({
   description:
-    'Each path\'s text, {"base64": "..."} for bytes, or {"blob": "<sha-256>"} for a file Erga keeps (an image sent to your agent).',
+    'Each path\'s text, {"base64": "..."} for bytes, or {"blob": "<sha-256>"} for a file Erga keeps (an image sent to your agent); with "size" (bytes), a file on your disk: the answer says where to send its bytes.',
 });
 
 /**
@@ -444,8 +452,18 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       const remove = new Set<string>();
       if (args.replace === true) for (const p of await platform.docs.paths(doc)) if (!(p in files)) remove.add(p);
       if (!Object.keys(files).length && !remove.size) throw new OperationError({ message: "Nothing to do: files is empty.", status: 400 });
-      const r = await platform.docs.publish(doc, files, [...remove], byLine(caller.who.login.toLowerCase(), caller.who.via));
-      return { ...described((await platform.directory.get(doc.id)) ?? doc, caller), ...r };
+      // A file on the agent's own disk ({blob, size}) waits for its bytes, which come to the document's own address.
+      const writer = caller.origin ? { who: caller.who, name: caller.name ?? caller.who.login, origin: caller.origin } : undefined;
+      const r = await platform.docs.publish(doc, files, [...remove], byLine(caller.who.login.toLowerCase(), caller.who.via), writer);
+      return {
+        ...described((await platform.directory.get(doc.id)) ?? doc, caller),
+        ...r,
+        ...(r.waiting
+          ? {
+              upload: `Erga doesn't have the bytes of the files that wait. Send each one in the next ${WAIT_MINUTES} minutes, from your shell, never through your conversation: curl -T <file> ${caller.origin}/d/${doc.id}/api/blobs/<its sha-256>. It goes into the document as its bytes arrive.`,
+            }
+          : {}),
+      };
     },
   },
   {
@@ -563,8 +581,10 @@ function decodeFiles(raw: unknown, blobs = false): Record<string, FileData> {
     } else if (blobs && v && typeof v == "object" && typeof (v as { blob?: unknown }).blob == "string") {
       const hash = (v as { blob: string }).blob.trim().toLowerCase();
       if (!/^[0-9a-f]{64}$/.test(hash)) throw new OperationError({ message: `${path}: a blob is a sha-256, 64 hex digits.`, status: 400 });
-      // (Its size comes from the blob store, which the document asks: uploads.ts.)
-      out[rel] = { hash, size: 0, at: Date.now() };
+      // (The size of one Erga keeps comes from the blob store, which the document asks; one it doesn't keep waits for
+      // its bytes, of the size given: uploads.ts.)
+      const size = (v as { size?: unknown }).size;
+      out[rel] = { hash, size: typeof size == "number" && Number.isInteger(size) && size > 0 ? size : 0, at: Date.now() };
       continue;
     } else if (v && typeof v == "object" && typeof (v as { text?: unknown }).text == "string") data = (v as { text: string }).text;
     else throw new OperationError({ message: `${path}: give its text as a string, or {"base64": "..."}.`, status: 400 });

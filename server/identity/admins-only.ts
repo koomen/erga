@@ -44,6 +44,11 @@
 //                                   no Authorization header, which answers only the 401 that starts the sign-in. The
 //                                   person's own step, /oauth/authorize, is not exempt: it needs an admin, signed in
 //   GET /llms.txt                   a few fixed lines that point to /mcp (no data)
+//   PUT /d/<id>/api/blobs/<sha-256> the bytes of a file that an agent's write waits for (document/waits.ts), from its
+//                                   shell, which has no session. It gives no data out. The document takes the bytes
+//                                   only where a write named their sha-256 and size in the last minutes, on this
+//                                   server (a wait that came in production's copy names production, and takes
+//                                   none): a write is a tool's, behind this guard, so only an admin's
 //   the API, MCP and documents' own routes with an admin's token of another scope (document, documents)
 //                                   an admin shares a document with an outside agent (the editor's Share card) and it
 //                                   must work here as on production: /mcp, /api/publish,
@@ -107,6 +112,7 @@ function exempt(request: Request, base: Platform, url: URL): boolean {
   const token = request.headers.has("authorization");
   if (path == "/mcp") return !token && method == "POST";
   if (path == "/llms.txt") return method == "GET" || method == "HEAD";
+  if (/^\/d\/[^/]+\/api\/blobs\/[0-9a-f]{64}$/.test(path)) return method == "PUT";
   return false;
 }
 

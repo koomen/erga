@@ -157,7 +157,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     docs: {
       create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),
       keep: (doc) => counted("doc", () => host(doc).keep()),
-      publish: (doc, files, remove, by) => counted("doc", () => host(doc).publish(files, remove, by)),
+      publish: (doc, files, remove, by, writer) => counted("doc", () => host(doc).publish(files, remove, by, writer)),
       paths: (doc) => counted("doc", () => host(doc).paths()),
       index: (doc) => counted("doc", () => host(doc).index()),
       snapshot: (doc) => counted("doc", () => host(doc).snapshot()),

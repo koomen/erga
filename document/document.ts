@@ -60,7 +60,7 @@ import { History } from "./history.ts";
 import { expiryOf, expiryStep, type ExpiryEffect, type ExpiryEvent } from "./expiry.ts";
 import { openRoom, type Opened } from "./open.ts";
 import { next, type Phase, type PhaseEvent } from "./phase.ts";
-import { isText, Uploads, type Published } from "./uploads.ts";
+import { isArrival, isText, isUpload, Uploads, type Published } from "./uploads.ts";
 
 /**
  * What a document is: its id, who made it, which file is its page, whether
@@ -214,6 +214,7 @@ export class Document {
       info: () => this.readInfo(),
       hold: (work) => this.hold(work),
       touch: () => this.touch(),
+      roleOf: (who) => this.access.roleOf(who),
     });
     this.access = new DocumentAccess({
       storage: this.storage,
@@ -805,14 +806,14 @@ export class Document {
    * after `admit`). Viewers see the files as they are now, at /doc/.
    */
   handle(request: Request): Effect.Effect<Response, StoreError> {
+    if (isArrival(request)) return this.hold(io(() => this.uploads.arrive(request)));
     return Effect.flatMap(this.authorize(request), (allowed) =>
       allowed instanceof Response ? Effect.succeed(allowed) : io(() => this.serve(allowed))
     );
   }
 
   private async serve(request: Request): Promise<Response> {
-    if (request.method == "PUT" && new URL(request.url).pathname.startsWith("/api/files/"))
-      return Effect.runPromise(this.hold(io(() => this.uploads.upload(request))));
+    if (isUpload(request)) return Effect.runPromise(this.hold(io(() => this.uploads.upload(request))));
     // Someone viewing it: its files straight from storage while the room isn't open, without opening it
     // (once a room closing a moment ago has written them).
     await this.settled();
@@ -977,8 +978,8 @@ export class Document {
   // ---------------------------------------------------------------- versions (history.ts), and files arriving whole (uploads.ts)
 
   /** Files arriving whole, from the server's API (Uploads.publish): says what it did with each. */
-  publish(files: Record<string, FileData>, remove: string[], by?: string): Effect.Effect<Published, StoreError | NoSuchDocument> {
-    return this.uploads.publish(files, remove, by);
+  publish(...args: Parameters<Uploads["publish"]>): Effect.Effect<Published, StoreError | NoSuchDocument> {
+    return this.uploads.publish(...args);
   }
 
   /** Its versions, newest first, and the current one (History.versionsState). Null if there's no such document. */
