@@ -80,6 +80,8 @@ export default function viewerFrames(pages: string): void {
         Object.assign(f.style, fixed);
         f.removeAttribute("id");
         to.style.cssText = "opacity: 0";
+        // (A page that says nothing, an error's, is up when its frame's load ends.)
+        to.addEventListener("load", () => act({ type: "up", n: swap.n }));
         to.src = url;
         f.before(to);
         old = f;
@@ -101,6 +103,8 @@ export default function viewerFrames(pages: string): void {
       if (!old) return;
       old.contentWindow?.postMessage({ type: "erga-leave" }, pages);
       if (document.activeElement == old) frame()!.focus();
+      // (From now on the viewer's wait for its view runs: the old page, with its editor, stayed for as long as the load took.)
+      act({ type: "up", n: swap.n });
     } else if (e.data?.type == "erga-placed" && e.data.keep === key) act({ type: "placed", n: swap.n });
   });
   window.ergaEditAddress = () => /[?&]edit(=|&|$)/.test(location.search);

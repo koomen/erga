@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { expect, journey, servers, test, until, type Tab } from "../helpers/fixtures";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
 import { runTool } from "../helpers/tools";
+import { WAIT_MS } from "../../client/common/frame-swap";
 import {
   agentBox,
   agentPlays,
@@ -255,7 +256,11 @@ journey("a deck that changes on disk and by an agent while the person types", ()
     await ed.clickEnd(TITLE);
     await ed.type(" one");
     await ed.idle();
-    // The page loads slowly, as on a real network: the edit on disk comes while it loads.
+    // The page loads slowly, as on a real network: the edit on disk comes while it loads. It takes longer than the
+    // viewer waits for a new page (frame-swap.ts): until it comes, that wait takes no time.
+    await ed.eval(
+      `window.__setTimeout = window.setTimeout; window.setTimeout = (f, ms, ...a) => window.__setTimeout(f, ms == ${WAIT_MS} ? 0 : ms, ...a)`
+    );
     let release = () => {};
     let asked = false;
     const held = new Promise<void>((r) => (release = r));
@@ -272,7 +277,8 @@ journey("a deck that changes on disk and by an agent while the person types", ()
     await until(() => ed.eval<boolean>(`ergaPage.collab.current().includes("the disk edits")`), DISK_MS, "the shell has the edit on disk");
     // The person types on while the page loads.
     await ed.type(" two");
-    // (From now on the page loads at once.)
+    // (From now on the page loads at once, and the viewer waits as long as it does.)
+    await ed.eval(`window.setTimeout = window.__setTimeout`);
     release();
     await ed.loaded();
     await tab.page.context().unrouteAll({ behavior: "wait" });
