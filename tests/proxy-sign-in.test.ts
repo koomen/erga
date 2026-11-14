@@ -422,7 +422,7 @@ test("the OAuth mode (no PROXY_SIGN_IN): /auth/proxy is nothing and GitHub's way
   );
 });
 
-test("a new server's first admin: the setup page's link lets its person in and makes them the admin, one time, and connects the ops page", async () => {
+test("a new server's first admin: setup's one-time link lets its person in and makes them the admin, one time, and connects the ops page", async () => {
   const { platform, directory } = server();
   const at = (path: string, init: RequestInit = {}) => respond(claimRoute, new Request(`${ORIGIN}${path}`, init), platform);
   const form = (cookie: string, fields: Record<string, string>) =>

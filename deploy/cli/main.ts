@@ -3,9 +3,8 @@
 // as one commit and deploys it to each staging instance, `deploy` deploys a primary and moves main, `release` tags main.
 // Every deploy runs on this machine: a push deploys nothing. `bun erga skill` is the agents' manual.
 //
-//   bun erga [--port N] [--no-open] [--no-queue]
-//                                       the ops page on localhost: the registered instances, setup, deploys, logs, history
-//                                       (--no-queue: it runs no tests on the branches: the page that setup starts)
+//   bun erga [--port N] [--no-open]
+//                                       the ops page on localhost: the registered instances, deploys, logs, history
 //   bun erga skill                      how an agent works in this repository (the workflow and its rules)
 //   bun erga start <branch>             a new feature branch from GitHub's newest staging, in a work folder of its
 //                                       own (worktrees/<branch> in the main clone), with its packages installed
@@ -37,8 +36,9 @@
 //   bun erga register <host> [--staging-of <host>]            signs in to an instance as an admin, in the browser, and
 //                                       adds it to .erga/config.json: its deploy facts, its plain settings, an ops token
 //   bun erga login <host>               a new ops token for a registered instance, when its token runs out
-//   bun erga setup <host>               a new instance, on Cloudflare or AWS: the person's answers, their steps on the
-//                                       ops page, the first deploy, the first admin (bun erga setup skill; setup help)
+//   bun erga setup <host> --host ... --sign-in ... [--dry-run]
+//                                       a new instance, on Cloudflare or AWS, from the person's answers: the checks and
+//                                       the plan (--dry-run), then the build and the first admin (bun erga setup --help)
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -294,7 +294,7 @@ async function login(arg: string | undefined) {
 
 export async function main(argv: string[]) {
   // No command, or only the ops page's options: the ops page.
-  const [cmd, ...rest] = argv[0] == undefined || /^--(port|no-open|no-queue)$/.test(argv[0]) ? ["", ...argv] : argv;
+  const [cmd, ...rest] = argv[0] == undefined || /^--(port|no-open)$/.test(argv[0]) ? ["", ...argv] : argv;
   const flag = (f: string) => rest.includes(f);
   const opt = (f: string) => {
     const i = rest.indexOf(f);
@@ -340,7 +340,6 @@ export async function main(argv: string[]) {
         cwd: process.cwd(),
         port: port == undefined ? undefined : Number(port),
         open: !flag("--no-open"),
-        queue: !flag("--no-queue"),
       });
       return;
     }

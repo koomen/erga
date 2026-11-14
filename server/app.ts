@@ -189,7 +189,7 @@ export const ROUTES: readonly RouteRow<Route>[] = [
     domain: "none",
     exempt: DEV,
   },
-  // A new server's first admin: the setup page's link (server/identity/claim.ts).
+  // A new server's first admin: setup's one-time link (server/identity/claim.ts).
   { method: "GET", path: "/auth/claim", run: claimRoute, action: "A new server's first person signs in, to become its admin", ...SIGN },
   {
     method: "POST",

@@ -115,7 +115,7 @@ export const vouchedSignIn = Effect.fnUntraced(function* (
   const tested = (end: TestEnd) => (o.tested ? call(() => o.tested!(end)) : Effect.void);
   const url = new URL(request.url);
   const dev = platform.dev(url);
-  // A new server's first person comes by the setup page's link (claim.ts): they may join, to become its admin.
+  // A new server's first person comes by setup's one-time link (claim.ts): they may join, to become its admin.
   const join = !o.onlyAdmins && ((yield* call(() => mayJoin(platform, url, v))) || (yield* call(() => claims(platform, request))));
   const outcome = yield* call(() => resolve(platform.directory, v, { join, create: dev, onlyAdmins: o.onlyAdmins }));
   if (outcome.kind == "refused") {

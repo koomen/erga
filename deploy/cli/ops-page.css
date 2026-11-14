@@ -115,7 +115,7 @@ a.f-proof:hover { background: var(--sel); }
 .err { flex-basis: 100%; color: var(--bad); font-size: 13px; }
 .err:empty { display: none; }
 
-/* The buttons: Merge, Deploy and their questions, like the Setup tab's (.s-btn). */
+/* The buttons: Merge, Deploy and their questions. */
 .btn { display: inline-block; padding: 3px 12px; border: 0; border-radius: 8px; background: var(--fg-strong); color: var(--bg); font: inherit; font-size: 12.5px;
   font-weight: 600; line-height: 1.5; white-space: nowrap; cursor: pointer; }
 .btn:hover { background: color-mix(in srgb, var(--fg-strong) 82%, var(--bg)); }
@@ -210,79 +210,6 @@ a.h-row:hover > * { background: color-mix(in srgb, var(--chrome) 8%, transparent
   .history { grid-template-columns: 80px minmax(0, 1fr) auto; }
   .h-host, .h-from, .h-took { display: none !important; }
 }
-
-/* Setup: the checklist of `bun erga setup` (deploy/own/page.ts and setup.js): the steps, then the forms and the chat. */
-.s-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
-.s-wrap.s-one { grid-template-columns: minmax(0, 1fr); max-width: 760px; }
-@container (max-width: 820px) { .s-wrap { grid-template-columns: minmax(0, 1fr); } }
-.s-sub { margin: 0 0 12px; font-size: 14px; color: var(--soft); }
-.s-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.s-step { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 3px 10px; align-items: start; padding: 10px 14px;
-  border: 1px solid var(--rule); border-radius: 12px; font-size: 14px; }
-.s-dot { width: 20px; height: 20px; margin-top: 1px; border-radius: 50%; border: 2px solid var(--rule); display: flex; align-items: center;
-  justify-content: center; font-size: 12px; font-weight: 700; color: #fff; }
-.s-step.done .s-dot { background: var(--ok); border-color: var(--ok); }
-.s-step.done .s-dot::after { content: "✓"; }
-.s-step.fail .s-dot { background: var(--bad); border-color: var(--bad); }
-.s-step.fail .s-dot::after { content: "!"; }
-.s-step.now { border-color: var(--fg-strong); box-shadow: 0 0 0 1px var(--fg-strong); }
-.s-step.now .s-dot { border-color: var(--fg-strong); }
-.s-step.blocked { opacity: .55; }
-.s-t { font-weight: 600; color: var(--fg-strong); }
-.s-d { grid-column: 2 / 4; font-size: 13px; color: var(--soft); overflow-wrap: anywhere; }
-.s-d a { color: var(--fg-strong); }
-.s-who { padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; white-space: nowrap; background: var(--code-bg); color: var(--soft); }
-.s-who.person { background: color-mix(in srgb, var(--off) 16%, transparent); color: var(--off); }
-/* Inside the open step: the choices, a wait, the buttons, a field, the plan, the build's parts. */
-.s-n { grid-column: 2 / 4; display: flex; flex-direction: column; gap: 8px; margin-top: 6px; padding: 10px 12px; border-radius: 8px;
-  background: var(--code-bg); font-size: 13.5px; overflow-wrap: anywhere; }
-.s-n p, .s-n ol, .s-n ul, .s-n dl, .s-n form, .s-card p, .s-card ul { margin: 0; }
-.s-n form { display: flex; flex-direction: column; gap: 8px; }
-.setup code { font-size: 12px; padding: 1px 4px; border-radius: 4px; background: var(--code-bg); overflow-wrap: anywhere; }
-.s-n code { background: var(--bg); }
-.s-opts { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 6px; counter-reset: o; }
-.s-opts li { position: relative; padding: 8px 12px 8px 40px; border: 1px solid var(--rule); border-radius: 10px; background: var(--bg);
-  counter-increment: o; color: var(--fg-strong); }
-.s-opts li::before { content: counter(o); position: absolute; left: 12px; top: 9px; width: 20px; height: 20px; display: grid; place-items: center;
-  border-radius: 50%; font-size: 11.5px; font-weight: 650; color: var(--soft); background: var(--code-bg); }
-.s-opts small { display: block; font-size: 12.5px; color: var(--soft); }
-.s-rec { margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 13%, transparent); }
-.s-wait { display: flex; align-items: center; gap: 10px; }
-.s-spin, .s-parts li.run::before { flex: none; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--soft); border-right-color: transparent;
-  animation: s-turn 1s linear infinite; }
-@keyframes s-turn { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .s-spin, .s-parts li.run::before { animation: none; } }
-.s-acts { display: flex; gap: 8px; flex-wrap: wrap; }
-.s-btn { display: inline-block; padding: 6px 14px; border: 0; border-radius: 8px; background: var(--fg-strong); color: var(--bg) !important;
-  font: inherit; font-size: 13.5px; font-weight: 600; white-space: nowrap; text-decoration: none; cursor: pointer; }
-.s-btn.quiet { background: var(--bg); color: var(--fg-strong) !important; box-shadow: inset 0 0 0 1px var(--rule); }
-.s-fl { font-size: 13px; font-weight: 600; color: var(--fg-strong); }
-.s-row { display: flex; gap: 8px; }
-.s-row input { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--fg-strong); font: inherit; }
-.s-row input.s-mono { font: 12.5px/1.6 var(--font-mono); }
-.s-soft { font-size: 12.5px; color: var(--soft); }
-.s-bad { color: var(--bad); }
-.s-todo { padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
-.s-plan { display: grid; grid-template-columns: 7em minmax(0, 1fr); gap: 4px 14px; font-size: 13px; }
-.s-plan dt { color: var(--soft); }
-.s-plan dd { margin: 0; color: var(--fg-strong); }
-.s-res { font-size: 12.5px; color: var(--soft); }
-.s-res summary { cursor: pointer; }
-.s-res ul { margin: 6px 0 0; padding-left: 18px; max-height: 220px; overflow: auto; font-family: var(--font-mono); font-size: 12px; }
-.s-parts { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.s-parts li { display: flex; align-items: center; gap: 10px; color: var(--soft); }
-.s-parts li::before { content: ""; flex: none; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--rule); }
-.s-parts li.ok { color: var(--fg-strong); }
-.s-parts li.ok::before { background: var(--ok); border-color: var(--ok); }
-.s-parts li.bad { color: var(--bad); }
-.s-parts li.bad::before { background: var(--bad); border-color: var(--bad); }
-.s-parts li.run { color: var(--fg-strong); font-weight: 600; }
-.s-parts small { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--soft); }
-.s-card { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 12px; font-size: 13.5px; }
-.s-card.s-made { border-color: var(--fg-strong); box-shadow: 0 0 0 1px var(--fg-strong); }
-.s-card h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--fg-strong); }
-.s-later { padding-left: 18px; color: var(--soft); font-size: 13px; }
 
 /* A button whose job runs: "Merging…" or "Deploying…", with a small spinner; its cell stays shown. */
 .spin { display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px; border: 1.5px solid currentColor; border-right-color: transparent;

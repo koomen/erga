@@ -111,7 +111,7 @@ test("the first rows go only into a database with no admin, and a quote can't le
   expect(sql).toMatch(
     /^INSERT INTO access_rules \(kind, value, access, created\) SELECT 'github_org', 'it''s', 'write', \d+ WHERE NOT EXISTS \(SELECT 1 FROM users WHERE role = 'admin'\) ON CONFLICT/
   );
-  // Nobody is named an admin: the person who opens the setup page's link becomes it.
+  // Nobody is named an admin: the person who opens setup's one-time link becomes it.
   expect(sql).not.toContain("INSERT INTO users");
   expect(firstSql({ ...aws, signIn: "invite" })).toBe("");
 });

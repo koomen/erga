@@ -38,14 +38,13 @@ name or domain: each instance takes its names from its name in setup, and the AW
 
 ## The stack
 
-`bun erga setup <host>` writes `.erga/aws/<stack>.json` (and `<stack>-certs.json` with CloudFront in front) from the
-person's answers, when the setup comes to its review. The Setup tab shows each resource, and the agent asks for the
-person's yes. Then the build makes AWS's change sets, shows them in its log, and applies them. An answer that changes
-writes the templates again.
+`bun erga setup <host> --host aws ...` writes `.erga/aws/<stack>.json` (and `<stack>-certs.json` with CloudFront in
+front) from the person's answers. The dry run (`--dry-run`) lists each resource, and the agent asks for the person's
+yes. Then the build writes the templates again, makes AWS's change sets, shows them in its log, and applies them.
 
 - **The network.** A new VPC: a private subnet for the machine, a public one for its way out. The way out is a NAT
   machine (t4g.nano) or a NAT gateway. Or the person names a VPC and a private subnet of their own, with its own way
-  out and an internet gateway (`egress=vpc-.../subnet-...`): the stack then makes no network.
+  out and an internet gateway (`--egress vpc-.../subnet-...`): the stack then makes no network.
 - **The machine.** No public address. Its firewall lets in only CloudFront's origin-facing prefix list, on celld's
   port. Systems Manager runs each deploy's commands: no SSH.
 - **CloudFront.** Two distributions, the app's and the pages'. Each reaches the machine as a VPC origin, over the
@@ -55,16 +54,16 @@ writes the templates again.
   path and the query.
 - **Domains.** Each must have a Route 53 hosted zone in the account, and the pages' domain must not be under the
   app's. The certificates are in a second stack in us-east-1, where CloudFront needs them; DNS validates them.
-- **Or a proxy, with the company's sign-in**: the proxy mode (`signIn=proxy oidc=<issuer's URL>
-  oidcClient=<client ID>`; `server/identity/mode.ts` has the two modes). A public Application Load Balancer takes
+- **Or a proxy, with the company's sign-in**: the proxy mode (`--sign-in sso --issuer <issuer's URL>
+  --client <client ID>`; `server/identity/mode.ts` has the two modes). A public Application Load Balancer takes
   CloudFront's place. It sends each browser to the company's OIDC sign-in first, and that sign-in is Erga's own: no
   GitHub, no Google (`server/identity/proxy.ts` reads the proxy's signed header; the setup writes which proxy
-  and which client as `PROXY_SIGN_IN`). The first admin is the person who opens the setup page's link and signs in
+  and which client as `PROXY_SIGN_IN`). The first admin is the person who opens setup's one-time link and signs in
   (`server/identity/claim.ts`). Everybody who passes the sign-in may make an account.
   - Erga takes each person's email address from the sign-in: the first of the claims `email`, `upn` and
     `preferred_username` that looks like one. A sign-in that gives none still signs in, by its ID (`sub`).
   - The setup reads the sign-in's endpoints from its issuer. The client's secret is never in a file: the person types
-    it on the setup page, which stores it in Secrets Manager as `erga/<stack>/oidc-client-secret`, and the stack reads it there.
+    it on a page that setup opens on this machine, which stores it in Secrets Manager as `erga/<stack>/oidc-client-secret`, and the stack reads it there.
   - Without the sign-in pass only: a document's own address (its files by their token; a frame can't sign in); on the
     app's address, what Erga's tokens guard (MCP and its OAuth, the operations, the CLI's token request, the deploy's
     checks: `deploy/proxy-paths.ts`), a page's keyed requests to its room, and the server's own browser, by the NAT's fixed
@@ -123,7 +122,7 @@ That run used an earlier deploy script, Caddy and temporary names, with the same
 
 ## Limits
 
-- Staging on AWS isn't there yet: `--staging-of` takes a primary on Cloudflare only.
+- Staging on AWS isn't there yet: `--staging` takes a primary on Cloudflare only.
 - The app has a domain in Route 53. The documents' pages have a zone of their own; with the company's sign-in, a name
   under the app's (pages.<host>).
 - A secret set in Parameter Store reaches the Worker at the next deploy.

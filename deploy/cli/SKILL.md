@@ -166,11 +166,12 @@ and `main`. There are no pull requests.
   its plain settings and an ops token into `.erga/config.json` in the main
   clone. Only when Pete asks.
 - `bun erga login <host>`: a new ops token for a registered instance.
-- `bun erga setup <host>`: a new instance, from nothing to a registered one, on
-  Cloudflare or AWS. The one command does the work: it asks the person three
-  questions through their agent, waits for their steps on the ops page's
-  Setup tab, deploys, and connects the page (`bun erga setup skill`).
-  `--staging-of <host>` makes a staging instance of a registered one.
+- `bun erga setup <host> --host ... --sign-in ...`: a new instance, from
+  nothing to a registered one, on Cloudflare or AWS. The agent asks the person
+  the README's questions first; `--dry-run` checks the answers and prints the
+  plan; then the command does all the work, and opens the browser only for the
+  person's own steps (`bun erga setup --help`). `--staging <host>` makes a
+  staging instance too, or of a registered one.
 
 ## The rules
 

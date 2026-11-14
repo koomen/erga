@@ -1,6 +1,7 @@
-// A new Erga instance (`bun erga setup <host>`): the person's answers, and what follows from them alone: the
-// instance's names, its entry in .erga/config.json, its plain settings, its database's first rows, its GitHub App.
-// Pure: no network, no files. The flow (which answer is asked when, and who does each step) is deploy/own/flow.ts.
+// A new Erga instance (`bun erga setup <host> --host ... --sign-in ...`): the person's answers, which the agent asked
+// first and gives as the command's options, and what follows from them alone: the instance's names, its entry in
+// .erga/config.json, its plain settings, its database's first rows, its GitHub App. Pure: no network, no files. The
+// flow (what the command does next) is deploy/own/flow.ts.
 
 import type { CloudflareEntry } from "../cli/config";
 import { deployFacts } from "../pipeline/account";
@@ -14,10 +15,12 @@ export type SignIn = "invite" | "company" | "sso";
 export interface Answers {
   /** The instance's address: a hostname on a domain of the person's account ("erga.example.com"). The command's. */
   host: string;
-  /** A staging instance's setup: its primary's host, which has an entry in .erga/config.json. */
+  /** A staging instance's setup: its primary's host, which has an entry in .erga/config.json (setup sets it itself). */
   stagingOf: string;
+  /** --staging: a staging instance of this one too, at this address (Cloudflare only). */
+  staging: string;
   where: Where | "";
-  /** Cloudflare: the account that holds the host's domain (found; asked only when two accounts hold it). */
+  /** Cloudflare: the account that holds the host's domain: its id, or its name (found; asked only when two accounts hold it). */
   account: string;
   /** AWS: the AWS CLI's profile (asked only with more than one), its region, and the machine's way out to the internet. */
   profile: string;
@@ -34,13 +37,12 @@ export interface Answers {
   client: string;
   /** Documents' pages: "shared", or a domain. "": the default (pagesOf). */
   pages: string;
-  /** The person's yes to the plan: the plan it was said to (planKey). Another answer after it asks again. */
-  confirm: string;
 }
 
 export const noAnswers = (host: string): Answers => ({
   host,
   stagingOf: "",
+  staging: "",
   where: "",
   account: "",
   profile: "",
@@ -53,7 +55,6 @@ export const noAnswers = (host: string): Answers => ({
   issuer: "",
   client: "",
   pages: "",
-  confirm: "",
 });
 
 export const sso = (a: Pick<Answers, "signIn">) => a.signIn == "sso";
@@ -66,24 +67,6 @@ export const sso = (a: Pick<Answers, "signIn">) => a.signIn == "sso";
  */
 export const pagesOf = (a: Answers): string => a.pages || (a.where != "aws" ? "shared" : sso(a) ? `pages.${a.host}` : "");
 
-/** The plan that a yes is said to: every answer that decides what is made. */
-export const planKey = (a: Answers): string =>
-  [
-    a.host,
-    a.stagingOf,
-    a.where,
-    a.account,
-    a.profile,
-    a.region,
-    a.egress,
-    a.signIn,
-    a.company,
-    a.team,
-    a.issuer,
-    a.client,
-    pagesOf(a),
-  ].join("|");
-
 const HOST = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
 /** Reads one answer as the person gave it: its value, or why it isn't one. */
@@ -94,11 +77,12 @@ export function parseAnswer(key: keyof Answers, raw: string): { value: string } 
   switch (key) {
     case "host":
     case "stagingOf":
+    case "staging":
       return is(HOST.test(low), low, `"${v}" isn't an address like erga.example.com.`);
     case "where":
       return is(low == "cloudflare" || low == "aws", low, "where is cloudflare or aws.");
     case "account":
-      return is(/^[0-9a-f]{32}$/.test(low), low, "account is the Cloudflare account's id: 32 hex digits.");
+      return is(v.length > 0 && v.length <= 200, /^[0-9a-f]{32}$/.test(low) ? low : v, "account is the Cloudflare account's name or id.");
     case "profile":
       return is(/^[\w.+@-]{1,64}$/.test(v), v, `"${v}" isn't an AWS CLI profile's name.`);
     case "region":
@@ -137,8 +121,6 @@ export function parseAnswer(key: keyof Answers, raw: string): { value: string } 
       return is(/^[\w.~-]{1,128}$/.test(v), v, `"${v}" isn't a client ID.`);
     case "pages":
       return is(low == "shared" || HOST.test(low), low, "pages is shared, or a domain.");
-    case "confirm":
-      return is(low == "yes", low, "confirm is yes.");
   }
 }
 
@@ -206,7 +188,7 @@ export interface FirstRow {
  * The rows a new server's database gets with its first deploy, only while it has no admin (each host writes them in its
  * own way: first.ts, deploy/aws/setup.ts): the access rule that the answer names. A company's people may sign in and
  * write: a GitHub organization's members, or a Google Workspace's (once Google sign-in is on). With single sign-on,
- * everybody who passes the proxy may. No admin: the person who opens the setup page's link becomes it
+ * everybody who passes the proxy may. No admin: the person who opens setup's one-time link becomes it
  * (server/identity/claim.ts).
  */
 export function firstRows(a: Answers, now = Date.now()): FirstRow[] {
@@ -274,12 +256,12 @@ export function setupEntry(
   return { host: a.host, ...(a.stagingOf ? { stagingOf: a.stagingOf } : {}), ...deployFacts(target), token: "" };
 }
 
-/** The GitHub App's manifest (GitHub makes the app from it in one click): sign-in only, no permissions. */
+/** The GitHub App's manifest (GitHub makes the app from it in one click): sign-in only, no permissions. Staging shares it. */
 export const githubManifest = (a: Answers, redirect: string): Record<string, unknown> => ({
   name: `Erga ${a.host}`.slice(0, 34),
   url: `https://${a.host}`,
   redirect_url: redirect,
-  callback_urls: [callbackOf(a.host)],
+  callback_urls: [a.host, a.staging].filter(Boolean).map(callbackOf),
   description: `Sign-in for the Erga at https://${a.host}`,
   public: false,
   request_oauth_on_install: false,

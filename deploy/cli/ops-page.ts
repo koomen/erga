@@ -20,7 +20,6 @@ import { busyWith, type Facts, type Git, type JobRecord, jobOf, mergeBlock, page
 import { alive } from "./pid";
 import { type JobState, stepRun } from "./job-state";
 import { GITHUB, type PollEvent, startPolls, stepPolls } from "./poll-state";
-import { loadSetup } from "../own/store";
 import { ROOT, sh } from "../root";
 
 const git = (cwd: string, ...args: string[]) => sh(["git", ...args], { cwd });
@@ -112,7 +111,6 @@ export function serveOpsPage(o: OpsPageOptions) {
     answers: {},
     git: { error: "Fetching from GitHub…" },
     jobs: [],
-    setup: null,
     run: { at: "idle" },
     polls: startPolls(),
     runs: [],
@@ -160,7 +158,6 @@ export function serveOpsPage(o: OpsPageOptions) {
     facts.jobs = readJobs(o.dir);
     facts.runs = readRuns(o.dir);
     facts.proofs = readProofs(o.dir);
-    facts.setup = loadSetup(o.dir);
     poll({ type: "sources", names: [GITHUB, ...hosts], now: Date.now() });
   };
   /** Steps the tests' queue with what git and the records say now, and starts the run it asks for. Its end is an event. */
@@ -326,18 +323,9 @@ export function serveOpsPage(o: OpsPageOptions) {
       // Only this machine's browser, by this server's name: another site can't reach it through DNS rebinding.
       const names = [`localhost:${srv.port}`, `127.0.0.1:${srv.port}`];
       if (!names.includes(req.headers.get("host") ?? "")) return new Response("Wrong host.", { status: 403 });
-      // A POST only from this page (the Setup tab's forms, Merge and Deploy): no other site.
+      // A POST only from this page (Merge and Deploy): no other site.
       if (req.method != "GET" && !names.some((n) => req.headers.get("origin") == `http://${n}`))
         return new Response("Wrong origin.", { status: 403 });
-      // The Setup tab's own routes: what the person does there (deploy/own/page.ts), loaded only when it is used.
-      // Each may change the setup's file: the page that comes next shows it, with no wait for the folder's watcher.
-      if (url.pathname.startsWith("/setup/"))
-        return import("../own/page")
-          .then((p) => p.setupRoute(req, url, o.dir))
-          .finally(() => {
-            readFiles();
-            changed();
-          });
       if (req.method == "POST" && (url.pathname == "/api/merge" || url.pathname == "/api/deploy")) return act(req, url.pathname.slice(5));
       if (url.pathname == "/") return html(pageHtml(viewHtml(facts, ""), script, code()));
       if (url.pathname == "/view") return html(viewHtml(facts, url.searchParams.get("hash") ?? ""), { "X-Ops-Code": code() });
@@ -392,11 +380,8 @@ export function serveOpsPage(o: OpsPageOptions) {
   };
 }
 
-/**
- * `bun erga [--port N] [--no-open] [--no-queue]`: the page on the first free port from 4801, opened in the browser.
- * `queue` false: it works no tests' queue (the page that `bun erga setup` starts, on a new person's machine).
- */
-export function startOpsPage(o: { dir: string; cwd: string; port?: number; open: boolean; queue?: boolean }) {
+/** `bun erga [--port N] [--no-open]`: the page on the first free port from 4801, opened in the browser. */
+export function startOpsPage(o: { dir: string; cwd: string; port?: number; open: boolean }) {
   let page: ReturnType<typeof serveOpsPage> | null = null;
   const from = o.port ?? 4801;
   for (let p = from; !page && p < from + 20; p++) {
@@ -405,7 +390,7 @@ export function startOpsPage(o: { dir: string; cwd: string; port?: number; open:
         dir: o.dir,
         cwd: o.cwd,
         port: p,
-        ...(o.queue === false ? {} : { test: (branch) => runCli(o.cwd)(["test", branch]) }),
+        test: (branch) => runCli(o.cwd)(["test", branch]),
       });
     } catch (e) {
       if (from == 0 || !/in use|EADDRINUSE/i.test((e as Error).message)) throw e;
@@ -413,7 +398,7 @@ export function startOpsPage(o: { dir: string; cwd: string; port?: number; open:
   }
   if (!page) throw new Error(`No free port from ${from} to ${from + 19}.`);
   const url = `http://127.0.0.1:${page.server.port}/`;
-  // `bun erga setup` finds this page by its port (deploy/own/cli.ts, page).
+  // The other commands find this page by its port (main.ts).
   mkdirSync(o.dir, { recursive: true, mode: 0o700 });
   writeFileSync(join(o.dir, "page.port"), String(page.server.port));
   console.log(`PASS  The ops page: ${url}`);
