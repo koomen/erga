@@ -88,7 +88,7 @@ export const jsonSchemaOf = (t: Tool): { type: "object"; required?: string[] } =
 /** Files by path, as a kind shows them: create_document and write check each one. */
 const FILES = Schema.Record(Schema.String, Schema.Unknown).annotate({
   description:
-    'Each path: its text, or {"base64": "..."}; for write, also {"blob": "<sha-256>"}: an image sent to you; or, with "size" (bytes), a file on your disk, of any size: the answer says where to send its bytes.',
+    'Each path: its text, or {"base64": "..."}. Only in edit\'s write (never in create_document), also {"blob": "<sha-256>"}: an image sent to you; or, with "size" (bytes), a file on your disk, of any size: the answer says where to send its bytes.',
 });
 
 /**
