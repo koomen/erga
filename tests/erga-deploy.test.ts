@@ -1,6 +1,6 @@
 // `bun erga deploy` and `bun erga rollback` (deploy/cli/deploy.ts), from .erga/config.json, against the mock
-// Cloudflare's example account (ERGA_DEPLOY_MOCK=1): the upload has the entry's vars, a staging entry gets
-// SNAPSHOT_FROM and keeps its copy of the data, no secret goes out, the lock and the job record, the tests' gate, and
+// Cloudflare's example account (ERGA_DEPLOY_MOCK=1): every entry takes the same path (entryTarget); the upload has the
+// entry's vars, a staging entry gets SNAPSHOT_FROM and keeps its copy of the data, no secret goes out, the lock and the job record, the tests' gate, and
 // a primary with no commit named takes the commit its staging instances report (a fake GET /api/ops). With --fresh, or
 // with no copy yet, a staging entry gets a new copy of its primary's database and documents (its SNAPSHOT_TOKEN from
 // .erga/secrets.json); without the token, it stops before the build. And the branches: merge deploys to each staging
@@ -16,20 +16,21 @@ import { lockPath, takeLock } from "../deploy/cli/jobs";
 import { replaceSnapshotSecret } from "../deploy/cli/snapshot-secret";
 import { snapshotAuth } from "../document/snapshot";
 import { deployFacts } from "../deploy/pipeline/account";
-import { guardTarget } from "../deploy/pipeline/pipeline";
-import { MOCK_SNAPSHOT_TOKEN, mockCloudflare, PROD_DOCS } from "../dev/mock-cloudflare";
+import { ALL_STEPS, guardTarget, STEPS, stepsFor } from "../deploy/pipeline/pipeline";
+import { readsOldSetting, stagingCommitRefusal } from "../deploy/cli/staging-commit";
+import { MOCK_SNAPSHOT_TOKEN, mockCloudflare, PRIMARY_DOCS } from "../dev/mock-cloudflare";
 import {
   bindingsOf,
   bootstrap,
   prepareRelease,
   primary as primaryTarget,
-  productionOf,
+  primaryOf,
   ROOT,
   SHA1,
   staging as stagingTarget,
   stagingCopies,
   stagingDbOf,
-  writesToProduction,
+  writesToPrimary,
 } from "./helpers/deploys.ts";
 import type { Suite } from "../deploy/cli/test-run";
 import { writePass } from "./helpers/pass.ts";
@@ -79,10 +80,10 @@ afterAll(() => {
 });
 
 describe("bun erga deploy", () => {
-  test("a staging entry: its vars, DEPLOY_TARGET=staging and SNAPSHOT_FROM; its copy of the data kept; no secret sent; production untouched", async () => {
+  test("a staging entry: its vars and SNAPSHOT_FROM, no other flag; its copy of the data kept; no secret sent; its primary untouched", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
-    const before = productionOf(mock.state);
+    const before = primaryOf(mock.state);
     const db = bindingsOf(mock.state, "erga-staging").DB.database_id;
     const secrets = { ...mock.state.secrets["erga-staging"] };
     fresh(primary, staging);
@@ -103,14 +104,15 @@ describe("bun erga deploy", () => {
     const b = bindingsOf(mock.state, "erga-staging");
     expect(b.ERGA_VERSION.text).toBe(HEAD.slice(0, 12));
     expect(b.GITHUB_CLIENT_ID.text).toBe("Ov23-from-the-entry");
-    expect(b.DEPLOY_TARGET.text).toBe("staging");
+    expect(b.DEPLOY_TARGET).toBeUndefined();
+    expect(b.SNAPSHOT_IMPORT).toBeUndefined();
     expect(b.SNAPSHOT_FROM.text).toBe("https://example.com");
     expect(JSON.parse(b.ERGA_DEPLOY.text).vars.SNAPSHOT_FROM).toBe("https://example.com");
     expect(b.DB.database_id).toBe(db);
-    expect(lines.some((l) => l.startsWith("Copy production's database"))).toBe(false);
+    expect(lines.some((l) => l.startsWith("Copy its primary's database"))).toBe(false);
     expect(mock.state.scripts["erga-staging"].metadata.keep_bindings).toEqual(["secret_text", "secret_key"]);
     expect(mock.state.secrets["erga-staging"]).toEqual(secrets);
-    expect(productionOf(mock.state)).toBe(before);
+    expect(primaryOf(mock.state)).toBe(before);
 
     // The job record: the command, the commit, the tests, the output, the result. The lock is free again.
     const [job] = records();
@@ -132,7 +134,7 @@ describe("bun erga deploy", () => {
       "name the commit"
     );
     const config = withEntry(withEntry({ instances: [] }, primary), { ...staging, worker: "erga" });
-    expect(guardTarget(entryTarget(config, config.instances[1] as CloudflareEntry))).toContain("would replace production's Worker (erga)");
+    expect(guardTarget(entryTarget(config, config.instances[1] as CloudflareEntry))).toContain("would replace its primary's Worker (erga)");
     expect(entryTarget(config, primary).vars.SNAPSHOT_FROM).toBeUndefined();
   });
 
@@ -154,7 +156,7 @@ describe("bun erga deploy", () => {
     const mock = mockCloudflare({ fleet: true });
     expect(await deployInstance({ dir, host: "example.com", commit: "HEAD", net: mock.fetch, print: () => {} })).toBe(HEAD);
     expect(bindingsOf(mock.state, "erga").ERGA_VERSION.text).toBe(HEAD.slice(0, 12));
-    expect(bindingsOf(mock.state, "erga").SNAPSHOT_FROM).toBeUndefined();
+    expect(bindingsOf(mock.state, "erga").SNAPSHOT_FROM.text).toBe("");
 
     // A job killed with its lock, and its pid given to another process later (here, this one): the lock names the
     // process by its pid and its start time, so it is free.
@@ -193,6 +195,40 @@ describe("bun erga deploy", () => {
   }, 60_000);
 });
 
+describe("every entry takes one path", () => {
+  test("an entry's target is its names and its vars; a staging entry's adds its primary, and nothing else differs", () => {
+    const config = { instances: [primary, staging] };
+    const p = entryTarget(config, primary as CloudflareEntry),
+      s = entryTarget(config, staging as CloudflareEntry);
+    const { stagingOf, ...rest } = s;
+    expect(Object.keys(rest).sort()).toEqual(Object.keys(p).sort());
+    expect(p.stagingOf).toBeUndefined();
+    expect(p.vars).toEqual((primary as CloudflareEntry).vars);
+    // The one fact a staging server gets: its primary's address. No flag says "production" or "staging".
+    expect(s.vars).toEqual({ ...(staging as CloudflareEntry).vars, SNAPSHOT_FROM: "https://example.com" });
+    expect(stagingOf).toEqual({
+      accountId: p.accountId,
+      worker: "erga",
+      database: "erga",
+      host: "example.com",
+      pages: "example-pages.com",
+      origin: "https://example.com",
+    });
+    // The same steps for both; the copy of the primary's data adds its three.
+    expect(stepsFor(p)).toEqual([...STEPS]);
+    expect(stepsFor(s)).toEqual([...STEPS]);
+    expect(stepsFor(entryTarget(config, staging as CloudflareEntry, { token: "t".repeat(32), fresh: true }))).toEqual([...ALL_STEPS]);
+  });
+
+  test("a commit from before SNAPSHOT_FROM made a staging server admins only does not deploy to a staging instance", () => {
+    expect(readsOldSetting('DEPLOY_TARGET: bindings.text(""),')).toBe(true);
+    expect(readsOldSetting('SNAPSHOT_FROM: bindings.text(""),')).toBe(false);
+    // This commit's own config has no such setting; a clone with no Worker config says nothing (the build stops it).
+    expect(stagingCommitRefusal(ROOT, HEAD, "staging.example.com")).toBeNull();
+    expect(stagingCommitRefusal(tmpdir(), HEAD, "staging.example.com")).toBeNull();
+  });
+});
+
 describe("bun erga deploy --fresh", () => {
   const words = (mock: ReturnType<typeof mockCloudflare>, id: string) =>
     new TextDecoder().decode(mock.state.docs["erga-staging"].docs.get(id)?.entries.get("file:index.html") as Uint8Array);
@@ -205,16 +241,18 @@ describe("bun erga deploy --fresh", () => {
   test("a new database with the primary's data and documents; without --fresh, nothing copies; without the token, it stops before the build", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
-    const before = productionOf(mock.state);
+    const before = primaryOf(mock.state);
     const copy = stagingDbOf(mock.state).name;
-    mock.state.docs["erga-staging"].docs.get(PROD_DOCS[0])!.entries.set("file:index.html", new TextEncoder().encode("edited on staging"));
+    mock.state.docs["erga-staging"].docs
+      .get(PRIMARY_DOCS[0])!
+      .entries.set("file:index.html", new TextEncoder().encode("edited on staging"));
     fresh(primary, staging);
 
     // Without --fresh: the copy stays, with what an admin changed on it, and nothing is exported. No token is needed.
     const mark = mock.state.calls.length;
     await deploy(mock);
     expect(stagingDbOf(mock.state).name).toBe(copy);
-    expect(words(mock, PROD_DOCS[0])).toBe("edited on staging");
+    expect(words(mock, PRIMARY_DOCS[0])).toBe("edited on staging");
     expect(exported(mock, mark)).toBe(false);
 
     // --fresh with no SNAPSHOT_TOKEN: it says where to put it, and nothing is built or uploaded.
@@ -233,11 +271,11 @@ describe("bun erga deploy --fresh", () => {
     expect(stagingCopies(mock.state)).toEqual([now.name]);
     expect((now.rows ?? []).join("\n")).toContain("doc-1");
     expect(exported(mock, again)).toBe(true);
-    for (const id of PROD_DOCS) expect(words(mock, id)).toContain("production's words");
+    for (const id of PRIMARY_DOCS) expect(words(mock, id)).toContain("the primary's words");
     expect(records().at(-1)).toContainEqual({ copy: "fresh" });
-    expect(bindingsOf(mock.state, "erga-staging").SNAPSHOT_IMPORT.text).toBe("1");
-    expect(productionOf(mock.state)).toBe(before);
-    expect(writesToProduction(mock.state)).toEqual([]);
+    expect(bindingsOf(mock.state, "erga-staging").SNAPSHOT_FROM.text).toBe("https://example.com");
+    expect(primaryOf(mock.state)).toBe(before);
+    expect(writesToPrimary(mock.state)).toEqual([]);
   }, 60_000);
 
   test("a staging instance with no copy yet gets one without --fresh; a primary refuses --fresh", async () => {
@@ -249,7 +287,7 @@ describe("bun erga deploy --fresh", () => {
     await deploy(mock);
     expect(stagingDbOf(mock.state).name.startsWith("erga-staging-")).toBe(true);
     expect(exported(mock, 0)).toBe(true);
-    for (const id of PROD_DOCS) expect(words(mock, id)).toContain("production's words");
+    for (const id of PRIMARY_DOCS) expect(words(mock, id)).toContain("the primary's words");
     expect(records().at(-1)).toContainEqual({ copy: "no copy yet" });
 
     await expect(deployInstance({ dir, host: "example.com", commit: "HEAD", fresh: true, net: mock.fetch })).rejects.toThrow(
@@ -278,7 +316,7 @@ describe("bun erga snapshot-secret", () => {
     // The primary answers a request signed with the new secret, and refuses the old one's.
     const ask = async (secret: string) => {
       const url = "https://example.com/api/snapshot/docs",
-        body = JSON.stringify({ ids: [PROD_DOCS[0]] });
+        body = JSON.stringify({ ids: [PRIMARY_DOCS[0]] });
       return (await mock.fetch(url, { method: "POST", headers: { Authorization: await snapshotAuth(secret, "POST", url, body) }, body }))
         .status;
     };
@@ -328,7 +366,7 @@ describe("bun erga deploy --home", () => {
     await expect(deploy("example.com", "nowhere.test")).rejects.toThrow("nowhere.test is on none of this Cloudflare account's zones");
     await expect(deploy("example.com", "not a domain")).rejects.toThrow("give a domain name");
     await expect(deploy("example.com", "example.com")).rejects.toThrow("is the app's address");
-    await expect(deploy("staging.example.com", "example.org")).rejects.toThrow("only a primary serves a homepage domain");
+    await expect(deploy("staging.example.com", "example.org")).rejects.toThrow("a staging instance serves no homepage domain");
     expect(mock.state.domains.map((d) => d.hostname)).not.toContain("nowhere.test");
   }, 60_000);
 });
@@ -355,7 +393,7 @@ describe("a primary with no commit", () => {
       fetch: (req) => {
         const path = new URL(req.url).pathname;
         asked.push(`${path} ${req.headers.get("authorization") ?? ""}`);
-        if (path == "/api/ops") return Response.json({ version: HEAD.slice(0, 12), target: "staging", host: "x", deploy: null });
+        if (path == "/api/ops") return Response.json({ version: HEAD.slice(0, 12), host: "x", deploy: null });
         if (path == "/api/health") return Response.json({ ok: true });
         return new Response("no", { status: 404 });
       },
@@ -460,7 +498,7 @@ describe("the branches move only after a healthy deploy", () => {
         port: 0,
         fetch: (req) => {
           const path = new URL(req.url).pathname;
-          if (path == "/api/ops") return Response.json({ version: runs.slice(0, 12), target: "staging", host: "x", deploy: null });
+          if (path == "/api/ops") return Response.json({ version: runs.slice(0, 12), host: "x", deploy: null });
           return Response.json({ ok: true });
         },
       });

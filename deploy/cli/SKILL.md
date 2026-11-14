@@ -95,12 +95,13 @@ and `main`. There are no pull requests.
    It stops when no branch merges, and when a deploy fails: staging stays
    where it was.
 6. `merge` reports each staging instance's commit and health. Check the
-   change on https://staging.erga.dev before you say that it works.
-   Staging is for admins only.
-7. Only when Pete asks: `bun erga deploy erga.dev` deploys the commit that
-   staging runs to production, from this machine. Then it moves `main` to
-   that commit and pushes it. erga.koomen.dev has no staging instance:
-   `bun erga deploy main erga.koomen.dev`.
+   change on a staging instance (`bun erga status` has its address) before
+   you say that it works. A staging instance is for admins only.
+7. Only when Pete asks: `bun erga deploy <host>` deploys the commit that
+   the instance's staging instances run to the instance (a primary), from
+   this machine. Then it moves `main` to that commit and pushes it. An
+   instance with no staging instance needs the commit:
+   `bun erga deploy main <host>`.
 8. Only when Pete asks: `bun erga release [vX.Y.Z|major|minor|patch]`
    tags `main` and makes a GitHub release with notes from the commits.
    `--dry-run` shows the version and the notes first.
@@ -138,8 +139,9 @@ and `main`. There are no pull requests.
   commands, with the same locks, and only one job at a time. Only when Pete asks.
 - `bun erga deploy [<commit>] <host>`: deploys a registered instance from
   this machine, with the facts in `.erga/config.json`. Only when Pete asks.
-  It asks no question. A staging instance needs a commit, and keeps its
-  copy of production's data. A primary with no commit takes the commit
+  It asks no question. Every instance deploys by the same steps, from its
+  entry. A staging instance (an entry that names its primary) needs a
+  commit, and keeps its copy of its primary's data. A primary with no commit takes the commit
   that its staging instances run (they must agree and be healthy). It
   deploys only a commit whose tests (`bun run test`) passed (the record
   of its tree in `.erga/tests/`, which its merge wrote). With no record,
@@ -147,7 +149,7 @@ and `main`. There are no pull requests.
   tests. `--no-tests` skips this, and the job record says so. After a healthy deploy of a
   primary, `main` moves forward to the commit and the CLI pushes it. A
   primary does not deploy a commit apart from `main`. `--home <domain>`
-  (a primary only, a name on one of its account's zones) serves the
+  (never a staging instance; a name on one of its account's zones) serves the
   homepage's site on that domain from then on. The server keeps it, and
   the CLI copies it into the entry after the deploy: never edit it there.
 - `bun erga rollback <host>`: a registered instance's Worker version from
@@ -163,9 +165,11 @@ and `main`. There are no pull requests.
   its plain settings and an ops token into `.erga/config.json` in the main
   clone. Only when Pete asks.
 - `bun erga login <host>`: a new ops token for a registered instance.
-- `bun erga setup <host>`: a new instance. It writes its entry, deploys it the
-  first time with its secrets, writes the first admin, and registers it
-  (`bun erga setup skill`).
+- `bun erga setup <host>`: the steps from nothing to a registered instance. For
+  a new instance it writes its entry, deploys it the first time with its
+  secrets, writes the first admin, and registers it (`bun erga setup skill`).
+  An instance that runs already keeps its entry: the same steps show what is
+  done.
 
 ## The rules
 
@@ -189,7 +193,7 @@ and `main`. There are no pull requests.
 - A deploy builds the commit in a scratch worktree, then runs the pipeline:
   the D1 migrations, the static files, the Worker, the addresses, the
   health check. A deploy sends no secret: the Workers keep their own.
-- Staging runs on a frozen copy of production's data. Only
+- A staging instance runs on a frozen copy of its primary's data. Only
   `bun erga deploy <commit> <staging host> --fresh` copies it again, with
   the primary's `SNAPSHOT_TOKEN` (in `.erga/secrets.json` under the
   primary's host, or in the environment).

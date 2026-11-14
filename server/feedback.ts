@@ -1,20 +1,21 @@
 // Feedback becomes an issue in a repository on GitHub: the setting feedback_repository (owner/name), which an admin
 // sets on the Settings page (empty: no issues). The server keeps the feedback first (dir.feedback,
 // server/directory/feedback.ts), then opens an issue for it: its title the start of the text, its body the text and
-// "Feedback <id>", the label "feedback" (and "staging" on staging). Never a name, a login, an email or the page: a
+// "Feedback <id>", the label "feedback" (and "staging" on a staging instance). Never a name, a login, an email or the page: a
 // page's address names its owner.
 //
 // The issue needs that setting and a GitHub token that may open issues there (GITHUB_ISSUES_TOKEN, a Worker secret:
 // a fine-grained token with only Issues: read and write on the repository). Without them the feedback stays, with no
 // issue. If GitHub fails, the feedback stays too, and the next feedback, or an admin who opens
-// /admin/feedback, tries it again (`fileFeedback`). Each server opens issues only for the feedback sent to it: staging
-// has a copy of production's rows, and never opens their issues.
+// /admin/feedback, tries it again (`fileFeedback`). Each server opens issues only for the feedback sent to it: a staging
+// instance has a copy of its primary's rows, and never opens their issues.
 
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import type { Directory, FeedbackRow } from "./directory/index.ts";
+import type { Platform } from "./platform.ts";
 
 /** An issue to open. */
 export interface Issue {
@@ -38,6 +39,12 @@ declare module "./platform.ts" {
 
 /** GitHub refused or failed to open an issue. */
 export class IssueError extends Schema.TaggedError<IssueError>()("IssueError", { message: Schema.String }) {}
+
+/**
+ * The server a feedback was sent to, as its row keeps it: "staging" on a staging instance (the deploy named its
+ * primary), "" on any other. A staging instance's copy holds its primary's rows, which are not its own.
+ */
+export const feedbackTarget = (p: Pick<Platform, "deploy">) => (p.deploy.primary ? "staging" : "");
 
 /** The longest title an issue gets from its text. */
 const TITLE = 60;

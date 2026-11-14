@@ -4,7 +4,7 @@
 
 import * as Schema from "effect/Schema";
 import { FEEDBACK_MAX } from "../directory/index.ts";
-import { fileFeedback, issuesRepo } from "../feedback.ts";
+import { feedbackTarget, fileFeedback, issuesRepo } from "../feedback.ts";
 import { type Caller, iso, type Operation, OperationError, platformOf, str } from "./operation.ts";
 
 /** The path of the page it was sent from: a path on this site, short; a URL gives its path. */
@@ -22,7 +22,7 @@ export function pageOf(page: unknown): string | null {
 /** Opens the issues that wait, after the answer (the request's background work). */
 function fileLater(caller: Caller) {
   const platform = platformOf(caller);
-  platform.edge.background(fileFeedback(caller.dir, platform.issues, platform.deploy.target ?? ""));
+  platform.edge.background(fileFeedback(caller.dir, platform.issues, feedbackTarget(platform)));
 }
 
 export const FEEDBACK_OPERATIONS: Operation[] = [
@@ -46,7 +46,7 @@ export const FEEDBACK_OPERATIONS: Operation[] = [
       const id = await caller.dir.feedback.add(caller.who, {
         text,
         page: pageOf(args.page ?? caller.here),
-        target: platform.deploy.target ?? "",
+        target: feedbackTarget(platform),
       });
       fileLater(caller);
       return { sent: true, id, message: "Thanks, sent. It goes to Erga's issues on GitHub, without your name." };

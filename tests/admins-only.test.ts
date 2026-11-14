@@ -17,7 +17,7 @@ const serverWith = (clientId: string): Platform => ({
     devLogin: null,
     encryptionKey: null,
   },
-  deploy: { target: null, version: null, primary: null },
+  deploy: { version: null, primary: null },
   own: { get: async () => undefined, put: async () => {}, delete: async () => {} },
 } as unknown as Platform);
 
@@ -96,14 +96,14 @@ test("an admin's token without the admin scope reaches only the API, MCP and doc
     expect(`${p}: ${tokenPath(p)}`).toBe(`${p}: false`);
 });
 
-test("a server whose deploy says DEPLOY_TARGET=staging is for admins only: signed out, a page asks to sign in, and the API refuses", async () => {
+test("a staging instance (its deploy names its primary) is for admins only: signed out, a page asks to sign in, and the API refuses", async () => {
   const s = app({ staging: true });
   const page = await s.fetch("/docs", { headers: { ...signedOut(), Accept: "text/html" } });
   expect(page.status).toBe(403);
   const html = await page.text();
   expect(html).toContain("Staging is for admins: sign in");
-  // No SNAPSHOT_FROM here: the page names no primary, and no instance's name.
-  expect(html).not.toContain("Erga itself");
+  // The page names its primary, from the deploy (SNAPSHOT_FROM), and no instance's name in the code.
+  expect(html).toContain('Erga itself is at <a href="https://primary.example.com">primary.example.com</a>');
   const api = await s.fetch("/api/tools", { headers: signedOut() });
   expect(api.status).toBe(403);
   expect(((await api.json()) as { adminsOnly?: boolean }).adminsOnly).toBe(true);

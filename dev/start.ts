@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Local development: erga.dev's app on your machine, the very same Worker
+// Local development: the app on your machine, the very same Worker
 // run by Vite and the Cloudflare plugin, with any file or
 // folder from disk as a document.
 //
@@ -34,10 +34,9 @@
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
-import { deployedSettings } from "../server/directory/index.ts";
+import { parseDeployed } from "../server/directory/index.ts";
 import { freePort } from "./browser";
 import { resolveTarget } from "./vite-plugin";
-import { deployed } from "../deploy/locked-settings";
 import { ROOT } from "../deploy/root";
 
 const args = process.argv.slice(2);
@@ -61,8 +60,13 @@ const target = args.find((a) => !a.startsWith("--"));
 
 // Fail fast on a target that won't open, before anything starts.
 if (target) await resolveTarget(target, process.cwd()).catch((e) => { console.error((e as Error).message); process.exit(2); });
-// The settings the deploy fixes: a bad one stops here, saying why.
-try { deployedSettings(deployed()); } catch (e) { console.error(`deploy/locked-settings.ts: ${(e as Error).message}`); process.exit(2); }
+// The settings this server locks (ERGA_SERVER_CONFIG, as a deploy's SERVER_CONFIG does): a bad one stops here, saying why.
+try {
+  parseDeployed(process.env.ERGA_SERVER_CONFIG);
+} catch (e) {
+  console.error(`ERGA_SERVER_CONFIG: ${(e as Error).message}`);
+  process.exit(2);
+}
 // Tests give each server its own state (ERGA_STATE_DIR); otherwise it's this checkout's, which one server at a time may hold.
 const ownState = !process.env.ERGA_STATE_DIR;
 if (ownState && existsSync(URL_FILE)) {

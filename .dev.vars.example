@@ -1,5 +1,5 @@
 # Local development's settings (bun start makes .dev.vars, gitignored, the
-# first time; on erga.dev they're the Worker's secrets).
+# first time; on a deployed instance they're the Worker's secrets).
 
 # Who you are locally: signed in as this login, without GitHub (localhost only).
 DEV_LOGIN=

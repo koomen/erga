@@ -102,6 +102,6 @@ export const signOut: Route = Effect.gen(function* () {
     "",
     0
   );
-  // Locally someone is always signed in (the dev login), unless the browser signs out: then nobody, as on erga.dev.
+  // Locally someone is always signed in (the dev login), unless the browser signs out: then nobody, as on a deployed instance.
   return platform.dev(url) ? withCookie(out, request, SIGNED_OUT, "1", 30 * DAY) : out;
 });

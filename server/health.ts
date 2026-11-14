@@ -1,20 +1,29 @@
 // The app's health check, GET /api/health: whether this server works, for
 // the deploy pipeline after each deploy (deploy/pipeline/pipeline.ts, the live step:
 // a release that answers its version but fails this is rolled back) and for
-// anyone who wants to know. It answers the release and target (as
+// anyone who wants to know. It answers the release (as
 // /api/deploys/version does) and a few checks, each timed:
 //
 //   db          one read of the server's settings (D1 answers)
 //   documents   the homepage's document, opened in its own object (a Durable Object answers), when there is one
 //
-// {ok, version, target, checks: {<name>: {ok, ms, error?}}}: 200 when every
+// {ok, version, checks: {<name>: {ok, ms, error?}}}: 200 when every
 // check passes, 503 when one fails. It holds no data and needs no sign-in:
-// on staging the admins-only guard lets it through (server/identity/admins-only.ts).
+// on a staging instance the admins-only guard lets it through (server/identity/admins-only.ts).
 
 import type { Platform } from "./platform.ts";
 
-export interface HealthCheck { ok: boolean; ms: number; error?: string; note?: string }
-export interface HealthReport { ok: boolean; version: string | null; target: string | null; checks: Record<string, HealthCheck> }
+export interface HealthCheck {
+  ok: boolean;
+  ms: number;
+  error?: string;
+  note?: string;
+}
+export interface HealthReport {
+  ok: boolean;
+  version: string | null;
+  checks: Record<string, HealthCheck>;
+}
 
 /** The health report: every check runs, so the answer says all that's wrong. */
 export async function health(p: Platform): Promise<HealthReport> {
@@ -30,7 +39,7 @@ export async function health(p: Platform): Promise<HealthReport> {
       if ((await p.docs.index(route)) == null) throw new Error(`the homepage document ${id} has no host`);
     }),
   };
-  return { ok: Object.values(checks).every((c) => c.ok), version: p.deploy.version, target: p.deploy.target, checks };
+  return { ok: Object.values(checks).every((c) => c.ok), version: p.deploy.version, checks };
 }
 
 /** One check, timed; a string it answers is a note (the check passed, with nothing to do); a throw fails it. */

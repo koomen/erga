@@ -439,7 +439,7 @@ function entryOf(e: ConfigEntry) {
     default: e.default,
     source: e.source,
     locked,
-    ...(locked ? { deployed: e.deployed, note: "Locked by the deploy (deploy/locked-settings.ts): it can't be changed here." } : {}),
+    ...(locked ? { deployed: e.deployed, note: "Locked by the deploy (its SERVER_CONFIG): it can't be changed here." } : {}),
     updated: iso(e.updated),
     updatedBy: e.updatedBy,
     ...(e.updatedVia ? { updatedVia: e.updatedVia } : {}),
@@ -498,7 +498,6 @@ function authOf(caller: Caller): AuthOps {
 /** A server's sign-in, as an agent reads it: never a secret. */
 function signInOf(s: AuthStatus) {
   return {
-    target: s.target,
     origin: s.origin,
     provider: s.provider,
     state: s.check.state,

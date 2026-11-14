@@ -79,20 +79,19 @@ const store = () => {
   return { m, storage: { get: async (k: string) => structuredClone(m.get(k)), put: async (k: string, v: unknown) => { m.set(k, structuredClone(v)); }, delete: async (k: string) => { m.delete(k); } } };
 };
 
-test("kept values: the secret encrypted, never in what an admin reads, and only for this app on this server", async () => {
+test("kept values: the secret encrypted, never in what an admin reads, and only for this app with this server's key", async () => {
   const { m, storage } = store();
-  const apps = new AuthApps(storage, "factory-key", "staging");
+  const apps = new AuthApps(storage, "factory-key");
   await apps.keep("github", "active", GOOD, { login: "Koomen", via: "their admin agent" });
   expect(await apps.values("github", "active")).toEqual(GOOD);
   const read = await apps.read("github");
   expect(read.active).toMatchObject({ clientId: GOOD.clientId, updatedBy: "koomen", updatedVia: "their admin agent" });
   expect(JSON.stringify(read)).not.toContain(GOOD.secret);
   expect(JSON.stringify([...m.values()])).not.toContain(GOOD.secret);
-  // Another server's key, or the same key on another target (production's values copied to staging), opens nothing.
-  expect(await new AuthApps(storage, "another-key", "staging").values("github", "active")).toBeNull();
-  expect(await new AuthApps(storage, "factory-key", "production").values("github", "active")).toBeNull();
+  // Another server's key opens nothing (each server has its own FACTORY_KEY).
+  expect(await new AuthApps(storage, "another-key").values("github", "active")).toBeNull();
   // No FACTORY_KEY: nothing can be kept.
-  const none = new AuthApps(store().storage, null, "staging");
+  const none = new AuthApps(store().storage, null);
   expect(none.canStore).toBe(false);
   await expect(none.keep("github", "active", GOOD, { login: "koomen" })).rejects.toThrow(AuthError);
 });
@@ -102,7 +101,7 @@ function server(deploy: AppValues, github: AppValues[]) {
   const { m, storage } = store();
   const log: { by: string; change: SignInChange }[] = [];
   const c: AppContext = {
-    apps: new AuthApps(storage, "factory-key", "staging"),
+    apps: new AuthApps(storage, "factory-key"),
     provider: "github",
     deploy,
     check: (v) => checkGithubApp(v, { fetch: fakeGithub(github) }),
@@ -113,24 +112,26 @@ function server(deploy: AppValues, github: AppValues[]) {
 
 test("save: values GitHub refuses change nothing", async () => {
   const { c, m, log } = server({ clientId: "", secret: "" }, [GOOD]);
-  await expect(saveApp(c, "staging", { clientId: GOOD.clientId, secret: "d".repeat(40) }, { login: "koomen" })).rejects.toThrow("The client secret is wrong.");
-  await expect(saveApp(c, "staging", OTHER, { login: "koomen" })).rejects.toThrow("Nothing changed.");
+  await expect(saveApp(c, { clientId: GOOD.clientId, secret: "d".repeat(40) }, { login: "koomen" })).rejects.toThrow(
+    "The client secret is wrong."
+  );
+  await expect(saveApp(c, OTHER, { login: "koomen" })).rejects.toThrow("Nothing changed.");
   expect(m.size).toBe(0);
   expect(log).toEqual([]);
 });
 
 test("save with no working app (staging today): used at once, as there's nothing to lose", async () => {
   const { c, log } = server({ clientId: "", secret: "" }, [GOOD]);
-  const r = await saveApp(c, "staging", GOOD, { login: "koomen" });
+  const r = await saveApp(c, GOOD, { login: "koomen" });
   expect(r.kept).toBe("active");
   expect(await inUse(c)).toEqual({ ...GOOD, source: "page" });
-  expect(log).toEqual([{ by: "koomen", change: { provider: "github", target: "staging", event: "set", clientId: GOOD.clientId } }]);
+  expect(log).toEqual([{ by: "koomen", change: { provider: "github", event: "set", clientId: GOOD.clientId } }]);
   expect(JSON.stringify(log)).not.toContain(GOOD.secret);
 });
 
 test("save while the app in use works: the new values wait for a test sign-in, and sign-in keeps the old ones", async () => {
   const { c, log } = server(GOOD, [GOOD, OTHER]);
-  const r = await saveApp(c, "production", OTHER, { login: "koomen" });
+  const r = await saveApp(c, OTHER, { login: "koomen" });
   expect(r.kept).toBe("pending");
   expect(r.message).toContain("Test sign-in");
   expect(await inUse(c)).toEqual({ ...GOOD, source: "deploy" });
@@ -147,18 +148,18 @@ test("save while the app in use works: the new values wait for a test sign-in, a
 
 test("discard drops only the values that wait; clear goes back to the deploy's, but not into a lockout unless forced", async () => {
   const { c, log } = server({ clientId: GOOD.clientId, secret: "wrong-secret-0000000000" }, [GOOD, OTHER]);
-  await saveApp(c, "production", GOOD, { login: "koomen" });
+  await saveApp(c, GOOD, { login: "koomen" });
   expect((await inUse(c)).source).toBe("page");
   await c.apps.keep("github", "pending", OTHER, { login: "koomen" });
-  expect(await discardApp(c, "production", { login: "koomen" })).toEqual({ discarded: true });
-  expect(await discardApp(c, "production", { login: "koomen" })).toEqual({ discarded: false });
+  expect(await discardApp(c, { login: "koomen" })).toEqual({ discarded: true });
+  expect(await discardApp(c, { login: "koomen" })).toEqual({ discarded: false });
   expect((await inUse(c)).clientId).toBe(GOOD.clientId);
   // The deploy's secret is wrong: clearing would stop everyone signing in.
-  await expect(clearApp(c, "production", { login: "koomen" })).rejects.toThrow("Clearing would stop sign-in for everyone");
+  await expect(clearApp(c, { login: "koomen" })).rejects.toThrow("Clearing would stop sign-in for everyone");
   expect((await inUse(c)).source).toBe("page");
-  expect((await clearApp(c, "production", { login: "koomen" }, true)).cleared).toBe(true);
+  expect((await clearApp(c, { login: "koomen" }, true)).cleared).toBe(true);
   expect((await inUse(c)).source).toBe("deploy");
-  expect((await clearApp(c, "production", { login: "koomen" })).cleared).toBe(false);
+  expect((await clearApp(c, { login: "koomen" })).cleared).toBe(false);
   expect(log.map((l) => l.change.event)).toEqual(["set", "discarded", "cleared"]);
 });
 
@@ -166,7 +167,6 @@ test("the status: what's in use and where from, never a secret, the URLs GitHub 
   const { c } = server({ clientId: "", secret: "" }, [GOOD]);
   const none = await statusOf(c, {
     origin: "https://staging.erga.dev",
-    target: "staging",
     dev: false,
     pagePlace: "on this server's page",
   });
@@ -181,8 +181,8 @@ test("the status: what's in use and where from, never a secret, the URLs GitHub 
     "GITHUB_CLIENT_ID as a text binding",
   ])
     expect(steps).toContain(s);
-  await saveApp(c, "staging", GOOD, { login: "koomen" });
-  const set = await statusOf(c, { origin: "https://staging.erga.dev", target: "staging", dev: false, pagePlace: "here" });
+  await saveApp(c, GOOD, { login: "koomen" });
+  const set = await statusOf(c, { origin: "https://staging.erga.dev", dev: false, pagePlace: "here" });
   expect(set.check.state).toBe("working");
   expect(set.inUse).toEqual({ clientId: GOOD.clientId, secretSet: true, source: "page" });
   expect(set.setup).toBeNull();
@@ -212,7 +212,7 @@ function serverOn(own: Platform["own"]): Platform {
       devLogin: null,
       encryptionKey: "factory-key",
     },
-    deploy: { target: "production", version: null, primary: null },
+    deploy: { version: null, primary: null },
     own,
     directory: { config: { record: async () => {} } } as unknown as Directory,
   } as unknown as Platform;
@@ -221,7 +221,7 @@ function serverOn(own: Platform["own"]): Platform {
 test("sign-in uses the page's values over the deploy's, and ?app=pending tests the values that wait", async () => {
   const { storage } = store();
   const env = serverOn(storage);
-  const apps = new AuthApps(storage, "factory-key", "production");
+  const apps = new AuthApps(storage, "factory-key");
   const go = async (q = "") =>
     new URL((await respond(startSignIn, new Request(`https://erga.dev/auth/github${q}`), env)).headers.get("location") ?? "about:blank");
   expect((await go()).searchParams.get("client_id")).toBe(GOOD.clientId);

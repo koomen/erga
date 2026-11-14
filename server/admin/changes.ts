@@ -67,8 +67,7 @@ function eventItem(c: SettingChange): string {
     return `<li><span class="key">Access</span> ${who} ${what}</li>`;
   }
   if (c.signIn) {
-    const a = c.signIn,
-      server = a.target ? `${esc(a.target)}'s` : "the";
+    const a = c.signIn;
     const name = esc(providerName(a.provider));
     if (a.event == "on" || a.event == "off") return `<li><span class="key">Sign-in</span> ${name} turned ${a.event}</li>`;
     const what =
@@ -81,7 +80,7 @@ function eventItem(c: SettingChange): string {
             : a.event == "discarded"
               ? `new values discarded`
               : "cleared: the deploy's values again";
-    return `<li><span class="key">Sign-in</span> ${server} ${name} app ${what}</li>`;
+    return `<li><span class="key">Sign-in</span> the ${name} app ${what}</li>`;
   }
   if (c.token)
     return `<li><span class="key">Token</span> <span class="title">${esc(c.token.label)}</span> (${esc(c.token.of)}’s) revoked</li>`;

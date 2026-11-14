@@ -157,10 +157,6 @@ export async function writeInline(): Promise<void> {
 }
 
 async function build(): Promise<void> {
-  // The server settings the deploy locks (deploy/locked-settings.ts): a bad one stops the build here.
-  const check = Bun.spawnSync(["bun", "deploy/locked-settings.ts"], { cwd: ROOT, stdout: "ignore", stderr: "inherit" });
-  if (check.exitCode != 0) process.exit(check.exitCode || 1);
-
   await writeInline();
   const tmp = join(OUT, `.next-${process.pid}`);
   rmSync(tmp, { recursive: true, force: true });

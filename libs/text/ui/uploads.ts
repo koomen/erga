@@ -17,7 +17,7 @@ const folderFor = (file: File) => (file.type.startsWith("image/") ? "images" : "
 const cleanName = (name: string) => name.replace(/[/\\]/g, "-").replace(/^\.+/, "").trim() || "file";
 
 /**
- * Adds `file` to the document's files: `doc` is the document's address (https://erga.dev/d/<id>), `key` the edit key,
+ * Adds `file` to the document's files: `doc` is the document's address (https://<host>/d/<id>), `key` the edit key,
  * `taken` the paths the document has (any case), which gets the file's; `sending` hears its path before it goes.
  * Returns the path it got, or why it couldn't be added.
  */

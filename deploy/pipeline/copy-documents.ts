@@ -37,7 +37,7 @@ export async function copyDocuments(o: {
       });
     if (!r.ok)
       throw new DeployError({
-        message: `${o.to} didn't take the documents' copy (it answered ${r.status}${r.status == 404 ? ": it needs SNAPSHOT_IMPORT=1 and SNAPSHOT_TOKEN" : ""}).`,
+        message: `${o.to} didn't take the documents' copy (it answered ${r.status}${r.status == 404 ? ": it needs SNAPSHOT_FROM (a staging instance) and SNAPSHOT_TOKEN" : ""}).`,
       });
   };
   // Documents with a part copied, those that failed, and those the source didn't have.

@@ -31,7 +31,7 @@ const EDITING_API = inlineCall("page-editing-api");
  * allow-same-origin stays, with allow-scripts: the page keeps its pages origin, which holds nothing but this one
  * document, and the editor's half reaches into it there (typing and carets). So the page's script can remove its own
  * sandbox: Chrome warns about that, rightly, and it changes nothing. The boundary is the origin: the page can't reach
- * erga.dev, its cookies or another document's origin, and the viewer (viewer.ts, client/shell/page-frame.ts) treats every
+ * the app's origin, its cookies or another document's origin, and the viewer (viewer.ts, client/shell/page-frame.ts) treats every
  * message from it as the page's own. Its own storage is its own, as on any site.
  */
 export const PAGE_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-modals allow-popups";

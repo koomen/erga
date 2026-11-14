@@ -86,7 +86,7 @@ function serverCard(s: AuthStatus, o: { editable: boolean; session: Session; on:
       <div class="row"><button class="pill save">Save</button>${s.page ? `<button type="button" class="pill clear">Clear</button>` : ""}</div>
     </form>`
     : "";
-  return `<section class="server" data-provider="${provider}" data-target="${esc(s.target ?? "")}" data-state="${s.check.state}">
+  return `<section class="server" data-provider="${provider}" data-state="${s.check.state}">
     <p class="summary">${esc(s.check.summary)}</p>${reasons}
     ${rows}${deployNote}${devNote}${offTest}${pending}${steps}${cannot}${form}
     <p class="hint" role="status"></p>

@@ -34,9 +34,9 @@ export const whereOf = (a: Answers): Where => ({ profile: a.awsProfile || undefi
 
 const hash = (path: string) => (existsSync(path) ? createHash("sha256").update(readFileSync(path)).digest("hex") : null);
 
-/** The templates of the setup's production stack: the certificates' (with domains), then the main one. */
+/** The templates of the instance's stack: the certificates' (with domains), then the main one. */
 const templatesOf = (dir: string, a: Answers) => {
-  const stack = stackOf(a, "production");
+  const stack = stackOf(a, "primary");
   return isName(a.host) || proxySignIn(a) ? [templatePath(dir, stack)] : [templatePath(dir, stack, true), templatePath(dir, stack)];
 };
 
@@ -59,7 +59,7 @@ export async function discoverOidc(issuer: string, net: Fetch = fetch): Promise<
 }
 
 /**
- * The shape of the production stack, from the answers and what the account has (its zones, CloudFront's prefix list),
+ * The shape of the instance's stack, from the answers and what the account has (its zones, CloudFront's prefix list),
  * and in the proxy mode what its issuer publishes.
  */
 export async function shapeOf(a: Answers, net: Fetch = fetch): Promise<AwsShape> {
@@ -73,7 +73,7 @@ export async function shapeOf(a: Answers, net: Fetch = fetch): Promise<AwsShape>
     domains = { app: a.host, appZone: app.id, pages: a.pages, pagesZone: pages.id };
   }
   return {
-    stack: stackOf(a, "production"),
+    stack: stackOf(a, "primary"),
     egress: vpcId ? { kind: "vpc", vpcId, subnetId } : { kind: a.egress as "nat-instance" | "nat-gateway" },
     domains,
     edge: proxySignIn(a)
@@ -100,7 +100,7 @@ export async function observeAws(dir: string, a: Answers, applied: Record<string
       HostedZones: [],
     }))
   ).HostedZones.filter((z) => !z.Config.PrivateZone).map((z) => z.Name.replace(/\.$/, ""));
-  const name = stackOf(a, "production");
+  const name = stackOf(a, "primary");
   const st = await stackState(aws, name);
   const files = templatesOf(dir, a);
   const template = files.some((f) => !existsSync(f))
@@ -112,7 +112,7 @@ export async function observeAws(dir: string, a: Answers, applied: Record<string
         : "new";
   facts.stack = { name, status: st.status, outputs: st.outputs, template };
   if (proxySignIn(a)) facts.proxySecret = await secretThere(aws, secretOf(files[0], name));
-  facts.targets.production = await targetFacts(dir, a, st.outputs, net, githubId);
+  facts.targets.primary = await targetFacts(dir, a, st.outputs, net, githubId);
 }
 
 /** The secret's name the main template reads the client's secret by: its parameter's (the person may change it), else ours. */
@@ -134,7 +134,7 @@ const secretThere = (aws: Aws, name: string) =>
 /** The server the stack made: what it answers, and what it holds (the secrets' names in Parameter Store). */
 async function targetFacts(dir: string, a: Answers, outputs: Record<string, string>, net: Fetch, githubId?: string): Promise<TargetFacts> {
   const host = outputs.AppHost;
-  const entry = entryOf(readConfig(dir), hostOf(a, "production"));
+  const entry = entryOf(readConfig(dir), hostOf(a, "primary"));
   const facts: TargetFacts = {
     worker: outputs.Machine ? "ours" : "missing",
     address: "free",
@@ -158,7 +158,7 @@ async function targetFacts(dir: string, a: Answers, outputs: Record<string, stri
     "ssm",
     "get-parameters-by-path",
     "--path",
-    paramPath(stackOf(a, "production"))
+    paramPath(stackOf(a, "primary"))
   ).catch(() => null);
   facts.held = params
     ? { secrets: params.Parameters.map((p) => p.Name.split("/").at(-1)!), vars: entry && "aws" in entry ? { ...entry.vars } : {} }
@@ -289,15 +289,15 @@ export const firstSql = (a: Answers): string =>
     })
     .join("; ");
 
-/** The first deploy of the production server on AWS. The result: the commit it deployed. */
+/** The first deploy of the instance on AWS. The result: the commit it deployed. */
 export async function firstDeployAws(o: FirstAws): Promise<string> {
   const a = o.answers;
   const outputs = o.facts.stack?.outputs ?? {};
   if (!outputs.Machine || !o.facts.account) throw new Error("The stack isn't made yet: bun erga setup <name> stack.");
-  const host = hostOf(a, "production");
+  const host = hostOf(a, "primary");
   const had = entryOf(readConfig(o.dir), host);
   if (had && !("aws" in had)) throw new Error(`${host} is registered already, on Cloudflare. Setup makes a new instance.`);
-  const config: Config = withEntry(readConfig(o.dir), awsEntry(a, "production", o.facts.account, outputs, o.ids, had?.token ?? ""));
+  const config: Config = withEntry(readConfig(o.dir), awsEntry(a, "primary", o.facts.account, outputs, o.ids, had?.token ?? ""));
   writeConfig(o.dir, config);
   const entry = entryOf(config, host) as AwsEntry;
   const aws = awsCli(whereOf(a));
@@ -320,8 +320,8 @@ export async function firstDeployAws(o: FirstAws): Promise<string> {
   });
 }
 
-/** The address of the setup's production server on AWS, once registered: its entry's. */
+/** The address of the setup's instance on AWS, once registered: its entry's. */
 export const awsOrigin = (dir: string, a: Answers) => {
-  const e = entryOf(readConfig(dir), hostOf(a, "production"));
+  const e = entryOf(readConfig(dir), hostOf(a, "primary"));
   return e ? entryOrigin(e) : null;
 };

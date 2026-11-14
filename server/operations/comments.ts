@@ -42,7 +42,7 @@ async function ask(caller: Caller, doc: DocRow, call: CommentCall) {
   return "threads" in r ? { note: DATA, threads: r.threads } : { note: DATA, thread: r.thread };
 }
 
-/** "@erga" in a comment: its author asks their own agent. Not in an address or a longer name ("x@erga.dev", "@ergas"). */
+/** "@erga" in a comment: its author asks their own agent. Not in an address or a longer name ("x@erga.example", "@ergas"). */
 export const asksAgent = (text: string) => /(^|[^\w@.\/-])@erga(?![\w.-]*\w)/i.test(text);
 
 /** The comment with @erga that `by` wrote last in `thread`, in person. */

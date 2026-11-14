@@ -3,10 +3,10 @@
 // checks. A blob never changes, so the edge's cache keeps a whole one by its
 // hash with no time limit: most loads of a page's images never reach R2.
 //
-// Staging runs on a copy of production's documents, but not of its bucket:
-// a blob staging doesn't have is read from production's (its read-only
+// A staging instance runs on a copy of its primary's documents, but not of its bucket:
+// a blob it doesn't have is read from its primary's (the read-only
 // snapshot endpoint at SNAPSHOT_FROM, GET /api/snapshot/blob/<sha-256>, behind SNAPSHOT_TOKEN),
-// and kept in staging's own bucket from then on.
+// and kept in its own bucket from then on.
 
 import type { BlobBody, BlobStore } from "../document/blobs";
 import type { EdgeCache } from "./kv-cache";
@@ -26,17 +26,17 @@ const key = (hash: string) => `blobs/${hash}`;
  * cache's copy of a blob); without it nothing is cached.
  */
 export function blobsOf(
-  env: Pick<Env, "FILES" | "SNAPSHOT_IMPORT" | "SNAPSHOT_TOKEN" | "SNAPSHOT_FROM" | "DEPLOY_TARGET">,
+  env: Pick<Env, "FILES" | "SNAPSHOT_TOKEN" | "SNAPSHOT_FROM">,
   edge?: { cache: EdgeCache | null; background: (work: Promise<unknown>) => void }
 ): BlobStore | undefined {
   const bucket = env.FILES;
   if (!bucket) return undefined;
   const cache = edge?.cache ?? null;
   const background = edge?.background;
-  // Staging: what its copy of production's documents needs from production's bucket.
+  // A staging instance: what its copy of its primary's documents needs from its primary's bucket.
   const primary = env.SNAPSHOT_FROM?.trim().replace(/\/+$/, "");
-  const fromProduction =
-    primary && env.SNAPSHOT_IMPORT == "1" && env.DEPLOY_TARGET != "production" && (env.SNAPSHOT_TOKEN?.trim().length ?? 0) >= 32
+  const fromPrimary =
+    primary && (env.SNAPSHOT_TOKEN?.trim().length ?? 0) >= 32
     ? async (hash: string): Promise<boolean> => {
         const url = `${primary}/api/snapshot/blob/${hash}`;
         const r = await fetch(url, { headers: { Authorization: await snapshotAuth(env.SNAPSHOT_TOKEN!, "GET", url) } }).catch(() => null);
@@ -60,7 +60,7 @@ export function blobsOf(
     async head(hash) {
       const o = await bucket.head(key(hash));
       if (o) return { size: o.size };
-      return fromProduction && (await fromProduction(hash)) ? store.head(hash) : null;
+      return fromPrimary && (await fromPrimary(hash)) ? store.head(hash) : null;
     },
     async get(hash, range): Promise<BlobBody | null> {
       if (cache) {
@@ -73,7 +73,8 @@ export function blobsOf(
         await hit?.body?.cancel();
       }
       let o = await bucket.get(key(hash), range ? { range: { offset: range.start, length: range.end - range.start + 1 } } : undefined);
-      if (!o && fromProduction && (await fromProduction(hash))) o = await bucket.get(key(hash), range ? { range: { offset: range.start, length: range.end - range.start + 1 } } : undefined);
+      if (!o && fromPrimary && (await fromPrimary(hash)))
+        o = await bucket.get(key(hash), range ? { range: { offset: range.start, length: range.end - range.start + 1 } } : undefined);
       if (!o) return null;
       if (!range && cache && background && o.size <= CACHE_MAX) {
         const [mine, kept] = o.body.tee();
@@ -86,7 +87,7 @@ export function blobsOf(
     },
     async bytes(hash) {
       let o = await bucket.get(key(hash));
-      if (!o && fromProduction && (await fromProduction(hash))) o = await bucket.get(key(hash));
+      if (!o && fromPrimary && (await fromPrimary(hash))) o = await bucket.get(key(hash));
       return o ? new Uint8Array(await o.arrayBuffer()) : null;
     },
     put,
@@ -100,7 +101,7 @@ export function blobsOf(
 
 /**
  * GET /api/snapshot/blob/<sha-256>: one blob, for a server that copies
- * this one's documents (staging, production's), behind SNAPSHOT_TOKEN. Only
+ * this one's documents (a staging instance, its primary's), behind SNAPSHOT_TOKEN. Only
  * reads. Null for any other path.
  */
 export async function snapshotBlob(request: Request, env: Pick<Env, "FILES" | "SNAPSHOT_TOKEN">): Promise<Response | null> {

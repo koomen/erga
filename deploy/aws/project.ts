@@ -73,12 +73,11 @@ export async function celldProject(release: Release, vars: Record<string, string
       run_worker_first: worker.assets?.runWorkerFirst ?? true,
     },
     durable_objects: { bindings: durable },
-    // celld takes only new classes: the deleted ones never ran here.
     migrations: [
       {
         tag: "v1",
         new_sqlite_classes: Object.entries(worker.exports ?? {})
-          .filter(([, e]) => e.type == "durable-object" && e.state != "deleted")
+          .filter(([, e]) => e.type == "durable-object")
           .map(([name]) => name),
       },
     ],

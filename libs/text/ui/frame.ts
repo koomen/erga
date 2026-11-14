@@ -1,5 +1,5 @@
 // The page editor, in the document's own page: the viewer's page holds the page in its frame, on the document's own
-// origin (<id>-<owner>.erga-pages.dev), and the page's first script (client/inline/reader.ts) loads this one into it
+// origin (<id>-<owner>.<pages domain>), and the page's first script (client/inline/reader.ts) loads this one into it
 // when the viewer says "edit" (its one word, erga-mode: mode.ts). From then on the editor is the page's own: it opens
 // the document's socket itself, from this origin, with the edit key (server/documents/edit-key.ts), holds its own
 // replica of the room (collab.ts), sends every edit there and applies everyone else's, shows where the others' carets
@@ -63,7 +63,7 @@ const docExtensions: Extension[] = [history()];
 // (Only in a document's page on Erga: its first script is there, and says where the viewer is.)
 if (!window.__ergaReader) throw new Error("erga/text runs in a document's page on Erga");
 const reader = window.__ergaReader.config;
-/** The shell's origin (erga.dev): the only one this frame takes its word from. */
+/** The shell's origin (the app's): the only one this frame takes its word from. */
 const SHELL = reader.shell;
 /** The document's files, under this origin (the token in the address opens them). */
 const BASE = reader.prefix;

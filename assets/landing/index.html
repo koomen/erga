@@ -571,7 +571,7 @@ fetch('mail.json')
         show();
         new MutationObserver(sync).observe(body, { subtree: true, childList: true, characterData: true });
 
-        // Outside the editor (the page published as is, like the read-only demo at erga.dev/),
+        // Outside the editor (the page published as is: a homepage served as it is, read-only),
         // nothing makes the scene editable, so make it editable here and the demo still works.
         // In the editor the page runs in its frame and the editor's own editing drives it.
         if (!window.frameElement) {
@@ -777,7 +777,7 @@ Token: erga_OIoY…</pre>
       <li>There's no fixed document format, which means that you can use Erga for docs,  slides, or anything else you can dream up</li>
       <li>It's fully multi-player. Share your document URL with a friend or colleague and they can edit too.</li>
     </ul>
-    <p>You can try it yourself by editing this document or <a href="https://erga.dev/new" target="_top">creating a new one</a>.</p>
+    <p>You can try it yourself by editing this document or <a href="/new" target="_top">creating a new one</a>.</p>
     <p> </p>
   </section>
 

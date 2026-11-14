@@ -2,6 +2,10 @@
 // the server learns its host from the request. The test reads every tracked source file but the tests and the docs,
 // with its comments taken out (a comment may name erga.dev as an example). The HMAC label `erga-pages:` and the meta
 // name `erga-pages` are not addresses (server/documents/pages-origin.ts, server/documents/view.ts).
+//
+// And no kind of instance but the two the code has (one on Cloudflare, one on AWS): no flag or value says that an
+// instance is "production". A staging instance is any instance's feature: its entry names its primary (stagingOf), and
+// its server gets that address (SNAPSHOT_FROM). Every instance takes one path, so no code may ask which one it is.
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -16,6 +20,25 @@ const uncommented = (path: string, text: string) =>
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(path.endsWith(".sql") ? /(^|\s)--.*$/gm : path.endsWith(".toml") ? /(^|\s)#.*$/gm : /(^|\s)\/\/.*$/gm, "$1");
 
+/** The tracked source files (not the tests, not the docs), each with its text without comments. */
+const sources = () =>
+  Bun.spawnSync(["git", "ls-files", "-z"], { cwd: ROOT })
+    .stdout.toString()
+    .split("\0")
+    .filter((f) => /\.(ts|tsx|js|mjs|json|css|sql|toml)$/.test(f) && !/^(tests|e2e)\//.test(f) && f != "bun.lock")
+    .map((f) => ({ f, text: uncommented(f, readFileSync(join(ROOT, f), "utf8")) }));
+
+/** The lines of the sources that `what` matches, as "file: line". */
+const hitsOf = (what: RegExp, but: string[] = []) =>
+  sources()
+    .filter(({ f }) => !but.includes(f))
+    .flatMap(({ f, text }) =>
+      text
+        .split("\n")
+        .filter((line) => line.match(what))
+        .map((line) => `${f}: ${line.trim().slice(0, 120)}`)
+    );
+
 test("the names find what they are for, and skip comments and the HMAC label", () => {
   const found = (path: string, text: string) => uncommented(path, text).match(NAMES) ?? [];
   expect(found("a.ts", 'const host = "erga.dev";')).toEqual(["erga.dev"]);
@@ -27,16 +50,21 @@ test("the names find what they are for, and skip comments and the HMAC label", (
 });
 
 test("no instance's name in the code", () => {
-  const files = Bun.spawnSync(["git", "ls-files", "-z"], { cwd: ROOT })
-    .stdout.toString()
-    .split("\0")
-    .filter((f) => /\.(ts|tsx|js|mjs|json|css|sql|toml)$/.test(f) && !/^(tests|e2e)\//.test(f) && f != "bun.lock");
-  expect(files.length).toBeGreaterThan(100);
-  const hits = files.flatMap((f) =>
-    uncommented(f, readFileSync(join(ROOT, f), "utf8"))
-      .split("\n")
-      .filter((line) => line.match(NAMES))
-      .map((line) => `${f}: ${line.trim().slice(0, 120)}`)
-  );
-  expect(hits).toEqual([]);
+  expect(sources().length).toBeGreaterThan(100);
+  expect(hitsOf(NAMES)).toEqual([]);
+});
+
+/**
+ * A flag or a value for a kind of instance: the settings that only two instances had (DEPLOY_TARGET, SNAPSHOT_IMPORT),
+ * and "production" as a key, a value or a question. (The word in a sentence for a person is not one.)
+ */
+const KINDS = /\bDEPLOY_TARGET\b|\bSNAPSHOT_IMPORT\b|\bisProduction\b|\bproduction\??\s*[:=]|[=(,:]\s*["'`]production["'`]/g;
+
+test("no code asks whether an instance is production: every instance takes one path", () => {
+  const found = (text: string) => uncommented("a.ts", text).match(KINDS) ?? [];
+  expect(found('if (env.DEPLOY_TARGET == "production") return;').length).toBe(2);
+  expect(found('const t = { production: true }; vars.SNAPSHOT_IMPORT = "1"; kind = "production";').length).toBe(3);
+  expect(found('log("It is on production now."); // production: true\nconst stagingOf = entry.stagingOf;')).toEqual([]);
+  // The one file about commits from before this rule (deploy/cli/staging-commit.ts) names the old setting, to refuse them.
+  expect(hitsOf(KINDS, ["deploy/cli/staging-commit.ts"])).toEqual([]);
 });

@@ -1,19 +1,19 @@
-// The one deploy pipeline on Erga's own targets, against the mock Cloudflare's
-// copy of Erga's account: production as cf deploy left it, with data in its
-// database and documents in its Durable Objects. Nothing real is touched: no
-// Cloudflare, no credentials, no production data.
+// The one deploy pipeline on an instance that runs already and on its staging
+// instance, against the mock Cloudflare's example account (the fleet): the
+// instance as a deploy left it, with data in its database and documents in its
+// Durable Objects. Nothing real is touched: no Cloudflare, no credentials.
 //
-// Staging: every step, its own Worker, database, Durable Objects, secrets and
-// pages origin, a copy of production's database and documents, and nothing
-// written to production. Production: its Worker replaced in place, its secrets
-// kept. The guards. The snapshot endpoints, the documents' bucket.
+// The staging instance: every step, its own Worker, database, Durable Objects,
+// secrets and pages origin, a copy of its primary's database and documents, and
+// nothing written to its primary. The instance itself: its Worker replaced in
+// place, its secrets kept. The guards. The snapshot endpoints, the documents' bucket.
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { ALL_STEPS, guardTarget, runPipeline } from "../deploy/pipeline/pipeline";
 import { bucketName, ownCredentials } from "../deploy/pipeline/account";
 import { Cloudflare } from "../deploy/pipeline/cloudflare-api";
 import type { Release } from "../deploy/pipeline/release-format";
-import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare, PROD_DB, PROD_DOCS } from "../dev/mock-cloudflare";
+import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare, PRIMARY_DB, PRIMARY_DOCS } from "../dev/mock-cloudflare";
 import { memoryStore, SNAPSHOT_MINUTES, snapshotAuth, snapshotRoutes } from "../document/snapshot";
 import {
   prepareRelease,
@@ -26,8 +26,8 @@ import {
   deployTo,
   bindingsOf,
   stagingDbOf,
-  productionOf,
-  writesToProduction,
+  primaryOf,
+  writesToPrimary,
 } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 
@@ -35,20 +35,20 @@ quietConsole();
 
 beforeAll(prepareRelease, 120_000);
 
-describe("staging", () => {
-  test("its own Worker, database, Durable Objects and pages origin, and a copy of production's data; production untouched", async () => {
+describe("a staging instance", () => {
+  test("its own Worker, database, Durable Objects and pages origin, and a copy of its primary's data; its primary untouched", async () => {
     const mock = mockCloudflare({ fleet: true });
-    const before = productionOf(mock.state);
+    const before = primaryOf(mock.state);
     const { result, steps } = await deployTo(staging({ secrets: stagingSecrets }), mock);
     expect(steps.filter((s) => s.endsWith(":running")).map((s) => s.split(":")[0])).toEqual(ALL_STEPS.map((s) => s.id));
     expect(result.url).toBe("https://staging.example.com");
     expect(result.pages).toBe("*.example-pages-staging.com");
 
-    // Its own database: a new one, with production's rows and migrations, then the migrations production hasn't had yet
-    // (the mock's production stops at 0110_admin_keys.sql; staging runs ahead of it with the newer ones).
+    // Its own database: a new one, with its primary's rows and migrations, then the migrations its primary hasn't had yet
+    // (the mock's primary stops at 0110_admin_keys.sql; staging runs ahead of it with the newer ones).
     const db = stagingDbOf(mock.state);
-    const prod = mock.state.databases.find((d) => d.uuid == PROD_DB)!;
-    expect(db.uuid).not.toBe(PROD_DB);
+    const prod = mock.state.databases.find((d) => d.uuid == PRIMARY_DB)!;
+    expect(db.uuid).not.toBe(PRIMARY_DB);
     expect(db.rows).toEqual(prod.rows!);
     const all = Object.keys(release.migrations).sort(), newer = all.filter((n) => !prod.migrations.includes(n));
     expect(db.migrations).toEqual([...prod.migrations, ...newer]);
@@ -60,13 +60,14 @@ describe("staging", () => {
       )
     );
 
-    // Its own Worker: bound to its database, its settings, its secrets, the builder; Durable Objects of its own (a new Worker: no tombstone).
+    // Its own Worker: bound to its database, its settings, its secrets; Durable Objects of its own.
     const b = bindingsOf(mock.state, "erga-staging");
     expect(b.DB.database_id).toBe(db.uuid);
     expect(b.DOCUMENTS).toMatchObject({ type: "durable_object_namespace", class_name: "DocumentObject" });
     expect(b.DOCUMENTS.script_name).toBeUndefined();
-    expect(b.DEPLOY_TARGET.text).toBe("staging");
-    expect(b.SNAPSHOT_IMPORT.text).toBe("1");
+    // One fact says that it is a staging instance: its primary's address. No other flag.
+    expect(b.DEPLOY_TARGET).toBeUndefined();
+    expect(b.SNAPSHOT_IMPORT).toBeUndefined();
     expect(b.PAGES_DOMAIN.text).toBe("example-pages-staging.com");
     expect(b.ERGA_VERSION.text).toBe(release.version);
     expect(b.ERGA_DEPLOYED).toBeUndefined();
@@ -78,8 +79,8 @@ describe("staging", () => {
     expect(mock.state.secrets["erga-staging"].SESSION_SECRET).not.toBe(mock.state.secrets.erga.SESSION_SECRET);
     const meta = mock.state.scripts["erga-staging"].metadata;
     expect(meta.keep_bindings).toEqual(["secret_text", "secret_key"]);
-    expect(meta.exports.DocList).toBeUndefined();
-    expect(Object.keys(meta.exports).sort()).toEqual(Object.entries(release.worker.exports!).filter(([, e]) => e.state != "deleted").map(([n]) => n).sort());
+    expect(Object.keys(meta.exports).sort()).toEqual(Object.keys(release.worker.exports!).sort());
+    expect(Object.values(meta.exports)).toEqual(Object.keys(meta.exports).map(() => ({ type: "durable-object", storage: "sqlite" })));
     expect(mock.state.scripts["erga-staging"].namespaces.sort()).toEqual(Object.keys(meta.exports).sort());
 
     // Its addresses: staging.example.com, and documents' pages on a zone of their own (example-pages-staging.com: its Universal SSL covers them).
@@ -91,23 +92,26 @@ describe("staging", () => {
     const pagesZone = "zone00000000000000000000000e7ga3";
     expect(mock.state.routes[pagesZone]).toEqual([{ pattern: "*.example-pages-staging.com/*", script: "erga-staging" }]);
     expect(mock.state.dns[pagesZone].map((r) => r.name)).toEqual(["*.example-pages-staging.com"]);
-    // Production's pages zone: nothing of staging's.
+    // Its primary's pages zone: nothing of staging's.
     expect(mock.state.routes["zone00000000000000000000000e7ga2"]).toEqual([{ pattern: "*.example-pages.com/*", script: "erga" }]);
     expect(mock.state.dns["zone00000000000000000000000e7ga2"].map((r) => r.name)).toEqual(["*.example-pages.com"]);
 
-    // Production's documents, every key and alarm, in staging's Durable Objects.
+    // Its primary's documents, every key and alarm, in staging's Durable Objects.
     const ours = mock.state.docs["erga-staging"].docs, theirs = mock.state.docs.erga.docs;
-    expect([...ours.keys()].sort()).toEqual([...PROD_DOCS].sort());
-    for (const id of PROD_DOCS) {
+    expect([...ours.keys()].sort()).toEqual([...PRIMARY_DOCS].sort());
+    for (const id of PRIMARY_DOCS) {
       expect([...ours.get(id)!.entries].sort()).toEqual([...theirs.get(id)!.entries].sort());
       expect(ours.get(id)!.alarm).toBe(theirs.get(id)!.alarm);
     }
     expect(steps.find((s) => s.startsWith("documents:done"))).toContain("3 documents copied");
 
-    // Production: read (its database's export, its snapshot endpoint), never written.
-    expect(writesToProduction(mock.state)).toEqual([]);
-    expect(mock.state.calls.filter((c) => c.includes(PROD_DB))).toEqual([`POST /accounts/${FLEET_ACCOUNT}/d1/database/${PROD_DB}/export`, `POST /accounts/${FLEET_ACCOUNT}/d1/database/${PROD_DB}/export`]);
-    expect(productionOf(mock.state)).toBe(before);
+    // Its primary: read (its database's export, its snapshot endpoint), never written.
+    expect(writesToPrimary(mock.state)).toEqual([]);
+    expect(mock.state.calls.filter((c) => c.includes(PRIMARY_DB))).toEqual([
+      `POST /accounts/${FLEET_ACCOUNT}/d1/database/${PRIMARY_DB}/export`,
+      `POST /accounts/${FLEET_ACCOUNT}/d1/database/${PRIMARY_DB}/export`,
+    ]);
+    expect(primaryOf(mock.state)).toBe(before);
   });
 
   test("again, with a fresh copy asked for: a fresh snapshot (staging's old copy gone, its own documents emptied), its secrets and API keys kept", async () => {
@@ -116,35 +120,47 @@ describe("staging", () => {
     // Each server stored its own Anthropic key, under its own FACTORY_KEY.
     const key = (who: string) => `INSERT INTO credentials (name, iv, data, last4, updated, updated_by, updated_via) VALUES ('anthropic', 'iv-${who}', 'data-${who}', '${who.slice(0, 4)}', 1, 'koomen', NULL);`;
     stagingDbOf(mock.state).rows!.push(key("staging"));
-    const prodDb = mock.state.databases.find((d) => d.uuid == PROD_DB)!;
-    prodDb.tables.push("credentials");
-    prodDb.rows!.push(key("production"));
-    // Things happen on both: someone makes a document on staging, and one on production.
+    const primaryDb = mock.state.databases.find((d) => d.uuid == PRIMARY_DB)!;
+    primaryDb.tables.push("credentials");
+    primaryDb.rows!.push(key("primary"));
+    // Things happen on both: someone makes a document on staging, and one on its primary.
     const stagingDb = stagingDbOf(mock.state);
     stagingDb.rows!.push("INSERT INTO documents (id, owner, slug, title) VALUES ('zzzz9999', 'bo', 'scratch', 'Scratch');");
     mock.state.docs["erga-staging"].docs.set("zzzz9999", { entries: new Map([["meta", { id: "zzzz9999" }]]), alarm: null });
-    mock.state.docs["erga-staging"].docs.get(PROD_DOCS[0])!.entries.set("file:index.html", new TextEncoder().encode("edited on staging"));
-    mock.state.databases.find((d) => d.uuid == PROD_DB)!.rows!.push("INSERT INTO documents (id, owner, slug, title) VALUES ('newp4567', 'ada', 'new', 'New');");
-    mock.state.docs.erga.docs.set("newp4567", { entries: new Map<string, unknown>([["meta", { id: "newp4567" }], ["file:index.html", new TextEncoder().encode("new on production")]]), alarm: null });
-    const before = productionOf(mock.state);
+    mock.state.docs["erga-staging"].docs
+      .get(PRIMARY_DOCS[0])!
+      .entries.set("file:index.html", new TextEncoder().encode("edited on staging"));
+    mock.state.databases
+      .find((d) => d.uuid == PRIMARY_DB)!
+      .rows!.push("INSERT INTO documents (id, owner, slug, title) VALUES ('newp4567', 'ada', 'new', 'New');");
+    mock.state.docs.erga.docs.set("newp4567", {
+      entries: new Map<string, unknown>([
+        ["meta", { id: "newp4567" }],
+        ["file:index.html", new TextEncoder().encode("new on the primary")],
+      ]),
+      alarm: null,
+    });
+    const before = primaryOf(mock.state);
 
     const { steps } = await deployTo(afresh(staging()), mock);
     expect(mock.state.deletedDatabases).toEqual([stagingDb.name]);
     const db = stagingDbOf(mock.state);
     expect(db.uuid).not.toBe(stagingDb.uuid);
-    // Staging's own key, not production's (which doesn't open on staging).
+    // Staging's own key, not its primary's (which doesn't open on staging).
     expect(db.rows!.filter((r) => r.startsWith("INSERT INTO credentials"))).toEqual([key("staging")]);
     expect(steps.find((s) => s.startsWith("migrations:done"))).toContain("its own API keys kept (anthropic)");
     expect(db.rows!.some((r) => r.includes("zzzz9999"))).toBe(false);
     expect(db.rows!.some((r) => r.includes("newp4567"))).toBe(true);
     const docs = mock.state.docs["erga-staging"].docs;
-    expect([...docs.keys()].sort()).toEqual([...PROD_DOCS, "newp4567"].sort());
-    expect(new TextDecoder().decode(docs.get(PROD_DOCS[0])!.entries.get("file:index.html") as Uint8Array)).toContain("production's words");
+    expect([...docs.keys()].sort()).toEqual([...PRIMARY_DOCS, "newp4567"].sort());
+    expect(new TextDecoder().decode(docs.get(PRIMARY_DOCS[0])!.entries.get("file:index.html") as Uint8Array)).toContain(
+      "the primary's words"
+    );
     expect(steps.find((s) => s.startsWith("documents:done"))).toContain("1 old ones emptied");
     // The secrets setup gave it stay (this deploy sent none).
     expect(mock.state.secrets["erga-staging"]).toEqual(stagingSecrets);
-    expect(writesToProduction(mock.state)).toEqual([]);
-    expect(productionOf(mock.state)).toBe(before);
+    expect(writesToPrimary(mock.state)).toEqual([]);
+    expect(primaryOf(mock.state)).toBe(before);
   });
 
   test("a step that fails stops the deploy; run again, it finishes, and still empties what it should", async () => {
@@ -166,10 +182,10 @@ describe("staging", () => {
     mock.state.failNext = "worker";
     await expect(deployTo(afresh(staging()), mock)).rejects.toThrow(/upload the Worker/);
     await deployTo(afresh(staging()), mock);
-    expect(writesToProduction(mock.state)).toEqual([]);
+    expect(writesToPrimary(mock.state)).toEqual([]);
   });
 
-  test("before production serves snapshots, documents are skipped (and said so), not failed", async () => {
+  test("before its primary serves snapshots, documents are skipped (and said so), not failed", async () => {
     const mock = mockCloudflare({ fleet: true });
     delete mock.state.secrets.erga.SNAPSHOT_TOKEN;
     const { steps } = await deployTo(staging({ secrets: stagingSecrets }), mock);
@@ -178,58 +194,64 @@ describe("staging", () => {
   });
 });
 
-describe("production", () => {
-  test("its Worker replaced in place: the same database and domain, its secrets kept, its tombstone sent, no copying", async () => {
+describe("an instance that runs already", () => {
+  test("its Worker replaced in place: the same database and domain, its secrets kept, no copying", async () => {
     const mock = mockCloudflare({ fleet: true });
     const secrets = { ...mock.state.secrets.erga };
     const { steps } = await deployTo(primary(), mock);
     expect(steps.filter((s) => s.endsWith(":running")).map((s) => s.split(":")[0])).toEqual(["account", "database", "migrations", "assets", "worker", "address", "pages", "live"]);
-    expect(steps).toContain("database:done using Erga's database from before (" + PROD_DB + ")");
+    expect(steps).toContain("database:done using Erga's database from before (" + PRIMARY_DB + ")");
     expect(mock.state.databases.length).toBe(1);
     expect(mock.state.deletedDatabases).toEqual([]);
     expect(mock.state.versions.erga).toBe(2);
     expect(mock.state.secrets.erga).toEqual(secrets);
     const b = bindingsOf(mock.state, "erga");
-    expect(b.DB.database_id).toBe(PROD_DB);
-    expect(b.DEPLOY_TARGET.text).toBe("production");
-    expect(b.SNAPSHOT_IMPORT.text).toBe("");
-    expect(b.SNAPSHOT_FROM).toBeUndefined();
+    expect(b.DB.database_id).toBe(PRIMARY_DB);
+    expect(b.DEPLOY_TARGET).toBeUndefined();
+    expect(b.SNAPSHOT_FROM.text).toBe("");
     expect(b.PAGES_DOMAIN.text).toBe("example-pages.com");
     expect(b.GITHUB_CLIENT_ID.text).toBe("Ov23primary");
-    expect(mock.state.scripts.erga.metadata.exports.DocList).toEqual({ type: "durable-object", state: "deleted" });
+    // The same exports as its staging instance's, and as a new instance's: none is deleted.
+    expect(mock.state.scripts.erga.metadata.exports).toEqual(
+      Object.fromEntries(Object.keys(release.worker.exports!).map((n) => [n, { type: "durable-object", storage: "sqlite" }]))
+    );
     expect(mock.state.domains.filter((d) => d.hostname == "example.com")).toEqual([
       { hostname: "example.com", service: "erga", zone_id: "zone00000000000000000000000e7ga1" },
     ]);
     expect(mock.state.routes["zone00000000000000000000000e7ga2"]).toEqual([{ pattern: "*.example-pages.com/*", script: "erga" }]);
   });
 
-  test("guards: nothing but production may use production's names, and a snapshot never goes into its source", () => {
+  test("guards: a staging instance may not use its primary's names, and a copy never goes into its source", () => {
     const g = staging();
     expect(guardTarget(g)).toBeNull();
-    expect(guardTarget({ ...g, workerName: "erga" })).toMatch(/replace production's Worker/);
-    expect(guardTarget({ ...g, databaseName: "erga" })).toMatch(/production's database/);
+    expect(guardTarget({ ...g, workerName: "erga" })).toMatch(/replace its primary's Worker/);
+    expect(guardTarget({ ...g, databaseName: "erga" })).toMatch(/its primary's database/);
     expect(guardTarget({ ...g, app: { kind: "domain", zoneName: "example.com", hostname: "example.com" } })).toMatch(
-      /production's address/
+      /its primary's address/
     );
-    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "example-pages.com" } })).toMatch(/production's address/);
+    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "example-pages.com" } })).toMatch(/its primary's address/);
     expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "example-pages.com", domain: "staging.example-pages.com" } })).toMatch(
-      /under production's pages domain/
+      /under its primary's pages domain/
     );
     expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "example-pages.com", domain: "a.b.EXAMPLE-PAGES.com" } })).toMatch(
-      /under production's pages domain/
+      /under its primary's pages domain/
     );
     // Not under it: a name that only ends the same way.
     expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "my-example-pages.com" } })).toBeNull();
     expect(g.pages).toEqual({ kind: "zone", zoneName: "example-pages-staging.com", domain: "example-pages-staging.com" });
-    expect(guardTarget({ ...g, snapshot: { ...g.snapshot!, databaseName: "erga-staging" } })).toMatch(/can't go into the database it's copied from/);
-    expect(guardTarget({ ...primary(), snapshot: g.snapshot })).toMatch(/Production never takes a copy/);
-    // A server /deploy made in someone else's account may be called erga: the guard is production's account's.
-    expect(guardTarget({ ...g, snapshot: undefined, workerName: "erga", databaseName: "erga", accountId: "f".repeat(32) })).toBeNull();
+    // In another account, the names may be the same: the guard is its primary's account's. But a copy never goes into its source's name.
+    const elsewhere = { ...g, workerName: "erga", databaseName: "erga", accountId: "f".repeat(32) };
+    expect(guardTarget(elsewhere)).toMatch(/can't go into the database it's copied from/);
+    expect(guardTarget({ ...elsewhere, stagingOf: { ...g.stagingOf!, copy: undefined } })).toBeNull();
+    // An instance that names no primary has nothing to guard, and no homepage rule but its own address.
+    expect(guardTarget(primary())).toBeNull();
+    expect(guardTarget({ ...primary(), home: "example.org" })).toBeNull();
+    expect(guardTarget({ ...g, home: "example.org" })).toMatch(/a staging instance serves no homepage domain/);
   });
 
   test("a guarded deploy stops before it asks Cloudflare anything", async () => {
     const mock = mockCloudflare({ fleet: true });
-    await expect(deployTo(staging({ databaseName: "erga" }), mock)).rejects.toThrow(/production's database/);
+    await expect(deployTo(staging({ databaseName: "erga" }), mock)).rejects.toThrow(/its primary's database/);
     expect(mock.state.calls).toEqual([]);
   });
 });
@@ -314,27 +336,35 @@ describe("the snapshot endpoints", () => {
     mock.state.snapshotBudget = 16_000;
     mock.state.docs.erga.rpcLimit = 64_000;
     mock.state.docs["erga-staging"] = Object.assign(memoryStore(), { rpcLimit: 64_000 });
-    // Production's first document has 40 versions' blobs of 8 KB: about 430 KB as base64.
-    const big = mock.state.docs.erga.docs.get(PROD_DOCS[0])!;
+    // The primary's first document has 40 versions' blobs of 8 KB: about 430 KB as base64.
+    const big = mock.state.docs.erga.docs.get(PRIMARY_DOCS[0])!;
     for (let i = 0; i < 40; i++) big.entries.set(`b:${String(i).padStart(4, "0")}`, crypto.getRandomValues(new Uint8Array(8_000)));
     const { steps } = await deployTo(staging({ secrets: stagingSecrets }), mock);
     expect(steps.find((s) => s.startsWith("documents:") && s != "documents:running")).toBe("documents:done 3 documents copied");
     const ours = mock.state.docs["erga-staging"].docs, theirs = mock.state.docs.erga.docs;
-    for (const id of PROD_DOCS) {
+    for (const id of PRIMARY_DOCS) {
       expect([...ours.get(id)!.entries].sort()).toEqual([...theirs.get(id)!.entries].sort());
       expect(ours.get(id)!.alarm).toBe(theirs.get(id)!.alarm);
     }
   });
 
-  test("a document production can't read is left empty, and the others are copied", async () => {
+  test("a document its primary can't read is left empty, and the others are copied", async () => {
     const mock = mockCloudflare({ fleet: true });
-    const prod = mock.state.docs.erga, read = prod.export.bind(prod);
-    prod.export = async (id, page) => { if (id == PROD_DOCS[1]) throw new Error("storage unreadable"); return read(id, page); };
+    const prod = mock.state.docs.erga,
+      read = prod.export.bind(prod);
+    prod.export = async (id, page) => {
+      if (id == PRIMARY_DOCS[1]) throw new Error("storage unreadable");
+      return read(id, page);
+    };
     // Staging has an older copy of it: emptied, not left as it was.
-    mock.state.docs["erga-staging"] = memoryStore(new Map([[PROD_DOCS[1], { entries: new Map<string, unknown>([["meta", { id: PROD_DOCS[1] }]]), alarm: null }]]));
+    mock.state.docs["erga-staging"] = memoryStore(
+      new Map([[PRIMARY_DOCS[1], { entries: new Map<string, unknown>([["meta", { id: PRIMARY_DOCS[1] }]]), alarm: null }]])
+    );
     const { steps } = await deployTo(staging({ secrets: stagingSecrets }), mock);
-    expect(steps.find((s) => s.startsWith("documents:") && s != "documents:running")).toBe(`documents:done 2 documents copied; 1 couldn't be read, and are empty here: ${PROD_DOCS[1]} (storage unreadable)`);
-    expect([...mock.state.docs["erga-staging"].docs.keys()].sort()).toEqual([PROD_DOCS[0], PROD_DOCS[2]].sort());
+    expect(steps.find((s) => s.startsWith("documents:") && s != "documents:running")).toBe(
+      `documents:done 2 documents copied; 1 couldn't be read, and are empty here: ${PRIMARY_DOCS[1]} (storage unreadable)`
+    );
+    expect([...mock.state.docs["erga-staging"].docs.keys()].sort()).toEqual([PRIMARY_DOCS[0], PRIMARY_DOCS[2]].sort());
   });
 });
 

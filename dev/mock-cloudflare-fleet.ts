@@ -1,10 +1,11 @@
-// The pretend Cloudflare's fleet (dev/mock-cloudflare.ts, the `fleet` option): an account with a primary instance and
-// room for its staging instance, as their deploys see it. Example names only: example.com, its pages on example-pages.com.
+// The pretend Cloudflare's fleet (dev/mock-cloudflare.ts, the `fleet` option): an account with an instance that runs
+// already and room for its staging instance, as their deploys see it. Example names only: example.com, its pages on
+// example-pages.com.
 
 import { memoryStore } from "../document/snapshot";
-import { ACCOUNT_ID, deployVersion, MOCK_SNAPSHOT_TOKEN, PROD_DB, PROD_DOCS, type MockState } from "./mock-cloudflare";
+import { ACCOUNT_ID, deployVersion, MOCK_SNAPSHOT_TOKEN, PRIMARY_DB, PRIMARY_DOCS, type MockState } from "./mock-cloudflare";
 
-/** The example account: the primary as its first deploy left it (the fleet option). */
+/** The example account: the instance as a deploy left it (the fleet option). */
 export function seedFleet(state: MockState) {
   state.account = { id: ACCOUNT_ID, name: "Erga" };
   state.subdomain = "erga";
@@ -27,34 +28,33 @@ export function seedFleet(state: MockState) {
     "admin_log",
   ];
   state.databases.push({
-    uuid: PROD_DB,
+    uuid: PRIMARY_DB,
     name: "erga",
     statements: [],
     tables,
     migrations: ["0001_erga.sql", "0002_delete_docs_after_hours.sql", "0100_tokens.sql", "0110_admin_keys.sql"],
     rows: [
-      "INSERT INTO users (login, name) VALUES ('ada', 'Ada');",
-      ...PROD_DOCS.map(
+      "INSERT INTO users (login, name, role, created) VALUES ('ada', 'Ada', 'admin', 1700000000000);",
+      ...PRIMARY_DOCS.map(
         (id, i) => `INSERT INTO documents (id, owner, slug, title) VALUES ('${id}', 'ada', 'doc-${i + 1}', 'Document ${i + 1}');`
       ),
     ],
   });
-  const prodBindings = [
+  const bindings = [
     { type: "durable_object_namespace", name: "DOCUMENTS", class_name: "DocumentObject" },
-    { type: "d1", name: "DB", database_id: PROD_DB, id: PROD_DB },
-    { type: "plain_text", name: "DEPLOY_TARGET", text: "production" },
-    { type: "plain_text", name: "ERGA_VERSION", text: "prod00000000" },
+    { type: "d1", name: "DB", database_id: PRIMARY_DB, id: PRIMARY_DB },
+    { type: "plain_text", name: "ERGA_VERSION", text: "prim00000000" },
   ];
   state.scripts.erga = {
-    metadata: { main_module: "index.js", bindings: prodBindings },
+    metadata: { main_module: "index.js", bindings },
     modules: ["index.js"],
     workersDev: false,
     tags: [],
-    namespaces: ["DocumentObject", "DocHost", "Deployer", "DocList"],
+    namespaces: ["DocumentObject"],
   };
   state.secrets.erga = {
-    SESSION_SECRET: "production-session-secret",
-    GITHUB_CLIENT_SECRET: "production-github-secret",
+    SESSION_SECRET: "primary-session-secret",
+    GITHUB_CLIENT_SECRET: "primary-github-secret",
     SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN,
   };
   state.versions = { erga: 1 };
@@ -63,11 +63,11 @@ export function seedFleet(state: MockState) {
   state.routes[state.zones[1].id] = [{ pattern: "*.example-pages.com/*", script: "erga" }];
   state.dns[state.zones[1].id] = [{ type: "AAAA", name: "*.example-pages.com", content: "100::", proxied: true }];
   const docs = memoryStore();
-  PROD_DOCS.forEach((id, i) =>
+  PRIMARY_DOCS.forEach((id, i) =>
     docs.docs.set(id, {
       entries: new Map<string, unknown>([
         ["meta", { id, owner: "ada", index: "index.html", created: 1_700_000_000_000 + i, modified: 1_700_000_100_000 + i }],
-        ["file:index.html", new TextEncoder().encode(`<h1>Document ${i + 1}</h1><p>production's words</p>`)],
+        ["file:index.html", new TextEncoder().encode(`<h1>Document ${i + 1}</h1><p>the primary's words</p>`)],
         ["state", new Uint8Array([1, 2, 3, i])],
         ...(i == 2 ? [["dir:drafts", true] as [string, unknown]] : []),
       ]),

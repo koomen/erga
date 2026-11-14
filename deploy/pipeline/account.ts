@@ -31,7 +31,7 @@ export const servedAssets = (release: Release) => Object.fromEntries(Object.entr
  * as `cf build` wrote it), each made the target's own: its database, its
  * text settings, its secrets, its services and where its pages run.
  */
-export function workerMetadata(release: Release, target: Target, o: { dbId: string; assetsJwt: string; pagesHost: string | null; existing?: boolean }) {
+export function workerMetadata(release: Release, target: Target, o: { dbId: string; assetsJwt: string; pagesHost: string | null }) {
   const w = release.worker;
   // Which release this is (GET /api/deploys/version answers it).
   const text: Record<string, string> = { ERGA_VERSION: release.version, ERGA_DEPLOY: JSON.stringify(deployFacts(target)), ...target.vars };
@@ -64,10 +64,11 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
   else bindings.push({ type: "plain_text", name: "PAGES_HOST", text: o.pagesHost });
   // Durable Objects as declarative exports, as `cf deploy` sends them: the platform makes each namespace on the first
   // deploy and matches it after, with no migration tags, so a deploy run again (or retried) is the same deploy.
-  // A "deleted" tombstone (erga.dev's DocList) goes only to a Worker that's there already: a new one has nothing to delete.
-  const exports = Object.fromEntries(Object.entries(w.exports ?? {})
-    .filter(([, e]) => e.type == "durable-object" && (o.existing || e.state != "deleted"))
-    .map(([n, e]) => [n, e.state == "deleted" ? { type: "durable-object", state: "deleted" } : { type: "durable-object", storage: e.storage ?? "sqlite" }]));
+  const exports = Object.fromEntries(
+    Object.entries(w.exports ?? {})
+      .filter(([, e]) => e.type == "durable-object")
+      .map(([n, e]) => [n, { type: "durable-object", storage: e.storage ?? "sqlite" }])
+  );
   return {
     main_module: release.mainModule,
     compatibility_date: w.compatibilityDate,
@@ -91,7 +92,7 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
 
 /**
  * What the server answers an admin's ops token (GET /api/ops) of where it is deployed: the target's own names and its
- * plain settings (vars), so a deploy from a machine can deploy it again with no list of targets in the code. Never a
+ * plain settings (vars), so a deploy from a machine can deploy it again with no list of instances in the code. Never a
  * secret: the secrets stay on the Worker.
  */
 export const deployFacts = (t: Target) => ({
@@ -107,17 +108,15 @@ export const deployFacts = (t: Target) => ({
 
 /**
  * The R2 bucket a target binds as `binding`: one of its own, named after its
- * Worker (FILES on erga is erga-files, on erga-staging erga-staging-files),
- * so no two targets share one.
+ * Worker (FILES on the Worker example is example-files), so no two targets share one.
  */
 export const bucketName = (target: Pick<Target, "workerName">, binding: string) => `${target.workerName}-${binding.toLowerCase().replace(/_/g, "-")}`;
 
 /**
  * Makes each R2 bucket the release binds that the target's account doesn't
  * have yet. A credential that may not read the account's buckets (a token
- * with no R2 permission) goes on: the buckets of Erga's own
- * targets are made once, by hand, and the upload says in Cloudflare's words
- * if one is missing.
+ * with no R2 permission) goes on: the upload says in Cloudflare's words
+ * if a bucket is missing.
  */
 export async function ensureBuckets(cf: Cloudflare, acc: string, release: Release, target: Target): Promise<void> {
   for (const [name, b] of Object.entries(release.worker.env)) {
@@ -138,8 +137,7 @@ const serviceBinding = (name: string, to: string | { service: string; entrypoint
 
 /**
  * The account's Workers, as the account step needs them (is the target's
- * there, and is it Erga's). A token scoped to some Workers only (Erga's own
- * deploy token) may not list the account's: then the
+ * there, and is it Erga's). A token scoped to some Workers only may not list the account's: then the
  * target's own settings answer whether it's there and Erga's.
  */
 export async function listScripts(
@@ -540,12 +538,12 @@ const claimsOf = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Record(
  * another server's data it moves to: the copy's rows (the other server's,
  * encrypted with its FACTORY_KEY, so they don't open here) go, and the rows of
  * the copy it was on (`from`; none on its first copy) come in. Without this,
- * each new copy would drop staging's Anthropic key, and its agents would stop. The same for each person's own keys.
- * Trap: staging's database is a copy of production's. A new table that holds secrets needs the same here, in the same change.
+ * each new copy would drop the staging instance's Anthropic key, and its agents would stop. The same for each person's own keys.
+ * Trap: a staging instance's database is a copy of its primary's. A new table that holds secrets needs the same here, in the same change.
  */
 export async function ownCredentials(cf: Cloudflare, acc: string, from: string | null, to: string): Promise<string> {
   const rows = from ? (await d1(cf, acc, from, "SELECT * FROM credentials", [], "read the API keys this server stored")) ?? [] : [];
-  // Each person's own keys too (server/migrations/0290_person_keys.sql): production's people's keys never stay in the
+  // Each person's own keys too (server/migrations/0290_person_keys.sql): the primary's people's keys never stay in the
   // copy, and the copy it was on keeps its own (none if its copy is older than the table).
   const theirs = from
     ? ((await d1(cf, acc, from, "SELECT * FROM person_keys", [], "read the people's own API keys this server stored").catch(() => null)) ??

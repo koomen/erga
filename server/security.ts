@@ -2,8 +2,7 @@
 // (handle, server/app.ts, puts it on each one, after the route table):
 //
 //   - HSTS, on every HTTPS answer (not on this machine's): HTTPS only, for a
-//     year, on every subdomain too (all of erga.dev's are HTTPS; .dev is on the
-//     browsers' HTTPS-only list anyway);
+//     year, on every subdomain too (a server's subdomains must all be HTTPS);
 //   - on the site's own origin, no frame but its own: frame-ancestors 'self',
 //     and X-Frame-Options for the browsers before it. The editor frames its
 //     own files (a PDF in the viewer), never another site's page this one;

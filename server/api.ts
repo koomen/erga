@@ -432,15 +432,15 @@ const pollForToken = Effect.fnUntraced(function* (platform: Platform) {
 
 /**
  * GET /api/ops, with an admin's ops token (it signs no one in, so it's checked here): the release this server runs,
- * its target, the host it was asked at, and the deploy facts the pipeline gave it (null where none did).
+ * the host it was asked at, and the deploy facts the pipeline gave it (null where none did).
  */
 const opsFacts = Effect.fnUntraced(function* (platform: Platform, request: Request, url: URL) {
   const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1];
   const token = bearer ? yield* call(() => platform.tokens.verify(bearer)) : null;
   const admin = token?.scope == "ops" && (yield* call(() => platform.directory.users.isAdmin({ login: token.login })));
   if (!admin) return failure("This needs an admin's ops token (Authorization: Bearer erga_...).", 401);
-  const { version, target, facts } = platform.deploy;
-  return json({ version, target, host: url.host, deploy: facts ?? null });
+  const { version, facts } = platform.deploy;
+  return json({ version, host: url.host, deploy: facts ?? null });
 });
 
 // ---------------------------------------------------------------- MCP's instructions
@@ -548,7 +548,7 @@ export const ROUTES: readonly RouteRow<(a: Asked, params: Record<string, string>
   {
     method: "GET",
     path: "/api/ops",
-    // An admin's ops token only: {version, target, host, deploy}, what a deploy from a machine needs to deploy this
+    // An admin's ops token only: {version, host, deploy}, what a deploy from a machine needs to deploy this
     // server again (the CLI: deploy/cli/ops.ts).
     run: ({ platform, request, url }) => opsFacts(platform, request, url),
     action: "The CLI reads the server's deploy facts (the commit it runs, its Cloudflare account, Worker, database, domains)",

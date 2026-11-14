@@ -738,8 +738,8 @@ export class Document {
   }
 
   /**
-   * Becomes `snap` (staging only: the app allows it only with
-   * SNAPSHOT_IMPORT, never on production): whoever has it open is
+   * Becomes `snap` (a staging instance only: the app allows it only with
+   * SNAPSHOT_FROM, its primary): whoever has it open is
    * disconnected and the room closed first (it writes what it holds as it
    * closes), then its storage is emptied and the snapshot written in. A
    * later part (`append`) is only written in.

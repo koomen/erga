@@ -7,7 +7,7 @@
 // Beside it, the text of each file as the room's files last had it (`base`): if the room loses its history (a new epoch), the
 // replica can't merge into it, and its files' text goes in as edits instead, against that base (collab.ts, `adopt`).
 //
-// One database per origin: the viewer's (erga.dev) keeps the shell's replica, a document's pages origin its page's.
+// One database per origin: the viewer's (the app's) keeps the shell's replica, a document's pages origin its page's.
 // Sign-out deletes it, and nothing opens it again until the next sign-in (client/common/offline.ts, keepWrite).
 
 import * as Y from "yjs";

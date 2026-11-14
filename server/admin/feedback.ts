@@ -2,7 +2,7 @@
 // and its GitHub issue (or that it waits for one). Opening the page tries the waiting ones again (server/feedback.ts).
 
 import { esc } from "../../shared/html.ts";
-import { fileFeedback, issuesRepo } from "../feedback.ts";
+import { feedbackTarget, fileFeedback, issuesRepo } from "../feedback.ts";
 import { TIMES_SCRIPT } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import type { FeedbackRow } from "../directory/index.ts";
@@ -18,7 +18,7 @@ function feedbackRow(f: FeedbackRow, target: string, link: ((n: number) => strin
         ? `<a class="issue" href="${esc(link(f.issue))}" target="_blank" rel="noopener">#${f.issue}</a>`
         : `<span class="issue">#${f.issue}</span>`
       : f.target != target
-        ? `<span class="badge" title="Each server opens issues only for its own feedback">Sent on ${esc(f.target || "another server")}</span>`
+        ? `<span class="badge" title="Each server opens issues only for its own feedback">Sent on ${f.target == "staging" ? "a staging instance" : "its primary"}</span>`
         : `<span class="badge">No issue yet</span>`;
   return `  <li class="feedback-row" data-id="${esc(f.id)}">
     <p class="text">${esc(f.text)}</p>
@@ -29,7 +29,7 @@ function feedbackRow(f: FeedbackRow, target: string, link: ((n: number) => strin
 /** /admin/feedback. */
 export async function feedbackPage(platform: Platform, session: Session) {
   const rows = await platform.directory.feedback.list(whoOf(session));
-  const target = platform.deploy.target ?? "";
+  const target = feedbackTarget(platform);
   const issues = platform.issues;
   const repo = await issuesRepo(platform.directory, issues);
   const waiting = rows.filter((f) => f.issue == null && f.target == target).length;

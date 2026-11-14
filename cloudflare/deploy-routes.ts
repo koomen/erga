@@ -19,13 +19,12 @@ export const isDeploysPath = (path: string) => path == "/api/deploys/version" ||
 type Answer = HttpServerResponse.HttpServerResponse;
 type Run = (env: Env, request: Request, platform: Platform) => Promise<Answer>;
 
-/** Staging's copy of production's documents: read their storage (any server), write it (staging only). SNAPSHOT_TOKEN. */
-const snapshot: Run = async (env, request) => {
-  // Never into production, whatever its settings say.
-  const production = env.DEPLOY_TARGET?.trim() == "production";
+/** A staging instance's copy of its primary's documents: read their storage (any server), write it (a staging instance only). SNAPSHOT_TOKEN. */
+const snapshot: Run = async (env, request, platform) => {
   const answer = await snapshotRoutes(request, {
     token: env.SNAPSHOT_TOKEN,
-    importAllowed: env.SNAPSHOT_IMPORT == "1" && !production,
+    // Only into a staging instance (the deploy names its primary): never into any other server.
+    importAllowed: !!platform.deploy.primary,
     store: {
       export: (id, page) => documentOf(env, id).exportStorage(id, page),
       import: (snap) => documentOf(env, snap.id).importStorage(snap),
@@ -41,8 +40,8 @@ export const ROUTES: readonly RouteRow<Run>[] = [
   {
     method: "GET",
     path: "/api/deploys/version",
-    // anyone: {version, target} (the pipeline waits for it)
-    run: async (env) => json({ version: env.ERGA_VERSION ?? null, target: env.DEPLOY_TARGET || null }),
+    // anyone: {version} (the pipeline waits for it)
+    run: async (env) => json({ version: env.ERGA_VERSION ?? null }),
     action: "The release this server runs",
     domain: "none",
     exempt: PIPELINE,
@@ -50,7 +49,7 @@ export const ROUTES: readonly RouteRow<Run>[] = [
   {
     method: "GET",
     path: "/api/health",
-    // anyone: {ok, version, target, checks}: the app works (server/health.ts); 503 when it doesn't
+    // anyone: {ok, version, checks}: the app works (server/health.ts); 503 when it doesn't
     run: async (_env, _request, platform) => {
       const h = await health(platform);
       return json(h, h.ok ? 200 : 503);
@@ -63,7 +62,7 @@ export const ROUTES: readonly RouteRow<Run>[] = [
     method: "POST",
     path: "/api/snapshot/docs",
     run: snapshot,
-    action: "Staging reads production's documents",
+    action: "A staging instance reads its primary's documents",
     domain: "none",
     exempt: PIPELINE,
   },
@@ -71,7 +70,7 @@ export const ROUTES: readonly RouteRow<Run>[] = [
     method: "POST",
     path: "/api/snapshot/docs/import",
     run: snapshot,
-    action: "Staging takes in its copy of production's documents",
+    action: "A staging instance takes in its copy of its primary's documents",
     domain: "none",
     exempt: PIPELINE,
   },
@@ -83,7 +82,7 @@ export const ROUTES: readonly RouteRow<Run>[] = [
       const blob = await snapshotBlob(request, env);
       return blob ? fromWeb(blob) : NOT_FOUND;
     },
-    action: "Staging reads a blob its copy of production's documents needs",
+    action: "A staging instance reads a blob its copy of its primary's documents needs",
     domain: "none",
     exempt: "server to server (staging's blob store, cloudflare/blobs.ts)",
   },

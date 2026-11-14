@@ -36,9 +36,8 @@ export interface Env {
   /** The editor's own files (client/editor.html as editor.html, page.js, client/style.css, fonts). */
   ASSETS: Fetcher;
   /**
-   * The server settings the deploy fixes, a JSON object by key
-   * (deploy/locked-settings.ts and ERGA_SERVER_CONFIG, via cloudflare.config.ts):
-   * locked, so admins see them but can't change them.
+   * The server settings the deploy fixes, a JSON object by key (the instance's entry's vars in .erga/config.json;
+   * locally, ERGA_SERVER_CONFIG): locked, so admins see them but can't change them.
    */
   SERVER_CONFIG?: string;
   /**
@@ -64,12 +63,10 @@ export interface Env {
   PAGES_DOMAIN?: string;
   PAGES_HOST?: string;
   /**
-   * Which deploy target this server is, as its deploy says: "production" on a primary, "staging" on a staging
-   * instance (for admins only: server/identity/admins-only.ts), empty on any other (local development unless
-   * ERGA_DEPLOY_TARGET).
+   * A staging instance's primary, https://<host>: the deploy sets it from the instance's entry (stagingOf), and no
+   * other instance has it. So this server is a staging instance: for admins only (server/identity/admins-only.ts), it
+   * takes its primary's documents in, and its blobs come from there. Locally: ERGA_SNAPSHOT_FROM.
    */
-  DEPLOY_TARGET?: string;
-  /** A staging instance's primary, https://<host> (the deploy sets it): its blobs come from there, and its admins-only page links to it. */
   SNAPSHOT_FROM?: string;
   /** The release this server runs (the commit, 12 characters; the pipeline sets it). GET /api/deploys/version answers it. */
   ERGA_VERSION?: string;
@@ -79,10 +76,8 @@ export interface Env {
    * the pages'. GET /api/ops (server/api.ts) answers it, to an admin's ops token only.
    */
   ERGA_DEPLOY?: string;
-  /** A secret, the same on production and staging: production's read-only snapshot endpoint takes it, and staging's import. */
+  /** A secret, the same on an instance and its staging instances: the read-only snapshot endpoint takes it, and a staging instance's import. */
   SNAPSHOT_TOKEN?: string;
-  /** "1" on staging: the server takes snapshots in (never on production). */
-  SNAPSHOT_IMPORT?: string;
   /** A Worker secret: a GitHub token that may open issues in the setting feedback_repository, for the feedback people send (server/feedback.ts). */
   GITHUB_ISSUES_TOKEN?: string;
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */

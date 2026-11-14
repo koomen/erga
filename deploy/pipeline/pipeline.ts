@@ -4,26 +4,26 @@
 // every one against a mock Cloudflare.
 //
 // Its input is a target (Target: an account, a Worker, a database, its
-// addresses, settings and secrets, and maybe a snapshot to copy in) and a
+// addresses, settings and secrets, and for a staging instance its primary) and a
 // release (deploy/release.ts: the Worker exactly as `cf build` builds it from
 // cloudflare.config.ts, its static assets and the migrations). Its output is
 // a live server, each step reported as it goes. Its callers:
 //
 //   - a deploy from a machine: a registered instance (`bun erga deploy` and `bun erga setup`, deploy/cli/deploy.ts).
 //
-// Staging runs on a copy of production's data, frozen: a deploy keeps it,
-// and copies afresh only when asked (`bun erga deploy <commit> <staging host> --fresh`) or when
-// staging has no copy yet (Target.snapshot: the "data" and "documents" steps).
+// Every instance takes the same steps. A staging instance (Target.stagingOf) runs on a copy of its primary's data,
+// frozen: a deploy keeps it, and copies afresh only when asked (`bun erga deploy <commit> <staging host> --fresh`) or
+// when it has no copy yet (Target.stagingOf.copy: the "data" and "documents" steps).
 //
 // The steps (ALL_STEPS): check the account, find or make the D1 database
-// (for a snapshot, a new copy beside the one the Worker is on, or that one
-// kept: Target.snapshot), copy the source's database into it, apply
+// (for a copy, a new one beside the one the Worker is on, or that one
+// kept: Target.stagingOf), copy the primary's database into it, apply
 // server/migrations/ to it (recorded in d1_migrations, as `cf d1 migrations apply`
 // does), upload the static assets (direct upload), upload the Worker with its
 // bindings, secrets and Durable Objects, give it its address (workers.dev,
 // or a custom domain), give documents' pages theirs, wait for it to answer,
-// copy the source's documents into it, and delete the old copies of the
-// database (a snapshot's: only once the new version answers). Once the server answers, the deploy asks it
+// copy the primary's documents into it, and delete the old copies of the
+// database (only once the new version answers). Once the server answers, the deploy asks it
 // for the homepage project (askHomepage): a server with none makes it from the landing project built into it.
 
 import * as Clock from "effect/Clock";
@@ -66,21 +66,21 @@ export const STEPS = [
   { id: "live", title: "Wait for it to answer" },
 ] as const;
 
-/** Every step the pipeline knows, in order: a target that copies another's data (staging) has all of them. */
+/** Every step the pipeline knows, in order: a staging instance that copies its primary's data has all of them. */
 export const ALL_STEPS = [
   STEPS[0], STEPS[1],
-  { id: "data", title: "Copy production's database into it" },
+  { id: "data", title: "Copy its primary's database into it" },
   STEPS[2], STEPS[3],
   STEPS[4],
   STEPS[5], STEPS[6], STEPS[7],
-  { id: "documents", title: "Copy production's documents into it" },
+  { id: "documents", title: "Copy its primary's documents into it" },
   { id: "cleanup", title: "Delete the old copies of the database" },
 ] as const;
 export type StepId = (typeof ALL_STEPS)[number]["id"];
 
-/** A target's steps: STEPS, and the copying steps (and the old copies' cleanup) for one with a snapshot. */
-export const stepsFor = (t: Pick<Target, "snapshot">): readonly { id: StepId; title: string }[] =>
-  ALL_STEPS.filter((s) => t.snapshot || (s.id != "data" && s.id != "documents" && s.id != "cleanup"));
+/** A target's steps: STEPS, and the copying steps (and the old copies' cleanup) for one that copies its primary's data. */
+export const stepsFor = (t: Pick<Target, "stagingOf">): readonly { id: StepId; title: string }[] =>
+  ALL_STEPS.filter((s) => t.stagingOf?.copy || (s.id != "data" && s.id != "documents" && s.id != "cleanup"));
 
 export type Report = (step: StepId, status: "running" | "done" | "skipped", detail?: string) => void;
 
@@ -91,11 +91,11 @@ export interface Deployed { url: string; pages: string; database: string; worker
 
 /**
  * Where a deploy goes: everything the pipeline needs to know about it, in
- * any account. `bun erga deploy` and `bun erga setup` make a registered instance's from its entry (deploy/cli/deploy.ts,
- * entryTarget); setup makes the entry from its answers (deploy/own/plan.ts, ownTarget).
+ * any account. `bun erga deploy` and `bun erga setup` make every instance's from its entry in .erga/config.json
+ * (deploy/cli/deploy.ts, entryTarget); setup makes a new instance's entry from its answers (deploy/own/plan.ts, setupEntry).
  */
 export interface Target {
-  /** What to call it in the log ("staging", or the account's name). */
+  /** What to call it in the log: its host. */
   label: string;
   accountId: string;
   /** The Worker's name: also its workers.dev address, <name>.<subdomain>.workers.dev. */
@@ -116,7 +116,7 @@ export interface Target {
   pages: { kind: "shared" } | { kind: "zone"; zoneId?: string; zoneName: string; domain?: string };
   /**
    * The homepage's own domain (server/home/site.ts), a hostname on one of the account's zones: the same Worker serves the
-   * homepage's site there, and nothing else. A primary's only.
+   * homepage's site there, and nothing else. Never a staging instance's.
    */
   home?: string;
   /** Text bindings over the build's (cloudflare.config.ts as `cf build` wrote it). */
@@ -130,31 +130,41 @@ export interface Target {
   /** Wait for this release's version to answer (GET /api/deploys/version), not only for the server to answer. */
   checkVersion?: boolean;
   /**
-   * Copy another server's data in (staging: production's). The copy goes
+   * A staging instance: the instance it is a staging instance of (its primary), and no other target has this. The
+   * primary's names are a guard: this target stops before it starts if it uses one of them. The server gets the
+   * primary's address (SNAPSHOT_FROM), which makes it a server for admins only.
+   *
+   * With `copy`, the deploy copies the primary's data in. The copy goes
    * into a new database of its own, `<databaseName>-<when, base 36>`
-   * (copyName), made from the source database's D1 export (read-only on the
-   * source), while the target's Worker stays on the database it has: the
+   * (copyName), made from the primary database's D1 export (read-only on the
+   * primary), while the target's Worker stays on the database it has: the
    * Worker's upload binds the new one, and the old one is deleted only once
    * the new version answers (the cleanup step). So the target is never on a
    * deleted database, and a deploy that stops before its upload leaves it as
    * it was; the copies such a deploy leaves are deleted by the next one. Each
-   * document's Durable Object is copied from the source server's snapshot
+   * document's Durable Object is copied from the primary's snapshot
    * endpoint, authorized with `token`. Nothing is ever
-   * written to the source.
+   * written to the primary.
    *
    * A deploy copies only when the target has no copy yet, or with `fresh`
    * (asked for: `bun erga deploy --fresh`): copyReason. Otherwise the
-   * target keeps its database and documents as they are (staging's copy is
+   * target keeps its database and documents as they are (its copy is
    * frozen), and new migrations run on that database in place.
    */
-  snapshot?: { databaseName: string; origin: string; token: string; fresh?: boolean };
-  /** This is a primary: only then may the target use the guard's names. */
-  production?: boolean;
-  /** Its primary's names (a staging instance's): a target that isn't production and uses one stops before it starts. */
-  guard?: { worker: string; database: string; host: string; pages: string; accountId?: string };
+  stagingOf?: {
+    accountId: string;
+    worker: string;
+    database: string;
+    /** The primary's app host, and where its documents' pages run (a domain, or its shared pages host). */
+    host: string;
+    pages: string;
+    /** The primary's address, https://<host>. */
+    origin: string;
+    copy?: { token: string; fresh?: boolean };
+  };
 }
 
-/** What runs on from one step to the next: the database, the version, and the documents staging had before. */
+/** What runs on from one step to the next: the database, the version, and the documents a staging instance had before. */
 export interface Carry {
   dbId?: string; version?: string; oldDocs?: string[]; existing?: boolean; copied?: boolean;
   /** The copy the target was on before a new one (its own API keys come from it). */
@@ -173,7 +183,7 @@ export interface Carry {
  */
 export interface RestorePoint { versionId: string | null; version: string | null; bookmark: string | null; at: number }
 
-/** A copy of another server's data, by when it was made: `<base>-<ms since the epoch, base 36>` (Target.snapshot). */
+/** A copy of a primary's data, by when it was made: `<base>-<ms since the epoch, base 36>` (Target.stagingOf). */
 export const copyName = (base: string, at: number) => `${base}-${at.toString(36)}`;
 /** When a database by that name was made, if it's one of `base`'s copies (the base name itself: one from before, of no known age). */
 export function copyMade(base: string, name: string): number | null | undefined {
@@ -184,7 +194,7 @@ export function copyMade(base: string, name: string): number | null | undefined 
   return at > 1.5e12 && at < 1e13 ? at : undefined;
 }
 /**
- * Why a deploy copies the source's data afresh, or null: the target keeps its
+ * Why a deploy copies the primary's data afresh, or null: the target keeps its
  * copy, however old, and a new migration runs on it in place.
  */
 export function copyReason(o: { fresh?: boolean; live: unknown | null }): string | null {
@@ -207,7 +217,7 @@ export async function boundDatabase(cf: Cloudflare, acc: string, worker: string)
 }
 
 /**
- * Deletes a target's copies of the source's data but `keep` (and, unless null, the one its Worker is bound to):
+ * Deletes a target's copies of its primary's data but `keep` (and, unless null, the one its Worker is bound to):
  * the ones a failed or cancelled deploy left, or the one a new version took the place of. What it deleted.
  */
 export async function dropCopies(cf: Cloudflare, target: Target, keep: string | null): Promise<string[]> {
@@ -218,8 +228,8 @@ export async function dropCopies(cf: Cloudflare, target: Target, keep: string | 
   const gone: string[] = [];
   for (const c of await copiesOf(cf, acc, target.databaseName)) {
     if (c.uuid == keep || c.uuid == bound) continue;
-    // Never production's, whatever its name (copiesOf matches the target's names only; this is a second lock).
-    if (target.guard && c.name == target.guard.database) continue;
+    // Never its primary's, whatever its name (copiesOf matches the target's names only; this is a second lock).
+    if (c.name == target.stagingOf?.database) continue;
     await cf.call("DELETE", `${acc}/d1/database/${c.uuid}`, `delete ${c.name}, an old copy`);
     gone.push(c.name);
   }
@@ -231,31 +241,33 @@ export const targetSharedPagesHost = (t: Pick<Target, "workerName" | "subdomain"
 export const targetPagesShown = (t: Pick<Target, "pages" | "workerName" | "subdomain">) =>
   t.pages.kind == "zone" ? `*.${t.pages.domain ?? t.pages.zoneName}` : targetSharedPagesHost(t);
 
-/** Why a target mustn't be deployed, or null: one that isn't production may not touch production's names (nor put its pages under production's), and a snapshot never goes into its own source. */
+/**
+ * Why a target mustn't be deployed, or null. A staging instance may not touch its primary's names (nor put its pages
+ * under its primary's), serves no homepage domain, and never copies its primary's data into the primary's database.
+ */
 export function guardTarget(t: Target): string | null {
-  const g = t.guard;
+  const p = t.stagingOf;
   const host = t.app.kind == "domain" ? t.app.hostname.toLowerCase() : null;
   const pages = t.pages.kind == "zone" ? (t.pages.domain ?? t.pages.zoneName).toLowerCase() : null;
   const home = t.home?.toLowerCase();
-  if (home && !t.production) return `This deploy (${t.label}) would put the homepage on ${home}: only a primary serves a homepage domain.`;
+  if (home && p) return `This deploy (${t.label}) would put the homepage on ${home}: a staging instance serves no homepage domain.`;
   if (home && (home == host || home == pages || (pages && home.endsWith(`.${pages}`))))
     return `The homepage's domain (${home}) is the app's address or under its documents' pages: give it a domain of its own.`;
-  if (g && !t.production) {
-    if (host == g.host || pages == g.pages) return `This deploy (${t.label}) would put a server on production's address (${host == g.host ? g.host : `*.${g.pages}`}). It stops here: production is deployed only as production.`;
-    // Pages under production's (*.x.example-pages.com): a route on production's pages zone, which only production uses.
-    if (pages?.endsWith(`.${g.pages}`)) return `This deploy (${t.label}) would put documents' pages under production's pages domain (*.${pages}, in ${g.pages}). It stops here: give it a pages domain of its own.`;
-    const sameAccount = !g.accountId || g.accountId == t.accountId;
-    if (sameAccount && t.workerName == g.worker) return `This deploy (${t.label}) would replace production's Worker (${g.worker}). It stops here.`;
-    if (sameAccount && t.databaseName == g.database) return `This deploy (${t.label}) would use production's database (${g.database}). It stops here.`;
-  }
-  if (t.snapshot) {
-    if (t.production) return "Production never takes a copy of another server's data.";
-    if (t.snapshot.databaseName == t.databaseName) return `A snapshot can't go into the database it's copied from (${t.databaseName}).`;
-    if (g && (t.databaseName == g.database || t.workerName == g.worker)) return `A snapshot is made afresh in the target's database, which is deleted first: never production's (${g.database}).`;
-    // The target's copies (copyName) are made and deleted by their names: production's must never look like one.
-    if (g && copyMade(t.databaseName, g.database) !== undefined) return `Production's database (${g.database}) has a name like a copy of ${t.databaseName}'s: copies are deleted by name, so this stops here.`;
-    if (copyMade(t.databaseName, t.snapshot.databaseName) !== undefined) return `The snapshot's source (${t.snapshot.databaseName}) has a name like a copy of ${t.databaseName}'s: this stops here.`;
-  }
+  if (!p) return null;
+  if (host == p.host || pages == p.pages)
+    return `This deploy (${t.label}) would put a server on its primary's address (${host == p.host ? p.host : `*.${p.pages}`}). It stops here: give it an address of its own.`;
+  // Pages under its primary's (*.x.example-pages.com): a route on the primary's pages zone, which only the primary uses.
+  if (pages?.endsWith(`.${p.pages}`))
+    return `This deploy (${t.label}) would put documents' pages under its primary's pages domain (*.${pages}, in ${p.pages}). It stops here: give it a pages domain of its own.`;
+  const sameAccount = p.accountId == t.accountId;
+  if (sameAccount && t.workerName == p.worker)
+    return `This deploy (${t.label}) would replace its primary's Worker (${p.worker}). It stops here.`;
+  if (sameAccount && t.databaseName == p.database)
+    return `This deploy (${t.label}) would use its primary's database (${p.database}). It stops here.`;
+  if (p.copy && t.databaseName == p.database) return `A copy can't go into the database it's copied from (${t.databaseName}).`;
+  // The target's copies (copyName) are made and deleted by their names: the primary's must never look like one.
+  if (p.copy && copyMade(t.databaseName, p.database) !== undefined)
+    return `The primary's database (${p.database}) has a name like a copy of ${t.databaseName}'s: copies are deleted by name, so this stops here.`;
   return null;
 }
 
@@ -321,7 +333,7 @@ export async function runPipeline(
   const uploadWorker = async (rel: Release, assetsJwt: string) => {
     // Whether the Worker was there: the account step's answer, kept in the carry.
     await ensureBuckets(cf, acc, rel, target);
-    const metadata = workerMetadata(rel, target, { dbId: carry.dbId!, assetsJwt, pagesHost, existing: !!carry.existing });
+    const metadata = workerMetadata(rel, target, { dbId: carry.dbId!, assetsJwt, pagesHost });
     const form = new FormData();
     form.set("metadata", JSON.stringify(metadata));
     for (const [name, bytes] of Object.entries(rel.modules)) form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
@@ -368,10 +380,11 @@ export async function runPipeline(
       return `${account?.name ?? target.accountId}${found ? `; ${target.workerName} is already there and will be replaced${target.keepSecrets ? "" : " (everyone signs in again)"}` : ""}`;
     },
 
-    // The database: the one by this name if it's Erga's, else a new one. With a snapshot, the target's copy, or a new
-    // copy beside it (Target.snapshot): the Worker stays on the one it has until its upload.
+    // The database: the one by this name if it's Erga's, else a new one. A staging instance that copies: its copy, or a
+    // new copy beside it (Target.stagingOf.copy): the Worker stays on the one it has until its upload.
     async database() {
-      if (target.snapshot) {
+      const copy = target.stagingOf?.copy;
+      if (copy) {
         const copies = await copiesOf(cf, acc, target.databaseName);
         const boundId = await boundDatabase(cf, acc, target.workerName);
         const live = copies.find((c) => c.uuid == boundId) ?? null;
@@ -379,7 +392,7 @@ export async function runPipeline(
         const left = live ? copies.filter((c) => c != live) : [];
         for (const c of left) await cf.call("DELETE", `${acc}/d1/database/${c.uuid}`, `delete ${c.name}, a copy an earlier deploy left`);
         const leftNote = left.length ? `; ${left.length} left by an earlier deploy deleted (${left.map((c) => c.name).join(", ")})` : "";
-        const why = copyReason({ fresh: target.snapshot.fresh, live });
+        const why = copyReason({ fresh: copy.fresh, live });
         if (!why && live) {
           carry.dbId = live.uuid;
           carry.copied = false;
@@ -396,8 +409,8 @@ export async function runPipeline(
         const names = new Set(copies.map((c) => c.name));
         while (names.has(copyName(target.databaseName, at))) at++;
         const name = copyName(target.databaseName, at);
-        if (target.guard && name == target.guard.database)
-          throw new DeployError({ message: `A copy can't be called ${name}: that's production's database.` });
+        if (name == target.stagingOf!.database)
+          throw new DeployError({ message: `A copy can't be called ${name}: that's its primary's database.` });
         const made = await cf.call<{ uuid: string }>("POST", `${acc}/d1/database`, "make the database", { name });
         if (!made?.uuid)
           throw new DeployError({ message: "Cloudflare made the database but didn't say its id. Deploy again: the next one deletes it." });
@@ -429,19 +442,19 @@ export async function runPipeline(
       return `"${target.databaseName}" (${carry.dbId})`;
     },
 
-    // Production's database, exported (D1's export: read-only on it) and loaded into the new one (D1's import).
+    // The primary's database, exported (D1's export: read-only on it) and loaded into the new one (D1's import).
     async data() {
-      const snap = target.snapshot!;
+      const from = target.stagingOf!.database;
       if (carry.copied === false) return "skipped: the target keeps its copy (the database step says why)";
-      const source = await findDatabase(cf, acc, snap.databaseName);
-      if (!source) throw new DeployError({ message: `There's no database called ${snap.databaseName} to copy.` });
-      if (source == carry.dbId) throw new DeployError({ message: "The snapshot's source and target are the same database: stopped." });
-      const sql = await runWith(opts.sleep, exportD1(cf, acc, source, snap.databaseName, site));
+      const source = await findDatabase(cf, acc, from);
+      if (!source) throw new DeployError({ message: `There's no database called ${from} to copy.` });
+      if (source == carry.dbId) throw new DeployError({ message: "The copy's source and target are the same database: stopped." });
+      const sql = await runWith(opts.sleep, exportD1(cf, acc, source, from, site));
       await runWith(opts.sleep, importD1(cf, acc, carry.dbId!, target.databaseName, sql, site));
-      return `${snap.databaseName} (${source}) → ${target.databaseName}: ${sql.length} bytes of SQL`;
+      return `${from} (${source}) → ${target.databaseName}: ${sql.length} bytes of SQL`;
     },
 
-    // server/migrations/, each once, recorded in d1_migrations as the cf CLI does (on a new copy, the ones production hasn't had yet; on a kept one, the ones it hasn't).
+    // server/migrations/, each once, recorded in d1_migrations as the cf CLI does (on a new copy, the ones its primary hasn't had yet; on a kept one, the ones it hasn't).
     // First, the restore point: the last thing before the deploy changes what the target runs on.
     async migrations() {
       const rel = needRelease();
@@ -458,8 +471,8 @@ export async function runPipeline(
         await d1(cf, acc, db, `${sql}${sql.endsWith(";") ? "" : ";"}\nINSERT INTO d1_migrations (name) VALUES ('${name.replace(/'/g, "''")}');`, [], `apply the database migration ${name}`);
       }
       const did = `${pending.length ? `applied ${pending.join(", ")}` : "already up to date"}; ${noted}`;
-      // A new copy has production's API keys, which don't open on the target (its FACTORY_KEY is its own): its own come back.
-      return target.snapshot && carry.copied ? `${did}; ${await ownCredentials(cf, acc, carry.ownDb ?? null, db)}` : did;
+      // A new copy has its primary's API keys, which don't open on the target (its FACTORY_KEY is its own): its own come back.
+      return target.stagingOf?.copy && carry.copied ? `${did}; ${await ownCredentials(cf, acc, carry.ownDb ?? null, db)}` : did;
     },
 
     // The static assets: the manifest, then each bucket Cloudflare asks for.
@@ -509,19 +522,7 @@ export async function runPipeline(
         await cf.call("POST", `${acc}/workers/scripts/${target.workerName}/subdomain`, "turn on its workers.dev address", { enabled: true, previews_enabled: false });
       } else {
         const app = target.app;
-        // There already (Erga's own targets: the setup made it), nothing to change. The address itself says so: it
-        // answers as this target (a deploy token can't read the account's custom domains: Cloudflare has no per-zone
-        // read for them).
-        let answers = false;
-        if (target.checkVersion && target.vars.DEPLOY_TARGET) {
-          const r = await site(`https://${app.hostname}/api/deploys/version`).catch(() => null);
-          answers =
-            (r?.ok ? ((await r.json().catch(() => null)) as { target?: string } | null)?.target : null) == target.vars.DEPLOY_TARGET;
-        }
-        if (
-          answers ||
-          (await put(app.hostname, app.zoneId ?? (await zoneIdOf(cf, target.accountId, app.zoneName)))) == "already its address"
-        )
+        if ((await put(app.hostname, app.zoneId ?? (await zoneIdOf(cf, target.accountId, app.zoneName)))) == "already its address")
           said += " (already its address)";
       }
       if (target.home) {
@@ -577,8 +578,8 @@ export async function runPipeline(
         opts.sleep,
         Effect.gen(function* () {
           const want = carry.version;
-          // A target that copies its primary's data (staging: for admins only) has its primary's homepage: not asked.
-          const homepage = target.snapshot ? Effect.succeed("") : Effect.map(askHomepage(site, host), (said) => `; ${said}`);
+          // A staging instance runs on a copy of its primary's data, with its primary's homepage: not asked.
+          const homepage = target.stagingOf ? Effect.succeed("") : Effect.map(askHomepage(site, host), (said) => `; ${said}`);
           if (!(target.checkVersion && want)) {
             // Up when its logo answers.
             const answers = Effect.promise(() =>
@@ -616,16 +617,16 @@ export async function runPipeline(
         })
       ),
 
-    // Each document's Durable Object: production's storage, read through its snapshot endpoint, written into the new server's.
+    // Each document's Durable Object: the primary's storage, read through its snapshot endpoint, written into the new server's.
     async documents() {
-      const snap = target.snapshot!;
+      const snap = { origin: target.stagingOf!.origin, token: target.stagingOf!.copy!.token };
       if (carry.copied === false) return "skipped: the target keeps its documents, as it keeps its copy of the database";
       const ids = ((await d1(cf, acc, carry.dbId!, "SELECT id FROM documents", [], "list the documents in the copy")) ?? []).map((r) => String(r.id));
       const result = await copyDocuments({ ids, wipe: (carry.oldDocs ?? []).filter((id) => !ids.includes(id)), from: snap.origin, to: `https://${host}`, token: snap.token, fetch: site });
       if (result.unsupported) return `skipped: ${snap.origin} doesn't serve snapshots yet (it needs this version, and SNAPSHOT_TOKEN set); the documents are listed but empty`;
       carry.oldDocs = [];
       const failed = result.failed.length ? `; ${result.failed.length} couldn't be read, and are empty here: ${result.failed.slice(0, 5).map((f) => `${f.id} (${f.error})`).join(", ")}${result.failed.length > 5 ? ", ..." : ""}` : "";
-      return `${result.copied} documents copied${result.missing ? `, ${result.missing} gone from production since the database's copy` : ""}${result.wiped ? `, ${result.wiped} old ones emptied` : ""}${failed}`;
+      return `${result.copied} documents copied${result.missing ? `, ${result.missing} gone from its primary since the database's copy` : ""}${result.wiped ? `, ${result.wiped} old ones emptied` : ""}${failed}`;
     },
 
     // The copies the new version doesn't use: the one it took the place of, and any a stopped deploy left. Only now,

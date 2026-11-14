@@ -1,8 +1,9 @@
 // `bun erga setup <host>`'s own work around `bun erga deploy`'s code (deploy/cli/deploy.ts, deployInstance):
 //
-// 1. The entries in .erga/config.json, from the answers alone, before the first deploy (no token yet).
+// 1. The entries in .erga/config.json: a new instance's from the answers alone, before the first deploy (no token yet).
+//    A registered instance's entry stays as it is: an instance is what its entry says.
 // 2. The first deploy, with the secrets that the Worker doesn't hold yet: its own SESSION_SECRET and FACTORY_KEY, the
-//    sign-in apps' secrets, and SNAPSHOT_TOKEN when the setup has a staging server. Each is made one time and kept in
+//    sign-in apps' secrets, and SNAPSHOT_TOKEN when the setup has a staging instance. Each is made one time and kept in
 //    .erga/secrets.json under its host; a Worker that holds a secret keeps it, and no later deploy sends one.
 // 3. After the health check: the first admin and feedback_repository (plan.ts, firstRows), written into the new
 //    database with the Cloudflare D1 API. A database that has an admin already gets nothing.
@@ -39,21 +40,24 @@ export interface Setup {
 }
 
 /**
- * Writes the setup's entries (the primary, and its staging server) into .erga/config.json, with the token each one has.
- * It refuses a host that is registered with other names: setup makes a new instance, and never takes over another.
+ * Writes the setup's entries (the primary, and its staging instance) into .erga/config.json. A registered instance (its
+ * entry has an ops token) keeps its entry as it is, whatever its names: its facts are the server's (GET /api/ops). An
+ * instance that is not registered yet gets its entry from the answers; an entry with other names is not this setup's,
+ * and stops it.
  */
 export function writeEntries(o: Setup): Config {
   let config = readConfig(o.dir);
   for (const t of targetsOf(o.answers)) {
     const want = setupEntry(o.answers, t, o);
     const had = entryOf(config, want.host) as CloudflareEntry | null;
-    if (had && "aws" in had) throw new Error(`${want.host} is registered already, on AWS. Setup makes a new instance.`);
+    if (had && "aws" in had) throw new Error(`${want.host} has an entry already, on AWS.`);
+    if (had?.token) continue;
     if (had && (had.account != want.account || had.worker != want.worker || had.database != want.database))
       throw new Error(
-        `${want.host} is registered already, with the Worker ${had.worker} and the database ${had.database}. Setup makes a new instance: deploy this one with bun erga deploy ${want.host}.`
+        `${want.host} has an entry already, with the Worker ${had.worker} and the database ${had.database}, and no ops token. Register it (bun erga register ${want.host}), or take its entry out of .erga/config.json.`
       );
     // The homepage's domain is the server's (a deploy with --home set it): the entry keeps its copy.
-    config = withEntry(config, { ...want, ...(had?.home ? { home: had.home } : {}), token: had?.token ?? "" });
+    config = withEntry(config, { ...want, ...(had?.home ? { home: had.home } : {}), token: "" });
   }
   writeConfig(o.dir, config);
   return config;
@@ -63,7 +67,7 @@ const random = () => randomBytes(32).toString("hex");
 
 /**
  * The secrets that `t`'s Worker gets with its first deploy: each one it doesn't hold yet (`held`). The server's own are
- * made one time, under its host; the sign-in apps' and SNAPSHOT_TOKEN (a primary and its staging server share it) are
+ * made one time, under its host; the sign-in apps' and SNAPSHOT_TOKEN (a primary and its staging instance share it) are
  * under the primary's host. New ones go into the file before the deploy, so a deploy that fails sends the same again.
  */
 export function secretsFor(dir: string, a: Answers, t: TargetName, held: string[]): Record<string, string> {
@@ -115,7 +119,7 @@ export async function firstDeploy(o: Setup, t: TargetName): Promise<string> {
     print,
     secrets: secretsFor(o.dir, o.answers, t, held),
     createSubdomain: !!entry.subdomain && !o.subdomain,
-    ...(o.home && t == "production" ? { home: o.home } : {}),
+    ...(o.home && t == "primary" ? { home: o.home } : {}),
   });
   await writeFirstRows(cf, acc, entry.worker, o.answers, print);
   return sha;
@@ -123,7 +127,7 @@ export async function firstDeploy(o: Setup, t: TargetName): Promise<string> {
 
 /**
  * The first admin and, if the person gave one, feedback_repository (plan.ts, firstRows): written only into
- * a database with no admin yet, the one `worker` binds as DB. A staging server's is a copy of its primary's (it has the
+ * a database with no admin yet, the one `worker` binds as DB. A staging instance's is a copy of its primary's (it has the
  * admin already), and a run again, or an admin's later change, stays as it is.
  */
 export async function writeFirstRows(cf: Cloudflare, acc: string, worker: string, a: Answers, print: (line: string) => void) {

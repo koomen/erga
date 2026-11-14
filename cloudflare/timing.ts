@@ -1,7 +1,7 @@
 // Where a request's time went, for its Server-Timing header:
 // how many times it asked the database (D1) and documents' Durable Objects,
 // and how long those took, added up (calls made at once each count). On
-// erga.dev each is a round trip from wherever the Worker runs, so the count is
+// a deployed instance each is a round trip from wherever the Worker runs, so the count is
 // what makes a page slow or fast; e2e/bench/run.ts --waterfall prints the requests.
 
 import * as Duration from "effect/Duration";
@@ -25,7 +25,7 @@ export async function tallied<T>(f: () => Promise<T>): Promise<{ value: T; timin
 /**
  * Local development only (ERGA_REMOTE_LATENCY_MS, which e2e/bench/run.ts sets):
  * how long each call to the database or a document waits first, standing in
- * for the distance between a Worker and them on erga.dev. Never set there.
+ * for the distance between a Worker and them on a deployed instance. Never set there.
  */
 let latency = 0;
 export const simulateLatency = (ms: number) => { latency = ms > 0 ? ms : 0; };

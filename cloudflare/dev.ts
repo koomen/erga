@@ -96,7 +96,7 @@ const migrations = () =>
 
 /**
  * Brings the local D1 up to date with server/migrations/ when the dev server
- * starts, recording each in d1_migrations as the cf CLI does (erga.dev's is
+ * starts, recording each in d1_migrations as the cf CLI does (a deployed instance's is
  * migrated by the deploy pipeline before each deploy). Returns what it applied.
  * A migration lands just before the Worker that needs it, so it must keep working with the
  * Worker still deployed: add tables and columns, never rename or drop them.

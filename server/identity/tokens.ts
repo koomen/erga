@@ -24,7 +24,7 @@
 // (server/api.ts: /api/tools and /mcp).
 //
 // Kept in SQL behind the directory's `Sql`, so
-// D1 holds them on erga.dev and locally, and the tests run them on
+// D1 holds them on Cloudflare and locally, and the tests run them on
 // bun:sqlite. A token is an HMAC of its id with the server's secret, and only
 // its SHA-256 is stored, so the database alone holds no working token. That
 // lets the share button show its token again each time it's asked (until

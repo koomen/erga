@@ -1,25 +1,26 @@
-// A new Erga instance, set up by a coding agent: `bun erga setup <host> [<command>]` (deploy/cli/main.ts). Each command
-// says what it saw, PASS or FAIL, and the next step. The person decides; the agent runs these.
+// An Erga instance, set up by a coding agent: `bun erga setup <host> [<command>]` (deploy/cli/main.ts). Each command
+// says what it saw, PASS or FAIL, and the next step. The person decides; the agent runs these. An instance that runs
+// already takes the same steps: its entry in .erga/config.json gives its names, and status shows what is done.
 //
 //   bun erga setup skill                       the agent's manual: the steps, the rules, what to do when one fails
 //   bun erga setup <host> [--no-tests] [--home <domain>]
 //                                              every step, then the agent's next ones: the first deploy of each server
 //                                              (the entries, the secrets one time, the first admin), then the ops token
 //                                              that the admin approves; it stops at a step of the person's. --home: the
-//                                              production server serves the homepage's site on that domain too
+//                                              instance serves the homepage's site on that domain too
 //   bun erga setup <host> status [--json]      every step, done or not, and the next one (who does it, and how)
 //   bun erga setup <host> ask                  the person's questions, with the defaults, to ask in one message
 //   bun erga setup <host> set key=value ...    records answers (staging, providers, preset, admin, company, pages,
-//                                              feedback, account)
+//                                              stagingPages, feedback, account)
 //   bun erga setup <host> start [--port N]     the ops page's Setup tab: steps, live checks, the person's forms, a chat
 //   bun erga setup <host> signin github|google --from-file <file>   an existing app's values (KEY=value lines), never printed
-//   bun erga setup <host> token [production|staging]                an admin token for this agent, in .erga/secrets.json
-//   bun erga setup <host> home <folder> [production|staging]        the folder's files become the homepage project (/_home)
-//   bun erga setup <host> preset [production|staging]               the preset's access rule (company)
+//   bun erga setup <host> token [primary|staging]                   an admin token for this agent, in .erga/secrets.json
+//   bun erga setup <host> home <folder> [primary|staging]           the folder's files become the homepage project (/_home)
+//   bun erga setup <host> preset [primary|staging]                  the preset's access rule (company)
 //   bun erga setup <host> inbox [--wait]       the person's new messages from the Setup tab; ... say "<text>" answers
 //   bun erga setup <host> stack [--yes]        AWS: writes the templates into .erga/aws/ (once), shows AWS's change sets;
 //                                              --yes (after the person's yes) applies them
-//   bun erga setup <host> remove <production|staging> --yes         deletes that server: its Workers, database and bucket
+//   bun erga setup <host> remove <primary|staging> --yes            deletes that server: its Workers, database and bucket
 //                                              (AWS: its stacks and secrets; the bucket stays, with the data)
 
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -33,7 +34,6 @@ import {
   type Answers,
   type Facts,
   hostOf,
-  namesOf,
   nextStep,
   parseAnswer,
   PRESETS,
@@ -48,7 +48,7 @@ import {
 import { checkSignIn, cloudflare, type Connection, observe, site } from "./facts";
 import { fail, pass, say } from "../root";
 import { firstDeploy, registerSetup } from "./first";
-import { addMessage, answersOf, DIR, loadOwn, loadSecrets, messages, putSecret, readEnvFile, saveOwn, saveSecrets } from "./store";
+import { addMessage, answersOf, DIR, loadOwn, loadSecrets, messages, namesAt, putSecret, readEnvFile, saveOwn, saveSecrets } from "./store";
 
 
 /** The person's GitHub login, if gh is logged in here: the default admin. */
@@ -196,7 +196,8 @@ async function deployStep(s: Status, t: TargetName, noTests: boolean, home: stri
   if (a.provider == "aws") return deployStepAws(s, t, noTests, home);
   const c = await connect();
   const host = hostOf(a, t);
-  say(`Deploy ${t}: https://${host} (Worker ${namesOf(host).worker}, database ${namesOf(host).database}, bucket ${namesOf(host).bucket}).`);
+  const n = namesAt(host);
+  say(`Deploy ${host}: https://${host} (Worker ${n.worker}, database ${n.database}, bucket ${n.bucket}).`);
   say(`  ${summary(a)}`);
   const started = Date.now();
   const ids = { github: own.github?.clientId, google: own.google?.clientId };
@@ -217,7 +218,7 @@ async function deployStep(s: Status, t: TargetName, noTests: boolean, home: stri
       },
       t
     );
-    pass(`${t} answers at https://${host}, release ${sha.slice(0, 12)}, healthy. (${Math.round((Date.now() - started) / 1000)} s)`);
+    pass(`${host} answers, release ${sha.slice(0, 12)}, healthy. (${Math.round((Date.now() - started) / 1000)} s)`);
   } catch (e) {
     fail(
       (e as Error).message,
@@ -236,7 +237,7 @@ async function deployStepAws({ own, answers: a, facts: f }: Status, t: TargetNam
   const { firstDeployAws } = await import("../aws/setup");
   const { secretsFor } = await import("./first");
   const started = Date.now();
-  say(`Deploy ${t} on AWS: stack ${f.stack?.name}, https://${f.stack?.outputs.AppHost}.`);
+  say(`Deploy ${hostOf(a, t)} on AWS: stack ${f.stack?.name}, https://${f.stack?.outputs.AppHost}.`);
   say(`  ${summary(a)}`);
   const ids = { github: own.github?.clientId, google: own.google?.clientId };
   try {
@@ -251,7 +252,7 @@ async function deployStepAws({ own, answers: a, facts: f }: Status, t: TargetNam
       print: (l) => say(`  ${l.slice(0, 200)}`),
     });
     pass(
-      `${t} answers at https://${f.stack?.outputs.AppHost}, release ${sha.slice(0, 12)}, healthy. (${Math.round((Date.now() - started) / 1000)} s)`
+      `${hostOf(a, t)} answers at https://${f.stack?.outputs.AppHost}, release ${sha.slice(0, 12)}, healthy. (${Math.round((Date.now() - started) / 1000)} s)`
     );
   } catch (e) {
     fail(
@@ -344,8 +345,8 @@ async function sqlOf(t: TargetName): Promise<{ sql: Sql; host: string }> {
   const account = own.account ?? (await cf.call<{ id: string }[]>("GET", "/accounts", "list your accounts"))?.[0]?.id;
   const host = hostOf(a, t),
     acc = `/accounts/${account}`;
-  const db = await findDatabase(cf, acc, namesOf(host).database);
-  if (!db) return fail(`${t} has no database yet.`, `bun erga setup ${a.host}`);
+  const db = await findDatabase(cf, acc, namesAt(host).database);
+  if (!db) return fail(`${host} has no database yet.`, `bun erga setup ${a.host}`);
   const all = async <T>(q: string, ...p: (string | number | null)[]) => ((await d1(cf, acc, db, q, p, "read the database")) ?? []) as T[];
   return {
     host,
@@ -471,10 +472,10 @@ async function remove(t: TargetName, yes: boolean) {
     a = answersOf(own);
   if (a.provider == "aws") return removeAws(t, yes);
   const host = hostOf(a, t),
-    n = namesOf(host);
+    n = namesAt(host);
   if (!yes)
     fail(
-      `This deletes ${t} (${host}): the Workers ${n.worker} and ${n.pagesWorker}, the database ${n.database} and the bucket ${n.bucket}, with every document on it.`,
+      `This deletes ${host}: the Workers ${n.worker} and ${n.pagesWorker}, the database ${n.database} and the bucket ${n.bucket}, with every document on it.`,
       `Only if the person said yes: bun erga setup ${a.host} remove ${t} --yes`
     );
   const { cf } = await connect();
@@ -522,7 +523,7 @@ async function removeAws(t: TargetName, yes: boolean) {
     where = whereOf(a);
   if (!yes)
     fail(
-      `This deletes ${t} (${a.host}) on AWS: the stack ${name} (the machine, CloudFront, the network, the key), its certificates and its secrets. The bucket stays, with the documents in it.`,
+      `This deletes ${a.host} on AWS: the stack ${name} (the machine, CloudFront, the network, the key), its certificates and its secrets. The bucket stays, with the documents in it.`,
       `Only if the person said yes: bun erga setup ${a.host} remove ${t} --yes`
     );
   const aws = awsCli(where);
@@ -553,9 +554,9 @@ async function removeAws(t: TargetName, yes: boolean) {
 const targetArg = (v: string | undefined): TargetName =>
   v == "staging"
     ? "staging"
-    : v == undefined || v == "production"
-      ? "production"
-      : fail(`No server called ${v}.`, "production or staging.");
+    : v == undefined || v == "primary"
+      ? "primary"
+      : fail(`No server called ${v}.`, "primary (the instance itself) or staging (its staging instance).");
 
 const usage = (code: number): never => {
   say(
