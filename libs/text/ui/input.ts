@@ -6,7 +6,18 @@ import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
 import { contentIn, findDiff, norm, placeholderBr, setChecked } from "../api/source";
-import { draggedFiles, draggedImages, hasFiles, type ImageSpot, LOADING_AGAIN, NOT_HERE, showDropSign } from "./drop";
+import {
+  askPage,
+  draggedFiles,
+  draggedImages,
+  type DropFile,
+  type DropSign,
+  hasFiles,
+  type ImageSpot,
+  LOADING_AGAIN,
+  type PagePlace,
+  showDropSign,
+} from "./drop";
 import { pageOwnBox } from "./core";
 import { isMac } from "../../../client/common/app-keys";
 import { TEXT_ATTR } from "../../../shared/page-html";
@@ -98,12 +109,13 @@ export abstract class EditorInput extends EditorClipboard {
     on("dragover", (e) => {
       if (!hasFiles(e)) return;
       e.preventDefault();
-      // Images: a line between two blocks; other files: a caret in the line. Nothing in the text moves.
-      const images = draggedImages(e),
-        spot = images ? this.imageDropAt(e) : null;
-      const at = spot ? null : this.dropAt(e);
-      e.dataTransfer!.dropEffect = spot || at ? "copy" : "none";
-      showDropSign(doc, spot ? { spot: spot.spot, count: images } : at ? { range: at.range, count: draggedFiles(e) } : null);
+      // Where they land: where the page says, else between two blocks (images) or in the line (other files), else in
+      // the document's files. Nothing on the page moves.
+      e.dataTransfer!.dropEffect = this.readOnly ? "none" : "copy";
+      const files = [...(e.dataTransfer?.items ?? [])]
+        .filter((i) => i.kind == "file")
+        .map((i): DropFile => ({ kind: i.type.startsWith("image/") ? "image" : "file", type: i.type }));
+      showDropSign(doc, this.readOnly ? null : this.dropSignAt(e, files));
     });
     on("dragleave", (e) => {
       if (!hasFiles(e) || e.relatedTarget) return;
@@ -163,7 +175,7 @@ export abstract class EditorInput extends EditorClipboard {
   }
 
   /**
-   * Where images dragged over the page go: before or after the paragraph or heading under the pointer (its upper half:
+   * Where images dragged over the text go: before or after the paragraph or heading under the pointer (its upper half:
    * before), never inside its text. Null on any other block: they go in at the pointer, as other files do.
    */
   protected imageDropAt(e: DragEvent): { pos: number; spot: ImageSpot } | null {
@@ -176,21 +188,57 @@ export abstract class EditorInput extends EditorClipboard {
     return { pos: side == "before" ? u.contentFrom : u.contentTo, spot: { el, side } };
   }
 
-  /** Files dropped on the text (a folder's files with it): to the caller, which puts them in the document (onDropFiles). */
+  /** The sign for files dragged to the pointer's place: what a drop there does. */
+  protected dropSignAt(e: DragEvent, files: DropFile[]): DropSign {
+    const count = files.length || draggedFiles(e),
+      images = draggedImages(e);
+    const place = this.placeAt(e.clientX, e.clientY, files, false);
+    if (place) return { place, images: images > 0, count };
+    const spot = images ? this.imageDropAt(e) : null;
+    if (spot) return { spot: spot.spot, count };
+    const at = this.dropAt(e);
+    return at ? { range: at.range, count } : { none: { x: e.clientX, y: e.clientY }, count };
+  }
+
+  /** Where the page itself puts files dropped at a point of its window (its `window.ergaDrop`: drop.ts), if it does. */
+  placeAt(x: number, y: number, files: DropFile[], final: boolean): PagePlace | null {
+    return this.win && !this.rendering ? askPage(this.win, { x, y, files, final }) : null;
+  }
+
+  /**
+   * One of the page's own edits for a dropped file (the page named it: placeAt), made as the person's own, in one undo
+   * step; the caret stays where it is. Answers why not, if the page's API refuses it.
+   */
+  async dropEdit(edit: string, input: unknown): Promise<string | null> {
+    if (!this.config.pageEdit) return "this editor can't make the page's own edits";
+    const src = this.src;
+    const r = await this.config.pageEdit(src, edit, input);
+    if ("error" in r) return r.error;
+    if (this.src != src) return "the page changed while its edit was made";
+    if (r.changes.length) this.dispatch({ changes: this.state.changes(r.changes), userEvent: "input.drop" });
+    if (this.stale || this.unshown) this.render();
+    return null;
+  }
+
+  /**
+   * Files dropped on the page (a folder's files with it): to the caller, which puts them in the document (onDropFiles),
+   * with the place in the text they go to, or the point of the drop where the page places them itself or has no place.
+   */
   protected dropFiles(e: DragEvent): void {
     const dt = e.dataTransfer,
       plain = [...(dt?.files ?? [])];
     // (The entries are the event's: read now. A folder's files come a moment later.)
     const entries = [...(dt?.items ?? [])].filter((i) => i.kind == "file").map((i) => i.webkitGetAsEntry?.() ?? null);
-    const images = plain.length && plain.every((f) => f.type.startsWith("image/"));
-    const spot = images ? this.imageDropAt(e) : null;
     if (!plain.length) return;
     if (this.rendering) return this.config.onDropRefused?.(LOADING_AGAIN);
-    const at = spot ?? this.dropAt(e);
-    if (!at) return this.config.onDropRefused?.(NOT_HERE);
-    if (!entries.some((x) => x?.isDirectory)) return this.config.onDropFiles?.(plain, at.pos);
+    const point = { x: e.clientX, y: e.clientY };
+    const kinds = plain.map((f): DropFile => ({ kind: f.type.startsWith("image/") ? "image" : "file", type: f.type }));
+    const images = plain.every((f) => f.type.startsWith("image/"));
+    const at = this.placeAt(point.x, point.y, kinds, false) ? null : ((images ? this.imageDropAt(e) : null) ?? this.dropAt(e));
+    const to = at ? { at: at.pos } : { point };
+    if (!entries.some((x) => x?.isDirectory)) return this.config.onDropFiles?.(plain, to);
     void Promise.all(entries.map((x, i) => (x?.isDirectory ? filesIn(x as FileSystemDirectoryEntry) : [plain[i]].filter(Boolean)))).then(
-      (all) => this.config.onDropFiles?.(all.flat(), at.pos)
+      (all) => this.config.onDropFiles?.(all.flat(), to)
     );
   }
 

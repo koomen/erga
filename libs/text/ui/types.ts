@@ -55,10 +55,11 @@ export interface PageEditorConfig {
    */
   onNotice?: (message: string, fix?: string, draft?: boolean) => void;
   /**
-   * Files dropped or pasted on the text, at source position `at`: the caller gives each its path in the document's
-   * files and puts them on the page (insertFiles); their bytes follow.
+   * Files dropped or pasted on the page: for source position `at` of its text, or dropped at a `point` of its window
+   * that isn't the text's (the page may place them there itself: placeAt; else they have no place on it). The caller
+   * gives each its path in the document's files and puts them on the page; their bytes follow.
    */
-  onDropFiles?: (files: File[], at: number) => void;
+  onDropFiles?: (files: File[], to: { at: number } | { point: { x: number; y: number } | null }) => void;
   /** Files dropped or pasted that can't go in (the place takes none, the page loads again): why. */
   onDropRefused?: (why: string) => void;
   /**

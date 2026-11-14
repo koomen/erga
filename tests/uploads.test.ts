@@ -222,6 +222,27 @@ test("sizes and an agent's file in a few words", () => {
   });
 });
 
+test("a file with no place on the page: a problem that names where the file is, with the agent's help and its address", () => {
+  expect(U.noPlace("images/sunrise.jpg", "", "index.html", { x: 660, y: 420 })).toEqual({
+    key: "upload-place:images/sunrise.jpg",
+    kind: "error",
+    source: "upload",
+    title: "“sunrise.jpg” has no place on this page",
+    detail: "it is in this document’s files: images/sunrise.jpg",
+    fix: "The file images/sunrise.jpg of this document was dropped on the page index.html, at the point (660, 420) of its window, which has no place of its own for it. Put it on the page where it fits.",
+    fixLabel: "Ask the agent to place it",
+    actions: [{ id: "copy", label: "Copy its address" }],
+  });
+  // The page's own edit refused it: its reason shows to the person. It is not in the agent's request (the page wrote it).
+  const refused = U.noPlace("images/a.png", "There's no slide 9: the deck has slides 1 to 2.", "deck.html");
+  expect(refused.detail).toBe(
+    "it is in this document’s files: images/a.png. The page gave this reason: There's no slide 9: the deck has slides 1 to 2."
+  );
+  expect(refused.fix).toBe(
+    "The file images/a.png of this document was dropped on the page deck.html, which has no place of its own for it. Put it on the page where it fits."
+  );
+});
+
 test("a file's element in a page's HTML: an image in a paragraph of its own goes with it, an image in a line and a link alone", () => {
   const IMG = `<img style="max-width: 100%; height: auto" src="images/a%20b.jpg" width="2400" height="1600" alt="a b.jpg">`;
   const cut = (html: string, href: string) => {

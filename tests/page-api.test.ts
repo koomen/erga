@@ -156,6 +156,53 @@ describe("the caret an edit names", () => {
   });
 });
 
+describe("the templates' add_image, which puts a dropped image on the page", () => {
+  type Api = { apply(html: string, edit: string, input: unknown): unknown };
+  const api = async (template: string): Promise<Api> => (await import(`../assets/templates/${template}/api.js`)).default;
+  const made = (html: string, ops: unknown) => {
+    const plan = planPageOps(html, ops as never);
+    if ("error" in plan) throw new Error(plan.error);
+    return applyChanges(html, plan.changes);
+  };
+  const file = { src: "images/a&b.png", name: "a&b.png", width: 2400, height: 1600 };
+
+  test("slides: on a slide under its text, at a height in cqw; or on a new slide after it, under its name", async () => {
+    const deck = `<body>\n<section class="slide" data-layout="content">\n  <h2>Two</h2>\n  <p>Hello</p>\n</section>\n</body>`;
+    const slides = await api("slides");
+    const img = (h: number) =>
+      `<img src="images/a&amp;b.png" width="2400" height="1600" alt="a&amp;b.png" style="height: ${h}cqw; width: auto; max-width: 100%; align-self: flex-start; object-fit: contain">`;
+    expect(made(deck, slides.apply(deck, "add_image", { slide: 1, file, height: 30.5 }))).toContain(
+      `<p>Hello</p>\n  ${img(30.5)}\n</section>`
+    );
+    // (No height, as an agent may call it: one that leaves room. Never taller than the slide's space.)
+    expect(made(deck, slides.apply(deck, "add_image", { slide: 1, file }))).toContain(img(20));
+    expect(made(deck, slides.apply(deck, "add_image", { slide: 1, file, height: 90 }))).toContain(img(52));
+    expect(made(deck, slides.apply(deck, "add_image", { slide: 1, file, fresh: true }))).toContain(
+      `</section>\n<section class="slide" data-layout="content">\n  <h2>a&amp;b</h2>\n  ${img(36)}\n</section>`
+    );
+    expect(slides.apply(deck, "add_image", { slide: 2, file })).toEqual({ refused: "There's no slide 2: the deck has slides 1 to 1." });
+    expect(slides.apply(deck, "add_image", { slide: 1 })).toEqual({ refused: "file.src is the image's address from the page." });
+  });
+
+  test("canvas: at a point of the canvas, or in a frame, which it then moves with; several images step down and right", async () => {
+    const page = `<body>\n<div class="stage">\n  <div class="canvas">\n    <section class="frame" style="left: 240px; top: 320px;">\n      <h2>One</h2>\n    </section>\n  </div>\n</div>\n</body>`;
+    const canvas = await api("canvas");
+    const img = (at: string, width: number) =>
+      `<img src="images/a&amp;b.png" width="2400" height="1600" alt="a&amp;b.png" style="position: absolute; ${at}; width: ${width}px; height: auto; border-radius: 6px">`;
+    expect(made(page, canvas.apply(page, "add_image", { frame: 0, x: 1290.4, y: 560, width: 480, file }))).toContain(
+      `    </section>\n    ${img("left: 1290px; top: 560px", 480)}\n  </div>`
+    );
+    expect(made(page, canvas.apply(page, "add_image", { frame: 1, x: 439, y: 333, file, index: 2 }))).toContain(
+      `      <h2>One</h2>\n      ${img("left: 487px; top: 381px", 240)}\n    </section>`
+    );
+    expect(canvas.apply(page, "add_image", { frame: 2, x: 0, y: 0, file })).toEqual({
+      refused: "frame is a frame's number, 1 to 1, or 0 for the canvas.",
+    });
+    expect(canvas.apply(page, "add_image", { frame: 0, x: "a", y: 0, file })).toEqual({ refused: "x and y are numbers of px." });
+    expect(canvas.apply(page, "move_frame", {})).toEqual({ refused: 'The canvas has no edit "move_frame".' });
+  });
+});
+
 describe("a page's API module, in the sandbox", () => {
   const code = `export default {
     name: "notes",

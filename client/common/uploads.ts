@@ -401,6 +401,27 @@ export const neverCame = (path: string): Raise => ({
   actions: [{ id: "remove", label: "Remove" }],
 });
 
+/** The alert's key of a file with no place on the page. */
+export const placeKey = (path: string) => `upload-place:${path}`;
+/**
+ * The problem of a file that was dropped where the page has no place for it: it is in the document's files, and the
+ * person's agent can place it. `why`: the page's own reason, if its edit refused the file. `page`: the page's path;
+ * `point`: where on it (its window, px) the file was dropped.
+ */
+export function noPlace(path: string, why: string, page: string, point?: { x: number; y: number }): Raise {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return {
+    key: placeKey(path),
+    kind: "error",
+    source: "upload",
+    title: `“${name}” has no place on this page`,
+    detail: `it is in this document’s files: ${path}${why ? `. The page gave this reason: ${why}` : ""}`,
+    fix: `The file ${path} of this document was dropped on the page ${page}${point ? `, at the point (${point.x}, ${point.y}) of its window` : ""}, which has no place of its own for it. Put it on the page where it fits.`,
+    fixLabel: "Ask the agent to place it",
+    actions: [{ id: "copy", label: "Copy its address" }],
+  };
+}
+
 /** A file on its way, as the page shows it on its element (libs/text/ui/pending.ts). */
 export interface PageFile {
   path: string;

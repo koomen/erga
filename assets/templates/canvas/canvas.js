@@ -3,6 +3,7 @@
 // canvas: each frame is a step (window.ergaSteps: erga/steps draws back, forward and the list of frames, each drawn
 // small), and the camera glides to the next frame in one smooth move. Drag or scroll moves the canvas, a pinch (or ctrl
 // and the wheel) zooms it, and Erga's zoom keys zoom the camera (window.ergaZoom). A click on another frame goes to it.
+// An image dropped on the canvas goes where the pointer is (window.ergaDrop, and api.js's add_image).
 // The canvas has the whole window, under Erga's bars and its agent's panel (window.ergaInset): the camera centres each
 // frame in the part of the window that they leave clear.
 // In the editor a press on a frame is the text's: no click goes to a frame, and a drag moves the canvas only from the
@@ -286,6 +287,37 @@ window.ergaZoom = (k) => {
   handMove();
   const v = view();
   zoomAt(v.x, v.y, k);
+};
+// Where a dropped image lands. Erga asks while files are dragged over the canvas, and one more time at the drop (when
+// it knows the image's size): the answer is the box the image will have in the window, what takes it, a few words, and
+// the canvas's own edit that puts it there (api.js, add_image). Erga draws the box and makes the edit. An image goes
+// where the pointer is, at the canvas's zoom: on the canvas, or in the frame under the pointer, which it then belongs
+// to and moves with. Any other file: Erga's own rule (null).
+window.ergaDrop = ({ x, y, files }) => {
+  const file = files[0];
+  if (file?.kind != "image") return null;
+  const frame = document.elementFromPoint(x, y)?.closest(".frame") ?? null;
+  const box = canvas.getBoundingClientRect(),
+    s = box.width / canvas.offsetWidth;
+  // On the canvas, px: no wider than 480 (in a frame 240), at its own proportions (not known yet: 3 to 2).
+  const most = frame ? 240 : 480,
+    w = Math.min(file.width ?? most, most),
+    h = (w * (file.height ?? 2)) / (file.width ?? 3);
+  const left = (x - box.left) / s - w / 2,
+    top = (y - box.top) / s - h / 2;
+  const n = frame ? frames().indexOf(frame) + 1 : 0;
+  return {
+    box: { x: x - (w * s) / 2, y: y - (h * s) / 2, width: w * s, height: h * s },
+    ...(frame ? { into: frame } : {}),
+    label: frame ? `in the frame “${frame.querySelector("h2")?.textContent.trim() || n}”` : `on the canvas, at ${Math.round(s * 100)}%`,
+    edit: "add_image",
+    input: {
+      frame: n,
+      x: Math.round(frame ? left - frame.offsetLeft : left),
+      y: Math.round(frame ? top - frame.offsetTop : top),
+      width: Math.round(w),
+    },
+  };
 };
 // Erga gives a page with this function the whole window, and tells it what its bars and its agent's panel cover of
 // it ({ top, right, bottom, left }, in px), at the start and at each change. The canvas stays where it is on the

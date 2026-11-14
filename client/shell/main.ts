@@ -358,7 +358,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       else if (comes == "maybe") window.setTimeout(() => shell.uploads.awaits(path) == "maybe" && say(), ms(3000));
     },
     onAlert: (event) => shell.alerts.fromPage(event),
-    onUpload: (files) => shell.uploads.add(files),
+    onUpload: (files, point) => shell.uploads.add(files, point),
     onUploadAct: (path, action) => shell.uploads.act(path, action),
     onUploadsAsk: () => shell.uploads.asked(),
     onLoad: () => {

@@ -46,7 +46,7 @@ The rules:
 | G2 | `e2e/agent/tools.e2e.ts` | An agent tool edits the wrong file, shows a wrong picture, or works on a document it may not open. | 21 |
 | V1 | `e2e/viewer/reader.e2e.ts` | A reader gets a blank or wrong page, links leave the viewer, or the bars hide the text. | 9 |
 | V2 | `e2e/viewer/live.e2e.ts` | A reader sees an old page; the page's scripts run twice; a page that loads again shows its start, or loses its view. | 11 |
-| T1 | `e2e/templates/templates.e2e.ts` | A template makes a broken document; a deck does not step or leaves full screen in a bad state. | 11 |
+| T1 | `e2e/templates/templates.e2e.ts` | A template makes a broken document; a deck does not step or leaves full screen in a bad state; an image dropped on a deck or a canvas lands away from the pointer, or covers the text. | 11 |
 | D1 | `e2e/documents/list.e2e.ts` | A person cannot make, find, archive or delete a document; the list shows old rows. | 14 |
 | D2 | `e2e/documents/tree.e2e.ts` | A page or folder cannot be made, renamed, moved or deleted; the tree shows old rows. | 13 |
 | A1 | `e2e/access/sign-in.e2e.ts` | A person cannot sign in, or a person who may not, can. | 10 |

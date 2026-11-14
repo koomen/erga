@@ -1,9 +1,6 @@
 // Helpers of the steady journeys (steady.e2e.ts): the agent's box and its scripted run, and files dropped or pasted
 // on a page of a document that the server keeps.
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { crc32, deflateSync } from "node:zlib";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dragTo } from "../helpers/drops";
 import { editor, F, type Editor } from "../helpers/editor";
 import { agentClosed, expect, settle, until, type Server, type Tab } from "../helpers/fixtures";
 import { idOf, runTool } from "../helpers/tools";
@@ -59,6 +56,16 @@ const DROP_PAGE = `<!doctype html>
 </html>
 `;
 
+/** A page with no text that the editor can edit: a drawing. */
+export const DRAWN_PAGE = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Harbor traffic</title><style>html, body { margin: 0; height: 100%; background: #0f1b2a; } svg { display: block; width: 100%; height: 100%; }</style></head>
+<body>
+<svg viewBox="0 0 1280 800"><text x="96" y="150" font-size="44" fill="#dbe7f5">Harbor traffic</text><rect x="110" y="520" width="70" height="140" rx="6" fill="#3b82c4"></rect><rect x="210" y="470" width="70" height="190" rx="6" fill="#3b82c4"></rect></svg>
+</body>
+</html>
+`;
+
 /**
  * A new project of DEV_LOGIN's that the server keeps (as on a deployment: a document on disk takes only text files),
  * with DROP_PAGE as its page blog/post and `files`, open in the editor at that page, in the test's tab.
@@ -102,58 +109,11 @@ const make = (files: Made[]) => `
 /** A PNG image, for a paste. */
 export const png = (name: string): Made[] => [{ name, type: "image/png", png: true }];
 
-/** A folder for the files a test drags, on this machine's disk. */
-const DISK = mkdtempSync(join(tmpdir(), "erga-drop-"));
-let made = 0;
-/** A PNG of 200 by 150 px, one colour. */
-const PNG = (() => {
-  const chunk = (type: string, data: Buffer) => {
-    const body = Buffer.concat([Buffer.from(type), data]),
-      out = Buffer.alloc(body.length + 8);
-    out.writeUInt32BE(data.length, 0);
-    body.copy(out, 4);
-    out.writeUInt32BE(crc32(body), body.length + 4);
-    return out;
-  };
-  const head = Buffer.alloc(13);
-  head.writeUInt32BE(200, 0);
-  head.writeUInt32BE(150, 4);
-  head.set([8, 2, 0, 0, 0], 8);
-  // (Each row: no filter, then its pixels.)
-  const rows = Buffer.concat(Array.from({ length: 150 }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(600, 0x6f)])));
-  return Buffer.concat([
-    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    chunk("IHDR", head),
-    chunk("IDAT", deflateSync(rows)),
-    chunk("IEND", Buffer.alloc(0)),
-  ]);
-})();
-
-/**
- * A file on disk to drag: `name` is a PNG of 200 by 150 px if it ends in .png (with bytes of its own after the image:
- * Erga sends no bytes it keeps already), else text of `bytes` or more, in a folder of its own, or in `folder`.
- */
-export function onDisk(name: string, bytes = 10, folder?: string): string {
-  const dir = folder ?? join(DISK, String(++made));
-  mkdirSync(dir, { recursive: true });
-  const path = join(dir, name);
-  const own = `${Date.now()}-${Math.random()}`;
-  if (name.endsWith(".png")) writeFileSync(path, Buffer.concat([PNG, Buffer.from(own)]));
-  else writeFileSync(path, `some notes ${own} `.repeat(Math.ceil(bytes / (own.length + 12))));
-  return path;
-}
-/** A folder on disk to drag, with `files` in it. */
-export function folderOnDisk(name: string, files: string[]): string {
-  const dir = join(DISK, String(++made), name);
-  for (const f of files) onDisk(f, 10, dir);
-  return dir;
-}
-
 /**
  * The editor takes a drop: it's on the page, which isn't loading again (an edit the editor can't patch in makes the
  * page afresh, a moment after it shows in the text). A person can't drop sooner.
  */
-const takesDrop = (ed: Editor) =>
+export const takesDrop = (ed: Editor) =>
   until(
     () => ed.frame<boolean>(`!!window.ergaFrame?.page && !ergaFrame.reloading && !ergaFrame.page.rendering`),
     10_000,
@@ -189,23 +149,8 @@ export const dropSign = (ed: Editor) =>
 export const drag = async (ed: Editor, selector: string, i: number, files: string[], half?: "top" | "bottom") => {
   await takesDrop(ed);
   const at = await pointAt(ed, selector, i, half);
-  const frame = await ed.page.evaluate(() => {
-    const r = document.getElementById("frame")!.getBoundingClientRect();
-    return { x: r.left, y: r.top };
-  });
-  const cdp = await ed.page.context().newCDPSession(ed.page);
-  const send = (type: "dragEnter" | "dragOver" | "drop") =>
-    cdp.send("Input.dispatchDragEvent", { type, x: frame.x + at.x, y: frame.y + at.y, data: { items: [], files, dragOperationsMask: 1 } });
-  await send("dragEnter");
-  await send("dragOver");
-  await send("dragOver");
-  return {
-    sign: await dropSign(ed),
-    async drop() {
-      await send("drop");
-      await cdp.detach();
-    },
-  };
+  const over = await dragTo(ed.page, at, files);
+  return { sign: await dropSign(ed), drop: over.drop };
 };
 /** Drags the files to the point, and drops them. */
 export const drop = async (ed: Editor, selector: string, i: number, files: string[], half?: "top" | "bottom") =>

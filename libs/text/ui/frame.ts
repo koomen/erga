@@ -98,10 +98,10 @@ const drops = new Set<{ at: number }>();
 /** The files on their way, on their elements here (the viewer and the room say which). */
 const pending = mountPending(window, {
   base: location.origin + BASE,
-  act: (path, action) => window.parent.postMessage({ type: "erga-upload-act", path, action }, SHELL),
+  act: (path, action) => window.parent?.postMessage({ type: "erga-upload-act", path, action }, SHELL),
 });
 // (The viewer says which files are on their way, as they change; this editor, new on the page, asks one time.)
-window.parent.postMessage({ type: "erga-uploads-ask" }, SHELL);
+window.parent?.postMessage({ type: "erga-uploads-ask" }, SHELL);
 /** The paths of the files that were on their way while this page was open: when one comes, its elements load it in place. */
 const awaited = new Set<string>();
 /** The files this editor put on the page that are still on their way, each with its address there: Undo cancels one. */
@@ -417,7 +417,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
         for (const [path, href] of placed)
           if (!text.includes(`"${href}"`)) {
             placed.delete(path);
-            window.parent.postMessage({ type: "erga-upload-act", path, action: "gone" }, SHELL);
+            window.parent?.postMessage({ type: "erga-upload-act", path, action: "gone" }, SHELL);
           }
       }
       if (u.docChanged || u.selectionSet) queueCursor();
@@ -542,7 +542,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
         });
       return runPageEdit(code, html, edit, input);
     },
-    onDropFiles: (list, at) => void dropFiles(list, at),
+    onDropFiles: (list, to) => void dropFiles(list, to),
     onDropRefused: notDropped,
   });
   // The page's own API, imported before the person's first edit asks for it.
@@ -564,19 +564,22 @@ function notDropped(why: string) {
 }
 
 /**
- * Files dropped, pasted or picked for the page, for `at` of its text: each gets its path in the document's files and
- * its element on the page at once (an image with its size), and the viewer sends its bytes (client/shell/uploads.ts).
+ * Files dropped, pasted or picked for the page: each gets its path in the document's files and its element on the page
+ * at once (an image with its size), and the viewer sends its bytes (client/shell/uploads.ts). Its element goes into
+ * the text at `at`; or, dropped at a `point` that isn't the text's, where the page itself places it (its
+ * window.ergaDrop names one of its own edits: drop.ts). A file with no place on the page goes to the document's files
+ * all the same, and the viewer says so.
  */
-async function dropFiles(list: File[], at: number) {
+async function dropFiles(list: File[], to: { at: number } | { point: { x: number; y: number } | null }) {
   // (Its state is on its way to the page that comes: what's dropped now would have nowhere to go in.)
   if (state.phase != "editing" || !editing() || !collab) return notDropped(LOADING_AGAIN);
-  const place = { at };
-  drops.add(place);
+  const place = "at" in to ? { at: to.at } : null;
+  if (place) drops.add(place);
   const taken = new Set([...files(collab.doc).keys(), ...assets(collab.doc).keys(), ...awaited].map((p) => p.toLowerCase()));
-  const named = list.slice(0, 50).map((file) => ({ file, path: pathFor(file, taken) }));
+  const named: { file: File; path: string; noPlace?: string }[] = list.slice(0, 50).map((file) => ({ file, path: pathFor(file, taken) }));
   for (const f of named) awaited.add(f.path);
   const sizes = await Promise.all(named.map((f) => imageSize(f.file)));
-  drops.delete(place);
+  if (place) drops.delete(place);
   if (!page) return;
   // From this page's folder (a page in blog/ reaches images/ as ../images/).
   const up = "../".repeat(HERE.startsWith(BASE) ? HERE.slice(BASE.length).split("/").filter(Boolean).length : 0);
@@ -586,12 +589,41 @@ async function dropFiles(list: File[], at: number) {
     image: f.path.startsWith("images/"),
     ...sizes[i],
   }));
-  if (!page.insertFiles(place.at, items)) return notDropped("The text where the file was dropped changed meanwhile. Drop it again.");
+  if (place) {
+    if (!page.insertFiles(place.at, items)) return notDropped("The text where the file was dropped changed meanwhile. Drop it again.");
+  } else {
+    // The page's own place for them, now that their names and sizes are known; each goes in by the page's own edit.
+    const point = "point" in to ? to.point : null;
+    const where =
+      point &&
+      page.placeAt(
+        point.x,
+        point.y,
+        items.map((i, n) => ({
+          kind: i.image ? "image" : "file",
+          type: named[n].file.type,
+          name: i.name,
+          width: i.width,
+          height: i.height,
+        })),
+        true
+      );
+    let why = where ? null : "";
+    for (const [n, i] of items.entries()) {
+      why ??= await page.dropEdit(where!.edit, {
+        ...where!.input,
+        file: { src: i.href, name: i.name, width: i.width, height: i.height },
+        index: n,
+      });
+      if (why != null) named[n].noPlace = why;
+    }
+  }
   named.forEach((f, i) => {
+    if (f.noPlace != null) return;
     placed.set(f.path, items[i].href);
     pending.add(f.path, f.file);
   });
-  window.parent.postMessage({ type: "erga-upload", files: named }, SHELL);
+  window.parent?.postMessage({ type: "erga-upload", files: named, ...("point" in to && to.point ? { point: to.point } : {}) }, SHELL);
 }
 
 /** The "/" menu's choice: the editor makes the block; for an image, the person picks files, which go in as dropped ones do. */
@@ -599,7 +631,7 @@ function slashChosen(kind: Parameters<PageEditor["slashBlock"]>[0]) {
   const at = page?.slashBlock(kind);
   if (kind != "image" || at == null || at === false) return;
   void pickImages(document).then((list) => {
-    if (list.length) void dropFiles(list, at);
+    if (list.length) void dropFiles(list, { at });
   });
 }
 

@@ -202,6 +202,24 @@ for each step, placed by its `left` and `top`. Its heading names the step.
 `canvas.js` moves the camera, and defines `window.ergaZoom`, so Erga's zoom
 keys zoom the camera.
 
+An image that a person drops on a deck or a canvas goes in by the page's own
+edit `add_image` (`api.js`; `read` with op `document_api` lists it): on a
+slide under its text (or on a new slide), on a canvas at a point or in a
+frame. Use it too (`call_edit`), after you wrote the image's file.
+
+A page that places dropped files itself defines
+`window.ergaDrop = ({ x, y, files, final }) => ...`: Erga calls it while
+files are dragged over the page (`x`, `y`: the pointer in the page's window;
+`files`: each `{ kind: "image" | "file", type }`), and again at the drop
+(`final: true`, each file then with its `name`, and an image's `width` and
+`height`). It answers `{ box: { x, y, width, height }, into, label, edit,
+input }`: where the first file will show (Erga draws the box, and outlines
+the element `into`), a few words, and one of the page's own edits with its
+input; or `null` for Erga's own rule (into the text; where the page has no
+text to edit, into the document's files). At the drop Erga runs the edit for
+each file, with `file: { src, name, width, height }` and `index` added to
+the input. The page draws nothing itself.
+
 A page that defines `window.ergaInset` has the whole window: Erga's bars and
 its agent's panel float over the page. Erga calls it with what they cover,
 `{ top, right, bottom, left }` in px, at the start and at each change; the

@@ -6,10 +6,12 @@
 <title>A canvas presentation</title>
 <script type="module" src="/erga/steps/editor.js"></script>
 <script type="module" src="canvas.js"></script>
+<meta name="erga-api" content="api.js">
 <style>
   /* One large white canvas with frames on it (canvas.js moves the camera; erga/steps draws back, forward and the list).
      Each frame is a step: the camera glides to the next frame in one smooth move. Drag to move around the canvas; scroll to move it, pinch (or ctrl and scroll) to zoom.
-     To move a frame, change its left and top; to add one, copy a section with class "frame" (its h2 is the step's name). */
+     To move a frame, change its left and top; to add one, copy a section with class "frame" (its h2 is the step's name).
+     An image dropped on the canvas goes where the pointer is (api.js, add_image): on the canvas, or in a frame, which it moves with. */
   :root {
     --bg: #ffffff; --ink: #18202c; --muted: #566273;
     --a: #2f6fd6; --b: #d4623a; --c: #2c9a6a; --d: #8a55c9;
