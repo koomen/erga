@@ -173,6 +173,30 @@ export class Users {
     this.known.delete(login);
   }
 
+  /** Whether the server has an admin: a user, a person an admin added as one, or a bootstrap admin. */
+  async hasAdmin(): Promise<boolean> {
+    if (this.admins.size) return true;
+    const rows = await this.sql.all("SELECT 1 FROM users WHERE role = 'admin' UNION ALL SELECT 1 FROM people WHERE role = 'admin' LIMIT 1");
+    return rows.length > 0;
+  }
+
+  /**
+   * A server with no admin takes `login`, an account, as its first one (server/identity/claim.ts). In one statement, so
+   * of two claims at once only the first makes an admin. The result: whether `login` is the admin now.
+   */
+  async claim(login: string): Promise<boolean> {
+    login = login.toLowerCase();
+    if (await this.hasAdmin()) return false;
+    await this.sql.batch([
+      ["UPDATE users SET role = 'admin' WHERE login = ?1 AND NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')", login],
+      this.logged({ login }, Date.now(), { login, event: "role", role: "admin" }),
+    ]);
+    this.known.delete(login);
+    this.accessChanged();
+    await this.pagesChanged([`user:${login}`]);
+    return this.isAdmin(login);
+  }
+
   /** Whether `login` is an admin. */
   async isAdmin(who: Actor | string): Promise<boolean> {
     const actor = typeof who == "string" ? { login: who } : who;

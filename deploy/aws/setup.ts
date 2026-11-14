@@ -1,20 +1,23 @@
-// `bun erga setup <name>` for an instance on AWS (deploy/own/ asks the questions and keeps the steps; this file does the
-// AWS side). In order:
+// `bun erga setup <host>` for an instance on AWS (deploy/own/ keeps the flow; this file does the AWS side). In order:
 //
-//   1. What setup observes: the AWS CLI's login, the account's Route 53 zones, the stack, and the server it made.
-//   2. `stack`: the templates into .erga/aws/ (only if they aren't there: the person's changes stay), then AWS's change
-//      sets; with --yes, it applies them (the certificates first, in us-east-1, when CloudFront has domains). With the
-//      company's sign-in at a proxy (the proxy mode), its endpoints come from its issuer, and its client's secret must be in Secrets Manager.
-//   3. The first deploy: the entry from the stack's outputs, the secrets into Parameter Store (encrypted with the stack's
-//      key), the programs into the bucket and onto the machine, then `bun erga deploy`'s code, with the first admin.
+//   1. What setup observes: the AWS CLI's profiles and login, the account's Route 53 zones, the stack, and the server.
+//   2. The plan: the templates into .erga/aws/, from the answers (the review shows their resources).
+//   3. The build: AWS's change sets, applied (the certificates first, in us-east-1, when CloudFront is in front); the
+//      entry from the stack's outputs; the secrets into Parameter Store (encrypted with the stack's key); the programs
+//      into the bucket and onto the machine; then `bun erga deploy`'s code, with the first rows. With the company's
+//      sign-in at a proxy, its endpoints come from its issuer, and its client's secret is in Secrets Manager (the
+//      setup page puts it there).
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { type AwsEntry, type Config, entryOf, entryOrigin, readConfig, withEntry, writeConfig } from "../cli/config";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { type AwsEntry, type Config, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
 import { type DeployOptions, deployInstance } from "../cli/deploy";
 import type { Fetch } from "../pipeline/cloudflare-api";
-import type { Answers, Facts, TargetFacts, TargetName } from "../own/plan";
-import { firstRows, hostOf, isName, proxySignIn, SETUP_COMMIT, stackOf, varsOf } from "../own/plan";
+import type { Seen } from "../own/flow";
+import type { Answers } from "../own/plan";
+import { firstRows, pagesOf, SETUP_COMMIT, sso, stackOf, varsOf } from "../own/plan";
+import { DIR, loadSecrets, type Setup } from "../own/store";
 import { type Aws, awsCli, whoAmI, type Where } from "./cli";
 import { provisionScript, putPrograms, onMachine, untilReachable } from "./machine";
 import {
@@ -30,14 +33,18 @@ import {
 } from "./stack";
 import { type AwsShape, type Oidc, oidcSecretName, paramPath } from "./template";
 
-export const whereOf = (a: Answers): Where => ({ profile: a.awsProfile || undefined, region: a.awsRegion });
+/** The AWS CLI's place for the answers: the profile (default: the CLI's own) and the region. */
+export const whereOf = (a: Answers): Where => ({
+  profile: a.profile && a.profile != "default" ? a.profile : undefined,
+  region: a.region || "us-east-1",
+});
 
 const hash = (path: string) => (existsSync(path) ? createHash("sha256").update(readFileSync(path)).digest("hex") : null);
 
-/** The templates of the instance's stack: the certificates' (with domains), then the main one. */
+/** The templates of the instance's stack: the certificates' (CloudFront in front), then the main one. */
 const templatesOf = (dir: string, a: Answers) => {
-  const stack = stackOf(a, "primary");
-  return isName(a.host) || proxySignIn(a) ? [templatePath(dir, stack)] : [templatePath(dir, stack, true), templatePath(dir, stack)];
+  const stack = stackOf(a);
+  return sso(a) ? [templatePath(dir, stack)] : [templatePath(dir, stack, true), templatePath(dir, stack)];
 };
 
 /**
@@ -60,69 +67,93 @@ export async function discoverOidc(issuer: string, net: Fetch = fetch): Promise<
 
 /**
  * The shape of the instance's stack, from the answers and what the account has (its zones, CloudFront's prefix list),
- * and in the proxy mode what its issuer publishes.
+ * and with the company's sign-in what its issuer publishes.
  */
 export async function shapeOf(a: Answers, net: Fetch = fetch): Promise<AwsShape> {
   const aws = awsCli(whereOf(a));
   const [vpcId, subnetId] = a.egress.includes("/") ? a.egress.split("/") : [];
-  let domains: AwsShape["domains"] = null;
-  if (!isName(a.host)) {
-    const app = await zoneOf(aws, a.host),
-      pages = await zoneOf(aws, a.pages);
-    if (!app || !pages) throw new Error(`${!app ? a.host : a.pages} has no Route 53 hosted zone in this account.`);
-    domains = { app: a.host, appZone: app.id, pages: a.pages, pagesZone: pages.id };
-  }
+  const app = await zoneOf(aws, a.host),
+    pages = await zoneOf(aws, pagesOf(a));
+  if (!app || !pages) throw new Error(`${!app ? a.host : pagesOf(a)} has no Route 53 hosted zone in this account.`);
   return {
-    stack: stackOf(a, "primary"),
+    stack: stackOf(a),
     egress: vpcId ? { kind: "vpc", vpcId, subnetId } : { kind: a.egress as "nat-instance" | "nat-gateway" },
-    domains,
-    edge: proxySignIn(a)
-      ? { kind: "proxy", oidc: { ...(await discoverOidc(a.oidc, net)), clientId: a.oidcClient } }
+    domains: { app: a.host, appZone: app.id, pages: pagesOf(a), pagesZone: pages.id },
+    edge: sso(a)
+      ? { kind: "proxy", oidc: { ...(await discoverOidc(a.issuer, net)), clientId: a.client } }
       : { kind: "cloudfront", prefixList: await cloudFrontPrefixList(aws) },
   };
 }
 
 // ------------------------------------------------------------------ what setup observes
 
-/** The login, the zones, the stack and the server, into `facts` (the Cloudflare parts stay empty). */
-export async function observeAws(dir: string, a: Answers, applied: Record<string, string>, facts: Facts, net: Fetch, githubId?: string) {
+/** What the AWS CLI's configuration says, or "": no AWS call, so it works before the login. */
+const configured = (key: string, profile: string) => {
+  const r = Bun.spawnSync(["aws", "configure", "get", key, "--profile", profile], { stdout: "pipe", stderr: "ignore" });
+  return r.exitCode == 0 ? r.stdout.toString().trim() : "";
+};
+
+/** The CLI's profiles, each with its account if its configuration names one (an SSO profile's). */
+function profiles(): Seen["choices"] {
+  const r = Bun.spawnSync(["aws", "configure", "list-profiles"], { stdout: "pipe", stderr: "ignore" });
+  const names =
+    r.exitCode == 0
+      ? r.stdout
+          .toString()
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean)
+      : [];
+  return names.map((id) => ({ id, name: configured("sso_account_id", id) }));
+}
+
+/** What the flow decides from, on AWS: the profiles, the login, the zones, the stack and the server. */
+export async function observeAws(dir: string, setup: Setup, seen: Seen, net: Fetch): Promise<Seen> {
+  const a = setup.flow.answers;
+  seen.choices = profiles();
+  if (!a.profile) return seen;
+  seen.region = configured("region", a.profile);
   const where = whereOf(a);
   const me = await whoAmI(where);
-  if ("why" in me) {
-    facts.login = { ok: false, why: me.why };
-    return;
-  }
-  facts.login = { ok: true, accounts: [{ id: me.account, name: me.arn }] };
-  facts.account = me.account;
+  if ("why" in me) return { ...seen, login: { ok: false, why: me.why } };
+  seen.login = { ok: true };
+  seen.account = me.account;
   const aws = awsCli(where);
-  facts.zones = (
+  seen.zones = (
     await aws<{ HostedZones: { Name: string; Config: { PrivateZone: boolean } }[] }>("route53", "list-hosted-zones").catch(() => ({
       HostedZones: [],
     }))
   ).HostedZones.filter((z) => !z.Config.PrivateZone).map((z) => z.Name.replace(/\.$/, ""));
-  const name = stackOf(a, "primary");
+  if (!a.region) return seen;
+  const name = stackOf(a);
   const st = await stackState(aws, name);
   const files = templatesOf(dir, a);
-  const template = files.some((f) => !existsSync(f))
-    ? "none"
-    : files.every((f) => applied[f] && applied[f] == hash(f))
-      ? "applied"
-      : files.some((f) => applied[f])
-        ? "changed"
-        : "new";
-  facts.stack = { name, status: st.status, outputs: st.outputs, template };
-  if (proxySignIn(a)) facts.proxySecret = await secretThere(aws, secretOf(files[0], name));
-  facts.targets.primary = await targetFacts(dir, a, st.outputs, net, githubId);
+  seen.stack = {
+    status: st.status,
+    outputs: st.outputs,
+    resources: files.flatMap(resourcesOf),
+    applied: files.every((f) => setup.applied[f] && setup.applied[f] == hash(f)),
+  };
+  const params = await aws<{ Parameters: { Name: string }[] }>("ssm", "get-parameters-by-path", "--path", paramPath(name)).catch(
+    () => null
+  );
+  seen.held = (params?.Parameters ?? []).map((p) => p.Name.split("/").at(-1)!);
+  seen.app = sso(a)
+    ? await secretThere(aws, oidcSecretName(name))
+    : !!setup.github && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
+  if (st.outputs.Machine) seen.live = await (await import("../own/facts")).liveOf(net, a, setup.github?.clientId);
+  return seen;
 }
 
-/** The secret's name the main template reads the client's secret by: its parameter's (the person may change it), else ours. */
-const secretOf = (template: string, stack: string): string => {
+/** Each resource of a template on disk, as "Name (Type)": what the stack makes. */
+function resourcesOf(file: string): string[] {
   try {
-    return JSON.parse(readFileSync(template, "utf8")).Parameters.OidcSecret.Default || oidcSecretName(stack);
+    const r = JSON.parse(readFileSync(file, "utf8")).Resources as Record<string, { Type: string }>;
+    return Object.entries(r).map(([name, v]) => `${name} (${v.Type})`);
   } catch {
-    return oidcSecretName(stack);
+    return [];
   }
-};
+}
 
 /** Whether Secrets Manager has the secret (its description only: never its value). */
 const secretThere = (aws: Aws, name: string) =>
@@ -131,113 +162,86 @@ const secretThere = (aws: Aws, name: string) =>
     () => false
   );
 
-/** The server the stack made: what it answers, and what it holds (the secrets' names in Parameter Store). */
-async function targetFacts(dir: string, a: Answers, outputs: Record<string, string>, net: Fetch, githubId?: string): Promise<TargetFacts> {
-  const host = outputs.AppHost;
-  const entry = entryOf(readConfig(dir), hostOf(a, "primary"));
-  const facts: TargetFacts = {
-    worker: outputs.Machine ? "ours" : "missing",
-    address: "free",
-    version: null,
-    health: null,
-    signIn: null,
-    registered: !!entry?.token,
-    rule: null,
-    held: null,
-  };
-  if (!host) return facts;
-  const { checkSignIn, getJson } = await import("../own/facts");
-  const v = await getJson<{ version?: string }>(net, `https://${host}/api/deploys/version`);
-  facts.version = v?.version ?? null;
-  if (v) {
-    const h = await getJson<{ ok?: boolean; checks?: unknown }>(net, `https://${host}/api/health`);
-    facts.health = h?.ok ? "ok" : { bad: h ? JSON.stringify(h.checks ?? h).slice(0, 200) : "no answer" };
-    facts.signIn = await checkSignIn(net, host, a, githubId);
+/**
+ * The client secret of the company's sign-in, from the setup page into Secrets Manager, where the stack reads it by
+ * its name. It goes through a file of this user's only, never a command line, and the file goes at once.
+ */
+export async function putOidcSecret(a: Answers, value: string, dir = DIR) {
+  const aws = awsCli(whereOf(a));
+  const name = oidcSecretName(stackOf(a));
+  const file = join(dir, `oidc-${process.pid}.tmp`);
+  writeFileSync(file, value, { mode: 0o600 });
+  try {
+    if (await secretThere(aws, name))
+      await aws("secretsmanager", "put-secret-value", "--secret-id", name, "--secret-string", `file://${file}`);
+    else await aws("secretsmanager", "create-secret", "--name", name, "--secret-string", `file://${file}`);
+  } finally {
+    rmSync(file, { force: true });
   }
-  const params = await awsCli(whereOf(a))<{ Parameters: { Name: string }[] }>(
-    "ssm",
-    "get-parameters-by-path",
-    "--path",
-    paramPath(stackOf(a, "primary"))
-  ).catch(() => null);
-  facts.held = params
-    ? { secrets: params.Parameters.map((p) => p.Name.split("/").at(-1)!), vars: entry && "aws" in entry ? { ...entry.vars } : {} }
-    : null;
-  return facts;
 }
 
 // ------------------------------------------------------------------ the stacks
 
+/** The plan: the templates of the answers, written into .erga/aws/ (again when an answer changed). The result: their paths. */
+export const writePlan = async (dir: string, a: Answers) => writeTemplates(dir, await shapeOf(a));
+
 /**
- * `bun erga setup <name> stack [--yes]`: writes the templates (the first time), then shows each change set, and with
- * `yes` applies it. The certificates' stack comes first (the main one takes their ARNs). The result: whether all is applied.
+ * The stacks, after the person's yes: each change set, shown in the log and applied. The certificates' stack comes
+ * first (the main one takes their ARNs). `applied` gets each template's hash. The result: the main stack's outputs.
  */
-export async function stackStep(dir: string, a: Answers, yes: boolean, applied: Record<string, string>, log: (l: string) => void) {
-  const shape = await shapeOf(a);
-  const fresh = !templatesOf(dir, a).every(existsSync);
-  for (const p of writeTemplates(dir, shape)) if (fresh) log(`wrote ${p}`);
+export async function applyStacks(dir: string, a: Answers, applied: Record<string, string>, log: (l: string) => void) {
+  const stack = stackOf(a);
   const where = whereOf(a);
   const params: Record<string, string> = {};
-  if (shape.edge.kind == "proxy" && !(await secretThere(awsCli(where), secretOf(templatePath(dir, shape.stack), shape.stack))))
+  if (sso(a) && !(await secretThere(awsCli(where), oidcSecretName(stack))))
     throw new Error(
-      `The sign-in's client secret isn't in Secrets Manager (${where.region}) as ${secretOf(templatePath(dir, shape.stack), shape.stack)}: the stack reads it there. The person who has it stores it (plain text, only the secret), then run this again.`
+      `The sign-in's client secret isn't in Secrets Manager (${where.region}) as ${oidcSecretName(stack)}: the setup page puts it there.`
     );
-  if (shape.domains && shape.edge.kind == "cloudfront") {
-    const certs = `${shape.stack}-certs`;
-    const file = templatePath(dir, shape.stack, true);
-    const plan = await planStack({ ...where, region: CERT_REGION }, certs, file);
-    log(`Change set of ${certs} (${CERT_REGION}):`);
+  const apply = async (w: Where, name: string, file: string, title: string) => {
+    log(`${title}...`);
+    const plan = await planStack(w, name, file, params);
     for (const l of changeLines(plan)) log(`  ${l}`);
-    if (!yes) {
-      log(`The main stack's change set comes once the certificates are made (it takes their ARNs).`);
-      return false;
-    }
     const st = await applyStack(plan, log);
     applied[file] = hash(file)!;
+    log(`${title}: done`);
+    return st;
+  };
+  if (!sso(a)) {
+    const st = await apply(
+      { ...where, region: CERT_REGION },
+      `${stack}-certs`,
+      templatePath(dir, stack, true),
+      "The certificates, validated by DNS"
+    );
     params.AppCertificate = st.outputs.AppCertificate;
     params.PagesCertificate = st.outputs.PagesCertificate;
   }
-  const file = templatePath(dir, shape.stack);
-  const plan = await planStack(where, shape.stack, file, params);
-  log(`Change set of ${shape.stack} (${where.region}):`);
-  for (const l of changeLines(plan)) log(`  ${l}`);
-  if (!yes) return false;
-  const st = await applyStack(plan, log);
-  applied[file] = hash(file)!;
-  log(`The app: https://${st.outputs.AppHost}; the pages: ${shape.domains ? `*.${shape.domains.pages}` : st.outputs.PagesHost}.`);
-  return true;
+  return (await apply(where, stack, templatePath(dir, stack), "The stack: network, machine, bucket and addresses")).outputs;
 }
 
 // ------------------------------------------------------------------ the first deploy
 
 /** The instance's entry, from the answers and the stack's outputs. */
-export function awsEntry(
-  a: Answers,
-  t: TargetName,
-  account: string,
-  outputs: Record<string, string>,
-  ids: { github?: string; google?: string },
-  token = ""
-): AwsEntry {
+export function awsEntry(a: Answers, account: string, outputs: Record<string, string>, github: string | undefined, token = ""): AwsEntry {
   return {
-    host: hostOf(a, t),
+    host: a.host,
     token,
-    ...(a.awsProfile ? { profile: a.awsProfile } : {}),
+    ...(whereOf(a).profile ? { profile: a.profile } : {}),
     aws: {
       account,
-      region: a.awsRegion,
-      stack: stackOf(a, t),
+      region: a.region,
+      stack: stackOf(a),
       bucket: outputs.Bucket,
       machine: outputs.Machine,
       app: outputs.AppHost,
-      pages: isName(a.host) ? { kind: "shared", host: outputs.PagesHost } : { kind: "domain", domain: a.pages },
+      pages: { kind: "domain", domain: pagesOf(a) },
     },
-    // In the proxy mode: whose signed header is the sign-in (server/identity/proxy.ts): this proxy's, for this client.
-    vars: varsOf(a, ids, outputs.Proxy),
+    // With the company's sign-in: whose signed header is the sign-in (server/identity/proxy.ts): this proxy's, for this client.
+    vars: varsOf(a, github, outputs.Proxy),
   };
 }
 
-/** Each secret `held` doesn't have, into Parameter Store under the stack's path, encrypted with the stack's key. */
+/** Each secret the server doesn't hold, into Parameter Store under the stack's path, encrypted with the stack's key. */
 async function putSecrets(aws: Aws, stack: string, secrets: Record<string, string>, log: (l: string) => void) {
   for (const [name, value] of Object.entries(secrets)) {
     await aws(
@@ -260,8 +264,10 @@ async function putSecrets(aws: Aws, stack: string, secrets: Record<string, strin
 export interface FirstAws {
   dir: string;
   answers: Answers;
-  facts: Facts;
-  ids: { github?: string; google?: string };
+  /** The AWS account's id, and the main stack's outputs. */
+  account: string;
+  outputs: Record<string, string>;
+  github?: string;
   /** The secrets the server doesn't hold yet (deploy/own/first.ts, secretsFor). */
   secrets: Record<string, string>;
   net?: Fetch;
@@ -271,47 +277,47 @@ export interface FirstAws {
   commit?: string;
 }
 
-/** SQL quoting of a value checked already (a login, a repository): ' doubled. */
+/** SQL quoting of a value checked already (an organization, a domain): ' doubled. */
 const q = (v: string) => `'${v.replace(/'/g, "''")}'`;
 
 /**
  * The first rows (deploy/own/plan.ts, firstRows) as one SQL text for the machine to run after the release answers. The
- * machine can't ask first whether the database has an admin, so each statement for a new database says so itself.
+ * machine can't ask first whether the database has an admin, so each statement says so itself.
  */
 export const firstSql = (a: Answers): string =>
   firstRows(a)
-    .map(({ table, row, onConflict, noAdmin }) => {
+    .map(({ table, row, onConflict }) => {
       const values = Object.values(row)
         .map((v) => (typeof v == "number" ? String(v) : q(v)))
         .join(", ");
-      const what = noAdmin ? `SELECT ${values} WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')` : `VALUES (${values})`;
-      return `INSERT INTO ${table} (${Object.keys(row).join(", ")}) ${what} ON CONFLICT ${onConflict}`;
+      return `INSERT INTO ${table} (${Object.keys(row).join(", ")}) SELECT ${values} WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin') ON CONFLICT ${onConflict}`;
     })
     .join("; ");
 
-/** The first deploy of the instance on AWS. The result: the commit it deployed. */
+/** The first deploy of the instance on AWS, onto the stack's machine. The result: the commit it deployed. */
 export async function firstDeployAws(o: FirstAws): Promise<string> {
   const a = o.answers;
-  const outputs = o.facts.stack?.outputs ?? {};
-  if (!outputs.Machine || !o.facts.account) throw new Error("The stack isn't made yet: bun erga setup <name> stack.");
-  const host = hostOf(a, "primary");
-  const had = entryOf(readConfig(o.dir), host);
-  if (had && !("aws" in had)) throw new Error(`${host} is registered already, on Cloudflare. Setup makes a new instance.`);
-  const config: Config = withEntry(readConfig(o.dir), awsEntry(a, "primary", o.facts.account, outputs, o.ids, had?.token ?? ""));
+  if (!o.outputs.Machine) throw new Error("The stack has no machine yet.");
+  const had = entryOf(readConfig(o.dir), a.host);
+  if (had && !("aws" in had)) throw new Error(`${a.host} is registered already, on Cloudflare. Setup makes a new instance.`);
+  const config: Config = withEntry(readConfig(o.dir), awsEntry(a, o.account, o.outputs, o.github, had?.token ?? ""));
   writeConfig(o.dir, config);
-  const entry = entryOf(config, host) as AwsEntry;
+  const entry = entryOf(config, a.host) as AwsEntry;
   const aws = awsCli(whereOf(a));
+  o.print("The machine's secrets and programs...");
   await putSecrets(aws, entry.aws.stack, o.secrets, o.print);
   await putPrograms(aws, entry.aws.bucket, o.print);
   await untilReachable(aws, entry.aws.machine, o.print);
   o.print(
     `the machine: ${(await onMachine(aws, entry.aws.machine, provisionScript({ bucket: entry.aws.bucket, region: entry.aws.region }))).trim().split("\n").at(-1)}`
   );
+  o.print("The machine's secrets and programs: done");
   return deployInstance({
     dir: o.dir,
-    host,
+    host: a.host,
     commit: o.commit ?? SETUP_COMMIT,
-    command: `bun erga setup ${a.host}`,
+    keepMain: !!o.commit,
+    command: `bun erga setup ${a.host}${o.commit ? ` --commit ${o.commit}` : ""}`,
     noTests: o.noTests,
     suite: o.suite,
     ...(o.net ? { net: o.net } : {}),
@@ -319,9 +325,3 @@ export async function firstDeployAws(o: FirstAws): Promise<string> {
     first: firstSql(a),
   });
 }
-
-/** The address of the setup's instance on AWS, once registered: its entry's. */
-export const awsOrigin = (dir: string, a: Answers) => {
-  const e = entryOf(readConfig(dir), hostOf(a, "primary"));
-  return e ? entryOrigin(e) : null;
-};

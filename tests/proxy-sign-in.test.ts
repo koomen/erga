@@ -9,7 +9,9 @@ import { usernameStep } from "../server/identity/accounts";
 import { providersOf, signInOf } from "../server/identity/mode";
 import { finishOAuth, startOAuth } from "../server/identity/oauth";
 import { claimsOf, type Proxy, proxyOf, proxySignIn, readProxy, vouchedOf } from "../server/identity/proxy";
+import { Claim, claimRoute } from "../server/identity/claim";
 import { sessionOf } from "../server/identity/session";
+import { Tokens } from "../server/identity/tokens";
 import { authOps } from "../server/identity/settings";
 import { chooseSignIn } from "../server/identity/sign-in";
 import type { Platform } from "../server/platform";
@@ -213,6 +215,8 @@ function server(proxy: Proxy | string = AWS, admins: string[] = []) {
     directory,
     signIn: { ...signIn, devLogin: null, encryptionKey: null },
     deploy: { version: null, primary: null },
+    sessionOf: (request: Request) => sessionOf(platform, request),
+    tokens: new Tokens(sql, "session-secret", directory),
   } as unknown as Platform;
   /** The server's first admin, as its deploy adds one: a person who waits, by their email at the proxy's sign-in. */
   const firstAdmin = (email: string) =>
@@ -416,4 +420,113 @@ test("the OAuth mode (no PROXY_SIGN_IN): /auth/proxy is nothing and GitHub's way
   expect((await respond(chooseSignIn, new Request(`${ORIGIN}/auth/sign-in`), platform)).headers.get("location")).toBe(
     "/auth/github?next=%2F"
   );
+});
+
+test("a new server's first admin: the setup page's link lets its person in and makes them the admin, one time, and connects the ops page", async () => {
+  const { platform, directory } = server();
+  const at = (path: string, init: RequestInit = {}) => respond(claimRoute, new Request(`${ORIGIN}${path}`, init), platform);
+  const form = (cookie: string, fields: Record<string, string>) =>
+    at("/auth/claim", {
+      method: "POST",
+      headers: { cookie, origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(fields).toString(),
+    });
+  // Nobody is named in the database, and no rule lets anyone in: without the link, a person who passes the proxy is refused.
+  expect((await signUp(platform, await aws(ADA), "ada")).answer.status).toBe(403);
+  // A link that this server's secret did not sign, or one from over 30 minutes ago, is nothing.
+  const old = await Claim.seal("session-secret", {}, { now: Date.now() - 31 * 60_000 });
+  for (const bad of ["", "x.y", await Claim.seal("another-secret", {}), old]) {
+    const no = await at(`/auth/claim?t=${encodeURIComponent(bad)}`);
+    expect(no.status).toBe(410);
+    expect(await no.text()).toContain("<h1>This link does not work any more</h1>");
+  }
+  // The setup's request for its ops token waits; the link carries its code.
+  const asked = await platform.tokens.request("bun erga setup", { scope: "ops" });
+  const claim = await Claim.seal("session-secret", {});
+  const here = `/auth/claim?t=${encodeURIComponent(claim)}&approve=${asked.userCode}`;
+  // Not signed in: on to the sign-in, with the claim in a cookie.
+  const first = await at(here);
+  expect([first.status, first.headers.get("location")]).toEqual([302, `/auth/sign-in?next=${encodeURIComponent(here)}`]);
+  const claimCookie = cookieOf(first);
+  expect(claimCookie).toStartWith("erga_claim=");
+  // With it, the person the proxy vouches for may make their account, and comes back to the link, signed in.
+  const signed = await respond(
+    proxySignIn,
+    new Request(`${ORIGIN}/auth/proxy?next=${encodeURIComponent(here)}`, { headers: { ...(await aws(ADA)), cookie: claimCookie } }),
+    platform
+  );
+  expect(signed.headers.get("location")).toBe("/auth/username");
+  const made = await respond(
+    usernameStep,
+    new Request(`${ORIGIN}/auth/username`, {
+      method: "POST",
+      headers: { cookie: `${cookieOf(signed)}; ${claimCookie}`, origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username: "ada" }).toString(),
+    }),
+    platform
+  );
+  expect([made.status, made.headers.get("location")]).toEqual([302, here]);
+  const session = cookieOf(made);
+  expect(await directory.users.isAdmin("ada")).toBe(false);
+  // The link asks first: a GET makes nobody an admin.
+  const card = await at(here, { headers: { cookie: session } });
+  expect(card.status).toBe(200);
+  expect(await card.text()).toContain(`<button class="new">Become the admin of erga.example</button>`);
+  expect(await directory.users.isAdmin("ada")).toBe(false);
+  // Another site's form is refused. The person's own click makes them the admin, and approves the setup's request.
+  expect((await at("/auth/claim", { method: "POST", headers: { cookie: session, origin: "https://evil.example" } })).status).toBe(403);
+  const done = await form(session, { t: claim, approve: asked.userCode });
+  expect(done.status).toBe(200);
+  expect(await done.text()).toContain("<h1>You are the admin</h1>");
+  expect(await directory.users.isAdmin("ada")).toBe(true);
+  expect(await platform.tokens.collect(asked.code)).toMatchObject({
+    status: "ready",
+    login: "ada",
+    token: expect.stringMatching(/^erga_/),
+  });
+  // One time: the server has its admin, so the same link claims nothing. It sends an admin on to approve a request.
+  const again = await at(here, { headers: { cookie: session } });
+  expect([again.status, again.headers.get("location")]).toEqual([302, `/tokens/approve?code=${asked.userCode}`]);
+  expect((await at(`/auth/claim?t=${encodeURIComponent(claim)}`)).headers.get("location")).toBe("/");
+  // And it lets nobody else in.
+  const eve = await respond(
+    proxySignIn,
+    new Request(`${ORIGIN}/auth/proxy`, {
+      headers: { ...(await aws({ sub: "sub-eve", email: "eve@example.com", email_verified: "true" })), cookie: claimCookie },
+    }),
+    platform
+  );
+  expect(eve.status).toBe(403);
+});
+
+test("the link approves only the setup's own request: a wider one stays for the person's own decision", async () => {
+  const { platform, directory } = server();
+  const claim = await Claim.seal("session-secret", {});
+  const asked = await platform.tokens.request("an agent", { scope: "admin" });
+  const signed = await respond(
+    proxySignIn,
+    new Request(`${ORIGIN}/auth/proxy?next=/docs`, { headers: { ...(await aws(ADA)), cookie: `erga_claim=${claim}` } }),
+    platform
+  );
+  const made = await respond(
+    usernameStep,
+    new Request(`${ORIGIN}/auth/username`, {
+      method: "POST",
+      headers: { cookie: `${cookieOf(signed)}; erga_claim=${claim}`, origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username: "ada" }).toString(),
+    }),
+    platform
+  );
+  const done = await respond(
+    claimRoute,
+    new Request(`${ORIGIN}/auth/claim`, {
+      method: "POST",
+      headers: { cookie: cookieOf(made), origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ t: claim, approve: asked.userCode }).toString(),
+    }),
+    platform
+  );
+  expect(done.status).toBe(200);
+  expect(await directory.users.isAdmin("ada")).toBe(true);
+  expect(await platform.tokens.collect(asked.code)).toEqual({ status: "pending" });
 });

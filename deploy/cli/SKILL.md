@@ -127,7 +127,7 @@ and `main`. There are no pull requests.
   merge deleted; offline, it lists the clone's branches, with a note.
 - `bun erga`: the ops page on localhost. It lists the instances of `.erga/config.json`,
   each primary with its staging instances, the feature branches, the log with "live" at each
-  instance's commit, and the job that runs. Its tabs: Setup (the checklist of `bun erga setup`), Deploys,
+  instance's commit, and the job that runs. Its tabs: Setup (the steps of `bun erga setup`), Deploys,
   Logs (a job's output, live) and History (the jobs). It checks its sources, each on its own
   period, whatever happens: GitHub at most once a minute, with `git fetch --prune` in the main
   clone, and each instance's commit and health every 5 seconds. The Deploys tab's Sources box shows each source's
@@ -165,11 +165,11 @@ and `main`. There are no pull requests.
   its plain settings and an ops token into `.erga/config.json` in the main
   clone. Only when Pete asks.
 - `bun erga login <host>`: a new ops token for a registered instance.
-- `bun erga setup <host>`: the steps from nothing to a registered instance. For
-  a new instance it writes its entry, deploys it the first time with its
-  secrets, writes the first admin, and registers it (`bun erga setup skill`).
-  An instance that runs already keeps its entry: the same steps show what is
-  done.
+- `bun erga setup <host>`: a new instance, from nothing to a registered one, on
+  Cloudflare or AWS. The one command does the work: it asks the person three
+  questions through their agent, waits for their steps on the ops page's
+  Setup tab, deploys, and connects the page (`bun erga setup skill`).
+  `--staging-of <host>` makes a staging instance of a registered one.
 
 ## The rules
 

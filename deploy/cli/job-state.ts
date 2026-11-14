@@ -27,9 +27,10 @@ export type Alive = (pid: number, start: unknown) => boolean;
 
 /** The state of a record's first line, or null: it is not a job's start. */
 export function jobStart(head: Line | undefined): JobState | null {
-  const m = typeof head?.command == "string" ? /^bun erga (deploy|merge|rollback)\b(?: (\S+))?/.exec(head.command) : null;
+  const m = typeof head?.command == "string" ? /^bun erga (deploy|merge|rollback|setup)\b(?: (\S+))?/.exec(head.command) : null;
   if (!m || typeof head?.host != "string") return null;
-  const kind = m[1] as Kind;
+  // A setup's job is its first deploy.
+  const kind = (m[1] == "setup" ? "deploy" : m[1]) as Kind;
   return { kind, host: head.host, commit: null, branch: kind == "merge" ? (m[2] ?? null) : null, phase: "running" };
 }
 

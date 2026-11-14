@@ -242,8 +242,10 @@ export interface DeployOptions {
   createSubdomain?: boolean;
   /** --home: the homepage's own domain, a hostname on one of the account's zones. The server keeps it after. */
   home?: string;
-  /** AWS, `bun erga setup`'s first deploy only: SQL the machine runs once the release answers (the first admin). */
+  /** AWS, `bun erga setup`'s first deploy only: SQL the machine runs once the release answers (the first rows). */
   first?: string;
+  /** `bun erga setup --commit`: a primary takes a commit that is not main's, and main stays where it is. */
+  keepMain?: boolean;
 }
 
 /** Why `home` can't be the homepage's domain, or null. */
@@ -325,7 +327,8 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     const old = entry.stagingOf ? stagingCommitRefusal(clone, sha, o.host) : null;
     if (old) throw new Error(old);
     // A primary: main must have the commit, or move forward to it. Checked before the build, so a deploy never leaves main behind.
-    const main = entry.stagingOf ? null : mocked() && !o.clone ? "mock" : mainMove(clone, sha);
+    const main = entry.stagingOf || o.keepMain ? null : mocked() && !o.clone ? "mock" : mainMove(clone, sha);
+    if (o.keepMain) job.note({ main: "kept: --commit" });
     // Before the tests and the build: a copy that needs a token it does not have stops here.
     const copying = target && entry.stagingOf ? await copyTarget(o.dir, config, entry as CloudflareEntry, cf, !!o.fresh) : null;
     if (copying) {
@@ -338,13 +341,22 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       log(`NOTE  The tests of ${sha.slice(0, 12)} did not run (--no-tests).`);
     } else {
       // The gate (gate.ts): the record of the commit's tree, which its merge wrote; with none, the tests run now.
+      log("Test the commit...");
       const run = await testRun({ dir: o.dir, clone, tree: treeOf(clone, sha)!, commit: sha, what: sha.slice(0, 12), log, suite: o.suite });
       job.note({ tests: run.state });
       const no = gateRefusal(run, sha.slice(0, 12));
       if (no) throw new Error(`${no}\nIt does not deploy.`);
+      log("Test the commit: done");
     }
 
     const { buildHere } = await import("../pipeline/build");
+    // Each part of a deploy says when it starts ("<part>...") and ends ("<part>: done"): setup's page lists them.
+    const built = async (commit: string) => {
+      log("Build the code...");
+      const release = await buildHere(commit, log, mocked());
+      log("Build the code: done");
+      return release;
+    };
     const { keepLast } = await import("../pipeline/keep-last");
     if (aws) {
       log(`Deploy ${sha.slice(0, 12)} to ${o.host} on AWS:`);
@@ -352,11 +364,13 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       log(
         `  ${entryOrigin(aws)}, documents' pages on ${aws.aws.pages.kind == "domain" ? `*.${aws.aws.pages.domain}` : aws.aws.pages.host}`
       );
-      const release = await keepLast(await buildHere(sha, log, mocked()), entryOrigin(aws), net, log);
+      const release = await keepLast(await built(sha), entryOrigin(aws), net, log);
       const { deployToAws } = await import("../aws/deploy");
+      log("Deploy to the machine...");
       await deployToAws(aws, release, log, o.first);
       if (!(await healthOf(entryOrigin(aws), net)))
         throw new Error(`${entryOrigin(aws)} runs ${sha.slice(0, 12)}, but its health check fails from here.`);
+      log("Deploy to the machine: done");
       log(`Deployed ${sha.slice(0, 12)} to ${entryOrigin(aws)}: healthy.`);
     } else {
       const t = target!;
@@ -367,7 +381,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       log(
         `  https://${targetHost(t)}, documents' pages on ${targetPagesShown(t)}; ${sent.length ? `the secrets sent: ${sent.join(", ")}` : "no secret sent"}`
       );
-      const release = await keepLast(await buildHere(sha, log, mocked()), `https://${targetHost(t)}`, net, log);
+      const release = await keepLast(await built(sha), `https://${targetHost(t)}`, net, log);
       const carry: Carry = {};
       try {
         await runPipeline(cf, release, t, {

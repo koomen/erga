@@ -16,7 +16,7 @@ name or domain: each instance takes its names from its name in setup, and the AW
 | `machine.ts` | celld and Chrome in the bucket and on the machine; the commands the CLI runs there (Systems Manager) |
 | `project.ts` | A release as a celld project |
 | `deploy.ts` | `bun erga deploy` and `rollback` of an instance on AWS |
-| `setup.ts` | `bun erga setup` on AWS: what it observes, the `stack` step, the first deploy |
+| `setup.ts` | `bun erga setup` on AWS: what it observes, the plan, the stacks, the first deploy |
 | `cli.ts` | The AWS CLI with the instance's profile and region |
 | `check.ts` | Checks a live server feature by feature, in a browser and through the tools API |
 
@@ -38,10 +38,10 @@ name or domain: each instance takes its names from its name in setup, and the AW
 
 ## The stack
 
-`bun erga setup <name> stack` writes `.erga/aws/<stack>.json` (and `<stack>-certs.json` with domains), then shows
-AWS's change set. The person reads the template, may change it (the machine size, the disk, the image are its
-parameters), and says yes; then `stack --yes` applies it. A later change to the file goes through the same steps: the
-setup's status shows a template that changed since it was applied.
+`bun erga setup <host>` writes `.erga/aws/<stack>.json` (and `<stack>-certs.json` with CloudFront in front) from the
+person's answers, when the setup comes to its review. The Setup tab shows each resource, and the agent asks for the
+person's yes. Then the build makes AWS's change sets, shows them in its log, and applies them. An answer that changes
+writes the templates again.
 
 - **The network.** A new VPC: a private subnet for the machine, a public one for its way out. The way out is a NAT
   machine (t4g.nano) or a NAT gateway. Or the person names a VPC and a private subnet of their own, with its own way
@@ -59,14 +59,12 @@ setup's status shows a template that changed since it was applied.
   oidcClient=<client ID>`; `server/identity/mode.ts` has the two modes). A public Application Load Balancer takes
   CloudFront's place. It sends each browser to the company's OIDC sign-in first, and that sign-in is Erga's own: no
   GitHub, no Google (`server/identity/proxy.ts` reads the proxy's signed header; the setup writes which proxy
-  and which client as `PROXY_SIGN_IN`). The first admin is an email address: a person added before their first
-  sign-in, as an admin adds one on the Users page. With the company preset, everybody who passes the sign-in may make
-  an account.
+  and which client as `PROXY_SIGN_IN`). The first admin is the person who opens the setup page's link and signs in
+  (`server/identity/claim.ts`). Everybody who passes the sign-in may make an account.
   - Erga takes each person's email address from the sign-in: the first of the claims `email`, `upn` and
-    `preferred_username` that looks like one. A sign-in that gives none still signs in, by its ID (`sub`); the first
-    admin needs the address in `email` (verified) or `upn`.
-  - The setup reads the sign-in's endpoints from its issuer. The client's secret is never in a file: the person who
-    has it stores it in Secrets Manager as `erga/<stack>/oidc-client-secret` (plain text), and the stack reads it there.
+    `preferred_username` that looks like one. A sign-in that gives none still signs in, by its ID (`sub`).
+  - The setup reads the sign-in's endpoints from its issuer. The client's secret is never in a file: the person types
+    it on the setup page, which stores it in Secrets Manager as `erga/<stack>/oidc-client-secret`, and the stack reads it there.
   - Without the sign-in pass only: a document's own address (its files by their token; a frame can't sign in); on the
     app's address, what Erga's tokens guard (MCP and its OAuth, the operations, the CLI's token request, the deploy's
     checks: `deploy/proxy-paths.ts`), a page's keyed requests to its room, and the server's own browser, by the NAT's fixed
@@ -125,10 +123,9 @@ That run used an earlier deploy script, Caddy and temporary names, with the same
 
 ## Limits
 
-- Staging on AWS isn't there yet: setup refuses `staging` with `provider=aws`.
-- An agent's admin token (`bun erga setup <name> token`) and `--home` are for Cloudflare only.
-- Without domains, CloudFront's names are random, and change if the stack makes a distribution again. The GitHub
-  app's callback must then change too. The shared pages host has no offline copy, as on Cloudflare.
+- Staging on AWS isn't there yet: `--staging-of` takes a primary on Cloudflare only.
+- The app has a domain in Route 53. The documents' pages have a zone of their own; with the company's sign-in, a name
+  under the app's (pages.<host>).
 - A secret set in Parameter Store reaches the Worker at the next deploy.
 - One machine: each write waits for S3 (about 90 ms by celld's docs). A second machine on the same bucket makes
   writes faster and takes over if the first one stops.

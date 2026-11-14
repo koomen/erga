@@ -1,11 +1,11 @@
-// An instance's stacks on AWS (deploy/aws/template.ts): setup writes the templates into .erga/aws/, the person reads
-// them and may change them, then a change set shows what AWS will make or change, and only a yes applies it. The
-// templates on disk are the source: a change to them goes through the same steps (`bun erga setup <name> stack`).
+// An instance's stacks on AWS (deploy/aws/template.ts): setup writes the templates into .erga/aws/ from the person's
+// answers, its page shows their resources, and after the person's yes a change set shows what AWS will make or
+// change, and applies it (deploy/aws/setup.ts).
 //
 //   .erga/aws/<stack>.json          the main stack, in the instance's region
 //   .erga/aws/<stack>-certs.json    CloudFront with domains: the ACM certificates, in us-east-1 (CloudFront's region)
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Aws, awsCli, type Where } from "./cli";
 import { type AwsShape, certificatesTemplate, stackTemplate } from "./template";
@@ -16,16 +16,13 @@ export const CERT_REGION = "us-east-1";
 export const templatesDir = (dir: string) => join(dir, "aws");
 export const templatePath = (dir: string, stack: string, certs = false) => join(templatesDir(dir), `${stack}${certs ? "-certs" : ""}.json`);
 
-/**
- * Writes the templates of `shape` into .erga/aws/, unless they are there already: the person's changes stay. `fresh`
- * writes them again from the answers (after a new answer). The result: the paths.
- */
-export function writeTemplates(dir: string, shape: AwsShape, fresh = false): string[] {
+/** Writes the templates of `shape` into .erga/aws/. The result: the paths. */
+export function writeTemplates(dir: string, shape: AwsShape): string[] {
   mkdirSync(templatesDir(dir), { recursive: true });
   const out: [string, unknown][] = [[templatePath(dir, shape.stack), stackTemplate(shape)]];
   if (shape.domains && shape.edge.kind == "cloudfront")
     out.unshift([templatePath(dir, shape.stack, true), certificatesTemplate(shape.stack, shape.domains)]);
-  for (const [path, t] of out) if (fresh || !existsSync(path)) writeFileSync(path, `${JSON.stringify(t, null, 2)}\n`);
+  for (const [path, t] of out) writeFileSync(path, `${JSON.stringify(t, null, 2)}\n`);
   return out.map(([p]) => p);
 }
 
