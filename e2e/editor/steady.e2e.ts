@@ -9,6 +9,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, journey, servers, test, until, type Tab } from "../helpers/fixtures";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
+import { dragTo, folderOnDisk, onDisk, SIGN } from "../helpers/drops";
 import { pointerOnPage } from "../helpers/press";
 import { runTool } from "../helpers/tools";
 import { WAIT_MS } from "../../client/common/frame-swap";
@@ -17,20 +18,20 @@ import {
   agentPlays,
   CENTRED,
   clickBadge,
+  DRAWN_PAGE,
   newConversation,
   drag,
   drop,
   dropSign,
-  folderOnDisk,
   images,
   IMG,
   lockNote,
-  onDisk,
   openDropPage,
   pageStill,
   pasteFiles,
   pendingParts,
   png,
+  takesDrop,
   UPLOAD,
 } from "./steady-helpers";
 
@@ -492,7 +493,11 @@ journey("files dropped and pasted on a page in a folder", () => {
     tab,
   }) => {
     // A folder has an image's name, and a file has another's: the steps below meet both.
-    ({ ed, id, address, files } = await openDropPage(tab, s, { "images/clash.png/a.txt": "x", "images/dot.png": "old" })); // page load 1
+    ({ ed, id, address, files } = await openDropPage(tab, s, {
+      "images/clash.png/a.txt": "x",
+      "images/dot.png": "old",
+      "drawn.html": DRAWN_PAGE,
+    })); // page load 1
     loaded = await ed.frame<number>(`performance.timeOrigin`);
     const go = await held();
     const before = await tail();
@@ -689,9 +694,50 @@ journey("files dropped and pasted on a page in a folder", () => {
     expected(tab);
   });
 
+  test("the page did not load again for the new files; after a reload, every image is there", async ({ tab }) => {
+    // (The shell makes the page afresh for a stylesheet or a script that changes, not for a file.)
+    expect(await ed.frame<number>(`performance.timeOrigin`)).toBe(loaded);
+    const before = await images(ed);
+    expect(before.length).toBe(7);
+    await ed.page.reload(); // page load 3
+    await ed.loaded();
+    await expect.poll(() => images(ed), UPLOAD).toEqual(before);
+    expected(tab);
+  });
+
+  test("a page with no text to edit has no place for a file: the sign says that it goes to the document's files; dropped, it is there, and a problem offers the agent and its address", async ({
+    tab,
+  }) => {
+    // (Before: no sign, no file, no message.)
+    await ed.page.goto(`${s.root}${address}/drawn?edit`); // page load 4
+    await takesDrop(ed);
+    const over = await dragTo(ed.page, { x: 500, y: 300 }, [onDisk("lost.png")]);
+    expect((await ed.frame<{ part: string }[]>(SIGN)).map((x) => x.part)).toEqual([
+      "into",
+      "chip To this document’s filesthis page has no place for it",
+    ]);
+    await over.drop();
+    await expect
+      .poll(async () => (await ed.alerts()).alerts)
+      .toEqual([
+        {
+          title: "“lost.png” has no place on this page",
+          count: "",
+          detail: "Upload · it is in this document’s files: images/lost.png",
+          rows: [],
+          buttons: [expect.stringMatching(/^Ask the agent to place it/), "Copy its address"],
+        },
+      ]);
+    await expect.poll(files, UPLOAD).toEqual(expect.arrayContaining(["images/lost.png"]));
+    expect(await ed.frame<number>(`document.querySelectorAll("img").length`)).toBe(0);
+    expected(tab);
+  });
+
   test("an agent's file on its way: a box of its size on the page with the agent's name, and its line in the alerts; when its bytes come, the image shows them", async ({
     tab,
   }) => {
+    // (On the drawn page, where the step before left the tab: its problem is closed first.)
+    await ed.page.click("#alerts .alerts-close");
     const token = (
       (await (
         await fetch(`${s.root}${address}/api/share`, {
@@ -708,13 +754,13 @@ journey("files dropped and pasted on a page in a folder", () => {
       "images/chart.png",
     ]);
     await agent("edit", {
-      path: "blog/post.html",
-      edits: [{ oldText: "<h1>Launch notes</h1>", newText: `<h1>Launch notes</h1>\n  ${CENTRED("../images/chart.png")}` }],
+      path: "drawn.html",
+      edits: [{ oldText: "</svg>", newText: `</svg>\n${CENTRED("images/chart.png")}` }],
     });
     await expect.poll(() => pendingParts(ed), UPLOAD).toEqual(["ph wait", expect.stringMatching(/^badge plain 0%chart\.png · from /)]);
     await expect
       .poll(async () => (await images(ed)).find((i) => i.alt == "chart.png"))
-      .toEqual({ src: "../images/chart.png", alt: "chart.png", size: "200x150", loaded: false });
+      .toEqual({ src: "images/chart.png", alt: "chart.png", size: "200x150", loaded: false });
     await expect.poll(async () => (await ed.alerts()).head).toBe("chart.png");
     await ed.page.click("#alerts .alerts-pill");
     expect((await ed.alerts()).alerts).toEqual([
@@ -729,17 +775,6 @@ journey("files dropped and pasted on a page in a folder", () => {
     expect((await fetch(`${s.root}/d/${id}/api/blobs/${hash}`, { method: "PUT", body: bytes })).status).toBe(200);
     await expect.poll(async () => (await images(ed)).find((i) => i.alt == "chart.png")?.loaded, UPLOAD).toBe(true);
     await expect.poll(() => pendingParts(ed)).toEqual([]);
-    expected(tab);
-  });
-
-  test("the page did not load again for the new files; after a reload, every image is there", async ({ tab }) => {
-    // (The shell makes the page afresh for a stylesheet or a script that changes, not for a file.)
-    expect(await ed.frame<number>(`performance.timeOrigin`)).toBe(loaded);
-    const before = await images(ed);
-    expect(before.length).toBe(8);
-    await ed.page.reload(); // page load 3
-    await ed.loaded();
-    await expect.poll(() => images(ed), UPLOAD).toEqual(before);
     expected(tab);
   });
 });

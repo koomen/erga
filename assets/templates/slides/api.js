@@ -1,5 +1,6 @@
-// The deck's own edits (<meta name="erga-api" content="api.js">): add, delete and move a slide, and change its layout.
-// The bar over the slide (slides.js) calls them, and agents do (call_edit). Slides are numbered from 1, in the page's
+// The deck's own edits (<meta name="erga-api" content="api.js">): add, delete and move a slide, change its layout, and
+// put an image on one. The bar over the slide (slides.js) calls them, Erga calls add_image when a person drops an
+// image on a slide (slides.js says where: window.ergaDrop), and agents do (call_edit). Slides are numbered from 1, in the page's
 // order: each is a <section class="slide"> in <body>, with a layout (data-layout: title or content).
 
 const LAYOUTS = ["title", "content"];
@@ -22,7 +23,7 @@ const LAYOUT = { type: "string", enum: LAYOUTS, description: "title: a heading a
 
 export default {
   name: "slides",
-  description: "The deck's slides: add, delete, move, layout.",
+  description: "The deck's slides: add, delete, move, layout; an image on a slide.",
   edits: [
     {
       name: "add_slide",
@@ -60,6 +61,29 @@ export default {
       name: "set_layout",
       description: "Changes a slide's layout.",
       input: { type: "object", properties: { slide: SLIDE, layout: LAYOUT }, required: ["slide", "layout"] },
+    },
+    {
+      name: "add_image",
+      description: "Puts an image on a slide, under its text, or on a new slide after it.",
+      input: {
+        type: "object",
+        properties: {
+          slide: SLIDE,
+          file: {
+            type: "object",
+            description: "The image: its address from the page (images/…), its name, and its size in px if known.",
+            properties: { src: { type: "string" }, name: { type: "string" }, width: { type: "number" }, height: { type: "number" } },
+            required: ["src"],
+          },
+          height: {
+            type: "number",
+            description:
+              "Its height in cqw (hundredths of the slide's width; a slide is 56.25 high). Default 20: keep the slide's text and it inside the slide.",
+          },
+          fresh: { type: "boolean", description: "true: on a new slide after this one, under a heading with its name." },
+        },
+        required: ["slide", "file"],
+      },
     },
   ],
   apply(html, edit, input) {
@@ -106,6 +130,21 @@ export default {
       return [
         { op: "attr", el: slide(n), name: "data-layout", value: layout },
         { op: "caret", el: slide(n) },
+      ];
+    }
+    if (edit == "add_image") {
+      const { slide: n, file, fresh } = input;
+      if (no(n)) return { refused: no(n) };
+      if (!file || typeof file.src != "string" || !file.src) return { refused: "file.src is the image's address from the page." };
+      const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const height = Number.isFinite(input.height) && input.height > 0 ? Math.min(input.height, 52) : fresh ? 36 : 20;
+      const size = file.width > 0 && file.height > 0 ? ` width="${Math.round(file.width)}" height="${Math.round(file.height)}"` : "";
+      const name = String(file.name ?? "");
+      const img = `<img src="${esc(file.src)}"${size} alt="${esc(name)}" style="height: ${height}cqw; width: auto; max-width: 100%; align-self: flex-start; object-fit: contain">`;
+      if (!fresh) return [{ op: "insert", html: img, into: slide(n) }];
+      const title = esc(name.replace(/\.[^.]+$/, "") || "Image");
+      return [
+        { op: "insert", html: `<section class="slide" data-layout="content">\n  <h2>${title}</h2>\n  ${img}\n</section>`, after: slide(n) },
       ];
     }
     return { refused: `The deck has no edit "${edit}".` };

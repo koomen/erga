@@ -55,8 +55,8 @@ export interface PageFrameConfig {
   onProblem: (problem: RawProblem, base: string) => void;
   /** The editor in the page raised an alert, changed it or ended it. */
   onAlert: (event: Extract<AlertEvent, { t: "raise" | "row" | "end" }>) => void;
-  /** The editor in the page has files for the document, each at a path it chose. */
-  onUpload: (files: NewFile[]) => void;
+  /** The editor in the page has files for the document, each at a path it chose; `point`: where in the page's window they were dropped. */
+  onUpload: (files: NewFile[], point?: { x: number; y: number }) => void;
   /** A button on a file in the page (cancel, remove, retry, raise). */
   onUploadAct: (path: string, action: string) => void;
   /** The editor in the page needs to know which files are on their way: it is new there and asks, or it was told to edit. */
@@ -172,9 +172,21 @@ export function mountPageFrame(c: PageFrameConfig) {
         return;
       }
       case "erga-upload": {
-        const list = (Array.isArray(m.files) ? m.files : []).slice(0, 50) as { file?: unknown; path?: unknown }[];
+        const list = (Array.isArray(m.files) ? m.files : []).slice(0, 50) as { file?: unknown; path?: unknown; noPlace?: unknown }[];
+        const at = m.point as { x?: unknown; y?: unknown } | undefined;
         c.onUpload(
-          list.flatMap((f) => (f?.file instanceof File && typeof f.path == "string" ? [{ file: f.file, path: f.path.slice(0, 500) }] : []))
+          list.flatMap((f) =>
+            f?.file instanceof File && typeof f.path == "string"
+              ? [
+                  {
+                    file: f.file,
+                    path: f.path.slice(0, 500),
+                    ...(typeof f.noPlace == "string" ? { noPlace: f.noPlace.slice(0, 300) } : {}),
+                  },
+                ]
+              : []
+          ),
+          num(at?.x) && num(at?.y) ? { x: Math.round(at.x), y: Math.round(at.y) } : undefined
         );
         return;
       }

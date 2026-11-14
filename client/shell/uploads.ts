@@ -19,10 +19,14 @@ import { asUser, runTool } from "../common/tools";
 import * as U from "../common/uploads";
 import { BASE, type Shell } from "./shell";
 
-/** A file for the document, at the path the editor gave it (images/…, files/…). */
+/**
+ * A file for the document, at the path the editor gave it (images/…, files/…). `noPlace`: the page has no place for it
+ * where it was dropped ("": none at all; else the reason the page's own edit gave).
+ */
 export interface NewFile {
   file: File;
   path: string;
+  noPlace?: string;
 }
 /** What the write answers of a file it refused (document/uploads.ts, Published). */
 interface Refused {
@@ -317,8 +321,11 @@ export function mountUploads(shell: Shell) {
   }
 
   return {
-    /** Files for the document, each at its path: a new batch. False: none of them can be one (a path that is none). */
-    add(list: NewFile[]): boolean {
+    /**
+     * Files for the document, each at its path: a new batch. One with no place on the page is a problem in the card,
+     * with the way on (`point`: where it was dropped). False: none of them can be one (a path that is none).
+     */
+    add(list: NewFile[], point?: { x: number; y: number }): boolean {
       const ok = list
         .filter((f) => f.file instanceof File && PATH.test(f.path) && !f.path.split("/").some((p) => p.startsWith(".")))
         .slice(0, 50);
@@ -330,6 +337,11 @@ export function mountUploads(shell: Shell) {
         batch: ++batches,
         files: ok.map((f) => ({ id: f.path, name: f.path.slice(f.path.lastIndexOf("/") + 1), size: f.file.size })),
       });
+      for (const f of ok)
+        if (f.noPlace != null)
+          shell.alerts.raise(U.noPlace(f.path, f.noPlace, shell.pagePath, point), (action) => {
+            if (action == "copy") void navigator.clipboard?.writeText(f.path).then(() => shell.toast.flash("Copied"));
+          });
       return true;
     },
     /**

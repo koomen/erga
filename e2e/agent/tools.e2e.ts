@@ -384,7 +384,7 @@ journey("a deck: the slide bar, the keys and the agent's add_slide", () => {
     const t = (await mine()).on(await idOf(ed.address));
     const apis = await apisOf(t);
     expect(apis.map((a) => a.api)).toEqual(["slides", "erga/text"]);
-    expect(apis[0].edits.map((e) => e.name)).toEqual(["add_slide", "delete_slide", "move_slide", "set_layout"]);
+    expect(apis[0].edits.map((e) => e.name)).toEqual(["add_slide", "delete_slide", "move_slide", "set_layout", "add_image"]);
     expect(apis[1].edits.map((e) => e.name)).toContain("replace_text");
     const before = await shown();
     expect(

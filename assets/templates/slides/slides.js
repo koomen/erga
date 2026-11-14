@@ -1,7 +1,7 @@
 // The deck: each <section class="slide"> is a 16:9 slide (index.html's style), shown one at a time, the slide in the
 // address (#3). It gives Erga its steps (window.ergaSteps: erga/steps draws back, forward and the list of slides,
 // each drawn small). In the editor, a bar over the slide adds, moves, lays out and deletes slides (⌘⇧Enter adds one),
-// with the deck's own edits (api.js).
+// with the deck's own edits (api.js). An image dropped on a slide fits its free space (window.ergaDrop, add_image).
 
 const slides = () => [...document.querySelectorAll("body > section.slide")];
 let at = Math.max(0, (Number.parseInt(location.hash.slice(1), 10) || 1) - 1);
@@ -59,6 +59,46 @@ new MutationObserver(() => {
   show(next ?? at);
   next = null;
 }).observe(document.body, { childList: true });
+
+// Where a dropped image lands. Erga asks while files are dragged over the deck, and one more time at the drop (when it
+// knows the image's size): the answer is the box the image will have, the slide that takes it, a few words, and the
+// deck's own edit that puts it there (api.js, add_image). The image fits the free space under the slide's text, so a
+// slide never overflows; with less than a fifth of the slide free, it goes on a new slide after it. Any other file:
+// Erga's own rule (null).
+window.ergaDrop = ({ files, final }) => {
+  const file = files[0],
+    slide = slides()[at];
+  if (file?.kind != "image" || !slide) return null;
+  const r = slide.getBoundingClientRect(),
+    cs = getComputedStyle(slide),
+    px = (v) => Number.parseFloat(v) || 0;
+  const last = slide.lastElementChild?.getBoundingClientRect();
+  const top = last ? last.bottom + px(cs.rowGap) : r.top + px(cs.paddingTop),
+    free = r.bottom - px(cs.paddingBottom) - top,
+    wide = r.width - px(cs.paddingLeft) - px(cs.paddingRight);
+  const ratio = (file.width ?? 3) / (file.height ?? 2);
+  if (free < r.height / 5) {
+    // A slide of its own: the image under a heading, in the space a new slide has for it.
+    const h = Math.min(wide * 0.36, wide / ratio);
+    if (final) next = at + 1;
+    return {
+      box: { x: r.left + px(cs.paddingLeft), y: r.bottom - px(cs.paddingBottom) - h, width: h * ratio, height: h },
+      into: slide,
+      label: `on a new slide after slide ${at + 1}`,
+      edit: "add_image",
+      input: { slide: at + 1, fresh: true, height: Math.round((h / wide) * 1000) / 10 },
+    };
+  }
+  const h = Math.min(free, wide / ratio);
+  return {
+    box: { x: r.left + px(cs.paddingLeft), y: top, width: h * ratio, height: h },
+    into: slide,
+    label: `on slide ${at + 1}, in its free space`,
+    edit: "add_image",
+    // (Its height in cqw, hundredths of the width of the slide's text: it scales with the slide.)
+    input: { slide: at + 1, height: Math.round((h / wide) * 1000) / 10 },
+  };
+};
 
 // ---------------------------------------------------------------- in the editor
 

@@ -163,7 +163,11 @@ export function mountPending(win: Window, o: PendingOptions) {
       const problem = mine?.problem;
       const picture = pictures.get(path);
       s.ph.className = `ph${link ? " link" : ""}${problem ? " error" : ""}${!mine && !landed.has(el) && !link ? " wait" : ""}${roomy ? "" : " small"}${landed.has(el) ? " landed" : ""}${mine || theirs ? "" : " idle"}`;
-      s.ph.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px;${link ? "border-radius:3px;" : ""}${picture && !link ? `background-image:url("${picture}");` : ""}`;
+      // (Its element's own corners, at the size the page shows it: an image on a canvas that is zoomed.)
+      const round = link
+        ? 0
+        : (Number.parseFloat(win.getComputedStyle(el).borderTopLeftRadius) || 0) * (r.width / ((el as HTMLElement).offsetWidth || r.width));
+      s.ph.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px;${link ? "border-radius:3px;" : round ? `border-radius:${round}px;` : ""}${picture && !link ? `background-image:url("${picture}");` : ""}`;
       const pct = `${Math.round(p * 100)}%`;
       const drawn = JSON.stringify([
         mine ? [pct, mine.text, problem] : theirs ? [pct, theirs.name, theirs.via, path] : s.ph.className,

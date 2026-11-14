@@ -3,9 +3,10 @@
 // and comes back at the same step; and a presentation keeps working served as it is, with no viewer.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { dragTo, onDisk, SIGN } from "../helpers/drops";
 import { F, openEditor, type Editor } from "../helpers/editor";
 import { ROOT } from "../helpers/env";
-import { expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
+import { expect, journey, servers, settle, test, until, type Page, type Tab } from "../helpers/fixtures";
 import { pointerOnPage } from "../helpers/press";
 import { idOf } from "../helpers/tools";
 import {
@@ -31,6 +32,19 @@ import {
 } from "./templates";
 
 const s = await servers.main();
+
+/** The sign for dragged files on the page: its parts, each with its text and its box in the page's window. */
+const sign = (page: Page) => inPage<{ part: string; box: number[] }[]>(page, SIGN);
+/** The page's images: where each is written (its parent's class), its style, its box on the screen, and whether it has loaded. */
+const pictures = (page: Page) =>
+  inPage<{ src: string; in: string; style: string; box: number[]; loaded: boolean }[]>(
+    page,
+    `[...document.querySelectorAll("img")].map((i) => { const r = i.getBoundingClientRect(); return { src: i.getAttribute("src"), in: i.parentElement.className.split(" ")[0], style: i.getAttribute("style"), box: [r.left, r.top, r.width, r.height].map(Math.round), loaded: i.complete && i.naturalWidth > 0 }; })`
+  );
+/** The browser logs an error for each image that its element asked for before its bytes were there: no other error. */
+const expected = (tab: Tab) => tab.errors.splice(0, tab.errors.length, ...tab.errors.filter((e) => !/Failed to load resource/.test(e)));
+/** Two boxes are the same, to a pixel. */
+const near = (a: number[], b: number[]) => a.length == b.length && a.every((n, i) => Math.abs(n - b[i]) <= 1.5);
 
 journey("a new document from the picker", () => {
   let page: Page;
@@ -251,6 +265,94 @@ journey("the Slides template: a deck of two slides", () => {
         );
       })
       .toBe(true);
+  });
+
+  test("an image dragged over a slide shows where it will be, in the slide's free space; dropped, it is there, the text stays and nothing leaves the slide; on a full slide it goes on a new one", async ({
+    tab,
+  }) => {
+    if ((await bar(page)).open) await clickOn(page, ".toggle");
+    /** The slide that shows: its heading's top, the bottom of its space for text, and its number. */
+    const slide = () =>
+      inPage<{ h2: number; bottom: number; title: string }>(
+        page,
+        `(() => { const s = document.querySelector(".slide:not([hidden])"), r = s.getBoundingClientRect(); return { h2: Math.round(s.querySelector("h2").getBoundingClientRect().top), bottom: r.bottom - parseFloat(getComputedStyle(s).paddingBottom), title: s.querySelector("h2").textContent }; })()`
+      );
+    const before = await slide();
+    // (Before: the image covered the slide, and pushed its title out of view.)
+    const over = await dragTo(page, { x: 500, y: 450 }, [onDisk("chart.png")]);
+    const shown = await sign(page);
+    expect(shown.map((x) => x.part)).toEqual(["into", "ghost", "chip Imageon slide 2, in its free space"]);
+    await over.drop();
+    await expect.poll(async () => (await pictures(page)).filter((i) => i.box[2] > 0).length).toBe(1);
+    const [image] = (await pictures(page)).filter((i) => i.box[2] > 0);
+    // Where the sign was, as high (the sign had no size to go by: 3 to 2; the image is 4 to 3), inside the slide.
+    const ghost = shown[1].box;
+    expect([image.box[0], image.box[1], image.box[3]].map((n, i) => Math.abs(n - [ghost[0], ghost[1], ghost[3]][i]) <= 1.5)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    expect(image.box[1] + image.box[3]).toBeLessThanOrEqual(before.bottom + 1);
+    expect(image).toMatchObject({ src: "images/chart.png", in: "slide" });
+    expect(image.style).toMatch(/^height: [\d.]+cqw; width: auto; max-width: 100%; align-self: flex-start; object-fit: contain;?$/);
+    expect(await slide()).toEqual(before);
+    await expect.poll(async () => (await pictures(page))[0].loaded, { timeout: 10_000 }).toBe(true);
+    // The slide is full now: the next image gets a slide of its own, which shows.
+    const more = await dragTo(page, { x: 500, y: 450 }, [onDisk("full.png")]);
+    expect((await sign(page)).map((x) => x.part)).toEqual(["into", "ghost", "chip Imageon a new slide after slide 2"]);
+    await more.drop();
+    await atStep(page, 2, 3);
+    await expect.poll(async () => (await slide()).title).toBe("full");
+    await expect.poll(async () => (await pictures(page)).find((i) => i.src == "images/full.png")?.loaded, { timeout: 10_000 }).toBe(true);
+    expected(tab);
+  });
+});
+
+journey("a canvas takes a dropped image where the pointer is", () => {
+  let page: Page;
+
+  test("over the empty canvas, a box at the pointer at the canvas's zoom; dropped, the image is on the canvas there; over a frame, the frame's outline, and the image belongs to the frame", async ({
+    tab,
+  }) => {
+    page = tab.page;
+    const made = await newDoc(s, "canvas");
+    await openTab(tab, `${made.address}?edit`, { width: 1200, height: 800 }); // the journey's one page load
+    await editorReady(page);
+    await expect.poll(async () => (await bar(page)).shown).toBe(true);
+    // A point of the canvas with no frame under it, and the canvas's zoom there.
+    const space = await inPage<{ x: number; y: number; zoom: number }>(
+      page,
+      `(() => { const c = document.querySelector(".canvas"), zoom = c.getBoundingClientRect().width / c.offsetWidth; for (const [x, y] of [[150, 150], [1050, 150], [150, 650], [1050, 650], [600, 120]]) if (!document.elementFromPoint(x, y)?.closest(".frame")) return { x, y, zoom }; return null; })()`
+    );
+    expect(space, "the canvas has free space in view").not.toBeNull();
+    // (Before: the image went into the nearest frame's text, not where the pointer was.)
+    const over = await dragTo(page, space, [onDisk("spot.png")]);
+    const shown = await sign(page);
+    expect(shown.map((x) => x.part)).toEqual(["ghost", `chip Imageon the canvas, at ${Math.round(space.zoom * 100)}%`]);
+    // The box: an image of a size not known yet (480 by 320 px of the canvas), its middle at the pointer.
+    expect(near(shown[0].box, [space.x - 240 * space.zoom, space.y - 160 * space.zoom, 480 * space.zoom, 320 * space.zoom])).toBe(true);
+    await over.drop();
+    await expect.poll(async () => (await pictures(page)).length).toBe(1);
+    const [image] = await pictures(page);
+    // On the canvas, not in a frame: 200 by 150 px of the canvas as its file is, its middle where the pointer was.
+    expect(image).toMatchObject({ src: "images/spot.png", in: "canvas" });
+    expect(image.style).toMatch(/^position: absolute; left: -?\d+px; top: -?\d+px; width: 200px; height: auto; border-radius: 6px;?$/);
+    expect(near(image.box, [space.x - 100 * space.zoom, space.y - 75 * space.zoom, 200 * space.zoom, 150 * space.zoom])).toBe(true);
+    await expect.poll(async () => (await pictures(page))[0].loaded, { timeout: 10_000 }).toBe(true);
+    // Over a frame: its outline, and its name in the label. The image is written in the frame, placed from its corner.
+    const frame = await inPage<{ x: number; y: number; left: number; top: number }>(
+      page,
+      `(() => { const f = document.querySelector(".frame"), p = f.querySelector("p").getBoundingClientRect(), r = f.getBoundingClientRect(); return { x: Math.round(p.left + 60), y: Math.round(p.bottom + 40), left: r.left, top: r.top }; })()`
+    );
+    const into = await dragTo(page, frame, [onDisk("mine.png")]);
+    const framed = await sign(page);
+    expect(framed.map((x) => x.part)).toEqual(["into", "ghost", "chip Imagein the frame “One big canvas”"]);
+    await into.drop();
+    await expect.poll(async () => (await pictures(page)).find((i) => i.src == "images/mine.png")?.in).toBe("frame");
+    const mine = (await pictures(page)).find((i) => i.src == "images/mine.png")!;
+    expect(Math.abs(mine.box[0] + mine.box[2] / 2 - frame.x) <= 2 && Math.abs(mine.box[1] + mine.box[3] / 2 - frame.y) <= 2).toBe(true);
+    await expect.poll(async () => (await pictures(page)).every((i) => i.loaded), { timeout: 10_000 }).toBe(true);
+    expected(tab);
   });
 });
 

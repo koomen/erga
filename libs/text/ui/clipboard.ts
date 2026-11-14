@@ -68,9 +68,8 @@ export abstract class EditorClipboard extends EditorMarkdown {
     const at = this.currentSelection().from,
       u = M.unitAt(this.units, at);
     if (this.rendering) return this.config.onDropRefused?.(LOADING_AGAIN);
-    if (!u || !this.verify(u) || !editableAt(u, at))
-      return this.config.onDropRefused?.("A file can go only into the text you can edit. Put the caret in a paragraph.");
-    this.config.onDropFiles?.(files, at);
+    // (No caret in text that can take them: they go to the document's files, and an alert says so.)
+    this.config.onDropFiles?.(files, u && this.verify(u) && editableAt(u, at) ? { at } : { point: null });
   }
 
   protected cut(e: ClipboardEvent): void {
