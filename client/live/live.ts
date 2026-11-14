@@ -87,7 +87,41 @@ const api: Live = {
     showNote();
   },
   check: (why) => check(why),
+  signedOut(fn) {
+    if (out) fn();
+    else outHeard.push(fn);
+  },
 };
+
+// ------------------------------------------------------------------ signed out
+
+// The server answers 401 to this page's own request, made as the person the page was made for: they are signed out
+// (a sign-out on another device ends every session; a session ends after 30 days). Before, each loop of the page asked
+// on, every few seconds, for as long as the tab was open. Now each stops (Live.signedOut), and the note says "Sign in".
+let out = false;
+const outHeard: (() => void)[] = [];
+function signedOut() {
+  if (out) return;
+  out = true;
+  for (const fn of outHeard.splice(0))
+    try {
+      fn();
+    } catch (e) {
+      console.error(e);
+    }
+  showNote();
+}
+/** A request of this page's own, as the person it was made for: with their cookie, and no token. */
+function asMe(input: RequestInfo | URL, init?: RequestInit): boolean {
+  const req = input instanceof Request ? input : null;
+  const headers = new Headers(init?.headers ?? req?.headers);
+  return (
+    new URL(req ? req.url : String(input), location.href).origin == location.origin &&
+    !headers.has("authorization") &&
+    (init?.credentials ?? req?.credentials) != "omit" &&
+    !!document.querySelector('[data-erga-account="in"]')
+  );
+}
 
 for (const type of ["keydown", "input", "pointerdown", "wheel", "touchmove"]) addEventListener(type, () => { lastActivity = now(); }, { capture: true, passive: true });
 addEventListener("pointerdown", () => { pointerHeld = true; }, true);
@@ -108,8 +142,12 @@ function showNote() {
   const gone = [...connections.values()].filter((c) => c.state == "gone");
   // (A connection with the note null says nothing while it's down: the editor's room, whose own note tells of edits not saved.)
   const down = gone.length ? gone : [...connections.values()].filter((c) => c.state == "down" && c.wasUp && c.note !== null);
-  if (!down.length) { note?.remove(); note = null; return; }
-  const left = navigator.onLine && !gone.length ? Math.min(...down.map((c) => c.since)) + NOTE_AFTER_MS - now() : 0;
+  if (!out && !down.length) {
+    note?.remove();
+    note = null;
+    return;
+  }
+  const left = !out && navigator.onLine && !gone.length ? Math.min(...down.map((c) => c.since)) + NOTE_AFTER_MS - now() : 0;
   if (left > 0) { noteTimer = window.setTimeout(showNote, left); return; }
   if (!note) {
     note = document.createElement("div");
@@ -120,6 +158,19 @@ function showNote() {
       "font:500 12px/1.2 Inter,ui-sans-serif,system-ui,sans-serif;color:var(--soft,#6b6b73);background:var(--panel-bg,rgba(255,255,255,.92));" +
       "padding:6px 10px;border-radius:999px;box-shadow:0 0 0 1px var(--panel-border,rgba(0,0,0,.06)),0 2px 8px rgba(0,0,0,.08);pointer-events:none";
     document.body.append(note);
+  }
+  // Signed out: the note says so, with the way back in, to this page. It stays.
+  if (out) {
+    if (note.querySelector("a")) return;
+    const a = Object.assign(document.createElement("a"), { textContent: "Sign in", href: "/auth/sign-in" });
+    a.style.cssText = "color:var(--fg-strong,#1c1c1f);font-weight:600";
+    a.addEventListener("click", () => {
+      a.href = `/auth/sign-in?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`;
+    });
+    note.setAttribute("role", "alert");
+    note.style.pointerEvents = "auto";
+    note.replaceChildren("You are signed out. ", a);
+    return;
   }
   note.textContent = down.find((c) => c.note)?.note ?? "Reconnecting…";
 }
@@ -380,6 +431,7 @@ if (back?.page) restorePage(back.page as PageState);
 window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   try {
     const r = await nativeFetch(input, init);
+    if (r.status == 401 && asMe(input, init)) signedOut();
     // (An API that answers 400 or 404 may be one this page's code calls the old way.)
     if (r.status >= 500 || ((r.status == 404 || r.status == 400) && /\/api\//.test(typeof input == "string" ? input : input instanceof URL ? input.href : input.url))) check("a request failed");
     return r;

@@ -25,6 +25,12 @@ export interface Live {
   connection(name: string, state: ConnectionState | null, note?: string | null): void;
   /** Asks the server whether this page's code is still current (a request failed oddly, a connection came back). */
   check(why: string): void;
+  /**
+   * `fn` runs when the server says that this browser is signed out (a 401 to a page made for someone signed in), one
+   * time; at once if it said so before. From then on the page says "Sign in", and nothing asks the server again by
+   * itself: each owner of a loop stops it here.
+   */
+  signedOut(fn: () => void): void;
 }
 
 declare global {

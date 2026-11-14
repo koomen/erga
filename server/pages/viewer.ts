@@ -53,6 +53,9 @@ export const frameSrc = (editing: boolean) => inlineCall("viewer-frame-src", edi
 /** The document's frame and the address with ?edit or without, for every script on the page (client/inline/viewer-frames.ts). */
 export const framesScript = (pages: string) => inlineCall("viewer-frames", pages);
 
+/** The frame's page was refused (its pass ended): the viewer gets a new page, or says that it has none (client/inline/viewer-refused.ts). */
+const REFUSED_SCRIPT = inlineCall("viewer-refused");
+
 /** Which of the document's pages is shown: the address bar follows the frame (client/inline/viewer-nav.ts). */
 export const NAV_SCRIPT = inlineCall("viewer-nav");
 
@@ -165,7 +168,7 @@ export function viewerPage(o: {
 ${headTags(o.head, o.title, o.file, o.files)}
 <link rel="preconnect" href="${esc(o.pages)}">
 <meta name="erga-doc" content="${esc(o.docId)}">
-${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(session, true)}${style}<style>${BAND_STYLE}${o.bars ? "" : NO_BARS}</style>${editing ? opening : ""}
+${o.meta}<script>${framesScript(o.pages)}</script><script>${REFUSED_SCRIPT}</script>${backdrop}${crumbsFont(session, true)}${style}<style>${BAND_STYLE}${o.bars ? "" : NO_BARS}</style>${editing ? opening : ""}
 <body>${o.agent ? `<script>${AGENT_LAYOUT}</script>` : ""}${editing ? editingBody : ""}
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
   const bars = barsHtml({

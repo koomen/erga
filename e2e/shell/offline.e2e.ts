@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
-import { expect, journey, servers, test, until, type Tab } from "../helpers/fixtures";
+import { expect, goto, journey, servers, test, until, type Tab } from "../helpers/fixtures";
 import { idOf, runTool } from "../helpers/tools";
 import { soon } from "./shell";
 
@@ -180,6 +180,43 @@ journey("offline, and back; then sign-out", () => {
     tab.strict = true;
   });
 
+  // Before, the page stayed blank: its frame had one line, "This link has expired", behind the bars (erga.dev, 14 November).
+  test("the copy's page has a pass that the server refuses: with no answer from the server the page says so; Try again loads a new page", async ({
+    tab,
+  }) => {
+    const page = tab.page;
+    const at = new URL(ed.address);
+    // The copy's pass, as after a week, or after a release that reads no old pass: the pages origin refuses it.
+    await ed.eval(`(async () => {
+      const c = await caches.open("erga-offline-v1"), k = location.href.replace(/[?#].*$/, "") + "?edit=&erga-page=", r = await c.match(k), t = await r.text();
+      const pass = t.split("/t/")[1].split("/")[0];
+      await c.put(k, new Response(t.split(pass).join(pass.slice(0, -6) + "AAAAAA"), { status: 200, headers: r.headers }));
+    })()`);
+    // The app's worker answers from its copy, as when it thinks the browser is offline (after a sleep).
+    const worker = page
+      .context()
+      .serviceWorkers()
+      .find((w) => w.url() == `${at.origin}/erga-sw.js`)!;
+    await worker.evaluate(() => Object.defineProperty(navigator, "onLine", { get: () => false, configurable: true }));
+    // The server does not answer the viewer, which asks for a new page.
+    const asks = (u: URL) => u.origin == at.origin && u.pathname == at.pathname;
+    let asked = 0;
+    await page.route(asks, (route) => (route.request().headers()["x-erga-check"] == "page" ? (asked++, route.abort()) : route.fallback()));
+    await goto(page, `${ed.address}?edit`);
+    const note = () => page.evaluate(() => document.querySelector(".erga-refused")?.textContent ?? null);
+    await soon(note, 10_000).toBe("This page is an old copy, and Erga could not get a new one from the server.Try again");
+    expect(asked, "it asked one time").toBe(1);
+    // The server answers again.
+    await page.unroute(asks);
+    await page.click(".erga-refused button");
+    await ed.loaded();
+    expect(await ed.textOf("h1")).toBe("Field guide, second edition");
+    expect(await note()).toBeNull();
+    await worker.evaluate(() => delete (navigator as { onLine?: boolean }).onLine);
+    // (The refused frame, and the request that the step failed, as the browser logs them: on purpose.)
+    tab.errors.splice(0, tab.errors.length, ...tab.errors.filter((e) => !/status of 403 \(Forbidden\)|net::ERR_FAILED/.test(e)));
+  });
+
   // Before, the tab that stayed open kept its copy and its replica again as soon as it typed.
   test("sign-out in another tab: this tab types on, and keeps nothing more in either origin", async ({ tab }) => {
     await soon(() => ed.frame(KEPT)).toEqual(ALL);
@@ -207,11 +244,36 @@ journey("offline, and back; then sign-out", () => {
     tab.strict = false;
   });
 
+  // Before, the tab asked on (a key, each socket) every few seconds, for as long as it was open, and said nothing.
+  test("this tab's sockets go, and the server refuses new ones (401): the tab says Sign in here, and asks no more by itself", async () => {
+    // The tab's own sockets: its room, the version that viewers see, its agent. (The page's own has an edit key, which
+    // holds for a while: it may come back one time, and saves what the person types.)
+    const sockets = () => ed.eval<number[]>(`(window.__sockets ?? []).map((s) => s.readyState)`);
+    // As with a lost connection. Each socket tries again, and the server refuses it.
+    for (const f of ed.page.frames()) await f.evaluate(`(window.__sockets ?? []).forEach((s) => s.close())`).catch(() => {});
+    const said = () =>
+      ed.eval<{ text: string; to: string } | null>(`(() => {
+        const n = document.querySelector(".erga-live-note"), a = n?.querySelector("a");
+        return n && a ? { text: n.textContent, to: a.getAttribute("href") } : null;
+      })()`);
+    await soon(said).toEqual({ text: "You are signed out. Sign in", to: "/auth/sign-in" });
+    // Each is closed, and none opens again: the same ones after a request and its answer.
+    await soon(async () => (await sockets()).every((state) => state == 3)).toBe(true);
+    const closed = await sockets();
+    expect(await ed.eval<number>(`fetch("/api/agent").then((r) => r.status)`)).toBe(401);
+    expect(await sockets()).toEqual(closed);
+  });
+
   test("signed in again, on another document: the browser keeps again; that document's copy and replica are its own", async ({ tab }) => {
     // (With no cookie, the dev server signs a request in.)
     await tab.page.context().clearCookies();
     other = await openEditor(tab, s, "page");
-    tab.errors.splice(0, tab.errors.length, ...tab.errors.filter((e) => !/status of 401 \(Unauthorized\)/.test(e)));
+    // (What the server refused the signed-out tab, as the browser logged it: its requests, and its sockets' last tries.)
+    tab.errors.splice(
+      0,
+      tab.errors.length,
+      ...tab.errors.filter((e) => !/status of 401 \(Unauthorized\)|^console\.error: WebSocket connection to '[^']*' failed/.test(e))
+    );
     await workersIn(other);
     await other.clickEnd("h1");
     await other.type("!");

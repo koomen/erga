@@ -4,6 +4,7 @@
 // offline too.
 
 import { ms } from "../../libs/text/ui/timescale";
+import { live } from "../live/client";
 import { initial, step, type EditorEvent, type Held } from "./editor-state";
 import { BASE, type Shell } from "./shell";
 
@@ -56,6 +57,7 @@ export function mountEditor(shell: Shell, editing: boolean, full: boolean) {
     send({ type: "key", held });
   }
   setInterval(() => send({ type: "tick" }), 60_000);
+  live((l) => l.signedOut(() => send({ type: "signed-out" })));
   return {
     get state() {
       return state;

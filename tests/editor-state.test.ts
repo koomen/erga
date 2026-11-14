@@ -97,3 +97,20 @@ test("a key near its end is renewed while the editor runs, never while viewing; 
   const { effects } = run(initial(true, false, soon), { type: "tick" }, { type: "tick" }, { type: "key", held: HOUR });
   expect(effects).toEqual([{ ask: true, say: { mode: "edit", key: "k0" } }, {}, { say: { mode: "edit", key: "k1" } }]);
 });
+
+// Before, a tab that was signed out asked for a key every 5 seconds, for as long as it was open.
+test("signed out: the refusal that comes with it gives no note and no retry; nothing asks again, and the key held stays", () => {
+  const soon = { key: "k1", expires: NOW + RENEW_MS - 1 };
+  const { state, effects } = run(
+    initial(true, false, soon),
+    { type: "tick" },
+    { type: "signed-out" },
+    { type: "refused" },
+    { type: "retry" },
+    { type: "online" },
+    { type: "tick" },
+    { type: "unreachable" }
+  );
+  expect(effects).toEqual([{ ask: true, say: { mode: "edit", key: "k1" } }, {}, {}, {}, {}, {}, {}]);
+  expect(state.key).toEqual({ status: "out", held: soon, noted: false });
+});

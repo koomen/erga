@@ -121,7 +121,10 @@ window.addEventListener("message", (e: MessageEvent) => {
   if (e.source != window.parent || e.origin != SHELL) return;
   if (e.data?.type == "erga-mode") setMode(e.data as EditMode);
   else if (e.data?.type == "erga-leave") leave();
-  else if (e.data?.type == "erga-notes") setNotes(e.data.notes);
+  else if (e.data?.type == "erga-out") {
+    signedOut = true;
+    collab?.signedOut();
+  } else if (e.data?.type == "erga-notes") setNotes(e.data.notes);
   else if (e.data?.type == "erga-full") wasFull ||= e.data.on === true && !!page;
   else if (e.data?.type == "erga-uploads-of" && e.data.files) {
     const files = (e.data as UploadsMessage).files;
@@ -237,6 +240,8 @@ const typingAgent = (a: Author | null): TypingAgent | null =>
 
 /** Whether this origin holds nothing but this document: then the replica and the page are kept in this browser. */
 let own = false;
+/** The viewer says that this browser is signed out: the room's socket tries no more (collab.ts, signedOut). */
+let signedOut = false;
 
 /** Into the editor: once the page has loaded (its scripts have built what they build on load). */
 async function start(run: number) {
@@ -290,6 +295,7 @@ function join(run: number) {
     onStale: () => location.reload(),
     ...(own ? { keep: m.doc } : {}),
   }));
+  if (signedOut) c.signedOut();
   c.join(m.me, m.path, { tab: m.tab });
   void ready(c, run);
 }

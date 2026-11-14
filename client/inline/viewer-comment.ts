@@ -6,6 +6,7 @@
 // place, and the viewer's own reload stops (viewer-live.ts reads the class).
 
 import { asUser } from "../common/tools";
+import { live } from "../live/client";
 
 export default function viewerComment(base: string, me: { user: string; name: string; color: string; avatar?: string }): void {
   const tab = Math.random().toString(36).slice(2);
@@ -27,7 +28,16 @@ export default function viewerComment(base: string, me: { user: string; name: st
       notes: 0,
     });
   };
+  // Signed out (client/live/live.ts): no more keys are asked for, and the page's socket tries no more.
+  let out = false;
+  live((l) =>
+    l.signedOut(() => {
+      out = true;
+      ergaFrames.send({ type: "erga-out" });
+    })
+  );
   async function fresh() {
+    if (out) return;
     const r = await fetch(asUser(base + "/api/key"), { method: "POST" }).catch(() => null);
     const k = r && r.ok ? ((await r.json().catch(() => null)) as { key?: string; expires?: number } | null) : null;
     if (k?.key) {
