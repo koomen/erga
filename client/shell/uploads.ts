@@ -175,7 +175,10 @@ export function mountUploads(shell: Shell) {
       sends.delete(id);
       send({ t: "lost", id });
     };
-    x.send(file);
+    // Its bytes, not the file itself: the browser reads a file of the person's disk by its path, for the process that
+    // may read it. The file was dropped on the page, a process of its own, and this one (the viewer's) may not: Chrome
+    // ends a process that sends such a file.
+    x.send(file.slice(0, file.size, file.type));
   }
 
   /** The files whose elements the page's editor says left the text (Undo): there is none to take out. */
