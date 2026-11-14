@@ -1,20 +1,32 @@
-// Files dropped or pasted on the page's text (input.ts and clipboard.ts take them): while they're dragged over the text,
-// a line shows where they will go, the editor's own element on the page (like its caret: caret.ts), on the page's <html>,
-// outside the text. If they can't go in, an alert says why (alerts.ts).
-//
-// Images go between blocks, never inside a line of text: while they're dragged, the text opens a gap before or after the
-// block under the pointer, and a faint image shows in it, centred, where they will go. After the drop the gap stays, with
-// the images themselves, until they're in the text (showDropImage). The gap is a style of the page's own (an adopted
-// stylesheet, never a change of the page's elements), so the text and its source stay as they are.
+// Files dragged over the page's text (input.ts takes them): a sign shows where they will go and what they will be, the
+// editor's own element on the page's <html> (like its caret: caret.ts), outside the text. Images go between two blocks:
+// a line there, as wide as the block, and nothing in the text moves. Any other file becomes a link in the line: a caret
+// there. A label beside the sign says which. If the files can't go in, an alert says why (alerts.ts).
 
-const STYLE = `
-erga-drop-caret { all: initial; position: absolute; z-index: 2147483646; pointer-events: none; width: 2px; background: #2563eb; border-radius: 1px; }
-erga-drop-image { all: initial; position: absolute; z-index: 2147483646; pointer-events: none; display: flex; gap: 8px;
-  justify-content: center; align-items: center; opacity: 0.55; transform: translateX(-50%); }
-erga-drop-image img { all: initial; display: block; height: 100%; max-width: 100%; object-fit: contain; border-radius: 4px; }
-erga-drop-image span { all: initial; display: block; height: 100%; aspect-ratio: 4 / 3; box-sizing: border-box; border-radius: 6px;
-  border: 2px dashed #2563eb; background: rgba(37, 99, 235, 0.12); }
+import { KEPT, LOOK } from "./controls";
+
+/** The look of the editor's signs on the page: where a drop lands (here), and a file on its way (pending.ts). */
+export const PARTS = `
+:host { all: initial; position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 2147483646; pointer-events: none; }
+${LOOK}
+.c { --code: #f4f4f6; --panel-bg: rgba(255, 255, 255, 0.94); --bad: #c2410c; }
+.c.dark { --code: #232327; --panel-bg: rgba(32, 32, 36, 0.94); --bad: #f08a5d; }
+.c > * { position: absolute; box-sizing: border-box; }
+.line { height: 2px; border-radius: 1px; background: var(--caret); }
+.line::before { content: ""; position: absolute; left: -7px; top: -3px; width: 8px; height: 8px; box-sizing: border-box;
+  border: 2px solid var(--caret); border-radius: 50%; background: var(--bg); }
+.bar { width: 2px; border-radius: 1px; background: var(--caret); }
+.chip { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 8px; border-radius: 999px; white-space: nowrap;
+  background: var(--panel-bg); border: 1px solid var(--panel-border); box-shadow: var(--shadow); -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px); font: 500 12px/1 var(--font); color: var(--fg); }
+.chip svg { width: 14px; height: 14px; color: var(--caret); flex: none; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+.chip span { color: var(--soft); font-weight: 400; }
 `;
+
+export const ICON = {
+  image: `<svg viewBox="0 0 24 24" stroke-width="1.6"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="m4 17 4.6-4.4a1.5 1.5 0 0 1 2.1 0L15 17m-1.5-2.6 1.4-1.3a1.5 1.5 0 0 1 2 0l3.1 3"/></svg>`,
+  link: `<svg viewBox="0 0 24 24" stroke-width="1.7"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>`,
+};
 
 /** Why files dropped or pasted while the page loads again (made afresh) don't go in. */
 export const LOADING_AGAIN = "The page is loading again. Drop or paste the file again in a moment.";
@@ -24,12 +36,31 @@ export const NOT_HERE = "A file can go only into the text you can edit. Drop it 
 /** Whether a drag carries files (from outside the page: the computer). */
 export const hasFiles = (e: DragEvent) => [...(e.dataTransfer?.types ?? [])].includes("Files");
 
-function styleOnce(doc: Document): void {
-  if (doc.querySelector("style[data-erga-drop]")) return;
-  const style = doc.createElement("style");
-  style.setAttribute("data-erga-drop", "");
-  style.textContent = STYLE;
-  (doc.head ?? doc.documentElement).append(style);
+/** Whether a drag carries only images: the types the browser tells while they're dragged (it holds back the files). */
+export const draggedImages = (e: DragEvent): number => {
+  const items = [...(e.dataTransfer?.items ?? [])];
+  return items.length && items.every((i) => i.kind == "file" && i.type.startsWith("image/")) ? items.length : 0;
+};
+/** How many files a drag carries. */
+export const draggedFiles = (e: DragEvent): number => [...(e.dataTransfer?.items ?? [])].filter((i) => i.kind == "file").length || 1;
+
+/** Where dragged images go: before or after a block of text (its element). */
+export interface ImageSpot {
+  el: Element;
+  side: "before" | "after";
+}
+/** Where a drop lands: images between blocks (`spot`), or other files as links in the line (`range`); `count` files. */
+export type DropSign = { spot: ImageSpot; count: number } | { range: Range; count: number };
+
+/** A layer of the editor's signs on the page: its box (`.c`, which takes the dark look), made the first time. */
+export function partsLayer(doc: Document, tag: string, style: string): HTMLElement {
+  const host = doc.querySelector(tag) ?? doc.documentElement.appendChild(doc.createElement(tag));
+  const root = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+  if (!root.firstChild) {
+    root.innerHTML = `<style>${style}</style><div class="c"></div>`;
+    for (const type of KEPT) root.addEventListener(type, (e) => e.stopPropagation());
+  }
+  return root.querySelector<HTMLElement>(".c")!;
 }
 
 /** Where a collapsed range is on the page (its window's coordinates), even at an element's edge where it has no box. */
@@ -41,93 +72,54 @@ function rectOf(range: Range): { left: number; top: number; height: number } | n
   return box ? { left: box.left, top: box.top, height: Math.min(box.height, 24) || 16 } : null;
 }
 
-/** Shows the drop line at `range`, or takes it away (null). */
-export function showDropCaret(doc: Document, range: Range | null): void {
-  let caret = doc.querySelector<HTMLElement>("erga-drop-caret");
-  const at = range && rectOf(range);
-  if (!at) {
-    caret?.remove();
+/** The middle of the space between a block and its neighbour on `side` (the window's coordinates). */
+function between(el: Element, side: "before" | "after"): number {
+  const r = el.getBoundingClientRect();
+  const next = side == "before" ? el.previousElementSibling : el.nextElementSibling,
+    n = next?.getBoundingClientRect();
+  if (side == "before") return n && n.height && n.bottom <= r.top ? (n.bottom + r.top) / 2 : r.top - 6;
+  return n && n.height && n.top >= r.bottom ? (r.bottom + n.top) / 2 : r.bottom + 6;
+}
+
+/** Whether the page is dark (frame.ts says): the signs take their dark look. */
+let dark = false;
+export const signsDark = (on: boolean) => void (dark = on);
+
+/** Shows where a drop lands, or takes the sign away (null). */
+export function showDropSign(doc: Document, sign: DropSign | null): void {
+  if (!sign) {
+    doc.querySelector("erga-drop")?.remove();
     return;
   }
-  styleOnce(doc);
-  if (!caret) {
-    caret = doc.createElement("erga-drop-caret");
-    doc.documentElement.append(caret);
+  const box = partsLayer(doc, "erga-drop", PARTS),
+    win = doc.defaultView!;
+  box.classList.toggle("dark", dark);
+  const px = (n: number) => `${Math.round(n * 100) / 100}px`;
+  const part = (cls: string, x: number, y: number, style = "") =>
+    `<div class="${cls}" style="left:${px(x + win.scrollX)};top:${px(y + win.scrollY)};${style}"></div>`;
+  const chip = (x: number, y: number, icon: string, text: string, sub: string) =>
+    part("chip", x, y).replace("></div>", `>${icon}${text}<span>${sub}</span></div>`);
+  let html = "";
+  if ("spot" in sign) {
+    const r = sign.spot.el.getBoundingClientRect(),
+      y = between(sign.spot.el, sign.spot.side);
+    const label = sign.count > 1 ? `${sign.count} images` : "Image";
+    // The label in the margin; where the margin has no room for it, under the line.
+    const inMargin = r.left >= 186;
+    html =
+      part("line", r.left, y - 1, `width:${px(r.width)}`) +
+      chip(inMargin ? r.left - 178 : r.left + 12, inMargin ? y - 12 : y + 9, ICON.image, label, "as wide as the text");
+  } else {
+    const at = rectOf(sign.range);
+    if (!at) return showDropSign(doc, null);
+    const label = sign.count > 1 ? `Links to ${sign.count} files` : "Link to the file";
+    const x = Math.min(at.left + 66, win.innerWidth - 220);
+    html =
+      part("bar", at.left - 1, at.top, `height:${px(at.height)}`) +
+      chip(Math.max(8, x), at.top + at.height + 8, ICON.link, label, "in this line");
   }
-  const win = doc.defaultView!;
-  caret.style.cssText = `left:${at.left + win.scrollX - 1}px;top:${at.top + win.scrollY}px;height:${at.height}px`;
-}
-
-/** Where dragged images go: before or after a block of text (its element). */
-export interface ImageSpot {
-  el: Element;
-  side: "before" | "after";
-}
-
-/** The faint image's height, and the gap it opens in the text. */
-const GHOST_H = 120,
-  GAP = GHOST_H + 24;
-/** Each page's stylesheet for the gap. */
-const gaps = new WeakMap<Document, CSSStyleSheet>();
-
-/** A selector for exactly `el`, by its place from the root. */
-function placeOf(el: Element): string {
-  const steps: string[] = [];
-  for (let e: Element | null = el; e?.parentElement; e = e.parentElement)
-    steps.unshift(`:nth-child(${[...e.parentElement.children].indexOf(e) + 1})`);
-  return [":root", ...steps].join(" > ");
-}
-
-/**
- * Opens a gap at `spot` and shows images in it: `srcs` (the dropped files), or for a drag, `count` faint frames; null
- * closes it. The frames are centred on the block.
- */
-export function showDropImage(doc: Document, spot: ImageSpot | null, count = 1, srcs: string[] = []): void {
-  const win = doc.defaultView!;
-  let sheet = gaps.get(doc);
-  if (!sheet) {
-    sheet = new win.CSSStyleSheet();
-    gaps.set(doc, sheet);
-    doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet];
+  if (box.dataset.shown != html) {
+    box.innerHTML = html;
+    box.dataset.shown = html;
   }
-  let ghost = doc.querySelector<HTMLElement>("erga-drop-image");
-  // (The dropped files' own addresses, made for the gap, go with it.)
-  const unmade = () => ghost?.querySelectorAll("img").forEach((i) => i.src.startsWith("blob:") && URL.revokeObjectURL(i.src));
-  if (!spot?.el.isConnected) {
-    sheet.replaceSync("");
-    unmade();
-    ghost?.remove();
-    return;
-  }
-  styleOnce(doc);
-  sheet.replaceSync(`${placeOf(spot.el)} { margin-${spot.side == "before" ? "top" : "bottom"}: ${GAP}px !important; }`);
-  if (!ghost) {
-    ghost = doc.createElement("erga-drop-image");
-    doc.documentElement.append(ghost);
-  }
-  const shown = srcs.length
-    ? srcs.map((s) => `<img src="${s.replace(/"/g, "%22")}" alt="">`)
-    : Array(Math.min(count, 3)).fill("<span></span>");
-  if (ghost.dataset.shown != shown.join("")) {
-    unmade();
-    ghost.innerHTML = shown.join("");
-    ghost.dataset.shown = shown.join("");
-  }
-  const r = spot.el.getBoundingClientRect();
-  const top = (spot.side == "before" ? r.top - GAP : r.bottom) + (GAP - GHOST_H) / 2;
-  ghost.style.cssText = `left:${r.left + r.width / 2 + win.scrollX}px;top:${top + win.scrollY}px;height:${GHOST_H}px;width:${Math.max(r.width, 80)}px`;
 }
-
-/** Whether a point (the window's coordinates) is in the gap that's open: the images go where they show. */
-export function inDropGap(doc: Document, x: number, y: number): boolean {
-  const ghost = doc.querySelector("erga-drop-image");
-  if (!ghost) return false;
-  const r = ghost.getBoundingClientRect();
-  return y >= r.top - (GAP - GHOST_H) / 2 && y <= r.bottom + (GAP - GHOST_H) / 2 && x >= r.left - 40 && x <= r.right + 40;
-}
-
-/** Whether a drag carries only images: the types the browser tells while they're dragged (it holds back the files). */
-export const draggedImages = (e: DragEvent): number => {
-  const items = [...(e.dataTransfer?.items ?? [])];
-  return items.length && items.every((i) => i.kind == "file" && i.type.startsWith("image/")) ? items.length : 0;
-};

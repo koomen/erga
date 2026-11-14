@@ -30,3 +30,22 @@ export function decodeStart<H>(bytes: Uint8Array): { hello: H; state: Uint8Array
   const hello = JSON.parse(d.readString()) as H;
   return { hello, state: d.readBytes() };
 }
+
+/**
+ * A file on its way (a write that waits for its bytes: document/waits.ts), as an open tab hears it: its size, whose it
+ * is (`via`: how they act, when through an agent: shared/attribution.ts), until when it waits (ms), and the bytes that
+ * came (none yet: no `got`).
+ */
+export interface Pending {
+  size: number;
+  login: string;
+  name: string;
+  via?: string;
+  until: number;
+  got?: number;
+}
+/** What every open tab hears as the waits change: the files on their way, by path. */
+export interface UploadsMessage {
+  type: "uploads";
+  files: Record<string, Pending>;
+}

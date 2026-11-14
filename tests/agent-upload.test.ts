@@ -3,7 +3,7 @@
 // agent uses it: the tool over MCP, the bytes as its shell sends them.
 
 import { expect, setSystemTime, test } from "bun:test";
-import { step, WAIT_MINUTES, type Waits, type Writer } from "../document/waits";
+import { pendingOf, step, WAIT_MINUTES, type Waits, type Writer } from "../document/waits";
 import { TEXT_MAX } from "../document/blobs";
 import { sha256Hex } from "../shared/bytes";
 import { mcp, mint, person, server, signedOut, tool, type Server } from "./helpers/app";
@@ -29,8 +29,17 @@ test("a wait: a write starts it, its bytes end it one time, and it ends by itsel
   // A newer write of the path takes the wait's place, with a time of its own.
   waits = step(came.waits, { on: "write", files: { "b.png": { hash: "c".repeat(64), size: 5 } }, by: ada, now: 10 * MINUTE }).waits;
   expect(step(waits, { on: "bytes", hash: "b".repeat(64), origin: ada.origin, now: 11 * MINUTE }).put).toEqual([]);
+  // What an open tab hears of it: a file on its way, with the bytes that came so far, until its time.
+  const until = (10 + WAIT_MINUTES) * MINUTE;
+  expect(pendingOf(waits, 11 * MINUTE, () => 2).files).toEqual({
+    "b.png": { size: 5, login: "ada", name: "Ada", via: "Claude Code", until, got: 2 },
+  });
+  expect(pendingOf(waits, until).files).toEqual({});
+  // Taken back (a cancel): it waits no more, and its bytes land nowhere.
+  const back = step(waits, { on: "remove", path: "b.png", now: 11 * MINUTE });
+  expect([back.put, back.waits]).toEqual([[], {}]);
   // Past its time, it is gone at the next event.
-  const late = step(waits, { on: "bytes", hash: "c".repeat(64), origin: ada.origin, now: (10 + WAIT_MINUTES) * MINUTE });
+  const late = step(waits, { on: "bytes", hash: "c".repeat(64), origin: ada.origin, now: until });
   expect([late.put, late.waits]).toEqual([[], {}]);
 });
 
@@ -163,7 +172,18 @@ test("the bytes of any kind and size: a big file streams to the blob store, whic
   // A file over the admin's limit never waits.
   const over = await write(s, token, id, { "files/over.bin": { blob: "0".repeat(64), size: 900_000_000_000 } });
   expect(over.refused[0].why).toContain("max_file_mb");
+  // (The answer names the setting and its value: the editor offers an admin to raise it.)
+  expect(over.refused[0]).toMatchObject({ path: "files/over.bin", limit: { setting: "max_file_mb", value: 100 } });
   expect(await file("files/over.bin")).toBe(404);
+  // A write that waits is taken back by a delete of its path (an upload's Cancel): its bytes land nowhere after.
+  const late = bytesOf(5000, 11);
+  const lateHash = await sha256Hex(late);
+  expect((await write(s, token, id, { "images/late.png": { blob: lateHash, size: late.length } })).waiting).toEqual(["images/late.png"]);
+  expect((await tool(s, token, "rm", { document: id, path: "images/late.png" })).ok).toBe(true);
+  expect((await send(s, id, lateHash, late)).status).toBe(404);
+  expect(await file("images/late.png")).toBe(404);
+  // (Where nothing is and nothing waits, a delete says so, as before.)
+  expect((await tool(s, token, "rm", { document: id, path: "images/late.png" })).text).toContain("There's nothing at images/late.png");
 });
 
 test("who may: only a write by someone who may edit waits, the bytes land only while they still may, and a document token's reach is its document", async () => {

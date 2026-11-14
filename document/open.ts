@@ -19,6 +19,7 @@ import { namingFor, type Naming } from "./names.ts";
 import { titleOf, type DocKind } from "./pages.ts";
 import { FileStore, Room, StateStore, type StoreError } from "./room.ts";
 import { fileStoreOf, RefIndex, stateStoreOf, TimeIndex } from "./storage.ts";
+import { unwait, uploadsNow } from "./uploads.ts";
 import { versionNumber } from "./versions.ts";
 
 /** The document once its room is open. */
@@ -99,6 +100,13 @@ export async function openRoom(h: RoomHost): Promise<Opened> {
     room,
     files,
     docId: info.id,
+    // A file on its way that is taken back (the tree's delete): every tab hears it.
+    unwait: async (path) => {
+      const was = await unwait(deps.storage, path);
+      if (was) host.broadcast(await uploadsNow(deps.storage));
+      return was;
+    },
+    maxFileMb: () => deps.directory.config.get("max_file_mb"),
     agents: deps.agents,
     // The render's token and pages origin name the owner the directory has: the host's info.owner can be an old one.
     ...(deps.render
@@ -192,7 +200,12 @@ export async function openRoom(h: RoomHost): Promise<Opened> {
     handler: host.handler,
     calls: host.calls,
     renamed: host.renamed,
-    addTab: host.addTab,
+    // (A tab that joins hears the files on their way first: waits.ts.)
+    addTab: (user, send, watch) => {
+      const leave = host.addTab(user, send, watch);
+      void uploadsNow(deps.storage).then((m) => Object.keys(m.files).length && send(m));
+      return leave;
+    },
     hello: host.hello,
     room,
     // Back in touch with disk: every file there, and every one the room holds, is looked at again.

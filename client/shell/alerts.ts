@@ -86,7 +86,11 @@ export function mountAlerts(shell: Shell) {
   // ---------------------------------------------------------------- drawing
 
   function actions(list: A.Action[], className: string): HTMLButtonElement[] {
-    return list.map((a) => button(className + (a.primary ? " primary" : ""), a.label, a.id));
+    return list.map((a) => {
+      const b = button(className + (a.primary ? " primary" : ""), a.label, a.id);
+      if (a.label == "×") b.setAttribute("aria-label", "Cancel");
+      return b;
+    });
   }
   function rowOf(r: A.Row): HTMLElement {
     const li = el("li", "alert-row");
@@ -133,7 +137,7 @@ export function mountAlerts(shell: Shell) {
     if (a.count > 1) title.append(el("span", "alert-count", `×${a.count}`));
     text.append(title, el("p", "alert-detail", [SOURCE[a.source], a.by && `by ${a.by.name}`, a.detail].filter(Boolean).join(" · ")));
     li.append(mark(a), text);
-    const list = a.fix ? [{ id: A.FIX, label: "Fix with agent", primary: true }, ...a.actions] : a.actions;
+    const list = a.fix ? [{ id: A.FIX, label: a.fixLabel ?? "Fix with agent", primary: true }, ...a.actions] : a.actions;
     if (list.length) {
       const acts = el("div", `alert-actions${list.length > 1 ? " under" : ""}`);
       acts.append(...actions(list, "alert-action"));
@@ -238,6 +242,8 @@ export function mountAlerts(shell: Shell) {
       if (hear) hears.set(alert.key, hear);
       send({ t: "raise", alert });
     },
+    /** One row of it, new or changed. */
+    row: (key: string, row: A.Row) => send({ t: "row", key, row }),
     /** Its source says that it is over. */
     end: (key: string, title?: string) => send({ t: "end", key, ...(title ? { title } : {}) }),
     /** What the page's editor raised, changed or ended (page-frame.ts read it). */

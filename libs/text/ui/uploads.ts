@@ -1,47 +1,14 @@
-// Files dropped or pasted on the page in the editor (input.ts takes them): each goes into the document's files at its
-// top, an image in images/ and any other file in files/, under its own name or, if a file has that name already, the
-// name with -2, -3, ... before its extension. The editor puts them there itself, from the page's origin, with its edit
-// key (PUT /d/<id>/api/files/<path>?key=: server/documents/routes.ts), then on the page where they were dropped: an
-// image as an image, another file as a link to it. One file at a time; a file that fails doesn't stop the others.
-
-import { encodePath } from "../../../document/pages";
-import { sha256Hex } from "../../../shared/bytes";
-
-/** Files over this size go with their sha-256, so they stream to storage (the server asks for it over 25 MB). */
-const HASH_FROM = 20_000_000;
+// Files dropped or pasted on the page in the editor (input.ts takes them): each gets its place in the document's files
+// here, an image in images/ and any other file in files/, under its own name or, if a file has that name already, the
+// name with -2, -3, ... before its extension. A folder's files keep the folder: images/<folder>/<name>. The editor puts
+// the file's element on the page at once (an image with its size, read here), and hands the file to the viewer, which
+// sends its bytes (client/shell/uploads.ts).
 
 /** The folder a file goes in. */
 const folderFor = (file: File) => (file.type.startsWith("image/") ? "images" : "files");
 
-/** A file's name as it can be in the document: no folders, no dot at the start. */
+/** A name as it can be in the document: no folders, no dot at the start. */
 const cleanName = (name: string) => name.replace(/[/\\]/g, "-").replace(/^\.+/, "").trim() || "file";
-
-/**
- * Adds `file` to the document's files: `doc` is the document's address (https://<host>/d/<id>), `key` the edit key,
- * `taken` the paths the document has (any case), which gets the file's; `sending` hears its path before it goes.
- * Returns the path it got, or why it couldn't be added.
- */
-export async function addFile(
-  doc: string,
-  key: string,
-  file: File,
-  taken: Set<string>,
-  sending: (path: string) => void
-): Promise<{ path: string } | { error: string }> {
-  const dir = folderFor(file);
-  const path = `${dir}/${unique(cleanName(file.name), (n) => taken.has(`${dir}/${n}`.toLowerCase()))}`;
-  const headers: Record<string, string> = {};
-  if (file.size > HASH_FROM) headers["x-erga-sha256"] = await sha256Hex(await file.arrayBuffer());
-  sending(path);
-  const r = await fetch(`${doc}/api/files/${encodePath(path)}?key=${encodeURIComponent(key)}`, {
-    method: "PUT",
-    body: file,
-    headers,
-  }).catch(() => null);
-  if (!r?.ok) return { error: await why(r) };
-  taken.add(path.toLowerCase());
-  return { path };
-}
 
 /** `name`, or with -2, -3, ... before its extension, the first that isn't `taken`. */
 function unique(name: string, taken: (name: string) => boolean): string {
@@ -52,8 +19,36 @@ function unique(name: string, taken: (name: string) => boolean): string {
   for (let i = 2; ; i++) if (!taken(`${stem}-${i}${ext}`)) return `${stem}-${i}${ext}`;
 }
 
-async function why(r: Response | null): Promise<string> {
-  if (!r) return "The server didn't answer. Check the connection.";
-  const body = (await r.json().catch(() => null)) as { error?: string } | null;
-  return body?.error ?? `The server answered ${r.status}.`;
+/** The path `file` gets in the document: `taken`, the paths the document has (lower case), gets it too. */
+export function pathFor(file: File, taken: Set<string>): string {
+  // (A dropped folder's file says where in the folder it was: input.ts, filesIn.)
+  const under = ((file as { rel?: string }).rel ?? "").split("/").filter(Boolean).map(cleanName);
+  const dir = [folderFor(file), ...under].join("/");
+  const path = `${dir}/${unique(cleanName(file.name), (n) => taken.has(`${dir}/${n}`.toLowerCase()))}`;
+  taken.add(path.toLowerCase());
+  return path;
+}
+
+/** An image's size in px, read from the file (a few milliseconds); nothing for a file that isn't a picture the browser reads. */
+export async function imageSize(file: File): Promise<{ width?: number; height?: number }> {
+  if (!file.type.startsWith("image/")) return {};
+  try {
+    const bitmap = await createImageBitmap(file);
+    const size = { width: bitmap.width, height: bitmap.height };
+    bitmap.close();
+    return size;
+  } catch {
+    /* not a bitmap (an SVG): an image element reads it */
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    return img.naturalWidth ? { width: img.naturalWidth, height: img.naturalHeight } : {};
+  } catch {
+    return {};
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }

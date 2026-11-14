@@ -248,7 +248,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
     name: "rm",
     label: "Delete",
     activity: "deleting",
-    ui: "The page tree: Delete",
+    ui: "The page tree: Delete; an upload's Cancel (a file whose bytes haven't come waits no more)",
     description: "Deletes a file or folder.",
     parameters: Schema.Struct({ document: DOCUMENT, path: PATH("The file or folder") }),
     run: (args, caller) => treeOp(caller, args.document, { op: "delete", path: String(args.path ?? "") }),

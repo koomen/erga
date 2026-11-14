@@ -45,13 +45,20 @@ export interface Raise {
   source: Source;
   title: string;
   detail?: string;
+  /** Progress: what the one line says of it, and the card's head when it is alone there (none: its title, "In progress"). */
+  line?: string;
+  head?: string;
   by?: By;
   actions?: Action[];
   rows?: Row[];
   /** Progress with no rows: how far it is, 0 to 1 (none: it can't tell). */
   p?: number;
-  /** A request the agent can do for it ("Fix with agent"). `draft`: the start of one, for the person to complete. */
+  /**
+   * A request the agent can do for it ("Fix with agent", or `fixLabel`: "Ask the agent again"; the viewer's own alerts
+   * only: a page can't name the agent's button). `draft`: the start of one, for the person to complete.
+   */
   fix?: string;
+  fixLabel?: string;
   draft?: boolean;
   /** Shown one time in a view of the page (a page's problem), until the agent is asked to fix it. */
   once?: boolean;
@@ -141,12 +148,14 @@ export function progress(a: Alert): number | null {
 /** The progress in a few words: the newest's title, and how many more. */
 export function running(s: State): string {
   const all = s.alerts.filter((a) => a.kind == "progress" && shows(a));
-  return all.length ? all[0].title + (all.length > 1 ? ` · ${all.length - 1} more` : "") : "";
+  return all.length ? (all[0].line ?? all[0].title) + (all.length > 1 ? ` · ${all.length - 1} more` : "") : "";
 }
-/** The card's head: "3 problems", "Uploading 3 files · 2 problems", or with no problem "In progress". */
+/** The card's head: "3 problems", "Uploading 3 files · 2 problems", or with no problem the one progress's own, else "In progress". */
 export function headline(s: State): string {
-  const n = problems(s);
-  return n ? [running(s), `${n} problem${n == 1 ? "" : "s"}`].filter(Boolean).join(" · ") : "In progress";
+  const n = problems(s),
+    all = s.alerts.filter((a) => a.kind == "progress" && shows(a));
+  if (n) return [running(s), `${n} problem${n == 1 ? "" : "s"}`].filter(Boolean).join(" · ");
+  return (all.length == 1 && all[0].head) || "In progress";
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) == JSON.stringify(b);
@@ -208,7 +217,7 @@ export function step(s: State, e: Event): [State, Effect[]] {
         ];
       if (old.kind == "progress" && shows(old) && e.title)
         return [
-          put({ ...old, done: true, title: e.title, detail: undefined, actions: [], rows: [], p: 1 }),
+          put({ ...old, done: true, title: e.title, line: undefined, head: undefined, detail: undefined, actions: [], rows: [], p: 1 }),
           [{ t: "timer", key: e.key, what: "done", ms: DONE_MS }, draw],
         ];
       return settle(drop([e.key]), shows(old) ? [draw] : []);

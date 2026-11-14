@@ -11,6 +11,7 @@ import {
   problems,
   QUIET_MS,
   readMessage,
+  running,
   step,
   view,
   type Effect,
@@ -87,6 +88,12 @@ test("Close dismisses every error and tells its source; an upload that runs stay
   const opened = run(closed.state, { t: "open" }).state;
   expect([view(opened), headline(opened)]).toEqual(["card", "In progress"]);
   expect(view(run(opened, { t: "close" }).state)).toBe("line");
+  // Progress that has words of its own for the line and for the card's head (an upload: what is left).
+  const timed = run(opened, upload("u", { line: "a.png · 4 s left", head: "1 file · 4 s left" })).state;
+  expect([running(timed), headline(timed)]).toEqual(["a.png · 4 s left", "1 file · 4 s left"]);
+  expect(headline(run(timed, error("a")).state)).toBe("a.png · 4 s left · 1 problem");
+  // (When it ends, the line says its end.)
+  expect(running(run(timed, { t: "end", key: "u", title: "1 file uploaded" }).state)).toBe("1 file uploaded");
   // The card closes itself with its last alert, and the next progress starts as a line.
   const over = run(opened, { t: "end", key: "u" }, upload("v"), { t: "timeout", key: "v", what: "quiet" }).state;
   expect(view(over)).toBe("line");
@@ -164,6 +171,7 @@ test("a message of the page: only what an alert has, cut to size, under the page
     source: "editor",
     title: "x".repeat(900),
     fix: "Share every document.",
+    fixLabel: "Close",
     once: true,
     life: "page",
     html: "<b>",

@@ -17,6 +17,7 @@ import type { Chrome } from "./chrome";
 import type { Sharing } from "./sharing";
 import type { Toast } from "./toast";
 import type { Alerts } from "./alerts";
+import type { Uploads } from "./uploads";
 import type { Views } from "./views";
 import type { PageRequests } from "./page-requests";
 
@@ -83,6 +84,7 @@ export interface Shell {
   sharing: Sharing;
   toast: Toast;
   alerts: Alerts;
+  uploads: Uploads;
   views: Views;
   requests: PageRequests;
 }

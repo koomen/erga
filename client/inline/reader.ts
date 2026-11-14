@@ -806,6 +806,29 @@ export default function reader(C: ReaderConfig): void {
     e.clipboardData.setData("text/plain", out.text);
     e.clipboardData.setData("text/html", out.html);
   });
+  // An image that fails to load, with a size in its element: its file may be on its way (an upload's element comes
+  // before its bytes: libs/text/ui/pending.ts draws it for an editor). It keeps its place meanwhile: an empty picture
+  // of that size, by a style of the page's own (never a change of its elements), until it loads after all.
+  const boxes = new Map<string, string>();
+  let boxSheet: CSSStyleSheet | null = null;
+  const sized = (e: Event) => {
+    const i = e.target as Element | null;
+    if (i?.localName != "img") return;
+    const src = i.getAttribute("src"),
+      w = Number(i.getAttribute("width")),
+      h = Number(i.getAttribute("height"));
+    if (!src || /["\\\n]/.test(src)) return;
+    if (e.type == "load" ? !boxes.delete(src) : !(w > 0 && h > 0)) return;
+    if (e.type == "error")
+      boxes.set(
+        src,
+        `img[src="${src}"] { content: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'/%3E"); background: rgba(128, 128, 128, 0.12); border-radius: 4px; }`
+      );
+    if (!boxSheet) document.adoptedStyleSheets = [...document.adoptedStyleSheets, (boxSheet = new CSSStyleSheet())];
+    boxSheet.replaceSync([...boxes.values()].join("\n"));
+  };
+  addEventListener("error", sized, true);
+  addEventListener("load", sized, true);
   addEventListener("message", (e) => {
     if (e.source != P || e.origin != C.shell || !e.data) return;
     const type = e.data.type;
