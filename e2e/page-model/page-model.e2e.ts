@@ -31,7 +31,7 @@ import {
   usd,
   useToday,
 } from "./model";
-import { clickOn } from "../helpers/press";
+import { clickInPage, clickOn } from "../helpers/press";
 
 const s = await servers.main();
 
@@ -200,13 +200,13 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
       b.textContent = "Sign in";
       b.onclick = () => window.ergaLLM!.signIn();
     });
-    await frame.locator("#sign-in-test").click();
+    await clickInPage(page, frame.locator("#sign-in-test"));
     await expect.poll(() => signInOpen(page)).toBe(true);
     await page.mouse.click(5, page.viewportSize()!.height - 5);
     await expect.poll(() => signInOpen(page)).toBe(false);
     // Continue with GitHub: Erga's sign-in, which comes back to the same page and place. (The journey ends at the
     // request: the sign-in itself does not load.)
-    await frame.locator("#sign-in-test").click();
+    await clickInPage(page, frame.locator("#sign-in-test"));
     await expect.poll(() => signInOpen(page)).toBe(true);
     await page.route("**/auth/github*", (route) => route.abort("aborted"));
     const signIn = page.waitForRequest((r) => r.isNavigationRequest() && new URL(r.url()).pathname == "/auth/github");

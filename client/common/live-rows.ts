@@ -15,6 +15,7 @@
 // in its `wire(row)`, never in a loop over the rows at load: a row that comes later would have none.
 
 import { liveSocket } from "../live/socket";
+import { pressedIn } from "./pressed";
 import { asUser } from "./tools";
 
 type Row = { html: string; sort: number | string } | null;
@@ -178,9 +179,11 @@ const ahead = (el: HTMLElement, r: HTMLElement, s: number | string) => {
 
 /**
  * Puts `key`'s row in `el` as it is now, in its place; null takes it out. False: not now (someone is typing in it, and
- * it isn't the page's own change).
+ * it isn't the page's own change; or someone presses a row of the list).
  */
 function put(el: HTMLElement, o: LiveList, key: string, row: Row): boolean {
+  // (A press on the list: its rows stay as they are until the release, or the click would be lost. pressed.ts.)
+  if (pressedIn(el)) return false;
   const old = el.querySelector<HTMLElement>(`:scope > [data-live="${CSS.escape(key)}"]`);
   if (old && typing(old) && !own.has(key)) return false;
   own.delete(key);

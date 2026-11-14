@@ -6,6 +6,7 @@
 import { ms } from "../../libs/text/ui/timescale";
 import { FIX_ALL_REPORTED, FIX_REPORTED, pageReport } from "../../shared/page-report";
 import * as A from "../common/alerts";
+import { afterPress } from "../common/pressed";
 import { editorContext } from "./agent-context";
 import { $, type Shell } from "./shell";
 
@@ -48,7 +49,7 @@ export function mountAlerts(shell: Shell) {
     const [next, effects] = A.step(state, e);
     state = next;
     for (const f of effects) {
-      if (f.t == "draw") draw();
+      if (f.t == "draw") afterPress(box, draw);
       else if (f.t == "paint") paint(f.key, f.row);
       else if (f.t == "timer") window.setTimeout(() => send({ t: "timeout", key: f.key, what: f.what }), ms(f.ms));
       else if (f.t == "fix") askAgent(f.alerts);
@@ -80,7 +81,7 @@ export function mountAlerts(shell: Shell) {
   // buttons follow it (client/agent/person-agent.ts sends "erga:agent-state"), and the alert that says it's off goes.
   window.addEventListener("erga:agent-state", () => {
     if (!agentOff()) send({ t: "end", key: AGENT_OFF });
-    draw();
+    afterPress(box, draw);
   });
 
   // ---------------------------------------------------------------- drawing
@@ -157,6 +158,8 @@ export function mountAlerts(shell: Shell) {
     }
     return li;
   }
+  // (Each draw makes the card anew. One for news during a press on the card waits for its release, or the click would
+  // be lost: client/common/pressed.ts.)
   function draw() {
     const v = A.view(state),
       at = box.querySelector(".alerts-list")?.scrollTop ?? 0;

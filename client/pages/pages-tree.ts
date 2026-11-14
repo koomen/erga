@@ -27,6 +27,7 @@
 // Delete deletes, and Shift-F10 (or the context-menu key) opens a row's menu.
 
 import { baseName, encodePath, joinPath, pageUrl, parentOf, readable, slugify, type DocKind } from "../../document/pages";
+import { afterPress } from "../common/pressed";
 import { runTool } from "../common/tools";
 import { ICONS, STYLE } from "./pages-tree-style";
 
@@ -269,6 +270,8 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
 
   // ------------------------------------------------------------ talking to the server
 
+  /** An answer draws the rows again: after a press on them ends, or its click is lost (pressed.ts). */
+  const steady = () => new Promise<void>((done) => afterPress(root, done));
   async function load() {
     const at = asked;
     try {
@@ -282,6 +285,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     } catch (e) {
       loadError = plain(e);
     }
+    await steady();
     render();
     if (wantFocus && entries) { wantFocus = false; focusFirst(); }
   }
@@ -309,6 +313,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     // A new folder is new's path that ends with "/".
     if (name == "new_folder") args.path += "/";
     const body = await run<Partial<TreeAnswer>>(TOOLS[name] ?? name, { document: opts.id, ...args });
+    await steady();
     let next = body.entries ?? entries ?? [];
     // A moved document keeps its title while the server catches up with its text at the new path.
     if (op.op == "move" && entries) {
@@ -340,6 +345,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
       await send(op, before);
       return true;
     } catch (e) {
+      await steady();
       if (before) set(before, canEdit);
       say(plain(e));
       return false;

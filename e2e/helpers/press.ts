@@ -12,7 +12,7 @@
 // back as the pointer moves. Then the press, on an element that shows.
 // tests/test-habits.test.ts counts the presses at a place (mouse.click, mouse.down): a new one needs a reason.
 
-import type { Page } from "playwright-core";
+import type { Locator, Page } from "playwright-core";
 import { until } from "./fixtures";
 
 /** The check of a press, in the page: whether it landed (null: no press yet), what to say of it, and its end. */
@@ -178,4 +178,16 @@ export async function pointerOnPage(page: Page, x: number, y: number) {
     5000,
     `the pointer is on the page at ${x},${y}`
   );
+}
+
+/**
+ * Clicks an element of the document's page (a locator in its frame), with the pointer on the page first (pointerOnPage).
+ * Was a flaky failure: a click on the page just after something of the viewer's over the frame went away (a dialog, a
+ * card) or the frame showed again went to the viewer, and did nothing.
+ */
+export async function clickInPage(page: Page, el: Locator) {
+  const b = await el.boundingBox();
+  if (!b) throw new Error("clickInPage: the element is not on the page");
+  await pointerOnPage(page, b.x + b.width / 2, b.y + b.height / 2);
+  await el.click();
 }

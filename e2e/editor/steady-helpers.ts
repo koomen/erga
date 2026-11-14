@@ -11,6 +11,12 @@ export const agentBox = (ed: Editor) =>
     `({ text: document.getElementById("agent-input").value, open: document.body.classList.contains("agent-open"), sent: document.querySelectorAll(".msg-user").length })`
   );
 
+/** The selector of the "Fix with agent" button of the alert whose title matches (a title has no selector of its own). */
+export const fixButton = (ed: Editor, title: RegExp) =>
+  ed.eval<string>(
+    `(() => { const a = [...document.querySelectorAll("#alerts .alert")].find((a) => ${title}.test(a.querySelector(".alert-title").textContent)); return '#alerts .alert[data-key="' + CSS.escape(a.dataset.key) + '"] [data-action="fix"]'; })()`
+  );
+
 /** A new conversation with the person's agent, as the panel's "New conversation" button starts one. */
 export async function newConversation(server: Server) {
   const r = await fetch(`${server.root}/api/agent/conversation`, { method: "DELETE", headers: { Origin: server.root } });
