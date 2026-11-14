@@ -63,9 +63,14 @@ export async function dragTo(page: Page, at: { x: number; y: number }, files: st
     const r = document.getElementById("frame")!.getBoundingClientRect();
     return { x: r.left, y: r.top };
   });
+  return dragAt(page, { x: frame.x + at.x, y: frame.y + at.y }, files);
+}
+
+/** The same, to a point of the tab (the editor's own parts: the file tree, the agent's panel). */
+export async function dragAt(page: Page, at: { x: number; y: number }, files: string[]) {
   const cdp = await page.context().newCDPSession(page);
   const send = (type: "dragEnter" | "dragOver" | "drop") =>
-    cdp.send("Input.dispatchDragEvent", { type, x: frame.x + at.x, y: frame.y + at.y, data: { items: [], files, dragOperationsMask: 1 } });
+    cdp.send("Input.dispatchDragEvent", { type, x: at.x, y: at.y, data: { items: [], files, dragOperationsMask: 1 } });
   await send("dragEnter");
   await send("dragOver");
   await send("dragOver");

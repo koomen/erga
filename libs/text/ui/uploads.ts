@@ -4,29 +4,14 @@
 // the file's element on the page at once (an image with its size, read here), and hands the file to the viewer, which
 // sends its bytes (client/shell/uploads.ts).
 
+import { placeIn } from "../../../client/common/dropped";
+
 /** The folder a file goes in. */
 const folderFor = (file: File) => (file.type.startsWith("image/") ? "images" : "files");
 
-/** A name as it can be in the document: no folders, no dot at the start. */
-const cleanName = (name: string) => name.replace(/[/\\]/g, "-").replace(/^\.+/, "").trim() || "file";
-
-/** `name`, or with -2, -3, ... before its extension, the first that isn't `taken`. */
-function unique(name: string, taken: (name: string) => boolean): string {
-  if (!taken(name)) return name;
-  const dot = name.lastIndexOf(".");
-  const stem = dot > 0 ? name.slice(0, dot) : name,
-    ext = dot > 0 ? name.slice(dot) : "";
-  for (let i = 2; ; i++) if (!taken(`${stem}-${i}${ext}`)) return `${stem}-${i}${ext}`;
-}
-
 /** The path `file` gets in the document: `taken`, the paths the document has (lower case), gets it too. */
 export function pathFor(file: File, taken: Set<string>): string {
-  // (A dropped folder's file says where in the folder it was: input.ts, filesIn.)
-  const under = ((file as { rel?: string }).rel ?? "").split("/").filter(Boolean).map(cleanName);
-  const dir = [folderFor(file), ...under].join("/");
-  const path = `${dir}/${unique(cleanName(file.name), (n) => taken.has(`${dir}/${n}`.toLowerCase()))}`;
-  taken.add(path.toLowerCase());
-  return path;
+  return placeIn(folderFor(file), file, taken);
 }
 
 /** An image's size in px, read from the file (a few milliseconds); nothing for a file that isn't a picture the browser reads. */

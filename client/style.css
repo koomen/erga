@@ -368,6 +368,12 @@ button.alerts-pill { cursor: pointer; }
 .alert-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
 .alert-row .detail { color: var(--soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .alert-row-action { margin-left: 8px; padding: 0; border: 0; background: none; color: var(--caret); font: 500 12.5px/1.5 var(--font-text); cursor: pointer; }
+/* The label beside a folder of the file tree while files are dragged over it (client/shell/tree-files.ts). */
+.drop-chip { position: fixed; z-index: 60; display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 8px; border-radius: 999px; white-space: nowrap; pointer-events: none;
+  background: var(--panel-bg); border: 1px solid var(--panel-border); box-shadow: var(--shadow); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); font: 500 12px/1 var(--font-text); color: var(--fg); }
+.drop-chip[hidden] { display: none; }
+.drop-chip svg { width: 14px; height: 14px; color: var(--caret); flex: none; }
+.drop-chip span { color: var(--soft); font-weight: 400; }
 /* A row's × (an upload's Cancel). */
 .alert-row .side { min-width: 20px; }
 .alert-row-action[data-action="cancel"] { display: block; width: 20px; height: 20px; margin: 0; border-radius: 6px; color: var(--chrome); font: 400 16px/1 var(--font-text); }

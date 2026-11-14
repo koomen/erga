@@ -218,11 +218,12 @@ export class Uploads {
           }
         }
       }
-      // A file by its ref: one whose bytes Erga keeps (a text, if they are one: D5); or an agent's file on its own disk,
-      // whose write waits for the bytes (waits.ts).
+      // A file by its ref: one whose bytes Erga keeps (a text, if they are one: D5); or a file on its writer's own disk
+      // (an agent's, a person's drop), whose write waits for the bytes (waits.ts). A document with no blob store (one on
+      // disk) keeps none, so each such write waits: its bytes say, as they arrive, whether they are a text it takes.
       let kept: { size: number } | null = null;
-      if (blobs && isBlobRef(data)) {
-        kept = await blobs.head(data.hash);
+      if (isBlobRef(data)) {
+        kept = blobs ? await blobs.head(data.hash) : null;
         if (!kept) {
           const none = `Erga keeps no file with the sha-256 ${data.hash}`;
           const size = Number.isInteger(data.size) && data.size > 0;
@@ -240,7 +241,7 @@ export class Uploads {
             });
           continue;
         }
-        if (isTextPath(path) && kept.size <= TEXT_MAX) {
+        if (blobs && isTextPath(path) && kept.size <= TEXT_MAX) {
           const bytes = await blobs.bytes(data.hash);
           try {
             if (bytes) text = utf8(bytes);

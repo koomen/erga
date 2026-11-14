@@ -15,6 +15,11 @@ export interface AttachOptions {
   /** The compose form: the paperclip goes first in it, the chips just above it. */
   form: HTMLElement;
   input: HTMLTextAreaElement;
+  /**
+   * A file that a message can't take (its kind, its size): the caller may offer another way (true), else the hint says
+   * why.
+   */
+  refuse?: (file: File, name: string) => boolean;
   /** Says why a file wasn't attached. */
   hint(text: string): void;
   /** The list changed (the panel redraws Send). */
@@ -143,8 +148,14 @@ export function attachments(o: AttachOptions): Attachments {
       // A pasted screenshot comes as "image.png"; say what it is.
       const name = file.name && file.name != "image.png" ? file.name : `Pasted image${file.type == "image/png" || !file.type ? ".png" : "." + (file.type.split("/")[1] ?? "png")}`;
       const no = refusal(name, file.type, file.size);
-      if (no) { why.push(no); continue; }
-      if (slots.length + todo.length >= MAX_FILES) { why.push(`At most ${MAX_FILES} files can go with one message.`); break; }
+      if (no) {
+        if (!o.refuse?.(file, name)) why.push(no);
+        continue;
+      }
+      if (slots.length + todo.length >= MAX_FILES) {
+        why.push(`At most ${MAX_FILES} files can go with one message.`);
+        break;
+      }
       todo.push(new File([file], name, { type: file.type }));
     }
     if (why.length) o.hint(why.join(" "));

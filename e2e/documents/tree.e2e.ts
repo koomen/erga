@@ -8,6 +8,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Frame, Route } from "playwright-core";
 import { agentClosed, expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
+import { dragAt, onDisk } from "../helpers/drops";
 import { newToken } from "../helpers/new-token";
 import { clickOn } from "../helpers/press";
 import { idOf, runTool, treeOp } from "../helpers/tools";
@@ -240,6 +241,45 @@ journey("a project's tree in the editor", () => {
       .poll(() => js(page, `document.querySelector(".et-banner.note")?.textContent ?? ""`))
       .toMatch(/Moved\. “About us” finds its styles, images and links by where it was/);
     await expect.poll(async () => (await rows(page)).some((x) => x[0] == "blog/about.html" && x[1] == "About us")).toBe(true);
+  });
+
+  test("files dragged from the computer onto a folder light it, and a label says what a drop does; dropped, they are in the folder, each with its row at once, with how far it is", async () => {
+    // (Before: the cursor said "no drop", and the tree took no file.)
+    const at = await page.evaluate(() => {
+      const r = document.querySelector('.et-row[data-path="blog"]')!.getBoundingClientRect();
+      return { x: r.left + 120, y: r.top + r.height / 2 };
+    });
+    // The files' bytes wait, so that their rows show on their way.
+    let go!: () => void;
+    const wait = new Promise<void>((done) => (go = done));
+    const going: Promise<void>[] = [];
+    await page.route(/\/api\/blobs\//, (r) => void going.push(wait.then(() => r.continue())));
+    const over = await dragAt(page, at, [onDisk("notes.txt"), onDisk("terms.txt")]);
+    expect(
+      await page.evaluate(() => ({
+        lit: [...document.querySelectorAll<HTMLElement>(".et-row.drop")].map((r) => r.dataset.path),
+        label: document.querySelector(".drop-chip:not([hidden])")?.textContent,
+      }))
+    ).toEqual({ lit: ["blog"], label: "Add 2 filesto blog/" });
+    await over.drop();
+    const pending = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll<HTMLElement>(".et-row.pending")]
+          .map((r) => `${r.dataset.path} ${r.querySelector(".et-pct")?.textContent}`)
+          .sort()
+      );
+    await expect.poll(pending).toEqual(["blog/notes.txt 0%", "blog/terms.txt 0%"]);
+    expect(
+      await page.evaluate(() => [document.querySelectorAll(".et-row.drop").length, !!document.querySelector(".drop-chip:not([hidden])")])
+    ).toEqual([0, false]);
+    go();
+    await Promise.all(going);
+    await page.unroute(/\/api\/blobs\//);
+    await expect.poll(pending).toEqual([]);
+    await expect
+      .poll(async () => (await paths(page)).filter((x) => /^blog\/(notes|terms)\.txt$/.test(x)).sort())
+      .toEqual(["blog/notes.txt", "blog/terms.txt"]);
+    expect(await doc.tree()).toEqual(expect.arrayContaining(["blog/notes.txt", "blog/terms.txt"]));
   });
 
   test("a page that arrives on disk shows, by its title", async () => {

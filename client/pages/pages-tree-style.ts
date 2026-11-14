@@ -42,6 +42,11 @@ export const STYLE = `
 .et-row[aria-current="page"] .et-icon { color: var(--caret); }
 .et-row[aria-current="page"]:hover { background: color-mix(in srgb, var(--caret) 14%, transparent); }
 .et-row.dragging { opacity: 0.45; }
+.et-row.pending .et-name { opacity: 0.55; }
+.et-row.pending .et-pct { margin-left: auto; padding-right: 8px; font: 400 11.5px/1 var(--font-text); color: var(--chrome); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.et-row.pending .et-track { position: absolute; left: calc(44px + var(--depth, 0) * 16px - 16px); right: 8px; bottom: 2px; height: 2px; border-radius: 1px;
+  background: linear-gradient(to right, var(--caret) calc(var(--p) * 100%), color-mix(in srgb, var(--chrome) 26%, transparent) 0); }
+.et-row.pending .et-acts { display: none; }
 .et-row.drop { background: color-mix(in srgb, var(--caret) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--caret) 55%, transparent); }
 .et-row.busy { opacity: 0.55; pointer-events: none; }
 /* A row's buttons: on hover or focus, always on touch. */
