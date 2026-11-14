@@ -24,6 +24,7 @@ export default function viewerComment(base: string, me: { user: string; name: st
       zoom: 1,
       tall: innerHeight,
       pinched: false,
+      notes: 0,
     });
   };
   async function fresh() {

@@ -8,7 +8,7 @@ import { placeOf, publicHref, type Place } from "../../../client/common/link-tar
 import { HEADING } from "../api/source";
 import { EditorMarkdown } from "./markdown";
 import { editableAt } from "../api/rules";
-import { LOADING_AGAIN, showDropNote } from "./drop";
+import { LOADING_AGAIN } from "./drop";
 import { pageUrl } from "../../../document/pages";
 
 export abstract class EditorClipboard extends EditorMarkdown {
@@ -67,14 +67,10 @@ export abstract class EditorClipboard extends EditorMarkdown {
   protected pasteFiles(files: File[]): void {
     const at = this.currentSelection().from,
       u = M.unitAt(this.units, at);
-    const r = this.coordsAtPos(at),
-      point = { x: r?.left ?? 0, y: r?.bottom ?? 0 };
-    if (this.rendering) return this.doc ? showDropNote(this.doc, point, LOADING_AGAIN) : undefined;
-    if (!u || !this.verify(u) || !editableAt(u, at)) {
-      if (this.doc) showDropNote(this.doc, point, "A file can go only into the text you can edit. Put the caret in a paragraph.");
-      return;
-    }
-    this.config.onDropFiles?.(files, at, point);
+    if (this.rendering) return this.config.onDropRefused?.(LOADING_AGAIN);
+    if (!u || !this.verify(u) || !editableAt(u, at))
+      return this.config.onDropRefused?.("A file can go only into the text you can edit. Put the caret in a paragraph.");
+    this.config.onDropFiles?.(files, at);
   }
 
   protected cut(e: ClipboardEvent): void {

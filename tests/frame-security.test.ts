@@ -103,7 +103,7 @@ test("a reader's viewer holds the page in one frame on its own origin (allow-sam
   const page = await (await framed(src)).text();
   expect(page).toContain("erga-hello");
   expect(page).not.toContain("importmap");
-  expect(page).not.toContain("__ergaReport");
+  expect(page).not.toContain("erga-problem");
   // Someone it isn't shared with gets no page.
   expect((await as("Zed")).status).toBe(403);
   // Edited: the next load shows it (readers see the document as it is now).

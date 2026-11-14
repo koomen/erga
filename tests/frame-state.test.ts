@@ -13,6 +13,7 @@ const mode = (key = "k1"): Editing => ({
   zoom: 1,
   tall: 800,
   pinched: false,
+  notes: 0,
 });
 
 /** The steps in turn, from idle: the state after the last, and every effect on the way. */

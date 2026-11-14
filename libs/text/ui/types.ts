@@ -50,20 +50,17 @@ export interface PageEditorConfig {
   /** Unhandled keydowns inside the page (for app-level shortcuts). */
   onKey?: (e: KeyboardEvent) => boolean;
   /**
-   * Something the user asked for couldn't be done; say why. When the
-   * document itself is at fault, `fix` is a prompt that asks the agent to
-   * repair it, which the viewer offers as a button.
-   */
-  /**
    * Why something can't be done. `fix`: a request the agent can do for it (the viewer offers "Fix with agent"); with
    * `draft`, the start of a request that the person completes ("Change the text “42” to: ").
    */
   onNotice?: (message: string, fix?: string, draft?: boolean) => void;
   /**
-   * Files dropped or pasted on the text, at source position `at` (`point`: where, in the page's coordinates): the
-   * caller adds them to the document's files, then puts them on the page (insertFiles), or says why not (dropError).
+   * Files dropped or pasted on the text, at source position `at`: the caller adds them to the document's files, then
+   * puts them on the page (insertFiles), or not (dropEnd).
    */
-  onDropFiles?: (files: File[], at: number, point: { x: number; y: number }) => void;
+  onDropFiles?: (files: File[], at: number) => void;
+  /** Files dropped or pasted that can't go in (the place takes none, the page loads again): why. */
+  onDropRefused?: (why: string) => void;
   /**
    * One of the page's own edits (ergaEditor.call), on `html`: the change its API gives (its module, run in the page:
    * page-edits.ts), or why not.

@@ -347,6 +347,29 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
       ),
     /** What watchMarks has seen. */
     seenMarks: () => ed.frame<string[]>(`[...(${W}.__ergaMarks ?? [])]`),
+    /**
+     * The alerts (client/shell/alerts.ts): what shows (none, the line or the card), the card's head or the line's text,
+     * and each alert in the card: its title, count, detail, rows ("error a.png: why") and buttons.
+     */
+    alerts: () =>
+      page.evaluate(() => {
+        const b = document.getElementById("alerts")!;
+        const text = (e: Element | null | undefined) => e?.textContent ?? "";
+        return {
+          view: (b.dataset.view ?? "none") as "none" | "line" | "card",
+          head: text(b.querySelector(".alerts-head h2, .alerts-pill")),
+          all: !!b.querySelector(".alerts-all"),
+          alerts: [...b.querySelectorAll<HTMLElement>(".alert")].map((a) => ({
+            title: text(a.querySelector(".alert-title")?.firstChild as Element | null),
+            count: text(a.querySelector(".alert-count")),
+            detail: text(a.querySelector(".alert-detail")),
+            rows: [...a.querySelectorAll<HTMLElement>(".alert-row")].map(
+              (r) => `${r.dataset.state} ${text(r.querySelector(".name"))}: ${text(r.querySelector(".why") ?? r.querySelector(".detail"))}`
+            ),
+            buttons: [...a.querySelectorAll("button")].map((x) => text(x) + (x.getAttribute("aria-disabled") ? " (off)" : "")),
+          })),
+        };
+      }),
     /** The toast: its text and whether it shows. */
     toast: () => page.evaluate(() => { const t = document.getElementById("toast")!; return { text: t.textContent ?? "", shown: t.classList.contains("show") }; }),
     /** The editor's selection, and the text it covers. */

@@ -15,8 +15,8 @@ export function mountRoom(shell: Shell) {
 
   // The room writes files to disk as edits land; there's nothing to save here. Without a connection, edits stay in this
   // tab and in this browser (collab.ts, `keep`), and sync on return. A short break (the server restarting, a redeploy)
-  // passes unseen: the room reconnects by itself, and nothing says so. Only edits that are not on the server yet show a
-  // small note, at the bottom right, until they are (libs/text/ui/unsaved.ts). A deleted document's room never comes
+  // passes unseen: the room reconnects by itself, and nothing says so. Only edits that are not on the server yet show,
+  // as one line of the alerts, until they are (libs/text/ui/unsaved.ts). A deleted document's room never comes
   // back: live.ts's note says so, at once.
   let status: RoomStatus = "up";
   function connectionChanged(now: RoomStatus) {
@@ -36,9 +36,6 @@ export function mountRoom(shell: Shell) {
     if (shell.sourceView) shell.sourceView.dispatch({ changes, annotations: Transaction.addToHistory.of(false), userEvent: "external" });
     shell.people.queuePeers();
   }
-
-  /** The problems this page view has shown (client/shell/problems.ts): each once. */
-  const shownProblems = new Set<string>();
 
   // Your agent's events and its requests to look at the page come to your tabs only, on the document's socket (as
   // text, beside the room's messages: collab.ts). Events sent while it was down are gone: each time it's back (or the
@@ -101,7 +98,6 @@ export function mountRoom(shell: Shell) {
     connectionChanged,
     applyRemote,
     socketEvent,
-    shownProblems,
     get connected() {
       return status == "up";
     },

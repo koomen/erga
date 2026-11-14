@@ -116,6 +116,8 @@ let voice: {
   due: boolean;
 } | null = null;
 let hintTimer = 0;
+/** The alert for a turn that failed while the panel was closed: it goes when the panel opens. */
+const TURN_FAILED = "agent:turn";
 // Files to go with the next message: dropped on the panel, pasted, or picked.
 const att = attachments({
   pane: $("agent"),
@@ -357,7 +359,11 @@ $("agent-reset").addEventListener("click", () => {
   );
   input.focus();
 });
-window.addEventListener("erga:agent-shown", () => { talk.follow(true); input.focus(); });
+window.addEventListener("erga:agent-shown", () => {
+  talk.follow(true);
+  input.focus();
+  window.ergaAlerts?.end(TURN_FAILED);
+});
 
 // Which model the agent runs on: a menu when there's a choice, plain text otherwise (as in the editor).
 function renderModel(m: AgentState | null) {
@@ -428,7 +434,7 @@ async function load(tries = 0, fresh = false): Promise<void> {
   const l = (await kept)?.log ?? a.log;
   if (heard != was && tries < 5) return load(tries + 1, fresh);
   off = a.enabled ? null : `The agent is off: ${a.reason ?? "the server did not start it"}.`;
-  // The editor's buttons that ask the agent (the toast's fix: client/shell/toast.ts) follow its state.
+  // The editor's buttons that ask the agent (an alert's fix: client/shell/alerts.ts) follow its state.
   window.dispatchEvent(new Event("erga:agent-state"));
   renderModel(a);
   if (l) { log.items = l.items; log.busy = l.busy; log.undoable = l.undoable; }
@@ -459,6 +465,20 @@ const events = liveSocket({
       heard++;
       talk.apply(m.ev);
       renderBusy();
+      // The agent stopped on an error, with its panel closed: in the editor, an alert says so (client/shell/alerts.ts).
+      if (m.ev.t == "error" && !document.body.classList.contains("agent-open"))
+        window.ergaAlerts?.raise(
+          {
+            key: TURN_FAILED,
+            kind: "error",
+            source: "agent",
+            title: "Your agent stopped",
+            detail: m.ev.text,
+            actions: [{ id: "show", label: "Show" }],
+          },
+          (action) => {
+            if (action == "show") window.ergaAgent?.show(true);
+        });
       // A tool call done: the document open may have changed (Undo's count).
       if (m.ev.t == "tool" && m.ev.status != "running") window.dispatchEvent(new Event("erga:agent-tool"));
     }

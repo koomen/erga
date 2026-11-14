@@ -6,8 +6,8 @@
 // are and shows its own to them. It does everything that needs the page's DOM: typing, selections, marks and carets,
 // its own controls (controls.ts: the style bar, the link bar), the comments (comments.ts), files dropped on the page
 // (uploads.ts), on the page as it is, which the pages origin served from the text (shared/page-html.ts). It asks the
-// viewer for one thing: the page loaded again (erga-reload), for a change it can't show in place. When the viewer says
-// "view", it stops, and the page carries on as it is.
+// viewer for one thing: the page loaded again (erga-reload), for a change it can't show in place; and it tells the
+// viewer its alerts (alerts.ts). When the viewer says "view", it stops, and the page carries on as it is.
 //
 // Trap: in the frame, a `setTimeout` can wait for seconds in a tab that isn't in front. Code that must run soon after
 // an edit here (the replica kept in IndexedDB, the page in the copy) runs at once, and joins what comes meanwhile.
@@ -16,6 +16,8 @@ import { EditorState, Transaction, type Extension } from "@codemirror/state";
 import { history, historyField } from "@codemirror/commands";
 import { PageEditor, type HeldInput, type TypingAgent } from "./editor";
 import { LOADING_AGAIN } from "./drop";
+import { pageAlerts } from "./alerts";
+import { DISMISS, type Row } from "../../../client/common/alerts";
 import { drawCaret } from "./caret";
 import { watchMoves } from "./moves";
 import { listenAsEditor } from "./text-guard";
@@ -25,7 +27,7 @@ import { mountControls, noteOnPage, type Controls } from "./controls";
 import { mountComments, type Comments } from "./comments";
 import { mountSlash, pickImages, type Slash } from "./slash";
 import { watchUnsaved } from "./unsaved";
-import { addFiles } from "./uploads";
+import { addFile } from "./uploads";
 import { apiCode, runPageEdit, warm } from "./page-edits";
 import type { EditMode } from "./mode";
 import { step, type Editing, type FrameEvent, type State } from "./frame-state";
@@ -88,19 +90,28 @@ let commentsShown = (window.__ergaReader?.comments as { show?: unknown } | undef
 let kept: EditorState | null = null;
 /** The page went full screen under the running editor (the viewer's erga-full; the editor stops for it): back in, the text is left. */
 let wasFull = false;
+/** The editor's alerts, in the viewer's card. */
+const alerts = pageAlerts(window, SHELL);
 /** Files dropped or pasted on the page on their way into the document's files: where they go in (mapped through the edits meanwhile). */
-const drops = new Set<{ at: number; point: { x: number; y: number } }>();
+const drops = new Set<{ at: number }>();
 /** The paths of the files this editor is putting into the document's files for a drop. */
 const sent = new Set<string>();
 /** What stops what the editor added to the page besides its own (its caret, its watches). */
 let unwatch: (() => void)[] = [];
 /** The level the shell draws the page at (zoom.ts): the frame scaled; the controls keep their own size. */
 let zoom = 1;
+/** How much of the window's bottom the viewer's alerts take, in px: the controls' notes sit over them. */
+let notes = 0;
+function setNotes(px: unknown) {
+  notes = typeof px == "number" && px > 0 ? px : 0;
+  controls?.lift(notes);
+}
 
 window.addEventListener("message", (e: MessageEvent) => {
   if (e.source != window.parent || e.origin != SHELL) return;
   if (e.data?.type == "erga-mode") setMode(e.data as EditMode);
   else if (e.data?.type == "erga-leave") leave();
+  else if (e.data?.type == "erga-notes") setNotes(e.data.notes);
   else if (e.data?.type == "erga-full") wasFull ||= e.data.on === true && !!page;
   else if (e.data?.type == "erga-comments") {
     commentsShown = e.data.show !== false;
@@ -113,6 +124,7 @@ function setMode(m: EditMode) {
   if (m.mode == "edit") {
     if (m.timescale) window.__ergaTimescale = m.timescale;
     if (typeof m.zoom == "number") setZoom(m.zoom);
+    setNotes(m.notes);
   }
   send(m.mode == "view" ? { type: "view" } : { type: "edit", mode: m });
 }
@@ -322,7 +334,21 @@ let lockNote: (() => void) | null = null;
 function edit(c: Collab, m: Editing, back: Carry | null) {
   let text = c.current();
   // (A commenter makes no edits.)
-  if (!m.comment) unsaved = watchUnsaved(window, { flushed: () => (collab == c ? c.flushed() : Promise.resolve(false)), key: m.path });
+  if (!m.comment)
+    unsaved = watchUnsaved(window, {
+      flushed: () => (collab == c ? c.flushed() : Promise.resolve(false)),
+      key: m.path,
+      note: (on) =>
+        on
+          ? alerts.raise({
+              key: "unsaved",
+              kind: "progress",
+              source: "connection",
+              title: "Edits not saved yet",
+              detail: "Erga saves them when the connection is back.",
+            })
+          : alerts.end("unsaved"),
+    });
   // The state this page's editor had (with its undo history), brought to the room's text: before the page loaded again,
   // or before the editor stopped (out of the editor and back). Else the room's text, afresh.
   let begin = EditorState.create({ doc: text, extensions: docExtensions }),
@@ -383,6 +409,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
               comment: () => comments?.compose(),
             });
             controls = made;
+            made.lift(notes);
             unwatch.push(() => {
               made.remove();
               if (controls == made) controls = null;
@@ -458,18 +485,13 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
       // The viewer's own shortcuts: the page's first script passes them on (client/common/app-keys.ts).
       return isAppShortcut(e, isMac);
     },
-    // A notice the agent can fix (a paragraph whose HTML is broken) goes to the viewer, which offers the fix: through the
-    // page's problem watch (client/inline/page-problems.ts), Erga's own. Any other says why, here.
+    // A notice the agent can fix (a paragraph whose HTML is broken) is an alert, with the fix as its button: what is
+    // wrong in a few words, then the rest. Any other says why, here.
     onNotice: (message, fix, draft) => {
       if (m.comment) return;
-      if (fix)
-        (window as Window & { __ergaReport?: (p: unknown) => void }).__ergaReport?.({
-          kind: "notice",
-          message,
-          fix,
-          ...(draft ? { draft } : {}),
-        });
-      else controls?.explain(message);
+      if (!fix) return controls?.explain(message);
+      const [, title, detail] = /^(.*?)(?:: |\. )(.+)$/s.exec(message) ?? [null, message.replace(/\.$/, ""), undefined];
+      alerts.raise({ key: `notice:${message}`, kind: "error", source: "editor", title: title!, detail, fix, ...(draft ? { draft } : {}) });
     },
     // In the page: its change shows at once (page-edits.ts).
     pageEdit(html, edit, input) {
@@ -482,6 +504,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
       return runPageEdit(code, html, edit, input);
     },
     onDropFiles: dropFiles,
+    onDropRefused: notDropped,
   });
   // The page's own API, imported before the person's first edit asks for it.
   warm(apiCode(m.path, text, (p) => files(c.doc).get(p)?.toString()));
@@ -496,36 +519,109 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
   };
 }
 
-/** Files dropped or picked for the page: into the document's files, then onto the page at `at` (`point`: where an error shows). */
-function dropFiles(list: File[], at: number, point: { x: number; y: number }) {
+/** Files dropped or pasted can't go in: an alert says why. */
+function notDropped(why: string) {
+  alerts.raise({ key: `drop:${why}`, kind: "error", source: "upload", title: "The file wasn't added", detail: why });
+}
+
+/** Files dropped or picked for the page, on their way: where they go in, and why each one that failed did (by its place in `files`). */
+interface Batch {
+  key: string;
+  files: File[];
+  place: { at: number };
+  failed: Map<number, string>;
+}
+let batches = 0;
+const count = (n: number) => `${n} file${n == 1 ? "" : "s"}`;
+const size = (bytes: number) => (bytes < 1e6 ? `${Math.max(1, Math.round(bytes / 1e3))} kB` : `${(bytes / 1e6).toFixed(1)} MB`);
+
+/** Files dropped or picked for the page: into the document's files, then onto the page at `at`. */
+function dropFiles(list: File[], at: number) {
   // (Its state is on its way to the page that comes: what's dropped now would have nowhere to go in.)
+  if (state.phase != "editing" || !editing() || !collab) {
+    page?.dropEnd();
+    return notDropped(LOADING_AGAIN);
+  }
+  const batch: Batch = { key: `upload:${++batches}`, files: list.slice(0, 50), place: { at }, failed: new Map() };
+  drops.add(batch.place);
+  void upload(
+    batch,
+    batch.files.map((_, i) => i)
+  );
+}
+
+/**
+ * Sends the files `which` of a batch, one at a time, as one alert with a row for each: the first time, all of them; after
+ * "Try again", those that failed. Then puts those that arrived on the page. The files that failed stay in the alert.
+ */
+async function upload(b: Batch, which: number[]) {
   const m = editing();
-  if (state.phase != "editing" || !m || !collab) return page?.dropError(point, LOADING_AGAIN);
-  const d = { at, point };
-  drops.add(d);
-  const taken = new Set([...files(collab.doc).keys(), ...assets(collab.doc).keys()].map((p) => p.toLowerCase()));
-  void addFiles(m.doc, m.key, list.slice(0, 50), taken, (p) => sent.add(p)).then(({ paths, error }) => {
-    drops.delete(d);
-    if (!page) return;
-    // From this page's folder (a page in blog/ reaches images/ as ../images/).
-    const up = "../".repeat(HERE.startsWith(BASE) ? HERE.slice(BASE.length).split("/").filter(Boolean).length : 0);
-    const items = paths.map((p) => ({ href: up + encodePath(p), name: baseName(p), image: p.startsWith("images/") }));
-    if (items.length && !page.insertFiles(d.at, items))
-      page.dropError(
-        d.point,
-        `The text where it was dropped changed meanwhile. It's in the document's files (${paths.join(", ")}): drop it again.`
-      );
-    else if (error) page.dropError(d.point, error);
+  if (!m || !collab) return;
+  const row = (i: number, state: Row["state"]): Row => ({
+    id: String(i),
+    title: b.files[i].name,
+    state,
+    detail: state == "error" ? b.failed.get(i) : size(b.files[i].size),
   });
+  const one = which.length == 1 ? `“${b.files[which[0]].name}”` : null;
+  alerts.raise(
+    {
+      key: b.key,
+      kind: "progress",
+      source: "upload",
+      title: `Uploading ${one ?? count(which.length)}`,
+      rows: which.map((i) => row(i, "waiting")),
+    },
+    (action) => {
+      if (action == DISMISS) drops.delete(b.place);
+      else if (action == "retry") void upload(b, [...b.failed.keys()]);
+  });
+  const taken = new Set([...files(collab.doc).keys(), ...assets(collab.doc).keys()].map((p) => p.toLowerCase()));
+  const paths: string[] = [];
+  for (const i of which) {
+    alerts.row(b.key, row(i, "running"));
+    const r = await addFile(m.doc, m.key, b.files[i], taken, (p) => sent.add(p));
+    if ("path" in r) {
+      paths.push(r.path);
+      b.failed.delete(i);
+    } else b.failed.set(i, r.error);
+    alerts.row(b.key, row(i, "path" in r ? "done" : "error"));
+  }
+  if (!page) return alerts.end(b.key);
+  // From this page's folder (a page in blog/ reaches images/ as ../images/).
+  const up = "../".repeat(HERE.startsWith(BASE) ? HERE.slice(BASE.length).split("/").filter(Boolean).length : 0);
+  const items = paths.map((p) => ({ href: up + encodePath(p), name: baseName(p), image: p.startsWith("images/") }));
+  if (!items.length) page.dropEnd();
+  else if (!page.insertFiles(b.place.at, items))
+    alerts.raise({
+      key: `${b.key}:place`,
+      kind: "error",
+      source: "upload",
+      title: `${count(items.length)} not on the page`,
+      detail: `The text where they were dropped changed meanwhile. They are in the document's files (${paths.join(", ")}): drop them again.`,
+    });
+  if (b.failed.size)
+    alerts.raise({
+      key: b.key,
+      kind: "error",
+      source: "upload",
+      title: `Couldn't add ${b.failed.size == 1 ? `“${b.files[[...b.failed.keys()][0]].name}”` : count(b.failed.size)}`,
+      ...(b.failed.size < b.files.length ? { detail: "The other files of the drop are in the document." } : {}),
+      rows: [...b.failed.keys()].map((i) => row(i, "error")),
+      actions: [{ id: "retry", label: "Try again", primary: true }],
+    });
+  else {
+    drops.delete(b.place);
+    alerts.end(b.key, `${one ?? count(which.length)} uploaded`);
+  }
 }
 
 /** The "/" menu's choice: the editor makes the block; for an image, the person picks files, which go in as dropped ones do. */
 function slashChosen(kind: Parameters<PageEditor["slashBlock"]>[0]) {
   const at = page?.slashBlock(kind);
   if (kind != "image" || at == null || at === false) return;
-  const r = document.getSelection()?.rangeCount ? document.getSelection()!.getRangeAt(0).getBoundingClientRect() : null;
   void pickImages(document).then((list) => {
-    if (list.length) dropFiles(list, at, { x: r?.left ?? 0, y: r?.bottom ?? 0 });
+    if (list.length) dropFiles(list, at);
   });
 }
 

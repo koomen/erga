@@ -97,7 +97,7 @@ journey("a page with parts of its own: keys go where the caret is", () => {
     await ed.clickEnd("#scratch p");
     await ed.type(" XY");
     await expect.poll(() => ed.textOf("#scratch")).toBe("Scratch XY");
-    expect((await ed.toast()).shown).toBe(false);
+    expect((await ed.alerts()).view).toBe("none");
     await ed.settle();
     expect(await ed.source()).toBe(before);
     // The text around it still edits.
@@ -129,7 +129,9 @@ journey("a page with parts of its own: keys go where the caret is", () => {
     const before = await ed.source();
     const r = await ed.rectOf(".fixed p", 0.3);
     await ed.click(r.x, r.y);
-    await expect.poll(async () => (await ed.toast()).shown && /not editable by hand/.test((await ed.toast()).text)).toBe(true);
+    await expect
+      .poll(async () => (await ed.alerts()).alerts.map((a) => a.title))
+      .toEqual(["This part of the page is marked as not editable by hand"]);
     await ed.type("xyz");
     await ed.settle();
     expect(await ed.source()).toBe(before);
@@ -138,57 +140,91 @@ journey("a page with parts of its own: keys go where the caret is", () => {
     await expect.poll(() => ed.source()).toContain("items.!</p>");
   });
 
-  test("a paragraph with a stray end tag: a click says why and offers the agent's help; typing changes nothing; a click elsewhere takes the note away", async () => {
+  test("a paragraph with a stray end tag: a second problem in the same card, with the agent's help; a click there again counts, typing changes nothing; the card stays while the person types elsewhere", async () => {
     const before = await ed.source();
     const r = await ed.rectOf(".typo p", 0.3);
     await ed.click(r.x, r.y);
-    await expect.poll(async () => (await ed.toast()).shown && /stray <\/h2>/.test((await ed.toast()).text)).toBe(true);
-    expect((await ed.toast()).text).not.toMatch(/HTML view|⌘⇧P/);
-    expect(await ed.eval<boolean>(`!!document.querySelector("#toast .toast-fix")`)).toBe(true);
-    // Typing into it explains again, and changes nothing.
+    // The card has both problems now, the newest first: never a second card, and none waits behind another.
+    await expect.poll(async () => (await ed.alerts()).head).toBe("2 problems");
+    const [stray, fixed] = (await ed.alerts()).alerts;
+    expect(stray).toEqual({
+      title: "This paragraph can't be edited",
+      count: "",
+      detail: "Editor · its HTML has a stray </h2> that the browser ignores, so the page's text no longer lines up with the file.",
+      rows: [],
+      buttons: ["Fix with agent"],
+    });
+    expect(stray.detail).not.toMatch(/HTML view|⌘⇧P/);
+    expect(fixed.title).toMatch(/not editable by hand/);
+    // Typing into it changes nothing. A click on it again says so in the same block, with a count.
     await ed.type("xyz");
-    await ed.settle();
-    const t = await ed.toast();
-    expect(t.shown).toBe(true);
-    expect(t.text).toMatch(/stray/);
+    await ed.click(r.x, r.y);
+    await expect.poll(async () => (await ed.alerts()).alerts[0].count).toBe("×2");
+    expect((await ed.alerts()).alerts.length).toBe(2);
     expect(await ed.source()).toBe(before);
-    // Clicked elsewhere until it goes: a click inside the note's minimum time leaves it up.
-    const elsewhere = await ed.rectOf("h1", 0.5);
-    await expect
-      .poll(async () => {
-        await ed.click(elsewhere.x, elsewhere.y);
-        return (await ed.toast()).shown;
-      })
-      .toBe(false);
-    // The paragraph below it still edits.
+    // The card never takes the focus, and stays up while the person works: the paragraph below it still edits.
     await ed.clickEnd("#last");
     await ed.type("?");
     await expect.poll(() => ed.source()).toContain("Last paragraph.123456!?</p>");
+    expect((await ed.alerts()).head).toBe("2 problems");
   });
 
-  test("a no-edit part's note has Fix with agent: it opens the agent's panel with the request ready to complete, and sends nothing", async () => {
+  test("a no-edit part's Fix with agent opens the agent's panel with the request ready to complete, sends nothing, and takes only its own alert off", async () => {
     // (A person has one conversation with their agent, in every document: a new one, so that this journey counts its own messages.)
     await newConversation(s);
     const r = await ed.rectOf(".count", 0.5);
     await ed.click(r.x, r.y);
-    await expect.poll(async () => (await ed.toast()).text).toMatch(/not editable by hand/);
-    expect((await ed.toast()).shown).toBe(true);
-    expect(await ed.eval<string>(`document.querySelector("#toast .toast-fix").textContent`)).toBe("Fix with agent");
-    await ed.page.click("#toast .toast-fix");
+    // The same problem as before (another no-edit part): its block counts.
+    await expect.poll(async () => (await ed.alerts()).alerts.find((a) => /not editable by hand/.test(a.title))?.count).toBe("×2");
+    await ed.page.click('#alerts .alert:has-text("not editable by hand") [data-action="fix"]');
     await expect.poll(() => agentBox(ed)).toEqual({ text: "Change the text “42” to: ", open: true, sent: 0 });
     expect(await ed.eval<boolean>(`document.activeElement == document.getElementById("agent-input")`)).toBe(true);
+    expect((await ed.alerts()).alerts.map((a) => a.title)).toEqual(["This paragraph can't be edited"]);
   });
 
-  test("text that the page's script changed: its note has Fix with agent, which asks the agent to make it editable by hand", async () => {
+  test("text that the page's script changed: its Fix with agent asks the agent to make it editable by hand; Escape closes the card with what is left", async () => {
     // (The panel opened in the step before, and the page slides over beside it: a click waits for the page to be still.)
     await pageStill(ed);
     const r = await ed.rectOf("#now", 0.3);
     await ed.click(r.x, r.y);
-    await expect.poll(async () => (await ed.toast()).text).toMatch(/changed by the page's script after it loaded/);
-    await ed.page.click("#toast .toast-fix");
+    const changed = {
+      title: "This paragraph can't be edited here",
+      detail: "Editor · the page's script changed its text after the page loaded.",
+    };
+    await expect.poll(async () => (await ed.alerts()).alerts[0]).toMatchObject(changed);
+    // Beside the agent's panel, not under it.
+    const clear = await ed.eval<boolean>(
+      `document.querySelector("#alerts .alerts-card").getBoundingClientRect().left >= document.getElementById("agent").getBoundingClientRect().right`
+    );
+    expect(clear).toBe(true);
+    await ed.page.click('#alerts .alert:has-text("edited here") [data-action="fix"]');
     await expect.poll(async () => (await agentBox(ed)).sent).toBe(1);
     expect(await ed.eval<string>(`document.querySelector(".msg-user").textContent`)).toContain(
       "Fix the problem with this page that the editor reported"
+    );
+    // One problem is left, with its own button. Escape, in the text, dismisses it.
+    expect((await ed.alerts()).head).toBe("1 problem");
+    await ed.clickEnd("#last");
+    await ed.press("Escape");
+    await expect.poll(async () => (await ed.alerts()).view).toBe("none");
+  });
+
+  test("the agent stops on an error while its panel is closed: an alert says so, and its Show opens the panel", async () => {
+    await agentPlays(ed, [{ error: "overloaded", delay: 300 }]);
+    await ed.page.click("#agent-close");
+    const stopped = {
+      title: "Your agent stopped",
+      count: "",
+      detail: 'Agent · overloaded. Say "go on" to try again.',
+      rows: [],
+      buttons: ["Show"],
+    };
+    await expect.poll(async () => (await ed.alerts()).alerts).toEqual([stopped]);
+    await ed.page.click('#alerts .alert [data-action="show"]');
+    await expect.poll(() => ed.eval<boolean>(`document.body.classList.contains("agent-open")`)).toBe(true);
+    expect((await ed.alerts()).view).toBe("none");
+    expect(await ed.eval<string>(`document.querySelector("#agent-log .msg-error").textContent`)).toBe(
+      'overloaded. Say "go on" to try again.'
     );
   });
 });
@@ -453,7 +489,9 @@ journey("files dropped and pasted on a page in a folder", () => {
         { src: "../images/dot-2.png", alt: "dot-2.png", ...LOADED },
         { src: "../images/two.png", alt: "two.png", ...LOADED },
       ]);
-    expect(await ed.frame<boolean>(`!${F}.querySelector("erga-drop-caret, erga-drop-note, erga-drop-image")`)).toBe(true);
+    expect(await ed.frame<boolean>(`!${F}.querySelector("erga-drop-caret, erga-drop-image")`)).toBe(true);
+    // An upload that ends within its first second shows nothing.
+    expect((await ed.alerts()).view).toBe("none");
     expect(await ed.source()).toContain(`ship them.</p>\n  ${CENTRED("../images/dot-2.png")}\n  ${CENTRED("../images/two.png")}\n  <p`);
     expect(await files()).toEqual(expect.arrayContaining(["images/dot.png", "images/dot-2.png", "images/two.png"]));
   });
@@ -469,85 +507,115 @@ journey("files dropped and pasted on a page in a folder", () => {
     expect(await files()).toEqual(expect.arrayContaining(["images/image.png"]));
   });
 
-  test("a file that can't be added says why where it was dropped, and nothing goes into the text", async ({ tab }) => {
+  test("a file that can't be added is a problem in the card, with the file and why; Try again tries it; nothing goes into the text", async ({
+    tab,
+  }) => {
     // A folder has the image's name: the server refuses the file.
     const before = await ed.source();
     expect((await drop(ed, "h1", 3, png("clash.png"))).stopped).toBe(true);
-    await expect
-      .poll(() => ed.frame<string>(`${F}.querySelector("erga-drop-note")?.textContent ?? ""`))
-      .toMatch(/^Couldn't add clash\.png: There's a folder at images\/clash\.png/);
-    // Near the drop: just under the heading's text.
-    const near = await ed.frame<boolean>(
-      `(() => { const n = ${F}.querySelector("erga-drop-note").getBoundingClientRect(), h = ${F}.querySelector("h1").getBoundingClientRect(); return n.top >= h.top && n.top <= h.bottom + 20; })()`
-    );
-    expect(near).toBe(true);
+    const failed = {
+      title: "Couldn't add “clash.png”",
+      count: "",
+      detail: "Upload",
+      rows: ["error clash.png: There's a folder at images/clash.png: a file can't take its place."],
+      buttons: ["Try again"],
+    };
+    await expect.poll(async () => (await ed.alerts()).alerts).toEqual([failed]);
+    // Again, from the card: the server refuses it again, and the card says so again.
+    const again = ed.page.waitForResponse((r) => r.request().method() == "PUT" && /clash\.png/.test(r.url()));
+    await ed.page.click('#alerts .alert [data-action="retry"]');
+    expect((await again).status()).toBe(409);
+    await expect.poll(async () => (await ed.alerts()).alerts).toEqual([failed]);
     expect(await ed.source()).toBe(before);
-    // (The browser logs the refused upload as an error: the one error this page may have.)
+    // (The browser logs each refused upload as an error: the only errors this page may have.)
     const refused = (e: string) => /Failed to load resource/.test(e);
-    await until(() => tab.errors.some(refused), 3000, "the browser logs the refused upload");
+    await until(() => tab.errors.filter(refused).length == 2, 3000, "the browser logs the refused uploads");
     tab.errors.splice(0, tab.errors.length, ...tab.errors.filter((e) => !refused(e)));
+  });
+
+  test("a slow upload beside the problem: the card lists both; Close dismisses the problem and the upload goes on as one line, which says when it is done", async () => {
+    // (The alerts' times, five times as fast: the quiet second, and the two seconds that the end shows.)
+    await ed.eval(`window.__ergaTimescale = 0.2`);
+    let hold!: () => void;
+    const held = new Promise<void>((done) => (hold = done));
+    await ed.page.route(/\/api\/files\/images\/slow\.png/, async (r) => {
+      await held;
+      await r.continue();
+    });
+    await drop(ed, "p.tail", 3, png("slow.png"), "top");
+    await expect.poll(async () => (await ed.alerts()).head).toBe("Uploading “slow.png” · 1 problem");
+    expect((await ed.alerts()).alerts.map((a) => [a.title, a.rows])).toEqual([
+      ["Uploading “slow.png”", ["running slow.png: 1 kB"]],
+      ["Couldn't add “clash.png”", ["error clash.png: There's a folder at images/clash.png: a file can't take its place."]],
+    ]);
+    // ×: the problem is dismissed, and the upload is not stopped.
+    await ed.page.click("#alerts .alerts-close");
+    expect(await ed.alerts()).toMatchObject({ view: "line", head: "Uploading “slow.png”" });
+    hold();
+    await expect.poll(async () => (await ed.alerts()).head).toBe("“slow.png” uploaded");
+    await expect.poll(async () => (await ed.alerts()).view).toBe("none");
+    await expect.poll(async () => (await images(ed)).some((i) => i.src == "../images/slow.png" && i.loaded), UPLOAD).toBe(true);
+    await ed.page.unroute(/\/api\/files\/images\/slow\.png/);
+    await ed.eval(`delete window.__ergaTimescale`);
   });
 
   test("the page did not load again for the new files; after a reload, every image is there", async () => {
     // (The shell makes the page afresh for a stylesheet or a script that changes, not for a file.)
     expect(await ed.frame<number>(`performance.timeOrigin`)).toBe(loaded);
     const before = await images(ed);
-    expect(before.length).toBe(7);
+    expect(before.length).toBe(8);
     await ed.page.reload(); // page load 2
     await ed.loaded();
     await expect.poll(() => images(ed), UPLOAD).toEqual(before);
   });
 });
 
-type Problem = { text: string; shown: boolean; fix: boolean; fixDisabled: string | null; fixTitle: string };
-/** The problem that the tab shows: its text, and its fix button. */
-const problem = (ed: Editor) =>
-  ed.eval<Problem>(
-    `(() => { const t = document.getElementById("toast"), b = t.querySelector(".toast-fix"); return { text: t.querySelector(".toast-text")?.textContent ?? t.textContent, shown: t.classList.contains("show"), fix: !!b, fixDisabled: b?.getAttribute("aria-disabled") ?? null, fixTitle: b?.title ?? "" }; })()`
-  );
-
-journey("a broken page says what is wrong, one problem at a time", () => {
+journey("a broken page says what is wrong, all of it in one card", () => {
   let ed: Editor;
-  let first: Problem;
+  const titles = async () => (await ed.alerts()).alerts.map((a) => a.title).sort();
 
-  test("a broken page says what's wrong by itself, with a button to have the agent fix it", async ({ tab }) => {
+  test("a broken page says what's wrong by itself: both problems in one card, each with a button to have the agent fix it, and one for all", async ({
+    tab,
+  }) => {
     // The page's script error is the point.
     ed = await openEditor(tab, s, "broken", { allowErrors: true }); // the journey's one page load
-    await expect.poll(async () => (await problem(ed)).shown).toBe(true);
-    // The button says "Connecting to the agent…" until the agent's state comes, which can be after the page's problems.
-    await expect.poll(async () => (await problem(ed)).fixTitle).toBe("");
-    first = await problem(ed);
-    expect(first.text).toMatch(/missing\.css|drawTheChart/);
-    expect(first.fix).toBe(true);
-    expect(first.fixDisabled).toBeNull();
+    await expect.poll(titles).toEqual(["The page's script hit an error", "The stylesheet “missing.css” didn't load"]);
+    // The buttons are off ("Connecting to the agent…") until the agent's state comes, which can be after the page's problems.
+    await expect.poll(async () => (await ed.alerts()).alerts.map((a) => a.buttons)).toEqual([["Fix with agent"], ["Fix with agent"]]);
+    const shown = await ed.alerts();
+    expect([shown.view, shown.head, shown.all]).toEqual(["card", "2 problems", true]);
+    expect(shown.alerts.find((a) => /script/.test(a.title))!.detail).toMatch(
+      /^Page · .*drawTheChart is not defined \(index\.html, line \d+\)$/
+    );
   });
 
-  test("a problem closes with its × button and with Escape; between them the two name the stylesheet and the script error; none comes back when the page loads again", async () => {
-    await ed.eval(`document.querySelector("#toast .toast-close").click()`);
-    await expect
-      .poll(async () => {
-        const t = await problem(ed);
-        return t.shown && t.text != first.text;
-      })
-      .toBe(true);
-    const second = await problem(ed);
-    const both = `${first.text} ${second.text}`;
-    expect(both).toMatch(/stylesheet “missing\.css”/);
-    expect(both).toMatch(/drawTheChart is not defined/);
-    // The caret in the text: Escape goes to the shell (the frame passes it on), which closes the problem first.
+  test("Ctrl+S while the problems show: “Saved” shows over the card, in its own place, and the problems stay; typed text goes into the page", async () => {
     await ed.clickEnd("h1");
-    await ed.press("Escape");
-    await expect.poll(async () => (await problem(ed)).shown).toBe(false);
+    await ed.press("ControlOrMeta+s");
+    await expect.poll(async () => (await ed.toast()).shown).toBe(true);
+    expect((await ed.toast()).text).toMatch(/^Saved/);
+    const gap = await ed.eval<number>(
+      `document.querySelector("#alerts .alerts-card").getBoundingClientRect().top - document.getElementById("toast").getBoundingClientRect().bottom`
+    );
+    expect(gap).toBeGreaterThanOrEqual(0);
+    await ed.type("!");
+    await expect.poll(() => ed.source()).toContain("<h1>Something is off here!</h1>");
+    // The confirmation goes by itself; both problems are still there.
+    await expect.poll(async () => (await ed.toast()).shown).toBe(false);
+    expect((await ed.alerts()).head).toBe("2 problems");
+  });
+
+  test("one click on × closes both problems; neither comes back when the page loads again", async () => {
+    await ed.page.click("#alerts .alerts-close");
+    expect((await ed.alerts()).view).toBe("none");
+    // The click left the caret in the text.
+    await ed.type("?");
+    await expect.poll(() => ed.source()).toContain("<h1>Something is off here!?</h1>");
     // The page made afresh: its script throws again, and its stylesheet fails again. Neither shows again.
     await ed.frame(`ergaFrame.page.render()`);
     await ed.loaded();
-    // The new page's editor has taken its problems (client/inline/page-problems.ts), and the tab has heard them.
-    await until(
-      () => ed.frame<boolean>(`!!window.__ergaReport && document.readyState == "complete"`),
-      5000,
-      "the page reports its problems"
-    );
+    await until(() => ed.frame<boolean>(`document.readyState == "complete"`), 5000, "the page has loaded, with its problems");
     await ed.settle();
-    expect((await problem(ed)).shown, both).toBe(false);
+    expect((await ed.alerts()).view).toBe("none");
   });
 });

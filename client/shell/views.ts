@@ -22,11 +22,25 @@ export function mountViews(shell: Shell) {
       }
     ));
   let unsaved: ReturnType<typeof watchUnsaved> | null = null;
+  const unsavedNote = (on: boolean) =>
+    on
+      ? shell.alerts.raise({
+          key: "unsaved",
+          kind: "progress",
+          source: "connection",
+          title: "Edits not saved yet",
+          detail: "Erga saves them when the connection is back.",
+        })
+      : shell.alerts.end("unsaved");
   const sourceHooks = {
     edited(changes: ChangeSet) {
       shell.collab.push(changes);
       // (An edit in the source view that does not reach the server shows the same note as one on the page.)
-      (unsaved ??= watchUnsaved(window, { flushed: () => shell.collab.flushed(), key: `source:${location.pathname}` })).edit();
+      (unsaved ??= watchUnsaved(window, {
+        flushed: () => shell.collab.flushed(),
+        key: `source:${location.pathname}`,
+        note: unsavedNote,
+      })).edit();
       shell.chrome.hideChrome();
     },
     moved: () => shell.people.queueCursor(),
@@ -47,9 +61,16 @@ export function mountViews(shell: Shell) {
       try {
         code = await loadSource();
       } catch {
-        shell.toast.flash("Couldn't open the source: check your connection and try again.", 4000);
+        shell.alerts.raise({
+          key: "source",
+          kind: "error",
+          source: "editor",
+          title: "Couldn't open the source",
+          detail: "Check your connection and try again.",
+        });
         return;
       }
+      shell.alerts.end("source");
       const text = shell.collab.current(),
         sel = shell.currentSelection().main;
       const at = (n: number) => Math.min(n, text.length);

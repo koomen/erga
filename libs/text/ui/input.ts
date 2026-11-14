@@ -6,7 +6,7 @@ import { escapeAttr, escapeHtmlText } from "../../../shared/html";
 import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
 import { contentIn, findDiff, norm, placeholderBr, setChecked } from "../api/source";
-import { draggedImages, hasFiles, type ImageSpot, inDropGap, LOADING_AGAIN, showDropCaret, showDropImage, showDropNote } from "./drop";
+import { draggedImages, hasFiles, type ImageSpot, inDropGap, LOADING_AGAIN, NOT_HERE, showDropCaret, showDropImage } from "./drop";
 import { pageOwnBox } from "./core";
 import { isMac } from "../../../client/common/app-keys";
 import { TEXT_ATTR } from "../../../shared/page-html";
@@ -190,16 +190,15 @@ export abstract class EditorInput extends EditorClipboard {
     const images = files.length && files.every((f) => f.type.startsWith("image/"));
     const spot = images ? this.imageDropAt(e) : null;
     this.imageDrop = null;
-    const point = { x: e.clientX, y: e.clientY };
-    const none = (message: string) => {
+    const none = (why: string) => {
       showDropImage(this.doc!, null);
-      showDropNote(this.doc!, point, message);
+      this.config.onDropRefused?.(why);
     };
     if (!files.length) return showDropImage(this.doc!, null);
     if (this.rendering) return none(LOADING_AGAIN);
     const at = spot ?? this.dropAt(e);
-    if (!at) return none("A file can go only into the text you can edit. Drop it on a paragraph.");
-    // The images themselves wait in the gap until they're in the text (insertFiles), or can't be (dropError).
+    if (!at) return none(NOT_HERE);
+    // The images themselves wait in the gap until they're in the text (insertFiles), or can't be (dropEnd).
     if (spot)
       showDropImage(
         this.doc!,
@@ -208,7 +207,7 @@ export abstract class EditorInput extends EditorClipboard {
         files.map((f) => URL.createObjectURL(f))
       );
     else showDropImage(this.doc!, null);
-    this.config.onDropFiles?.(files, at.pos, point);
+    this.config.onDropFiles?.(files, at.pos);
   }
 
   /**
@@ -249,10 +248,9 @@ export abstract class EditorInput extends EditorClipboard {
     return true;
   }
 
-  /** Says why files dropped at `point` (the window's coordinates) didn't go in, there on the page. */
-  dropError(point: { x: number; y: number }, message: string): void {
+  /** The files dropped didn't go in (the caller says why, in an alert): the gap they waited in closes. */
+  dropEnd(): void {
     if (this.doc) showDropImage(this.doc, null);
-    if (this.doc) showDropNote(this.doc, point, message);
   }
 
   /**

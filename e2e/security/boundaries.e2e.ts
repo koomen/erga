@@ -63,7 +63,7 @@ journey("a hostile page, opened by a reader", () => {
   test("in the viewer the page runs on its own origin: no reach into the viewer's window, its cookies or its site, no storage of the site's (its own works)", async () => {
     reachedNothing(await lootOf(page), new URL(here).origin);
     expect(await page.evaluate(() => localStorage.getItem("k")), "not the viewer's").toBeNull();
-    expect(await page.evaluate(() => !!document.querySelector("#toast.show")), "a forged notice").toBe(false);
+    expect(await page.evaluate(() => !!document.querySelector("#alerts .alert")), "a forged alert").toBe(false);
     expect(await docFrame(page)!.evaluate(() => document.querySelector("h1")!.textContent)).toBe("Quarterly notes");
     // A reader's page gets no edit key for its script to take.
     expect(await docFrame(page)!.evaluate(() => typeof (window as any).__steal)).toBe("undefined");
@@ -86,8 +86,8 @@ journey("a hostile page, opened by a reader", () => {
           .click({ position: { x: 30, y: 12 } }),
       false
     );
-    // No editor in the tab took the forged messages: no toast, no link followed out of the document.
-    expect(await page.evaluate(() => !!document.querySelector("#toast.show"))).toBe(false);
+    // No editor in the tab took the forged messages: no alert, no link followed out of the document.
+    expect(await page.evaluate(() => !!document.querySelector("#alerts .alert"))).toBe(false);
     expect(new URL(page.url()).pathname).toBe(new URL(doc.address).pathname);
   });
 
@@ -200,10 +200,17 @@ journey("a hostile page, opened in the editor by the person it attacks", () => {
 
   test("a page that attacks whoever edits it, with the editor in it: no prompt sent as the person's, no tab elsewhere, no service worker, no fetch by the shell", async () => {
     await attack(page, s, inHeading, true);
-    // The forged problem shows, as any would; its "Fix with agent" sends the shell's own words, the report as data.
-    await until(() => page.evaluate(() => !!document.querySelector("#toast.show .toast-fix")), 5000, "the toast's Fix with agent");
+    // The forged alert shows, as any would, as text; its "Fix with agent" sends the shell's own words, the report as data.
+    await until(
+      () => page.evaluate(() => !!document.querySelector('#alerts .alert [data-action="fix"]')),
+      5000,
+      "the alert's Fix with agent"
+    );
+    expect(await page.evaluate(() => document.querySelector("#alerts .alert-title")!.textContent)).toBe(
+      "The page's stylesheet didn't load"
+    );
     const sent = page.waitForRequest((r) => r.method() == "POST" && new URL(r.url()).pathname.endsWith("/api/agent"));
-    await page.click("#toast .toast-fix");
+    await page.click('#alerts .alert [data-action="fix"]');
     const body = JSON.parse((await sent).postData() ?? "{}") as { text: string; context: string };
     expect(body.text).toBe(FIX_REPORTED);
     expect(body.context).toContain(

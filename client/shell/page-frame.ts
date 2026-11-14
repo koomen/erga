@@ -3,7 +3,7 @@
 // (client/inline/reader.ts, Erga's) tells the viewer while editing: the viewer's shortcuts pressed in the page, a press
 // on it, a zoom gesture, the wheel sideways on a zoomed page, a link to another of the document's pages, the page's
 // problems. The editor itself asks for one thing: the page loaded again (erga-reload), which the viewer does with the
-// page's view kept (viewer-frames.ts).
+// page's view kept (viewer-frames.ts). And it raises its alerts (client/common/alerts.ts), and hears their buttons.
 // Everything that comes from the page is checked: the page itself could have sent it.
 
 import type { EditMode } from "../../libs/text/ui/mode";
@@ -11,9 +11,16 @@ import type { Word } from "./editor-state";
 import type { Keys } from "../common/app-keys";
 import { clampZoom, type ZoomBy } from "../common/zoom";
 import type { RawProblem } from "./problems";
+import { readMessage, type AlertAct, type Event as AlertEvent } from "../common/alerts";
+
+/** What the keys of the page's alerts start with here: the page can't name one of the viewer's own. */
+const PAGE_KEY = "page/";
 
 /** What "edit" says, but the zoom and the tests' settings, which this adds. */
-export type EditWord = Omit<Extract<EditMode, { mode: "edit" }>, "type" | "mode" | "zoom" | "tall" | "pinched" | "timescale" | "check">;
+export type EditWord = Omit<
+  Extract<EditMode, { mode: "edit" }>,
+  "type" | "mode" | "zoom" | "tall" | "pinched" | "notes" | "timescale" | "check"
+>;
 
 export interface PageFrameConfig {
   /** The frame now: a load of the page again puts a new one in its place (client/inline/viewer-frames.ts). */
@@ -42,6 +49,12 @@ export interface PageFrameConfig {
   onZooms: () => void;
   /** A problem the page reported (`base`: the page's folder on its origin, for the names of its files). */
   onProblem: (problem: RawProblem, base: string) => void;
+  /** The editor in the page raised an alert, changed it or ended it. */
+  onAlert: (event: Extract<AlertEvent, { t: "raise" | "row" | "end" }>) => void;
+  /** A page came into the frame: this one again, or another. */
+  onLoad: () => void;
+  /** The page shows its steps bar (a presentation), at the bottom centre. */
+  onSteps: (on: boolean) => void;
 }
 
 export function mountPageFrame(c: PageFrameConfig) {
@@ -55,6 +68,8 @@ export function mountPageFrame(c: PageFrameConfig) {
   let pinched = false;
   /** The page zooms itself (window.ergaZoom), so the viewer's zoom goes to it, not to the frame. */
   let zoomsItself = false;
+  /** How much of the window's bottom the alerts take, in px. */
+  let notes = 0;
 
   const post = (m: unknown) => {
     // A frame whose page hasn't come yet (its first, empty document is this origin's): the page says hello when it comes.
@@ -83,6 +98,7 @@ export function mountPageFrame(c: PageFrameConfig) {
       zoom,
       tall,
       pinched,
+      notes,
       ...(timescale ? { timescale } : {}),
       ...(check ? { check } : {}),
     } satisfies EditMode);
@@ -96,6 +112,7 @@ export function mountPageFrame(c: PageFrameConfig) {
     // A page in the frame (again: it loaded again, or went to another page): the editor in it, if in the editor.
     if (m.type == "erga-hello") {
       zoomsItself = false;
+      c.onLoad();
       if (active()) say();
       // (The frame had the focus: the page that came in it has it, for its editor.)
       if (active() && document.activeElement == frame) frame.focus();
@@ -121,12 +138,8 @@ export function mountPageFrame(c: PageFrameConfig) {
           },
           m.base
         );
-      else if (p.kind == "notice" && s("message", 500) && s("fix", 2000))
-        c.onProblem(
-          { kind: "notice", message: s("message", 500)!, fix: s("fix", 2000)!, ...(p.draft === true ? { draft: true } : {}) },
-          m.base
-        );
     }
+    if (m.type == "erga-steps") c.onSteps(m.on === true);
     if (!active()) return;
     switch (m.type) {
       // The page's editor asks for the page made again from its files (libs/text/ui/frame.ts, reloadNow): with its view kept.
@@ -142,6 +155,11 @@ export function mountPageFrame(c: PageFrameConfig) {
       case "erga-press":
         c.onPress();
         return;
+      case "erga-alert": {
+        const event = readMessage(m, PAGE_KEY);
+        if (event) c.onAlert(event);
+        return;
+      }
       case "erga-pointer": {
         if (!num(m.x) || !num(m.y) || m.tap) return;
         const r = frame.getBoundingClientRect();
@@ -184,6 +202,18 @@ export function mountPageFrame(c: PageFrameConfig) {
     },
     focus() {
       c.frame().focus();
+    },
+    /** The alerts take `px` of the window's bottom: the editor in the page keeps its own notes over them. */
+    setNotes(px: number) {
+      if (px == notes) return;
+      notes = px;
+      if (active()) post({ type: "erga-notes", notes });
+    },
+    /** A button of one of the page's alerts (or that the person closed it), to the editor in the page; false: not the page's. */
+    act(key: string, action: string, row?: string): boolean {
+      if (!key.startsWith(PAGE_KEY)) return false;
+      post({ type: "erga-alert-act", key: key.slice(PAGE_KEY.length), action, ...(row ? { row } : {}) } satisfies AlertAct);
+      return true;
     },
     get zoomsItself() {
       return zoomsItself;
