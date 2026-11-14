@@ -26,6 +26,12 @@
 //                                   page that deletes its offline copies at sign-out (it deletes only, and reads nothing)
 //   GET /api/deploys/version        the release and target, which the deploy pipeline waits on
 //   GET /api/health                 the health check the pipeline runs after (ok, the release, the checks: no data)
+//   GET /api/release                which of the editor's static files this release has: their addresses and the
+//                                   release, no data (server/live.ts). Each page's own check of its code asks it
+//                                   (client/live/live.ts), also with no admin's session: the sign-in page, and a
+//                                   document's viewer in the server's browser, whose view cookie signs in only on
+//                                   that document's paths. The deploy asks it too, for the files of the release
+//                                   before (deploy/pipeline/keep-last.ts)
 //   GET /api/ops                    the deploy facts, for an admin's ops token only (server/api.ts checks
 //                                   it: an ops token signs no one in, so this guard can't)
 //   POST /api/auth/request, /api/auth/poll
@@ -97,7 +103,8 @@ function exempt(request: Request, base: Platform, url: URL): boolean {
     return true;
   if (isAssetPath(path) || path == "/logo.png" || path == WORKER_PATH || path == CLEAR_PATH || libraryOf(path))
     return method == "GET" || method == "HEAD";
-  if (path == "/api/deploys/version" || path == "/api/health" || path == "/api/ops") return method == "GET" || method == "HEAD";
+  if (path == "/api/deploys/version" || path == "/api/health" || path == "/api/release" || path == "/api/ops")
+    return method == "GET" || method == "HEAD";
   if (path == "/api/auth/request" || path == "/api/auth/poll") return method == "POST";
   if (path.startsWith("/api/snapshot/")) return true;
   if (path.startsWith("/__erga/")) return true;

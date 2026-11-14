@@ -103,7 +103,7 @@ test("served by the Worker, a hashed file is kept a year and any origin may load
   for (const h of ["Cache-Control: public, max-age=31536000, immutable", "Access-Control-Allow-Origin: *"]) expect(HEADERS).toContain(h);
 });
 
-test("staging (admins only) lets anyone read the hashed files and the logo, and nothing else under the same names", async () => {
+test("staging (admins only) lets anyone read the hashed files, their list and the logo, and nothing else under the same names", async () => {
   const staging = { adminsOnly: true, sessionOf: async () => null, pagesDomain: () => "", directory: { users: {} } } as unknown as Platform;
   const gate = (path: string, method = "GET") => {
     const url = new URL(`https://staging.erga.test${path}`);
@@ -114,7 +114,9 @@ test("staging (admins only) lets anyone read the hashed files and the logo, and 
   expect(await gate("/logo.png")).toBeNull();
   expect((await gate("/_erga/main-aaaa1111.js", "POST"))?.status).toBe(403);
   expect((await gate("/manifest.json"))?.status).toBe(403);
-  expect((await gate("/api/release"))?.status).toBe(403);
+  // The list: a page's check of its code, with no admin's session (the sign-in page, the server's browser), and the deploy.
+  expect(await gate("/api/release")).toBeNull();
+  expect((await gate("/api/release", "POST"))?.status).toBe(403);
 });
 
 test("a file has an ETag, is checked each time, and is a 304 with no body when unchanged; so is the page, with what goes in it; an editor's page names the editor's half at the app's origin; the viewer preloads the editor's files", async () => {
