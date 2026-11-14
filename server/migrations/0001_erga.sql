@@ -1,4 +1,4 @@
--- Erga's server database, in D1 (applied by migrate.ts on erga.dev, before
+-- Erga's server database, in D1 (applied by migrate.ts on a deployed server, before
 -- each deploy; by the dev server locally, worker/index.ts): who may sign in
 -- and who's an admin (users), the server's settings (server_config), and
 -- every document's address, title and who may do what with it (documents,

@@ -1,7 +1,9 @@
 // No instance's name in the code: each instance's names come from its entry in .erga/config.json (`bun erga deploy`), and
-// the server learns its host from the request. The test reads every tracked source file but the tests and the docs,
-// with its comments taken out (a comment may name erga.dev as an example). The HMAC label `erga-pages:` and the meta
-// name `erga-pages` are not addresses (server/documents/pages-origin.ts, server/documents/view.ts).
+// the server learns its host from the request. The test reads every tracked source file but the tests and the docs
+// (the pages Erga ships, assets/**/*.html, and its agents' prompts, agents/**/*.md, are sources), with its comments
+// taken out (a comment may name erga.dev as an example). A name in a pattern (erga\.dev) is a name. The HMAC label
+// `erga-pages:` and the meta name `erga-pages` are not addresses (server/documents/pages-origin.ts,
+// server/documents/view.ts).
 //
 // And no kind of instance but the two the code has (one on Cloudflare, one on AWS): no flag or value says that an
 // instance is "production". A staging instance is any instance's feature: its entry names its primary (stagingOf), and
@@ -12,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = new URL("..", import.meta.url).pathname;
-const NAMES = /erga\.dev|erga-staging|erga-pages(?![\\"':])|koomen\/erga/g;
+const NAMES = /erga\\?\.dev|erga-staging|erga-pages(?![\\"':])|koomen\/erga/g;
 
 /** The text without its comments: // and # to the end of the line, -- in SQL, and block comments. */
 const uncommented = (path: string, text: string) =>
@@ -20,12 +22,15 @@ const uncommented = (path: string, text: string) =>
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(path.endsWith(".sql") ? /(^|\s)--.*$/gm : path.endsWith(".toml") ? /(^|\s)#.*$/gm : /(^|\s)\/\/.*$/gm, "$1");
 
+/** A source file: code, a page Erga ships (a template), or an agent's prompt. */
+const SOURCE = /\.(ts|tsx|js|mjs|json|css|sql|toml|html)$|^agents\/.*\.md$/;
+
 /** The tracked source files (not the tests, not the docs), each with its text without comments. */
 const sources = () =>
   Bun.spawnSync(["git", "ls-files", "-z"], { cwd: ROOT })
     .stdout.toString()
     .split("\0")
-    .filter((f) => /\.(ts|tsx|js|mjs|json|css|sql|toml)$/.test(f) && !/^(tests|e2e)\//.test(f) && f != "bun.lock")
+    .filter((f) => SOURCE.test(f) && !/^(tests|e2e)\//.test(f) && f != "bun.lock")
     .map((f) => ({ f, text: uncommented(f, readFileSync(join(ROOT, f), "utf8")) }));
 
 /** The lines of the sources that `what` matches, as "file: line". */
@@ -46,6 +51,8 @@ test("the names find what they are for, and skip comments and the HMAC label", (
   expect(found("a.ts", 'fork("koomen/erga")')).toEqual(["koomen/erga"]);
   expect(found("a.ts", '// on erga.dev\nx(); /* koomen/erga */ const u = "https://example.com"; // erga-staging')).toEqual([]);
   expect(found("a.sql", "-- on erga.dev\nSELECT 'erga.dev';")).toEqual(["erga.dev"]);
+  expect(found("a.ts", "html.replace(/https:\\/\\/erga\\.dev\\/erga\\//, shell)")).toEqual(["erga\\.dev"]);
+  expect(found("a.html", '<script type="module" src="https://erga.dev/erga/steps/editor.js"></script>')).toEqual(["erga.dev"]);
   expect(found("a.ts", 'encode(`erga-pages:${s}`); meta("erga-pages"); "meta[name=\\"erga-pages\\"]"')).toEqual([]);
 });
 

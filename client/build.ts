@@ -12,7 +12,7 @@
 //     frame-<h>.js       frame.js: the editor itself (frame.ts), which runs on each document's own origin, loaded
 //                        from here (one address for every document, so one copy in the browser's cache)
 //     steps-<h>.js       steps.js: erga/steps (libs/steps/ui/library.ts), a presentation's bar and list of steps, which the
-//                        page imports itself; it works outside Erga too
+//                        page imports itself; it works outside the viewer too
 //     settings-<h>.js    document settings (settings.ts), imported when the gear is reached for
 //     pages-tree-<h>.js  a document's pages (pages-tree.ts), imported when someone opens the tree
 //     agent-<h>.js                each person's agent panel, on every page (client/agent/person-agent.ts)

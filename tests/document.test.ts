@@ -668,7 +668,7 @@ const DECK = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<script type="module" src="https://erga.dev/erga/steps/editor.js"></script>
+<script type="module" src="/erga/steps/editor.js"></script>
 <title>Builds</title>
 <style>
   body { background: #fff; font: 20px/1.5 sans-serif; margin: 0; }

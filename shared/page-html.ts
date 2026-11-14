@@ -77,13 +77,14 @@ export const GUARD_END = ["mouseup", "touchend", "touchcancel"];
 
 
 /**
- * A page imports Erga's libraries at erga.dev (https://erga.dev/erga/<name>/editor.js); each server serves its own
- * (serveLibrary), the build its editor runs. So the page loads them from the viewer's origin, `shell`: staging's page
- * loads staging's library, and a local server's its own. The page (server/pages/reader.ts) and the agent's copy of it
- * (client/page-tools/tools.ts) both do. The text the editor reads stays as written.
+ * A page imports Erga's libraries by their path alone (<script type="module" src="/erga/<name>/editor.js">): its text
+ * names no server, so a copy of the document works on any. Each server serves its own (serveLibrary), the build its
+ * editor runs, on the app's origin, `shell`: a pages origin has nothing of Erga's, so the page as served names them
+ * there. On the app's origin itself (the homepage's site, served as it is) the path is right as written. The text the
+ * editor reads stays as written.
  */
 export const localLibraries = (html: string, shell: string) =>
-  html.replace(/(<script\b[^>]*\bsrc\s*=\s*["']?)https:\/\/erga\.dev(\/erga\/[a-z]+\/editor\.js)/gi, `$1${shell}$2`);
+  html.replace(/(<script\b[^>]*\bsrc\s*=\s*["']?)(\/erga\/[a-z]+\/editor\.js)/gi, `$1${shell}$2`);
 
 /** A document's page as its pages origin serves it: its text, with Erga's `head` first in its <head> (server/pages/reader.ts). */
 export const pageOf = (text: string, head: string, shell: string) => insertHead(localLibraries(text, shell), head);
