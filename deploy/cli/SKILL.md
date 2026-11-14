@@ -101,7 +101,8 @@ and `main`. There are no pull requests.
    the instance's staging instances run to the instance (a primary), from
    this machine. Then it moves `main` to that commit and pushes it. An
    instance with no staging instance needs the commit:
-   `bun erga deploy main <host>`.
+   `bun erga deploy main <host>`. `main` and `staging` are the branches
+   on GitHub, never this clone's own branch of that name.
 8. Only when Pete asks: `bun erga release [vX.Y.Z|major|minor|patch]`
    tags `main` and makes a GitHub release with notes from the commits.
    `--dry-run` shows the version and the notes first.
@@ -181,7 +182,8 @@ and `main`. There are no pull requests.
 - Report what you observed (a version, a health check, a run's result),
   never what you assumed.
 - When a deploy fails, read its output, or its job record in
-  `.erga/jobs/`. A failed health check rolls the Worker back by itself.
+  `.erga/jobs/`. A health check that fails for two minutes rolls the
+  Worker back by itself.
 - AGENTS.md has the code's rules. A file's traps are in the comment at
   its top.
 

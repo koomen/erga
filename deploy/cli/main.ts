@@ -29,6 +29,7 @@
 //   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
 //   bun erga deploy [<commit>] <host> [--no-tests]            deploys a registered instance from this machine; a primary
 //                                       with no commit takes the commit its staging instances run, and main moves to it;
+//                                       the commits main and staging are origin's branches, never the clone's own;
 //                                       --fresh: a staging instance gets a new copy of its primary's data;
 //                                       --home <domain>: a primary serves its homepage on that domain from now on
 //   bun erga rollback <host> [--yes]    a registered instance's Worker version from before its last deploy

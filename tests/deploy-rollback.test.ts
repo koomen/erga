@@ -23,6 +23,18 @@ describe("rollbacks", () => {
     await run(SHA2);
     expect(bindingsOf(mock.state, "erga-staging").ERGA_VERSION.text).toBe(SHA2.slice(0, 12));
 
+    // The Worker has the new code before its objects have it: health fails for 40 seconds (8 checks), then passes. No rollback.
+    let behind = 8;
+    const late: typeof mock.fetch = (input, init) =>
+      String(input).includes("/api/health") && behind-- > 0
+        ? Promise.resolve(
+            Response.json({ ok: false, checks: { documents: { ok: false, error: "the object runs the code before" } } }, { status: 503 })
+          )
+        : mock.fetch(input, init);
+    await runPipeline(cf, release, staging(), { ...quick, site: late, report: () => {} });
+    expect(behind).toBe(-1);
+    await run(SHA2);
+
     mock.state.unhealthy = [SHA3.slice(0, 12)];
     const carry: Carry = {};
     const failed = await run(SHA3, carry).catch((e) => e);
