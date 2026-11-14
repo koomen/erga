@@ -5,6 +5,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { editor, type Editor } from "../helpers/editor";
+import { sitesPage } from "../helpers/engine";
 import { ROOT } from "../helpers/env";
 import { expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
 import { newToken } from "../helpers/new-token";
@@ -196,35 +197,55 @@ journey("a reader's open page shows an agent's change", () => {
   // Was a bug (Pete's): each time the page loaded again, the reader saw its start, then a jump to where they were;
   // loaded again by the person, a page in the viewer opened at its top.
   test("someone who can edit, scrolled down a long page: an agent's change to the page, and the tab loaded again, show the page where it was on every frame the tab paints", async () => {
-    const own = await openOwn("Live scroll", {
-      "index.html": `${LONG.replace("<h1>", `<link rel="stylesheet" href="style.css"><h1>`)}<p>The last line.</p>`,
-      "style.css": "h1 { color: rgb(200, 0, 0) }",
-    });
-    await wheel(300, 300, 0, 900);
-    await expect.poll(() => inDoc<number>(page, "scrollY")).toBe(900);
-    await inDoc(page, "window.__first = true");
-    // The change is to a line out of sight: the picture must stay the same. The page loads again in a second frame,
-    // and the first one shows until the new page is where the old one was.
-    const edited = await views(page, async () => {
-      const changed = await agent("edit", {
+    // In a browser with a process for each site, as a person's: there the page's frame is in a process of its own
+    // (e2e/helpers/engine.ts, the trap).
+    const tab = page,
+      sites = await sitesPage();
+    page = sites.page;
+    try {
+      const own = await openOwn("Live scroll", {
+        "index.html": `${LONG.replace("<h1>", `<link rel="stylesheet" href="style.css"><h1>`)}<p>The last line.</p>`,
+        "style.css": "h1 { color: rgb(200, 0, 0) }",
+      });
+      await wheel(300, 300, 0, 900);
+      await expect.poll(() => inDoc<number>(page, "scrollY")).toBe(900);
+      await inDoc(page, "window.__first = true");
+      // The change is to a line out of sight: the picture must stay the same. The page loads again in a second frame,
+      // and the first one shows until the new page is where the old one was.
+      const edited = await views(page, async () => {
+        const changed = await agent("edit", {
+          document: own.id,
+          path: "index.html",
+          edits: [{ oldText: "The last line.", newText: WRITTEN }],
+        });
+        expect(changed.ok, changed.text).toBe(true);
+        await expect
+          .poll(async () => !(await inDoc(page, "window.__first")) && (await shown()).includes(WRITTEN) && (await shows()))
+          .toBe(true);
+        expect(await inDoc<number>(page, "scrollY")).toBe(900);
+      });
+      expect(edited, "the agent's change: no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
+      // Was a bug (seen on staging, in a browser with a process for each site): the old page, as its frame went, wrote a
+      // view at the page's top over the kept one, so the next change in a row opened the page at its top.
+      const second = await agent("edit", {
         document: own.id,
         path: "index.html",
-        edits: [{ oldText: "The last line.", newText: WRITTEN }],
+        edits: [{ oldText: WRITTEN, newText: `${WRITTEN} Twice.` }],
       });
-      expect(changed.ok, changed.text).toBe(true);
-      await expect
-        .poll(async () => !(await inDoc(page, "window.__first")) && (await shown()).includes(WRITTEN) && (await shows()))
-        .toBe(true);
-      expect(await inDoc<number>(page, "scrollY")).toBe(900);
-    });
-    expect(edited, "the agent's change: no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
-    // The person loads the tab again (⌘R): the page is out of sight until it is where it was.
-    const again = await views(page, async () => {
-      await page.reload();
-      await expect.poll(async () => (await inDoc<number>(page, "scrollY")) == 900 && (await shows())).toBe(true);
-    });
-    expect(again.moved, "⌘R: no frame with another view").toEqual([]);
-    expect(await inDoc<string>(page, "location.hash")).toBe("#place");
+      expect(second.ok, second.text).toBe(true);
+      await expect.poll(async () => (await shown()).includes("Twice.") && (await shows())).toBe(true);
+      expect(await inDoc<number>(page, "scrollY"), "the second change in a row").toBe(900);
+      // The person loads the tab again (⌘R): the page is out of sight until it is where it was.
+      const again = await views(page, async () => {
+        await page.reload();
+        await expect.poll(async () => (await inDoc<number>(page, "scrollY")) == 900 && (await shows())).toBe(true);
+      });
+      expect(again.moved, "⌘R: no frame with another view").toEqual([]);
+      expect(await inDoc<string>(page, "location.hash")).toBe("#place");
+    } finally {
+      page = tab;
+      sites.close();
+    }
   });
 
   // The owner's open page stayed as it was until a reload by hand: the files' address of someone who can edit has no

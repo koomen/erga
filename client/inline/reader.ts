@@ -9,6 +9,10 @@
 // view this one had (`place`), and the viewer shows it only when it says so (erga-placed). A new wait there needs its
 // end, and its event for `soon`: `check` runs on no frame without one.
 //
+// Trap: the view is saved only while the page shows, never as it goes (pagehide). A browser with a process for each
+// site (every person's; the document's files are on another site than the viewer) says that a frame that goes is
+// scrolled to 0, and that view took the kept one's place: the next load opened at the page's top.
+//
 // Trap: `check` (the colour, the canvas, the scroll, the hash) runs only after an event that `soon` hears (a DOM change,
 // a size, a load, a transition's start), never on each frame. A new thing the viewer must hear of needs its event
 // there. A change made only through the CSSOM (`insertRule`) reaches the viewer at the next such event.
@@ -316,8 +320,6 @@ export default function reader(C: ReaderConfig): void {
     },
     { capture: true, passive: true }
   );
-  // (A tab that isn't in front has no frames: the view as the page goes.)
-  addEventListener("pagehide", save);
   // Stylesheets of the document changed (`paths`, in the document): their new rules take the old ones' place in the
   // page as it is, at once, so the page keeps its view and its scripts' state. `files`: where the document's files are
   // now (a reader's address has the version in it), else where this page's are. False when it can't (a path that is no
