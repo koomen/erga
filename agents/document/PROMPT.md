@@ -28,11 +28,11 @@ rendered page:
   exactly. A unit that doesn't match (a script changed it, or its markup is
   malformed) is locked, and clicking it explains why.
 
-A page's text has edits of its own, the ones a person makes in the editor:
+A page's text has edits of its own, the ones a user makes in the editor:
 `read` with op `document_api` lists them (type, replace, split, block kinds, styles, links,
 lists, new blocks), and `edit` with op `call_edit` runs one. It checks the input against
 the edit's JSON Schema first, and says what is wrong. Use them first for a change to
-a page's text: they keep the HTML as a person's editing would. Edit the
+a page's text: they keep the HTML as a user's editing would. Edit the
 source (`edit`, and `edit` op `write`) for what they can't do: layout, styles, scripts,
 attributes, new elements of other kinds.
 
@@ -68,7 +68,7 @@ attributes, new elements of other kinds.
    ```
 
    The element and everything inside it are never editable on the page; the
-   rest of the paragraph still is. Clicking it tells the person to ask the
+   rest of the paragraph still is. Clicking it tells the user to ask the
    agent. The attribute has no effect on how the page looks or behaves.
 
    A `contenteditable` element of the page's own is text like any other: the
@@ -131,13 +131,13 @@ attributes, new elements of other kinds.
     A slide that builds up in parts names the part too: `#3.2` is the second
     part of slide 3, and `#3` its first.
 
-    A view that the person moves by hand (a canvas's camera, a map) goes in
+    A view that the user moves by hand (a canvas's camera, a map) goes in
     the address too, once it rests: `#3@1280,640,0.5` is frame 3 with the
     camera at that point and zoom. The page loads again for each change to
     its script: Erga brings back what the browser holds (the address, each
-    scroll position, `history.state`), and the person sees the old page until
+    scroll position, `history.state`), and the user sees the old page until
     the new one shows the same view. A view that only a script's variables
-    hold is lost: with the view in the address, the person stays where they
+    hold is lost: with the view in the address, the user stays where they
     were. The canvas template's `canvas.js` does it (`note`, `fromAddress`);
     give a canvas made before it the same. A change to a linked stylesheet
     loads nothing again.
@@ -156,7 +156,7 @@ For a deck, start from the `slides` template; for frames on one large
 canvas, start from the `canvas` template. Each holds its own code, which
 defines `window.ergaSteps`: the slides template's `slides.js` and `api.js`,
 the canvas template's `canvas.js`. Keep that code, and change it when the
-person asks for a deck or a canvas that works another way.
+user asks for a deck or a canvas that works another way.
 
 To make another page a presentation, import erga/steps in its `<head>` and
 define the steps in its own script:
@@ -202,7 +202,7 @@ for each step, placed by its `left` and `top`. Its heading names the step.
 `canvas.js` moves the camera, and defines `window.ergaZoom`, so Erga's zoom
 keys zoom the camera.
 
-An image that a person drops on a deck or a canvas goes in by the page's own
+An image that a user drops on a deck or a canvas goes in by the page's own
 edit `add_image` (`api.js`; `read` with op `document_api` lists it): on a
 slide under its text (or on a new slide), on a canvas at a point or in a
 frame. Use it too (`call_edit`), after you wrote the image's file.
@@ -231,7 +231,7 @@ without it never has anything under the bars.
 To check a step, give `page` op `view_page` or `eval_in_page` the step (`step: "3"`),
 and `frames: [300, 900]` to see a transition partway. To check several steps,
 give `view_page` a list (`step: ["1", "2.2", "4"]`): one picture each, in one
-call. They render a copy on the server, so the person's own view stays where it is.
+call. They render a copy on the server, so the user's own view stays where it is.
 
 ## A page's own edits
 
@@ -271,9 +271,9 @@ exactly one element:
 | `{ op: "move", el: sel, after: sel }` | Moves the element; `before`, `into` and `prepend` too. |
 | `{ op: "replace", el: sel, html }` | Puts new HTML in the place of the element. |
 | `{ op: "attr", el: sel, name, value }` | Sets an attribute; `value: null` removes it. |
-| `{ op: "caret", el: sel }` | After the person's click, puts the caret at the end of the element's first text, where it is after the edit (`select: true` selects that text). One for each call. Without it, the caret goes to the change. |
+| `{ op: "caret", el: sel }` | After the user's click, puts the caret at the end of the element's first text, where it is after the edit (`select: true` selects that text). One for each call. Without it, the caret goes to the change. |
 
-For the person's clicks, Erga runs the module in the page and changes the
+For the user's clicks, Erga runs the module in the page and changes the
 page in the same frame; for agents, in a sandbox. So write `apply` as a
 quick, pure function of its arguments: no DOM, no network, no timers, and
 no imports of other files. What Erga makes sure of, so the page can't break
@@ -292,9 +292,9 @@ In the editor, and only there, the page's `<html>` has the attribute
 `data-erga-editing`, and `window.ergaEditor.editing` is `true`. Outside it,
 the page shows as it always does, controls left out.
 `ergaEditor.call(edit, input)` answers a Promise of `{ ok: true }` or
-`{ ok: false, error }`. It works only right after the person clicks or
+`{ ok: false, error }`. It works only right after the user clicks or
 presses a key on the page: a page can't change itself as it loads, or on a
-timer. When Erga refuses, it says why to the person and offers to ask the
+timer. When Erga refuses, it says why to the user and offers to ask the
 agent to fix the page. Erga selects the new text, so people type over its
 placeholder.
 

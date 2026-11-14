@@ -210,7 +210,7 @@ journey("the agents' tools on a page that a person has open", () => {
       ...SOON,
       edits: [{ oldText: "</body>", newText: "<style>html, body { background: rgb(200, 0, 0) !important; }</style></body>" }],
     });
-    expect(view.text).toContain("Shown as its person sees it, in Erga's viewer.");
+    expect(view.text).toContain("Shown as its user sees it, in Erga's viewer.");
     // The page's red, below the bars and in the middle of the window.
     const middle = await pixel(ed.page, view.images[0], 640, 500);
     expect(
@@ -274,7 +274,7 @@ journey("the agents' tools on a page that a person has open", () => {
 
   test("editor: true opens the page in the editor, with its controls; code in that window can't get the person's Share token", async () => {
     const view = await t.ok("view_page", { ...SOON, editor: true });
-    expect(view.text).toContain("Shown as its person sees it, in Erga's editor.");
+    expect(view.text).toContain("Shown as its user sees it, in Erga's editor.");
     expect(view.text).toContain("No script errors.");
     const shell = await t.ok("eval_in_page", {
       editor: true,

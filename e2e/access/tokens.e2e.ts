@@ -401,7 +401,7 @@ journey("on a staging server with no agent key: a token's reach, the agent's pan
     expect((await tool(root, share, "list_documents")).text).toContain("Staging two");
     // Was a bug (seen on staging): the viewer's check of its code (GET /api/release) got a 403 in the server's browser.
     const view = await tool(root, share, "view_page", { document });
-    expect(view.text).toContain("Shown as its person sees it, in Erga's viewer.");
+    expect(view.text).toContain("Shown as its user sees it, in Erga's viewer.");
     expect(view.text).not.toContain("The page threw");
     expect((await tool(root, share, "set_user", { action: "role", login: "tester", role: "write" })).status).toBe(403);
 

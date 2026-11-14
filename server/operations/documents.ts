@@ -308,7 +308,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       const doc = await findDocument({ ...caller, here: undefined }, args.document, "delete");
       if (doc.id == caller.here)
         throw new OperationError({
-          message: "That's the document open on the person's page: they delete it on the documents list (/documents).",
+          message: "That's the document open on the user's page: they delete it on the documents list (/documents).",
           status: 409,
         });
       const platform = platformOf(caller);

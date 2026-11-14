@@ -316,6 +316,6 @@ test("a call that needs no approval runs at once; a restart closes a question th
   expect(await b.resume()).toBe(false);
   expect(ran).toEqual(["draft"]);
   expect(results(b).at(-1)).toMatchObject({ isFailure: true });
-  expect(results(b).at(-1)!.result).toContain("restarted before the person answered");
+  expect(results(b).at(-1)!.result).toContain("restarted before the user answered");
   expect(b.answer("x", true)).toBe(false);
 });

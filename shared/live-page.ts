@@ -386,7 +386,7 @@ const act = (a: Activation) => `isActive ${a.isActive}, hasBeenActive ${a.hasBee
 export function describeAct(kind: "click" | "key", a: ActResult): string {
   const out = [
     `${kind == "click" ? "Clicked" : "Pressed a key on"} ${a.target}${a.at ? ` at (${Math.round(a.at.x)}, ${Math.round(a.at.y)})` : ""}: ${a.events.join(", ")}.`,
-    ...(a.covered ? [`Note: at that point the page shows ${a.covered} on top, so a person's click there would reach it instead.`] : []),
+    ...(a.covered ? [`Note: at that point the page shows ${a.covered} on top, so a user's click there would reach it instead.`] : []),
     `Trusted: ${a.trusted} (the browser marks every event a script sends untrusted, so it gives no user activation of its own).`,
     `User activation in the page's frame: before ${act(a.activation.before)}; after ${act(a.activation.after)}.`,
     a.consumed.length ? `Consumed: ${a.consumed.map(describeConsumer).join("; ")}.` : "Nobody called preventDefault or stopPropagation on it.",
@@ -397,7 +397,8 @@ export function describeAct(kind: "click" | "key", a: ActResult): string {
 }
 
 /** Where the answer came from, in words: which page, and the tab's state. */
-export const describeTab = (t: LiveResult["tab"]) => t ? `(From ${t.page} in the person's ${t.focused ? "focused" : t.visible ? "visible" : "background"} tab.)` : "";
+export const describeTab = (t: LiveResult["tab"]) =>
+  t ? `(From ${t.page} in the user's ${t.focused ? "focused" : t.visible ? "visible" : "background"} tab.)` : "";
 
 /**
  * The page's first script (a function, as its text goes into the page, so

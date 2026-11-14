@@ -443,7 +443,7 @@ function openPage(open: (path: string) => Promise<OpenResult>): AgentTool {
   return {
     name: "open_page",
     label: "Open a page",
-    description: "Opens another page in your person's editor tabs.",
+    description: "Opens another page in your user's editor tabs.",
     parameters: Schema.Struct({
       path: Schema.String.annotate({
         description:

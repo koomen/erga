@@ -106,7 +106,7 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>, live:
         }),
         live: Schema.optionalKey(
           Schema.Boolean.annotate({
-            description: "In the person's open page instead, only when they ask.",
+            description: "In the user's open page instead, only when they ask.",
           })
         ),
         frame: FRAME,
@@ -202,7 +202,7 @@ function liveTools(live: (req: LiveRequest) => Promise<LiveAnswer>): AgentTool[]
     {
       name: "page_log",
       label: "Read the live page",
-      description: "The person's open page: its console, requests, events, frames.",
+      description: "The user's open page: its console, requests, events, frames.",
       parameters: Schema.Struct({
         kind: Schema.Literals(["console", "network", "events", "frames"]).annotate({
           description: "events: pointer and key events; frames: each frame's sandbox.",
@@ -242,7 +242,7 @@ function liveTools(live: (req: LiveRequest) => Promise<LiveAnswer>): AgentTool[]
     {
       name: "page_input",
       label: "Act on the live page",
-      description: "Clicks or presses a key in the person's open page, when they ask.",
+      description: "Clicks or presses a key in the user's open page, when they ask.",
       parameters: Schema.Struct({
         selector: Schema.optionalKey(
           Schema.String.annotate({
@@ -370,7 +370,7 @@ export function describeView(v: ViewResult, fullPage?: boolean): string {
   ];
   if (v.shown)
     lines.push(
-      `Shown as its person sees it, in Erga's ${v.shown}${v.shown == "viewer" && !v.bars ? " (its bars are off for readers)" : ""}.`
+      `Shown as its user sees it, in Erga's ${v.shown}${v.shown == "viewer" && !v.bars ? " (its bars are off for readers)" : ""}.`
     );
   if (v.viewport || v.colorScheme)
     lines.push(

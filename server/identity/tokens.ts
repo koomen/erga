@@ -109,7 +109,7 @@ export interface Who {
 }
 
 /** The rule, with no exception: a token is made by a person, in person. An agent never makes one, of any kind. */
-export const NOT_FOR_AGENTS = "An agent can't make a token: a person makes one, signed in as themselves, on the page.";
+export const NOT_FOR_AGENTS = "An agent can't make a token: a user makes one, signed in as themselves, on the page.";
 const inPerson = (who: Who) => {
   if (who.via) throw new ScopeError({ message: NOT_FOR_AGENTS });
 };

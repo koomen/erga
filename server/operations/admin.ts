@@ -31,7 +31,7 @@ const ACCOUNT_PROVIDER = Schema.Literals(Object.keys(SIGN_IN_PROVIDERS)).annotat
 const ACCESS = Schema.Literals(["none", "read", "write"]).annotate({
   description: "none ('No access'), read ('Can authenticate') or write ('Can create and edit content')",
 });
-const PERSON = Schema.Int.annotate({ description: "For someone who hasn't signed in yet: their person id (people)" });
+const PERSON = Schema.Int.annotate({ description: "For a user who hasn't signed in yet: their waiting id, as people lists it" });
 
 /** US dollars to a tenth of a cent. */
 const round = (usd: number) => Math.round(usd * 1000) / 1000;
@@ -184,7 +184,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
         return {
           mode: "proxy",
           proxy: status.proxy,
-          note: "A proxy in front of the server signs each person in. The deploy sets it: nothing here changes it.",
+          note: "A proxy in front of the server signs each user in. The deploy sets it: nothing here changes it.",
         };
       return {
         mode: "oauth",
@@ -217,7 +217,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
       force: Schema.optionalKey(
         Schema.Boolean.annotate({
           description:
-            "clear: even when the page's values work and the deploy's don't (nobody could sign in). Only after you told the person",
+            "clear: even when the page's values work and the deploy's don't (nobody could sign in). Only after you told the user",
         })
       ),
     }),
@@ -262,7 +262,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
         rules: rules.map(ruleOf),
         suggestions,
         publicSharing,
-        note: "Access is the highest of a person's role and every group rule that matches them; none: they can't sign in. waiting: added, not signed in yet (use its person id). bootstrap: the dev server's own admin (DEV_LOGIN), fixed. Tell the person the labels (roleLabel, accessLabel).",
+        note: "Access is the highest of a user's role and every group rule that matches them; none: they can't sign in. waiting: added, not signed in yet (use its id as person). bootstrap: the dev server's own admin (DEV_LOGIN), fixed. Tell the user the labels (roleLabel, accessLabel).",
       };
     },
   },
@@ -294,7 +294,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
         );
       return {
         ...(await analytics(dir, who, isSpan(args.days) ? args.days : 30)),
-        note: "Days are UTC. Active: opened a document, edited one (a version: a burst of edits), or used a model (their agent, a page's model). Tokens: input and output of every model, by the server's keys or the person's own. Each list's more: true means list with an offset gives the next.",
+        note: "Days are UTC. Active: opened a document, edited one (a version: a burst of edits), or used a model (their agent, a page's model). Tokens: input and output of every model, by the server's keys or the user's own. Each list's more: true means list with an offset gives the next.",
       };
     },
   },
@@ -383,7 +383,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
       }),
       kind: Schema.optionalKey(
         Schema.Literals(["workspace", "github_org"]).annotate({
-          description: "add: workspace (a Google Workspace domain) or github_org (a GitHub organization). A person is a user (set_user)",
+          description: "add: workspace (a Google Workspace domain) or github_org (a GitHub organization). A single user: set_user",
         })
       ),
       value: Schema.optionalKey(Schema.String.annotate({ description: "add: the domain or the organization's login" })),

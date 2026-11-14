@@ -184,7 +184,7 @@ export const COMMENT_OPERATIONS: Operation[] = [
           description: "add, the editor's: a selection. start, end: Y.encodeRelativePosition in base64; quote: its text.",
         })
       ),
-      text: Schema.optionalKey(str('add, reply, edit: what it says. "@erga" in a person\'s own comment asks their Erga agent.')),
+      text: Schema.optionalKey(str('add, reply, edit: what it says. "@erga" in a user\'s own comment asks their Erga agent.')),
       thread: Schema.optionalKey(str("reply, resolve, reopen: the thread's id.")),
       comment: Schema.optionalKey(str("edit, delete: the comment's id.")),
     }),

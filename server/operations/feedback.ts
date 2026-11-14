@@ -34,7 +34,7 @@ export const FEEDBACK_OPERATIONS: Operation[] = [
     wide: true,
     description: "Sends feedback about Erga to its makers: an issue on GitHub, without your name.",
     parameters: Schema.Struct({
-      text: str(`The feedback, in the person's words (at most ${FEEDBACK_MAX} characters).`),
+      text: str(`The feedback, in the user's words (at most ${FEEDBACK_MAX} characters).`),
       page: Schema.optionalKey(str("The page it is about (a path or URL); your own agent may leave it out: the open one.")),
     }),
     run: async (args, caller) => {

@@ -40,28 +40,28 @@ export const CREDENTIALS = {
     label: "Anthropic API key",
     service: "Anthropic",
     prefixes: ["sk-ant-"],
-    description: "Each person's agent can use Claude with it, and the descriptions of versions call Anthropic's API with it.",
+    description: "Each user's agent can use Claude with it, and the descriptions of versions call Anthropic's API with it.",
   },
   openai: {
     env: "OPENAI_API_KEY",
     label: "OpenAI API key",
     service: "OpenAI",
     prefixes: ["sk-"],
-    description: "Each person's agent can use OpenAI's GPT models with it.",
+    description: "Each user's agent can use OpenAI's GPT models with it.",
   },
   google: {
     env: "GEMINI_API_KEY",
     label: "Google Gemini API key",
     service: "Google",
     prefixes: ["AIza"],
-    description: "Each person's agent can use Google's Gemini models with it.",
+    description: "Each user's agent can use Google's Gemini models with it.",
   },
   openrouter: {
     env: "OPENROUTER_API_KEY",
     label: "OpenRouter API key",
     service: "OpenRouter",
     prefixes: ["sk-or-"],
-    description: "Each person's agent can use the models Erga lists from OpenRouter (Grok, Kimi, DeepSeek) with it.",
+    description: "Each user's agent can use the models Erga lists from OpenRouter (Grok, Kimi, DeepSeek) with it.",
   },
 } as const satisfies Record<string, { env: string; label: string; service: string; prefixes: readonly string[]; description: string }>;
 

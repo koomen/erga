@@ -62,7 +62,7 @@ const agentRoutes = (origin: string): Route =>
     if (/^Bearer\s/i.test(request.headers.get("authorization") ?? ""))
       return json(
         {
-          error: `The agent panel is a person's, in a browser: an outside agent calls the same tools itself, over MCP (${url.origin}/mcp).`,
+          error: `The agent panel is a user's, in a browser: an outside agent calls the same tools itself, over MCP (${url.origin}/mcp).`,
         },
         403
       );

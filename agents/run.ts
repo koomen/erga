@@ -168,12 +168,12 @@ export function toolMessage(id: string, name: string, out: ToolOutput, isFailure
 export const MAX_STEPS = 100;
 
 /** A call that never began because the person stopped the run: what the model hears. */
-const NOT_RUN = "The person stopped the run before this call began. It did not run.";
+const NOT_RUN = "The user stopped the run before this call began. It did not run.";
 
 /** A call the person did not approve, and the calls of its turn after it: what the model hears. */
-const DENIED = "The person did not approve this call. It did not run. Do not call it again unless they ask for it.";
-const UNANSWERED = "The server restarted before the person answered. This call did not run. Ask them again if they still want it.";
-const AFTER_DENIED = "The person did not approve an earlier call of this turn. This call did not run.";
+const DENIED = "The user did not approve this call. It did not run. Do not call it again unless they ask for it.";
+const UNANSWERED = "The server restarted before the user answered. This call did not run. Ask them again if they still want it.";
+const AFTER_DENIED = "The user did not approve an earlier call of this turn. This call did not run.";
 
 /** A failure's words as the model reads them. */
 const failure = (text: string): ToolOutput => ({ content: [{ type: "text", text }] });

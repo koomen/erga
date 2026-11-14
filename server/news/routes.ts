@@ -29,7 +29,7 @@ export const newsRoutes = Effect.gen(function* () {
   const { request, url, platform } = yield* ctx;
   const session = yield* call(() => platform.sessionOf(request));
   if (!session) return json({ error: "Sign in first." }, 401);
-  if (session.agent) return json({ error: "Live pages are for a person's open pages: an agent reads with tools (/mcp)." }, 403);
+  if (session.agent) return json({ error: "Live pages are for a user's open pages: an agent reads with tools (/mcp)." }, 403);
   const found = routeFor(ROUTES, url.pathname == "/api/news" ? "WS" : request.method, url.pathname);
   if (!found) return json({ error: "Not found" }, 404);
   return yield* found.route.run({ request, url, platform, session });

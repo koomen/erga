@@ -162,7 +162,7 @@ export const SETTINGS = {
   agent_keys: setting<"server" | "own">({
     label: "Whose keys the agents use",
     description:
-      '"server": the keys on the API keys page, for everyone (a person\'s own key wins). "own": each person adds their own keys in Settings, and the agents never use a server key.',
+      '"server": the keys on the API keys page, for everyone (a user\'s own key wins). "own": each user adds their own keys in Settings, and the agents never use a server key.',
     default: "server",
     parse: (v) => {
       const s = typeof v == "string" ? v.trim().toLowerCase() : v;
@@ -172,16 +172,16 @@ export const SETTINGS = {
     choices: ["server", "own"],
   }),
   agent_daily_tokens: setting<number>({
-    label: "Agents: daily token limit for each person",
-    description: "The most tokens one person's agent can use each day on the server's keys.",
+    label: "Agents: daily token limit for each user",
+    description: "The most tokens one user's agent can use each day on the server's keys.",
     values:
-      "Input and output tokens a day (UTC). Over it, their agent stops until midnight UTC, and says why. A person's own key has no limit.",
+      "Input and output tokens a day (UTC). Over it, their agent stops until midnight UTC, and says why. A user's own key has no limit.",
     default: 30_000_000,
     parse: integer(1, 100_000_000_000),
   }),
   agent_models_off: setting<string[]>({
     label: "Models a server key doesn't run",
-    description: `The models that a server key doesn't run; a person's own key still runs them. A list of: ${Object.keys(MODELS).join(", ")}.`,
+    description: `The models that a server key doesn't run; a user's own key still runs them. A list of: ${Object.keys(MODELS).join(", ")}.`,
     default: [],
     parse: (v) => {
       const list = typeof v == "string" ? v.split(/[\s,]+/).filter(Boolean) : v;

@@ -25,7 +25,7 @@ ${owner} is an admin of this Erga server. For the server (the admin pages, /admi
 - settings op sign_in reads how people sign in (/admin/auth): the mode, which the deploy
   chooses. In the mode oauth: the providers on (GitHub, Google), each OAuth app, a live
   check of each, and how to make one where it's missing. In the mode proxy: the proxy in
-  front of the server, which signs each person in; nothing here changes it.
+  front of the server, which signs each user in; nothing here changes it.
   op set_sign_in (the mode oauth) turns a provider on or off, clears its values set on
   /admin/auth, or discards new values that wait for a test sign-in. An app's client ID and
   secret are pasted only on /admin/auth, never here: if ${owner} wants an app set, give
@@ -38,7 +38,7 @@ ${owner} is an admin of this Erga server. For the server (the admin pages, /admi
   organization, a GitHub organization), or turns public sharing on or off. The
   roles are "Admin", "Can create and edit content" (write) and "Can authenticate" (read);
   a rule's access is "No access", "Can authenticate" or "Can create and edit content". A
-  person gets the highest of their role and the rules that match them; if that's "No
+  user gets the highest of their role and the rules that match them; if that's "No
   access", they can't sign in. Use those words with ${owner}.
 - people op analytics reads the Analytics page (/admin): each day's active people,
   document views and edits, and models' tokens (by the server's keys or people's own),

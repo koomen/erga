@@ -110,7 +110,7 @@ export const UNREADABLE_KEY =
 /** What the agent pane says when no key runs any model. */
 const NO_KEY =
   "no API key is set (add your own in Settings, or an admin sets one on /admin/api-keys; locally, export ANTHROPIC_API_KEY before bun start, or put it in .dev.vars)";
-const OWN_KEYS = "the admin asks each person to bring their own API key, and you have none yet. Add one in Settings, Agent";
+const OWN_KEYS = "the admin asks each user to bring their own API key, and you have none yet. Add one in Settings, Agent";
 
 /** Where the server's keys and the admin's choices are read: the directory's stored keys and its settings. */
 export interface KeySource {

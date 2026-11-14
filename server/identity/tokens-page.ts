@@ -124,7 +124,7 @@ const approve = ({ request, platform, url, session, post, who }: Asked): Route =
         return redirect(
           callbackUrl(denied.oauth.redirectUri, {
             error: "access_denied",
-            error_description: "The person denied it.",
+            error_description: "The user denied it.",
             state: denied.oauth.state,
           }),
           303
