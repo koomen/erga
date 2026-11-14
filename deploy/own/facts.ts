@@ -1,5 +1,5 @@
 // What `bun erga setup` observes before each step of the flow (deploy/own/flow.ts, Seen): the login, the person's
-// account, and the server as the world sees it. It looks at what the answers so far name, and no further. AWS's side
+// account, and the server as the world sees it. The dry run's checks are these. It looks at what the answers so far name, and no further. AWS's side
 // is deploy/aws/setup.ts. Under ERGA_DEPLOY_MOCK=1, the account and the servers are a mock Cloudflare's
 // (dev/mock-cloudflare.ts): nothing real.
 
@@ -10,7 +10,7 @@ import { WORKER_TAG } from "../pipeline/account";
 import { machineCredential } from "../local-credential";
 import { nothingSeen, type Seen } from "./flow";
 import { type Answers, proxyExpects, sso, zoneOf } from "./plan";
-import { DIR, loadSecrets, namesAt, type Setup } from "./store";
+import { DIR, githubIdOf, loadSecrets, namesAt } from "./store";
 
 export interface Connection {
   cf: Cloudflare;
@@ -123,12 +123,10 @@ export async function liveOf(net: Fetch, a: Answers, githubId: string | undefine
 }
 
 /** What the flow decides from, on Cloudflare: the login, the accounts that hold the domain, and the server. */
-export async function observe(setup: Setup, dir = DIR): Promise<Seen> {
-  const a = setup.flow.answers;
-  // The person who claimed the server: the setup's own record, while the entry has their token.
-  const seen: Seen = { ...nothingSeen, admin: entryOf(readConfig(dir), a.host)?.token ? setup.flow.seen.admin || "an admin" : "" };
+export async function observe(a: Answers, dir = DIR): Promise<Seen> {
+  const seen: Seen = { ...nothingSeen, admin: !!entryOf(readConfig(dir), a.host)?.token };
   if (!a.where) return seen;
-  if (a.where == "aws") return (await import("../aws/setup")).observeAws(dir, setup, seen, site);
+  if (a.where == "aws") return (await import("../aws/setup")).observeAws(dir, a, seen, site);
   const c = await cloudflare();
   if ("why" in c) return { ...seen, login: { ok: false, why: c.why } };
   const { cf, net } = c;
@@ -200,8 +198,8 @@ export async function observe(setup: Setup, dir = DIR): Promise<Seen> {
       )
       .catch(() => null);
     seen.held = (settings?.bindings ?? []).filter((b) => b.type == "secret_text").map((b) => b.name);
-    seen.live = await liveOf(net, a, setup.github?.clientId);
+    seen.live = await liveOf(net, a, githubIdOf(a.host, dir));
   }
-  seen.app = !!setup.github && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
+  seen.app = !!githubIdOf(a.host, dir) && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
   return seen;
 }

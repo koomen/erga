@@ -1,5 +1,5 @@
-// The first admin of a new server: whoever opens the link that the setup page gives (`bun erga setup`,
-// deploy/own/page.ts: /setup/claim), and signs in. No deploy names an admin, and no agent makes a token: the link is
+// The first admin of a new server: whoever opens the one-time link that setup opens in their browser (`bun erga setup`,
+// deploy/own/cli.ts, admin), and signs in. No deploy names an admin, and no agent makes a token: the link is
 // signed with this server's own secret, which only the machine that set it up has.
 //
 //   GET  /auth/claim?t=<claim>[&approve=<code>]   signs the person in first (a good claim lets a new person join:
@@ -23,7 +23,7 @@ import { normalCode } from "./tokens.ts";
 const SECONDS = 30 * 60;
 const COOKIE = "erga_claim";
 
-/** A claim: nothing but this server's signature and its end. The setup page seals one with the server's SESSION_SECRET. */
+/** A claim: nothing but this server's signature and its end. Setup (deploy/own/cli.ts) seals one with the server's SESSION_SECRET. */
 export const Claim = signed("claim", Schema.Struct({}), SECONDS);
 
 const good = async (platform: Pick<Platform, "secret" | "directory">, claim: string | null | undefined) =>
@@ -47,7 +47,7 @@ export const claimRoute: Route = Effect.gen(function* () {
   if (!(yield* call(() => good(platform, f.t))))
     return page(
       "This link does not work any more",
-      "The link to become the admin works for 30 minutes. The setup page gives a new one: tell your agent to run <code>bun erga setup</code> again.",
+      "The link to become the admin works for 30 minutes. Setup opens a new one: tell your agent to run its <code>bun erga setup</code> command again.",
       410
     );
   const here = `/auth/claim?t=${encodeURIComponent(f.t)}${code ? `&approve=${encodeURIComponent(code)}` : ""}`;
@@ -70,7 +70,7 @@ export const claimRoute: Route = Effect.gen(function* () {
   return withCookie(
     page(
       "You are the admin",
-      `<b>${esc(session.login)}</b> is the admin of ${esc(url.host)}. Go back to the setup page: your agent goes on by itself. Or <a href="/">open Erga</a>.`,
+      `<b>${esc(session.login)}</b> is the admin of ${esc(url.host)}. Go back to your agent: setup goes on by itself. Or <a href="/">open Erga</a>.`,
       200
     ),
     request,

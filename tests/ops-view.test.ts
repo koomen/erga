@@ -3,7 +3,6 @@
 // (deploy/cli/ops-page.ts) starts their jobs with a fake `bun erga`: nothing merges or deploys.
 
 import { expect, test } from "bun:test";
-import { newSetup } from "../deploy/own/store";
 import type { Entry } from "../deploy/cli/config";
 import { type Run, stepRun } from "../deploy/cli/job-state";
 import { type Branch, type Facts, groupsOf, jobOf, viewHtml } from "../deploy/cli/ops-view";
@@ -59,7 +58,6 @@ test("the view: each primary with its staging instances, the job line, and live 
     },
     git: { log, branches: [], base: "staging", main: "1".repeat(40), staging: "3".repeat(40), elsewhere: { ["9".repeat(12)]: false } },
     jobs: [jobOf(line(start) + line({ commit: "1".repeat(40) }) + line({ result: "ok", ended: "2026-11-05T11:55:00.000Z" }), () => true)!],
-    setup: null,
     run: { at: "idle" },
     polls: startPolls(),
     runs: [],
@@ -95,7 +93,6 @@ test("Logs shows the job that runs, else the last one, or the one the hash names
       job("runs", "staging.example.net", "2026-11-05T11:00:00.000Z"),
       job("other", "erga.example.org", "2026-11-05T11:30:00.000Z", done("2026-11-05T11:31:00.000Z")),
     ],
-    setup: null,
     run: { at: "idle" },
     polls: startPolls(),
     runs: [],
@@ -114,136 +111,6 @@ test("Logs shows the job that runs, else the last one, or the one the hash names
   expect(history).toContain('<span class="h-took">1 h 0 min</span>');
   // An unknown tab is Deploys.
   expect(viewHtml(facts, "example.net/nope", NOW)).toContain('data-tab="deploys"');
-});
-
-test("Setup: the setup's host shows before it has an entry, and opens on its steps; another primary says how to start one", () => {
-  const config = { instances: [entry("example.net")] };
-  const facts: Facts = {
-    config,
-    answers: {},
-    git: { error: "no git" },
-    jobs: [],
-    setup: newSetup("new.example.com"),
-    run: { at: "idle" },
-    polls: startPolls(),
-    runs: [],
-    proofs: {},
-  };
-  expect(groupsOf(config, "new.example.com").map((g) => [g.primary.host, g.primary.token])).toEqual([
-    ["example.net", "t"],
-    ["new.example.com", ""],
-  ]);
-  // The tab has its steps as soon as it opens: nothing is fetched after.
-  const html = viewHtml(facts, "new.example.com", NOW);
-  expect(html).toContain('data-tab="setup"');
-  expect(html).toMatch(/<div class="setup" data-host="new\.example\.com" data-rev="\w+"><div class="s-wrap s-one">/);
-  expect(html).toContain("0 of 7 steps done. Next: Where it runs (you, to your agent).");
-  expect(html).toContain('title="new.example.com: not registered yet: bun erga setup"');
-  // The box's revision changes with the setup: the page's script keeps a box only while it is the same.
-  const rev = (h: string) => /data-rev="(\w+)"/.exec(h)![1];
-  const answered = {
-    ...facts.setup!,
-    flow: {
-      ...facts.setup!.flow,
-      answers: { ...facts.setup!.flow.answers, where: "aws" as const },
-      state: { at: "connect" as const, need: "login" as const },
-    },
-  };
-  expect(rev(viewHtml({ ...facts, setup: answered }, "new.example.com", NOW))).not.toBe(rev(html));
-  expect(rev(viewHtml(facts, "new.example.com", NOW + 60_000))).toBe(rev(html));
-  // A staging instance's setup shows under its primary, once it has its entry.
-  const staging = {
-    ...newSetup("staging.example.net"),
-    flow: { ...newSetup("staging.example.net").flow, state: { at: "build" as const } },
-  };
-  const under = viewHtml(
-    {
-      ...facts,
-      config: { instances: [entry("example.net"), { ...entry("staging.example.net"), stagingOf: "example.net" }] },
-      setup: staging,
-    },
-    "staging.example.net/setup",
-    NOW
-  );
-  expect(under).toContain('<div class="setup" data-host="staging.example.net"');
-  const other = viewHtml(facts, "example.net/setup", NOW);
-  expect(other).toContain("example.net is registered.");
-  expect(other).toContain('The setup of <a href="#new.example.com/setup">new.example.com</a> is in progress.');
-  expect(other).not.toContain('class="setup"');
-});
-
-test("the ops page's server: the Setup tab follows the setup's file, and the person's steps go only through its own origin", async () => {
-  const { mkdtempSync, rmSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
-  const { join } = await import("node:path");
-  const { serveOpsPage } = await import("../deploy/cli/ops-page");
-  const { loadSetup, putSecret, saveSetup, stepSetup, updateSetup } = await import("../deploy/own/store");
-  const { Claim } = await import("../server/identity/claim");
-  const dir = mkdtempSync(join(tmpdir(), "erga-ops-setup-"));
-  const HOST = "erga.example.com";
-  // A setup at its single sign-on step, on Cloudflare: the Audience tag is the page's to take.
-  saveSetup(newSetup(HOST), dir);
-  const cf = {
-    login: { ok: true } as const,
-    choices: [{ id: "a".repeat(32), name: "Ada" }],
-    zones: ["example.com"],
-    account: "a".repeat(32),
-  };
-  const seen = () => ({ type: "seen" as const, seen: { ...loadSetup(dir)!.flow.seen, ...cf } });
-  stepSetup(
-    [
-      { type: "set", key: "where", value: "cloudflare" },
-      seen(),
-      seen(),
-      { type: "set", key: "signIn", value: "sso" },
-      { type: "set", key: "team", value: "acme" },
-      { type: "set", key: "confirm", value: "yes" },
-    ],
-    dir
-  );
-  expect(loadSetup(dir)!.flow.state).toEqual({ at: "app", kind: "access" });
-  const page = serveOpsPage({ dir, cwd: dir, port: 0, ask: async () => ({ version: null, healthy: null }) });
-  const at = `http://127.0.0.1:${page.server.port}`;
-  const post = (path: string, fields: Record<string, string>, origin = at) =>
-    fetch(`${at}${path}`, {
-      method: "POST",
-      redirect: "manual",
-      headers: { Origin: origin, "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams(fields).toString(),
-    });
-  const view = async () => (await fetch(`${at}/view?hash=${encodeURIComponent(`${HOST}/setup`)}`)).text();
-  try {
-    // The tab is in the page's first answer, and the page loads no script of the setup's.
-    expect(await view()).toContain('<form method="post" action="/setup/aud">');
-    expect(await (await fetch(`${at}/`)).text()).not.toContain("/setup.js");
-    // Another site can't answer for the person.
-    expect((await post("/setup/aud", { aud: "f".repeat(64) }, "https://evil.example")).status).toBe(403);
-    // A tag that isn't one comes back with why, on the tab; a good one ends the step, and the tab follows.
-    const bad = await post("/setup/aud", { aud: "nope" });
-    expect([bad.status, bad.headers.get("location")]).toEqual([303, `${at}/#${HOST}/setup`]);
-    expect(await view()).toContain('<p class="s-bad" role="alert">The Audience tag is 64 letters and digits.</p>');
-    expect((await post("/setup/aud", { aud: "F".repeat(64) })).status).toBe(303);
-    expect(loadSetup(dir)!.flow).toMatchObject({ answers: { aud: "f".repeat(64) }, state: { at: "build" } });
-    expect(loadSetup(dir)!.problem).toBe("");
-    // The admin's link: only with a request that waits; then to the new server, with a claim that its secret opens.
-    expect((await fetch(`${at}/setup/claim`, { redirect: "manual" })).headers.get("location")).toBe(`${at}/#${HOST}/setup`);
-    putSecret(HOST, "SESSION_SECRET", "s3cret", dir);
-    updateSetup((s) => ({ ...s, approve: "ABCD-EFGH" }), dir);
-    const to = new URL((await fetch(`${at}/setup/claim`, { redirect: "manual" })).headers.get("location")!);
-    expect([to.origin, to.pathname, to.searchParams.get("approve")]).toEqual([`https://${HOST}`, "/auth/claim", "ABCD-EFGH"]);
-    expect(await Claim.open("s3cret", to.searchParams.get("t"))).toEqual({});
-    expect(await Claim.open("another", to.searchParams.get("t"))).toBeNull();
-    // A staging instance has its primary's admins: its link is the approval alone.
-    updateSetup((s) => ({ ...s, flow: { ...s.flow, answers: { ...s.flow.answers, stagingOf: "example.com" } } }), dir);
-    expect((await fetch(`${at}/setup/claim`, { redirect: "manual" })).headers.get("location")).toBe(
-      `https://${HOST}/tokens/approve?code=ABCD-EFGH`
-    );
-    // The link is nowhere in the setup's file.
-    expect(JSON.stringify(loadSetup(dir))).not.toContain("/auth/claim");
-  } finally {
-    page.stop();
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 const commits = ["3", "2", "1"].map((n, i) => ({ sha: n.repeat(40), subject: `Change ${n}`, author: "Pete", at: NOW - i * 3_600_000 }));
@@ -275,7 +142,6 @@ const deploys = (more: Partial<Facts> = {}, staging = "3", production = "1"): Fa
     elsewhere: {},
   },
   jobs: [],
-  setup: null,
   run: { at: "idle" },
   polls: startPolls(),
   // Every test passed on the merge of clean.

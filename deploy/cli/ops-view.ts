@@ -3,7 +3,7 @@
 // under them, and the chosen tab. Deploys: the feature branches, each in one row with its tests' state (gate.ts), its
 // proof and its Merge button, which only a passed run of the tests opens; then the clone's log with a column for
 // each of the primary's instances and "live" at the commit it runs. Logs: a job's output. History: the jobs of the primary and its
-// staging instances. Setup: the steps of `bun erga setup`.
+// staging instances.
 
 import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo";
 import { esc } from "../../shared/html";
@@ -13,8 +13,6 @@ import type { Answer, Branch as StatusBranch, Commit as StatusCommit } from "./f
 import { secondsOf, TARGET_S, type Test, type TestRun, testOf, testText } from "./gate";
 import { type Alive, activeJobs, deploysTo, type JobState, jobState, type Line, type Run } from "./job-state";
 import { GITHUB, isStale, type Polls } from "./poll-state";
-import type { Setup } from "../own/store";
-import { setupHtml } from "../own/view";
 
 /** A job's record in .erga/jobs/ (deploy/cli/jobs.ts, startJob), as the page reads it: its state, and what it says. */
 export interface JobRecord extends JobState {
@@ -53,8 +51,6 @@ export interface Facts {
   answers: Record<string, Answer>;
   git: Git | { error: string };
   jobs: JobRecord[];
-  /** The setup in progress (.erga/setup.json, `bun erga setup <host>`: deploy/own/store.ts), or null. */
-  setup: Setup | null;
   /** The command that this page started (job-state.ts, stepRun). */
   run: Run;
   /** The checks of GitHub and of each instance (poll-state.ts). */
@@ -98,29 +94,11 @@ export interface Group {
   staging: Entry[];
 }
 
-/**
- * Each primary with its staging instances, in the file's order. A staging instance whose primary has no entry stands
- * alone. The setup's host, before setup writes its entry, comes last, with no facts and no token.
- */
-export function groupsOf(config: Config, setup = ""): Group[] {
+/** Each primary with its staging instances, in the file's order. A staging instance whose primary has no entry stands alone. */
+export function groupsOf(config: Config): Group[] {
   const hosts = new Set(config.instances.map((e) => e.host));
   const primaries = config.instances.filter((e) => !e.stagingOf || !hosts.has(e.stagingOf));
-  const groups = primaries.map((p) => ({ primary: p, staging: config.instances.filter((e) => e.stagingOf == p.host && p != e) }));
-  if (setup && !hosts.has(setup))
-    groups.push({
-      primary: {
-        host: setup,
-        account: "",
-        worker: "",
-        database: "",
-        app: { kind: "workers.dev" },
-        pages: { kind: "shared" },
-        vars: {},
-        token: "",
-      },
-      staging: [],
-    });
-  return groups;
+  return primaries.map((p) => ({ primary: p, staging: config.instances.filter((e) => e.stagingOf == p.host && p != e) }));
 }
 
 /** The group a hash names (a primary or one of its staging instances), else the first. */
@@ -423,26 +401,8 @@ function log(g: Group, f: Facts & { git: Git }, now: number): string {
   </section>`;
 }
 
-/** The host of the setup in progress, or "". */
-const setupHost = (f: Pick<Facts, "setup">) => f.setup?.flow.answers.host ?? "";
-
-/**
- * Setup: the setup in progress, when it is this primary's or one of its staging instances' (deploy/own/view.ts draws
- * it). `data-rev` changes when the setup does: the page's script keeps the box while it is the same, so a field keeps
- * what the person types. Else, how to start one.
- */
-function setupTab(g: Group, setup: Setup | null): string {
-  const host = setup?.flow.answers.host ?? "";
-  if (setup && [g.primary, ...g.staging].some((e) => e.host == host)) {
-    const html = setupHtml(setup);
-    return `<div class="setup" data-host="${esc(host)}" data-rev="${Bun.hash(html).toString(36)}">${html}</div>`;
-  }
-  const other = host ? ` The setup of <a href="#${esc(host)}/setup">${esc(host)}</a> is in progress.` : "";
-  return `<p class="note">${esc(g.primary.host)} is ${g.primary.token ? "registered" : "not registered yet"}. A new instance starts with <code>bun erga setup &lt;host&gt;</code>: its steps then show here.${other}</p>`;
-}
-
 /** The tabs of a primary, by their name in the hash (#<primary>/<tab>). */
-const TABS: Record<string, string> = { setup: "Setup", deploys: "Deploys", logs: "Logs", history: "History" };
+const TABS: Record<string, string> = { deploys: "Deploys", logs: "Logs", history: "History" };
 
 /** The newest job of all, for the page's script: when another one starts, the page switches to its primary. */
 function newest(groups: Group[], jobs: JobRecord[]): string {
@@ -456,13 +416,12 @@ export function viewHtml(f: Facts, name: string, now = Date.now()): string {
   if ("error" in f.config)
     return `<aside class="side"></aside><section class="main"><p class="note bad">${esc(f.config.error)}</p></section>`;
   const [host = "", wanted = "", id = ""] = name.split("/");
-  const groups = groupsOf(f.config, setupHost(f));
+  const groups = groupsOf(f.config);
   const g = chosenOf(groups, host);
   const sidebar = `<aside class="side" aria-label="Instances"><h2 class="side-head">Instances</h2>${side(groups, g, f, now)}</aside>`;
   if (!g)
     return `${sidebar}<section class="main"><p class="note">No instance is registered in this clone's .erga/config.json. Add one: <code>bun erga register &lt;host&gt;</code></p></section>`;
-  // A primary that setup has not registered yet opens on its Setup tab.
-  const tab = TABS[wanted] ? wanted : g.primary.host == setupHost(f) && !g.primary.token ? "setup" : "deploys";
+  const tab = TABS[wanted] ? wanted : "deploys";
   const tabs = `<nav class="tabs" role="tablist">${Object.entries(TABS)
     .map(([k, t]) => `<a class="tab" role="tab" href="#${esc(g.primary.host)}/${k}" aria-selected="${k == tab}">${t}</a>`)
     .join("")}</nav>`;
@@ -472,9 +431,7 @@ export function viewHtml(f: Facts, name: string, now = Date.now()): string {
       ? logs(g, mine, id, now)
       : tab == "history"
         ? history(g, mine, now)
-        : tab == "setup"
-          ? setupTab(g, f.setup)
-          : sources(g, f, now) +
+        : sources(g, f, now) +
             ("error" in f.git
               ? `<p class="note bad">${esc(f.git.error)}</p>`
               : branches(f.git, f, activeJobs(f.jobs, f.run), busyWith(f), now) + log(g, { ...f, git: f.git }, now));

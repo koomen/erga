@@ -1,9 +1,7 @@
 // The ops page's script (deploy/cli/ops-view.ts puts it in the page): it draws the page again (GET /view) when the
 // server says something changed (/api/events), when another primary or tab is chosen (the hash: #<primary>/<tab>),
 // and each minute (the times). When a new job starts on another primary's instance, it switches to that primary.
-// A job's log that was scrolled to its end stays at its end. The Setup tab's box (deploy/own/view.ts) is kept when the
-// page draws again and the setup did not change, so its fields keep what the person types. When the
-// server stops, it says so; when it runs again, the page follows, and reloads if the server's script or styles changed.
+// A job's log that was scrolled to its end stays at its end. When the server stops, it says so; when it runs again, the page follows, and reloads if the server's script or styles changed.
 // Merge opens a field for the commit's message under its branch. A commit row's cell shows a Deploy button in an instance's column on hover or focus, which asks a question
 // first (the instance and the commit). Each starts its job (POST /api/merge, /api/deploy); the page stays on its tab,
 // and the job line shows the job as it runs. An open field or question stays open, with what the person typed, when the
@@ -15,11 +13,6 @@
   const main = () => ops.querySelector(".main");
   let newest = main()?.dataset.newest ?? "";
   let asked = 0;
-  /** After a draw: the old box of the setup stays in its place while the setup is the same, with what the person typed. */
-  function settle(old) {
-    const box = ops.querySelector(".setup[data-host]");
-    if (box && old && old.dataset.host == box.dataset.host && old.dataset.rev == box.dataset.rev) box.replaceWith(old);
-  }
   /** What the person has open now: the merge field (its branch, text, caret, error), and the deploy question. */
   function opened() {
     const form = ops.querySelector(".f-merge:not([hidden])");
@@ -73,10 +66,8 @@
       const old = ops.querySelector(".log");
       const atEnd = !old || old.scrollTop + old.clientHeight >= old.scrollHeight - 8;
       const job = ops.querySelector(".logs")?.dataset.job;
-      const setup = ops.querySelector(".setup[data-host]");
       const open = opened();
       ops.innerHTML = html;
-      settle(setup);
       reopen(open);
       const log = ops.querySelector(".log");
       if (log) log.scrollTop = atEnd || ops.querySelector(".logs")?.dataset.job != job ? log.scrollHeight : old.scrollTop;

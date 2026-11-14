@@ -9,8 +9,8 @@
 //    it, and no later deploy sends one.
 // 3. After the health check: the access rule that the answers name (plan.ts, firstRows), written into the new
 //    database with the Cloudflare D1 API. A database that has an admin already gets nothing.
-// 4. The ops token (register): the server asks for one, the person approves it from the setup page's link (a new
-//    server: as they claim it, server/identity/claim.ts), and the entry gets it.
+// 4. The ops token (register): the server asks for one, the person approves it from the link that setup opens (a
+//    new server: as they claim it, server/identity/claim.ts), and the entry gets it.
 
 import { randomBytes } from "node:crypto";
 import { type CloudflareEntry, type Config, entryOf, entryOrigin, isAws, readConfig, withEntry, writeConfig } from "../cli/config";
@@ -143,7 +143,7 @@ export async function writeFirstRows(cf: Cloudflare, acc: string, worker: string
 }
 
 /**
- * The ops token of the setup's server: the server asks for one, `asked` gets the request's code (the setup page's link
+ * The ops token of the setup's server: the server asks for one, `asked` gets the request's code (the link that setup opens
  * carries it), and the call waits until the person approves it. The entry gets the token and the instance's own deploy
  * facts. The result: the person's login.
  */

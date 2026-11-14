@@ -68,7 +68,7 @@ const rowsOf = (state: MockState, worker: string) =>
 
 test("from the answers to a healthy deploy: the entry, the secrets one time, the access rule, and no admin; then its staging instance", async () => {
   const mock = mockCloudflare();
-  // The GitHub App's secret, as the setup page keeps it.
+  // The GitHub App's secret, as setup's GitHub page keeps it.
   putSecret(HOST, "GITHUB_CLIENT_SECRET", "github-app-secret", dir);
   expect(await firstDeploy(first(mock, HOST))).toBe(HEAD);
 

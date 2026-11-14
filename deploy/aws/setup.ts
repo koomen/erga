@@ -6,10 +6,9 @@
 //      entry from the stack's outputs; the secrets into Parameter Store (encrypted with the stack's key); the programs
 //      into the bucket and onto the machine; then `bun erga deploy`'s code, with the first rows. With the company's
 //      sign-in at a proxy, its endpoints come from its issuer, and its client's secret is in Secrets Manager (the
-//      setup page puts it there).
+//      page that setup opens puts it there: deploy/own/browser.ts).
 
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type AwsEntry, type Config, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
 import { type DeployOptions, deployInstance } from "../cli/deploy";
@@ -17,7 +16,7 @@ import type { Fetch } from "../pipeline/cloudflare-api";
 import type { Seen } from "../own/flow";
 import type { Answers } from "../own/plan";
 import { firstRows, pagesOf, SETUP_COMMIT, sso, stackOf, varsOf } from "../own/plan";
-import { DIR, loadSecrets, type Setup } from "../own/store";
+import { DIR, githubIdOf, loadSecrets } from "../own/store";
 import { type Aws, awsCli, whoAmI, type Where } from "./cli";
 import { provisionScript, putPrograms, onMachine, untilReachable } from "./machine";
 import {
@@ -38,8 +37,6 @@ export const whereOf = (a: Answers): Where => ({
   profile: a.profile && a.profile != "default" ? a.profile : undefined,
   region: a.region || "us-east-1",
 });
-
-const hash = (path: string) => (existsSync(path) ? createHash("sha256").update(readFileSync(path)).digest("hex") : null);
 
 /** The templates of the instance's stack: the certificates' (CloudFront in front), then the main one. */
 const templatesOf = (dir: string, a: Answers) => {
@@ -108,8 +105,7 @@ function profiles(): Seen["choices"] {
 }
 
 /** What the flow decides from, on AWS: the profiles, the login, the zones, the stack and the server. */
-export async function observeAws(dir: string, setup: Setup, seen: Seen, net: Fetch): Promise<Seen> {
-  const a = setup.flow.answers;
+export async function observeAws(dir: string, a: Answers, seen: Seen, net: Fetch): Promise<Seen> {
   seen.choices = profiles();
   if (!a.profile) return seen;
   seen.region = configured("region", a.profile);
@@ -132,7 +128,6 @@ export async function observeAws(dir: string, setup: Setup, seen: Seen, net: Fet
     status: st.status,
     outputs: st.outputs,
     resources: files.flatMap(resourcesOf),
-    applied: files.every((f) => setup.applied[f] && setup.applied[f] == hash(f)),
   };
   const params = await aws<{ Parameters: { Name: string }[] }>("ssm", "get-parameters-by-path", "--path", paramPath(name)).catch(
     () => null
@@ -140,8 +135,8 @@ export async function observeAws(dir: string, setup: Setup, seen: Seen, net: Fet
   seen.held = (params?.Parameters ?? []).map((p) => p.Name.split("/").at(-1)!);
   seen.app = sso(a)
     ? await secretThere(aws, oidcSecretName(name))
-    : !!setup.github && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
-  if (st.outputs.Machine) seen.live = await (await import("../own/facts")).liveOf(net, a, setup.github?.clientId);
+    : !!githubIdOf(a.host, dir) && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
+  if (st.outputs.Machine) seen.live = await (await import("../own/facts")).liveOf(net, a, githubIdOf(a.host, dir));
   return seen;
 }
 
@@ -163,7 +158,7 @@ const secretThere = (aws: Aws, name: string) =>
   );
 
 /**
- * The client secret of the company's sign-in, from the setup page into Secrets Manager, where the stack reads it by
+ * The client secret of the company's sign-in, from setup's page into Secrets Manager, where the stack reads it by
  * its name. It goes through a file of this user's only, never a command line, and the file goes at once.
  */
 export async function putOidcSecret(a: Answers, value: string, dir = DIR) {
@@ -187,22 +182,21 @@ export const writePlan = async (dir: string, a: Answers) => writeTemplates(dir, 
 
 /**
  * The stacks, after the person's yes: each change set, shown in the log and applied. The certificates' stack comes
- * first (the main one takes their ARNs). `applied` gets each template's hash. The result: the main stack's outputs.
+ * first (the main one takes their ARNs). The result: the main stack's outputs.
  */
-export async function applyStacks(dir: string, a: Answers, applied: Record<string, string>, log: (l: string) => void) {
+export async function applyStacks(dir: string, a: Answers, log: (l: string) => void) {
   const stack = stackOf(a);
   const where = whereOf(a);
   const params: Record<string, string> = {};
   if (sso(a) && !(await secretThere(awsCli(where), oidcSecretName(stack))))
     throw new Error(
-      `The sign-in's client secret isn't in Secrets Manager (${where.region}) as ${oidcSecretName(stack)}: the setup page puts it there.`
+      `The sign-in's client secret isn't in Secrets Manager (${where.region}) as ${oidcSecretName(stack)}: setup's page puts it there.`
     );
   const apply = async (w: Where, name: string, file: string, title: string) => {
     log(`${title}...`);
     const plan = await planStack(w, name, file, params);
     for (const l of changeLines(plan)) log(`  ${l}`);
     const st = await applyStack(plan, log);
-    applied[file] = hash(file)!;
     log(`${title}: done`);
     return st;
   };
