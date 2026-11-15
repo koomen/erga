@@ -60,7 +60,7 @@ import { History } from "./history.ts";
 import { expiryOf, expiryStep, type ExpiryEffect, type ExpiryEvent } from "./expiry.ts";
 import { openRoom, type Opened } from "./open.ts";
 import { next, type Phase, type PhaseEvent } from "./phase.ts";
-import { isArrival, isText, isUpload, Uploads, type Published } from "./uploads.ts";
+import { isArrival, isText, isUpload, Uploads, type Written } from "./uploads.ts";
 
 /**
  * What a document is: its id, who made it, which file is its page, whether
@@ -87,8 +87,7 @@ export interface OnDisk { path: string; slug: string; only?: boolean }
 /**
  * What a document asks the directory (server/directory/, the Directory
  * itself): its row (made, edited, its kind and expiry, gone), its name, its
- * permissions and the rule that decides them, which document is the homepage,
- * and the settings it reads.
+ * permissions and the rule that decides them, and the settings it reads.
  */
 export interface DocumentDirectory extends NamesDirectory {
   add(row: {
@@ -116,7 +115,6 @@ export interface DocumentDirectory extends NamesDirectory {
     permissions: readonly { login: string; role: Role }[]
   ): Promise<Role | null>;
   permissions(id: string): Promise<{ login: string; role: Role }[]>;
-  homeId(): Promise<string | null>;
   /** What people did each day (server/directory/activity.ts): a version's edits, by each author. */
   activity: { add(login: string | null, counts: { edit?: number; "in:server"?: number; "out:server"?: number }): Promise<void> };
   /** The settings it reads: delete_docs_after_hours (null: never), and the limits max_file_mb and max_project_gb (numbers). */
@@ -139,8 +137,8 @@ export interface DocumentDeps {
   tabs: { count(): number; closeAll(code: number, reason: string): void; attach?(opened: Opened): void; detach?(): void };
   /** Each person's agent here (agents/document/session.ts `documentAgents`): its settings, their conversation's store, and the server tools they may use. */
   agents: DocumentAgents;
-  /** The homepage forgets a deleted document; and its next deploy is scheduled when the homepage has a new version. */
-  home: { forget: (docId: string) => Promise<void> };
+  /** Each domain forgets a deleted document: its link and its published version go. */
+  sites: { forget: (docId: string) => Promise<void> };
   /** Local development: this document's storage with its files on disk (document/disk.ts), for a document that is one. */
   disk?: { storage: (only: string | null) => Storage };
   /**
@@ -151,7 +149,7 @@ export interface DocumentDeps {
    * sleep while tabs stay connected (never, if unset).
    */
   timing: { idleMs: number; maxMs: number; writeDelay?: number; fileDelay?: number; closeIdleMs?: number };
-  /** Work that outlives the request (a version's description, telling the homepage). */
+  /** Work that outlives the request (a version's description). */
   background: (work: Promise<unknown>) => void;
   log: (line: string) => void;
   /** What a new page starts from (the new-document template's page); a plain one if not given. */
@@ -206,7 +204,7 @@ export class Document {
       info: () => this.readInfo(),
       updateInfo: (change) => this.updateInfo(change),
       activity: () => this.activity(),
-      publish: (files, remove, by) => this.uploads.publish(files, remove, by),
+      write: (files, remove, by) => this.uploads.write(files, remove, by),
     });
     this.uploads = new Uploads({
       deps,
@@ -605,8 +603,8 @@ export class Document {
       await this.storage.deleteAll();
     });
     await this.directory.remove(info.id);
-    // If it was the homepage, its snapshot goes too (the next / makes another).
-    await this.deps.home.forget(info.id).catch((e) => this.deps.log(`couldn't tell the homepage: ${e}`));
+    // If it was published, its domain serves nothing from now on.
+    await this.deps.sites.forget(info.id).catch((e) => this.deps.log(`couldn't tell the domains: ${e}`));
   }
 
   /**
@@ -637,7 +635,7 @@ export class Document {
     return name;
   }
 
-  /** A message for everyone who has the document open (the homepage's deploy status). Opens nothing. */
+  /** A message for everyone who has the document open (its publishing state). Opens nothing. */
   notify(msg: unknown): void {
     this.opened?.broadcast(msg);
   }
@@ -942,7 +940,7 @@ export class Document {
 
   /**
    * A document's page for a viewer (the app's viewer, server/documents/view.ts), in one call: what `who` may do
-   * (`anyone`: the homepage, which everyone may view), which file the address `page` is (its path under the
+   * (`anyone`: one everyone may view), which file the address `page` is (its path under the
    * document's; "" its own page) in what viewers see (view.ts), that version, and the document's name (the page itself comes
    * from the document's pages origin: server/documents/pages-origin.ts). Null if there's no such document.
    */
@@ -977,9 +975,9 @@ export class Document {
 
   // ---------------------------------------------------------------- versions (history.ts), and files arriving whole (uploads.ts)
 
-  /** Files arriving whole, from the server's API (Uploads.publish): says what it did with each. */
-  publish(...args: Parameters<Uploads["publish"]>): Effect.Effect<Published, StoreError | NoSuchDocument> {
-    return this.uploads.publish(...args);
+  /** Files arriving whole, from the server's API (Uploads.write): says what it did with each. */
+  write(...args: Parameters<Uploads["write"]>): Effect.Effect<Written, StoreError | NoSuchDocument> {
+    return this.uploads.write(...args);
   }
 
   /** Its versions, newest first, and the current one (History.versionsState). Null if there's no such document. */
@@ -1002,7 +1000,7 @@ export class Document {
     return this.history.restore(ref, by, path);
   }
 
-  /** The document as it is now (up to the keystroke), with its current version: what the homepage and its site deploy. */
+  /** The document as it is now (up to the keystroke), with its current version: what a publish puts on its domain. */
   currentFiles(): Effect.Effect<{ version: Version; index: string; files: Map<string, Uint8Array> } | null, StoreError> {
     return this.history.currentFiles();
   }

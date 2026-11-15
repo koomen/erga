@@ -70,7 +70,8 @@ const VERBS: Record<string, [string, string]> = {
   set_access: ["Changing the access rules:", "Changed the access rules:"],
   sign_in: ["Reading how people sign in", "Read how people sign in"],
   set_sign_in: ["Changing sign-in:", "Changed sign-in:"],
-  deploy_homepage: ["Deploying the homepage", "Deployed the homepage"],
+  set_publishing: ["Changing the document's domain", "Changed the document's domain"],
+  publish_document: ["Publishing the document", "Published the document"],
 };
 
 /** The document the page has open, if any: the document tools' own when the agent names none. */

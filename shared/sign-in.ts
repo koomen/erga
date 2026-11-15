@@ -60,7 +60,7 @@ export interface SignInChoice {
   label: string;
 }
 
-/** The buttons, each to the provider's sign-in and back to `next`; `base`: where Erga's paths are ("/_erga" on the homepage's own domain). */
+/** The buttons, each to the provider's sign-in and back to `next`; `base`: where Erga's paths are ("/_erga" on a custom domain). */
 export const providerButtons = (choices: SignInChoice[], next: string, base = "") =>
   choices
     .map(

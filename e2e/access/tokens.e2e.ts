@@ -11,7 +11,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Route } from "playwright-core";
 import { agentClosed, expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
-import { getter, mint, publish, signIn, soon, tool, unique } from "./access";
+import { getter, mint, signIn, soon, tool, unique, upload } from "./access";
 
 const [s, own] = await Promise.all([servers.main(), servers.of("tokens", { env: { ERGA_SNAPSHOT_FROM: "https://primary.example.com" } })]);
 
@@ -114,7 +114,7 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
     page = tab.page;
     tab.strict = true;
     await agentClosed(page);
-    const made = await publish(root, await mint(root, null, { label: "Docs", scope: "documents" }), "Scoped one");
+    const made = await upload(root, await mint(root, null, { label: "Docs", scope: "documents" }), "Scoped one");
     const post = (path: string, body: object) =>
       fetch(`${root}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const asked = (await (
@@ -360,8 +360,8 @@ journey("on a staging server with no agent key: a token's reach, the agent's pan
 
   // A token of a smaller scope once reached nothing at all on staging, where only admins come in.
   test("on staging an admin's document token reads and edits its document (API, MCP, its routes), and nothing else", async () => {
-    const one = await publish(root, await mint(root, null, { label: "Docs", scope: "documents" }), "Staging one"),
-      two = await publish(root, await mint(root, null, { label: "Docs 2", scope: "documents" }), "Staging two");
+    const one = await upload(root, await mint(root, null, { label: "Docs", scope: "documents" }), "Staging one"),
+      two = await upload(root, await mint(root, null, { label: "Docs 2", scope: "documents" }), "Staging two");
     expect(one.id && two.id).toBeTruthy();
     const token = await mint(root, null, { label: "One", scope: "document", doc: one.id });
 
@@ -417,7 +417,7 @@ journey("on a staging server with no agent key: a token's reach, the agent's pan
       ["POST", "/tokens/new"],
       ["GET", "/documents"],
       ["GET", "/new"],
-      ["POST", "/api/tools/deploy_homepage"],
+      ["POST", "/api/tools/publish_document"],
       ["GET", one.address],
     ] as const;
     const answers = await Promise.all(

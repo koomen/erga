@@ -2,8 +2,8 @@
 // of the site's own has it, the editor has its own, a document's files have none. The whole app, in memory.
 
 import { expect, test } from "bun:test";
-import type { LivePage } from "../server/home/snapshot.ts";
 import { server, signedOut, type Server } from "./helpers/app";
+import { until } from "./helpers/until";
 
 /** The dev login signs in with a pretend GitHub account, so it has GitHub's picture, by its id: that picture. */
 async function githubPicture(s: Server): Promise<string> {
@@ -42,32 +42,14 @@ test("the editor's page has the corner, and the links for its own menu, Admin am
   expect(JSON.parse(/name="erga-account" content="([^"]+)"/.exec(html)![1].replaceAll("&quot;", '"')).admin).toBe("/admin");
 });
 
-test("a document's own files, and the homepage's document on its pages origin, have no corner", async () => {
+test("a document's own files have no corner; a published page has one, in its controls", async () => {
   const s = server();
   const { id } = await newDoc(s);
   expect(await (await s.fetch(`/d/${id}/doc/index.html`)).text()).not.toContain("data-erga-account");
-  // The homepage, which the deploy makes (signed out: someone signed in goes to /documents). Until its first deploy is done it
-  // is the viewer, whose frame is the page on its pages origin.
+  // The default homepage, which the deploy makes and publishes (signed out: someone signed in goes to /documents): the
+  // page itself, served from its publish, whose one corner is in its controls.
   await s.fetch("/api/deploys/home", { method: "POST" });
-  const viewer = await (await s.fetch("/", { headers: signedOut() })).text();
-  expect(viewer).toContain('<iframe id="frame" class="erga-view"');
-  const pages = /name="erga-pages" content="([^"]+)"/.exec(viewer)![1];
-  const framed = await s.fetch(`${pages}index.html`, { headers: { "Sec-Fetch-Dest": "iframe" } });
-  expect(framed.status).toBe(200);
-  expect(await framed.text()).not.toContain("data-erga-account");
-  // Then it is the page itself, served from the deploy, whose one corner is in its controls.
-  const page: LivePage = {
-    gen: "g1",
-    docId: /name="erga-doc" content="([^"]+)"/.exec(viewer)![1],
-    address: "/_home",
-    before: "<!doctype html><html><head><title>Erga</title></head><body><h1>Erga</h1>",
-    after: "</body></html>",
-    files: ["index.html"],
-    site: { bars: true, redirects: [] },
-    at: 1,
-    version: 1,
-  };
-  s.platform.home.page = async () => ({ same: false, page });
+  await until(async () => (await s.platform.site("").status()).state == "published");
   const front = await (await s.fetch("/", { headers: signedOut() })).text();
   expect(front).toContain("<h1>Erga</h1>");
   const at = front.indexOf("<erga-controls");
@@ -83,8 +65,10 @@ test("someone who isn't an admin has no Admin, and a local tab's ?user= stays on
   expect(html).not.toContain('href="/admin');
 });
 
-test("signed out, /documents asks you to sign in first, and the homepage's corner offers it", async () => {
+test("signed out, /documents asks you to sign in first, and the published page's corner offers it", async () => {
   const s = server();
+  await s.fetch("/api/deploys/home", { method: "POST" });
+  await until(async () => (await s.platform.site("").status()).state == "published");
   const out = await s.fetch("/auth/logout", { method: "POST", headers: { Origin: s.root } });
   const cookie = out.headers
     .getSetCookie()

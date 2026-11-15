@@ -15,6 +15,7 @@ import { directoryOf, factoryKey, tokensOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
 import { githubIssues } from "../server/feedback";
+import { ERGA } from "../server/sites/index.ts";
 import { agentSettingsFrom } from "../agents/models";
 import { documentOf } from "./objects/document-stub";
 import { blobsOf } from "./blobs";
@@ -57,8 +58,8 @@ const SETTINGS = Config.all({
   origins: Config.all({ github: origin("ERGA_GITHUB_ORIGIN"), google: origin("ERGA_GOOGLE_ORIGIN") }),
   /** The proxy mode's proxy (server/identity/proxy.ts); any value: this server's sign-in is the proxy's. */
   proxy: text("PROXY_SIGN_IN"),
-  /** How often the served homepage looks for a newer deploy (ms); not a number: 0, every request. */
-  homeRecheckMs: text("ERGA_HOME_RECHECK_MS").pipe(Config.map((v) => (v ? Number(v) || 0 : 5000))),
+  /** How often a served site looks for a newer publish (ms); not a number: 0, every request. */
+  siteRecheckMs: text("ERGA_SITE_RECHECK_MS").pipe(Config.map((v) => (v ? Number(v) || 0 : 5000))),
 });
 
 /** The Worker's settings, read from its bindings. */
@@ -71,11 +72,14 @@ export const signInOfEnv = (env: Env): SignIn => {
   return signInOf({ proxy: s.proxy, apps: s.apps, origins: { github: standIn(s.origins.github), google: standIn(s.origins.google) } });
 };
 
-/** The homepage's own domain in the deploy facts, or null. */
-const homeOf = (facts: unknown): string | null => {
-  const home = facts && typeof facts == "object" ? (facts as { home?: unknown }).home : null;
-  return typeof home == "string" && home ? home.toLowerCase() : null;
+/** The custom domains in the deploy facts (`bun erga deploy <host> --domain <domain>`). */
+const domainsOf = (facts: unknown): string[] => {
+  const domains = facts && typeof facts == "object" ? (facts as { domains?: unknown }).domains : null;
+  return Array.isArray(domains) ? domains.filter((d): d is string => typeof d == "string" && !!d).map((d) => d.toLowerCase()) : [];
 };
+
+/** A domain's site object (objects/site.ts: the Erga domain's is named "home"). */
+export const siteOf = (env: Pick<Env, "HOME">, domain: string) => env.HOME.getByName(domain == ERGA ? "home" : domain);
 
 /** The app's host in the deploy facts (deploy/pipeline/account.ts, deployFacts: its domain, or its workers.dev address), or null. */
 const appOf = (facts: unknown): string | null => {
@@ -90,7 +94,7 @@ const appOf = (facts: unknown): string | null => {
   return null;
 };
 
-/** The landing project's files. They are large (its fonts), and only the making of the homepage needs them: they load then. */
+/** The landing project's files. They are large (its fonts), and only the making of the default homepage needs them: they load then. */
 const LANDING: NonNullable<Platform["landing"]> = { files: () => import("./landing-files.ts").then((m) => m.LANDING) };
 
 /** The edge's cache: the Cache API, where the runtime has one, or the KV namespace a host binds in its place (kv-cache.ts). */
@@ -136,12 +140,12 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       version: settings.version || null,
       facts: settings.deployFacts,
       primary: settings.snapshotFrom || null,
-      home: homeOf(settings.deployFacts),
+      domains: domainsOf(settings.deployFacts),
       app: appOf(settings.deployFacts),
     },
     signIn: { ...signInOfEnv(env), devLogin: settings.devLogin || null, encryptionKey: factoryKey(env) },
     own: { get: (k) => own().get(k), put: (k, v) => own().put(k, v), delete: (k) => own().delete(k) },
-    home: env.HOME.getByName("home"),
+    site: (domain) => siteOf(env, domain),
     news: env.NEWS.getByName("news"),
     personAgent: (login: string) => env.AGENTS.getByName(login),
     ...(issues ? { issues } : {}),
@@ -149,12 +153,12 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     edge: {
       cache: edgeCache(env),
       background: (work) => { if (ctx) ctx.waitUntil(work); else work.catch(() => {}); },
-      homeRecheckMs: settings.homeRecheckMs,
+      siteRecheckMs: settings.siteRecheckMs,
     },
     docs: {
       create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),
       keep: (doc) => counted("doc", () => host(doc).keep()),
-      publish: (doc, files, remove, by, writer) => counted("doc", () => host(doc).publish(files, remove, by, writer)),
+      write: (doc, files, remove, by, writer) => counted("doc", () => host(doc).write(files, remove, by, writer)),
       paths: (doc) => counted("doc", () => host(doc).paths()),
       index: (doc) => counted("doc", () => host(doc).index()),
       snapshot: (doc) => counted("doc", () => host(doc).snapshot()),

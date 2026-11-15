@@ -4,10 +4,8 @@
 // who's signed in, the templates, the directory of documents (server/directory/,
 // in D1) and the documents themselves (Durable Objects).
 //
-//   /                          the homepage: the viewer on the landing document (a setting), for anyone
 //   /new                       a blank document for you, in the editor (signs you in first); /new?template=<id> one from
-//                              a template; /new?from=landing a copy
-//                              of the homepage's, /new?from=<id> of another you may open (the viewer's Clone)
+//                              a template; /new?from=<id> a copy of a document you may open (the viewer's Clone)
 //   /documents                      your documents, latest edit first (archive, delete and share are operations: POST /api/tools/<name>)
 //   /documents/archived             the documents you archived, the same rows (unarchive is an operation too)
 //   /admin                     the server's analytics, settings and users, for admins (each change an operation: POST /api/tools/<name>)
@@ -16,7 +14,7 @@
 //                              Clone, and Edit for those who may edit it
 //   /<owner>/<slug>?edit       the editor on it, under Documents (its breadcrumbs): the same page, which
 //                              goes into the editor (the pencil goes there and back without a reload)
-//   /_home[/<page>]            the homepage project (nobody's: document/names.ts), as /<owner>/<slug>[/<page>] above
+//   /_home[/<page>]            the default homepage (nobody's: document/names.ts), as /<owner>/<slug>[/<page>] above
 //   /<owner>/<slug>/<page>     another of its pages (document/pages.ts: blog is blog.html, else blog/index.html), ?edit
 //                              for its editor; never with a slash added at the end
 //   /<owner>/<id>, /<owner>/<old slug>, /d/<id> (and pages under them)
@@ -52,10 +50,9 @@ import { type Platform, type Session, whoOf } from "../platform.ts";
 import { HOME_OWNER, HOME_SLUG } from "../../document/names.ts";
 import { NO_WAIT } from "../../document/waits.ts";
 import { newDoc, scratchDoc } from "./make.ts";
-import { adoptLanding } from "./landing.ts";
 import { pagesOrigin, pagesRoutes, pagesHost } from "./pages-origin.ts";
 import { editKey, type KeyPerson, keyWho, readEditKey } from "./edit-key.ts";
-import { locating, viewAddress, viewLanding, viewPublic } from "./view.ts";
+import { locating, viewAddress, viewPublic } from "./view.ts";
 import { documentsPage, notFound, OWN_ACCOUNT, page, signInFirst } from "../pages/index.ts";
 import { call, ctx, fromWeb, html, json, plainJson, text, type Route as HttpRoute } from "../http.ts";
 import { routeAt, routeFor, SECRET, type RouteRow } from "../../shared/routes.ts";
@@ -66,15 +63,12 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   const path = url.pathname;
   const pages = pagesHost(url, platform);
   if (pages) return yield* pagesRoutes(pages);
-  if (path == "/") return yield* viewLanding;
   const list = routeAt(PAGES, path);
   if (list) return yield* list.run;
   if (isAdminPath(path)) return yield* adminRoutes;
 
-  // The homepage project's address, /_home[/<page>], is its row's /<HOME_OWNER>/<HOME_SLUG> (document/names.ts).
+  // The default homepage's address, /_home[/<page>], is its row's /<HOME_OWNER>/<HOME_SLUG> (document/names.ts).
   const home = /^\/_home(\/.*)?$/.exec(path);
-  // The deploy makes it, or the homepage from before becomes it (landing.ts).
-  if (home) yield* call(() => adoptLanding(platform));
   const routed = home ? `/${HOME_OWNER}/${HOME_SLUG}${home[1] ?? ""}` : path;
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(routed) ?? [];
   const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
@@ -242,7 +236,7 @@ export const PAGES: readonly RouteRow<HttpRoute>[] = [
     domain: "document",
     tool: "list_documents",
   },
-  // In the editor (signs you in first); ?template=<id> one from a template; ?from=landing a copy of the homepage's,
+  // In the editor (signs you in first); ?template=<id> one from a template; ?from=<id> a copy of a document,
   // ?from=<id> of another you may open (the viewer's Clone).
   {
     method: "GET",
@@ -363,11 +357,11 @@ export async function keyedPerson(platform: Platform, request: Request, url: URL
   return doc ? readEditKey(platform.secret, key, doc.owner, doc.id) : null;
 }
 
-/** The pages documentRoutes answers by name, whatever the homepage has. */
+/** The pages documentRoutes answers by name, whatever the Erga domain's published site has. */
 const ERGA_PAGES = /^\/(new|scratch|documents|admin|_home|d)(\/|$)/;
 
 /**
- * Whether an address is Erga's, not the homepage site's (Erga's paths win, server/home/site.ts): one of the pages
+ * Whether an address is Erga's, not the published site's (Erga's paths win, server/sites/addresses.ts): one of the pages
  * above, or a document's address that has a document. `notFound`: what documentRoutes says of it is "There's nothing
  * here", which the site's own 404 page may say instead.
  */

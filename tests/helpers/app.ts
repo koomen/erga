@@ -8,9 +8,9 @@
 // by origin and address for a few seconds (who may see what: server/documents/view.ts). Give two servers' people
 // different logins (`person` does).
 //
-// What it leaves out, because nothing here runs it: the news hub's sockets, the homepage's deploys (/ shows the viewer
-// on the homepage project), each person's agent, comments, and the routes that live outside the app (the deploys', the
-// dev server's).
+// What it leaves out, because nothing here runs it: the news hub's sockets, each person's agent, comments, and the
+// routes that live outside the app (the deploys', the dev server's). Each domain's publishing is the real one
+// (server/sites/publishing.ts), on fake storage (helpers/sites.ts); `domains`: the server's custom domains.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -30,6 +30,7 @@ import { useAssets } from "../../server/pages/index.ts";
 import type { Platform } from "../../server/platform";
 import type { AssetManifest } from "../../shared/assets.ts";
 import { memory } from "./memory-sql";
+import { memorySite, type MemorySite } from "./sites";
 import { promised, type Promised } from "./promised";
 import { testSandbox } from "./sandbox";
 
@@ -73,7 +74,7 @@ export const MANIFEST: AssetManifest = {
   },
 };
 
-/** The homepage project's files (assets/landing/ is large: its fonts), small. */
+/** The default homepage's files (assets/landing/ is large: its fonts), small. */
 const LANDING = { "index.html": "<!doctype html><html><head><title>Erga</title></head><body><h1>Erga</h1></body></html>" };
 
 export const ROOT = "http://localhost";
@@ -83,6 +84,8 @@ export interface ServerOptions {
   staging?: boolean;
   /** The documents' timers (the versions' pause, the write delay): short unless said. */
   timing?: DocumentDeps["timing"];
+  /** The server's custom domains (the deploy's --domain). */
+  domains?: string[];
 }
 
 /** A server in memory: `fetch` is its answer to a request (redirects not followed, as the old tests' `getter`). */
@@ -118,7 +121,7 @@ export function server(o: ServerOptions = {}) {
           directory: dir,
           tabs: { count: () => 0, closeAll: () => {} },
           agents: documentAgents({ settings: async () => ({ missing: "no key in the tests" }), sandbox: testSandbox }),
-          home: { forget: async () => {} },
+          sites: { forget: async (id) => void (await Promise.all([...sites.values()].map((s) => s.site.forget(id)))) },
           timing: o.timing ?? { idleMs: 40, maxMs: 400, writeDelay: 10 },
           background: (work) => void work.catch(() => {}),
           log: (line) => log.push(line),
@@ -136,6 +139,23 @@ export function server(o: ServerOptions = {}) {
     return Effect.runPromise(d.hold(work(d)));
   };
   const own = new Map<string, unknown>();
+  /** Each domain's publishing, made the first time it is asked for (a Durable Object named by the domain). */
+  const sites = new Map<string, MemorySite>();
+  const site = (domain: string) => {
+    let made = sites.get(domain);
+    if (!made) {
+      made = memorySite({
+        auto: true,
+        document: (id) => dir.get(id),
+        current: async (id) => {
+          const now = await Effect.runPromise(host({ id }).self.hold(host({ id }).self.currentFiles()));
+          return now && { index: now.index, files: Object.fromEntries(now.files), version: now.version.n };
+        },
+      });
+      sites.set(domain, made);
+    }
+    return made.site;
+  };
   const p: Platform = {
     directory: dir,
     sessionOf: (request) => sessionOf(p, request),
@@ -149,7 +169,7 @@ export function server(o: ServerOptions = {}) {
     secret: "session-secret",
     adminsOnly: !!o.staging,
     tokens: new Tokens(sql, "session-secret", dir),
-    deploy: { version: null, facts: null, primary: o.staging ? "https://primary.example.com" : null, home: null, app: null },
+    deploy: { version: null, facts: null, primary: o.staging ? "https://primary.example.com" : null, domains: o.domains ?? [], app: null },
     signIn: {
       mode: "oauth",
       apps: { github: { clientId: "", secret: "" }, google: { clientId: "", secret: "" } },
@@ -158,26 +178,17 @@ export function server(o: ServerOptions = {}) {
       encryptionKey: "local:secret",
     },
     own: { get: async (k) => own.get(k) as never, put: async (k, v) => void own.set(k, v), delete: async (k) => void own.delete(k) },
-    // The homepage has no deploy: / is the viewer on the homepage project.
-    home: {
-      status: async () => ({ state: "none" }) as never,
-      deploy: async () => ({ state: "none" }) as never,
-      homeChanged: async () => ({ state: "none" }) as never,
-      ensure: async () => {},
-      forget: async () => {},
-      page: async () => null,
-      file: async () => null,
-    },
+    site,
     news: { fetch: async () => new Response("No news in the tests", { status: 404 }) },
     personAgent: () => {
       throw new Error("no person's agent in the tests' server");
     },
     agentSettings: async () => ({ missing: "no key in the tests" }),
-    edge: { cache: null, background: (work) => void work.catch(() => {}), homeRecheckMs: 0 },
+    edge: { cache: null, background: (work) => void work.catch(() => {}), siteRecheckMs: 0 },
     docs: {
       create: (doc, files, index, opts) => host(doc).create(doc.owner, doc.id, files, index, opts),
       keep: (doc) => host(doc).keep(),
-      publish: (doc, files, remove, by, writer) => host(doc).publish(files, remove, by, writer),
+      write: (doc, files, remove, by, writer) => host(doc).write(files, remove, by, writer),
       paths: (doc) => hold(doc, (d) => d.paths()),
       index: (doc) => host(doc).index(),
       snapshot: (doc) => hold(doc, (d) => d.snapshot()),
@@ -225,7 +236,7 @@ export function server(o: ServerOptions = {}) {
   const route = app(() => Effect.succeed(null));
   /** The app's answer to a request, at a path of this server or a whole address (a document's pages origin). */
   const fetch = (at: string, init: RequestInit = {}) => respond(route, new Request(at.startsWith("/") ? ROOT + at : at, init), p);
-  return { root: ROOT, platform: p, dir, sql, hosts, host, blobs, log, fetch };
+  return { root: ROOT, platform: p, dir, sql, hosts, host, blobs, log, fetch, sites };
 }
 export type Server = ReturnType<typeof server>;
 

@@ -27,7 +27,7 @@ export function docRow(session: Session, d: Listed, now: number, hours: number |
   const mine = d.role == "owner";
   const note =
     d.owner == HOME_OWNER
-      ? `<span class="note" title="This site's homepage, at /: every admin may edit it">Homepage</span>`
+      ? `<span class="note" title="The default homepage (/_home): every admin may edit it">Homepage</span>`
       : !mine
         ? `<span class="note" title="Shared with you by ${esc(d.owner)}">${esc(d.owner)} · ${d.role == "editor" ? "can edit" : d.role == "commenter" ? "can comment" : "view only"}</span>`
         : d.path != null
@@ -42,7 +42,7 @@ export function docRow(session: Session, d: Listed, now: number, hours: number |
   // before kinds that hasn't opened since has it, as before).
   const twist = d.kind == "document" ? `<span class="twist none" aria-hidden="true"></span>`
       : `<button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="${esc(addressOf(d))}" data-title="${esc(d.title)}"${d.role == "owner" || d.role == "editor" ? " data-edit" : ""}>${ICON.chevron}</button>`;
-  // Archive (Unarchive on /documents/archived): each person's own, on their permission; the homepage has none of theirs.
+  // Archive (Unarchive on /documents/archived): each person's own, on their permission; the default homepage has none of theirs.
   const [op, tip] = archived ? ["unarchive_document", "Unarchive"] : ["archive_document", "Archive"];
   const archive =
     d.owner == HOME_OWNER

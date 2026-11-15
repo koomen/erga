@@ -76,7 +76,7 @@ export const ROUTES: readonly RouteRow<Run>[] = [
   {
     method: "GET",
     path: "/admin/settings",
-    run: (a) => settingsPage(a.platform, a.session),
+    run: (a) => settingsPage(a.platform, a.session, a.url.origin),
     action: "Read the settings and pages' model use today (Settings)",
     domain: "admin",
     tool: "settings",

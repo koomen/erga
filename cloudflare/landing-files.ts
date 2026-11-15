@@ -1,12 +1,12 @@
 /// <reference types="vite/client" />
 // The repo's landing project (assets/landing/), as the Worker carries it. A module of its own, which the platform
-// loads when the deploy's step makes the homepage project (cloudflare/platform.ts): the Worker starts without it.
+// loads when the deploy's step makes the default homepage (cloudflare/platform.ts): the Worker starts without it.
 
 import * as Base64 from "effect/encoding/Base64";
 import * as Result from "effect/Result";
 
 /**
- * The repo's landing project, which the deploy makes the homepage
+ * The repo's landing project, which the deploy makes the default homepage
  * project from: its text files as they are, and its fonts
  * and images as bytes (Vite inlines them as data: URLs, decoded here).
  */

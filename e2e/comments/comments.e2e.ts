@@ -1,7 +1,7 @@
 // Comments on a document: a person comments on a selection in the editor (the box, reply, resolve, undo, edit, a
 // phone's sheet), asks their agent with @erga, and a person who "Can comment" comments from the viewer and can change
 // no text. The page shows a comment's highlight as "{...}" in the visible snapshot: a CSS highlight, never in its HTML.
-import { expect, journey, servers, test, until } from "../helpers/fixtures";
+import { agentClosed, expect, journey, servers, test, until } from "../helpers/fixtures";
 import { editor, openEditor, type Editor } from "../helpers/editor";
 import { newToken } from "../helpers/new-token";
 import { clickOn } from "../helpers/press";
@@ -278,6 +278,8 @@ journey("comments in the viewer", () => {
     tab.strict = true;
     // A page with comments asks for a key to them as it starts (client/inline/viewer-comment.ts).
     page.on("request", (r) => void (r.url().includes("/api/key") && keys.push(r.url())));
+    // (Someone signed in has their agent in the viewer: its pane stays closed here, so the comments have their room.)
+    await agentClosed(page);
     await page.goto(`${address}?user=${ada}`);
     await page.locator("#frame").waitFor();
     await page.waitForLoadState("load");

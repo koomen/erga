@@ -25,7 +25,7 @@ name or domain: each instance takes its names from its name in setup, and the AW
 | Part of Erga | On Cloudflare | On AWS |
 | --- | --- | --- |
 | The Worker (`cloudflare/index.ts`) | Workers | celld, on one EC2 machine (t4g.small) in a private subnet |
-| Each document, the homepage, each user's agent, the news hub | Durable Objects | celld cells: SQLite on the machine's disk, copied to S3 |
+| Each document, each domain's published site, each user's agent, the news hub | Durable Objects | celld cells: SQLite on the machine's disk, copied to S3 |
 | The database (users, settings, the directory) | D1 | celld's D1: a cell, copied to S3 |
 | Blobs (FILES) | R2 | celld's R2: the instance's bucket, under `fleet/r2/` |
 | The editor's files (ASSETS) | Static assets | celld's static assets: the bucket, cached on the disk |

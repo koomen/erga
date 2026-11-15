@@ -18,7 +18,7 @@
 //
 // An answer that has a policy of its own keeps it, with the frame rule added
 // if it lacks one: a document's own HTML here (its files at /d/<id>/..., in a
-// sandbox; the homepage and its files) is its authors' code, not the site's.
+// sandbox; a published site and its files) is its authors' code, not the site's.
 // A document's pages origin is apart: its pages say themselves which viewer
 // may frame them (pages-origin.ts), and their scripts are their authors'.
 

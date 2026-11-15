@@ -9,7 +9,7 @@
 // state becomes one snapshot in place of the log. A room opens from that
 // journal alone: the snapshot and the log after it, one read of storage.
 //
-// The files are a view of the room, written from it, so publishing, the CLI
+// The files are a view of the room, written from it, so an upload, the CLI
 // and git still see ordinary files. Over a journal they're written lazily
 // (each at most every `fileDelay`, 2 seconds, and all of them as the room
 // closes), and the journal names the files storage doesn't have yet, so a
@@ -528,7 +528,7 @@ export class Room {
   }
 
   /**
-   * Who the room's own edits in this turn of the queue are by (a publish's `by`: the files arriving whole), for the
+   * Who the room's own edits in this turn of the queue are by (an upload's `by`: the files arriving whole), for the
    * version; null: nobody named.
    */
   get by(): string | null {
@@ -536,7 +536,7 @@ export class Room {
   }
   private actor: string | null = null;
 
-  /** Runs `work` in one turn of the queue, its edits by `by`: one turn at a time, so two publishes never mix. */
+  /** Runs `work` in one turn of the queue, its edits by `by`: one turn at a time, so two uploads never mix. */
   private inTurn<A, E>(by: string | null, work: Effect.Effect<A, E>): Effect.Effect<A, E> {
     return Semaphore.withPermit(
       this.turn,
@@ -644,7 +644,7 @@ export class Room {
   }
 
   /**
-   * An edit that arrives as a whole file (a publish): written to storage
+   * An edit that arrives as a whole file (an upload): written to storage
    * and merged into the room in one turn of the queue. With `ifMatch` (an
    * etag from `etag`), it's refused if storage has moved on since, so a
    * file based on an old version can't undo newer edits.
@@ -818,7 +818,7 @@ export class Room {
   );
   }
 
-  /** Deletes one file (a publish that removes it); nothing if the room has no such file. */
+  /** Deletes one file (an upload that removes it); nothing if the room has no such file. */
   removeOne(path: string, by: string | null = null): Effect.Effect<boolean> {
     return this.inTurn(
       by,

@@ -245,14 +245,10 @@ test("server config: each change is a version, with who, when, and from what to 
   await config.set(ada, "agent_keys", "own");
   await config.reset(root, "delete_docs_after_hours");
   await config.reset(root, "delete_docs_after_hours"); // already the default: no version
-  // The server's own write (a claim) is recorded too, and only the one that wins.
-  expect(await config.claim("landing_document", null, "abcd1234", "Erga")).toBe(true);
-  expect(await config.claim("landing_document", null, "efgh5678", "erga")).toBe(false);
 
   const { versions, total } = await config.history(root);
-  expect(total).toBe(5);
+  expect(total).toBe(4);
   expect(versions.map((v) => [v.n, v.by, v.changes])).toEqual([
-    [5, "erga", [{ key: "landing_document", from: null, to: "abcd1234" }]],
     [4, "root", [{ key: "delete_docs_after_hours", from: null, to: 24, reset: true }]],
     [3, "ada", [{ key: "agent_keys", from: "server", to: "own" }]],
     [2, "ada", [{ key: "delete_docs_after_hours", from: 48, to: null }]],
@@ -260,12 +256,19 @@ test("server config: each change is a version, with who, when, and from what to 
   ]);
   for (const v of versions) expect(v.at).toBeGreaterThan(0);
   // Newest first, a page at a time.
-  expect((await config.history(root, { limit: 2 })).versions.map((v) => v.n)).toEqual([5, 4]);
+  expect((await config.history(root, { limit: 2 })).versions.map((v) => v.n)).toEqual([4, 3]);
   expect((await config.history(root, { before: 4, limit: 2 })).versions.map((v) => v.n)).toEqual([3, 2]);
   // Two saves at once (a switch saved twice): one version. Two different ones: each says truly what it changed.
   await Promise.all([config.set(root, "agent_keys", "server"), config.set(root, "agent_keys", "server")]);
-  await Promise.all([config.set(root, "delete_docs_after_hours", 12), config.set(ada, "delete_docs_after_hours", 36), config.reset(root, "delete_docs_after_hours")]);
-  const raced = (await config.history(root)).versions.filter((v) => v.n > 5).reverse().map((v) => v.changes[0]);
+  await Promise.all([
+    config.set(root, "delete_docs_after_hours", 12),
+    config.set(ada, "delete_docs_after_hours", 36),
+    config.reset(root, "delete_docs_after_hours"),
+  ]);
+  const raced = (await config.history(root)).versions
+    .filter((v) => v.n > 4)
+    .reverse()
+    .map((v) => v.changes[0]);
   expect(raced[0]).toEqual({ key: "agent_keys", from: "own", to: "server" });
   expect(raced.filter((c) => c.key == "agent_keys")).toHaveLength(1);
   const hours = raced.filter((c) => c.key == "delete_docs_after_hours");
@@ -349,35 +352,6 @@ test("server config: the deploy's values, from SERVER_CONFIG", () => {
   expect(() => parseDeployed('{"delete_docs_after_hours": "soon"}')).toThrow(/delete_docs_after_hours to "soon", but it must be a whole number/);
 });
 
-test("landing_document: an admin chooses any document or project on the server, by address, URL or id; kept by id", async () => {
-  const dir = fresh({ admins: ["ada", "root"] });
-  const one = (await dir.add(doc("aaaaaaaa", "Front page"))).doc;
-  await dir.add(doc("tttttttt", "Test", { test: true }));
-  expect(await dir.landing()).toBeNull();
-  const ada = { login: "ada", admin: true }, root = { login: "root", admin: true };
-  // Another admin's document: any admin may choose it. A missing one or a test one: no such document.
-  expect((await dir.config.set(root, "landing_document", `/ada/${one.slug}`)).value).toBe("aaaaaaaa");
-  await expect(dir.config.set(ada, "landing_document", "/ada/nothing-here")).rejects.toThrow(ConfigError);
-  await expect(dir.config.set(ada, "landing_document", "tttttttt")).rejects.toThrow(/no document/);
-  // A user's: still only if everyone who may edit it is an admin (homeBlocked), its owner too.
-  await dir.users.add(ada, "bo", { role: "user" });
-  const bos = (await dir.add(doc("bbbbbbbb", "Bo's page", { owner: "bo" }))).doc;
-  await expect(dir.config.set(root, "landing_document", bos.id)).rejects.toThrow(/Only admins may edit the homepage/);
-  // Not an admin: refused.
-  await expect(dir.config.set({ login: "bo" }, "landing_document", "aaaaaaaa")).rejects.toThrow(NotAllowed);
-  for (const ref of [`/ada/${one.slug}`, `https://erga.dev/ada/${one.slug}`, "/d/aaaaaaaa", "aaaaaaaa"]) {
-    expect((await dir.config.set(ada, "landing_document", ref)).value).toBe("aaaaaaaa");
-  }
-  expect((await dir.landing())?.id).toBe("aaaaaaaa");
-  // Empty is none.
-  expect((await dir.config.set(ada, "landing_document", "")).value).toBeNull();
-  expect(await dir.landing()).toBeNull();
-  // A deploy may lock it to an address; the document it names is the homepage.
-  const locked = fresh({ locked: { landing_document: "/ada/front-page" } }, memory());
-  await locked.add(doc("aaaaaaaa", "Front page"));
-  expect((await locked.landing())?.id).toBe("aaaaaaaa");
-});
-
 test("search: an admin finds any of the server's documents and projects by title, owner, address or id; nobody else may", async () => {
   const dir = fresh({ admins: ["ada"] });
   const ada = { login: "ada", admin: true };
@@ -410,41 +384,17 @@ test("search: an admin finds any of the server's documents and projects by title
   await expect(dir.lists.search({ login: "ada" }, "")).rejects.toThrow(NotAllowed);
 });
 
-test("the homepage: only admins may edit it while it is one", async () => {
-  const changed: string[] = [];
-  const dir = fresh({ admins: ["ada"], defaults: { public_sharing: true }, changed: async (key) => { changed.push(key); } });
-  const ada = { login: "ada", admin: true };
-  await dir.users.add(ada, "bo", { role: "user" });
-  await dir.users.add(ada, "cy", { role: "admin" });
-  const one = (await dir.add(doc("aaaaaaaa", "Front page"))).doc;
-  // Someone who isn't an admin may edit it: it can't be the homepage, and says why.
-  await dir.share(ada, one.id, "bo", "editor");
-  expect(await dir.homeBlocked(one.id)).toMatch(/bo may edit this document/);
-  await expect(dir.config.set(ada, "landing_document", one.id)).rejects.toThrow(/Only admins may edit the homepage/);
-  await dir.share(ada, one.id, "*", "editor");
-  await dir.share(ada, one.id, "bo", "viewer");
-  expect(await dir.homeBlocked(one.id)).toMatch(/anyone with the link may edit/);
-  await dir.share(ada, one.id, "*", null);
-  // Viewers and admin editors are fine.
-  await dir.share(ada, one.id, "cy", "editor");
-  expect(await dir.homeBlocked(one.id)).toBeNull();
-  await dir.config.set(ada, "landing_document", one.id);
-  expect(changed).toEqual(["landing_document"]);
-  expect(await dir.homeId()).toBe(one.id);
-  // While it's the homepage nobody else becomes its editor; a viewer still may.
-  await expect(dir.share(ada, one.id, "bo", "editor")).rejects.toThrow(/only admins may edit it/);
-  await expect(dir.share(ada, one.id, "*", "editor")).rejects.toThrow(/only admins may edit it/);
-  await dir.share(ada, one.id, "*", "viewer");
-  // An admin editor made a user only views it (users are remembered a few seconds: a fresh directory on the same database asks again).
-  expect(await dir.access({ login: "cy", admin: true }, one)).toBe("editor");
-  // An admin editor without admin power (a documents token) only views it too: editing it changes the site.
-  expect(await dir.access({ login: "cy" }, one)).toBe("viewer");
-  await dir.users.setRole(ada, "cy", "user");
-  const again = new Directory((dir as unknown as { sql: Sql }).sql, { admins: ["ada"] });
-  expect(await again.access({ login: "cy", admin: true }, one)).toBe("viewer");
-  expect((await again.openAs({ login: "cy" }, "ada", one.slug))?.role).toBe("viewer");
-  expect(await again.may({ login: "cy" }, "edit", one)).toBe(false);
-  // Not the homepage any more: their permission counts again.
-  await again.config.reset(ada, "landing_document");
-  expect(await again.access({ login: "cy" }, one)).toBe("editor");
+// The bug (production): on a server older than /_home, the default homepage was an admin's document first. Its host
+// still names that admin as its owner, and decides on its copy of the permissions, whose owner is nobody.
+test("the default homepage is every admin's to edit, also where its host names the admin who had it before", async () => {
+  const dir = fresh({ admins: ["ada", "root"] });
+  await dir.users.add({ login: "ada", admin: true }, "bo", { role: "user" });
+  const host = { id: "aaaaaaaa", owner: "ada", test: false };
+  const permissions = [{ login: "-home", role: "owner" as const }];
+  expect(await dir.decide({ login: "root", admin: true }, host, permissions)).toBe("editor");
+  expect(await dir.decide({ login: "ada", admin: true }, host, permissions)).toBe("editor");
+  // Without admin power (a documents token), or not an admin: a viewer.
+  expect(await dir.decide({ login: "ada" }, host, permissions)).toBe("viewer");
+  expect(await dir.decide({ login: "bo" }, host, permissions)).toBe("viewer");
 });
+

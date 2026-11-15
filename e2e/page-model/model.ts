@@ -1,6 +1,6 @@
 // Helpers for the page model's journeys (window.ergaLLM, agents/page-llm.ts): what a page's own script gets from
-// ergaLLM in the viewer's frame and on the homepage, the sign-in dialog as the viewer shows it, the owner's tool calls,
-// and the homepage's project with an essay page. The model is the scripted one: a message "@script [...]" is its answer.
+// ergaLLM in the viewer's frame and on a published site, the sign-in dialog as the viewer shows it, the owner's tool calls,
+// and a published site with an essay page. The model is the scripted one: a message "@script [...]" is its answer.
 
 import type { Frame, Page } from "playwright-core";
 import { expect, settle, until, type Server } from "../helpers/fixtures";
@@ -49,7 +49,7 @@ export const pageFrame = (page: Page) =>
     "the page has window.ergaLLM"
   ) as Promise<Frame>;
 
-/** What a page's own script gets from ergaLLM.ask() with one user message: `where` is the page (the homepage) or its frame. */
+/** What a page's own script gets from ergaLLM.ask() with one user message: `where` is the page (a published site's) or its frame. */
 export const askIn = (where: Page | Frame, content: string) =>
   where.evaluate(
     (content) =>
@@ -105,10 +105,14 @@ export const row = (admin: Page, key: string) => admin.locator(`li.setting[data-
 /** The view of today's use on the Settings page, as the page shows it. */
 export const usage = (admin: Page) => admin.locator("section.llm-use").innerText();
 
-// The homepage (server/home/): / as served to someone signed out, and its project, published with an admin's token.
+// The Erga domain's published site (server/sites/): / as served to someone signed out, and a project uploaded with an
+// admin's token and published there.
 
-/** Makes a document the homepage (the setting landing_document); with no `id`, the homepage project (/_home) again. */
-export const setLanding = (s: Server, id?: string) => owner(s, "set_setting", { key: "landing_document", value: id ?? "/_home" });
+/** Publishes a document to the Erga domain, in place of the one that has it; with no `id`, the default homepage (/_home) again. */
+export async function toErga(s: Server, id = "/_home"): Promise<void> {
+  await owner(s, "set_publishing", { document: id, domain: new URL(s.root).host, replace: true });
+  await owner(s, "publish_document", { document: id });
+}
 
 /** / as served to someone signed out. */
 export const front = async (s: Server, path = "/") => (await get(s, path, { headers: { Cookie: `${signedOutCookie(s)}=1` } })).text();
@@ -118,33 +122,33 @@ const HOME = {
   "essays/essay.html": `<!doctype html><html><head><title>Essay</title><script>window.early = !!window.ergaLLM;</script></head><body><h1>The essay</h1></body></html>`,
 };
 
-/** Publishes files as a new document, with an admin's token (only that may edit the homepage): its id. */
-export async function publish(s: Server, files: Record<string, string>, title?: string): Promise<string> {
+/** Uploads files as a new document, with an admin's token: its id. */
+export async function upload(s: Server, files: Record<string, string>, title?: string): Promise<string> {
   const token = await until(
     async () => (await newToken(s.root, { label: "Page model journey", scope: "admin" })).token || undefined,
     10_000,
     "an admin token"
   );
-  const r = await get(s, "/api/publish", {
+  const r = await get(s, "/api/upload", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ files, ...(title ? { title } : {}) }),
   });
   const body = (await r.json()) as { ok: boolean; id?: string; error?: string };
-  if (!body.ok) throw new Error(`publishing: ${body.error}`);
+  if (!body.ok) throw new Error(`upload: ${body.error}`);
   return body.id!;
 }
 
-/** A homepage with an essay page, whose model all viewers may call: its id. */
-export async function homeWithEssay(s: Server): Promise<string> {
-  const id = await publish(s, HOME, "Home with an essay");
-  await setLanding(s, id);
+/** A site with an essay page, published to the Erga domain, whose model all viewers may call: its id. */
+export async function siteWithEssay(s: Server): Promise<string> {
+  const id = await upload(s, HOME, "Home with an essay");
+  await toErga(s, id);
   await expect.poll(async () => (await front(s)).includes("Home with an essay")).toBe(true);
   await owner(s, "share_document", { document: id, page_llm: true, page_llm_who: "all" });
   return id;
 }
 
-/** The page token in a homepage page as served signed out (server/home/llm-token.ts). */
+/** The page token in a published page as served signed out (server/sites/llm-token.ts). */
 export const tokenIn = async (s: Server, path: string) => /"(eyJ2Ijp7ImRvYyI6[\w-]+\.[\w-]+)"/.exec(await front(s, path))?.[1];
 
 /** POST /api/llm signed out, as a script elsewhere might: `headers` over this site's Origin. The answer, with its status. */

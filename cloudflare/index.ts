@@ -24,7 +24,7 @@ import { simulateLatency, tallied } from "./timing";
 
 export { DocumentObject } from "./objects/document";
 export { PersonAgent } from "./objects/person-agent";
-export { Home } from "./objects/home";
+export { Home } from "./objects/site";
 export { OwnStorage } from "./objects/own";
 export { NewsHub } from "./objects/news";
 

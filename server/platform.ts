@@ -5,13 +5,13 @@
 // Cloudflare binding.
 
 import type { AgentToken, AuthStorage, SignIn, Tokens } from "./identity/index.ts";
-import type { HomeObject } from "./home/index.ts";
+import type { SiteObject } from "./sites/index.ts";
 import { type Directory, type Route, type Who } from "./directory/index.ts";
 import type { Role } from "../document/access.ts";
 import type { RestoreResult, Version, VersionsState } from "../document/versions.ts";
 import type { FileList, NameAnswer, TreeAnswer, TreeState } from "../document/host.ts";
 import type { FileData } from "../document/document.ts";
-import type { Published } from "../document/uploads.ts";
+import type { Written } from "../document/uploads.ts";
 import type { Writer } from "../document/waits.ts";
 import type { ViewAnswer } from "../document/view.ts";
 import type { CommentAnswer, CommentCall } from "../document/comments.ts";
@@ -88,9 +88,9 @@ export interface Platform {
   /** The templates' text files, by template then path ("doc" → { "index.html": "..." }): assets/templates/doc is a blank document. */
   templates: Record<string, Record<string, string>>;
   /**
-   * The repo's landing project (assets/landing/, built into the Worker), which the deploy makes the homepage project
-   * from when the server has none (server/documents/landing.ts, makeHome): its files by path (read only then: they are
-   * large).
+   * The repo's landing project (assets/landing/, built into the Worker), which the deploy makes the default homepage
+   * (/_home) from when the server has none (server/documents/landing.ts, makeHome): its files by path (read only
+   * then: they are large).
    */
   landing?: { files: () => Promise<Record<string, string | Uint8Array>> };
   /** The app's own static files (the editor's page and scripts, their builds, the release): the answer for this request. */
@@ -136,12 +136,9 @@ export interface Platform {
     facts: unknown;
     /** A staging instance's primary: the origin it copies documents and images from (SNAPSHOT_FROM), or null on any other server. */
     primary: string | null;
-    /**
-     * The homepage's own domain (the deploy facts' home: `bun erga deploy <host> --home <domain>` sets it), or null: the
-     * homepage is on this server's own domain.
-     */
-    home: string | null;
-    /** The app's own host in the deploy facts (app), or null: where the homepage's own domain sends a visitor to sign in. */
+    /** The custom domains a document can be published to (the deploy facts' domains: `bun erga deploy <host> --domain <domain>`). */
+    domains: string[];
+    /** The app's own host in the deploy facts (app), or null: where a custom domain sends a visitor to sign in. */
     app: string | null;
   };
   /** How people sign in: the mode and its values, from the deploy (server/identity/mode.ts), and what both modes read. */
@@ -153,16 +150,16 @@ export interface Platform {
   };
   /** The news hub (server/news/): the open pages' sockets, which hear which of their rows changed. One object per server. */
   news: { fetch(request: Request): Promise<Response> };
-  /** The homepage's deploys and its snapshot (server/home/deploys.ts), one object per server. */
-  home: HomeObject;
+  /** A domain's publishing: its state and its snapshot (server/sites/publishing.ts), one object for each domain (server/sites/domains.ts). */
+  site(domain: string): SiteObject;
   /** What runs at the edge, around a request. */
   edge: {
     /** The edge's cache, shared by the isolates of one place; null where there's none (workers.dev). */
     cache: { match(key: string): Promise<Response | undefined>; put(key: string, response: Response): Promise<void>; delete(key: string): Promise<boolean> } | null;
     /** Work that goes on after the response is sent. */
     background(work: Promise<unknown>): void;
-    /** How often / asks the home object whether its snapshot is still current (0: every time; the tests). */
-    homeRecheckMs: number;
+    /** How often a domain's requests ask its site object whether their copy is still current (0: every time; the tests). */
+    siteRecheckMs: number;
   };
   /**
    * This server's own small storage, which a copy of production's data never
@@ -184,11 +181,11 @@ export interface Platform {
     /** A scratch document saved: its host keeps it. False if it has no host. */
     keep(doc: Route): Promise<boolean>;
     /**
-     * Files arriving whole into an existing document (a publish): written,
+     * Files arriving whole into an existing document (an upload): written,
      * and merged into its room as edits; `remove` deletes files; `by`: who, as a version records it (byLine).
      * `writer`: who wrote, when their write may wait for a file's bytes (document/waits.ts).
      */
-    publish(doc: Route, files: Record<string, FileData>, remove: string[], by?: string, writer?: Writer): Promise<Published>;
+    write(doc: Route, files: Record<string, FileData>, remove: string[], by?: string, writer?: Writer): Promise<Written>;
     /** Every file a document holds. */
     paths(doc: Route): Promise<string[]>;
     /** A document's page, or null if it has no host. */
@@ -221,7 +218,7 @@ export interface Platform {
     fetch(doc: Route, request: Request): Promise<Response>;
     /**
      * A viewer's page, in one call to the document's host (document/document.ts, view): what `who` may do (`anyone`:
-     * the homepage), which file the address `page` is, the version viewers see, and the file's text unless the caller
+     * one everyone may view), which file the address `page` is, the version viewers see, and the file's text unless the caller
      * has that version (`have`). Null if there's no such document. Asks the database nothing.
      */
     view(id: string, who: Who | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null>;

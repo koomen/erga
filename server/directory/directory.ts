@@ -28,13 +28,8 @@
 // Server admins get nothing on documents by being admins. No list shows a
 // test document (`test`: one the test people made, whom Erga no longer has).
 //
-// The homepage (landing_document) is the exception: its scripts run on
-// this site itself, so while it's the homepage only admins
-// may edit it. It can't be made the homepage while anyone else may
-// (homeBlocked), nobody else can be made its editor (share), and anyone else
-// whose permission says otherwise only views it (homeLimit). The homepage
-// project (owner HOME_OWNER, at /_home: nobody's) is every admin's to edit,
-// and on their list (`list`).
+// The default homepage (owner HOME_OWNER, at /_home: nobody's) is the
+// exception: every admin edits it (homeRole), and it is on their list (`list`).
 //
 // A document's host (its Durable Object) keeps a copy of the document's
 // permissions, so a request to the document needs no query here: it decides
@@ -192,21 +187,6 @@ export class Directory {
         await opts.changed?.(key);
         await this.adminChanged([`setting:${key}`]);
       },
-      // The homepage shows a document or project to everyone, and runs its scripts on this site itself: an admin
-      // puts any of the server's there (config.set checks they're one), but only if everyone who may edit it is an admin.
-      // Kept by id, which a rename never changes.
-      checks: {
-        landing_document: async (_by, value) => {
-          const doc = await this.find(String(value));
-          if (!doc || doc.test)
-            throw new ConfigError({
-              message: `landing_document: there's no document or project at ${JSON.stringify(value)}. Give its address (/<owner>/<slug>), URL or id.`,
-             });
-          const blocked = await this.homeBlocked(doc.id);
-          if (blocked) throw new NotAllowed({ message: blocked });
-          return doc.id;
-        },
-      },
     });
   }
 
@@ -225,53 +205,13 @@ export class Directory {
     return (await this.locate(first, second))?.doc ?? null;
   }
 
-  /** The document the homepage shows (the landing_document setting), if it's set and there is one. */
-  async landing(): Promise<DocRow | null> {
-    const ref = await this.config.get("landing_document");
-    const doc = ref ? await this.find(ref) : null;
-    return doc && !doc.test ? doc : null;
-  }
-
   /**
-   * The id of the document the homepage shows (landing_document), without
-   * asking the database when the setting holds an id (it does, unless the
-   * deploy locks it to an address). Null when it's unset.
+   * The default homepage is nobody's: every admin edits it, with admin power (Users.actsAsAdmin: not through a token
+   * without the admin scope), and anyone else signed in views it. Any other document: `role`, as its permissions say.
    */
-  async homeId(): Promise<string | null> {
-    const ref = await this.config.get("landing_document");
-    if (!ref) return null;
-    return idShaped(ref) ? ref : (await this.find(ref))?.id ?? null;
-  }
-
-  /**
-   * Why a document can't be the homepage, or null if it can: the homepage
-   * runs its scripts on this site itself, where they
-   * act as whoever views it, so everyone who may edit it must be an admin.
-   * (The homepage project's owner is nobody: only admins edit it, homeLimit.)
-   */
-  async homeBlocked(id: string): Promise<string | null> {
-    const editors = (await this.permissions(id)).filter((p) => (p.role == "owner" || p.role == "editor") && p.login != HOME_OWNER);
-    const others: string[] = [];
-    for (const p of editors) if (p.login == ANYONE || !(await this.users.isAdmin(p.login))) others.push(p.login == ANYONE ? "anyone with the link" : p.login);
-    if (!others.length) return null;
-    return `Only admins may edit the homepage, since its scripts run on this site itself. ${others.join(", ")} may edit this document: make ${others.length == 1 ? "them a viewer" : "them viewers"} (or admins) first.`;
-  }
-
-  /**
-   * The homepage's editing is for admins only (homeBlocked), and only
-   * with admin power (Users.actsAsAdmin: not through a token without the admin
-   * scope): its scripts run on this site itself, so editing it is changing the app.
-   * Anyone else, whatever their permission says (an admin since made a user,
-   * or an admin's documents token), only views it while it's the homepage.
-   */
-  async homeLimit(who: Who, doc: { id: string; owner: string }, role: Role | null): Promise<Role | null> {
-    // The homepage project is nobody's: every admin (with admin power) edits it, and anyone else signed in views it, as
-    // they view it at /.
-    if (doc.owner == HOME_OWNER) return (await this.users.actsAsAdmin(who)) ? "editor" : "viewer";
-    if (role != "owner" && role != "editor") return role;
-    // Both at once, so a stall of the database counts once (actsAsAdmin reads the user `decide` reads anyway).
-    const [home, admin] = await Promise.all([this.homeId(), this.users.actsAsAdmin(who)]);
-    return home != doc.id || admin ? role : "viewer";
+  async homeRole(who: Who, doc: { owner: string }, role: Role | null): Promise<Role | null> {
+    if (doc.owner != HOME_OWNER) return role;
+    return (await this.users.actsAsAdmin(who)) ? "editor" : "viewer";
   }
 
   async get(id: string): Promise<DocRow | null> {
@@ -422,7 +362,7 @@ export class Directory {
     const doc = await this.get(id);
     if (!doc) throw new NameError({ message: "There's no such document." });
     if (doc.owner == HOME_OWNER && patch.slug !== undefined)
-      throw new NameError({ message: "The homepage's address is /_home: it doesn't change." });
+      throw new NameError({ message: "The default homepage's address is /_home: it doesn't change." });
     let { title, titleSet, slugSet } = doc;
     if (patch.title !== undefined) {
       const given = clip(patch.title ?? "");
@@ -443,7 +383,7 @@ export class Directory {
   }
 
   /**
-   * Gives the homepage project's address (/_home) to a document the server just made as nobody's
+   * Gives the default homepage's address (/_home) to a document the server just made as nobody's
    * (server/documents/landing.ts, makeHome), only if no document has it. Whether it got it: of several at once, one does
    * (an address is one document's).
    */
@@ -522,26 +462,6 @@ export class Directory {
 
   /** When a document nobody has edited goes, now that it's been put off. */
   /** Its kind, as its object says (it keeps the kind, and checks it): made a project, or decided as it opened. */
-  /**
-   * Makes a document the homepage project (server/documents/landing.ts): nobody's (owner HOME_OWNER), at /_home. Its
-   * old address goes to history, so old links still open it. The caller sets its title and kind through its host. Null
-   * when there's no such document, or another one is the homepage project already.
-   */
-  async adoptHome(id: string): Promise<DocRow | null> {
-    const doc = await this.get(id);
-    if (!doc || doc.owner == HOME_OWNER) return doc;
-    if ((await this.sql.all<{ id: string }>("SELECT id FROM documents WHERE owner = ?1", HOME_OWNER)).length) return null;
-    await this.sql.batch([
-      ["INSERT OR REPLACE INTO slug_history (owner, slug, doc_id) VALUES (?1, ?2, ?3)", doc.owner, doc.slug, doc.id],
-      ["UPDATE permissions SET login = ?2 WHERE doc_id = ?1 AND role = 'owner'", id, HOME_OWNER],
-      ["UPDATE documents SET owner = ?2, slug = ?3, slug_set = 1 WHERE id = ?1", id, HOME_OWNER, HOME_SLUG],
-    ]);
-    this.routes.delete(id);
-    await this.tell(id, await this.permissions(id));
-    await this.docChanged(id, [doc.owner]);
-    return this.get(id);
-  }
-
   async setKind(id: string, kind: DocKind): Promise<void> {
     await this.sql.run("UPDATE documents SET kind = ?2 WHERE id = ?1", id, kind);
     await this.docChanged(id);
@@ -591,22 +511,22 @@ export class Directory {
 
   /**
    * `access`'s rule, on permissions already at hand (`access` reads them here; a document's host keeps a copy:
-   * document/document.ts). Only the homepage's limit may ask the database (homeLimit: its settings and users,
-   * remembered a few seconds).
+   * document/document.ts). Only the default homepage's rule may ask the database (homeRole: its users, remembered a
+   * few seconds).
    */
   async decide(who: Who | null, doc: { id: string; owner: string; test: boolean }, permissions: readonly { login: string; role: Role }[]): Promise<Role | null> {
     if (!who) return null;
     if (who.onlyDoc != null && who.onlyDoc != doc.id) return null;
     const login = who.login.toLowerCase();
     const best = permissions.reduce<Role | null>((b, p) => (p.login != login && p.login != ANYONE) || (b && RANK[b] >= RANK[p.role]) ? b : p.role, null);
-    // The owner as the permissions say: a host's copy of its owner is the one it was made with, and the homepage
-    // project's adoption (adoptHome) changes the owner only here, so its host still names the admin who had it.
+    // The owner as the permissions say: a host's copy of its owner is the one it was made with, and on a server older
+    // than /_home, the default homepage was an admin's document first, so its host still names that admin.
     const owner = permissions.find((p) => p.role == "owner")?.login ?? doc.owner;
     // The access rules: someone without write opens their documents, and those shared with them, as a viewer. Asked
-    // with the homepage's limit, not after it, so a stall of the database counts once; only where homeLimit can
-    // answer owner or editor (an admin's session edits the homepage project).
+    // with the default homepage's rule, not after it, so a stall of the database counts once; only where the answer
+    // can be owner or editor (an admin's session edits the default homepage).
     const writes = best == "owner" || best == "editor" || best == "commenter" || (owner == HOME_OWNER && who.admin == true);
-    const [role, mayWrite] = await Promise.all([this.homeLimit(who, { id: doc.id, owner }, best), writes ? this.mayWrite(login) : true]);
+    const [role, mayWrite] = await Promise.all([this.homeRole(who, { owner }, best), writes ? this.mayWrite(login) : true]);
     return (role == "owner" || role == "editor" || role == "commenter") && !mayWrite ? "viewer" : role;
   }
 
@@ -730,30 +650,13 @@ export class Directory {
   }
 
   /**
-   * Whether a document opens for people who aren't signed in: the homepage always does (the app's own path), and
+   * Whether a document opens for people who aren't signed in: the default homepage always does, and
    * one shared with anyone with the link does while the server lets users share content publicly. They view it only.
    */
   async isPublic(id: string): Promise<boolean> {
     if (!(await this.config.get("public_sharing"))) return false;
     const [row] = await this.sql.all<{ n: number }>("SELECT COUNT(*) AS n FROM permissions p JOIN documents d ON d.id = p.doc_id WHERE p.doc_id = ?1 AND p.login = ?2 AND d.test = 0", id, ANYONE);
     return Number(row?.n ?? 0) > 0;
-  }
-
-  /**
-   * What a document's readers (who can't edit it) get in the viewer, as its owner set it (setReaderOption): their own
-   * agent, which a document shared with anyone with the link ("*") never has (server/operations/readers.ts), and Erga's bars.
-   */
-  async readerOptions(id: string): Promise<{ agent: boolean; bars: boolean }> {
-    const [row] = await this.sql.all<{ agent: number; bars: number }>(
-      "SELECT reader_agent AS agent, reader_bars AS bars FROM documents WHERE id = ?1",
-      id
-    );
-    return { agent: !!row?.agent, bars: !row || !!row.bars };
-  }
-
-  /** Turns one of the readers' options on or off (share_document checks who may). */
-  async setReaderOption(id: string, option: "agent" | "bars", on: boolean): Promise<void> {
-    await this.sql.run(`UPDATE documents SET ${option == "agent" ? "reader_agent" : "reader_bars"} = ?2 WHERE id = ?1`, id, on ? 1 : 0);
   }
 
   /** Whether someone may do something with a document: every such decision comes here (see the top of this file). */
@@ -790,12 +693,6 @@ export class Directory {
     if (login != ANYONE && role != null) {
       const why = await this.whyNoShare(login);
       if (why) throw new NotAllowed({ message: why });
-    }
-    // The homepage's editors are admins only (homeBlocked).
-    if (role == "editor" && (await this.homeId()) == id && (login == ANYONE || !(await this.users.isAdmin(login)))) {
-      throw new NotAllowed({
-        message: `This document is the homepage, whose scripts run on this site itself: only admins may edit it. Share it with ${login == ANYONE ? "anyone with the link" : login} as a viewer${login == ANYONE ? "" : ", or make them an admin first"}.`,
-       });
     }
     if (role == null) await this.sql.run("DELETE FROM permissions WHERE doc_id = ?1 AND login = ?2", id, login);
     else await this.sql.run(

@@ -1,4 +1,4 @@
-// The homepage's controls (server/home/render.ts, homeHeader), in the script after their host: it moves the host out of
+// A published site's controls (server/sites/render.ts, siteHeader), in the script after their host: it moves the host out of
 // the page's <body> (so nothing the page does to its body moves it), gives the band and the bars the page's background
 // and its tone, and runs the account menu, the New document picker, the bars' buttons (client/common/bars.ts) and the
 // tooltips.
@@ -8,7 +8,7 @@ import { imgFallback } from "../common/img-fallback";
 import { newDocPicker } from "../common/new-doc";
 import { installQuickSearch, quickLink } from "../common/quick-search";
 
-export default function homeControls(): void {
+export default function siteControls(): void {
   const host = document.currentScript!.previousElementSibling as HTMLElement;
   let root = host.shadowRoot;
   // A browser without declarative shadow roots: made here instead.

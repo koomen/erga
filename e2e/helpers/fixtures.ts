@@ -87,7 +87,7 @@ const ONE = {
   ERGA_WRITE_DELAY_MS: "50",
   ERGA_VERSION_IDLE_MS: String(SHORT.idle),
   ERGA_VERSION_MAX_MS: String(SHORT.max),
-  ERGA_HOME_RECHECK_MS: "0",
+  ERGA_SITE_RECHECK_MS: "0",
 };
 
 export const servers = {

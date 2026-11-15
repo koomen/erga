@@ -87,7 +87,7 @@ class World {
         detach: () => this.tabs.detachAll(),
       },
       agents: documentAgents({ settings: this.settings, sandbox: testSandbox }),
-      home: { forget: async () => {} },
+      sites: { forget: async () => {} },
       timing: { idleMs: 20, maxMs: 2000, writeDelay: 5, fileDelay: 30, closeIdleMs: 60 },
       background: () => {}, log: () => {},
     };
@@ -213,8 +213,8 @@ test("idle, the document closes and tabs stay; presence passes between them with
   await w.settle();
   expect([hostile.closed, b.presence.length, w.document.isOpen()]).toEqual([4400, before, false]);
   // A message for every tab reaches the event channels while it's closed.
-  w.tabs.notify({ type: "home" });
-  expect(events.events).toContainEqual({ type: "home" });
+  w.tabs.notify({ type: "publishing" });
+  expect(events.events).toContainEqual({ type: "publishing" });
 
   // The object sleeps and wakes with nothing in memory: a new one, on the same storage and sockets.
   w.boot();

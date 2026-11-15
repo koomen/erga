@@ -6,9 +6,7 @@ import { SYSTEM } from "../../shared/attribution.ts";
 
 export const shown = (v: unknown, kind?: string) =>
   v === null
-    ? kind == "document"
-      ? "none"
-      : "never"
+    ? "never"
     : typeof v == "boolean"
       ? v
         ? "on"

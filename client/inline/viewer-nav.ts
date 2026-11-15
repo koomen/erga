@@ -27,8 +27,6 @@ export default function viewerNav(): void {
     }
     if (m.content == path || (!path && !suffix(m.content))) return;
     m.content = path;
-    // Viewing at the homepage's address (/), its first page stays there.
-    if (location.pathname == "/" && !suffix(path)) return;
     const here = ergaPageAddress();
     history.replaceState({ ...history.state, ergaPage: path || undefined }, "", here + location.search + location.hash);
     document.querySelector(".erga-view-buttons a[aria-pressed]")?.setAttribute("href", ergaWithEdit(here, true));

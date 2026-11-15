@@ -107,7 +107,7 @@ test("an edit that doesn't apply, or a path that isn't a page: nothing renders, 
   const rendered: unknown[] = [];
   s.deps.render = async (job) => (rendered.push(job), { errors: [] });
   const deck = readFileSync(new URL("../e2e/fixtures/builds/index.html", import.meta.url), "utf8");
-  await s.doc.publish({ "index.html": deck }, [], "ada");
+  await s.doc.write({ "index.html": deck }, [], "ada");
   /** A tool's error, as an agent with a token gets it (the app sends the request from its own address). */
   const call = async (name: string, args: object) => {
     const r = await s.doc.handle(

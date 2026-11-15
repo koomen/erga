@@ -56,7 +56,7 @@ export interface Doc {
   fetch(path: string, init?: RequestInit, user?: string): Promise<Response>;
   /** What storage holds for a file, and its etag (null if it doesn't exist). */
   stored(path: string): Promise<{ text: string; etag: string } | null>;
-  /** An edit that arrives as a whole file (a publish). */
+  /** An edit that arrives as a whole file (an upload). */
   push(path: string, text: string, ifMatch?: string | null): Promise<Response>;
   /** What the server serves for a file to the page (the room's latest). */
   served(path: string): Promise<string | null>;
@@ -173,7 +173,7 @@ export class RemoteTarget implements Target {
 
   /**
    * One scratch document, reset to the fixture for each test: every fixture
-   * file is pushed as a publish would. Tests that make new files give them
+   * file is pushed as an upload would. Tests that make new files give them
    * unique names; tests run one at a time, so they don't see each other.
    */
   async newDoc(fixture: string): Promise<Doc> {

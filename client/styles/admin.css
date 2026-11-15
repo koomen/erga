@@ -87,8 +87,6 @@ ol.rows > :is(li.setting, li.provider, li.deploy-secret) { display: grid; grid-t
 .setting .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .setting .meta { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 12px; color: var(--soft); }
 .setting .meta .badge { margin: 0; }
-.setting .meta a { color: inherit; }
-.setting .meta .gone { color: var(--bad); }
 .setting .set { margin: 4px 0 0; font-size: 12px; color: var(--chrome); }
 .setting .set .reset { padding: 0; border: 0; background: none; color: var(--link); font: inherit; cursor: pointer; }
 .setting .set .reset:hover { text-decoration: underline; }
@@ -100,16 +98,19 @@ ol.rows > :is(li.setting, li.provider, li.deploy-secret) { display: grid; grid-t
 .setting .value select { min-width: 6.5em; }
 .setting .value .input.pick { width: 9em; }
 .keys-mode { min-width: 15em; }
-/* A document setting's picker (the homepage): a box to find one, and what it finds below it, each with its owner, address and kind. */
-.doc-pick { position: relative; }
-.setting .value .input.find { width: 16em; }
-.doc-pick .found { position: absolute; z-index: 20; top: calc(100% + 4px); right: 0; width: 26em; max-width: calc(100vw - 32px); max-height: 320px; overflow-y: auto; box-sizing: border-box; margin: 0; padding: 4px; list-style: none;
-  border: 1px solid var(--rule); border-radius: 10px; background: var(--bg); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
-.doc-pick .found li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; column-gap: 10px; padding: 7px 10px; border-radius: 7px; cursor: pointer; }
-.doc-pick .found li[aria-selected=true], .doc-pick .found li[role=option]:hover { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
-.doc-pick .found .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--fg-strong); }
-.doc-pick .found .where { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--soft); }
-.doc-pick .found .none { display: block; cursor: default; font-size: 13px; color: var(--soft); }
+/* The Sites row: each domain, the document that has it, and whether it is published. */
+ol.rows > li.sites { display: block; }
+ol.rows > li.sites .key { margin: 0; font-size: 14px; font-weight: 600; color: var(--fg-strong); }
+ol.rows > li.sites .desc { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--soft); }
+ol.rows > li.sites .set { margin: 6px 0 0; font-size: 12px; color: var(--chrome); }
+.site-list { width: 100%; border-collapse: collapse; margin: 10px 0 0; font-size: 13px; }
+.site-list td { padding: 8px 10px 8px 0; border-top: 1px solid var(--rule); vertical-align: middle; }
+.site-list td.domain { font: 600 12.5px var(--font-mono); color: var(--fg-strong); white-space: nowrap; }
+.site-list td.state { text-align: right; padding-right: 0; font-size: 12px; color: var(--soft); white-space: nowrap; }
+.site-list a { color: var(--fg); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--chrome) 60%, transparent); text-underline-offset: 2px; }
+.site-list .free { color: var(--chrome); }
+.site-list .dot { display: inline-block; margin-right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--chrome); }
+.site-list .dot.on { background: var(--ok); }
 /* A users setting: a chip for each, and a box to add one. */
 .picker { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; max-width: 26em; }
 .chips { display: contents; list-style: none; margin: 0; padding: 0; }
@@ -277,9 +278,7 @@ ol.users .avatar.waiting { background: transparent; border: 1.5px dashed var(--r
   :is(li.setting, li.provider) .value { justify-content: flex-start; }
   /* A switch stays at the right of its words, as on a phone's own settings. */
   ol.rows > li.setting[data-control="switch"], ol.rows > li.setting:has(> .value > .switch) { grid-template-columns: minmax(0, 1fr) auto; }
-  .setting .value .input:not([type=number]), .provider .value .input.secret, .setting .value .input.find { width: auto; flex: 1; min-width: 0; }
-  .setting .value .doc-pick { flex: 1; }
-  .setting .value .doc-pick .input.find { width: 100%; }
+  .setting .value .input:not([type=number]), .provider .value .input.secret { width: auto; flex: 1; min-width: 0; }
   section.provider { padding: 16px; }
   .server dl { grid-template-columns: 1fr; gap: 2px; }
   .server dd { margin-bottom: 8px; }

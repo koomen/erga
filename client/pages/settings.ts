@@ -10,28 +10,25 @@
 //     A project with more than one page can't be a document yet: its tip says why.
 //   - Page details: the page shown now, with its icon, title and description, and Edit, which opens its details
 //     (client/pages/page-head.ts: its title, description, icon and link picture, in its <head>).
-//   - Viewer settings, for anyone who may edit it (their state from ls's access): whether the people who view it, and
-//     can't edit it, see Erga's header bar (share_document's reader_bars; on at first), and whether they may use the
-//     Erga agent on it (reader_agent). The agent is off, and not to be turned on, while anyone with the link may open
-//     it. And whether its page may call a model as its visitor, which, and for whom: signed-in viewers or all of them
-//     (page_llm, page_llm_model, page_llm_who: window.ergaLLM).
-//   - Homepage, only on the homepage: one line, with its own domain (a link) when it has one, with how its deploy is going and Deploy (admins), which is blue when
-//     the document is newer than the live page. Nothing deploys by itself. The homepage is chosen on /admin/settings
-//     (the landing_document setting), never here.
+//   - Viewer settings, for anyone who may edit it (their state from ls's access): whether its page may call a model as
+//     its visitor, which, and for whom: signed-in viewers or all of them (page_llm, page_llm_model, page_llm_who:
+//     window.ergaLLM). It holds in the viewer and on the published site.
+//   - Publishing, for anyone who may edit it (settings-publishing.ts): the document's domain, its header bar there,
+//     and Publish.
 //   - Versions: the latest ten, each with its number, the model's five-word
-//     description (a quiet placeholder until it arrives), when and who; on the
-//     homepage, the deployed one marked. A deployed version older than the latest ten shows
+//     description (a quiet placeholder until it arrives), when and who; the
+//     published one marked. A published version older than the latest ten shows
 //     in its own place: the latest five, a gap, then five around it (two newer, it, two older); only those five are
 //     read. Show older versions loads the ten before the oldest one shown. Restore, on hover or
 //     focus, makes a copy of a version the current one (restore_version). Then "Restored v3. Undo" shows for 10
 //     seconds: Undo puts back the document as it was (a restore of the version from just before).
 //
-// It runs the operations (server/operations/: versions, restore_version, ls, set_kind, deploy_homepage,
-// share_document; over POST /api/tools/<name>), and refreshes on the event channel's
-// { type: "versions" }, { type: "home" } and { type: "tree" } (main.ts passes them on), open or not.
+// It runs the operations (server/operations/: versions, restore_version, ls, set_kind, set_publishing,
+// publish_document, share_document; over POST /api/tools/<name>), and refreshes on the event channel's
+// { type: "versions" }, { type: "publishing" } and { type: "tree" } (main.ts passes them on), open or not.
 // Someone who can't edit sees it all read-only.
 
-import { clock, RECENT, type Version, type Versions } from "./versions";
+import { RECENT, type Version, type Versions } from "./versions";
 import { runTool } from "../common/tools";
 import { esc } from "../../shared/html";
 import { timeAgo } from "../../shared/time";
@@ -40,21 +37,8 @@ import type { DocKind } from "../../document/pages";
 import { isModelChoice, MODELS, PROVIDER_LABEL } from "../../shared/models";
 import { openPageHead } from "./page-head";
 import { headUrl, tabTitle, type PageHead } from "../../shared/page-head";
+import { type Publishing, PUBLISHING_CSS, PUBLISHING_HTML, publishingSection } from "./settings-publishing";
 
-export interface Deploy {
-  state: "idle" | "deploying" | "deployed" | "failed";
-  at: string | null;
-  version: number | null;
-  error: string | null;
-}
-/** ls's homepage: on the homepage only. */
-export interface Home {
-  isHome: boolean;
-  canDeploy: boolean /** An admin acting through a token without the admin scope. */;
-  locked?: boolean /** Its own domain, or null. */;
-  domain?: string | null;
-  deploy: Deploy;
-}
 /** ls's answer, as far as this panel reads it. */
 interface Tree {
   entries: { path: string; type: string; head?: PageHead }[];
@@ -64,16 +48,13 @@ interface Tree {
   index?: string;
   title?: string;
 }
-/** ls's access, as far as Readers need it (the readers' options, for anyone who may edit it). */
+/** ls's access, as far as Viewer settings need it (for anyone who may edit it). */
 type Access = {
-  readerAgent: boolean;
-  readerBars: boolean;
   /** models: the ones the owner may choose now (Claude's, and OpenAI's where the server has a key). */
   pageLlm: { on: boolean; model: string; models: string[]; who: "signed_in" | "all" };
-  anyoneWithLink: boolean;
 };
 interface Doc extends Tree {
-  homepage?: Home;
+  publishing?: Publishing;
   access?: Access;
 }
 
@@ -84,8 +65,6 @@ export interface SettingsHost {
   query: string;
   /** The gear. */
   anchor: HTMLElement;
-  /** Whether you're an admin (the homepage's deploy is theirs). */
-  admin: boolean;
   /** The document's kind as the editor knows it now (its hello, or the last "tree" event). */
   kind(): DocKind;
   /** The kind changed here: the editor shows it at once (the breadcrumb), before the event comes. */
@@ -97,9 +76,9 @@ export interface SettingsHost {
 export interface Settings {
   toggle(open?: boolean): void;
   isOpen(): boolean;
-  /** Escape: closes the popover. False if it wasn't open. */
+  /** Escape: closes the publishing menu or its question, else the popover. False if it wasn't open. */
   escape(): boolean;
-  /** An event from the channel ("versions", "home", "tree"). */
+  /** An event from the channel ("versions", "publishing", "tree"). */
   event(type: string): void;
   /** Whether a node is part of the popover. */
   contains(node: Node): boolean;
@@ -126,7 +105,7 @@ const CSS = `
   font: 400 12px/1.4 var(--font-text); color: var(--soft); text-align: left; white-space: normal; text-transform: none; letter-spacing: 0;
   opacity: 0; pointer-events: none; transition: opacity 80ms ease 250ms;
 }
-.ds :is(.ds-btn, [data-kind="project"])[data-tip]::after { left: auto; right: 0; }
+.ds :is(.ds-btn, .ds-select, [data-kind="project"])[data-tip]::after { left: auto; right: 0; }
 @media (hover: hover) { .ds [data-tip]:hover::after { opacity: 1; } }
 .ds-error { margin: 8px 0 0; padding: 7px 10px; border-radius: 8px; font-size: 12.5px; line-height: 1.45; color: #b42318; background: color-mix(in srgb, #d0453a 10%, transparent); }
 html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
@@ -152,6 +131,8 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-list .ds-meta { grid-column: 2 / span 2; font-size: 11.5px; color: var(--chrome); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-tags { display: flex; gap: 4px; }
 .ds-tag { font: 600 10.5px/1 var(--font-text); padding: 3px 6px; border-radius: 999px; color: var(--soft); background: var(--code-bg); white-space: nowrap; }
+.ds-tag.live { color: #1f7a45; background: #e5f4ea; }
+html.page-dark body:not(.source) .ds-tag.live { color: #7fd6a0; background: color-mix(in srgb, #2f9e5b 22%, transparent); }
 .ds-list li.ds-gap { display: block; padding: 3px 0 3px 42px; font-size: 11.5px; color: var(--chrome); }
 .ds-foot { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 0; font-size: 11.5px; color: var(--chrome); }
 .ds-skel { height: 12px; border-radius: 6px; background: var(--code-bg); margin: 10px 0; animation: ds-pulse 1.1s ease-in-out infinite alternate; }
@@ -175,7 +156,7 @@ span.ds-page-icon { background: color-mix(in srgb, var(--chrome) 35%, transparen
 .ds-page-desc { grid-column: 1; margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--soft); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .ds-page-desc:empty { display: none; }
 .ds-page-row .ds-btn { grid-column: 2; grid-row: 1 / span 2; }
-/* Viewer settings: three switches and the model, for anyone who may edit it. */
+/* Viewer settings: the page's model, for anyone who may edit it. */
 .ds-checks { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin-top: 10px; }
 .ds-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); cursor: pointer; }
 .ds-check input { margin: 0; width: 15px; height: 15px; accent-color: var(--caret); cursor: inherit; }
@@ -188,18 +169,7 @@ span.ds-page-icon { background: color-mix(in srgb, var(--chrome) 35%, transparen
 .ds-llm-model:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 .ds-llm-model:disabled { opacity: 0.55; cursor: default; }
 .ds-llm-model[hidden] { display: none; }
-/* The homepage, only on the homepage: one line, and Deploy. */
-.ds-deploy { display: flex; align-items: center; gap: 10px; }
-.ds-deploy > svg { flex: none; align-self: flex-start; margin-top: 1px; width: 16px; height: 16px; fill: none; stroke: var(--caret); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.ds-home-text { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.4; color: var(--soft); }
-.ds-home-text a { font-weight: 500; color: var(--caret); text-decoration: none; }
-.ds-home-text a:hover { text-decoration: underline; text-underline-offset: 2px; }
-.ds-home-text b { display: block; font: 600 13px/1.35 var(--font-text); color: var(--fg-strong, var(--fg)); }
-.ds-status span { white-space: nowrap; }
-.ds-dot { display: inline-block; margin-right: 6px; vertical-align: 0; width: 8px; height: 8px; border-radius: 50%; }
-.ds-dot.failed { background: #d0453a; }
-.ds-dot.deploying { vertical-align: -1px; width: 10px; height: 10px; background: transparent; border: 1.6px solid color-mix(in srgb, var(--caret) 25%, transparent); border-top-color: var(--caret); box-sizing: border-box; animation: agent-spin 0.8s linear infinite; }
-.ds-btn { flex: none; font: 600 12.5px var(--font-text); border-radius: 7px; padding: 6px 11px; cursor: pointer; border: 1px solid var(--panel-border); background: var(--bg); color: var(--fg); white-space: nowrap; }
+${PUBLISHING_CSS}.ds-btn { flex: none; font: 600 12.5px var(--font-text); border-radius: 7px; padding: 6px 11px; cursor: pointer; border: 1px solid var(--panel-border); background: var(--bg); color: var(--fg); white-space: nowrap; }
 .ds-btn:hover { border-color: color-mix(in srgb, var(--chrome) 45%, var(--panel-border)); }
 .ds-btn:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 .ds-btn[aria-disabled="true"] { color: var(--chrome); cursor: default; }
@@ -215,7 +185,7 @@ span.ds-page-icon { background: color-mix(in srgb, var(--chrome) 35%, transparen
 .ds-sheet-grip { display: none; }
 @keyframes ds-sheet { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (pointer: coarse) { .ds-kind button { min-height: 38px; } }
-@media (prefers-reduced-motion: reduce) { .ds-dot.deploying, .ds-skel { animation-duration: 3s; } .help.ds { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .ds-dot.publishing, .ds-skel { animation-duration: 3s; } .help.ds { animation: none; } }
 `;
 
 
@@ -258,8 +228,6 @@ function mount(host: SettingsHost): Settings {
     <section class="ds-agent" id="ds-agent" hidden aria-labelledby="ds-agent-title">
       <h3 id="ds-agent-title">Viewer settings</h3>
       <div class="ds-checks">
-        <label class="ds-check" id="ds-bars"><input type="checkbox" id="ds-bars-on">Show the Erga header bar</label>
-        <label class="ds-check" id="ds-agent-label"><input type="checkbox" id="ds-agent-on">Viewers can use the Erga agent</label>
         <label class="ds-check" id="ds-llm" data-tip="The page's script can ask this model for each viewer (window.ergaLLM). The server pays, with an hourly limit."><input type="checkbox" id="ds-llm-on">Viewers have access to the LLM API</label>
         <div class="ds-llm-opts">
           <select class="ds-llm-model" id="ds-llm-who" aria-label="Who may use it" hidden><option value="signed_in">Signed-in viewers</option><option value="all">All viewers</option></select>
@@ -268,15 +236,7 @@ function mount(host: SettingsHost): Settings {
       </div>
       <p class="ds-error" id="ds-agent-error" role="alert"></p>
     </section>
-    <section class="ds-home" id="ds-home" hidden aria-labelledby="ds-home-note">
-      <div class="ds-deploy" id="ds-deploy">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 11 12 4l8.5 7"/><path d="M6 9.5V20h12V9.5"/></svg>
-        <div class="ds-home-text"><b id="ds-home-note">Homepage</b><span class="ds-status" id="ds-status" role="status" aria-live="polite"></span></div>
-        <button type="button" class="ds-btn" id="ds-redeploy">Deploy</button>
-      </div>
-      <p class="ds-error" id="ds-home-error" role="alert"></p>
-    </section>
-    <section class="ds-history" aria-labelledby="ds-history-title">
+${PUBLISHING_HTML}    <section class="ds-history" aria-labelledby="ds-history-title">
       <h3 id="ds-history-title">Versions <small id="ds-total"></small></h3>
       <p class="ds-restored" id="ds-restored" role="status" hidden><span></span> <button type="button" class="ds-quiet" id="ds-undo">Undo</button></p>
       <ol class="ds-list" id="ds-list" aria-label="Recent versions"></ol>
@@ -291,16 +251,10 @@ function mount(host: SettingsHost): Settings {
     footText = $("ds-foot-text"),
     olderBtn = $("ds-older"),
     histError = $("ds-hist-error");
-  const homeSec = $("ds-home");
-  const statusEl = $("ds-status"),
-    redeploy = $("ds-redeploy"),
-    homeError = $("ds-home-error");
   const kindBox = $("ds-kind"),
     kindError = $("ds-kind-error");
   const agentSec = $("ds-agent"),
-    agentOn = $<HTMLInputElement>("ds-agent-on"),
     agentError = $("ds-agent-error"),
-    barsOn = $<HTMLInputElement>("ds-bars-on"),
     llmOn = $<HTMLInputElement>("ds-llm-on"),
     llmModel = $<HTMLSelectElement>("ds-llm-model"),
     llmWho = $<HTMLSelectElement>("ds-llm-who");
@@ -323,15 +277,26 @@ function mount(host: SettingsHost): Settings {
   let loadError: string | null = null;
   /** Every version loaded, by number: the latest ten, and the older ones Show older versions brought. */
   let loaded = new Map<number, Version>();
-  let home: Home | null = null;
-  let homeBusy = false;
+  /** Publishing (settings-publishing.ts): it keeps ls's answer, and draws its section. */
+  const publishing = publishingSection({
+    pop,
+    docId: host.docId,
+    tip,
+    current: () => data?.current.n ?? null,
+    // The published version's tag in the list follows.
+    changed: () => {
+      if (data) render();
+    },
+    reload: () => loadDoc(),
+  });
+  const renderPub = () => publishing.render();
   let loadSeq = 0,
     docSeq = 0;
   /** The tree as last read: its pages (a project with more than one can't be a document yet) and whether you may change it. */
   let tree: Tree | null = null;
   /** The kind being switched to, while the server does it. */
   let kindBusy: DocKind | null = null;
-  /** Readers, for anyone who may edit it (ls answers no one else): their bars and their agent, and whether anyone with the link may open it. */
+  /** Viewer settings, for anyone who may edit it (ls answers no one else): the page's model. */
   let access: Access | null = null;
   let agentBusy = false;
 
@@ -349,7 +314,7 @@ function mount(host: SettingsHost): Settings {
       data = d;
       loadError = null;
       render();
-      renderHome();
+      renderPub();
       loadAround();
     } catch (e) {
       if (seq != loadSeq) return;
@@ -380,34 +345,34 @@ function mount(host: SettingsHost): Settings {
     render();
   }
   olderBtn.addEventListener("click", () => loadOlder());
-  /** The homepage's deployed version, on the homepage only. */
-  const deployed = () => (home?.isHome ? home.deploy.version : null);
-  /** The deployed version, when it's older than the latest ten: the list shows it apart, after a gap. */
+  /** The document's published version, if it has one. */
+  const published = () => publishing.get()?.version ?? null;
+  /** The published version, when it's older than the latest ten: the list shows it apart, after a gap. */
   const apart = () => {
-    const d = deployed();
+    const d = published();
     return data && d != null && d < (data.versions.at(-1)?.n ?? 1) ? d : null;
   };
-  /** The versions the list shows, newest first: with a deployed version apart, the latest five, then from two newer than it down. */
+  /** The versions the list shows, newest first: with a published version apart, the latest five, then from two newer than it down. */
   const visible = () => {
     const all = shown(),
       d = apart();
     return d == null ? all : [...all.slice(0, 5), ...all.filter((v) => v.n <= d + 2)];
   };
-  /** The five around a deployed version that's apart: read only those, once. */
+  /** The five around a published version that's apart: read only those, once. */
   let aroundSeq = 0;
   async function loadAround() {
     const d = apart();
     if (d == null || loaded.has(d)) return;
     const seq = ++aroundSeq;
     const r = await runTool<Versions>("versions", { document: host.docId, before: `v${d + 3}`, limit: 5 }).catch((e: Error) => {
-      histError.textContent = `Couldn't load the deployed version: ${e.message}`;
+      histError.textContent = `Couldn't load the published version: ${e.message}`;
       return null;
     });
     if (!r || seq != aroundSeq) return;
     add(r.versions);
     render();
   }
-  /** The document as ls answers it: its tree and kind, the homepage's state (on the homepage), and its access (for the owner). */
+  /** The document as ls answers it: its tree and kind, and its publishing and access (for whoever may edit it). */
   async function loadDoc() {
     const seq = ++docSeq;
     const d = await runTool<Doc>("ls", { document: host.docId }).catch(() => null);
@@ -416,10 +381,10 @@ function mount(host: SettingsHost): Settings {
       tree = d;
       if (d.kind) host.onKind(d.kind);
     }
-    home = d?.homepage ?? null;
+    publishing.set(d?.publishing ?? null);
     access = d?.access ?? null;
     renderKind();
-    renderHome();
+    renderPub();
     renderAgent();
     renderPage();
     if (data) render();
@@ -463,9 +428,6 @@ function mount(host: SettingsHost): Settings {
   function renderAgent() {
     agentSec.hidden = !access;
     if (!access) return;
-    agentOn.checked = access.readerAgent;
-    barsOn.checked = access.readerBars;
-    barsOn.disabled = agentBusy;
     llmOn.checked = access.pageLlm.on;
     // The choices, and the model chosen now even when the server's keys no longer run it.
     const { model, models } = access.pageLlm;
@@ -476,8 +438,6 @@ function mount(host: SettingsHost): Settings {
     // Who may call it: only while it's on.
     llmWho.hidden = !access.pageLlm.on;
     llmOn.disabled = llmModel.disabled = llmWho.disabled = agentBusy;
-    agentOn.disabled = access.anyoneWithLink || agentBusy;
-    tip($("ds-agent-label"), access.anyoneWithLink ? "Anyone with the link can open it, so viewers have no agent here." : "");
   }
   /** One of the switches (share_document's options): the server's answer says what holds now. */
   async function setReader(options: Record<string, boolean | string>) {
@@ -492,8 +452,6 @@ function mount(host: SettingsHost): Settings {
     agentBusy = false;
     renderAgent();
   }
-  agentOn.addEventListener("change", () => setReader({ reader_agent: agentOn.checked }));
-  barsOn.addEventListener("change", () => setReader({ reader_bars: barsOn.checked }));
   // Each sends only its own change: a model the server's keys no longer run stays chosen (share_document refuses it).
   llmOn.addEventListener("change", () => setReader({ page_llm: llmOn.checked }));
   llmModel.addEventListener("change", () => setReader({ page_llm_model: llmModel.value }));
@@ -571,11 +529,11 @@ function mount(host: SettingsHost): Settings {
     totalEl.textContent = data.total > 1 ? `${data.total} in all` : "";
     // The list is drawn afresh: a Restore button that had focus keeps it.
     const focused = (document.activeElement as HTMLElement | null)?.closest?.("#ds-list [data-restore]")?.getAttribute("data-restore");
-    // A deployed version apart: the latest five, a gap, then what's loaded from two newer than it down.
+    // A published version apart: the latest five, a gap, then what's loaded from two newer than it down.
     const vs = visible(),
       d = apart();
     const row = (v: Version) => {
-      const tags = v.n == deployed() ? `<span class="ds-tag">Deployed</span>` : "";
+      const tags = v.n == published() ? `<span class="ds-tag live">Published</span>` : "";
       const edit =
         v.id == current.id || !data!.canEdit
           ? ""
@@ -594,47 +552,6 @@ function mount(host: SettingsHost): Settings {
     footText.textContent = d == null ? `The latest ${vs.length} of ${data.total}.` : `${vs.length} of ${data.total}.`;
     olderBtn.textContent = loadingOlder ? "Loading…" : "Show older versions";
     if (loadingOlder) olderBtn.setAttribute("aria-disabled", "true"); else olderBtn.removeAttribute("aria-disabled");
-  }
-
-  /** Only on the homepage: a note that says so, and its deploy (Deploy for admins). Nothing elsewhere. */
-  function renderHome() {
-    homeSec.hidden = !home?.isHome;
-    if (!home || !home.isHome) return;
-    const d = home.deploy;
-    // Its own domain, a link that opens it there (with this server's port, locally).
-    const site = home.domain ? `${location.protocol}//${home.domain}${location.port ? `:${location.port}` : ""}/` : "";
-    $("ds-home-note").innerHTML =
-      `Homepage${site ? ` · <a id="ds-home-domain" href="${esc(site)}" target="_blank" rel="noopener">${esc(home.domain!)}</a>` : ""}`;
-    // Each part keeps its words together, and the line wraps only between them.
-    const at = d.at
-      ? `<span>Deployed ${esc(clock(d.at))}</span>${d.version != null ? ` <span>· version ${d.version}</span>` : ""}`
-      : `<span>Not deployed yet</span>`;
-    statusEl.innerHTML =
-      d.state == "deploying"
-        ? `<span class="ds-dot deploying" aria-hidden="true"></span>Deploying…`
-        : d.state == "failed"
-          ? `<span class="ds-dot failed" aria-hidden="true"></span>Failed: ${esc(d.error || "the deploy didn't finish.")} ${d.at ? at : ""}`
-          : at;
-    // Redeploy is an admin's: others see how the deploy goes, and no button.
-    redeploy.hidden = !host.admin;
-    const can = home.canDeploy && d.state != "deploying" && !homeBusy;
-    // The document has versions the live page hasn't: Deploy is blue, and its tip says so.
-    const now = data?.current.n;
-    const newer = d.state != "deploying" && now != null && d.version != null && now > d.version;
-    redeploy.classList.toggle("newer", newer && can);
-    if (can) redeploy.removeAttribute("aria-disabled");
-    else redeploy.setAttribute("aria-disabled", "true");
-    tip(
-      redeploy,
-      !can
-        ? home.locked
-          ? "This token has no admin power."
-          : "A deploy is running."
-        : newer
-          ? `The document is at version ${now}: the live page is older.`
-          : "Deploy the document as it is now."
-    );
-    redeploy.textContent = d.state == "deploying" ? "Deploying…" : "Deploy";
   }
 
   /** Document or Project: the kind now, whether you may switch, and why a project can't be a document yet. */
@@ -691,21 +608,6 @@ function mount(host: SettingsHost): Settings {
     other.focus();
     switchKind(other.dataset.kind as DocKind);
   });
-  redeploy.addEventListener("click", async () => {
-    if (redeploy.getAttribute("aria-disabled") == "true") return;
-    homeBusy = true;
-    homeError.textContent = "";
-    if (home) home = { ...home, deploy: { ...home.deploy, state: "deploying", error: null } };
-    renderHome();
-    try {
-      await runTool("deploy_homepage", {});
-    } catch (e) {
-      homeError.textContent = `Couldn't deploy: ${(e as Error).message}`;
-    }
-    homeBusy = false;
-    loadDoc();
-  });
-
   // ------------------------------------------------------------ the popover
 
   // What it shows, read as it mounts (the editor's idle time, chrome.ts), kept fresh by the event channel and read
@@ -738,19 +640,22 @@ function mount(host: SettingsHost): Settings {
       return;
     }
     position();
-    homeError.textContent = "";
+    publishing.reset();
     // (A refresh that failed while it was closed says so.)
     histError.textContent = loadError && data ? `Couldn't refresh the versions: ${loadError}` : "";
     kindError.textContent = "";
     agentError.textContent = "";
     render();
-    renderHome();
+    renderPub();
     renderKind();
     renderAgent();
     renderPage();
     if (!data) loadVersions();
     // Relative times ("4 minutes ago") move on while it's open, every 30 seconds.
-    ticker = window.setInterval(() => { render(); renderHome(); }, 30_000);
+    ticker = window.setInterval(() => {
+      render();
+      renderPub();
+    }, 30_000);
     pop.tabIndex = -1;
     pop.focus();
   }
@@ -768,13 +673,15 @@ function mount(host: SettingsHost): Settings {
     isOpen: () => !pop.hidden,
     escape() {
       if (pop.hidden) return false;
+      // First the publishing menu or its question, then the panel.
+      if (publishing.escape()) return true;
       toggle(false);
       host.anchor.focus();
       return true;
     },
     event(type) {
       // Open or not, so that it opens with what holds now. A burst (a version cut, then its description) is one refresh.
-      if (type != "home" && type != "versions" && type != "tree") return;
+      if (type != "publishing" && type != "versions" && type != "tree") return;
       const key = type == "versions" ? type : "doc";
       clearTimeout(pending[key]);
       pending[key] = window.setTimeout(() => (key == "doc" ? loadDoc() : loadVersions()), 120);

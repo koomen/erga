@@ -797,10 +797,14 @@ journey("a project on Documents and in the viewer; a document becomes a project 
       .toEqual([false, true]);
     await page.keyboard.press("Escape");
 
-    // The settings: Document chosen, no homepage note, and nothing about "Make a project" in the pages.
+    // The settings: Document chosen, not published, and nothing about "Make a project" in the pages.
     await openSettings();
     await until(() => has('#ds-kind [data-kind="document"][aria-checked="true"]:not([aria-disabled])'), 5000, "the settings show Document");
-    expect(await js(page, `document.getElementById("ds-home").hidden`)).toBe(true);
+    await until(
+      () => js(page, `document.getElementById("ds-pub-name").textContent == "Not published"`),
+      5000,
+      "the settings say Not published"
+    );
     expect(await js(page, `document.querySelector('#ds-kind [data-kind="document"]').dataset.tip`)).toBe(
       "A document is one page, with its files beside it."
     );

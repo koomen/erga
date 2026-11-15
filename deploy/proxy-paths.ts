@@ -9,7 +9,7 @@
 export const PROXY_FREE_PATHS: readonly string[] = [
   "/mcp",
   "/llms.txt",
-  "/api/publish",
+  "/api/upload",
   "/.well-known/oauth-*",
   "/oauth/register",
   "/oauth/token",

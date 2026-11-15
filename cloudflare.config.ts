@@ -42,13 +42,13 @@ export default defineConfig(({ mode }) => ({
     // the editor's hashed files (/_erga/..., client/build.ts) too: it serves them from the static assets with a year in
     // the browser's cache, to any origin, and a missing one with no-store (server/pages/assets.ts, serveAsset). They are
     // public code, which staging's admins-only guard lets anyone have (server/identity/admins-only.ts). Not the static
-    // assets alone for /_erga/*: their 404 carried the year-long header (the build's _headers), and the homepage's own
+    // assets alone for /_erga/*: their 404 carried the year-long header (the build's _headers), and a custom
     // domain answers its /_erga/ routes in the Worker (server/app.ts).
     assets: { htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: true },
     exports: {
       // Each document (cloudflare/objects/document.ts), named by its id.
       DocumentObject: exports.durableObject({ storage: "sqlite" }),
-      // The homepage's deploys and the snapshot / serves: one object, "home".
+      // Each domain's publishing and the snapshot it serves (cloudflare/objects/site.ts): one object for each domain.
       Home: exports.durableObject({ storage: "sqlite" }),
       // The server's own small storage (the sign-in values set on /admin/auth): one object, "own", which no copy of another server's data replaces.
       OwnStorage: exports.durableObject({ storage: "sqlite" }),
@@ -101,8 +101,8 @@ export default defineConfig(({ mode }) => ({
         ERGA_LINK_SECRET: local(process.env.ERGA_LINK_SECRET ?? ""),
         ERGA_WRITE_DELAY_MS: local(process.env.ERGA_WRITE_DELAY_MS ?? ""),
         ERGA_RENDER_ALLOW: local(process.env.ERGA_RENDER_ALLOW ?? ""),
-        // How often / checks for a newer homepage deploy (tests shorten it).
-        ERGA_HOME_RECHECK_MS: local(process.env.ERGA_HOME_RECHECK_MS ?? ""),
+        // How often a site checks for a newer publish (tests shorten it).
+        ERGA_SITE_RECHECK_MS: local(process.env.ERGA_SITE_RECHECK_MS ?? ""),
         // When versions are cut: how long edits pause first, and the longest burst one version holds.
         ERGA_VERSION_IDLE_MS: local(process.env.ERGA_VERSION_IDLE_MS ?? ""),
         ERGA_VERSION_MAX_MS: local(process.env.ERGA_VERSION_MAX_MS ?? ""),

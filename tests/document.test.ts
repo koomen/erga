@@ -47,7 +47,7 @@ function setup(dir = new Directory(memory(), { admins: ["ada"] })) {
     directory: dir,
     tabs: { count: () => 0, closeAll: () => {} },
     agents: documentAgents({ settings: async () => ({ missing: "no key in the tests" }), sandbox: testSandbox }),
-    home: {
+    sites: {
       forget: async (id) => {
         forgotten.push(id);
       },
@@ -90,7 +90,7 @@ test("a document is made from files, read from storage while closed, edited by a
   expect((await get(doc, "/doc/nope.html")).status).toBe(404);
 
   // A publish opens the room and edits; once edits pause, a version is cut.
-  const out = await doc.publish({ "index.html": "<h1>Two</h1>" }, [], "ada");
+  const out = await doc.write({ "index.html": "<h1>Two</h1>" }, [], "ada");
   expect(out).toEqual({ written: ["index.html"], removed: [], refused: [] });
   expect(await doc.paths()).toEqual(["index.html", "logo.png"]);
   await until(async () => (await doc.versionsState())!.total == 2);
@@ -136,7 +136,7 @@ test("an unedited document goes when its alarm comes; an edited one stays", asyn
   const kept = make();
   await kept.create("ada", "kept12345", { "index.html": "<h1>Kept</h1>" }, "index.html", { expires: Date.now() + 60_000 });
   expect(await storage().getAlarm()).not.toBeNull();
-  await kept.publish({ "index.html": "<h1>Kept, edited</h1>" }, [], "ada");
+  await kept.write({ "index.html": "<h1>Kept, edited</h1>" }, [], "ada");
   // The edit took its alarm away; and an alarm that comes all the same leaves it.
   expect(await storage().getAlarm()).toBeNull();
   await kept.wake();
@@ -210,7 +210,7 @@ test("a viewer's page in one call: the role, the file an address is, a version t
   const again = (await doc.view({ login: "ada" }, { page: "" }))!;
   expect(again.ver).toBe(first.ver);
   // A file changes (not the page): another version.
-  await doc.publish({ "style.css": "h1{color:red}" }, [], "ada");
+  await doc.write({ "style.css": "h1{color:red}" }, [], "ada");
   const changed = (await doc.view({ login: "ada" }, { page: "" }))!;
   expect(changed.ver).not.toBe(first.ver);
 });
@@ -220,7 +220,7 @@ test("a document stored before publishing went (its record names a published ver
   const doc = make();
   await dir.add({ id: "old12345", owner: "ada", title: "Old", created: Date.now() });
   await doc.create("ada", "old12345", { "index.html": "<h1>One</h1>" }, "index.html", { expires: null });
-  await doc.publish({ "index.html": "<h1>Two</h1>" }, [], "ada");
+  await doc.write({ "index.html": "<h1>Two</h1>" }, [], "ada");
   await until(async () => (await doc.versionsState())!.total == 2);
   // Its record as an older Erga left it: viewers saw version 1 ("manual").
   const stored = storage();
@@ -277,7 +277,7 @@ test("an unedited document edited while its alarm reads the setting stays; one a
   const setting = slowSetting(dir);
   const woke = edited.wake();
   await setting.reading;
-  await edited.publish({ "index.html": "<h1>Edited</h1>" }, [], "ada");
+  await edited.write({ "index.html": "<h1>Edited</h1>" }, [], "ada");
   setting.open();
   await woke;
   expect(await edited.index()).toBe("index.html");
@@ -302,7 +302,7 @@ test("a call while the document is deleted finds no document, and opens nothing 
   await dir.add({ id: "del12345", owner: "ada", title: "Del", created: Date.now(), expires: null });
   const doc = make();
   await doc.create("ada", "del12345", { "index.html": "<h1>Del</h1>" }, "index.html", { expires: null, modified: Date.now() });
-  await doc.publish({ "index.html": "<h1>Del, edited</h1>" }, [], "ada");
+  await doc.write({ "index.html": "<h1>Del, edited</h1>" }, [], "ada");
   // Storage is slow to empty; a publish comes meanwhile.
   const s = storage();
   const deleteAll = s.deleteAll.bind(s);
@@ -316,7 +316,7 @@ test("a call while the document is deleted finds no document, and opens nothing 
   };
   const deleted = doc.delete();
   await emptying;
-  const late = doc.publish({ "index.html": "<h1>Back</h1>" }, [], "ada").then(
+  const late = doc.write({ "index.html": "<h1>Back</h1>" }, [], "ada").then(
     () => "published",
     (e: { message?: string }) => e.message
   );
@@ -337,7 +337,7 @@ test("two publishes at once: each file's edit is by its own publisher", async ()
     expires: null,
     modified: Date.now(),
   });
-  await Promise.all([doc.publish({ "a.css": "a{color:red}" }, [], "ada"), doc.publish({ "b.css": "b{color:red}" }, [], "bob")]);
+  await Promise.all([doc.write({ "a.css": "a{color:red}" }, [], "ada"), doc.write({ "b.css": "b{color:red}" }, [], "bob")]);
   await until(async () => (await doc.versionsState())!.total == 2);
   const state = (await doc.versionsState())!;
   expect(state.current.authors).toEqual(["ada", "bob"]);
@@ -622,7 +622,7 @@ async function versioned(id: string) {
 test("restoring one file: the others stay, the answer has the new version, and an edit lands right after", async () => {
   const { doc, ada } = await versioned("one12345");
   const before = (await doc.versionsState())!.total;
-  await doc.publish({ "notes.md": "# Notes\n\nnotes-one\n" }, [], "ada");
+  await doc.write({ "notes.md": "# Notes\n\nnotes-one\n" }, [], "ada");
   await until(async () => (await doc.versionsState())!.total == before + 1);
   const withNotes = (await doc.versionsState())!.current;
   expect((await tool(doc, "write", { path: "notes.md", content: "# Notes\n\nnotes-two\n" })).status).toBe(200);

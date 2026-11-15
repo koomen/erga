@@ -3,7 +3,7 @@
 // it to the page in its frame; the page opens /<owner>/<slug>/api/room?key=<key> with it (routes.ts). The key names the
 // person and the one document, and holds for a short time: it is checked only when a socket opens, so the viewer gets a
 // new one before it ends, for the next socket. It carries the person's admin power only if their session has it (an
-// admin edits the homepage project, which is nobody's), and only for this one document. The document decides what the
+// admin edits the default homepage, which is nobody's), and only for this one document. The document decides what the
 // person may do (read or edit) as it does for any request: a share taken away holds for the next socket.
 //
 // Trap: a page's own scripts can read its edit key and call the keyed operations as the person. So a call with the key

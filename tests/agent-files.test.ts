@@ -145,7 +145,7 @@ test("versions lists them, and read with version reads an old file; there's no p
   let page = await (await owner.get(`/d/${document}/doc/index.html`)).text();
   for (const [n, word] of [" alpha", " beta"].entries()) {
     page = page.replace("</h1>", `${word}</h1>`);
-    const sent = await s.fetch("/api/publish", {
+    const sent = await s.fetch("/api/upload", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ document, files: { "index.html": page } }),

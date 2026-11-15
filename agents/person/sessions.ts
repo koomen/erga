@@ -34,7 +34,7 @@ const modelState = (agent: AgentSession) => ({
 
 /**
  * What the agents need from where they run: their SQLite, the Platform (the
- * directory, tokens, the repository, the deploys, the homepage), and an
+ * directory, tokens, the repository, the deploys, publishing), and an
  * alarm, set while a run goes (`wake` when it rings).
  */
 export interface PersonAgentsDeps {

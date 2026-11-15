@@ -5,9 +5,8 @@
 // Its circle and panel are outside `#erga-editor`, and stay as they are when the editor opens or closes: the editor
 // only places it (client/agent/layout.ts). Its conversation is the person's (`/api/agent`, which takes only the app's
 // own origin), not the document's: a test reads it at `${root}/api/agent/conversation`, never at the document's
-// `/d/<id>/api/agent`. In the viewer, a reader has it only where the owner allows it (`share_document`,
-// `reader_agent`), and never on a document shared with "*". A reader sees Erga's bars only where the owner leaves them
-// on (`reader_bars`): off, the viewer sets `--band-h` to 0 and hides the bars, so the page has no room at its top.
+// `/d/<id>/api/agent`. In the viewer, everyone signed in who may open the document has it. A published site never
+// has it.
 
 import type { Session } from "../platform.ts";
 import { inlineScript } from "./inline.ts";

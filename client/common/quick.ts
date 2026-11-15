@@ -1,8 +1,8 @@
-// The quick actions on a phone (narrower than 760px), in the viewer and on the homepage (bars.ts) and in the editor
+// The quick actions on a phone (narrower than 760px), in the viewer and on a published site (bars.ts) and in the editor
 // (client/shell/chrome.ts) alike: the buttons' bar is your avatar alone, and a tap on it opens the quick actions out of it,
 // to its left, and its menu under it (client/inline/bars.css, .quick). A card opened from them keeps them open; a tap
 // anywhere else closes them. The breadcrumbs' bar makes way: it ends 8px before the buttons' bar, its end in sight
-// (--nav-room). Open or closed is the class quick-open on the body (on the homepage, on its controls' host: `on`), so
+// (--nav-room). Open or closed is the class quick-open on the body (on a published site, on its controls' host: `on`), so
 // the viewer's bars and the editor's agree.
 
 export function mountQuick(o: {
@@ -17,7 +17,7 @@ export function mountQuick(o: {
   menuOpen(): boolean | undefined;
   /** What a tap may land on and keep them open: the bar and the cards out of it. */
   keep: string;
-  /** What carries the class: the body, or the homepage's controls' host. */
+  /** What carries the class: the body, or a published site's controls' host. */
   on?: HTMLElement;
   /** The others' stack left of the bar (the editor's #people), if there is one. */
   stack?: HTMLElement;

@@ -36,7 +36,7 @@ const LOCAL: Record<string, string> = {
     [
       "ERGA_WRITE_DELAY_MS",
       "ERGA_RENDER_ALLOW",
-      "ERGA_HOME_RECHECK_MS",
+      "ERGA_SITE_RECHECK_MS",
       "ERGA_VERSION_IDLE_MS",
       "ERGA_VERSION_MAX_MS",
       "ERGA_ROOM_IDLE_MS",

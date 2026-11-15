@@ -1,7 +1,7 @@
 // A document's versions, in the editor's settings: what cuts one (an agent's turn, a pause in a person's edits, a
 // restore), the list that follows them live, Restore with its Undo, what a viewer may not do, the list of ten with
-// its older versions, errors in place, the sheet on a phone, the homepage's line with Deploy, which no new version
-// presses by itself, and the deployed version shown apart when it is old.
+// its older versions, errors in place, the sheet on a phone, the Publishing section with Publish, which no new version
+// presses by itself, and the published version shown apart when it is old.
 //
 // The page of the document says which draft it is ("Draft A", "Draft B"...): each check reads the draft that it
 // expects. Only two versions wait for a person's edits to pause (SHORT.idle), and one for the pause in an agent's
@@ -11,7 +11,7 @@ import { runTool } from "../helpers/tools";
 import {
   draftDoc,
   front,
-  homeOf,
+  publishingOf,
   openDocEditor,
   PHONE,
   scripted,
@@ -57,7 +57,9 @@ journey("versions in the editor's settings", () => {
   const current = async () => (await versionsOf(s, id)).current.n;
   const restore = (version: string, as = {}) =>
     runTool<{ current: { id: string; n: number } }>(s.root, "restore_version", { document: id, version }, as);
-  const blue = () => st.eval<boolean>(`document.getElementById("ds-redeploy").classList.contains("newer")`);
+  const blue = () => st.eval<boolean>(`document.getElementById("ds-publish").classList.contains("newer")`);
+  /** The Erga domain's name on this server. */
+  const erga = s ? new URL(s.root).host : "";
   const histError = () => st.text("#ds-hist-error");
   /** From now on, requests that match fail as if the network were down: the browser logs each, on purpose. */
   const down = async (tab: Tab, pattern: RegExp) => {
@@ -81,8 +83,11 @@ journey("versions in the editor's settings", () => {
     await expect.poll(() => st.draft()).toBe(`Draft ${n}`);
   };
 
-  // The journey makes its document the server's homepage for a while: put back, also when a step fails.
-  test.afterAll(async () => void (await runTool(s.root, "set_setting", { key: "landing_document", value: "/_home" })));
+  // The journey publishes its document to the Erga domain for a while: the default homepage gets it back, also when a step fails.
+  test.afterAll(async () => {
+    await runTool(s.root, "set_publishing", { document: "/_home", domain: erga, replace: true });
+    await runTool(s.root, "publish_document", { document: "/_home" });
+  });
 
   test("the popover hangs from the gear, with the latest ten versions of twelve", async ({ tab }) => {
     // Twelve versions with no wait: the first, one by an agent's turn (draft B), and ten restores of the two in turn.
@@ -99,7 +104,7 @@ journey("versions in the editor's settings", () => {
     expect(pop.top - gear.bottom).toBeLessThan(20);
     expect(Math.abs(pop.right - gear.right)).toBeLessThan(24);
     expect(await st.attr("#btn-settings", "aria-expanded")).toBe("true");
-    // No publishing: nothing to choose what viewers see.
+    // Not published: no version has the tag.
     expect(await st.eval<boolean>(`!!document.querySelector("#ds-mode, #ds-pick, #ds-explain")`)).toBe(false);
     const rows = await st.rows();
     expect(rows).toHaveLength(10);
@@ -210,7 +215,8 @@ journey("versions in the editor's settings", () => {
     );
     expect(await theirs.listed()).toEqual([]);
     expect(await theirs.eval<boolean>(`!!document.querySelector("#ds-list .ds-restore")`)).toBe(false);
-    expect(await theirs.eval<boolean>(`document.getElementById("ds-home").hidden`)).toBe(true);
+    // Publishing is for those who may edit too: it goes when the settings read the document again.
+    await until(() => theirs.eval<boolean>(`document.getElementById("ds-pub").hidden`), 5_000, "the Publishing section goes");
     // Document or Project: shown, not theirs to change.
     await until(
       async () => (await theirs.eval<number>(`document.querySelectorAll('#ds-kind [aria-disabled="true"]').length`)) == 2,
@@ -219,14 +225,14 @@ journey("versions in the editor's settings", () => {
     );
   });
 
-  test("a viewer at the editor's address gets the viewer, with the document as it is; the tools give them no versions, no restore and no deploy", async () => {
+  test("a viewer at the editor's address gets the viewer, with the document as it is; the tools give them no versions, no restore and no publish", async () => {
     await readerSees("Draft C");
     expect(new URL(reader.url()).search).toContain("edit");
     expect(await settings(reader).rect("#btn-settings")).toBeNull();
     const versions = await runTool(s.root, "versions", { document: id }, asBo);
     expect([versions.status, versions.error]).toEqual([403, "Only people who can edit a document read its versions."]);
     expect((await restore("v1", asBo)).status).toBe(403);
-    expect((await runTool(s.root, "deploy_homepage", {}, asBo)).status).toBe(403);
+    expect((await runTool(s.root, "publish_document", { document: id }, asBo)).status).toBe(403);
   });
 
   test("a person's edits are a version once they pause; a viewer who comes before sees them; the list has the version with its description", async () => {
@@ -303,89 +309,95 @@ journey("versions in the editor's settings", () => {
     await tab.page.setViewportSize(WIDE);
   });
 
-  test("the homepage's line shows only on the homepage: it comes when an admin makes the document the homepage, which deploys it at once", async () => {
+  test("Publishing says Not published; an admin links the document to the Erga domain, and the open settings hear of it; nothing is live until Publish", async () => {
     await st.open();
-    // Not the homepage: nothing about it, and no switch anywhere.
-    expect(await st.eval<boolean>(`document.getElementById("ds-home").hidden`)).toBe(true);
+    // Not published: the section says so, and no switch anywhere.
+    expect(await st.text("#ds-pub-name")).toBe("Not published");
+    expect(await st.text("#ds-status")).toBe("Choose a domain to publish");
     expect(await st.eval<boolean>(`!!document.querySelector("#doc-settings [role=switch]")`)).toBe(false);
-    // An admin chooses it (landing_document, as /admin/settings sets it): the open settings hear of it.
-    expect((await runTool(s.root, "set_setting", { key: "landing_document", value: id })).error).toBeUndefined();
-    await until(() => st.eval<boolean>(`!document.getElementById("ds-home").hidden`), 5_000, "the homepage's line shows");
-    expect(await st.text("#ds-home-note")).toBe("Homepage");
-    await until(async () => /^Deployed .*· version 18$/.test(await st.text("#ds-status")), 5_000, "the first deploy is done");
+    // An admin links it in the default homepage's place (set_publishing, as "Publish to" does after its question): the
+    // open settings hear of it. The default homepage serves on.
+    expect((await runTool(s.root, "set_publishing", { document: id, domain: erga, replace: true })).error).toBeUndefined();
+    await until(async () => (await st.text("#ds-pub-name")) == erga, 5_000, "the settings name the domain");
+    expect(await st.text("#ds-status")).toBe("Not published yet");
+    expect(await blue()).toBe(true);
+    expect(await front(s)).not.toContain("Draft C");
+    // Publish: the document is live.
+    await st.clickOn("#ds-publish");
+    await until(async () => /^Published .*· version 18$/.test(await st.text("#ds-status")), 5_000, "the first publish is done");
     expect(await front(s)).toContain("Draft C");
     expect(await blue()).toBe(false);
-    expect(await st.text("#ds-redeploy")).toBe("Deploy");
+    expect(await st.text("#ds-publish")).toBe("Publish");
   });
 
-  test("a new version never deploys by itself: Deploy turns blue, its tip says that the live page is older, and Deploy deploys the document", async () => {
-    // An edit: once it is a version, the settings say that the live page is older, and nothing deploys.
+  test("a new version never publishes by itself: Publish turns blue, its tip says that the live site is older, and Publish publishes the document", async () => {
+    // An edit: once it is a version, the settings say that the live site is older, and nothing publishes.
     await typeDraft("E");
     await until(async () => (await current()) == 19, SHORT.idle * 5, "the edit is a version");
     await st.open();
     await until(
-      async () => (await st.attr("#ds-redeploy", "data-tip")) == "The document is at version 19: the live page is older.",
+      async () => (await st.attr("#ds-publish", "data-tip")) == "The document is at version 19: the live site is older.",
       5_000,
       "the tip says so"
     );
     expect(await blue()).toBe(true);
-    expect(await st.text("#ds-status")).toMatch(/^Deployed .*· version 18$/);
-    expect((await homeOf(s, id)).deploy.version).toBe(18);
+    expect(await st.text("#ds-status")).toMatch(/^Published .*· version 18$/);
+    expect((await publishingOf(s, id)).version).toBe(18);
     expect(await front(s)).toContain("Draft C");
-    // Deploy: the button is locked while the deploy runs, and then the live page is the document.
+    // Publish: the button is locked while the publish runs, and then the live site is the document.
     await st.watchStatus();
-    await st.clickOn("#ds-redeploy");
+    await st.clickOn("#ds-publish");
     await until(
-      async () => /^Deployed .*· version 19$/.test(await st.text("#ds-status")) && (await st.seen()).length >= 2,
+      async () => /^Published .*· version 19$/.test(await st.text("#ds-status")) && (await st.seen()).length >= 2,
       5_000,
-      "the deploy is done",
+      "the publish is done",
       st.seen
     );
-    expect(await st.lockedWhileDeploying()).toBe(true);
+    expect(await st.lockedWhilePublishing()).toBe(true);
     expect(await blue()).toBe(false);
     expect(await front(s)).toContain("Draft E");
   });
 
-  test("Deploy with an edit that no version has yet deploys the document as it is, at once", async () => {
+  test("Publish with an edit that no version has yet publishes the document as it is, at once", async () => {
     await typeDraft("F");
     await st.open();
     await st.watchStatus();
-    await st.clickOn("#ds-redeploy");
+    await st.clickOn("#ds-publish");
     await until(
-      async () => (await st.seen()).length >= 2 && (await st.text("#ds-status")).startsWith("Deployed "),
+      async () => (await st.seen()).length >= 2 && (await st.text("#ds-status")).startsWith("Published "),
       5_000,
-      "the deploy is done",
+      "the publish is done",
       st.seen
     );
     expect(await front(s)).toContain("Draft F");
   });
 
-  test("a deployed version older than the latest ten shows apart: the latest five, a gap, then five with it third; Show older versions goes on below it; a deploy takes the gap away", async ({
+  test("a published version older than the latest ten shows apart: the latest five, a gap, then five with it third; Show older versions goes on below it; a publish takes the gap away", async ({
     tab,
   }) => {
-    const deployed = (await homeOf(s, id)).deploy.version!;
-    // Sixteen more versions, none deployed: restores of two old versions in turn (the first one takes the typed edit with it).
+    const published = (await publishingOf(s, id)).version!;
+    // Sixteen more versions, none published: restores of two old versions in turn (the first one takes the typed edit with it).
     let at = 0;
-    for (let i = 0; at < deployed + 16; i++) at = (await restore(i % 2 ? "v2" : "v1")).result!.current.n;
-    expect(at).toBe(deployed + 16);
+    for (let i = 0; at < published + 16; i++) at = (await restore(i % 2 ? "v2" : "v1")).result!.current.n;
+    expect(at).toBe(published + 16);
     // The settings read the versions afresh: the page loads again (a tab that has listed them keeps them all).
     st = await openDocEditor(tab.page, s, address);
     await st.open();
-    const around = [deployed + 2, deployed + 1, deployed, deployed - 1, deployed - 2];
+    const around = [published + 2, published + 1, published, published - 1, published - 2];
     await expect.poll(() => st.listed()).toEqual([at, at - 1, at - 2, at - 3, at - 4, ...around]);
     const r = await st.rows();
     expect(r[5]).toBe("… 9 more");
-    expect(r[8].startsWith(`v${deployed}`)).toBe(true);
-    expect(r[8]).toContain("Deployed");
-    expect(r.filter((x) => x.includes("Deployed"))).toHaveLength(1);
+    expect(r[8].startsWith(`v${published}`)).toBe(true);
+    expect(r[8]).toContain("Published");
+    expect(r.filter((x) => x.includes("Published"))).toHaveLength(1);
     expect(await st.text("#ds-foot-text")).toBe(`10 of ${at}.`);
     await st.clickOn("#ds-older");
-    const below = Array.from({ length: 10 }, (_, i) => deployed - 3 - i);
+    const below = Array.from({ length: 10 }, (_, i) => published - 3 - i);
     await expect.poll(() => st.listed()).toEqual([at, at - 1, at - 2, at - 3, at - 4, ...around, ...below]);
-    // Deploy: the deployed version is the latest, in the list, with no gap.
-    await st.clickOn("#ds-redeploy");
-    await expect.poll(() => st.text("#ds-status")).toMatch(new RegExp(`^Deployed .*· version ${at}$`));
-    await expect.poll(async () => (await st.rows())[0]).toContain("Deployed");
+    // Publish: the published version is the latest, in the list, with no gap.
+    await st.clickOn("#ds-publish");
+    await expect.poll(() => st.text("#ds-status")).toMatch(new RegExp(`^Published .*· version ${at}$`));
+    await expect.poll(async () => (await st.rows())[0]).toContain("Published");
     expect((await st.rows()).some((x) => x.startsWith("…"))).toBe(false);
   });
 });

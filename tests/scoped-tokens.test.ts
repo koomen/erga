@@ -76,9 +76,9 @@ test("a document token: its one document, with the person's rights there, and no
   // Not its person's tokens, keys or pages: those reach beyond one document.
   expect([me.token.scope, me.tokens, me.apiKeys]).toEqual(["document", undefined, undefined]);
   // Its own document: the document's own tools reach it (sharing is the owner's right there).
-  expect((await call(token, "share_document", { document: "oneoneon", reader_bars: true })).status).toBe(200);
+  expect((await call(token, "share_document", { document: "oneoneon", page_llm: false })).status).toBe(200);
   // Another of the same person's documents: refused.
-  const other = await call(token, "share_document", { document: "twotwotw", reader_bars: true });
+  const other = await call(token, "share_document", { document: "twotwotw", page_llm: false });
   expect(other.status).toBe(403);
   // No listing, making or deleting other documents, and no token tools.
   for (const tool of ["list_documents", "create_document", "revoke"]) {
@@ -95,7 +95,7 @@ test("a documents token: every document, but not the admin tools, even an admin'
   const list = await call(token, "list_documents");
   expect(list.status).toBe(200);
   expect(list.body.result.documents.map((d: { id: string }) => d.id).sort()).toEqual(["oneoneon", "twotwotw"]);
-  expect((await call(token, "share_document", { document: "twotwotw", reader_bars: true })).status).toBe(200);
+  expect((await call(token, "share_document", { document: "twotwotw", page_llm: false })).status).toBe(200);
   const users = await call(token, "people");
   expect(users.status).toBe(403);
   expect(users.body.error).toMatch(/admin token/);
@@ -341,7 +341,7 @@ test("one network address has REQUESTS_WAITING requests for a token at most; ano
 
 /** Publishes a document with a documents token: its id and address. */
 async function publish(s: Server, token: string, title: string) {
-  const r = await s.fetch("/api/publish", {
+  const r = await s.fetch("/api/upload", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ title, files: { "index.html": `<h1>${title}</h1>` } }),

@@ -1,5 +1,5 @@
 // /admin, the Settings page: each of the server's settings, with the control it's set with (client/inline/admin-settings.ts
-// saves it), and under them pages' models today (./page-llm.ts).
+// saves it), the Sites row (the document published to each domain), and under them pages' models today (./page-llm.ts).
 
 import { ACCESS_SETTINGS, AGENT_SETTINGS, type ConfigEntry, type Settings } from "../directory/index.ts";
 import { ICON, inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
@@ -10,22 +10,19 @@ import { adminPage } from "./layout.ts";
 import { pageLlmSection, pageLlmUsage } from "./page-llm.ts";
 import { setAt, shown } from "./parts.ts";
 import { addressOf } from "../../document/names.ts";
-
-/** A setting that names a document (Setting.kind), with the document it names now, if there is one. */
-type Shown = ConfigEntry & { doc?: { address: string; title: string } | null };
+import { domainName, ERGA, ergaName, sitesOf } from "../sites/index.ts";
 
 /**
  * The control a setting's value is set with: by its kind, its choices, else
  * the kind of its default. A boolean, or a setting whose choices are "off"
  * and "on", is a switch; other choices are a select (with the value now
- * among them, if the parser took another). A document is typed by its
- * address (kept by id, which a rename never changes), empty for none. A list
+ * among them, if the parser took another). A list
  * of users is a picker: a chip for each, and a box to add one from the
  * server's users. A number that can also be never (null, e.g.
  * delete_docs_after_hours) gets a choice of "After [n] hours" or "Never" in
  * front of it.
  */
-function valueInput(e: Shown, never: boolean): string {
+function valueInput(e: ConfigEntry, never: boolean): string {
   const locked = e.locked;
   const attrs = `name="value" id="set-${esc(e.key)}" aria-label="${esc(e.label ?? e.key)}"${locked ? " disabled" : ""}`;
   const unit = unitOf(e.key);
@@ -47,16 +44,6 @@ function valueInput(e: Shown, never: boolean): string {
         <input type="hidden" ${attrs} data-kind="users" value="${esc(JSON.stringify(list))}">
       </div>`;
   }
-  if (e.kind == "document") {
-    // Find as you type: any of the server's documents and projects, by title, owner or address (the operation list_documents, with all);
-    // choosing one saves it. The value is its address, kept by id.
-    const value = e.doc ? e.doc.address : e.value == null ? "" : String(e.value);
-    return `<div class="doc-pick">
-        <input class="input find" id="find-${esc(e.key)}" type="search" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="found-${esc(e.key)}" placeholder="Find a document or project" autocomplete="off" autocapitalize="off" spellcheck="false"${locked ? " disabled" : ""}>
-        <ul class="found" id="found-${esc(e.key)}" role="listbox" aria-label="Documents and projects" hidden></ul>
-        <input type="hidden" ${attrs} data-kind="document" value="${esc(value)}">
-      </div>`;
-  }
   if (never && typeof e.default == "number") {
     const off = e.value === null;
     return `<select class="mode" name="mode" aria-label="${esc(e.label ?? e.key)}: after a time, or never"${locked ? " disabled" : ""}><option value="after"${off ? "" : " selected"}>After</option><option value="never"${off ? " selected" : ""}>Never</option></select>
@@ -72,10 +59,9 @@ function valueInput(e: Shown, never: boolean): string {
 /** The unit of a number setting, from the end of its key: "_hours", "_mb", "_gb". */
 const unitOf = (key: string) => ({ hours: "hours", mb: "MB", gb: "GB", usd: "US$" })[key.slice(key.lastIndexOf("_") + 1)] ?? "";
 
-/** How a setting is set: "switch", "choice" and "document" save as soon as they change; the rest have Save. */
-function controlOf(e: Shown): "switch" | "choice" | "users" | "document" | "typed" {
+/** How a setting is set: "switch" and "choice" save as soon as they change; the rest have Save. */
+function controlOf(e: ConfigEntry): "switch" | "choice" | "users" | "typed" {
   if (e.kind == "users") return "users";
-  if (e.kind == "document") return "document";
   if (typeof e.default == "boolean" || (e.choices?.length == 2 && e.choices.includes("off") && e.choices.includes("on"))) return "switch";
   if (e.choices?.length) return "choice";
   return "typed";
@@ -85,34 +71,25 @@ function controlOf(e: Shown): "switch" | "choice" | "users" | "document" | "type
 const chip = (login: string, locked: boolean) =>
   `<li class="chip" data-login="${esc(login)}">${esc(login)}${locked ? "" : `<button type="button" class="unpick" aria-label="Take out ${esc(login)}" title="Take out ${esc(login)}">${ICON.close}</button>`}</li>`;
 
-export function settingRow(e: Shown, session: Session, never: boolean, place: number): string {
-  const def = `default ${shown(e.default, e.kind)}`;
+export function settingRow(e: ConfigEntry, never: boolean, place: number): string {
+  const def = `default ${shown(e.default)}`;
   const control = controlOf(e);
   const meta = e.locked ? `<span class="badge" title="Fixed by the deploy · ${esc(def)}">Locked</span>` : "";
-  const doc =
-    e.kind == "document" && e.value != null
-      ? e.doc
-        ? `<a class="open-doc" href="${esc(link(e.doc.address, session))}">${esc(e.doc.title)}</a>`
-        : `<span class="gone" title="No such document now: the homepage is the plain one">missing</span>`
-      : "";
   // Reset where the control can't simply pick the default (a switch, a choice can): in the line that says who set it.
   const reset =
     e.source == "set" && !e.locked && control != "switch" && control != "choice"
-      ? ` · <button type="button" class="reset" title="Back to ${esc(e.kind == "document" ? "no homepage: / is a page with Sign in" : shown(e.default, e.kind))}">Reset</button>`
+      ? ` · <button type="button" class="reset" title="Back to ${esc(shown(e.default))}">Reset</button>`
       : "";
   // Under each setting: when it was last set, and by whom (its default on hover).
   const set =
     e.source == "set"
       ? `<p class="set"><span title="${esc(def)}">${e.updated != null ? `Set ${esc(setAt(e.updated))}${e.updatedBy ? ` by ${esc(byLine(e.updatedBy, e.updatedVia))}` : ""}` : "Set"}</span>${reset}</p>`
       : "";
-  // Save for what's typed in (a document saves as it's chosen).
-  const buttons =
-    e.locked || control == "switch" || control == "choice" || control == "document"
-      ? ""
-      : `<button class="pill save" disabled>Save</button>`;
+  // Save for what's typed in.
+  const buttons = e.locked || control == "switch" || control == "choice" ? "" : `<button class="pill save" disabled>Save</button>`;
   return `  <li class="setting" data-key="${esc(e.key)}" data-control="${control}" data-live="setting:${esc(e.key)}" data-sort="${place}">
     <div class="about">
-      <div class="head"><label class="key" for="${control == "document" ? "find-" : "set-"}${esc(e.key)}" title="${esc(e.key)}">${esc(e.label ?? e.key)}</label>${meta || doc ? `<span class="meta">${[meta, doc].filter(Boolean).join(`<span aria-hidden="true">·</span>`)}</span>` : ""}</div>
+      <div class="head"><label class="key" for="set-${esc(e.key)}" title="${esc(e.key)}">${esc(e.label ?? e.key)}</label>${meta ? `<span class="meta">${meta}</span>` : ""}</div>
       ${e.description ? `<p class="desc">${esc(e.description)}</p>` : ""}
       ${set}
     </div>
@@ -125,26 +102,55 @@ export function settingRow(e: Shown, session: Session, never: boolean, place: nu
   </li>`;
 }
 
-/** The settings /admin/settings shows, in its order, each with what its row needs: the document it names; whether it takes never. */
+/** The Sites row's key among the page's live rows. */
+const SITES = "setting:sites";
+
+/**
+ * The Sites row: one line for each domain, with the document that has it (server/sites/). It only shows the links: a
+ * person changes them in the document's settings ("Publish to"), which read the same state.
+ */
+async function sitesRow(platform: Platform, session: Session, origin: string, place: number): Promise<string> {
+  const erga = ergaName(platform, origin);
+  const sites = await sitesOf(platform);
+  const lines = await Promise.all(
+    sites.map(async ({ domain, status }) => {
+      const doc = status.doc ? await platform.directory.get(status.doc) : null;
+      const own = status.live && status.live.doc == status.doc ? status.live : null;
+      const linked = doc
+        ? `<a href="${esc(link(addressOf(doc), session))}">${esc(doc.title)}</a>`
+        : `<span class="free">${status.doc ? "missing" : "Free"}</span>`;
+      const state = !status.doc
+        ? ""
+        : own
+          ? `<span class="dot on" aria-hidden="true"></span>Published${own.version != null ? ` v${own.version}` : ""}`
+          : `<span class="dot" aria-hidden="true"></span>Not published`;
+      return `<tr data-domain="${esc(domain == ERGA ? "erga" : domain)}"><td class="domain">${esc(domainName(domain, erga))}</td><td>${linked}</td><td class="state">${state}</td></tr>`;
+    })
+  );
+  // The link made last: when, and by whom.
+  const last = sites.filter((s) => s.status.linked).sort((a, b) => b.status.linked!.at - a.status.linked!.at)[0];
+  const set = last
+    ? `<p class="set">${esc(domainName(last.domain, erga))} set ${esc(setAt(last.status.linked!.at))}${last.status.linked!.by ? ` by ${esc(last.status.linked!.by)}` : ""}</p>`
+    : "";
+  return `  <li class="sites" data-live="${SITES}" data-sort="${place}">
+    <p class="key">Sites</p>
+    <p class="desc">The document published to each domain. To publish a document, use the document settings in the editor.</p>
+    <table class="site-list"><tbody>${lines.join("")}</tbody></table>
+    ${set}
+  </li>`;
+}
+
+/** The rows /admin/settings shows, in its order: each setting with what its row needs (whether it takes never), and the Sites row after delete_docs_after_hours. */
 async function shownSettings(
   platform: Platform,
   session: Session,
+  origin: string,
   fresh = false,
   pick = (key: string) => !ACCESS_SETTINGS.includes(key) && !AGENT_SETTINGS.includes(key)
 ) {
   if (fresh) platform.directory.config.forget();
-  const entries = await platform.directory.config.list(whoOf(session));
-  // A setting naming a document shows it by its address now, linked.
   // The Access page's settings are set there, and the agents' on the API keys page.
-  const settings: Shown[] = await Promise.all(
-    entries
-      .filter((e) => pick(e.key))
-      .map(async (e) => {
-        if (e.kind != "document" || e.value == null) return e;
-        const doc = await platform.directory.find(String(e.value));
-        return { ...e, doc: doc && { address: addressOf(doc), title: doc.title } };
-      })
-  );
+  const settings = (await platform.directory.config.list(whoOf(session))).filter((e) => pick(e.key));
   // Whether a setting takes null (never) as well as its kind of value.
   const takesNever = (key: string) => {
     try {
@@ -153,13 +159,21 @@ async function shownSettings(
       return false;
     }
   };
-  return settings.map((e, place) => ({ key: e.key, html: settingRow(e, session, takesNever(e.key), place), place }));
+  const rows = settings.map((e, i) => ({ key: `setting:${e.key}`, html: settingRow(e, takesNever(e.key), i * 2), place: i * 2 }));
+  const place =
+    Math.max(
+      0,
+      settings.findIndex((e) => e.key == "delete_docs_after_hours")
+    ) *
+      2 +
+    1;
+  return [...rows, { key: SITES, html: await sitesRow(platform, session, origin, place), place }].sort((a, b) => a.place - b.place);
 }
 
 /** /admin: the server's settings. */
-export async function settingsPage(platform: Platform, session: Session) {
+export async function settingsPage(platform: Platform, session: Session, origin: string) {
   const [rows, users, use] = await Promise.all([
-    shownSettings(platform, session),
+    shownSettings(platform, session, origin),
     platform.directory.users.list(whoOf(session)),
     pageLlmUsage(platform.directory),
   ]);
@@ -179,10 +193,9 @@ ${rows.map((r) => r.html).join("\n")}
 }
 
 /** The rows of /admin/settings that `keys` name ("setting:<key>"), as they are now, for an open page (server/news/). */
-export const settingsRows: LiveRows = async (platform, session, keys) => {
+export const settingsRows: LiveRows = async (platform, session, keys, origin) => {
   const out: Record<string, LiveRow> = Object.fromEntries(keys.map((k) => [k, null]));
-  for (const r of await shownSettings(platform, session, true))
-    if (`setting:${r.key}` in out) out[`setting:${r.key}`] = { html: r.html, sort: r.place };
+  for (const r of await shownSettings(platform, session, origin, true)) if (r.key in out) out[r.key] = { html: r.html, sort: r.place };
   return out;
 };
 

@@ -340,33 +340,51 @@ describe("bun erga snapshot-secret", () => {
   });
 });
 
-describe("bun erga deploy --home", () => {
-  test("puts the primary on the homepage's domain; the server keeps it, and the entry copies it from the server", async () => {
+describe("bun erga deploy --domain", () => {
+  test("registers each custom domain on the primary; the server keeps them, and the entry copies them from the server", async () => {
     const mock = mockCloudflare({ fleet: true });
     mock.state.zones.push({ id: "zone00000000000000000000000e7ga4", name: "example.org", status: "active" });
     fresh(primary, staging);
     const lines: string[] = [];
-    await deployInstance({ dir, host: "example.com", commit: "HEAD", home: "Example.org", net: mock.fetch, print: (l) => lines.push(l) });
+    const facts = () => JSON.parse(bindingsOf(mock.state, "erga").ERGA_DEPLOY.text).domains;
+    await deployInstance({
+      dir,
+      host: "example.com",
+      commit: "HEAD",
+      domains: ["Example.org"],
+      net: mock.fetch,
+      print: (l) => lines.push(l),
+    });
     expect(mock.state.domains).toContainEqual(expect.objectContaining({ hostname: "example.org", service: "erga" }));
-    expect(JSON.parse(bindingsOf(mock.state, "erga").ERGA_DEPLOY.text).home).toBe("example.org");
-    expect(lines).toContainEqual(expect.stringContaining("the homepage on https://example.org"));
-    expect((entryOf(readConfig(dir), "example.com") as CloudflareEntry | null)?.home).toBe("example.org");
-    expect(records().at(-1)?.[0].command).toBe("bun erga deploy HEAD example.com --home Example.org");
+    expect(facts()).toEqual(["example.org"]);
+    expect(lines).toContainEqual(expect.stringContaining("the custom domain https://example.org"));
+    expect((entryOf(readConfig(dir), "example.com") as CloudflareEntry | null)?.domains).toEqual(["example.org"]);
+    expect(records().at(-1)?.[0].command).toBe("bun erga deploy HEAD example.com --domain example.org");
 
-    // The next deploy keeps it, from the entry's copy.
+    // The next deploy keeps it, from the entry's copy; another --domain adds to it.
     await deployInstance({ dir, host: "example.com", commit: "HEAD", net: mock.fetch, print: () => {} });
-    expect(JSON.parse(bindingsOf(mock.state, "erga").ERGA_DEPLOY.text).home).toBe("example.org");
+    expect(facts()).toEqual(["example.org"]);
+    await deployInstance({
+      dir,
+      host: "example.com",
+      commit: "HEAD",
+      domains: ["blog.example.org", "example.org"],
+      net: mock.fetch,
+      print: () => {},
+    });
+    expect(facts()).toEqual(["example.org", "blog.example.org"]);
+    expect(mock.state.domains.map((d) => d.hostname)).toContain("blog.example.org");
   }, 60_000);
 
   test("only a name on the account's zones, only for a primary, never the app's own address", async () => {
     const mock = mockCloudflare({ fleet: true });
     fresh(primary, staging);
-    const deploy = (host: string, home: string, commit = "HEAD") =>
-      deployInstance({ dir, host, commit, home, net: mock.fetch, print: () => {} });
+    const deploy = (host: string, domain: string, commit = "HEAD") =>
+      deployInstance({ dir, host, commit, domains: [domain], net: mock.fetch, print: () => {} });
     await expect(deploy("example.com", "nowhere.test")).rejects.toThrow("nowhere.test is on none of this Cloudflare account's zones");
     await expect(deploy("example.com", "not a domain")).rejects.toThrow("give a domain name");
     await expect(deploy("example.com", "example.com")).rejects.toThrow("is the app's address");
-    await expect(deploy("staging.example.com", "example.org")).rejects.toThrow("a staging instance serves no homepage domain");
+    await expect(deploy("staging.example.com", "example.org")).rejects.toThrow("a staging instance serves no custom domain");
     expect(mock.state.domains.map((d) => d.hostname)).not.toContain("nowhere.test");
   }, 60_000);
 });

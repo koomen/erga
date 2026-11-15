@@ -229,12 +229,8 @@ journey("a reader opens a document with several pages", () => {
     expect(html).toMatch(/<link rel="icon" href="[^"]+\/assets\/owl\.svg">/);
   });
 
-  test("the owner hides Erga's bars from readers in Document settings", async () => {
-    expect(await page.locator("#ds-bars-on").isChecked()).toBe(true);
-    await page.locator("#ds-bars-on").click();
-    await expect.poll(async () => (await runTool(s.root, "ls", { document: doc.id })).result?.access?.readerBars).toBe(false);
+  test("the page's details empty again: the tab shows the document's title", async () => {
     await page.keyboard.press("Escape");
-    // The page's details empty again: the tab shows the document's title.
     expect(
       (await runTool(s.root, "set_head", { document: doc.id, path: "blog/index.html", title: "", description: "", icon: "" })).result.head
     ).toEqual({});
@@ -306,7 +302,7 @@ journey("a reader opens a document with several pages", () => {
     expect([edit.left.l, edit.left.t, edit.left.b]).toEqual([atRest.left.l, atRest.left.t, atRest.left.b]);
   });
 
-  test("readers have no bars while the owner hides them, and editors keep them; with the bars, a reader and someone signed out have the buttons that apply to them in the owner's places", async () => {
+  test("a reader always has Erga's bars, as an editor has; a reader and someone signed out have the buttons that apply to them in the owner's places", async () => {
     await page.setViewportSize({ width: 1200, height: 760 });
     const share = (args: object) => runTool(s.root, "share_document", { document: doc.id, ...args });
     expect((await share({ login: "*", role: "viewer" })).ok).toBe(true);
@@ -320,12 +316,10 @@ journey("a reader opens a document with several pages", () => {
         top: document.getElementById("frame")!.getBoundingClientRect().top,
       }));
     };
-    // The owner hid the bars: a reader's page fills the window, from its top. An editor has the bars.
-    expect(await view("reader"), "a reader, the bars hidden").toEqual({ bars: false, top: 0 });
+    // The viewer always shows the bars. A reader: no pencil; Share with an agent, Documents and the avatar where the
+    // owner has them.
     expect((await view("ed")).bars, "an editor").toBe(true);
-    // On again. A reader: no pencil; Share with an agent, Documents and the avatar where the owner has them.
-    expect((await share({ reader_bars: true })).ok).toBe(true);
-    expect((await view("reader")).bars, "a reader, the bars on again").toBe(true);
+    expect((await view("reader")).bars, "a reader").toBe(true);
     const reader = await bars(page, "view");
     expect(reader.glass).toEqual([GLASS, GLASS]);
     expect(Object.keys(reader.parts)).toEqual(["left", "right", "brand", "new", "full", "agent", "documents", "me"]);

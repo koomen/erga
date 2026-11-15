@@ -11,7 +11,7 @@
 //   sync step 1 and sends back anything the room lacks;
 // - presence alone (carets, awareness) never opens it: while it's closed,
 //   a tab's presence goes straight to the other tabs;
-// - a message for every tab (the homepage's deploy status) reaches the
+// - a message for every tab (the document's publishing state) reaches the
 //   tabs that hear events while it's closed, too.
 //
 // One socket is a whole tab (an editor's: ?events=1): the room's Yjs
@@ -181,7 +181,7 @@ export class Tabs<S extends TabSocket> {
     this.notify({ type: "access" });
   }
 
-  /** A message for every tab (the homepage's deploy status): through the document if it's open, else to the tabs that hear events. */
+  /** A message for every tab (the document's publishing state): through the document if it's open, else to the tabs that hear events. */
   notify(msg: unknown): void {
     const document = this.o.document();
     if (document.isOpen()) return document.notify(msg);

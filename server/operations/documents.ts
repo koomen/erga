@@ -1,13 +1,12 @@
 // The operations on documents as wholes: who you are (your tokens, keys and Erga's pages too), the documents list
 // (/documents: list, make, delete; an admin's search of everyone's), sharing (the Share dialogs of the list and the editor,
-// and the readers' options), writing files into one, and revoking a token or a key. What a person does inside one
+// and the page's model), writing files into one, and revoking a token or a key. What a person does inside one
 // document (its name, pages, files and versions) is editor.ts's; its text is edited over the room's socket, and by the
 // document tools (agents/document/tools.ts), which agents/tools.ts offers for any document.
 
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Base64 } from "effect/encoding";
-import { readersStep, type Readers } from "./readers.ts";
 import { ANYONE, type DocRow, type Grant, NO_WRITE, PAGE_LLM_WHO, type PageLlmWho } from "../directory/index.ts";
 import { forgetDecisions, makeDoc, startingFiles } from "../documents/index.ts";
 import { TEMPLATES, templateById } from "../pages/index.ts";
@@ -145,7 +144,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     label: "List documents",
     activity: "listing the documents",
     wide: true,
-    ui: "Documents (/documents): the list; Settings (/admin/settings): the Homepage picker (an admin's search of everyone's)",
+    ui: "Documents (/documents): the list",
     description: "Your documents and those shared with you, newest first.",
     parameters: Schema.Struct({
       query: Schema.optionalKey(Schema.String),
@@ -189,7 +188,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     activity: "making a document",
     wide: true,
     loose: true,
-    ui: "Documents (/documents): New, from a template or a copy, and + Scratch (/scratch); the viewer's Clone; publishing a folder of files",
+    ui: "Documents (/documents): New, from a template or a copy, and + Scratch (/scratch); the viewer's Clone; an upload of a folder of files",
     description: "Makes a document from files, a template or a copy.",
     parameters: Schema.Struct({
       files: Schema.optionalKey(FILES),
@@ -198,8 +197,8 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       slug: Schema.optionalKey(str("Default: from the title.")),
       template: Schema.optionalKey(
         Schema.String.annotate({
-          enum: ["blank", ...TEMPLATES.map((t) => t.id), "landing"],
-          description: `Without files: ${["blank", ...TEMPLATES.map((t) => t.id), "landing"].join(", ")}.`,
+          enum: ["blank", ...TEMPLATES.map((t) => t.id)],
+          description: `Without files: ${["blank", ...TEMPLATES.map((t) => t.id)].join(", ")}.`,
         })
       ),
       from: Schema.optionalKey(str("Without files: a document to copy.")),
@@ -218,39 +217,28 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       if (scratch && args.slug)
         throw new OperationError({ message: "A scratch document's address is random until it's saved: no slug.", status: 400 });
       let files: Record<string, FileData> = decodeFiles(args.files);
-      const published = Object.keys(files).length > 0;
+      const uploaded = Object.keys(files).length > 0;
       let index: string;
       let startKind: DocKind | undefined;
       let from: string | null = null;
-      if (published) index = pageOf(files, args.index);
+      if (uploaded) index = pageOf(files, args.index);
       else {
         const named = typeof args.template == "string" && args.template.trim() && args.template != "blank" ? args.template.trim() : null;
         if (named && args.from)
           throw new OperationError({ message: "Give a template or a document to copy (from), not both.", status: 400 });
-        const template = named && named != "landing" ? templateById(named) : undefined;
-        if (named && named != "landing" && !template)
-          throw new OperationError({
-            message: `There's no template "${named}": ${TEMPLATES.map((t) => t.id).join(", ")}, or landing.`,
-            status: 400,
-          });
-        from = args.from
-          ? (await findDocument({ ...caller, here: undefined }, args.from, "open")).id
-          : named == "landing"
-            ? "landing"
-            : null;
+        const template = named ? templateById(named) : undefined;
+        if (named && !template)
+          throw new OperationError({ message: `There's no template "${named}": ${TEMPLATES.map((t) => t.id).join(", ")}.`, status: 400 });
+        from = args.from ? (await findDocument({ ...caller, here: undefined }, args.from, "open")).id : null;
         const start = await startingFiles(platform, from, who, template);
-        if (!start)
-          throw new OperationError({
-            message: from == "landing" ? "This server has no homepage (landing document) to copy." : "There's nothing there you can copy.",
-            status: 404,
-          });
+        if (!start) throw new OperationError({ message: "There's nothing there you can copy.", status: 404 });
         ({ files, index } = start);
         startKind = start.kind;
       }
       if (!(await caller.dir.mayWrite(who.login))) throw new OperationError({ message: NO_WRITE, status: 403 });
       const doc = await makeDoc(platform, who.login.toLowerCase(), files, {
         index,
-        published,
+        uploaded,
         title: optString(args.title, "title"),
         slug: optString(args.slug, "slug"),
         kind: isDocKind(args.kind) ? args.kind : startKind,
@@ -262,7 +250,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         page: index,
         files: Object.keys(files).sort(),
         ...(from ? { from } : {}),
-        ...(doc.expires == null || (published && !scratch)
+        ...(doc.expires == null || (uploaded && !scratch)
           ? {}
           : { expires: `${iso(doc.expires)}, ${scratch ? "unless someone saves it (save_document)" : "unless someone edits it"}` }),
       };
@@ -354,8 +342,8 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     name: "share_document",
     label: "Share the document",
     activity: "sharing the document",
-    ui: "Share (the documents list and the editor): give someone a role, change it, or stop sharing; Document settings (the editor): Readers",
-    description: "Shares a document or answers a request for access (owner); sets its readers' options (editors).",
+    ui: "Share (the documents list and the editor): give someone a role, change it, or stop sharing; Document settings (the editor): Viewer settings",
+    description: "Shares a document or answers a request for access (owner); sets its page's model (editors).",
     // Only a share with anyone: a person is named, and sees it in their list.
     asks: (args) =>
       args.login == "*" && args.role != "none"
@@ -365,8 +353,6 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       document: DOCUMENT,
       login: Schema.optionalKey(str('A GitHub login, or "*" for anyone with the link.')),
       role: Schema.optionalKey(Schema.Literals(["editor", "commenter", "viewer", "none"]).annotate({ description: "none stops sharing." })),
-      reader_agent: bool("Readers may ask their agent."),
-      reader_bars: bool("Readers see Erga's bars over it."),
       page_llm: bool("Its script may call a model (window.ergaLLM)."),
       page_llm_model: Schema.optionalKey(
         Schema.Literals(PAGE_LLM_MODELS).annotate({
@@ -384,14 +370,11 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       const login = String(args.login ?? "")
         .trim()
         .replace(/^@/, "");
-      // Roles are the owner's; the readers' options, anyone's who may edit it.
+      // Roles are the owner's; the page's model, anyone's who may edit it.
       const doc = await findDocument(caller, args.document, login ? "share" : "edit");
       const llm = args.page_llm != null || args.page_llm_model != null || args.page_llm_who != null;
-      if (!login && args.reader_agent == null && args.reader_bars == null && !llm)
-        throw new OperationError({
-          message: "Give a login and a role, reader_agent, reader_bars, page_llm, page_llm_model or page_llm_who.",
-          status: 400,
-        });
+      if (!login && !llm)
+        throw new OperationError({ message: "Give a login and a role, page_llm, page_llm_model or page_llm_who.", status: 400 });
       if (!login != !args.role)
         throw new OperationError({ message: "Give a login and its role (editor, viewer or none) together.", status: 400 });
       const asked = args.page_llm_model as ModelChoice | undefined;
@@ -400,23 +383,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
           message: `The server has no API key that runs ${MODELS[asked].label} for pages.`,
           status: 409,
         });
-      // Who reads it, and their agent: decided in full before any write (readers.ts).
-      const [permissions, options] = await Promise.all([dir.permissions(doc.id), dir.readerOptions(doc.id)]);
-      const readers: Readers = permissions.some((p) => p.login == ANYONE)
-        ? { state: "public" }
-        : { state: "private", agent: options.agent };
-      const step = readersStep(readers, {
-        anyone: login == ANYONE ? args.role != "none" : undefined,
-        agent: args.reader_agent == null ? undefined : args.reader_agent === true,
-      });
-      if ("refused" in step) throw new OperationError({ message: step.refused, status: 409 });
-      // The agent goes off before the document goes public, and comes on only after the rest.
-      if (step.agent === false) await dir.setReaderOption(doc.id, "agent", false);
       if (login) await dir.share(caller.who, doc.id, login, args.role == "none" ? null : (args.role as Grant));
-      if (step.agent === true) await dir.setReaderOption(doc.id, "agent", true);
-      if (args.reader_bars != null) await dir.setReaderOption(doc.id, "bars", args.reader_bars === true);
-      // The readers' options are part of what a view keeps (documents/view.ts).
-      if (step.agent != null || args.reader_bars != null) forgetDecisions(doc.id);
       if (llm) {
         const had = await dir.pageLlm.setting(doc.id);
         const model = args.page_llm_model ?? (had.model && isPageLlmModel(had.model) ? had.model : DEFAULT_PAGE_LLM_MODEL);
@@ -424,7 +391,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         await dir.pageLlm.set(doc.id, { on, model: String(model), who: (args.page_llm_who as PageLlmWho | undefined) ?? had.who });
       }
       const owner = !!login || (await dir.may(caller.who, "share", doc));
-      return { document: described(doc, caller), ...(owner ? await accessOf(caller, doc) : await readersOf(caller, doc)) };
+      return { document: described(doc, caller), ...(owner ? await accessOf(caller, doc) : await viewersOf(caller, doc)) };
     },
   },
   {
@@ -432,7 +399,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     label: "Write",
     activity: "writing",
     loose: true,
-    ui: "An HTTP client's publish (POST /api/publish); the page tree's upload (PUT /api/files/<path>); a file dropped, pasted or picked in the editor (its bytes follow: PUT /api/blobs/<sha-256>)",
+    ui: "An HTTP client's upload (POST /api/upload); the page tree's upload (PUT /api/files/<path>); a file dropped, pasted or picked in the editor (its bytes follow: PUT /api/blobs/<sha-256>)",
     description: "Writes one file (path), or many (files).",
     parameters: Schema.Struct({
       document: DOCUMENT,
@@ -452,7 +419,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         const { path, content, content_base64 } = args;
         return runInDocument(caller, doc, "write", { path, content, content_base64 });
       }
-      // Many: as a publish, each file an edit (open editors show it at once, and anyone's undo history stays).
+      // Many: as an upload, each file an edit (open editors show it at once, and anyone's undo history stays).
       const platform = platformOf(caller);
       const files = decodeFiles(args.files, true);
       const remove = new Set<string>();
@@ -460,7 +427,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       if (!Object.keys(files).length && !remove.size) throw new OperationError({ message: "Nothing to do: files is empty.", status: 400 });
       // A file on the agent's own disk ({blob, size}) waits for its bytes, which come to the document's own address.
       const writer = caller.origin ? { who: caller.who, name: caller.name ?? caller.who.login, origin: caller.origin } : undefined;
-      const r = await platform.docs.publish(doc, files, [...remove], byLine(caller.who.login.toLowerCase(), caller.who.via), writer);
+      const r = await platform.docs.write(doc, files, [...remove], byLine(caller.who.login.toLowerCase(), caller.who.via), writer);
       return {
         ...described((await platform.directory.get(doc.id)) ?? doc, caller),
         ...r,
@@ -513,27 +480,20 @@ async function pageLlmModels(caller: Caller): Promise<ModelChoice[]> {
   });
 }
 
-/** The readers' options, which anyone who may edit the document may see and change, and whether anyone with the link may open it. */
-export async function readersOf(caller: Caller, doc: DocRow) {
+/** The page's model, which anyone who may edit the document may see and change, and whether anyone with the link may open it. */
+export async function viewersOf(caller: Caller, doc: DocRow) {
   const { dir } = caller;
-  const [permissions, readers, llm, models] = await Promise.all([
-    dir.permissions(doc.id),
-    dir.readerOptions(doc.id),
-    dir.pageLlm.setting(doc.id),
-    pageLlmModels(caller),
-  ]);
+  const [permissions, llm, models] = await Promise.all([dir.permissions(doc.id), dir.pageLlm.setting(doc.id), pageLlmModels(caller)]);
   return {
-    readerAgent: readers.agent,
-    readerBars: readers.bars,
     pageLlm: { on: llm.on, model: llm.model ?? DEFAULT_PAGE_LLM_MODEL, models, who: llm.who },
     anyoneWithLink: permissions.some((p) => p.login == ANYONE),
   };
 }
 
-/** Who a document is shared with, as the Share dialogs show it (its owner only), and the readers' options: ls's `access`. */
+/** Who a document is shared with, as the Share dialogs show it (its owner only), and its page's model: ls's `access`. */
 export async function accessOf(caller: Caller, doc: DocRow) {
   const { dir } = caller;
-  const [permissions, readers] = await Promise.all([dir.permissions(doc.id), readersOf(caller, doc)]);
+  const [permissions, viewers] = await Promise.all([dir.permissions(doc.id), viewersOf(caller, doc)]);
   const notUsers = (
     await Promise.all(permissions.map(async (p) => (p.login == ANYONE || (await dir.users.allowed(p.login)) ? null : p.login)))
   ).filter((l) => l != null);
@@ -550,7 +510,7 @@ export async function accessOf(caller: Caller, doc: DocRow) {
     publicSharing: await dir.config.get("public_sharing"),
     // Who asked for access and waits for the owner's answer (request_access): share_document answers, "none" declines.
     requests: (await dir.requests.waiting(doc.owner, doc.id)).map((r) => ({ login: r.login, asked: iso(r.asked) })),
-    ...readers,
+    ...viewers,
   };
 }
 

@@ -1,5 +1,5 @@
 // Helpers for the versions' journey (versions.e2e.ts): a document whose page says which draft it is, its versions and
-// its homepage state as the tools answer them, a scripted turn of the person's agent, and the settings popover in an
+// its publishing as the tools answer them, a scripted turn of the person's agent, and the settings popover in an
 // editor tab.
 //
 // Trap: a version of a person's edits is cut once the edits pause (SHORT.idle, a second). Three things make a version
@@ -27,10 +27,11 @@ export interface State {
   canEdit: boolean;
   pending: boolean;
 }
-export interface HomeState {
-  isHome: boolean;
-  canDeploy: boolean;
-  deploy: { state: string; version: number | null; at: string | null; error?: string | null };
+/** ls's publishing, as far as this journey reads it. */
+export interface Publishing {
+  domain: string | null;
+  state: string;
+  version: number | null;
 }
 
 /** A name that no other test (nor a repeat of this one) uses: for logins and titles. */
@@ -65,14 +66,14 @@ export async function draftDoc(server: Server, title: string) {
 export const versionsOf = async (server: Server, id: string, q: { before?: string; limit?: number } = {}) =>
   (await runTool(server.root, "versions", { document: id, ...q })).result as State;
 
-/** The homepage's state, as ls answers it; not the homepage: { isHome: false }. */
-export const homeOf = async (server: Server, id: string) =>
-  ((await runTool(server.root, "ls", { document: id })).result?.homepage ?? { isHome: false }) as HomeState;
+/** The document's publishing, as ls answers it. */
+export const publishingOf = async (server: Server, id: string) =>
+  (await runTool(server.root, "ls", { document: id })).result?.publishing as Publishing;
 
 /** What the room holds for the document's page now, as the server serves it. */
 export const served = async (server: Server, id: string) => (await fetch(`${server.root}/d/${id}/doc/index.html`)).text();
 
-/** / as served to someone signed out (someone signed in goes to /documents): the homepage's live page. */
+/** / as served to someone signed out (someone signed in goes to /documents): the Erga domain's published page. */
 export const front = async (server: Server) =>
   (await fetch(`${server.root}/`, { headers: { Cookie: `erga_signed_out_${server.port}=1` } })).text();
 
@@ -187,14 +188,14 @@ export function settings(p: Page) {
       }
       await until(async () => !(await s.isOpen()), 5_000, "the settings close");
     },
-    /** Every status line the homepage section showed, from now on (a deploy can be quick: each one is caught as it's drawn). */
+    /** Every status line the Publishing section showed, from now on (a publish can be quick: each one is caught as it's drawn). */
     watchStatus: () =>
       p.evaluate(() => {
         const w = window as any;
         w.__seen = [];
         w.__locked = [];
         const el = document.getElementById("ds-status")!,
-          btn = document.getElementById("ds-redeploy")!;
+          btn = document.getElementById("ds-publish")!;
         const note = () => {
           const t = el.textContent!.trim();
           if (t && w.__seen.at(-1) != t) {
@@ -206,12 +207,12 @@ export function settings(p: Page) {
         new MutationObserver(note).observe(el, { childList: true, subtree: true, characterData: true });
       }),
     seen: () => p.evaluate(() => ((window as any).__seen as string[]) ?? []),
-    lockedWhileDeploying: () =>
+    lockedWhilePublishing: () =>
       p.evaluate(() => {
         const w = window as any;
         return (
-          w.__seen.some((t: string) => t.startsWith("Deploying")) &&
-          w.__seen.every((t: string, i: number) => !t.startsWith("Deploying") || w.__locked[i])
+          w.__seen.some((t: string) => t.startsWith("Publishing")) &&
+          w.__seen.every((t: string, i: number) => !t.startsWith("Publishing") || w.__locked[i])
         );
       }),
   };

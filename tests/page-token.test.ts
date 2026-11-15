@@ -1,8 +1,8 @@
-// The homepage's page token (server/home/llm-token.ts): good for its document, for an hour, signed with this server's
+// The page token (server/sites/llm-token.ts): good for its document, for an hour, signed with this server's
 // secret; refused when it's old, for another document, signed elsewhere, changed, or missing.
 
 import { expect, test } from "bun:test";
-import { pageToken, PAGE_TOKEN_MS, tokenOk } from "../server/home/index.ts";
+import { pageToken, PAGE_TOKEN_MS, tokenOk } from "../server/sites/index.ts";
 
 test("a page token is good for its document for an hour, and for nothing else", async () => {
   const t = 1_800_000_000_000;

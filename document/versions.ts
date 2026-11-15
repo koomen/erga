@@ -30,7 +30,7 @@ import { sha256Hex } from "../shared/bytes.ts";
 import { isTextPath } from "./content.ts";
 import { io, type StoreError } from "./room.ts";
 
-/** A version as the API shows it (the contract shared with the settings UI, client/pages/versions.ts, and the homepage deploy, server/home/deploys.ts). */
+/** A version as the API shows it (the contract shared with the settings UI, client/pages/versions.ts, and a publish, server/sites/publishing.ts). */
 export interface Version {
   id: string;
   /** 1, 2, 3... per document. */

@@ -72,8 +72,8 @@ export const fromThisSite = (request: Request, url: URL) => {
 };
 
 /**
- * / sends someone signed in to their documents, however they came; the homepage project is at /_home for them. Not an
- * agent's token; signed out, always the homepage.
+ * / sends someone signed in to their documents, however they came. Not an agent's token; signed out, always the
+ * Erga domain's published site.
  */
 export const homeGoesToDocuments = (session: Session | null) => !!session && !session.agent;
 

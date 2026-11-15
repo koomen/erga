@@ -12,14 +12,6 @@ export interface SettingsConfig {
   chip: string;
 }
 
-/** A document or project the search found (list_documents, with all). */
-interface Found {
-  title: string;
-  address: string;
-  owner: string;
-  kind: string;
-}
-
 export default function adminSettings(c: SettingsConfig): void {
   const chipHtml = c.chip;
   /** A setting's row: its control, Save and Reset. */
@@ -31,7 +23,7 @@ export default function adminSettings(c: SettingsConfig): void {
       reset = li.querySelector(".reset"),
       hint = li.querySelector(".hint")!;
     if (input.disabled) return;
-    const instant = li.dataset.control == "switch" || li.dataset.control == "choice" || li.dataset.control == "document";
+    const instant = li.dataset.control == "switch" || li.dataset.control == "choice";
     const state = () => (mode ? mode.value + ":" : "") + (input.type == "checkbox" ? input.checked : input.value);
     const was = state();
     const asJson = () => {
@@ -46,11 +38,7 @@ export default function adminSettings(c: SettingsConfig): void {
           : String(Number(v))
         : kind == "string"
           ? JSON.stringify(input.value)
-          : kind == "document"
-            ? v == ""
-              ? "null"
-              : JSON.stringify(v)
-            : v;
+          : v;
     };
     /** The row's hint: this one's, or the one of the row that took its place meanwhile (live-rows: a change heard). */
     const hintNow = () => (li.isConnected ? hint : (document.querySelector(`[data-live="${CSS.escape(li.dataset.live!)}"] .hint`) ?? hint));
@@ -140,111 +128,6 @@ export default function adminSettings(c: SettingsConfig): void {
       });
       form.addEventListener("submit", () => add(), { capture: true });
     }
-    // A document setting: find as you type, among all the server's documents and projects; choosing one saves it.
-    const find = li.querySelector<HTMLInputElement>("input.find");
-    if (find) {
-      const list = li.querySelector<HTMLElement>(".found")!;
-      let found: Found[] = [],
-        at = -1,
-        asked = 0,
-        timer: ReturnType<typeof setTimeout> | undefined;
-      const open = (on: boolean) => {
-        list.hidden = !on;
-        find.setAttribute("aria-expanded", String(on));
-        if (!on) {
-          at = -1;
-          find.removeAttribute("aria-activedescendant");
-        }
-      };
-      const mark = (i: number) => {
-        at = i;
-        list.querySelectorAll("[role=option]").forEach((o, j) => o.setAttribute("aria-selected", String(j == i)));
-        const o = list.children[i];
-        if (o?.id) {
-          find.setAttribute("aria-activedescendant", o.id);
-          o.scrollIntoView({ block: "nearest" });
-        }
-      };
-      const show = () => {
-        list.innerHTML = found.length
-          ? found
-              .map(
-                (d, i) =>
-                  '<li role="option" id="' +
-                  li.dataset.key +
-                  "-opt-" +
-                  i +
-                  '" aria-selected="false" data-i="' +
-                  i +
-                  '">' +
-                  '<span class="title">' +
-                  esc(String(d.title || d.address)) +
-                  '</span><span class="badge">' +
-                  (d.kind == "project" ? "Project" : "Document") +
-                  "</span>" +
-                  '<span class="where">' +
-                  esc(String(d.owner)) +
-                  " · " +
-                  esc(String(d.address)) +
-                  "</span></li>"
-              )
-              .join("")
-          : '<li class="none">Nothing matches.</li>';
-        open(true);
-      };
-      const search = async () => {
-        const n = ++asked;
-        try {
-          const body = await runTool<{ documents: Found[] }>("list_documents", { all: true, query: find.value });
-          if (n != asked) return;
-          found = body.documents;
-          show();
-        } catch (err) {
-          if (n == asked) say(hint, (err as Error).message, true);
-        }
-      };
-      const choose = (i: number) => {
-        const d = found[i];
-        if (!d) return;
-        input.value = d.address;
-        find.value = d.title || d.address;
-        open(false);
-        void sync();
-      };
-      find.addEventListener("input", () => {
-        say(hint, "");
-        clearTimeout(timer);
-        timer = setTimeout(search, 150);
-      });
-      find.addEventListener("focus", () => {
-        if (list.hidden) search();
-      });
-      find.addEventListener("keydown", (e) => {
-        if (e.key == "ArrowDown" || e.key == "ArrowUp") {
-          e.preventDefault();
-          if (list.hidden) {
-            search();
-            return;
-          }
-          if (found.length) mark((at + (e.key == "ArrowDown" ? 1 : found.length - 1)) % found.length);
-        } else if (e.key == "Enter") {
-          e.preventDefault();
-          if (!list.hidden && at >= 0) choose(at);
-        } else if (e.key == "Escape" && !list.hidden) {
-          e.preventDefault();
-          open(false);
-        }
-      });
-      // mousedown, not click: the box keeps its focus, so it doesn't close first.
-      list.addEventListener("mousedown", (e) => {
-        const o = (e.target as Element).closest<HTMLElement>("[role=option]");
-        if (o) {
-          e.preventDefault();
-          choose(Number(o.dataset.i));
-        }
-      });
-      find.addEventListener("blur", () => open(false));
-    }
     // "Never" hides the number; "After" shows it again, ready to type.
     mode?.addEventListener("change", () => {
       const amount = li.querySelector<HTMLElement>(".amount")!;
@@ -274,5 +157,6 @@ export default function adminSettings(c: SettingsConfig): void {
   const list = document.querySelector<HTMLElement>("ol[data-live-kind=setting]")!;
   for (const li of list.querySelectorAll<HTMLElement>(":scope > li.setting")) wire(li);
   // Changes made elsewhere (another admin, an agent) show here as they're made; a setting being typed in waits (client/common/live-rows.ts).
-  liveList(list, { wire: (row) => (wire(row), times()) }, window.ergaView?.signal);
+  // (The Sites row has no control: nothing to wire.)
+  liveList(list, { wire: (row) => (row.matches(".setting") && wire(row), times()) }, window.ergaView?.signal);
 }

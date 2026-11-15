@@ -5,13 +5,14 @@
 // /api/deploys/version does) and a few checks, each timed:
 //
 //   db          one read of the server's settings (D1 answers)
-//   documents   the homepage's document, opened in its own object (a Durable Object answers), when there is one
+//   documents   the Erga domain's document, opened in its own object (a Durable Object answers), when there is one
 //
 // {ok, version, checks: {<name>: {ok, ms, error?}}}: 200 when every
 // check passes, 503 when one fails. It holds no data and needs no sign-in:
 // on a staging instance the admins-only guard lets it through (server/identity/admins-only.ts).
 
 import type { Platform } from "./platform.ts";
+import { ERGA } from "./sites/index.ts";
 
 export interface HealthCheck {
   ok: boolean;
@@ -32,11 +33,11 @@ export async function health(p: Platform): Promise<HealthReport> {
       await p.directory.config.get("public_sharing");
     }),
     documents: await timed(async () => {
-      const id = await p.directory.homeId();
-      if (!id) return "no homepage document: nothing to open";
+      const id = (await p.site(ERGA).status()).doc;
+      if (!id) return "no document is linked to the Erga domain: nothing to open";
       const route = await p.directory.route(id);
-      if (!route) return `the homepage document ${id} isn't in the directory: nothing to open`;
-      if ((await p.docs.index(route)) == null) throw new Error(`the homepage document ${id} has no host`);
+      if (!route) return `the Erga domain's document ${id} isn't in the directory: nothing to open`;
+      if ((await p.docs.index(route)) == null) throw new Error(`the Erga domain's document ${id} has no host`);
     }),
   };
   return { ok: Object.values(checks).every((c) => c.ok), version: p.deploy.version, checks };

@@ -149,10 +149,12 @@ and `main`. There are no pull requests.
   it runs them first; a failed run refuses the deploy, with the failed
   tests. `--no-tests` skips this, and the job record says so. After a healthy deploy of a
   primary, `main` moves forward to the commit and the CLI pushes it. A
-  primary does not deploy a commit apart from `main`. `--home <domain>`
-  (never a staging instance; a name on one of its account's zones) serves the
-  homepage's site on that domain from then on. The server keeps it, and
-  the CLI copies it into the entry after the deploy: never edit it there.
+  primary does not deploy a commit apart from `main`. `--domain <domain>`
+  (it can repeat; never a staging instance; a name on one of its account's
+  zones) registers a custom domain: an admin can publish a document to it
+  from then on (the document's settings, "Publish to"). The server keeps
+  its domains, and the CLI copies them into the entry after the deploy:
+  never edit them there.
 - `bun erga rollback <host>`: a registered instance's Worker version from
   before its last deploy, in seconds. Only when Pete asks. The next deploy
   goes forward again.

@@ -1,9 +1,8 @@
-// The homepage project, which the deploy makes (server/documents/landing.ts, makeHome: POST /api/deploys/home): on a
+// The default homepage, which the deploy makes (server/documents/landing.ts, makeHome: POST /api/deploys/home): on a
 // fresh database it is made from the repo's assets/landing/ once, however many ask at once, even from separate
-// isolates (two Directory objects over one database), and it is the homepage; asked again, nothing; a deleted one is
-// made again; a homepage an admin chose, or one the deploy locks, stays the homepage. No request for a page makes it:
-// with no homepage, / is the page in the server's code. A server's homepage from before the project becomes the
-// project, once (adoptLanding).
+// isolates (two Directory objects over one database), and published to the Erga domain; asked again, nothing; a deleted
+// one is made again; a later deploy never changes what is published. No request for a page makes it: with nothing
+// published, / answers with nothing.
 
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Route, type Sql } from "../server/directory/index.ts";
@@ -12,6 +11,7 @@ import { HOME_OWNER } from "../document/names.ts";
 import type { Platform } from "../server/platform";
 import { runTool, server, signedOut, type Server } from "./helpers/app";
 import { memory as steady } from "./helpers/memory-sql";
+import { until } from "./helpers/until";
 
 const LANDING = { "index.html": "<!doctype html><title>Erga</title><h1>Erga</h1>" };
 
@@ -42,9 +42,9 @@ function memory(): Sql {
 function platformOn(
   sql: Sql,
   hosts: Map<string, Record<string, string | Uint8Array>>,
-  opts: { locked?: Record<string, unknown>; files?: false; made?: () => Promise<void>; asked?: string[]; read?: () => void } = {}
+  opts: { files?: false; made?: () => Promise<void>; asked?: string[]; read?: () => void; claimed?: string } = {}
 ): Platform {
-  const directory = new Directory(sql, { admins: ["root", "second"], locked: opts.locked });
+  const directory = new Directory(sql, { admins: ["root", "second"] });
   return {
     directory,
     ...(opts.files === false ? {} : { landing: { files: async () => (opts.read?.(), LANDING) } }),
@@ -57,29 +57,28 @@ function platformOn(
         await directory.remove(doc.id);
         return true;
       },
-      treeOp: async (_doc: Route, op: { op: string }) => {
-        opts.asked?.push(op.op);
-        return { ok: true };
-      },
-      rename: async (doc: Route, _by: unknown, patch: { title: string }) => {
-        opts.asked?.push(`title ${patch.title}`);
-        await directory.rename(doc.id, patch, null);
-        return { ok: true };
-      },
     },
-    home: {
-      deploy: async () => {
-        opts.asked?.push("deploy");
+    // The Erga domain's site object: `claimed`: another document has the domain.
+    site: () => ({
+      link: async (o: { doc: string; replace: boolean }) => {
+        if (opts.claimed && !o.replace) return { refused: { claimed: opts.claimed } };
+        opts.asked?.push(`link ${o.doc}`);
+        return {};
       },
-    },
+      publish: async (doc: string, by: string) => {
+        opts.asked?.push(`publish ${doc} by ${by}`);
+        return {};
+      },
+    }),
   } as unknown as Platform;
 }
 
 const home = async (p: Platform) => (await p.directory.locate(HOME_OWNER, "home"))?.doc ?? null;
 
-test("a fresh database: the deploy's step makes one homepage project, even asked many times at once from separate isolates", async () => {
+test("a fresh database: the deploy's step makes one default homepage, and publishes it, even asked many times at once from separate isolates", async () => {
   const sql = memory(), hosts = new Map();
-  const isolates = [platformOn(sql, hosts), platformOn(sql, hosts), platformOn(sql, hosts)];
+  const asked: string[] = [];
+  const isolates = [platformOn(sql, hosts, { asked }), platformOn(sql, hosts, { asked }), platformOn(sql, hosts, { asked })];
   const said = await Promise.all(isolates.flatMap((p) => [makeHome(p), makeHome(p), makeHome(p)]));
   // Asks at once in one isolate share an answer: one isolate made it, and the others say that it is there.
   expect([...new Set(said)].sort()).toEqual(["made", "there"]);
@@ -91,15 +90,14 @@ test("a fresh database: the deploy's step makes one homepage project, even asked
   expect((await sql.all<{ id: string }>("SELECT id FROM documents")).map((r) => r.id)).toEqual([doc.id]);
   expect([...hosts.keys()]).toEqual([doc.id]);
   expect(hosts.get(doc.id)).toEqual(LANDING);
-  // It is the homepage: the server's own write, which needs no admin.
-  expect(await platformOn(sql, hosts).directory.config.get("landing_document")).toBe(doc.id);
-  expect(await sql.all("SELECT updated_by FROM server_config WHERE key = 'landing_document'")).toEqual([{ updated_by: "(system)" }]);
+  // The one that made it links it to the Erga domain and publishes it, as the system: it needs no admin.
+  expect(asked).toEqual([`link ${doc.id}`, `publish ${doc.id} by the system`]);
   // Nobody owns it: every admin may edit it, and nobody may delete or share it; anyone else signed in views it.
   expect(await p.directory.may({ login: "root", admin: true }, "edit", doc)).toBe(true);
   expect(await p.directory.may({ login: "second", admin: true }, "edit", doc)).toBe(true);
   expect(await p.directory.may({ login: "root", admin: true }, "delete", doc)).toBe(false);
   expect(await p.directory.may({ login: "root", admin: true }, "share", doc)).toBe(false);
-  // Only with admin power (not through a documents token): the homepage's scripts run on the site itself.
+  // Only with admin power (not through a documents token).
   expect(await p.directory.may({ login: "second" }, "edit", doc)).toBe(false);
   expect(await p.directory.may({ login: "second" }, "open", doc)).toBe(true);
   expect(await p.directory.may({ login: "ada" }, "edit", doc)).toBe(false);
@@ -108,10 +106,12 @@ test("a fresh database: the deploy's step makes one homepage project, even asked
   expect((await p.directory.lists.list("second")).map((d) => d.id)).toEqual([doc.id]);
   expect(await p.directory.lists.list("ada")).toEqual([]);
   expect(await p.directory.rename(doc.id, { slug: "other" }, null).catch((e) => e.message)).toContain("/_home");
-  // The next deploy asks again: it is there, and the project's files (large: its fonts) aren't read for it.
+  // The next deploy asks again: it is there, nothing is published again, and the project's files (large: its fonts)
+  // aren't read for it.
   let reads = 0;
-  expect(await makeHome(platformOn(sql, hosts, { read: () => reads++ }))).toBe("there");
+  expect(await makeHome(platformOn(sql, hosts, { asked, read: () => reads++ }))).toBe("there");
   expect(reads).toBe(0);
+  expect(asked.length).toBe(2);
 });
 
 test("two at once: the one that gets /_home keeps its project, and the other deletes its own", async () => {
@@ -128,67 +128,19 @@ test("two at once: the one that gets /_home keeps its project, and the other del
   expect(hosts.size).toBe(1);
 });
 
-test("a homepage from before the project becomes the project: nobody's, at /_home, its old address kept", async () => {
-  const sql = memory(), hosts = new Map();
-  const asked: string[] = [];
-  const p = platformOn(sql, hosts, { asked });
-  await p.directory.add({ id: "theirs01", owner: "root", title: "Erga", slug: "landing", slugSet: true, created: 1 });
-  hosts.set("theirs01", { "index.html": "<h1>Erga</h1>" });
-  await p.directory.config.set({ login: "root", admin: true }, "landing_document", "/root/landing");
-  expect(await makeHome(p)).toBe("there");
-  const doc = (await home(p))!;
-  expect(doc).toMatchObject({ id: "theirs01", owner: HOME_OWNER, slug: "home" });
-  expect(asked).toEqual(["make_project", "title Erga Homepage", "deploy"]);
-  expect((await p.directory.locate("root", "landing"))?.doc.id).toBe("theirs01");
-  expect(await p.directory.may({ login: "root" }, "delete", doc)).toBe(false);
-  expect(await p.directory.may({ login: "second", admin: true }, "edit", doc)).toBe(true);
-  expect(hosts.size).toBe(1);
-});
-
-test("a document an admin chose as the homepage stays theirs, and stays the homepage: the project is made beside it", async () => {
-  const sql = memory(),
-    hosts = new Map();
-  const asked: string[] = [];
-  const p = platformOn(sql, hosts, { asked });
-  await p.directory.add({ id: "chosen01", owner: "root", title: "Mine", slug: "mine", slugSet: true, created: 1 });
-  hosts.set("chosen01", { "index.html": "<h1>Mine</h1>" });
-  await p.directory.config.set({ login: "root", admin: true }, "landing_document", "/root/mine");
-  expect(await makeHome(p)).toBe("made");
-  expect(await p.directory.landing()).toMatchObject({ id: "chosen01", owner: "root", slug: "mine" });
-  expect(await home(p)).toMatchObject({ owner: HOME_OWNER });
-  expect(asked).toEqual([]);
-});
-
-test("a deleted homepage project is made again, and is the homepage again; a reset setting stays reset", async () => {
+test("a deleted default homepage is made again; a domain that another document has stays its own; no landing files, nothing", async () => {
   const sql = memory(), hosts = new Map();
   const p = platformOn(sql, hosts);
   await makeHome(p);
   const first = (await home(p))!;
-  // Gone: no homepage until the next deploy.
   await p.docs.delete(first);
-  expect(await platformOn(sql, hosts).directory.landing()).toBeNull();
-  expect(await makeHome(platformOn(sql, hosts))).toBe("made");
-  const q = platformOn(sql, hosts);
-  const second = (await home(q))!;
+  // An admin published another document to the Erga domain meanwhile: the new /_home is made, and not published.
+  const asked: string[] = [];
+  expect(await makeHome(platformOn(sql, hosts, { asked, claimed: "theirs01" }))).toBe("made");
+  const second = (await home(platformOn(sql, hosts)))!;
   expect(second.id).not.toBe(first.id);
-  expect(await q.directory.config.get("landing_document")).toBe(second.id);
   expect(hosts.get(second.id)).toEqual(LANDING);
-
-  // An admin resets the setting: no homepage. The project stays where it is, and a deploy changes nothing.
-  await q.directory.config.reset({ login: "root", admin: true }, "landing_document");
-  const r = platformOn(sql, hosts);
-  expect(await makeHome(r)).toBe("there");
-  expect(await r.directory.landing()).toBeNull();
-  expect((await home(r))?.id).toBe(second.id);
-  expect(hosts.size).toBe(1);
-});
-
-test("a locked setting stays as the deploy fixed it; a server with no landing files makes nothing", async () => {
-  const sql = memory(), hosts = new Map();
-  const locked = platformOn(sql, hosts, { locked: { landing_document: "/root/elsewhere" } });
-  expect(await makeHome(locked)).toBe("made");
-  expect(await locked.directory.config.get("landing_document")).toBe("/root/elsewhere");
-  expect(await sql.all("SELECT key FROM server_config")).toEqual([]);
+  expect(asked).toEqual([]);
   const bare = memory(),
     none = new Map();
   expect(await makeHome(platformOn(bare, none, { files: false }))).toBe("none");
@@ -199,41 +151,47 @@ test("a locked setting stays as the deploy fixed it; a server with no landing fi
 
 /** The deploy's step, over HTTP: what the server says it did. */
 const deployHome = async (s: Server) => ((await (await s.fetch("/api/deploys/home", { method: "POST" })).json()) as { home: string }).home;
-/** / as someone signed out sees it. */
-const front = async (s: Server) => (await s.fetch("/", { headers: signedOut() })).text();
-/** The document / shows to someone signed out (the viewer's frame names it). */
-const docOnFront = async (s: Server) => /<meta name="erga-doc" content="([a-z0-9]{8})">/.exec(await front(s))?.[1];
+/** / as someone signed out gets it: its status and its text. */
+const front = async (s: Server) => {
+  const r = await s.fetch("/", { headers: signedOut() });
+  return [r.status, await r.text()] as const;
+};
+/** The Erga domain's state. */
+const erga = (s: Server) => s.platform.site("").status();
 
-test("no request for a page makes a homepage: / is the page in the server's code until the deploy's step, then the homepage project", async () => {
+test("no request for a page makes a homepage: / answers with nothing until the deploy's step, then the default homepage; a later deploy changes nothing", async () => {
   const s = server();
-  const plain = await front(s);
-  expect(plain).toContain("<h1>Erga is an AI document editor for people who care about every word</h1>");
-  expect(plain).toContain('<a class="go" href="/auth/sign-in?next=%2Fdocuments">Sign in</a>');
+  expect(await front(s)).toEqual([404, ""]);
   expect((await s.fetch("/_home")).status).toBe(404);
-  expect(await s.platform.directory.landing()).toBeNull();
-  // The deploy asks: made, from the landing project's files. Asked again: it is there.
+  // Someone signed out who goes to /documents is sent to sign in.
+  const docs = await s.fetch("/documents", { headers: signedOut() });
+  expect([docs.status, docs.headers.get("location")]).toEqual([302, "/auth/sign-in?next=%2Fdocuments"]);
+  // The deploy asks: made, from the landing project's files, and published. Asked again: it is there.
   expect(await deployHome(s)).toBe("made");
+  await until(async () => (await erga(s)).state == "published");
   expect(await deployHome(s)).toBe("there");
-  const id = await docOnFront(s);
-  expect(id).toBeTruthy();
+  const id = (await erga(s)).doc!;
+  const [status, html] = await front(s);
+  expect(status).toBe(200);
+  expect(html).toContain("<h1>Erga</h1>");
+  // The header bar is on at first: Erga's controls are on the page.
+  expect(html).toContain("<erga-controls");
   expect(await (await s.fetch(`/d/${id}/doc/index.html`)).text()).toBe((await s.platform.landing!.files())["index.html"] as string);
   // Nobody's: an admin can't delete it.
-  const del = await runTool(s, "delete_document", { document: "/_home" });
-  expect(del.status).toBe(403);
-  expect(await docOnFront(s)).toBe(id);
-  // The setting reset: no homepage is assigned, so / is the page in the server's code again. The project stays.
-  await runTool(s, "set_setting", { key: "landing_document", reset: true });
-  expect(await front(s)).toContain('<a class="go" href="/auth/sign-in?next=%2Fdocuments">Sign in</a>');
+  expect((await runTool(s, "delete_document", { document: "/_home" })).status).toBe(403);
+  // An admin sets it to "Not published": / answers with nothing at once, the project stays, and the next deploy leaves it so.
+  expect((await runTool(s, "set_publishing", { document: "/_home", domain: "" })).error).toBeUndefined();
+  expect(await front(s)).toEqual([404, ""]);
   expect((await s.fetch("/_home")).status).toBe(200);
-  // An admin chooses the homepage project again, by its address.
-  expect((await runTool(s, "set_setting", { key: "landing_document", value: "/_home" })).error).toBeUndefined();
-  expect(await docOnFront(s)).toBe(id);
+  expect(await deployHome(s)).toBe("there");
+  expect((await erga(s)).state).toBe("free");
+  expect(await front(s)).toEqual([404, ""]);
 });
 
-test("rename_document renames the homepage project for an admin, and refuses a new address", async () => {
+test("rename_document renames the default homepage for an admin, and refuses a new address", async () => {
   const s = server();
   await deployHome(s);
-  const id = await docOnFront(s);
+  const id = (await erga(s)).doc!;
   const r = await runTool(s, "rename_document", { document: id, title: "Home, renamed" });
   expect(r.error).toBeUndefined();
   expect(r.result).toMatchObject({ title: "Home, renamed", address: "/_home" });

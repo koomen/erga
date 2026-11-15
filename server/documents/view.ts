@@ -1,4 +1,4 @@
-// The viewer on a document: the page at /<owner>/<slug> (and the homepage, /), which is
+// The viewer on a document: the page at /<owner>/<slug>, which is
 // the editor too for whoever may edit (?edit). It holds the document's page in one frame,
 // on the document's own pages origin (pages-origin.ts: the page with what the viewer and
 // the editor need in it, pages/reader.ts), for readers and editors alike: the page loads
@@ -11,7 +11,7 @@
 // this isolate's memory and the edge's cache), when the document is quiet (no file changed
 // in the last minute: one being edited is asked each time). It's theirs alone: the key
 // names them (someone signed out, on a public document: nobody). A change of permissions,
-// of the readers' options, or of a quiet document, reaches it within that time
+// or of a quiet document, reaches it within that time
 // (this isolate forgets a change of permissions at once).
 //
 // So a second view in a short while asks neither the database nor the document. A first
@@ -40,7 +40,6 @@ import {
   accountOf,
   editButton,
   hasAgent,
-  homePage,
   inlineScript,
   link,
   OWN_ACCOUNT,
@@ -50,7 +49,7 @@ import {
   withEdit,
 } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
-import { pageToken } from "../home/index.ts";
+import { pageToken } from "../sites/index.ts";
 
 const HALF_HOUR = 1_800_000;
 import { sha256 } from "../../shared/bytes.ts";
@@ -79,8 +78,6 @@ interface Decision {
   head?: PageHead;
   /** A scratch document: when it goes (null: never). */
   scratch?: { expires: number | null };
-  /** What its readers get, as its owner set it (DocRow.readers). */
-  readers: { agent: boolean; bars: boolean };
 }
 
 /** Decisions in this isolate: key -> when, and what. */
@@ -121,7 +118,7 @@ function keepDecision(platform: Platform, key: string, d: Decision): void {
 }
 
 /**
- * This isolate forgets what it decided for a document (its permissions or its readers' options changed); with no
+ * This isolate forgets what it decided for a document (its permissions changed); with no
  * document, all it decided (public sharing went on or off).
  */
 export function forgetDecisions(id?: string): void {
@@ -248,20 +245,18 @@ async function address(
       kind: row?.kind ?? null,
       head: answer.head,
       ...(row?.scratch ? { scratch: { expires: row.expires } } : {}),
-      // By id, the page only redirects to the document's address (below), where its row gives the readers' options.
-      readers: row?.readers ?? { agent: false, bars: true },
     };
     if (answer.quiet) keepDecision(platform, key, d);
   }
   const canonical = `${addressOf(d)}${suffix(d.canonical)}`;
   if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`))
     return redirect(canonical + url.search, 302, { "Cache-Control": "no-store" });
-  return render(platform, request, session, d, false);
+  return render(platform, request, session, d);
 }
 
 /**
  * The viewer for someone who isn't signed in, at /<owner>/<slug>[/<page>]: a document shared with anyone with the link,
- * while the server lets users share content publicly (Directory.isPublic), and the homepage project (/_home). They view it only. Null for any other: they
+ * while the server lets users share content publicly (Directory.isPublic), and the default homepage (/_home). They view it only. Null for any other: they
  * sign in first, as before.
  */
 export const viewPublic = (first: string, second: string, wanted: string, located: Promise<Located> | null) =>
@@ -282,7 +277,7 @@ async function publicView(
   let d = await keptDecision(platform, key);
   if (!d) {
     const row = (await (located ?? platform.directory.locate(first, second)))?.doc ?? null;
-    // The homepage project is public, as the homepage is at /.
+    // The default homepage is public.
     if (!row || (row.owner != HOME_OWNER && !(await platform.directory.isPublic(row.id)))) return null;
     const answer = await platform.docs.view(row.id, null, { page: wanted, anyone: true });
     if (!answer || answer.file == null || answer.ver == null) return null;
@@ -297,54 +292,13 @@ async function publicView(
       canonical: answer.canonical ?? "",
       shares: answer.shares,
       head: answer.head,
-      readers: row.readers,
     };
     if (answer.quiet) keepDecision(platform, key, d);
   }
   const canonical = `${addressOf(d)}${suffix(d.canonical)}`;
   if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`))
     return redirect(canonical + url.search, 302, { "Cache-Control": "no-store" });
-  return render(platform, request, null, d, false);
-}
-
-/**
- * The homepage: the viewer on the landing document (the landing_document setting), for anyone, signed in or not. None
- * set, or one that is gone: the page in the server's code (pages/home.ts). No request makes a homepage: the deploy
- * does (landing.ts).
- */
-export const viewLanding = Effect.gen(function* () {
-  const { platform, request } = yield* ctx;
-  return yield* call(async () => landingView(platform, request, await platform.sessionOf(request)));
-});
-
-async function landingView(platform: Platform, request: Request, session: Session | null): Promise<HttpServerResponse.HttpServerResponse> {
-  const url = new URL(request.url);
-  // (Which document the setting names is part of the key: another one is another decision.)
-  const home = await platform.directory.homeId();
-  if (!home) return homePage();
-  const key = `${decisionKey(url, whoKey(session))}&home=${home}`;
-  let d = await keptDecision(platform, key);
-  if (!d) {
-    const who = session ? whoOf(session) : null;
-    const row = await platform.directory.landing();
-    const answer = row ? await platform.docs.view(row.id, who, { page: "", anyone: true }) : null;
-    if (!row || !answer || answer.file == null || answer.ver == null) return homePage();
-    d = {
-      id: row.id,
-      owner: row.owner,
-      slug: row.slug,
-      title: row.title,
-      role: answer.role,
-      ver: answer.ver,
-      file: answer.file,
-      canonical: "",
-      shares: answer.shares,
-      head: answer.head,
-      readers: row.readers,
-    };
-    if (answer.quiet) keepDecision(platform, key, d);
-  }
-  return render(platform, request, session, d, true);
+  return render(platform, request, null, d);
 }
 
 /** What the editor's menu on your avatar needs to know that the document doesn't: the links it offers. */
@@ -373,8 +327,7 @@ async function render(
   platform: Platform,
   request: Request,
   session: Session | null,
-  d: Decision,
-  landing: boolean
+  d: Decision
 ): Promise<HttpServerResponse.HttpServerResponse> {
   const url = new URL(request.url);
   const dir = platform.directory;
@@ -395,14 +348,12 @@ async function render(
   // (pages-origin.ts). Whoever has the page's editor gets them checked each time: the page changes under it.
   const files = `${origin}/t/${token}/${canEdit || canComment ? "" : `@${d.ver}/`}`;
   const address = addressOf(d);
-  const clone = link(`/new?from=${landing ? "landing" : d.id}`, session);
+  const clone = link(`/new?from=${d.id}`, session);
   const here = pageAddress(d.file) ? `${address}/${pageAddress(d.file).split("/").map(encodeURIComponent).join("/")}` : address;
   const edit = canEdit ? editButton(withEdit(link(here, session)), false) : "";
   const canShare = canEdit && !!session && roleMay(d.role, "share");
-  // What a reader gets, as the owner set it (share_document: reader_agent, reader_bars): an editor gets all of it. Their agent
-  // (signed in, with a role here), and Erga's bars over the page.
-  const reader = canEdit ? { agent: true, bars: true } : d.readers;
-  const agent = hasAgent(session) && (canEdit || (roleMay(d.role, "open") && reader.agent));
+  // Everyone signed in who may open it has their agent here.
+  const agent = hasAgent(session) && roleMay(d.role, "open");
   // Someone signed out: the page's token, for its model where the owner lets all viewers call it (agents/page-llm.ts).
   // Made at the start of a half hour, so the page, and its ETag, stay the same for a while.
   const llmToken = session ? "" : await pageToken(platform.secret, d.id, Math.floor(Date.now() / HALF_HOUR) * HALF_HOUR);
@@ -423,9 +374,7 @@ async function render(
     session,
     editable: canEdit,
     agent,
-    bars: reader.bars,
     editing,
-    landing,
     clone,
     edit,
     corner: accountHtml(accountOf(session, admin), url.pathname + url.search),
@@ -465,7 +414,7 @@ async function render(
   // live.js asking whether the page's code changed: the build alone.
   if (request.headers.get(CHECK_HEADER) == "build") return empty(204);
   // A view of the document, in the day's counts (server/directory/activity.ts), after the answer; never a prefetch.
-  if (!landing && request.method == "GET" && !request.headers.get("sec-purpose")?.includes("prefetch"))
+  if (request.method == "GET" && !request.headers.get("sec-purpose")?.includes("prefetch"))
     platform.edge.background(
       dir.activity.add(session?.login ?? null, { view: 1 }).catch((e) => console.log(`couldn't count a view: ${e}`))
     );

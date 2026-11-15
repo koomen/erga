@@ -22,7 +22,7 @@ async function server() {
     directory: dir,
     dev: () => false,
     signIn: {},
-    deploy: {},
+    deploy: { domains: [] },
   } as unknown as Platform;
   /** A new sign-in of `login`: its session cookie, as a browser keeps it. */
   const cookieOf = async (login: string) => {

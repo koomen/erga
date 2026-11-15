@@ -34,7 +34,18 @@ test("the agent's tools ask for a delete, a share with anyone and a revoke, in w
   expect(asks("people", { op: "set_user", action: "add", handle: "mallory", role: "admin" })).toBe(
     "Add the user mallory with the role admin"
   );
-  expect(asks("settings", { op: "deploy_homepage" })).toBe("Deploy the homepage as it is now");
+  // Publishing: each change asks, in its own words.
+  expect(asks("documents", { op: "publish_document", document: "/root/notes" })).toBe("Publish /root/notes to its domain as it is now");
+  expect(asks("documents", { op: "set_publishing", document: "/root/notes", domain: "erga.dev" })).toBe("Link /root/notes to erga.dev");
+  expect(asks("documents", { op: "set_publishing", document: "/root/notes", domain: "erga.dev", replace: true })).toBe(
+    "Link /root/notes to erga.dev in place of the document that has it"
+  );
+  expect(asks("documents", { op: "set_publishing", document: "/root/notes", domain: "" })).toBe(
+    "Unpublish /root/notes: its domain answers with nothing from then on"
+  );
+  expect(asks("documents", { op: "set_publishing", document: "/root/notes", bars: false })).toBe(
+    "Turn off the Erga header bar on the published site of /root/notes"
+  );
   // A share with a person, the end of a share, and the reads and edits: no question.
   expect(asks("documents", { op: "share_document", document: "/root/notes", login: "bo", role: "editor" })).toBeNull();
   expect(asks("documents", { op: "share_document", document: "/root/notes", login: "*", role: "none" })).toBeNull();

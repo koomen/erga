@@ -565,7 +565,7 @@ async function settled(people: ReturnType<typeof crowd>, room: Room, ps: Person[
   return text;
 }
 
-test("random edits from four people, with spells off the network and publishes: nothing is lost, and nothing comes back", async () => {
+test("random edits from four people, with spells off the network and uploads: nothing is lost, and nothing comes back", async () => {
   const people = crowd(),
     rng = random(SEED);
   try {
@@ -575,18 +575,18 @@ test("random edits from four people, with spells off the network and publishes: 
     for (let i = 0; i < 4; i++) ps.push(await people.join(room, `P${i}`));
     const live = new Set<string>(); // the tokens that must be there at the end
     const owned = new Map<Person, string[]>(ps.map((p) => [p, []]));
-    /** Publishes on their way: each reads the stored file now and pushes it, with one more token, some rounds later. */
-    const publishes: { at: number; read: Promise<{ text: string; etag: string } | null>; token: string; pick: number }[] = [];
+    /** Uploads on their way: each reads the stored file now and pushes it, with one more token, some rounds later. */
+    const uploads: { at: number; read: Promise<{ text: string; etag: string } | null>; token: string; pick: number }[] = [];
     const pushed: Promise<void>[] = [];
     let offline = 0,
       taken = 0,
       stale = 0;
     /**
      * The stored file as it was read, with one token more: taken, or refused as stale when the room stored since.
-     * (Next to another token too: the room takes a publish as a difference of two texts, and the new token is whole
+     * (Next to another token too: the room takes an upload as a difference of two texts, and the new token is whole
      * in it, with no bracket of its neighbour's. document/merge.ts, whole.)
      */
-    const push = async (pub: (typeof publishes)[number]) => {
+    const push = async (pub: (typeof uploads)[number]) => {
       const was = await pub.read;
       if (!was) return;
       const sl = slots(was.text),
@@ -627,21 +627,21 @@ test("random edits from four people, with spells off the network and publishes: 
         p.online();
         if (rng() < 0.5) await until(() => p.synced, 5000, `${p.name} is back`);
       } else if (roll < 0.9) {
-        // A publish: one time in two at once (the room takes it, if it did not store meanwhile), else some rounds later (often stale).
+        // An upload: one time in two at once (the room takes it, if it did not store meanwhile), else some rounds later (often stale).
         const pub = { at: r + rng.int(20), read: room.stored(), token: `⟦pub.${r}⟧`, pick: rng() };
         if (rng() < 0.5) await push(pub);
-        else publishes.push(pub);
+        else uploads.push(pub);
       }
-      for (const pub of publishes.filter((x) => x.at <= r)) {
-        publishes.splice(publishes.indexOf(pub), 1);
+      for (const pub of uploads.filter((x) => x.at <= r)) {
+        uploads.splice(uploads.indexOf(pub), 1);
         pushed.push(push(pub));
       }
     }
-    for (const pub of publishes) pushed.push(push(pub));
+    for (const pub of uploads) pushed.push(push(pub));
     await Promise.all(pushed);
     const text = await settled(people, room, ps);
     const found: string[] = text.match(TOKEN) ?? [];
-    const why = `ERGA_SEED=${SEED} plays this run again (${live.size} tokens, ${offline} edits off the network, ${taken} publishes taken, ${stale} stale)`;
+    const why = `ERGA_SEED=${SEED} plays this run again (${live.size} tokens, ${offline} edits off the network, ${taken} uploads taken, ${stale} stale)`;
     expect(
       found.filter((t, i) => found.indexOf(t) != i),
       `no token is there two times. ${why}`

@@ -1,6 +1,6 @@
 // Open pages across a redeploy, the page's side. The Worker adds this script
 // to every page of the site's own: the editor,
-// Documents, the admin pages, settings, the homepage. A document's own frame never gets it.
+// Documents, the admin pages, settings. A document's own frame never gets it.
 //
 // A redeploy (or a restart of the dev server) drops every live connection:
 // each script reconnects by itself and reads again what it shows

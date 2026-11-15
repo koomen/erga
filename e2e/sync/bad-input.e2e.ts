@@ -191,7 +191,7 @@ test("a paragraph that bad markup breaks says what is wrong, and its button asks
   // Someone who closed the agent pane.
   await ed.openAgent();
   await ed.eval(`document.getElementById("agent-close").click()`);
-  // The bad markup arrives as a publish.
+  // The bad markup arrives as an upload.
   const stored = (await room.stored())!;
   const broken = stored.text.replace("Where the leads go.", "Where the</h2> leads go.");
   expect(broken).not.toBe(stored.text);

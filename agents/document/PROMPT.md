@@ -370,7 +370,7 @@ A page may call a model as its signed-in visitor, when its owner turns it
 on in Document settings (`share_document` with `page_llm`, and `page_llm_model`: Haiku at first).
 The server's API keys pay, so each visitor has an hour's limit, and so has
 the server. The page's script has `window.ergaLLM` (in the viewer, and on
-the homepage):
+its published site):
 
 - `ergaLLM.status()` answers a Promise of `{ on, model, signedIn }`. Show
   the page's model controls only when `on` is true.

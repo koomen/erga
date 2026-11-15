@@ -24,7 +24,8 @@
 // or a custom domain), give documents' pages theirs, wait for it to answer,
 // copy the primary's documents into it, and delete the old copies of the
 // database (only once the new version answers). Once the server answers, the deploy asks it
-// for the homepage project (askHomepage): a server with none makes it from the landing project built into it.
+// for the default homepage (askHomepage): a server with none makes it from the landing project built into it, and
+// publishes it.
 
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -115,10 +116,10 @@ export interface Target {
    */
   pages: { kind: "shared" } | { kind: "zone"; zoneId?: string; zoneName: string; domain?: string };
   /**
-   * The homepage's own domain (server/home/site.ts), a hostname on one of the account's zones: the same Worker serves the
-   * homepage's site there, and nothing else. Never a staging instance's.
+   * The custom domains for publishing (server/sites/domains.ts), each a hostname on one of the account's zones: the same
+   * Worker serves the document published to each there, and nothing else. Never a staging instance's.
    */
-  home?: string;
+  domains?: readonly string[];
   /** Text bindings over the build's (cloudflare.config.ts as `cf build` wrote it). */
   vars: Record<string, string>;
   /** Secrets set with this upload. */
@@ -243,16 +244,17 @@ export const targetPagesShown = (t: Pick<Target, "pages" | "workerName" | "subdo
 
 /**
  * Why a target mustn't be deployed, or null. A staging instance may not touch its primary's names (nor put its pages
- * under its primary's), serves no homepage domain, and never copies its primary's data into the primary's database.
+ * under its primary's), serves no custom domain, and never copies its primary's data into the primary's database.
  */
 export function guardTarget(t: Target): string | null {
   const p = t.stagingOf;
   const host = t.app.kind == "domain" ? t.app.hostname.toLowerCase() : null;
   const pages = t.pages.kind == "zone" ? (t.pages.domain ?? t.pages.zoneName).toLowerCase() : null;
-  const home = t.home?.toLowerCase();
-  if (home && p) return `This deploy (${t.label}) would put the homepage on ${home}: a staging instance serves no homepage domain.`;
-  if (home && (home == host || home == pages || (pages && home.endsWith(`.${pages}`))))
-    return `The homepage's domain (${home}) is the app's address or under its documents' pages: give it a domain of its own.`;
+  for (const domain of (t.domains ?? []).map((d) => d.toLowerCase())) {
+    if (p) return `This deploy (${t.label}) would serve ${domain}: a staging instance serves no custom domain.`;
+    if (domain == host || domain == pages || (pages && domain.endsWith(`.${pages}`)))
+      return `The custom domain ${domain} is the app's address or under its documents' pages: give it a domain of its own.`;
+  }
   if (!p) return null;
   if (host == p.host || pages == p.pages)
     return `This deploy (${t.label}) would put a server on its primary's address (${host == p.host ? p.host : `*.${p.pages}`}). It stops here: give it an address of its own.`;
@@ -493,7 +495,7 @@ export async function runPipeline(
       return `${target.workerName}, release ${rel.version}`;
     },
 
-    // Its address, and the homepage's domain if it has one.
+    // Its address, and its custom domains.
     async address() {
       /** Puts the Worker on `hostname` (a custom domain on one of the account's zones), unless it's there already. */
       const put = async (hostname: string, zoneId: string) => {
@@ -525,17 +527,20 @@ export async function runPipeline(
         if ((await put(app.hostname, app.zoneId ?? (await zoneIdOf(cf, target.accountId, app.zoneName)))) == "already its address")
           said += " (already its address)";
       }
-      if (target.home) {
-        const home = target.home.toLowerCase();
-        const zones =
-          (await cf.call<{ id: string; name: string }[]>("GET", `/zones?account.id=${target.accountId}&per_page=50`, "list your zones")) ??
-          [];
-        const zone = zones.filter((z) => home == z.name || home.endsWith(`.${z.name}`)).sort((x, y) => y.name.length - x.name.length)[0];
+      const domains = (target.domains ?? []).map((d) => d.toLowerCase());
+      const zones = domains.length
+        ? ((await cf.call<{ id: string; name: string }[]>("GET", `/zones?account.id=${target.accountId}&per_page=50`, "list your zones")) ??
+          [])
+        : [];
+      for (const domain of domains) {
+        const zone = zones
+          .filter((z) => domain == z.name || domain.endsWith(`.${z.name}`))
+          .sort((x, y) => y.name.length - x.name.length)[0];
         if (!zone)
           throw new DeployError({
-            message: `${home} is on none of this Cloudflare account's zones (${zones.map((z) => z.name).join(", ") || "none"}). The homepage's domain must be: add its zone to the account first.`,
+            message: `${domain} is on none of this Cloudflare account's zones (${zones.map((z) => z.name).join(", ") || "none"}). A custom domain must be: add its zone to the account first.`,
           });
-        said += `; the homepage on https://${home}${(await put(home, zone.id)) == "new" ? "" : " (already its address)"}`;
+        said += `; the custom domain https://${domain}${(await put(domain, zone.id)) == "new" ? "" : " (already its address)"}`;
       }
       return said;
     },
@@ -572,13 +577,13 @@ export async function runPipeline(
 
     // Up: a new workers.dev address or certificate can take a minute or two. With checkVersion, until this release is the
     // one answering, and then its health check says it works (GET /api/health: the database, a document). Then the
-    // homepage project, if the server has none.
+    // default homepage, if the server has none.
     live: () =>
       runWith(
         opts.sleep,
         Effect.gen(function* () {
           const want = carry.version;
-          // A staging instance runs on a copy of its primary's data, with its primary's homepage: not asked.
+          // A staging instance runs on a copy of its primary's data, with its primary's default homepage: not asked.
           const homepage = target.stagingOf ? Effect.succeed("") : Effect.map(askHomepage(site, host), (said) => `; ${said}`);
           if (!(target.checkVersion && want)) {
             // Up when its logo answers.

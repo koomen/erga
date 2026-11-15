@@ -2,8 +2,8 @@
 //
 // The first journey is one owner, one document and one reader (Ada) on the shared server. Nobody but the owner opens
 // the document; a viewer only looks, also in the room; an editor edits, with Share off; access taken away closes the
-// open editor; Ada asks for access; the owner shares from the documents list and its Share dialog, and lets readers
-// use their agent. The rules of access are checked with requests (`?user=`), the dialogs on the page.
+// open editor; Ada asks for access; the owner shares from the documents list and its Share dialog. A reader has
+// their agent in the viewer. The rules of access are checked with requests (`?user=`), the dialogs on the page.
 // The second journey is the admin's switch "Users can share content publicly", on a server of this file's own: it
 // changes the whole server.
 import { framed, pagesFetch } from "../helpers/pages-fetch";
@@ -16,7 +16,7 @@ import { clickOn } from "../helpers/press";
 
 const [s, own] = await Promise.all([servers.main(), servers.of("share")]);
 
-type Access = { permissions: { login: string; role: string }[]; requests: { login: string }[]; readerAgent?: boolean };
+type Access = { permissions: { login: string; role: string }[]; requests: { login: string }[] };
 
 /**
  * From before the page's first frame to now, each state the editor's Share button had, as the person sees it: whether
@@ -273,10 +273,10 @@ journey("an owner shares a document with a reader", () => {
     await page.keyboard.press("Escape");
   });
 
-  test("a reader has no agent in the viewer until the owner lets readers use theirs", async () => {
+  test("a reader has their agent in the viewer, and no editor", async () => {
     await page.goto(`${root}${doc.address}?user=${ada}`);
     await page.locator(".erga-view-buttons").waitFor();
-    expect(await page.evaluate(() => !!document.getElementById("agent"))).toBe(false);
+    expect(await page.evaluate(() => !!document.getElementById("agent"))).toBe(true);
     // A reader has no editor, so no Share button at any moment.
     expect(await page.evaluate(() => [(window as any).__share, !!document.querySelector(".erga-edit-button")])).toEqual([[], false]);
   });
@@ -301,17 +301,6 @@ journey("an owner shares a document with a reader", () => {
     await share(root, doc.id, cy, "none", owner);
     await soon(listed).toEqual([owner, ada]);
     await page.keyboard.press("Escape");
-  });
-
-  test("the owner's switch in Document settings gives readers their agent", async () => {
-    await clickOn(page, "#btn-settings");
-    await page.locator("#ds-agent-on").waitFor();
-    expect(await page.locator("#ds-agent-on").isChecked()).toBe(false);
-    await page.locator("#ds-agent-on").click();
-    await soon(async () => (await access()).readerAgent).toBe(true);
-    await page.goto(`${root}${doc.address}?user=${ada}`);
-    await page.locator(".erga-view-buttons").waitFor();
-    expect(await page.evaluate(() => !!document.getElementById("agent"))).toBe(true);
   });
 });
 
@@ -350,8 +339,6 @@ journey("the admin's switch: users can share content publicly", () => {
     const refused = await share(root, closed.id, "*", "viewer");
     expect(refused.status).toBe(403);
     expect(refused.error).toContain("doesn't let users share content publicly");
-    // The homepage stays public.
-    expect((await stranger("/")).status).toBe(200);
   });
 
   test("off: the Share dialog does not offer anyone with the link, and shows a share made before, to stop it; on again: it opens", async () => {

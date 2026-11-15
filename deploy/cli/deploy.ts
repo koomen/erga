@@ -70,7 +70,7 @@ const namesOf = (e: CloudflareEntry) => ({
   ...(e.subdomain ? { subdomain: e.subdomain } : {}),
   app: e.app,
   pages: e.pages,
-  ...(e.home ? { home: e.home } : {}),
+  ...(e.domains?.length ? { domains: e.domains } : {}),
 });
 
 /**
@@ -252,19 +252,19 @@ export interface DeployOptions {
   /** `bun erga setup`'s first deploy only: the secrets the Worker doesn't hold yet, and a new workers.dev subdomain. */
   secrets?: Record<string, string>;
   createSubdomain?: boolean;
-  /** --home: the homepage's own domain, a hostname on one of the account's zones. The server keeps it after. */
-  home?: string;
+  /** --domain: custom domains to register for publishing, hostnames on the account's zones. The server keeps them after. */
+  domains?: string[];
   /** AWS, `bun erga setup`'s first deploy only: SQL the machine runs once the release answers (the first rows). */
   first?: string;
   /** `bun erga setup --commit`: a primary takes a commit that is not main's, and main stays where it is. */
   keepMain?: boolean;
 }
 
-/** Why `home` can't be the homepage's domain, or null. */
-export const homeRefusal = (home: string) =>
-  /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(home)
+/** Why `domain` can't be a custom domain, or null. */
+export const domainRefusal = (domain: string) =>
+  /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)
     ? null
-    : `--home ${home}: give a domain name, e.g. example.com.`;
+    : `--domain ${domain}: give a domain name, e.g. example.com.`;
 
 export const mocked = () => process.env.ERGA_DEPLOY_MOCK == "1";
 
@@ -295,15 +295,17 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     throw new Error(`${o.host} is a primary: --fresh is only for a staging instance, which copies its primary's data.`);
   const aws = isAws(entry) ? entry : null;
   if (aws && entry.stagingOf) throw new Error(`${o.host} is a staging instance on AWS: Erga has no staging on AWS yet.`);
-  if (aws && (o.home || o.createSubdomain)) throw new Error(`${o.host} is on AWS: --home is only for an instance on Cloudflare.`);
+  const domains = (o.domains ?? []).map((d) => d.toLowerCase());
+  if (aws && (domains.length || o.createSubdomain)) throw new Error(`${o.host} is on AWS: --domain is only for an instance on Cloudflare.`);
   // setup's first deploy: its secrets, one time, and a new workers.dev subdomain. A copy's target keeps them.
   const own = {
     ...(o.secrets ? { secrets: o.secrets } : {}),
     ...(o.createSubdomain ? { createSubdomain: true } : {}),
-    ...(o.home ? { home: o.home.toLowerCase() } : {}),
+    // The domains it has, and the new ones.
+    ...(domains.length ? { domains: [...new Set([...((entry as CloudflareEntry).domains ?? []), ...domains])] } : {}),
   };
-  const badHome = o.home ? homeRefusal(o.home.toLowerCase()) : null;
-  if (badHome) throw new Error(badHome);
+  const bad = domains.map(domainRefusal).find((why) => why);
+  if (bad) throw new Error(bad);
   // The settings the entry locks, and its defaults (server/directory/settings.ts): a bad one stops here, not the server.
   for (const key of ["SERVER_CONFIG", "SERVER_DEFAULTS"])
     try {
@@ -320,7 +322,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   const cf = new Cloudflare(token, net);
   const command =
     o.command ??
-    `bun erga deploy ${o.commit ? `${o.commit} ` : ""}${o.host}${o.fresh ? " --fresh" : ""}${o.home ? ` --home ${o.home}` : ""}`;
+    `bun erga deploy ${o.commit ? `${o.commit} ` : ""}${o.host}${o.fresh ? " --fresh" : ""}${domains.map((d) => ` --domain ${d}`).join("")}`;
   const free = takeLock(o.dir, o.host, command);
   const job = startJob(o.dir, { command, host: o.host, from: o.from, print: o.print });
   const log = job.log;
@@ -437,7 +439,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
 
 /**
  * The entry's copy of the deploy facts, read again from the server (GET /api/ops), which keeps them: a deploy may have
- * changed them (--home). Without a working ops token, the entry stays as it was, and the log says so.
+ * changed them (--domain). Without a working ops token, the entry stays as it was, and the log says so.
  */
 async function copyFacts(dir: string, host: string, net: Fetch, log: (line: string) => void) {
   const entry = entryOf(readConfig(dir), host);
@@ -445,7 +447,7 @@ async function copyFacts(dir: string, host: string, net: Fetch, log: (line: stri
   try {
     const facts = await readOps(entryOrigin(entry), entry.token, net);
     if (!facts.deploy) return;
-    const { home: _, ...was } = entry as CloudflareEntry;
+    const { domains: _, ...was } = entry as CloudflareEntry;
     writeConfig(dir, withEntry(readConfig(dir), { ...was, ...facts.deploy, token: entry.token } as Entry));
   } catch (e) {
     log(`NOTE  ${host}'s entry keeps its facts as they were: ${(e as Error).message}`);

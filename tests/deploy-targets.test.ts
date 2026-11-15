@@ -243,10 +243,10 @@ describe("an instance that runs already", () => {
     const elsewhere = { ...g, workerName: "erga", databaseName: "erga", accountId: "f".repeat(32) };
     expect(guardTarget(elsewhere)).toMatch(/can't go into the database it's copied from/);
     expect(guardTarget({ ...elsewhere, stagingOf: { ...g.stagingOf!, copy: undefined } })).toBeNull();
-    // An instance that names no primary has nothing to guard, and no homepage rule but its own address.
+    // An instance that names no primary has nothing to guard, and no rule for a custom domain but its own address.
     expect(guardTarget(primary())).toBeNull();
-    expect(guardTarget({ ...primary(), home: "example.org" })).toBeNull();
-    expect(guardTarget({ ...g, home: "example.org" })).toMatch(/a staging instance serves no homepage domain/);
+    expect(guardTarget({ ...primary(), domains: ["example.org", "blog.example.org"] })).toBeNull();
+    expect(guardTarget({ ...g, domains: ["example.org"] })).toMatch(/a staging instance serves no custom domain/);
   });
 
   test("a guarded deploy stops before it asks Cloudflare anything", async () => {

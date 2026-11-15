@@ -86,7 +86,7 @@ export function mountChrome(shell: Shell) {
     closeCards(card);
   }
 
-  // Document settings (document or project, the homepage, versions): the gear opens
+  // Document settings (document or project, viewer settings, publishing, versions): the gear opens
   // them, a popover under it. Their code loads once the editor is idle, or sooner if the gear is reached for.
   const settingsBtn = $("btn-settings");
   let settingsLoading: Promise<Settings | null> | null = null;
@@ -98,7 +98,6 @@ export function mountChrome(shell: Shell) {
             docId: shell.docId,
             query: shell.as,
             anchor: settingsBtn,
-            admin: !!shell.people.accountLinks?.admin,
             kind: () => shell.docKind,
             onKind: shell.naming.applyKind,
             onToggle: (open) => open && cardOpened("settings"),

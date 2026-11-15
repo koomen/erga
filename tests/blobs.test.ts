@@ -87,7 +87,7 @@ test("a new document's image is a blob from the start; a copy left in the object
   expect(storage2.data.get(KEYS.ref + "logo.png")).toMatchObject({ hash, size: png.length });
   expect(made.blobs.data.get(hash)).toEqual(png);
   // A copy an older server kept beside the ref: the blob store's bytes are the file's.
-  await doc.publish({ "p.png": png }, []);
+  await doc.write({ "p.png": png }, []);
   storage.data.set(KEYS.file + "p.png", bytesOf(3_000, 99));
   expect(new Uint8Array(await (await get("/doc/p.png")).arrayBuffer())).toEqual(png);
   // Without the blob in the store, the file isn't found: nothing else has its bytes.
@@ -167,7 +167,7 @@ test("a blob moves by its ref, is deleted with its file, and comes back with a r
 test("a text file that grows past 2 MB in edits stays text; its stored copy goes to the blob store", async () => {
   const { doc, storage, blobs, get } = await setup();
   const big = "<p>" + "x".repeat(OBJECT_MAX + 10) + "</p>";
-  await doc.publish({ "index.html": "<h1>Small</h1>" }, []);
+  await doc.write({ "index.html": "<h1>Small</h1>" }, []);
   // An edit (here a publish of the whole text, merged into the room as an edit is) that takes it past the limit.
   // The room as a tab sees it: its text, edited in place.
   const opened = await (doc as unknown as { room(): Promise<{ room: Room } > }).room();
@@ -210,7 +210,7 @@ test("write takes a file Erga keeps by its sha-256 (an image sent to the person'
     site.set("title", title);
     site.set("index.html", new Blob([`<!doctype html><title>x</title><h1>Hello from a folder</h1><img src="img/dot.png">`]), "index.html");
     site.set("img/dot.png", new Blob([PNG]), "dot.png");
-    const res = await s.fetch("/api/publish", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: site });
+    const res = await s.fetch("/api/upload", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: site });
     return (await res.json()) as { id: string; address: string };
   };
   await publish("Has the picture");

@@ -4,7 +4,7 @@
 //   1. shared/        nothing of ours (assets/ is data: any layer may import it). A library's API (libs/<name>/api/) is
 //                     in this layer too: it needs no browser, and the document's object runs it for agents.
 //   2. document/      shared/. It gets the directory and the agents through DocumentDeps.
-//   3. server/'s areas (directory, identity, documents, pages, home, admin, operations) and its other files but app.ts and
+//   3. server/'s areas (directory, identity, documents, pages, sites, admin, operations) and its other files but app.ts and
 //                     api.ts: platform.ts, http.ts, security.ts, live.ts, health.ts. directory/ never
 //                     imports identity/; documents/ and admin/ never import operations/.
 //   4. agents/        each person's agent and the tools
@@ -28,7 +28,7 @@ import { join, relative, resolve } from "node:path";
 import { expect, test } from "bun:test";
 
 const ROOT = resolve(import.meta.dir, "..");
-const AREAS = ["directory", "identity", "documents", "pages", "home", "admin", "operations", "news"];
+const AREAS = ["directory", "identity", "documents", "pages", "sites", "admin", "operations", "news"];
 /** The repository's folders (an import that names none is a package's). */
 const REPO = readdirSync(ROOT).filter((n) => !n.startsWith(".") && n != "node_modules" && statSync(join(ROOT, n)).isDirectory());
 const BROWSER_DOCUMENT = ["document/content", "document/pages", "document/merge"];

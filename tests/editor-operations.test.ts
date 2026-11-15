@@ -24,6 +24,9 @@ async function world() {
   const platform = {
     agentSettings: async () => ({ missing: "no API key" }),
     directory: s.dir,
+    // No custom domain, and nothing linked to the Erga domain.
+    deploy: { domains: [], app: null },
+    site: () => ({ status: async () => ({ state: "free", doc: null, bars: false, live: null, error: null, by: null, linked: null }) }),
     docs: {
       tree: () => call((c) => c.tree()),
       treeOp: async (_d: unknown, op: never) => (await call((c) => c.treeOp(op)))!,
@@ -86,7 +89,7 @@ test("a person's agent renames the document open on their page, lists, makes, mo
   await ask(tools, "rm", { path: "blog" });
   expect(await doc.paths()).toEqual(["index.html"]);
   // Versions: listed, read, and one brought back as the agent's person's.
-  await doc.publish({ "index.html": "<h1>Changed</h1>" }, []);
+  await doc.write({ "index.html": "<h1>Changed</h1>" }, []);
   await until(async () => (await doc.versionsState())!.total > 1);
   const v = JSON.parse(await ask(tools, "versions"));
   expect(v.total).toBeGreaterThan(1);

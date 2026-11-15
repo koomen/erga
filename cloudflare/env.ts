@@ -1,6 +1,6 @@
 import type { BrowserBinding } from "./cdp";
 import type { DocumentObject } from "./objects/document";
-import type { Home } from "./objects/home";
+import type { Home } from "./objects/site";
 import type { NewsHub } from "./objects/news";
 import type { OwnStorage } from "./objects/own";
 import type { PersonAgent } from "./objects/person-agent";
@@ -9,7 +9,7 @@ import type { PersonAgent } from "./objects/person-agent";
 export interface Env {
   /** One Durable Object per document, named by its id. */
   DOCUMENTS: DurableObjectNamespace<DocumentObject>;
-  /** The homepage's deploys and its served snapshot: one Durable Object, named "home". */
+  /** Each domain's publishing and its served snapshot (objects/site.ts): one Durable Object for each domain. */
   HOME: DurableObjectNamespace<Home>;
   /** Live pages' hub (server/news/): the open pages' sockets and which rows changed. One Durable Object, "news". */
   NEWS: DurableObjectNamespace<NewsHub>;
@@ -107,8 +107,8 @@ export interface Env {
   ERGA_RENDER_ALLOW?: string;
   /** Local development only: the dev server's address, where its own headless Chrome is (cloudflare/browser.ts). */
   ERGA_DEV_ORIGIN?: string;
-  /** Local development only: how often the Worker checks for a newer homepage deploy (5 seconds by default; tests shorten it). */
-  ERGA_HOME_RECHECK_MS?: string;
+  /** Local development only: how often the Worker checks for a newer publish of a site (5 seconds by default; tests shorten it). */
+  ERGA_SITE_RECHECK_MS?: string;
   /** Local development only: how long after an edit the room writes it (tests shorten it). */
   ERGA_WRITE_DELAY_MS?: string;
   /** Local development only: how long edits pause before a version is cut, and the longest burst of edits one version holds (tests shorten them; document/versions.ts). */

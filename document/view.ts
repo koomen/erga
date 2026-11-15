@@ -187,12 +187,12 @@ export class DocumentView {
   private news = throttle(async () => {
     const ver = await this.current();
     if (!ver) return;
-    // (A change to very many files, a folder published again, say: no list, and each page loads again.)
+    // (A change to very many files, a folder uploaded again, say: no list, and each page loads again.)
     this.o.tell(ver, this.touched.size > 100 ? undefined : [...this.touched]);
     this.touched.clear();
   }, TELL_EVERY_MS);
 
-  /** The answer for someone who may view (`role`, or anyone: the homepage): which file the address `page` is, in what viewers see now, and that version. */
+  /** The answer for someone who may view (`role`, or anyone): which file the address `page` is, in what viewers see now, and that version. */
   answer(
     info: { index: string; test?: boolean; disk?: unknown },
     role: Role | null,

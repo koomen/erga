@@ -194,7 +194,7 @@ echo "celld $(/usr/local/bin/celld --version | head -1); $(curl -fsS http://${CH
  * takes its lease (nodes/ in the fleet's folder) only when it has a deployment, and celld d1 needs that node: the
  * first release goes the other way, the Worker and then the migrations. The secrets go into
  * the settings on the machine only, never into the bucket's release. The machine adds the version to its list of
- * releases (rollback reads it). Once it answers, the script asks it for the homepage project (the server makes it when
+ * releases (rollback reads it). Once it answers, the script asks it for the default homepage (the server makes it when
  * it has none: server/documents/landing.ts). `first`: SQL to run after it answers (setup's first admin).
  */
 export function deployScript(o: { bucket: string; region: string; stack: string; version: string; first?: string }): string {

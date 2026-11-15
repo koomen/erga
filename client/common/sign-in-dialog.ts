@@ -1,5 +1,5 @@
 // The sign-in dialog: a page's model was asked by someone signed out (client/common/page-llm.ts, llmFetch). The viewer
-// shows it around the document's frame; the homepage, which isn't in the viewer, shows it in the page itself. It offers
+// shows it around the document's frame; a published site, which isn't in the viewer, shows it in the page itself. It offers
 // the providers that are on (shared/sign-in.ts), each back to `next`. One dialog for each page: a call while it is open
 // changes nothing. Escape, its close button and a click outside it close it.
 
@@ -7,7 +7,7 @@ import { PROVIDER_CSS, providerButtons, type SignInChoice } from "../../shared/s
 
 const CLOSE = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`;
 
-// Erga's dialog (client/inline/app.css: dialog), in its own shadow root: the homepage's own style can't reach it.
+// Erga's dialog (client/inline/app.css: dialog), in its own shadow root: a published page's own style can't reach it.
 const CSS = `
 :host { --bg: #fff; --fg: #3a3a40; --fg-strong: #1c1c1f; --soft: #6b6b73; --ring: #e6e6ea; }
 @media (prefers-color-scheme: dark) { :host { --bg: #1f1f23; --fg: #c9c9d1; --fg-strong: #ececf1; --soft: #8f8f99; --ring: #2f2f35; } }

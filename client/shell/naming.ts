@@ -41,9 +41,7 @@ export function mountNaming(shell: Shell) {
     if (!n.address) return;
     const at = viewHref(n.address);
     document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.setAttribute("content", n.address);
-    // At the homepage's address (/), it stays there.
-    const here = location.pathname == "/" ? "/" : at;
-    if (location.pathname != here) window.history.replaceState(window.history.state, "", here + location.search + location.hash);
+    if (location.pathname != at) window.history.replaceState(window.history.state, "", at + location.search + location.hash);
   }
   /** This page's address in the viewer (without the query): the pencil goes there, or to its editor while viewing (viewer-edit-boot.ts). */
   function viewHref(address: string) {
@@ -65,7 +63,7 @@ export function mountNaming(shell: Shell) {
     if (!open) return;
     shell.chrome.cardOpened("naming");
     slugTouched = false;
-    // The address as the server gives it, its slug in the field; the homepage project's (/_home) has no slug to change.
+    // The address as the server gives it, its slug in the field; the default homepage's (/_home) has no slug to change.
     const n = shell.docName!,
       free = n.address.endsWith(`/${n.slug}`);
     $("naming-prefix").textContent = free ? n.address.slice(0, -n.slug.length) : n.address;

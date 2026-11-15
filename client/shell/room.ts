@@ -59,7 +59,11 @@ export function mountRoom(shell: Shell) {
       // The body's erga-listening class: this tab hears its agent (and open_page counts it). Tests wait on it.
       document.body.classList.add("erga-listening");
       if (h.info.docName && shell.docName) shell.naming.showName(h.info.docName);
-      if (greeted) { shell.docSettings?.event("versions"); shell.docSettings?.event("home"); shell.docSettings?.event("tree"); }
+      if (greeted) {
+        shell.docSettings?.event("versions");
+        shell.docSettings?.event("publishing");
+        shell.docSettings?.event("tree");
+      }
       greeted = true;
       shell.naming.applyKind(h.tree.kind);
       stillHere(h.tree);
@@ -68,7 +72,7 @@ export function mountRoom(shell: Shell) {
     else if (msg.type == "agent" && msg.ev?.t == "undoable") window.dispatchEvent(new Event("erga:agent-tool"));
     else if (msg.type == "live" && msg.id && msg.req) shell.requests.answerLive(msg.id, msg.req);
     else if (msg.type == "name" && msg.name) shell.naming.showName(msg.name);
-    else if (msg.type == "versions" || msg.type == "home") shell.docSettings?.event(msg.type);
+    else if (msg.type == "versions" || msg.type == "publishing") shell.docSettings?.event(msg.type);
     else if (msg.type == "access") shell.sharing?.accessChanged();
     else if (msg.type == "uploads") shell.uploads.heard((m as unknown as UploadsMessage).files);
     else if (msg.type == "tree") { shell.naming.applyKind(msg.kind); treeChanged(msg); shell.docSettings?.event("tree"); }

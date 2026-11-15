@@ -9,7 +9,7 @@ import { fromBase64 } from "../../shared/bytes";
 import { pictureSize } from "../../shared/picture";
 import { apisOf, edit, person, pixel, toolsOf, valueOf, type DocTools, type Person, type Tools } from "./panel";
 import { eventsOf, joinRoom, type Joined } from "./room";
-import { CODE, docOf, pdf, PLAYER, PNG, probe, SITE, slideBar, tone, viewButton, type LiveFacts } from "./samples";
+import { CODE, pdf, PLAYER, PNG, probe, SITE, slideBar, tone, viewButton, type LiveFacts } from "./samples";
 
 const s = await servers.main();
 /**
@@ -133,13 +133,13 @@ journey("the agents' tools on a page that a person has open", () => {
       `the viewer's agent's edit is refused, with why: ${JSON.stringify(tried)}`
     ).toBe(true);
     expect(await stored()).not.toContain("Dee's notes");
-    // Nor do the viewer's own edits, in the room or as a publish, go anywhere.
+    // Nor do the viewer's own edits, in the room or as an upload, go anywhere.
     const viewer = await joinRoom(ed.address, DEE);
     viewer.insertAfter("<h1>", "Dee typed. ");
     bo.insertAfter("<h1>", "Bo typed. ");
     await until(() => viewer.str().includes("Bo typed. "), 3000, "the viewer sees Bo's edit");
     const push = await dee.get(`${new URL(ed.address).pathname}/api/stored/index.html`, { method: "PUT", body: "<h1>Dee's page</h1>" });
-    expect(push.status, "the viewer's publish is refused").toBe(403);
+    expect(push.status, "the viewer's upload is refused").toBe(403);
     // Bo's edit came after Dee's: when storage has Bo's, it would have Dee's too.
     await until(async () => (await stored()).includes("Bo typed. "), 5000, "Bo's edit is stored");
     expect(bo.str()).not.toContain("Dee");
@@ -530,15 +530,15 @@ test("the document tools work on any of your documents, named by address, URL, s
     "index.html": `<!doctype html><title>x</title><h1>Hello from a folder</h1><img src="img/dot.png">`,
     "img/dot.png": { base64: PNG },
   };
-  const pub = await t.create({ title: "Published app", files });
-  expect(pub.address).toBe(`/${p.login}/published-app`);
+  const pub = await t.create({ title: "Uploaded app", files });
+  expect(pub.address).toBe(`/${p.login}/uploaded-app`);
   let r = await t.call("read", { document: pub.address, path: "index.html" });
   expect(r.status).toBe(200);
   expect(r.text).toContain("Hello from a folder");
   r = await t.call("read", { document: s.root + pub.address, path: "img/dot.png" });
   expect(r.content[0]?.type).toBe("image");
   r = await t.call("edit", {
-    document: "published-app",
+    document: "uploaded-app",
     path: "index.html",
     edits: [{ oldText: "Hello from a folder", newText: "Hello, edited by an agent" }],
   });
@@ -803,17 +803,4 @@ test("versions with from or to: since the agent's last turn, between two version
   } finally {
     room.leave();
   }
-});
-
-// The bug (production): the homepage project adopted from an admin's /<admin>/landing is owned by "-home", but its host
-// still kept the admin it was made with, and the render's token named that admin: the page's own files gave 404.
-test("in the homepage project adopted from an admin's document (owner -home), the render loads the page's script and image", async () => {
-  const admin = await (await person(bare, "tester")).tools("admin");
-  // The old homepage, /tester/landing, made before anything opened / (which would make a homepage project of its own).
-  const made = await admin.create({ files: { "index.html": "<!doctype html><title>Erga</title><h1>Old</h1>" }, slug: "landing" });
-  expect((await runTool(bare.root, "set_setting", { key: "landing_document", value: made.id })).error).toBeUndefined();
-  // The first / (signed out) adopts it.
-  const front = await fetch(`${bare.root}/`, { redirect: "manual", headers: { Cookie: `erga_signed_out_${new URL(bare.root).port}=1` } });
-  expect(docOf(await front.text())).toBe(made.id);
-  await probe(admin.on("/_home"), SOON);
 });

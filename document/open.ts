@@ -123,7 +123,7 @@ export async function openRoom(h: RoomHost): Promise<Opened> {
         : null,
     // Their agent edits only if they may (and only while they may).
     canEdit: (person) => h.canEdit(person.id),
-    mayPublish: (req) => req.headers["x-erga-access"] == "edit",
+    mayPut: (req) => req.headers["x-erga-access"] == "edit",
     avatarOf: deps.avatarOf,
     // Its title and address (the app decided who may rename it: rename_document).
     naming: () => naming,
@@ -153,7 +153,7 @@ export async function openRoom(h: RoomHost): Promise<Opened> {
     const paths = filesTouched(room.doc, tr);
     if (!paths) return;
     const a = authorOf(room.doc, tr);
-    h.edited(a ? (a.kind == "disk" ? (info.disk ? "on disk" : (room.by ?? "files published")) : editorOf(a)) : null, paths);
+    h.edited(a ? (a.kind == "disk" ? (info.disk ? "on disk" : (room.by ?? "files uploaded")) : editorOf(a)) : null, paths);
   });
   // Its name from its record once the directory has said it; a rename goes to the directory, and what it answers is kept.
   const named = namingFor(deps.directory, info.id, () => titleOf(room.text(info.index) ?? ""));

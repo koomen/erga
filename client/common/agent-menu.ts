@@ -14,7 +14,7 @@ type Scope = "documents" | "admin";
 export interface AgentMenuOptions {
   /** The button that opens it. */
   button: HTMLElement;
-  /** Where the menu and its style go: the page, or the homepage's shadow root. */
+  /** Where the menu and its style go: the page, or a published site's shadow root. */
   root: Document | ShadowRoot;
   /** The page's address (its path), read at each copy: the editor's frame can show another page. */
   address(): string;

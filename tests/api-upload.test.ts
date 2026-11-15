@@ -1,4 +1,4 @@
-// POST /api/publish (server/api.ts), as an outside agent uses it with its person's token: a folder becomes a document
+// POST /api/upload (server/api.ts), as an outside agent uses it with its person's token: a folder becomes a document
 // at its title's address; publishing again into the document replaces its files. The whole app, in memory.
 
 import { expect, test } from "bun:test";
@@ -22,7 +22,7 @@ async function publish(s: Server, token: string, title = "Published app") {
   site.set("css/app.css", new Blob(["h1 { color: rebeccapurple }"]), "app.css");
   site.set("file", new Blob(["console.log('hi')"]), "app.js");
   site.set("img/dot.png", new Blob([PNG]), "dot.png");
-  const res = await s.fetch("/api/publish", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: site });
+  const res = await s.fetch("/api/upload", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: site });
   return { res, pub: (await res.json()) as { ok: boolean; id: string; address: string; url: string; files: string[] } };
 }
 
@@ -33,7 +33,7 @@ async function setup(): Promise<{ s: Server; p: Person; token: string }> {
   return { s, p, token: await p.token() };
 }
 
-test("POST /api/publish makes a document of a folder at its title's address: images byte for byte, styles as text; it's listed, and doesn't expire", async () => {
+test("POST /api/upload makes a document of a folder at its title's address: images byte for byte, styles as text; it's listed, and doesn't expire", async () => {
   const { s, p, token } = await setup();
   const { res, pub } = await publish(s, token);
   expect(res.ok).toBe(true);
@@ -49,7 +49,7 @@ test("POST /api/publish makes a document of a folder at its title's address: ima
 test("publishing again into the same document replaces its files; rename_document renames it; delete_document deletes yours", async () => {
   const { s, p, token } = await setup();
   const { pub } = await publish(s, token);
-  const res = await s.fetch("/api/publish", {
+  const res = await s.fetch("/api/upload", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ document: pub.id, files: { "index.html": "<!doctype html><h1>Version two</h1>" } }),

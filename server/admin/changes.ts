@@ -18,7 +18,6 @@ import { byLine, SYSTEM, VIA } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
 import { avatarHtml, shown } from "./parts.ts";
 import { plural } from "../../shared/time.ts";
-import { addressOf } from "../../document/names.ts";
 
 /** How many changes the change log lists on a page. */
 const CHANGES = 50;
@@ -107,21 +106,11 @@ function eventItem(c: SettingChange): string {
 
 /**
  * One version of the settings in the change log: when, who, and each
- * setting's value from and to. `docs`: a document's address and title by id,
- * for a setting that names one.
+ * setting's value from and to.
  */
-function changeRow(
-  v: SettingsVersion,
-  settings: Settings,
-  docs: Map<string, { address: string; title: string }>,
-  avatars: Record<string, string>
-): string {
+function changeRow(v: SettingsVersion, settings: Settings, avatars: Record<string, string>): string {
   const at = new Date(v.at).toISOString();
-  const value = (key: string, x: unknown) => {
-    const kind = settings[key]?.kind;
-    const doc = kind == "document" && x != null ? docs.get(String(x)) : undefined;
-    return `<span class="was">${esc(doc ? doc.address : shown(x, kind))}</span>`;
-  };
+  const value = (key: string, x: unknown) => `<span class="was">${esc(shown(x, settings[key]?.kind))}</span>`;
   // A setting by its name on the admin page, its key on hover.
   const name = (key: string) => `<span class="key" title="${esc(key)}">${esc(settings[key]?.label ?? key)}</span>`;
   const what = v.changes
@@ -138,27 +127,11 @@ function changeRow(
   </li>`;
 }
 
-/** These versions' rows, newest first: each setting that names a document shows it by its address now, as /admin/settings does. */
+/** These versions' rows, newest first. */
 async function changeRows(platform: Platform, versions: SettingsVersion[]): Promise<{ n: number; html: string }[]> {
   const settings = platform.directory.config.settings as Settings;
-  const ids = new Set(
-    versions
-      .flatMap((v) => v.changes.filter((c) => settings[c.key]?.kind == "document").flatMap((c) => [c.from, c.to]))
-      .filter((x) => x != null)
-      .map(String)
-  );
-  const docs = new Map(
-    (
-      await Promise.all(
-        [...ids].map(async (id) => {
-          const doc = await platform.directory.find(id);
-          return doc ? [[id, { address: addressOf(doc), title: doc.title }] as const] : [];
-        })
-      )
-    ).flat()
-  );
   const avatars = await platform.directory.users.avatars(versions.map((v) => v.by).filter((by) => by && by != SYSTEM));
-  return versions.map((v) => ({ n: v.n, html: changeRow(v, settings, docs, avatars) }));
+  return versions.map((v) => ({ n: v.n, html: changeRow(v, settings, avatars) }));
 }
 
 /** /admin/changes: the change log, every change to the settings, factory task added or merged, and production deploy, newest first (`before`: only those older than version n). */

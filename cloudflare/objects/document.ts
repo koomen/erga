@@ -35,7 +35,8 @@ import { CommentTables, placeQuote, type CommentAnswer, type CommentCall } from 
 import type { DocSnapshot, Page } from "../../document/snapshot";
 import { directoryOf } from "../d1";
 import { forgetDecisions } from "../../server/documents/index.ts";
-import { platform } from "../platform";
+import { platform, siteOf } from "../platform";
+import { domainsOf } from "../../server/sites/index.ts";
 import { DiskLink } from "../../document/disk";
 import type { Env } from "../env";
 import { CALLS, throughDoor, type CallAnswer } from "./document-door";
@@ -105,8 +106,8 @@ export class DocumentObject extends DurableObject<Env> {
       },
       // Each person's agent's session here, and the key the versions' descriptions are written with.
       agents: documentAgents({ settings: () => platform(env).agentSettings(), sandbox: sandboxOf(env.LOADER) }),
-      home: {
-        forget: (docId) => env.HOME.getByName("home").forget(docId),
+      sites: {
+        forget: async (docId) => void (await Promise.all(domainsOf(platform(env)).map((domain) => siteOf(env, domain).forget(docId)))),
       },
       disk: { storage: (only) => this.disk.storage(this.ctx.storage, only) },
       timing: {
@@ -152,8 +153,8 @@ export class DocumentObject extends DurableObject<Env> {
     return run(this.document.link(owner, id, index, disk));
   }
   // (Each call that opens the document holds it open until it's done: it doesn't close for being idle meanwhile.)
-  publish(files: Record<string, FileData>, remove: string[], by?: string, writer?: Writer) {
-    return run(this.document.publish(files, remove, by, writer));
+  write(files: Record<string, FileData>, remove: string[], by?: string, writer?: Writer) {
+    return run(this.document.write(files, remove, by, writer));
   }
   paths(): Promise<string[]> {
     return run(this.document.hold(this.document.paths()));
@@ -167,7 +168,7 @@ export class DocumentObject extends DurableObject<Env> {
   delete(): Promise<boolean> {
     return run(this.document.delete());
   }
-  /** A message for everyone who has the document open (the homepage's deploy status, home.ts). Opens nothing. */
+  /** A message for everyone who has the document open (its publishing state, site.ts). Opens nothing. */
   async notify(msg: unknown): Promise<void> {
     this.tabs.notify(msg);
   }

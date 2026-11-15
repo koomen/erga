@@ -43,8 +43,8 @@ export interface Setting<T = unknown> {
   default: T;
   /** A value as given (parsed JSON), checked: throws a ConfigError saying what's wrong. */
   parse(value: unknown): T;
-  /** What the value names, when it isn't just a number or text: "document" (one of the server's documents, by id), "users" (a list of logins). */
-  kind?: "document" | "users";
+  /** What the value names, when it isn't just a number or text: "users" (a list of logins). */
+  kind?: "users";
   /** The values the admin page offers, as a select (as a switch when they're "off" and "on"). The parser may take others too. */
   choices?: string[];
 }
@@ -100,14 +100,6 @@ export const SETTINGS = {
       return v;
     },
   }),
-  landing_document: setting<string | null>({
-    label: "Homepage",
-    description: "The document or project shown at /.",
-    values: "A document's address or id, or null: no homepage (/ is a page with Sign in).",
-    default: null,
-    parse: (v) => (v === null || v === "" ? null : text(300)(v) || null),
-    kind: "document",
-  }),
   max_file_mb: setting<number>({
     label: "Largest file",
     description: "The largest file anyone can add to a document.",
@@ -123,7 +115,7 @@ export const SETTINGS = {
   public_sharing: setting<boolean>({
     label: "Public sharing",
     description: "Owners can share a document with anyone who has the link, signed in or not.",
-    values: "false: those links open only after a sign-in. The homepage is always public.",
+    values: "false: those links open only after a sign-in. A published document is always public on its domain.",
     default: false,
     parse: boolean,
   }),
@@ -213,7 +205,7 @@ export interface ConfigEntry {
   /** Fixed by the deploy: nobody can set or reset it here (show it read-only). */
   locked: boolean;
   /** What the value names, if it isn't plain (Setting.kind). */
-  kind?: "document" | "users";
+  kind?: "users";
   /** Its name on the admin page, where it isn't the key (Setting.label). */
   label?: string;
   /** The values the admin page offers (Setting.choices). */
@@ -321,35 +313,33 @@ export interface SettingsVersion {
 }
 
 interface Row { key: string; value: string; updated: number; updated_by: string | null; updated_via?: string | null }
-/**
- * By key: a parsed value someone sets, checked against more than the
- * setting's parser knows (the directory, who's setting it). Answers the value
- * to keep, or throws a ConfigError or NotAllowed saying why not.
- */
-export type Checks = Record<string, (by: Actor, value: unknown) => Promise<unknown>>;
 const REMEMBER_MS = 10_000;
 
 export class ServerConfig<S extends Settings = typeof SETTINGS> {
   readonly settings: S;
   private locked: Record<string, unknown>;
-  private checks: Checks;
   private changed: (key: string) => Promise<void>;
   private rows: { at: number; byKey: Map<string, Row> } | null = null;
 
   /**
    * `settings`: the keys there are (SETTINGS). `locked`: values fixed by the
    * deploy, by key; each must be a key there is, and a value it takes.
-   * `checks`: by key, what else a value set by someone must pass, beyond its
-   * parser (the directory's: a landing document must be the setter's own).
-   * `changed`: told of every change to a key (set, reset or claimed), once
-   * it's written (the Worker tells the homepage's deploys: server/home/deploys.ts).
+   * `changed`: told of every change to a key (set or reset), once it's written.
    */
   /** `defaults`: other defaults than SETTINGS' (local development's), still the admins' to change. */
-  constructor(private sql: Sql, private users: Users, opts: { settings?: S; locked?: Record<string, unknown>; defaults?: Record<string, unknown>; checks?: Checks; changed?: (key: string) => Promise<void> } = {}) {
+  constructor(
+    private sql: Sql,
+    private users: Users,
+    opts: {
+      settings?: S;
+      locked?: Record<string, unknown>;
+      defaults?: Record<string, unknown>;
+      changed?: (key: string) => Promise<void>;
+    } = {}
+  ) {
     const base = opts.settings ?? (SETTINGS as unknown as S);
     this.settings = { ...base, ...Object.fromEntries(Object.entries(opts.defaults ?? {}).filter(([k]) => k in base).map(([k, v]) => [k, { ...base[k], default: base[k].parse(v) }])) } as S;
     this.locked = deployedSettings(opts.locked ?? {}, this.settings);
-    this.checks = opts.checks ?? {};
     this.changed = opts.changed ?? (async () => {});
   }
 
@@ -412,37 +402,10 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     } catch (e) {
       throw new ConfigError({ message: `${key} ${(e as Error).message}.` });
     }
-    const check = Object.hasOwn(this.checks, key) ? this.checks[key] : undefined;
-    if (check && parsed != null) parsed = await check(by, parsed);
     await this.write(key, JSON.stringify(parsed), by.login.toLowerCase(), by.via ?? null);
     this.rows = null;
     await this.tell(key);
     return this.entry(key);
-  }
-
-  /**
-   * The server's own write, nobody's request: sets `key` to `value` only if
-   * its row is still `expected` (its stored JSON as `stored` read it, null
-   * for no row), so of several at once only one wins. Answers whether this
-   * one did. Not for locked keys (the caller checks). `by`: who to record.
-   */
-  async claim(key: string, expected: string | null, value: unknown, by: string): Promise<boolean> {
-    this.setting(key);
-    const json = JSON.stringify(value);
-    if (expected == null) {
-      await this.sql.run("INSERT INTO server_config (key, value, updated, updated_by) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (key) DO NOTHING", key, json, Date.now(), by.toLowerCase());
-    } else {
-      await this.sql.run("UPDATE server_config SET value = ?2, updated = ?3, updated_by = ?4 WHERE key = ?1 AND value = ?5", key, json, Date.now(), by.toLowerCase(), expected);
-    }
-    this.rows = null;
-    const won = (await this.stored(key)) == json;
-    // Only the winner records the change, from the row it replaced.
-    if (won) {
-      const recorded = this.version(Date.now(), by.toLowerCase(), this.change(key, expected, json));
-      if (recorded.length) await this.sql.batch(recorded);
-      await this.tell(key);
-    }
-    return won;
   }
 
   /** A setting's row as stored now (its JSON), read afresh; null if it has none. */

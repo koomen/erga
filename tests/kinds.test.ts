@@ -49,7 +49,7 @@ test("a document refuses a second page however it comes, saying how to make it a
   expect(tree.body.error).toContain("make it a project first");
   // An upload, a publish, an agent's write and a move that would make a page.
   expect((await put("about.html", "<h1>About</h1>")).status).toBe(409);
-  expect((await doc.publish({ "blog/post.html": "<h1>Post</h1>" }, [])).refused[0].why).toContain("make it a project first");
+  expect((await doc.write({ "blog/post.html": "<h1>Post</h1>" }, [])).refused[0].why).toContain("make it a project first");
   const w = await tool("write", { path: "contact.html", content: "<h1>Contact</h1>" });
   expect(w.body.ok).toBe(false);
   expect(JSON.stringify(w.body)).toContain("make it a project first");

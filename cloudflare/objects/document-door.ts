@@ -6,7 +6,7 @@ export const CALLS = [
   "create",
   "keep",
   "link",
-  "publish",
+  "write",
   "paths",
   "index",
   "snapshot",

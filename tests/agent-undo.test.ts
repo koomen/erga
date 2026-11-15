@@ -15,7 +15,7 @@ const PAGE = "<h1>Launch notes</h1>\n<p>Where the leads go.</p>\n";
 
 test("undo takes back exactly the agent's last change, then the one before", async () => {
   const { doc } = await setup();
-  await doc.publish({ "index.html": PAGE }, [], "ada");
+  await doc.write({ "index.html": PAGE }, [], "ada");
   /** A request of Ada's to the document: from her page, or (agent) from her own agent, as the server sends its tool calls. */
   const asAda = async <T>(path: string, init: { method?: string; body?: unknown; agent?: boolean } = {}) => {
     const r = await doc.handle(

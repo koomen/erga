@@ -1,10 +1,9 @@
-// The homepage's page as a deploy renders it: the
-// document's page as it is, with what the viewer would give it, its files
-// linked where the deploy serves them, and the place for the controls.
+// A document's page as a publish renders it: the page as it is, with what the viewer would give it, its files linked
+// where the snapshot serves them, and the place for the controls.
 
 import { expect, test } from "bun:test";
-import { homeHeader, renderHome } from "../server/home/index.ts";
-import { pageInter } from "../server/home/render.ts";
+import { renderSite, siteHeader } from "../server/sites/index.ts";
+import { pageInter, withBand, withControls, withLlm } from "../server/sites/render.ts";
 
 const files = {
   "index.html": "",
@@ -16,9 +15,16 @@ const files = {
   "fonts/x.woff2": new Uint8Array([0]),
 };
 const render = (index: string, more: Record<string, string | Uint8Array> = {}) =>
-  renderHome({ index: "index.html", files: { ...files, ...more, "index.html": index }, gen: "g1", title: "The Title", doc: "abcd1234" });
+  renderSite({
+    index: "index.html",
+    files: { ...files, ...more, "index.html": index },
+    gen: "g1",
+    title: "The Title",
+    doc: "abcd1234",
+    address: "/ada/site",
+  });
 
-test("its files point at the deploy's addresses; everything else stays as it is", async () => {
+test("its files point at the snapshot's addresses; everything else stays as it is", async () => {
   const r = await render(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=500"><title>Own</title>
 <link rel="stylesheet" href="style.css?v=2"><link rel="preconnect" href="https://fonts.googleapis.com"><meta property="og:image" content="img/bg.png">
 <style>@import "style.css"; .x { background: url('img/bg.png') } .y { background: url(/abs.png) } .z { background: url(data:image/png;base64,AA==) }</style>
@@ -69,19 +75,38 @@ test("a <base> moves where its URLs resolve; a page that isn't HTML can't be ser
   const r = await render(`<!doctype html><head><base href="img/"></head><body><img src="bg.png"><img src="../style.css"></body>`);
   expect(r.before).toContain('src="/_home-files/g1/img/bg.png"');
   expect(r.before).toContain('src="/_home-files/g1/style.css"');
-  await expect(renderHome({ index: "index.md", files: { "index.md": "# Hi" }, gen: "g", title: "t", doc: "abcd1234" })).rejects.toThrow(
-    /only an HTML page/
-  );
+  await expect(
+    renderSite({ index: "index.md", files: { "index.md": "# Hi" }, gen: "g", title: "t", doc: "abcd1234", address: "/ada/site" })
+  ).rejects.toThrow(/only an HTML page/);
 });
 
 test("the controls: in a declarative shadow root, Edit only when given", () => {
-  const h = homeHeader({ clone: "/new?from=landing", edit: "/ada/home?edit", account: null, here: "/" });
+  const h = siteHeader({ clone: "/new?from=abcdefgh", edit: "/ada/home?edit", account: null, here: "/" });
   expect(h).toMatch(/^<erga-controls><template shadowrootmode="open">/);
-  expect(homeHeader({ clone: "/c", edit: null, account: null, here: "/", doc: "abcdefgh" })).toMatch(/^<erga-controls data-doc="abcdefgh">/);
-  expect(h).toContain('href="/new?from=landing"');
+  expect(siteHeader({ clone: "/c", edit: null, account: null, here: "/", doc: "abcdefgh" })).toMatch(
+    /^<erga-controls data-doc="abcdefgh">/
+  );
+  expect(h).toContain('href="/new?from=abcdefgh"');
   expect(h).toContain('href="/ada/home?edit"');
   expect(h).toContain('data-erga-account="out"');
-  expect(homeHeader({ clone: "/c", edit: null, account: null, here: "/" })).not.toContain("erga-edit-button");
+  expect(siteHeader({ clone: "/c", edit: null, account: null, here: "/" })).not.toContain("erga-edit-button");
+});
+
+test("the header bar is the site's setting, read when the page is served: only with it does the page start below the band", async () => {
+  const r = await render("<!doctype html><html><head></head><body><h1>Hi</h1></body></html>");
+  expect(r.before).not.toContain("padding-top");
+  expect(withBand(r.before)).toMatch(/html:root:root \{ padding-top: calc\(/);
+  // Another page of the site: the model's script first, and with the bars, a start below the band and the controls before </body>.
+  const about = withLlm(
+    "<!doctype html><html><head><title>About</title></head><body><p>about</p></body></html>",
+    "abcd1234",
+    "tok",
+    "/ada/site"
+  );
+  expect(about).toMatch(/<head><script>.*"abcd1234","tok","\/ada\/site"/s);
+  const barred = withControls(about, "<erga-controls></erga-controls>");
+  expect(barred).toMatch(/<head><style>html:root:root \{ padding-top/);
+  expect(barred).toContain("<erga-controls></erga-controls></body>");
 });
 
 test("a page that declares Inter itself", () => {

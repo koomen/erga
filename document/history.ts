@@ -14,7 +14,7 @@ import { later, stop } from "./later.ts";
 import type { Opened } from "./open.ts";
 import { io, type NoSuchDocument, type StoreError } from "./room.ts";
 import { kvOf } from "./storage.ts";
-import type { Published } from "./uploads.ts";
+import type { Written } from "./uploads.ts";
 import {
   describeChange,
   fallbackDescription,
@@ -39,7 +39,7 @@ export interface HistoryHost {
   /** Something happened: the document stays open a while longer. */
   activity(): void;
   /** Files arriving whole (uploads.ts): what a restore writes. */
-  publish(files: Record<string, FileData>, remove: string[], by: string): Effect.Effect<Published, StoreError | NoSuchDocument>;
+  write(files: Record<string, FileData>, remove: string[], by: string): Effect.Effect<Written, StoreError | NoSuchDocument>;
 }
 
 export class History {
@@ -286,15 +286,15 @@ export class History {
       yield* io(() => self.cutSoon("restore"));
       const files = yield* self.versions.entries(v);
       // The document went while it was restored: as if it had never been there.
-      const gone = (put: Record<string, FileData>, remove: string[]): Published => ({
+      const gone = (put: Record<string, FileData>, remove: string[]): Written => ({
         written: [],
         removed: [],
         refused: [...Object.keys(put), ...remove].map((p) => ({ path: p, why: "there's no such document" })),
       });
-      const publish = (put: Record<string, FileData>, remove: string[]) =>
-        Effect.catchTag(self.host.publish(put, remove, by), "NoSuchDocument", () => Effect.succeed(gone(put, remove)));
+      const write = (put: Record<string, FileData>, remove: string[]) =>
+        Effect.catchTag(self.host.write(put, remove, by), "NoSuchDocument", () => Effect.succeed(gone(put, remove)));
       if (path != null) {
-        const out = yield* publish({ [path]: files.get(path)! }, []);
+        const out = yield* write({ [path]: files.get(path)! }, []);
         if (out.refused.length) return { ok: false, status: 409, error: `Couldn't restore ${path}: ${out.refused[0].why}.` } as const;
         const made = yield* io(() => self.cutSoon("restored", { authors: [by], description: `Restored ${path} from version ${v.n}` }));
         return { ok: true, current: publicVersion(made ?? (yield* self.versions.latest)!), from: v.id, files: [path] } as const;
@@ -305,7 +305,7 @@ export class History {
       for (const d of room.folderPaths())
         if (!keep.some((p) => p == d || p.startsWith(`${d}/`)) && room.exists(d) == "folder") yield* Effect.ignore(room.remove(d));
       const now = new Set((yield* io(() => r.opened.current())).keys());
-      const out = yield* publish(
+      const out = yield* write(
         Object.fromEntries(files),
         [...now].filter((p) => !files.has(p))
       );
@@ -323,7 +323,7 @@ export class History {
 
   /**
    * The document as it is now (up to the keystroke), with its current
-   * version: what the homepage and the document's site deploy.
+   * version: what a publish puts on the document's domain.
    */
   currentFiles(): Effect.Effect<{ version: Version; index: string; files: Map<string, Uint8Array> } | null, StoreError> {
     const self = this;

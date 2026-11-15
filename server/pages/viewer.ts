@@ -21,7 +21,7 @@ import { NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
 import { scratchSave } from "./scratch.ts";
 
 
-/** The viewer's pencil (Edit, the editor at `href`), blue while editing: also the homepage's. */
+/** The viewer's pencil (Edit, the editor at `href`), blue while editing: also a published site's. */
 export const editButton = (href: string, editing: boolean) =>
   `<a href="${esc(href)}" class="erga-view-button erga-edit-button" id="btn-edit" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit  ⌘⇧E"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0512) translate(-11.885 -13.365)" stroke-width="1.5221"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></g></svg></a>`;
 
@@ -116,12 +116,9 @@ export function viewerPage(o: {
   meta: string;
   session: Session | null;
   editable: boolean;
-  /** The person's agent: an editor's, or a reader's where the document's owner lets readers use theirs (documents/view.ts). */
+  /** The person's agent: everyone signed in who may open the document has theirs (documents/view.ts). */
   agent: boolean;
-  /** Erga's bars over the page: off for a reader where the document's owner hides them (documents/view.ts). */
-  bars: boolean;
   editing: boolean;
-  landing: boolean;
   /** Your own copy's address: the New menu's last item. */
   clone: string;
   /** The pencil, for whoever may edit (editButton), else nothing. */
@@ -168,12 +165,12 @@ export function viewerPage(o: {
 ${headTags(o.head, o.title, o.file, o.files)}
 <link rel="preconnect" href="${esc(o.pages)}">
 <meta name="erga-doc" content="${esc(o.docId)}">
-${o.meta}<script>${framesScript(o.pages)}</script><script>${REFUSED_SCRIPT}</script>${backdrop}${crumbsFont(session, true)}${style}<style>${BAND_STYLE}${o.bars ? "" : NO_BARS}</style>${editing ? opening : ""}
+${o.meta}<script>${framesScript(o.pages)}</script><script>${REFUSED_SCRIPT}</script>${backdrop}${crumbsFont(session, true)}${style}<style>${BAND_STYLE}</style>${editing ? opening : ""}
 <body>${o.agent ? `<script>${AGENT_LAYOUT}</script>` : ""}${editing ? editingBody : ""}
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
   const bars = barsHtml({
     session,
-    title: o.landing ? null : o.title,
+    title: o.title,
     project: !!o.project,
     full: true,
     edit: o.edit,
@@ -181,7 +178,7 @@ ${o.meta}<script>${framesScript(o.pages)}</script><script>${REFUSED_SCRIPT}</scr
     editor: o.editable,
   });
   const after = `
-${editing ? "" : opening + editingBody}${bars}${o.editable ? RESTORE_BARS : ""}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}"><script>${inlineCall("viewer-live", `/d/${o.docId}`)}</script>` : ""}${o.commenter ? `<script>${inlineCall("viewer-comment", `/d/${o.docId}`, o.commenter)}</script>` : ""}${o.project && session && !o.landing ? `<meta name="erga-title" content="${esc(o.title)}"><script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
+${editing ? "" : opening + editingBody}${bars}${o.editable ? RESTORE_BARS : ""}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}"><script>${inlineCall("viewer-live", `/d/${o.docId}`)}</script>` : ""}${o.commenter ? `<script>${inlineCall("viewer-comment", `/d/${o.docId}`, o.commenter)}</script>` : ""}${o.project && session ? `<meta name="erga-title" content="${esc(o.title)}"><script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
 `;
   return { before, after };
 }
@@ -210,10 +207,6 @@ function headTags(head: PageHead, docTitle: string, file: string, files: string)
     ...(image ? [`<meta property="og:image" content="${esc(image)}">`, `<meta name="twitter:card" content="summary_large_image">`] : []),
   ].join("\n");
 }
-
-/** A reader's page with no bars (the owner's reader_bars, share_document): no band, so no room at the page's top, and the bars
- *  hidden, their scripts still there. */
-const NO_BARS = ":root { --band-h: 0px; } :is(.erga-crumbs, .erga-view-buttons, .erga-tree-card) { display: none !important; }";
 
 /** With no colour remembered for the document, its page waits out of sight for the band's own (client/inline/viewer-band-wait.ts). */
 export const BAND_WAIT = inlineCall("viewer-band-wait");

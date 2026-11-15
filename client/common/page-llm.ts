@@ -1,7 +1,7 @@
 // window.ergaLLM, a document's page's model, called as its signed-in visitor (agents/page-llm.ts has the route and the
 // limits). The page in the viewer's frame asks the viewer by postMessage (client/inline/reader.ts), which calls the
-// route with the visitor's session (client/inline/viewer-llm.ts); the homepage, on the app's own site, calls it itself
-// (client/inline/home-llm.ts). Both answer through `llmFetch`, which shows the sign-in dialog there
+// route with the visitor's session (client/inline/viewer-llm.ts); a published site's page, on its domain itself, calls it itself
+// (client/inline/site-llm.ts). Both answer through `llmFetch`, which shows the sign-in dialog there
 // (client/common/sign-in-dialog.ts) when someone signed out asks: the page needs no code of its own for it.
 //
 //   ergaLLM.status()                               { on, model, signedIn }
@@ -54,8 +54,8 @@ const failed = (error: string, code: LlmCode = "error"): LlmAnswer => ({ ok: fal
 /**
  * One op for document `doc`, on the app's own site, with the visitor's cookie: the route's answer. Signed out, a call
  * (or "sign-in") shows the sign-in dialog, whose choices come back to `back` (the page's address). `token`: the
- * homepage's page token, which lets a visitor signed out call its model (server/home/llm-token.ts). `base`: where
- * Erga's paths are on this site ("/_erga" on the homepage's own domain, server/identity/home-pass.ts).
+ * published page's token, which lets a visitor signed out call its model (server/sites/llm-token.ts). `base`: where
+ * Erga's paths are on this site ("/_erga" on a custom domain, server/identity/domain-pass.ts).
  */
 export async function llmFetch(doc: string, o: LlmOp, back: string, token?: string, base = ""): Promise<LlmAnswer> {
   if (o.op == "sign-in") {

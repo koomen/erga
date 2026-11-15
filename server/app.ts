@@ -3,13 +3,11 @@
 // The app is an Effect (server/http.ts): cloudflare/index.ts turns it into the
 // Worker's fetch handler, and the unit tests may run it on a Platform in memory.
 //
-//   /                          the homepage, if this domain has one: served from its last deploy, else the viewer on
-//                              the landing document (a setting), with an Edit button for those who may. None (none
-//                              set, it is gone, or it has a domain of its own: deploy.home): the page in the server's
-//                              code, with Sign in (pages/home.ts). Someone signed in goes to /documents instead
-//                              (homeGoesToDocuments); /_home is the homepage project for them.
-//   <the homepage's domain>/*  the homepage's site alone, from its last deploy, as its files are (server/home/site.ts)
-//   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the homepage's
+//   /                          the document published to the Erga domain, served from its last publish, with
+//                              Erga's bars if its publishing setting has them. Nothing published: nothing (a 404
+//                              with no body). Someone signed in goes to /documents instead (homeGoesToDocuments).
+//   <a custom domain>/*        the site published there alone, as its files are (server/sites/addresses.ts), or nothing
+//   /new                       a blank document for you (signs you in first); /new?from=<id> a copy of a document
 //   /scratch                   a scratch document for you: off your list, deleted delete_docs_after_hours after it's
 //                              made unless you save it (signs you in first)
 //   /documents                      your documents (the directory), latest edit first
@@ -22,15 +20,17 @@
 //                              values that wait on /admin/auth
 //   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
-//   /auth/home-pass            the homepage's own domain's sign-in, through here (server/identity/home-pass.ts)
-//   /api/deploys/home          the deploy makes the homepage project, when the server has none (documents/landing.ts)
+//   /auth/domain-pass          a custom domain's sign-in, through here (server/identity/domain-pass.ts)
+//   /api/deploys/home          the deploy makes the default homepage (/_home) and publishes it, when the server has
+//                              none (documents/landing.ts)
 //   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent; /llms.txt points agents to /mcp
 //   /.well-known/oauth-..., /oauth/...
 //                              MCP's sign-in: an agent's app gets a token through its person's browser (server/identity/mcp-oauth.ts)
 //   /tokens/...                approving an agent's request for a token; making one (the Settings dialog)
-//   /_home-files/<gen>/<path>  the homepage's files, as deployed
-//   any other address          the homepage's site (server/home/site.ts): its redirects, its files at clean addresses
-//                              (/about), its 404 page; Erga's own paths, and documents that are there, win
+//   /_home-files/<gen>/<path>  the Erga domain's published files
+//   any other address          the Erga domain's published site (server/sites/addresses.ts): its redirects, its files
+//                              at clean addresses (/about), its 404 page; Erga's own paths, and documents that are
+//                              there, win
 //   /admin, /admin/changes, /admin/users, /admin/auth, /admin/api-keys   the server's settings, their change log, its
 //                              users, how people sign in, the API keys
 //   /api/admin/agent[/...]     each admin's agent: its messages, events, conversation and panel layout
@@ -58,17 +58,18 @@
 import * as Effect from "effect/Effect";
 import { adminGate, isAdminPath } from "./admin/index.ts";
 import { agentApi, isAgentPath } from "../agents/person/routes.ts";
-import { HOME_LLM_PATH, homeDomainLlmApi, isPageLlmPath, pageLlmApi } from "../agents/page-llm.ts";
+import { DOMAIN_LLM_PATH, domainLlmApi, isPageLlmPath, pageLlmApi } from "../agents/page-llm.ts";
 import { serverApi } from "./api.ts";
-import { adoptLanding, documentRoutes, ergaAddress, isPagesSite, makeHomeRoute, workerHere } from "./documents/index.ts";
-import { serveHome, serveHomeDomain, serveHomeFile, serveHomeSite } from "./home/index.ts";
+import { documentRoutes, ergaAddress, isPagesSite, makeHomeRoute, workerHere } from "./documents/index.ts";
+import { domainOf, ERGA, LIVE_FILES, liveDoc, nothing, serveDomain, serveLiveFile, serveRoot, serveSitePath } from "./sites/index.ts";
 import {
   adminsOnlyGate,
   chooseSignIn,
   claimRoute,
-  HOME_ERGA,
-  homeDomainSignIn,
-  homePass,
+  DOMAIN_ERGA,
+  DOMAIN_SIGN_OUT,
+  domainPass,
+  domainSignIn,
   devSignIn,
   finishOAuth,
   isOAuthPath,
@@ -84,7 +85,6 @@ import { newsRoutes } from "./news/index.ts";
 import {
   accountOf,
   homeGoesToDocuments,
-  homePage,
   isAssetPath,
   libraryOf,
   serveLibrary,
@@ -112,15 +112,19 @@ export const app = (outside: Outside): Route =>
     const request = yield* webRequest,
       p = yield* platform;
     const url = new URL(request.url);
-    // The homepage's own domain is the site's alone: its files as they are, and nothing of Erga's. (On staging, as every
+    // A custom domain is its site's alone: the published files as they are, and nothing of Erga's. (On staging, as every
     // origin, for admins only; but a staging server never has one: deploy/pipeline/pipeline.ts, guardTarget.)
-    // Under /_erga/ only, Erga's: its pages' model (window.ergaLLM) and signing in for it (identity/home-pass.ts).
-    if (p.deploy.home && url.hostname == p.deploy.home) {
+    // Under /_erga/ only, Erga's: the pages' model (window.ergaLLM) and signing in for it (identity/domain-pass.ts);
+    // not while nothing is published there.
+    const domain = domainOf(p, url);
+    if (domain != ERGA) {
       const refused = yield* adminsOnlyGate;
       if (refused) return refused;
-      if (!url.pathname.startsWith(HOME_ERGA)) return yield* serveHomeDomain;
-      if (url.pathname == HOME_LLM_PATH) return yield* homeDomainLlmApi;
-      return (yield* homeDomainSignIn) ?? text("Not found", 404);
+      if (!url.pathname.startsWith(DOMAIN_ERGA)) return yield* serveDomain(domain);
+      // (Sign-out passes through every custom domain, published or not: it only ends the domain's cookie, and goes on.)
+      if (url.pathname != DOMAIN_SIGN_OUT && !(yield* call(() => liveDoc(p, url)))) return fromWeb(nothing());
+      if (url.pathname == DOMAIN_LLM_PATH) return yield* domainLlmApi;
+      return (yield* domainSignIn) ?? fromWeb(nothing());
     }
     // The editor's files' addresses, for the pages below to name (pages/assets.ts).
     if (!isAsset(url.pathname)) yield* call(() => loadAssets(p, url));
@@ -130,7 +134,7 @@ export const app = (outside: Outside): Route =>
     // The corner, live.js and the security headers rewrite the page: they take it as a web Response.
     const response = toWeb(answer);
     if (isPagesSite(url, p)) return fromWeb(withSecurity(response, url, "pages"));
-    // A document's own HTML (its files under /d/<id>/, the homepage served directly) is its own: nothing of the site's goes in.
+    // A document's own HTML (its files under /d/<id>/, a published page served directly) is its own: nothing of the site's goes in.
     const own = response.headers.has(OWN_ACCOUNT);
     const page = yield* call(() =>
       withAccount(
@@ -152,7 +156,7 @@ export const app = (outside: Outside): Route =>
 
 const SIGN = { domain: "none", exempt: SIGN_IN } as const;
 
-/** The routes this file answers itself: signing in, the deploy's homepage, and the release an open page follows. */
+/** The routes this file answers itself: signing in, the deploy's default homepage, and the release an open page follows. */
 export const ROUTES: readonly RouteRow<Route>[] = [
   { method: "GET", path: "/auth/sign-in", run: chooseSignIn, action: "Choose a way to sign in that is on here", ...SIGN },
   // The OAuth mode (server/identity/oauth.ts): one flow, a start and a callback for each provider.
@@ -198,13 +202,13 @@ export const ROUTES: readonly RouteRow<Route>[] = [
     action: "Become a new server's first admin, and connect the setup's ops page",
     ...SIGN,
   },
-  { method: "GET", path: "/auth/home-pass", run: homePass, action: "Sign in on the homepage's own domain, through this one", ...SIGN },
+  { method: "GET", path: "/auth/domain-pass", run: domainPass, action: "Sign in on a custom domain, through this one", ...SIGN },
   // Each deploy asks, once its release answers: {home: "made" | "there" | "none"}. Asked again, it does nothing.
   {
     method: "POST",
     path: "/api/deploys/home",
     run: makeHomeRoute,
-    action: "The deploy makes the homepage project from the release's files, when the server has none",
+    action: "The deploy makes the default homepage from the release's files and publishes it, when the server has none",
     domain: "none",
     exempt: PIPELINE,
   },
@@ -263,18 +267,13 @@ const route = (url: URL, outside: Outside): Route =>
     const read = request.method == "GET" || request.method == "HEAD";
     // MCP's sign-in: the metadata, an app's registration, the person's approval, the token.
     if (isOAuthPath(path)) return yield* oauthRoutes;
-    // The homepage, served directly from its last deploy; the viewer on it until there's one; with no homepage, the
-    // page in the server's code (documents/view.ts, landingView).
+    // The document published to the Erga domain, served directly from its last publish; nothing published: nothing.
     if (path == "/" && read) {
-      // Someone signed in goes to their documents; the homepage project is at /_home for them.
-      yield* call(() => adoptLanding(p));
+      // Someone signed in goes to their documents.
       if (homeGoesToDocuments(yield* call(() => p.sessionOf(request)))) return redirect(`/documents${url.search}`);
-      // The homepage on a domain of its own: this domain has none.
-      if (p.deploy.home) return homePage();
-      const home = yield* serveHome;
-      if (home) return home;
+      return (yield* serveRoot) ?? fromWeb(nothing());
     }
-    if (path.startsWith("/_home-files/")) return yield* serveHomeFile;
+    if (path.startsWith(LIVE_FILES)) return yield* serveLiveFile;
     // Each person's agent, its conversation and panel: before the server's API, which has the rest of /api/.
     if (isAgentPath(path)) return yield* agentApi;
     // A page's model, called as its visitor (window.ergaLLM): before the server's API too.
@@ -284,11 +283,11 @@ const route = (url: URL, outside: Outside): Route =>
     // The server's one API (the pages' and every agent's), its guide, and people's agent tokens.
     if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return yield* serverApi;
     if (path == "/tokens" || path.startsWith("/tokens/")) return yield* tokensRoutes;
-    // The rest of the homepage's site (server/home/site.ts): its redirects, its files at clean addresses, its 404 page.
-    // Erga's paths win: its own pages, and every address of a document that's there.
+    // The rest of the Erga domain's published site (server/sites/addresses.ts): its redirects, its files at clean
+    // addresses, its 404 page. Erga's paths win: its own pages, and every address of a document that's there.
     const erga = ergaAddress(p, path);
-    if (read && !erga.named && !p.deploy.home) {
-      const site = yield* serveHomeSite(erga);
+    if (read && !erga.named) {
+      const site = yield* serveSitePath(erga);
       if (site) return site;
     }
     return yield* documentRoutes;

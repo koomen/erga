@@ -111,10 +111,6 @@ export async function probe(d: DocTools, view: Record<string, unknown>) {
   expect((await d.ok("view_page", view)).text).not.toMatch(/probeFn|404/);
 }
 
-/** The document that a page of the site shows: in the viewer's frame, or served directly (its controls name it). */
-export const docOf = (html: string) =>
-  /<meta name="erga-doc" content="([a-z0-9]{8})">/.exec(html)?.[1] ?? /<erga-controls data-doc="([a-z0-9]{8})"/.exec(html)?.[1];
-
 /** Clicks a button of the deck's slide bar (data-act: add, title, up, down, layout, delete) with the mouse, as a person does. */
 export async function slideBar(ed: Editor, act: string) {
   const r = await ed.frame<{ x: number; y: number } | null>(

@@ -22,7 +22,7 @@ export interface Room {
   stored(path?: string): Promise<{ text: string; etag: string } | null>;
   /** What the server serves for a file to the page: the room's latest text. */
   served(path?: string): Promise<string | null>;
-  /** An edit that arrives as a whole file (a publish), made from the stored version `ifMatch`. */
+  /** An edit that arrives as a whole file (an upload), made from the stored version `ifMatch`. */
   push(text: string, ifMatch: string, path?: string): Promise<Response>;
 }
 

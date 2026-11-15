@@ -1,8 +1,9 @@
 // A document's page calls a model as its visitor, where its owner turned it on (share_document page_llm): the page's
 // script has window.ergaLLM (client/inline/reader.ts), which asks the viewer around it (client/inline/viewer-llm.ts),
-// which calls this with the visitor's session. The homepage, on this site itself, calls it directly (server/home/).
+// which calls this with the visitor's session. A published site's page, on its domain itself, calls it directly
+// (server/sites/).
 //
-// The routes are ROUTES, below: /api/llm, and the same on the homepage's own domain, for the homepage's document only.
+// The routes are ROUTES, below: /api/llm, and the same on a custom domain, for the document published there only.
 //
 // The pages origin never gets the session or a key: only this site's own pages may call this (their Origin), with the
 // visitor's cookie, for the one document they show. Each call is logged, and counted against the visitor's limits and
@@ -11,15 +12,15 @@
 // page_llm_guests off gives every signed-out visitor "sign_in", whatever the document's setting says.
 //
 // Where the owner lets all viewers call it (page_llm_who "all"), a signed-out visitor may too, on a page anyone may open
-// (the homepage's project, or a document shared with anyone), from the page only: the request must come from this site
-// (Origin, and Sec-Fetch-Site when the browser sends it) and carry the page's token (server/home/llm-token.ts: `token`,
-// an hour old at most; the homepage's pages and the viewer carry one). Such a
+// (the document the Erga domain serves, or a document shared with anyone), from the page only: the request must come
+// from this site (Origin, and Sec-Fetch-Site when the browser sends it) and carry the page's token
+// (server/sites/llm-token.ts: `token`, an hour old at most; a published site's pages and the viewer carry one). Such a
 // visitor is counted by their IP address (a hash of it), with the smaller limit `guest`, and all of them together
 // with `guests`, so they never use up what the signed-in visitors have.
 //
-// On the homepage's own domain (Platform's deploy.home), its pages call /_erga/api/llm there, with the same rules,
-// for the homepage's document only. The visitor there is the own domain's cookie (server/identity/home-pass.ts),
-// never the Erga domain's session.
+// On a custom domain (Platform's deploy.domains), its pages call /_erga/api/llm there, with the same rules, for the
+// document that domain serves only. The visitor there is that domain's cookie (server/identity/domain-pass.ts), never
+// the Erga domain's session.
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -40,16 +41,16 @@ import {
   type PageLlmWho,
 } from "../server/directory/index.ts";
 import { whoOf, type Platform, type Session } from "../server/platform.ts";
-import { homeVisitor, signInChoices } from "../server/identity/index.ts";
+import { domainVisitor, signInChoices } from "../server/identity/index.ts";
 import type { SignInChoice } from "../shared/sign-in.ts";
-import { tokenOk } from "../server/home/index.ts";
+import { domainOf, ERGA, liveDoc, tokenOk } from "../server/sites/index.ts";
 import { DEFAULT_PAGE_LLM_MODEL, isPageLlmModel, MODELS, type ModelChoice } from "../shared/models.ts";
 import { modelError, pageModel } from "./models.ts";
 
 export const isPageLlmPath = (path: string) => path == "/api/llm";
 
-/** The page model's path on the homepage's own domain. */
-export const HOME_LLM_PATH = "/_erga/api/llm";
+/** The page model's path on a custom domain. */
+export const DOMAIN_LLM_PATH = "/_erga/api/llm";
 
 const Message = Schema.Struct({ role: Schema.Literals(["user", "assistant"]), content: Schema.String });
 const Ask = Schema.Struct({
@@ -68,19 +69,21 @@ const fail = (code: Code, error: string, status = STATUS[code]) => json({ error,
 /** The visitor, in person: agents' tokens have no model here. */
 const visitorOf = (s: Session | null) => (s && !s.agent ? s : null);
 
-/** What the page may call for `docId` now, as `session` (null: signed out): the model and who may call it, or why not (`unseen`: they may not open it). */
+/**
+ * What the page may call for `docId` now, as `session` (null: signed out): the model and who may call it, or why not
+ * (`unseen`: they may not open it). `live`: the document the request's domain serves, which anyone may open there.
+ */
 async function decide(
   p: Platform,
   docId: string,
-  session: Session | null
+  session: Session | null,
+  live: string | null
 ): Promise<{ doc: DocRow; model: ModelChoice; who: PageLlmWho } | { off: string; unseen?: true }> {
   const dir = p.directory;
   const doc = await dir.get(docId);
   const setting = doc ? await dir.pageLlm.setting(doc.id) : null;
   if (!doc || !setting?.on) return { off: "The owner of this page didn't let it call a model." };
-  const seen = session
-    ? roleMay(await dir.access(whoOf(session), doc), "open")
-    : (await dir.homeId()) == doc.id || (await dir.isPublic(doc.id));
+  const seen = live == doc.id || (session ? roleMay(await dir.access(whoOf(session), doc), "open") : await dir.isPublic(doc.id));
   if (!seen) return { off: "The owner of this page didn't let it call a model.", unseen: true };
   if ((await dir.config.get("page_llm_daily_usd")) <= 0) return { off: "This server's admin turned pages' models off." };
   const model = setting.model && isPageLlmModel(setting.model) ? setting.model : DEFAULT_PAGE_LLM_MODEL;
@@ -111,11 +114,8 @@ function tooBig(a: Ask): string | null {
     : null;
 }
 
-/**
- * The route, with the visitor from `whoAsks`; `home`: on the homepage's own domain, where only the homepage's
- * document may call its model.
- */
-const pageLlm = (whoAsks: (p: Platform, request: Request) => Promise<Session | null>, home: boolean): Route =>
+/** The route, with the visitor from `whoAsks`. On a custom domain, only the document it serves may call its model. */
+const pageLlm = (whoAsks: (p: Platform, request: Request) => Promise<Session | null>): Route =>
   Effect.gen(function* () {
   const { request, url, platform } = yield* ctx;
   // Only this site's own pages, with the visitor's cookie: never a token, never another origin (the pages origin is one).
@@ -125,12 +125,12 @@ const pageLlm = (whoAsks: (p: Platform, request: Request) => Promise<Session | n
   const from = request.headers.get("origin");
   if (from != url.origin && !(request.method == "GET" && from == null)) return fail("error", "Forbidden", 403);
   const visitor = visitorOf(yield* call(() => whoAsks(platform, request)));
-  // On the own domain, the homepage's model alone.
-  const allowed = (id: string) =>
-    home ? call(() => platform.directory.homeId()).pipe(Effect.map((h) => h == id)) : Effect.succeed(true);
+  const live = yield* call(() => liveDoc(platform, url));
   const found = routeFor(ROUTES, request.method, url.pathname);
   if (!found) return fail("error", "GET or POST", 405);
-  return yield* found.route.run({ request, url, platform, visitor, allowed });
+  // On a custom domain, the model of the document it serves alone.
+  const allowed = (id: string) => domainOf(platform, url) == ERGA || live == id;
+  return yield* found.route.run({ request, url, platform, visitor, allowed, live });
   });
 
 /** The visitor who asks (null: signed out), checked to come from this site's own page. */
@@ -140,7 +140,9 @@ interface Asked {
   readonly platform: Platform;
   readonly visitor: ReturnType<typeof visitorOf>;
   /** Whether this domain's pages may call this document's model. */
-  readonly allowed: (id: string) => Effect.Effect<boolean>;
+  readonly allowed: (id: string) => boolean;
+  /** The document this domain serves (its id), or null. */
+  readonly live: string | null;
 }
 
 /**
@@ -148,11 +150,11 @@ interface Asked {
  * server's keys run the model, and the visitor may open it), its name, and whether the visitor is signed in (signed
  * out: and providers, as below).
  */
-const status = ({ url, platform, visitor, allowed }: Asked): Route =>
+const status = ({ url, platform, visitor, allowed, live }: Asked): Route =>
   Effect.gen(function* () {
     const id = url.searchParams.get("document") ?? "";
-    const now = (yield* allowed(id))
-      ? yield* call(() => decide(platform, id, visitor))
+    const now = allowed(id)
+      ? yield* call(() => decide(platform, id, visitor, live))
       : { off: "This site's pages call only its own model." };
     const providers = visitor ? {} : { providers: yield* call(() => signInChoices(platform)) };
     return json({ on: "model" in now, model: "model" in now ? MODELS[now.model].label : null, signedIn: !!visitor, ...providers });
@@ -163,15 +165,15 @@ const status = ({ url, platform, visitor, allowed }: Asked): Route =>
  * { error, code }: "sign_in" (401), "off" (403), "limit" (429), "error". "sign_in" has providers: [{ id, label }], the
  * sign-in providers that are on, for the sign-in dialog (client/common/sign-in-dialog.ts).
  */
-const askModel = ({ request, platform, visitor, allowed }: Asked): Route =>
+const askModel = ({ request, platform, visitor, allowed, live }: Asked): Route =>
   Effect.gen(function* () {
   const ask = yield* call(() => request.text()).pipe(
     Effect.flatMap((t) => Schema.decodeUnknownEffect(Schema.fromJsonString(Ask))(t)),
     Effect.orElseSucceed(() => null)
   );
   if (!ask) return fail("error", "The body must be { document, system?, messages: [{ role, content }], max_tokens? }.");
-  if (!(yield* allowed(ask.document))) return fail("off", "This site's pages call only its own model.");
-  const now = yield* call(() => decide(platform, ask.document, visitor));
+  if (!allowed(ask.document)) return fail("off", "This site's pages call only its own model.");
+  const now = yield* call(() => decide(platform, ask.document, visitor, live));
   // Signed out: a guest (their IP address), only where the owner lets all viewers call it and anyone may open the page,
   // from the page itself (its token).
   const guest = !visitor;
@@ -256,12 +258,12 @@ const ROW = { domain: "none", exempt: PAGE_SCRIPT } as const;
 export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
   { method: "GET", path: "/api/llm", run: status, action: STATUS_ACTION, ...ROW },
   { method: "POST", path: "/api/llm", run: askModel, action: ASK_ACTION, ...ROW },
-  { method: "GET", path: HOME_LLM_PATH, run: status, action: `${STATUS_ACTION}, on the homepage's own domain`, ...ROW },
-  { method: "POST", path: HOME_LLM_PATH, run: askModel, action: `${ASK_ACTION}, on the homepage's own domain`, ...ROW },
+  { method: "GET", path: DOMAIN_LLM_PATH, run: status, action: `${STATUS_ACTION}, on a custom domain`, ...ROW },
+  { method: "POST", path: DOMAIN_LLM_PATH, run: askModel, action: `${ASK_ACTION}, on a custom domain`, ...ROW },
 ];
 
 /** /api/llm, on the app's domain: the visitor is the session. */
-export const pageLlmApi = pageLlm((p, request) => p.sessionOf(request), false);
+export const pageLlmApi = pageLlm((p, request) => p.sessionOf(request));
 
-/** /_erga/api/llm, on the homepage's own domain: the visitor is that domain's cookie (server/identity/home-pass.ts). */
-export const homeDomainLlmApi = pageLlm(homeVisitor, true);
+/** /_erga/api/llm, on a custom domain: the visitor is that domain's cookie (server/identity/domain-pass.ts). */
+export const domainLlmApi = pageLlm(domainVisitor);

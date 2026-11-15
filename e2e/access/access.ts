@@ -128,9 +128,9 @@ export async function tool(root: string, token: string, name: string, args: Reco
   return { status: r.status, text: r.ok ? textOf(r.result) : (r.error ?? "") };
 }
 
-/** Publishes a document with a documents token: its id and address. */
-export async function publish(root: string, token: string, title: string) {
-  const r = await fetch(`${root}/api/publish`, {
+/** Uploads a document with a documents token: its id and address. */
+export async function upload(root: string, token: string, title: string) {
+  const r = await fetch(`${root}/api/upload`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ title, files: { "index.html": `<h1>${title}</h1>` } }),

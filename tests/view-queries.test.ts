@@ -58,14 +58,11 @@ async function server(id: string) {
 
 test("a reader's view asks for the document one time, and a second view a moment later asks nothing", async () => {
   const { seen, dir, doc, view } = await server("viewone1");
-  await dir.setReaderOption(doc.id, "bars", false);
   // bo's account and the settings are remembered from another page.
   await dir.users.signedIn("bo");
   seen.reads = 0;
   const first = await view(`/ada/${doc.slug}?user=bo`);
   expect([first.status, seen.reads]).toEqual([200, 1]);
-  // The owner's options for readers came with the row: no bars.
-  expect((await first.text()).includes("--band-h: 0px")).toBe(true);
   seen.reads = 0;
   expect([(await view(`/ada/${doc.slug}?user=bo`)).status, seen.reads]).toEqual([200, 0]);
 });

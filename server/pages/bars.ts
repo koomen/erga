@@ -1,5 +1,5 @@
 // The header of every page Erga serves: two glass bars at the top (client/inline/bars.css), the same on a document's
-// page (the viewer and the editor), the homepage, Documents, Settings, the admin pages, sign-in and the error pages.
+// page (the viewer and the editor), a published site, Documents, Settings, the admin pages, sign-in and the error pages.
 // Upper left the breadcrumbs (erga › where you are); upper right the page's quick actions, then your avatar and its
 // menu. Each bar is one element, viewing and editing: the editor's own parts of it are in it for whoever may edit, out
 // of sight until they edit (client/inline/viewer.css).
@@ -24,7 +24,7 @@ export const AGENT_SHARE_BUTTON = `<button type="button" class="erga-view-button
 export const documentsButton = (href: string) =>
   `<a href="${esc(href)}" class="erga-view-button erga-documents-button" draggable="false" aria-label="Documents" data-tip="Documents"><svg viewBox="0 0 24 24" aria-hidden="true"><g stroke-width="1.5"><rect x="4.75" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="4.75" y="13.5" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="13.5" width="5.75" height="5.75" rx="1.25"/></g></svg></a>`;
 
-/** The homepage (the homepage project at /_home: document/names.ts), at `href`: on Documents, in the Documents button's place, where / is for someone signed in. */
+/** The default homepage (/_home: document/names.ts), at `href`: on Documents, in the Documents button's place. */
 export const homeButton = (href: string) =>
   `<a href="${esc(href)}" class="erga-view-button erga-home-button" draggable="false" aria-label="Home page" data-tip="Home page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.75 10.5 12 4.75l7.25 5.75v8a1 1 0 0 1-1 1h-4v-5.5h-4.5v5.5h-4a1 1 0 0 1-1-1z"/></svg></a>`;
 
@@ -66,8 +66,8 @@ const ZOOM_BUTTON = `<button type="button" class="icon-btn zoom-btn" id="btn-zoo
 const EDIT_GROUP = `<div class="edit-group" id="edit-group"><div class="edit-group-inner"><button type="button" class="icon-btn" id="btn-share" aria-label="Share this page" data-tip="Share" aria-haspopup="dialog" aria-expanded="false" aria-controls="sharing"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0714) translate(-12.5 -13.5)" stroke-width="1.4933"><g transform="translate(0 1.5)"><circle cx="9.5" cy="8.5" r="3.5"/><path d="M3.5 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M18.5 8v6M15.5 11h6"/></g></g></svg></button><button type="button" class="icon-btn" id="btn-settings" aria-label="Document settings" data-tip="Document settings" aria-haspopup="dialog" aria-expanded="false" aria-controls="doc-settings"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(0.8523) translate(-12 -11.55)" stroke-width="1.8773"><path d="M12.22 2.75h-.44a1.75 1.75 0 0 0-1.75 1.75v.16a1.75 1.75 0 0 1-.88 1.51l-.38.22a1.75 1.75 0 0 1-1.75 0l-.13-.07a1.75 1.75 0 0 0-2.39.64l-.22.38a1.75 1.75 0 0 0 .64 2.39l.13.09a1.75 1.75 0 0 1 .88 1.5v.45a1.75 1.75 0 0 1-.88 1.52l-.13.08a1.75 1.75 0 0 0-.64 2.39l.22.38a1.75 1.75 0 0 0 2.39.64l.13-.07a1.75 1.75 0 0 1 1.75 0l.38.22a1.75 1.75 0 0 1 .88 1.51v.16a1.75 1.75 0 0 0 1.75 1.75h.44a1.75 1.75 0 0 0 1.75-1.75v-.16a1.75 1.75 0 0 1 .88-1.51l.38-.22a1.75 1.75 0 0 1 1.75 0l.13.07a1.75 1.75 0 0 0 2.39-.64l.22-.39a1.75 1.75 0 0 0-.64-2.39l-.13-.07a1.75 1.75 0 0 1-.88-1.52v-.44a1.75 1.75 0 0 1 .88-1.52l.13-.08a1.75 1.75 0 0 0 .64-2.39l-.22-.38a1.75 1.75 0 0 0-2.39-.64l-.13.07a1.75 1.75 0 0 1-1.75 0l-.38-.22a1.75 1.75 0 0 1-.88-1.51V4.5a1.75 1.75 0 0 0-1.75-1.75Z"/><circle cx="12" cy="12" r="2.75"/></g></svg></button><button type="button" class="icon-btn" id="btn-help" aria-label="Keyboard shortcuts" data-tip="Shortcuts  ⌘/" aria-haspopup="dialog" aria-expanded="false" aria-controls="help"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8.5a4 4 0 1 1 5.6 3.66c-1.05.48-1.6 1.2-1.6 2.34v.75" stroke-width="2.1"/><circle cx="12" cy="18.85" r="1.3" fill="currentColor" stroke="none"/></svg></button></div></div>`;
 
 /**
- * A document's two bars, in the viewer and on the homepage, as the editor's and in the same places: erga › Documents ›
- * the document (signed out: erga › the document; the homepage: erga), and the buttons with who you are (`corner`).
+ * A document's two bars, in the viewer and on a published site, as the editor's and in the same places: erga › Documents ›
+ * the document (signed out: erga › the document; a published site: erga), and the buttons with who you are (`corner`).
  * Full screen only where there's a frame to fill the screen (`full`). The editor's own actions (Share, Document
  * settings) are folded into the pencil until someone edits; Clone is the New menu's last item. A project's title opens its pages
  * (the card after the bars: client/inline/viewer-tree.ts). An agent sees no breadcrumbs.
@@ -90,7 +90,7 @@ export function barsHtml(o: {
     : `<span class="erga-here" aria-current="page"><span>${esc(o.title ?? "")}</span></span>`;
   const documents = (only = "") =>
     `<a class="erga-crumb${o.editor ? ` nav-back${only}" id="nav-back` : ""}" href="${esc(link("/documents", s))}">${o.editor ? "<span>Documents</span>" : "Documents"}</a>`;
-  // (The homepage has no steps while viewing; editing, the editor's own: Documents and its title, .edit-only.)
+  // (A published site has no steps; editing, the editor's own: Documents and its title, .edit-only.)
   const steps = o.title != null ? [...(mine ? [documents()] : []), crumb] : o.editor ? [documents(" edit-only")] : [];
   const card = tree ? `<div id="erga-tree" class="erga-tree-card" role="dialog" aria-label="Pages" hidden></div>` : "";
   const editor = !!o.editor;

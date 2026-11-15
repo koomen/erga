@@ -12,7 +12,7 @@ import type { Platform, Session } from "../platform.ts";
 import { call, ctx, redirect, type Route } from "../http.ts";
 import { cookies, withCookie } from "./cookies.ts";
 import { signInChoices } from "./settings.ts";
-import { afterSignOut } from "./home-pass.ts";
+import { afterSignOut } from "./domain-pass.ts";
 import { SESSION_COOKIE, sessionCookie, sessionOf, SIGNED_OUT } from "./session.ts";
 import { esc } from "../../shared/html.ts";
 import { PROVIDER_CSS, providerButtons } from "../../shared/sign-in.ts";

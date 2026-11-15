@@ -36,8 +36,8 @@ export const CloudflareFacts = Schema.Struct({
   subdomain: Schema.optionalKey(Schema.String),
   app: App,
   pages: Pages,
-  /** The homepage's own domain, if it has one (Target's home). */
-  home: Schema.optionalKey(Schema.String),
+  /** The custom domains registered for publishing (Target's domains). */
+  domains: Schema.optionalKey(Schema.Array(Schema.String)),
   vars: Schema.Record(Schema.String, Schema.String),
 });
 

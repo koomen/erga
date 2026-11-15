@@ -57,7 +57,7 @@
 //                                   none): a write is a tool's, behind this guard, so only an admin's
 //   the API, MCP and documents' own routes with an admin's token of another scope (document, documents)
 //                                   an admin shares a document with an outside agent (the editor's Share card) and it
-//                                   must work here as on its primary: /mcp, /api/publish,
+//                                   must work here as on its primary: /mcp, /api/upload,
 //                                   /api/tools/..., and /<owner or d>/<doc>/(api|doc)/..., and
 //                                   nothing else. The token's person must be an admin at each request, as
 //                                   for the pages origin. Past this guard the token's
@@ -73,7 +73,7 @@
 //                                   the page's editor sends them from the pages origin, with no cookie; the key
 //                                   (documents/edit-key.ts) names its person, who must be an admin at each request
 //
-// Everything else needs an admin: documents and their sockets, /documents, the homepage and the homepage, /new,
+// Everything else needs an admin: documents and their sockets, /documents, the published site, /new,
 // /tokens, the APIs and MCP, and the documents' pages origin
 // (*.<staging's pages domain>). That origin has no cookies: on this server its tokens name the admin they were made for
 // (server/documents/pages-origin.ts, pagesToken's `by`), and a file is served only while that person is still an admin. A token without a name

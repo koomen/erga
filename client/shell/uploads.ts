@@ -29,7 +29,7 @@ export interface NewFile {
   path: string;
   noPlace?: string;
 }
-/** What the write answers of a file it refused (document/uploads.ts, Published). */
+/** What the write answers of a file it refused (document/uploads.ts, Written). */
 interface Refused {
   path: string;
   why: string;

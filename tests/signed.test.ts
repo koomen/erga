@@ -9,7 +9,7 @@ import { clientIdFor, clientOf } from "../server/identity/mcp-oauth.ts";
 import { mac, signed } from "../server/signed.ts";
 
 const Pass = Schema.Struct({ login: Schema.String });
-const pass = signed("home-pass", Pass, 60);
+const pass = signed("domain-pass", Pass, 60);
 const T = 1_800_000_000_000;
 
 test("a sealed value opens with the same secret and purpose, until it expires", async () => {
@@ -23,7 +23,7 @@ test("a sealed value opens with the same secret and purpose, until it expires", 
 });
 
 test("a string sealed for one purpose never opens as another, and a changed one never opens", async () => {
-  const visitor = signed("home-visitor", Pass, 60);
+  const visitor = signed("domain-visitor", Pass, 60);
   const text = await pass.seal("secret", { login: "ada" }, { now: T });
   expect(await visitor.open("secret", text, T)).toBeNull();
   const [claims, sig] = text.split(".");
@@ -34,9 +34,9 @@ test("a string sealed for one purpose never opens as another, and a changed one 
 });
 
 test("a value of another shape doesn't open, and a kind that expires refuses a string with no expiry", async () => {
-  const loose = signed("home-pass", Schema.Struct({ login: Schema.Number }), 60);
+  const loose = signed("domain-pass", Schema.Struct({ login: Schema.Number }), 60);
   expect(await pass.open("secret", await loose.seal("secret", { login: 7 }, { now: T }), T)).toBeNull();
-  const forever = signed("home-pass", Pass, null);
+  const forever = signed("domain-pass", Pass, null);
   const text = await forever.seal("secret", { login: "ada" });
   expect(await forever.open("secret", text, T * 2)).toEqual({ login: "ada" });
   expect(await pass.open("secret", text, T)).toBeNull();

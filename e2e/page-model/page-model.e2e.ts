@@ -2,7 +2,7 @@
 // the model on in Document settings, and the page's script gets the model's text. The admin's daily spend limit stops
 // all pages' calls, and the admin's switch for guests gives every signed-out visitor "sign_in". Someone signed out may
 // call the model only where the owner lets all viewers; else the call gets "sign_in", and the viewer shows one sign-in
-// dialog, which comes back to the page. The homepage's pages have the model too, for a visitor signed out: from its
+// dialog, which comes back to the page. A published site's pages have the model too, for a visitor signed out: from its
 // own pages only, with the page's token, up to the visitor's hour. The model is the scripted one: no real model.
 //
 // The admin's settings and the day's use are the whole server's, and other files use the server before this one. So
@@ -13,14 +13,14 @@ import {
   askIn,
   call,
   haikuCost,
-  homeWithEssay,
+  siteWithEssay,
   newDoc,
   owner,
   pageLlmOf,
-  publish,
   resetSetting,
   row,
-  setLanding,
+  toErga,
+  upload,
   setting,
   signInOpen,
   signInState,
@@ -215,13 +215,13 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
   });
 });
 
-journey("the homepage's model, for a visitor signed out", () => {
+journey("a published site's model, for a visitor signed out", () => {
   let home: string;
-  // The homepage is the whole server's: the files after this one get a fresh one.
-  test.afterAll(async () => void (await setLanding(s)));
+  // The Erga domain is the whole server's: the files after this one get the default homepage there again.
+  test.afterAll(async () => void (await toErga(s)));
 
   test("it refuses a call from elsewhere, without its page's token, or over the visitor's hour", async () => {
-    home = await homeWithEssay(s);
+    home = await siteWithEssay(s);
     const token = await tokenIn(s, "/essays/essay.html");
     expect(token).toBeTruthy();
     expect(await tokenIn(s, "/")).toBeTruthy();
@@ -240,11 +240,11 @@ journey("the homepage's model, for a visitor signed out", () => {
     expect(await call(s, { document: home, token }, ip)).toMatchObject({ status: 401, code: "sign_in" });
     await owner(s, "share_document", { document: home, page_llm_who: "all" });
     // Another document's model: signed out, only where it is shared with anyone and open to all viewers.
-    const other = await publish(s, { "index.html": "<h1>Other</h1>" });
+    const other = await upload(s, { "index.html": "<h1>Other</h1>" });
     await owner(s, "share_document", { document: other, page_llm: true });
     await owner(s, "share_document", { document: other, login: "*", role: "viewer" });
     expect(await call(s, { document: other, token }, ip)).toMatchObject({ status: 401, code: "sign_in" });
-    // Open to all viewers: still not with the homepage's token, which is for its own document.
+    // Open to all viewers: still not with the published page's token, which is for its own document.
     await owner(s, "share_document", { document: other, page_llm_who: "all" });
     expect(await call(s, { document: other, token }, ip)).toMatchObject({ status: 403, error: "Reload this page to use its model." });
     // One answer that used the visitor's whole hour (PAGE_LLM_LIMITS.guest.tokens: 30,000); then "limit".
@@ -255,11 +255,11 @@ journey("the homepage's model, for a visitor signed out", () => {
     expect(await call(s, { document: home, token }, { "cf-connecting-ip": "198.51.100.7" })).toEqual({ status: 200, text: "Hi." });
   });
 
-  test("every page of the homepage's project has ergaLLM, which answers where page_llm is on", async ({ tab }) => {
+  test("every page of the published site has ergaLLM, which answers where page_llm is on", async ({ tab }) => {
     const p = tab.page;
     await owner(s, "share_document", { document: home, page_llm: false });
     await signOut(p, s);
-    await p.goto(`${s.root}/`); // page load 1: the homepage
+    await p.goto(`${s.root}/`); // page load 1: the published page
     expect(await p.locator("h1").textContent()).toBe("Home with an essay");
     expect((await askIn(p, "Hi")).code).toBe("off");
     await p.goto(`${s.root}/essays/essay.html`); // page load 2: a page in a folder
@@ -270,7 +270,7 @@ journey("the homepage's model, for a visitor signed out", () => {
     expect((await askIn(p, "Hi")).code).toBe("off");
     await owner(s, "share_document", { document: home, page_llm: true });
     expect(await askIn(p, '@script [{"text": "Hello from the essay."}]')).toEqual({ text: "Hello from the essay." });
-    await p.goto(`${s.root}/`); // page load 3: the homepage again
+    await p.goto(`${s.root}/`); // page load 3: the published page again
     expect(await askIn(p, '@script [{"text": "Hello from home."}]')).toEqual({ text: "Hello from home." });
   });
 });

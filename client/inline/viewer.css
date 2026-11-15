@@ -1,4 +1,4 @@
-/* A document's page (server/pages/viewer.ts) and the homepage's controls (server/home/render.ts): the controls upper
+/* A document's page (server/pages/viewer.ts) and a published site's controls (server/sites/render.ts): the controls upper
    right, and the breadcrumbs upper left, in two glass bars (client/inline/bars.css). They never fade as the page scrolls:
    it goes under their glass. */
 

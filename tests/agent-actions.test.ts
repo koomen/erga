@@ -86,7 +86,7 @@ const PAGE_SCRIPTS = [
   "server/pages/documents.ts",
   "server/pages/chrome.ts",
   "server/api.ts",
-  "server/home/render.ts",
+  "server/sites/render.ts",
 ];
 
 /** What the agents' tools do, each an `op` of one (agents/tools.ts, KINDS). The admin agent has every one. */
@@ -179,8 +179,9 @@ test("only a secret, or what isn't a person's action, goes without a tool", () =
   for (const a of AUDIT.filter((a) => a.exempt && a.domain != "none")) expect(`${named(a)}: ${a.exempt}`).toMatch(/secret/);
 });
 
-test("the known gaps are closed: the homepage's deploy, keys and tokens", () => {
-  for (const t of ["deploy_homepage", "clear_api_key", "whoami", "revoke", "sign_in", "set_sign_in"]) expect(ADMIN).toContain(t);
+test("the known gaps are closed: publishing, keys and tokens", () => {
+  for (const t of ["set_publishing", "publish_document", "clear_api_key", "whoami", "revoke", "sign_in", "set_sign_in"])
+    expect(ADMIN).toContain(t);
   // Share with agent makes agent tokens now (whoami lists them, revoke turns one off): no factory tokens, nor their tools.
   for (const t of ["list_factory_tokens", "revoke_factory_token"]) expect(ADMIN).not.toContain(t);
   for (const t of ["list_documents", "create_document", "delete_document"]) expect(DOCUMENT).toContain(t);

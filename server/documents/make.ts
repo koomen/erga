@@ -1,5 +1,5 @@
 // New documents: what /new and /scratch do, and makeDoc, which every way to make a document ends in (the operation
-// create_document and the homepage's seed too).
+// create_document and the default homepage's seed too).
 
 import * as Effect from "effect/Effect";
 import type { FileData } from "../../document/document.ts";
@@ -7,7 +7,6 @@ import { kindOf, titleOf, type DocKind } from "../../document/pages.ts";
 import { type DocRow, ID, newDocId, NO_WRITE, type Who } from "../directory/index.ts";
 import { addressOf, UNTITLED } from "../../document/names.ts";
 import { type Platform, whoOf } from "../platform.ts";
-import { landingDocument } from "./landing.ts";
 import { confirmAction, fromThisSite, link, page, signInFirst, type Template, templateById, TEMPLATES, withEdit } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { call, ctx, redirect } from "../http.ts";
@@ -24,21 +23,19 @@ export function templateFiles(
 }
 
 /**
- * What a new document starts from: a copy of the homepage's document
- * (`landing`), of another document by id (one `who` may open), or a
- * template's files (server/pages/templates.ts; the first, a blank page, by default).
- * Null if there's nothing there to copy.
+ * What a new document starts from: a copy of another document by id (one `who` may open), or a template's files
+ * (server/pages/templates.ts; the first, a blank page, by default). Null if there's nothing there to copy.
  */
 export async function startingFiles(platform: Platform, from: string | null, who?: Who, template?: Template): Promise<{ files: Record<string, FileData>; index: string; kind?: DocKind } | null> {
   if (!from) return templateFiles(platform, template ?? TEMPLATES[0]);
-  const doc = from == "landing" ? await landingDocument(platform) : ID.test(from) && who ? await platform.directory.get(from) : null;
-  if (!doc || (from != "landing" && !(await platform.directory.may(who!, "open", doc)))) return null;
+  const doc = ID.test(from) && who ? await platform.directory.get(from) : null;
+  if (!doc || !who || !(await platform.directory.may(who, "open", doc))) return null;
   // A copy is the kind its original is (a project with one page stays a project).
   const snap = await platform.docs.snapshot(doc);
   return snap && (doc.kind ? { ...snap, kind: doc.kind } : snap);
 }
 
-/** A new document for the signed-in person, at /<login>/<id>: blank, from a template (?template=<id>, server/pages/templates.ts), or a copy of the homepage's (?from=landing). */
+/** A new document for the signed-in person, at /<login>/<id>: blank, from a template (?template=<id>, server/pages/templates.ts), or a copy of a document (?from=<id>). */
 export const newDoc = Effect.gen(function* () {
   const { request, url, platform } = yield* ctx;
   const session = yield* call(() => platform.sessionOf(request));
@@ -57,14 +54,7 @@ export const newDoc = Effect.gen(function* () {
   const wanted = params.get("id");
   const from = params.get("from");
   const start = yield* call(() => startingFiles(platform, from, whoOf(session), template));
-  if (!start)
-    return page(
-      "Nothing to copy",
-      from == "landing"
-        ? 'This server has no homepage to copy. <a href="/new">Make a blank document</a>.'
-        : 'There\'s no document here you can copy. <a href="/new">Make a blank document</a>.',
-      404
-    );
+  if (!start) return page("Nothing to copy", 'There\'s no document here you can copy. <a href="/new">Make a blank document</a>.', 404);
   const files = start.files,
     index = start.index;
   // ?kind=project: a project from the start (create_document's kind), else the kind it copies, else from its files.
@@ -117,35 +107,35 @@ export async function makeDoc(
   opts: MakeOptions
 ): Promise<DocRow | null> {
   const created = Date.now();
-  // A published one has been edited already (its files are someone's work): it never expires.
+  // An uploaded one has been edited already (its files are someone's work): it never expires.
   // Nor does any when the server's delete_docs_after_hours is never (null).
-  // A scratch one goes then too, edited or not, published or not.
-  const kept = opts.published && !opts.scratch;
+  // A scratch one goes then too, edited or not, uploaded or not.
+  const kept = opts.uploaded && !opts.scratch;
   const hours = kept || opts.unedited ? null : await platform.directory.config.get("delete_docs_after_hours");
   const expires = kept ? null : opts.unedited ? created + opts.unedited : hours == null ? null : created + hours * HOUR;
   const index = opts.index ?? "index.html";
   const page = files[index];
   const pageText = typeof page == "string" ? page : page instanceof Uint8Array ? new TextDecoder().decode(page) : "";
-  // A project if asked, or if its files have more than one page (a published folder); else a document.
+  // A project if asked, or if its files have more than one page (an uploaded folder); else a document.
   const kind = opts.kind ?? kindOf(Object.keys(files));
   for (let tries = 0; tries < (opts.id ? 1 : 5); tries++) {
     const id = opts.id ?? newDocId();
     const { doc, added } = await platform.directory.add({
       id, owner, kind,
       ...(opts.title?.trim() ? { title: opts.title, titleSet: true } : { title: titleOf(pageText) ?? UNTITLED }),
-      // A scratch one's address is its random id until it's saved (save_document); the homepage's, until it takes /_home.
+      // A scratch one's address is its random id until it's saved (save_document); the default homepage's, until it takes /_home.
       ...(opts.scratch || opts.atId ? { slug: id, slugSet: true } : opts.slug?.trim() ? { slug: opts.slug, slugSet: true } : {}),
       ...(opts.scratch ? { scratch: true } : {}),
       created,
       expires,
-      ...(opts.published ? { modified: created } : {}),
+      ...(opts.uploaded ? { modified: created } : {}),
     });
     if (!added) continue;
     if (
       await platform.docs.create(doc, files, index, {
         expires,
         kind,
-        ...(opts.published ? { modified: created } : {}),
+        ...(opts.uploaded ? { modified: created } : {}),
         ...(opts.scratch ? { scratch: true } : {}),
       })
     )
@@ -168,10 +158,10 @@ export interface MakeOptions {
   /** A title (set: it won't follow the page's heading) and slug (set: it won't follow the title). */
   title?: string;
   slug?: string;
-  /** Its slug is its id (the homepage's document, until it takes its address). */
+  /** Its slug is its id (the default homepage, until it takes its address). */
   atId?: boolean;
   /** Made from someone's files (the server's API): counts as edited, so it never expires. */
-  published?: boolean;
+  uploaded?: boolean;
   /** A scratch document: off the list, its address its id, and gone delete_docs_after_hours after it's made, edited or not. */
   scratch?: boolean;
 }

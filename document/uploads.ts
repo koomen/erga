@@ -1,4 +1,4 @@
-// Files that arrive whole: a publish (from the server's API), a PUT of one
+// Files that arrive whole: an upload (from the server's API), a PUT of one
 // file (the editor's drop of a file, an HTTP client) and an agent's write of
 // bytes. Each file's kind is decided as it arrives (D5): text goes into the
 // room, anything else is a blob. The Document owns one Uploads.
@@ -27,8 +27,8 @@ import { NO_WAIT, pendingOf, step, waitingFor, type Wait, type WaitEvent, type W
 
 const { file: FILE, ref: REF, wait: WAIT } = KEYS;
 
-/** What a publish did with each file. */
-export interface Published {
+/** What an upload did with each file. */
+export interface Written {
   written: string[];
   removed: string[];
   /** `limit`: the admin's setting that refused it, and its value now (the editor offers to raise it). */
@@ -157,7 +157,7 @@ export class Uploads {
   constructor(private host: UploadsHost) {}
 
   /**
-   * Files arriving whole (a publish, from the server's API): each written and
+   * Files arriving whole (an upload, from the server's API): each written and
    * taken into the room as an edit "on disk", so open tabs see it at once.
    * What the room holds is written first, so a file replaces the text as it
    * is now (only edits made while it arrives merge with it). Text files go through the room's
@@ -166,33 +166,33 @@ export class Uploads {
    * version records it ("ada", "ada, via a shared agent (CI)": byLine). `writer`: who wrote, when their write may wait
    * for a file's bytes (a blob's ref with a size, whose bytes Erga doesn't keep: waits.ts).
    */
-  publish(
+  write(
     files: Record<string, FileData>,
     remove: string[],
     by?: string,
     writer?: Writer
-  ): Effect.Effect<Published, StoreError | NoSuchDocument> {
+  ): Effect.Effect<Written, StoreError | NoSuchDocument> {
     const self = this;
     return this.host.hold(
       Effect.gen(function* () {
         const opened = yield* io(() => self.host.room());
         if (!opened) return yield* new NoSuchDocument({ message: "There's no such document." });
-        return yield* io(() => self.publishNow(opened, files, remove, by ?? null, writer));
+        return yield* io(() => self.writeNow(opened, files, remove, by ?? null, writer));
       })
     );
   }
 
-  private async publishNow(
+  private async writeNow(
     opened: Opened,
     files: Record<string, FileData>,
     remove: string[],
     by: string | null,
     writer?: Writer
-  ): Promise<Published> {
+  ): Promise<Written> {
     const info = (await this.host.info())!;
-    const out: Published = { written: [], removed: [], refused: [] };
+    const out: Written = { written: [], removed: [], refused: [] };
     const waiting: Record<string, { hash: string; size: number }> = {};
-    // Edits not yet written land first, so a published file replaces what's there now rather than merging with it.
+    // Edits not yet written land first, so an uploaded file replaces what's there now rather than merging with it.
     await Effect.runPromise(opened.room.flush);
     const blobs = info.disk ? null : (this.host.deps.blobs ?? null);
     for (const [path, data] of Object.entries(files)) {
@@ -421,7 +421,7 @@ export class Uploads {
    * PUT /api/files/<path>: one file from a person or an HTTP client (the
    * editor's drop of a file), its bytes the body, its size Content-Length. Its
    * kind is decided now (D5): a text file's name, UTF-8 and at most TEXT_MAX
-   * bytes is text, merged into the room as a publish is; anything else is a
+   * bytes is text, merged into the room as an upload is; anything else is a
    * blob, which streams to the blob store (`x-erga-sha256`, the bytes'
    * sha-256 in hex, lets one of any size stream: without it, one over
    * BUFFER_MAX is refused). A file at the path is replaced (it stays in the
@@ -538,7 +538,7 @@ export class Uploads {
 
   /**
    * A file's bytes, arriving whole (an upload, an agent's write of bytes), as
-   * `by`: its kind decided now (D5), text merged into the room as a publish
+   * `by`: its kind decided now (D5), text merged into the room as an upload
    * is, anything else a blob.
    */
   private async addBytes(
@@ -558,7 +558,7 @@ export class Uploads {
       }
     }
     if (text != null || !blobs) {
-      const r = await Effect.runPromise(this.publish({ [path]: text ?? bytes }, [], by));
+      const r = await Effect.runPromise(this.write({ [path]: text ?? bytes }, [], by));
       if (r.refused.length) return { ok: false, status: 409, error: `Couldn't add ${path}: ${r.refused[0].why}.` };
       return { ok: true, kind: text != null ? "text" : "file" };
     }

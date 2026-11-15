@@ -109,13 +109,15 @@ export const KINDS: readonly {
 }[] = [
   {
     name: "documents",
-    description: "Lists, makes, renames, shares, archives and deletes documents; sends feedback.",
+    description: "Lists, makes, renames, shares, publishes, archives and deletes documents; sends feedback.",
     ops: [
       "list_documents",
       "create_document",
       "save_document",
       "rename_document",
       "share_document",
+      "set_publishing",
+      "publish_document",
       "request_access",
       "archive_document",
       "unarchive_document",
@@ -165,8 +167,8 @@ export const KINDS: readonly {
   },
   {
     name: "settings",
-    description: "The server's settings, API keys, change log and feedback, how people sign in, the homepage's deploy (admins).",
-    ops: ["settings", "set_setting", "clear_api_key", "sign_in", "set_sign_in", "deploy_homepage", "feedback"],
+    description: "The server's settings, API keys, change log and feedback, how people sign in (admins).",
+    ops: ["settings", "set_setting", "clear_api_key", "sign_in", "set_sign_in", "feedback"],
   },
   {
     name: "people",

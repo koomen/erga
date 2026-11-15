@@ -2,7 +2,7 @@
 // result, a link's preview), its description, its icon (the tab's) and the picture a link to it shows (og:image).
 // They live in the page's own <head>, as any web page has them: the agent edits them there, and the page's
 // details (client/pages/page-head.ts) and the set_head tool rewrite those tags. The viewer puts them on its own
-// page too (server/pages/viewer.ts), since the page itself is in a frame, and the homepage serves the page's own.
+// page too (server/pages/viewer.ts), since the page itself is in a frame, and a published site serves the page's own.
 
 import { decodeEntities, esc } from "./html.ts";
 

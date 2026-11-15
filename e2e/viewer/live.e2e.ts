@@ -161,7 +161,7 @@ journey("a reader's open page shows an agent's change", () => {
       expect([tool, r.ok, r.text]).toEqual([tool, false, ONLY]);
     }
     expect((await runTool(s.root, "restore_version", { document: id, version: old }, { cookie, origin: s.root })).status).toBe(403);
-    // There is no publishing: viewers see the document as it is.
+    // No version is chosen for viewers: they see the document as it is.
     const publish = await fetch(`${s.root}/api/docs/${id}/publish`, {
       method: "POST",
       headers: { Origin: s.root, "Content-Type": "application/json" },

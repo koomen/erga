@@ -94,8 +94,8 @@ export interface HostOptions {
   readonly avatarOf?: (person: { id: string; name: string; avatar?: string }) => string | undefined;
   /** Whether a person may edit, so their agent may (everyone, if not given; the directory's roles decide, cloudflare/objects/document.ts). */
   readonly canEdit?: (person: { id: string; name: string }) => boolean;
-  /** Whether a request may publish a file (PUT /api/stored): everyone, if not given. */
-  readonly mayPublish?: (request: HttpServerRequest.HttpServerRequest) => boolean;
+  /** Whether a request may put a file (PUT /api/stored): everyone, if not given. */
+  readonly mayPut?: (request: HttpServerRequest.HttpServerRequest) => boolean;
   /** A single file opened from disk: the document holds only it, and no other file can be made. */
   readonly only?: string;
   /** A document (one page) or a project (pages): now. A project if not given. */
@@ -185,7 +185,7 @@ export function makeHost(opts: HostOptions) {
   const sendAll = (msg: unknown) => { for (const t of tabs) t.send(msg); };
   /** A document (one page) or a project, as it is now. */
   const kindNow = (): DocKind => opts.kind?.() ?? "project";
-  // The tree changed, by anyone (a person, an agent, a publish, disk): every open tab refetches it.
+  // The tree changed, by anyone (a person, an agent, an upload, disk): every open tab refetches it.
   room.onTree(() => sendAll({ type: "tree" }));
   /** The latest moves, for a tab that missed one while it was loading (its hello, ls). */
   const moves: { from: string; to: string }[] = [];
@@ -543,11 +543,11 @@ export function makeHost(opts: HostOptions) {
     // An editor's start, in one answer: its hello and the room's whole state (shared/room-socket.ts).
     HttpRouter.route("GET", "/api/start", Effect.gen(function* () {
       const req = yield* HttpServerRequest.HttpServerRequest;
-      const hello = yield* Effect.promise(() => helloFor(opts.personOf(req), opts.mayPublish?.(req) ?? true));
+      const hello = yield* Effect.promise(() => helloFor(opts.personOf(req), opts.mayPut?.(req) ?? true));
       return HttpServerResponse.uint8Array(encodeStart(hello, Y.encodeStateAsUpdate(room.doc)), { contentType: "application/octet-stream", headers: { "Cache-Control": "no-store" } });
     })),
     // What storage holds (not the room): lets a test see the room's writes
-    // land, and send an edit that arrives as a file (a publish, a git pull)
+    // land, and send an edit that arrives as a file (an upload, a git pull)
     // without depending on a filesystem watcher.
     HttpRouter.route("GET", "/api/stored/*", Effect.gen(function* () {
       const rel = cleanRel((yield* HttpRouter.params)["*"]);
@@ -563,7 +563,7 @@ export function makeHost(opts: HostOptions) {
       const notPage = room.exists(rel) ? null : pageRefusal(kindNow(), rel, doc.path);
       if (notPage) return HttpServerResponse.text(notPage, { status: 409 });
       const req = yield* HttpServerRequest.HttpServerRequest;
-      if (opts.mayPublish && !opts.mayPublish(req)) return HttpServerResponse.text("You can only view this document.", { status: 403 });
+      if (opts.mayPut && !opts.mayPut(req)) return HttpServerResponse.text("You can only view this document.", { status: 403 });
       const text = yield* req.text;
       const ifMatch = req.headers["if-match"]?.replace(/^W\//, "").replace(/"/g, "") ?? null;
       const r = yield* room.push(rel, text, ifMatch);
@@ -627,7 +627,7 @@ export function makeHost(opts: HostOptions) {
     },
     /** What a tab hears first: the document's details as its person sees them, and its tree (`canEdit`: theirs to change). */
     hello: helloFor,
-    /** Tells every open tab, whoever's (a new version, a restore, the homepage's deploy status). */
+    /** Tells every open tab, whoever's (a new version, a restore, its publishing state). */
     broadcast: sendAll,
     /** The document was renamed some other way (its title following an edit): every tab hears of it. */
     renamed,

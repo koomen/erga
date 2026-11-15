@@ -1,5 +1,5 @@
 // The operations inside one document, as a person does them in the editor: what it is (ls: its name and address,
-// kind, homepage, access, files and pages), its name (the title card), its pages and folders (the page tree), its kind
+// kind, publishing, access, files and pages), its name (the title card), its pages and folders (the page tree), its kind
 // (the settings' Document/Project switch), a page's head (the settings' Page) and its versions (the settings' Versions). Each takes `document`; the
 // person's own agent may leave it out for the one open on their page (Caller.here). They reach the document's host
 // through its Durable Object's calls (platform.docs), as the person, after the directory says they may.
@@ -15,8 +15,8 @@ import { EDITORS_READ_VERSIONS } from "../../document/content.ts";
 import { nameOf } from "../../document/names.ts";
 import { pageAddress, type TreeOp } from "../../document/pages.ts";
 import { globToRegExp } from "../../shared/glob.ts";
-import { accessOf, cleanFilePath, readersOf } from "./documents.ts";
-import { homepageOf } from "./home.ts";
+import { accessOf, cleanFilePath, viewersOf } from "./documents.ts";
+import { publishingOf } from "./publishing.ts";
 import { byLine } from "../../shared/attribution.ts";
 import { HEAD_FIELDS, headOf, withHead, type PageHead } from "../../shared/page-head.ts";
 import {
@@ -68,7 +68,7 @@ const VERSION = str('A version, e.g. "v3".');
 
 /**
  * cp, and mv into another document: `from` (a file; a folder with everything in it; "." for the whole document) to
- * `to` in `to_document` (else the same one), as a publish writes files: text as an edit, a blob by its ref, so no
+ * `to` in `to_document` (else the same one), as an upload writes files: text as an edit, a blob by its ref, so no
  * bytes go through the agent. A file at the destination is replaced (the old one stays in the versions). `to` that
  * ends with "/", or names a folder there, takes it inside. A move then deletes what it copied.
  */
@@ -102,8 +102,8 @@ async function copyFiles(caller: Caller, args: Record<string, unknown>, move: bo
     under.map((p) => [[target, p.slice(from.length).replace(/^\//, "")].filter(Boolean).join("/"), snap.files[p]])
   );
   const by = byLine(caller.who.login.toLowerCase(), caller.who.via);
-  const r = await platform.docs.publish(dst, files, [], by);
-  const removed = move && !r.refused.length ? (await platform.docs.publish(src, {}, under, by)).removed : [];
+  const r = await platform.docs.write(dst, files, [], by);
+  const removed = move && !r.refused.length ? (await platform.docs.write(src, {}, under, by)).removed : [];
   // A folder that moved goes whole, empty folders in it too.
   if (move && removed.length && !(from in snap.files)) await platform.docs.treeOp(src, { op: "delete", path: from });
   return {
@@ -121,7 +121,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
     name: "ls",
     label: "Look at the document",
     activity: "looking around",
-    ui: "The editor: the title and address; a project's tree (the documents list, the crumbs); the editor's settings: Document/Project, Homepage, Readers; Share: who has access",
+    ui: "The editor: the title and address; a project's tree (the documents list, the crumbs); the editor's settings: Document/Project, Viewer settings, Publishing; Share: who has access",
     description: "A document's name, kind, access, files and pages.",
     parameters: Schema.Struct({
       document: DOCUMENT,
@@ -131,12 +131,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
     run: async (args, caller) => {
       const doc = await findDocument(caller, args.document, "open");
       const docs = platformOf(caller).docs;
-      const [tree, list, homepage, owner] = await Promise.all([
-        docs.tree(doc),
-        docs.files(doc),
-        homepageOf(caller, doc),
-        caller.dir.may(caller.who, "share", doc),
-      ]);
+      const [tree, list, owner] = await Promise.all([docs.tree(doc), docs.files(doc), caller.dir.may(caller.who, "share", doc)]);
       const canEdit = !tree?.single && (await mayEdit(caller, doc));
       if (!tree || !list) throw new OperationError({ message: "There's no such document.", status: 404 });
       const raw = typeof args.path == "string" ? args.path.replace(/^[./]+$/, "").replace(/^\.?\/+|\/+$/g, "") : "";
@@ -162,8 +157,8 @@ export const EDITOR_OPERATIONS: Operation[] = [
         kind: tree.kind,
         index: list.index,
         canEdit,
-        ...(homepage ? { homepage } : {}),
-        ...(owner ? { access: await accessOf(caller, doc) } : canEdit ? { access: await readersOf(caller, doc) } : {}),
+        ...(canEdit ? { publishing: await publishingOf(caller, doc) } : {}),
+        ...(owner ? { access: await accessOf(caller, doc) } : canEdit ? { access: await viewersOf(caller, doc) } : {}),
         entries,
         moved: tree.moved,
       };
@@ -304,7 +299,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
       // The page's <head> as it should be: only its differences reach the room, as an edit (open editors show it).
       const now = withHead(text, changes);
       if (now != text) {
-        const r = await platform.docs.publish(doc, { [path]: now }, [], byLine(caller.who.login.toLowerCase(), caller.who.via));
+        const r = await platform.docs.write(doc, { [path]: now }, [], byLine(caller.who.login.toLowerCase(), caller.who.via));
         if (r.refused.length) throw new OperationError({ message: r.refused[0].why, status: 409 });
       }
       return { document: described(doc, caller), path, head: headOf(now) };

@@ -1,5 +1,5 @@
 // What a new document can start from: the templates the + button offers
-// (the viewer's, the homepage's, the editor's and the documents page's New), and /new?template=<id>
+// (the viewer's, a published site's, the editor's and the documents page's New), and /new?template=<id>
 // makes. One registry, so a new template is one entry in TEMPLATES (its
 // starting files in assets/templates/<name>/, index.html and text files
 // beside it, which the Worker reads as text). No server code: the editor's

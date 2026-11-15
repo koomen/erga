@@ -75,11 +75,9 @@ const adminsOf = (env: Env): string[] => (env.DEV_LOGIN?.trim() ? [env.DEV_LOGIN
 /** The directory, on this Worker's database, with the settings the deploy locks (SERVER_CONFIG). */
 export function directoryOf(env: Env): Directory {
   if (directory?.db !== env.DB) {
-    // A change to the homepage setting, however it's made (the admin page, an agent, the homepage's API, the deploy that makes the homepage project), reaches its deploys.
     // Public sharing on or off: the views kept for people signed out no longer hold (server/documents/view.ts).
     const changed = async (key: string) => {
       if (key == "public_sharing") forgetDecisions();
-      if (key == "landing_document" && env.HOME) await env.HOME.getByName("home").homeChanged();
     };
     // A document's permissions changed: its object keeps a copy, and decides with it (document/document.ts, authorize).
     const permissionsChanged = async (id: string, permissions: Permission[]) => { forgetDecisions(id); if (permissions.length) await documentOf(env, id).setPermissions(permissions.map((p) => ({ login: p.login, role: p.role }))); };

@@ -8,8 +8,8 @@ import { COMMENT_OPERATIONS } from "./comments.ts";
 import { DOCUMENT_OPERATIONS } from "./documents.ts";
 import { EDITOR_OPERATIONS } from "./editor.ts";
 import { FEEDBACK_OPERATIONS } from "./feedback.ts";
-import { HOME_OPERATIONS } from "./home.ts";
 import type { Operation } from "./operation.ts";
+import { PUBLISHING_OPERATIONS } from "./publishing.ts";
 
 export {
   callDocument,
@@ -33,6 +33,6 @@ export const OPERATIONS: Operation[] = [
   ...EDITOR_OPERATIONS,
   ...COMMENT_OPERATIONS,
   ...ADMIN_OPERATIONS,
-  ...HOME_OPERATIONS,
+  ...PUBLISHING_OPERATIONS,
   ...FEEDBACK_OPERATIONS,
 ];

@@ -62,7 +62,7 @@ test("an admin's token without the admin scope reaches only the API, MCP and doc
   const { tokenPath } = await import("../server/identity/token-paths");
   for (const p of [
     "/mcp",
-    "/api/publish",
+    "/api/upload",
     "/api/tools",
     "/api/tools/versions",
     "/api/tools/rename_document",

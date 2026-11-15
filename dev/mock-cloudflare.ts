@@ -87,7 +87,7 @@ export interface MockState {
   unhealthy?: string[];
   /** The next call of this step fails once (a 500), as mock-fail-<step> does for every call. */
   failNext: string | null;
-  /** The Workers whose deploy made their homepage project (POST /api/deploys/home), by name. */
+  /** The Workers whose deploy made their default homepage (POST /api/deploys/home), by name. */
   homes?: string[];
 }
 
@@ -454,7 +454,7 @@ export function mockCloudflare(
       );
     if (url.pathname == "/logo.png") return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "Content-Type": "image/png" } });
     if (url.pathname == "/api/deploys/version") return Response.json({ version: text("ERGA_VERSION") ?? null });
-    // The homepage project: made the first time a deploy asks, there from then on.
+    // The default homepage: made the first time a deploy asks, there from then on.
     if (url.pathname == "/api/deploys/home" && req.method == "POST") {
       const homes = (state.homes ??= []);
       if (homes.includes(name)) return Response.json({ home: "there" });

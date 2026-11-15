@@ -159,7 +159,7 @@ export class DocumentAccess {
 
   /**
    * The document's owner as its permissions say (Directory.decide does the same): the host's own copy is the one it was
-   * made with, and the homepage project's adoption (adoptHome) changes the owner only in the directory.
+   * made with, and on a server older than /_home, the default homepage was an admin's document first.
    */
   async owner(): Promise<string | null> {
     const info = await this.o.info();

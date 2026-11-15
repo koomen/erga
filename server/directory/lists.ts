@@ -34,7 +34,7 @@ export class Lists {
       ...(only ?? [])
     );
     const listed = rows.map((r) => ({ ...fromRow(r), role: r.role, shared: Number(r.shared) }));
-    // An admin's list has the homepage project too, to edit (homeLimit); no permission of theirs archives it.
+    // An admin's list has the default homepage too, to edit (homeRole); no permission of theirs archives it.
     if (archived || listed.some((d) => d.owner == HOME_OWNER) || !(await this.users.isAdmin(login))) return listed;
     const [home] = await this.sql.all<Row>(
       `SELECT * FROM documents WHERE owner = ?1${only ? ` AND id IN (${only.map((_, i) => `?${i + 2}`).join(", ")})` : ""}`,
@@ -51,8 +51,7 @@ export class Lists {
    * The server's documents and projects (test ones aside) whose title, owner,
    * address (/<owner>/<slug>, or a URL with it) or id has `query` in it, most
    * recently edited first, at most `limit` (and at most 100); with no query, the most recent. `total`: how many match.
-   * For an admin choosing one (the homepage, the landing_document setting):
-   * admins only, since it names everyone's documents.
+   * Admins only (list_documents with all), since it names everyone's documents.
    */
   async search(by: Actor, query: string, limit = 20): Promise<{ documents: DocFound[]; total: number }> {
     await this.users.mustAdmin(by);
