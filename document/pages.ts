@@ -15,11 +15,8 @@
 // The editor for a page is its address with ?edit (the pencil goes there and
 // back without a reload): an address always means a page, so a page may be called edit too.
 //
-// A document is one of two kinds. A "document" has one page (index.html) and any other files beside
-// it; a "project" is a folder of pages, each with its own address. A document becomes a project only
-// when someone asks (make_project), never as a side effect of a write: so a new page, or a file that
-// would be one, is refused in a document with a message that says how (pageRefusal). A project with
-// one page becomes a document again the same way (make_document).
+// Any document may have more pages: its object counts them (pageCount) and tells the directory, so the
+// documents list and the viewer show a page tree only for a document with more than one.
 //
 // Shared by the host (document/host.ts: the tree's API and its operations), the app
 // (server/documents/routes.ts: which page an address is) and the browser (the editor and
@@ -38,34 +35,19 @@ export interface TreeEntry {
   head?: PageHead;
 }
 
-/** What can be done to the tree (the operations new_page, mkdir, mv, rm, make_project, make_document): rename is a move. */
+/** What can be done to the tree (the operations new_page, mkdir, mv, rm): rename is a move. */
 export type TreeOp =
   | { op: "new_page"; path: string }
   | { op: "new_folder"; path: string }
   | { op: "move"; from: string; to: string }
-  | { op: "delete"; path: string }
-  | { op: "make_project" }
-  | { op: "make_document" };
+  | { op: "delete"; path: string };
 
-/** A document (one page, index.html, and other files) or a project (a folder of pages). */
-export type DocKind = "document" | "project";
-export const isDocKind = (k: unknown): k is DocKind => k == "document" || k == "project";
-
-/** The kind of a new document made from these files: a project if it has more than one page. */
-export const kindOf = (paths: Iterable<string>): DocKind => {
+/** How many pages these files have: the .html files. */
+export const pageCount = (paths: Iterable<string>): number => {
   let pages = 0;
-  for (const p of paths) if (isPage(p) && ++pages > 1) return "project";
-  return "document";
+  for (const p of paths) if (isPage(p)) pages++;
+  return pages;
 };
-
-/**
- * Why a document can't take `path` as a new file: it would be a second page. Null when it can (a project, the
- * document's own page, a file that isn't a page). In words for a person or an agent.
- */
-export function pageRefusal(kind: DocKind, path: string, index: string): string | null {
-  if (kind != "document" || !isPage(path) || path == index) return null;
-  return `This is a document: its one page is ${index}, so ${path} can't be a page of it. To have more pages, make it a project first (Project in the document's settings, or the set_kind tool).`;
-}
 
 /** A tree operation that can't be done, with why, in words for a person or an agent. */
 export class TreeError extends Error {

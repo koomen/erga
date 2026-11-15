@@ -26,7 +26,6 @@ async function site(): Promise<string> {
   const made = await runTool(s.root, "create_document", {
     title: "Restart",
     slug: `restart-${crypto.randomUUID().slice(0, 8)}`,
-    kind: "project",
     files: { "index.html": PAGE("Home") },
   });
   if (!made.ok) throw new Error(`create_document: ${made.status} ${made.error}`);

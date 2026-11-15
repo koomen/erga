@@ -6,8 +6,6 @@
 //
 // Readers always see the document as it is now. No line of help anywhere: what needs a word has a hover tip
 // (data-tip, which tip() sets). It holds, top to bottom:
-//   - Document (one page, and files beside it) or Project (pages, each with its own address), a switch (set_kind).
-//     A project with more than one page can't be a document yet: its tip says why.
 //   - Page details: the page shown now, with its icon, title and description, and Edit, which opens its details
 //     (client/pages/page-head.ts: its title, description, icon and link picture, in its <head>).
 //   - Viewer settings, for anyone who may edit it (their state from ls's access): whether its page may call a model as
@@ -23,7 +21,7 @@
 //     focus, makes a copy of a version the current one (restore_version). Then "Restored v3. Undo" shows for 10
 //     seconds: Undo puts back the document as it was (a restore of the version from just before).
 //
-// It runs the operations (server/operations/: versions, restore_version, ls, set_kind, set_publishing,
+// It runs the operations (server/operations/: versions, restore_version, ls, set_publishing,
 // publish_document, share_document; over POST /api/tools/<name>), and refreshes on the event channel's
 // { type: "versions" }, { type: "publishing" } and { type: "tree" } (main.ts passes them on), open or not.
 // Someone who can't edit sees it all read-only.
@@ -33,7 +31,6 @@ import { runTool } from "../common/tools";
 import { esc } from "../../shared/html";
 import { timeAgo } from "../../shared/time";
 import { EDITORS_READ_VERSIONS } from "../../document/content";
-import type { DocKind } from "../../document/pages";
 import { isModelChoice, MODELS, PROVIDER_LABEL } from "../../shared/models";
 import { openPageHead } from "./page-head";
 import { headUrl, tabTitle, type PageHead } from "../../shared/page-head";
@@ -43,7 +40,6 @@ import { type Publishing, PUBLISHING_CSS, PUBLISHING_HTML, publishingSection } f
 interface Tree {
   entries: { path: string; type: string; head?: PageHead }[];
   canEdit?: boolean;
-  kind?: DocKind;
   /** The document's own page; and its title. */
   index?: string;
   title?: string;
@@ -65,10 +61,6 @@ export interface SettingsHost {
   query: string;
   /** The gear. */
   anchor: HTMLElement;
-  /** The document's kind as the editor knows it now (its hello, or the last "tree" event). */
-  kind(): DocKind;
-  /** The kind changed here: the editor shows it at once (the breadcrumb), before the event comes. */
-  onKind(kind: DocKind): void;
   /** The popover opened or closed. */
   onToggle(open: boolean): void;
 }
@@ -105,7 +97,7 @@ const CSS = `
   font: 400 12px/1.4 var(--font-text); color: var(--soft); text-align: left; white-space: normal; text-transform: none; letter-spacing: 0;
   opacity: 0; pointer-events: none; transition: opacity 80ms ease 250ms;
 }
-.ds :is(.ds-btn, .ds-select, [data-kind="project"])[data-tip]::after { left: auto; right: 0; }
+.ds :is(.ds-btn, .ds-select)[data-tip]::after { left: auto; right: 0; }
 @media (hover: hover) { .ds [data-tip]:hover::after { opacity: 1; } }
 .ds-error { margin: 8px 0 0; padding: 7px 10px; border-radius: 8px; font-size: 12.5px; line-height: 1.45; color: #b42318; background: color-mix(in srgb, #d0453a 10%, transparent); }
 html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
@@ -137,16 +129,6 @@ html.page-dark body:not(.source) .ds-tag.live { color: #7fd6a0; background: colo
 .ds-foot { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 0; font-size: 11.5px; color: var(--chrome); }
 .ds-skel { height: 12px; border-radius: 6px; background: var(--code-bg); margin: 10px 0; animation: ds-pulse 1.1s ease-in-out infinite alternate; }
 @keyframes ds-pulse { from { opacity: 0.5; } to { opacity: 1; } }
-/* Document or Project: two halves of one control, the chosen one raised. */
-.ds-kind { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 2px; border-radius: 9px; background: var(--code-bg); border: 1px solid var(--panel-border); }
-.ds-kind button { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 4px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--soft); font: 600 13px/1.2 var(--font-text); cursor: pointer; transition: background-color 120ms ease, color 120ms ease; }
-.ds-kind button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.ds-kind button:hover { color: var(--fg); }
-.ds-kind button[aria-checked="true"] { background: var(--bg); color: var(--fg-strong, var(--fg)); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
-.ds-kind button:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
-/* (Never opacity on a control with a tip: its tip would fade too.) */
-.ds-kind button[aria-disabled="true"] { color: color-mix(in srgb, var(--soft) 50%, transparent); cursor: not-allowed; }
-.ds-kind button[aria-disabled="true"]:hover { color: color-mix(in srgb, var(--soft) 50%, transparent); }
 /* Page details: the icon and the title on one line, the description under them, and Edit. */
 .ds-page-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center; margin-top: 8px; }
 .ds-page-title { display: flex; align-items: center; gap: 8px; min-width: 0; font: 600 13px/1.35 var(--font-text); color: var(--fg-strong, var(--fg)); }
@@ -184,7 +166,6 @@ ${PUBLISHING_CSS}.ds-btn { flex: none; font: 600 12.5px var(--font-text); border
 }
 .ds-sheet-grip { display: none; }
 @keyframes ds-sheet { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
-@media (pointer: coarse) { .ds-kind button { min-height: 38px; } }
 @media (prefers-reduced-motion: reduce) { .ds-dot.publishing, .ds-skel { animation-duration: 3s; } .help.ds { animation: none; } }
 `;
 
@@ -214,13 +195,6 @@ function mount(host: SettingsHost): Settings {
   pop.setAttribute("aria-labelledby", "ds-title");
   pop.innerHTML = `<div class="ds-sheet-grip" aria-hidden="true"></div>
     <h2 id="ds-title">Document settings</h2>
-    <section class="ds-kind-sec">
-      <div class="ds-kind" id="ds-kind" role="radiogroup" aria-label="Kind">
-        <button type="button" role="radio" data-kind="document" aria-checked="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/></svg>Document</button>
-        <button type="button" role="radio" data-kind="project" aria-checked="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2h8.5A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></svg>Project</button>
-      </div>
-      <p class="ds-error" id="ds-kind-error" role="alert"></p>
-    </section>
     <section class="ds-page" id="ds-page" hidden aria-labelledby="ds-page-title">
       <h3 id="ds-page-title">Page details</h3>
       <div class="ds-page-row"><div class="ds-page-title" id="ds-page-tab"></div><p class="ds-page-desc" id="ds-page-desc"></p><button type="button" class="ds-btn" id="ds-page-edit" aria-label="Edit the page's details">Edit</button></div>
@@ -251,8 +225,6 @@ ${PUBLISHING_HTML}    <section class="ds-history" aria-labelledby="ds-history-ti
     footText = $("ds-foot-text"),
     olderBtn = $("ds-older"),
     histError = $("ds-hist-error");
-  const kindBox = $("ds-kind"),
-    kindError = $("ds-kind-error");
   const agentSec = $("ds-agent"),
     agentError = $("ds-agent-error"),
     llmOn = $<HTMLInputElement>("ds-llm-on"),
@@ -292,10 +264,8 @@ ${PUBLISHING_HTML}    <section class="ds-history" aria-labelledby="ds-history-ti
   const renderPub = () => publishing.render();
   let loadSeq = 0,
     docSeq = 0;
-  /** The tree as last read: its pages (a project with more than one can't be a document yet) and whether you may change it. */
+  /** The tree as last read: its pages and whether you may change it. */
   let tree: Tree | null = null;
-  /** The kind being switched to, while the server does it. */
-  let kindBusy: DocKind | null = null;
   /** Viewer settings, for anyone who may edit it (ls answers no one else): the page's model. */
   let access: Access | null = null;
   let agentBusy = false;
@@ -372,18 +342,14 @@ ${PUBLISHING_HTML}    <section class="ds-history" aria-labelledby="ds-history-ti
     add(r.versions);
     render();
   }
-  /** The document as ls answers it: its tree and kind, and its publishing and access (for whoever may edit it). */
+  /** The document as ls answers it: its tree, and its publishing and access (for whoever may edit it). */
   async function loadDoc() {
     const seq = ++docSeq;
     const d = await runTool<Doc>("ls", { document: host.docId }).catch(() => null);
     if (seq != docSeq) return;
-    if (d) {
-      tree = d;
-      if (d.kind) host.onKind(d.kind);
-    }
+    if (d) tree = d;
     publishing.set(d?.publishing ?? null);
     access = d?.access ?? null;
-    renderKind();
     renderPub();
     renderAgent();
     renderPage();
@@ -554,60 +520,6 @@ ${PUBLISHING_HTML}    <section class="ds-history" aria-labelledby="ds-history-ti
     if (loadingOlder) olderBtn.setAttribute("aria-disabled", "true"); else olderBtn.removeAttribute("aria-disabled");
   }
 
-  /** Document or Project: the kind now, whether you may switch, and why a project can't be a document yet. */
-  function renderKind() {
-    const kind = kindBusy ?? tree?.kind ?? host.kind();
-    const canEdit = tree?.canEdit ?? false;
-    const pages = (tree?.entries ?? []).filter((e) => e.type == "page");
-    // A document has one page: a project with more can't be one until the others go (nothing is deleted for you).
-    const blocked =
-      kind == "project" && pages.length > 1 ? `A document has one page. This project has ${pages.length}: delete the others first.` : null;
-    const only = tree && !canEdit ? " Only its editors can change this." : "";
-    for (const b of kindBox.querySelectorAll<HTMLElement>("[data-kind]")) {
-      const on = b.dataset.kind == kind;
-      b.setAttribute("aria-checked", String(on));
-      b.tabIndex = on ? 0 : -1;
-      const off = !canEdit || !!kindBusy || (b.dataset.kind == "document" && !on && !!blocked);
-      if (off) b.setAttribute("aria-disabled", "true"); else b.removeAttribute("aria-disabled");
-      const doc = b.dataset.kind == "document";
-      tip(
-        b,
-        (doc && blocked
-          ? blocked
-          : doc
-            ? "A document is one page, with its files beside it."
-            : "A project has pages, each with its own address.") + only
-      );
-    }
-  }
-  async function switchKind(want: DocKind) {
-    const now = tree?.kind ?? host.kind();
-    if (want == now || kindBusy || !tree?.canEdit) return;
-    kindBusy = want;
-    kindError.textContent = "";
-    renderKind();
-    try {
-      await runTool("set_kind", { document: host.docId, kind: want });
-      tree = { ...tree, kind: want };
-      host.onKind(want);
-    } catch (e) { kindError.textContent = `Couldn't make it a ${want}: ${(e as Error).message}`; }
-    kindBusy = null;
-    renderKind();
-    loadDoc();
-  }
-  kindBox.addEventListener("click", (e) => {
-    const b = (e.target as Element).closest<HTMLElement>("[data-kind]");
-    if (b && b.getAttribute("aria-disabled") != "true") switchKind(b.dataset.kind as DocKind);
-  });
-  // A radio group's keys: the arrows move to the other choice and choose it.
-  kindBox.addEventListener("keydown", (e) => {
-    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
-    e.preventDefault();
-    const other = kindBox.querySelector<HTMLElement>(`[data-kind="${(tree?.kind ?? host.kind()) == "document" ? "project" : "document"}"]`)!;
-    if (other.getAttribute("aria-disabled") == "true") return;
-    other.focus();
-    switchKind(other.dataset.kind as DocKind);
-  });
   // ------------------------------------------------------------ the popover
 
   // What it shows, read as it mounts (the editor's idle time, chrome.ts), kept fresh by the event channel and read
@@ -643,11 +555,9 @@ ${PUBLISHING_HTML}    <section class="ds-history" aria-labelledby="ds-history-ti
     publishing.reset();
     // (A refresh that failed while it was closed says so.)
     histError.textContent = loadError && data ? `Couldn't refresh the versions: ${loadError}` : "";
-    kindError.textContent = "";
     agentError.textContent = "";
     render();
     renderPub();
-    renderKind();
     renderAgent();
     renderPage();
     if (!data) loadVersions();

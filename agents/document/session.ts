@@ -18,7 +18,6 @@ import * as Schema from "effect/Schema";
 import { argumentsSchema } from "../run";
 import { colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "../../document/content";
 import { byLine, VIA } from "../../shared/attribution";
-import { pageRefusal } from "../../document/pages";
 import { joinLocal, LOCK_IDLE_MS } from "../../document/room";
 import type { AgentSession, DocumentAgents, SessionOptions, ToolContent } from "../../document/agent";
 import type { LogEvent } from "../../shared/agent-log";
@@ -93,7 +92,6 @@ async function startSession(opts: SessionOptions, sandbox: Sandbox): Promise<Age
     opts.canEdit,
     origin,
     opts.only ?? null,
-    (path) => (opts.kind ? pageRefusal(opts.kind(), path, opts.docName) : null),
     cursor
   );
   const presence = (patch: Record<string, unknown>) => awareness.setLocalState({ ...awareness.getLocalState(), ...patch });

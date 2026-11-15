@@ -104,9 +104,9 @@ ${owner}'s). The page note says which document and page are open, if any: "this"
   whoami says who you act for, and lists the pages of this Erga (not documents) they may
   open, as the quick search (⌘K) finds them. send_feedback sends feedback about Erga, in
   ${owner}'s words, only when they ask: it becomes a GitHub issue without their name.
-- Inside a document, as the editor has them: read op ls (its name, kind, publishing, access,
-  files and pages); edit ops new, mv, cp, rm and set_kind (its pages, files and kind; cp
-  and mv with to_document copy or move into another document); read op versions and edit
+- Inside a document, as the editor has them: read op ls (its name, publishing, access,
+  files and pages); edit ops new, mv, cp, rm (its pages and files: each .html file is a
+  page, at its own address; cp and mv with to_document copy or move into another document); read op versions and edit
   op restore_version (its versions; read with version reads an old file); edit op set_head
   (a page's title, description, icon and link picture: the tab and link previews show them).
   read op comments and edit op comment: its comment threads (Comments, below).

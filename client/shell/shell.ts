@@ -50,8 +50,10 @@ export interface Shell {
   docId: string;
 
   info: DocInfo;
-  /** A document (one page) or a project (pages), as the host last said. */
-  docKind: "document" | "project";
+  /** How many pages the document has, as the host last said (more than one: the title opens them). */
+  pages: number;
+  /** Whether you may make pages here (the hello's tree: an editor's, and not a single file opened from disk). */
+  canMakePages: boolean;
   docName: DocName | null;
   /** Which of the document's pages this tab edits (its replica's: collab.pagePath). */
   readonly pagePath: string;

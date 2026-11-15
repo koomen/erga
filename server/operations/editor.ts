@@ -58,7 +58,7 @@ async function treeOp(caller: Caller, ref: unknown, op: TreeOp) {
   const doc = await findDocument(caller, ref, "edit");
   const r = await platformOf(caller).docs.treeOp(doc, op);
   if (!r.ok) throw new OperationError({ message: r.error, status: r.status });
-  return { document: described(doc, caller), entries: r.entries, kind: r.kind };
+  return { document: described(doc, caller), entries: r.entries };
 }
 
 const PATH = (what: string) => str(what);
@@ -121,8 +121,8 @@ export const EDITOR_OPERATIONS: Operation[] = [
     name: "ls",
     label: "Look at the document",
     activity: "looking around",
-    ui: "The editor: the title and address; a project's tree (the documents list, the crumbs); the editor's settings: Document/Project, Viewer settings, Publishing; Share: who has access",
-    description: "A document's name, kind, access, files and pages.",
+    ui: "The editor: the title and address; a document's tree (the documents list, the crumbs); the editor's settings: Viewer settings, Publishing; Share: who has access",
+    description: "A document's name, access, files and pages.",
     parameters: Schema.Struct({
       document: DOCUMENT,
       path: Schema.optionalKey(PATH("Only what is in this folder")),
@@ -154,7 +154,6 @@ export const EDITOR_OPERATIONS: Operation[] = [
         });
       return {
         ...named(nameOf(doc), caller),
-        kind: tree.kind,
         index: list.index,
         canEdit,
         ...(canEdit ? { publishing: await publishingOf(caller, doc) } : {}),
@@ -247,24 +246,6 @@ export const EDITOR_OPERATIONS: Operation[] = [
     description: "Deletes a file or folder.",
     parameters: Schema.Struct({ document: DOCUMENT, path: PATH("The file or folder") }),
     run: (args, caller) => treeOp(caller, args.document, { op: "delete", path: String(args.path ?? "") }),
-  },
-  {
-    name: "set_kind",
-    label: "Change the kind",
-    activity: "changing the kind",
-    ui: "The editor's settings: Document/Project",
-    description: "Makes a document a project, or back.",
-    parameters: Schema.Struct({
-      document: DOCUMENT,
-      kind: Schema.Literals(["project", "document"]).annotate({
-        description: "project: pages; document: one page.",
-      }),
-    }),
-    run: (args, caller) => {
-      if (args.kind != "project" && args.kind != "document")
-        throw new OperationError({ message: "kind is project or document.", status: 400 });
-      return treeOp(caller, args.document, { op: args.kind == "project" ? "make_project" : "make_document" });
-    },
   },
   {
     name: "set_head",

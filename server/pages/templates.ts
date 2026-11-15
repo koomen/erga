@@ -6,7 +6,6 @@
 // bundle reads it too.
 
 import { asset } from "./assets.ts";
-import type { DocKind } from "../../document/pages.ts";
 import { esc } from "../../shared/html.ts";
 import { inlineStyle } from "./inline.ts";
 
@@ -23,8 +22,6 @@ export interface Template {
    * whole (text files only), whose page is its index.html.
    */
   files: `assets/templates/${string}`;
-  /** What it makes: a project (pages) from the start; else a document, or what its files make it. */
-  kind?: DocKind;
 }
 
 /** The templates, in the picker's order. The first is what /new makes when no template is named. */
@@ -39,10 +36,9 @@ export const TEMPLATES: Template[] = [
   },
   {
     id: "project",
-    name: "Project",
-    description: "Pages, each at its own address. It starts with two that link to each other.",
+    name: "Site",
+    description: "Pages that link to each other, each at its own address.",
     files: "assets/templates/project",
-    kind: "project",
   },
 ];
 

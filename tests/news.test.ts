@@ -39,8 +39,10 @@ test("each change of a document's row sends its key to everyone whose list shows
   expect(take()).toEqual(["doc:aaaaaaaa>ada,bo"]);
   await dir.edited("aaaaaaaa", { modified: 5, pageTitle: "Q3" });
   expect(take()).toEqual([]);
-  await dir.setKind("aaaaaaaa", "project");
+  await dir.setPages("aaaaaaaa", 2);
   expect(take()).toEqual(["doc:aaaaaaaa>ada,bo"]);
+  await dir.setPages("aaaaaaaa", 2);
+  expect(take()).toEqual([]);
   await dir.share(ada, "aaaaaaaa", "bo", null);
   expect(take()).toEqual(["doc:aaaaaaaa>ada,bo"]);
   await dir.share(ada, "aaaaaaaa", "cy", "editor");

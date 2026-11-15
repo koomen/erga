@@ -17,7 +17,6 @@ test("edit: replaceAll changes every match; a glob path edits each file it match
   const nav = (here: string) => `<nav><a href="${here}old.html">Old</a> <a href="${here}index.html">Home</a></nav>`;
   const made = await call("documents", {
     op: "create_document",
-    kind: "project",
     files: {
       "index.html": `<!doctype html><html><body>${nav("")}<p>See old.html, then old.html again.</p></body></html>`,
       "old.html": `<!doctype html><html><body>${nav("")}<p>Old page.</p></body></html>`,

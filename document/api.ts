@@ -100,7 +100,12 @@ export type DocInfo = typeof DocInfo.Type;
 export interface Hello {
   type: "hello";
   info: DocInfo;
-  tree: { entries: { path: string; type: string; title?: string }[]; canEdit: boolean; moved: { from: string; to: string }[]; /** A document (one page) or a project (pages). */ kind?: "document" | "project" };
+  tree: {
+    entries: { path: string; type: string; title?: string }[];
+    canEdit: boolean;
+    moved: { from: string; to: string }[] /** How many pages it has (more than one: the title opens them). */;
+    pages: number;
+  };
   /** The room's history (document/room.ts): a tab that started from another's must not merge into this one. */
   epoch: string;
 }

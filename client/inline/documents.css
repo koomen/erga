@@ -1,4 +1,4 @@
-/* The documents list (/documents, server/pages/documents.ts): its rows, the pages under a project, and the share dialog. */
+/* The documents list (/documents, server/pages/documents.ts): its rows, the pages under a document, and the share dialog. */
 
 /* Rows, and the labels over them, in three columns: the name (its title and what's special about it), when it was edited, its buttons. */
   .labels, ol.rows > li { display: grid; grid-template-columns: minmax(0, 1fr) 10rem 96px; align-items: center; column-gap: 16px; }

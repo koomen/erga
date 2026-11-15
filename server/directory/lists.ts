@@ -75,9 +75,7 @@ export class Lists {
       this.sql.all<{ n: number }>(`SELECT COUNT(*) AS n FROM documents WHERE ${match}`, q, like),
     ]);
     return {
-      documents: rows
-        .map(fromRow)
-        .map((d) => ({ id: d.id, title: d.title, owner: d.owner, address: addressOf(d), kind: d.kind ?? "document" })),
+      documents: rows.map(fromRow).map((d) => ({ id: d.id, title: d.title, owner: d.owner, address: addressOf(d) })),
       total: Number(count?.n ?? 0),
     };
   }

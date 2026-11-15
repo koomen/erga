@@ -20,7 +20,7 @@ import { DurableObject } from "cloudflare:workers";
 import { Document, type DocumentDeps, type FileData, type OnDisk } from "../../document/document";
 import type { ViewAnswer } from "../../document/view";
 import type { Writer } from "../../document/waits";
-import type { DocKind, TreeOp } from "../../document/pages";
+import type { TreeOp } from "../../document/pages";
 import type { FileList, NameAnswer, TreeAnswer, TreeState } from "../../document/host";
 import { Tabs, type Tab } from "../../document/tabs";
 import { PING, PONG } from "../../shared/room-socket";
@@ -142,7 +142,7 @@ export class DocumentObject extends DurableObject<Env> {
     id: string,
     files: Record<string, FileData>,
     index: string,
-    opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind; scratch?: boolean }
+    opts: { test?: boolean; expires: number | null; modified?: number; scratch?: boolean }
   ): Promise<boolean> {
     return run(this.document.create(owner, id, files, index, opts));
   }

@@ -182,7 +182,7 @@ test("sharing: the owner sees and changes who has access; editors change the pag
   expect(r.permissions.map((p: { login: string }) => p.login)).toEqual(["ada", "*"]);
 });
 
-test("the Project template makes a project from the start, with its two pages that link to each other: from /new's menu and from create_document", async () => {
+test("the Site template makes a document with two pages that link to each other: from /new's menu and from create_document", async () => {
   const dir = fresh();
   const { platform } = platformOf(dir);
   const read = (f: string) => readFileSync(new URL(`../assets/templates/project/${f}`, import.meta.url), "utf8");
@@ -190,20 +190,19 @@ test("the Project template makes a project from the start, with its two pages th
     "index.html": read("index.html"),
     "about.html": read("about.html"),
   };
-  const created: { kind?: string; files: string[] }[] = [];
-  platform.docs.create = async (_doc, files, _index, opts) => {
-    created.push({ kind: opts.kind, files: Object.keys(files).sort() });
+  const created: string[][] = [];
+  platform.docs.create = async (_doc, files) => {
+    created.push(Object.keys(files).sort());
     return true;
   };
-  const t = templateById("project")!;
-  expect([t.name, t.kind]).toEqual(["Project", "project"]);
+  expect(templateById("project")!.name).toBe("Site");
   expect(newDocMenu((p) => p)).toContain('data-template="project"');
   expect(read("index.html")).toContain('href="about.html"');
   expect(read("about.html")).toContain('href="index.html"');
   const ada: Caller = { dir, who: { login: "ada" }, platform, origin: "https://erga.test" };
   const r = await run(ada, "create_document", { template: "project" });
-  expect(created).toEqual([{ kind: "project", files: ["about.html", "index.html"] }]);
-  expect((await dir.get(r.id))?.kind).toBe("project");
+  expect(created).toEqual([["about.html", "index.html"]]);
+  expect((await dir.get(r.id))?.pages).toBe(2);
 });
 
 /** The platform the documents list's tools need, on the in-memory directory: templates, and documents that are only rows. */
@@ -350,7 +349,6 @@ test("list_documents' all is an admin's: someone else is refused", async () => {
   expect((await run(root, "list_documents", { all: true, limit: 1 })).moreDocuments).toBe(1);
   expect(found[0]).toMatchObject({
     address: expect.stringMatching(/^\/[^/]+\/[^/]+$/),
-    kind: expect.stringMatching(/^(document|project)$/),
   });
 });
 

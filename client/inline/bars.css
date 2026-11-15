@@ -22,7 +22,7 @@ html.page-white { --glass-tint: 0.035; --glass-sh: 0.5; }
   background: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 55%), var(--glass-tinted), color-mix(in srgb, var(--glass-pg) 76%, transparent);
   box-shadow: var(--glass-edge), var(--glass-shadow);
 }
-/* The menus out of the bars (New document, your avatar's, a project's pages): glass at 90%. (html: over their own sheets'
+/* The menus out of the bars (New document, your avatar's, a document's pages): glass at 90%. (html: over their own sheets'
    look, which come later on the page.) */
 html :is(.erga-new-menu, .erga-tree-card), .erga-bar .erga-account-menu {
   -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border: 0.5px solid rgba(0, 0, 0, 0.07);

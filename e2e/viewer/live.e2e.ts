@@ -65,7 +65,6 @@ journey("a reader's open page shows an agent's change", () => {
     tab.strict = true;
     const made = await runTool(s.root, "create_document", {
       title: "Live read",
-      kind: "project",
       files: { "index.html": FIRST, "second.html": LONG, "style.css": "h1 { color: rgb(200, 0, 0) }" },
     });
     expect(made.ok, made.error).toBe(true);
@@ -174,7 +173,7 @@ journey("a reader's open page shows an agent's change", () => {
 
   /** A document of its own (the first one's viewers hear of a change at most every 2 s), open in the tab at #place. */
   const openOwn = async (title: string, files: Record<string, string>) => {
-    const made = await runTool(s.root, "create_document", { title, kind: "project", files });
+    const made = await runTool(s.root, "create_document", { title, files });
     expect(made.ok, made.error).toBe(true);
     const own = JSON.parse(textOf(made.result)) as { id: string; address: string };
     await page.goto(`${s.root}${own.address}#place`);

@@ -217,12 +217,6 @@ journey("versions in the editor's settings", () => {
     expect(await theirs.eval<boolean>(`!!document.querySelector("#ds-list .ds-restore")`)).toBe(false);
     // Publishing is for those who may edit too: it goes when the settings read the document again.
     await until(() => theirs.eval<boolean>(`document.getElementById("ds-pub").hidden`), 5_000, "the Publishing section goes");
-    // Document or Project: shown, not theirs to change.
-    await until(
-      async () => (await theirs.eval<number>(`document.querySelectorAll('#ds-kind [aria-disabled="true"]').length`)) == 2,
-      5_000,
-      "the kind is locked"
-    );
   });
 
   test("a viewer at the editor's address gets the viewer, with the document as it is; the tools give them no versions, no restore and no publish", async () => {

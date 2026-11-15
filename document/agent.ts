@@ -19,7 +19,6 @@ export interface RenderJob {
   origin: string;
   req: ViewRequest;
 }
-import type { DocKind } from "./pages.ts";
 import type { Sandbox } from "./page-api.ts";
 import type { Room } from "./room.ts";
 import type { RestoreResult, Version, VersionsState } from "./versions.ts";
@@ -71,8 +70,6 @@ export interface SessionOptions {
   docName: string;
   /** A document that's a single file opened from disk: its path (the agent can't make other files). */
   only?: string;
-  /** A document (one page: no other page can be made) or a project (pages), now; a project if not given. */
-  kind?: () => DocKind;
   /** Whether the owner may edit (an agent acts with its user's permissions). */
   canEdit: () => boolean;
   /** Renders the page in the server's browser (view_page, eval_in_page). */

@@ -52,7 +52,7 @@ journey("a new document from the picker", () => {
   const askedGoogle: string[] = [];
   // The picker's root: the page's own document, or the homepage's controls' shadow root when it is served directly.
   const ROOT_OF = `(document.querySelector("erga-controls")?.shadowRoot ?? document)`;
-  const ROWS = ["Document", "Slides", "Canvas", "Project"];
+  const ROWS = ["Document", "Slides", "Canvas", "Site"];
   const picker = () =>
     page.evaluate(`(() => {
       const r = ${ROOT_OF}, menu = r.querySelector(".erga-new-menu");

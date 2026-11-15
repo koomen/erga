@@ -244,7 +244,6 @@ test("an agent's edit lands at once, in one undo step, keeps others' edits, and 
       () => true,
       origin,
       null,
-      () => null,
       cursor
     );
     ada.text().insert(ada.text().length, "<p>Ada's line.</p>\n");

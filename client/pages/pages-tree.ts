@@ -7,12 +7,12 @@
 // viewer nothing.
 //
 // The two places show the same tree: the same rows, in the same order, with the same
-// look and keys. A project's tree shows every file: index.html first (the home page,
+// look and keys. The tree shows every file: index.html first (the home page,
 // which the headline above the tree opens too), then its
 // folders, pages and other files (stylesheets, scripts, images, PDFs: each by its name,
-// opened as itself in a new tab). Only a project has a tree; a document (one page) keeps
-// its files to itself (the document's settings switch between the two). To an agent
-// either is one folder of files. A page shows by its
+// opened as itself in a new tab). The title opens it when the document has more than one
+// page; with one, the title opens its name, whose card has New page. To an agent it is
+// one folder of files. A page shows by its
 // title when known, else by its name made readable ("spring-migration" is
 // "Spring migration"; a folder's index is the folder's name), and its file's
 // name quietly on the right (notes.html), titled or not. Clicking a page opens it,
@@ -26,14 +26,21 @@
 // it (or goes up), Home and End, Enter opens a page or a folder, F2 renames,
 // Delete deletes, and Shift-F10 (or the context-menu key) opens a row's menu.
 
-import { baseName, encodePath, joinPath, pageUrl, parentOf, readable, slugify, type DocKind } from "../../document/pages";
+import { baseName, encodePath, joinPath, pageUrl, parentOf, readable, slugify } from "../../document/pages";
 import { afterPress } from "../common/pressed";
 import { runTool } from "../common/tools";
 import { ICONS, STYLE } from "./pages-tree-style";
 
 export type EntryType = "page" | "folder" | "file";
-export interface Entry { path: string; type: EntryType; title?: string }
-export interface TreeAnswer { entries: Entry[]; canEdit?: boolean; kind?: DocKind }
+export interface Entry {
+  path: string;
+  type: EntryType;
+  title?: string;
+}
+export interface TreeAnswer {
+  entries: Entry[];
+  canEdit?: boolean;
+}
 
 export interface TreeOptions {
   /** The document's id: what the operations name it by. */
@@ -57,9 +64,9 @@ export interface TreeOptions {
   /** Whether a document links to other files by relative paths, where the caller knows: a move may break those (warnMoved). Unknown: assume it does. */
   hasRelativeLinks?: (path: string) => boolean | undefined;
   /** What the server answered last, for a caller that wants it (e.g. to count the pages). */
-  onChange?: (answer: { entries: Entry[]; canEdit: boolean; kind: DocKind }) => void;
+  onChange?: (answer: { entries: Entry[]; canEdit: boolean }) => void;
   /** The tree as the caller last saw it (Documents keeps each one's last answer): shown at once, then read again. */
-  initial?: { entries: Entry[]; canEdit: boolean; kind?: DocKind } | null;
+  initial?: { entries: Entry[]; canEdit: boolean } | null;
   /** Runs an operation (Documents answers ls from what it read ahead); default runTool. */
   run?: <T>(name: string, args: Record<string, unknown>) => Promise<T>;
   /** The label for the tree, for screen readers. */
@@ -89,6 +96,8 @@ export interface TreeHandle {
   retitle(): void;
   /** Focuses the page you're on, else the first row. */
   focus(): void;
+  /** Starts a new page at the top level: its name to type, in place (New page). */
+  newPage(): void;
   destroy(): void;
 }
 
@@ -122,11 +131,6 @@ export const fileName = (typed: string, type: EntryType) => {
   const slug = slugify(name, PAGE_NAME_MAX);
   return type == "page" ? (slug ? `${slug}.html` : "") : typed.trim();
 };
-
-/** Whether an entry shows: in a project, all of them; in a document, only its page. */
-export function shows(n: { type: EntryType; path: string }, kind: DocKind = "project"): boolean {
-  return kind == "project" || n.path == ROOT;
-}
 
 interface Node { path: string; type: EntryType; title?: string; children: Node[] }
 
@@ -186,7 +190,6 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   const query = opts.query ?? "";
   let base = opts.base, rootTitle = opts.rootTitle ?? "", current = opts.current ?? null;
   let entries: Entry[] | null = null, canEdit = false, loadError: string | null = null, banner: string | null = null;
-  let kind: DocKind = "project";
   let tree: Node = buildTree([]);
   // Which folders are open, remembered for this tab.
   const storeKey = `erga:tree:${opts.id}`;
@@ -280,7 +283,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
         stale = true;
         return;
       }
-      set(body.entries ?? [], !!body.canEdit, body.kind);
+      set(body.entries ?? [], !!body.canEdit);
       loadError = null;
     } catch (e) {
       loadError = plain(e);
@@ -295,16 +298,15 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     if (t) { setRoving(t); t.focus(); } else if (!foot.hidden) addPage.focus();
   }
 
-  function set(list: Entry[], edit: boolean, k?: DocKind) {
+  function set(list: Entry[], edit: boolean) {
     entries = list;
     canEdit = edit;
-    if (k) kind = k;
     const all = opts.files?.with(list) ?? list;
     tree = buildTree(all);
     // The page you're on is in view, and each file on its way.
     for (const p of [current, ...all.slice(list.length).map((e) => e.path)])
       if (p) for (let d = parentOf(p); d; d = parentOf(d)) open.add(d);
-    opts.onChange?.({ entries: list, canEdit: edit, kind });
+    opts.onChange?.({ entries: list, canEdit: edit });
   }
 
   /** A change, sent: the tree it answers, or the server's own words for why not (thrown). */
@@ -321,7 +323,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
       const back = (p: string) => (p == op.to ? op.from : p.startsWith(op.to + "/") ? op.from + p.slice(op.to.length) : null);
       next = next.map((e) => { const b = !e.title && back(e.path); return b && was.has(b) ? { ...e, title: was.get(b) } : e; });
     }
-    set(next, body.canEdit ?? canEdit, body.kind);
+    set(next, body.canEdit ?? canEdit);
   }
 
   /** The entries as a change leaves them, to show before the server answers. */
@@ -476,14 +478,14 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   function visible(): [Node, number][] {
     const out: [Node, number][] = [];
     const walk = (list: Node[], depth: number) => {
-      for (const n of sorted(list.filter((n) => shows(n, kind)))) {
+      for (const n of sorted(list)) {
         out.push([n, depth]);
         if (n.type == "folder" && open.has(n.path)) walk(n.children, depth + 1);
       }
     };
     // index.html first, as its own row (the headline above the tree opens it too), then the rest, all at the top level.
     const r = tree.children.find((c) => c.path == ROOT);
-    if (r && shows(r, kind)) out.push([r, 0]);
+    if (r) out.push([r, 0]);
     walk(
       tree.children.filter((c) => c.path != ROOT),
       0
@@ -496,7 +498,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     const want = focusPath ?? had;
     const typing = document.activeElement?.classList.contains("et-input");
     rows.replaceChildren();
-    foot.hidden = !entries || !canEdit || kind == "document";
+    foot.hidden = !entries || !canEdit;
     if (!entries) {
       if (loadError) {
         say(null);
@@ -538,13 +540,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     }
     const peers = list.filter(([n]) => n.path != ROOT).length;
     if (!peers && !editing)
-      rows.append(
-        el(
-          "p",
-          { className: "et-note", style: "--depth: 0" },
-          kind == "document" ? "A document has one page. A project has many." : canEdit ? "No other pages yet." : "No other pages."
-        )
-      );
+      rows.append(el("p", { className: "et-note", style: "--depth: 0" }, canEdit ? "No other pages yet." : "No other pages."));
     // Focus where it was (or on what was just made), unless someone's typing.
     const input = rows.querySelector<HTMLInputElement>(".et-input");
     if (input) {
@@ -752,7 +748,11 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   function moveMenu(anchor: HTMLElement, path: string) {
     const folders: [string, number][] = [];
     const walk = (list: Node[], depth: number) => {
-      for (const c of sorted(list)) if (c.type == "folder" && shows(c, kind) && c.path != path && !c.path.startsWith(path + "/")) { folders.push([c.path, depth]); walk(c.children, depth + 1); }
+      for (const c of sorted(list))
+        if (c.type == "folder" && c.path != path && !c.path.startsWith(path + "/")) {
+          folders.push([c.path, depth]);
+          walk(c.children, depth + 1);
+        }
     };
     walk(tree.children, 1);
     const here = parentOf(path);
@@ -940,7 +940,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   window.addEventListener("scroll", onScroll, true);
   window.addEventListener("resize", () => closeMenu());
 
-  if (opts.initial) set(opts.initial.entries, opts.initial.canEdit, opts.initial.kind);
+  if (opts.initial) set(opts.initial.entries, opts.initial.canEdit);
   render();
   load();
 
@@ -952,6 +952,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     setBase(b) { if (b == base) return; base = b; render(); },
     retitle() { if (!editing) render(); },
     focus: focusFirst,
+    newPage: () => startNew("", "page"),
     destroy() {
       closeMenu();
       document.removeEventListener("pointerdown", outside, true);

@@ -352,12 +352,12 @@ test("server config: the deploy's values, from SERVER_CONFIG", () => {
   expect(() => parseDeployed('{"delete_docs_after_hours": "soon"}')).toThrow(/delete_docs_after_hours to "soon", but it must be a whole number/);
 });
 
-test("search: an admin finds any of the server's documents and projects by title, owner, address or id; nobody else may", async () => {
+test("search: an admin finds any of the server's documents by title, owner, address or id; nobody else may", async () => {
   const dir = fresh({ admins: ["ada"] });
   const ada = { login: "ada", admin: true };
   await dir.users.add(ada, "bo", { role: "user" });
   await dir.add(doc("aaaaaaaa", "Front page", { modified: 10 }));
-  await dir.add(doc("bbbbbbbb", "Garden notes", { owner: "bo", modified: 30, kind: "project" }));
+  await dir.add(doc("bbbbbbbb", "Garden notes", { owner: "bo", modified: 30 }));
   await dir.add(doc("cccccccc", "100% done_now", { owner: "bo", modified: 20 }));
   await dir.add(doc("tttttttt", "Garden test", { test: true }));
   const ids = async (q: string) => (await dir.lists.search(ada, q)).documents.map((d) => d.id);
@@ -373,7 +373,7 @@ test("search: an admin finds any of the server's documents and projects by title
   expect(await ids("0% d")).toEqual(["cccccccc"]);
   expect(await ids("e_n")).toEqual(["cccccccc"]);
   expect(await dir.lists.search(ada, "garden")).toEqual({
-    documents: [{ id: "bbbbbbbb", title: "Garden notes", owner: "bo", address: "/bo/garden-notes", kind: "project" }],
+    documents: [{ id: "bbbbbbbb", title: "Garden notes", owner: "bo", address: "/bo/garden-notes" }],
     total: 1,
   });
   // At most `limit` of them; `total`: all that match.

@@ -15,7 +15,7 @@ import type { Written } from "../document/uploads.ts";
 import type { Writer } from "../document/waits.ts";
 import type { ViewAnswer } from "../document/view.ts";
 import type { CommentAnswer, CommentCall } from "../document/comments.ts";
-import type { DocKind, TreeOp } from "../document/pages.ts";
+import type { TreeOp } from "../document/pages.ts";
 import { VIA } from "../shared/attribution.ts";
 
 /** Who's signed in. */
@@ -63,8 +63,8 @@ export interface Listed {
   role: Role;
   /** How many it's shared with besides its owner (anyone with the link counts as one). */
   shared?: number;
-  /** A document (one page) or a project (pages); missing if its row has none. */
-  kind?: DocKind;
+  /** How many pages it has; null or missing if not counted yet. */
+  pages?: number | null;
 }
 
 /**
@@ -176,7 +176,7 @@ export interface Platform {
       doc: Route,
       files: Record<string, FileData>,
       index: string,
-      opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind; scratch?: boolean }
+      opts: { test?: boolean; expires: number | null; modified?: number; scratch?: boolean }
     ): Promise<boolean>;
     /** A scratch document saved: its host keeps it. False if it has no host. */
     keep(doc: Route): Promise<boolean>;
@@ -200,7 +200,7 @@ export interface Platform {
     version(doc: Route, ref: string): Promise<(Version & { files: string[]; index: string }) | null>;
     /** One file of a version; null if there's no such version or file. */
     versionFile(doc: Route, ref: string, path: string): Promise<Uint8Array | null>;
-    /** Its file tree (pages with titles, files, folders), its latest moves and its kind; null if it has no host. */
+    /** Its file tree (pages with titles, files, folders) and its latest moves; null if it has no host. */
     tree(doc: Route): Promise<TreeState | null>;
     /** A tree operation: the tree after it, or why not. The caller checks the person may edit. */
     treeOp(doc: Route, op: TreeOp): Promise<TreeAnswer>;

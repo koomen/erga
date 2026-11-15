@@ -35,12 +35,7 @@ export function makeHome(platform: Platform): Promise<HomeMade> {
     const files = await platform.landing?.files();
     const index = files?.["index.html"] != null ? "index.html" : null;
     if (!files || !index) return "none";
-    const made = await makeDoc(
-      platform,
-      HOME_OWNER,
-      { ...files },
-      { index, atId: true, uploaded: true, kind: "project", title: HOME_TITLE }
-    );
+    const made = await makeDoc(platform, HOME_OWNER, { ...files }, { index, atId: true, uploaded: true, title: HOME_TITLE });
     if (!made) return "none";
     if (!(await dir.takeHome(made.id))) {
       if (!(await platform.docs.delete(made))) await dir.remove(made.id);

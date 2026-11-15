@@ -19,7 +19,7 @@ import { isBlobRef, storeBlob, TEXT_MAX, type BlobRef } from "./blobs.ts";
 import { files as texts, isTextPath } from "./content.ts";
 import type { DocumentDeps, DocumentInfo, FileData } from "./document.ts";
 import type { Opened } from "./open.ts";
-import { cleanRel, pageRefusal, parentsOf } from "./pages.ts";
+import { cleanRel, parentsOf } from "./pages.ts";
 import { io, NoSuchDocument, type StoreError } from "./room.ts";
 import { KEYS } from "./storage.ts";
 import type { UploadsMessage } from "../shared/room-socket.ts";
@@ -198,11 +198,6 @@ export class Uploads {
     for (const [path, data] of Object.entries(files)) {
       if (info.disk?.only && path != info.index) {
         out.refused.push({ path, why: `this document is the single file ${info.index}` });
-        continue;
-      }
-      const notPage = opened.room.exists(path) ? null : pageRefusal(info.kind ?? "project", path, info.index);
-      if (notPage) {
-        out.refused.push({ path, why: notPage });
         continue;
       }
       // Its kind, decided as it arrives (D5): text if it's a text file's name, UTF-8 and at most TEXT_MAX bytes; else a blob.
@@ -520,10 +515,6 @@ export class Uploads {
     if (at == "folder") return { ok: false, status: 409, error: `There's a folder at ${path}: a file can't take its place.` };
     const inFile = parentsOf(path).find((d) => room.exists(d) == "file");
     if (inFile) return { ok: false, status: 409, error: `${inFile} is a file, so nothing can go inside it.` };
-    const notPage = at
-      ? null
-      : pageRefusal((await this.host.info())?.kind ?? "project", path, (await this.host.info())?.index ?? "index.html");
-    if (notPage) return { ok: false, status: 409, error: notPage };
     const maxGb = (await config.get("max_project_gb")) as number;
     const used = (await this.bytesUsed(opened)) - (at == "file" ? await this.sizeOf(opened, path) : 0);
     if (used + size > maxGb * GB)
@@ -531,7 +522,7 @@ export class Uploads {
         ok: false,
         status: 413,
         limit: { setting: "max_project_gb", value: maxGb, used },
-        error: `The files here have ${megabytes(used)} together: with ${path} (${megabytes(size)}) they'd pass the ${maxGb} GB a project can have (an admin sets it: max_project_gb).`,
+        error: `The files here have ${megabytes(used)} together: with ${path} (${megabytes(size)}) they'd pass the ${maxGb} GB a document can have (an admin sets it: max_project_gb).`,
       };
     return { ok: true, replaced: at == "file" };
   }

@@ -580,7 +580,6 @@ test("the file tools on a document of many pages: ls, new, read, mv, grep and rm
   const t = await p.tools();
   const doc = await t.create({
     title: "Pages test",
-    kind: "project",
     files: SITE,
   });
   const d = t.on(doc.id);

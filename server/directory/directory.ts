@@ -51,7 +51,7 @@ import { Lists } from "./lists.ts";
 import { Requests } from "./requests.ts";
 import { Identities, type SignInProvider, type Vouched } from "./identities.ts";
 import { providerName, SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
-import { isDocKind, SLUG_MAX, slugify, type DocKind } from "../../document/pages.ts";
+import { SLUG_MAX, slugify } from "../../document/pages.ts";
 import { addressOf, HOME_OWNER, HOME_SLUG, NameError, UNTITLED } from "../../document/names.ts";
 import type { Role } from "../../document/access.ts";
 import {
@@ -288,7 +288,7 @@ export class Directory {
       await this.sql.batch([
         ["DELETE FROM slug_history WHERE owner = ?1 AND slug = ?2", owner, slug],
         [
-          `INSERT INTO documents (id, owner, slug, title, title_set, slug_set, created, modified, expires, test, kind, scratch)
+          `INSERT INTO documents (id, owner, slug, title, title_set, slug_set, created, modified, expires, test, pages, scratch)
           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
           doc.id,
           owner,
@@ -300,7 +300,7 @@ export class Directory {
           doc.modified ?? null,
           doc.expires ?? null,
           doc.test ? 1 : 0,
-          doc.kind ?? null,
+          doc.pages ?? null,
           doc.scratch ? 1 : 0,
         ],
         [
@@ -460,11 +460,10 @@ export class Directory {
     for (let n = 2; ; n++) if (!taken.has(`${stem}-${n}`)) return `${stem}-${n}`;
   }
 
-  /** When a document nobody has edited goes, now that it's been put off. */
-  /** Its kind, as its object says (it keeps the kind, and checks it): made a project, or decided as it opened. */
-  async setKind(id: string, kind: DocKind): Promise<void> {
-    await this.sql.run("UPDATE documents SET kind = ?2 WHERE id = ?1", id, kind);
-    await this.docChanged(id);
+  /** Its number of pages, as its object counts them: as it opens, and at each change. */
+  async setPages(id: string, pages: number): Promise<void> {
+    const changed = await this.sql.all("UPDATE documents SET pages = ?2 WHERE id = ?1 AND pages IS NOT ?2 RETURNING id", id, pages);
+    if (changed.length) await this.docChanged(id);
   }
 
   /** A scratch document saved: on its owner's list, and kept. */

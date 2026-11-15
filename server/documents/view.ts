@@ -31,7 +31,6 @@ import type { ViewAnswer } from "../../document/view.ts";
 import type { PageHead } from "../../shared/page-head.ts";
 import { type DocRow, ID, OWNER, roleMay } from "../directory/index.ts";
 import type { Role } from "../../document/access.ts";
-import type { DocKind } from "../../document/pages.ts";
 import { BUILD_HEADER, CHECK_HEADER, pageBuild } from "../live.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { pagesOrigin, pagesToken } from "./pages-origin.ts";
@@ -72,8 +71,8 @@ interface Decision {
   canonical: string;
   /** The document's share counter (document/access.ts): the pass to its files carries it. */
   shares?: number;
-  /** A project (pages: its crumb opens its tree), or not; null if its row doesn't say. */
-  kind?: DocKind | null;
+  /** How many pages the document has (more than one: its crumb opens its tree); null if not counted yet. */
+  pages?: number | null;
   /** The page's head's details (shared/page-head.ts): the tab's title and icon, and a link's preview. */
   head?: PageHead;
   /** A scratch document: when it goes (null: never). */
@@ -218,7 +217,7 @@ async function address(
     }
     const name = row ?? answer.name ?? (await platform.directory.get(id));
     if (!name) return nothing();
-    // A file that isn't a page (style.css, assets/owl.png: a project's tree links to them) opens as itself, on the
+    // A file that isn't a page (style.css, assets/owl.png: a document's tree links to them) opens as itself, on the
     // document's pages origin, where its scripts can't reach the app; the pages origin answers 404 if it isn't there.
     if (answer.file == null && FILE.test(wanted)) {
       const by = platform.adminsOnly ? session.login : null;
@@ -242,7 +241,7 @@ async function address(
       file: answer.file,
       canonical: answer.canonical ?? "",
       shares: answer.shares,
-      kind: row?.kind ?? null,
+      pages: row?.pages ?? null,
       head: answer.head,
       ...(row?.scratch ? { scratch: { expires: row.expires } } : {}),
     };
@@ -381,7 +380,7 @@ async function render(
     // The page follows each change while it's open: for someone signed in in their browser, who may open its room. Not
     // the server's browser (view_page: Session.view): its page stays as it loaded, while the picture is taken.
     ...(session && !session.agent && !session.view ? { live: d.ver } : {}),
-    ...(session && !session.agent && d.kind == "project" ? { project: address } : {}),
+    ...(session && !session.agent ? { tree: { address, many: d.pages != 1 } } : {}),
     ...(canComment && session
       ? {
           commenter: {

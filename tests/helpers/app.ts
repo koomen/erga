@@ -218,7 +218,7 @@ export function server(o: ServerOptions = {}) {
           modified: d.modified ?? d.created,
           role: d.role,
           shared: d.shared,
-          ...(d.kind ? { kind: d.kind } : {}),
+          pages: d.pages,
           ...(d.modified == null && d.expires != null ? { expires: d.expires } : {}),
         })),
       fetch: async (doc, request) => {

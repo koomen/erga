@@ -11,7 +11,7 @@ import { ANYONE, type DocRow, type Grant, NO_WRITE, PAGE_LLM_WHO, type PageLlmWh
 import { forgetDecisions, makeDoc, startingFiles } from "../documents/index.ts";
 import { TEMPLATES, templateById } from "../pages/index.ts";
 import type { FileData } from "../../document/document.ts";
-import { cleanRel, isDocKind, type DocKind } from "../../document/pages.ts";
+import { cleanRel } from "../../document/pages.ts";
 import { byLine } from "../../shared/attribution.ts";
 import {
   ANY_DOCUMENT,
@@ -172,7 +172,6 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
           owner: d.owner,
           role: d.role,
           modified: iso(d.modified),
-          ...(d.kind ? { kind: d.kind } : {}),
           ...(d.expires != null ? { expires: iso(d.expires) } : {}),
           ...(d.path != null ? { onDisk: d.path } : {}),
           ...(d.id == caller.here ? { here: true } : {}),
@@ -202,12 +201,6 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         })
       ),
       from: Schema.optionalKey(str("Without files: a document to copy.")),
-      kind: Schema.optionalKey(
-        Schema.String.annotate({
-          enum: ["document", "project"],
-          description: "document (one page) or project (pages).",
-        })
-      ),
       scratch: bool("Not on the list; deleted delete_docs_after_hours after it's made (a setting), unless saved (save_document)."),
     }),
     run: async (args, caller) => {
@@ -219,7 +212,6 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       let files: Record<string, FileData> = decodeFiles(args.files);
       const uploaded = Object.keys(files).length > 0;
       let index: string;
-      let startKind: DocKind | undefined;
       let from: string | null = null;
       if (uploaded) index = pageOf(files, args.index);
       else {
@@ -233,7 +225,6 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         const start = await startingFiles(platform, from, who, template);
         if (!start) throw new OperationError({ message: "There's nothing there you can copy.", status: 404 });
         ({ files, index } = start);
-        startKind = start.kind;
       }
       if (!(await caller.dir.mayWrite(who.login))) throw new OperationError({ message: NO_WRITE, status: 403 });
       const doc = await makeDoc(platform, who.login.toLowerCase(), files, {
@@ -241,7 +232,6 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         uploaded,
         title: optString(args.title, "title"),
         slug: optString(args.slug, "slug"),
-        kind: isDocKind(args.kind) ? args.kind : startKind,
         scratch,
       });
       if (!doc) throw new OperationError({ message: "Couldn't pick an address for it: try again.", status: 500 });

@@ -82,7 +82,7 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
 
   // On a document's page: the document (its project's pages come first).
   const doc = document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')?.content;
-  type Ls = { title?: string; kind?: string; index?: string; entries?: { type: string; path: string; title?: string; address?: string }[] };
+  type Ls = { title?: string; index?: string; entries?: { type: string; path: string; title?: string; address?: string }[] };
   const read = () =>
     (reading ??= Promise.all([
       doc ? runTool<Ls>("ls", { document: doc }).catch(() => null) : null,
@@ -96,13 +96,12 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
       ),
     ]).then(([ls, docs, pages]) => {
       reading = null;
-      const project = ls?.kind == "project" ? ls : null;
+      // The open document's pages, when it has more than one: its own page first, then as its tree has them.
+      const own = (ls?.entries ?? []).filter((e) => e.type == "page" && e.address);
       entries = [
-        ...(project?.entries ?? [])
-          .filter((e) => e.type == "page" && e.address)
-          // Its home page first, then as its tree has them.
-          .sort((a, b) => Number(b.path == project!.index) - Number(a.path == project!.index))
-          .map((e) => ({ group: `Pages of ${project!.title}`, label: e.title || readable(e.path), path: e.address!, hint: e.address })),
+        ...(own.length > 1 ? own : [])
+          .sort((a, b) => Number(b.path == ls!.index) - Number(a.path == ls!.index))
+          .map((e) => ({ group: `Pages of ${ls!.title}`, label: e.title || readable(e.path), path: e.address!, hint: e.address })),
         ...docs.map((d) => ({ group: "Documents", label: d.title || d.address, path: d.address, hint: d.address })),
         ...pages.map((p) => ({ ...p, hint: p.path })),
       ];

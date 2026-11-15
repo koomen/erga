@@ -152,9 +152,9 @@ export default function docs(c: DocsConfig): void {
       return null;
     }
   };
-  const keep = (id: string, answer: { entries: unknown; canEdit: unknown; kind: unknown }) => {
+  const keep = (id: string, answer: { entries: unknown; canEdit: unknown }) => {
     try {
-      sessionStorage.setItem(keptKey(id), JSON.stringify({ entries: answer.entries, canEdit: answer.canEdit, kind: answer.kind }));
+      sessionStorage.setItem(keptKey(id), JSON.stringify({ entries: answer.entries, canEdit: answer.canEdit }));
     } catch {}
   };
   const openKey = "erga:docs-open";

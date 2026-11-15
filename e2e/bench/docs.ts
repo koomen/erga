@@ -22,11 +22,10 @@ export function lineLength(html: string): number {
   return m ? m[1].replace(/<[^>]*>/g, "").replace(/&[a-z]+;|&#\d+;/g, "x").length : -1;
 }
 
-/** A document kind: its files, and whether it is a project (pages) rather than a document (one page). */
+/** A kind of document for the bench: its name and its files. */
 export interface DocKind {
   name: string;
   files: Record<string, string>;
-  project?: boolean;
 }
 
 const STYLE = `body { font: 17px/1.6 Georgia, serif; max-width: 42rem; margin: 3rem auto; padding: 0 1.25rem; color: #222; }
@@ -72,7 +71,6 @@ export const LARGE: DocKind = { name: "large", files: { "style.css": STYLE, "wid
 /** A project of 30 pages of about 10 kB each: about 300 kB of text, as Pete's largest (erga-designs). Its home page is the small one. */
 export const PROJECT: DocKind = {
   name: "project",
-  project: true,
   files: {
     "style.css": STYLE,
     "widget.js": SCRIPT,
@@ -90,9 +88,9 @@ const newId = () => "b" + Array.from(crypto.getRandomValues(new Uint8Array(7)), 
 const stored = (root: string, id: string, path: string) => `${root}/d/${id}/api/stored/${path}`;
 
 /** Makes a document (POST /new): its id and its address (no ?edit). `from`: a copy of that document. */
-async function make(root: string, from?: string, project = false): Promise<{ id: string; address: string }> {
+async function make(root: string, from?: string): Promise<{ id: string; address: string }> {
   const id = newId();
-  const r = await fetch(`${root}/new?id=${id}${from ? `&from=${from}` : ""}${project ? "&kind=project" : ""}`, {
+  const r = await fetch(`${root}/new?id=${id}${from ? `&from=${from}` : ""}`, {
     method: "POST",
     headers: { Origin: root },
     redirect: "manual",
@@ -114,7 +112,7 @@ export class Docs {
   private source(kind: DocKind): Promise<string> {
     let p = this.sources.get(kind.name);
     if (!p) this.sources.set(kind.name, p = (async () => {
-          const { id } = await make(this.root, undefined, kind.project);
+          const { id } = await make(this.root);
       // index.html last: the page's files are there when it changes.
       for (const [path, text] of Object.entries(kind.files).sort(([a], [b]) => (a == "index.html" ? 1 : b == "index.html" ? -1 : 0))) {
         const r = await fetch(stored(this.root, id, path), { method: "PUT", body: text });

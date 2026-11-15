@@ -16,7 +16,7 @@ import type { DocumentDeps, DocumentInfo } from "./document.ts";
 import type { History } from "./history.ts";
 import { makeHost, type EditorCalls } from "./host.ts";
 import { namingFor, type Naming } from "./names.ts";
-import { titleOf, type DocKind } from "./pages.ts";
+import { titleOf } from "./pages.ts";
 import { FileStore, Room, StateStore, type StoreError } from "./room.ts";
 import { fileStoreOf, RefIndex, stateStoreOf, TimeIndex } from "./storage.ts";
 import { unwait, uploadsNow } from "./uploads.ts";
@@ -63,8 +63,8 @@ export interface RoomHost {
   rememberName(name: DocName): Promise<DocName>;
   /** An agent's write of bytes (uploads.ts). */
   putFile(path: string, bytes: Uint8Array, by: string): Promise<{ kind: "text" | "file"; replaced: boolean }>;
-  kind(): DocKind;
-  setKind(kind: DocKind): Effect.Effect<void, StoreError>;
+  /** Its number of pages changed, or is first counted as it opens. */
+  pagesChanged(pages: number): void;
   /** An edit to the files reached the room, by `author` (null: unknown): `paths`, the files it changed. */
   edited(author: string | null, paths: string[]): void;
 }
@@ -145,8 +145,7 @@ export async function openRoom(h: RoomHost): Promise<Opened> {
     blobs,
     // An agent's write of bytes: as an upload is.
     putFile: (path, bytes, by) => h.putFile(path, bytes, by),
-    kind: () => h.kind(),
-    setKind: (kind) => h.setKind(kind),
+    pagesChanged: (pages) => h.pagesChanged(pages),
   });
   // Every edit to the files, and who made it: a version is cut once a burst of them ends (History.noteEdit).
   room.doc.on("afterTransaction", (tr: Y.Transaction) => {

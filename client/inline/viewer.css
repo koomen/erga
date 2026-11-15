@@ -57,7 +57,7 @@ body:not(.erga-editing.erga-editor-ready) :is(#me, #btn-zoom), body.erga-editing
 @media (max-width: 640px), (max-height: 480px) {
   .erga-view-buttons, .erga-crumbs { position: absolute; }
 }
-/* A project's crumb opens its tree (client/inline/viewer-tree.ts), as the editor's title does (editor.css, .nav-title):
+/* A document's crumb opens its tree, when it has more than one page (client/inline/viewer-tree.ts), as the editor's title does (editor.css, .nav-title):
    the same box, caret and card, so going into the editor and out moves nothing. */
 .erga-crumbs .erga-tree-btn { align-items: center; align-self: center; height: 34px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent;
   color: var(--fg); font: inherit; cursor: pointer; transition: color 150ms ease, background-color 150ms ease; }

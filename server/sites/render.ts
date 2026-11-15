@@ -238,7 +238,7 @@ export function siteHeader(o: {
   const bars = barsHtml({
     session,
     title: null,
-    project: false,
+    tree: false,
     full: false,
     edit: o.edit ? editButton(o.edit, false) : "",
     corner: accountMarkup(o.account, o.here),

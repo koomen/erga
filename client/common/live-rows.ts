@@ -5,7 +5,7 @@
 // which of its person's rows changed, whoever changed them; the page then asks for those rows only (/api/news/rows),
 // and puts each in, in its place, replaces it, or takes it out. Nothing else on the page moves: focus, scroll, an open
 // menu or a half-typed field elsewhere stay as they are, and a row whose field has the focus (or a field beneath it:
-// a project's pages) waits until it hasn't.
+// a document's pages) waits until it hasn't.
 //
 // A hidden tab waits until it shows. A dropped socket comes back by itself and says the last version it heard, so it
 // hears what changed meanwhile. One ask at a time, so a later answer is never older than one before it. The socket's
@@ -149,7 +149,7 @@ async function askOnce(): Promise<void> {
 /** The row's status lines (role="status": "Saved.", an error), as they are: a row replaced keeps what they say. */
 const statuses = (row: Element) => [...row.querySelectorAll<HTMLElement>('[role="status"]')];
 
-/** A row, with what follows it until the next row (a project's pages beneath it). */
+/** A row, with what follows it until the next row (a document's pages beneath it). */
 const group = (row: Element) => {
   const out = [row];
   for (let n = row.nextElementSibling; n && !(n as HTMLElement).dataset.live; n = n.nextElementSibling) out.push(n);
@@ -157,7 +157,7 @@ const group = (row: Element) => {
 };
 
 /**
- * Whether a row, or what belongs to it beneath it (a project's pages), has the focus in a field: someone is typing
+ * Whether a row, or what belongs to it beneath it (a document's pages), has the focus in a field: someone is typing
  * there, and its new state waits. (The row comes in again with what is beneath it: a field there would lose the focus.)
  */
 const typing = (row: Element) => {

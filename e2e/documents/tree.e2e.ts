@@ -582,10 +582,10 @@ const isClosed = (page: Page, id: string) =>
     })
     .toBe(true);
 
-journey("a project on Documents and in the viewer; a document becomes a project and back", () => {
+journey("pages on Documents and in the viewer; a document with one page, then more", () => {
   let page: Page, doc: Doc;
-  /** A project with no other pages yet, and a document (one page): their ids; the document's address. */
-  let none = "",
+  /** A document of two pages (the Project template), and a document of one page: their ids; the second one's address. */
+  let two = "",
     plain = "",
     plainAt = "";
   /** What the list's socket hears. */
@@ -609,7 +609,7 @@ journey("a project on Documents and in the viewer; a document becomes a project 
       const at = ((await fetch(`${s.root}/new${query}`, { redirect: "manual" })).headers.get("location") ?? "").replace(/[?&]edit=?$/, "");
       return { at, id: await idOf(`${s.root}${at}`) };
     };
-    none = (await made("?template=page&kind=project")).id;
+    two = (await made("?template=project")).id;
     ({ at: plainAt, id: plain } = await made("?template=page"));
     await page.setViewportSize({ width: 1100, height: 720 });
     await agentClosed(page);
@@ -618,7 +618,7 @@ journey("a project on Documents and in the viewer; a document becomes a project 
     await page.goto(`${s.root}/documents`);
     // The rows just made come in once more as the page opens: from here they stay.
     await news.caughtUp();
-    // A document's row has no chevron.
+    // A row of one page has no chevron.
     expect(await has(`a.doc[href*="${plainAt}"]`)).toBe(true);
     expect(await has(chevron(plain))).toBe(false);
 
@@ -652,10 +652,10 @@ journey("a project on Documents and in the viewer; a document becomes a project 
     expect(await js(page, `document.querySelector(".erga-account-menu").hidden`)).toBe(true);
   });
 
-  test("the chevron opens and closes a project's pages, twice, and shows which; a project with no other pages says so, with New page and New folder", async () => {
+  test("the chevron opens and closes a document's pages, twice, and shows which, with New page and New folder", async () => {
     for (const [id, ready] of [
       [doc.id, (t: Twist) => t.rows > 0],
-      [none, (t: Twist) => /No other pages yet\./.test(t.text) && /New page/.test(t.text) && /New folder/.test(t.text)],
+      [two, (t: Twist) => /About/.test(t.text) && /New page/.test(t.text) && /New folder/.test(t.text)],
     ] as const) {
       for (let i = 0; i < 2; i++) {
         await isClosed(page, id);
@@ -668,14 +668,14 @@ journey("a project on Documents and in the viewer; a document becomes a project 
   });
 
   test("what is open is kept for the tab across a reload, and still closes; the others stay closed", async () => {
-    await clickOn(page, chevron(none));
-    await isOpen(page, none, () => true);
+    await clickOn(page, chevron(two));
+    await isOpen(page, two, () => true);
     await page.reload();
     await news.caughtUp();
-    await isOpen(page, none, (t) => /No other pages yet\./.test(t.text));
+    await isOpen(page, two, (t) => /About/.test(t.text));
     await isClosed(page, doc.id);
-    await clickOn(page, chevron(none));
-    await isClosed(page, none);
+    await clickOn(page, chevron(two));
+    await isClosed(page, two);
   });
 
   test("Documents shows the project's tree as the editor does: every file, index.html first, each page with its file's name", async () => {
@@ -780,10 +780,9 @@ journey("a project on Documents and in the viewer; a document becomes a project 
     await css.close();
   });
 
-  test("Document or Project in the settings: the title's caret follows the kind at once, in every tab, and after a change from elsewhere", async () => {
+  test("one page: the title opens its name, with no caret; a second page from elsewhere gives it its caret at once, in every tab; one page again takes it away", async () => {
     /** A tree operation from outside the tabs, as an agent's. */
     const op = (o: Record<string, unknown>) => treeOp(s.root, plain, o);
-    // The editor, and a second tab of it: a document's title has no caret, and opens its name.
     await up(page, `${s.root}${plainAt}`);
     await treeUp(page);
     await editorFocused(page);
@@ -797,23 +796,34 @@ journey("a project on Documents and in the viewer; a document becomes a project 
       .toEqual([false, true]);
     await page.keyboard.press("Escape");
 
-    // The settings: Document chosen, not published, and nothing about "Make a project" in the pages.
+    // The settings: not published, and no kind to choose.
     await openSettings();
-    await until(() => has('#ds-kind [data-kind="document"][aria-checked="true"]:not([aria-disabled])'), 5000, "the settings show Document");
     await until(
       () => js(page, `document.getElementById("ds-pub-name").textContent == "Not published"`),
       5000,
       "the settings say Not published"
     );
-    expect(await js(page, `document.querySelector('#ds-kind [data-kind="document"]').dataset.tip`)).toBe(
-      "A document is one page, with its files beside it."
-    );
-    expect(await js(page, `[...document.querySelectorAll("#pages .et-add")].map((b) => b.textContent)`)).not.toContain("Make a project");
+    expect(await js(page, `!!document.querySelector("#doc-settings [role=radiogroup]")`)).toBe(false);
+    await page.keyboard.press("Escape");
 
-    // Project: the caret shows at once here, and in the other tab with no reload; the title opens the pages.
-    await changing(page, () => clickOn(page, '#ds-kind [data-kind="project"]'), "kind");
-    await until(() => has('#ds-kind [data-kind="project"][aria-checked="true"]'), 5000, "the settings show Project");
-    await until(() => caret(), 2000, "the caret shows once the server says so");
+    // The name's card has New page: it opens the pages with a new page's name to type. A second page: the caret, here
+    // and in the other tab with no reload; the title opens the pages.
+    await clickOn(page, "#doc-title");
+    await until(() => js(page, `!document.getElementById("naming").hidden`), 5000, "the name's card opens");
+    expect(await js(page, `document.getElementById("naming-new-page").textContent`)).toBe("New page");
+    await clickOn(page, "#naming-new-page");
+    await until(
+      () =>
+        js(
+          page,
+          `document.getElementById("naming").hidden && !document.getElementById("pages").hidden && document.activeElement?.classList.contains("et-input")`
+        ),
+      5000,
+      "the pages open, with a new page's name to type"
+    );
+    await page.keyboard.type("About");
+    await changing(page, () => page.keyboard.press("Enter"));
+    await until(() => caret(), 5000, "the caret shows with a second page");
     await until(() => caret(other), 5000, "the other tab's caret shows, with no reload");
     await other.close();
     await page.keyboard.press("Escape");
@@ -828,36 +838,14 @@ journey("a project on Documents and in the viewer; a document becomes a project 
       .toBe("New page,New folder");
     await page.keyboard.press("Escape");
 
-    // A second page (from elsewhere): Document can't be chosen, and its tip says why.
-    expect((await changing(page, () => op({ op: "new_page", path: "about" }))).status).toBe(200);
-    await openSettings();
-    await until(
-      () => js(page, `document.querySelector('#ds-kind [data-kind="document"]').getAttribute("aria-disabled") == "true"`),
-      5000,
-      "Document is off with two pages"
-    );
-    expect(await js(page, `document.querySelector('#ds-kind [data-kind="document"]').dataset.tip`)).toBe(
-      "A document has one page. This project has 2: delete the others first."
-    );
-
-    // One page again: Document, and the caret goes at once.
+    // One page again: the caret goes at once; a second page again, for Documents.
     expect((await changing(page, () => op({ op: "delete", path: "about.html" }), "deleted")).status).toBe(200);
-    await until(
-      () => js(page, `!document.querySelector('#ds-kind [data-kind="document"]').hasAttribute("aria-disabled")`),
-      5000,
-      "Document is on again with one page"
-    );
-    await changing(page, () => clickOn(page, '#ds-kind [data-kind="document"]'), "kind");
     await until(async () => !(await caret()), 5000, "the caret goes");
-
-    // From elsewhere (an agent's make_project): the caret comes back with no reload, and the open settings follow.
-    expect((await changing(page, () => op({ op: "make_project" }), "kind")).status).toBe(200);
-    await until(() => caret(), 5000, "the caret shows after a change from elsewhere");
-    await until(() => has('#ds-kind [data-kind="project"][aria-checked="true"]'), 5000, "the open settings follow");
-    await page.keyboard.press("Escape");
+    expect((await changing(page, () => op({ op: "new_page", path: "about" }))).status).toBe(200);
+    await until(() => caret(), 5000, "the caret is back");
   });
 
-  test("New, then Project: a project from the start, its caret shown, and its two pages in the tree", async () => {
+  test("New, then Site: a document of two pages, its caret shown, and both pages in the tree", async () => {
     const from = await page.evaluate(() => location.pathname);
     await clickOn(page, "#btn-new");
     await until(() => js(page, `!document.querySelector(".erga-new-menu").hidden`), 5000, "the New menu opens");
@@ -865,24 +853,21 @@ journey("a project on Documents and in the viewer; a document becomes a project 
     await until(
       () => page.evaluate((f) => location.pathname != f && location.search == "?edit", from),
       10_000,
-      "the new project opens in the editor"
+      "the new document opens in the editor"
     );
     await until(
       () => page.evaluate(() => document.body.classList.contains("erga-editor-ready") && !document.getElementById("doc-title")!.hidden),
       10_000,
       "the editor is up"
     );
-    await until(() => caret(), 5000, "a project's caret shows");
+    await until(() => caret(), 5000, "its caret shows");
     await clickOn(page, "#doc-title");
     await until(async () => [...(await paths(page, "#pages"))].sort().join() == "about.html,index.html", 5000, "both pages in the tree");
   });
 
-  test("on Documents the document that became a project has its chevron, and says Project", async () => {
+  test("on Documents the document that has a second page now has its chevron", async () => {
     await page.goto(`${s.root}/documents`);
-    await until(() => has(chevron(plain)), 5000, "a project's row has its chevron");
-    expect(await js(page, `document.querySelector('${chevron(plain)}').closest(".name").querySelector(".note.kind").textContent`)).toBe(
-      "Project"
-    );
+    await until(() => has(chevron(plain)), 5000, "its row has its chevron");
   });
 });
 
@@ -890,7 +875,6 @@ journey("a project on Documents and in the viewer; a document becomes a project 
 test("editors change the tree, viewers only read it, strangers and other sites get nothing; a token works too", async () => {
   const made = await runTool<{ id: string }>(s.root, "create_document", {
     title: "Pages of the access check",
-    kind: "project",
     files: { "index.html": "<h1>Home</h1>", "blog/post.html": "<h1>A post</h1>", "about.html": "<h1>About</h1>" },
   });
   const id = made.result!.id;

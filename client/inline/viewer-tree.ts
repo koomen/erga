@@ -1,4 +1,4 @@
-// A project's tree in the viewer (server/pages/viewer.ts): its crumb (viewCrumbs) opens the card below it with the
+// A document's tree in the viewer, when it has more than one page (server/pages/viewer.ts): its crumb (viewCrumbs) opens the card below it with the
 // same tree as the editor's crumb and Documents show (client/pages/pages-tree.ts, loaded as pages-tree.js once the page
 // is idle, and read then, so a click opens it whole on the next frame). Pages open in the viewer, files as themselves in a new
 // tab. A click outside, or Escape, closes it. The tree's last answer is kept for the tab (the key Documents and the
@@ -37,7 +37,7 @@ export default function viewerTree(script: string, id: string, base: string, que
     readAt = Date.now();
     runTool("ls", { document: id })
       .then((a) => {
-        if (a?.entries) sessionStorage.setItem(key, JSON.stringify({ entries: a.entries, canEdit: !!a.canEdit, kind: a.kind }));
+        if (a?.entries) sessionStorage.setItem(key, JSON.stringify({ entries: a.entries, canEdit: !!a.canEdit }));
       })
       .catch(() => {
         readAt = 0;
@@ -60,7 +60,7 @@ export default function viewerTree(script: string, id: string, base: string, que
       initial,
       onChange: (a) => {
         try {
-          sessionStorage.setItem(key, JSON.stringify({ entries: a.entries, canEdit: a.canEdit, kind: a.kind }));
+          sessionStorage.setItem(key, JSON.stringify({ entries: a.entries, canEdit: a.canEdit }));
         } catch {}
         tree?.setCurrent(t.pageAt(a.entries, base, window.ergaPageAddress()));
       },

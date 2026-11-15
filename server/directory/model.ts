@@ -1,7 +1,6 @@
 // The directory's words: a document's row and its address's parts, who asks (Who) and what they may do, a
 // permission, and the shapes of an owner and an id. Directory (directory.ts) keeps them in the database.
 
-import { isDocKind, type DocKind } from "../../document/pages.ts";
 import type { Role } from "../../document/access.ts";
 import { randomString } from "../../shared/bytes.ts";
 
@@ -33,8 +32,8 @@ export interface DocRow {
   test: boolean;
   /** A scratch document: off its owner's list, and deleted at `expires` until someone saves it. */
   scratch: boolean;
-  /** A document (one page) or a project (pages); null if its row has none. */
-  kind: DocKind | null;
+  /** How many pages it has, as its object last counted; null if not counted yet. */
+  pages: number | null;
 }
 
 /** A document or project an admin's search finds (Directory.search). */
@@ -45,8 +44,6 @@ export interface DocFound {
   owner: string;
   /** Its canonical address, "/<owner>/<slug>". */
   address: string;
-  /** A document (one page) or a project (pages); a document if its row has none. */
-  kind: DocKind;
 }
 
 /** A role that can be given to someone (a document's owner is who made it, and stays so). */
@@ -139,8 +136,8 @@ export interface NewDoc {
   scratch?: boolean;
   /** A role for anyone signed in who has the link, from the start (local development's documents on disk). */
   everyone?: Grant;
-  /** A document (one page) or a project (pages); left for its object to decide as it opens, if not given. */
-  kind?: DocKind;
+  /** How many pages it starts with; left for its object to count as it opens, if not given. */
+  pages?: number;
 }
 
 /** Where a request's document is: enough to reach its host (named by its id) and decide who may. None of it ever changes. */
@@ -172,7 +169,7 @@ export interface Row {
   expires: number | null;
   test: number;
   scratch?: number;
-  kind?: string | null;
+  pages?: number | null;
 }
 export const fromRow = (r: Row): DocRow => ({
   id: r.id,
@@ -186,5 +183,5 @@ export const fromRow = (r: Row): DocRow => ({
   expires: r.expires == null ? null : Number(r.expires),
   test: !!r.test,
   scratch: !!r.scratch,
-  kind: isDocKind(r.kind) ? r.kind : null,
+  pages: r.pages == null ? null : Number(r.pages),
 });

@@ -85,7 +85,7 @@ test("a fresh database: the deploy's step makes one default homepage, and publis
   expect(isolates.filter((_, i) => said[i * 3] == "made").length).toBe(1);
   const p = isolates[0];
   const doc = (await home(p))!;
-  expect(doc).toMatchObject({ owner: HOME_OWNER, slug: "home", title: "Erga Homepage", kind: "project" });
+  expect(doc).toMatchObject({ owner: HOME_OWNER, slug: "home", title: "Erga Homepage" });
   // The others deleted theirs: one document, one host.
   expect((await sql.all<{ id: string }>("SELECT id FROM documents")).map((r) => r.id)).toEqual([doc.id]);
   expect([...hosts.keys()]).toEqual([doc.id]);

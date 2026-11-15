@@ -69,13 +69,13 @@ const EDIT_GROUP = `<div class="edit-group" id="edit-group"><div class="edit-gro
  * A document's two bars, in the viewer and on a published site, as the editor's and in the same places: erga › Documents ›
  * the document (signed out: erga › the document; a published site: erga), and the buttons with who you are (`corner`).
  * Full screen only where there's a frame to fill the screen (`full`). The editor's own actions (Share, Document
- * settings) are folded into the pencil until someone edits; Clone is the New menu's last item. A project's title opens its pages
+ * settings) are folded into the pencil until someone edits; Clone is the New menu's last item. With more than one page, the title opens them
  * (the card after the bars: client/inline/viewer-tree.ts). An agent sees no breadcrumbs.
  */
 export function barsHtml(o: {
   session: Session | null;
   title: string | null;
-  project: boolean;
+  tree: boolean;
   full: boolean;
   edit: string;
   corner: string;
@@ -84,7 +84,7 @@ export function barsHtml(o: {
 }): string {
   const s = o.session;
   const mine = !!s && !s.agent;
-  const tree = o.project && !!s && o.title != null;
+  const tree = o.tree && !!s && o.title != null;
   const crumb = tree
     ? `<button type="button" class="erga-here erga-tree-btn" aria-expanded="false" aria-controls="erga-tree" aria-label="${esc(o.title ?? "")}: its pages"><span>${esc(o.title ?? "")}</span><svg class="erga-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></button>`
     : `<span class="erga-here" aria-current="page"><span>${esc(o.title ?? "")}</span></span>`;

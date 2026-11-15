@@ -266,7 +266,7 @@ test("ls: every page with its title and address, the folders and the other files
       `${nav('<a href="index.html">Home</a> · <a href="blog/post.html">A post</a>')}\n<h1>About</h1>\n<p>Who made this.</p>`
     ),
   };
-  const made = await overHttp(s, token, "create_document", { title: "Pages test", slug: "site", kind: "project", files });
+  const made = await overHttp(s, token, "create_document", { title: "Pages test", slug: "site", files });
   expect(made.ok, made.text).toBe(true);
   const { id: document, address: a } = made.data as { id: string; address: string };
   const tool = (name: string, args: Record<string, unknown>) => overHttp(s, token, name, { document, ...args });

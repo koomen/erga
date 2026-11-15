@@ -61,16 +61,14 @@ test("a person's agent renames the document open on their page, lists, makes, mo
     origin: "https://erga.test",
   };
   const tools = agentTools(await toolsFor(agent, true), agent);
-  for (const t of ["rename_document", "ls", "new", "mv", "rm", "set_kind", "versions", "restore_version"])
+  for (const t of ["rename_document", "ls", "new", "mv", "rm", "versions", "restore_version"])
     expect(tools.map((x) => x.name)).toContain(toolOf(t)!);
   // Its name, from the directory; a rename moves the address.
   expect(JSON.parse(await ask(tools, "ls")).address).toBe("/ada/files");
   const named = JSON.parse(await ask(tools, "rename_document", { title: "Field notes" }));
   expect([named.title, named.address, named.url]).toEqual(["Field notes", "/ada/field-notes", "https://erga.test/ada/field-notes"]);
   expect((await dir.get("doc12345"))!.title).toBe("Field notes");
-  // A document has one page: a second is refused, saying how; as a project it takes more.
-  await expect(ask(tools, "new", { path: "about" })).rejects.toThrow(/make it a project first/);
-  expect(JSON.parse(await ask(tools, "set_kind", { kind: "project" })).kind).toBe("project");
+  // Any document takes more pages.
   await ask(tools, "new", { path: "about" });
   await ask(tools, "new", { path: "blog/" });
   await ask(tools, "mv", { from: "about.html", to: "blog/about.html" });

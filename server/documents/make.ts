@@ -3,7 +3,7 @@
 
 import * as Effect from "effect/Effect";
 import type { FileData } from "../../document/document.ts";
-import { kindOf, titleOf, type DocKind } from "../../document/pages.ts";
+import { pageCount, titleOf } from "../../document/pages.ts";
 import { type DocRow, ID, newDocId, NO_WRITE, type Who } from "../directory/index.ts";
 import { addressOf, UNTITLED } from "../../document/names.ts";
 import { type Platform, whoOf } from "../platform.ts";
@@ -11,28 +11,31 @@ import { confirmAction, fromThisSite, link, page, signInFirst, type Template, te
 import { esc } from "../../shared/html.ts";
 import { call, ctx, redirect } from "../http.ts";
 
-/** A template's starting files (server/pages/templates.ts: a folder under assets/templates/), its page and its kind; null if this server hasn't them. */
+/** A template's starting files (server/pages/templates.ts: a folder under assets/templates/) and its page; null if this server hasn't them. */
 export function templateFiles(
   platform: Platform,
   template: Template
-): { files: Record<string, string | Uint8Array>; index: string; kind?: DocKind } | null {
+): { files: Record<string, string | Uint8Array>; index: string } | null {
   const files = platform.templates[template.files.slice("assets/templates/".length)];
   if (!files) return null;
   const index = files["index.html"] != null ? "index.html" : null;
-  return index ? { files: { ...files }, index, ...(template.kind ? { kind: template.kind } : {}) } : null;
+  return index ? { files: { ...files }, index } : null;
 }
 
 /**
  * What a new document starts from: a copy of another document by id (one `who` may open), or a template's files
  * (server/pages/templates.ts; the first, a blank page, by default). Null if there's nothing there to copy.
  */
-export async function startingFiles(platform: Platform, from: string | null, who?: Who, template?: Template): Promise<{ files: Record<string, FileData>; index: string; kind?: DocKind } | null> {
+export async function startingFiles(
+  platform: Platform,
+  from: string | null,
+  who?: Who,
+  template?: Template
+): Promise<{ files: Record<string, FileData>; index: string } | null> {
   if (!from) return templateFiles(platform, template ?? TEMPLATES[0]);
   const doc = ID.test(from) && who ? await platform.directory.get(from) : null;
   if (!doc || !who || !(await platform.directory.may(who, "open", doc))) return null;
-  // A copy is the kind its original is (a project with one page stays a project).
-  const snap = await platform.docs.snapshot(doc);
-  return snap && (doc.kind ? { ...snap, kind: doc.kind } : snap);
+  return platform.docs.snapshot(doc);
 }
 
 /** A new document for the signed-in person, at /<login>/<id>: blank, from a template (?template=<id>, server/pages/templates.ts), or a copy of a document (?from=<id>). */
@@ -57,14 +60,12 @@ export const newDoc = Effect.gen(function* () {
   if (!start) return page("Nothing to copy", 'There\'s no document here you can copy. <a href="/new">Make a blank document</a>.', 404);
   const files = start.files,
     index = start.index;
-  // ?kind=project: a project from the start (create_document's kind), else the kind it copies, else from its files.
-  const kind = params.get("kind") == "project" ? "project" as const : start.kind;
   // Local development may name the document (the test suite wants "test" in its address),
   // and say how soon it goes if nobody edits it (?unedited=<ms>, for e2e/documents/list.e2e.ts).
   const dev = platform.dev(url);
   const unedited = (dev && Number(params.get("unedited"))) || undefined;
   const id = wanted && dev && ID.test(wanted) ? wanted : undefined;
-  const made = yield* call(() => makeDoc(platform, session.login.toLowerCase(), files, { id, unedited, index, kind }));
+  const made = yield* call(() => makeDoc(platform, session.login.toLowerCase(), files, { id, unedited, index }));
   if (made) return redirect(withEdit(link(addressOf(made), session)));
   return page("Couldn't make a document", "Something went wrong picking an address. <a href=\"/new\">Try again</a>.", 500);
 });
@@ -86,7 +87,7 @@ export const scratchDoc = Effect.gen(function* () {
   // Local development may say how soon it goes (?unedited=<ms>), to test it.
   const unedited = (platform.dev(url) && Number(url.searchParams.get("unedited"))) || undefined;
   const made = yield* call(() =>
-    makeDoc(platform, session.login.toLowerCase(), start.files, { index: start.index, kind: start.kind, scratch: true, unedited })
+    makeDoc(platform, session.login.toLowerCase(), start.files, { index: start.index, scratch: true, unedited })
   );
   if (made) return redirect(withEdit(link(addressOf(made), session)));
   return page("Couldn't make a document", 'Something went wrong picking an address. <a href="/scratch">Try again</a>.', 500);
@@ -116,12 +117,12 @@ export async function makeDoc(
   const index = opts.index ?? "index.html";
   const page = files[index];
   const pageText = typeof page == "string" ? page : page instanceof Uint8Array ? new TextDecoder().decode(page) : "";
-  // A project if asked, or if its files have more than one page (an uploaded folder); else a document.
-  const kind = opts.kind ?? kindOf(Object.keys(files));
   for (let tries = 0; tries < (opts.id ? 1 : 5); tries++) {
     const id = opts.id ?? newDocId();
     const { doc, added } = await platform.directory.add({
-      id, owner, kind,
+      id,
+      owner,
+      pages: pageCount(Object.keys(files)),
       ...(opts.title?.trim() ? { title: opts.title, titleSet: true } : { title: titleOf(pageText) ?? UNTITLED }),
       // A scratch one's address is its random id until it's saved (save_document); the default homepage's, until it takes /_home.
       ...(opts.scratch || opts.atId ? { slug: id, slugSet: true } : opts.slug?.trim() ? { slug: opts.slug, slugSet: true } : {}),
@@ -134,7 +135,6 @@ export async function makeDoc(
     if (
       await platform.docs.create(doc, files, index, {
         expires,
-        kind,
         ...(opts.uploaded ? { modified: created } : {}),
         ...(opts.scratch ? { scratch: true } : {}),
       })
@@ -153,8 +153,6 @@ export interface MakeOptions {
   unedited?: number;
   /** Its page (index.html if not given). */
   index?: string;
-  /** A document (one page) or a project (pages): from its files if not given (a project if they have more than one page). */
-  kind?: DocKind;
   /** A title (set: it won't follow the page's heading) and slug (set: it won't follow the title). */
   title?: string;
   slug?: string;

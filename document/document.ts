@@ -52,7 +52,7 @@ import { KEYS, type Storage } from "./storage.ts";
 import { assets, files as texts } from "./content.ts";
 import type { RestoreResult, Version, VersionsState } from "./versions.ts";
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "./snapshot.ts";
-import { cleanRel, kindOf, titleOf, type DocKind } from "./pages.ts";
+import { cleanRel, titleOf } from "./pages.ts";
 import { throttle } from "../shared/time.ts";
 import { later } from "./later.ts";
 import { idleStep, RESTING, type Idle, type IdleEvent } from "./idle.ts";
@@ -75,8 +75,6 @@ export interface DocumentInfo {
   name?: DocName;
   /** It has edits no version holds yet: it cuts one as it opens. */
   uncut?: boolean;
-  /** A document (one page) or a project (pages). */
-  kind: DocKind;
   /** A scratch document: it goes at its alarm, edited or not, until someone saves it (keep). */
   scratch?: true;
 }
@@ -100,11 +98,10 @@ export interface DocumentDirectory extends NamesDirectory {
     modified?: number | null;
     expires?: number | null;
     test?: boolean;
-    kind?: DocKind;
     everyone?: "editor";
   }): Promise<{ doc: NamedRow }>;
   edited(id: string, at: { modified: number | null; pageTitle: string | null }): Promise<{ doc: NamedRow; renamed: boolean } | null>;
-  setKind(id: string, kind: DocKind): Promise<void>;
+  setPages(id: string, pages: number): Promise<void>;
   setExpires(id: string, expires: number | null): Promise<void>;
   /** A scratch document saved: on its owner's list, and kept. */
   keep(id: string): Promise<void>;
@@ -433,7 +430,7 @@ export class Document {
     id: string,
     files: Record<string, FileData>,
     index: string,
-    opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind; scratch?: boolean }
+    opts: { test?: boolean; expires: number | null; modified?: number; scratch?: boolean }
   ): Effect.Effect<boolean, StoreError> {
     const self = this;
     return Effect.gen(function* () {
@@ -450,14 +447,11 @@ export class Document {
         else entries.push([FILE + path, data]);
       }
       for (let i = 0; i < entries.length; i += 128) yield* io(() => self.storage.put(Object.fromEntries(entries.slice(i, i + 128))));
-      // A project if asked, or if its files have more than one page; else a document.
-      const kind = opts.kind ?? kindOf(Object.keys(files));
       const info: DocumentInfo = {
         id,
         owner: owner.toLowerCase(),
         index,
         created: Date.now(),
-        kind,
         ...(opts.modified ? { modified: opts.modified } : {}),
         ...(opts.test ? { test: true } : {}),
         ...(opts.scratch ? { scratch: true as const } : {}),
@@ -482,28 +476,14 @@ export class Document {
    */
   link(owner: string, id: string, index: string, disk: OnDisk): Effect.Effect<NamedRow, StoreError> {
     return io(async () => {
-      // A single file is a document; a folder a project (it may hold pages).
       await this.updateInfo((info) =>
-        info
-          ? { ...info, index, disk }
-          : { id, owner: owner.toLowerCase(), index, created: Date.now(), disk, kind: disk.only ? "document" : "project" }
+        info ? { ...info, index, disk } : { id, owner: owner.toLowerCase(), index, created: Date.now(), disk }
       );
       await this.storage.deleteAlarm();
       return (await this.addRow())!;
     });
   }
 
-  /**
-   * Changes the document's kind (the switch in the document's settings, or an agent: make_project, make_document):
-   * a project may have more pages, a document one. The tree's operation checks a project has one page before it
-   * becomes a document. Kept here, where the rule is checked, and in its row, which the documents list reads.
-   */
-  setKind(kind: DocKind): Effect.Effect<void, StoreError> {
-    return io(async () => {
-      const info = await this.updateInfo((info) => (info && info.kind != kind ? { ...info, kind } : info));
-      if (info) await this.directory.setKind(info.id, kind);
-    });
-  }
 
   /** A page's text in the room (opened if it isn't), or null: a comment's quote finds its place there. */
   async roomText(path: string) {
@@ -574,7 +554,7 @@ export class Document {
       ...(info.test ? { slug: info.id, slugSet: true } : info.disk ? { slug: info.disk.slug, slugSet: true } : {}),
       created: info.created, modified: info.modified ?? null,
       expires: info.modified || info.test || info.disk ? null : (await this.storage.getAlarm()),
-      test: info.test, kind: info.kind,
+      test: info.test,
       ...(info.disk ? { everyone: "editor" as const } : {}),
     });
     return doc;
@@ -1025,8 +1005,8 @@ export class Document {
       readInfo: () => this.readInfo(),
       rememberName: (name) => this.rememberName(name),
       putFile: (path, bytes, by) => this.uploads.putFile(path, bytes, by),
-      kind: () => this.info?.kind ?? "project",
-      setKind: (kind) => this.setKind(kind),
+      // Its number of pages, as it opens and at each change: the documents list and the viewer read it.
+      pagesChanged: (pages) => this.deps.background(this.directory.setPages(info.id, pages)),
       edited: (author, paths) => {
         this.lastAuthor = author;
         this.views.changed(paths);

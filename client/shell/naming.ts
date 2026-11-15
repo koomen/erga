@@ -30,7 +30,7 @@ export function mountNaming(shell: Shell) {
     shell.docName = n;
     $("doc-title-text").textContent = n.title;
     titleBtn.hidden = false;
-    titleBtn.setAttribute("aria-label", shell.docKind == "project" ? `${n.title}: its pages` : `${n.title}: rename`);
+    titleBtn.setAttribute("aria-label", shell.pages > 1 ? `${n.title}: its pages` : `${n.title}: rename`);
     titleBtn.title = `${location.host}${n.address}`;
     // The tab's title is the page's own, if it has one (client/inline/viewer-nav.ts); else the document's.
     document.querySelector<HTMLMetaElement>('meta[name="erga-title"]')?.setAttribute("content", n.title);
@@ -74,23 +74,33 @@ export function mountNaming(shell: Shell) {
     titleIn.focus();
     titleIn.select();
   }
-  // A project's title opens its pages; a document's (one page: nothing to open) its name, to rename it.
-  titleBtn.addEventListener("click", () => (!naming.hidden ? toggleNaming(false) : shell.docKind == "project" ? togglePages() : toggleNaming(true)));
+  // With more than one page, the title opens them; with one (nothing to open), its name, to rename it.
+  titleBtn.addEventListener("click", () => (!naming.hidden ? toggleNaming(false) : shell.pages > 1 ? togglePages() : toggleNaming(true)));
   /**
-   * The kind as the host says it now (the hello, or a "tree" event: the settings' switch in any tab, or an agent):
-   * a project's title has the caret and opens its pages, a document's has none. At once, with no reload.
+   * How many pages the host says it has now (the hello, or a "tree" event: a page made or deleted in any tab, or by an
+   * agent): with more than one, the title has the caret and opens them. At once, with no reload.
    */
-  function applyKind(kind: "document" | "project" | undefined) {
-    if (!kind) return;
-    shell.docKind = kind;
-    const project = kind == "project";
-    titleBtn.classList.toggle("project", project);
-    titleBtn.setAttribute("aria-controls", project ? "pages" : "naming");
-    if (shell.docName) titleBtn.setAttribute("aria-label", project ? `${shell.docName.title}: its pages` : `${shell.docName.title}: rename`);
-    if (!project && !pagesCard.hidden) togglePages(false);
+  function setPages(pages: number) {
+    shell.pages = pages;
+    const many = pages > 1;
+    titleBtn.classList.toggle("pages", many);
+    titleBtn.setAttribute("aria-controls", many ? "pages" : "naming");
+    if (shell.docName) titleBtn.setAttribute("aria-label", many ? `${shell.docName.title}: its pages` : `${shell.docName.title}: rename`);
   }
-  applyKind(shell.docKind);
+  setPages(shell.pages);
   $("naming-cancel").addEventListener("click", () => toggleNaming(false));
+  // New page: the pages open, with a new page's name to type in the tree. Only where pages can be made (an editor's, not a
+  // single file opened from disk).
+  const newPageFoot = $("naming-new-page").parentElement!;
+  newPageFoot.hidden = !shell.canMakePages;
+  $("naming-new-page").addEventListener("click", () => {
+    toggleNaming(false);
+    togglePages(true);
+    prepareTree().then(
+      (t) => t.newPage(),
+      () => {}
+    );
+  });
   // An address that follows the title follows it here too, until it's typed in.
   titleIn.addEventListener("input", () => { if (!shell.docName!.slugSet && !slugTouched) slugIn.value = slugify(titleIn.value) || shell.docName!.slug; namingHint(); });
   slugIn.addEventListener("input", () => { slugTouched = true; namingHint(); });
@@ -147,8 +157,20 @@ export function mountNaming(shell: Shell) {
       }
     ));
   const keptKey = () => `erga:docs-tree:${shell.docName!.id}`;
-  const kept = () => { try { return JSON.parse(sessionStorage.getItem(keptKey()) || "null") as Parameters<typeof mountTree>[1]["initial"]; } catch { return null; } };
-  const keep = (a: { entries: unknown[]; canEdit: boolean; kind: string }) => { try { sessionStorage.setItem(keptKey(), JSON.stringify({ entries: a.entries, canEdit: a.canEdit, kind: a.kind })); } catch { /* private mode */ } };
+  const kept = () => {
+    try {
+      return JSON.parse(sessionStorage.getItem(keptKey()) || "null") as Parameters<typeof mountTree>[1]["initial"];
+    } catch {
+      return null;
+    }
+  };
+  const keep = (a: { entries: unknown[]; canEdit: boolean }) => {
+    try {
+      sessionStorage.setItem(keptKey(), JSON.stringify({ entries: a.entries, canEdit: a.canEdit }));
+    } catch {
+      /* private mode */
+    }
+  };
   /** The tree, mounted (closed or open) once its script is in: what opening it waits for, if anything. */
   let treeReady: Promise<TreeHandle> | null = null;
   const slot = $("pages-tree");
@@ -207,8 +229,7 @@ export function mountNaming(shell: Shell) {
   }
   function togglePages(force?: boolean) {
     const open = typeof force == "boolean" ? force : pagesCard.hidden;
-    // A document has one page: no pages to open.
-    if (open && (!shell.docName || shell.docKind != "project")) return;
+    if (open && !shell.docName) return;
     if (open != pagesCard.hidden) return;
     pagesCard.hidden = !open;
     titleBtn.setAttribute("aria-expanded", String(open || !naming.hidden));
@@ -241,7 +262,7 @@ export function mountNaming(shell: Shell) {
   if ((reopen || new URLSearchParams(location.search).has("pages")) && shell.editor.state.editing)
     requestAnimationFrame(() => togglePages(true));
   pagesCard.addEventListener("keydown", (e) => { if (e.key == "Escape" && !e.defaultPrevented) { e.preventDefault(); togglePages(false); titleBtn.focus(); } });
-  return { showName, viewHref, toggleNaming, togglePages, applyKind, tree: () => tree };
+  return { showName, viewHref, toggleNaming, togglePages, setPages, tree: () => tree };
 }
 
 export type Naming = ReturnType<typeof mountNaming>;

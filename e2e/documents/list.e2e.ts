@@ -151,7 +151,6 @@ journey("a person's documents", () => {
   // moved the name 12 px right and made the row taller.
   test("a document's name lines up with a project's, and the rows have the same height", async () => {
     await make("A project", {
-      kind: "project",
       files: { "index.html": "<h1>Home</h1>", "plans/roadmap.html": "<title>Road map</title><h1>Road map</h1>" },
     }).then((d) => (project = d.address));
     await make("Tax notes", { slug: "money-plan" });

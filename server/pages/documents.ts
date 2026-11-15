@@ -38,9 +38,10 @@ export function docRow(session: Session, d: Listed, now: number, hours: number |
   const when = new Date(d.modified).toISOString();
   // One opened from disk only comes off the list: its files stay where they are.
   const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
-  // A project's row opens to its pages (the chevron); a document has one page, so its row has none (one from
-  // before kinds that hasn't opened since has it, as before).
-  const twist = d.kind == "document" ? `<span class="twist none" aria-hidden="true"></span>`
+  // A row with more than one page opens to them (the chevron); one with one page has none (one not counted yet has it).
+  const twist =
+    d.pages == 1
+      ? `<span class="twist none" aria-hidden="true"></span>`
       : `<button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="${esc(addressOf(d))}" data-title="${esc(d.title)}"${d.role == "owner" || d.role == "editor" ? " data-edit" : ""}>${ICON.chevron}</button>`;
   // Archive (Unarchive on /documents/archived): each person's own, on their permission; the default homepage has none of theirs.
   const [op, tip] = archived ? ["unarchive_document", "Unarchive"] : ["archive_document", "Archive"];
@@ -50,7 +51,7 @@ export function docRow(session: Session, d: Listed, now: number, hours: number |
       : `<button type="button" class="act archive" aria-label="${tip} ${esc(d.title)}" data-tip="${tip}" data-op="${op}" data-id="${esc(d.id)}">${archived ? ICON.unarchive : ICON.archive}</button>`;
   // The whole row opens the document (the link stretches over it); its buttons sit on top.
   return `  <li data-live="doc:${esc(d.id)}" data-sort="${d.modified}">
-    <div class="name">${twist}<a class="doc" href="${esc(withEdit(link(addressOf(d), session)))}"><span class="title">${esc(d.title)}</span></a>${d.kind == "project" ? `<span class="note kind" title="A folder of pages, each with its own address">Project</span>` : ""}${note}${mine ? sharedNote(d) : ""}</div>
+    <div class="name">${twist}<a class="doc" href="${esc(withEdit(link(addressOf(d), session)))}"><span class="title">${esc(d.title)}</span></a>${note}${mine ? sharedNote(d) : ""}</div>
     <time datetime="${when}">${timeAgo(d.modified, now, "en-US", "UTC")}</time>
     <div class="acts">${archive}${
       mine

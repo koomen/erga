@@ -52,7 +52,7 @@ export function mountRoom(shell: Shell) {
       moved?: { from: string; to: string };
       deleted?: string;
       path?: string;
-      kind?: "document" | "project";
+      pages?: number;
     };
     if (msg.type == "hello") {
       const h = m as Hello;
@@ -65,7 +65,7 @@ export function mountRoom(shell: Shell) {
         shell.docSettings?.event("tree");
       }
       greeted = true;
-      shell.naming.applyKind(h.tree.kind);
+      shell.naming.setPages(h.tree.pages);
       stillHere(h.tree);
     }
     // Your agent's changes to this document (its tools run here, as your agent): Undo's count in its panel.
@@ -75,7 +75,11 @@ export function mountRoom(shell: Shell) {
     else if (msg.type == "versions" || msg.type == "publishing") shell.docSettings?.event(msg.type);
     else if (msg.type == "access") shell.sharing?.accessChanged();
     else if (msg.type == "uploads") shell.uploads.heard((m as unknown as UploadsMessage).files);
-    else if (msg.type == "tree") { shell.naming.applyKind(msg.kind); treeChanged(msg); shell.docSettings?.event("tree"); }
+    else if (msg.type == "tree") {
+      if (msg.pages != null) shell.naming.setPages(msg.pages);
+      treeChanged(msg);
+      shell.docSettings?.event("tree");
+    }
     // Your agent (or an external one, as you) opened another page: go there (open_page).
     else if (msg.type == "open" && msg.path && msg.path != shell.pagePath) shell.openPage(msg.path);
   }

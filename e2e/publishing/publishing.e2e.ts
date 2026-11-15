@@ -729,7 +729,7 @@ journey("the Erga domain", () => {
     );
   });
 
-  test("an admin renames the default homepage in the breadcrumb: its address stays /_home, and the title stays after a reload", async ({
+  test("an admin renames the default homepage in its title card: its address stays /_home, and the title stays after a reload", async ({
     tab,
   }) => {
     const page = tab.page;
@@ -762,16 +762,8 @@ journey("the Erga domain", () => {
     await agentClosed(page);
     await page.goto(`${main.root}/_home?edit`);
     await editorUp();
+    // One page: the title opens its name.
     await clickOn("#doc-title");
-    await until(
-      () => js(`!document.getElementById("pages").hidden && !!document.querySelector(${JSON.stringify(indexRow)})`),
-      5_000,
-      "the pages show"
-    );
-    // index.html is the page at /_home.
-    expect(await js<string>(`document.querySelector(${JSON.stringify(`${indexRow} .et-name`)}).getAttribute("href")`)).toBe("/_home?edit");
-    await clickOn(indexRow);
-    await clickOn(`${indexRow} [data-act="rename"]`);
     await until(
       () => js(`!document.getElementById("naming").hidden && document.activeElement.id == "naming-title"`),
       5_000,
@@ -789,9 +781,10 @@ journey("the Erga domain", () => {
     await page.reload();
     await until(async () => (await title().catch(() => "")) == "Our homepage", 10_000, "the title stays after a reload");
     await editorUp();
-    await clickOn("#doc-title");
+    // index.html, in the tree, is the page at /_home, named by the title.
     const name = () => js<string | undefined>(`document.querySelector(${JSON.stringify(`${indexRow} .et-name`)})?.textContent`);
     await until(async () => (await name()) == "Our homepage", 5_000, "the pages name the default homepage by its title", name);
+    expect(await js<string>(`document.querySelector(${JSON.stringify(`${indexRow} .et-name`)}).getAttribute("href")`)).toBe("/_home?edit");
   });
 
   test("signed out, / has Clone and Sign in with its menu, and no Edit", async ({ tab }) => {

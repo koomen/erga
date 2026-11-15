@@ -96,7 +96,8 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     source: null,
     docSettings: null,
     docName: null,
-    docKind: "project",
+    pages: 1,
+    canMakePages: false,
   } as Partial<Shell> as Shell;
   /** Editing (shell.editor: once it's mounted). */
   const editing = () => shell.editor.state.editing;
@@ -163,7 +164,8 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
   const first = await awaitHello(collab.hello, missing);
   if (!first) return;
   shell.info = first.info;
-  shell.docKind = first.tree.kind ?? "project";
+  shell.pages = first.tree.pages;
+  shell.canMakePages = first.tree.canEdit;
   performance.mark("erga:hello");
 
   // Which of the document's pages the editor holds: the one the viewer shows (the meta erga-page, which

@@ -132,8 +132,12 @@ export function viewerPage(o: {
   live?: string;
   /** Someone who may comment and not edit: who they are, for the comments on the page (client/inline/viewer-comment.ts). */
   commenter?: { user: string; name: string; color: string; avatar?: string };
-  /** A project's address, for someone signed in: its crumb opens its tree (client/inline/viewer-tree.ts). */
-  project?: string;
+  /**
+   * For someone signed in: the document's address, and whether it has more than one page (its crumb opens its tree:
+   * client/inline/viewer-tree.ts). The tree's script is there either way: the page's build (server/live.ts) is its
+   * scripts, and a page made or deleted must not reload an open editor.
+   */
+  tree?: { address: string; many: boolean };
   /** A scratch document, for its owner, who may save it: unsaved, it goes `hours` after it's made (null: never). */
   scratch?: { hours: number | null };
 }): { before: string; after: string } {
@@ -171,14 +175,14 @@ ${o.meta}<script>${framesScript(o.pages)}</script><script>${REFUSED_SCRIPT}</scr
   const bars = barsHtml({
     session,
     title: o.title,
-    project: !!o.project,
+    tree: !!o.tree?.many,
     full: true,
     edit: o.edit,
     corner: o.corner,
     editor: o.editable,
   });
   const after = `
-${editing ? "" : opening + editingBody}${bars}${o.editable ? RESTORE_BARS : ""}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}"><script>${inlineCall("viewer-live", `/d/${o.docId}`)}</script>` : ""}${o.commenter ? `<script>${inlineCall("viewer-comment", `/d/${o.docId}`, o.commenter)}</script>` : ""}${o.project && session ? `<meta name="erga-title" content="${esc(o.title)}"><script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
+${editing ? "" : opening + editingBody}${bars}${o.editable ? RESTORE_BARS : ""}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}"><script>${inlineCall("viewer-live", `/d/${o.docId}`)}</script>` : ""}${o.commenter ? `<script>${inlineCall("viewer-comment", `/d/${o.docId}`, o.commenter)}</script>` : ""}${o.tree && session ? `<meta name="erga-title" content="${esc(o.title)}"><script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.tree.address, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
 `;
   return { before, after };
 }

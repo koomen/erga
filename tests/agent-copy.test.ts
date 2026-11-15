@@ -35,7 +35,6 @@ test("Pete's task in three calls: the notes to notes.html, the deck and its imag
   // The presentation, a document with an image; the project, its notes as its page and an old copy of the slides.
   await ok("write", { document: deck, path: "index.html", content: DECK });
   await ok("write", { document: deck, path: "shots/one.png", content_base64: PNG });
-  await ok("set_kind", { document: project, kind: "project" });
   await ok("write", { document: project, path: "index.html", content: NOTES });
   await ok("write", { document: project, path: "slides.html", content: DECK.replace("First frame", "An old first frame") });
 
@@ -76,7 +75,7 @@ test("the deck copied over a project's page: the project's title follows the dec
   const { p, ok } = await agent(server(), "Title test");
   const deck = await p.make();
   await ok("write", { document: deck, path: "index.html", content: DECK });
-  const project = JSON.parse((await ok("create_document", { kind: "project", files: { "index.html": NOTES } })).text).id as string;
+  const project = JSON.parse((await ok("create_document", { files: { "index.html": NOTES } })).text).id as string;
   expect(JSON.parse((await ok("ls", { document: project })).text).title).toBe("Speaker notes");
   await ok("cp", { document: deck, from: ".", to: ".", to_document: project });
   await until(async () => JSON.parse((await ok("ls", { document: project })).text).title == "Glide");

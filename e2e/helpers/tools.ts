@@ -14,8 +14,6 @@ const TREE_TOOLS: Record<string, (args: Record<string, unknown>) => [string, Rec
   new_folder: (a) => ["new", { ...a, path: `${a.path}/` }],
   move: (a) => ["mv", a],
   delete: (a) => ["rm", a],
-  make_project: (a) => ["set_kind", { ...a, kind: "project" }],
-  make_document: (a) => ["set_kind", { ...a, kind: "document" }],
 };
 
 /** A page tree's change, as the tree makes it: { op: "new_page", path } runs new, and so on. */
