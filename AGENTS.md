@@ -11,8 +11,7 @@ feature branch for each task, in a work folder of its own
 only `bun erga` moves `staging` and `main`, when Pete asks. There are no
 pull requests.
 
-Pete works with [herdr-core](https://github.com/herdrdev/herdr-core), in
-this way:
+Pete works with [herdr-core](https://github.com/herdrdev/herdr-core):
 
 1. Pete talks to one manager agent. The manager does not write code.
 2. For each task, the manager makes a work folder (`bun erga start <task>`)
@@ -31,8 +30,7 @@ this way:
    ten words at most, with no body: what the whole task does.
 6. When a task's commit is on production (`bun erga deploy <host>`), the
    manager retires the task's agent, and `bun erga clean` removes its
-   folder. Until then the agent stays: it knows its task if the merge or
-   staging shows a problem.
+   folder. Until then the agent stays: it knows its task.
 
 ## Testing as the user
 
@@ -42,8 +40,8 @@ with requests.
 
 1. While you build, check your work by hand as the user would. For the
    editor, press real keys and look at the screenshot:
-   `bun run look 'type:- Milk' Enter Tab` (`--help` has the steps). A
-   passing test alone is not proof.
+   `bun run look 'type:- Milk' Enter Tab`. A passing test alone is not
+   proof.
 2. One suite, `bun run test`: under 60 seconds (`e2e/COVERAGE.md`). While
    you work: `bun run check` (5 seconds, loose).
 3. A reported bug becomes a failing test first, with the person's exact
@@ -52,12 +50,10 @@ with requests.
 4. A journey drives the page with real keys and checks what the page
    shows. Logic without a page is a unit test. A bug that stays keeps the
    mark `knownBug`.
-5. A passing local test, even one that fakes staging, is not proof that a
-   fix works on staging. Run the real flow there, end to end. If you need
+5. A passing local test is not proof that a fix works on staging. Run the real flow there, end to end. If you need
    an admin credential you don't have, say so.
 
-Tests run with no model in the loop. The suite never grows past its
-minute: a new check replaces a weaker one.
+Tests run with no model in the loop. A new check replaces a weaker one.
 
 ## Rules
 
@@ -95,6 +91,10 @@ minute: a new check replaces a weaker one.
    decides stays apart from IO, so it tests without servers or browsers.
 9. **Report what you observed**, never what you assumed. Do not change
    documented behavior silently.
+10. **Nothing specific to one organization.** The repository is public,
+    and organizations deploy their own Erga from it. Commit no
+    organization's name, domains, sign-in, IDs or work addresses, not even
+    in tests (use example.com). Erga's own hosts are the exception.
 
 Tests hold the other rules, and a failed one says what to do: the layers
 (`tests/imports.test.ts`), migrations that only add
@@ -109,9 +109,8 @@ A trap does not go in this file: it stays under 1,300 words
 (`tests/file-size.test.ts`). When a mistake costs a loop:
 
 1. Make a script or a test refuse it. `dev/guard.ts` refuses an agent's
-   shell command before it runs (a plain `git push`, `pkill`, `rm` with a
-   bare `$VAR`, a link to `node_modules`). `bun erga push` and
-   `bun run test` refuse the rest (`tests/test-habits.test.ts`).
+   shell command before it runs. `bun erga push` and `bun run test`
+   refuse the rest (`tests/test-habits.test.ts`).
 2. If no script can, write it in the comment at the top of the file that
    it is about, with the word "Trap:". Read that comment before you change
    a file.
