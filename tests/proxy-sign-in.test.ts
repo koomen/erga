@@ -432,7 +432,8 @@ test("an organization's sign-in with the address after a prefix in preferred_use
     emails: [{ email: "grace@example.com", verified: true }],
     groups: [],
   });
-  // Only that claim, only after that prefix, only an address: else refused, with what the sign-in gave.
+  // Only that claim, only after that prefix, only an address: else refused, with the names of the claims the sign-in
+  // sent (never their values), so the admin sees which claim to name.
   for (const claims of [
     { sub: "s", preferred_username: "grace@example.com" },
     { sub: "s", preferred_username: "other|grace@example.com" },
@@ -440,8 +441,14 @@ test("an organization's sign-in with the address after a prefix in preferred_use
     { sub: "s", email: "grace@example.com", email_verified: "true" },
   ])
     expect(await readProxy(await headerFor(claims), CORP, { key })).toEqual({
-      refused: 'Your organization\'s sign-in gave no email address in preferred_username after "corp|".',
+      refused: `Your organization's sign-in gave no email address in preferred_username after "corp|". It sent the claims ${Object.keys(claims).join(", ")}.`,
     });
+  // The claims as AWS's proxy sends them: the sign-in's user info, then its own exp and iss.
+  const wrong = { ...CORP, email: { claim: "email", prefix: "" } } satisfies Proxy;
+  expect(await readProxy(await headerFor(grace), wrong, { key })).toEqual({
+    refused:
+      'Your organization\'s sign-in gave no email address in email after "". It sent the claims sub, preferred_username, username, exp, iss.',
+  });
 
   // An admin adds a user by email: at the first sign-in, that user is the one who waits.
   const { platform, directory, firstAdmin } = server(CORP);
@@ -455,7 +462,11 @@ test("an organization's sign-in with the address after a prefix in preferred_use
     platform
   );
   expect(refused.status).toBe(403);
-  expect(await refused.text()).toContain("email address in preferred_username after &quot;corp|&quot;. Tell your Erga admin.");
+  const shown = await refused.text();
+  expect(shown).toContain(
+    "email address in preferred_username after &quot;corp|&quot;. It sent the claims sub, preferred_username. Tell your Erga admin."
+  );
+  expect(shown).not.toContain("grace");
 });
 
 test("the OAuth mode (no PROXY_SIGN_IN): /auth/proxy is nothing and GitHub's way is open", async () => {

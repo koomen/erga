@@ -230,7 +230,7 @@ export interface Refused {
  * The `email` claim's is verified when the proxy's kind says so, and `upn`'s is (a directory gives it); never
  * `preferred_username`'s, which a user may choose: it names them, and matches nobody an admin added. Without an
  * address, `handle` is "": the `sub` is never a name. A proxy that names the claim (`email`): only there, after its
- * prefix, verified; else Refused.
+ * prefix, verified; else Refused, with the names of the claims the sign-in sent.
  */
 export function vouchedOf(claims: Record<string, unknown>, proxy: Proxy): Vouched | Refused | null {
   const text = (claim: string) => (typeof claims[claim] == "string" ? claims[claim].trim() : "");
@@ -240,7 +240,11 @@ export function vouchedOf(claims: Record<string, unknown>, proxy: Proxy): Vouche
   if (proxy.kind == "aws-alb" && proxy.email) {
     const { claim, prefix } = proxy.email;
     const email = text(claim).startsWith(prefix) ? text(claim).slice(prefix.length).toLowerCase() : "";
-    if (!EMAIL.test(email)) return { refused: `Your organization's sign-in gave no email address in ${claim} after "${prefix}".` };
+    // The claims' names only, never their values: they show the admin which claim to name.
+    if (!EMAIL.test(email))
+      return {
+        refused: `Your organization's sign-in gave no email address in ${claim} after "${prefix}". It sent the claims ${Object.keys(claims).join(", ")}.`,
+      };
     return { provider: "proxy", subject, handle: email, name, emails: [{ email, verified: true }], groups: [] };
   }
   const claim = EMAIL_CLAIMS.find((c) => EMAIL.test(text(c)));

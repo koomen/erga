@@ -46,16 +46,20 @@ git. Give your coding agent this prompt:
         (its callback: `https://<address>/oauth2/idpresponse`). Which claim
         gives the email address, after what prefix? Not the `email` claim:
         `--email-claim <claim>:<prefix>` (`preferred_username:corp|`).
+        If the user doesn't know, find it without a change: the user pool's
+        identity provider attribute mapping, or how their other apps behind
+        the same sign-in read `x-amzn-oidc-data`. Never guess.
    6. AWS without single sign-on: a second Route 53 domain, not the
       address's, for the documents' pages.
-3. Run this with the answers, with a 10-minute timeout. It makes nothing
-   and prints the plan:
+3. Run this with the answers. It makes nothing and prints the plan:
 
        bun erga setup <address> --host cloudflare|aws --sign-in invite|organization|sso \
          [--staging <address>] [--profile <name>] [--organization <org or domain>] \
          [--team <name> --aud <tag>] [--issuer <URL> --client <ID>] [--pages <domain>] [--remote] --dry-run
 
-   Show the user the plan. On their yes, run it again without `--dry-run`.
+   Show the user the plan. On their yes, run it again without `--dry-run`,
+   in the background: the first build takes 10 to 20 minutes, a redeploy
+   about 2.
 4. The last line of each run (DRY RUN, DONE, WAIT or FAIL) says what to
    do next. Do it. When it needs a choice, ask the user. When it ends in
    WAIT, don't run it again yourself: give the user the exact command to
