@@ -33,14 +33,14 @@ git. Give your coding agent this prompt:
       and not in use.
    3. Cloudflare ($5 a month, recommended) or AWS (billed by use)? On AWS:
       which profile, if `aws configure list-profiles` shows several.
-   4. Cloudflare only: a staging server too (a copy for admins, to try
-      updates)? No, or its address.
+   4. Cloudflare only: a second server too, to try updates on (a copy of
+      the first one's data, for admins only)? No, or its address.
    5. Who may sign in? 1. Only users you invite (recommended) 2. Anyone in
       your organization: which GitHub organization or email domain?
       3. Your organization's single sign-on:
       - Cloudflare: the Zero Trust team name, and the Application Audience
         (AUD) tag of a self-hosted Access application that the user adds
-        for the address (and staging's), with a Bypass policy for the
+        for the address (and one for the second server's), with a Bypass policy for the
         paths that need no sign-in.
       - AWS: the OpenID Connect issuer URL, and Erga's client ID there
         (its callback: `https://<address>/oauth2/idpresponse`). Which claim
@@ -54,12 +54,14 @@ git. Give your coding agent this prompt:
 3. Run this with the answers. It makes nothing and prints the plan:
 
        bun erga setup <address> --host cloudflare|aws --sign-in invite|organization|sso \
-         [--staging <address>] [--profile <name>] [--organization <org or domain>] \
+         [--profile <name>] [--organization <org or domain>] \
          [--team <name> --aud <tag>] [--issuer <URL> --client <ID>] [--pages <domain>] [--remote] --dry-run
 
    Show the user the plan. On their yes, run it again without `--dry-run`,
    in the background: the first build takes 10 to 20 minutes, a redeploy
-   about 2.
+   about 2. For a second server (question 4), when the first one is
+   done, run the same two steps with its address and
+   `--copy-of <the first address>`.
 4. The last line of each run (DRY RUN, DONE, WAIT or FAIL) says what to
    do next. Do it. When it needs a choice, ask the user. When it ends in
    WAIT, don't run it again yourself: give the user the exact command to
@@ -72,8 +74,11 @@ or a file. Never open, read or repeat a link that the command opens. Run
 `bun erga setup <address> remove --yes` only when the user asks for it in
 those words.
 
-Later deploys run from your clone: `git pull`, then
-`bun erga deploy <commit> <address>`.
+A server tracks one branch of one repository: Erga's `main`, unless
+`--repo <repo>` and `--branch <branch>` say another (`bun erga track
+<address>` changes them later). Later deploys run from your clone:
+`git pull`, then `bun erga deploy <address>`, which gives the server that
+branch's newest commit.
 
 ## Develop
 

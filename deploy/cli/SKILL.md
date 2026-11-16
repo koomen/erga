@@ -195,8 +195,10 @@ and `main`. There are no pull requests.
   nothing to a registered one, on Cloudflare or AWS. The agent asks the user
   the README's questions first; `--dry-run` checks the answers and prints the
   plan; then the command does all the work, and opens the browser only for the
-  user's own steps (`bun erga setup --help`). `--staging <host>` makes a
-  second instance too, on a copy of the first one's data, or of a registered one.
+  user's own steps (`bun erga setup --help`). `--repo <repo>` and
+  `--branch <branch>` say what the instance tracks (the defaults: `github.com/koomen/erga`, `main`): its first deploy
+  takes that branch's head. `--copy-of <host>` makes it an instance on a copy of a registered one's data, for admins
+  only (Cloudflare only).
 
 ## The rules
 

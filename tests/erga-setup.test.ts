@@ -59,9 +59,8 @@ const first = (mock: { state: MockState; fetch: First["net"] }, host: string, mo
   github: "Iv1.ada",
   net: mock.fetch,
   token: "mock-machine-token",
+  // The mock deploys this checkout's commit; a real setup takes the head of the branch that the entry tracks.
   print: () => {},
-  // This branch's commit, which the mock deploys; setup takes the head of the branch that the entry tracks.
-  commit: "HEAD",
 });
 const rowsOf = (state: MockState, worker: string) =>
   state.databases.find((d) => d.uuid == bindingsOf(state, worker).DB.database_id)?.rows ?? [];
@@ -98,7 +97,7 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
   expect(rows.join("\n")).not.toContain("INSERT INTO users");
   // The job is the setup's. Its entry tracks the default repository's main: no deploy moves a branch.
   const [job] = jobs();
-  expect(job[0]).toMatchObject({ command: `bun erga setup ${HOST} --commit HEAD`, host: HOST });
+  expect(job[0]).toMatchObject({ command: `bun erga setup ${HOST}`, host: HOST });
   expect(job).toContainEqual({ commit: HEAD, secrets: ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET"] });
   expect(job.some((x: object) => "main" in x)).toBe(false);
   expect(readConfig(dir).instances.map((e) => [e.repo, e.branch])).toEqual([["github.com/koomen/erga", "main"]]);
@@ -113,7 +112,8 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
   // Its staging instance, set up later: the primary gets the secret they share, and the new instance a copy of its data.
   writeConfig(dir, withEntry(readConfig(dir), { ...readConfig(dir).instances[0], token: "erga_ops_primary" }));
   putSecret(STAGING, "GITHUB_CLIENT_SECRET", "staging-app-secret", dir);
-  expect(await firstDeploy({ ...first(mock, STAGING, { stagingOf: HOST }), github: "Iv1.staging" })).toBe(HEAD);
+  expect(await firstDeploy({ ...first(mock, STAGING, { copyOf: HOST, branch: "staging" }), github: "Iv1.staging" })).toBe(HEAD);
+  expect(readConfig(dir).instances.map((e) => e.branch)).toEqual(["main", "staging"]);
   expect(readConfig(dir).instances.map((e) => [e.host, e.copyOf ?? null])).toEqual([
     [HOST, null],
     [STAGING, HOST],

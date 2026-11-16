@@ -98,8 +98,8 @@ export function missing(a: Answers): string[] {
   if (sso(a) && aws && !a.client) need.push("--client <ID>: Erga's client ID at the organization's sign-in.");
   if (a.emailClaim && !(sso(a) && aws)) need.push("--email-claim is only for --sign-in sso on AWS: leave it out.");
   if (aws && !pagesOf(a)) need.push("--pages <domain>: a second Route 53 domain of the account, for the documents' pages.");
-  if (aws && a.staging) need.push("Staging is not on AWS yet: leave out --staging.");
-  if (a.staging && a.staging == a.host) need.push("--staging needs an address of its own.");
+  if (aws && a.copyOf) need.push("A copy of another instance's data is not on AWS yet: leave out --copy-of.");
+  if (a.copyOf && a.copyOf == a.host) need.push("--copy-of names another instance: the one whose data this one copies.");
   return need;
 }
 
@@ -153,13 +153,13 @@ export function stateOf(a: Answers, s: Seen): State {
 
 /**
  * The settings that the answers give (plan.ts, varsOf) and the entry doesn't have: their names. A left-out option is
- * its default: the options of each run are the whole answer. A staging instance takes its defaults from its primary.
+ * its default: the options of each run are the whole answer. An instance on a copy takes its defaults from its source.
  */
 export function changedVars(a: Answers, s: Seen): string[] {
   if (!s.vars) return [];
   const want: Record<string, string> = varsOf(a, s.github || undefined, s.stack?.outputs.Proxy);
   const had = s.vars;
-  return ANSWER_VARS.filter((k) => !(a.stagingOf && k == "SERVER_DEFAULTS") && (want[k] ?? "") != (had[k] ?? ""));
+  return ANSWER_VARS.filter((k) => !(a.copyOf && k == "SERVER_DEFAULTS") && (want[k] ?? "") != (had[k] ?? ""));
 }
 
 /** Folds what was seen in: the answers with what the code found, and the state. `look`: an answer changed, so observe again. */
@@ -174,14 +174,6 @@ export function step(a: Answers, s: Seen): { answers: Answers; state: State; loo
     look: Object.keys(fill).length > 0,
   };
 }
-
-/** The answers of the staging instance of `a`: on its primary's account, with its sign-in. */
-export const stagingOf = (a: Answers): Answers => ({
-  ...a,
-  host: a.staging,
-  stagingOf: a.host,
-  staging: "",
-});
 
 /** The name of the account that Erga goes into, for the user. */
 export const accountName = (a: Answers, s: Seen) =>
@@ -206,9 +198,8 @@ export function planText(a: Answers, s: Seen): string[] {
     ? a.where == "aws"
       ? `• your organization's sign-in, at a load balancer in front (you type its client secret ${a.remote ? "in your terminal" : "on a page that opens"})${email ? `; the email address in ${email.claim}, after "${email.prefix}"` : ""}`
       : "• your organization's sign-in, with Cloudflare Access"
-    : a.stagingOf
-      ? `• sign-in with the GitHub App of ${a.stagingOf}`
-      : "• a GitHub App, for sign-in (you click one button)";
+    : "• a GitHub App, for sign-in (you click one button)";
+  const tracks = `• it tracks ${a.branch} of ${a.repo}: a deploy gives it that branch's newest commit`;
   if (a.where == "aws")
     return [
       `I will make Erga at ${a.host}, in your AWS account ${accountName(a, s)} (profile ${a.profile}, region ${a.region}), as one CloudFormation stack:`,
@@ -219,15 +210,17 @@ export function planText(a: Answers, s: Seen): string[] {
       sso(a) ? "• an S3 bucket, a load balancer and its certificate" : "• an S3 bucket, 2 CloudFront distributions and the certificates",
       `• the documents' pages on ${pagesOf(a)}`,
       signIn,
+      tracks,
       "AWS bills it by use.",
     ];
   const n = namesOf(a.host);
   return [
-    a.stagingOf
-      ? `I will make its staging instance at ${a.host}, in the same account: a copy of ${a.stagingOf}'s data, for admins only:`
+    a.copyOf
+      ? `I will make Erga at ${a.host}, in the account of ${a.copyOf}, on a copy of its data, for admins only:`
       : `I will make Erga at ${a.host}, in the Cloudflare account ${accountName(a, s)}:`,
     `• a Worker (${n.worker}), a D1 database, an R2 bucket and a DNS record`,
     signIn,
-    a.stagingOf ? "It is in the same Workers Paid plan." : "It costs $5 a month: the Workers Paid plan.",
+    tracks,
+    a.copyOf ? "It is in the same Workers Paid plan." : "It costs $5 a month: the Workers Paid plan.",
   ];
 }

@@ -3,7 +3,7 @@
 //
 //   githubApp     the page posts the app's manifest to GitHub (GitHub's manifest flow needs a form POST); GitHub makes
 //                 the app and comes back with a code; the page changes it for the app's id and secret, into
-//                 .erga/secrets.json (with a staging address: under both hosts, since they share the app)
+//                 .erga/secrets.json, under the host
 //   oidcSecret    single sign-on on AWS: one field for the client secret of the organization's sign-in, into Secrets Manager
 //
 // With --remote the user is at another computer, and a browser here shows nothing. Their steps go through their own
@@ -124,10 +124,8 @@ export function githubApp(
         const why = `GitHub didn't give the app's values: ${app?.message ?? r.status}.`;
         return { res: html(esc(why), 502), end: why };
       }
-      for (const host of [a.host, a.staging].filter(Boolean)) {
-        putSecret(host, "GITHUB_CLIENT_SECRET", app.client_secret, dir);
-        putSecret(host, "GITHUB_CLIENT_ID", app.client_id, dir);
-      }
+      putSecret(a.host, "GITHUB_CLIENT_SECRET", app.client_secret, dir);
+      putSecret(a.host, "GITHUB_CLIENT_ID", app.client_id, dir);
       return { res: doneHtml("GitHub made the app."), end: "" };
     },
     ms,

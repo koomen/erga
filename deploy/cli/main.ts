@@ -46,7 +46,7 @@
 //                                       .erga/config.json: its deploy facts, its plain settings, an ops token, the
 //                                       repository and branch it tracks, and the instance whose data it is a copy of
 //   bun erga login <host>               a new ops token for a registered instance, when its token runs out
-//   bun erga setup <host> --host ... --sign-in ... [--dry-run]
+//   bun erga setup <host> --host ... --sign-in ... [--repo <repo>] [--branch <branch>] [--copy-of <host>] [--dry-run]
 //                                       a new instance, on Cloudflare or AWS, from the user's answers: the checks and
 //                                       the plan (--dry-run), then the build and the first admin (bun erga setup --help)
 

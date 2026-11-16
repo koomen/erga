@@ -10,7 +10,7 @@
 
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type AwsEntry, type Config, DEFAULT_BRANCH, DEFAULT_REPO, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
+import { type AwsEntry, type Config, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
 import { type DeployOptions, deployInstance } from "../cli/deploy";
 import type { Fetch } from "../pipeline/cloudflare-api";
 import type { Seen } from "../own/flow";
@@ -219,8 +219,8 @@ export async function applyStacks(dir: string, a: Answers, log: (l: string) => v
 export function awsEntry(a: Answers, account: string, outputs: Record<string, string>, github: string | undefined, token = ""): AwsEntry {
   return {
     host: a.host,
-    repo: DEFAULT_REPO,
-    branch: DEFAULT_BRANCH,
+    repo: a.repo,
+    branch: a.branch,
     token,
     ...(whereOf(a).profile ? { profile: a.profile } : {}),
     aws: {
@@ -270,7 +270,6 @@ export interface FirstAws {
   print: (line: string) => void;
   noTests?: boolean;
   suite?: DeployOptions["suite"];
-  commit?: string;
 }
 
 /** SQL quoting of a value checked already (an organization, a domain): ' doubled. */
@@ -311,8 +310,7 @@ export async function firstDeployAws(o: FirstAws): Promise<string> {
   return deployInstance({
     dir: o.dir,
     host: a.host,
-    commit: o.commit,
-    command: `bun erga setup ${a.host}${o.commit ? ` --commit ${o.commit}` : ""}`,
+    command: `bun erga setup ${a.host}`,
     noTests: o.noTests,
     suite: o.suite,
     ...(o.net ? { net: o.net } : {}),

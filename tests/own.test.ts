@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { githubApp, openTerminal } from "../deploy/own/browser";
 import { readOptions } from "../deploy/own/cli";
-import { checksOf, missing, nothingSeen, planText, type Seen, stagingOf, step } from "../deploy/own/flow";
+import { checksOf, missing, nothingSeen, planText, type Seen, step } from "../deploy/own/flow";
 import {
   type Answers,
   firstRows,
@@ -53,7 +53,21 @@ test("each answer is an option of the command; a bad one, or an unknown one, say
     "--dry-run"
   );
   expect([answers.where, answers.signIn, answers.organization, problems, rest]).toEqual(["cloudflare", "organization", "acme.com", [], []]);
-  expect(options("--staging", "Staging.Example.com").answers.staging).toBe("staging.example.com");
+  // What the instance tracks: the default repository's main, or the options'. A copy names its source.
+  expect([answers.repo, answers.branch, answers.copyOf]).toEqual(["github.com/koomen/erga", "main", ""]);
+  const tracked = options("--repo", "https://example.com/team/erga.git", "--branch", "staging", "--copy-of", "Live.Example.com");
+  expect([tracked.answers.repo, tracked.answers.branch, tracked.answers.copyOf, tracked.problems]).toEqual([
+    "example.com/team/erga",
+    "staging",
+    "live.example.com",
+    [],
+  ]);
+  expect(options("--branch", "-x").problems).toEqual(["--branch: \"-x\" isn't a branch's name."]);
+  // The options from before an instance tracked a branch are gone.
+  expect(options("--staging", "staging.example.com", "--commit", "HEAD").problems).toEqual([
+    "--staging isn't an option of bun erga setup.",
+    "--commit isn't an option of bun erga setup.",
+  ]);
   // An account is a name or an id.
   expect(options("--account", "Ada Lovelace").answers.account).toBe("Ada Lovelace");
   expect(options("--account", ADA.toUpperCase()).answers.account).toBe(ADA);
@@ -84,10 +98,13 @@ test("the command says each option it still needs, before it looks at anything",
   expect(missing(options("--host", "cloudflare", "--sign-in", "sso", "--team", "acme").answers)).toEqual([
     "--aud <tag>: the Access application's Audience tag.",
   ]);
-  // AWS: no staging yet, and without single sign-on the pages need a domain of their own.
-  expect(missing(options("--host", "aws", "--sign-in", "invite", "--staging", "staging.example.com").answers)).toEqual([
+  // AWS: no copy of another instance's data yet, and without single sign-on the pages need a domain of their own.
+  expect(missing(options("--host", "aws", "--sign-in", "invite", "--copy-of", "live.example.com").answers)).toEqual([
     "--pages <domain>: a second Route 53 domain of the account, for the documents' pages.",
-    "Staging is not on AWS yet: leave out --staging.",
+    "A copy of another instance's data is not on AWS yet: leave out --copy-of.",
+  ]);
+  expect(missing(options("--host", "cloudflare", "--sign-in", "invite", "--copy-of", HOST).answers)).toEqual([
+    "--copy-of names another instance: the one whose data this one copies.",
   ]);
   expect(missing(options("--host", "aws", "--sign-in", "sso", "--issuer", "https://idp.example.com", "--client", "c1").answers)).toEqual(
     []
@@ -115,6 +132,7 @@ test("the main path: the login, the one account that holds the domain, the GitHu
     `I will make Erga at ${HOST}, in the Cloudflare account Ada Lovelace:`,
     "• a Worker (erga-example-com), a D1 database, an R2 bucket and a DNS record",
     "• a GitHub App, for sign-in (you click one button)",
+    "• it tracks main of github.com/koomen/erga: a deploy gives it that branch's newest commit",
     "It costs $5 a month: the Workers Paid plan.",
   ]);
 });
@@ -260,35 +278,60 @@ test("--remote: the user's steps need their terminal; an agent's shell, with non
   expect(asked).toEqual(["/dev/tty"]);
 });
 
-test("--staging: one GitHub App for both, then the staging instance on its primary's account, with an approval at the end", () => {
-  const a = options("--host", "cloudflare", "--sign-in", "invite", "--staging", "staging.example.com").answers;
-  expect(githubManifest(a, "http://127.0.0.1:5000/created")).toMatchObject({
-    name: `Erga ${HOST}`,
+test("--copy-of and --branch: an instance of its own, with its own GitHub App, on a copy of a registered one's data", () => {
+  const s = {
+    ...readOptions("staging.example.com", ["--host", "cloudflare", "--sign-in", "invite", "--copy-of", HOST, "--branch", "staging"])
+      .answers,
+    account: ADA,
+  };
+  // Its GitHub App is its own: one callback, its address.
+  expect(githubManifest(s, "http://127.0.0.1:5000/created")).toMatchObject({
+    name: "Erga staging.example.com",
     redirect_url: "http://127.0.0.1:5000/created",
-    callback_urls: [`https://${HOST}/auth/github/callback`, "https://staging.example.com/auth/github/callback"],
+    callback_urls: ["https://staging.example.com/auth/github/callback"],
     default_permissions: {},
     public: false,
   });
-  const s = stagingOf({ ...a, account: ADA });
-  expect([s.host, s.stagingOf, s.staging, s.account, s.signIn]).toEqual(["staging.example.com", HOST, "", ADA, "invite"]);
-  // The app is there already (made with both callbacks): the staging instance builds.
+  // The same steps as every instance: the app, then the build.
+  expect(run(s, CF).state).toEqual({ at: "app", kind: "github" });
   expect(run(s, CF, { ...CF, app: true }).state).toEqual({ at: "build" });
   expect(planText(s, seen(CF))).toEqual([
-    `I will make its staging instance at staging.example.com, in the same account: a copy of ${HOST}'s data, for admins only:`,
+    `I will make Erga at staging.example.com, in the account of ${HOST}, on a copy of its data, for admins only:`,
     "• a Worker (staging-example-com), a D1 database, an R2 bucket and a DNS record",
-    `• sign-in with the GitHub App of ${HOST}`,
+    "• a GitHub App, for sign-in (you click one button)",
+    "• it tracks staging of github.com/koomen/erga: a deploy gives it that branch's newest commit",
     "It is in the same Workers Paid plan.",
   ]);
   const entry = setupEntry(s, {
     zones: ["example.com"],
     subdomain: "ada",
-    github: "Iv1.both",
+    github: "Iv1.own",
     base: { SERVER_DEFAULTS: '{"public_sharing":false}' },
   });
-  expect(entry).toMatchObject({ host: "staging.example.com", copyOf: HOST, worker: "staging-example-com", token: "" });
-  expect(entry.vars).toMatchObject({ GITHUB_CLIENT_ID: "Iv1.both", SERVER_DEFAULTS: '{"public_sharing":false}' });
-  // A registered primary is done at once: only its staging instance is made.
-  expect(run(a, { ...CF, admin: true }).state).toEqual({ at: "done" });
+  expect(entry).toMatchObject({
+    host: "staging.example.com",
+    repo: "github.com/koomen/erga",
+    branch: "staging",
+    copyOf: HOST,
+    worker: "staging-example-com",
+    token: "",
+  });
+  expect(entry.vars).toMatchObject({ GITHUB_CLIENT_ID: "Iv1.own", SERVER_DEFAULTS: '{"public_sharing":false}' });
+  // The repository and the branch of the options go into every entry.
+  const forked = readOptions(HOST, [
+    "--host",
+    "cloudflare",
+    "--sign-in",
+    "invite",
+    "--repo",
+    "example.com/team/erga",
+    "--branch",
+    "stable",
+  ]);
+  expect(setupEntry({ ...forked.answers, account: ADA }, { zones: ["example.com"], subdomain: "ada" })).toMatchObject({
+    repo: "example.com/team/erga",
+    branch: "stable",
+  });
 });
 
 test("an instance's names come from its entry, or from its address; its entry from the answers alone", () => {
@@ -315,9 +358,9 @@ test("an instance's names come from its entry, or from its address; its entry fr
   });
 });
 
-test("the GitHub App's page: it posts the manifest to GitHub, and GitHub's code becomes the app's id and secret, under both hosts", async () => {
+test("the GitHub App's page: it posts the manifest to GitHub, and GitHub's code becomes the app's id and secret, under its host", async () => {
   const dir = mkdtempSync(join(tmpdir(), "erga-own-"));
-  const a = { ...options("--host", "cloudflare", "--sign-in", "invite", "--staging", "staging.example.com").answers };
+  const a = { ...options("--host", "cloudflare", "--sign-in", "invite").answers };
   // GitHub's API, faked: the code becomes the app's values.
   const api = (async (url: string) =>
     url.endsWith("/app-manifests/c0de1234/conversions")
@@ -337,10 +380,7 @@ test("the GitHub App's page: it posts the manifest to GitHub, and GitHub's code 
     const done = await fetch(`${at}created?code=c0de1234&state=${state}`);
     expect([done.status, await ended]).toEqual([200, ""]);
     expect(await done.text()).not.toContain("app-secret");
-    expect(loadSecrets(dir)).toEqual({
-      [HOST]: { GITHUB_CLIENT_SECRET: "app-secret", GITHUB_CLIENT_ID: "Iv1.both" },
-      "staging.example.com": { GITHUB_CLIENT_SECRET: "app-secret", GITHUB_CLIENT_ID: "Iv1.both" },
-    });
+    expect(loadSecrets(dir)).toEqual({ [HOST]: { GITHUB_CLIENT_SECRET: "app-secret", GITHUB_CLIENT_ID: "Iv1.both" } });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -3,7 +3,7 @@
 // .erga/config.json, its plain settings, its database's first rows, its GitHub App. Pure: no network, no files. The
 // flow (what the command does next) is deploy/own/flow.ts.
 
-import { type CloudflareEntry, DEFAULT_BRANCH, DEFAULT_REPO } from "../cli/config";
+import { type CloudflareEntry, DEFAULT_BRANCH, DEFAULT_REPO, repoName } from "../cli/config";
 import { deployFacts } from "../pipeline/account";
 import type { Target } from "../pipeline/pipeline";
 
@@ -15,10 +15,14 @@ export type SignIn = "invite" | "organization" | "sso";
 export interface Answers {
   /** The instance's address: a hostname on a domain of the user's account ("erga.example.com"). The command's. */
   host: string;
-  /** A staging instance's setup: its primary's host, which has an entry in .erga/config.json (setup sets it itself). */
-  stagingOf: string;
-  /** --staging: a staging instance of this one too, at this address (Cloudflare only). */
-  staging: string;
+  /** --repo, --branch: the repository and the branch that the instance tracks: each deploy gives it that branch's head. */
+  repo: string;
+  branch: string;
+  /**
+   * --copy-of: the host of a registered instance (Cloudflare only). This one runs on a copy of its data, for admins
+   * only, in its account.
+   */
+  copyOf: string;
   where: Where | "";
   /** Cloudflare: the account that holds the host's domain: its id, or its name (found; asked only when two accounts hold it). */
   account: string;
@@ -48,8 +52,9 @@ export type TextAnswer = Exclude<keyof Answers, "remote">;
 
 export const noAnswers = (host: string): Answers => ({
   host,
-  stagingOf: "",
-  staging: "",
+  repo: DEFAULT_REPO,
+  branch: DEFAULT_BRANCH,
+  copyOf: "",
   where: "",
   account: "",
   profile: "",
@@ -85,9 +90,12 @@ export function parseAnswer(key: TextAnswer, raw: string): { value: string } | {
   const is = (ok: boolean, value: string, problem: string) => (ok ? { value } : { problem });
   switch (key) {
     case "host":
-    case "stagingOf":
-    case "staging":
+    case "copyOf":
       return is(HOST.test(low), low, `"${v}" isn't an address like erga.example.com.`);
+    case "repo":
+      return is(/^[^\s-]\S{2,300}$/.test(v), repoName(v), `"${v}" isn't a repository like ${DEFAULT_REPO}.`);
+    case "branch":
+      return is(/^[\w.][\w./-]{0,200}$/.test(v), v, `"${v}" isn't a branch's name.`);
     case "where":
       return is(low == "cloudflare" || low == "aws", low, "where is cloudflare or aws.");
     case "account":
@@ -256,9 +264,9 @@ export const callbackOf = (host: string) => `https://${host}/auth/github/callbac
 
 /**
  * The entry of `.erga/config.json` for a new instance on Cloudflare, from the answers alone: its names, its plain
- * settings, the default repository and branch (its first deploy takes that branch's head), and no token yet (the token
- * comes at the end, when the admin approves it). A staging instance names the instance whose data it copies, and takes
- * the settings' defaults from it (`base`: that instance's vars).
+ * settings, the repository and the branch that it tracks (its first deploy takes that branch's head), and no token yet
+ * (the token comes at the end, when the admin approves it). An instance on a copy of another's data names that
+ * instance, and takes the settings' defaults from it (`base`: that instance's vars).
  */
 export function setupEntry(
   a: Answers,
@@ -279,20 +287,20 @@ export function setupEntry(
   };
   return {
     host: a.host,
-    repo: DEFAULT_REPO,
-    branch: DEFAULT_BRANCH,
-    ...(a.stagingOf ? { copyOf: a.stagingOf } : {}),
+    repo: a.repo,
+    branch: a.branch,
+    ...(a.copyOf ? { copyOf: a.copyOf } : {}),
     ...deployFacts(target),
     token: "",
   };
 }
 
-/** The GitHub App's manifest (GitHub makes the app from it in one click): sign-in only, no permissions. Staging shares it. */
+/** The GitHub App's manifest (GitHub makes the app from it in one click): sign-in only, no permissions. */
 export const githubManifest = (a: Answers, redirect: string): Record<string, unknown> => ({
   name: `Erga ${a.host}`.slice(0, 34),
   url: `https://${a.host}`,
   redirect_url: redirect,
-  callback_urls: [a.host, a.staging].filter(Boolean).map(callbackOf),
+  callback_urls: [callbackOf(a.host)],
   description: `Sign-in for the Erga at https://${a.host}`,
   public: false,
   request_oauth_on_install: false,

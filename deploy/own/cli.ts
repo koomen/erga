@@ -6,8 +6,11 @@
 // makes a token.
 //
 //   bun erga setup <host> --host cloudflare|aws --sign-in invite|organization|sso [<options>] [--dry-run]
-//       --staging <address>    a staging instance too, on a copy of the data, for admins only (Cloudflare only).
-//                              On a registered instance it makes only the staging instance.
+//       --repo <repo>          the repository that the instance tracks (default: github.com/koomen/erga)
+//       --branch <branch>      the branch of it that the instance tracks (default: main): its first deploy, and each
+//                              deploy after, takes that branch's head. bun erga track <host> changes both later.
+//       --copy-of <address>    the instance runs on a copy of that registered instance's data, for admins only, in
+//                              its account (Cloudflare only): a server to try updates on, often with --branch staging
 //       --account <name|id>    Cloudflare: the account, when two hold the domain
 //       --profile <name>       AWS: the AWS CLI's profile, when there are several (the region is the profile's)
 //       --organization <org|domain>      --sign-in organization: a GitHub organization, or an email domain
@@ -17,7 +20,6 @@
 //                                        address is, e.g. preferred_username:corp| for "corp|ada@example.com"
 //       --pages <domain>       AWS without single sign-on: a second Route 53 domain, for the documents' pages
 //       --egress <way>         AWS: nat-instance (the default), nat-gateway, or <vpc id>/<private subnet id>
-//       --commit <ref>         deploys that commit of main, not main's head
 //       --no-tests             the build runs no tests
 //       --remote               the user is at another computer (on by itself over SSH): no browser opens here. The
 //                              user types the client secret in their terminal, and the admin's link shows there.
@@ -32,13 +34,13 @@
 
 import { closeSync, readFileSync } from "node:fs";
 import { Claim } from "../../server/identity/claim-link";
-import { entryOf, isAws, originOf, readConfig } from "../cli/config";
+import { copyRefusal, entryOf, isAws, originOf, readConfig } from "../cli/config";
 import { findDatabase } from "../pipeline/account";
 import { fail, pass, ROOT, say } from "../root";
 import { askSecret, githubApp, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
 import { checkSignIn, cloudflare, type Connection, observe, site } from "./facts";
 import { firstDeploy, register, secretsFor } from "./first";
-import { checksOf, missing, planText, type Seen, type State, stagingOf, step } from "./flow";
+import { checksOf, missing, planText, type Seen, type State, step } from "./flow";
 import { type Answers, noAnswers, parseAnswer, type TextAnswer } from "./plan";
 import { DIR, githubIdOf, loadSecrets, namesAt, saveSecrets } from "./store";
 
@@ -49,7 +51,9 @@ const WAIT_MS = 8 * 60_000;
 const OPTIONS: Record<string, TextAnswer> = {
   "--host": "where",
   "--sign-in": "signIn",
-  "--staging": "staging",
+  "--repo": "repo",
+  "--branch": "branch",
+  "--copy-of": "copyOf",
   "--account": "account",
   "--profile": "profile",
   "--organization": "organization",
@@ -66,7 +70,6 @@ const FLAGS = ["--dry-run", "--no-tests", "--yes", "--remote"];
 interface Run {
   dryRun: boolean;
   noTests: boolean;
-  commit?: string;
   /** The command again, for the lines that say to run it. */
   again: string;
 }
@@ -152,13 +155,12 @@ async function build(a: Answers, seen: Seen, o: Run) {
         secrets: secretsFor(DIR, a, seen.held),
         net,
         noTests: o.noTests,
-        commit: o.commit,
         print,
       });
     } else {
       const c = await connect();
       net = c.net;
-      await firstDeploy({ dir: DIR, answers: a, seen, github, net, token: c.token, noTests: o.noTests, commit: o.commit, print });
+      await firstDeploy({ dir: DIR, answers: a, seen, github, net, token: c.token, noTests: o.noTests, print });
     }
     print("Check the sign-in...");
     const check = await checkSignIn(net, a, github);
@@ -174,12 +176,12 @@ async function build(a: Answers, seen: Seen, o: Run) {
 
 /**
  * The admin's step: the server asks for the ops token, and the browser opens the one-time link that carries its code.
- * A new server: the link makes the user its admin as they sign in (server/identity/claim.ts). A staging instance
- * has its primary's users: an admin approves. The result: the user's login, or "" when the wait ended first.
+ * A new server: the link makes the user its admin as they sign in (server/identity/claim.ts). An instance on a copy
+ * has its source's users: an admin approves. The result: the user's login, or "" when the wait ended first.
  */
 async function admin(a: Answers, o: Run): Promise<string> {
   const net = a.where == "aws" ? site : (await connect()).net;
-  const secret = a.stagingOf ? "" : loadSecrets(DIR)[a.host]?.SESSION_SECRET;
+  const secret = a.copyOf ? "" : loadSecrets(DIR)[a.host]?.SESSION_SECRET;
   const opened = async (code: string) => {
     const to = secret
       ? `https://${a.host}/auth/claim?t=${encodeURIComponent(await Claim.seal(secret, {}))}&approve=${encodeURIComponent(code)}`
@@ -189,9 +191,9 @@ async function admin(a: Answers, o: Run): Promise<string> {
   };
   say(
     a.remote
-      ? `WAIT  The user's terminal shows a link to ${a.host}. The user opens it in their browser, and ${a.stagingOf ? `approves there, as an admin of ${a.stagingOf}` : "signs in there: they become the admin"}.`
-      : a.stagingOf
-      ? `WAIT  A tab opens on ${a.host}. The user approves there, as an admin of ${a.stagingOf}.`
+      ? `WAIT  The user's terminal shows a link to ${a.host}. The user opens it in their browser, and ${a.copyOf ? `approves there, as an admin of ${a.copyOf}` : "signs in there: they become the admin"}.`
+      : a.copyOf
+        ? `WAIT  A tab opens on ${a.host}. The user approves there, as an admin of ${a.copyOf}.`
       : `WAIT  A tab opens on ${a.host}, with a link that works one time. The user signs in there, and becomes the admin.`
   );
   const approved = register(DIR, a.host, { site: net, asked: (code) => void opened(code) });
@@ -295,26 +297,30 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
   }
 }
 
-/** `bun erga setup <host> --host ... --sign-in ...`: the instance, then its staging instance. */
+/** `bun erga setup <host> --host ... --sign-in ...`: the instance. */
 async function run(a: Answers, o: Run) {
   const need = missing(a);
   if (need.length)
     return fail(`The command needs: ${need.join(" ")}`, "Ask the user what the README's setup asks, then run the command again.");
+  // An instance on a copy of another's data is in that instance's account: the copy is made inside one account.
+  if (a.copyOf) {
+    const no = copyRefusal(readConfig(DIR), a.host, a.copyOf);
+    const source = entryOf(readConfig(DIR), a.copyOf);
+    if (no || !source || isAws(source))
+      return fail(
+        no ?? `${a.copyOf} is on AWS: a copy of another instance's data is on Cloudflare only.`,
+        `Set up ${a.copyOf} first, or leave out --copy-of.`
+      );
+    a = { ...a, account: source.account };
+  }
   const end = await setUp(a, o);
   if (end == "wait") return say(`WAIT  The user's step is still open. Run the same command again: ${o.again}`);
-  if (a.staging) {
-    const primary = entryOf(readConfig(DIR), a.host);
-    const s = stagingOf({ ...a, account: primary && !isAws(primary) ? primary.account : a.account });
-    // The staging instance shares the GitHub App when it was made with both addresses; else it makes one of its own.
-    const sEnd = await setUp(s, o);
-    if (sEnd == "wait") return say(`WAIT  The user's step is still open. Run the same command again: ${o.again}`);
-  }
   if (o.dryRun)
     return say(
       "DRY RUN  Nothing is made. Tell the user the plan, and ask: Shall I make it? On yes, run the same command without --dry-run."
     );
   say(
-    `DONE  Tell the user: Erga is live at https://${a.host}${a.staging ? `, and staging at https://${a.staging}` : ""}, and they are the admin. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page). Settings has the rest: Google sign-in, a feedback repository, the homepage.`
+    `DONE  Tell the user: Erga is live at https://${a.host}${a.copyOf ? `, on a copy of ${a.copyOf}'s data, for admins only` : ""}, and they are the admin. It tracks ${a.branch} of ${a.repo}: bun erga deploy ${a.host} gives it that branch's newest commit. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page). Settings has the rest: Google sign-in, a feedback repository, the homepage.`
   );
 }
 
@@ -419,8 +425,7 @@ export function readOptions(host: string, args: string[]): { answers: Answers; p
       const r = parseAnswer(key, args[++i] ?? "");
       if ("problem" in r) problems.push(`${x}: ${r.problem}`);
       else answers = { ...answers, [key]: r.value };
-    } else if (x == "--commit") i++;
-    else if (x.startsWith("--") && !FLAGS.includes(x)) problems.push(`${x} isn't an option of bun erga setup.`);
+    } else if (x.startsWith("--") && !FLAGS.includes(x)) problems.push(`${x} isn't an option of bun erga setup.`);
     else if (!x.startsWith("--")) rest.push(x);
   }
   return { answers, problems, rest };
@@ -444,9 +449,8 @@ export async function setupMain(argv: string[]) {
       say(`No setup command ${rest[0]}.`);
       return usage(2);
     }
-    const commit = flag("--commit") ? args[args.indexOf("--commit") + 1] : undefined;
     const again = ["bun erga setup", host, ...args, ...(remote && !flag("--remote") ? ["--remote"] : [])].join(" ");
-    await run({ ...answers, remote }, { dryRun: flag("--dry-run"), noTests: flag("--no-tests"), commit, again });
+    await run({ ...answers, remote }, { dryRun: flag("--dry-run"), noTests: flag("--no-tests"), again });
   } catch (e) {
     fail((e as Error).message, `bun erga setup ${host}`);
   }
