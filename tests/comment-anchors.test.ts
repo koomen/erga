@@ -1,10 +1,10 @@
 // A comment's anchor (libs/text/api/anchors.ts) through the edits a document gets: typing, an agent's write (merged
-// word by word, as agents/document/workspace.ts does), a delete, an undo (Yjs's own, and the editor's, which puts the
+// word by word, as document/room/workspace.ts does), a delete, an undo (Yjs's own, and the editor's, which puts the
 // text back as new characters), and a rename (new characters at another path).
 import { expect, test } from "bun:test";
 import * as Y from "yjs";
-import { applyChanges, files } from "../document/content";
-import { changesBetween } from "../document/merge";
+import { applyChanges, files } from "../document/model/content";
+import { changesBetween } from "../document/model/merge";
 import { anchorFromJSON, anchorOf, anchorToJSON, resolveAnchor, type Anchor } from "../libs/text/api/anchors";
 
 const QUOTE = "Lisbon in May";
@@ -129,7 +129,7 @@ test("Y.UndoManager's undo: its link to the text it put back stays in its own re
 
 test("a rename loses the positions: the quote finds the text at its new path", () => {
   const { doc, t, anchor } = setup("<p>Lisbon is far.</p><p>We go to Lisbon in May.</p><p>Lisbon in May is warm.</p>");
-  // As the room moves a file (document/room.ts, move): its text at the new path, the old one removed.
+  // As the room moves a file (document/room/room.ts, move): its text at the new path, the old one removed.
   const moved = new Y.Text();
   doc.transact(() => {
     moved.insert(0, t.toString());

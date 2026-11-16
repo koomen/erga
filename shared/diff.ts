@@ -1,5 +1,5 @@
-// Text diffs: Myers' O(ND) diff of two lists, and on it a word diff (document/merge.ts), a line diff and unified
-// patches (document/versions.ts), as the package `diff` made them. Its cost grows with the number of edits, not with
+// Text diffs: Myers' O(ND) diff of two lists, and on it a word diff (document/model/merge.ts), a line diff and unified
+// patches (document/history/versions.ts), as the package `diff` made them. Its cost grows with the number of edits, not with
 // the length: an edit in one spot of a long file is cheap. A diff of more than `maxEdits` edits gives up: undefined,
 // or for a patch, all of one text replaced by all of the other (still a correct patch).
 

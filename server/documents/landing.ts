@@ -1,5 +1,5 @@
 // The default homepage: the project "Erga Homepage" at /_home, which nobody owns and every admin may edit
-// (document/names.ts, server/directory/ homeRole). It is a document like any other: it can be published to a domain,
+// (document/model/names.ts, server/directory/ homeRole). It is a document like any other: it can be published to a domain,
 // or not. Each deploy of Erga asks the server for it once its release answers (POST /api/deploys/home: makeHome). A
 // server that has none makes it from the repo's assets/landing/, and publishes it to the Erga domain, so a new server
 // shows it at /. A server that has it does nothing: a later deploy never changes what is published. No request for a
@@ -11,7 +11,7 @@ import { type Platform } from "../platform.ts";
 import { ERGA } from "../sites/index.ts";
 import { makeDoc } from "./make.ts";
 import * as Effect from "effect/Effect";
-import { HOME_OWNER, HOME_SLUG, HOME_TITLE } from "../../document/names.ts";
+import { HOME_OWNER, HOME_SLUG, HOME_TITLE } from "../../document/model/names.ts";
 
 /** What makeHome did: it made the default homepage, there is one already, or this server has no files to make it from. */
 export type HomeMade = "made" | "there" | "none";

@@ -1,6 +1,6 @@
-// The line an edit's error names (agents/document/nearest.ts): the file's line nearest to an oldText that isn't there.
+// The line an edit's error names (document/room/nearest.ts): the file's line nearest to an oldText that isn't there.
 import { expect, test } from "bun:test";
-import { filesNote, nearestLine, nearestNote } from "../agents/document/nearest.ts";
+import { filesNote, nearestLine, nearestNote } from "../document/room/nearest.ts";
 
 const FILE = `<!doctype html>
 <body>

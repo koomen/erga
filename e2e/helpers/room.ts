@@ -6,7 +6,7 @@
 // replica waits for it (until).
 
 import * as Y from "yjs";
-import { colorFor, files, introduce, roomInfo, stamp, type Author } from "../../document/content";
+import { colorFor, files, introduce, roomInfo, stamp, type Author } from "../../document/model/content";
 import {
   applyAwarenessUpdate,
   Awareness,

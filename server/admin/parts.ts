@@ -1,7 +1,7 @@
 // What two or more admin pages show alike: a setting's value, a time, a person's picture.
 
 import { esc } from "../../shared/html.ts";
-import { colorFor } from "../../document/content.ts";
+import { colorFor } from "../../document/model/content.ts";
 import { SYSTEM } from "../../shared/attribution.ts";
 
 export const shown = (v: unknown, kind?: string) =>

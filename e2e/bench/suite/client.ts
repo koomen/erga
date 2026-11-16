@@ -1,7 +1,7 @@
 // The bench's participants: people with no browser (a Replica, e2e/helpers/room.ts) in a target's document, each with
 // the target's sign-in on its socket. Many of them make a crowd.
 
-import { files } from "../../../document/content";
+import { files } from "../../../document/model/content";
 import { until } from "../../helpers/fixtures";
 import { Replica } from "../../helpers/room";
 import type { Doc } from "./target";

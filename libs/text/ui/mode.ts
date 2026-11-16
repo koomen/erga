@@ -8,7 +8,7 @@
 // changes, the viewer says "erga-notes" with the new height), and what the tests set (`timescale`, `check`). `comment`: for a person who may comment and not edit (a commenter:
 // client/inline/viewer-comment.ts sends it): the comments alone, on a page that nothing here changes.
 
-import type { Author } from "../../../document/content";
+import type { Author } from "../../../document/model/content";
 
 export type EditMode =
   | {

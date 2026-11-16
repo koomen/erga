@@ -26,11 +26,11 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Effect from "effect/Effect";
 import { HttpServerResponse } from "effect/http";
 import { call, ctx, html, redirect } from "../http.ts";
-import { pageAddress } from "../../document/pages.ts";
-import type { ViewAnswer } from "../../document/view.ts";
+import { pageAddress } from "../../document/model/pages.ts";
+import type { ViewAnswer } from "../../document/api/view.ts";
 import type { PageHead } from "../../shared/page-head.ts";
 import { type DocRow, ID, OWNER, roleMay } from "../directory/index.ts";
-import type { Role } from "../../document/access.ts";
+import type { Role } from "../../document/model/access.ts";
 import { BUILD_HEADER, CHECK_HEADER, pageBuild } from "../live.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { pagesOrigin, pagesToken } from "./pages-origin.ts";
@@ -52,8 +52,8 @@ import { pageToken } from "../sites/index.ts";
 
 const HALF_HOUR = 1_800_000;
 import { sha256 } from "../../shared/bytes.ts";
-import { addressOf, HOME_OWNER } from "../../document/names.ts";
-import { colorFor } from "../../document/content.ts";
+import { addressOf, HOME_OWNER } from "../../document/model/names.ts";
+import { colorFor } from "../../document/model/content.ts";
 
 /** How long a decision (who may see what at an address) is kept: as long as the directory keeps who's an admin (users.ts). */
 export const DECISION_MS = 10_000;
@@ -69,7 +69,7 @@ interface Decision {
   file: string;
   /** The page's own address under the document's ("" for its own page). */
   canonical: string;
-  /** The document's share counter (document/access.ts): the pass to its files carries it. */
+  /** The document's share counter (document/model/access.ts): the pass to its files carries it. */
   shares?: number;
   /** How many pages the document has (more than one: its crumb opens its tree); null if not counted yet. */
   pages?: number | null;

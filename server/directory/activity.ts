@@ -3,9 +3,9 @@
 // each event. Who writes it, each off the way of typing and of a page's answer:
 //
 //   view      the viewer sends a document's page (server/documents/view.ts, after the answer)
-//   edit      a document cuts a version: a burst of edits, by each of its authors (document/history.ts)
+//   edit      a document cuts a version: a burst of edits, by each of its authors (document/history/history.ts)
 //   in:*      a model's tokens: the person's agent at each model turn (agents/person/sessions.ts), a page's model at the
-//   out:*     end of its call (page-llm.ts), a version's description (document/history.ts, nobody's); `server`: the server's
+//   out:*     end of its call (page-llm.ts), a version's description (document/history/history.ts, nobody's); `server`: the server's
 //             API keys, `own`: the person's own key
 //
 // A person is active on a day when they have any row that day: they opened a document, edited one, or used a model.

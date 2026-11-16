@@ -1,12 +1,12 @@
-// A document's files on disk as a Storage (document/disk.ts): files and
+// A document's files on disk as a Storage (document/store/disk.ts): files and
 // folders go to the dev server over the mirror's socket, every other key to
 // the storage it wraps; a single file linked on its own is the one file there.
 // The dev server here is a fake folder answering the mirror's asks.
 
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
-import { DiskLink, type FromDisk, type ToDisk } from "../document/disk";
-import { fileStoreOf, MemoryStorage } from "../document/storage";
+import { DiskLink, type FromDisk, type ToDisk } from "../document/store/disk";
+import { fileStoreOf, MemoryStorage } from "../document/store/storage";
 
 /** A fake dev server: a folder in memory on the other end of the socket. */
 function folder(files: Record<string, string> = {}, dirs: string[] = []) {

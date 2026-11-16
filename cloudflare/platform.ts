@@ -20,7 +20,7 @@ import { agentSettingsFrom } from "../agents/models";
 import { documentOf } from "./objects/document-stub";
 import { blobsOf } from "./blobs";
 import { kvCache, type EdgeCache } from "./kv-cache";
-import { BLOB_HEADER, serveBlob } from "../document/blobs";
+import { BLOB_HEADER, serveBlob } from "../document/store/blobs";
 import { isLocal } from "../shared/http";
 
 
@@ -167,7 +167,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       version: (doc, ref) => counted("doc", () => host(doc).version(ref)),
       versionFile: (doc, ref, path) => counted("doc", () => host(doc).versionFile(ref, path)),
       tree: (doc) => counted("doc", () => host(doc).tree()),
-      treeOp: (doc, op) => counted("doc", () => host(doc).treeOp(op)),
+      treeOp: (doc, op, by) => counted("doc", () => host(doc).treeOp(op, by)),
       files: (doc) => counted("doc", () => host(doc).fileList()),
       rename: (doc, person, patch) => counted("doc", () => host(doc).rename(person, patch)),
       delete: (doc) => counted("doc", () => host(doc).delete()),
@@ -193,7 +193,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
           };
         }));
       },
-      // A file that is a blob comes from the edge's cache or R2, never through the document's object (document/blobs.ts).
+      // A file that is a blob comes from the edge's cache or R2, never through the document's object (document/store/blobs.ts).
       fetch: async (doc, request) => {
         const answer = await counted("doc", () => host(doc).fetch(request));
         if (!answer.headers.has(BLOB_HEADER)) return answer;

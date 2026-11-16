@@ -2,7 +2,7 @@
 
 import { expect, test } from "bun:test";
 import { base64, base64url, fromBase64, fromBase64url, hex, randomToken, readableSize, sha256, sha256Hex } from "../shared/bytes";
-import { baseName, joinPath, pageUrl, parentOf, slugify } from "../document/pages";
+import { baseName, joinPath, pageUrl, parentOf, slugify } from "../document/model/pages";
 import { dateTag, decodeEntities, esc, escapeAttr, escapeHtmlText, escapeRe, jsonInScript } from "../shared/html";
 import { callerAddress, isLocal } from "../shared/http";
 import { plural, sleep, timeAgo } from "../shared/time";

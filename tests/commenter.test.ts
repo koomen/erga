@@ -3,7 +3,7 @@
 
 import { expect, test } from "bun:test";
 import { allTools, runTool } from "../agents/tools";
-import { accessOf, mayComment, mayResolveAny, type Role } from "../document/access.ts";
+import { accessOf, mayComment, mayResolveAny, type Role } from "../document/model/access.ts";
 import { Directory } from "../server/directory/index.ts";
 import type { Caller } from "../server/operations/index.ts";
 import { memory } from "./helpers/memory-sql";

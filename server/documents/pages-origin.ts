@@ -6,7 +6,7 @@
 // is the file at <path>, and a page (an HTML file the frame goes to) comes with what the
 // viewer and the editor need in it (pages/reader.ts, readerPage).
 //
-// Trap: a pass carries the document's share counter (document/access.ts, `shares`), and the document refuses a pass
+// Trap: a pass carries the document's share counter (document/model/access.ts, `shares`), and the document refuses a pass
 // from before a share ended. A test that asks the document for a file with a checked key sends `x-erga-shares` too.
 // An open page keeps its old pass: after a share ends, its next file gets a 403 until the person loads the page again.
 
@@ -86,9 +86,9 @@ const PagesToken = signed(
  * `edit`: for someone who may edit it, or comment on it (the comments are the editor's), whose pages come with what
  * the editor needs in them (readerPage).
  * Its expiry is rounded up to the next whole day, so the token, and with it the address of every file of the page, stays the
- * same all day: the browser's cache can answer for them (they're checked by ETag, pagesRoutes and document/host.ts's docFile).
+ * same all day: the browser's cache can answer for them (they're checked by ETag, pagesRoutes and document/api/host.ts's docFile).
  * `ttl`: good for that many seconds only, not rounded (the server's own browser: cloudflare/render.ts).
- * `shares`: the document's share counter now (document/access.ts): the token opens its files only until a share of it ends.
+ * `shares`: the document's share counter now (document/model/access.ts): the token opens its files only until a share of it ends.
  */
 export async function pagesToken(
   secret: string,
@@ -198,13 +198,13 @@ async function pageFile(request: Request, url: URL, doc: { owner: string; id: st
   }
   // The token names the document; the directory confirms it's still its owner's (remembered, so usually without asking the
   // database). Both at once: a file is only read, so asking the document before the answer comes costs nothing if it's no.
-  // The document hears the token's share counter, and refuses one from before a share ended (document/access.ts).
+  // The document hears the token's share counter, and refuses one from before a share ended (document/model/access.ts).
   const at = { id: doc.id, owner: doc.owner.toLowerCase(), test: false };
   const inner = forwarded(new Request(request.url, { method: request.method, headers: asked }), url, `/doc${rest}`, null, "files");
   inner.headers.set("x-erga-shares", String(claims.shares));
   const [route, answer] = await Promise.all([platform.directory.route(doc.id), platform.docs.fetch(at, inner)]);
   if (!route || route.owner != at.owner) { await answer.body?.cancel(); return notFound(); }
-  // The document refused the pass (a share ended since: document/access.ts): the frame's page tells its viewer, too.
+  // The document refused the pass (a share ended since: document/model/access.ts): the frame's page tells its viewer, too.
   if (page && answer.status == 403) {
     await answer.body?.cancel();
     return refused(true);

@@ -7,7 +7,7 @@
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Route, type Sql } from "../server/directory/index.ts";
 import { makeHome } from "../server/documents/index.ts";
-import { HOME_OWNER } from "../document/names.ts";
+import { HOME_OWNER } from "../document/model/names.ts";
 import type { Platform } from "../server/platform";
 import { runTool, server, signedOut, type Server } from "./helpers/app";
 import { memory as steady } from "./helpers/memory-sql";

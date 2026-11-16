@@ -1,5 +1,5 @@
 // The whole app (server/app.ts) on a Platform in memory, for the tests of what the server answers over HTTP: the
-// directory and the tokens on bun:sqlite, each document a real Document (document/document.ts) on MemoryStorage with
+// directory and the tokens on bun:sqlite, each document a real DocumentHost (document/life/document.ts) on MemoryStorage with
 // MemoryBlobs, as cloudflare/platform.ts and cloudflare/objects/document.ts wire them on Cloudflare. No socket, no
 // browser, no model. It is local development's server (DEV_LOGIN "tester", an admin; ?user=Ada and /auth/github?as=
 // sign anyone in), on http://localhost; `staging: true` makes it a staging instance: a server for admins only (its deploy names its primary).
@@ -16,10 +16,10 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import * as Effect from "effect/Effect";
 import { mockGithubId } from "../../dev/github-mock";
-import { documentAgents } from "../../agents/document/session";
-import { BLOB_HEADER, MemoryBlobs, serveBlob } from "../../document/blobs";
-import { Document, type DocumentDeps } from "../../document/document";
-import { MemoryStorage } from "../../document/storage";
+import { BLOB_HEADER, MemoryBlobs, serveBlob } from "../../document/store/blobs";
+import { type DocumentDeps } from "../../document/life/document";
+import { DocumentHost } from "../../document/api/host";
+import { MemoryStorage } from "../../document/store/storage";
 import { app } from "../../server/app.ts";
 import { Directory, type Route } from "../../server/directory/index.ts";
 import { forgetDecisions } from "../../server/documents/index.ts";
@@ -91,7 +91,7 @@ export interface ServerOptions {
 /** A server in memory: `fetch` is its answer to a request (redirects not followed, as the old tests' `getter`). */
 export function server(o: ServerOptions = {}) {
   const sql = memory();
-  const hosts = new Map<string, Promised<Document> & { readonly self: Document }>();
+  const hosts = new Map<string, Promised<DocumentHost> & { readonly self: DocumentHost }>();
   const blobs = new MemoryBlobs();
   const log: string[] = [];
   const dir = new Directory(sql, {
@@ -116,11 +116,12 @@ export function server(o: ServerOptions = {}) {
     if (!h) {
       const storage: MemoryStorage = new MemoryStorage(() => made.wake());
       const made = promised(
-        new Document({
+        new DocumentHost({
           storage,
           directory: dir,
           tabs: { count: () => 0, closeAll: () => {} },
-          agents: documentAgents({ settings: async () => ({ missing: "no key in the tests" }), sandbox: testSandbox }),
+          sandbox: testSandbox,
+          descriptionKey: async () => "",
           sites: { forget: async (id) => void (await Promise.all([...sites.values()].map((s) => s.site.forget(id)))) },
           timing: o.timing ?? { idleMs: 40, maxMs: 400, writeDelay: 10 },
           background: (work) => void work.catch(() => {}),
@@ -134,7 +135,7 @@ export function server(o: ServerOptions = {}) {
     }
     return h;
   };
-  const hold = <A>(doc: Route, work: (d: Document) => Effect.Effect<A, unknown>): Promise<A> => {
+  const hold = <A>(doc: Route, work: (d: DocumentHost) => Effect.Effect<A, unknown>): Promise<A> => {
     const d = host(doc).self;
     return Effect.runPromise(d.hold(work(d)));
   };
@@ -197,8 +198,8 @@ export function server(o: ServerOptions = {}) {
       version: (doc, ref) => hold(doc, (d) => d.version(ref)),
       versionFile: (doc, ref, path) => hold(doc, (d) => d.versionFile(ref, path)),
       tree: (doc) => hold(doc, (d) => d.call((c) => c.tree())),
-      treeOp: async (doc, op) =>
-        (await hold(doc, (d) => d.call((c) => c.treeOp(op)))) ?? { ok: false, status: 404, error: "There's no such document." },
+      treeOp: async (doc, op, by) =>
+        (await hold(doc, (d) => d.call((c) => c.treeOp(op, by)))) ?? { ok: false, status: 404, error: "There's no such document." },
       files: (doc) => hold(doc, (d) => d.call((c) => c.files())),
       rename: async (doc, person, patch) =>
         (await hold(doc, (d) => d.call((c) => c.rename(person, patch)))) ?? { ok: false, error: "There's no such document." },

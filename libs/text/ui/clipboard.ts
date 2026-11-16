@@ -9,7 +9,7 @@ import { HEADING } from "../api/source";
 import { EditorMarkdown } from "./markdown";
 import { editableAt } from "../api/rules";
 import { LOADING_AGAIN } from "./drop";
-import { pageUrl } from "../../../document/pages";
+import { pageUrl } from "../../../document/model/pages";
 
 export abstract class EditorClipboard extends EditorMarkdown {
   /**

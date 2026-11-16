@@ -1,10 +1,10 @@
-// One kind of document (document/pages.ts): any document may have more pages, however they come (the tree, a move, an
+// One kind of document (document/model/pages.ts): any document may have more pages, however they come (the tree, a move, an
 // upload, an agent's write, a write of many files). Its object counts its pages and tells the directory at each change; the
 // documents list shows a chevron only for a document with more than one page (or one not counted yet).
 
 import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";
-import { pageCount, type TreeOp } from "../document/pages";
+import { pageCount, type TreeOp } from "../document/model/pages";
 import { documentsPage } from "../server/pages/documents";
 import type { Listed, Session } from "../server/platform";
 import { setup } from "./helpers/files-fixture";
@@ -20,19 +20,19 @@ test("a document takes more pages however they come, and its row in the director
   const who = {
     "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }),
     "x-erga-who": JSON.stringify({ login: "ada" }),
-    "x-erga-agent": "token-1",
+    "x-erga-via": JSON.stringify("a shared agent (test)"),
   };
   const tool = async (name: string, args: object) =>
     (await (
       await doc.handle(
-        new Request(`http://doc/api/tools/${name}`, {
+        new Request(`http://doc/api/operations/${name}`, {
           method: "POST",
           body: JSON.stringify(args),
           headers: { "content-type": "application/json", ...who },
         })
       )
     ).json()) as { ok?: boolean };
-  const treeOp = async (op: TreeOp) => (await Effect.runPromise(doc.self.call((c) => c.treeOp(op))))!.ok;
+  const treeOp = async (op: TreeOp) => (await Effect.runPromise(doc.self.call((c) => c.treeOp(op, { login: "ada" }))))!.ok;
   const counted = (n: number) => until(async () => (await dir.get("doc12345"))!.pages == n);
   await doc.setPermissions([{ login: "ada", role: "owner" }]);
   expect(await treeOp({ op: "new_folder", path: "scans" })).toBe(true);

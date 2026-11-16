@@ -1,9 +1,9 @@
-// Every tool an agent has on the server, as its person. The tools are the
-// operations (server/operations/: the same ones the front end calls
-// over POST /api/tools/<name>), and each document tool (read, edit, write, ...
-// of agents/document/tools.ts) for any document the caller names, run in that
-// document's host as the person's agent (`documentTools`). An agent sees them as a few tools, one for each kind of
-// action (KINDS), whose `op` argument names the operation or document tool.
+// Every tool an agent has on the server, as its person: a thin layer of names, descriptions and schemas over two
+// kinds of operations. The server's operations (server/operations/: the same ones the front end calls over
+// POST /api/tools/<name>), and the document's own operations (read, edit, call_edit, ... of
+// document/api/operations.ts) for any document the caller names, run in that document as the caller's participant
+// (`documentTools`). An agent sees them as a few tools, one for each kind of action (KINDS), whose `op` argument
+// names the operation.
 //
 //   a person's own agent (agents/person/sessions.ts) every operation its person may use (the admin ones, with admin
 //                        power, for an admin), and the document tools for any document
@@ -27,8 +27,7 @@ import {
   runInDocument,
   runOperation,
 } from "../server/operations/index.ts";
-import type { ToolContent } from "../document/agent.ts";
-import { CHANGES, documentToolSpecs } from "./document/tools.ts";
+import { OPERATIONS as DOCUMENT_OPERATIONS, type DocumentOperation, type ToolContent } from "../document/api/operations.ts";
 
 /** A tool, for any agent: an operation, or a document tool for any document. */
 export type Tool = Omit<Operation, "ui"> & { readonly ui?: string };
@@ -36,10 +35,16 @@ export type Tool = Omit<Operation, "ui"> & { readonly ui?: string };
 const DOCUMENT = "Its address, URL or id";
 const ANY_DOCUMENT = Schema.String.annotate({ description: DOCUMENT });
 
-/** The document tools, for any document: a `document` argument, and they run in its host, as the person's agent. */
+/**
+ * The document's operations that are tools by their own name. Not write's one file and diff_versions: the server's
+ * operations write and versions call those (server/operations/: runInDocument), and no agent has them by these names.
+ */
+const documentOperations = (): DocumentOperation[] => DOCUMENT_OPERATIONS.filter((o) => o.name != "write" && o.name != "diff_versions");
+
+/** The document tools, for any document: a `document` argument, and they run in it, as the caller's participant. */
 let docTools: Tool[] | null = null;
 export function documentTools(): Tool[] {
-  return (docTools ??= documentToolSpecs().map((spec): Tool => docTool(spec, ANY_DOCUMENT)));
+  return (docTools ??= documentOperations().map((op): Tool => docTool(op, ANY_DOCUMENT)));
 }
 
 /**
@@ -49,7 +54,7 @@ export function documentTools(): Tool[] {
 let docToolsHere: Tool[] | null = null;
 export function documentToolsHere(): Tool[] {
   const optional = Schema.optionalKey(Schema.String.annotate({ description: `${DOCUMENT}; leave it out for the one open on the page` }));
-  return (docToolsHere ??= documentToolSpecs().map((spec): Tool => docTool(spec, optional)));
+  return (docToolsHere ??= documentOperations().map((op): Tool => docTool(op, optional)));
 }
 
 /**
@@ -62,8 +67,8 @@ const PREVIEW = Schema.optionalKey(
   })
 );
 
-function docTool(spec: ReturnType<typeof documentToolSpecs>[number], document: Schema.Top): Tool {
-  const fields = spec.parameters.fields;
+function docTool(spec: DocumentOperation, document: Schema.Top): Tool {
+  const fields = (spec.parameters as Schema.Struct<Schema.Struct.Fields>).fields;
   return {
     name: spec.name,
     loose: true,
@@ -71,7 +76,7 @@ function docTool(spec: ReturnType<typeof documentToolSpecs>[number], document: S
     parameters: Schema.Struct({ document, ...fields, ...(spec.name != "edit" && "edits" in fields ? { edits: PREVIEW } : {}) }),
     // (No `document`: the one open on the person's page, if their agent has one: findDocument.)
     run: async ({ document: ref, ...rest }, caller) =>
-      runInDocument(caller, await findDocument(caller, ref, CHANGES.has(spec.name) ? "edit" : "open"), spec.name, rest),
+      runInDocument(caller, await findDocument(caller, ref, spec.changes ? "edit" : "open"), spec.name, rest),
   };
 }
 

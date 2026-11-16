@@ -1,7 +1,7 @@
 // `ergaEditor`, for the page's own script (server/pages/reader.ts puts it in a document's page): whether the editor is
 // on it now (`editing`, and data-erga-editing on its <html>, which the editor sets and takes off: libs/text/ui/frame.ts), with
 // the event erga-editing on the window as it changes, and `call(edit, input)` for one of the page's own edits (its API:
-// document/page-api.ts, agents/document/PROMPT.md, "A page's own edits"), which waits for the editor (window.__ergaCall:
+// document/api/page-api.ts, agents/document/PROMPT.md, "A page's own edits"), which waits for the editor (window.__ergaCall:
 // libs/text/ui/render.ts).
 
 type CallWindow = Window & {

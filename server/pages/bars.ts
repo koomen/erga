@@ -24,7 +24,7 @@ export const AGENT_SHARE_BUTTON = `<button type="button" class="erga-view-button
 export const documentsButton = (href: string) =>
   `<a href="${esc(href)}" class="erga-view-button erga-documents-button" draggable="false" aria-label="Documents" data-tip="Documents"><svg viewBox="0 0 24 24" aria-hidden="true"><g stroke-width="1.5"><rect x="4.75" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="4.75" y="13.5" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="13.5" width="5.75" height="5.75" rx="1.25"/></g></svg></a>`;
 
-/** The default homepage (/_home: document/names.ts), at `href`: on Documents, in the Documents button's place. */
+/** The default homepage (/_home: document/model/names.ts), at `href`: on Documents, in the Documents button's place. */
 export const homeButton = (href: string) =>
   `<a href="${esc(href)}" class="erga-view-button erga-home-button" draggable="false" aria-label="Home page" data-tip="Home page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.75 10.5 12 4.75l7.25 5.75v8a1 1 0 0 1-1 1h-4v-5.5h-4.5v5.5h-4a1 1 0 0 1-1-1z"/></svg></a>`;
 

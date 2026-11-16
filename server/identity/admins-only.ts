@@ -50,7 +50,7 @@
 //                                   no Authorization header, which answers only the 401 that starts the sign-in. The
 //                                   person's own step, /oauth/authorize, is not exempt: it needs an admin, signed in
 //   GET /llms.txt                   a few fixed lines that point to /mcp (no data)
-//   PUT /d/<id>/api/blobs/<sha-256> the bytes of a file that an agent's write waits for (document/waits.ts), from its
+//   PUT /d/<id>/api/blobs/<sha-256> the bytes of a file that an agent's write waits for (document/api/waits.ts), from its
 //                                   shell, which has no session. It gives no data out. The document takes the bytes
 //                                   only where a write named their sha-256 and size in the last minutes, on this
 //                                   server (a wait that came in its primary's copy names its primary, and takes

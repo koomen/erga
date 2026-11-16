@@ -24,7 +24,7 @@ import { pageToken } from "./llm-token.ts";
 import { actingAdmin } from "../identity/index.ts";
 import { fileOf, NOT_FOUND, redirectOf } from "./addresses.ts";
 import { localLibraries } from "../../shared/page-html.ts";
-import { pageAddress } from "../../document/pages.ts";
+import { pageAddress } from "../../document/model/pages.ts";
 import { domainOf, ERGA } from "./domains.ts";
 
 /** What this isolate last had of each domain, and when it last asked whether it's still current. */

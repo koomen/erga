@@ -2,7 +2,7 @@
 // (/documents: list, make, delete; an admin's search of everyone's), sharing (the Share dialogs of the list and the editor,
 // and the page's model), writing files into one, and revoking a token or a key. What a person does inside one
 // document (its name, pages, files and versions) is editor.ts's; its text is edited over the room's socket, and by the
-// document tools (agents/document/tools.ts), which agents/tools.ts offers for any document.
+// document tools (document/api/operations.ts), which agents/tools.ts offers for any document.
 
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -10,9 +10,8 @@ import { Base64 } from "effect/encoding";
 import { ANYONE, type DocRow, type Grant, NO_WRITE, PAGE_LLM_WHO, type PageLlmWho } from "../directory/index.ts";
 import { forgetDecisions, makeDoc, startingFiles } from "../documents/index.ts";
 import { TEMPLATES, templateById } from "../pages/index.ts";
-import type { FileData } from "../../document/document.ts";
-import { cleanRel } from "../../document/pages.ts";
-import { byLine } from "../../shared/attribution.ts";
+import type { FileData } from "../../document/life/document.ts";
+import { cleanRel } from "../../document/model/pages.ts";
 import {
   ANY_DOCUMENT,
   type Caller,
@@ -26,11 +25,12 @@ import {
   platformOf,
   namedDocument,
   runInDocument,
+  actOf,
   str,
 } from "./operation.ts";
 import { sitePages } from "./pages.ts";
-import { addressOf } from "../../document/names.ts";
-import { WAIT_MINUTES } from "../../document/waits.ts";
+import { addressOf } from "../../document/model/names.ts";
+import { WAIT_MINUTES } from "../../document/api/waits.ts";
 import {
   DEFAULT_PAGE_LLM_MODEL,
   isPageLlmModel,
@@ -47,7 +47,7 @@ const FILES = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.S
 });
 /**
  * Files to write: as FILES, or a file by the sha-256 of its bytes: one Erga keeps already (an image sent to your
- * agent), or, with its size, one on the agent's own disk, whose bytes it then sends (document/waits.ts).
+ * agent), or, with its size, one on the agent's own disk, whose bytes it then sends (document/api/waits.ts).
  */
 const WRITE_FILES = Schema.Record(
   Schema.String,
@@ -417,7 +417,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       if (!Object.keys(files).length && !remove.size) throw new OperationError({ message: "Nothing to do: files is empty.", status: 400 });
       // A file on the agent's own disk ({blob, size}) waits for its bytes, which come to the document's own address.
       const writer = caller.origin ? { who: caller.who, name: caller.name ?? caller.who.login, origin: caller.origin } : undefined;
-      const r = await platform.docs.write(doc, files, [...remove], byLine(caller.who.login.toLowerCase(), caller.who.via), writer);
+      const r = await platform.docs.write(doc, files, [...remove], actOf(caller), writer);
       return {
         ...described((await platform.directory.get(doc.id)) ?? doc, caller),
         ...r,

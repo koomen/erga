@@ -1,7 +1,7 @@
 // The viewer, live (server/pages/viewer.ts): the document's page shows each change while it's open, whoever makes it
 // (an editor, their agent, an agent over the API). The page listens on the document's own socket as a watcher
 // (<base>/api/room?watch=view: it never joins the room), which says the version viewers see now as it opens and as it
-// changes (document/view.ts, at most every 2 s). A version other than the one shown loads the page again with its view
+// changes (document/api/view.ts, at most every 2 s). A version other than the one shown loads the page again with its view
 // kept (ergaFrames.reload: the old page shows until the new one has the same view). Not while the editor is open in this page, nor in
 // a hidden tab: it catches up when it shows. A dropped socket comes back by itself, and hears the version first. A
 // deleted document (4404), or one no longer theirs (4403), never comes back, and the page says so (shared/socket-phase.ts).

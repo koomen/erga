@@ -1,8 +1,8 @@
-// A document's room through its life (document/phase.ts): each call does one clear thing in each phase, and a
+// A document's room through its life (document/life/phase.ts): each call does one clear thing in each phase, and a
 // call while the document goes never opens it again.
 
 import { expect, test } from "bun:test";
-import { next, type Phase } from "../document/phase";
+import { next, type Phase } from "../document/life/phase";
 
 type O = { room: number };
 const room: O = { room: 1 };

@@ -356,7 +356,7 @@ export function alertsOf(s: State, now: number, admin: boolean): { alerts: Raise
 /** The alert's key of a file on its way from an agent. */
 export const agentKey = (path: string) => `upload-agent:${path}`;
 /**
- * The alert of a file on its way from an agent (document/waits.ts): its name and the agent's, how far it is, the time
+ * The alert of a file on its way from an agent (document/api/waits.ts): its name and the agent's, how far it is, the time
  * left (`rate`: bytes a second, 0 if not known) and Cancel. `mine`: the agent is this person's own.
  */
 export function agentAlert(path: string, f: Pending, rate: number, mine: boolean): Raise {

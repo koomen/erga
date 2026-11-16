@@ -278,7 +278,7 @@ export function mountPending(win: Window, o: PendingOptions) {
     add(path: string, file: File) {
       this.setOwn([...own.values(), { path, p: 0, text: "", file }]);
     },
-    /** The files on their way from anyone (the room says: document/waits.ts). */
+    /** The files on their way from anyone (the room says: document/api/waits.ts). */
     setOthers(files: Record<string, Pending>) {
       const next = new Map(Object.entries(files));
       const gone = [...others.keys()].filter((p) => !next.has(p) && !own.has(p));

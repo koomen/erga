@@ -3,7 +3,7 @@
 // The routes are ROUTES, below.
 
 import * as Effect from "effect/Effect";
-import { snapshotRoutes } from "../document/snapshot";
+import { snapshotRoutes } from "../document/store/snapshot";
 import { health } from "../server/health";
 import type { Env } from "./env";
 import { documentOf } from "./objects/document-stub";

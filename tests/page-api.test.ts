@@ -1,9 +1,9 @@
-// A page's own API (document/page-api.ts): its module, run in the sandbox, answers operations on elements named by CSS
+// A page's own API (document/api/page-api.ts): its module, run in the sandbox, answers operations on elements named by CSS
 // selector; Erga makes them one change to the source, or refuses them, saying why.
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { EditorState } from "@codemirror/state";
-import { applyPageEdit, describePageApi } from "../document/page-api";
+import { applyPageEdit, describePageApi } from "../document/api/page-api";
 import { apiPathOf, applyChanges, planPageOps } from "../shared/page-ops";
 import { keys } from "./helpers/page-keys";
 import { testSandbox } from "./helpers/sandbox";

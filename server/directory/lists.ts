@@ -2,8 +2,8 @@
 // everyone's. The archive is each person's own, on their permission (server/migrations/0390_archived.sql): it
 // changes only their own lists, never the document or anyone else's.
 
-import { addressOf, HOME_OWNER } from "../../document/names.ts";
-import type { Role } from "../../document/access.ts";
+import { addressOf, HOME_OWNER } from "../../document/model/names.ts";
+import type { Role } from "../../document/model/access.ts";
 import { type DocFound, type DocRow, fromRow, ID, type News, type Row, type Sql } from "./model.ts";
 import { type Actor, NotAllowed, type Users } from "./users.ts";
 

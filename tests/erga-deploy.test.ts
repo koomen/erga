@@ -14,7 +14,7 @@ import { type CloudflareEntry, type Entry, entryOf, readConfig, secretsPath, wit
 import { commitOf, deployInstance, deployStaging, entryTarget, rollbackInstance, stagingCommit } from "../deploy/cli/deploy";
 import { lockPath, takeLock } from "../deploy/cli/jobs";
 import { replaceSnapshotSecret } from "../deploy/cli/snapshot-secret";
-import { snapshotAuth } from "../document/snapshot";
+import { snapshotAuth } from "../document/store/snapshot";
 import { deployFacts } from "../deploy/pipeline/account";
 import { ALL_STEPS, guardTarget, STEPS, stepsFor } from "../deploy/pipeline/pipeline";
 import { readsOldSetting, stagingCommitRefusal } from "../deploy/cli/staging-commit";

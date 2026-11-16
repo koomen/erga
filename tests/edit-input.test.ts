@@ -1,6 +1,6 @@
-// call_edit checks an edit's input against the edit's JSON Schema before the edit runs (agents/document/edit-input.ts).
+// call_edit checks an edit's input against the edit's JSON Schema before the edit runs (document/api/edit-input.ts).
 import { expect, test } from "bun:test";
-import { inputProblem } from "../agents/document/edit-input";
+import { inputProblem } from "../document/api/edit-input";
 import { textApi } from "../libs/text/api/edits";
 
 type Api = { edits: { name: string; input: Record<string, unknown> }[] };

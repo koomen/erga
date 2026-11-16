@@ -1,6 +1,6 @@
 // A replica of the document room's shared Yjs doc, synced with the host over one WebSocket (/api/room?events=1:
 // Yjs's sync and awareness messages (shared/yjs-protocol.ts) as binary frames, the person's events as text frames of JSON:
-// document/tabs.ts), and the binding between it and an editor's CodeMirror state. The page's editor (frame.ts) has
+// document/room/participants.ts), and the binding between it and an editor's CodeMirror state. The page's editor (frame.ts) has
 // one, on its socket from the pages origin with an edit key; the viewer (client/shell/main.ts) has one for the source
 // view, the people in the document and the agent's events.
 //
@@ -37,7 +37,7 @@ import {
   encodeAwarenessUpdate,
 } from "../../../shared/yjs-protocol.ts";
 import type { ChangeSet } from "@codemirror/state";
-import type { Hello } from "../../../document/api";
+import type { Hello } from "../../../document/api/api";
 import {
   applyChanges,
   assets,
@@ -50,8 +50,8 @@ import {
   stamp,
   stateVector,
   type Author,
-} from "../../../document/content";
-import { changesBetween, rebaseOnce } from "../../../document/merge";
+} from "../../../document/model/content";
+import { changesBetween, rebaseOnce } from "../../../document/model/merge";
 import { decodeStart, PING, PONG } from "../../../shared/room-socket";
 import { base64, fromBase64 } from "../../../shared/bytes";
 import { sleep } from "../../../shared/time";
@@ -121,9 +121,9 @@ export interface CollabOptions {
   keep?: string;
 }
 
-/** The message types, as the room sends them (document/room.ts). */
+/** The message types, as the room sends them (document/room/room.ts). */
 const MSG_SYNC = 0, MSG_AWARENESS = 1, MSG_QUERY_AWARENESS = 3;
-/** How often an idle socket is checked (a PING, document/tabs.ts), and how long its answer may take before it's given up for dead. */
+/** How often an idle socket is checked (a PING, document/room/participants.ts), and how long its answer may take before it's given up for dead. */
 const PING_EVERY = 15_000, PONG_WITHIN = 8_000;
 
 /** The socket the page opened as it parsed (server/pages/viewer.ts, ergaConnect), with what came on it before this script did. */
@@ -267,7 +267,7 @@ export class Collab {
    * A replica of a history the room lost (it started anew from its files: a new epoch), which can't merge into it: its
    * edits go in as edits of the files' text instead, made against the text that the room last said its files hold
    * (`base`). That text may be behind the files: the room stored an edit, and lost its history before this tab heard so
-   * (it was off the network). So what the files' text has already goes in no second time (document/merge.ts,
+   * (it was off the network). So what the files' text has already goes in no second time (document/model/merge.ts,
    * rebaseOnce). One tab takes it (claimKept), so they go in once.
    */
   private async adopt(k: Kept): Promise<void> {

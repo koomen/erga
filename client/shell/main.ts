@@ -11,9 +11,9 @@ import { EditorSelection, EditorState } from "@codemirror/state";
 import { mountPageFrame } from "./page-frame";
 import { isMac, type Keys } from "../common/app-keys";
 import { describeProblem } from "./problems";
-import { colorFor, files, roomInfo, type Author } from "../../document/content";
+import { colorFor, files, roomInfo, type Author } from "../../document/model/content";
 import type { Attachment } from "../../shared/attach";
-import { isPage, pageUrl } from "../../document/pages";
+import { isPage, pageUrl } from "../../document/model/pages";
 import { live } from "../live/client";
 import { restoredFor } from "../live/restore";
 import {
@@ -276,7 +276,7 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     return;
   }
   document.title = document.documentElement.dataset.pageTitle || (info.docName?.title ?? shell.pagePath);
-  // Someone edits the source (the lock: document/room.ts): the source view gives way to the page, which says so and is
+  // Someone edits the source (the lock: document/room/room.ts): the source view gives way to the page, which says so and is
   // read-only meanwhile (libs/text/ui/frame.ts).
   roomInfo(collab.doc).observe(() => {
     if (roomInfo(collab.doc).get("lock") && shell.editor.state.view != "text") shell.views.setMode("text");

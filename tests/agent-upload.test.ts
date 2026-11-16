@@ -1,10 +1,10 @@
-// An agent's file on its own disk (document/waits.ts): its write names the bytes' sha-256 and size and waits, and a
+// An agent's file on its own disk (document/api/waits.ts): its write names the bytes' sha-256 and size and waits, and a
 // PUT with no session brings the bytes. The waits' state machine alone, then the whole app in memory, as an outside
 // agent uses it: the tool over MCP, the bytes as its shell sends them.
 
 import { expect, setSystemTime, test } from "bun:test";
-import { pendingOf, step, WAIT_MINUTES, type Waits, type Writer } from "../document/waits";
-import { TEXT_MAX } from "../document/blobs";
+import { pendingOf, step, WAIT_MINUTES, type Waits, type Writer } from "../document/api/waits";
+import { TEXT_MAX } from "../document/store/blobs";
 import { sha256Hex } from "../shared/bytes";
 import { mcp, mint, person, server, signedOut, tool, type Server } from "./helpers/app";
 

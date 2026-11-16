@@ -26,7 +26,7 @@
 // it (or goes up), Home and End, Enter opens a page or a folder, F2 renames,
 // Delete deletes, and Shift-F10 (or the context-menu key) opens a row's menu.
 
-import { baseName, encodePath, joinPath, pageUrl, parentOf, readable, slugify } from "../../document/pages";
+import { baseName, encodePath, joinPath, pageUrl, parentOf, readable, slugify } from "../../document/model/pages";
 import { afterPress } from "../common/pressed";
 import { runTool } from "../common/tools";
 import { ICONS, STYLE } from "./pages-tree-style";
@@ -102,7 +102,7 @@ export interface TreeHandle {
 }
 
 const ROOT = "index.html";
-/** The ending a typed page name may carry (.html, or .htm): a page's file is always .html (document/pages.ts). */
+/** The ending a typed page name may carry (.html, or .htm): a page's file is always .html (document/model/pages.ts). */
 const PAGE_EXT = /\.html?$/i;
 /** How long a page's file name may be, before .html: longer than a document's slug (SLUG_MAX). */
 const PAGE_NAME_MAX = 80;

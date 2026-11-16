@@ -23,7 +23,7 @@ import { type AiError, LanguageModel, Prompt, Tool, type Response, type Toolkit 
 import { fileRefs, messageContent, type Attachment } from "../shared/attach";
 import { noMarks } from "../shared/page-report";
 import { emptyLog, reduce, type Log, type LogEvent } from "../shared/agent-log";
-import type { ToolContent } from "../document/agent";
+import type { ToolContent } from "../document/api/operations";
 import {
   ASK_LOST,
   CUT,

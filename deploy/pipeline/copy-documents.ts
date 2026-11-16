@@ -1,9 +1,9 @@
 // The deploy pipeline's copy of documents from one server to another (the
 // "documents" step, pipeline.ts), through the snapshot
-// endpoints of both (document/snapshot.ts).
+// endpoints of both (document/store/snapshot.ts).
 
 import { DeployError, type Fetch } from "./cloudflare-api";
-import { snapshotAuth, type DocSnapshot } from "../../document/snapshot";
+import { snapshotAuth, type DocSnapshot } from "../../document/store/snapshot";
 
 /**
  * Copies documents' storage from the server at `from` to the one at `to`:
@@ -23,7 +23,7 @@ export async function copyDocuments(o: {
   fetch: Fetch;
   batch?: number;
 }): Promise<{ copied: number; missing: number; wiped: number; failed: { id: string; error: string }[]; unsupported: boolean }> {
-  // Each request is signed with the secret, which never travels (document/snapshot.ts, snapshotAuth).
+  // Each request is signed with the secret, which never travels (document/store/snapshot.ts, snapshotAuth).
   const post = async (url: string, body: string) =>
     o.fetch(url, {
       method: "POST",

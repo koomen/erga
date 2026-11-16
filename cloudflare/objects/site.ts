@@ -6,7 +6,7 @@
 // holds the live snapshot.
 
 import { DurableObject } from "cloudflare:workers";
-import { mimeOf } from "../../document/host";
+import { mimeOf } from "../../document/api/view";
 import { Publishing, type SiteObject } from "../../server/sites/index.ts";
 import { directoryOf } from "../d1";
 import type { Env } from "../env";

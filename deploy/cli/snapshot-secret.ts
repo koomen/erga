@@ -1,5 +1,5 @@
 // bun erga snapshot-secret <primary host>: a new SNAPSHOT_TOKEN, the secret that a primary and its staging instances
-// share (document/snapshot.ts). With it a staging instance reads every document of its primary, so when it may have
+// share (document/store/snapshot.ts). With it a staging instance reads every document of its primary, so when it may have
 // leaked, this command replaces it everywhere at once: on the primary's Worker, on each staging instance's Worker,
 // and in .erga/secrets.json under the primary's host (where a --fresh deploy reads it). The old secret opens nothing
 // from then on. It prints the servers' names, never the secret.

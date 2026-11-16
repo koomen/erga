@@ -8,7 +8,7 @@ export interface ToolAnswer<T = any> {
   error?: string;
 }
 
-/** Each of the page tree's changes ({ op, ... }, document/pages.ts's TreeOp), as its operation's call (server/operations/editor.ts). */
+/** Each of the page tree's changes ({ op, ... }, document/model/pages.ts's TreeOp), as its operation's call (server/operations/editor.ts). */
 const TREE_TOOLS: Record<string, (args: Record<string, unknown>) => [string, Record<string, unknown>]> = {
   new_page: (a) => ["new", a],
   new_folder: (a) => ["new", { ...a, path: `${a.path}/` }],

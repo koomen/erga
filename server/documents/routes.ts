@@ -14,8 +14,8 @@
 //                              Clone, and Edit for those who may edit it
 //   /<owner>/<slug>?edit       the editor on it, under Documents (its breadcrumbs): the same page, which
 //                              goes into the editor (the pencil goes there and back without a reload)
-//   /_home[/<page>]            the default homepage (nobody's: document/names.ts), as /<owner>/<slug>[/<page>] above
-//   /<owner>/<slug>/<page>     another of its pages (document/pages.ts: blog is blog.html, else blog/index.html), ?edit
+//   /_home[/<page>]            the default homepage (nobody's: document/model/names.ts), as /<owner>/<slug>[/<page>] above
+//   /<owner>/<slug>/<page>     another of its pages (document/model/pages.ts: blog is blog.html, else blog/index.html), ?edit
 //                              for its editor; never with a slash added at the end
 //   /<owner>/<id>, /<owner>/<old slug>, /d/<id> (and pages under them)
 //                              redirect there
@@ -23,12 +23,12 @@
 //                              editor uses this address, which never changes. Under any of the
 //                              addresses above it works too (older tabs and share links use them).
 //
-// The routes with a function here are ROUTES, below; the rest of a document's address is its host's (document/api.ts).
+// The routes with a function here are ROUTES, below; the rest of a document's address is its host's (document/api/api.ts).
 //
 // Who may open, edit, rename, delete or share a document is the directory's
 // rule (`Directory.decide`, from the document's permissions). For a request to
 // a document, its host applies it, on the copy of its permissions it keeps
-// (document/document.ts, authorize): the app says only who's asking
+// (document/life/document.ts, authorize): the app says only who's asking
 // (x-erga-who), and asks the database nothing. The viewer's page asks the host
 // once for everything (view.ts).
 //
@@ -47,8 +47,8 @@ import * as Schema from "effect/Schema";
 import { adminRoutes, isAdminPath } from "../admin/index.ts";
 import { ID, OWNER, type Route, type Who } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
-import { HOME_OWNER, HOME_SLUG } from "../../document/names.ts";
-import { NO_WAIT } from "../../document/waits.ts";
+import { HOME_OWNER, HOME_SLUG } from "../../document/model/names.ts";
+import { NO_WAIT } from "../../document/api/waits.ts";
 import { newDoc, scratchDoc } from "./make.ts";
 import { pagesOrigin, pagesRoutes, pagesHost } from "./pages-origin.ts";
 import { editKey, type KeyPerson, keyWho, readEditKey } from "./edit-key.ts";
@@ -67,7 +67,7 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   if (list) return yield* list.run;
   if (isAdminPath(path)) return yield* adminRoutes;
 
-  // The default homepage's address, /_home[/<page>], is its row's /<HOME_OWNER>/<HOME_SLUG> (document/names.ts).
+  // The default homepage's address, /_home[/<page>], is its row's /<HOME_OWNER>/<HOME_SLUG> (document/model/names.ts).
   const home = /^\/_home(\/.*)?$/.exec(path);
   const routed = home ? `/${HOME_OWNER}/${HOME_SLUG}${home[1] ?? ""}` : path;
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(routed) ?? [];
@@ -98,9 +98,9 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
         : null
       : yield* call(() => documentRoute(platform, first, second));
   if (!route) return text("No such document", 404);
-  // A document's tools are the server's one API's (POST /api/tools/<name>, with "document"): the host's own route for
-  // them is the server's to call (forwardedAs), never reached from outside; so is a person's agent's "turn done".
-  if (/^\/api\/tools(\/|$)|^\/api\/agent\/done$/.test(rest))
+  // A document's operations are the server's one API's (POST /api/tools/<name>, with "document"): the document's own
+  // route for them is the server's to call (forwardedAs), never reached from outside; so is an agent's "turn done".
+  if (/^\/api\/(operations|tools)(\/|$)|^\/api\/turn-done$/.test(rest))
     return plainJson(
       {
         ok: false,
@@ -140,7 +140,7 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
     for (const [k, v] of Object.entries(cors)) out.set(k, v);
     return fromWeb(new Response(answer.body, { status: answer.status, headers: out }));
   }
-  // The bytes of a file that an agent's write waits for (document/uploads.ts, arrive): from its shell, which has no
+  // The bytes of a file that an agent's write waits for (document/api/uploads.ts, arrive): from its shell, which has no
   // session. The document takes them only where a write named their sha-256 and size, as the person who wrote; so
   // nobody is forwarded, whoever asks. A document there is, before its host is asked.
   if (request.method == "PUT" && AWAITED.test(rest)) {
@@ -156,7 +156,7 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   const origin = request.headers.get("origin");
   if (request.headers.get("upgrade")?.toLowerCase() == "websocket" && origin && origin != url.origin)
     return text("Not from this site", 403);
-  // Who's asking: the document decides what they may do (document/document.ts, authorize), and refuses the rest.
+  // Who's asking: the document decides what they may do (document/life/document.ts, authorize), and refuses the rest.
   const answer = yield* call(() => platform.docs.fetch(route, forwarded(request, url, rest, session)));
   if (answer.status == 101) return fromWeb(answer);
   // A document's files (an HTML page, an SVG) are its authors' code. Here, on this site's own origin, they run in a
@@ -425,8 +425,8 @@ export function forwarded(request: Request, url: URL, rest: string, session: Ses
 /**
  * The same, for a caller the server itself vouches for: a person (and their picture), and who they are
  * (Who: how they act, `via`, when through one of their agents: an agent token's, or the editor's or admin's agent
- * reaching another document). Only such a request, from the server itself, may run a document tool in the document's
- * host (/api/tools/<name> there: agents/tools.ts, runInDocument), as the person's agent.
+ * reaching another document): the document names its participant by the two. Only a request from the server itself
+ * runs one of the document's operations there (/api/operations/<name>: agents/tools.ts, runInDocument).
  */
 export function forwardedAs(
   request: Request,
@@ -445,8 +445,8 @@ export function forwardedAs(
     "x-erga-checked",
     "x-erga-shares",
     "x-erga-view",
-    "x-erga-agent",
     "x-erga-via",
+    "x-erga-turn",
     "authorization",
   ])
     headers.delete(h);
@@ -457,9 +457,8 @@ export function forwardedAs(
     );
   if (who) headers.set("x-erga-who", ascii(JSON.stringify(who)));
   if (checked) headers.set("x-erga-checked", checked);
-  // Only an agent's request may call a document's agent tools; with how the person acts through it (JSON: a header is ASCII).
+  // An agent's request says so, with how the person acts through it (JSON: a header is ASCII).
   if (who?.via) {
-    headers.set("x-erga-agent", "1");
     headers.set("x-erga-via", ascii(JSON.stringify(who.via)));
   }
   return new Request(inner, { method: request.method, headers, body: request.body, redirect: "manual" });

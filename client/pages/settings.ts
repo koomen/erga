@@ -30,7 +30,7 @@ import { RECENT, type Version, type Versions } from "./versions";
 import { runTool } from "../common/tools";
 import { esc } from "../../shared/html";
 import { timeAgo } from "../../shared/time";
-import { EDITORS_READ_VERSIONS } from "../../document/content";
+import { EDITORS_READ_VERSIONS } from "../../document/model/content";
 import { isModelChoice, MODELS, PROVIDER_LABEL } from "../../shared/models";
 import { openPageHead } from "./page-head";
 import { headUrl, tabTitle, type PageHead } from "../../shared/page-head";

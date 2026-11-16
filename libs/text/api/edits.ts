@@ -1,6 +1,6 @@
 // erga/text's API: the named edits on a page's HTML that a person's keys make, as an agent (or any caller) asks for
 // them. Each edit takes a page's HTML and its input, and gives the changes to the HTML, or refuses with a reason. No
-// browser: the document's object runs them for an agent's call_edit (agents/document/tools.ts), on the page's text as it
+// browser: the document's object runs them for an agent's call_edit (document/api/operations.ts), on the page's text as it
 // is in the room. The editor's own keys go through the same rules (rules.ts, format.ts).
 //
 // An edit names where it acts by the element that holds the text (`selector`, a CSS selector as the source has it:
@@ -317,7 +317,7 @@ const EDITS: Edit[] = [
   },
 ];
 
-/** erga/text's API, for the document's object (agents/document/tools.ts) and any caller. */
+/** erga/text's API, for the document's object (document/api/operations.ts) and any caller. */
 export const textApi: DocumentApi = {
   name: "erga/text",
   description:

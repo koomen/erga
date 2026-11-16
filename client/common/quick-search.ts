@@ -6,7 +6,7 @@
 // shell calls that. The account menus' "Go to…" opens it too (quickLink), with the key beside it.
 // It opens at once: with the list it read last, read again behind each time it opens, and filtered here.
 
-import { readable } from "../../document/pages";
+import { readable } from "../../document/model/pages";
 import { esc } from "../../shared/html";
 import { isMac } from "./app-keys";
 import { asUser, runTool, WHOLE_LIST } from "./tools";

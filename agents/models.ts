@@ -474,3 +474,14 @@ const scriptModel = (model: string) =>
       streamText: (options) => Stream.unwrap(Effect.map(scriptStep(options.prompt, model), (parts) => Stream.fromIterable(parts))),
     })
   );
+
+/**
+ * The key that the documents' versions' descriptions are written with (document/history/history.ts): the server's Anthropic
+ * key, whose ever keys the agents use (the agent_keys setting); "" for none (a plain description).
+ */
+export async function descriptionKey(settings: () => Promise<AgentSettings>): Promise<string> {
+  const cfg = await settings();
+  if (!("missing" in cfg) && cfg.model == "script") return "";
+  const key = cfg.server?.anthropic;
+  return key ? Redacted.value(key) : "";
+}

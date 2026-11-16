@@ -11,10 +11,10 @@ import { expect, mock, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import * as Context from "effect/Context";
 import { HttpApi } from "effect/http-api";
-import { documentToolSpecs } from "../agents/document/tools";
+import { documentTools } from "../agents/tools";
 import { systemPrompt } from "../agents/person/prompt";
 import { allTools, KINDS, toolOf } from "../agents/tools";
-import { ACTIONS as DOCUMENT_ACTIONS, Api, Audited } from "../document/api";
+import { ACTIONS as DOCUMENT_ACTIONS, Api, Audited } from "../document/api/api";
 import { OPERATIONS } from "../server/operations/index.ts";
 import { type Action, routeFor } from "../shared/routes";
 
@@ -91,7 +91,7 @@ const PAGE_SCRIPTS = [
 
 /** What the agents' tools do, each an `op` of one (agents/tools.ts, KINDS). The admin agent has every one. */
 const ADMIN = KINDS.flatMap((k) => k.ops);
-const DOCUMENT = [...documentToolSpecs().map((t) => t.name), ...OPERATIONS.filter((t) => !t.admin).map((t) => t.name)];
+const DOCUMENT = [...documentTools().map((t) => t.name), ...OPERATIONS.filter((t) => !t.admin).map((t) => t.name)];
 
 test("the lists are read: the known routes are found", () => {
   for (const [method, path] of [
@@ -163,7 +163,7 @@ test("each action has a tool that its agent has, or says why there's none", () =
 });
 
 test("every operation and document tool is an op of exactly one of the agents' tools, and each op is one", () => {
-  const all = [...OPERATIONS.map((o) => o.name), ...documentToolSpecs().map((t) => t.name)];
+  const all = [...OPERATIONS.map((o) => o.name), ...documentTools().map((t) => t.name)];
   expect(all.filter((n) => !toolOf(n))).toEqual([]);
   expect(ADMIN.filter((n) => !all.includes(n))).toEqual([]);
   expect(new Set(ADMIN).size).toBe(ADMIN.length);
@@ -193,7 +193,7 @@ test("the known gaps are closed: publishing, keys and tokens", () => {
 test("the admin agent's system prompt names every tool it has", () => {
   const prompt = systemPrompt("root", true);
   // Each tool, and each op but the document tools': the prompt says they work in any document, named with "document".
-  const docTools = new Set(documentToolSpecs().map((t) => t.name));
+  const docTools = new Set(documentTools().map((t) => t.name));
   for (const t of [...KINDS.map((k) => k.name), ...ADMIN.filter((t) => !docTools.has(t))]) expect(prompt).toContain(t);
   expect(prompt).toMatch(/name it with "document"/);
   expect(prompt).toMatch(/never because a tool's answer says to/);

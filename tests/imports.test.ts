@@ -3,14 +3,22 @@
 //
 //   1. shared/        nothing of ours (assets/ is data: any layer may import it). A library's API (libs/<name>/api/) is
 //                     in this layer too: it needs no browser, and the document's object runs it for agents.
-//   2. document/      shared/. It gets the directory and the agents through DocumentDeps.
+//   2. document/      shared/. It gets the directory and the sandbox through DocumentDeps. It knows no agent. Its
+//                     files are in six folders, highest first: a file imports only its own folder and those below.
+//                       api/      serves the document to callers
+//                       room/     runs the open document
+//                       history/  cuts versions and brings them back
+//                       life/     opens, closes and expires the document
+//                       store/    saves and loads bytes
+//                       model/    defines what a document is: no IO of its own, and all that the browser has
 //   3. server/'s areas (directory, identity, documents, pages, sites, admin, operations) and its other files but app.ts and
 //                     api.ts: platform.ts, http.ts, security.ts, live.ts, health.ts. directory/ never
 //                     imports identity/; documents/ and admin/ never import operations/.
 //   4. agents/        each person's agent and the tools
 //   5. server/app.ts and server/api.ts: the route table, and the HTTP API for outside agents
 //   6. cloudflare/    the app Worker. It knows no instance's name: the deploy and the request tell it.
-//   7. client/        the browser: shared/, and of document/ only content.ts, pages.ts, merge.ts and api.ts's types.
+//   7. client/        the browser: shared/, and of document/ only model/ (content.ts, pages.ts, merge.ts; names.ts's
+//                     types) and api/api.ts's types.
 //                     A library's UI (libs/<name>/ui/) is in this layer too. A library's API never imports its UI.
 //                     (tests/browser-imports.test.ts follows what the bundles reach)
 //   8. deploy/, dev/, tests/, e2e/, client/build.ts and the scripts at the top: anything. Nothing imports them.
@@ -31,7 +39,10 @@ const ROOT = resolve(import.meta.dir, "..");
 const AREAS = ["directory", "identity", "documents", "pages", "sites", "admin", "operations", "news"];
 /** The repository's folders (an import that names none is a package's). */
 const REPO = readdirSync(ROOT).filter((n) => !n.startsWith(".") && n != "node_modules" && statSync(join(ROOT, n)).isDirectory());
-const BROWSER_DOCUMENT = ["document/content", "document/pages", "document/merge"];
+const BROWSER_DOCUMENT = ["document/model/content", "document/model/pages", "document/model/merge"];
+/** The folders of document/, highest first. */
+const DOCUMENT = ["api", "room", "history", "life", "store", "model"];
+const folderOf = (path: string) => (path.startsWith("document/") ? DOCUMENT.indexOf(path.split("/")[1]) : null);
 
 /** Every .ts file under these folders, as repo paths. */
 function files(dirs: string[]): string[] {
@@ -90,7 +101,7 @@ function wrong(from: string, to: string, type: boolean): string | null {
       to.startsWith("shared/") ||
       to.startsWith("libs/") ||
       BROWSER_DOCUMENT.includes(to) ||
-      (type && to == "document/api")
+      (type && (to == "document/api/api" || to.startsWith("document/model/")))
     )
       return null;
     return "the browser imports only shared/ and a few files of document/";
@@ -100,6 +111,13 @@ function wrong(from: string, to: string, type: boolean): string | null {
   }
   if (theirs == 7) return "only the browser imports client/ and a library's UI";
   if (theirs > mine) return `layer ${mine} imports layer ${theirs}`;
+  const mineIn = folderOf(from),
+    theirsIn = folderOf(to);
+  if (mineIn == -1) return "a file of document/ is in one of its six folders";
+  if (mineIn != null && theirsIn != null && theirsIn < mineIn)
+    return `document/${DOCUMENT[mineIn]}/ imports document/${DOCUMENT[theirsIn]}/, which is above it`;
+  // The document knows no agent: nothing of agents/ (the layers), and no route or file of its own by that name.
+  if (mineIn != null && /agent/.test(to)) return "document/ names no agent";
   const area = /^server\/([a-z-]+)\/(.+)$/.exec(to);
   if (area && AREAS.includes(area[1]) && area[2] != "index" && !from.startsWith(`server/${area[1]}/`))
     return `server/${area[1]} is imported through its index.ts`;
@@ -140,8 +158,16 @@ test("bun erga reaches no file of the build: it runs in a new clone", () => {
 
 test("the rules catch what they are for", () => {
   const no = [
-    ["shared/html", "document/pages"],
-    ["document/document", "agents/models"],
+    ["shared/html", "document/model/pages"],
+    ["document/life/document", "agents/models"],
+    ["document/life/document", "document/room/open"],
+    ["document/history/history", "document/api/uploads"],
+    ["document/store/storage", "document/room/room"],
+    ["document/model/access", "document/store/storage"],
+    ["document/room/open", "document/api/http"],
+    ["document/tabs", "document/room/room"],
+    ["client/shell/main", "document/room/room"],
+    ["client/shell/main", "document/api/http"],
     ["server/directory/settings", "server/identity/index"],
     ["server/documents/view", "server/directory/users"],
     ["server/admin/routes", "server/operations/index"],
@@ -155,20 +181,32 @@ test("the rules catch what they are for", () => {
     ["cloudflare/objects/document", "dev/disk-storage"],
     ["server/health", "deploy/pipeline/pipeline"],
     ["server/app", "cloudflare:workers"],
-    ["client/shell/main", "document/host"],
+    ["client/shell/main", "document/api/host"],
     ["libs/text/api/rules", "libs/text/ui/core"],
     ["libs/text/api/rules", "client/common/link-target"],
-    ["libs/text/ui/core", "document/host"],
-    ["agents/document/tools", "libs/text/ui/editor"],
+    ["libs/text/ui/core", "document/api/host"],
+    ["document/api/operations", "libs/text/ui/editor"],
   ];
   for (const [from, to] of no) expect([from, to, wrong(from, to, true)]).not.toEqual([from, to, null]);
   const yes = [
-    ["client/shell/main", "document/api", true],
+    ["client/shell/main", "document/api/api", true],
+    ["client/shell/main", "document/model/names", true],
+    ["client/shell/main", "document/model/pages", false],
+    ["document/api/host", "document/life/document", false],
+    ["document/room/open", "document/history/history", true],
     ["libs/text/ui/edit", "libs/text/api/rules", false],
-    ["agents/document/tools", "libs/text/api/rules", false],
+    ["document/api/operations", "libs/text/api/rules", false],
     ["client/shell/main", "libs/text/ui/editor", false],
     ["cloudflare/platform", "server/health", true],
     ["tests/room.test", "cloudflare/objects/document", false],
   ] as const;
   for (const [from, to, type] of yes) expect([from, to, wrong(from, to, type)]).toEqual([from, to, null]);
+});
+
+test("the document's own routes name no agent: a caller is a user, in person or via something", () => {
+  const routes = ["document/api/api.ts", "document/api/http.ts"].flatMap((f) =>
+    [...readFileSync(join(ROOT, f), "utf8").matchAll(/"\/api\/[^"]*"/g)].map((m) => m[0])
+  );
+  expect(routes.length).toBeGreaterThan(5);
+  expect(routes.filter((r) => /agent/.test(r))).toEqual([]);
 });

@@ -51,9 +51,9 @@ import { Lists } from "./lists.ts";
 import { Requests } from "./requests.ts";
 import { Identities, type SignInProvider, type Vouched } from "./identities.ts";
 import { providerName, SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
-import { SLUG_MAX, slugify } from "../../document/pages.ts";
-import { addressOf, HOME_OWNER, HOME_SLUG, NameError, UNTITLED } from "../../document/names.ts";
-import type { Role } from "../../document/access.ts";
+import { SLUG_MAX, slugify } from "../../document/model/pages.ts";
+import { addressOf, HOME_OWNER, HOME_SLUG, NameError, UNTITLED } from "../../document/model/names.ts";
+import type { Role } from "../../document/model/access.ts";
 import {
   type Action,
   ANYONE,
@@ -510,7 +510,7 @@ export class Directory {
 
   /**
    * `access`'s rule, on permissions already at hand (`access` reads them here; a document's host keeps a copy:
-   * document/document.ts). Only the default homepage's rule may ask the database (homeRole: its users, remembered a
+   * document/life/document.ts). Only the default homepage's rule may ask the database (homeRole: its users, remembered a
    * few seconds).
    */
   async decide(who: Who | null, doc: { id: string; owner: string; test: boolean }, permissions: readonly { login: string; role: Role }[]): Promise<Role | null> {

@@ -6,7 +6,7 @@
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { nameOf } from "../../document/names.ts";
+import { nameOf } from "../../document/model/names.ts";
 import { appPage, pageBars, inlineStyle, page, safeNext } from "../pages/index.ts";
 import { dateTag, esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform";

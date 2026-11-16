@@ -9,7 +9,7 @@ import { byLine } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
 import { pageLlmSection, pageLlmUsage } from "./page-llm.ts";
 import { setAt, shown } from "./parts.ts";
-import { addressOf } from "../../document/names.ts";
+import { addressOf } from "../../document/model/names.ts";
 import { domainName, ERGA, ergaName, sitesOf } from "../sites/index.ts";
 
 /**

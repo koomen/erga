@@ -1,10 +1,10 @@
-// The document's Storage (document/storage.ts): MemoryStorage behaves as a
+// The document's Storage (document/store/storage.ts): MemoryStorage behaves as a
 // Durable Object's storage does for what the document uses, and the store
 // helpers read and write files, folders and the room's state through it.
 
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
-import { fileStoreOf, KEYS, kvOf, MemoryStorage } from "../document/storage";
+import { fileStoreOf, KEYS, kvOf, MemoryStorage } from "../document/store/storage";
 import { until } from "./helpers/until";
 
 test("get, put and delete, one key or many; list in key order, by prefix, after a key, at most a limit", async () => {

@@ -31,9 +31,9 @@ import { mountPending } from "./pending";
 import { apiCode, runPageEdit, warm } from "./page-edits";
 import type { EditMode } from "./mode";
 import { step, type Editing, type FrameEvent, type State } from "./frame-state";
-import { changesBetween } from "../../../document/merge";
-import { baseName, encodePath } from "../../../document/pages";
-import { assets, authors, colorFor, files, roomInfo, type Author } from "../../../document/content";
+import { changesBetween } from "../../../document/model/merge";
+import { baseName, encodePath } from "../../../document/model/pages";
+import { assets, authors, colorFor, files, roomInfo, type Author } from "../../../document/model/content";
 import type { UploadsMessage } from "../../../shared/room-socket";
 import { sourceDigest } from "../../../shared/page-html";
 import { sleep } from "../../../shared/time";
@@ -329,7 +329,7 @@ function enter() {
   const back = carried();
   if (back?.room) c.merge(back.room);
   edit(c, editing()!, back);
-  // The lock for source edits (document/room.ts): while someone holds it, the page is read-only, and says so; their
+  // The lock for source edits (document/room/room.ts): while someone holds it, the page is read-only, and says so; their
   // edits show as they land, and the page edits again once it's let go (no reload).
   const follow = () => {
     if (collab != c) return;

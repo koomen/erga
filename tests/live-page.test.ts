@@ -5,8 +5,8 @@
 
 import { expect, test } from "bun:test";
 import { ConsoleLog, describeConsole, describeNetwork, fromTiming, mergeHooked, parseSince, queryConsole, queryEvents, queryNetwork, type EventEntry } from "../shared/live-page";
-import { byteRange } from "../document/blobs";
-import { docFile, mimeOf } from "../document/host";
+import { byteRange } from "../document/store/blobs";
+import { docFile, mimeOf } from "../document/api/view";
 
 test("the console collapses identical messages into one entry, with a count and the first and last time", () => {
   const log = new ConsoleLog();

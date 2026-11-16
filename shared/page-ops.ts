@@ -1,4 +1,4 @@
-// A page's own edits, as operations (document/page-api.ts has the module and its sandbox): the page names a module of its
+// A page's own edits, as operations (document/api/page-api.ts has the module and its sandbox): the page names a module of its
 // own files (<meta name="erga-api" content="api.js">) whose `apply(html, edit, input)` answers a list of operations on
 // the page's elements, named by CSS selector as the source has them: insert HTML before, after or into one, remove one,
 // move one, replace one, set or remove an attribute, and where the person's caret goes after it. Or { refused: why }.

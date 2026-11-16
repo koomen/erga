@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { evaluateIn } from "../client/page-tools/evaluate";
-import { describeView } from "../agents/document/page-tools";
+import { describeView } from "../document/api/page-operations";
 import { renderTimes } from "../shared/view-page";
 import { setup } from "./helpers/files-fixture";
 
@@ -107,18 +107,18 @@ test("an edit that doesn't apply, or a path that isn't a page: nothing renders, 
   const rendered: unknown[] = [];
   s.deps.render = async (job) => (rendered.push(job), { errors: [] });
   const deck = readFileSync(new URL("../e2e/fixtures/builds/index.html", import.meta.url), "utf8");
-  await s.doc.write({ "index.html": deck }, [], "ada");
+  await s.doc.write({ "index.html": deck }, [], { login: "ada" });
   /** A tool's error, as an agent with a token gets it (the app sends the request from its own address). */
   const call = async (name: string, args: object) => {
     const r = await s.doc.handle(
-      new Request(`https://erga.test/api/tools/${name}`, {
+      new Request(`https://erga.test/api/operations/${name}`, {
         method: "POST",
         body: JSON.stringify(args),
         headers: {
           "content-type": "application/json",
           "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }),
           "x-erga-who": JSON.stringify({ login: "ada" }),
-          "x-erga-agent": "token-1",
+          "x-erga-via": JSON.stringify("a shared agent (test)"),
         },
       })
     );

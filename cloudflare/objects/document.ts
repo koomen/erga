@@ -1,43 +1,44 @@
 // One document, as a Durable Object (on a deployed instance, and in local development
-// alike): the Cloudflare side of document/document.ts. It gives the
+// alike): the Cloudflare side of document/api/host.ts. It gives the
 // Document its storage, the server around it (the directory in D1, the
 // other objects, the agent's settings), takes its WebSockets, wakes it for
 // its alarm, and forwards the calls the rest of the Worker makes (RPC).
 //
 // Tabs' sockets use the hibernation API (ctx.acceptWebSocket): the object
 // sleeps while they're idle and wakes for their next message, and each
-// socket keeps what it is in its attachment. document/tabs.ts joins them to
+// socket keeps what it is in its attachment. document/room/participants.ts joins them to
 // the document whenever it opens; the document closes itself when nothing
 // has happened for a while (ERGA_ROOM_IDLE_MS, a minute), so nothing keeps
 // the object awake while tabs only sit open.
 //
 // The dev server's link to a document on disk (/api/mirror) is here too:
-// the files then stay on disk, reached over that WebSocket (document/disk.ts).
+// the files then stay on disk, reached over that WebSocket (document/store/disk.ts).
 // It's an ordinary socket: a document on disk never sleeps.
 
 import * as Effect from "effect/Effect";
 import { DurableObject } from "cloudflare:workers";
-import { Document, type DocumentDeps, type FileData, type OnDisk } from "../../document/document";
-import type { ViewAnswer } from "../../document/view";
-import type { Writer } from "../../document/waits";
-import type { TreeOp } from "../../document/pages";
-import type { FileList, NameAnswer, TreeAnswer, TreeState } from "../../document/host";
-import { Tabs, type Tab } from "../../document/tabs";
+import type { DocumentDeps, FileData, OnDisk } from "../../document/life/document";
+import { DocumentHost } from "../../document/api/host";
+import type { ViewAnswer } from "../../document/api/view";
+import type { Writer } from "../../document/api/waits";
+import type { TreeOp } from "../../document/model/pages";
+import type { FileList, NameAnswer, TreeAnswer, TreeState } from "../../document/api/http";
+import type { Tab } from "../../document/room/participants";
 import { PING, PONG } from "../../shared/room-socket";
 import type { Who } from "../../server/directory/index.ts";
-import { askerFrom, personOf, type Role } from "../../document/access";
-import type { NamedRow } from "../../document/names";
-import { documentAgents } from "../../agents/document/session";
+import { askerFrom, personOf, type Role } from "../../document/model/access";
+import type { NamedRow } from "../../document/model/names";
+import { descriptionKey } from "../../agents/models";
 import { sandboxOf } from "../sandbox";
-import { VIA } from "../../shared/attribution";
-import type { RestoreResult, VersionsState } from "../../document/versions";
-import { CommentTables, placeQuote, type CommentAnswer, type CommentCall } from "../../document/comments";
-import type { DocSnapshot, Page } from "../../document/snapshot";
+import type { Act } from "../../shared/attribution";
+import type { RestoreResult, VersionsState } from "../../document/history/versions";
+import { CommentTables, placeQuote, type CommentAnswer, type CommentCall } from "../../document/api/comments";
+import type { DocSnapshot, Page } from "../../document/store/snapshot";
 import { directoryOf } from "../d1";
 import { forgetDecisions } from "../../server/documents/index.ts";
 import { platform, siteOf } from "../platform";
 import { domainsOf } from "../../server/sites/index.ts";
-import { DiskLink } from "../../document/disk";
+import { DiskLink } from "../../document/store/disk";
 import type { Env } from "../env";
 import { CALLS, throughDoor, type CallAnswer } from "./document-door";
 import { blobsOf } from "../blobs";
@@ -68,21 +69,21 @@ export class DocumentObject extends DurableObject<Env> {
     // Edits already on their way (another socket, a busy machine) land first: a tenth of a second is nothing to wait when stopping.
     flush: () => run(Effect.sleep(Duration.millis(100)).pipe(Effect.andThen(this.document.flush()))),
   });
-  private document = new Document(this.deps());
-  /** Its comments, in this object's SQLite (document/comments.ts). */
+  /** The document, with the tabs' sockets: each keeps what it is in its attachment, and joins the document whenever it's open. */
+  private document: DocumentHost<WebSocket> = new DocumentHost<WebSocket>(this.deps(), {
+    all: () => this.ctx.getWebSockets(),
+    tabOf: (ws) => (ws.deserializeAttachment() as Tab | null) ?? null,
+    keep: (ws, tab) => ws.serializeAttachment(tab),
+  });
+  private get tabs() {
+    return this.document.participants;
+  }
+  /** Its comments, in this object's SQLite (document/api/comments.ts). */
   private commentTables = new CommentTables({
     exec: <T>(query: string, ...params: (string | number | null | ArrayBuffer)[]) =>
       this.ctx.storage.sql.exec(query, ...params).toArray() as T[],
     transaction: <R>(f: () => R) => this.ctx.storage.transactionSync(f),
   });
-  /** The tabs' sockets, joined to the document whenever it's open. */
-  private tabs = new Tabs<WebSocket>({
-    document: () => this.document,
-    sockets: () => this.ctx.getWebSockets(),
-    tabOf: (ws) => (ws.deserializeAttachment() as Tab | null) ?? null,
-    keep: (ws, tab) => ws.serializeAttachment(tab),
-  });
-
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     // A tab's "are you there?" is answered without waking the object (libs/text/ui/collab.ts sends it while idle).
@@ -99,13 +100,11 @@ export class DocumentObject extends DurableObject<Env> {
         closeAll: (code, reason) => {
           for (const socket of [...this.ctx.getWebSockets(), ...this.mirrors]) { try { socket.close(code, reason); } catch { /* already closed */ } }
           this.mirrors.clear();
-          this.tabs.detachAll();
         },
-        attach: (opened) => this.tabs.attachAll(opened),
-        detach: () => this.tabs.detachAll(),
       },
-      // Each person's agent's session here, and the key the versions' descriptions are written with.
-      agents: documentAgents({ settings: () => platform(env).agentSettings(), sandbox: sandboxOf(env.LOADER) }),
+      // Where a page's own API runs for an operation, and the key the versions' descriptions are written with.
+      sandbox: sandboxOf(env.LOADER),
+      descriptionKey: () => descriptionKey(() => platform(env).agentSettings()),
       sites: {
         forget: async (docId) => void (await Promise.all(domainsOf(platform(env)).map((domain) => siteOf(env, domain).forget(docId)))),
       },
@@ -153,7 +152,7 @@ export class DocumentObject extends DurableObject<Env> {
     return run(this.document.link(owner, id, index, disk));
   }
   // (Each call that opens the document holds it open until it's done: it doesn't close for being idle meanwhile.)
-  write(files: Record<string, FileData>, remove: string[], by?: string, writer?: Writer) {
+  write(files: Record<string, FileData>, remove: string[], by?: Act, writer?: Writer) {
     return run(this.document.write(files, remove, by, writer));
   }
   paths(): Promise<string[]> {
@@ -170,7 +169,7 @@ export class DocumentObject extends DurableObject<Env> {
   }
   /** A message for everyone who has the document open (its publishing state, site.ts). Opens nothing. */
   async notify(msg: unknown): Promise<void> {
-    this.tabs.notify(msg);
+    this.tabs.tellAll(msg);
   }
   diskPath(): Promise<string | null> {
     return run(this.document.diskPath());
@@ -187,7 +186,7 @@ export class DocumentObject extends DurableObject<Env> {
   versionsState(opts: { before?: string | number | null; limit?: number } = {}): Promise<VersionsState | null> {
     return run(this.document.hold(this.document.versionsState(opts)));
   }
-  restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult> {
+  restore(ref: string | number, by: Act, path?: string | null): Promise<RestoreResult> {
     return run(this.document.hold(this.document.restore(ref, by, path)));
   }
   currentFiles() {
@@ -204,9 +203,9 @@ export class DocumentObject extends DurableObject<Env> {
   tree(): Promise<TreeState | null> {
     return run(this.document.hold(this.document.call((c) => c.tree())));
   }
-  async treeOp(op: TreeOp): Promise<TreeAnswer> {
+  async treeOp(op: TreeOp, by: Act): Promise<TreeAnswer> {
     return (
-      (await run(this.document.hold(this.document.call((c) => c.treeOp(op))))) ?? {
+      (await run(this.document.hold(this.document.call((c) => c.treeOp(op, by))))) ?? {
         ok: false,
         status: 404,
         error: "There's no such document.",
@@ -254,7 +253,7 @@ export class DocumentObject extends DurableObject<Env> {
     // The dev server, bringing the files of a document on disk: before the room opens, which waits for them.
     if (url.pathname == "/api/mirror") return this.mirror(request);
     if (request.headers.get("upgrade")?.toLowerCase() != "websocket") return run(this.document.handle(request));
-    // A tab's one socket: the room, and with ?events=1 its person's events (document/tabs.ts).
+    // A tab's one socket: the room, and with ?events=1 its person's events (document/room/participants.ts).
     if (!url.pathname.startsWith("/api/room")) return new Response("Not found", { status: 404 });
     // Who may: decided here, on the document's copy of its permissions (the app asked no database).
     const allowed = await run(this.document.authorize(request));
@@ -269,10 +268,10 @@ export class DocumentObject extends DurableObject<Env> {
       epoch: url.searchParams.get("epoch") || null,
       person: personOf(request.headers),
       events: url.searchParams.get("events") == "1" || watch,
-      // Whom it's for, as the app said: when the permissions change, whether they may still (Tabs.permissionsChanged).
+      // Whom it's for, as the app said: when the permissions change, whether they may still (Participants.permissionsChanged).
       ...(askerFrom(request.headers) ? { who: askerFrom(request.headers)! } : {}),
       // A viewer's page (?watch=view, client/inline/viewer-live.ts): it hears what it shows change, never joins the room,
-      // and opens no closed document (Tabs.watch).
+      // and opens no closed document (Participants.watch).
       ...(watch ? { watch: true } : {}),
       ...(url.searchParams.get("comments") == "1" ? { comments: true } : {}),
     };
@@ -293,7 +292,7 @@ export class DocumentObject extends DurableObject<Env> {
       return new Response(null, { status: 101, webSocket: client });
     }
     accept();
-    if (!this.tabs.join(server, opened, tab)) server.close(4409, "stale epoch");
+    if (!this.tabs.join(server, tab)) server.close(4409, "stale epoch");
     return new Response(null, { status: 101, webSocket: client });
   }
 

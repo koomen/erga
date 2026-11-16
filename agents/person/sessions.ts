@@ -18,7 +18,7 @@ import type { Platform } from "../../server/platform.ts";
 import * as Effect from "effect/Effect";
 import { Base64 } from "effect/encoding";
 import * as Result from "effect/Result";
-import { storeBlob, type BlobStore } from "../../document/blobs.ts";
+import { storeBlob, type BlobStore } from "../../document/store/blobs.ts";
 import * as Cache from "effect/Cache";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -113,8 +113,17 @@ export class PersonAgents {
     );
     if ("missing" in cfg) return cfg.missing;
     let s = this.agents.get(login);
-    if (s) { s.origin = origin; s.agent.configure(cfg); return s; }
-    const state: { origin: string; here: string | null; name: string } = { origin, here: null, name: name ?? login };
+    if (s) {
+      s.origin = origin;
+      s.agent.configure(cfg);
+      return s;
+    }
+    const state: { origin: string; here: string | null; name: string; turn: string | null } = {
+      origin,
+      here: null,
+      name: name ?? login,
+      turn: null,
+    };
     /** The documents its tools ran in this turn (callDocument): each hears when the turn is done (a version is cut there). */
     const touched = new Map<string, DocRoute>();
     const admin = await this.platform.directory.users.isAdmin(login);
@@ -129,6 +138,9 @@ export class PersonAgents {
       platform: this.platform,
       auth: authOps(this.platform, state.origin),
       ranIn: (doc) => touched.set(doc.id, doc),
+      // The turn that its calls are part of, from its first call to the end of its run: a document marks where the
+      // turn began there (its "See changes" and "Undo the turn").
+      turn: (state.turn ??= crypto.randomUUID()),
     });
     const scope = `you:${login}`;
     const store = tableStore(this.chats, scope, (running) => {
@@ -154,11 +166,12 @@ export class PersonAgents {
     agent.subscribe((ev) => {
       if (ev.t != "busy" || ev.busy) return;
       for (const doc of touched.values())
-        callDocument(as(), doc, "/api/agent/done", { method: "POST" }).then(
+        callDocument(as(), doc, "/api/turn-done", { method: "POST" }).then(
           (r) => r.body?.cancel(),
           () => {}
         );
       touched.clear();
+      state.turn = null;
     });
     agent.subscribe((ev) => this.event({ type: "agent", ev }, login));
     s = Object.assign(state, { agent });

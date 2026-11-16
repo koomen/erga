@@ -1,5 +1,5 @@
-// The room's journal (document/storage.ts, `Journal`) under a real room
-// (document/room.ts): a room opens again from its snapshot and log as it
+// The room's journal (document/store/storage.ts, `Journal`) under a real room
+// (document/room/room.ts): a room opens again from its snapshot and log as it
 // was, in one read of storage; the log becomes a snapshot when it grows; a
 // compaction stopped half way, or a write cut short, leaves a history that
 // still loads whole; big states are cut into parts; files the room hadn't
@@ -11,10 +11,11 @@ import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Y from "yjs";
 import { Awareness } from "../shared/yjs-protocol";
-import { FileStore, Room, StateStore } from "../document/room";
-import { fileStoreOf, Journal, KEYS, MemoryStorage, PART, stateStoreOf, type Storage } from "../document/storage";
-import { files, introduce } from "../document/content";
-import { joinLocal } from "../document/room";
+import { Room } from "../document/room/room";
+import { FileStore, StateStore } from "../document/store/storage";
+import { fileStoreOf, Journal, KEYS, MemoryStorage, PART, stateStoreOf, type Storage } from "../document/store/storage";
+import { files, introduce } from "../document/model/content";
+import { joinLocal } from "./helpers/join-local";
 import { sleep } from "../shared/time";
 import { until } from "./helpers/until";
 

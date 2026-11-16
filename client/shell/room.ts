@@ -3,7 +3,8 @@
 
 import { Transaction, type ChangeSet } from "@codemirror/state";
 import type { RoomStatus, SocketEvent } from "../../libs/text/ui/collab";
-import type { DocName, Hello } from "../../document/api";
+import type { Hello } from "../../document/api/api";
+import type { DocName } from "../../document/model/names";
 import type { LogEvent } from "../../shared/agent-log";
 import type { LiveRequest } from "../../shared/live-page";
 import { live } from "../live/client";
@@ -68,8 +69,8 @@ export function mountRoom(shell: Shell) {
       shell.naming.setPages(h.tree.pages);
       stillHere(h.tree);
     }
-    // Your agent's changes to this document (its tools run here, as your agent): Undo's count in its panel.
-    else if (msg.type == "agent" && msg.ev?.t == "undoable") window.dispatchEvent(new Event("erga:agent-tool"));
+    // Your agents' changes to this document (the document's operations, run as you via them): Undo's count in the panel.
+    else if (msg.type == "undoable") window.dispatchEvent(new Event("erga:agent-tool"));
     else if (msg.type == "live" && msg.id && msg.req) shell.requests.answerLive(msg.id, msg.req);
     else if (msg.type == "name" && msg.name) shell.naming.showName(msg.name);
     else if (msg.type == "versions" || msg.type == "publishing") shell.docSettings?.event(msg.type);
@@ -84,9 +85,9 @@ export function mountRoom(shell: Shell) {
     else if (msg.type == "open" && msg.path && msg.path != shell.pagePath) shell.openPage(msg.path);
   }
 
-  // The document's file tree changed (anyone's doing: document/pages.ts). Whatever shows the tree hears it as an
+  // The document's file tree changed (anyone's doing: document/model/pages.ts). Whatever shows the tree hears it as an
   // "erga-tree" event on window (the event's detail is the message: { type: "tree", moved?, deleted? }) and
-  // fetches it again (the tree, document/pages.ts, does both). This page, moved, goes to where it went; deleted, to the document's own.
+  // fetches it again (the tree, document/model/pages.ts, does both). This page, moved, goes to where it went; deleted, to the document's own.
   function treeChanged(msg: { moved?: { from: string; to: string }; deleted?: string }) {
     window.dispatchEvent(new CustomEvent("erga-tree", { detail: { type: "tree", ...msg } }));
     const under = (p: string) => shell.pagePath == p || shell.pagePath.startsWith(`${p}/`);

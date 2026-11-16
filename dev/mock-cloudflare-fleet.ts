@@ -2,7 +2,7 @@
 // already and room for its staging instance, as their deploys see it. Example names only: example.com, its pages on
 // example-pages.com.
 
-import { memoryStore } from "../document/snapshot";
+import { memoryStore } from "../document/store/snapshot";
 import { ACCOUNT_ID, deployVersion, MOCK_SNAPSHOT_TOKEN, PRIMARY_DB, PRIMARY_DOCS, type MockState } from "./mock-cloudflare";
 
 /** The example account: the instance as a deploy left it (the fleet option). */

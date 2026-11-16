@@ -4,7 +4,8 @@
 
 import { afterEach, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
-import { cleanDescription, describeChange, fallbackDescription, unifiedDiff, versionNumber, Versions, type KV } from "../document/versions";
+import { cleanDescription, describeChange, fallbackDescription, unifiedDiff, versionNumber, Versions } from "../document/history/versions";
+import type { KV } from "../document/store/storage";
 
 /** Versions on `kv`, each call run to its answer. */
 function versionsOn(kv: KV, now?: () => number) {

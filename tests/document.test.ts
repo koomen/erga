@@ -1,17 +1,18 @@
-// One document (document/document.ts) on MemoryStorage, with the real
+// One document (document/life/document.ts) on MemoryStorage, with the real
 // directory on bun:sqlite: made, read while its room is closed, edited by a
 // publish (a version cut once edits pause), restored, deleted when unedited.
-// Then with tabs in its room (Document.joinRoom): what is served and stored, a publish against the room's write, what
+// Then with tabs in its room (Participants.join): what is served and stored, a publish against the room's write, what
 // counts as an edit, the versions a leave and a restore make, and the agent's tools on its files.
 
 import { afterAll, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Y from "yjs";
-import { files, introduce } from "../document/content";
-import { Document, type DocumentDeps } from "../document/document";
-import { KEYS, MemoryStorage } from "../document/storage";
+import { files, introduce } from "../document/model/content";
+import { type DocumentDeps } from "../document/life/document";
+import { DocumentHost } from "../document/api/host";
+import type { Tab, TabSocket } from "../document/room/participants";
+import { KEYS, MemoryStorage } from "../document/store/storage";
 import { Directory } from "../server/directory/index.ts";
-import { documentAgents } from "../agents/document/session";
 import { testSandbox } from "./helpers/sandbox";
 import { sleep } from "../shared/time";
 import {
@@ -34,8 +35,15 @@ import { useAssets } from "../server/pages/index.ts";
 // The whole app in memory (tests/helpers/app.ts) names a build's files: none after this file, as before it.
 afterAll(() => useAssets(null));
 
-/** A Document as the tests await it. */
-type Doc = Promised<Document>;
+/** A tab's socket, as the tests hold it: what it is, and what the document sends it. */
+interface Sock extends TabSocket {
+  tab: Tab;
+}
+/** Each document's sockets (the adapter's, on Cloudflare). */
+const SOCKETS = new WeakMap<object, Set<Sock>>();
+
+/** A DocumentHost as the tests await it. */
+type Doc = Promised<DocumentHost<Sock>> & { readonly self: DocumentHost<Sock> };
 
 /** A document's deps on memory: the real directory, no sockets, no agent, short version timers. */
 function setup(dir = new Directory(memory(), { admins: ["ada"] })) {
@@ -46,7 +54,8 @@ function setup(dir = new Directory(memory(), { admins: ["ada"] })) {
     get storage() { return storage; },
     directory: dir,
     tabs: { count: () => 0, closeAll: () => {} },
-    agents: documentAgents({ settings: async () => ({ missing: "no key in the tests" }), sandbox: testSandbox }),
+    sandbox: testSandbox,
+    descriptionKey: async () => "",
     sites: {
       forget: async (id) => {
         forgotten.push(id);
@@ -58,7 +67,17 @@ function setup(dir = new Directory(memory(), { admins: ["ada"] })) {
   };
   const make = () => {
     storage = new MemoryStorage(() => doc.wake());
-    const doc = promised(new Document(deps));
+    const sockets = new Set<Sock>();
+    const doc = promised(
+      new DocumentHost<Sock>(deps, {
+        all: () => [...sockets],
+        tabOf: (s) => s.tab,
+        keep: (s, tab) => {
+          s.tab = tab;
+        },
+      })
+    );
+    SOCKETS.set(doc.self, sockets);
     return doc;
   };
   return { dir, log, forgotten, make, deps, storage: () => storage };
@@ -90,7 +109,7 @@ test("a document is made from files, read from storage while closed, edited by a
   expect((await get(doc, "/doc/nope.html")).status).toBe(404);
 
   // A publish opens the room and edits; once edits pause, a version is cut.
-  const out = await doc.write({ "index.html": "<h1>Two</h1>" }, [], "ada");
+  const out = await doc.write({ "index.html": "<h1>Two</h1>" }, [], { login: "ada" });
   expect(out).toEqual({ written: ["index.html"], removed: [], refused: [] });
   expect(await doc.paths()).toEqual(["index.html", "logo.png"]);
   await until(async () => (await doc.versionsState())!.total == 2);
@@ -103,14 +122,14 @@ test("a document is made from files, read from storage while closed, edited by a
   expect((await doc.snapshot())!.files["index.html"]).toBe("<h1>Two</h1>");
 
   // Restore version 1: a new version with its files, which viewers see.
-  const restored = await doc.restore("v1", "ada");
+  const restored = await doc.restore("v1", { login: "ada" });
   expect(restored).toMatchObject({ ok: true, from: "v1", files: ["index.html", "logo.png"] });
   state = (await doc.versionsState())!;
   expect(state.total).toBe(3);
   expect(state.current.description).toBe("Restored version 1");
   expect(await (await get(doc, "/doc/index.html")).text()).toBe("<h1>One</h1>");
   expect(await doc.versionFile("v2", "index.html")).toEqual(new TextEncoder().encode("<h1>Two</h1>"));
-  expect(await doc.restore("v9", "ada")).toMatchObject({ ok: false, status: 404 });
+  expect(await doc.restore("v9", { login: "ada" })).toMatchObject({ ok: false, status: 404 });
 
   // Deleted: storage empties, the row goes, the homepage hears of it.
   expect(await doc.delete()).toBe(true);
@@ -136,7 +155,7 @@ test("an unedited document goes when its alarm comes; an edited one stays", asyn
   const kept = make();
   await kept.create("ada", "kept12345", { "index.html": "<h1>Kept</h1>" }, "index.html", { expires: Date.now() + 60_000 });
   expect(await storage().getAlarm()).not.toBeNull();
-  await kept.write({ "index.html": "<h1>Kept, edited</h1>" }, [], "ada");
+  await kept.write({ "index.html": "<h1>Kept, edited</h1>" }, [], { login: "ada" });
   // The edit took its alarm away; and an alarm that comes all the same leaves it.
   expect(await storage().getAlarm()).toBeNull();
   await kept.wake();
@@ -210,7 +229,7 @@ test("a viewer's page in one call: the role, the file an address is, a version t
   const again = (await doc.view({ login: "ada" }, { page: "" }))!;
   expect(again.ver).toBe(first.ver);
   // A file changes (not the page): another version.
-  await doc.write({ "style.css": "h1{color:red}" }, [], "ada");
+  await doc.write({ "style.css": "h1{color:red}" }, [], { login: "ada" });
   const changed = (await doc.view({ login: "ada" }, { page: "" }))!;
   expect(changed.ver).not.toBe(first.ver);
 });
@@ -220,7 +239,7 @@ test("a document stored before publishing went (its record names a published ver
   const doc = make();
   await dir.add({ id: "old12345", owner: "ada", title: "Old", created: Date.now() });
   await doc.create("ada", "old12345", { "index.html": "<h1>One</h1>" }, "index.html", { expires: null });
-  await doc.write({ "index.html": "<h1>Two</h1>" }, [], "ada");
+  await doc.write({ "index.html": "<h1>Two</h1>" }, [], { login: "ada" });
   await until(async () => (await doc.versionsState())!.total == 2);
   // Its record as an older Erga left it: viewers saw version 1 ("manual").
   const stored = storage();
@@ -228,7 +247,7 @@ test("a document stored before publishing went (its record names a published ver
   stored.data.set(KEYS.meta, { ...(stored.data.get(KEYS.meta) as object), published: { n: 1 } });
   stored.data.delete("view");
   // The object starts again on that storage: what it shows is the document as it is now.
-  const again = promised(new Document({ ...deps, storage: stored }));
+  const again = promised(new DocumentHost<Sock>({ ...deps, storage: stored }));
   expect(await (await get(again, "/doc/index.html")).text()).toBe("<h1>Two</h1>");
   expect(await again.view({ login: "ada" }, { page: "" })).toMatchObject({ role: "owner", file: "index.html" });
   expect((await again.snapshot())!.files["index.html"]).toBe("<h1>Two</h1>");
@@ -277,7 +296,7 @@ test("an unedited document edited while its alarm reads the setting stays; one a
   const setting = slowSetting(dir);
   const woke = edited.wake();
   await setting.reading;
-  await edited.write({ "index.html": "<h1>Edited</h1>" }, [], "ada");
+  await edited.write({ "index.html": "<h1>Edited</h1>" }, [], { login: "ada" });
   setting.open();
   await woke;
   expect(await edited.index()).toBe("index.html");
@@ -302,7 +321,7 @@ test("a call while the document is deleted finds no document, and opens nothing 
   await dir.add({ id: "del12345", owner: "ada", title: "Del", created: Date.now(), expires: null });
   const doc = make();
   await doc.create("ada", "del12345", { "index.html": "<h1>Del</h1>" }, "index.html", { expires: null, modified: Date.now() });
-  await doc.write({ "index.html": "<h1>Del, edited</h1>" }, [], "ada");
+  await doc.write({ "index.html": "<h1>Del, edited</h1>" }, [], { login: "ada" });
   // Storage is slow to empty; a publish comes meanwhile.
   const s = storage();
   const deleteAll = s.deleteAll.bind(s);
@@ -316,7 +335,7 @@ test("a call while the document is deleted finds no document, and opens nothing 
   };
   const deleted = doc.delete();
   await emptying;
-  const late = doc.write({ "index.html": "<h1>Back</h1>" }, [], "ada").then(
+  const late = doc.write({ "index.html": "<h1>Back</h1>" }, [], { login: "ada" }).then(
     () => "published",
     (e: { message?: string }) => e.message
   );
@@ -337,7 +356,10 @@ test("two publishes at once: each file's edit is by its own publisher", async ()
     expires: null,
     modified: Date.now(),
   });
-  await Promise.all([doc.write({ "a.css": "a{color:red}" }, [], "ada"), doc.write({ "b.css": "b{color:red}" }, [], "bob")]);
+  await Promise.all([
+    doc.write({ "a.css": "a{color:red}" }, [], { login: "ada" }),
+    doc.write({ "b.css": "b{color:red}" }, [], { login: "bob" }),
+  ]);
   await until(async () => (await doc.versionsState())!.total == 2);
   const state = (await doc.versionsState())!;
   expect(state.current.authors).toEqual(["ada", "bob"]);
@@ -393,13 +415,13 @@ const message = (type: number, write: (e: Encoder) => void) => {
 };
 
 /**
- * A tab in the document's room, as a socket's adapter joins one (Document.admit, then joinRoom): its own replica and
+ * A tab in the document's room, as a socket's adapter joins one (admit, then participants.join): its own replica and
  * presence, which speak the room's protocol. Each message goes in a microtask, in order, as a socket's would.
  */
 async function tab(doc: Doc, who: string) {
   const person = { id: who, name: who };
   const request = new Request("http://doc/api/room", { headers: { "x-erga-person": JSON.stringify(person), "x-erga-access": "edit" } });
-  const opened = (await doc.admit(request))!;
+  expect(await doc.admit(request)).toBeTruthy();
   const ydoc = new Y.Doc();
   const aw = new Awareness(ydoc);
   const room = {};
@@ -414,12 +436,15 @@ async function tab(doc: Doc, who: string) {
     readSyncMessage(d, reply, ydoc, room);
     if (reply.length > 1) toRoom(reply.toBytes());
   }
-  const joined = doc.joinRoom(opened, {
-    epoch: null,
-    readOnly: false,
+  const sockets = SOCKETS.get(doc.self)!;
+  const socket: Sock = {
+    tab: { id: crypto.randomUUID(), epoch: null, readOnly: false, person, events: false },
     send: (m) => queueMicrotask(() => (open && typeof m != "string" ? receive(m) : undefined)),
-  })!;
-  const toRoom = (m: Uint8Array) => queueMicrotask(() => (open ? void joined.receive(m) : undefined));
+    close: () => {},
+  };
+  sockets.add(socket);
+  expect(doc.participants.join(socket)).toBe(true);
+  const toRoom = (m: Uint8Array) => queueMicrotask(() => (open ? void Effect.runPromise(doc.participants.message(socket, m)) : undefined));
   ydoc.on("update", (u: Uint8Array, from: unknown) => {
     if (from !== room) toRoom(message(MSG_SYNC, (e) => writeUpdate(e, u)));
   });
@@ -441,7 +466,8 @@ async function tab(doc: Doc, who: string) {
     /** The tab closes: its socket's end. */
     leave: () => {
       open = false;
-      joined.left();
+      sockets.delete(socket);
+      doc.participants.closed(socket);
     },
   };
 }
@@ -562,8 +588,9 @@ test("opening a document, being in its room and moving a caret don't count as ed
     bo = await tab(doc, "bo"),
     other = await tab(control.doc, "ada");
   ada.aw.setLocalState({ user: { name: "Ada" }, cursor: { anchor: 10, head: 10 } });
+  // (The room says whose caret it is: the name of the tab's socket.)
   type Presence = { user?: { name: string }; cursor?: unknown };
-  await until(() => [...bo.aw.getStates().values()].some((s) => (s as Presence).user?.name == "Ada" && (s as Presence).cursor));
+  await until(() => [...bo.aw.getStates().values()].some((s) => (s as Presence).user?.name == "ada" && (s as Presence).cursor));
   // An edit to another document, made after: once its mark goes, the caret's would have too, had it been an edit.
   other.insertAfter("<p>", "An edit. ");
   await until(async () => (await world.dir.get("ctrl1234"))!.modified != null);
@@ -590,14 +617,14 @@ test("the last editor leaving cuts a version at once, without waiting for the pa
 /** A tool of the document's, as the server runs it for an agent with one of Ada's tokens (POST /api/tools/<name>): its text, or the error. */
 async function tool(doc: Doc, name: string, args: object) {
   const r = await doc.handle(
-    new Request(`http://doc/api/tools/${name}`, {
+    new Request(`http://doc/api/operations/${name}`, {
       method: "POST",
       body: JSON.stringify(args),
       headers: {
         "content-type": "application/json",
         "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }),
         "x-erga-who": JSON.stringify({ login: "ada" }),
-        "x-erga-agent": "token-1",
+        "x-erga-via": JSON.stringify("a shared agent (test)"),
       },
     })
   );
@@ -622,13 +649,13 @@ async function versioned(id: string) {
 test("restoring one file: the others stay, the answer has the new version, and an edit lands right after", async () => {
   const { doc, ada } = await versioned("one12345");
   const before = (await doc.versionsState())!.total;
-  await doc.write({ "notes.md": "# Notes\n\nnotes-one\n" }, [], "ada");
+  await doc.write({ "notes.md": "# Notes\n\nnotes-one\n" }, [], { login: "ada" });
   await until(async () => (await doc.versionsState())!.total == before + 1);
   const withNotes = (await doc.versionsState())!.current;
   expect((await tool(doc, "write", { path: "notes.md", content: "# Notes\n\nnotes-two\n" })).status).toBe(200);
   ada.insertAfter("Garden", " keeps");
   await until(async () => (await tool(doc, "read", { path: "index.html" })).text.includes("keeps"));
-  const restored = await doc.restore(withNotes.id, "ada", "notes.md");
+  const restored = await doc.restore(withNotes.id, { login: "ada" }, "notes.md");
   const s = (await doc.versionsState())!;
   expect(s.current.description).toBe(`Restored notes.md from version ${withNotes.n}`);
   expect(restored).toMatchObject({ ok: true, current: { id: s.current.id }, files: ["notes.md"], from: withNotes.id });
@@ -641,7 +668,7 @@ test("restoring one file: the others stay, the answer has the new version, and a
   const edit = await tool(doc, "edit", { path: "notes.md", edits: [{ oldText: "notes-one", newText: "notes-one-edited" }] });
   expect(edit.status).toBe(200);
   expect((await tool(doc, "read", { path: "notes.md" })).text).toContain("notes-one-edited");
-  const none = await doc.restore(withNotes.id, "ada", "nope.html");
+  const none = await doc.restore(withNotes.id, { login: "ada" }, "nope.html");
   expect(none.ok).toBe(false);
   expect(!none.ok && none.error).toContain("has no file nope.html");
   ada.leave();
@@ -651,7 +678,7 @@ test("an edit against text a restore replaced says the file changed since, by wh
   const { doc, ada } = await versioned("stale234");
   ada.insertAfter("Garden", " keeps");
   await until(async () => (await tool(doc, "read", { path: "index.html" })).text.includes("keeps"));
-  const back = await doc.restore("v2", "ada");
+  const back = await doc.restore("v2", { login: "ada" });
   if (!back.ok) throw new Error(back.error);
   await until(() => !ada.str().includes("keeps"));
   const t = await tool(doc, "edit", { path: "index.html", edits: [{ oldText: "keeps", newText: "changed" }] });

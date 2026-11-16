@@ -1,5 +1,5 @@
 // A key an admin stores, replaces or clears on /admin/api-keys reaches the
-// agent of a document that is already open, at its next turn (document/host.ts reads
+// agent of a document that is already open, at its next turn (document/api/host.ts reads
 // the settings at each turn: agents/models.ts). No real API call: a
 // fake fetch answers for Anthropic and records the key each request sent.
 
@@ -11,9 +11,9 @@ import * as Scope from "effect/Scope";
 import * as Redacted from "effect/Redacted";
 import { startAgent } from "../agents/person/agent.ts";
 import { Directory, type Param } from "../server/directory/index.ts";
-import { makeHost } from "../document/host.ts";
-import { FileStore, Room, StateStore } from "../document/room.ts";
-import { documentAgents } from "../agents/document/session";
+import { makeHttp } from "../document/api/http.ts";
+import { Room } from "../document/room/room.ts";
+import { FileStore, StateStore } from "../document/store/storage.ts";
 import { agentSettingsFrom, UNREADABLE_KEY, type AgentSettings } from "../agents/models";
 import { memory } from "./helpers/memory-sql";
 import { until } from "./helpers/until";

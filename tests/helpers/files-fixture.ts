@@ -2,11 +2,11 @@
 // bun:sqlite, and the Worker's way to serve what the document answers (a blob pointer becomes the blob's bytes).
 
 import * as Effect from "effect/Effect";
-import { Document, type DocumentDeps } from "../../document/document";
-import { MemoryBlobs, serveBlob } from "../../document/blobs";
-import { MemoryStorage } from "../../document/storage";
+import { type DocumentDeps } from "../../document/life/document";
+import { DocumentHost } from "../../document/api/host";
+import { MemoryBlobs, serveBlob } from "../../document/store/blobs";
+import { MemoryStorage } from "../../document/store/storage";
 import { Directory } from "../../server/directory/index.ts";
-import { documentAgents } from "../../agents/document/session";
 import { testSandbox } from "./sandbox";
 import { promised } from "./promised";
 import { memory } from "./memory-sql";
@@ -20,7 +20,8 @@ export async function setup(o: { blobs?: boolean; test?: boolean } = {}) {
   const deps: DocumentDeps = {
     storage, directory: dir,
     tabs: { count: () => 0, closeAll: () => {} },
-    agents: documentAgents({ settings: async () => ({ missing: "no key in the tests" }), sandbox: testSandbox }),
+    sandbox: testSandbox,
+    descriptionKey: async () => "",
     sites: { forget: async () => {} },
     timing: { idleMs: 40, maxMs: 400, writeDelay: 10 },
     background: (w) => { void w.catch(() => {}); },
@@ -28,7 +29,7 @@ export async function setup(o: { blobs?: boolean; test?: boolean } = {}) {
     ...(o.blobs === false ? {} : { blobs }),
   };
   await dir.add({ id: "doc12345", owner: "ada", title: "Files", created: Date.now(), expires: null });
-  const doc = promised(new Document(deps));
+  const doc = promised(new DocumentHost(deps));
   // A test document's agent is the scripted one (no key needed).
   await doc.create("ada", "doc12345", { "index.html": "<h1>Files</h1>" }, "index.html", { expires: null, modified: Date.now(), ...(o.test ? { test: true } : {}) });
   const as = (headers: Record<string, string> = {}) => ({ "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }), ...headers });

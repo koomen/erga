@@ -11,7 +11,7 @@
 //
 // page_log reads them, and the page's frames; page_input acts on the page,
 // through the editor's own handlers. The host sends the request to the person's tabs ({ type: "live" }), and each
-// answers on POST /api/agent/live: the LiveResult as JSON.
+// answers on POST /api/live: the LiveResult as JSON.
 //
 // Pure: the logs and the words for the agent are here, tested in tests/live-page.test.ts;
 // the tab's side is client/page-tools/live-page-tab.ts.

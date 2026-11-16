@@ -24,8 +24,8 @@
 // "Cannot perform I/O on behalf of a different Durable Object". Keep it in the object (`browsers`), never in a module
 // variable.
 
-import type { RenderJob } from "../document/agent";
-import { encodePath, pageAddress } from "../document/pages";
+import type { RenderJob } from "../document/life/document";
+import { encodePath, pageAddress } from "../document/model/pages";
 import { base64 } from "../shared/bytes";
 import {
   FRAMES,

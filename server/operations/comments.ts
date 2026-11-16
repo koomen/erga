@@ -1,4 +1,4 @@
-// A document's comments (document/comments.ts: tables in its Durable Object): the read tool's op comments, and the
+// A document's comments (document/api/comments.ts: tables in its Durable Object): the read tool's op comments, and the
 // edit tool's op comment, as a person does them in the editor and every agent as a tool. The server sets who wrote
 // each comment: the person, and `via` when one of their agents acted.
 //
@@ -16,8 +16,8 @@
 
 import * as Schema from "effect/Schema";
 import type { DocRow } from "../directory/index.ts";
-import type { Anchor, Comment, CommentAnswer, CommentCall, Thread } from "../../document/comments.ts";
-import { addressOf } from "../../document/names.ts";
+import type { Anchor, Comment, CommentAnswer, CommentCall, Thread } from "../../document/api/comments.ts";
+import { addressOf } from "../../document/model/names.ts";
 import type { CommentAsk } from "../../shared/attribution.ts";
 import { fromBase64 } from "../../shared/bytes.ts";
 import { type Caller, DOCUMENT, findDocument, type Operation, OperationError, platformOf, str } from "./operation.ts";

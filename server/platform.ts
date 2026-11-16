@@ -7,16 +7,16 @@
 import type { AgentToken, AuthStorage, SignIn, Tokens } from "./identity/index.ts";
 import type { SiteObject } from "./sites/index.ts";
 import { type Directory, type Route, type Who } from "./directory/index.ts";
-import type { Role } from "../document/access.ts";
-import type { RestoreResult, Version, VersionsState } from "../document/versions.ts";
-import type { FileList, NameAnswer, TreeAnswer, TreeState } from "../document/host.ts";
-import type { FileData } from "../document/document.ts";
-import type { Written } from "../document/uploads.ts";
-import type { Writer } from "../document/waits.ts";
-import type { ViewAnswer } from "../document/view.ts";
-import type { CommentAnswer, CommentCall } from "../document/comments.ts";
-import type { TreeOp } from "../document/pages.ts";
-import { VIA } from "../shared/attribution.ts";
+import type { Role } from "../document/model/access.ts";
+import type { RestoreResult, Version, VersionsState } from "../document/history/versions.ts";
+import type { FileList, NameAnswer, TreeAnswer, TreeState } from "../document/api/http.ts";
+import type { FileData } from "../document/life/document.ts";
+import type { Written } from "../document/api/uploads.ts";
+import type { Writer } from "../document/api/waits.ts";
+import type { ViewAnswer } from "../document/api/view.ts";
+import type { CommentAnswer, CommentCall } from "../document/api/comments.ts";
+import type { TreeOp } from "../document/model/pages.ts";
+import { VIA, type Act } from "../shared/attribution.ts";
 
 /** Who's signed in. */
 export interface Session {
@@ -182,10 +182,10 @@ export interface Platform {
     keep(doc: Route): Promise<boolean>;
     /**
      * Files arriving whole into an existing document (an upload): written,
-     * and merged into its room as edits; `remove` deletes files; `by`: who, as a version records it (byLine).
-     * `writer`: who wrote, when their write may wait for a file's bytes (document/waits.ts).
+     * and merged into its room as edits; `remove` deletes files; `by`: who, and how when not in person.
+     * `writer`: who wrote, when their write may wait for a file's bytes (document/api/waits.ts).
      */
-    write(doc: Route, files: Record<string, FileData>, remove: string[], by?: string, writer?: Writer): Promise<Written>;
+    write(doc: Route, files: Record<string, FileData>, remove: string[], by?: Act, writer?: Writer): Promise<Written>;
     /** Every file a document holds. */
     paths(doc: Route): Promise<string[]>;
     /** A document's page, or null if it has no host. */
@@ -195,20 +195,20 @@ export interface Platform {
     /** A document's versions and the current one; null if it has no host. */
     versions(doc: Route, opts: { before?: string | null; limit?: number }): Promise<VersionsState | null>;
     /** Brings a version back as a new current version, by `by`. The caller checks the person may edit. */
-    restore(doc: Route, ref: string, by: string, path?: string | null): Promise<RestoreResult>;
+    restore(doc: Route, ref: string, by: Act, path?: string | null): Promise<RestoreResult>;
     /** One version (by id or number) with its files' paths; null if there's none. */
     version(doc: Route, ref: string): Promise<(Version & { files: string[]; index: string }) | null>;
     /** One file of a version; null if there's no such version or file. */
     versionFile(doc: Route, ref: string, path: string): Promise<Uint8Array | null>;
     /** Its file tree (pages with titles, files, folders) and its latest moves; null if it has no host. */
     tree(doc: Route): Promise<TreeState | null>;
-    /** A tree operation: the tree after it, or why not. The caller checks the person may edit. */
-    treeOp(doc: Route, op: TreeOp): Promise<TreeAnswer>;
+    /** A tree operation, as `by`: the tree after it, or why not. The caller checks the person may edit. */
+    treeOp(doc: Route, op: TreeOp, by: Act): Promise<TreeAnswer>;
     /** Every file (its kind, size, time) and folder; null if it has no host. */
     files(doc: Route): Promise<FileList | null>;
     /** Renames it as `person` (title and/or slug; "" or null goes back to following): its open tabs follow. The caller checks they may. */
     rename(doc: Route, person: { id: string; name: string }, patch: { title?: string | null; slug?: string | null }): Promise<NameAnswer>;
-    /** Its comments: a list, or a change (document/comments.ts). The caller checks what the person may do. */
+    /** Its comments: a list, or a change (document/api/comments.ts). The caller checks what the person may do. */
     comments(doc: Route, call: CommentCall): Promise<CommentAnswer>;
     /** Deletes a document (its host takes it out of the directory too); false if it had no host. */
     delete(doc: Route): Promise<boolean>;
@@ -217,7 +217,7 @@ export interface Platform {
     /** Hands a request to the document's host, its path already the one inside the document. */
     fetch(doc: Route, request: Request): Promise<Response>;
     /**
-     * A viewer's page, in one call to the document's host (document/document.ts, view): what `who` may do (`anyone`:
+     * A viewer's page, in one call to the document's host (document/life/document.ts, view): what `who` may do (`anyone`:
      * one everyone may view), which file the address `page` is, the version viewers see, and the file's text unless the caller
      * has that version (`have`). Null if there's no such document. Asks the database nothing.
      */

@@ -2,7 +2,7 @@
 
 import { watchUnsaved } from "../../libs/text/ui/unsaved";
 import { EditorSelection, EditorState, Transaction, type ChangeSet } from "@codemirror/state";
-import { changesBetween } from "../../document/merge";
+import { changesBetween } from "../../document/model/merge";
 import { live } from "../live/client";
 import { $, type Shell } from "./shell";
 import type { Mode } from "./editor-state";

@@ -1,6 +1,6 @@
 // view_page and eval_in_page: what an agent asks of a render of the page (ViewRequest), what the render answers
 // (ViewResult), the render's tools inside the page (PageRender) and the limits of both. Shared by the agent's tools
-// (agents/document/page-tools.ts), the server's browser (cloudflare/render.ts) and the page (client/page-tools/).
+// (document/api/page-operations.ts), the server's browser (cloudflare/render.ts) and the page (client/page-tools/).
 
 import type { TextEdit } from "./text-edits";
 

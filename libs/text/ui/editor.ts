@@ -25,7 +25,7 @@
 
 import type { ChangeSet, EditorState } from "@codemirror/state";
 import * as M from "../../../shared/manuscript";
-import { changesBetween } from "../../../document/merge";
+import { changesBetween } from "../../../document/model/merge";
 import type { HeldInput, LinkEdit, LinkInfo, TypingAgent, PageEditorConfig, PageUpdate, Peer } from "./types";
 import type { InlineStyle } from "../api/source";
 import { noHistory } from "./core";

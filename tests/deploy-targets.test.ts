@@ -14,7 +14,7 @@ import { bucketName, ownCredentials } from "../deploy/pipeline/account";
 import { Cloudflare } from "../deploy/pipeline/cloudflare-api";
 import type { Release } from "../deploy/pipeline/release-format";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare, PRIMARY_DB, PRIMARY_DOCS } from "../dev/mock-cloudflare";
-import { memoryStore, SNAPSHOT_MINUTES, snapshotAuth, snapshotRoutes } from "../document/snapshot";
+import { memoryStore, SNAPSHOT_MINUTES, snapshotAuth, snapshotRoutes } from "../document/store/snapshot";
 import {
   prepareRelease,
   release,

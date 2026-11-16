@@ -1,4 +1,4 @@
-// A glob pattern as a RegExp over a document's paths: ls's `glob` (server/operations/editor.ts), grep's (agents/document/tools.ts).
+// A glob pattern as a RegExp over a document's paths: ls's `glob` (server/operations/editor.ts), grep's (document/api/operations.ts).
 
 import { escapeRe } from "./html";
 

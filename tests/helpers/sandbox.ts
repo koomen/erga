@@ -1,10 +1,10 @@
 // The sandbox a page's own API runs in, for the tests (bun): the same main module as the Worker Loader's
-// (document/page-api.ts, SANDBOX_MAIN), the code beside it in a folder of its own, imported in this process.
+// (document/api/page-api.ts, SANDBOX_MAIN), the code beside it in a folder of its own, imported in this process.
 
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SANDBOX_MAIN, type Sandbox } from "../../document/page-api";
+import { SANDBOX_MAIN, type Sandbox } from "../../document/api/page-api";
 
 export const testSandbox: Sandbox = async (code, call) => {
   const dir = mkdtempSync(join(tmpdir(), "erga-sandbox-"));

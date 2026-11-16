@@ -1,15 +1,18 @@
 // The document room without a browser: participants converge, files are
-// written back and merged in from storage, the agent's workspace aims edits
-// by exact match, and every edit is attributed to whoever made it.
+// written back and merged in from storage, a participant's workspace aims
+// edits by exact match on the room's own text, and every edit is attributed
+// to whoever made it, from where it came in.
 
 import { expect, test } from "bun:test";
 import * as Y from "yjs";
 import { Awareness } from "../shared/yjs-protocol";
 import * as Layer from "effect/Layer";
-import { FileStore, Room, StateStore, StoreError, joinLocal } from "../document/room";
+import { Room, type Participant } from "../document/room/room";
+import { FileStore, StateStore, StoreError } from "../document/store/storage";
+import { joinLocal } from "./helpers/join-local";
 import * as Effect from "effect/Effect";
-import { YjsWorkspace, type Cursor, type WorkspaceError } from "../agents/document/workspace";
-import { assets, authorOf, files, introduce, roomInfo, type Author } from "../document/content";
+import { Workspace, type Cursor, type WorkspaceError } from "../document/room/workspace";
+import { assets, authorOf, files, introduce, roomInfo, type Author } from "../document/model/content";
 import { until } from "./helpers/until";
 
 /** Files in memory, as the room's storage (no saved state: each room starts afresh). */
@@ -48,12 +51,20 @@ async function peer(room: Room, me: Author) {
   const doc = new Y.Doc();
   const aw = new Awareness(doc);
   aw.setLocalState({ user: me });
-  const joined = joinLocal(room, doc, aw);
+  const participant: Participant = { act: { login: me.user }, author: me, canEdit: () => true };
+  const joined = joinLocal(room, doc, aw, participant);
   await tick();
   introduce(doc, me);
   await tick();
-  return { doc, aw, joined, text: (p = "index.html") => files(doc).get(p)! };
+  return { doc, aw, joined, participant, text: (p = "index.html") => files(doc).get(p)! };
 }
+
+/** A user's agent as a participant: it works on the server, on the room's own text. */
+const agentOf = (user: string, name: string, canEdit = true): Participant => ({
+  act: { login: user, via: "their agent" },
+  author: { user, name, color: "#12a594", kind: "agent", via: "their agent" },
+  canEdit: () => canEdit,
+});
 
 test("participants converge and the room writes files back", async () => {
   const m = memoryStore({ "index.html": "<p>Hello world</p>", "style.css": "p { color: red }", "logo.png": "\u0089PNG" });
@@ -98,9 +109,7 @@ test("the agent's edits aim at the current text and keep others' edits", async (
   const m = memoryStore({ "index.html": "<h1>Notes</h1>\n<p>The quick brown fox.</p>\n<p>Jumps over the dog.</p>\n" });
   await withRoom(m, async (room) => {
     const ada = await peer(room, person("Ada"));
-    const agentMe: Author = { user: "ada", name: "Ada’s agent", color: "#12a594", kind: "agent" };
-    const agent = await peer(room, agentMe);
-    const ws = new YjsWorkspace(agent.doc, agentMe, () => true, {});
+    const ws = new Workspace(room, agentOf("ada", "Ada’s agent"));
 
     // Ada types while the agent works; the agent's edit lands on top.
     ada.text().insert(ada.text().toString().indexOf("dog"), "lazy ");
@@ -128,7 +137,7 @@ test("the agent's edits aim at the current text and keep others' edits", async (
     await tick();
     expect(room.text("notes/extra.md")).toBe("hi\n");
     expect(failure(ws.read("../secret")).reason).toBe("outside");
-    const viewer = new YjsWorkspace(agent.doc, agentMe, () => false, {});
+    const viewer = new Workspace(room, agentOf("ada", "Ada’s agent", false));
     expect(failure(viewer.edit("index.html", [{ oldText: "red", newText: "blue" }])).reason).toBe("readOnly");
   });
 });
@@ -137,9 +146,7 @@ test("an edit based on text the file no longer has says the file changed since",
   const m = memoryStore({ "index.html": "<h1>Notes</h1>\n<p>Old line.</p>\n" });
   await withRoom(m, async (room) => {
     const ada = await peer(room, person("Ada"));
-    const agentMe: Author = { user: "ada", name: "Ada’s agent", color: "#12a594", kind: "agent" };
-    const agent = await peer(room, agentMe);
-    const ws = new YjsWorkspace(agent.doc, agentMe, () => true, {});
+    const ws = new Workspace(room, agentOf("ada", "Ada’s agent"));
     expect(ws.seenAt("index.html")).toBeNull();
     const before = Date.now();
     Effect.runSync(ws.read("index.html"));
@@ -179,11 +186,14 @@ test("every edit is attributed, deletions included", async () => {
   await withRoom(m, async (room) => {
     const ada = await peer(room, person("Ada"));
     const bo = await peer(room, person("Bo"));
-    const agentMe: Author = { user: "bo", name: "Bo’s agent", color: "#12a594", kind: "agent" };
-    const agent = await peer(room, agentMe);
-    const ws = new YjsWorkspace(agent.doc, agentMe, () => true, {});
+    const ws = new Workspace(room, agentOf("bo", "Bo’s agent"));
+    // What a tab reads: the name tag of the Yjs client. What the server reads: where the change came in.
     const seen: (string | undefined)[] = [];
     ada.text().observe((_e, tr) => seen.push(authorOf(ada.doc, tr)?.name));
+    const named: unknown[] = [];
+    files(room.doc)
+      .get("index.html")!
+      .observe((_e, tr) => named.push(room.madeBy(tr.origin)));
 
     bo.doc.transact(() => bo.text().insert(3, "zero "));
     await tick();
@@ -193,6 +203,10 @@ test("every edit is attributed, deletions included", async () => {
     await Effect.runPromise(room.fileChanged("index.html"));
     await tick();
     expect(seen).toEqual(["Bo", "Bo’s agent", "On disk"]);
+    expect(named).toEqual([{ login: "bo" }, { login: "bo", via: "their agent" }, null]);
+    // A change that goes around the door has no name: the history says "the system", never a user.
+    room.doc.transact(() => files(room.doc).get("index.html")!.insert(0, "x"));
+    expect(named.at(-1)).toBeUndefined();
   });
 });
 
@@ -229,23 +243,14 @@ test("an agent's edit lands at once, in one undo step, keeps others' edits, and 
     { oldText: " brown", newText: "" },
     { oldText: "the dog", newText: "the lazy old dog, twice" },
   ];
-  const agentMe: Author = { user: "ada", name: "Ada’s agent", color: "#12a594", kind: "agent" };
   await withRoom(memoryStore({ "index.html": start }), async (room) => {
     const ada = await peer(room, person("Ada"));
-    const agent = await peer(room, agentMe);
-    const origin = {};
-    const undo = new Y.UndoManager(files(agent.doc), { trackedOrigins: new Set([origin]), captureTimeout: Infinity });
-    const abs = (r: Y.RelativePosition) => Y.createAbsolutePositionFromRelativePosition(r, agent.doc)!.index;
+    const agent = agentOf("ada", "Ada’s agent");
+    const undo = new Y.UndoManager(files(room.doc), { trackedOrigins: new Set([agent]), captureTimeout: Infinity });
+    const abs = (r: Y.RelativePosition) => Y.createAbsolutePositionFromRelativePosition(r, room.doc)!.index;
     const carets: number[] = [];
     const cursor: Cursor = (_path, anchor) => carets.push(abs(anchor));
-    const ws = new YjsWorkspace(
-      agent.doc,
-      agentMe,
-      () => true,
-      origin,
-      null,
-      cursor
-    );
+    const ws = new Workspace(room, agent, null, cursor);
     ada.text().insert(ada.text().length, "<p>Ada's line.</p>\n");
     await tick();
     const seen: string[] = [];
@@ -262,34 +267,39 @@ test("an agent's edit lands at once, in one undo step, keeps others' edits, and 
     // One undo step takes back the whole call, and keeps Ada's line.
     undo.stopCapturing();
     expect(undo.undoStack.length).toBe(1);
-    undo.undo();
-    expect(agent.text().toString()).toBe(start + "<p>Ada's line.</p>\n");
+    room.as(agent, () => undo.undo(), undo);
+    expect(room.text("index.html")).toBe(start + "<p>Ada's line.</p>\n");
   });
 });
 
 test("the lock for source edits: only its holder's edits land; everyone sees whose it is; let go, the others' edits come", async () => {
   await withRoom(memoryStore({ "index.html": "<p>One</p>\n" }), async (room) => {
     const ada = await peer(room, person("Ada"));
-    const agent = await peer(room, { user: "bo", name: "Bo’s agent", color: "#12a594", kind: "agent" });
-    expect(agent.joined.lock("Bo’s agent")).toBeNull();
+    const agent = agentOf("bo", "Bo’s agent");
+    expect(room.lock(agent, "Bo’s agent")).toBeNull();
     await tick();
     // Everyone sees it, and another can't take it.
     expect(roomInfo(ada.doc).get("lock")).toBe("Bo’s agent");
-    expect(ada.joined.lock("Ada")).toBe("Bo’s agent");
-    expect(ada.joined.lockedBy()).toBe("Bo’s agent");
-    // The holder's edit lands; Ada's, meanwhile, doesn't reach the room.
-    agent.text().insert(0, "<h1>Notes</h1>\n");
+    expect(room.lock(ada.participant, "Ada")).toBe("Bo’s agent");
+    expect(room.lockedBy(ada.participant)).toBe("Bo’s agent");
+    // The holder's edit lands; Ada's, meanwhile, doesn't reach the room: not from her tab, and not through the door.
+    room.as(agent, () => files(room.doc).get("index.html")!.insert(0, "<h1>Notes</h1>\n"));
     ada.text().insert(ada.text().length, "<p>Ada's</p>\n");
+    expect(() => room.as(ada.participant, () => files(room.doc).get("index.html")!.insert(0, "no"))).toThrow(/Bo’s agent is editing/);
+
     await tick();
     await tick();
     expect(files(room.doc).get("index.html")!.toString()).toBe("<h1>Notes</h1>\n<p>One</p>\n");
     // Let go: everyone may edit again, and what Ada typed meanwhile comes in, merged.
-    agent.joined.unlock();
+    room.unlock(agent);
     await tick();
     for (let i = 0; i < 5; i++) await tick();
     expect(roomInfo(ada.doc).get("lock")).toBeUndefined();
     expect(files(room.doc).get("index.html")!.toString()).toBe("<h1>Notes</h1>\n<p>One</p>\n<p>Ada's</p>\n");
-    expect(agent.text().toString()).toBe(ada.text().toString());
+    // Someone who may only view can't change it: not through the door, and not with a file that arrives whole.
+    const dee = agentOf("dee", "Dee’s agent", false);
+    expect(() => room.as(dee, () => files(room.doc).get("index.html")!.insert(0, "no"))).toThrow(/can only view/);
+    expect((await Effect.runPromise(Effect.result(room.push("index.html", "<p>no</p>", null, dee))))._tag).toBe("Failure");
   });
 });
 

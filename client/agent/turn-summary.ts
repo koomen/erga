@@ -1,7 +1,7 @@
 // The end of the agent's turn, in its panel (client/agent/person-agent.ts): one line says what the turn changed in the
 // document open ("Done. 8 changes in index.html."), with two buttons. "See changes" shows the text before and after the
 // turn: a diff of each file, from the version the document cut before the turn. "Undo the turn" takes back all
-// of its changes at once. The document's host keeps the turn (agents/document/session.ts, AgentSession.undoable).
+// of its changes at once. The document's host keeps the turn (document/room/participants.ts, Participants.undoable).
 // The line shows when a turn ends on this page, and goes when the next one starts.
 
 /** The agent's last turn in the document open: its changes Undo can still take back, its files, the version before it. */

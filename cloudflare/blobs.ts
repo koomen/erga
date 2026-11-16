@@ -1,4 +1,4 @@
-// Documents' blobs on Cloudflare (document/blobs.ts): the FILES bucket in
+// Documents' blobs on Cloudflare (document/store/blobs.ts): the FILES bucket in
 // R2, each blob at blobs/<sha-256>, written with that sha-256, which R2
 // checks. A blob never changes, so the edge's cache keeps a whole one by its
 // hash with no time limit: most loads of a page's images never reach R2.
@@ -8,10 +8,10 @@
 // snapshot endpoint at SNAPSHOT_FROM, GET /api/snapshot/blob/<sha-256>, behind SNAPSHOT_TOKEN),
 // and kept in its own bucket from then on.
 
-import type { BlobBody, BlobStore } from "../document/blobs";
+import type { BlobBody, BlobStore } from "../document/store/blobs";
 import type { EdgeCache } from "./kv-cache";
 import type { Env } from "./env";
-import { snapshotAuth, snapshotRefused } from "../document/snapshot";
+import { snapshotAuth, snapshotRefused } from "../document/store/snapshot";
 
 /** The edge keeps a whole blob up to this size (the Cache API takes up to 512 MB). */
 const CACHE_MAX = 512 * 1024 * 1024;

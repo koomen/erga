@@ -23,7 +23,7 @@ import { callerAddress } from "../shared/http.ts";
 import { allTools, jsonSchemaOf, runTool, toolsFor, type Tool } from "../agents/tools";
 import { addFile, type Caller, cleanFilePath, OperationError, PAGE_RULES } from "./operations/index.ts";
 import { keyedOp } from "./documents/index.ts";
-import type { ToolContent, ToolSpec } from "../document/agent";
+import type { ToolContent } from "../document/api/operations";
 import {
   authOps,
   expiryOf,
@@ -53,7 +53,12 @@ const callerOf = (platform: Platform, session: Session, origin: string): ToolCon
 
 /** The tools a caller may use. */
 const listed = (ctx: Caller) => call(() => toolsFor(ctx));
-const specOf = (t: Tool): ToolSpec => ({ name: t.name, description: t.description, parameters: jsonSchemaOf(t) });
+/** A tool as an outside agent sees it: its arguments as JSON Schema. */
+const specOf = (t: Tool): { name: string; description: string; parameters: unknown } => ({
+  name: t.name,
+  description: t.description,
+  parameters: jsonSchemaOf(t),
+});
 
 const refuse = (message: string, status = 400) => Effect.fail(new OperationError({ message, status }));
 

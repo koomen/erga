@@ -1,7 +1,7 @@
-// A document's expiry (document/expiry.ts): its state from its record, and each step, with no IO.
+// A document's expiry (document/life/expiry.ts): its state from its record, and each step, with no IO.
 
 import { expect, test } from "bun:test";
-import { expiryOf, expiryStep, type ExpiryEvent } from "../document/expiry";
+import { expiryOf, expiryStep, type ExpiryEvent } from "../document/life/expiry";
 
 const alarm = (o: Partial<Extract<ExpiryEvent, { type: "alarm" }>> = {}): ExpiryEvent => ({
   type: "alarm",

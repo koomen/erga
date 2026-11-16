@@ -13,7 +13,7 @@
 
 import type { AnchorJSON } from "../api/anchors";
 
-/** A comment, as the server sends it (document/comments.ts). */
+/** A comment, as the server sends it (document/api/comments.ts). */
 export interface Comment {
   id: string;
   by: string;

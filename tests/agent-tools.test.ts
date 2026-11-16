@@ -320,14 +320,14 @@ test("a person's agent's document tools: the document open on their page, or ano
     read = documentToolsHere().find((t) => t.name == "read")!;
   // No document named: the one open on her page (Caller.here), in its host, as her agent.
   await runTool(edit, { path: "index.html", edits: [] }, agent);
-  expect(new URL(sent[0].url).pathname).toBe("/api/tools/edit");
+  expect(new URL(sent[0].url).pathname).toBe("/api/operations/edit");
   // Another of Ada's, named: there, as her agent.
   const out = await runTool(edit, { document: "/ada/notes", path: "index.html", edits: [] }, agent);
   expect(out).toEqual([{ type: "text", text: "Edited notes.html" }]);
   const r = sent[1];
-  expect(new URL(r.url).pathname).toBe("/api/tools/edit");
+  expect(new URL(r.url).pathname).toBe("/api/operations/edit");
   expect(JSON.parse(await r.text())).toEqual({ path: "index.html", edits: [] });
-  expect(r.headers.get("x-erga-agent")).toBeTruthy();
+  expect(r.headers.get("x-erga-via")).toBeTruthy();
   // Its edits are Ada's, via her agent ("ada, via their agent"), and it has no admin power there.
   expect(JSON.parse(r.headers.get("x-erga-via")!)).toBe(VIA.agent);
   expect(JSON.parse(r.headers.get("x-erga-who")!)).toEqual({ login: "ada", via: VIA.agent });

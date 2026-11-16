@@ -1,11 +1,13 @@
-// Undo of a person's agent's changes in a document (document/host.ts, /api/agent/undo; agents/document/session.ts):
-// each of the agent's tool calls is one step, taken back last first, and nobody else's edit goes with it. One document
-// on memory (tests/helpers/files-fixture.ts); the agent's calls come as the server sends them for a person's own agent.
+// Undo of the changes of a user's agents in a document (document/api/host.ts, /api/undo; document/room/participants.ts): each
+// call of an agent is one step, taken back last first, and nobody else's edit goes with it. Each agent of the user is
+// a participant with a history of its own, and Undo takes back the newest step of them all. One document on memory
+// (tests/helpers/files-fixture.ts); the agents' calls come as the server sends them.
 
 import { expect, test } from "bun:test";
 import * as Y from "yjs";
-import { authorOf, files, introduce, type Author } from "../document/content";
-import { joinLocal, type Room } from "../document/room";
+import { authorOf, files, introduce, type Author } from "../document/model/content";
+import type { Room } from "../document/room/room";
+import { joinLocal } from "./helpers/join-local";
 import { VIA } from "../shared/attribution";
 import { Awareness } from "../shared/yjs-protocol";
 import { setup } from "./helpers/files-fixture";
@@ -15,9 +17,10 @@ const PAGE = "<h1>Launch notes</h1>\n<p>Where the leads go.</p>\n";
 
 test("undo takes back exactly the agent's last change, then the one before", async () => {
   const { doc } = await setup();
-  await doc.write({ "index.html": PAGE }, [], "ada");
+  await doc.write({ "index.html": PAGE }, [], { login: "ada" });
   /** A request of Ada's to the document: from her page, or (agent) from her own agent, as the server sends its tool calls. */
-  const asAda = async <T>(path: string, init: { method?: string; body?: unknown; agent?: boolean } = {}) => {
+  const asAda = async <T>(path: string, init: { method?: string; body?: unknown; agent?: boolean; via?: string } = {}) => {
+    const via = init.via ?? VIA.agent;
     const r = await doc.handle(
       new Request(`http://doc${path}`, {
         method: init.method ?? "GET",
@@ -25,16 +28,21 @@ test("undo takes back exactly the agent's last change, then the one before", asy
         headers: {
           "content-type": "application/json",
           "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }),
-          "x-erga-who": JSON.stringify(init.agent ? { login: "ada", via: VIA.agent } : { login: "ada" }),
-          ...(init.agent ? { "x-erga-agent": "1", "x-erga-via": JSON.stringify(VIA.agent) } : {}),
+          "x-erga-who": JSON.stringify(init.agent ? { login: "ada", via } : { login: "ada" }),
+          ...(init.agent ? { "x-erga-via": JSON.stringify(via), ...(init.via ? {} : { "x-erga-turn": "turn-1" }) } : {}),
         },
       })
     );
     return (await r.json()) as T;
   };
-  const edit = (oldText: string, newText: string) =>
-    asAda<{ ok: boolean }>("/api/tools/edit", { method: "POST", agent: true, body: { path: "index.html", edits: [{ oldText, newText }] } });
-  const undo = () => asAda<{ ok: boolean }>("/api/agent/undo", { method: "POST" });
+  const edit = (oldText: string, newText: string, via?: string) =>
+    asAda<{ ok: boolean }>("/api/operations/edit", {
+      method: "POST",
+      agent: true,
+      via,
+      body: { path: "index.html", edits: [{ oldText, newText }] },
+    });
+  const undo = () => asAda<{ ok: boolean }>("/api/undo", { method: "POST" });
 
   // Bo, in the room: his own replica, which hears each change and who made it.
   const { room } = await (doc as unknown as { room(): Promise<{ room: Room }> }).room();
@@ -54,11 +62,17 @@ test("undo takes back exactly the agent's last change, then the one before", asy
   expect((await edit("Where the leads go.", "Where the leads go. TWO")).ok).toBe(true);
   await until(() => str().includes("ONE") && str().includes("TWO"));
   // The agent's turn ends, as the server says when its run is done: the lock that its edits held on the source goes.
-  expect((await asAda<{ ok: boolean }>("/api/agent/done", { method: "POST", agent: true })).ok).toBe(true);
+  expect((await asAda<{ ok: boolean }>("/api/turn-done", { method: "POST", agent: true })).ok).toBe(true);
+  // Where its turn ended is its own: "last_turn" is the default start of its diff. Another agent of Ada's has none here.
+  type Answer = { ok: boolean; content?: { text: string }[]; error?: string };
+  const diff = (via?: string) => asAda<Answer>("/api/operations/diff_versions", { method: "POST", agent: true, via, body: {} });
+  expect((await diff()).content?.[0].text).toMatch(/^No changes from v\d+ \(where your last turn ended\) to current/);
+  expect((await diff(VIA.token("CI"))).error).toMatch(/^You have no last turn in this document yet/);
   bo.transact(() => text()!.insert(str().indexOf("<h1>") + 4, "BO "));
   await until(() => room.text("index.html")?.includes("BO "));
   // Two changes to undo: the agent's, not Bo's.
-  expect((await asAda<{ count: number }>("/api/agent/undo")).count).toBe(2);
+  // (Both in her agent's turn: the document marked it at the first call that had its id.)
+  expect(await asAda<object>("/api/undo")).toMatchObject({ count: 2, redo: 0, turn: { changes: 2, files: ["index.html"] } });
   const heard = seen.length;
   expect((await undo()).ok).toBe(true);
   await until(() => !str().includes("TWO"));
@@ -72,4 +86,26 @@ test("undo takes back exactly the agent's last change, then the one before", asy
   // Nothing more to undo; and the document has what Bo has.
   expect((await undo()).ok).toBe(false);
   expect(room.text("index.html")).toBe(str());
+
+  // Another agent of Ada's (one with her token) is another participant: its edit has its own name, and Undo takes
+  // back the newest change of the two, whoever's.
+  const CI = VIA.token("CI");
+  expect((await asAda<{ ok: boolean }>("/api/redo", { method: "POST" })).ok).toBe(true);
+  await until(() => str().includes("ONE"));
+  expect((await edit("Where the leads go.", "Where the leads go. CI", CI)).ok).toBe(true);
+  await until(() => str().includes("CI"));
+  expect(seen.at(-1)).toBe(`Ada, via ${CI}`);
+  expect(await asAda<object>("/api/undo")).toMatchObject({ count: 2, redo: 1 });
+  // (Its edit of the page took the lock for source edits, for its run of calls: Undo of its own change passes it.)
+  expect((await undo()).ok).toBe(true);
+  await until(() => !str().includes("CI"));
+  expect(str()).toBe("<h1>BO Launch notes ONE</h1>\n<p>Where the leads go.</p>\n");
+  expect(seen.at(-1)).toBe(`Ada, via ${CI}`);
+  // The next one is her own agent's, and the other agent still holds the lock: nothing changes, and the answer says why.
+  const held = await asAda<{ ok: boolean; why?: string }>("/api/undo", { method: "POST" });
+  expect([held.ok, held.why]).toEqual([
+    false,
+    expect.stringMatching(/^Ada, via a shared agent \(CI\) is editing this document's source just now/),
+  ]);
+  expect(str()).toContain("ONE");
 });

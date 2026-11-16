@@ -1,6 +1,6 @@
 // What the Worker reads before its first answer: the modules cloudflare/index.ts reaches by static imports. A new
 // copy of the Worker reads them all first, so the large parts that few requests need stay out of them, behind an
-// import() at their first use: the model providers' code (agents/models.ts, document/versions.ts) and the landing
+// import() at their first use: the model providers' code (agents/models.ts, document/history/versions.ts) and the landing
 // project's files (cloudflare/platform.ts). The deploy's build minifies the rest (vite.config.ts).
 
 import { existsSync, readFileSync } from "node:fs";
@@ -44,7 +44,7 @@ test("the Worker starts without the model providers' code and the landing projec
   const start = reached("cloudflare/index.ts");
   // The walk works: it reaches the agents' loop and the document.
   expect(start.has("agents/models.ts")).toBe(true);
-  expect(start.has("document/versions.ts")).toBe(true);
+  expect(start.has("document/history/versions.ts")).toBe(true);
   const late = [...start].filter(
     (m) =>
       m.startsWith("@effect/ai-") ||

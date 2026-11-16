@@ -1,7 +1,7 @@
 // The uploads' owner: it keeps the one state (client/common/uploads.ts decides it) and does what the state says. For
 // each file: its sha-256, the write that names it (the operation `write`, which an agent has too: the server checks the
 // size, the space and the path before a byte goes, and the write waits), then its bytes to the document's own address
-// (PUT /api/blobs/<sha-256>: document/uploads.ts), with XMLHttpRequest, which says how many went and can stop. It
+// (PUT /api/blobs/<sha-256>: document/api/uploads.ts), with XMLHttpRequest, which says how many went and can stop. It
 // raises the uploads' alerts in the card, and tells the page each file's state, for its element there
 // (libs/text/ui/pending.ts). The page's editor hands it the files a person dropped, pasted or picked, each with the
 // path the editor gave it.
@@ -10,8 +10,8 @@
 // one (the page's edit key can do as much), never more: "Raise the limit" acts only from the card's own button.
 
 import { sha256Hex } from "../../shared/bytes";
-import { assets, files, stamp } from "../../document/content";
-import { encodePath } from "../../document/pages";
+import { assets, files, stamp } from "../../document/model/content";
+import { encodePath } from "../../document/model/pages";
 import { ms } from "../../libs/text/ui/timescale";
 import type { Pending } from "../../shared/room-socket";
 import { DISMISS, type Raise } from "../common/alerts";
@@ -29,7 +29,7 @@ export interface NewFile {
   path: string;
   noPlace?: string;
 }
-/** What the write answers of a file it refused (document/uploads.ts, Written). */
+/** What the write answers of a file it refused (document/api/uploads.ts, Written). */
 interface Refused {
   path: string;
   why: string;
@@ -60,7 +60,7 @@ export function mountUploads(shell: Shell) {
   /** The alerts in the card, as they were raised last; and the problems the person closed (they stay on their files). */
   const raised = new Map<string, Raise>(),
     closed = new Set<string>();
-  /** The files on their way from anyone, as the room says (document/waits.ts). */
+  /** The files on their way from anyone, as the room says (document/api/waits.ts). */
   let others: Record<string, Pending> = {};
   /** When each file of this tab's arrived: a moment after, the page may still say that it didn't load. */
   const arrivedAt = new Map<string, number>();

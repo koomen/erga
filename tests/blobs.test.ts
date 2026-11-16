@@ -1,19 +1,19 @@
-// A document's files that aren't text, as blobs (document/blobs.ts): one
+// A document's files that aren't text, as blobs (document/store/blobs.ts): one
 // document on MemoryStorage with MemoryBlobs, uploaded to, served, versioned,
 // moved, restored and copied. R2 is the only place a blob's bytes are.
 
 import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";
-import { BLOB_HEADER, OBJECT_MAX } from "../document/blobs";
+import { BLOB_HEADER, OBJECT_MAX } from "../document/store/blobs";
 import { sha256Hex } from "../shared/bytes";
-import { KEYS, MemoryStorage } from "../document/storage";
-import { Document } from "../document/document";
+import { KEYS, MemoryStorage } from "../document/store/storage";
+import { DocumentHost } from "../document/api/host";
 import { promised } from "./helpers/promised";
 import { person, server, tool } from "./helpers/app";
 import { bytesOf, setup } from "./helpers/files-fixture";
 import { until } from "./helpers/until";
-import { files } from "../document/content";
-import type { Room } from "../document/room";
+import { files } from "../document/model/content";
+import type { Room } from "../document/room/room";
 
 /** The version that holds `path`: cut once the edits pause. */
 const versionWith = (doc: Awaited<ReturnType<typeof setup>>["doc"], path: string) =>
@@ -76,7 +76,7 @@ test("a new document's image is a blob from the start; a copy left in the object
   const hash = await sha256Hex(png);
   const made = await setup();
   const storage2 = new MemoryStorage();
-  const fresh = promised(new Document({ ...made.deps, storage: storage2 }));
+  const fresh = promised(new DocumentHost({ ...made.deps, storage: storage2 }));
   expect(
     await fresh.create("ada", "new12345", { "index.html": "<h1>New</h1>", "logo.png": png }, "index.html", {
       expires: null,
@@ -150,16 +150,18 @@ test("a blob moves by its ref, is deleted with its file, and comes back with a r
   const pdf = bytesOf(2_500_000, 5);
   await put("a.pdf", pdf);
   const before = (await versionWith(doc, "a.pdf")).n;
-  expect((await Effect.runPromise(doc.self.call((c) => c.treeOp({ op: "move", from: "a.pdf", to: "docs/b.pdf" }))))!.ok).toBe(true);
+  expect(
+    (await Effect.runPromise(doc.self.call((c) => c.treeOp({ op: "move", from: "a.pdf", to: "docs/b.pdf" }, { login: "ada" }))))!.ok
+  ).toBe(true);
   expect(storage.data.has(KEYS.ref + "a.pdf")).toBe(false);
   expect(storage.data.get(KEYS.ref + "docs/b.pdf")).toMatchObject({ hash: await sha256Hex(pdf) });
   expect(new Uint8Array(await (await get("/doc/docs/b.pdf")).arrayBuffer())).toEqual(pdf);
-  expect((await Effect.runPromise(doc.self.call((c) => c.treeOp({ op: "delete", path: "docs/b.pdf" }))))!.ok).toBe(true);
+  expect((await Effect.runPromise(doc.self.call((c) => c.treeOp({ op: "delete", path: "docs/b.pdf" }, { login: "ada" }))))!.ok).toBe(true);
   expect(storage.data.has(KEYS.ref + "docs/b.pdf")).toBe(false);
   expect((await get("/doc/docs/b.pdf")).status).toBe(404);
   // The blob stays: a version has it.
   expect(blobs.data.has(await sha256Hex(pdf))).toBe(true);
-  const r = await doc.restore(before, "ada");
+  const r = await doc.restore(before, { login: "ada" });
   expect(r.ok).toBe(true);
   expect(new Uint8Array(await (await get("/doc/a.pdf")).arrayBuffer())).toEqual(pdf);
 });

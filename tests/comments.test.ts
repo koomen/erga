@@ -1,4 +1,4 @@
-// A document's comments (server/operations/comments.ts, document/comments.ts), as agents call them: the read tool's
+// A document's comments (server/operations/comments.ts, document/api/comments.ts), as agents call them: the read tool's
 // op comments and the edit tool's op comment, from their tool lists, on the real directory and the tables on
 // bun:sqlite (the Durable Object's SQLite in the Worker). Who may: an owner or editor any thread, a viewer nothing.
 
@@ -7,8 +7,8 @@ import { PersonAgents } from "../agents/person/sessions";
 import { agentTools, toolOf, toolsFor } from "../agents/tools";
 import { asksAgent, runComment } from "../server/operations/comments";
 import * as Y from "yjs";
-import { CommentTables, placeQuote } from "../document/comments";
-import { files } from "../document/content";
+import { CommentTables, placeQuote } from "../document/api/comments";
+import { files } from "../document/model/content";
 import { anchorFromJSON, resolveAnchor } from "../libs/text/api/anchors";
 import { Directory } from "../server/directory/index.ts";
 import type { Caller } from "../server/operations/index.ts";

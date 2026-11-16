@@ -1,9 +1,9 @@
 // The document's title and address, the naming card that renames it, and the pages card with its tree.
 
 import { treeFiles } from "./tree-files";
-import type { DocName } from "../../document/api";
-import { files } from "../../document/content";
-import { pageUrl, slugify, titleOf } from "../../document/pages";
+import type { DocName } from "../../document/model/names";
+import { files } from "../../document/model/content";
+import { pageUrl, slugify, titleOf } from "../../document/model/pages";
 import { live } from "../live/client";
 import { runTool } from "../common/tools";
 import type { mountTree, TreeHandle } from "../pages/pages-tree";

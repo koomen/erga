@@ -8,10 +8,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Y from "yjs";
 import { Awareness } from "../shared/yjs-protocol";
-import { FileStore, Room, StateStore, joinLocal } from "../document/room";
-import { relativeUrl, runTreeOp } from "../document/host";
-import { checkNewName, cleanTreePath, pageAddress, pageUrl, resolvePage, titleOf, TreeError, treeEntries } from "../document/pages";
-import { files, folders } from "../document/content";
+import { Room } from "../document/room/room";
+import { FileStore, StateStore } from "../document/store/storage";
+import { joinLocal, participant } from "./helpers/join-local";
+import { relativeUrl } from "../document/api/http";
+import { runTreeOp } from "../document/api/operations";
+import { checkNewName, cleanTreePath, pageAddress, pageUrl, resolvePage, titleOf, TreeError, treeEntries } from "../document/model/pages";
+import { files, folders } from "../document/model/content";
 import { person, server, tool as overHttp } from "./helpers/app";
 import { until } from "./helpers/until";
 
@@ -135,7 +138,7 @@ const withRoom = (m: ReturnType<typeof memoryStore>, f: (room: Room) => Promise<
   })).pipe(Effect.provide(m.layer)));
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
-const opts = { index: "index.html", newPage: "<h1>New</h1>" };
+const opts = { by: participant("ada"), index: "index.html", newPage: "<h1>New</h1>" };
 const op = (room: Room, o: unknown) => Effect.runPromise(runTreeOp(room, o, opts));
 const tree = (room: Room) => treeEntries(room.paths(), room.folderPaths()).map((e) => `${e.path}${e.type == "folder" ? "/" : e.type == "page" ? "" : "*"}`);
 
@@ -228,7 +231,7 @@ test("a single file opened on its own has no tree to change", async () => {
   const m = memoryStore({ "notes.html": "<h1>Notes</h1>" });
   await withRoom(m, async (room) => {
     const e = await Effect.runPromise(
-      runTreeOp(room, { op: "new_page", path: "x.html" }, { index: "notes.html", only: "notes.html" })
+      runTreeOp(room, { op: "new_page", path: "x.html" }, { by: participant("ada"), index: "notes.html", only: "notes.html" })
     ).catch((err) => err);
     expect(e).toBeInstanceOf(TreeError);
     expect(e.status).toBe(403);

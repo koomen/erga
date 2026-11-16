@@ -167,12 +167,12 @@ const turn = BASE
   ? mountTurn({
       el: $("agent-turn"),
       diff: async () => {
-        const r = await fetch(`${BASE}${asUser("/api/agent/turn-diff")}`);
+        const r = await fetch(`${BASE}${asUser("/api/turn-diff")}`);
         if (!r.ok) throw new Error("Couldn't read the changes. Try again.");
         return ((await r.json()) as { diff: string }).diff;
       },
       undo: async () => {
-        const r = await fetch(`${BASE}${asUser("/api/agent/undo-turn")}`, { method: "POST" });
+        const r = await fetch(`${BASE}${asUser("/api/undo-turn")}`, { method: "POST" });
         return r.ok ? ((await r.json()) as { undone: number }).undone : 0;
       },
       changed: () => void readUndo(),
@@ -574,7 +574,7 @@ if (back?.files?.length) att.restore(back.files);
 
 // Undo takes back the agent's last change to the document open (one tool call), whoever has typed since: your own ⌘Z
 // never undoes the agent's edits. Redo puts back what Undo took back, until the agent changes the document again. The
-// document's host keeps each person's agent's changes (document/host.ts).
+// document's host keeps each person's agent's changes (document/api/host.ts).
 const undoBtn = $("agent-undo") as HTMLButtonElement,
   redoBtn = $("agent-redo") as HTMLButtonElement;
 let undoable = 0,
@@ -589,7 +589,7 @@ function renderUndo() {
 }
 async function readUndo() {
   if (!BASE) return;
-  const a = (await fetch(`${BASE}${asUser("/api/agent/undo")}`).then(
+  const a = (await fetch(`${BASE}${asUser("/api/undo")}`).then(
     (r) => (r.ok ? r.json() : null),
     () => null
   )) as { count?: number; redo?: number; turn?: TurnFacts | null } | null;
@@ -606,8 +606,10 @@ if (BASE) {
         showHint(btn.dataset.tip ?? "");
         return;
       }
-      const r = await fetch(`${BASE}${asUser(`/api/agent/${which}`)}`, { method: "POST" }).catch(() => null);
-      if (!r?.ok) showHint(`Couldn't ${which} the agent's change. Try again.`);
+      const r = await fetch(`${BASE}${asUser(`/api/${which}`)}`, { method: "POST" }).catch(() => null);
+      // (It can't now: another agent edits the document's source, say. The document says why.)
+      const why = r?.ok ? ((await r.json().catch(() => null)) as { why?: string } | null)?.why : null;
+      if (!r?.ok || why) showHint(why ?? `Couldn't ${which} the agent's change. Try again.`);
       void readUndo();
     });
   wire(undoBtn, "undo", () => undoable);

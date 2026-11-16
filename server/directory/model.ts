@@ -1,7 +1,7 @@
 // The directory's words: a document's row and its address's parts, who asks (Who) and what they may do, a
 // permission, and the shapes of an owner and an id. Directory (directory.ts) keeps them in the database.
 
-import type { Role } from "../../document/access.ts";
+import type { Role } from "../../document/model/access.ts";
 import { randomString } from "../../shared/bytes.ts";
 
 /** What SQL a platform gives the directory (D1, bun:sqlite). Parameters are `?1`, `?2`... */

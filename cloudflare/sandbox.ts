@@ -1,9 +1,9 @@
-// The sandbox a page's own API runs in (document/page-api.ts): a Worker of its own for each module's code, which the
+// The sandbox a page's own API runs in (document/api/page-api.ts): a Worker of its own for each module's code, which the
 // Worker Loader (env.LOADER) starts from that code alone. It has no bindings and no network (globalOutbound: null),
 // and gets nothing but the call: the page's HTML and the edit's input. The same code is the same Worker, kept warm.
 
-import type { Sandbox } from "../document/page-api";
-import { SANDBOX_MAIN } from "../document/page-api";
+import type { Sandbox } from "../document/api/page-api";
+import { SANDBOX_MAIN } from "../document/api/page-api";
 import { sha256Hex } from "../shared/bytes";
 
 /** How long one call may take before it's refused. */

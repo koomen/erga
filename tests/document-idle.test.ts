@@ -1,8 +1,8 @@
-// When an open document closes for being idle, with no document (document/idle.ts): the timer, the two steps of the
+// When an open document closes for being idle, with no document (document/life/idle.ts): the timer, the two steps of the
 // check, and what stops it.
 
 import { expect, test } from "bun:test";
-import { idleStep, RESTING, type Idle, type IdleDo, type IdleEvent } from "../document/idle";
+import { idleStep, RESTING, type Idle, type IdleDo, type IdleEvent } from "../document/life/idle";
 
 const MS = 60_000;
 function run(s: Idle, ...events: IdleEvent[]) {

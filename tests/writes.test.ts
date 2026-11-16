@@ -1,8 +1,8 @@
-// What the room must still write of each file (document/writes.ts): one state for each path, a write that takes
+// What the room must still write of each file (document/room/writes.ts): one state for each path, a write that takes
 // what's due, and a commit that fails gives it back and waits longer each time.
 
 import { expect, test } from "bun:test";
-import { NOTHING, nextWrites, retryIn, type Look, type Writes } from "../document/writes";
+import { NOTHING, nextWrites, retryIn, type Look, type Writes } from "../document/room/writes";
 
 const looks = (m: Record<string, Look>) => (p: string) => m[p] ?? "text";
 const write = (w: Writes, now: number, all = false, look = looks({})) => nextWrites(w, { on: "write", now, all, fileDelay: 2000, look });

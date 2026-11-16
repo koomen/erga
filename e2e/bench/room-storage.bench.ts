@@ -13,12 +13,12 @@ import { readdirSync, readFileSync } from "node:fs";
 import * as Effect from "effect/Effect";
 import * as Y from "yjs";
 import { Awareness } from "../../shared/yjs-protocol";
-import { Document, type DocumentDeps } from "../../document/document";
-import { MemoryStorage } from "../../document/storage";
-import { joinLocal } from "../../document/room";
-import { files, introduce } from "../../document/content";
+import { type DocumentDeps } from "../../document/life/document";
+import { DocumentHost } from "../../document/api/host";
+import { MemoryStorage } from "../../document/store/storage";
+import { joinLocal } from "../../tests/helpers/join-local";
+import { files, introduce } from "../../document/model/content";
 import { Directory, type Param, type Sql } from "../../server/directory/index.ts";
-import { documentAgents } from "../../agents/document/session";
 import { testSandbox } from "../../tests/helpers/sandbox";
 import { promised } from "../../tests/helpers/promised";
 
@@ -63,7 +63,8 @@ const storage = new Counted();
 const deps = (): DocumentDeps => ({
   storage, directory: dir,
   tabs: { count: () => 0, closeAll: () => {} },
-  agents: documentAgents({ settings: async () => ({ missing: "none" }), sandbox: testSandbox }),
+  sandbox: testSandbox,
+  descriptionKey: async () => "",
   sites: { forget: async () => {} },
   timing: { idleMs: 3_600_000, maxMs: 3_600_000 },
   background: () => {}, log: () => {},
@@ -78,7 +79,7 @@ const init: Record<string, string | Uint8Array> = { "index.html": page };
 for (let i = 0; i < 40; i++) init[`notes/n${i}.md`] = `# Note ${i}\n\n` + "Some words in a note. ".repeat(900);
 for (let i = 0; i < 5; i++) init[`img/i${i}.png`] = new Uint8Array(200_000).fill(i + 7);
 await dir.add({ id: "bench123", owner: "ada", title: "Bench", created: Date.now(), expires: null });
-const first = promised(new Document(deps()));
+const first = promised(new DocumentHost(deps()));
 await first.create("ada", "bench123", init, "index.html", { expires: null });
 
 // A history: 3,000 keystrokes, written after every 20 (as the room's writer would during steady typing).
@@ -116,7 +117,7 @@ let coldReads = 0, coldBytes = 0;
 for (let i = 0; i < 5; i++) {
   storage.reset();
   const t = performance.now();
-  const cold = promised(new Document(deps()));
+  const cold = promised(new DocumentHost(deps()));
   const o = await cold.admit(req());
   times.push(performance.now() - t);
   coldReads = storage.reads; coldBytes = storage.readBytes;

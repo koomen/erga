@@ -54,7 +54,7 @@ export function mountPageRequests(shell: Shell) {
     }
     const declined = result.error != null;
     const rank = tab.focused ? 2 : tab.visible ? 1 : 0;
-    await fetch(shell.api("/api/agent/live"), {
+    await fetch(shell.api("/api/live"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, value: JSON.stringify({ ...result, tab }), declined, rank }),

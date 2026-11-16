@@ -1,4 +1,4 @@
-// The messages a Yjs room and its peers send (document/room.ts, libs/text/ui/collab.ts, agents/document/session.ts):
+// The messages a Yjs room and its peers send (document/room/room.ts, libs/text/ui/collab.ts, document/room/participants.ts):
 // the binary encoding, the sync steps and the awareness (who is here, and their carets). The wire format is the one
 // of y-protocols and lib0, byte for byte, so a peer that uses them still talks to the room.
 
@@ -105,7 +105,7 @@ export function readSyncMessage(d: Decoder, reply: Encoder, doc: Y.Doc, origin: 
 }
 
 // Stored (Erga's own, not of y-protocols; a peer that does not know it ignores it): what the room's files hold of the
-// history, as a state vector (document/room.ts, sayStored).
+// history, as a state vector (document/room/room.ts, sayStored).
 export const MSG_STORED = 4;
 
 /** A state vector (each client and its clock), as Yjs writes one. */
@@ -233,6 +233,31 @@ export function encodeAwarenessUpdate(awareness: Awareness, clients: number[]): 
     e.writeUint(c);
     e.writeUint(awareness.meta.get(c)!.clock);
     e.writeString(JSON.stringify(awareness.states.get(c) ?? null));
+  }
+  return e.toBytes();
+}
+
+/**
+ * A presence update with each state as `f` gives it (undefined: without that client). The room uses it to say who each
+ * tab is: a state is an object, or null for a client that left.
+ */
+export function mapAwarenessUpdate(update: Uint8Array, f: (client: number, state: State | null) => State | null | undefined): Uint8Array {
+  const d = new Decoder(update);
+  const kept: [client: number, clock: number, state: string][] = [];
+  for (let n = d.readUint(); n > 0; n--) {
+    const client = d.readUint(),
+      clock = d.readUint();
+    const said = JSON.parse(d.readString()) as State | null;
+    if (typeof said != "object") throw new Error("a presence state is an object or null");
+    const state = f(client, said);
+    if (state !== undefined) kept.push([client, clock, JSON.stringify(state)]);
+  }
+  const e = new Encoder();
+  e.writeUint(kept.length);
+  for (const [client, clock, state] of kept) {
+    e.writeUint(client);
+    e.writeUint(clock);
+    e.writeString(state);
   }
   return e.toBytes();
 }

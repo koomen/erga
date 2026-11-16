@@ -5,19 +5,18 @@
 // through its Durable Object's calls (platform.docs), as the person, after the directory says they may.
 //
 // The text itself is edited over the room's socket (and by the document tools read, edit, grep...:
-// agents/document/tools.ts), not here. Two calls run there, as the person's agent, since only the host knows what
+// document/api/operations.ts), not here. Two calls run there, as the person's agent, since only the host knows what
 // they need: write's one file (its differences, one undo step: documents.ts) and versions' diff (from "last_turn").
 
 import * as Schema from "effect/Schema";
 import type { DocRow } from "../directory/index.ts";
-import type { DocName } from "../../document/api.ts";
-import { EDITORS_READ_VERSIONS } from "../../document/content.ts";
-import { nameOf } from "../../document/names.ts";
-import { pageAddress, type TreeOp } from "../../document/pages.ts";
+import type { DocName } from "../../document/model/names.ts";
+import { EDITORS_READ_VERSIONS } from "../../document/model/content.ts";
+import { nameOf } from "../../document/model/names.ts";
+import { pageAddress, type TreeOp } from "../../document/model/pages.ts";
 import { globToRegExp } from "../../shared/glob.ts";
 import { accessOf, cleanFilePath, viewersOf } from "./documents.ts";
 import { publishingOf } from "./publishing.ts";
-import { byLine } from "../../shared/attribution.ts";
 import { HEAD_FIELDS, headOf, withHead, type PageHead } from "../../shared/page-head.ts";
 import {
   type Caller,
@@ -29,6 +28,7 @@ import {
   OperationError,
   platformOf,
   runInDocument,
+  actOf,
   str,
 } from "./operation.ts";
 
@@ -56,7 +56,7 @@ const mayEdit = (caller: Caller, doc: DocRow) => caller.dir.may(caller.who, "edi
 /** A tree operation, as an editor: the tree after it, or what's wrong. */
 async function treeOp(caller: Caller, ref: unknown, op: TreeOp) {
   const doc = await findDocument(caller, ref, "edit");
-  const r = await platformOf(caller).docs.treeOp(doc, op);
+  const r = await platformOf(caller).docs.treeOp(doc, op, actOf(caller));
   if (!r.ok) throw new OperationError({ message: r.error, status: r.status });
   return { document: described(doc, caller), entries: r.entries };
 }
@@ -101,11 +101,11 @@ async function copyFiles(caller: Caller, args: Record<string, unknown>, move: bo
   const files = Object.fromEntries(
     under.map((p) => [[target, p.slice(from.length).replace(/^\//, "")].filter(Boolean).join("/"), snap.files[p]])
   );
-  const by = byLine(caller.who.login.toLowerCase(), caller.who.via);
+  const by = actOf(caller);
   const r = await platform.docs.write(dst, files, [], by);
   const removed = move && !r.refused.length ? (await platform.docs.write(src, {}, under, by)).removed : [];
   // A folder that moved goes whole, empty folders in it too.
-  if (move && removed.length && !(from in snap.files)) await platform.docs.treeOp(src, { op: "delete", path: from });
+  if (move && removed.length && !(from in snap.files)) await platform.docs.treeOp(src, { op: "delete", path: from }, by);
   return {
     from: described(src, caller),
     to: described(dst, caller),
@@ -280,7 +280,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
       // The page's <head> as it should be: only its differences reach the room, as an edit (open editors show it).
       const now = withHead(text, changes);
       if (now != text) {
-        const r = await platform.docs.write(doc, { [path]: now }, [], byLine(caller.who.login.toLowerCase(), caller.who.via));
+        const r = await platform.docs.write(doc, { [path]: now }, [], actOf(caller));
         if (r.refused.length) throw new OperationError({ message: r.refused[0].why, status: 409 });
       }
       return { document: described(doc, caller), path, head: headOf(now) };
@@ -333,12 +333,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
       const doc = await findDocument(caller, args.document, "edit");
       const path = typeof args.path == "string" && args.path ? args.path : null;
       // A person's restore is theirs; an agent's is its person's, via it ("ada, via their agent").
-      const r = await platformOf(caller).docs.restore(
-        doc,
-        String(args.version ?? ""),
-        byLine(caller.who.login.toLowerCase(), caller.who.via),
-        path
-      );
+      const r = await platformOf(caller).docs.restore(doc, String(args.version ?? ""), actOf(caller), path);
       if (!r.ok) throw new OperationError({ message: r.error, status: r.status });
       return { current: r.current, from: r.from, files: r.files };
     },

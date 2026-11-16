@@ -1,12 +1,13 @@
-// What an agent's edit broke in a page's HTML (agents/document/faults.ts): an element with no end tag, and text
+// What an agent's edit broke in a page's HTML (document/room/faults.ts): an element with no end tag, and text
 // beside blocks. Only the faults the edit made, and only those that are sure.
 
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Y from "yjs";
-import { broke } from "../agents/document/faults";
-import { YjsWorkspace } from "../agents/document/workspace";
-import { files } from "../document/content";
+import { broke } from "../document/room/faults";
+import { Workspace } from "../document/room/workspace";
+import type { Participant, Room } from "../document/room/room";
+import { files } from "../document/model/content";
 
 const DECK = `<!doctype html>
 <html>
@@ -83,7 +84,13 @@ test("edit, write and a page's own edit each say what they broke", () => {
   const t = new Y.Text();
   t.insert(0, DECK);
   files(doc).set("index.html", t);
-  const ws = new YjsWorkspace(doc, { user: "ada", name: "Ada’s agent", color: "#12a594", kind: "agent" }, () => true, {});
+  // (Only the text matters here: a doc with the room's door, open.)
+  const room = { doc, as: (_p: Participant, change: () => void) => doc.transact(change), refusal: () => null } as unknown as Room;
+  const ws = new Workspace(room, {
+    act: { login: "ada" },
+    author: { user: "ada", name: "Ada", color: "#12a594", kind: "person" },
+    canEdit: () => true,
+  });
   const edit = Effect.runSync(ws.edit("index.html", [{ oldText: "<p>First.</p>", newText: "<p><b>First.</p>" }]));
   expect(edit.summary).toBe(
     "Edited index.html (1 change).\n1 problem in its HTML:\n line 4: <b> is not closed\nFix it now, or restore the last version."

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { changesBetween, rebase, rebaseOnce } from "../document/merge";
+import { changesBetween, rebase, rebaseOnce } from "../document/model/merge";
 
 const apply = (doc: string, cs: ReturnType<typeof changesBetween>) => cs.apply(Text.of(doc.split("\n"))).toString();
 import { Text } from "@codemirror/state";

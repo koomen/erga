@@ -30,9 +30,10 @@ import {
 import { AuthError, type AgentToken, type AuthOps } from "../identity/index.ts";
 import { forwardedAs } from "../documents/index.ts";
 import { DocumentBehind, type Platform } from "../platform.ts";
-import type { ToolContent } from "../../document/agent.ts";
-import type { Role } from "../../document/access.ts";
-import { HOME_OWNER, HOME_SLUG, nameOf } from "../../document/names.ts";
+import type { ToolContent } from "../../document/api/operations.ts";
+import type { Act } from "../../shared/attribution.ts";
+import type { Role } from "../../document/model/access.ts";
+import { HOME_OWNER, HOME_SLUG, nameOf } from "../../document/model/names.ts";
 
 /** An operation's failure, worded for a person or an agent to act on; `status` is the HTTP status the API answers. */
 export class OperationError extends Schema.TaggedError<OperationError>()("OperationError", {
@@ -63,6 +64,8 @@ export interface Caller {
   readonly fromPage?: true;
   /** A person's own agent hears each document its tools ran in (callDocument), to say when its turn is done there. */
   readonly ranIn?: (doc: Route) => void;
+  /** The id of the turn that a person's own agent is in: each document names the turn's changes by it. */
+  readonly turn?: string;
 }
 
 /** One operation, for the front end and every agent alike. */
@@ -221,9 +224,16 @@ export function described(doc: DocRow, { origin }: Caller) {
   return { id: doc.id, title: name.title, address: name.address, ...(origin ? { url: origin + name.address } : {}) };
 }
 
+/** Who a caller acts as, in a document: their login, and how when not in person (the document names its participant so). */
+export const actOf = (caller: Caller): Act => ({
+  login: caller.who.login.toLowerCase(),
+  ...(caller.who.via ? { via: caller.who.via } : {}),
+});
+
 /**
  * A request to a document's own host, as the caller: their person, what they may do there, and how they act
- * (an agent's request says so, and may then run the document's tools there: /api/tools/<name>).
+ * (the document names its participant so: a user in person, or via their agent). A user's own agent's call names its
+ * turn too (`turn`).
  */
 export async function callDocument(caller: Caller, doc: Route, path: string, init: RequestInit): Promise<Response> {
   const platform = platformOf(caller),
@@ -231,12 +241,14 @@ export async function callDocument(caller: Caller, doc: Route, path: string, ini
   const url = new URL(path, origin);
   const person = { login: caller.who.login, name: caller.name ?? caller.who.login };
   caller.ranIn?.(doc);
-  return platform.docs.fetch(doc, forwardedAs(new Request(url, init), url, path, person, caller.who));
+  const request = forwardedAs(new Request(url, init), url, path, person, caller.who);
+  if (caller.turn) request.headers.set("x-erga-turn", caller.turn);
+  return platform.docs.fetch(doc, request);
 }
 
-/** A document tool, run in the document's host as the caller's agent (POST /api/tools/<name> there, which only the server reaches). */
+/** One of a document's operations, run in the document as the caller (POST /api/operations/<name> there, which only the server reaches). */
 export async function runInDocument(caller: Caller, doc: Route, name: string, args: Record<string, unknown>): Promise<ToolContent[]> {
-  const r = await callDocument(caller, doc, `/api/tools/${encodeURIComponent(name)}`, {
+  const r = await callDocument(caller, doc, `/api/operations/${encodeURIComponent(name)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(args),

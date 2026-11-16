@@ -2,7 +2,7 @@
 // for the costliest documents, and how much of the daily spend limit (page_llm_daily_usd) they used. The Settings page
 // (/admin/settings) shows it under the settings, and the operation `settings` gives it to an admin's agent.
 
-import { addressOf } from "../../document/names.ts";
+import { addressOf } from "../../document/model/names.ts";
 import { esc } from "../../shared/html.ts";
 import type { Directory, PageLlmDayUse } from "../directory/index.ts";
 import { link } from "../pages/index.ts";

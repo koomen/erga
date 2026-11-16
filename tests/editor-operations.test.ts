@@ -7,7 +7,7 @@ import { expect, test } from "bun:test";
 import { agentTools, allTools, runTool, toolsFor, toolOf } from "../agents/tools";
 import type { Caller } from "../server/operations/index.ts";
 import type { Platform } from "../server/platform";
-import { VIA } from "../shared/attribution";
+import { VIA, type Act } from "../shared/attribution";
 import { setup } from "./helpers/files-fixture";
 import { until } from "./helpers/until";
 
@@ -29,13 +29,13 @@ async function world() {
     site: () => ({ status: async () => ({ state: "free", doc: null, bars: false, live: null, error: null, by: null, linked: null }) }),
     docs: {
       tree: () => call((c) => c.tree()),
-      treeOp: async (_d: unknown, op: never) => (await call((c) => c.treeOp(op)))!,
+      treeOp: async (_d: unknown, op: never, by: Act) => (await call((c) => c.treeOp(op, by)))!,
       files: () => call((c) => c.files()),
       rename: async (_d: unknown, person: never, patch: never) => (await call((c) => c.rename(person, patch)))!,
       versions: (_d: unknown, o: never) => s.doc.versionsState(o),
       version: (_d: unknown, ref: string) => s.doc.version(ref),
       versionFile: (_d: unknown, ref: string, path: string) => s.doc.versionFile(ref, path),
-      restore: (_d: unknown, ref: string, by: string, path: string | null) => s.doc.restore(ref, by, path),
+      restore: (_d: unknown, ref: string, by: Act, path: string | null) => s.doc.restore(ref, by, path),
     },
   } as unknown as Platform;
   return { ...s, platform };

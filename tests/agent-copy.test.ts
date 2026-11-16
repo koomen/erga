@@ -69,7 +69,7 @@ test("Pete's task in three calls: the notes to notes.html, the deck and its imag
   expect((await ok("read", { document: deck, path: "index.html" })).text).toBe(DECK);
 });
 
-// In a case of its own: a document's row follows its edits at most every 2 seconds (document/document.ts,
+// In a case of its own: a document's row follows its edits at most every 2 seconds (document/life/document.ts,
 // DIRECTORY_EVERY_MS), and at once for the first edit. Here the copy is the project's first edit, so no case waits.
 test("the deck copied over a project's page: the project's title follows the deck's", async () => {
   const { p, ok } = await agent(server(), "Title test");

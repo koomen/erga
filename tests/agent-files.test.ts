@@ -1,4 +1,4 @@
-// The agent's tools on every file (agents/document/session.ts, through the document's /api/tools/<name>, as the server
+// The agent's tools on every file (document/api/operations.ts, through the document's /api/operations/<name>, as the server
 // runs them for an agent): read gives a PDF (a range of its pages) and an image, write takes bytes, ls says each file's kind, size and
 // time, grep searches PDFs through their text (extracted once, kept by the PDF's hash), edit refuses a file kept whole,
 // and someone who may only view has the tools that change nothing.
@@ -16,11 +16,18 @@ type Content = { type: string; text?: string; data?: string; mimeType?: string }
 /** A document, its files, and its tools as an agent token's person calls them. */
 async function withTools() {
   const s = await setup();
-  await s.doc.setPermissions([{ login: "ada", role: "owner" }, { login: "bob", role: "viewer" }]);
-  const as = (who: string) => ({ "x-erga-person": JSON.stringify({ id: who, name: who }), "x-erga-who": JSON.stringify({ login: who }), "x-erga-agent": "token-1" });
+  await s.doc.setPermissions([
+    { login: "ada", role: "owner" },
+    { login: "bob", role: "viewer" },
+  ]);
+  const as = (who: string) => ({
+    "x-erga-person": JSON.stringify({ id: who, name: who }),
+    "x-erga-who": JSON.stringify({ login: who }),
+    "x-erga-via": JSON.stringify("a shared agent (test)"),
+  });
   const tool = async (name: string, args: object, who = "ada") => {
     const r = await s.doc.handle(
-      new Request(`http://doc/api/tools/${name}`, {
+      new Request(`http://doc/api/operations/${name}`, {
         method: "POST",
         body: JSON.stringify(args),
         headers: { "content-type": "application/json", ...as(who) },

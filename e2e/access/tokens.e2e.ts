@@ -395,9 +395,16 @@ journey("on a staging server with no agent key: a token's reach, the agent's pan
     // The Share card's prompt, step by step: the tools, with the document's address as "document".
     const document = root + one.address;
     expect((await tool(root, share, "read", { document, path: "index.html" })).text).toContain("Edited on staging");
-    const edit = { document, path: "index.html", edits: [{ oldText: "Edited on staging", newText: "Edited by the Share prompt" }] };
+    // (In the other document: in this one, the first token's run of edits holds the lock for source edits for some
+    // seconds more, and each agent of a user is a participant of its own.)
+    const other = root + two.address;
+    const edit = {
+      document: other,
+      path: "index.html",
+      edits: [{ oldText: "Staging two", newText: "Staging two, edited by the Share prompt" }],
+    };
     expect((await tool(root, share, "edit", edit)).status).toBe(200);
-    expect((await tool(root, share, "read", { document, path: "index.html" })).text).toContain("Edited by the Share prompt");
+    expect((await tool(root, share, "read", { document: other, path: "index.html" })).text).toContain("edited by the Share prompt");
     expect((await tool(root, share, "list_documents")).text).toContain("Staging two");
     // Was a bug (seen on staging): the viewer's check of its code (GET /api/release) got a 403 in the server's browser.
     const view = await tool(root, share, "view_page", { document });

@@ -22,7 +22,7 @@
 //   stored     the page's file in storage has the "q" (GET /api/stored). Not
 //              what a person waits for: the room writes the edit to its
 //              journal 400 ms after it (durable then), and copies its text to
-//              the file lazily, about 2.8 s after the edit (document/room.ts:
+//              the file lazily, about 2.8 s after the edit (document/room/room.ts:
 //              `writeDelay`, then `fileDelay`)
 //
 // No number says when the edit is durable (in the room's journal): nothing

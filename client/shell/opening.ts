@@ -3,7 +3,7 @@
 // offers a reload, but the wait goes on. Only the server's word that there's no such document ends it: the start's
 // 404 (GET /api/start). A socket that never gets in says nothing either way (the browser gives no status for it).
 
-import type { Hello } from "../../document/api";
+import type { Hello } from "../../document/api/api";
 import { ms } from "../../libs/text/ui/timescale";
 import { $ } from "./shell";
 

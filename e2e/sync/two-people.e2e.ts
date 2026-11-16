@@ -584,7 +584,7 @@ test("random edits from four people, with spells off the network and uploads: no
     /**
      * The stored file as it was read, with one token more: taken, or refused as stale when the room stored since.
      * (Next to another token too: the room takes an upload as a difference of two texts, and the new token is whole
-     * in it, with no bracket of its neighbour's. document/merge.ts, whole.)
+     * in it, with no bracket of its neighbour's. document/model/merge.ts, whole.)
      */
     const push = async (pub: (typeof uploads)[number]) => {
       const was = await pub.read;

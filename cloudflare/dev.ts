@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpServerRequest, type HttpServerResponse } from "effect/http";
 import { idShaped, OWNER } from "../server/directory/index.ts";
-import { slugify } from "../document/pages.ts";
+import { slugify } from "../document/model/pages.ts";
 import { call, ctx, fromWeb, plainJson, text, type Needs } from "../server/http.ts";
 import { DEV, routeFor, type RouteRow } from "../shared/routes.ts";
 import { directoryOf } from "./d1";

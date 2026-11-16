@@ -10,7 +10,7 @@ import { newDocButton, PLUS } from "./templates.ts";
 import { scratchMakeTip } from "./scratch.ts";
 import { inlineScript, inlineStyle } from "./inline.ts";
 import { plural, timeAgo } from "../../shared/time.ts";
-import { addressOf, HOME_ADDRESS, HOME_OWNER } from "../../document/names.ts";
+import { addressOf, HOME_ADDRESS, HOME_OWNER } from "../../document/model/names.ts";
 
 /** Who a document is shared with, as its row in the list says it (the owner's own view). */
 function sharedNote(d: Listed): string {

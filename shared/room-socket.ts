@@ -1,6 +1,6 @@
 // How a tab starts on its document, and what it says on its socket besides
 // the room's Yjs messages and the person's events: shared by the host
-// (document/host.ts, document/tabs.ts) and the browser (libs/text/ui/collab.ts).
+// (document/api/host.ts, document/room/participants.ts) and the browser (libs/text/ui/collab.ts).
 //
 // A tab starts with one request on the connection it has already (GET
 // /d/<id>/api/start: its hello and the room's whole state, START below), and
@@ -32,7 +32,7 @@ export function decodeStart<H>(bytes: Uint8Array): { hello: H; state: Uint8Array
 }
 
 /**
- * A file on its way (a write that waits for its bytes: document/waits.ts), as an open tab hears it: its size, whose it
+ * A file on its way (a write that waits for its bytes: document/api/waits.ts), as an open tab hears it: its size, whose it
  * is (`via`: how they act, when through an agent: shared/attribution.ts), until when it waits (ms), and the bytes that
  * came (none yet: no `got`).
  */

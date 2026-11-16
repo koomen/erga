@@ -14,7 +14,7 @@ import { link, safeNext } from "./chrome.ts";
 import { esc } from "../../shared/html.ts";
 import { inlineScript, inlineStyle } from "./inline.ts";
 import type { Session } from "../platform.ts";
-import { colorFor } from "../../document/content.ts";
+import { colorFor } from "../../document/model/content.ts";
 
 /** Where a page's header (pageBars, server/pages/bars.ts) wants the corner: at the right of its buttons' bar. */
 export const ACCOUNT_SLOT = "<!--erga-account-->";

@@ -32,7 +32,7 @@
 // it (the SQL as text), secrets are kept per Worker (keep_bindings, the
 // secrets API), and each Worker answers as the real one would where the
 // pipeline needs it: /logo.png, /api/deploys/version (its ERGA_VERSION) and
-// the snapshot endpoints (document/snapshot.ts, the real handler, over an
+// the snapshot endpoints (document/store/snapshot.ts, the real handler, over an
 // in-memory store of its documents). `failNext` makes the next call of a
 // step fail once (state.failNext = "worker"); `onUpload` hears of each
 // Worker uploaded.
@@ -41,7 +41,7 @@ import * as Base64 from "effect/encoding/Base64";
 import * as Result from "effect/Result";
 import { createHash } from "node:crypto";
 import type { Fetch } from "../deploy/pipeline/cloudflare-api";
-import { memoryStore, snapshotRoutes, type DocStore } from "../document/snapshot";
+import { memoryStore, snapshotRoutes, type DocStore } from "../document/store/snapshot";
 import { hex, randomBytes } from "../shared/bytes";
 import { accountZones, waitsForCertificate, zones } from "./mock-cloudflare-zones";
 import { seedFleet } from "./mock-cloudflare-fleet";

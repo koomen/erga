@@ -111,9 +111,9 @@ export interface Env {
   ERGA_SITE_RECHECK_MS?: string;
   /** Local development only: how long after an edit the room writes it (tests shorten it). */
   ERGA_WRITE_DELAY_MS?: string;
-  /** Local development only: how long edits pause before a version is cut, and the longest burst of edits one version holds (tests shorten them; document/versions.ts). */
+  /** Local development only: how long edits pause before a version is cut, and the longest burst of edits one version holds (tests shorten them; document/history/versions.ts). */
   ERGA_VERSION_IDLE_MS?: string;
   ERGA_VERSION_MAX_MS?: string;
-  /** Local development only: how long a document stays open with nothing done before it closes, so its object may sleep (document/document.ts). */
+  /** Local development only: how long a document stays open with nothing done before it closes, so its object may sleep (document/life/document.ts). */
   ERGA_ROOM_IDLE_MS?: string;
 }

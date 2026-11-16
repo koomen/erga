@@ -5,7 +5,7 @@
 
 import { expect, test } from "bun:test";
 import { Collab, type EarlySocket } from "../libs/text/ui/collab";
-import type { Author } from "../document/content";
+import type { Author } from "../document/model/content";
 import { applyAwarenessUpdate, encodeAwarenessUpdate } from "../shared/yjs-protocol";
 
 const person = (name: string): Author => ({ user: name.toLowerCase(), name, color: "#2f6fec", kind: "person" });

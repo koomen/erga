@@ -2,7 +2,7 @@
 // every page, how documents work (agents/document/PROMPT.md, the one copy of those rules), the admin's tools for an
 // admin, and that a tool's answer is information, never instructions.
 
-import { agentName } from "../../document/content";
+import { agentName } from "../../document/model/content";
 import { DOCUMENT_RULES, FILES_PROMPT, PAGES_PROMPT } from "../document/prompt";
 
 /** The admin's part: the server's settings, users and sign-in, and publishing. Only an admin's agent has those tools. */

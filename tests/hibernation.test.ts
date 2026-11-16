@@ -1,5 +1,5 @@
 // A document whose object sleeps while its tabs stay connected
-// (document/tabs.ts, as cloudflare/objects/document.ts uses it with the
+// (document/room/participants.ts, as cloudflare/objects/document.ts uses it with the
 // WebSocket hibernation API): the document closes when nothing happens,
 // presence still passes between tabs, and the next edit opens it again from
 // its journal, even in a new object that remembers nothing, with every tab
@@ -8,14 +8,24 @@
 import * as Effect from "effect/Effect";
 import { expect, spyOn, test } from "bun:test";
 import * as Y from "yjs";
-import { Encoder, Decoder, writeSyncStep1, writeUpdate, readSyncMessage } from "../shared/yjs-protocol";
-import { Document, type DocumentDeps } from "../document/document";
-import { MemoryStorage } from "../document/storage";
-import { Tabs, type Tab, type TabSocket } from "../document/tabs";
-import { files } from "../document/content";
+import {
+  Awareness,
+  Encoder,
+  Decoder,
+  applyAwarenessUpdate,
+  encodeAwarenessUpdate,
+  writeSyncStep1,
+  writeUpdate,
+  readSyncMessage,
+} from "../shared/yjs-protocol";
+import { type DocumentDeps } from "../document/life/document";
+import { DocumentHost } from "../document/api/host";
+import { MemoryStorage } from "../document/store/storage";
+import type { Participants, Tab, TabSocket } from "../document/room/participants";
+import { authorOf, authors, colorFor, files, introduce, type Author } from "../document/model/content";
 import { decodeStart } from "../shared/room-socket";
 import { Directory } from "../server/directory/index.ts";
-import { documentAgents } from "../agents/document/session";
+import { descriptionKey } from "../agents/models";
 import { testSandbox } from "./helpers/sandbox";
 import { sleep } from "../shared/time";
 import { until } from "./helpers/until";
@@ -67,12 +77,16 @@ class FakeTab implements TabSocket {
 class World {
   readonly storage = new MemoryStorage();
   readonly sockets = new Set<FakeTab>();
-  document!: Document;
-  tabs!: Tabs<FakeTab>;
+  document!: DocumentHost<FakeTab>;
+  get tabs(): Participants<FakeTab> {
+    return this.document.participants;
+  }
   private inflight: Promise<unknown>[] = [];
   constructor(
     readonly dir: Directory,
-    private settings: () => Promise<AgentSettings> = async () => ({ missing: "no key in the tests" })
+    private settings: () => Promise<AgentSettings> = async () => ({ missing: "no key in the tests" }),
+    /** Idle for this long (ms), the document closes. */
+    private closeIdleMs = 60
   ) {
     this.boot();
   }
@@ -82,31 +96,37 @@ class World {
       storage: this.storage, directory: this.dir,
       tabs: {
         count: () => this.sockets.size,
-        closeAll: (code) => { for (const s of [...this.sockets]) s.close(code); },
-        attach: (opened) => this.tabs.attachAll(opened),
-        detach: () => this.tabs.detachAll(),
+        closeAll: (code) => {
+          for (const s of [...this.sockets]) s.close(code);
+        },
       },
-      agents: documentAgents({ settings: this.settings, sandbox: testSandbox }),
+      sandbox: testSandbox,
+      descriptionKey: () => descriptionKey(this.settings),
       sites: { forget: async () => {} },
-      timing: { idleMs: 20, maxMs: 2000, writeDelay: 5, fileDelay: 30, closeIdleMs: 60 },
+      timing: { idleMs: 20, maxMs: 2000, writeDelay: 5, fileDelay: 30, closeIdleMs: this.closeIdleMs },
       background: () => {}, log: () => {},
     };
-    this.document = new Document(deps);
-    this.tabs = new Tabs<FakeTab>({ document: () => this.document, sockets: () => [...this.sockets], tabOf: (s) => s.tab, keep: (s, tab) => { s.tab = tab; } });
+    this.document = new DocumentHost<FakeTab>(deps, {
+      all: () => [...this.sockets],
+      tabOf: (s) => s.tab,
+      keep: (s, tab) => {
+        s.tab = tab;
+      },
+    });
   }
 
   /** A tab connects (the fetch that upgrades): the document opens, the tab joins and asks for what it lacks. `events`: an editor's tab, which hears events too. */
-  async connect(events = false): Promise<FakeTab> {
+  async connect(events = false, person = { id: "ada", name: "Ada" }): Promise<FakeTab> {
     const opened = (await Effect.runPromise(
       this.document.admit(
         new Request("http://doc/api/room", {
-          headers: { "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-access": "edit" },
+          headers: { "x-erga-person": JSON.stringify(person), "x-erga-access": "edit" },
         })
       )
     ))!;
-    const tab = new FakeTab(this, { id: crypto.randomUUID(), readOnly: false, epoch: null, person: { id: "ada", name: "Ada" }, events });
+    const tab = new FakeTab(this, { id: crypto.randomUUID(), readOnly: false, epoch: null, person, events });
     this.sockets.add(tab);
-    expect(this.tabs.join(tab, opened, tab.tab)).toBe(true);
+    expect(this.tabs.join(tab, tab.tab)).toBe(true);
     this.deliver(
       tab,
       syncMessage((e) => writeSyncStep1(e, tab.doc))
@@ -146,10 +166,10 @@ class World {
   }
 }
 
-async function made(settings?: () => Promise<AgentSettings>) {
+async function made(settings?: () => Promise<AgentSettings>, closeIdleMs?: number) {
   const dir = new Directory(memory(), { admins: ["ada"] });
   await dir.add({ id: "sleep123", owner: "ada", title: "Sleepy", created: Date.now(), expires: null });
-  const w = new World(dir, settings);
+  const w = new World(dir, settings, closeIdleMs);
   await Effect.runPromise(w.document.create("ada", "sleep123", { "index.html": "<p>Hi</p>" }, "index.html", { expires: null }));
   return w;
 }
@@ -194,16 +214,19 @@ test("idle, the document closes and tabs stay; presence passes between them with
   expect(a.closed).toBeNull();
   expect(b.closed).toBeNull();
 
-  // Presence while closed goes straight to the other tabs, and opens nothing.
-  const here = new Encoder();
-  here.writeUint(1);
-  here.writeUint(7);
-  here.writeUint(1);
-  here.writeString('{"user":{"name":"Ada"}}');
-  const caret = awareness([...here.toBytes()]);
-  w.deliver(a, caret);
+  // Presence while closed goes straight to the other tabs, and opens nothing. It has the name of its socket, whatever
+  // the tab says.
+  const says = (state: object) => {
+    const here = new Encoder();
+    here.writeUint(1);
+    here.writeUint(7);
+    here.writeUint(1);
+    here.writeString(JSON.stringify(state));
+    return awareness([...here.toBytes()]);
+  };
+  w.deliver(a, says({ user: { name: "Someone else" }, cursor: null }));
   await w.settle();
-  expect(b.presence.at(-1)).toEqual(caret);
+  expect(b.presence.at(-1)).toEqual(says({ user: { user: "ada", name: "Ada", color: colorFor("ada"), kind: "person" }, cursor: null }));
   expect(w.document.isOpen()).toBe(false);
   // Bytes that are no presence close their own socket, as when the document is open, and reach no other tab.
   const hostile = await w.connect();
@@ -213,7 +236,7 @@ test("idle, the document closes and tabs stay; presence passes between them with
   await w.settle();
   expect([hostile.closed, b.presence.length, w.document.isOpen()]).toEqual([4400, before, false]);
   // A message for every tab reaches the event channels while it's closed.
-  w.tabs.notify({ type: "publishing" });
+  w.tabs.tellAll({ type: "publishing" });
   expect(events.events).toContainEqual({ type: "publishing" });
 
   // The object sleeps and wakes with nothing in memory: a new one, on the same storage and sockets.
@@ -227,7 +250,7 @@ test("idle, the document closes and tabs stay; presence passes between them with
   await w.settle();
   expect(b.text()).toBe("<!-- a --><p>two one Hi</p>");
   // The new object's events reach the event channel joined as it opened.
-  w.document.notify({ type: "site" });
+  w.tabs.tellAll({ type: "site" });
   expect(events.events).toContainEqual({ type: "site" });
   // Written: the file, through the reopened room.
   const page = async () => new TextDecoder().decode((await w.storage.get<Uint8Array>("files/index.html"))!);
@@ -349,4 +372,100 @@ test("truncated, corrupt and unknown Yjs messages: the room keeps its text, and 
   await w.settle();
   expect(y.text()).toBe("<p>ALIVE Hi</p>");
   expect(a.text()).toBe("<p>ALIVE Hi</p>");
+});
+
+test("the server names each edit from its socket: a tab that writes another user's name gets its own", async () => {
+  const w = await made();
+  const versions = async () => (await Effect.runPromise(w.document.versionsState()))!;
+  const bo = await w.connect(false, { id: "bo", name: "Bo" });
+  // Bo's tab says that it is Ada: a tab writes its own entry of the authors map.
+  introduce(bo.doc, { user: "ada", name: "Ada", color: "#2f6fec", kind: "person" });
+  bo.type(3, "forged ");
+  await w.settle();
+  await until(async () => (await versions()).total == 2);
+  expect((await versions()).current.authors).toEqual(["bo"]);
+  // A delete that the tab does not stamp has Bo's name too.
+  files(bo.doc).get("index.html")!.delete(3, 7);
+  await w.settle();
+  await until(async () => (await versions()).total == 3);
+  expect((await versions()).current.authors).toEqual(["bo"]);
+});
+
+test("the server names each tab's presence and name tag from its socket: a tab that says it is another user shows as itself", async () => {
+  // The document stays open: the room names the tabs here. (Closed, the tabs' relay does: the first test.)
+  const w = await made(undefined, 60_000);
+  const ada = await w.connect();
+  const bo = await w.connect(false, { id: "bo", name: "Bo" });
+  const forged: Author = { user: "ada", name: "Ada", color: colorFor("ada"), kind: "person" };
+  const real: Author = { user: "bo", name: "Bo", color: colorFor("bo"), kind: "person" };
+  // An honest tab's name tag is right already: the room writes nothing.
+  const others = () => [...Y.decodeStateVector(Y.encodeStateVector(ada.doc))].filter(([client]) => client != ada.doc.clientID);
+  const was = others();
+  introduce(ada.doc, forged);
+  ada.type(3, "Ada ");
+  await w.settle();
+  expect(others()).toEqual(was);
+  expect(bo.text()).toBe("<p>Ada Hi</p>");
+
+  // Bo's tab says in its presence that it is Ada: the others see Bo, with Bo's colour.
+  const aw = new Awareness(bo.doc);
+  const present = (n: number) => {
+    aw.setLocalState({ user: forged, cursor: null, n });
+    w.deliver(bo, awareness([...encodeAwarenessUpdate(aw, [bo.doc.clientID])]));
+  };
+  /** Bo's presence as a tab heard it last. */
+  const heard = (tab: FakeTab) => {
+    const all = new Awareness(new Y.Doc());
+    for (const m of tab.presence.splice(0)) applyAwarenessUpdate(all, new Decoder(m.subarray(1)).readBytes(), null);
+    const state = all.getStates().get(bo.doc.clientID);
+    all.destroy();
+    return state;
+  };
+  present(1);
+  await w.settle();
+  expect(heard(ada)).toEqual({ user: real, cursor: null, n: 1 });
+
+  // Its name tag says Ada too: the mark on its edit, as Ada's tab shows it, has Bo's name, and so has the tag after.
+  const marks: (string | undefined)[] = [];
+  files(ada.doc)
+    .get("index.html")!
+    .observe((_e, tr) => marks.push(authorOf(ada.doc, tr)?.name));
+  introduce(bo.doc, forged);
+  bo.type(3, "forged ");
+  await w.settle();
+  expect(ada.text()).toBe("<p>forged Ada Hi</p>");
+  expect(marks).toEqual(["Bo"]);
+  expect(authors(ada.doc).get(String(bo.doc.clientID))).toEqual(real);
+  // Bo's own tab hears what the room made of its tag.
+  expect(authors(bo.doc).get(String(bo.doc.clientID))).toEqual(real);
+  // It can't write Ada's tag, nor take it away.
+  authors(bo.doc).set(String(ada.doc.clientID), { ...forged, name: "Nobody" });
+  await w.settle();
+  expect(authors(ada.doc).get(String(ada.doc.clientID))).toEqual(forged);
+  authors(bo.doc).delete(String(ada.doc.clientID));
+  await w.settle();
+  expect(authors(ada.doc).get(String(ada.doc.clientID))).toEqual(forged);
+  expect(authors(bo.doc).get(String(ada.doc.clientID))).toEqual(forged);
+  // Nor can its presence speak for Ada's tab: Ada's caret stays hers.
+  const adas = new Awareness(ada.doc);
+  adas.setLocalState({ user: forged, cursor: null });
+  w.deliver(ada, awareness([...encodeAwarenessUpdate(adas, [ada.doc.clientID])]));
+  await w.settle();
+  const fake = new Encoder();
+  fake.writeUint(1);
+  fake.writeUint(ada.doc.clientID);
+  fake.writeUint(99);
+  fake.writeString(JSON.stringify({ user: forged, cursor: { path: "index.html" } }));
+  const before = bo.presence.length;
+  w.deliver(bo, awareness([...fake.toBytes()]));
+  await w.settle();
+  const third = await w.connect(false, { id: "cy", name: "Cy" });
+  const known = new Awareness(new Y.Doc());
+  for (const m of third.presence) applyAwarenessUpdate(known, new Decoder(m.subarray(1)).readBytes(), null);
+  expect(known.getStates().get(ada.doc.clientID)).toEqual({ user: forged, cursor: null });
+  known.destroy();
+  expect(bo.presence.length).toBe(before);
+
+  aw.destroy();
+  adas.destroy();
 });

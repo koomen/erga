@@ -12,8 +12,8 @@ import {
   SETTINGS,
   type Sql,
 } from "../server/directory/index.ts";
-import { NameError } from "../document/names.ts";
-import { slugify } from "../document/pages.ts";
+import { NameError } from "../document/model/names.ts";
+import { slugify } from "../document/model/pages.ts";
 import { memory } from "./helpers/memory-sql";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;

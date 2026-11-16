@@ -22,6 +22,7 @@ export {
   OperationError,
   platformOf,
   runInDocument,
+  actOf,
   runOperation,
 } from "./operation.ts";
 export { addFile, cleanFilePath, PAGE_RULES } from "./documents.ts";

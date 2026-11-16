@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import type { DocRow } from "../directory/index.ts";
 import { domainName, domainNamed, ERGA, ergaName, forgetSite, isServed, LIVE_FILES, sitesOf, type SiteStatus } from "../sites/index.ts";
 import { byLine } from "../../shared/attribution.ts";
-import { addressOf } from "../../document/names.ts";
+import { addressOf } from "../../document/model/names.ts";
 import { type Caller, described, DOCUMENT, findDocument, iso, type Operation, OperationError, platformOf, said, str } from "./operation.ts";
 
 /** A domain as "Publish to" lists it: its name, and the document that has it now (null: free). */

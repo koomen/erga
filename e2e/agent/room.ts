@@ -1,6 +1,6 @@
 // What the other people get of an agent's edit, for the agent's journey: someone in the document's room with no browser
 // (a Replica, e2e/helpers/room.ts) who notes each change by someone else, and a person's event channel.
-import { authorOf } from "../../document/content";
+import { authorOf } from "../../document/model/content";
 import { until } from "../helpers/fixtures";
 import { joinRoom as join } from "../helpers/room";
 

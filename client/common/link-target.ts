@@ -6,7 +6,7 @@
 // editor (libs/text/ui/frame.ts), the copy (publicHref) and the link bar (libs/text/ui/controls.ts) read links
 // with it.
 
-import { pageUrl } from "../../document/pages";
+import { pageUrl } from "../../document/model/pages";
 
 /**
  * Where a page is: its origin, the path its document's files are under there (/t/<token>/), its own path in the

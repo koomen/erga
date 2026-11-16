@@ -1,8 +1,8 @@
-// The edits no version holds yet (document/cuts.ts): a burst gathers its authors, a cut takes it, and a cut that
+// The edits no version holds yet (document/history/cuts.ts): a burst gathers its authors, a cut takes it, and a cut that
 // fails gives it back, with its timers started again.
 
 import { expect, test } from "bun:test";
-import { nextCut, type CutEvent, type Cuts } from "../document/cuts";
+import { nextCut, type CutEvent, type Cuts } from "../document/history/cuts";
 
 const run = (s: Cuts, ...events: CutEvent[]) => {
   const effects: string[][] = [];

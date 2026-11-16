@@ -1,4 +1,4 @@
-// The room tells each participant what its files hold ("stored": document/room.ts), and a page's replica takes only
+// The room tells each participant what its files hold ("stored": document/room/room.ts), and a page's replica takes only
 // that as the base of its edits (libs/text/ui/collab.ts). A room that loses its history starts from its files, and the
 // page then puts in what it has and the base has not. So an edit that the room had and did not store arrives one
 // time, and so does one that it stored. A real Collab on a socket of this file's, which carries each message to a
@@ -9,10 +9,12 @@ import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import * as Y from "yjs";
 import { ChangeSet } from "@codemirror/state";
-import { FileStore, joinLocal, Room, StateStore } from "../document/room";
-import { fileStoreOf, Journal, KEYS, MemoryStorage, stateStoreOf } from "../document/storage";
-import { applyChanges, files } from "../document/content";
-import { rebaseOnce } from "../document/merge";
+import { Room, type Connection } from "../document/room/room";
+import { FileStore, StateStore } from "../document/store/storage";
+import { connect, joinLocal, participant } from "./helpers/join-local";
+import { fileStoreOf, Journal, KEYS, MemoryStorage, stateStoreOf } from "../document/store/storage";
+import { applyChanges, files } from "../document/model/content";
+import { rebaseOnce } from "../document/model/merge";
 import { Awareness, Decoder, MSG_STORED } from "../shared/yjs-protocol";
 import { Collab } from "../libs/text/ui/collab";
 import { until } from "./helpers/until";
@@ -31,7 +33,7 @@ class Socket {
   onmessage: ((e: { data: ArrayBuffer }) => void) | null = null;
   onopen: (() => void) | null = null;
   onclose: ((e: { code: number }) => void) | null = null;
-  private conn: ReturnType<Room["connect"]> = null;
+  private conn: Connection | null = null;
   /** What the room's files hold, as this socket heard it: each "stored". */
   readonly stored: Map<number, number>[] = [];
   /** False: nothing that the page sends arrives, and nothing says so. */
@@ -42,7 +44,7 @@ class Socket {
   up(): void {
     this.readyState = WebSocket.OPEN;
     // The room takes the socket as it opens: its first messages go out then.
-    this.conn = Socket.room.connect((m) => {
+    this.conn = connect(Socket.room, participant("ada"), (m) => {
       const data = m.slice().buffer;
       if (m[0] == MSG_STORED) this.stored.push(vectorOf(m));
       if (this.onmessage) queueMicrotask(() => this.onmessage?.({ data }));

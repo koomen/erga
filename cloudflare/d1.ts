@@ -79,7 +79,7 @@ export function directoryOf(env: Env): Directory {
     const changed = async (key: string) => {
       if (key == "public_sharing") forgetDecisions();
     };
-    // A document's permissions changed: its object keeps a copy, and decides with it (document/document.ts, authorize).
+    // A document's permissions changed: its object keeps a copy, and decides with it (document/life/document.ts, authorize).
     const permissionsChanged = async (id: string, permissions: Permission[]) => { forgetDecisions(id); if (permissions.length) await documentOf(env, id).setPermissions(permissions.map((p) => ({ login: p.login, role: p.role }))); };
     const dir = new Directory(sqlOn(env.DB), {
       admins: adminsOf(env),

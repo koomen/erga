@@ -190,7 +190,7 @@ Pete's page "Erga editor mechanics" proposes four more changes. Their status:
   (`indentItems`) replaces the whole range from the item above to the last
   moved item with a new string. Then `tidy` runs on every local edit.
 - Collaboration: Yjs `Y.Text` on the HTML string in the room
-  (`document/room.ts`). The shell and the frame exchange CodeMirror changes,
+  (`document/room/room.ts`). The shell and the frame exchange CodeMirror changes,
   and the frame rebases its own edits (`bridge.ts`, `Relay`).
 
 ### 2.2 Measurements (headless Chromium, the editor's own entry points)

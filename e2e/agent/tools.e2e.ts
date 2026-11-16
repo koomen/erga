@@ -41,8 +41,7 @@ journey("the agents' tools on a page that a person has open", () => {
   /** What storage holds for the page's file. */
   const stored = async () => (await fetch(`${ed.address}/api/stored/index.html`)).text();
   /** How many of Ada's agent's changes to the document Undo can take back. */
-  const undoable = async () =>
-    ((await (await ada.get(`${new URL(ed.address).pathname}/api/agent/undo`)).json()) as { count: number }).count;
+  const undoable = async () => ((await (await ada.get(`${new URL(ed.address).pathname}/api/undo`)).json()) as { count: number }).count;
 
   test("document_api lists the page's edits; call_edit runs one, the file and the page show it; one that can't, says why", async ({
     tab,
@@ -87,7 +86,7 @@ journey("the agents' tools on a page that a person has open", () => {
     const steps = [edit("<h1>Release notes", "<h1>Release notes, revised"), { text: "secret reply" }];
     const items = await ada.turn(id, steps, "a private question");
     await until(() => bo.str().includes("<h1>Release notes, revised"), 3000, "Bo sees the agent's edit");
-    // Typed in a few steps (agents/document/workspace.ts, paced): each of them by the agent.
+    // Typed in a few steps (document/room/workspace.ts, paced): each of them by the agent.
     const by = bo.seen.filter((x) => x.inserted && ", revised".includes(x.inserted));
     expect(by.length, JSON.stringify(bo.seen)).toBeGreaterThan(0);
     expect(
@@ -185,21 +184,21 @@ journey("the agents' tools on a page that a person has open", () => {
     const before = await undoable();
     await out.ok("edit", edit("<h1>Dee's notes", "<h1>Dee's notes EXT").args);
     await until(() => bo.str().includes("Dee's notes EXT"), 3000, "Bo sees the outside agent's edit");
-    // (A share token's edits are its person's, via it, under its label: agents/document/session.ts.)
+    // (A share token's edits are its person's, via it, under its label: document/room/participants.ts.)
     expect(bo.seen.at(-1)?.author).toBe(`${ADA}, via a shared agent (Share button)`);
     await expect.poll(() => ed.textOf("h1")).toBe("Dee's notes EXT, revised");
     const bad = await out.call("edit", { path: "index.html" });
     expect([bad.status, /edits/.test(bad.text)], `bad arguments say what is wrong: ${bad.text}`).toEqual([400, true]);
     expect((await out.call("nope")).status, "an unknown tool").toBe(404);
     expect(await undoable(), "Ada can undo it").toBe(before + 1);
-    await ada.get(`${path}/api/agent/undo`, { method: "POST" });
+    await ada.get(`${path}/api/undo`, { method: "POST" });
     await until(() => !bo.str().includes("EXT"), 3000, "the undo takes it back");
     const next = await share(true);
     expect([(await ext("/api/tools")).status, (await ext("/api/tools", {}, next)).status], "a new token turns the old one off").toEqual([
       401, 200,
     ]);
     bo.leave();
-    // (The outside agent's edit keeps the document's lock for some seconds more: agents/document/session.ts, IDLE_MS. No
+    // (The outside agent's edit keeps the document's lock for some seconds more: document/room/participants.ts, IDLE_MS. No
     // step after this one edits this document's page as a person.)
   });
 
@@ -556,7 +555,7 @@ test("the document tools work on any of your documents, named by address, URL, s
   const { documents, moreDocuments } = JSON.parse(few.text) as Listed;
   expect([documents.length, moreDocuments > 0], few.text.slice(0, 200)).toEqual([2, true]);
   // There is no second route by the document's URL: the old one, and the host's own, point to /api/tools.
-  for (const path of [`/d/${pub.id}/api/tools/read`, `${pub.address}/api/ext/tools/read`]) {
+  for (const path of [`/d/${pub.id}/api/tools/read`, `/d/${pub.id}/api/operations/read`, `${pub.address}/api/ext/tools/read`]) {
     const old = await fetch(`${s.root}${path}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${t.token}`, "Content-Type": "application/json" },
@@ -766,7 +765,7 @@ test("the agent reads the person's live page and clicks play: the audio plays, a
   expect(turn.find((i) => i.name == "page_log")?.status).toBe("done");
 });
 
-test("versions with from or to: since the agent's last turn, between two versions, for one file, and nothing changed", async () => {
+test("versions with from or to: since a version, between two versions, for one file, and nothing changed", async () => {
   const owner = await person(s, someone("v"));
   const t = await owner.tools();
   const doc = await t.create({
@@ -787,8 +786,9 @@ test("versions with from or to: since the agent's last turn, between two version
     const turn = (await versions()).current;
     room.insertAfter("agent-done", " live-now");
     await expect.poll(async () => (await versions()).pending).toBe(true);
-    let v = await d.ok("versions", { from: "last_turn" });
-    expect(v.text.startsWith(`From ${turn.id} (where your last turn ended) to current`), v.text.slice(0, 200)).toBe(true);
+    // (From where an agent's own last turn ended, "last_turn": tests/agent-undo.test.ts. This token had no turn here.)
+    let v = await d.ok("versions", { from: turn.id });
+    expect(v.text.startsWith(`From ${turn.id} to current`), v.text.slice(0, 200)).toBe(true);
     expect(v.text).toContain("--- a/index.html\n+++ b/index.html\n@@ ");
     expect(v.text).toMatch(/^\+.*live-now/m);
     expect(v.text).toMatch(/^-.*agent-done/m);

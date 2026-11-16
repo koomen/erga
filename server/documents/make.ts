@@ -2,10 +2,10 @@
 // create_document and the default homepage's seed too).
 
 import * as Effect from "effect/Effect";
-import type { FileData } from "../../document/document.ts";
-import { pageCount, titleOf } from "../../document/pages.ts";
+import type { FileData } from "../../document/life/document.ts";
+import { pageCount, titleOf } from "../../document/model/pages.ts";
 import { type DocRow, ID, newDocId, NO_WRITE, type Who } from "../directory/index.ts";
-import { addressOf, UNTITLED } from "../../document/names.ts";
+import { addressOf, UNTITLED } from "../../document/model/names.ts";
 import { type Platform, whoOf } from "../platform.ts";
 import { confirmAction, fromThisSite, link, page, signInFirst, type Template, templateById, TEMPLATES, withEdit } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";

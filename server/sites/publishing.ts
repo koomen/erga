@@ -9,7 +9,7 @@
 // Every change of the state is told to everyone who has the document open ({ type: "publishing" } on its /api/events).
 
 import type { DocRow } from "../directory/index.ts";
-import { addressOf } from "../../document/names.ts";
+import { addressOf } from "../../document/model/names.ts";
 import { addressesOf, REDIRECTS } from "./addresses.ts";
 import { renderSite } from "./render.ts";
 import { type Answer, isLivePage, kept, type LivePage, type Retired, tagOf } from "./snapshot.ts";
