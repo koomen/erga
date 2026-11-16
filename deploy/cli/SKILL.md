@@ -95,8 +95,10 @@ and `main`. There are no pull requests.
    It stops when no branch merges: staging stays where it was.
 6. An instance tracks one branch of one repository (its entry in
    `.erga/config.json`: `repo` and `branch`). `merge` names each instance
-   that tracks `staging`. A merge that Pete asked for includes the deploy
-   of its commit to each of them:
+   that tracks `staging`. With auto-deploy on (`bun erga --auto-deploy`, below),
+   the ops page deploys the commit to each of them within about a minute:
+   watch `bun erga status`. Without it, a merge that Pete asked for
+   includes the deploy of its commit to each of them:
 
        bun erga deploy <host>
 
@@ -107,8 +109,9 @@ and `main`. There are no pull requests.
 7. Only when Pete asks: `bun erga promote` moves `main` forward to the
    head of `staging`, and pushes it. It refuses when the tests did not pass
    on that commit, or when an instance that tracks `staging` does not run
-   it, healthy. It deploys nothing. Then, when Pete asks, `bun erga deploy
-   <host>` deploys an instance that tracks `main`. `main` and `staging` are the branches
+   it, healthy. It deploys nothing. Then auto-deploy deploys each instance
+   that tracks `main`; without it, when Pete asks, `bun erga deploy
+   <host>` does. `main` and `staging` are the branches
    on GitHub, never this clone's own branch of that name.
 8. Only when Pete asks: `bun erga release [vX.Y.Z|major|minor|patch]`
    tags `main` and makes a GitHub release with notes from the commits.
@@ -146,6 +149,13 @@ and `main`. There are no pull requests.
   which works only when the tests (`bun run test`) passed on the branch's merge. The page's server works the tests' queue. A commit row shows a Deploy button on hover in each
   column whose instance does not run it, when the commit is on that instance's branch (`bun erga deploy <commit> <host>`). They run the same
   commands, with the same locks, and only one job at a time. Only when Pete asks.
+- `bun erga --auto-deploy`: the ops page with auto-deploy on. Pete starts it. It asks each repository that an instance
+  tracks for its branches' heads once a minute (`git ls-remote`). When an instance does not run its branch's head, it
+  starts `bun erga deploy <head> <host>`: one job at a time, with the same gate (the tests) as every deploy. Each
+  column's head on the page shows its instance's state: idle, a commit that is next, a deploy that runs, or failed.
+  A head is tried one time: a failed deploy stays failed, and the page says why. A new commit on the branch, or
+  `bun erga deploy <host>`, starts it again. After `bun erga rollback`, it does not deploy the same commit again. A
+  branch that was written again (a force push) stops it, until `bun erga deploy <host>` accepts the new head.
 - `bun erga deploy [<commit>] <host>`: deploys a registered instance from
   this machine, with the facts in `.erga/config.json`. Only when Pete asks.
   It asks no question. Every instance deploys by the same steps, from its

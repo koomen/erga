@@ -1,7 +1,7 @@
 // What `bun erga` reads: git (the checkout's view of GitHub), and each registered instance's GET /api/ops (with its ops
 // token) and GET /api/health. Each call says what it saw; nothing here decides (flow.ts).
 
-import { type Config, type Entry, entryOrigin, repoName } from "./config";
+import { type Config, type Entry, entryOrigin, remoteOf, repoName } from "./config";
 import { type Answer, type Commit, type Instance, PROTECTED, type State, stateOf } from "./flow";
 import { readOps, type Site } from "./ops";
 import { git, ROOT, sh } from "../root";
@@ -105,6 +105,53 @@ export async function githubHeads(cwd = ROOT): Promise<Set<string> | null> {
     return null;
   }
 }
+
+/** git, for the ops page: it does not block, and stops after 30 seconds. */
+async function gitAsync(cwd: string, args: string[]): Promise<{ ok: boolean; out: string; err: string }> {
+  try {
+    const p = Bun.spawn(["git", ...args], {
+      cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+    const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
+    return { ok: (await p.exited) == 0, out: out.trim(), err: err.trim() };
+  } catch (e) {
+    // The clone went away (a test's), or git is not there.
+    return { ok: false, out: "", err: (e as Error).message };
+  }
+}
+
+/**
+ * The heads of `branches` on `repo` now (one git ls-remote: a read), for auto-deploy; each head that the clone does
+ * not have yet is fetched into it, so that a deploy and the page's checks have the commit. `error`: why the repository
+ * gave no answer, or null.
+ */
+export async function repoHeads(
+  cwd: string,
+  repo: string,
+  branches: string[]
+): Promise<{ heads: Record<string, string>; error: string | null }> {
+  const remote = remoteOf(cwd, repo);
+  const r = await gitAsync(cwd, ["ls-remote", remote, ...branches.map((b) => `refs/heads/${b}`)]);
+  if (!r.ok) return { heads: {}, error: r.err.split("\n").find((l) => /^(fatal|error):/i.test(l)) ?? (r.err || "git ls-remote failed") };
+  const heads = Object.fromEntries(
+    r.out.split("\n").flatMap((l) => {
+      const m = /^([0-9a-f]{40})\trefs\/heads\/(.+)$/.exec(l);
+      return m ? [[m[2], m[1]]] : [];
+    })
+  );
+  for (const [branch, sha] of Object.entries(heads))
+    if (!sh(["git", "cat-file", "-e", `${sha}^{commit}`], { cwd }).ok) await gitAsync(cwd, ["fetch", "--quiet", remote, branch]);
+  return { heads, error: null };
+}
+
+/** Whether the clone has both commits, and `head` has `commit` in its history. */
+export const inHistory = (cwd: string, commit: string, head: string) =>
+  sh(["git", "merge-base", "--is-ancestor", commit, head], { cwd }).ok;
 
 /** The origin's branches that the clone remembers, less those that GitHub no longer has (`live`; null: no answer). */
 function rememberedBranches(cwd: string, live: Set<string> | null) {

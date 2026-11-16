@@ -61,8 +61,11 @@ export interface Job {
   end: (result: "ok" | "failed", error?: string) => void;
 }
 
-/** Where a job's command was typed: a terminal, or the ops page (ops-page.ts runs the CLI with ERGA_JOB_FROM=page). */
-export type From = "terminal" | "page";
+/**
+ * Where a job's command came from: a terminal, the ops page's buttons, or its auto-deploy (ops-page.ts runs the CLI
+ * with ERGA_JOB_FROM=page or auto-deploy).
+ */
+export type From = "terminal" | "page" | "auto-deploy";
 
 /** This process's environment without ERGA_JOB_FROM: for the tests a merge or a deploy runs, which are no job of the page. */
 export const testEnv = () => {

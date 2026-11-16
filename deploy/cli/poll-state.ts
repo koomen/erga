@@ -1,4 +1,5 @@
-// The ops page's checks of its sources: GitHub (a git fetch) and each instance (its commit and health). One state value,
+// The ops page's checks of its sources: GitHub (a git fetch), each instance (its commit and health) and, for
+// auto-deploy, each repository that an instance tracks (its branches' heads: a source named "repo <name>"). One state value,
 // one pure step: ops-page.ts keeps the value, does each check that a step asks for, gives its end back as an event, and
 // wakes the step at the time it names. Each source has its own period, from the start of one check to the start of the
 // next, whatever happens (a page load, a job): GitHub once a minute at most, each instance every 5 seconds. A new source
@@ -8,8 +9,8 @@
 /** The name of the GitHub source; the others are the instances' hosts. */
 export const GITHUB = "github";
 
-/** A source's period: GitHub's fetch at most once a minute, an instance's answer every 5 seconds. */
-export const periodOf = (name: string) => (name == GITHUB ? 60_000 : 5_000);
+/** A source's period: GitHub's fetch and a repository's heads at most once a minute, an instance's answer every 5 seconds. */
+export const periodOf = (name: string) => (name == GITHUB || name.startsWith("repo ") ? 60_000 : 5_000);
 
 /** A source without a good answer for this many periods is stale. */
 const STALE_PERIODS = 3;

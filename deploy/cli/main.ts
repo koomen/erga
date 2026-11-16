@@ -4,8 +4,10 @@
 // repository: `deploy` gives it that branch's head. Every deploy runs on this machine: a push deploys nothing.
 // `bun erga skill` is the agents' manual.
 //
-//   bun erga [--port N] [--no-open]
-//                                       the ops page on localhost: the registered instances, deploys, logs, history
+//   bun erga [--auto-deploy] [--port N] [--no-open]
+//                                       the ops page on localhost: the registered instances, deploys, logs, history;
+//                                       --auto-deploy: it checks the branch of each instance once a minute, and
+//                                       deploys a new commit to the instance (bun erga deploy), one job at a time
 //   bun erga skill                      how an agent works in this repository (the workflow and its rules)
 //   bun erga start <branch>             a new feature branch from GitHub's newest staging, in a work folder of its
 //                                       own (worktrees/<branch> in the main clone), with its packages installed
@@ -56,8 +58,9 @@ import { commitsOf, fetchOrigin, headOf, readState, repoOf, tagsOf } from "./obs
 import { fail, pass, ROOT, say, sh } from "../root";
 
 
-/** Where this command was typed: ERGA_JOB_FROM=page when the ops page runs it (ops-page.ts), else a terminal. */
-const fromOf = () => (process.env.ERGA_JOB_FROM == "page" ? "page" : "terminal");
+/** Where this command came from: ERGA_JOB_FROM=page or auto-deploy when the ops page runs it (ops-page.ts), else a terminal. */
+const fromOf = () =>
+  process.env.ERGA_JOB_FROM == "page" ? "page" : process.env.ERGA_JOB_FROM == "auto-deploy" ? "auto-deploy" : "terminal";
 
 const needRepo = () => repoOf() ?? fail("This checkout's origin is not a GitHub repository.", "git remote -v");
 
@@ -344,7 +347,7 @@ async function login(arg: string | undefined) {
 
 export async function main(argv: string[]) {
   // No command, or only the ops page's options: the ops page.
-  const [cmd, ...rest] = argv[0] == undefined || /^--(port|no-open)$/.test(argv[0]) ? ["", ...argv] : argv;
+  const [cmd, ...rest] = argv[0] == undefined || /^--(auto-deploy|port|no-open)$/.test(argv[0]) ? ["", ...argv] : argv;
   const flag = (f: string) => rest.includes(f);
   const opt = (f: string) => {
     const i = rest.indexOf(f);
@@ -403,6 +406,7 @@ export async function main(argv: string[]) {
         cwd: process.cwd(),
         port: port == undefined ? undefined : Number(port),
         open: !flag("--no-open"),
+        autoDeploy: flag("--auto-deploy"),
       });
       return;
     }

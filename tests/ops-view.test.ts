@@ -71,6 +71,8 @@ test("the view: each instance with its branch, a column for each one of the same
     polls: startPolls(),
     runs: [],
     proofs: {},
+    auto: null,
+    heads: {},
   };
   const html = viewHtml(facts, "example.net", NOW);
   // The sidebar is a flat list: each instance, with the branch it tracks under its name. No instance stands under another.
@@ -134,6 +136,8 @@ test("Logs shows the job that runs, else the last one, or the one the hash names
     polls: startPolls(),
     runs: [],
     proofs: {},
+    auto: null,
+    heads: {},
   };
   const logs = viewHtml(facts, "example.net/logs", NOW);
   expect(logs).toContain('<section class="logs" data-job="runs"');
@@ -145,6 +149,15 @@ test("Logs shows the job that runs, else the last one, or the one the hash names
   const history = viewHtml(facts, "example.net/history", NOW);
   expect([...history.matchAll(/class="h-row [^"]*" href="[^"]*" data-job="(\w+)"/g)].map((m) => m[1])).toEqual(["runs", "old"]);
   expect(history).toContain('<span class="h-took">30 s</span>');
+  // A job that auto-deploy started says so.
+  const auto = jobOf(
+    line({ ...start, from: "auto-deploy" }) + line({ result: "ok", ended: "2026-11-05T11:55:00.000Z" }),
+    () => true,
+    "auto-1"
+  )!;
+  const withAuto = viewHtml({ ...facts, jobs: [auto] }, "example.net/history", NOW);
+  expect(withAuto).toContain('<span class="h-from">auto-deploy</span>');
+  expect(viewHtml({ ...facts, jobs: [auto] }, "example.net", NOW)).toContain("done 5 minutes ago · from auto-deploy");
   expect(history).toContain('<span class="h-took">1 h 0 min</span>');
   // An unknown tab is Deploys.
   expect(viewHtml(facts, "example.net/nope", NOW)).toContain('data-tab="deploys"');
@@ -184,6 +197,8 @@ const deploys = (more: Partial<Facts> = {}, staging = "3", production = "1"): Fa
   // Every test passed on the merge of clean.
   runs: [runOf("tree-clean")],
   proofs: {},
+  auto: null,
+  heads: {},
   ...more,
 });
 /** The page's own command as it starts: a merge of a branch, or a deploy of commit n...n to staging.example.net. */

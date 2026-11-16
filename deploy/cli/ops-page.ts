@@ -5,18 +5,23 @@
 // shows each source's last check. It serves each branch's proof page (bun erga proof) at /proof/<branch>/. Every command works without it. Its Merge and Deploy buttons run
 // `bun erga merge` and `bun erga deploy` (POST /api/merge, /api/deploy) in a process of their own, as a terminal does:
 // the same code, locks and job records. A merge's tests take minutes, and this server must answer while they run.
+// With --auto-deploy it is auto-deploy too (auto-state.ts): it asks each tracked repository for its branches' heads once a
+// minute (one git ls-remote), and starts `bun erga deploy <head> <host>` for an instance that does not run its
+// branch's head, one job at a time, as its buttons do.
 // It works the tests' queue (gate.ts, stepQueue): for each pushed branch whose merge has no test record, `bun erga test
 // <branch>` (about a minute), one at a time, the oldest first. A branch or a staging head that moves makes a new tree: it waits again.
 
 import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { startAuto, stepAuto } from "./auto-state";
 import { type Entry, readConfig } from "./config";
 import type { Answer } from "./flow";
 import { readRuns } from "./test-run";
 import { type Queue, stepQueue, testOf } from "./gate";
 import { readProofs } from "./proof";
-import { askInstance, branchesOf, commitsIn, fetchGitHub } from "./observe";
-import { busyWith, type Facts, type Git, type JobRecord, jobOf, mergeBlock, pageHtml, viewHtml } from "./ops-view";
+import type { From } from "./jobs";
+import { askInstance, branchesOf, commitsIn, fetchGitHub, inHistory, repoHeads } from "./observe";
+import { busyWith, type Facts, type Git, type JobRecord, jobOf, mergeBlock, pageHtml, repoSource, viewHtml } from "./ops-view";
 import { alive } from "./pid";
 import { type JobState, stepRun } from "./job-state";
 import { GITHUB, type PollEvent, startPolls, stepPolls } from "./poll-state";
@@ -64,13 +69,13 @@ export interface Run {
   done: Promise<{ code: number; out: string }>;
 }
 
-/** `bun erga <args>` in a process of its own, in the clone; its job record says the page started it. */
+/** `bun erga <args>` in a process of its own, in the clone; its job record says that the page started it, or its auto-deploy. */
 const runCli =
   (cwd: string) =>
-  (args: string[]): Run => {
+  (args: string[], from: From = "page"): Run => {
     const p = Bun.spawn([process.execPath, join(ROOT, "deploy/cli/main.ts"), ...args], {
       cwd,
-      env: { ...process.env, ERGA_JOB_FROM: "page" },
+      env: { ...process.env, ERGA_JOB_FROM: from },
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -89,8 +94,12 @@ export interface OpsPageOptions {
   ask?: (e: Entry) => Promise<Answer>;
   /** fetchGitHub (null: it worked, else why not), or a fake in the tests. */
   fetch?: (cwd: string) => Promise<string | null>;
-  /** Runs `bun erga <args>` for the Merge and Deploy buttons (default: the CLI, in a process of its own), or a fake. */
-  run?: (args: string[]) => Run;
+  /** Runs `bun erga <args>` for the Merge and Deploy buttons and for auto-deploy (default: the CLI, in a process of its own), or a fake. */
+  run?: (args: string[], from: From) => Run;
+  /** --auto-deploy: auto-deploy is on. */
+  autoDeploy?: boolean;
+  /** repoHeads (observe.ts): the heads of a repository's branches, or a fake in the tests. */
+  heads?: (cwd: string, repo: string, branches: string[]) => Promise<{ heads: Record<string, string>; error: string | null }>;
   /** Runs all the tests on a branch's merge, for the tests' queue: `bun erga test <branch>` (startOpsPage), or a fake. None: no queue. */
   test?: (branch: string) => Run;
 }
@@ -105,6 +114,7 @@ export function serveOpsPage(o: OpsPageOptions) {
   const ask = o.ask ?? askInstance;
   const run = o.run ?? runCli(o.cwd);
   const fetchGit = o.fetch ?? fetchGitHub;
+  const askRepo = o.heads ?? repoHeads;
   const script = readFileSync(join(ROOT, "deploy/cli/ops-page.js"), "utf8");
   const facts: Facts = {
     config: { instances: [] },
@@ -115,6 +125,8 @@ export function serveOpsPage(o: OpsPageOptions) {
     polls: startPolls(),
     runs: [],
     proofs: {},
+    auto: o.autoDeploy ? {} : null,
+    heads: {},
   };
   /** The tests' queue: the run that this page started, if one is on. */
   let queue: Queue = { at: "idle" };
@@ -137,8 +149,9 @@ export function serveOpsPage(o: OpsPageOptions) {
       }
     }
   };
-  /** After each change of the facts: the tests' queue looks at them, and the pages hear when what they show changed. */
+  /** After each change of the facts: auto-deploy and the tests' queue look at them, and the pages hear when what they show changed. */
   const changed = () => {
+    drive();
     work();
     const now = JSON.stringify(facts);
     if (now == sent) return;
@@ -155,10 +168,44 @@ export function serveOpsPage(o: OpsPageOptions) {
     }
     const hosts = new Set(entries().map((e) => e.host));
     for (const h of Object.keys(facts.answers)) if (!hosts.has(h)) delete facts.answers[h];
+    for (const h of Object.keys(facts.heads)) if (!hosts.has(h)) delete facts.heads[h];
+    for (const h of Object.keys(facts.auto ?? {})) if (!hosts.has(h)) delete facts.auto![h];
+    // Auto-deploy asks each repository that an instance tracks.
+    const repos = facts.auto ? [...new Set(entries().map((e) => repoSource(e.repo)))] : [];
     facts.jobs = readJobs(o.dir);
     facts.runs = readRuns(o.dir);
     facts.proofs = readProofs(o.dir);
-    poll({ type: "sources", names: [GITHUB, ...hosts], now: Date.now() });
+    poll({ type: "sources", names: [GITHUB, ...repos, ...hosts], now: Date.now() });
+  };
+  /**
+   * Auto-deploy: tells each instance's state what the page sees now, then starts the deploy of the first due one, when
+   * no job runs. The deploy's end is an event.
+   */
+  const drive = () => {
+    const auto = facts.auto;
+    if (stopped || !auto) return;
+    const step = (host: string, e: Parameters<typeof stepAuto>[1]) => {
+      const r = stepAuto(auto[host] ?? startAuto(), e);
+      auto[host] = r.auto;
+      return r.deploy;
+    };
+    for (const e of entries()) {
+      const head = facts.heads[e.host] ?? null;
+      const runs = facts.answers[e.host]?.version ?? null;
+      const behind = !!head && !!runs && !head.startsWith(runs);
+      // A job record of this instance has the head: it was tried. Else its history must have the commit that runs.
+      const tried = behind && facts.jobs.some((j) => j.kind == "deploy" && j.host == e.host && j.commit == head);
+      const rewritten = behind && !tried && !inHistory(o.cwd, runs!, head!);
+      step(e.host, { type: "seen", head, runs, tried, rewritten });
+    }
+    if (busyWith(facts)) return;
+    for (const e of entries()) {
+      const head = step(e.host, { type: "free" });
+      if (!head) continue;
+      const job: JobState = { kind: "deploy", host: e.host, commit: head, branch: null, phase: "starting" };
+      start(["deploy", head.slice(0, 12), e.host], job, "auto-deploy", (ok, why) => step(e.host, { type: "ended", ok, why }));
+      return;
+    }
   };
   /** Steps the tests' queue with what git and the records say now, and starts the run it asks for. Its end is an event. */
   const work = () => {
@@ -211,6 +258,21 @@ export function serveOpsPage(o: OpsPageOptions) {
       fetched = true;
       refs = refsOf(o.cwd);
       readClone();
+    } else if (name.startsWith("repo ")) {
+      // One repository: the heads of the branches that its instances track.
+      const tracking = entries().filter((e) => repoSource(e.repo) == name);
+      const branches = [...new Set(tracking.map((e) => e.branch))];
+      const r = tracking.length
+        ? await askRepo(o.cwd, tracking[0].repo, branches).catch((err: Error) => ({
+            heads: {} as Record<string, string>,
+            error: err.message,
+          }))
+        : { heads: {}, error: null };
+      if (stopped) return;
+      // A repository that gave no answer: the last heads stay.
+      if (!r.error) for (const e of tracking) facts.heads[e.host] = r.heads[e.branch] ?? null;
+      const gone = branches.filter((b) => !r.heads[b]);
+      error = r.error ?? (gone.length ? `no branch ${gone.join(", ")}` : null);
     } else {
       const e = entries().find((x) => x.host == name);
       const before = versions().join();
@@ -257,15 +319,19 @@ export function serveOpsPage(o: OpsPageOptions) {
     send(": still here\n\n");
   }, 5_000);
 
-  /** Starts `bun erga <args>`, unless a job runs: the result is the page's answer. */
-  const start = (args: string[], job: JobState) => {
+  /**
+   * Starts `bun erga <args>`, unless a job runs: the result is the page's answer. `ended`: told when the command ends,
+   * with its error (its job record's, else its last words).
+   */
+  const start = (args: string[], job: JobState, from: From = "page", ended?: (ok: boolean, why: string) => void) => {
     const busy = busyWith(facts);
     if (busy) return Response.json({ error: `Another job runs: ${busy}. Wait for it to end.` }, { status: 409 });
     const command = `bun erga ${args[0]} ${args[1]}${args[0] == "deploy" ? ` ${args[2]}` : ""}`;
     let r: Run;
     try {
-      r = run(args);
+      r = run(args, from);
     } catch (e) {
+      ended?.(false, `${command} did not start: ${(e as Error).message}`);
       return Response.json({ error: `${command} did not start: ${(e as Error).message}` }, { status: 500 });
     }
     facts.run = stepRun(facts.run, { type: "start", command, job });
@@ -273,8 +339,9 @@ export function serveOpsPage(o: OpsPageOptions) {
     void r.done.then(({ code, out }) => {
       readFiles();
       // A command that stopped before its job record (a lock, a missing credential): its own words, here.
-      const recorded = facts.jobs.some((j) => j.id.endsWith(`-${r.pid}`));
-      facts.run = stepRun(facts.run, { type: "exit", code, out, recorded });
+      const record = facts.jobs.find((j) => j.id.endsWith(`-${r.pid}`));
+      facts.run = stepRun(facts.run, { type: "exit", code, out, recorded: !!record });
+      ended?.(code == 0, record?.error ?? (out.trim().split("\n").slice(-2).join(" ") || `exit ${code}`));
       changed();
     });
     return Response.json({ ok: true, command }, { status: 202 });
@@ -380,7 +447,7 @@ export function serveOpsPage(o: OpsPageOptions) {
 }
 
 /** `bun erga [--port N] [--no-open]`: the page on the first free port from 4801, opened in the browser. */
-export function startOpsPage(o: { dir: string; cwd: string; port?: number; open: boolean }) {
+export function startOpsPage(o: { dir: string; cwd: string; port?: number; open: boolean; autoDeploy?: boolean }) {
   let page: ReturnType<typeof serveOpsPage> | null = null;
   const from = o.port ?? 4801;
   for (let p = from; !page && p < from + 20; p++) {
@@ -389,6 +456,7 @@ export function startOpsPage(o: { dir: string; cwd: string; port?: number; open:
         dir: o.dir,
         cwd: o.cwd,
         port: p,
+        autoDeploy: o.autoDeploy,
         test: (branch) => runCli(o.cwd)(["test", branch]),
       });
     } catch (e) {
@@ -402,6 +470,11 @@ export function startOpsPage(o: { dir: string; cwd: string; port?: number; open:
   writeFileSync(join(o.dir, "page.port"), String(page.server.port));
   console.log(`PASS  The ops page: ${url}`);
   console.log(`NOTE  It shows the instances of ${join(o.dir, "config.json")}. Keep this command running; Ctrl-C stops it.`);
+  console.log(
+    o.autoDeploy
+      ? "NOTE  Auto-deploy is on: a new commit on the branch that an instance tracks deploys to it (bun erga deploy), one job at a time."
+      : "NOTE  Auto-deploy is off: bun erga --auto-deploy turns it on."
+  );
   if (o.open) Bun.spawn([process.platform == "darwin" ? "open" : "xdg-open", url], { stdout: "ignore", stderr: "ignore" });
   return page;
 }
