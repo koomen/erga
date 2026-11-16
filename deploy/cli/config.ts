@@ -1,6 +1,8 @@
-// The instances this clone deploys: .erga/config.json in the main clone, which git ignores. `bun erga register <host>`
-// adds an instance with its deploy facts (GET /api/ops), its plain settings and its ops token; `bun erga login <host>`
-// gives it a new token. Each worktree of the clone uses the main clone's file. The file holds tokens: mode 600.
+// The instances this clone deploys: .erga/config.json in the main clone, which git ignores. An instance is a host that
+// tracks one branch of one repository: `bun erga deploy <host>` deploys that branch's head. `bun erga register <host>`
+// adds an instance with its deploy facts (GET /api/ops), its plain settings and its ops token; `bun erga track <host>`
+// changes its repository and branch; `bun erga login <host>` gives it a new token. Each worktree of the clone uses the
+// main clone's file. The file holds tokens: mode 600.
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -9,14 +11,22 @@ import * as Schema from "effect/Schema";
 import { AwsFacts, CloudflareFacts } from "./ops";
 import { sh } from "../root";
 
+/** The repository and the branch of an instance that names none. */
+export const DEFAULT_REPO = "github.com/koomen/erga";
+export const DEFAULT_BRANCH = "main";
+
 const Own = {
   host: Schema.String,
-  stagingOf: Schema.optionalKey(Schema.String),
+  repo: Schema.String,
+  branch: Schema.String,
+  copyOf: Schema.optionalKey(Schema.String),
   token: Schema.String,
 };
 /**
- * One instance: its host (its address on Cloudflare; on AWS, its name in setup), its primary if it is a staging
- * instance, its deploy facts and vars, and its ops token. On AWS, also the AWS CLI's profile this machine reaches it with.
+ * One instance: its host (its address on Cloudflare; on AWS, its name in setup), the repository and the branch whose
+ * commits it runs, its deploy facts and vars, and its ops token. `copyOf`: the host of the instance whose data it runs
+ * on a copy of; such an instance is for admins only (deploy.ts, entryTarget), and nothing else reads the field. On
+ * AWS, also the AWS CLI's profile this machine reaches it with.
  */
 const Entry = Schema.Union([
   Schema.Struct({ ...Own, ...CloudflareFacts.fields }),
@@ -62,13 +72,31 @@ export function writeConfig(dir: string, config: Config) {
 
 export const entryOf = (config: Config, host: string) => config.instances.find((e) => e.host == host) ?? null;
 
-/** Why a staging instance of `primary` can't be registered as `host`, or null. */
-export function stagingRefusal(config: Config, host: string, primary: string): string | null {
-  if (primary == host) return `${host} can't be its own staging instance.`;
-  const p = entryOf(config, primary);
-  if (!p) return `${primary} has no entry in .erga/config.json. Register the primary first: bun erga register ${primary}`;
-  if (p.stagingOf) return `${primary} is a staging instance of ${p.stagingOf}, not a primary.`;
+/** Why `host` can't run on a copy of `source`'s data, or null. */
+export function copyRefusal(config: Config, host: string, source: string): string | null {
+  if (source == host) return `${host} can't be a copy of its own data.`;
+  const s = entryOf(config, source);
+  if (!s) return `${source} has no entry in .erga/config.json. Register it first: bun erga register ${source}`;
+  if (s.copyOf) return `${source} runs on a copy of ${s.copyOf}'s data itself: name ${s.copyOf}.`;
   return null;
+}
+
+/** A repository's name from a git address: github.com/owner/name for an https, ssh or scp-like address; a path as it is. */
+export const repoName = (url: string) =>
+  url
+    .trim()
+    .replace(/^[a-z+]+:\/\/([^@/]+@)?/i, "")
+    .replace(/^[^@/]+@([^:/]+):/, "$1/")
+    .replace(/\.git$/, "")
+    .replace(/\/$/, "");
+
+/** What git fetches for `repo`: https for the short form (host/owner/name), else the address as it is. */
+export const repoUrl = (repo: string) => (/^[\w.-]+\.[a-z]{2,}(\/[\w.-]+){2}$/i.test(repo) ? `https://${repo}` : repo);
+
+/** The clone's remote for `repo`: origin when origin is that repository (its own sign-in works), else the address. */
+export function remoteOf(clone: string, repo: string): string {
+  const origin = sh(["git", "remote", "get-url", "origin"], { cwd: clone });
+  return origin.ok && repoName(origin.out) == repoName(repo) ? "origin" : repoUrl(repo);
 }
 
 /** The config with `entry` in it: it replaces the entry of the same host, in its place. */
@@ -88,14 +116,14 @@ export const secretsPath = (dir: string) => join(dir, "secrets.json");
 const SnapshotSecret = Schema.Struct({ SNAPSHOT_TOKEN: Schema.String });
 
 /**
- * A primary's SNAPSHOT_TOKEN, for a copy of its documents: SNAPSHOT_TOKEN in the environment, else
- * `{ "<primary host>": { "SNAPSHOT_TOKEN": "..." } }` in .erga/secrets.json. "" if neither has it.
+ * An instance's SNAPSHOT_TOKEN, for a copy of its documents: SNAPSHOT_TOKEN in the environment, else
+ * `{ "<its host>": { "SNAPSHOT_TOKEN": "..." } }` in .erga/secrets.json. "" if neither has it.
  */
-export function snapshotTokenOf(dir: string, primary: string): string {
+export function snapshotTokenOf(dir: string, source: string): string {
   const own = process.env.SNAPSHOT_TOKEN?.trim();
   if (own) return own;
   const path = secretsPath(dir);
   if (!existsSync(path)) return "";
   const file = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  return Option.getOrUndefined(Schema.decodeUnknownOption(SnapshotSecret)(file[primary]))?.SNAPSHOT_TOKEN.trim() ?? "";
+  return Option.getOrUndefined(Schema.decodeUnknownOption(SnapshotSecret)(file[source]))?.SNAPSHOT_TOKEN.trim() ?? "";
 }

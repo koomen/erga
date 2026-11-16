@@ -285,7 +285,7 @@ test("--staging: one GitHub App for both, then the staging instance on its prima
     github: "Iv1.both",
     base: { SERVER_DEFAULTS: '{"public_sharing":false}' },
   });
-  expect(entry).toMatchObject({ host: "staging.example.com", stagingOf: HOST, worker: "staging-example-com", token: "" });
+  expect(entry).toMatchObject({ host: "staging.example.com", copyOf: HOST, worker: "staging-example-com", token: "" });
   expect(entry.vars).toMatchObject({ GITHUB_CLIENT_ID: "Iv1.both", SERVER_DEFAULTS: '{"public_sharing":false}' });
   // A registered primary is done at once: only its staging instance is made.
   expect(run(a, { ...CF, admin: true }).state).toEqual({ at: "done" });
@@ -302,6 +302,8 @@ test("an instance's names come from its entry, or from its address; its entry fr
   const answers = { ...noAnswers(HOST), where: "cloudflare" as const, account: ADA, signIn: "invite" as const };
   expect(setupEntry(answers, { zones: ["example.com"], subdomain: null, github: "Iv1.ada" })).toEqual({
     host: HOST,
+    repo: "github.com/koomen/erga",
+    branch: "main",
     account: ADA,
     worker: "erga-example-com",
     database: "erga-example-com",

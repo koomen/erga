@@ -85,23 +85,30 @@ and `main`. There are no pull requests.
    A merge of one green branch runs no test: the row's run was on the
    same code. With no result for that code (many branches, or staging
    moved), it runs the tests itself, one time. It refuses a branch whose tests failed, and
-   names the failed tests. No flag skips the gate. Then it deploys the
-   commit from this machine to each registered staging instance, pushes
-   staging and deletes the merged branches on GitHub. A branch that
+   names the failed tests. No flag skips the gate. Then it pushes
+   staging and deletes the merged branches on GitHub. It deploys nothing.
+   A branch that
    conflicts stays out: rebase it on `origin/staging`, push it again, and
    merge it again. When the tests fail on many branches, it merges them
    one by one, each with its own gate, and a branch that fails stays out.
    It names each branch that stays out, and then ends with exit code 1.
-   It stops when no branch merges, and when a deploy fails: staging stays
-   where it was.
-6. `merge` reports each staging instance's commit and health. Check the
-   change on a staging instance (`bun erga status` has its address) before
-   you say that it works. A staging instance is for admins only.
-7. Only when Pete asks: `bun erga deploy <host>` deploys the commit that
-   the instance's staging instances run to the instance (a primary), from
-   this machine. Then it moves `main` to that commit and pushes it. An
-   instance with no staging instance needs the commit:
-   `bun erga deploy main <host>`. `main` and `staging` are the branches
+   It stops when no branch merges: staging stays where it was.
+6. An instance tracks one branch of one repository (its entry in
+   `.erga/config.json`: `repo` and `branch`). `merge` names each instance
+   that tracks `staging`. A merge that Pete asked for includes the deploy
+   of its commit to each of them:
+
+       bun erga deploy <host>
+
+   With no commit, an instance gets the head of the branch that it tracks.
+   Check the change there (`bun erga status` has its address, and how far
+   it is behind its branch) before you say that it works. An instance on a
+   copy of another's data is for admins only.
+7. Only when Pete asks: `bun erga promote` moves `main` forward to the
+   head of `staging`, and pushes it. It refuses when the tests did not pass
+   on that commit, or when an instance that tracks `staging` does not run
+   it, healthy. It deploys nothing. Then, when Pete asks, `bun erga deploy
+   <host>` deploys an instance that tracks `main`. `main` and `staging` are the branches
    on GitHub, never this clone's own branch of that name.
 8. Only when Pete asks: `bun erga release [vX.Y.Z|major|minor|patch]`
    tags `main` and makes a GitHub release with notes from the commits.
@@ -120,68 +127,74 @@ and `main`. There are no pull requests.
   production, and removes them after a yes. One with a later commit, or
   with a change that no commit has, stays. It also removes a scratch
   folder that a crashed merge left.
-- `bun erga status`: each instance in `.erga/config.json` with its commit
-  and health, the feature branches (ahead, behind, conflicts, and the
+- `bun erga status`: each instance in `.erga/config.json` with the
+  repository and branch that it tracks, its commit, how many commits it is
+  behind that branch, and its health, the feature branches (ahead, behind, conflicts, and the
   state of the tests on its merge, with each failed test) and the
   commits on staging that are not on main. It only reads: no fetch. It asks
   GitHub for its branches (`git ls-remote`) and leaves out a branch that a
   merge deleted; offline, it lists the clone's branches, with a note.
 - `bun erga`: the ops page on localhost. It lists the instances of `.erga/config.json`,
-  each primary with its staging instances, the feature branches, the log with "live" at each
-  instance's commit, and the job that runs. Its tabs: Setup (the steps of `bun erga setup`), Deploys,
+  each with the branch that it tracks, the feature branches, the log with a column for each instance that tracks the
+  chosen one's repository and "live" at its commit, and the job that runs. Its tabs: Setup (the steps of `bun erga setup`), Deploys,
   Logs (a job's output, live) and History (the jobs). It checks its sources, each on its own
   period, whatever happens: GitHub at most once a minute, with `git fetch --prune` in the main
   clone, and each instance's commit and health every 5 seconds. The Deploys tab's Sources box shows each source's
   last check, its answer or its error, and "stale" after three of its periods with no good answer. A new job
-  on another primary's instance switches the page to that primary. Each feature branch is one row: its tests' state (in the queue, running, passed, or failed, which opens
+  on an instance that the page does not show switches the page to that instance. Each feature branch is one row: its tests' state (in the queue, running, passed, or failed, which opens
   to the failed tests), its Proof link (`bun erga proof`) and its Merge button (`bun erga merge <branch> -m <text>`),
   which works only when the tests (`bun run test`) passed on the branch's merge. The page's server works the tests' queue. A commit row shows a Deploy button on hover in each
-  column whose instance does not run it (`bun erga deploy <commit> <host>`). They run the same
+  column whose instance does not run it, when the commit is on that instance's branch (`bun erga deploy <commit> <host>`). They run the same
   commands, with the same locks, and only one job at a time. Only when Pete asks.
 - `bun erga deploy [<commit>] <host>`: deploys a registered instance from
   this machine, with the facts in `.erga/config.json`. Only when Pete asks.
   It asks no question. Every instance deploys by the same steps, from its
-  entry. A staging instance (an entry that names its primary) needs a
-  commit, and keeps its copy of its primary's data. A primary with no commit takes the commit
-  that its staging instances run (they must agree and be healthy). It
+  entry. With no commit, it gets the head of the branch that it tracks, as
+  its repository has it now. It never gets a commit that its branch does
+  not have: to try another branch on it, `bun erga track <host> --branch
+  <branch>` first. No deploy moves a branch. An instance on a copy of
+  another's data (its entry's `copyOf`) keeps its copy. It
   deploys only a commit whose tests (`bun run test`) passed (the record
   of its tree in `.erga/tests/`, which its merge wrote). With no record,
   it runs them first; a failed run refuses the deploy, with the failed
-  tests. `--no-tests` skips this, and the job record says so. After a healthy deploy of a
-  primary, `main` moves forward to the commit and the CLI pushes it. A
-  primary does not deploy a commit apart from `main`. `--domain <domain>`
-  (it can repeat; never a staging instance; a name on one of its account's
+  tests. `--no-tests` skips this, and the job record says so. `--domain <domain>`
+  (it can repeat; never an instance on a copy; a name on one of its account's
   zones) registers a custom domain: an admin can publish a document to it
   from then on (the document's settings, "Publish to"). The server keeps
   its domains, and the CLI copies them into the entry after the deploy:
   never edit them there.
+- `bun erga track <host> [--repo <repo>] [--branch <branch>]`: the
+  repository and the branch that a registered instance tracks. The
+  defaults are `github.com/koomen/erga` and `main`. With no option, it
+  prints them. It deploys nothing. Only when Pete asks.
 - `bun erga rollback <host>`: a registered instance's Worker version from
   before its last deploy, in seconds. Only when Pete asks. The next deploy
   goes forward again.
-- `bun erga snapshot-secret <host>`: a new `SNAPSHOT_TOKEN` on a primary and
-  each of its staging instances, and in `.erga/secrets.json`. The old one
+- `bun erga snapshot-secret <host>`: a new `SNAPSHOT_TOKEN` on an instance and
+  each instance on a copy of its data, and in `.erga/secrets.json`. The old one
   opens nothing from then on. Only when Pete asks (when it may have leaked).
 - A deploy or a rollback holds the lock `.erga/jobs/<host>.lock` and writes
   its record in `.erga/jobs/`. A second one on the same instance stops.
-- `bun erga register <host> [--staging-of <host>]`: signs in to an instance
-  as an admin (Pete approves in the browser), and writes its deploy facts,
-  its plain settings and an ops token into `.erga/config.json` in the main
-  clone. Only when Pete asks.
+- `bun erga register <host> [--repo <repo>] [--branch <branch>] [--copy-of <host>]`:
+  signs in to an instance as an admin (Pete approves in the browser), and
+  writes its deploy facts, its plain settings, an ops token and what it
+  tracks into `.erga/config.json` in the main clone. `--copy-of`: it runs
+  on a copy of that instance's data, for admins only. Only when Pete asks.
 - `bun erga login <host>`: a new ops token for a registered instance.
 - `bun erga setup <host> --host ... --sign-in ...`: a new instance, from
   nothing to a registered one, on Cloudflare or AWS. The agent asks the user
   the README's questions first; `--dry-run` checks the answers and prints the
   plan; then the command does all the work, and opens the browser only for the
   user's own steps (`bun erga setup --help`). `--staging <host>` makes a
-  staging instance too, or of a registered one.
+  second instance too, on a copy of the first one's data, or of a registered one.
 
 ## The rules
 
 - Never push to `staging` or `main` with git. The pre-push hook stops it
   (`bun install` turns the hook on, in a clone).
 - Never open a pull request. Pull requests are off on GitHub.
-- `merge`, `deploy`, `release`, `rollback` and `snapshot-secret` run only
-  when Pete asks.
+- `merge`, `promote`, `deploy`, `track`, `release`, `rollback` and
+  `snapshot-secret` run only when Pete asks.
 - Report what you observed (a version, a health check, a run's result),
   never what you assumed.
 - When a deploy fails, read its output, or its job record in
@@ -198,10 +211,10 @@ and `main`. There are no pull requests.
 - A deploy builds the commit in a scratch worktree, then runs the pipeline:
   the D1 migrations, the static files, the Worker, the addresses, the
   health check. A deploy sends no secret: the Workers keep their own.
-- A staging instance runs on a frozen copy of its primary's data. Only
-  `bun erga deploy <commit> <staging host> --fresh` copies it again, with
-  the primary's `SNAPSHOT_TOKEN` (in `.erga/secrets.json` under the
-  primary's host, or in the environment).
+- An instance with `copyOf` runs on a frozen copy of that instance's data.
+  Only `bun erga deploy <host> --fresh` copies it again, with the source's
+  `SNAPSHOT_TOKEN` (in `.erga/secrets.json` under the source's host, or in
+  the environment).
 - A rollback never changes the database: migrations only add.
 
 ## Run it locally

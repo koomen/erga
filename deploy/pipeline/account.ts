@@ -543,12 +543,12 @@ const claimsOf = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Record(
  * another server's data it moves to: the copy's rows (the other server's,
  * encrypted with its FACTORY_KEY, so they don't open here) go, and the rows of
  * the copy it was on (`from`; none on its first copy) come in. Without this,
- * each new copy would drop the staging instance's Anthropic key, and its agents would stop. The same for each person's own keys.
- * Trap: a staging instance's database is a copy of its primary's. A new table that holds secrets needs the same here, in the same change.
+ * each new copy would drop this server's own Anthropic key, and its agents would stop. The same for each person's own keys.
+ * Trap: an instance with copyOf runs on a copy of its source's database. A new table that holds secrets needs the same here, in the same change.
  */
 export async function ownCredentials(cf: Cloudflare, acc: string, from: string | null, to: string): Promise<string> {
   const rows = from ? (await d1(cf, acc, from, "SELECT * FROM credentials", [], "read the API keys this server stored")) ?? [] : [];
-  // Each person's own keys too (server/migrations/0290_person_keys.sql): the primary's people's keys never stay in the
+  // Each person's own keys too (server/migrations/0290_person_keys.sql): the source's people's keys never stay in the
   // copy, and the copy it was on keeps its own (none if its copy is older than the table).
   const theirs = from
     ? ((await d1(cf, acc, from, "SELECT * FROM person_keys", [], "read the people's own API keys this server stored").catch(() => null)) ??

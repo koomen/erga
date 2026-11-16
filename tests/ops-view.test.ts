@@ -1,18 +1,20 @@
-// The ops page's view (deploy/cli/ops-view.ts): a job record read from its lines, the primaries with their staging
-// instances, and the Deploys tab drawn from fake facts, with its Merge and Deploy buttons. The page's server
+// The ops page's view (deploy/cli/ops-view.ts): a job record read from its lines, the instances with the branch each
+// tracks, and the Deploys tab drawn from fake facts, with its Merge and Deploy buttons. The page's server
 // (deploy/cli/ops-page.ts) starts their jobs with a fake `bun erga`: nothing merges or deploys.
 
 import { expect, test } from "bun:test";
 import type { Entry } from "../deploy/cli/config";
 import { type Run, stepRun } from "../deploy/cli/job-state";
-import { type Branch, type Facts, groupsOf, jobOf, viewHtml } from "../deploy/cli/ops-view";
+import { type Branch, columnsOf, type Facts, jobOf, viewHtml } from "../deploy/cli/ops-view";
 import { startPolls } from "../deploy/cli/poll-state";
 import { runOf } from "./helpers/pass.ts";
 
 const NOW = Date.parse("2026-11-05T12:00:00Z");
-const entry = (host: string, stagingOf?: string): Entry => ({
+const entry = (host: string, branch = "main", more: Partial<Entry> = {}): Entry => ({
   host,
-  ...(stagingOf ? { stagingOf } : {}),
+  repo: "example.net/team/erga",
+  branch,
+  ...more,
   account: "a",
   worker: "w",
   database: "d",
@@ -42,11 +44,18 @@ test("a job runs while it has no result and its process lives", () => {
   expect(jobOf("not json\n", () => true)).toBeNull();
 });
 
-test("the view: each primary with its staging instances, the job line, and live at each instance's commit", () => {
-  const config = { instances: [entry("example.net"), entry("erga.example.org"), entry("staging.example.net", "example.net")] };
-  expect(groupsOf(config).map((g) => [g.primary.host, g.staging.map((s) => s.host)])).toEqual([
-    ["example.net", ["staging.example.net"]],
-    ["erga.example.org", []],
+test("the view: each instance with its branch, a column for each one of the same repository, the job line, and live at each one's commit", () => {
+  const config = {
+    instances: [
+      entry("example.net"),
+      entry("erga.example.org", "main", { repo: "example.org/team/erga" }),
+      entry("staging.example.net", "staging", { copyOf: "example.net" }),
+    ],
+  };
+  expect(config.instances.map((e) => columnsOf(config, e).map((c) => c.host))).toEqual([
+    ["example.net", "staging.example.net"],
+    ["erga.example.org"],
+    ["example.net", "staging.example.net"],
   ]);
   const log = ["3", "2", "1"].map((n, i) => ({ sha: n.repeat(40), subject: `Change ${n}`, author: "Pete", at: NOW - i * 3_600_000 }));
   const facts: Facts = {
@@ -63,24 +72,52 @@ test("the view: each primary with its staging instances, the job line, and live 
     runs: [],
     proofs: {},
   };
-  const html = viewHtml(facts, "staging.example.net", NOW);
-  // A staging instance's name chooses its primary.
-  expect(html).toContain('<a class="group sel" href="#example.net"');
+  const html = viewHtml(facts, "example.net", NOW);
+  // The sidebar is a flat list: each instance, with the branch it tracks under its name. No instance stands under another.
+  expect(
+    [...html.matchAll(/<a class="group( sel)?" href="#([^"]+)"[^>]*>.*?<span class="tracks"[^>]*><span>(\w+)<\/span>/g)].map((m) =>
+      m.slice(1).map((x) => x ?? "")
+    )
+  ).toEqual([
+    [" sel", "example.net", "main"],
+    ["", "erga.example.org", "main"],
+    ["", "staging.example.net", "staging"],
+  ]);
+  expect(html).not.toMatch(/class="(primary|staging|primaries)"/);
+  expect(html).toContain("Tracks <code>example.net/team/erga</code> <code>main</code>.");
+  // Each column's head is its instance's branch.
+  expect([...html.matchAll(/<div class="head col"[^>]*><b>(\w+)<\/b><span class="host">([^<]+)</g)].map((m) => m.slice(1))).toEqual([
+    ["main", "example.net"],
+    ["staging", "staging.example.net"],
+  ]);
   expect(html).toContain('<a class="job ok"');
   expect(html).toContain("done 5 minutes ago · from a terminal");
-  // Staging's column comes first; the primary's live mark has its deploy's time; its commit and those before it are green.
+  // The chosen instance's live mark has its deploy's time; its commit and those before it are green.
   expect(html).toMatch(/data-sha="3{40}">.*data-host="staging.example.net"/);
   expect(html).toMatch(/data-sha="1{40}">.*data-host="example.net".*<span class="at">5m<\/span>/);
   expect(html).toContain('<div class="row off" data-sha="2');
   expect(html).toContain('<div class="row on" data-sha="1');
-  // An instance that runs a commit the clone does not have: the page says so.
+  // The instance on a copy is chosen by its own name, and says whose data it has.
+  const copy = viewHtml(facts, "staging.example.net", NOW);
+  expect(copy).toContain('<a class="group sel" href="#staging.example.net"');
+  expect(copy).toContain(
+    "Tracks <code>example.net/team/erga</code> <code>staging</code>, on a copy of example.net's data, for admins only."
+  );
+  // An instance of another repository has the log to itself. It runs a commit the clone does not have: the page says so.
   const other = viewHtml(facts, "erga.example.org", NOW);
+  expect([...other.matchAll(/<div class="head col"/g)].length).toBe(1);
   expect(other).toContain("erga.example.org runs 999999999999, which this clone does not have. git fetch gets it.");
   expect(other).toContain("No job yet.");
 });
 
-test("Logs shows the job that runs, else the last one, or the one the hash names; History lists the group's jobs", () => {
-  const config = { instances: [entry("example.net"), entry("staging.example.net", "example.net"), entry("erga.example.org")] };
+test("Logs shows the job that runs, else the last one, or the one the hash names; History lists the jobs of the columns' instances", () => {
+  const config = {
+    instances: [
+      entry("example.net"),
+      entry("staging.example.net", "staging", { copyOf: "example.net" }),
+      entry("erga.example.org", "main", { repo: "example.org/team/erga" }),
+    ],
+  };
   const job = (id: string, host: string, started: string, more = "") =>
     jobOf(line({ ...start, command: `bun erga deploy ${host}`, host, started }) + line({ out: `out of ${id}` }) + more, () => true, id)!;
   const done = (ended: string) => line({ result: "ok", ended });
@@ -103,8 +140,8 @@ test("Logs shows the job that runs, else the last one, or the one the hash names
   expect(logs).toContain("<span>out of runs</span>");
   expect(logs).toContain('<a class="tab" role="tab" href="#example.net/logs" aria-selected="true">Logs</a>');
   expect(viewHtml(facts, "example.net/logs/old", NOW)).toContain('<section class="logs" data-job="old"');
-  // The newest job of all, for the page's switch to its primary.
-  expect(logs).toContain('data-newest="other" data-newest-primary="erga.example.org"');
+  // The newest job of all, for the page's switch to an instance that it does not show.
+  expect(logs).toContain('data-newest="other" data-newest-host="erga.example.org"');
   const history = viewHtml(facts, "example.net/history", NOW);
   expect([...history.matchAll(/class="h-row [^"]*" href="[^"]*" data-job="(\w+)"/g)].map((m) => m[1])).toEqual(["runs", "old"]);
   expect(history).toContain('<span class="h-took">30 s</span>');
@@ -128,7 +165,7 @@ const branch = (name: string, more: Partial<Branch> = {}): Branch => ({
   ...more,
 });
 const deploys = (more: Partial<Facts> = {}, staging = "3", production = "1"): Facts => ({
-  config: { instances: [entry("example.net"), entry("staging.example.net", "example.net")] },
+  config: { instances: [entry("example.net"), entry("staging.example.net", "staging", { copyOf: "example.net" })] },
   answers: {
     "example.net": { version: production.repeat(12), healthy: true },
     "staging.example.net": { version: staging.repeat(12), healthy: true },
@@ -157,7 +194,7 @@ const starts = (kind: "merge" | "deploy", what: string): Run =>
         {
           type: "start",
           command: `bun erga merge ${what}`,
-          job: { kind, host: "staging.example.net", commit: null, branch: what, phase: "starting" },
+          job: { kind, host: "staging", commit: null, branch: what, phase: "starting" },
         }
       )
     : stepRun(
@@ -246,26 +283,32 @@ test("a branch's row shows one test state, and only a passed run of its merge's 
 const rowOf = (html: string, n: string) =>
   new RegExp(`<div class="row \\w+" data-sha="${n.repeat(40)}">.*?</div>(?=<div class="row|</div>)`).exec(html)?.[0] ?? "";
 
-test("Deploy: each commit row has a button in each instance's column, except where that instance runs the commit", () => {
+test("Deploy: a commit row has a button in an instance's column when the commit is on its branch and it does not run it", () => {
   const html = viewHtml(deploys(), "example.net", NOW);
   const hosts = (n: string) => [...rowOf(html, n).matchAll(/data-deploy data-host="([^"]+)"/g)].map((m) => m[1]);
-  expect(hosts("3")).toEqual(["example.net"]);
-  expect(hosts("2")).toEqual(["staging.example.net", "example.net"]);
+  // main is at commit 1: example.net, which tracks main, takes no commit after it. staging is at commit 3.
+  expect(hosts("3")).toEqual([]);
+  expect(hosts("2")).toEqual(["staging.example.net"]);
   expect(hosts("1")).toEqual(["staging.example.net"]);
+  expect(rowOf(html, "3")).toContain('<span class="deps" title="Not on main, the branch that example.net tracks"></span>');
+  // After a promote, main is at commit 3: example.net takes it.
+  const promoted = deploys();
+  const at3 = viewHtml({ ...promoted, git: { ...promoted.git, main: "3".repeat(40) } } as Facts, "example.net", NOW);
+  expect([...rowOf(at3, "3").matchAll(/data-deploy data-host="([^"]+)"/g)].map((m) => m[1])).toEqual(["example.net"]);
+  expect(rowOf(at3, "3")).toContain('data-note="example.net tracks main. No branch moves."');
   // Its question names the host and the commit; the page shows it only in the cell under the mouse or
   // with the focus (ops-page.css, .deps.here).
   expect(rowOf(html, "2")).toContain(
     `<span class="deps here"><span class="tip"><button class="btn" type="button" data-deploy data-host="staging.example.net" data-sha="${"2".repeat(40)}" data-ask="Deploy 2222222 Change 2 to staging.example.net?"`
   );
   expect(html).toContain('<div class="confirm" id="deploy-confirm" popover>');
-  // The old button of a production that is behind is gone: no row has more than its two columns.
-  expect(html.match(/data-deploy /g)?.length).toBe(4);
+  expect(html.match(/data-deploy /g)?.length).toBe(2);
   // While a job runs, each is disabled and says why.
   const busy = viewHtml(deploys({ run: starts("merge", "clean") }), "example.net", NOW);
   expect(busy).toContain(
     '<span class="tip" title="Another job runs: bun erga merge clean. Wait for it to end."><button class="btn" type="button" data-deploy'
   );
-  expect(busy.match(/data-deploy [^>]* disabled>/g)?.length).toBe(4);
+  expect(busy.match(/data-deploy [^>]* disabled>/g)?.length).toBe(2);
 });
 
 test("the page's server: Merge and Deploy start their `bun erga` command, one job at a time, only from the page", async () => {
@@ -286,7 +329,7 @@ test("the page's server: Merge and Deploy start their `bun erga` command, one jo
   mkdirSync(join(dir, ".erga"));
   writeFileSync(
     join(dir, ".erga/config.json"),
-    JSON.stringify({ instances: [entry("example.net"), entry("staging.example.net", "example.net")] })
+    JSON.stringify({ instances: [entry("example.net"), entry("staging.example.net", "staging", { copyOf: "example.net" })] })
   );
   const version = {
     "example.net": git("rev-parse", "HEAD~2").slice(0, 12),
@@ -377,7 +420,7 @@ test("while its job runs, a button says so with a spinner: Merging… on its bra
   // The page started the merge, and then its job record runs: the branch's button says Merging…, disabled.
   const merging = `<span class="tip" title="It merges now. The job line and Logs show its output."><button class="btn" type="button" data-merge="clean" aria-busy="true" disabled>${SPIN}Merging…</button></span>`;
   expect(viewHtml(deploys({ run: starts("merge", "clean") }), "example.net", NOW)).toContain(merging);
-  const record = jobOf(line({ ...start, command: "bun erga merge clean", host: "staging.example.net" }), () => true)!;
+  const record = jobOf(line({ ...start, command: "bun erga merge clean", host: "staging" }), () => true)!;
   const html = viewHtml(deploys({ jobs: [record] }), "example.net", NOW);
   expect(html).toContain(merging);
   // The other buttons wait, and say why; no other button spins.
@@ -423,21 +466,23 @@ test("a terminal's deploy says Deploying… in its cell, from its record's host 
   const early = jobOf(line({ ...start, command: "bun erga deploy example.net", host: "example.net" }), () => true)!;
   const html = viewHtml(deploys({ jobs: [early] }), "example.net", NOW);
   expect(html).not.toContain("spin");
-  expect(html.match(/data-deploy [^>]* disabled>/g)?.length).toBe(4);
+  expect(html.match(/data-deploy [^>]* disabled>/g)?.length).toBe(2);
 });
 
-test("a merge: staging's cell says Deploying… until the merge ends, after the push of staging, not live", () => {
-  const SPIN = '<i class="spin" aria-hidden="true"></i>';
+test("a merge deploys to no instance: no cell says Deploying…, and its job shows for each instance", () => {
   const two = "2".repeat(40);
-  const merge = line({ ...start, command: "bun erga merge clean", host: "staging.example.net" }) + line({ commit: two });
-  // Staging answers the merged commit while the merge still runs (its deploy record ended; staging is not pushed yet).
-  const deploy = merge + line({ result: "ok", ended: start.started });
-  const html = viewHtml(deploys({ jobs: [jobOf(merge, () => true)!, jobOf(deploy, () => true)!] }, "2"), "example.net", NOW);
-  expect(rowOf(html, "2")).toMatch(new RegExp(`data-host="staging.example.net" data-sha="${two}"[^]*?${SPIN}Deploying…`));
-  expect(rowOf(html, "2")).not.toContain("live");
-  // The merge ends: live.
-  const ended = viewHtml(deploys({ jobs: [jobOf(deploy, () => true)!] }, "2"), "example.net", NOW);
-  expect(rowOf(ended, "2")).toContain("live");
+  const merge = jobOf(line({ ...start, command: "bun erga merge clean", host: "staging" }) + line({ commit: two }), () => true, "merge-1")!;
+  const html = viewHtml(deploys({ jobs: [merge] }), "example.net", NOW);
+  expect(rowOf(html, "2")).not.toContain("Deploying…");
+  expect(html).toContain("Merging…");
+  expect(html).toContain('<a class="job running" href="#example.net/logs/merge-1"');
+  // A promote's job too.
+  const promote = jobOf(
+    line({ ...start, command: "bun erga promote", host: "main" }) + line({ result: "ok", ended: start.started }),
+    () => true,
+    "p-1"
+  )!;
+  expect(viewHtml(deploys({ jobs: [promote] }), "staging.example.net/history", NOW)).toContain('data-job="p-1"');
 });
 
 test("the page's server checks GitHub and each instance at start, not on a page load, and shows each source", async () => {

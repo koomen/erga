@@ -112,6 +112,8 @@ test("the ops page links the proof beside Merge, and serves its files and nothin
       instances: [
         {
           host: "example.net",
+          repo: "example.net/team/erga",
+          branch: "main",
           account: "a",
           worker: "w",
           database: "d",

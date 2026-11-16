@@ -1,6 +1,6 @@
 // The ops page's script (deploy/cli/ops-view.ts puts it in the page): it draws the page again (GET /view) when the
-// server says something changed (/api/events), when another primary or tab is chosen (the hash: #<primary>/<tab>),
-// and each minute (the times). When a new job starts on another primary's instance, it switches to that primary.
+// server says something changed (/api/events), when another instance or tab is chosen (the hash: #<host>/<tab>),
+// and each minute (the times). When a new job starts on an instance that the page does not show, it switches to that instance.
 // A job's log that was scrolled to its end stays at its end. When the server stops, it says so; when it runs again, the page follows, and reloads if the server's script or styles changed.
 // Merge opens a field for the commit's message under its branch. A commit row's cell shows a Deploy button in an instance's column on hover or focus, which asks a question
 // first (the instance and the commit). Each starts its job (POST /api/merge, /api/deploy); the page stays on its tab,
@@ -74,7 +74,7 @@
       const m = main();
       if (m?.dataset.newest && m.dataset.newest != newest) {
         newest = m.dataset.newest;
-        if (m.dataset.newestPrimary != m.dataset.primary) location.hash = `${m.dataset.newestPrimary}/${m.dataset.tab}`;
+        if (m.dataset.newestHost != m.dataset.host) location.hash = `${m.dataset.newestHost}/${m.dataset.tab}`;
       }
     } catch {}
   }

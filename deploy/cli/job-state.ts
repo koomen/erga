@@ -3,16 +3,16 @@
 // (ops-view.ts) draws the buttons from these states, never from a command's text.
 
 /** What a job does: the verb of its command (`bun erga <verb> ...`), which the CLI always writes first. */
-export type Kind = "deploy" | "merge" | "rollback";
+export type Kind = "deploy" | "merge" | "promote" | "rollback";
 
 /** starting: the page started it, and it has no record yet. stopped: its process ended with no result. */
 export type Phase = "starting" | "running" | "ok" | "failed" | "stopped";
 
 export interface JobState {
   kind: Kind;
-  /** The instance whose lock it holds. A merge's record names the first staging instance. */
+  /** The instance whose lock it holds; the branch that a merge ("staging") or a promote ("main") moves. */
   host: string;
-  /** The commit it deploys, from its record's `{commit}` line: null before the job knows it. */
+  /** The commit it deploys or moves the branch to, from its record's `{commit}` line: null before the job knows it. */
   commit: string | null;
   /** A merge's branch. */
   branch: string | null;
@@ -27,7 +27,7 @@ export type Alive = (pid: number, start: unknown) => boolean;
 
 /** The state of a record's first line, or null: it is not a job's start. */
 export function jobStart(head: Line | undefined): JobState | null {
-  const m = typeof head?.command == "string" ? /^bun erga (deploy|merge|rollback|setup)\b(?: (\S+))?/.exec(head.command) : null;
+  const m = typeof head?.command == "string" ? /^bun erga (deploy|merge|promote|rollback|setup)\b(?: (\S+))?/.exec(head.command) : null;
   if (!m || typeof head?.host != "string") return null;
   // A setup's job is its first deploy.
   const kind = (m[1] == "setup" ? "deploy" : m[1]) as Kind;
@@ -51,9 +51,9 @@ export function jobState(lines: Line[], alive: Alive): JobState | null {
   return s.phase == "running" && !(typeof head.pid == "number" && alive(head.pid, head.pidStart)) ? { ...s, phase: "stopped" } : s;
 }
 
-/** Whether a job (running, or starting) deploys `sha` to the instance `host`: a merge deploys to each staging instance. */
-export const deploysTo = (j: JobState, sha: string, host: string, staging: boolean) =>
-  !!j.commit && j.commit.slice(0, 12) == sha.slice(0, 12) && (j.host == host || (j.kind == "merge" && staging));
+/** Whether a job (running, or starting) deploys `sha` to the instance `host`. */
+export const deploysTo = (j: JobState, sha: string, host: string) =>
+  j.kind == "deploy" && !!j.commit && j.commit.slice(0, 12) == sha.slice(0, 12) && j.host == host;
 
 /** The ops page's own command: none, one that starts (until it ends), or why the last one stopped before its record. */
 export type Run = { at: "idle" } | { at: "starting"; command: string; job: JobState } | { at: "failed"; why: string };

@@ -63,7 +63,7 @@ export interface Env {
   PAGES_DOMAIN?: string;
   PAGES_HOST?: string;
   /**
-   * A staging instance's primary, https://<host>: the deploy sets it from the instance's entry (stagingOf), and no
+   * A staging instance's primary, https://<host>: the deploy sets it from the instance's entry (copyOf), and no
    * other instance has it. So this server is a staging instance: for admins only (server/identity/admins-only.ts), it
    * takes its primary's documents in, and its blobs come from there. Locally: ERGA_SNAPSHOT_FROM.
    */

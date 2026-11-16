@@ -82,7 +82,7 @@ export default defineConfig(({ mode }) => ({
       // The GitHub OAuth app's client ID: each instance's own, from its entry's vars. Locally, ERGA_GITHUB_CLIENT_ID only.
       GITHUB_CLIENT_ID: mode == "development" ? local(process.env.ERGA_GITHUB_CLIENT_ID ?? "") : bindings.text(""),
 
-      // A staging instance's primary (https://<host>): `bun erga deploy` sets it from the entry's stagingOf, and the
+      // A staging instance's primary (https://<host>): `bun erga deploy` sets it from the entry's copyOf, and the
       // server is then for admins only. Locally: ERGA_SNAPSHOT_FROM.
       SNAPSHOT_FROM: mode == "development" ? local(process.env.ERGA_SNAPSHOT_FROM ?? "") : bindings.text(""),
       ...optionalSecret(mode, "GITHUB_CLIENT_SECRET"),

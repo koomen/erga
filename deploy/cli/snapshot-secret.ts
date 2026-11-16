@@ -1,7 +1,7 @@
-// bun erga snapshot-secret <primary host>: a new SNAPSHOT_TOKEN, the secret that a primary and its staging instances
-// share (document/store/snapshot.ts). With it a staging instance reads every document of its primary, so when it may have
-// leaked, this command replaces it everywhere at once: on the primary's Worker, on each staging instance's Worker,
-// and in .erga/secrets.json under the primary's host (where a --fresh deploy reads it). The old secret opens nothing
+// bun erga snapshot-secret <host>: a new SNAPSHOT_TOKEN, the secret that an instance shares with each instance on a
+// copy of its data (document/store/snapshot.ts). With it a copy reads every document of its source, so when it may have
+// leaked, this command replaces it everywhere at once: on the source's Worker, on each copy's Worker,
+// and in .erga/secrets.json under the source's host (where a --fresh deploy reads it). The old secret opens nothing
 // from then on. It prints the servers' names, never the secret.
 
 import { randomBytes } from "node:crypto";
@@ -10,7 +10,7 @@ import { Cloudflare, type Fetch } from "../pipeline/cloudflare-api";
 import { type CloudflareEntry, entryOf, isAws, readConfig } from "./config";
 import { netOf } from "./deploy";
 
-/** Replaces the secret on `host` (a primary) and its staging instances. The result: the hosts that have the new one. */
+/** Replaces the secret on `host` and on each instance on a copy of its data. The result: the hosts that have the new one. */
 export async function replaceSnapshotSecret(o: {
   dir: string;
   host: string;
@@ -22,8 +22,9 @@ export async function replaceSnapshotSecret(o: {
   const config = readConfig(o.dir);
   const entry = entryOf(config, o.host);
   if (!entry) throw new Error(`${o.host} has no entry in .erga/config.json. Register it first: bun erga register ${o.host}`);
-  if (entry.stagingOf) throw new Error(`${o.host} is a staging instance: name its primary (bun erga snapshot-secret ${entry.stagingOf}).`);
-  const all = [entry, ...config.instances.filter((e) => e.stagingOf == o.host)];
+  if (entry.copyOf)
+    throw new Error(`${o.host} runs on a copy of ${entry.copyOf}'s data: name the source (bun erga snapshot-secret ${entry.copyOf}).`);
+  const all = [entry, ...config.instances.filter((e) => e.copyOf == o.host)];
   const aws = all.find(isAws);
   if (aws) throw new Error(`${aws.host} runs on AWS: its secrets are in Parameter Store, and this command does not change them.`);
   const { net, token } = await netOf(o);

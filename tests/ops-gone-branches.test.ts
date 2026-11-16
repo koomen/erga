@@ -59,6 +59,8 @@ test("a branch that GitHub deleted after the last fetch shows on neither the ops
     expect(error).toContain("nowhere.git");
     const entry = {
       host: "example.net",
+      repo: "example.net/team/erga",
+      branch: "main",
       account: "a",
       worker: "w",
       database: "d",

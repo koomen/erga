@@ -3,7 +3,7 @@
 // .erga/config.json, its plain settings, its database's first rows, its GitHub App. Pure: no network, no files. The
 // flow (what the command does next) is deploy/own/flow.ts.
 
-import type { CloudflareEntry } from "../cli/config";
+import { type CloudflareEntry, DEFAULT_BRANCH, DEFAULT_REPO } from "../cli/config";
 import { deployFacts } from "../pipeline/account";
 import type { Target } from "../pipeline/pipeline";
 
@@ -252,17 +252,13 @@ export function namesOf(
 /** The stack's name of the instance on AWS. */
 export const stackOf = (a: Answers) => namesOf(a.host).worker;
 
-/**
- * The commit a new instance gets: origin's main, as this clone knows it (git fetch to update it). A primary's deploy moves
- * main to its commit (deploy/cli/deploy.ts), so a setup from a feature branch never puts that branch on main.
- */
-export const SETUP_COMMIT = "origin/main";
 export const callbackOf = (host: string) => `https://${host}/auth/github/callback`;
 
 /**
  * The entry of `.erga/config.json` for a new instance on Cloudflare, from the answers alone: its names, its plain
- * settings, and no token yet (the token comes at the end, when the admin approves it). A staging instance names its
- * primary, and takes the settings' defaults from it (`base`: the primary's vars).
+ * settings, the default repository and branch (its first deploy takes that branch's head), and no token yet (the token
+ * comes at the end, when the admin approves it). A staging instance names the instance whose data it copies, and takes
+ * the settings' defaults from it (`base`: that instance's vars).
  */
 export function setupEntry(
   a: Answers,
@@ -281,7 +277,14 @@ export function setupEntry(
     vars: { ...varsOf(a, o.github), ...(o.base?.SERVER_DEFAULTS ? { SERVER_DEFAULTS: o.base.SERVER_DEFAULTS } : {}) },
     secrets: {},
   };
-  return { host: a.host, ...(a.stagingOf ? { stagingOf: a.stagingOf } : {}), ...deployFacts(target), token: "" };
+  return {
+    host: a.host,
+    repo: DEFAULT_REPO,
+    branch: DEFAULT_BRANCH,
+    ...(a.stagingOf ? { copyOf: a.stagingOf } : {}),
+    ...deployFacts(target),
+    token: "",
+  };
 }
 
 /** The GitHub App's manifest (GitHub makes the app from it in one click): sign-in only, no permissions. Staging shares it. */

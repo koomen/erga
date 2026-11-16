@@ -2,7 +2,7 @@
 // release's version and notes, a rollback's version, and `bun erga status`'s text. Pure: no network, no git, no files
 // (deploy/cli/observe.ts reads git and the instances; deploy/cli/main.ts acts).
 
-/** The branches that `bun erga` moves: staging (merge) and main (a deploy of a primary). */
+/** The branches that `bun erga` moves: staging (merge) and main (promote). */
 export const PROTECTED = ["staging", "main"] as const;
 
 // A commit, a branch and an instance's answer, for `bun erga status` and for the ops page (ops-view.ts). git gives every
@@ -29,8 +29,16 @@ export interface Answer {
 /** A registered instance (.erga/config.json), with its answer. */
 export interface Instance extends Answer {
   host: string;
-  /** The primary of a staging instance. */
-  stagingOf?: string;
+  /** The repository and the branch it tracks. */
+  repo: string;
+  branch: string;
+  /** The instance whose data it runs on a copy of. */
+  copyOf?: string;
+  /**
+   * How many commits of its branch it does not run yet, as the clone knows the branch (observe.ts, behindOf). Null:
+   * the clone can't say (no answer, another repository, a commit that the branch or the clone does not have).
+   */
+  behind: number | null;
 }
 
 export interface Branch {
@@ -72,7 +80,7 @@ export function mergeArgs(args: string[]): Merge[] {
 export function mergeRefusal(o: { branch: string; exists: boolean; ahead: number; conflicts: string[] }): string | null {
   if (!o.branch) return "Name the branch: bun erga merge <branch>.";
   if ((PROTECTED as readonly string[]).includes(o.branch))
-    return `${o.branch} is not a feature branch. A deploy of a primary moves main: bun erga deploy <host>.`;
+    return `${o.branch} is not a feature branch. bun erga promote moves main to staging's head.`;
   if (!o.exists) return `There is no branch ${o.branch} on GitHub. Push it first, from its checkout: bun erga push`;
   if (o.ahead == 0) return `${o.branch} has no commits that staging does not have. Nothing to merge.`;
   if (o.conflicts.length)
@@ -146,19 +154,19 @@ export function previousVersion(
 /** `bun erga status`'s picture: the clone as it is (no fetch), and each registered instance's answer. */
 export interface State {
   heads: { main: string | null; staging: string | null };
-  /** Each primary first, then its staging instances. */
+  /** In the file's order. */
   instances: Instance[];
   branches: Branch[];
   /** GitHub answered with its branches (git ls-remote); false: `branches` is as the clone last saw them. */
   github: boolean;
-  /** Commits on staging that main does not have (a deploy of a primary takes them out). */
+  /** Commits on staging that main does not have (bun erga promote moves main to them). */
   waiting: Commit[];
   /** main's recent commits, and the release tag of each that has one. */
   log: (Commit & { tag?: string })[];
   latestRelease: string | null;
 }
 
-/** The state from what was read: the instances in the order of their primaries, and main's log with its tags. */
+/** The state from what was read: the branches newest first, and main's log with its tags. */
 export function stateOf(o: {
   heads: State["heads"];
   instances: Instance[];
@@ -169,11 +177,9 @@ export function stateOf(o: {
   tags: { name: string; sha: string }[];
 }): State {
   const tagOf = new Map(o.tags.map((t) => [t.sha, t.name]));
-  const hosts = new Set(o.instances.map((i) => i.host));
-  const primaries = o.instances.filter((i) => !i.stagingOf || !hosts.has(i.stagingOf));
   return {
     heads: o.heads,
-    instances: primaries.flatMap((p) => [p, ...o.instances.filter((i) => i.stagingOf == p.host && i != p)]),
+    instances: o.instances,
     branches: [...o.branches].sort((a, b) => b.at - a.at),
     github: o.github,
     waiting: o.waiting,
@@ -182,11 +188,11 @@ export function stateOf(o: {
   };
 }
 
-/** Where an instance's commit is in the clone: a branch's head, else whether the clone has it at all. */
-function placeOf(version: string, s: State, has: (sha: string) => boolean): string {
-  const at = (["main", "staging"] as const).filter((b) => s.heads[b]?.startsWith(version));
-  if (at.length) return `origin/${at.join(" and origin/")}'s head`;
-  return has(version) ? "not a branch's head" : "a commit this clone does not have (git fetch)";
+/** Where an instance's commit is on the branch it tracks, as the clone knows the branch. */
+function placeOf(i: Instance, has: (sha: string) => boolean): string {
+  if (i.behind == 0) return `${i.branch}'s head`;
+  if (i.behind != null) return `${i.behind} ${i.behind == 1 ? "commit" : "commits"} behind ${i.branch}`;
+  return has(i.version!) ? `not on ${i.branch} as this clone knows it` : "a commit this clone does not have (git fetch)";
 }
 
 /** `bun erga status` as text. `has`: whether the clone has a commit. */
@@ -199,7 +205,7 @@ export function statusText(s: State, has: (sha: string) => boolean = () => true)
   if (!s.instances.length) out.push("- none: bun erga register <host>");
   for (const i of s.instances)
     out.push(
-      `${i.stagingOf ? "  - " : "- "}${i.host}${i.stagingOf ? ` (staging of ${i.stagingOf})` : ""}: ${i.version ? `runs ${i.version}, ${placeOf(i.version, s, has)}` : (i.error ?? "no answer")}; health ${i.healthy == null ? "unknown" : i.healthy ? "ok" : "FAIL"}`
+      `- ${i.host}: tracks ${i.repo} ${i.branch}${i.copyOf ? `, on a copy of ${i.copyOf}'s data (admins only)` : ""}; ${i.version ? `runs ${i.version}, ${placeOf(i, has)}` : (i.error ?? "no answer")}; health ${i.healthy == null ? "unknown" : i.healthy ? "ok" : "FAIL"}`
     );
   out.push("", "Feature branches:");
   if (!s.github) out.push("(GitHub did not answer git ls-remote: the list is as this clone last saw it, deleted branches too.)");
@@ -225,14 +231,14 @@ export function pushRefusal(ref: string, cli: boolean): string | null {
   if (cli || !(PROTECTED as readonly string[]).includes(name)) return null;
   return name == "staging"
     ? "Don't push to staging directly. Push your branch (bun erga push), then: bun erga merge <branch>. bun erga skill tells the rest."
-    : "Don't push to main directly. A deploy of a primary moves main: bun erga deploy <host>. bun erga skill tells the rest.";
+    : "Don't push to main directly. bun erga promote moves main to staging's head. bun erga skill tells the rest.";
 }
 
 /** Why `bun erga push` must stop before its first step, or null. `branch`: the checkout's branch, null when it has none. */
 export function branchRefusal(branch: string | null): string | null {
   if (!branch) return "This checkout is on no branch. Start one: bun erga start <branch>.";
   if ((PROTECTED as readonly string[]).includes(branch))
-    return `${branch} is not a feature branch: only bun erga merge and bun erga deploy move it. Start one: bun erga start <branch>.`;
+    return `${branch} is not a feature branch: only bun erga merge and bun erga promote move it. Start one: bun erga start <branch>.`;
   return null;
 }
 

@@ -17,7 +17,7 @@
 //                                        address is, e.g. preferred_username:corp| for "corp|ada@example.com"
 //       --pages <domain>       AWS without single sign-on: a second Route 53 domain, for the documents' pages
 //       --egress <way>         AWS: nat-instance (the default), nat-gateway, or <vpc id>/<private subnet id>
-//       --commit <ref>         deploys that commit, not origin/main; main never moves
+//       --commit <ref>         deploys that commit of main, not main's head
 //       --no-tests             the build runs no tests
 //       --remote               the user is at another computer (on by itself over SSH): no browser opens here. The
 //                              user types the client secret in their terminal, and the admin's link shows there.

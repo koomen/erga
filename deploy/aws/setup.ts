@@ -10,12 +10,12 @@
 
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type AwsEntry, type Config, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
+import { type AwsEntry, type Config, DEFAULT_BRANCH, DEFAULT_REPO, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
 import { type DeployOptions, deployInstance } from "../cli/deploy";
 import type { Fetch } from "../pipeline/cloudflare-api";
 import type { Seen } from "../own/flow";
 import type { Answers } from "../own/plan";
-import { firstRows, pagesOf, SETUP_COMMIT, sso, stackOf, varsOf } from "../own/plan";
+import { firstRows, pagesOf, sso, stackOf, varsOf } from "../own/plan";
 import { DIR, githubIdOf, loadSecrets } from "../own/store";
 import { type Aws, awsCli, whoAmI, type Where } from "./cli";
 import { provisionScript, putPrograms, onMachine, untilReachable } from "./machine";
@@ -219,6 +219,8 @@ export async function applyStacks(dir: string, a: Answers, log: (l: string) => v
 export function awsEntry(a: Answers, account: string, outputs: Record<string, string>, github: string | undefined, token = ""): AwsEntry {
   return {
     host: a.host,
+    repo: DEFAULT_REPO,
+    branch: DEFAULT_BRANCH,
     token,
     ...(whereOf(a).profile ? { profile: a.profile } : {}),
     aws: {
@@ -309,8 +311,7 @@ export async function firstDeployAws(o: FirstAws): Promise<string> {
   return deployInstance({
     dir: o.dir,
     host: a.host,
-    commit: o.commit ?? SETUP_COMMIT,
-    keepMain: !!o.commit,
+    commit: o.commit,
     command: `bun erga setup ${a.host}${o.commit ? ` --commit ${o.commit}` : ""}`,
     noTests: o.noTests,
     suite: o.suite,

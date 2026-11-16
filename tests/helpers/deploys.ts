@@ -42,8 +42,8 @@ export const primary = (): Target => ({
   keepSecrets: true,
   checkVersion: true,
 });
-/** The primary, as its staging instance names it: the names it may not touch, and the address it copies from. */
-const stagingOf = {
+/** The primary, as the instance on a copy of its data names it: the names it may not touch, and the address it copies from. */
+const copyOf = {
   worker: "erga",
   database: "erga",
   host: "example.com",
@@ -69,11 +69,11 @@ export const staging = (over: Partial<Target> = {}): Target => ({
   secrets: {},
   keepSecrets: true,
   checkVersion: true,
-  stagingOf: { ...stagingOf, copy: { token: MOCK_SNAPSHOT_TOKEN } },
+  copyOf: { ...copyOf, copy: { token: MOCK_SNAPSHOT_TOKEN } },
   ...over,
 });
 /** The target with a fresh copy of the primary's data asked for: staging's copy is frozen otherwise. */
-export const afresh = (t: Target): Target => ({ ...t, stagingOf: { ...t.stagingOf!, copy: { ...t.stagingOf!.copy!, fresh: true } } });
+export const afresh = (t: Target): Target => ({ ...t, copyOf: { ...t.copyOf!, copy: { ...t.copyOf!.copy!, fresh: true } } });
 
 export async function deployTo(target: Target, mock: ReturnType<typeof mockCloudflare>, rel: Release = release) {
   const steps: string[] = [];

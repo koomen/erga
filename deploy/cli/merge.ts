@@ -1,17 +1,17 @@
 // `bun erga merge <branch>... [-m text]`, and the ops page's Merge button (deploy/cli/ops-page.ts runs this command):
-// each branch onto staging as one commit, in a worktree of its own, then the gate (gate.ts) on the result, one deploy to
-// each staging instance, and the push of staging. The gate: the tests (bun run test) must have passed on the last commit's tree. A
+// each branch onto staging as one commit, in a worktree of its own, then the gate (gate.ts) on the result, and the push
+// of staging. It deploys nothing: an instance that tracks staging gets the commit from `bun erga deploy <host>`. The gate: the tests (bun run test) must have passed on the last commit's tree. A
 // tree with a record (.erga/tests/, test-run.ts: the ops page ran it for the branch's row) runs no test here; a tree with
 // none runs them now. A branch that conflicts stays out. When the tests fail on several branches, they go one by
 // one, each with its own gate, and a branch that fails stays out. No flag skips the gate. It holds the lock
-// .erga/jobs/staging.lock, and writes its job record (jobs.ts, startJob) on the first staging instance, so the ops
-// page shows its output as it comes.
+// .erga/jobs/staging.lock, and writes its job record (jobs.ts, startJob) under "staging", so the ops page shows its
+// output as it comes.
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readConfig } from "./config";
-import { deployStaging } from "./deploy";
+import { isAncestor, pushTo, remoteHead } from "./deploy";
 import { type Merge, mergeRefusal, squashMessage } from "./flow";
 import { testRun, type Suite } from "./test-run";
 import { gateRefusal } from "./gate";
@@ -27,7 +27,7 @@ export interface Merged {
 
 /**
  * Merges the branches onto staging, in their order. It throws when no branch merges: the error says what stopped it,
- * and what to do next. `clone`, `suite` and `deploy` are for the tests: a clone of their own, and fakes.
+ * and what to do next. `clone` and `suite` are for the tests: a clone of their own, and a fake.
  */
 export async function mergeBranches(o: {
   dir: string;
@@ -36,14 +36,12 @@ export async function mergeBranches(o: {
   print?: (line: string) => void;
   clone?: string;
   suite?: Suite;
-  deploy?: (sha: string) => Promise<string[]>;
 }): Promise<Merged> {
   const names = o.merges.map((m) => m.branch).join(" ");
   const command = `bun erga merge ${names}`;
   const clone = o.clone ?? ROOT;
   const free = takeLock(o.dir, "staging", command);
-  const host = readConfig(o.dir).instances.find((e) => e.stagingOf)?.host ?? "staging";
-  const job = startJob(o.dir, { command, host, from: o.from, print: o.print });
+  const job = startJob(o.dir, { command, host: "staging", from: o.from, print: o.print });
   const log = job.log;
   const git = (...args: string[]) => sh(["git", ...args], { cwd: clone });
   let dir = "";
@@ -142,11 +140,11 @@ export async function mergeBranches(o: {
 
     const sha = head();
     job.note({ commit: sha });
-    const deploy = o.deploy ?? ((s: string) => deployStaging({ dir: o.dir, sha: s, command, from: o.from, print: log }));
-    const hosts = await deploy(sha).catch((e: Error) => {
-      throw new Error(`${e.message} Fix it, then run ${command} again.`);
-    });
-    for (const h of hosts) log(`PASS  ${h} runs ${sha.slice(0, 12)}, healthy.`);
+    // staging may have moved while the tests ran: then the commit would not reach the branch.
+    const staging = remoteHead(clone, "origin", "staging");
+    if (staging && !isAncestor(clone, staging, sha))
+      throw new Error(`staging moved to ${staging.slice(0, 12)} while the tests ran. Nothing is pushed. Run ${command} again.`);
+    pushTo({ clone, print: log }, sha, "staging");
     for (const { branch, sha: s } of result.merged) {
       log(`PASS  Merged ${branch} as ${s.slice(0, 12)}: ${texts.get(branch)}`);
       const d = git("push", "--quiet", "origin", "--delete", branch);
@@ -156,6 +154,8 @@ export async function mergeBranches(o: {
         log(`NOTE  The local branch ${branch} is still here. Delete it when you are done with it: git branch -D ${branch}`);
     }
     for (const l of result.left) log(`FAIL  ${l.branch} is not merged: ${l.why.split("\n")[0]}`);
+    for (const e of readConfig(o.dir).instances.filter((x) => x.branch == "staging"))
+      log(`NEXT  ${e.host} tracks staging. Deploy the commit to it: bun erga deploy ${e.host}`);
     job.end("ok");
     return result;
   } catch (e) {

@@ -221,37 +221,37 @@ describe("an instance that runs already", () => {
     expect(mock.state.routes["zone00000000000000000000000e7ga2"]).toEqual([{ pattern: "*.example-pages.com/*", script: "erga" }]);
   });
 
-  test("guards: a staging instance may not use its primary's names, and a copy never goes into its source", () => {
+  test("guards: an instance on a copy may not use its source's names, and a copy never goes into its source", () => {
     const g = staging();
     expect(guardTarget(g)).toBeNull();
-    expect(guardTarget({ ...g, workerName: "erga" })).toMatch(/replace its primary's Worker/);
-    expect(guardTarget({ ...g, databaseName: "erga" })).toMatch(/its primary's database/);
+    expect(guardTarget({ ...g, workerName: "erga" })).toMatch(/replace its source's Worker/);
+    expect(guardTarget({ ...g, databaseName: "erga" })).toMatch(/its source's database/);
     expect(guardTarget({ ...g, app: { kind: "domain", zoneName: "example.com", hostname: "example.com" } })).toMatch(
-      /its primary's address/
+      /its source's address/
     );
-    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "example-pages.com" } })).toMatch(/its primary's address/);
+    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "example-pages.com" } })).toMatch(/its source's address/);
     expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "example-pages.com", domain: "staging.example-pages.com" } })).toMatch(
-      /under its primary's pages domain/
+      /under its source's pages domain/
     );
     expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "example-pages.com", domain: "a.b.EXAMPLE-PAGES.com" } })).toMatch(
-      /under its primary's pages domain/
+      /under its source's pages domain/
     );
     // Not under it: a name that only ends the same way.
     expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "my-example-pages.com" } })).toBeNull();
     expect(g.pages).toEqual({ kind: "zone", zoneName: "example-pages-staging.com", domain: "example-pages-staging.com" });
-    // In another account, the names may be the same: the guard is its primary's account's. But a copy never goes into its source's name.
+    // In another account, the names may be the same: the guard is its source's account's. But a copy never goes into its source's name.
     const elsewhere = { ...g, workerName: "erga", databaseName: "erga", accountId: "f".repeat(32) };
     expect(guardTarget(elsewhere)).toMatch(/can't go into the database it's copied from/);
-    expect(guardTarget({ ...elsewhere, stagingOf: { ...g.stagingOf!, copy: undefined } })).toBeNull();
+    expect(guardTarget({ ...elsewhere, copyOf: { ...g.copyOf!, copy: undefined } })).toBeNull();
     // An instance that names no primary has nothing to guard, and no rule for a custom domain but its own address.
     expect(guardTarget(primary())).toBeNull();
     expect(guardTarget({ ...primary(), domains: ["example.org", "blog.example.org"] })).toBeNull();
-    expect(guardTarget({ ...g, domains: ["example.org"] })).toMatch(/a staging instance serves no custom domain/);
+    expect(guardTarget({ ...g, domains: ["example.org"] })).toMatch(/on a copy of another's data serves no custom domain/);
   });
 
   test("a guarded deploy stops before it asks Cloudflare anything", async () => {
     const mock = mockCloudflare({ fleet: true });
-    await expect(deployTo(staging({ databaseName: "erga" }), mock)).rejects.toThrow(/its primary's database/);
+    await expect(deployTo(staging({ databaseName: "erga" }), mock)).rejects.toThrow(/its source's database/);
     expect(mock.state.calls).toEqual([]);
   });
 });

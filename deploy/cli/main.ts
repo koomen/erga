@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // Erga's command line: `bun erga <command>`. Development happens on feature branches; `merge` puts a branch on staging
-// as one commit and deploys it to each staging instance, `deploy` deploys a primary and moves main, `release` tags main.
-// Every deploy runs on this machine: a push deploys nothing. `bun erga skill` is the agents' manual.
+// as one commit, `promote` moves main to staging's head, `release` tags main. An instance tracks one branch of one
+// repository: `deploy` gives it that branch's head. Every deploy runs on this machine: a push deploys nothing.
+// `bun erga skill` is the agents' manual.
 //
 //   bun erga [--port N] [--no-open]
 //                                       the ops page on localhost: the registered instances, deploys, logs, history
@@ -15,27 +16,33 @@
 //   bun erga proof "<sentence>" [--look "<bun run look arguments>"]... [--no-picture "<the tests that prove it>"]
 //                                       the branch's proof page, for Pete before the merge: what changed, a picture
 //                                       before and after at desktop and phone width, the tests' result, the files
-//   bun erga status                     each registered instance's commit and health, the feature branches, each with
-//                                       its tests' state (in the queue, running, passed, failed with the tests'
+//   bun erga status                     each registered instance's branch, commit and health, the feature branches, each
+//                                       with its tests' state (in the queue, running, passed, failed with the tests'
 //                                       names), and the commits, as text; it only reads (no fetch)
 //   bun erga merge <branch>... [-m text]
 //                                       each branch onto staging as one commit, then the gate (the tests, bun run
-//                                       test, passed on the result: it runs them if no run has), one deploy to each
-//                                       staging instance, and the push of staging; -m is for the branch before it
+//                                       test, passed on the result: it runs them if no run has), and the push of
+//                                       staging; it deploys nothing; -m is for the branch before it
+//   bun erga promote                    moves main forward to staging's head, when the tests passed on it and each
+//                                       instance that tracks staging runs it, healthy; it deploys nothing
 //   bun erga test [<branch>|<commit>]   the gate's run: bun run test on a branch's merge onto staging, or on a commit
 //                                       (default: staging's head), in a scratch folder; a tree that ran before runs
 //                                       no more; the ops page runs it for each pushed branch
 //   bun erga release [vX.Y.Z|major|minor|patch] [--dry-run]   tags main and makes a GitHub release
-//   bun erga deploy [<commit>] <host> [--no-tests]            deploys a registered instance from this machine; a primary
-//                                       with no commit takes the commit its staging instances run, and main moves to it;
+//   bun erga deploy [<commit>] <host> [--no-tests]            deploys a registered instance from this machine: the head
+//                                       of the branch it tracks, or a commit of that branch; no branch moves;
 //                                       the commits main and staging are origin's branches, never the clone's own;
-//                                       --fresh: a staging instance gets a new copy of its primary's data;
-//                                       --domain <domain> (it can repeat): a primary takes a custom domain, which
-//                                       a document can be published to from now on
+//                                       --fresh: an instance on a copy of another's data gets a new copy;
+//                                       --domain <domain> (it can repeat): the instance takes a custom domain, which
+//                                       a document can be published to from now on (never one on a copy)
+//   bun erga track <host> [--repo <repo>] [--branch <branch>]  the repository and the branch that a registered
+//                                       instance tracks (github.com/koomen/erga, main); with no option, it prints them
 //   bun erga rollback <host> [--yes]    a registered instance's Worker version from before its last deploy
-//   bun erga snapshot-secret <host>     a new SNAPSHOT_TOKEN on a primary and its staging instances: the old one stops
-//   bun erga register <host> [--staging-of <host>]            signs in to an instance as an admin, in the browser, and
-//                                       adds it to .erga/config.json: its deploy facts, its plain settings, an ops token
+//   bun erga snapshot-secret <host>     a new SNAPSHOT_TOKEN on an instance and each copy of it: the old one stops
+//   bun erga register <host> [--repo <repo>] [--branch <branch>] [--copy-of <host>]
+//                                       signs in to an instance as an admin, in the browser, and adds it to
+//                                       .erga/config.json: its deploy facts, its plain settings, an ops token, the
+//                                       repository and branch it tracks, and the instance whose data it is a copy of
 //   bun erga login <host>               a new ops token for a registered instance, when its token runs out
 //   bun erga setup <host> --host ... --sign-in ... [--dry-run]
 //                                       a new instance, on Cloudflare or AWS, from the user's answers: the checks and
@@ -134,6 +141,14 @@ async function merge(args: string[]) {
   const r = await mergeBranches({ dir: ergaDir(), merges, from: fromOf() }).catch((e: Error) => fail(e.message));
   // Some branches merged, and some stay out: the output names them.
   if (r.left.length) process.exit(1);
+}
+
+async function promote() {
+  needRepo();
+  const { ergaDir } = await import("./config");
+  const { promote: run } = await import("./promote");
+  const sha = await run({ dir: ergaDir(), from: fromOf() }).catch((e: Error) => fail(e.message));
+  if (sha) pass(`main is at ${sha.slice(0, 12)}.`);
 }
 
 // ------------------------------------------------------------------ test
@@ -254,12 +269,25 @@ async function signInTo(origin: string) {
   return { token, facts: await readOps(origin, token) };
 }
 
-async function register(arg: string | undefined, stagingOf: string | undefined) {
-  const { host, origin } = await instanceOf(arg, "bun erga register <host> [--staging-of <host>]");
-  const { configPath, entryOf, ergaDir, originOf, readConfig, stagingRefusal, withEntry, writeConfig } = await import("./config");
+async function register(arg: string | undefined, o: { repo?: string; branch?: string; copyOf?: string }) {
+  const { host, origin } = await instanceOf(arg, "bun erga register <host> [--repo <repo>] [--branch <branch>] [--copy-of <host>]");
+  const {
+    configPath,
+    copyRefusal,
+    DEFAULT_BRANCH,
+    DEFAULT_REPO,
+    entryOf,
+    ergaDir,
+    originOf,
+    readConfig,
+    repoName,
+    withEntry,
+    writeConfig,
+  } = await import("./config");
   const dir = ergaDir();
-  const primary = stagingOf ? new URL(originOf(stagingOf)).host : entryOf(readConfig(dir), host)?.stagingOf;
-  const no = primary ? stagingRefusal(readConfig(dir), host, primary) : null;
+  const had = entryOf(readConfig(dir), host);
+  const source = o.copyOf ? new URL(originOf(o.copyOf)).host : had?.copyOf;
+  const no = source ? copyRefusal(readConfig(dir), host, source) : null;
   if (no) fail(no);
   const { token, facts } = await signInTo(origin);
   if (!facts.deploy)
@@ -267,15 +295,36 @@ async function register(arg: string | undefined, stagingOf: string | undefined) 
       `${host} gave no deploy facts: no deploy from the pipeline set them.`,
       `Deploy ${host} with this commit or a later one, then register again.`
     );
-  // Read the file again: another terminal can have changed it while the admin approved.
-  writeConfig(dir, withEntry(readConfig(dir), { host, ...(primary ? { stagingOf: primary } : {}), ...facts.deploy!, token }));
-  pass(`${host} is registered in ${configPath(dir)}${primary ? `, as a staging instance of ${primary}` : ""}.`);
+  // Read the file again: another terminal can have changed it while the admin approved. The entry keeps what it tracks.
+  const now = entryOf(readConfig(dir), host);
+  const repo = o.repo ? repoName(o.repo) : (now?.repo ?? DEFAULT_REPO);
+  const branch = o.branch ?? now?.branch ?? DEFAULT_BRANCH;
+  writeConfig(dir, withEntry(readConfig(dir), { host, repo, branch, ...(source ? { copyOf: source } : {}), ...facts.deploy!, token }));
+  pass(`${host} is registered in ${configPath(dir)}: it tracks ${repo} ${branch}${source ? `, on a copy of ${source}'s data` : ""}.`);
   const d = facts.deploy!;
   const where =
     "aws" in d
       ? `AWS account ${d.aws.account}, ${d.aws.region}, stack ${d.aws.stack}`
       : `Worker ${d.worker}, database ${d.database}, account ${d.account}`;
   say(`      ${where}, ${Object.keys(d.vars).length} plain settings. It runs ${facts.version ?? "no known commit"}.`);
+}
+
+/** `bun erga track <host> [--repo <repo>] [--branch <branch>]`: what a registered instance tracks. It deploys nothing. */
+async function track(arg: string | undefined, o: { repo?: string; branch?: string }) {
+  const { host } = await instanceOf(arg, "bun erga track <host> [--repo <repo>] [--branch <branch>]");
+  const { configPath, entryOf, ergaDir, readConfig, remoteOf, repoName, withEntry, writeConfig } = await import("./config");
+  const dir = ergaDir();
+  const had = entryOf(readConfig(dir), host) ?? fail(`${host} has no entry in ${configPath(dir)}.`, `bun erga register ${host}`);
+  if (!o.repo && !o.branch) return say(`${host} tracks ${had.repo} ${had.branch}.`);
+  const entry = { ...had, repo: o.repo ? repoName(o.repo) : had.repo, branch: o.branch ?? had.branch };
+  // The branch must be there: a deploy takes its head.
+  const { remoteHead } = await import("./deploy");
+  const head =
+    remoteHead(dirname(dir), remoteOf(dirname(dir), entry.repo), entry.branch) ??
+    fail(`${entry.repo} has no branch ${entry.branch}. ${host} tracks ${had.repo} ${had.branch}, as before.`);
+  writeConfig(dir, withEntry(readConfig(dir), entry));
+  pass(`${host} tracks ${entry.repo} ${entry.branch} (before: ${had.repo} ${had.branch}). Its head is ${head.slice(0, 12)}.`);
+  say(`NEXT  Nothing deployed. To deploy the branch's head: bun erga deploy ${host}`);
 }
 
 async function login(arg: string | undefined) {
@@ -301,7 +350,20 @@ export async function main(argv: string[]) {
     const i = rest.indexOf(f);
     return i >= 0 ? rest[i + 1] : undefined;
   };
-  const plain = rest.filter((x, i) => !x.startsWith("-") && !["-m", "--port", "--staging-of", "--domain"].includes(rest[i - 1] ?? ""));
+  const plain = rest.filter(
+    (x, i) => !x.startsWith("-") && !["-m", "--port", "--repo", "--branch", "--copy-of", "--domain"].includes(rest[i - 1] ?? "")
+  );
+  // A config file from before an instance tracked a branch moves to today's fields, one time (old-config.ts), at the
+  // first command that reads the file.
+  if (["", "status", "merge", "promote", "deploy", "rollback", "snapshot-secret", "register", "login", "track", "setup"].includes(cmd)) {
+    const { ergaDir } = await import("./config");
+    const { moveOldConfig } = await import("./old-config");
+    try {
+      moveOldConfig(ergaDir());
+    } catch {
+      // Not in a clone, or a file that nothing can write: the command itself says what is wrong.
+    }
+  }
   switch (cmd) {
     case "skill":
       return say(readFileSync(join(ROOT, "deploy/cli/SKILL.md"), "utf8"));
@@ -346,6 +408,8 @@ export async function main(argv: string[]) {
     }
     case "merge":
       return merge(rest);
+    case "promote":
+      return promote();
     case "test":
       return test(plain[0]);
     case "release":
@@ -360,7 +424,7 @@ export async function main(argv: string[]) {
     case "rollback":
       return rollback(plain[0], flag("--yes"));
     case "snapshot-secret": {
-      if (!plain[0]) return fail("Name the primary instance: bun erga snapshot-secret <host>.");
+      if (!plain[0]) return fail("Name the instance: bun erga snapshot-secret <host>.");
       const { ergaDir } = await import("./config");
       const { replaceSnapshotSecret } = await import("./snapshot-secret");
       await replaceSnapshotSecret({ dir: ergaDir(), host: await hostOf(plain[0]), print: say }).catch((e: Error) => fail(e.message));
@@ -368,7 +432,11 @@ export async function main(argv: string[]) {
     }
     case "register":
       // The server's or the file's error, in its own words.
-      return register(plain[0], opt("--staging-of")).catch((e: Error) => fail(e.message));
+      return register(plain[0], { repo: opt("--repo"), branch: opt("--branch"), copyOf: opt("--copy-of") }).catch((e: Error) =>
+        fail(e.message)
+      );
+    case "track":
+      return track(plain[0], { repo: opt("--repo"), branch: opt("--branch") }).catch((e: Error) => fail(e.message));
     case "login":
       return login(plain[0]).catch((e: Error) => fail(e.message));
     case "setup": {

@@ -60,7 +60,7 @@ const first = (mock: { state: MockState; fetch: First["net"] }, host: string, mo
   net: mock.fetch,
   token: "mock-machine-token",
   print: () => {},
-  // This branch's commit; setup takes origin/main by default.
+  // This branch's commit, which the mock deploys; setup takes the head of the branch that the entry tracks.
   commit: "HEAD",
 });
 const rowsOf = (state: MockState, worker: string) =>
@@ -73,7 +73,7 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
   expect(await firstDeploy(first(mock, HOST))).toBe(HEAD);
 
   // The entry: written from the answers, with no token yet.
-  expect(readConfig(dir).instances.map((e) => [e.host, e.stagingOf ?? null, (e as CloudflareEntry).worker, e.token])).toEqual([
+  expect(readConfig(dir).instances.map((e) => [e.host, e.copyOf ?? null, (e as CloudflareEntry).worker, e.token])).toEqual([
     [HOST, null, "erga-ada-example-com", ""],
   ]);
   // The secrets: made one time, kept in .erga/secrets.json, sent with this deploy.
@@ -96,11 +96,12 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
     expect.stringMatching(/^INSERT INTO access_rules \(kind, value, access, created\) VALUES \('github_org', 'acme-inc', 'write', \d+\)/)
   );
   expect(rows.join("\n")).not.toContain("INSERT INTO users");
-  // The job is the setup's, and main never moves to a commit that --commit names.
+  // The job is the setup's. Its entry tracks the default repository's main: no deploy moves a branch.
   const [job] = jobs();
   expect(job[0]).toMatchObject({ command: `bun erga setup ${HOST} --commit HEAD`, host: HOST });
   expect(job).toContainEqual({ commit: HEAD, secrets: ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET"] });
-  expect(job).toContainEqual({ main: "kept: --commit" });
+  expect(job.some((x: object) => "main" in x)).toBe(false);
+  expect(readConfig(dir).instances.map((e) => [e.repo, e.branch])).toEqual([["github.com/koomen/erga", "main"]]);
 
   // A run again: the Worker holds its secrets, so none goes out.
   const held = { ...mock.state.secrets["erga-ada-example-com"] };
@@ -113,7 +114,7 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
   writeConfig(dir, withEntry(readConfig(dir), { ...readConfig(dir).instances[0], token: "erga_ops_primary" }));
   putSecret(STAGING, "GITHUB_CLIENT_SECRET", "staging-app-secret", dir);
   expect(await firstDeploy({ ...first(mock, STAGING, { stagingOf: HOST }), github: "Iv1.staging" })).toBe(HEAD);
-  expect(readConfig(dir).instances.map((e) => [e.host, e.stagingOf ?? null])).toEqual([
+  expect(readConfig(dir).instances.map((e) => [e.host, e.copyOf ?? null])).toEqual([
     [HOST, null],
     [STAGING, HOST],
   ]);
@@ -179,7 +180,9 @@ test("an instance that runs already, with names of its own: setup keeps its entr
   try {
     writePass(own, HEAD);
     // A registered entry, as `bun erga register` writes it: the Worker "erga", which no address gives.
-    const entries: Entry[] = [{ host: "example.com", ...deployFacts(primary()), token: "erga_ops_primary" }];
+    const entries: Entry[] = [
+      { host: "example.com", repo: "example.com/team/erga", branch: "main", ...deployFacts(primary()), token: "erga_ops_primary" },
+    ];
     writeConfig(own, { instances: entries });
     const rows = JSON.stringify(mock.state.databases.map((d) => d.rows));
     expect(

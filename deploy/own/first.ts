@@ -20,7 +20,7 @@ import { replaceSnapshotSecret } from "../cli/snapshot-secret";
 import { d1 } from "../pipeline/account";
 import { Cloudflare, type Fetch } from "../pipeline/cloudflare-api";
 import type { Seen } from "./flow";
-import { type Answers, firstRows, SETUP_COMMIT, setupEntry } from "./plan";
+import { type Answers, firstRows, setupEntry } from "./plan";
 import { loadSecrets, saveSecrets } from "./store";
 
 export interface First {
@@ -36,7 +36,7 @@ export interface First {
   print?: (line: string) => void;
   noTests?: boolean;
   suite?: DeployOptions["suite"];
-  /** --commit: the commit to deploy in place of SETUP_COMMIT (origin's main). Main never moves to it. */
+  /** --commit: the commit to deploy in place of the head of the branch that the entry tracks: a commit of that branch. */
   commit?: string;
 }
 
@@ -99,8 +99,7 @@ export async function firstDeploy(o: First): Promise<string> {
   const sha = await deployInstance({
     dir: o.dir,
     host: a.host,
-    commit: o.commit ?? SETUP_COMMIT,
-    keepMain: !!o.commit,
+    commit: o.commit,
     command: `bun erga setup ${a.host}${o.commit ? ` --commit ${o.commit}` : ""}`,
     noTests: o.noTests,
     suite: o.suite,

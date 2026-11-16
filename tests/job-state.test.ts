@@ -23,25 +23,25 @@ test("a record: running, then its commit, then its result; with no result, a pro
 });
 
 test("the kind comes from the command's verb; a merge's branch follows it; anything else is no job", () => {
-  expect(jobStart({ command: "bun erga merge sm-ops-jobs", host: "staging.example.net" })).toMatchObject({
+  expect(jobStart({ command: "bun erga merge sm-ops-jobs", host: "staging" })).toMatchObject({
     kind: "merge",
     branch: "sm-ops-jobs",
   });
+  expect(jobStart({ command: "bun erga promote", host: "main" })).toMatchObject({ kind: "promote", host: "main", branch: null });
   expect(jobStart({ command: "bun erga rollback example.net", host: "example.net" })).toMatchObject({ kind: "rollback", branch: null });
   expect(jobStart({ command: "rm -rf /", host: "example.net" })).toBeNull();
   expect(jobStart({ command: "bun erga deploy example.net" })).toBeNull();
   expect(jobStart(undefined)).toBeNull();
 });
 
-test("a job deploys a commit to its host; a merge, to each staging instance", () => {
+test("a job deploys a commit to its host; a merge and a promote deploy to no instance", () => {
   const deploy = { kind: "deploy" as const, host: "s.dev", commit: C, branch: null, phase: "running" as const };
-  expect(deploysTo(deploy, C, "s.dev", true)).toBe(true);
-  expect(deploysTo(deploy, `${C.slice(0, 12)}${"0".repeat(28)}`, "s.dev", true)).toBe(true);
-  expect(deploysTo(deploy, C, "t.dev", true)).toBe(false);
-  expect(deploysTo({ ...deploy, commit: null }, C, "s.dev", true)).toBe(false);
-  const merge = { ...deploy, kind: "merge" as const };
-  expect(deploysTo(merge, C, "t.dev", true)).toBe(true);
-  expect(deploysTo(merge, C, "example.net", false)).toBe(false);
+  expect(deploysTo(deploy, C, "s.dev")).toBe(true);
+  expect(deploysTo(deploy, `${C.slice(0, 12)}${"0".repeat(28)}`, "s.dev")).toBe(true);
+  expect(deploysTo(deploy, C, "t.dev")).toBe(false);
+  expect(deploysTo({ ...deploy, commit: null }, C, "s.dev")).toBe(false);
+  expect(deploysTo({ ...deploy, kind: "merge" as const, host: "staging" }, C, "s.dev")).toBe(false);
+  expect(deploysTo({ ...deploy, kind: "promote" as const }, C, "s.dev")).toBe(false);
 });
 
 test("the page's run: it starts, then it ends; it stops before its record, with its last words", () => {

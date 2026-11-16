@@ -123,7 +123,7 @@ That run used an earlier deploy script, Caddy and temporary names, with the same
 
 ## Limits
 
-- Staging on AWS isn't there yet: `--staging` takes a primary on Cloudflare only.
+- Staging on AWS isn't there yet: `--staging` takes an instance on Cloudflare only.
 - The app has a domain in Route 53. The documents' pages have a zone of their own; with the organization's sign-in, a name
   under the app's (pages.<host>).
 - A secret set in Parameter Store reaches the Worker at the next deploy.

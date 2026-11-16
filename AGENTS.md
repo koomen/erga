@@ -28,7 +28,7 @@ Pete works with [herdr-core](https://github.com/herdrdev/herdr-core):
    conflict.
 5. Each merge is one squashed commit. Every commit message is one line of
    ten words at most, with no body: what the whole task does.
-6. When a task's commit is on production (`bun erga deploy <host>`), the
+6. When a task's commit is on production (`bun erga promote`), the
    manager retires the task's agent, and `bun erga clean` removes its
    folder. Until then the agent stays: it knows its task.
 

@@ -1,21 +1,21 @@
 // `bun erga deploy [<commit>] <host>` and `bun erga rollback <host>`: an instance of .erga/config.json, deployed
-// or rolled back from this machine, with nothing from the instance but, for a primary with no commit named, the commit
-// its staging instances run. Every deploy runs on a machine: a push deploys nothing. After a healthy deploy of a primary,
-// main on origin moves forward to its commit; `bun erga merge` deploys its commit to each staging instance, then moves
-// staging (deployStaging). The build and the pipeline are today's (buildHere, runPipeline). Every instance's target
-// comes from its entry only (entryTarget): its names, its vars, the secrets the Worker keeps. No secret goes out. No
-// instance has a path of its own: the entries differ, the code does not.
+// or rolled back from this machine. Every deploy runs on a machine: a push deploys nothing. An instance tracks one
+// branch of one repository (its entry's repo and branch): with no commit named, it gets that branch's head, and it
+// never gets a commit that the branch does not have. No deploy moves a branch: `bun erga merge` moves staging, and
+// `bun erga promote` moves main (merge.ts, promote.ts). The build and the pipeline are today's (buildHere,
+// runPipeline). Every instance's target comes from its entry only (entryTarget): its names, its vars, the secrets the
+// Worker keeps. No secret goes out. No instance has a path of its own: the entries differ, the code does not.
 //
-// A staging instance is an entry that names its primary (stagingOf). It gets SNAPSHOT_FROM (its primary's address)
-// over its entry's vars, which makes its server one for admins only; its primary's names are its guard. It keeps its
-// copy of its primary's data. With --fresh, or when it
-// has no copy yet, it gets a new copy of the primary's database and documents, with the primary's
-// SNAPSHOT_TOKEN (the environment, or .erga/secrets.json). Each deploy or
+// An entry with `copyOf` runs on a copy of that instance's data. It gets SNAPSHOT_FROM (its source's address) over its
+// entry's vars, which makes its server one for admins only; its source's names are its guard. It keeps its copy.
+// With --fresh, or when it has no copy yet, it gets a new copy of the source's database and documents, with the
+// source's SNAPSHOT_TOKEN (the environment, or .erga/secrets.json). Each deploy or
 // rollback holds the lock .erga/jobs/<host>.lock and writes its job record in .erga/jobs/ (jobs.ts). A deploy runs only a commit
 // whose tests passed (gate.ts: bun run test): the record .erga/tests/<tree>.json of the commit's tree, which its merge wrote.
 //
 // ERGA_DEPLOY_MOCK=1: against the mock Cloudflare's example account (dev/mock-cloudflare.ts, the fleet), with
-// .build/release/ for the build: nothing real is touched. No branch moves on origin, but in a clone a test gives.
+// .build/release/ for the build: nothing real is touched, and no repository is asked: with no commit named, the
+// checkout's own deploys. In a clone that a test gives, the repository is asked as always.
 
 import { rollbackTo } from "../pipeline/account";
 import { Cloudflare, DeployError, type Fetch, Unhealthy } from "../pipeline/cloudflare-api";
@@ -40,18 +40,19 @@ import {
   isAws,
   originOf,
   readConfig,
+  remoteOf,
   secretsPath,
   snapshotTokenOf,
   withEntry,
   writeConfig,
 } from "./config";
-import { type Instance, previousVersion } from "./flow";
+import { previousVersion } from "./flow";
 import { testRun, type Suite, treeOf } from "./test-run";
 import { gateRefusal } from "./gate";
 import { type From, startJob, takeLock } from "./jobs";
-import { askInstance, healthOf } from "./observe";
+import { healthOf } from "./observe";
 import { readOps } from "./ops";
-import { stagingCommitRefusal } from "./staging-commit";
+import { copyCommitRefusal } from "./copy-commit";
 import { parseDeployed } from "../../server/directory/index.ts";
 import { ROOT, sh } from "../root";
 
@@ -75,28 +76,28 @@ const namesOf = (e: CloudflareEntry) => ({
 
 /**
  * What the pipeline deploys for `entry`, any entry: its names and vars, no secret (the Worker keeps its own). An entry
- * that names a primary (stagingOf) is a staging instance: it gets SNAPSHOT_FROM over its vars, and may not touch its
- * primary's names. It keeps its copy of its primary's data, unless `copy` is given: then the pipeline copies the
- * primary's database and documents.
+ * with `copyOf` runs on a copy of that instance's data: it gets SNAPSHOT_FROM over its vars, and may not touch its
+ * source's names. It keeps its copy, unless `copy` is given: then the pipeline copies the source's database and
+ * documents.
  */
 export function entryTarget(config: Config, entry: CloudflareEntry, copy?: { token: string; fresh: boolean }): Target {
   const own = { ...namesOf(entry), secrets: {}, keepSecrets: true, checkVersion: true };
-  if (!entry.stagingOf) return { ...own, vars: { ...entry.vars } };
-  const primary = entryOf(config, entry.stagingOf);
-  if (!primary)
+  if (!entry.copyOf) return { ...own, vars: { ...entry.vars } };
+  const source = entryOf(config, entry.copyOf);
+  if (!source)
     throw new Error(
-      `${entry.host} is a staging instance of ${entry.stagingOf}, which has no entry. Register it: bun erga register ${entry.stagingOf}`
+      `${entry.host} runs on a copy of ${entry.copyOf}'s data, and ${entry.copyOf} has no entry. Register it: bun erga register ${entry.copyOf}`
     );
-  if (isAws(primary))
+  if (isAws(source))
     throw new Error(
-      `${entry.host} is on Cloudflare, and its primary ${primary.host} is on AWS: a staging instance is on its primary's host.`
+      `${entry.host} is on Cloudflare, and the source of its data, ${source.host}, is on AWS: a copy is on its source's host.`
     );
-  const p = namesOf(primary);
-  const origin = originOf(primary.host);
+  const p = namesOf(source);
+  const origin = originOf(source.host);
   return {
     ...own,
     vars: { ...entry.vars, SNAPSHOT_FROM: origin },
-    stagingOf: {
+    copyOf: {
       accountId: p.accountId,
       worker: p.workerName,
       database: p.databaseName,
@@ -108,28 +109,7 @@ export function entryTarget(config: Config, entry: CloudflareEntry, copy?: { tok
   };
 }
 
-// ------------------------------------------------------------------ the commit of a primary's staging instances
-
-/** The one commit that `primary`'s staging instances run, healthy, or why there is none (the CLI never guesses one). */
-export function stagingCommit(primary: string, answers: Instance[]): { version: string } | { problem: string } {
-  if (!answers.length)
-    return { problem: `${primary} has no staging instance in .erga/config.json. Name the commit: bun erga deploy <commit> ${primary}` };
-  const sick = answers.filter((a) => !a.healthy || !a.version);
-  if (sick.length)
-    return {
-      problem: `Not healthy, or no known commit: ${sick.map((a) => `${a.host} (${a.version ?? a.error ?? "no commit"})`).join(", ")}. Name the commit, or fix staging first.`,
-    };
-  const versions = [...new Set(answers.map((a) => a.version!))];
-  if (versions.length > 1)
-    return {
-      problem: `${primary}'s staging instances run different commits: ${answers.map((a) => `${a.host} ${a.version}`).join(", ")}. Name the commit.`,
-    };
-  return { version: versions[0] };
-}
-
-/** Asks each staging instance of `primary` for its commit (its ops token) and its health. */
-const stagingAnswers = (config: Config, primary: string, site: Fetch): Promise<Instance[]> =>
-  Promise.all(config.instances.filter((e) => e.stagingOf == primary).map(async (e) => ({ host: e.host, ...(await askInstance(e, site)) })));
+// ------------------------------------------------------------------ the commit
 
 /**
  * The full commit of a name or a short sha, in the clone, or an error that says to fetch. `main` and `staging` name
@@ -147,77 +127,61 @@ export function commitOf(name: string, clone = ROOT): string {
   return r.out;
 }
 
-// ------------------------------------------------------------------ the branches on origin
+// ------------------------------------------------------------------ the branches
 
-const isAncestor = (clone: string, a: string, b: string) => gitIn(clone, ["merge-base", "--is-ancestor", a, b]).ok;
+export const isAncestor = (clone: string, a: string, b: string) => gitIn(clone, ["merge-base", "--is-ancestor", a, b]).ok;
 
-/** The commit of `branch` on origin (it may be one this clone does not have), or null: no such branch. */
-function remoteHead(clone: string, branch: string): string | null {
-  const r = gitIn(clone, ["ls-remote", "origin", `refs/heads/${branch}`]);
-  if (!r.ok) throw new Error(`git ls-remote origin failed: ${r.err}`);
+/** The commit of `branch` on `remote` (it may be one this clone does not have), or null: no such branch. */
+export function remoteHead(clone: string, remote: string, branch: string): string | null {
+  const r = gitIn(clone, ["ls-remote", remote, `refs/heads/${branch}`]);
+  if (!r.ok) throw new Error(`git ls-remote ${remote} failed: ${r.err}`);
   return r.out.split(/\s/)[0] || null;
 }
 
 /** `remoteHead`, with the commit fetched into the clone. */
-function originHead(clone: string, branch: string): string | null {
-  const head = remoteHead(clone, branch);
+function fetchedHead(clone: string, remote: string, branch: string): string | null {
+  const head = remoteHead(clone, remote, branch);
   if (!head) return null;
-  const f = gitIn(clone, ["fetch", "--quiet", "origin", branch]);
-  if (!f.ok) throw new Error(`git fetch origin ${branch} failed: ${f.err}`);
+  const f = gitIn(clone, ["fetch", "--quiet", remote, branch]);
+  if (!f.ok) throw new Error(`git fetch ${remote} ${branch} failed: ${f.err}`);
+  return head;
+}
+const originHead = (clone: string, branch: string) => fetchedHead(clone, "origin", branch);
+
+/** The head of the branch that `entry` tracks, as its repository has it now, fetched into the clone. */
+export function trackedHead(clone: string, entry: Pick<Entry, "host" | "repo" | "branch">): string {
+  const head = fetchedHead(clone, remoteOf(clone, entry.repo), entry.branch);
+  if (!head)
+    throw new Error(
+      `${entry.repo} has no branch ${entry.branch}, which ${entry.host} tracks. Change it: bun erga track ${entry.host} --branch <branch>`
+    );
   return head;
 }
 
-/**
- * What a deploy of `sha` to a primary does to main on origin: "has" (main has the commit: main stays), or "forward"
- * (main moves to it after the deploy). A commit apart from main does not deploy: main would lose commits.
- */
-export function mainMove(clone: string, sha: string): "has" | "forward" {
-  const main = originHead(clone, "main");
-  if (!main) return "forward";
-  if (isAncestor(clone, sha, main)) return "has";
-  if (isAncestor(clone, main, sha)) return "forward";
-  throw new Error(
-    `${sha.slice(0, 12)} is not on main, and main (${main.slice(0, 12)}) has commits that it does not have. A primary deploys only a commit of main, or one after main's head.`
-  );
-}
-
-/**
- * Throws unless staging on origin has `sha`. A merge deploys its commit to the staging instances before it pushes staging:
- * when that push fails, they run a commit that staging lacks, and a primary must not take it from them (main would leave
- * staging).
- */
-function onStaging(clone: string, sha: string) {
-  const staging = originHead(clone, "staging");
-  if (staging && isAncestor(clone, sha, staging)) return;
-  throw new Error(
-    `The staging instances run ${sha.slice(0, 12)}, but staging on origin${staging ? ` (${staging.slice(0, 12)})` : ""} does not have it: its merge did not end. Merge it again, or name the commit.`
-  );
-}
-
 /** Moves `branch` on origin to `sha`, forward only (no force), as `bun erga`. */
-function pushTo(o: { clone?: string; print?: (line: string) => void }, sha: string, branch: string) {
+export function pushTo(o: { clone?: string; print?: (line: string) => void }, sha: string, branch: string) {
   const p = gitIn(o.clone ?? ROOT, ["push", "--quiet", "origin", `${sha}:refs/heads/${branch}`], true);
   if (!p.ok) throw new Error(`The push of ${sha.slice(0, 12)} to ${branch} failed: ${p.err}`);
   (o.print ?? console.log)(`${branch} is at ${sha.slice(0, 12)} on origin.`);
 }
 
-// ------------------------------------------------------------------ the copy of the primary's data
+// ------------------------------------------------------------------ the copy of the source's data
 
-/** Whether the Worker of a staging target runs on a copy of its primary's data (the pipeline's database step keeps it). */
+/** Whether the Worker of a target with a source runs on a copy of its data (the pipeline's database step keeps it). */
 async function hasCopy(cf: Cloudflare, t: Target): Promise<boolean> {
   const acc = `/accounts/${t.accountId}`;
   const bound = await boundDatabase(cf, acc, t.workerName);
   return !!bound && (await copiesOf(cf, acc, t.databaseName)).some((c) => c.uuid == bound);
 }
 
-/** The staging target with the copy of its primary's data, or null: it keeps its copy. It stops when the token is missing. */
+/** The target that copies its source's data, or null: it keeps its copy. It stops when the token is missing. */
 async function copyTarget(dir: string, config: Config, entry: CloudflareEntry, cf: Cloudflare, fresh: boolean): Promise<Target | null> {
-  const primary = entry.stagingOf!;
+  const source = entry.copyOf!;
   if (!fresh && (await hasCopy(cf, entryTarget(config, entry)))) return null;
-  const token = snapshotTokenOf(dir, primary);
+  const token = snapshotTokenOf(dir, source);
   if (token.length < 32)
     throw new Error(
-      `${fresh ? "--fresh copies" : `${entry.host} has no copy of ${primary}'s data yet, so this deploy copies`} ${primary}'s documents, with ${primary}'s SNAPSHOT_TOKEN. There is none. Put it in ${secretsPath(dir)} as { "${primary}": { "SNAPSHOT_TOKEN": "..." } } (mode 600), or set SNAPSHOT_TOKEN.`
+      `${fresh ? "--fresh copies" : `${entry.host} has no copy of ${source}'s data yet, so this deploy copies`} ${source}'s documents, with ${source}'s SNAPSHOT_TOKEN. There is none. Put it in ${secretsPath(dir)} as { "${source}": { "SNAPSHOT_TOKEN": "..." } } (mode 600), or set SNAPSHOT_TOKEN.`
     );
   const target = entryTarget(config, entry, { token, fresh });
   const wrong = guardTarget(target);
@@ -231,9 +195,9 @@ export interface DeployOptions {
   /** .erga/ in the main clone (config.ts, ergaDir). */
   dir: string;
   host: string;
-  /** A commit or a branch; required for a staging instance. None for a primary: the commit its staging instances run. */
+  /** A commit of the branch that the instance tracks. None: the branch's head, as its repository has it now. */
   commit?: string;
-  /** A staging instance only: a new copy of its primary's data in place of the one it keeps. */
+  /** An instance with `copyOf` only: a new copy of its source's data in place of the one it keeps. */
   fresh?: boolean;
   /** Skip the tests' gate: the job record says so. */
   noTests?: boolean;
@@ -247,7 +211,7 @@ export interface DeployOptions {
   print?: (line: string) => void;
   /** The suite for a commit with no test record yet (test-run.ts): a fake, in the tests. */
   suite?: Suite;
-  /** The clone whose commits deploy, and whose origin's main a primary moves (default: this one). */
+  /** The clone whose commits deploy (default: this one). */
   clone?: string;
   /** `bun erga setup`'s first deploy only: the secrets the Worker doesn't hold yet, and a new workers.dev subdomain. */
   secrets?: Record<string, string>;
@@ -256,8 +220,6 @@ export interface DeployOptions {
   domains?: string[];
   /** AWS, `bun erga setup`'s first deploy only: SQL the machine runs once the release answers (the first rows). */
   first?: string;
-  /** `bun erga setup --commit`: a primary takes a commit that is not main's, and main stays where it is. */
-  keepMain?: boolean;
 }
 
 /** Why `domain` can't be a custom domain, or null. */
@@ -289,12 +251,10 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   const config = readConfig(o.dir);
   const entry = entryOf(config, o.host);
   if (!entry) throw new Error(`${o.host} has no entry in .erga/config.json. Register it first: bun erga register ${o.host}`);
-  if (entry.stagingOf && !o.commit)
-    throw new Error(`${o.host} is a staging instance: name the commit (bun erga deploy <commit> ${o.host}).`);
-  if (o.fresh && !entry.stagingOf)
-    throw new Error(`${o.host} is a primary: --fresh is only for a staging instance, which copies its primary's data.`);
+  if (o.fresh && !entry.copyOf)
+    throw new Error(`${o.host} runs on its own data: --fresh is only for an instance on a copy of another's data (copyOf).`);
   const aws = isAws(entry) ? entry : null;
-  if (aws && entry.stagingOf) throw new Error(`${o.host} is a staging instance on AWS: Erga has no staging on AWS yet.`);
+  if (aws && entry.copyOf) throw new Error(`${o.host} is on AWS: Erga has no copy of another instance's data on AWS yet.`);
   const domains = (o.domains ?? []).map((d) => d.toLowerCase());
   if (aws && (domains.length || o.createSubdomain)) throw new Error(`${o.host} is on AWS: --domain is only for an instance on Cloudflare.`);
   // setup's first deploy: its secrets, one time, and a new workers.dev subdomain. A copy's target keeps them.
@@ -329,22 +289,22 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   const clone = o.clone ?? ROOT;
   try {
     let sha: string;
-    if (o.commit) sha = commitOf(o.commit, clone);
+    if (mocked() && !o.clone) sha = commitOf(o.commit ?? "HEAD", clone);
     else {
-      const chosen = stagingCommit(o.host, await stagingAnswers(config, o.host, net));
-      if ("problem" in chosen) throw new Error(chosen.problem);
-      sha = commitOf(chosen.version, clone);
-      if (!mocked() || o.clone) onStaging(clone, sha);
-      log(`The staging instances of ${o.host} run ${chosen.version}, healthy: that commit deploys.`);
+      // The branch it tracks, as its repository has it now: its head deploys, or a commit that the branch has.
+      const head = trackedHead(clone, entry);
+      sha = o.commit ? commitOf(o.commit, clone) : head;
+      if (!isAncestor(clone, sha, head))
+        throw new Error(
+          `${sha.slice(0, 12)} is not a commit of ${entry.branch} on ${entry.repo} (its head: ${head.slice(0, 12)}). ${o.host} deploys only a commit of the branch it tracks. To track another: bun erga track ${o.host} --branch <branch>`
+        );
+      if (!o.commit) log(`${entry.branch} on ${entry.repo} is at ${head.slice(0, 12)}: that commit deploys.`);
     }
     job.note({ commit: sha, ...(sent.length ? { secrets: sent } : {}) });
-    const old = entry.stagingOf ? stagingCommitRefusal(clone, sha, o.host) : null;
+    const old = entry.copyOf ? copyCommitRefusal(clone, sha, o.host) : null;
     if (old) throw new Error(old);
-    // A primary: main must have the commit, or move forward to it. Checked before the build, so a deploy never leaves main behind.
-    const main = entry.stagingOf || o.keepMain ? null : mocked() && !o.clone ? "mock" : mainMove(clone, sha);
-    if (o.keepMain) job.note({ main: "kept: --commit" });
     // Before the tests and the build: a copy that needs a token it does not have stops here.
-    const copying = target && entry.stagingOf ? await copyTarget(o.dir, config, entry as CloudflareEntry, cf, !!o.fresh) : null;
+    const copying = target && entry.copyOf ? await copyTarget(o.dir, config, entry as CloudflareEntry, cf, !!o.fresh) : null;
     if (copying) {
       target = { ...copying, ...own };
       job.note({ copy: o.fresh ? "fresh" : "no copy yet" });
@@ -390,7 +350,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       const t = target!;
       log(`Deploy ${sha.slice(0, 12)} to ${o.host}${mocked() ? " (the mock Cloudflare: nothing real)" : ""}:`);
       log(
-        `  account ${t.accountId}, Worker ${t.workerName}, database ${t.databaseName}${!entry.stagingOf ? "" : copying ? ` (a new copy of ${entry.stagingOf}'s database and documents: ${o.fresh ? "--fresh" : "it has no copy yet"})` : ` (its copy of ${entry.stagingOf}'s data kept)`}`
+        `  account ${t.accountId}, Worker ${t.workerName}, database ${t.databaseName}${!entry.copyOf ? "" : copying ? ` (a new copy of ${entry.copyOf}'s database and documents: ${o.fresh ? "--fresh" : "it has no copy yet"})` : ` (its copy of ${entry.copyOf}'s data kept)`}`
       );
       log(
         `  https://${targetHost(t)}, documents' pages on ${targetPagesShown(t)}; ${sent.length ? `the secrets sent: ${sent.join(", ")}` : "no secret sent"}`
@@ -416,17 +376,6 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       log(`Deployed ${sha.slice(0, 12)} to https://${targetHost(t)}: healthy.`);
     }
     await copyFacts(o.dir, o.host, net, log);
-    if (main == "forward") {
-      try {
-        pushTo({ clone: o.clone, print: log }, sha, "main");
-      } catch (e) {
-        throw new Error(`${o.host} runs ${sha.slice(0, 12)}, healthy, but main did not move. ${(e as Error).message}`);
-      }
-      job.note({ main: "moved" });
-    } else if (main == "has") {
-      log(`main has ${sha.slice(0, 12)} already: main stays.`);
-      job.note({ main: "kept" });
-    } else if (main == "mock") log("NOTE  The mock: main on origin does not move.");
     job.end("ok");
     return sha;
   } catch (e) {
@@ -452,36 +401,6 @@ async function copyFacts(dir: string, host: string, net: Fetch, log: (line: stri
   } catch (e) {
     log(`NOTE  ${host}'s entry keeps its facts as they were: ${(e as Error).message}`);
   }
-}
-
-// ------------------------------------------------------------------ merge
-
-/**
- * `bun erga merge`'s deploy: `sha` (a commit with a pass of its tests) to each registered staging instance, one after the
- * other, then staging on origin moves to it. It stops at the first failure, and staging stays. With no staging instance,
- * it says so, and only moves staging. The result: the hosts it deployed.
- */
-export async function deployStaging(
-  o: Pick<DeployOptions, "dir" | "net" | "token" | "print" | "clone" | "command" | "from"> & { sha: string }
-): Promise<string[]> {
-  const clone = o.clone ?? ROOT;
-  const print = o.print ?? console.log;
-  const real = !mocked() || !!o.clone;
-  // staging may have moved while the tests ran: then the commit would not reach the branch, so it deploys nowhere.
-  const staging = real ? remoteHead(clone, "staging") : null;
-  if (staging && !isAncestor(clone, staging, o.sha))
-    throw new Error(`staging moved to ${staging.slice(0, 12)} while the tests ran. Nothing deployed. Run bun erga merge again.`);
-  const hosts = readConfig(o.dir)
-    .instances.filter((e) => e.stagingOf)
-    .map((e) => e.host);
-  if (!hosts.length)
-    print(
-      "NOTE  No staging instance in .erga/config.json: the commit deploys nowhere. Register one: bun erga register <host> --staging-of <primary>"
-    );
-  for (const host of hosts) await deployInstance({ ...o, host, commit: o.sha });
-  if (real) pushTo(o, o.sha, "staging");
-  else print("NOTE  The mock: staging on origin does not move.");
-  return hosts;
 }
 
 // ------------------------------------------------------------------ rollback

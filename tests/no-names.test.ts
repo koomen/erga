@@ -3,11 +3,13 @@
 // (the pages Erga ships, assets/**/*.html, and its agents' prompts, agents/**/*.md, are sources), with its comments
 // taken out (a comment may name erga.dev as an example). A name in a pattern (erga\.dev) is a name. The HMAC label
 // `erga-pages:` and the meta name `erga-pages` are not addresses (server/documents/pages-origin.ts,
-// server/documents/view.ts).
+// server/documents/view.ts). One name is in the code: the repository that an instance tracks when its setup names none
+// (deploy/cli/config.ts, DEFAULT_REPO).
 //
 // And no kind of instance but the two the code has (one on Cloudflare, one on AWS): no flag or value says that an
-// instance is "production". A staging instance is any instance's feature: its entry names its primary (stagingOf), and
-// its server gets that address (SNAPSHOT_FROM). Every instance takes one path, so no code may ask which one it is.
+// instance is "production". A copy of another instance's data is any instance's feature: its entry names its source
+// (copyOf), and its server gets that address (SNAPSHOT_FROM). Every instance takes one path, so no code may ask which
+// one it is.
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -58,7 +60,7 @@ test("the names find what they are for, and skip comments and the HMAC label", (
 
 test("no instance's name in the code", () => {
   expect(sources().length).toBeGreaterThan(100);
-  expect(hitsOf(NAMES)).toEqual([]);
+  expect(hitsOf(NAMES)).toEqual(['deploy/cli/config.ts: export const DEFAULT_REPO = "github.com/koomen/erga";']);
 });
 
 /**
@@ -71,7 +73,7 @@ test("no code asks whether an instance is production: every instance takes one p
   const found = (text: string) => uncommented("a.ts", text).match(KINDS) ?? [];
   expect(found('if (env.DEPLOY_TARGET == "production") return;').length).toBe(2);
   expect(found('const t = { production: true }; vars.SNAPSHOT_IMPORT = "1"; kind = "production";').length).toBe(3);
-  expect(found('log("It is on production now."); // production: true\nconst stagingOf = entry.stagingOf;')).toEqual([]);
-  // The one file about commits from before this rule (deploy/cli/staging-commit.ts) names the old setting, to refuse them.
-  expect(hitsOf(KINDS, ["deploy/cli/staging-commit.ts"])).toEqual([]);
+  expect(found('log("It is on production now."); // production: true\nconst copyOf = entry.copyOf;')).toEqual([]);
+  // The one file about commits from before this rule (deploy/cli/copy-commit.ts) names the old setting, to refuse them.
+  expect(hitsOf(KINDS, ["deploy/cli/copy-commit.ts"])).toEqual([]);
 });

@@ -23,7 +23,7 @@ const S = "5".repeat(40),
 
 describe("merge", () => {
   test("refuses staging and main, a branch GitHub lacks, an empty branch and a conflict", () => {
-    expect(mergeRefusal({ branch: "main", exists: true, ahead: 1, conflicts: [] })).toContain("bun erga deploy <host>");
+    expect(mergeRefusal({ branch: "main", exists: true, ahead: 1, conflicts: [] })).toContain("bun erga promote");
     expect(mergeRefusal({ branch: "staging", exists: true, ahead: 1, conflicts: [] })).toContain("not a feature branch");
     expect(mergeRefusal({ branch: "x", exists: false, ahead: 0, conflicts: [] })).toContain("bun erga push");
     expect(mergeRefusal({ branch: "x", exists: true, ahead: 0, conflicts: [] })).toContain("Nothing to merge");
@@ -81,20 +81,30 @@ test("rollback goes to the version before the one that serves now", () => {
 
 test("the pre-push hook stops a plain push to staging or main, and lets bun erga and feature branches through", () => {
   expect(pushRefusal("refs/heads/staging", false)).toContain("bun erga merge");
-  expect(pushRefusal("refs/heads/main", false)).toContain("bun erga deploy <host>");
+  expect(pushRefusal("refs/heads/main", false)).toContain("bun erga promote");
   expect(pushRefusal("refs/heads/staging", true)).toBeNull();
   expect(pushRefusal("refs/heads/my-feature", false)).toBeNull();
   expect(pushRefusal("refs/tags/v0.1.0", false)).toBeNull();
 });
 
-test("bun erga status: each primary with its staging instances, where each one's commit is, and the branches", () => {
+const tracks = (branch: string) => ({ repo: "github.com/koomen/erga", branch });
+
+test("bun erga status: each instance with what it tracks and where its commit is on that branch, and the branches", () => {
   const s = stateOf({
     heads: { main: M, staging: S },
     instances: [
-      { host: "next.example.com", stagingOf: "example.com", version: S.slice(0, 12), healthy: true },
-      { host: "other.example.org", version: null, healthy: null, error: "refuses its ops token: bun erga login other.example.org" },
-      { host: "example.com", version: M.slice(0, 12), healthy: true },
-      { host: "old.example.com", stagingOf: "example.com", version: "111111111111", healthy: false },
+      { host: "next.example.com", ...tracks("staging"), copyOf: "example.com", version: S.slice(0, 12), healthy: true, behind: 0 },
+      {
+        host: "other.example.org",
+        ...tracks("main"),
+        version: null,
+        healthy: null,
+        error: "refuses its ops token: bun erga login other.example.org",
+        behind: null,
+      },
+      { host: "example.com", ...tracks("main"), version: M.slice(0, 12), healthy: true, behind: 2 },
+      { host: "old.example.com", ...tracks("staging"), version: "111111111111", healthy: false, behind: null },
+      { host: "side.example.com", ...tracks("main"), version: "222222222222", healthy: true, behind: null },
     ],
     branches: [
       { name: "old", sha: "1", ahead: 1, behind: 4, conflicts: [], at: 1, subject: "Old" },
@@ -105,16 +115,31 @@ test("bun erga status: each primary with its staging instances, where each one's
     log: [{ sha: M, subject: "On main" }],
     tags: [{ name: "v0.1.0", sha: M }],
   });
-  expect(s.instances.map((i) => i.host)).toEqual(["other.example.org", "example.com", "next.example.com", "old.example.com"]);
+  // The file's order: no instance stands under another.
+  expect(s.instances.map((i) => i.host)).toEqual([
+    "next.example.com",
+    "other.example.org",
+    "example.com",
+    "old.example.com",
+    "side.example.com",
+  ]);
   expect(s.branches.map((b) => b.name)).toEqual(["new", "old"]);
   expect(s.latestRelease).toBe("v0.1.0");
   const text = statusText(s, (sha) => sha != "111111111111");
-  expect(text).toContain("- other.example.org: refuses its ops token: bun erga login other.example.org; health unknown");
-  expect(text).toContain(`- example.com: runs ${M.slice(0, 12)}, origin/main's head; health ok`);
-  expect(text).toContain(`  - next.example.com (staging of example.com): runs ${S.slice(0, 12)}, origin/staging's head; health ok`);
   expect(text).toContain(
-    "  - old.example.com (staging of example.com): runs 111111111111, a commit this clone does not have (git fetch); health FAIL"
+    "- other.example.org: tracks github.com/koomen/erga main; refuses its ops token: bun erga login other.example.org; health unknown"
   );
+  expect(text).toContain(`- example.com: tracks github.com/koomen/erga main; runs ${M.slice(0, 12)}, 2 commits behind main; health ok`);
+  expect(text).toContain(
+    `- next.example.com: tracks github.com/koomen/erga staging, on a copy of example.com's data (admins only); runs ${S.slice(0, 12)}, staging's head; health ok`
+  );
+  expect(text).toContain(
+    "- old.example.com: tracks github.com/koomen/erga staging; runs 111111111111, a commit this clone does not have (git fetch); health FAIL"
+  );
+  expect(text).toContain(
+    "- side.example.com: tracks github.com/koomen/erga main; runs 222222222222, not on main as this clone knows it; health ok"
+  );
+  expect(text).not.toContain("staging of");
   expect(text).toContain("new: 2 ahead, 0 behind staging; conflicts in x.ts");
   expect(text).toContain("- 4444444 [v0.1.0] On main");
 });

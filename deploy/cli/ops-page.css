@@ -1,5 +1,5 @@
 /* The look of the ops page (`bun erga`, deploy/cli/ops-view.ts): the app's tokens (client/style.css), the glass bars
-   (client/inline/bars.css, which the page also loads), a sidebar of the primaries, and the
+   (client/inline/bars.css, which the page also loads), a sidebar of the instances, and the
    Deploys, Logs, History and Setup tabs. */
 
 :root {
@@ -29,25 +29,27 @@ code { font-family: var(--font-mono); }
   padding: calc(var(--bars-bottom) + 12px) max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left)); }
 @media (max-width: 760px) { .ops { grid-template-columns: minmax(0, 1fr); } }
 
-/* The sidebar: each primary, its staging instances under it. */
+/* The sidebar: each instance, the branch it tracks under it. */
 .side { position: sticky; top: calc(var(--bars-bottom) + 12px); align-self: start; min-width: 0; }
 .side-head { margin: 6px 10px 8px; font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--soft); }
-.primaries { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.instances { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .group { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; color: var(--fg); text-decoration: none; }
 .group:hover { background: color-mix(in srgb, var(--chrome) 10%, transparent); }
 .group.sel { background: var(--sel); box-shadow: 0 0 0 1px var(--rule); }
 .group > span { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .group > span > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.group .primary { font-size: 14px; font-weight: 600; color: var(--fg-strong); }
-.group .staging { padding-left: 14px; font-size: 13px; color: var(--soft); }
+.group .host { font-size: 14px; font-weight: 600; color: var(--fg-strong); }
+.group .tracks { padding-left: 16px; font: 12px var(--font-mono); color: var(--soft); }
 .light { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--chrome); }
 .light.ok { background: var(--ok); }
 .light.bad { background: var(--bad); }
 .none { margin: 6px 10px; font-size: 13.5px; color: var(--soft); }
 
-/* The chosen primary: its name, its tabs and the job line. */
+/* The chosen instance: its name, what it tracks, its tabs and the job line. */
 .main { min-width: 0; container-type: inline-size; }
-.title { margin: 4px 0 6px; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; color: var(--fg-strong); }
+.title { margin: 4px 0 2px; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; color: var(--fg-strong); }
+.tracks-line { margin: 0 0 8px; font-size: 13px; color: var(--soft); }
+.tracks-line code { font: 12px var(--font-mono); color: var(--fg); }
 .tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--rule); }
 .tab { padding: 6px 0 8px; margin-bottom: -1px; font-size: 14px; color: var(--soft); text-decoration: none; }
 .tab:hover { color: var(--fg-strong); }
@@ -193,7 +195,7 @@ a.f-proof:hover { background: var(--sel); }
   font: 12.5px/1.55 var(--font-mono); color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
 .log .bad { color: var(--bad); font-weight: 600; }
 
-/* History: the jobs of the primary and its staging instances. */
+/* History: the jobs. */
 .history { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto auto auto auto; border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; }
 .h-row { display: contents; color: var(--fg); text-decoration: none; }
 .h-row > * { display: flex; align-items: center; min-width: 0; padding: 7px 10px; border-top: 1px solid var(--rule); font-size: 13px; white-space: nowrap; }

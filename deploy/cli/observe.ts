@@ -1,7 +1,7 @@
 // What `bun erga` reads: git (the checkout's view of GitHub), and each registered instance's GET /api/ops (with its ops
 // token) and GET /api/health. Each call says what it saw; nothing here decides (flow.ts).
 
-import { type Config, type Entry, entryOrigin } from "./config";
+import { type Config, type Entry, entryOrigin, repoName } from "./config";
 import { type Answer, type Commit, type Instance, PROTECTED, type State, stateOf } from "./flow";
 import { readOps, type Site } from "./ops";
 import { git, ROOT, sh } from "../root";
@@ -155,7 +155,7 @@ export const healthOf = (origin: string, site: Site): Promise<boolean | null> =>
 
 /**
  * What an instance answers now: the commit it runs (GET /api/ops, with its ops token, in 8 seconds) and its health.
- * For `bun erga status`, the ops page, and a deploy of a primary with no commit named.
+ * For `bun erga status`, the ops page, and `bun erga promote`.
  */
 export async function askInstance(e: Entry, site: Site = fetch): Promise<Answer> {
   const origin = entryOrigin(e);
@@ -180,14 +180,34 @@ export async function askInstance(e: Entry, site: Site = fetch): Promise<Answer>
   return { ...ops, healthy };
 }
 
+/**
+ * How many commits of the branch that `e` tracks are after `version`, the commit it runs, as the clone last saw the
+ * branch (no fetch). Null: the clone can't say: no commit, a repository that is not the clone's origin, a branch or a
+ * commit that the clone does not have, or a commit that is not on the branch.
+ */
+export function behindOf(e: Pick<Entry, "repo" | "branch">, version: string | null, cwd = ROOT): number | null {
+  const origin = sh(["git", "remote", "get-url", "origin"], { cwd });
+  if (!version || !origin.ok || repoName(origin.out) != repoName(e.repo)) return null;
+  const branch = `origin/${e.branch}`;
+  if (!sh(["git", "merge-base", "--is-ancestor", version, branch], { cwd }).ok) return null;
+  const n = sh(["git", "rev-list", "--count", `${version}..${branch}`], { cwd });
+  return n.ok ? Number(n.out) : null;
+}
+
 /** What each registered instance answers now. */
 const instancesOf = (config: Config, site?: Site): Promise<Instance[]> =>
   Promise.all(
-    config.instances.map(async (e) => ({
-      host: e.host,
-      ...(e.stagingOf ? { stagingOf: e.stagingOf } : {}),
-      ...(await askInstance(e, site)),
-    }))
+    config.instances.map(async (e) => {
+      const a = await askInstance(e, site);
+      return {
+        host: e.host,
+        repo: e.repo,
+        branch: e.branch,
+        ...(e.copyOf ? { copyOf: e.copyOf } : {}),
+        ...a,
+        behind: behindOf(e, a.version),
+      };
+    })
   );
 
 /** Everything `bun erga status` shows. It only reads: no fetch; GitHub's branch list leaves out the ones it deleted. */

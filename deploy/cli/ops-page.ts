@@ -291,8 +291,7 @@ export function serveOpsPage(o: OpsPageOptions) {
       const block = mergeBlock(b, facts.git.base, "", testOf(b, facts.runs));
       if (block) return no(block);
       if (!message) return no("Write the message of the commit on staging.");
-      const host = entries().find((x) => x.stagingOf)?.host ?? "staging";
-      return start(["merge", b.name, "-m", message], { kind: "merge", host, commit: null, branch: b.name, phase: "starting" });
+      return start(["merge", b.name, "-m", message], { kind: "merge", host: "staging", commit: null, branch: b.name, phase: "starting" });
     }
     // A row's Deploy: a commit of the log, to an instance that does not run it now.
     const e = "error" in facts.config ? null : facts.config.instances.find((x) => x.host == body.host);
