@@ -124,7 +124,8 @@ export async function liveOf(net: Fetch, a: Answers, githubId: string | undefine
 
 /** What the flow decides from, on Cloudflare: the login, the accounts that hold the domain, and the server. */
 export async function observe(a: Answers, dir = DIR): Promise<Seen> {
-  const seen: Seen = { ...nothingSeen, admin: !!entryOf(readConfig(dir), a.host)?.token };
+  const entry = entryOf(readConfig(dir), a.host);
+  const seen: Seen = { ...nothingSeen, admin: !!entry?.token, vars: entry ? { ...entry.vars } : null, github: githubIdOf(a.host, dir) };
   if (!a.where) return seen;
   if (a.where == "aws") return (await import("../aws/setup")).observeAws(dir, a, seen, site);
   const c = await cloudflare();

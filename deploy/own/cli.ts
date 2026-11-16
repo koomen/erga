@@ -178,6 +178,13 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
     a = r.answers;
     const again = did.has(state.at);
     did.add(state.at);
+    if (o.dryRun && state.at == "update") {
+      for (const c of checksOf(a, seen)) pass(c);
+      say(
+        `PLAN  ${a.host} runs. The answers change its settings ${state.vars.join(", ")}: I will write them into .erga/config.json and deploy it again.`
+      );
+      return "dry";
+    }
     if (o.dryRun && (state.at == "app" || state.at == "build" || state.at == "admin")) {
       let resources: string[] = [];
       if (a.where == "aws") {
@@ -209,6 +216,17 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
       }
       case "build":
         if (again) return fail(`${a.host} is deployed, but setup does not see it healthy yet.`, o.again);
+        await build(a, seen, o);
+        break;
+      case "update":
+        if (again)
+          return fail(
+            `${a.host} is deployed again, but its entry still has other settings than the answers: ${state.vars.join(", ")}.`,
+            o.again
+          );
+        say(
+          `NOTE  The answers change the settings ${state.vars.join(", ")} of ${a.host}: setup writes them into its entry and deploys again.`
+        );
         await build(a, seen, o);
         break;
       case "admin": {

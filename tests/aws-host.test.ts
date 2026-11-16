@@ -1,6 +1,9 @@
 // The AWS host of bun erga (deploy/aws/): the stacks' templates, the instance's entry from the answers, the first rows'
 // SQL. No AWS here: the templates are pure. (The flow's AWS lane: tests/own.test.ts.)
 import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Aws } from "../deploy/aws/cli";
 import { deployScript, provisionScript, putObject } from "../deploy/aws/machine";
 import { awsEntry, discoverOidc, firstSql } from "../deploy/aws/setup";
@@ -345,4 +348,47 @@ test("celld has a listener of its own on the loopback, and the machine's setup f
   expect(script).toContain("CELLD_ADDR=0.0.0.0:8080");
   expect(script).toContain("Environment=CELLD_INTERNAL_ADDR=127.0.0.1:");
   expect(script).toContain(`listens || { echo "celld doesn't start:`);
+});
+
+test("a deploy again of the same release runs this deploy's settings, not those of the release the machine ran before", () => {
+  const dir = mkdtempSync(join(tmpdir(), "erga-machine-"));
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  // The machine's commands, faked: the bucket gives release.tgz, celld keeps the settings it loaded.
+  const tool = (name: string, body: string) => writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
+  tool(
+    "aws",
+    `case "$1 $2" in
+  "s3 cp") cat "$FAKE/release.tgz" ;;
+  "s3 ls") echo node ;;
+  "ssm get-parameters-by-path") echo '{"Parameters":[{"Name":"/erga/erga/SESSION_SECRET","Value":"s"}]}' ;;
+esac`
+  );
+  tool("celld", `[ "$1" = deploy ] && cp wrangler.json "$FAKE/loaded.json"; true`);
+  tool("curl", `echo '{"version":"v1"}'`);
+  // (macOS's sed needs a suffix after -i.)
+  tool(
+    "sed",
+    `if [ "$1" = -i ] && [ "$(uname)" = Darwin ]; then shift; exec ${Bun.which("sed")} -i '' "$@"; fi; exec ${Bun.which("sed")} "$@"`
+  );
+  const script = deployScript({ bucket: "bucket", region: "us-west-2", stack: "erga", version: "v1" }).replaceAll(
+    "/var/lib/erga",
+    join(dir, "state")
+  );
+  const deploy = (proxy: string) => {
+    const release = join(dir, "release");
+    mkdirSync(release, { recursive: true });
+    writeFileSync(join(release, "wrangler.json"), JSON.stringify({ vars: { PROXY_SIGN_IN: proxy } }));
+    Bun.spawnSync(["tar", "-czf", join(dir, "release.tgz"), "-C", release, "."]);
+    const r = Bun.spawnSync(["bash", "-c", script], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE: dir } });
+    expect([r.exitCode, r.stderr.toString()]).toEqual([0, ""]);
+    return JSON.parse(readFileSync(join(dir, "loaded.json"), "utf8")).vars;
+  };
+  try {
+    expect(deploy("old")).toEqual({ PROXY_SIGN_IN: "old", SESSION_SECRET: "s" });
+    expect(deploy("new")).toEqual({ PROXY_SIGN_IN: "new", SESSION_SECRET: "s" });
+    expect(readFileSync(join(dir, "state", "deployed"), "utf8")).toBe("v1\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

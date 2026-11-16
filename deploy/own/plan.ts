@@ -184,6 +184,9 @@ export function proxySetting(a: Answers, signer?: string): string | null {
 export const proxyExpects = (a: Answers): { to?: string; clientId?: string; callback?: string } =>
   a.where == "aws" ? { clientId: a.client, callback: `https://${a.host}/oauth2/idpresponse` } : { to: `${a.team}.cloudflareaccess.com` };
 
+/** The names of the plain settings that varsOf gives: what the answers decide in an entry. */
+export const ANSWER_VARS = ["GITHUB_CLIENT_ID", "PROXY_SIGN_IN", "SERVER_DEFAULTS"];
+
 /** The instance's plain settings: its sign-in (the GitHub App's id, or the proxy), and the settings' defaults. */
 export function varsOf(a: Answers, github: string | undefined, signer?: string): Record<string, string> {
   const proxy = proxySetting(a, signer);

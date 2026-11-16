@@ -303,3 +303,32 @@ test("the GitHub App's page: it posts the manifest to GitHub, and GitHub's code 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a run again with other sign-in answers writes the entry again and deploys, before the admin step", () => {
+  const sso = options(
+    "--host",
+    "aws",
+    "--sign-in",
+    "sso",
+    "--issuer",
+    "https://idp.example.com/pool",
+    "--client",
+    "c",
+    "--profile",
+    "work"
+  );
+  const a = { ...sso.answers, region: "us-west-2" };
+  const corp = { ...a, emailClaim: "preferred_username:corp|" };
+  const built = { ...AWS, ...LIVE, app: true, stack: { status: "CREATE_COMPLETE", outputs: { Proxy: "arn:p" }, resources: [] } };
+  // The first build wrote the entry without the email claim.
+  const vars = varsOf(a, undefined, "arn:p");
+  expect(run(a, { ...built, vars }).state).toEqual({ at: "admin" });
+  // The user runs setup again with --email-claim: the server's setting changes, so setup deploys again.
+  expect(run(corp, { ...built, vars }).state).toEqual({ at: "update", vars: ["PROXY_SIGN_IN"] });
+  expect(run(corp, { ...built, vars: varsOf(corp, undefined, "arn:p") }).state).toEqual({ at: "admin" });
+  // A run again that leaves out --email-claim means no email claim: the options are the whole answer.
+  expect(run(a, { ...built, vars: varsOf(corp, undefined, "arn:p") }).state).toEqual({ at: "update", vars: ["PROXY_SIGN_IN"] });
+  // Other settings of the entry are not the answers'. A registered instance is what its entry says (bun erga deploy).
+  expect(run(a, { ...built, vars: { ...vars, OTHER: "x" } }).state).toEqual({ at: "admin" });
+  expect(run(corp, { ...built, vars, admin: true }).state).toEqual({ at: "done" });
+});

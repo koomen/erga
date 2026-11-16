@@ -194,18 +194,15 @@ echo "celld $(/usr/local/bin/celld --version | head -1); $(curl -fsS http://${CH
  * takes its lease (nodes/ in the fleet's folder) only when it has a deployment, and celld d1 needs that node: the
  * first release goes the other way, the Worker and then the migrations. The secrets go into
  * the settings on the machine only, never into the bucket's release. The machine adds the version to its list of
- * releases (rollback reads it). Once it answers, the script asks it for the default homepage (the server makes it when
+ * releases (rollback reads it). Trap: the machine reads the release from the bucket on every deploy and keeps no copy:
+ * a deploy again of the same version carries other settings (the entry's vars, in its wrangler.json). Once it answers, the script asks it for the default homepage (the server makes it when
  * it has none: server/documents/landing.ts). `first`: SQL to run after it answers (setup's first admin).
  */
 export function deployScript(o: { bucket: string; region: string; stack: string; version: string; first?: string }): string {
   return `set -euo pipefail
 export AWS_REGION=${o.region}
-dir=/var/lib/erga/releases/${o.version}
-if [ ! -f "$dir/wrangler.json" ]; then
-  rm -rf "$dir.new" && mkdir -p "$dir.new" && aws s3 cp s3://${o.bucket}/releases/${o.version}.tgz - --quiet | tar -xz -C "$dir.new"
-  rm -rf "$dir" && mv "$dir.new" "$dir"
-fi
-live=$(mktemp -d) && trap 'rm -rf "$live"' EXIT && cp -r "$dir/." "$live" && cd "$live"
+live=$(mktemp -d) && trap 'rm -rf "$live"' EXIT && cd "$live"
+aws s3 cp s3://${o.bucket}/releases/${o.version}.tgz - --quiet | tar -xz
 aws ssm get-parameters-by-path --path ${paramFolder(o.stack)} --with-decryption --output json | python3 -c 'import json, sys
 c = json.load(open("wrangler.json"))
 c["vars"].update({p["Name"].rsplit("/", 1)[1]: p["Value"] for p in json.load(sys.stdin)["Parameters"]})

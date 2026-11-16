@@ -1,7 +1,7 @@
 // The setup of a new instance, as one state machine (`bun erga setup <host> --host ... --sign-in ...`). Pure: no
 // network, no files.
 //
-//   login > (stop) > app > build > admin > done
+//   login > (stop) > app > build > (update) > admin > done
 //
 // The answers are the command's options (plan.ts): the agent asked the user every question first (README, Setup),
 // and `missing` says which option is still needed. The state is the first step that the answers and what the command
@@ -10,7 +10,7 @@
 // observes again; a run again goes on from where the last one stopped. A dry run stops before the first step that
 // makes something, and prints the plan.
 
-import { type Answers, emailOf, namesOf, pagesOf, pagesProblem, sso, zoneOf } from "./plan";
+import { ANSWER_VARS, type Answers, emailOf, namesOf, pagesOf, pagesProblem, sso, varsOf, zoneOf } from "./plan";
 
 /** What the command observed (facts.ts; deploy/aws/setup.ts on AWS). */
 export interface Seen {
@@ -36,6 +36,10 @@ export interface Seen {
   held: string[];
   /** The instance is registered: its entry has an ops token (an admin approved it). */
   admin: boolean;
+  /** The plain settings of the instance's entry in .erga/config.json, or null: no entry yet. */
+  vars: Record<string, string> | null;
+  /** The GitHub App's client id that setup holds for the host, or "". */
+  github: string;
 }
 
 export const nothingSeen: Seen = {
@@ -51,6 +55,8 @@ export const nothingSeen: Seen = {
   live: null,
   held: [],
   admin: false,
+  vars: null,
+  github: "",
 };
 
 export type State =
@@ -61,6 +67,11 @@ export type State =
   /** The user's step in the browser: the GitHub App, or (single sign-on on AWS) the client's secret. */
   | { at: "app"; kind: "github" | "oidc" }
   | { at: "build" }
+  /**
+   * The instance runs with no admin yet, but the answers give other settings than its entry's (a run again): setup
+   * writes the entry and deploys again. A registered instance is what its entry says: `bun erga deploy` changes it.
+   */
+  | { at: "update"; vars: string[] }
   /** The user signs in to the new server with a one-time link: they become its admin, and approve the ops token. */
   | { at: "admin" }
   | { at: "done" };
@@ -127,7 +138,20 @@ export function stateOf(a: Answers, s: Seen): State {
   const kind = !sso(a) ? "github" : aws ? "oidc" : null;
   if (kind && !s.app) return { at: "app", kind };
   if (!(s.live?.healthy && s.live.version && s.live.signIn == "ok")) return { at: "build" };
+  const changed = changedVars(a, s);
+  if (changed.length) return { at: "update", vars: changed };
   return { at: "admin" };
+}
+
+/**
+ * The settings that the answers give (plan.ts, varsOf) and the entry doesn't have: their names. A left-out option is
+ * its default: the options of each run are the whole answer. A staging instance takes its defaults from its primary.
+ */
+export function changedVars(a: Answers, s: Seen): string[] {
+  if (!s.vars) return [];
+  const want: Record<string, string> = varsOf(a, s.github || undefined, s.stack?.outputs.Proxy);
+  const had = s.vars;
+  return ANSWER_VARS.filter((k) => !(a.stagingOf && k == "SERVER_DEFAULTS") && (want[k] ?? "") != (had[k] ?? ""));
 }
 
 /** Folds what was seen in: the answers with what the code found, and the state. `look`: an answer changed, so observe again. */
