@@ -316,7 +316,9 @@ test("an upload to the bucket is one request: the key lets the admins encrypt, a
   expect(statements.filter((s) => s.Sid.includes("admins")).flatMap((s) => s.Action)).not.toContain("kms:Decrypt");
 });
 
-test("the NAT machine's script runs at each start, gives dnf a swap file, and adds its rule one time", () => {
+test("the NAT machine has room for dnf, its script runs at each start, and adds its rule one time", () => {
+  // On a t4g.nano the kernel stopped dnf, also with the swap file: the default is a t4g.micro.
+  expect((stackTemplate(shape).Parameters as any).NatType.Default).toBe("t4g.micro");
   expect((stackTemplate(shape).Resources as any).Nat.Properties.UserData).toEqual({ "Fn::Base64": NAT_USER_DATA });
   expect(NAT_USER_DATA).toContain("- [scripts-user, always]");
   const script = NAT_USER_DATA.slice(NAT_USER_DATA.indexOf("#!/bin/bash"), NAT_USER_DATA.indexOf("--//--"));

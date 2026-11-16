@@ -59,7 +59,9 @@ export const paramFolder = (stack: string) => paramPath(stack).slice(0, -1);
 /**
  * What the NAT machine runs at each start (cloud-init runs a plain script at the first start only: then a change to
  * this script would do nothing, and a script that failed would never run again). Each step is safe to do again.
- * Trap: dnf needs more memory than the smallest machine has, and the kernel stops it: it gets a swap file.
+ * Trap: on a t4g.nano (512 MB), the kernel stopped dnf even with the swap file. Amazon Linux gives a machine under
+ * 800 MB a swap in RAM (zram), which the kernel fills first, and the agents of Systems Manager use RAM too. A t4g.micro
+ * (1 GB) has no zram, and dnf fits: so NatType is a t4g.micro, never smaller.
  */
 export const NAT_USER_DATA = [
   'Content-Type: multipart/mixed; boundary="//"',
@@ -472,7 +474,7 @@ export function stackTemplate(s: AwsShape): Json {
         Description: "Amazon Linux 2023 for ARM, AWS's newest",
       },
       ...(s.egress.kind == "nat-instance"
-        ? { NatType: { Type: "String", Default: "t4g.nano", Description: "The NAT machine: the Erga machine's way out" } }
+        ? { NatType: { Type: "String", Default: "t4g.micro", Description: "The NAT machine: the Erga machine's way out" } }
         : {}),
       ...edge.parameters,
     },

@@ -43,7 +43,7 @@ front) from the user's answers. The dry run (`--dry-run`) lists each resource, a
 yes. Then the build writes the templates again, makes AWS's change sets, shows them in its log, and applies them.
 
 - **The network.** A new VPC: a private subnet for the machine, a public one for its way out. The way out is a NAT
-  machine (t4g.nano) or a NAT gateway. Or the user names a VPC and a private subnet of their own, with its own way
+  machine (t4g.micro) or a NAT gateway. Or the user names a VPC and a private subnet of their own, with its own way
   out and an internet gateway (`--egress vpc-.../subnet-...`): the stack then makes no network.
 - **The machine.** No public address. Its firewall lets in only CloudFront's origin-facing prefix list, on celld's
   port. Systems Manager runs each deploy's commands: no SSH.
@@ -98,14 +98,14 @@ authority, and no Caddy.
 | Part | Cost |
 | --- | --- |
 | EC2 t4g.small and its 16 GB disk | $13.54 |
-| NAT machine: t4g.nano, its disk and its public address | about $7.40 (a NAT gateway: about $33) |
+| NAT machine: t4g.micro, its disk and its public address | about $10.40 (a NAT gateway: about $33) |
 | S3 (a few GB, few requests) | under $1 |
 | KMS key | $1 |
 | CloudFront (two distributions; free tier: 1 TB out, 10 million requests) | $0 |
 | KV writes of the edge cache (S3 requests) | under $3 |
 | Route 53 hosted zones, with domains | $0.50 each |
 
-Total: about $23 each month. With a proxy in place of CloudFront: its hours ($16.43), its use (a few
+Total: about $26 each month. With a proxy in place of CloudFront: its hours ($16.43), its use (a few
 dollars), its two public addresses ($7.30) and the secret ($0.40) more: about $52 to $56.
 
 ## What the first run showed (EC2, 2026-11-06)
