@@ -102,8 +102,12 @@ const rests = (p: Page, name: string) =>
     () => section(p)
   );
 
-/** "Publish to", with real keys: the menu opens, the arrows go `down` rows from the chosen one, and Enter chooses. */
+/**
+ * "Publish to", with real keys: the menu opens, the arrows go `down` rows from the chosen one, and Enter chooses.
+ * It is grey while a change's call runs (the section may show the change before that call answers): a press then does nothing.
+ */
 async function choose(p: Page, down: number) {
+  await until(async () => !(await section(p)).toOff, 5_000, "Publish to can be pressed");
   await pressOn(p, "#ds-pub-domain");
   await until(async () => (await section(p)).menu != null, 5_000, "the menu opens");
   for (let i = 0; i < Math.abs(down); i++) await p.keyboard.press(down > 0 ? "ArrowDown" : "ArrowUp");
