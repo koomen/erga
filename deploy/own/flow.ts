@@ -3,6 +3,9 @@
 //
 //   login > (stop) > app > build > (update) > admin > done
 //
+// With --remote (answers.remote) the user is at another computer: their steps (login, app, admin) go through their terminal,
+// never a browser on this machine. A command with no terminal (an agent's shell) stops there: "terminal".
+//
 // The answers are the command's options (plan.ts): the agent asked the user every question first (README, Setup),
 // and `missing` says which option is still needed. The state is the first step that the answers and what the command
 // observed (Seen) leave open. `step` folds an observation in: it fills what the code can find (the one account that
@@ -40,6 +43,8 @@ export interface Seen {
   vars: Record<string, string> | null;
   /** The GitHub App's client id that setup holds for the host, or "". */
   github: string;
+  /** The user's terminal (/dev/tty) opens for this command: an agent's shell has none. */
+  terminal: boolean;
 }
 
 export const nothingSeen: Seen = {
@@ -57,6 +62,7 @@ export const nothingSeen: Seen = {
   admin: false,
   vars: null,
   github: "",
+  terminal: false,
 };
 
 export type State =
@@ -74,6 +80,8 @@ export type State =
   | { at: "update"; vars: string[] }
   /** The user signs in to the new server with a one-time link: they become its admin, and approve the ops token. */
   | { at: "admin" }
+  /** --remote: the next step is the user's, in their terminal, and this command has none. The user runs it in theirs. */
+  | { at: "terminal" }
   | { at: "done" };
 
 /** Each option that the answers still need, with what it is for. */
@@ -158,7 +166,13 @@ export function changedVars(a: Answers, s: Seen): string[] {
 export function step(a: Answers, s: Seen): { answers: Answers; state: State; look: boolean } {
   const fill = filled(a, s);
   const answers = { ...a, ...fill };
-  return { answers, state: stateOf(answers, s), look: Object.keys(fill).length > 0 };
+  const state = stateOf(answers, s);
+  const theirs = state.at == "login" || state.at == "app" || state.at == "admin";
+  return {
+    answers,
+    state: theirs && answers.remote && !s.terminal ? { at: "terminal" } : state,
+    look: Object.keys(fill).length > 0,
+  };
 }
 
 /** The answers of the staging instance of `a`: on its primary's account, with its sign-in. */
@@ -190,7 +204,7 @@ export function planText(a: Answers, s: Seen): string[] {
   const email = emailOf(a);
   const signIn = sso(a)
     ? a.where == "aws"
-      ? `• your organization's sign-in, at a load balancer in front (you type its client secret on a page that opens)${email ? `; the email address in ${email.claim}, after "${email.prefix}"` : ""}`
+      ? `• your organization's sign-in, at a load balancer in front (you type its client secret ${a.remote ? "in your terminal" : "on a page that opens"})${email ? `; the email address in ${email.claim}, after "${email.prefix}"` : ""}`
       : "• your organization's sign-in, with Cloudflare Access"
     : a.stagingOf
       ? `• sign-in with the GitHub App of ${a.stagingOf}`

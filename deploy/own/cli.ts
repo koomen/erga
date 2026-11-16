@@ -19,6 +19,8 @@
 //       --egress <way>         AWS: nat-instance (the default), nat-gateway, or <vpc id>/<private subnet id>
 //       --commit <ref>         deploys that commit, not origin/main; main never moves
 //       --no-tests             the build runs no tests
+//       --remote               the user is at another computer (on by itself over SSH): no browser opens here. The
+//                              user types the client secret in their terminal, and the admin's link shows there.
 //   bun erga setup <host> remove --yes       deletes the server: its Workers, database and bucket (AWS: its stacks
 //                                            and secrets; the bucket stays, with the data)
 //
@@ -26,25 +28,25 @@
 // command again) or FAIL (what is wrong, and what to do). A run again goes on from where the last one stopped.
 //
 // Trap: nothing here prints a secret, or a link that signs someone in: the agent reads this command's output. The
-// admin's link goes to the browser only.
+// admin's link goes to the browser only, or with --remote to the user's terminal (/dev/tty), never to stdout.
 
-import { readFileSync } from "node:fs";
+import { closeSync, readFileSync } from "node:fs";
 import { Claim } from "../../server/identity/claim-link";
 import { entryOf, isAws, originOf, readConfig } from "../cli/config";
 import { findDatabase } from "../pipeline/account";
 import { fail, pass, ROOT, say } from "../root";
-import { githubApp, oidcSecret, openBrowser } from "./browser";
+import { askSecret, githubApp, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
 import { checkSignIn, cloudflare, type Connection, observe, site } from "./facts";
 import { firstDeploy, register, secretsFor } from "./first";
 import { checksOf, missing, planText, type Seen, type State, stagingOf, step } from "./flow";
-import { type Answers, noAnswers, parseAnswer } from "./plan";
+import { type Answers, noAnswers, parseAnswer, type TextAnswer } from "./plan";
 import { DIR, githubIdOf, loadSecrets, namesAt, saveSecrets } from "./store";
 
 /** How long one run waits for the user: under the ten minutes that an agent's command may take. */
 const WAIT_MS = 8 * 60_000;
 
 /** The options that are answers, by the answer's key. */
-const OPTIONS: Record<string, keyof Answers> = {
+const OPTIONS: Record<string, TextAnswer> = {
   "--host": "where",
   "--sign-in": "signIn",
   "--staging": "staging",
@@ -59,7 +61,7 @@ const OPTIONS: Record<string, keyof Answers> = {
   "--pages": "pages",
   "--egress": "egress",
 };
-const FLAGS = ["--dry-run", "--no-tests", "--yes"];
+const FLAGS = ["--dry-run", "--no-tests", "--yes", "--remote"];
 
 interface Run {
   dryRun: boolean;
@@ -69,13 +71,37 @@ interface Run {
   again: string;
 }
 
+/** --remote: the loopback page's address, on the user's terminal, with the port forward that brings it to their computer. */
+const forwarded = (url: string) => {
+  const port = new URL(url).port;
+  tellUser(`Open ${url} in your browser. At another computer, first forward its port: ssh -L ${port}:127.0.0.1:${port} <this machine>`);
+};
+
 /** Observes, and folds what was seen in, until the code finds nothing more to fill. */
 async function look(a: Answers): Promise<{ answers: Answers; seen: Seen; state: State }> {
   for (;;) {
-    const seen = await observe(a);
+    const seen = { ...(await observe(a)), terminal: a.remote && hasTerminal() };
     const r = step(a, seen);
     a = r.answers;
     if (!r.look) return { answers: a, seen, state: r.state };
+  }
+}
+
+const hasTerminal = () => {
+  const tty = openTerminal();
+  if (tty != null) closeSync(tty);
+  return tty != null;
+};
+
+/** --remote: the user types the client secret in their terminal, and AWS keeps it. "": done; else a failure. */
+async function oidcInTerminal(a: Answers): Promise<string> {
+  const { putOidcSecret } = await import("../aws/setup");
+  for (;;) {
+    const secret = askSecret(`The client secret of Erga's client ${a.client} at ${a.issuer} (it does not show as you type):`);
+    if (secret == null) return "The prompt in the terminal ended.";
+    if (!secret) continue;
+    await putOidcSecret(a, secret);
+    return "";
   }
 }
 
@@ -85,14 +111,24 @@ const connect = async (): Promise<Connection> => {
   return "why" in c ? fail(c.why, "bunx cf auth login") : c;
 };
 
-/** The host's own login, which the user finishes in the browser. */
+/** The host's own login, which the user finishes in the browser. --remote: its link shows on their terminal. */
 function login(a: Answers) {
-  if (a.where == "aws") {
-    say(`WAIT  An AWS sign-in tab opens. The user signs in there. (aws sso login --profile ${a.profile})`);
-    Bun.spawnSync(["aws", "sso", "login", "--profile", a.profile], { stdio: ["ignore", "inherit", "inherit"], timeout: WAIT_MS });
-  } else {
-    say("WAIT  A Cloudflare tab opens. The user signs in there, then clicks Allow. (bunx cf auth login)");
-    Bun.spawnSync(["bunx", "cf", "auth", "login"], { cwd: ROOT, stdio: ["ignore", "inherit", "inherit"], timeout: WAIT_MS });
+  const tty = a.remote ? openTerminal() : null;
+  const out = tty ?? "inherit";
+  const where = a.remote ? "Its link shows on the user's terminal" : "A tab opens";
+  try {
+    if (a.where == "aws") {
+      say(`WAIT  ${where}: AWS sign-in. The user signs in there. (aws sso login --profile ${a.profile})`);
+      Bun.spawnSync(["aws", "sso", "login", "--profile", a.profile, ...(a.remote ? ["--no-browser"] : [])], {
+        stdio: ["ignore", out, out],
+        timeout: WAIT_MS,
+      });
+    } else {
+      say(`WAIT  ${where}: Cloudflare. The user signs in there, then clicks Allow. (bunx cf auth login)`);
+      Bun.spawnSync(["bunx", "cf", "auth", "login"], { cwd: ROOT, stdio: ["ignore", out, out], timeout: WAIT_MS });
+    }
+  } finally {
+    if (tty != null) closeSync(tty);
   }
 }
 
@@ -148,10 +184,13 @@ async function admin(a: Answers, o: Run): Promise<string> {
     const to = secret
       ? `https://${a.host}/auth/claim?t=${encodeURIComponent(await Claim.seal(secret, {}))}&approve=${encodeURIComponent(code)}`
       : `https://${a.host}/tokens/approve?code=${encodeURIComponent(code)}`;
-    openBrowser(to);
+    if (a.remote) tellUser(`Open this link in your browser. It works one time; never give it to your agent.\n${to}`);
+    else openBrowser(to);
   };
   say(
-    a.stagingOf
+    a.remote
+      ? `WAIT  The user's terminal shows a link to ${a.host}. The user opens it in their browser, and ${a.stagingOf ? `approves there, as an admin of ${a.stagingOf}` : "signs in there: they become the admin"}.`
+      : a.stagingOf
       ? `WAIT  A tab opens on ${a.host}. The user approves there, as an admin of ${a.stagingOf}.`
       : `WAIT  A tab opens on ${a.host}, with a link that works one time. The user signs in there, and becomes the admin.`
   );
@@ -185,7 +224,7 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
       );
       return "dry";
     }
-    if (o.dryRun && (state.at == "app" || state.at == "build" || state.at == "admin")) {
+    if (o.dryRun && (state.at == "app" || state.at == "build" || state.at == "admin" || state.at == "terminal")) {
       let resources: string[] = [];
       if (a.where == "aws") {
         await (await import("../aws/setup")).writePlan(DIR, a);
@@ -197,6 +236,11 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
     switch (state.at) {
       case "stop":
         return fail(state.why, `Ask the user, then: ${o.again}`);
+      case "terminal":
+        return fail(
+          "The next step is the user's own, in their terminal (--remote), and this shell has no terminal.",
+          `Give the user this command, to run in their own terminal session, not through you: ${o.again}. Ask them to tell you only its last line.`
+        );
       case "login":
         if (again) return fail(state.why ?? "The sign-in did not finish.", o.again);
         login(a);
@@ -205,10 +249,18 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
         if (again) return fail("The app step did not finish.", o.again);
         const ended =
           state.kind == "github"
-            ? (say("WAIT  A GitHub tab opens. The user clicks Create GitHub App there. Its secret goes to this command, never to you."),
-              await githubApp(a, WAIT_MS))
-            : (say("WAIT  A page opens. The user types the client secret of the organization's sign-in there, and clicks Save."),
-              await oidcSecret(a, async (v) => (await import("../aws/setup")).putOidcSecret(a, v), WAIT_MS));
+            ? a.remote
+              ? (say("WAIT  The user's terminal shows a page's address. The user opens it, and clicks Create GitHub App on GitHub."),
+                await githubApp(a, WAIT_MS, { open: forwarded }))
+              : (say("WAIT  A GitHub tab opens. The user clicks Create GitHub App there. Its secret goes to this command, never to you."),
+                await githubApp(a, WAIT_MS))
+            : a.remote
+              ? (say(
+                  "WAIT  The user types the client secret of the organization's sign-in in their terminal. It goes to AWS, never to you."
+                ),
+                await oidcInTerminal(a))
+              : (say("WAIT  A page opens. The user types the client secret of the organization's sign-in there, and clicks Save."),
+                await oidcSecret(a, async (v) => (await import("../aws/setup")).putOidcSecret(a, v), WAIT_MS));
         if (ended == null) return "wait";
         if (ended) return fail(ended, o.again);
         pass(state.kind == "github" ? "GitHub made the app." : "AWS has the client secret.");
@@ -383,6 +435,7 @@ export async function setupMain(argv: string[]) {
   const host = parsed.value;
   const { answers, problems, rest } = readOptions(host, args);
   const flag = (f: string) => args.includes(f);
+  const remote = flag("--remote") || !!process.env.SSH_CONNECTION;
   try {
     if (rest[0] == "remove") return await remove(host, flag("--yes"));
     // An unknown option first: its value is no setup command.
@@ -392,8 +445,8 @@ export async function setupMain(argv: string[]) {
       return usage(2);
     }
     const commit = flag("--commit") ? args[args.indexOf("--commit") + 1] : undefined;
-    const again = ["bun erga setup", host, ...args].join(" ");
-    await run(answers, { dryRun: flag("--dry-run"), noTests: flag("--no-tests"), commit, again });
+    const again = ["bun erga setup", host, ...args, ...(remote && !flag("--remote") ? ["--remote"] : [])].join(" ");
+    await run({ ...answers, remote }, { dryRun: flag("--dry-run"), noTests: flag("--no-tests"), commit, again });
   } catch (e) {
     fail((e as Error).message, `bun erga setup ${host}`);
   }

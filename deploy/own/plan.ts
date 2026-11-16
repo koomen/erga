@@ -39,7 +39,12 @@ export interface Answers {
   emailClaim: string;
   /** Documents' pages: "shared", or a domain. "": the default (pagesOf). */
   pages: string;
+  /** --remote (or $SSH_CONNECTION): the user is at another computer. Their steps go through their terminal, never a browser here. */
+  remote: boolean;
 }
+
+/** The answers that an option gives as text. */
+export type TextAnswer = Exclude<keyof Answers, "remote">;
 
 export const noAnswers = (host: string): Answers => ({
   host,
@@ -58,6 +63,7 @@ export const noAnswers = (host: string): Answers => ({
   client: "",
   emailClaim: "",
   pages: "",
+  remote: false,
 });
 
 export const sso = (a: Pick<Answers, "signIn">) => a.signIn == "sso";
@@ -73,7 +79,7 @@ export const pagesOf = (a: Answers): string => a.pages || (a.where != "aws" ? "s
 const HOST = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
 /** Reads one answer as the user gave it: its value, or why it isn't one. */
-export function parseAnswer(key: keyof Answers, raw: string): { value: string } | { problem: string } {
+export function parseAnswer(key: TextAnswer, raw: string): { value: string } | { problem: string } {
   const v = raw.trim();
   const low = v.toLowerCase();
   const is = (ok: boolean, value: string, problem: string) => (ok ? { value } : { problem });

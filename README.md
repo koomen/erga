@@ -27,13 +27,15 @@ git. Give your coding agent this prompt:
    (Bun is in `~/.bun/bin`).
 2. Ask the user these questions, one at a time. Ask nothing else, and
    decide nothing for them.
-   1. Erga's address, for example erga.example.com: on a domain they own,
+   1. Are you at this computer, with a browser on its screen, or connected
+      from another one (SSH, a remote shell)? If remote: `--remote`.
+   2. Erga's address, for example erga.example.com: on a domain they own,
       and not in use.
-   2. Cloudflare ($5 a month, recommended) or AWS (billed by use)? On AWS:
+   3. Cloudflare ($5 a month, recommended) or AWS (billed by use)? On AWS:
       which profile, if `aws configure list-profiles` shows several.
-   3. Cloudflare only: a staging server too (a copy for admins, to try
+   4. Cloudflare only: a staging server too (a copy for admins, to try
       updates)? No, or its address.
-   4. Who may sign in? 1. Only users you invite (recommended) 2. Anyone in
+   5. Who may sign in? 1. Only users you invite (recommended) 2. Anyone in
       your organization: which GitHub organization or email domain?
       3. Your organization's single sign-on:
       - Cloudflare: the Zero Trust team name, and the Application Audience
@@ -44,18 +46,21 @@ git. Give your coding agent this prompt:
         (its callback: `https://<address>/oauth2/idpresponse`). Which claim
         gives the email address, after what prefix? Not the `email` claim:
         `--email-claim <claim>:<prefix>` (`preferred_username:corp|`).
-   5. AWS without single sign-on: a second Route 53 domain, not the
+   6. AWS without single sign-on: a second Route 53 domain, not the
       address's, for the documents' pages.
 3. Run this with the answers, with a 10-minute timeout. It makes nothing
    and prints the plan:
 
        bun erga setup <address> --host cloudflare|aws --sign-in invite|organization|sso \
          [--staging <address>] [--profile <name>] [--organization <org or domain>] \
-         [--team <name> --aud <tag>] [--issuer <URL> --client <ID>] [--pages <domain>] --dry-run
+         [--team <name> --aud <tag>] [--issuer <URL> --client <ID>] [--pages <domain>] [--remote] --dry-run
 
    Show the user the plan. On their yes, run it again without `--dry-run`.
 4. The last line of each run (DRY RUN, DONE, WAIT or FAIL) says what to
-   do next. Do it. When it needs a choice, ask the user.
+   do next. Do it. When it needs a choice, ask the user. When it ends in
+   WAIT, don't run it again yourself: give the user the exact command to
+   run in their own terminal session, not through you, and ask them to
+   tell you only the last line.
 
 You make nothing yourself: no resource, file or token. A secret goes only
 into the browser, where the user types it: never into the chat, a command

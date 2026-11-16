@@ -6,9 +6,14 @@
 //                 .erga/secrets.json (with a staging address: under both hosts, since they share the app)
 //   oidcSecret    single sign-on on AWS: one field for the client secret of the organization's sign-in, into Secrets Manager
 //
+// With --remote the user is at another computer, and a browser here shows nothing. Their steps go through their own
+// terminal (/dev/tty), never through stdin, stdout or stderr, which the agent that runs the command has: a hidden
+// prompt (askSecret), and the links that they open in their own browser (tellUser).
+//
 // Trap: a page here never shows a secret, and the command never prints one.
 
 import { randomBytes } from "node:crypto";
+import { closeSync, openSync, writeSync } from "node:fs";
 import { esc } from "../../shared/html";
 import { type Answers, githubManifest } from "./plan";
 import { DIR, putSecret } from "./store";
@@ -16,6 +21,41 @@ import { DIR, putSecret } from "./store";
 /** Opens `url` in the user's browser. */
 export const openBrowser = (url: string) =>
   void Bun.spawn([process.platform == "darwin" ? "open" : "xdg-open", url], { stdout: "ignore", stderr: "ignore" });
+
+/** The user's terminal, open for writing: its file descriptor, or null when the command has none (an agent's shell). */
+export function openTerminal(open: (path: string, flags: string) => number = openSync): number | null {
+  try {
+    return open("/dev/tty", "w");
+  } catch {
+    return null;
+  }
+}
+
+/** Writes `text` on the user's terminal only. False: there is none. */
+export function tellUser(text: string): boolean {
+  const tty = openTerminal();
+  if (tty == null) return false;
+  try {
+    writeSync(tty, `\n${text}\n\n`);
+  } finally {
+    closeSync(tty);
+  }
+  return true;
+}
+
+/**
+ * Asks the user for a secret on their terminal, with no echo (bash's read -s, which turns the echo back on after a
+ * Ctrl-C too). The value comes back through a pipe, and nothing shows it. "": they typed nothing; null: no terminal.
+ */
+export function askSecret(label: string): string | null {
+  if (!tellUser(label)) return null;
+  const r = Bun.spawnSync(["bash", "-c", 'IFS= read -rs v </dev/tty && printf %s "$v"; echo >/dev/tty'], {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  return r.success ? r.stdout.toString().trim() : null;
+}
 
 const html = (body: string, status = 200) =>
   new Response(

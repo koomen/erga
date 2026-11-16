@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { githubApp } from "../deploy/own/browser";
+import { githubApp, openTerminal } from "../deploy/own/browser";
 import { readOptions } from "../deploy/own/cli";
 import { checksOf, missing, nothingSeen, planText, type Seen, stagingOf, step } from "../deploy/own/flow";
 import {
@@ -218,6 +218,46 @@ test("AWS: the profile, the region from it, the stack as the plan, and the organ
   expect(run(cdn, AWS, AWS).state).toMatchObject({ at: "stop", why: expect.stringContaining("another domain than the app's") });
   const other = { ...cdn, pages: "example-pages.com" };
   expect(run(other, { ...AWS, zones: ["example.com", "example-pages.com"] }).state).toEqual({ at: "app", kind: "github" });
+});
+
+test("--remote: the user's steps need their terminal; an agent's shell, with none, stops there and never opens a browser", () => {
+  const sso = options(
+    "--host",
+    "aws",
+    "--sign-in",
+    "sso",
+    "--issuer",
+    "https://idp.example.com/pool",
+    "--client",
+    "c",
+    "--profile",
+    "work"
+  );
+  const a = { ...sso.answers, region: "us-west-2", remote: true };
+  expect(sso.problems).toEqual([]);
+  expect(options("--remote").problems).toEqual([]);
+  // No terminal: the login, the client secret and the admin's link each stop the command.
+  expect(run(a, { ...AWS, login: { ok: false, why: "expired" } }).state).toEqual({ at: "terminal" });
+  expect(run(a, AWS).state).toEqual({ at: "terminal" });
+  expect(run(a, { ...AWS, ...LIVE, app: true }).state).toEqual({ at: "terminal" });
+  // The build needs no user: it goes on without a terminal.
+  expect(run(a, { ...AWS, app: true }).state).toEqual({ at: "build" });
+  // In the user's own terminal: the same steps as at the computer.
+  expect(run(a, { ...AWS, terminal: true }).state).toEqual({ at: "app", kind: "oidc" });
+  expect(run(a, { ...AWS, ...LIVE, app: true, terminal: true }).state).toEqual({ at: "admin" });
+  expect(run({ ...a, remote: false }, AWS).state).toEqual({ at: "app", kind: "oidc" });
+  expect(planText(a, seen(AWS))).toContain(
+    "• your organization's sign-in, at a load balancer in front (you type its client secret in your terminal)"
+  );
+  // The terminal is /dev/tty, the user's own: never stdin, stdout or stderr. None (an agent's shell): null.
+  const asked: string[] = [];
+  expect(openTerminal((path) => (asked.push(path), 7))).toBe(7);
+  expect(
+    openTerminal(() => {
+      throw Object.assign(new Error("Device not configured"), { code: "ENXIO" });
+    })
+  ).toBeNull();
+  expect(asked).toEqual(["/dev/tty"]);
 });
 
 test("--staging: one GitHub App for both, then the staging instance on its primary's account, with an approval at the end", () => {
