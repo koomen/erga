@@ -1,4 +1,4 @@
-// The API keys admins enter on /admin/api-keys, on an
+// The API keys admins enter on the Agents page (/admin/agents), on an
 // in-memory SQLite database with the same migrations D1 gets: stored
 // encrypted, never answered back (only set, the last four characters, and who
 // set it when), in the change log without the value, and admins only.
@@ -109,7 +109,7 @@ afterAll(() => server.stop(true));
 test("POST /admin/credentials: only from this site's pages; the answer never holds the key", async () => {
   const post = (fields: Record<string, string>, from = origin) =>
     fetch(`${origin}/admin/credentials`, { method: "POST", body: new URLSearchParams(fields), headers: { Origin: from } });
-  const before = await (await fetch(`${origin}/admin/api-keys`)).text();
+  const before = await (await fetch(`${origin}/admin/agents`)).text();
   expect(before).toContain("Using the deploy's</span> <code>ANTHROPIC_API_KEY</code>");
   // A provider's models show once the server has a key for it: Anthropic's (the deploy's), not OpenAI's.
   expect(before).toContain(`value="sonnet" checked`);
@@ -122,25 +122,23 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   expect(JSON.parse(text).credential).toMatchObject({ name: "anthropic", set: true, last4: "Ab12" });
   expect((await post({ name: "anthropic", value: "nope" })).status).toBe(400);
   expect((await post({ name: "gemini", value: OPENAI })).status).toBe(400);
-  const html = await (await fetch(`${origin}/admin/api-keys`)).text();
+  const html = await (await fetch(`${origin}/admin/agents`)).text();
   expect(html).not.toContain(ANTHROPIC.slice(0, 20));
   expect(html).toContain(`Key saved</span> · <code>…Ab12</code>`);
   const log = await (await fetch(`${origin}/admin/changes`)).text();
   expect(log).toContain(`<span class="key">API key</span> <code>ANTHROPIC_API_KEY</code> set`);
   expect(log).not.toContain(ANTHROPIC.slice(0, 20));
-  // The keys have their own page now: Settings has none of them; every key and deploy secret is on API keys.
-  expect(await (await fetch(`${origin}/admin/settings`)).text()).not.toContain('li class="provider"');
+  // Every agent setting is on Agents: the keys, whose keys (the list at the top) and the daily token limit (with No
+  // limit). The deploy's secrets are on Settings (tests/settings.test.ts).
   expect(html).toContain(`data-name="anthropic"`);
   for (const name of ["openai", "google", "openrouter"]) expect(html).toContain(`data-name="${name}"`);
   expect(html).not.toContain(`data-name="cloudflare_deploy"`);
-  // Whose keys the agents use is set here (the list at the top), not on Settings.
   expect(html).toContain(`<option value="server" selected>Server will provide keys</option>`);
-  for (const key of ["agent_keys", "agent_models_off"])
-    expect(await (await fetch(`${origin}/admin/settings`)).text()).not.toContain(`data-key="${key}"`);
-  for (const env of ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET", "GITHUB_ISSUES_TOKEN"])
-    expect(html).toContain(`data-env="${env}"`);
-  expect(html).not.toContain("DEPLOY_HOOK_SECRET");
-  expect(html).toContain(`href="/admin/api-keys" aria-current="page"`);
+  expect(html).toContain(`data-key="agent_daily_tokens"`);
+  expect(html).toContain(`<option value="never">No limit</option>`);
+  expect(html).not.toContain(`data-env="SESSION_SECRET"`);
+  expect(html).toContain(`href="/admin/agents" aria-current="page"`);
+  expect((await fetch(`${origin}/admin/api-keys`)).status).toBe(404);
 });
 
 test("the change log shows a row of the removed factory as plain values: it has no code of its own", async () => {

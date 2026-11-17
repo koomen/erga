@@ -29,8 +29,8 @@
 //   any other address          the Erga domain's published site (server/sites/addresses.ts): its redirects, its files
 //                              at clean addresses (/about), its 404 page; Erga's own paths, and documents that are
 //                              there, win
-//   /admin, /admin/changes, /admin/users, /admin/auth, /admin/api-keys   the server's settings, their change log, its
-//                              users, how people sign in, the API keys
+//   /admin, /admin/changes, /admin/users, /admin/auth, /admin/agents   the server's settings, their change log, its
+//                              users, how people sign in, the agents' settings and API keys
 //   /api/admin/agent[/...]     each admin's agent: its messages, events, conversation and panel layout
 //                              Every /admin page has the same layout, and every /admin route is
 //                              for the server's admins only, checked here first (adminGate) and by its own routes.

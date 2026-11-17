@@ -1,15 +1,17 @@
-// /admin/api-keys, the API keys page (client/inline/admin-api-keys.ts): whose keys the agents use (the agent_keys
-// setting), and, when the server provides them, one row for each provider: its key (set, replace, clear) and, once the
-// server has one, the provider's models it runs (the agent_models_off setting holds the ones not ticked). Then the
-// secrets only the deploy sets, folded away.
+// /admin/agents, the Agents page (client/inline/admin-agents.ts): every setting of the users' agents. Whose keys the
+// agents use (the agent_keys setting); when the server provides them, one row for each provider: its key (set, replace,
+// clear) and, once the server has one, the provider's models it runs (the agent_models_off setting holds the ones not
+// ticked); and the daily token limit for each user (agent_daily_tokens, a setting row as Settings draws it, saved by
+// client/inline/admin-settings.ts).
 
-import type { CredentialEntry, DeploySecretEntry } from "../directory/index.ts";
+import type { CredentialEntry } from "../directory/index.ts";
 import { inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
 import { setAt } from "./parts.ts";
+import { chip, settingRows } from "./settings.ts";
 import { MODELS, type ModelChoice } from "../../shared/models.ts";
 
 /** The providers' models, by provider. */
@@ -45,28 +47,23 @@ export function credentialRow(c: CredentialEntry, session: Session, place: numbe
   </li>`;
 }
 
-/** A secret only the deploy sets: whether this server has it, and what it is for. */
-function deploySecretRow(d: DeploySecretEntry): string {
-  const state = d.set
-    ? `<span class="badge ok">Set</span>`
-    : `<span class="badge"${d.standIn ? ` title="The session secret stands in"` : ""}>Not set</span>`;
-  return `  <li class="deploy-secret" data-env="${esc(d.env)}"><div class="about"><code class="key">${esc(d.env)}</code><p class="desc">${esc(d.description)}</p></div>${state}</li>`;
-}
+/** The Agents page's setting rows: the daily token limit. */
+const LIMIT = (key: string) => key == "agent_daily_tokens";
 
-/** /admin/api-keys. The page never has a key. */
-export async function apiKeysPage(platform: Platform, session: Session) {
+/** /admin/agents. The page never has a key. */
+export async function agentsPage(platform: Platform, session: Session) {
   const who = whoOf(session);
-  const [credentials, deployed, mode, off] = await Promise.all([
+  const [credentials, limit, mode, off] = await Promise.all([
     platform.directory.credentials.list(who),
-    platform.directory.credentials.deployed(who),
+    settingRows(platform, session, LIMIT),
     platform.directory.config.get("agent_keys"),
     platform.directory.config.get("agent_models_off"),
   ]);
   const own = mode == "own";
   return adminPage({
     session,
-    title: "API keys",
-    here: "keys",
+    title: "Agents",
+    here: "agents",
     body: `
   <section aria-labelledby="page-head" class="credentials">
     <ol class="rows settings">
@@ -80,23 +77,21 @@ export async function apiKeysPage(platform: Platform, session: Session) {
       </li>
     </ol>
     <p class="empty own-note"${own ? "" : " hidden"}>Each user adds their own keys in their Settings.</p>
-    <ol class="rows providers" data-live-kind="apikey" data-live-view="api-keys" data-live-order="asc" data-live-at="${Date.now()}"${own ? " hidden" : ""}>
+    <ol class="rows providers" data-live-kind="apikey" data-live-view="agents" data-live-order="asc" data-live-at="${Date.now()}"${own ? " hidden" : ""}>
 ${credentials.map((c, place) => credentialRow(c, session, place, off)).join("\n")}
     </ol>
-  </section>
-  <section class="deploy-secrets" aria-labelledby="deploy-head">
-    <h3 class="sub-head" id="deploy-head">Set by the deploy</h3>
-    <ol class="rows">
-${deployed.map(deploySecretRow).join("\n")}
+    <ol class="rows settings server-only" data-live-kind="setting" data-live-view="agents" data-live-order="asc" data-live-at="${Date.now()}"${own ? " hidden" : ""}>
+${limit.map((r) => r.html).join("\n")}
     </ol>
   </section>
-<script>${TIMES_SCRIPT}${inlineCall("admin-api-keys")}</script>`,
+<script>${TIMES_SCRIPT}${inlineCall("admin-agents")}${inlineCall("admin-settings", { chip: chip("LOGIN", false) })}</script>`,
   });
 }
 
-/** The rows of /admin/api-keys that `keys` name ("apikey:<name>"), as they are now, for an open page (server/news/). */
-export const apiKeysRows: LiveRows = async (platform, session, keys) => {
+/** The rows of /admin/agents that `keys` name ("apikey:<name>", "setting:<key>"), as they are now, for an open page (server/news/). */
+export const agentsRows: LiveRows = async (platform, session, keys) => {
   const out: Record<string, LiveRow> = Object.fromEntries(keys.map((k) => [k, null]));
+  for (const r of await settingRows(platform, session, LIMIT, true)) if (r.key in out) out[r.key] = { html: r.html, sort: r.place };
   const off = await platform.directory.config.get("agent_models_off");
   (await platform.directory.credentials.list(whoOf(session))).forEach((c, place) => {
     if (`apikey:${c.name}` in out) out[`apikey:${c.name}`] = { html: credentialRow(c, session, place, off), sort: place };

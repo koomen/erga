@@ -5,7 +5,7 @@
 // their agent its models, and their tokens are listed, made and revoked there.
 // The second journey is on a server of this file's own, with no agent key: a token of a smaller scope reaches its
 // document and nothing else, the agent's panel says how to turn the agent on, and the admin saves the server's keys
-// on /admin/api-keys (they are the whole server's).
+// on /admin/agents (they are the whole server's).
 // A test never makes a token by itself: it asks as the Settings dialog does (POST /tokens/new), or as an agent does.
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -443,7 +443,7 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
   });
 
   test("the server's keys: a saved key shows its models under it; a box saves as it changes; own keys hide the providers", async () => {
-    await page.goto(`${root}/admin/api-keys`);
+    await page.goto(`${root}/admin/agents`);
     expect(await page.$(`${row} .models`)).toBeNull();
     await page.fill("#key-openai", KEY("Zz90"));
     await page.press("#key-openai", "Enter");
@@ -454,6 +454,8 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
 
     await page.selectOption("#agent-keys", "own");
     await soon(() => page.isHidden("ol.providers")).toBe(true);
+    // The daily token limit is for the server's keys only: it hides with them.
+    expect(await page.isHidden("ol.server-only")).toBe(true);
     expect(await page.isVisible(".own-note")).toBe(true);
     await page.reload();
     expect(await page.inputValue("#agent-keys")).toBe("own");

@@ -16,8 +16,8 @@ ${owner} is an admin of this Erga server. For the server (the admin pages, /admi
   JSON), or puts it back to its default (reset). A setting the deploy locks can't be
   changed: say so. documents (op list_documents) with all finds any document on the
   server by its title, owner or address. Each change you make goes in the change log
-  under ${owner}'s name, as if they made it on /admin/settings.
-- settings op clear_api_key clears an API key. Keys are set only on /admin/api-keys: if
+  under ${owner}'s name, as if they made it on /admin/settings or /admin/agents.
+- settings op clear_api_key clears an API key. Keys are set only on /admin/agents: if
   ${owner} wants to set one, tell them to paste it there, never in this conversation. If
   they paste a key or token here anyway, don't use it or repeat it: tell them to set it on
   the page and to replace it, as it is no longer secret.

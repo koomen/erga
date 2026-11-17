@@ -141,7 +141,7 @@ journey("an admin on the admin pages", () => {
     });
     await agent("set_setting", { key: "feedback_repository", value: "erga/pretend" });
     await soon(() => asked).toBe(1);
-    await go("/admin/api-keys", "li.provider .about");
+    await go("/admin/agents", "li.provider .about");
     const answered = page.waitForResponse("**/api/news/rows*");
     release();
     await answered;
@@ -204,7 +204,7 @@ journey("an admin on the admin pages", () => {
     expect(await page.evaluate(() => document.querySelector<HTMLElement>("ol.users")!.dataset.mark)).toBe("same");
   });
 
-  test("Settings and Access follow an agent's changes: a setting's value, a rule added and removed, the public switch", async () => {
+  test("Settings, Agents and Access follow an agent's changes: a setting's value, No limit, a rule added and removed, the public switch", async () => {
     await go("/admin/settings", 'li[data-live="setting:delete_docs_after_hours"]');
     // Feedback's repository is a setting on this page, with the value that the first step set.
     const repository = await page.evaluate(() => {
@@ -220,6 +220,17 @@ journey("an admin on the admin pages", () => {
     expect(await hours()).not.toBe("7");
     await agent("set_setting", { key: "delete_docs_after_hours", value: 7 });
     await soon(hours).toBe("7");
+    // Agents: the daily token limit. The admin picks "No limit" and saves, and the server has no limit; the agent's
+    // reset brings the default back to the page.
+    const tokens = 'li[data-live="setting:agent_daily_tokens"]';
+    await go("/admin/agents", tokens);
+    const limit = async () =>
+      (await agent<{ settings: { key: string; value: unknown }[] }>("settings")).settings.find((e) => e.key == "agent_daily_tokens")!.value;
+    await page.selectOption(`${tokens} select.mode`, { label: "No limit" });
+    await page.click(`${tokens} .save`);
+    await soon(limit).toBe(null);
+    await agent("set_setting", { key: "agent_daily_tokens", reset: true });
+    await soon(() => page.evaluate((s) => document.querySelector<HTMLSelectElement>(`${s} select.mode`)!.value, tokens)).toBe("after");
 
     // Access: a rule the agent adds comes in at its place; sharing publicly, switched by the agent, shows switched.
     await go("/admin/access", "ol.rules > li");

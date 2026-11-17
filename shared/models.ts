@@ -1,5 +1,5 @@
 // The models each person's agent can switch between, and which of them a person can use now. Data and decisions
-// only, with no IO: the server's settings check model names against it, the admin's API keys page lists it, and
+// only, with no IO: the server's settings check model names against it, the admin's Agents page lists it, and
 // agents/models.ts runs the models (agents/pi-model.ts for the providers Effect AI has none for).
 //
 // A model runs with a key for its provider. A person's own key always wins, and opens every model of its provider.

@@ -1,13 +1,14 @@
-// The API keys page's script (/admin/api-keys, server/admin/api-keys.ts): whose keys the agents use (the list at the top,
+// The Agents page's script (/admin/agents, server/admin/agents.ts): whose keys the agents use (the list at the top,
 // the agent_keys setting: it saves as it changes, and the providers show only when the server provides keys); for each
 // provider, Save sets or replaces the key typed in, Clear removes it (the answer never holds the key, and the row is
-// drawn again), and its models' boxes save as they change (agent_models_off: every model not ticked, on every row).
+// drawn again), and its models' boxes save as they change (agent_models_off: every model not ticked, on every row). The
+// daily token limit's row is a setting row: admin-settings.ts saves it, and it shows only when the server provides keys.
 
 import { post, runTool, say } from "../common/admin-post";
 import { liveList, refresh } from "../common/live-rows";
 import times from "./times";
 
-export default function adminApiKeys(): void {
+export default function adminAgents(): void {
   /**
    * `li` as the page has it now: a live change can draw a row again while it saves (live-rows.ts keeps its status),
    * and the answer goes to the new one.
@@ -67,7 +68,7 @@ export default function adminApiKeys(): void {
     try {
       await runTool("set_setting", { key: "agent_keys", value: mode.value });
       say(modeHint, "");
-      list.hidden = mode.value == "own";
+      for (const el of [list, document.querySelector<HTMLElement>("ol.server-only")!]) el.hidden = mode.value == "own";
       document.querySelector<HTMLElement>(".own-note")!.hidden = mode.value != "own";
     } catch (err) {
       say(modeHint, (err as Error).message, true);

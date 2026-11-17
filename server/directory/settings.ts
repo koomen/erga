@@ -83,8 +83,8 @@ const setting = <T>(s: Setting<T>) => s;
 
 /** The settings the Access page sets (/admin/access), not the Settings page. */
 export const ACCESS_SETTINGS: readonly string[] = ["public_sharing"];
-/** The settings the API keys page sets (/admin/api-keys), not the Settings page. */
-export const AGENT_SETTINGS: readonly string[] = ["agent_keys", "agent_models_off"];
+/** The settings the Agents page sets (/admin/agents), not the Settings page. */
+export const AGENT_SETTINGS: readonly string[] = ["agent_keys", "agent_models_off", "agent_daily_tokens"];
 
 /** Every setting the server has. */
 export const SETTINGS = {
@@ -154,7 +154,7 @@ export const SETTINGS = {
   agent_keys: setting<"server" | "own">({
     label: "Whose keys the agents use",
     description:
-      '"server": the keys on the API keys page, for everyone (a user\'s own key wins). "own": each user adds their own keys in Settings, and the agents never use a server key.',
+      '"server": the keys on the Agents page, for everyone (a user\'s own key wins). "own": each user adds their own keys in Settings, and the agents never use a server key.',
     default: "server",
     parse: (v) => {
       const s = typeof v == "string" ? v.trim().toLowerCase() : v;
@@ -163,13 +163,19 @@ export const SETTINGS = {
     },
     choices: ["server", "own"],
   }),
-  agent_daily_tokens: setting<number>({
-    label: "Agents: daily token limit for each user",
-    description: "The most tokens one user's agent can use each day on the server's keys.",
+  agent_daily_tokens: setting<number | null>({
+    label: "Daily token limit for each user",
+    description: "The most tokens one user's agent can use each day on the server's keys, or no limit.",
     values:
-      "Input and output tokens a day (UTC). Over it, their agent stops until midnight UTC, and says why. A user's own key has no limit.",
+      'Input and output tokens a day (UTC), or null (or "off"): no limit. Over it, their agent stops until midnight UTC, and says why. A user\'s own key has no limit.',
     default: 30_000_000,
-    parse: integer(1, 100_000_000_000),
+    // null, or "off" or "no limit" (as an agent or a deploy might say it), is no limit.
+    parse: (v) => {
+      if (v === null || (typeof v == "string" && ["off", "no limit", "none"].includes(v.trim().toLowerCase()))) return null;
+      if (typeof v != "number" || !Number.isInteger(v) || v < 1 || v > 100_000_000_000)
+        throw new ConfigError({ message: "must be a whole number from 1 to 100000000000 (tokens), or null for no limit" });
+      return v;
+    },
   }),
   agent_models_off: setting<string[]>({
     label: "Models a server key doesn't run",

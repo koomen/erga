@@ -42,6 +42,8 @@ const entries: ConfigEntry[] = [
     updated: null,
     updatedBy: null,
   },
+  // An agent setting: on the Agents page, never here.
+  { key: "agent_daily_tokens", value: 30_000_000, default: 30_000_000, source: "default", locked: false, updated: null, updatedBy: null },
 ];
 const users = ["alice", "bob", "carol"].map((login) => ({ login, name: login, role: login == "bob" ? "admin" : "user", created: 1, addedBy: null, lastSeen: null, bootstrap: false }));
 const platform = {
@@ -57,7 +59,12 @@ const platform = {
         return entries[0];
       },
     },
-    credentials: { list: async () => [] },
+    credentials: {
+      list: async () => [],
+      deployed: async () => [
+        { env: "SESSION_SECRET", service: "Erga", description: "Signs sessions.", why: "", set: true, standIn: false },
+      ],
+    },
     get: async () => null,
     pageLlm: { today: async () => ({ calls: 0, input: 0, output: 0, cost: 0, since: 0, docs: [] }) },
   },
@@ -83,4 +90,7 @@ test("a users setting is a picker: chips for its users, no typed list; the line 
   expect(html).toContain(`<datalist id="user-logins"><option value="alice"><option value="bob"><option value="carol"></datalist>`);
   expect(html).toContain(`Set 2026-10-05 14:03 UTC by bob`);
   expect(html).toMatch(/data-key="beta" data-control="switch"/);
+  // The agents' settings are on the Agents page; the deploy's secrets are here.
+  expect(html).not.toContain(`data-key="agent_daily_tokens"`);
+  expect(html).toContain(`<li class="deploy-secret" data-env="SESSION_SECRET">`);
 });

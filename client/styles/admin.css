@@ -93,6 +93,7 @@ ol.rows > :is(li.setting, li.provider, li.deploy-secret) { display: grid; grid-t
 .setting .value .amount { display: flex; align-items: center; gap: 8px; }
 .setting .value .amount[hidden], .setting .value [hidden] { display: none; }
 .setting .value .input[type=number] { width: 6.5em; text-align: right; font-feature-settings: "tnum"; }
+.setting[data-key=agent_daily_tokens] .value .input[type=number] { width: 8.5em; }
 .setting .value .input:not([type=number]) { width: 14em; }
 .setting .value .unit { min-width: 3em; font-size: 13px; color: var(--soft); }
 .setting .value select { min-width: 6.5em; }

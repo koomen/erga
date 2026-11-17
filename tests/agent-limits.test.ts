@@ -91,4 +91,16 @@ test("the day's limit: a person's tokens on the server's keys today (UTC), again
   );
   expect(await dailyLimit(dir, "bo", NOW)).not.toBeNull();
   expect(await dailyLimit(dir, "ada", NOW + 86_400_000)).toBeNull();
+  // No limit (null, or "off" as an agent may say it): nobody stops, however many tokens.
+  for (const off of [null, "off", "No limit"]) {
+    await dir.config.set(root, "agent_daily_tokens", off);
+    expect(await dir.config.get("agent_daily_tokens")).toBeNull();
+    expect(await dailyLimit(dir, "ada", NOW)).toBeNull();
+  }
+  await expect(dir.config.set(root, "agent_daily_tokens", 0)).rejects.toThrow(/or null for no limit/);
+  await expect(dir.config.set(root, "agent_daily_tokens", "lots")).rejects.toThrow(/or null for no limit/);
+  // The default is a limit again.
+  await dir.config.reset(root, "agent_daily_tokens");
+  expect(await dailyLimit(dir, "bo", NOW)).toBeNull();
+  expect(await dir.config.get("agent_daily_tokens")).toBe(30_000_000);
 });

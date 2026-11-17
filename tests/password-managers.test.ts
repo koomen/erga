@@ -38,7 +38,7 @@ test("each field that looks like a sign-in field tells password managers to igno
     "server/identity/accounts.ts",
     "server/admin/users.ts",
     "server/admin/settings.ts",
-    "server/admin/api-keys.ts",
+    "server/admin/agents.ts",
     "server/admin/auth.ts",
     "client/agent/settings-dialog.ts",
   ])

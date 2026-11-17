@@ -1,4 +1,4 @@
-// A key an admin stores, replaces or clears on /admin/api-keys reaches the
+// A key an admin stores, replaces or clears on /admin/agents reaches the
 // agent of a document that is already open, at its next turn (document/api/host.ts reads
 // the settings at each turn: agents/models.ts). No real API call: a
 // fake fetch answers for Anthropic and records the key each request sent.

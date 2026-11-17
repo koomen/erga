@@ -1,4 +1,4 @@
-// The API keys an admin enters on /admin/api-keys: one for each provider of
+// The API keys an admin enters on the Agents page (/admin/agents): one for each provider of
 // models (Anthropic, OpenAI, Google, OpenRouter), for each person's agent
 // (agents/models.ts), and Anthropic's for version descriptions. They are kept so:
 //
@@ -65,7 +65,7 @@ export const CREDENTIALS = {
 } as const satisfies Record<string, { env: string; label: string; service: string; prefixes: readonly string[]; description: string }>;
 
 /**
- * The secrets only the deploy sets (Worker secrets). The API keys page lists
+ * The secrets only the deploy sets (Worker secrets). The Settings page lists
  * them but can't change them: each is a root key, guards the sign-in, or is
  * shared with the other server, so a wrong value there could lock the admins
  * out or break both servers. A key here may be wrong at no greater cost than
@@ -81,8 +81,8 @@ export const DEPLOY_SECRETS = [
   {
     env: "FACTORY_KEY",
     service: "Erga",
-    description: "Encrypts the keys on this page and the sign-in secrets.",
-    why: "The keys on this page are encrypted with it.",
+    description: "Encrypts the API keys on the Agents page and the sign-in secrets.",
+    why: "The API keys on the Agents page are encrypted with it.",
   },
   {
     env: "GITHUB_CLIENT_SECRET",

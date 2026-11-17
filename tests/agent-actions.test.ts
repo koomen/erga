@@ -78,7 +78,7 @@ const named = (a: Action) => `${a.method} ${a.path} (${a.action})`;
 const PAGE_SCRIPTS = [
   ...(readdirSync(ROOT + "client", { recursive: true }) as string[]).filter((f) => f.endsWith(".ts")).map((f) => `client/${f}`),
   "server/identity/tokens-page.ts",
-  ...["settings", "api-keys", "auth", "access", "changes", "users"].map((p) => `server/admin/${p}.ts`),
+  ...["settings", "agents", "auth", "access", "changes", "users"].map((p) => `server/admin/${p}.ts`),
   "server/documents/view.ts",
   "server/documents/make.ts",
   "server/pages/viewer.ts",

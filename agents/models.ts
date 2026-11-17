@@ -36,7 +36,7 @@ type Keys = Partial<Record<Provider, Redacted.Redacted<string>>>;
 export interface AgentConfig {
   /** The person's own keys, by provider. */
   own: Keys;
-  /** The server's keys, by provider (stored on /admin/api-keys, else the deploy's Worker secret). */
+  /** The server's keys, by provider (stored on /admin/agents, else the deploy's Worker secret). */
   server: Keys;
   /** The agent_keys setting: "own" means the server's keys run nothing. */
   mode: "server" | "own";
@@ -105,11 +105,11 @@ declare module "../server/platform.ts" {
 
 /** What the agent pane says when the stored key doesn't open on this server. */
 export const UNREADABLE_KEY =
-  "the stored Anthropic API key doesn't open on this server: it was encrypted with another server's FACTORY_KEY. An admin pastes the key again on /admin/api-keys, or you add your own in Settings";
+  "the stored Anthropic API key doesn't open on this server: it was encrypted with another server's FACTORY_KEY. An admin pastes the key again on /admin/agents, or you add your own in Settings";
 
 /** What the agent pane says when no key runs any model. */
 const NO_KEY =
-  "no API key is set (add your own in Settings, or an admin sets one on /admin/api-keys; locally, export ANTHROPIC_API_KEY before bun start, or put it in .dev.vars)";
+  "no API key is set (add your own in Settings, or an admin sets one on /admin/agents; locally, export ANTHROPIC_API_KEY before bun start, or put it in .dev.vars)";
 const OWN_KEYS = "the admin asks each user to bring their own API key, and you have none yet. Add one in Settings, Agent";
 
 /** Where the server's keys and the admin's choices are read: the directory's stored keys and its settings. */
@@ -120,7 +120,7 @@ export interface KeySource {
 }
 
 /**
- * The agents' settings, as they are now: each provider's key an admin stored on /admin/api-keys, else the Worker
+ * The agents' settings, as they are now: each provider's key an admin stored on /admin/agents, else the Worker
  * secret of the same name in `env`; the admin's agent_keys and agent_models_off; and `login`'s own keys. Read at
  * each turn (a few rows of the database), so a key or a setting that changes reaches every agent at its next turn,
  * with no reload. No directory: the Worker secrets only.

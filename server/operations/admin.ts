@@ -46,7 +46,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
   // ------------------------------------------------------------ the server's settings and API keys (admins)
   {
     name: "settings",
-    ui: "Settings (/admin/settings), API keys (/admin/api-keys) and Change log (/admin/changes)",
+    ui: "Settings (/admin/settings), Agents (/admin/agents) and Change log (/admin/changes)",
     label: "Read the server's settings",
     activity: "reading the server's settings",
     admin: true,
@@ -105,17 +105,17 @@ export const ADMIN_OPERATIONS: Operation[] = [
           ...(c.unreadable
             ? {
                 unreadable:
-                  "stored, but this server can't open it (encrypted with another server's FACTORY_KEY): an admin must paste it again on /admin/api-keys",
+                  "stored, but this server can't open it (encrypted with another server's FACTORY_KEY): an admin must paste it again on /admin/agents",
               }
             : {}),
         })),
-        keysNote: "An admin sets or replaces a key only on /admin/api-keys, never in a conversation.",
+        keysNote: "An admin sets or replaces a key only on /admin/agents, never in a conversation.",
       };
     },
   },
   {
     name: "set_setting",
-    ui: "Settings (/admin/settings): change a setting, or Reset to the default",
+    ui: "Settings (/admin/settings) and Agents (/admin/agents): change a setting, or Reset to the default",
     label: "Change a server setting",
     activity: "changing a server setting",
     admin: true,
@@ -128,7 +128,8 @@ export const ADMIN_OPERATIONS: Operation[] = [
       key: Schema.String.annotate({ description: "The setting's key, e.g. delete_docs_after_hours (settings lists them)" }),
       value: Schema.optionalKey(
         Schema.Unknown.annotate({
-          description: "Its new value, as JSON: a number, string, boolean or null, as the setting takes. A locked setting can't change",
+          description:
+            "Its new value, as JSON: a number, string, boolean or null, as the setting takes (its values say; null is never or no limit, e.g. agent_daily_tokens: null). A locked setting can't change",
         })
       ),
       reset: Schema.optionalKey(Schema.Boolean.annotate({ description: "true: back to its default (no value)" })),
@@ -156,7 +157,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
   },
   {
     name: "clear_api_key",
-    ui: "API keys (/admin/api-keys): Clear",
+    ui: "Agents (/admin/agents): Clear an API key",
     label: "Clear an API key",
     activity: "clearing an API key",
     admin: true,

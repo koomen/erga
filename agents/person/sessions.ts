@@ -47,10 +47,13 @@ export interface PersonAgentsDeps {
 
 /**
  * Why `login`'s agent can't take another turn on the server's keys now: their tokens there today (UTC) reached the
- * setting agent_daily_tokens. Null when it can. Their own key has no limit (agents/run.ts never asks then).
+ * setting agent_daily_tokens. Null when it can, and always when the setting is null (no limit). Their own key has no
+ * limit (agents/run.ts never asks then).
  */
 export async function dailyLimit(dir: Directory, login: string, now = Date.now()): Promise<string | null> {
-  const [most, used] = await Promise.all([dir.config.get("agent_daily_tokens"), dir.activity.serverTokens(login, now)]);
+  const most = await dir.config.get("agent_daily_tokens");
+  if (most === null) return null;
+  const used = await dir.activity.serverTokens(login, now);
   const n = (v: number) => v.toLocaleString("en-US");
   return used < most
     ? null

@@ -4,7 +4,7 @@
 
 import * as Effect from "effect/Effect";
 import { NotAllowed } from "../directory/index.ts";
-import { accessRows, apiKeysRows, authRows, changesRows, settingsRows, usersRows } from "../admin/index.ts";
+import { accessRows, agentsRows, authRows, changesRows, settingsRows, usersRows } from "../admin/index.ts";
 import { documentsRows } from "../pages/index.ts";
 import { type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
 import { call, ctx, fromWeb, json, text, type Route } from "../http.ts";
@@ -17,7 +17,7 @@ const VIEWS: Record<string, LiveRows> = {
   users: usersRows,
   settings: settingsRows,
   access: accessRows,
-  "api-keys": apiKeysRows,
+  agents: agentsRows,
   changes: changesRows,
   auth: authRows,
 };

@@ -4,9 +4,9 @@
 //
 // The routes are ROUTES, below: each page, and the two POSTs that set a secret.
 //
-// The API keys page shows whether each key is set, its
-// last four characters, and who set it when; and, read-only, the secrets only the
-// deploy sets. The page never gets a saved key back, nor does any answer here.
+// The Agents page shows whether each API key is set, its last four characters,
+// and who set it when. The page never gets a saved key back, nor does any answer
+// here. The Settings page shows, read-only, the secrets only the deploy sets.
 //
 // The Authentication page shows this server's GitHub OAuth app and Google
 // OAuth client: the client ID (public), whether the secret is set (never the
@@ -17,7 +17,7 @@
 // shows the page again in place, with its message under the provider's card.
 //
 // Every page has the layout every admin page shares: the
-// breadcrumb, Share with agent, and the sidebar to Settings, API keys, Authentication, Change log, Users and Ops.
+// breadcrumb, Share with agent, and the sidebar to Settings, Agents, Authentication, Change log, Users and Ops.
 //
 // Every other change on these pages (a setting, a user, a rule, a key cleared, a
 // provider switched) is an operation (server/operations/admin.ts): the pages'
@@ -39,7 +39,7 @@ import type { Who } from "../directory/index.ts";
 import { call, ctx, Field, form, json, plainJson, redirect } from "../http.ts";
 import { settingsPage } from "./settings.ts";
 import { analyticsPage, isSpan } from "./analytics.ts";
-import { apiKeysPage } from "./api-keys.ts";
+import { agentsPage } from "./agents.ts";
 import { authPage } from "./auth.ts";
 import { usersPage } from "./users.ts";
 import { accessPage } from "./access.ts";
@@ -111,9 +111,9 @@ export const ROUTES: readonly RouteRow<Run>[] = [
   },
   {
     method: "GET",
-    path: "/admin/api-keys",
-    run: (a) => apiKeysPage(a.platform, a.session),
-    action: "Read the API keys' status (API keys)",
+    path: "/admin/agents",
+    run: (a) => agentsPage(a.platform, a.session),
+    action: "Read the agents' settings: whose keys, the API keys' status, the models, the daily token limit (Agents)",
     domain: "admin",
     tool: "settings",
   },
@@ -147,7 +147,7 @@ export const ROUTES: readonly RouteRow<Run>[] = [
     path: "/admin/credentials",
     // name (anthropic), and value. The answer says what the page shows: never the key.
     run: async (a, f) => plainJson({ credential: await a.platform.directory.credentials.set(a.who, f.name, f.value) }),
-    action: "Set or replace an API key (API keys)",
+    action: "Set or replace an API key (Agents)",
     domain: "admin",
     exempt: SECRET,
   },
