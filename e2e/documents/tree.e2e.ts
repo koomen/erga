@@ -404,14 +404,27 @@ journey("a project's tree in the editor", () => {
       .toBe(true);
     const before = await people();
     const share = await hold(page, "share_document");
+    // Its sharing changes elsewhere (an agent's link share): the open card reads it again, and that read is on its way
+    // while the person is added. Its answer, which has no grace in it, comes after: grace stays.
+    const reads: Route[] = [];
+    await page.route("**/api/tools/ls*", (r) => void reads.push(r));
+    expect((await runTool(s.root, "share_document", { document: doc.id, login: "*", role: "viewer" })).ok).toBe(true);
+    await expect.poll(() => reads.length).toBeGreaterThan(0);
     await page.keyboard.type("grace");
     await page.keyboard.press("Enter");
     await expect.poll(people).toEqual([...before, "grace"]);
+    const read = page.waitForResponse((r) => r.url().includes("/api/tools/ls"));
+    await page.unroute("**/api/tools/ls*");
+    for (const r of reads.splice(0)) await r.continue();
+    await read;
+    await settle(page);
+    expect(await people()).toEqual([...before, "grace"]);
     await share.refuse("There's no user grace.");
     await expect.poll(people).toEqual(before);
     expect(await js(page, `document.getElementById("sharing-status").textContent`)).toBe("There's no user grace.");
     await share.end();
     await press(page, "Escape");
+    expect((await runTool(s.root, "share_document", { document: doc.id, login: "*", role: "none" })).ok).toBe(true);
     onlyRefusals(tab.errors, 409);
   });
 

@@ -43,6 +43,10 @@ export function shareList(o: ShareList) {
   /** The last answer, and the document it is of: another document's list starts with none. */
   let kept: { doc: string; shared: Shared } | null = null;
   const last = () => (kept?.doc == o.doc() ? kept.shared : null);
+  /** The changes on their way; how many have started or ended; and a read to do again when the last one ends. */
+  let saving = 0,
+    changes = 0,
+    again = false;
   const who = o.add.elements.namedItem("who") as HTMLInputElement;
   const tell = (text: string, error = false) => {
     o.status.textContent = text;
@@ -111,6 +115,8 @@ export function shareList(o: ShareList) {
       draw({ ...before, permissions: others });
     }
     tell(before ? "" : "Saving…");
+    saving++;
+    changes++;
     try {
       kept = { doc, shared: await call({ login, role }) };
       if (doc == o.doc()) {
@@ -122,6 +128,37 @@ export function shareList(o: ShareList) {
       if (doc != o.doc()) return false;
       if (before) draw(before);
       tell((e as Error).message, true);
+      return false;
+    } finally {
+      saving--;
+      changes++;
+      if (!saving && again) {
+        again = false;
+        void read();
+      }
+    }
+  }
+  /** Reads who it's shared with, and draws it if the list shows. False: the read failed (it says why, if it has nothing to show). */
+  async function read(): Promise<boolean> {
+    const doc = o.doc(),
+      at = changes;
+    try {
+      const shared = await call();
+      // A change overlapped the read: its answer may lack the change, and would undo what the list shows (a person
+      // just added goes again). It is dropped, and the list is read again once no change is on its way.
+      if (saving || at != changes) {
+        if (saving) again = true;
+        else void read();
+        return true;
+      }
+      kept = { doc, shared };
+      if (doc == o.doc() && o.shown()) {
+        draw(kept.shared);
+        if (o.status.textContent == LOADING) tell("");
+      }
+      return true;
+    } catch (e) {
+      if (doc == o.doc() && o.shown() && !last()) tell((e as Error).message, true);
       return false;
     }
   }
@@ -142,20 +179,6 @@ export function shareList(o: ShareList) {
       tell(shared ? "" : LOADING);
       who.focus();
     },
-    /** Reads who it's shared with, and draws it if the list shows. False: the read failed (it says why, if it has nothing to show). */
-    async read(): Promise<boolean> {
-      const doc = o.doc();
-      try {
-        kept = { doc, shared: await call() };
-        if (doc == o.doc() && o.shown()) {
-          draw(kept.shared);
-          if (o.status.textContent == LOADING) tell("");
-        }
-        return true;
-      } catch (e) {
-        if (doc == o.doc() && o.shown() && !last()) tell((e as Error).message, true);
-        return false;
-      }
-    },
+    read,
   };
 }
