@@ -118,6 +118,9 @@ a.job:hover { border-color: var(--chrome); }
 
 /* Deploys: the instance's commits, in one column. */
 .c-head { margin: 0; padding: 0 0 6px 6px; border-bottom: 1px solid var(--rule); font-size: 11.5px; font-weight: 600; color: var(--soft); }
+/* A tag at a branch's head: the instance's branch, and its upstream. And the line for an upstream's commits past the list's. */
+.ref { margin-right: 8px; padding: 2px 7px; border-radius: 6px; background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--rule); font: 11px var(--font-mono); color: var(--fg); }
+.grid > .more { grid-column: 1 / -1; padding: 0 6px 0 28px; font-size: 12.5px; line-height: var(--row); color: var(--soft); }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .dot.off { background: var(--bg); border: 2px solid var(--off); }
 .dot.on { background: var(--ok); border: 2px solid var(--ok); }

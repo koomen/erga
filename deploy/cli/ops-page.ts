@@ -1,8 +1,8 @@
 // `bun erga`: the ops page, a local server on 127.0.0.1 and the page it serves (deploy/cli/ops-view.ts draws it). It
 // reads .erga/config.json, .erga/jobs/ and .erga/tests/ (the tests' runs, test-run.ts) in the main clone, which it watches (a change reaches the page at once,
 // through /api/events), and the clone's git. It checks its sources (poll-state.ts): each repository that an instance
-// tracks, for its branches' heads (one git ls-remote, at most once a minute: the instance's commits on the page are the
-// log of that head), each instance's commit (from its platform: running.ts) and health every 15 seconds, and GitHub,
+// tracks or names as its upstream, for its branches' heads (one git ls-remote, at most once a minute: the instance's
+// commits on the page are the log of that head, and its upstream's commits that it lacks are a comparison of the two heads), each instance's commit (from its platform: running.ts) and health every 15 seconds, and GitHub,
 // with a git fetch of the clone, at most once a minute, for the tests' queue. The page
 // shows the chosen instance's own checks. It serves each branch's proof page (bun erga proof) at /proof/<branch>/. Every command works without it. Its Deploy and Roll back buttons run
 // `bun erga deploy` and `bun erga rollback` (POST /api/deploy, /api/rollback) in a process of their own, as a terminal
@@ -21,7 +21,7 @@ import type { Answer, Branch as StatusBranch } from "./flow";
 import { readRuns } from "./test-run";
 import { type Queue, stepQueue } from "./gate";
 import type { From } from "./jobs";
-import { branchesOf, commitsIn, fetchGitHub, inHistory, repoHeads } from "./observe";
+import { branchesOf, commitsIn, compare, fetchGitHub, inHistory, repoHeads } from "./observe";
 import { busyWith, type Facts, type JobRecord, jobOf, pageHtml, repoSource, viewHtml } from "./ops-view";
 import { alive } from "./pid";
 import { type JobState, stepRun } from "./job-state";
@@ -118,6 +118,7 @@ export function serveOpsPage(o: OpsPageOptions) {
     config: { instances: [] },
     answers: {},
     logs: {},
+    upstreams: {},
     jobs: [],
     run: { at: "idle" },
     polls: startPolls(),
@@ -129,6 +130,8 @@ export function serveOpsPage(o: OpsPageOptions) {
   let clone: ReturnType<typeof readGit> | null = null;
   /** The head whose log each instance has in the facts: git reads a log again only when its head moves. */
   const logHeads: Record<string, string> = {};
+  /** Each instance's upstream: which one its head is of, the head as its repository last answered, and the two heads of the comparison in the facts. */
+  const ups: Record<string, { of: string; head: string | null; compared: string }> = {};
   /** The tests' queue: the run that this page started, if one is on. */
   let queue: Queue = { at: "idle" };
   let refs = "";
@@ -170,9 +173,15 @@ export function serveOpsPage(o: OpsPageOptions) {
     for (const h of Object.keys(facts.answers)) if (!hosts.has(h)) delete facts.answers[h];
     for (const h of Object.keys(facts.heads)) if (!hosts.has(h)) delete facts.heads[h];
     for (const h of Object.keys(facts.logs)) if (!hosts.has(h)) delete facts.logs[h], delete logHeads[h];
+    // An upstream that is gone, or another one now (bun erga track): its head and its comparison go.
+    for (const h of new Set([...Object.keys(ups), ...Object.keys(facts.upstreams)])) {
+      const up = entries().find((e) => e.host == h)?.upstream;
+      if (!up || ups[h]?.of != `${up.repo} ${up.branch}`) delete ups[h], delete facts.upstreams[h];
+    }
     for (const h of Object.keys(facts.auto ?? {})) if (!hosts.has(h)) delete facts.auto![h];
-    // Each repository that an instance tracks: its branches' heads, for the commits on the page and for auto-deploy.
-    const repos = [...new Set(entries().map((e) => repoSource(e.repo)))];
+    // Each repository that an instance tracks or names as its upstream: its branches' heads, for the commits on the
+    // page and for auto-deploy.
+    const repos = [...new Set(entries().flatMap((e) => [e.repo, ...(e.upstream ? [e.upstream.repo] : [])].map(repoSource)))];
     facts.jobs = readJobs(o.dir);
     facts.runs = readRuns(o.dir);
     poll({ type: "sources", names: [GITHUB, ...repos, ...hosts], now: Date.now() });
@@ -250,6 +259,18 @@ export function serveOpsPage(o: OpsPageOptions) {
       facts.logs[e.host] = log;
     }
   };
+  /** Each instance's branch against its upstream: compared again when one of the two heads moves. */
+  const readUpstreams = () => {
+    for (const e of entries()) {
+      const [head, up] = [facts.heads[e.host], ups[e.host]];
+      if (!head || !up?.head || up.compared == `${head} ${up.head}`) continue;
+      const c = compare(o.cwd, head, up.head);
+      // The clone does not have both (a fetch failed): the last comparison stays.
+      if (!c) continue;
+      up.compared = `${head} ${up.head}`;
+      facts.upstreams[e.host] = { head: up.head, behind: c.behind, ahead: c.ahead.length };
+    }
+  };
   /** Steps the sources' state, starts each check it asks for, and wakes it at the time it names. */
   const poll = (e: PollEvent) => {
     if (stopped) return;
@@ -271,19 +292,28 @@ export function serveOpsPage(o: OpsPageOptions) {
       refs = refsOf(o.cwd);
       readClone();
     } else if (name.startsWith("repo ")) {
-      // One repository: the heads of the branches that its instances track.
+      // One repository: the heads of the branches that its instances track, and of those that are an instance's upstream.
       const tracking = entries().filter((e) => repoSource(e.repo) == name);
-      const branches = [...new Set(tracking.map((e) => e.branch))];
-      const r = tracking.length
-        ? await askRepo(o.cwd, tracking[0].repo, branches).catch((err: Error) => ({
+      const above = entries().filter((e) => e.upstream && repoSource(e.upstream.repo) == name);
+      const repo = tracking[0]?.repo ?? above[0]?.upstream?.repo;
+      const branches = [...new Set([...tracking.map((e) => e.branch), ...above.map((e) => e.upstream!.branch)])];
+      const r = repo
+        ? await askRepo(o.cwd, repo, branches).catch((err: Error) => ({
             heads: {} as Record<string, string>,
             error: err.message,
           }))
         : { heads: {}, error: null };
       if (stopped) return;
       // A repository that gave no answer: the last heads stay.
-      if (!r.error) for (const e of tracking) facts.heads[e.host] = r.heads[e.branch] ?? null;
+      if (!r.error) {
+        for (const e of tracking) facts.heads[e.host] = r.heads[e.branch] ?? null;
+        for (const e of above) {
+          const up = e.upstream!;
+          ups[e.host] = { compared: ups[e.host]?.compared ?? "", of: `${up.repo} ${up.branch}`, head: r.heads[up.branch] ?? null };
+        }
+      }
       readLogs();
+      readUpstreams();
       const gone = branches.filter((b) => !r.heads[b]);
       error = r.error ?? (gone.length ? `no branch ${gone.join(", ")}` : null);
     } else {

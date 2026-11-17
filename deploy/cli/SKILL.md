@@ -149,6 +149,8 @@ and `main`. There are no pull requests.
   line: the command that runs for it, or its last one. Its tabs: Deploys, Logs (a job's output, live) and History
   (its deploys and rollbacks). Deploys shows the commits of its branch, as its repository has them now: a green dot
   where the commit is live on the instance, an orange ring where it is not yet, and "live" at the commit that runs.
+  An instance that names an upstream (`bun erga track <host> --upstream <branch>`) shows, on top, the upstream's
+  commits that its branch lacks, as orange rows with no button, and a tag at each of the two branches' heads.
   A commit row shows a Deploy button on hover (`bun erga deploy <commit> <host>`); the head's row shows it always
   while the head is not live. The live row shows a Roll back button on hover (`bun erga rollback <host>`). Each
   asks a question first, and runs the same command, with the same locks, and only one job at a time. Only when
@@ -189,7 +191,8 @@ and `main`. There are no pull requests.
   repository, or of another one (a fork names `main` of
   `github.com/koomen/erga`). `--no-upstream` removes it. `bun erga status`
   then says how many commits the instance's branch has that the upstream
-  lacks (ahead), and lacks of it (behind). Nothing else reads the upstream:
+  lacks (ahead), and lacks of it (behind), and the ops page shows the
+  commits that it lacks. Nothing else reads the upstream:
   no deploy, and no command that moves a branch. The numbers are git's
   history: a cherry-pick with the same patch counts on no side, and a
   branch that took its upstream as one squashed commit stays behind for

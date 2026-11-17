@@ -67,6 +67,7 @@ const facts = (more: Partial<Facts> = {}): Facts => ({
   },
   logs: { "example.net": MAIN, "staging.example.net": STAGING, "notes.example.org": MAIN },
   heads: { "example.net": "3".repeat(40), "staging.example.net": "5".repeat(40), "notes.example.org": "3".repeat(40) },
+  upstreams: {},
   jobs: [],
   run: { at: "idle" },
   polls: startPolls(),
@@ -236,6 +237,84 @@ test("the commits are the chosen instance's branch, in one column: green where i
   // The commits are not here yet; or its repository gave no answer.
   expect(right(viewHtml(facts({ logs: {} }), "example.net", NOW))).toContain(
     '<div class="none">The commits of main are not here yet.</div>'
+  );
+});
+
+test("an upstream: its commits that the branch lacks are orange rows on top, and a tag marks each of the two heads", () => {
+  const up = (repo: string, branch: string) => ({ upstream: { repo, branch } });
+  const config = {
+    instances: [
+      entry("example.net", "main", up("example.com/team/erga", "staging")),
+      entry("staging.example.net", "staging", up("example.com/team/erga", "main")),
+      entry("notes.example.org", "main", up("github.com/koomen/erga", "main")),
+    ],
+  };
+  const others = ["9", "8"].map((n, i) => ({ sha: n.repeat(40), subject: `Upstream ${n}`, author: "Sam", at: NOW - i * 60_000 }));
+  const f = facts({
+    config,
+    upstreams: {
+      // main lacks two commits of staging; staging has main's head, and two commits of its own; the fork and Erga's main went apart.
+      "example.net": { head: "5".repeat(40), behind: STAGING.slice(0, 2), ahead: 0 },
+      "staging.example.net": { head: "3".repeat(40), behind: [], ahead: 2 },
+      "notes.example.org": { head: "9".repeat(40), behind: others, ahead: 3 },
+    },
+  });
+  const marks = (html: string) => [...html.matchAll(/<div class="row (\w+)" data-sha="(\d)/g)].map((m) => m[2] + m[1]);
+  const tags = (html: string, n: string) =>
+    [...rowOf(html, n).matchAll(/<span class="ref" title="([^"]*)">([^<]*)</g)].map((m) => `${m[2]}|${m[1]}`);
+  // Behind: the upstream's commits on top, orange, with no Deploy; then the branch, from its tag down.
+  const behind = right(viewHtml(f, "example.net", NOW));
+  expect(behind).toContain("Tracks <code>example.com/team/erga</code> <code>main</code>. Upstream: <code>staging</code>.</p>");
+  expect(marks(behind)).toEqual(["5off", "4off", "3on", "2on", "1on"]);
+  expect(tags(behind, "5")).toEqual(["staging|staging, the upstream, is at this commit"]);
+  expect(tags(behind, "3")).toEqual(["main|main, the branch that example.net tracks, is at this commit"]);
+  expect(rowOf(behind, "5")).toContain('title="On staging, not on main yet"');
+  expect(rowOf(behind, "5")).toContain('<span class="deps" title="Not on main, the branch that example.net tracks"></span>');
+  expect(behind.match(/data-deploy /g)?.length).toBe(2);
+  // The line joins them: the upstream's commits are the branch's next ones.
+  expect(rowOf(behind, "4")).toContain('class="rail up down off"');
+  expect(rowOf(behind, "3")).toContain('class="rail up down on"');
+  // Ahead: no row comes from the upstream; its tag sits on the branch's commit that it is at.
+  const ahead = right(viewHtml(f, "staging.example.net", NOW));
+  expect(marks(ahead)).toEqual(["5off", "4on", "3on", "2on", "1on"]);
+  expect(tags(ahead, "5")).toEqual(["staging|staging, the branch that staging.example.net tracks, is at this commit"]);
+  expect(tags(ahead, "3")).toEqual(["main|main, the upstream, is at this commit"]);
+  expect(rowOf(ahead, "5")).toContain("data-deploy");
+  // Apart, with another repository: the line breaks between the upstream's commits and the branch's.
+  const apart = right(viewHtml(f, "notes.example.org", NOW));
+  expect(apart).toContain("Upstream: <code>github.com/koomen/erga</code> <code>main</code>.</p>");
+  expect(marks(apart)).toEqual(["9off", "8off", "3off", "2on", "1on"]);
+  expect(tags(apart, "9")).toEqual(["github.com/koomen/erga main|github.com/koomen/erga main, the upstream, is at this commit"]);
+  expect(rowOf(apart, "8")).toContain('class="rail up off"');
+  expect(rowOf(apart, "3")).toContain('class="rail down off"');
+  // Far behind: the newest 15, and one line with the count of the others.
+  const many = Array.from({ length: 18 }, (_, i) => ({
+    sha: `${String.fromCharCode(97 + i)}`.repeat(40),
+    subject: `U ${i}`,
+    author: "Sam",
+    at: NOW,
+  }));
+  const far = right(
+    viewHtml(facts({ config, upstreams: { "example.net": { head: many[0].sha, behind: many, ahead: 0 } } }), "example.net", NOW)
+  );
+  expect(far.match(/class="row off"/g)?.length).toBe(15);
+  expect(far).toContain('<div class="more">and 3 more commits of staging</div>');
+  // No comparison yet, or no upstream: the branch's own commits, and no tag.
+  expect(right(viewHtml(facts({ config }), "example.net", NOW))).not.toContain('class="ref"');
+  expect(right(viewHtml(facts(), "example.net", NOW))).not.toContain("Upstream");
+  // The rule holds: an upstream names branches and repositories, never an instance.
+  for (const host of HOSTS)
+    for (const other of HOSTS.filter((h) => h != host))
+      expect(names(right(viewHtml(f, host, NOW)), other), `${host} names ${other}`).toBe(false);
+});
+
+test("Checked names the upstream's repository when it is another one", () => {
+  const sources = ["repo example.com/team/erga", "repo github.com/koomen/erga", "notes.example.org"];
+  let polls = stepPolls(startPolls(), { type: "sources", names: sources, now: NOW - 60_000 }).polls;
+  for (const name of sources) polls = stepPolls(polls, { type: "answer", name, now: NOW - 42_000, error: null }).polls;
+  const config = { instances: [entry("notes.example.org", "main", { upstream: { repo: "github.com/koomen/erga", branch: "main" } })] };
+  expect(right(viewHtml(facts({ config, polls }), "notes.example.org", NOW))).toContain(
+    '<span class="check ok" data-source="repo example.com/team/erga"><i class="light ok"></i>example.com/team/erga main, 42 s ago</span><span class="check ok" data-source="repo github.com/koomen/erga"><i class="light ok"></i>github.com/koomen/erga main, 42 s ago</span><span class="check ok" data-source="notes.example.org">'
   );
 });
 
@@ -482,6 +561,93 @@ test("the page's server: Deploy and Roll back start their `bun erga` command, on
     );
   } finally {
     end({ code: 0, out: "" });
+    page.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the page's server asks for each upstream's head, and compares each instance's branch with it", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { serveOpsPage } = await import("../deploy/cli/ops-page");
+  // A clone: main at the first commit, staging at the third; Erga's main, another repository here, apart from both.
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "erga-ops-upstream-")));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim();
+  // Each commit has a file of its own: git takes two commits with no change for the same patch.
+  const commit = (m: string) => {
+    writeFileSync(join(dir, `${m}.txt`), m);
+    git("add", "-A");
+    git("-c", "user.name=Pete", "-c", "user.email=p@example.com", "commit", "--quiet", "-m", m);
+    return git("rev-parse", "HEAD");
+  };
+  git("init", "--quiet");
+  const [c1, c2, c3] = ["Change 1", "Change 2", "Change 3"].map(commit);
+  git("checkout", "--quiet", "--detach", c1);
+  const other = commit("A change of the other repository");
+  mkdirSync(join(dir, ".erga"));
+  const write = (fork: object) =>
+    writeFileSync(
+      join(dir, ".erga/config.json"),
+      JSON.stringify({
+        instances: [
+          entry("example.net", "main", { upstream: { repo: "example.com/team/erga", branch: "staging" } }),
+          entry("staging.example.net", "staging", { upstream: { repo: "example.com/team/erga", branch: "main" } }),
+          entry("notes.example.org", "staging", fork),
+        ],
+      })
+    );
+  write({ upstream: { repo: "github.com/koomen/erga", branch: "main" } });
+  const asked: string[] = [];
+  const page = serveOpsPage({
+    dir: join(dir, ".erga"),
+    cwd: dir,
+    port: 0,
+    fetch: async () => null,
+    heads: async (_cwd, repo, branches) => {
+      asked.push(`${repo}: ${[...branches].sort().join(" ")}`);
+      const heads: Record<string, string> = repo == "github.com/koomen/erga" ? { main: other } : { main: c1, staging: c3 };
+      return { heads, error: null };
+    },
+    ask: async () => ({ version: c1.slice(0, 12), healthy: true }),
+  });
+  const view = async (host: string) => (await fetch(`http://127.0.0.1:${page.server.port}/view?hash=${host}`)).text();
+  const until = async (host: string, ok: (html: string) => boolean) => {
+    for (let i = 0; i < 200 && !ok(await view(host)); i++) await Bun.sleep(20);
+    return view(host);
+  };
+  /** Each row: its commit, green or orange, and its tags. */
+  const marks = (html: string) =>
+    html
+      .split('<div class="row ')
+      .slice(1)
+      .map((r) =>
+        `${/data-sha="(\w{7})/.exec(r)?.[1]} ${r.slice(0, r.indexOf('"'))} ${[...r.matchAll(/class="ref"[^>]*>([^<]*)</g)].map((m) => m[1]).join("+")}`.trim()
+      );
+  const [s1, s2, s3, so] = [c1, c2, c3, other].map((c) => c.slice(0, 7));
+  try {
+    // One check of each repository, for the tracked branches and the upstreams' together.
+    const main = await until("example.net", (h) => h.includes('class="ref"'));
+    expect(asked.sort()).toEqual(["example.com/team/erga: main staging", "github.com/koomen/erga: main"]);
+    // main lacks staging's two commits: orange rows over its own head.
+    expect(marks(main)).toEqual([`${s3} off staging`, `${s2} off`, `${s1} on main`]);
+    // staging has main's head: no row from the upstream, and its tag on that commit.
+    expect(marks(await until("staging.example.net", (h) => h.includes('class="ref"')))).toEqual([
+      `${s3} off staging`,
+      `${s2} off`,
+      `${s1} on main`,
+    ]);
+    // Apart from another repository's branch: its commit on top, and the line broken under it.
+    const apart = await until("notes.example.org", (h) => h.includes('class="ref"'));
+    expect(marks(apart)).toEqual([`${so} off github.com/koomen/erga main`, `${s3} off staging`, `${s2} off`, `${s1} on`]);
+    expect(apart).toContain(`data-sha="${other}"><span class="rail off"`);
+    // The upstream goes (bun erga track --no-upstream): its rows and its tags go at once.
+    write({});
+    const none = await until("notes.example.org", (h) => !h.includes('class="ref"'));
+    expect(none).not.toContain(other);
+    expect(none).not.toContain("Upstream");
+  } finally {
     page.stop();
     rmSync(dir, { recursive: true, force: true });
   }
