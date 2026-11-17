@@ -277,7 +277,7 @@ describe("every entry takes one path", () => {
     expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort());
     expect(a.vars).toEqual((fleet as CloudflareEntry).vars);
     expect(b.vars).toEqual((next as CloudflareEntry).vars);
-    expect([a.secrets, a.keepSecrets, b.secrets, b.keepSecrets]).toEqual([{}, true, {}, true]);
+    expect([a.secrets, b.secrets]).toEqual([{}, {}]);
   });
 });
 

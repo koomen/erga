@@ -111,7 +111,6 @@ test("send_feedback keeps the text, the page and how it was sent, answers thanks
   const { dir, issues, opened } = await setup();
   const work: Promise<unknown>[] = [];
   const platform = {
-    deploy: { primary: null },
     edge: { background: (w: Promise<unknown>) => work.push(w) },
     issues,
   } as unknown as Platform;

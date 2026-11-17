@@ -24,24 +24,23 @@ const CHANGES = 50;
 
 /**
  * Who made a version, and how: the person's login, and, when they
- * acted through an agent or the factory, "via …" beside it. Never the agent alone.
+ * acted through an agent, "via …" beside it. Never the agent alone.
  */
 function byHtml(by: string, via: string | null | undefined, avatars: Record<string, string>): string {
   const chip = via ? viaChip(via) : null;
   return `<span class="who">${avatarHtml(by, avatars[by.toLowerCase()])}<span class="by">${esc(byLine(by))}</span>${chip ? ` <span class="via" data-via="${esc(via!)}" title="${esc(chip.title)}">${esc(chip.text)}</span>` : ""}</span>`;
 }
 
-/** A via as a short chip, with more on hover: "admin agent", "token" (its name on hover), "factory #12". */
+/** A via as a short chip, with more on hover: "admin agent", "token" (its name on hover). */
 function viaChip(via: string): { text: string; title: string } {
   if (via == VIA.agent) return { text: "their agent", title: `via ${via}` };
   if (via == VIA.admin) return { text: "admin agent", title: `via ${via}` };
   const token = /^a shared agent \((.*)\)$/.exec(via);
   if (token) return { text: "token", title: token[1] };
-  const task = /^the factory \(task #(\d+)\)$/.exec(via);
-  return { text: task ? `factory #${task[1]}` : via, title: `via ${via}` };
+  return { text: via, title: `via ${via}` };
 }
 
-/** A change log line for something other than a setting: a factory task added or merged, main moved to production, a user or a token changed. */
+/** A change log line for something other than a setting: a user, an access rule, a sign-in app or a token changed. */
 function eventItem(c: SettingChange): string {
   const role = (r: string) => esc(ROLE_LABEL[r as keyof typeof ROLE_LABEL] ?? r);
   if (c.user) {
@@ -53,7 +52,8 @@ function eventItem(c: SettingChange): string {
           ? "removed"
           : u.event == "role"
             ? `role: ${role(u.role ?? "none")}`
-            : `deploy role ${u.deploy ? "granted" : "revoked"}`;
+            : // An event of other code (a row from before): its name, as it is.
+              esc(String(u.event));
     return `<li><span class="key">User</span> <span class="title">${esc(u.login)}</span> ${what}</li>`;
   }
   if (c.access) {
@@ -81,27 +81,8 @@ function eventItem(c: SettingChange): string {
               : "cleared: the deploy's values again";
     return `<li><span class="key">Sign-in</span> the ${name} app ${what}</li>`;
   }
-  if (c.token)
-    return `<li><span class="key">Token</span> <span class="title">${esc(c.token.label)}</span> (${esc(c.token.of)}’s) revoked</li>`;
-  const sha = (s: unknown) => `<code class="sha" title="${esc(String(s))}">${esc(String(s).slice(0, 7))}</code>`;
-  if (c.task) {
-    const what = c.task.event == "added" ? "added" : `merged into staging${c.task.commit ? ` as ${sha(c.task.commit)}` : ""}`;
-    return `<li><span class="key">Task #${c.task.id}</span> ${what}: <span class="title">${esc(c.task.title)}</span></li>`;
-  }
-  if (c.stagingOverride)
-    return `<li><span class="key">Staging</span> pushes allowed until ${esc(new Date(c.stagingOverride.until).toISOString().slice(11, 16))} UTC <span class="badge">staging rule overridden</span> <span class="title">${esc(c.stagingOverride.reason)}</span></li>`;
-  const r = c.release!;
-  const commits = r.commits.map((x) => `<li>${sha(x.sha)} ${esc(x.subject)}</li>`).join("");
-  const more = r.total > r.commits.length ? `<li class="more">and ${r.total - r.commits.length} older</li>` : "";
-  // Past the production gate (its tests hadn't passed): the admin's reason, and what the gate said.
-  const override = r.override
-    ? ` <span class="badge" title="${esc(r.override.gate)}">${c.key == "staging" ? "staging rule overridden" : "tests overridden"}</span> <span class="title">${esc(r.override.reason)}</span>`
-    : "";
-  // Folded, so the entry stays on its line: the commits open under it.
-  const list = r.commits.length
-    ? ` <details><summary>${plural(r.total, "commit")}</summary><ul class="commits">${commits}${more}</ul></details>`
-    : "";
-  return `<li><span class="key">${c.key == "staging" ? "Staging" : "Main"}</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)}${override}${list}</li>`;
+  const t = c.token!;
+  return `<li><span class="key">Token</span> <span class="title">${esc(t.label)}</span> (${esc(t.of)}’s) revoked</li>`;
 }
 
 /**
@@ -115,7 +96,7 @@ function changeRow(v: SettingsVersion, settings: Settings, avatars: Record<strin
   const name = (key: string) => `<span class="key" title="${esc(key)}">${esc(settings[key]?.label ?? key)}</span>`;
   const what = v.changes
     .map((c) =>
-      c.task || c.release || c.stagingOverride || c.user || c.token || c.signIn || c.access
+      c.user || c.token || c.signIn || c.access
         ? eventItem(c)
         : c.credential
           ? `<li><span class="key">API key</span> <code>${esc(c.key)}</code> ${esc(c.credential)}</li>`
@@ -134,7 +115,7 @@ async function changeRows(platform: Platform, versions: SettingsVersion[]): Prom
   return versions.map((v) => ({ n: v.n, html: changeRow(v, settings, avatars) }));
 }
 
-/** /admin/changes: the change log, every change to the settings, factory task added or merged, and production deploy, newest first (`before`: only those older than version n). */
+/** /admin/changes: the change log, every change to the settings, the users, the access rules, the sign-in apps and the tokens, newest first (`before`: only those older than version n). */
 export async function changesPage(platform: Platform, session: Session, before?: number) {
   const history = await platform.directory.config.history(whoOf(session), { before, limit: CHANGES });
   const rows = await changeRows(platform, history.versions);

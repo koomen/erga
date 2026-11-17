@@ -176,9 +176,8 @@ and `main`. There are no pull requests.
   tests. `--no-tests` skips this, and the job record says so. `--domain <domain>`
   (it can repeat; a name on one of its account's
   zones) registers a custom domain: an admin can publish a document to it
-  from then on (the document's settings, "Publish to"). The server keeps
-  its domains, and the CLI copies them into the entry after the deploy:
-  never edit them there.
+  from then on (the document's settings, "Publish to"). The entry gets
+  the domains that the deploy sent: add one with `--domain`, never by hand.
 - `bun erga track <host> [--repo <repo>] [--branch <branch>]`: the
   repository and the branch that a registered instance tracks. The
   defaults are `github.com/koomen/erga` and `main`. With no option, it

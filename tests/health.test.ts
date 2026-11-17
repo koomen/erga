@@ -19,7 +19,7 @@ function directory(): Directory {
 const platform = (dir: Directory, exists: (id: string) => Promise<boolean>, linked: string | null = null): Platform =>
   ({
     directory: dir,
-    deploy: { version: "abcdef123456", primary: null },
+    deploy: { version: "abcdef123456" },
     site: () => ({ status: async () => ({ doc: linked }) }),
     docs: { index: async (doc: { id: string }) => ((await exists(doc.id)) ? "index.html" : null) },
 } as unknown as Platform);

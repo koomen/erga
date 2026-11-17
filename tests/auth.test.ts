@@ -212,7 +212,7 @@ function serverOn(own: Platform["own"]): Platform {
       devLogin: null,
       encryptionKey: "factory-key",
     },
-    deploy: { version: null, primary: null },
+    deploy: { version: null },
     own,
     directory: { config: { record: async () => {} } } as unknown as Directory,
   } as unknown as Platform;

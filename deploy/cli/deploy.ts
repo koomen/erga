@@ -70,7 +70,6 @@ const namesOf = (e: CloudflareEntry) => ({
 export const entryTarget = (entry: CloudflareEntry): Target => ({
   ...namesOf(entry),
   secrets: {},
-  keepSecrets: true,
   vars: { ...entry.vars },
 });
 
@@ -155,7 +154,7 @@ export interface DeployOptions {
   /** `bun erga setup`'s first deploy only: the secrets the Worker doesn't hold yet, and a new workers.dev subdomain. */
   secrets?: Record<string, string>;
   createSubdomain?: boolean;
-  /** --domain: custom domains to register for publishing, hostnames on the account's zones. The server keeps them after. */
+  /** --domain: custom domains to register for publishing, hostnames on the account's zones. The entry keeps them after. */
   domains?: string[];
   /** AWS, `bun erga setup`'s first deploy only: SQL the machine runs once the release answers (the first rows). */
   first?: string;

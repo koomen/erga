@@ -66,8 +66,8 @@ yes. Then the build writes the templates again, makes AWS's change sets, shows t
   - The setup reads the sign-in's endpoints from its issuer. The client's secret is never in a file: the user types
     it on a page that setup opens on this machine, which stores it in Secrets Manager as `erga/<stack>/oidc-client-secret`, and the stack reads it there.
   - Without the sign-in pass only: a document's own address (its files by their token; a frame can't sign in); on the
-    app's address, what Erga's tokens guard (MCP and its OAuth, the operations, an agent's token request, the deploy's
-    checks: `deploy/proxy-paths.ts`), a page's keyed requests to its room, and the server's own browser, by the NAT's fixed
+    app's address, what Erga's tokens guard (MCP and its OAuth, the operations, an agent's token request:
+    `deploy/proxy-paths.ts`), a page's keyed requests to its room, and the server's own browser, by the NAT's fixed
     address. A user approves an agent on a page behind the sign-in.
   - The proxy refuses a request that brings its own `X-Forwarded-Host`, which celld would take for the host.
   - One certificate, in the stack and its region, for the app's name and the pages' wildcard. The pages' name may be

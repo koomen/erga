@@ -208,14 +208,14 @@ async function approvalCard(
         ? ["reading and editing your documents.", ""]
         : [
               "reading and editing your documents, and admin power.",
-              "Admin power is everything you can do in Erga, the server's settings, users, source and deploys included, while you're an admin.",
+              "Admin power is everything you can do in Erga, the server's settings, users and sign-in included, while you're an admin.",
             ];
   // An admin request the person may approve: they choose documents only (the default) or admin power, on purpose.
   const choose = g.scope == "admin" && !may;
   const choice = choose
     ? `<fieldset class="choice"><legend>Give it</legend>
 <label><input type="radio" name="scope" value="documents" checked><span><b>Documents only</b>: all your documents, but no admin power</span></label>
-<label><input type="radio" name="scope" value="admin"><span><b>Admin power</b>: all your documents, and the server's settings, users, source and deploys, for ${ADMIN_DAYS} days at most</span></label></fieldset>`
+<label><input type="radio" name="scope" value="admin"><span><b>Admin power</b>: all your documents, and the server's settings, users and sign-in, for ${ADMIN_DAYS} days at most</span></label></fieldset>`
     : "";
   const asked = g.expires ? day(g.expires) : "Never (until you revoke it)";
   // An admin token ends after ADMIN_DAYS at most (Tokens.check): the card says when each choice ends.

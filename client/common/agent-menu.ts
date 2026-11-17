@@ -37,7 +37,7 @@ const HOURS: [number, string][] = [
 export function tokenPrompt(o: { origin: string; address: string; token: string; scope: Scope; expires: number }): string {
   const what =
     o.scope == "admin"
-      ? "with my admin access: my documents, and the server's settings, users, source and deploys"
+      ? "with my admin access: my documents, and the server's settings, users and sign-in"
       : "on my documents and the documents shared with me";
   return `I'd like your help on Erga, ${o.origin}. With the token below you act as me, ${what}.
 

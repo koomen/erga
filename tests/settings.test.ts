@@ -20,8 +20,28 @@ test("logins: a list of GitHub logins, tidied; a bad one is refused, saying whic
 // A server with one users setting, a switch and a choice, and three users.
 const saved: { key: string; value: unknown }[] = [];
 const entries: ConfigEntry[] = [
-  { key: "deploy_users", description: "Who may deploy.", value: ["alice"], default: [], source: "set", locked: false, kind: "users", updated: Date.UTC(2026, 9, 5, 14, 3), updatedBy: "bob" },
-  { key: "factory", description: "The factory.", value: "off", default: "off", source: "default", locked: false, choices: ["off", "on"], updated: null, updatedBy: null },
+  {
+    key: "notice_users",
+    description: "Who gets a notice.",
+    value: ["alice"],
+    default: [],
+    source: "set",
+    locked: false,
+    kind: "users",
+    updated: Date.UTC(2026, 9, 5, 14, 3),
+    updatedBy: "bob",
+  },
+  {
+    key: "beta",
+    description: "The beta.",
+    value: "off",
+    default: "off",
+    source: "default",
+    locked: false,
+    choices: ["off", "on"],
+    updated: null,
+    updatedBy: null,
+  },
 ];
 const users = ["alice", "bob", "carol"].map((login) => ({ login, name: login, role: login == "bob" ? "admin" : "user", created: 1, addedBy: null, lastSeen: null, bootstrap: false }));
 const platform = {
@@ -62,6 +82,5 @@ test("a users setting is a picker: chips for its users, no typed list; the line 
   expect(html).toContain(`<li class="chip" data-login="alice">alice<button type="button" class="unpick"`);
   expect(html).toContain(`<datalist id="user-logins"><option value="alice"><option value="bob"><option value="carol"></datalist>`);
   expect(html).toContain(`Set 2026-10-05 14:03 UTC by bob`);
-  expect(html).toMatch(/data-key="factory" data-control="switch"/);
-  expect(html).not.toContain("factory-title");
+  expect(html).toMatch(/data-key="beta" data-control="switch"/);
 });

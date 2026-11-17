@@ -65,11 +65,12 @@ test("no instance's name in the code", () => {
 /**
  * A flag or a value for a kind of instance, or a link from one instance to another: the settings that only two
  * instances had (DEPLOY_TARGET, SNAPSHOT_IMPORT), the names of an instance whose data another one copied (stagingOf,
- * copyOf, SNAPSHOT_FROM, SNAPSHOT_TOKEN), a server for admins only (adminsOnly), and "production" as a key, a value
- * or a question. (The word in a sentence for a person is not one; staging is a branch's name.)
+ * copyOf, SNAPSHOT_FROM, SNAPSHOT_TOKEN), a server for admins only (adminsOnly), the change log's record of a push
+ * past the old staging rule (stagingOverride), and "production" as a key, a value or a question. (The word in a
+ * sentence for a person is not one; staging is a branch's name.)
  */
 const KINDS =
-  /\bDEPLOY_TARGET\b|\bSNAPSHOT_(IMPORT|FROM|TOKEN)\b|\b(stagingOf|adminsOnly|isStaging|isProduction)\b|\.copyOf\b|\bcopyOf\??:|\bproduction\??\s*[:=]|[=(,:]\s*["'`]production["'`]/g;
+  /\bDEPLOY_TARGET\b|\bSNAPSHOT_(IMPORT|FROM|TOKEN)\b|\b(stagingOf|stagingOverride|adminsOnly|isStaging|isProduction)\b|\.copyOf\b|\bcopyOf\??:|\bproduction\??\s*[:=]|[=(,:]\s*["'`]production["'`]/g;
 
 test("no code asks which instance it is, and no instance names another: every instance takes one path", () => {
   const found = (text: string) => uncommented("a.ts", text).match(KINDS) ?? [];
@@ -78,11 +79,11 @@ test("no code asks which instance it is, and no instance names another: every in
   expect(
     found("const source = entry.copyOf ?? entry.stagingOf; if (platform.adminsOnly) vars.SNAPSHOT_FROM = env.SNAPSHOT_TOKEN;").length
   ).toBe(5);
+  expect(found("if (c.stagingOverride) return line(c.stagingOverride.reason);").length).toBe(2);
   expect(
     found(
       'log("It is on production now."); // production: true\nconst branch = "staging"; if (e.branch == "staging") push(sha, "staging");'
     )
   ).toEqual([]);
-  // The one file about the config files from before (deploy/cli/old-config.ts) names the old fields, to take them out.
-  expect(hitsOf(KINDS, ["deploy/cli/old-config.ts"])).toEqual([]);
+  expect(hitsOf(KINDS)).toEqual([]);
 });

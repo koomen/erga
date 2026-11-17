@@ -5,7 +5,7 @@
 // wins. Memory caps it too: each worker runs a dev server (about 1.7 GB: Vite 1.2, workerd 0.4) and a Chromium
 // (TEST_MEM_PER_JOB_MB, 2048 MB).
 //
-//   TEST_JOBS=n            exactly n at once (a factory task's VM sets 2: Claude Code and the preview share it)
+//   TEST_JOBS=n            exactly n at once
 //   TEST_CORES_PER_JOB=c   one at once for every c usable cores (default 2)
 //   TEST_MEM_PER_JOB_MB=m  one at once for every m MB of memory (default 2048)
 //

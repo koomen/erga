@@ -125,9 +125,9 @@ describe("deploying", () => {
       Home: { type: "durable-object", storage: "sqlite" },
       PersonAgent: { type: "durable-object", storage: "sqlite" },
     });
-    // No flag names a kind of instance. No secrets kept from before: its own, new.
+    // No flag names a kind of instance. Every upload keeps the secrets that the Worker has (here: none yet).
     expect(b.DEPLOY_TARGET).toBeUndefined();
-    expect(worker.metadata.keep_bindings).toBeUndefined();
+    expect(worker.metadata.keep_bindings).toEqual(["secret_text", "secret_key"]);
     expect(worker.metadata.migrations).toBeUndefined();
     expect(worker.tags).toEqual(["erga-deploy"]);
     // The Worker runs first for every path, the hashed files too (server/pages/assets.ts, serveAsset): the homepage's own

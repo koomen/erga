@@ -97,12 +97,11 @@ export interface Target {
   domains?: readonly string[];
   /** Text bindings over the build's (cloudflare.config.ts as `cf build` wrote it). */
   vars: Record<string, string>;
-  /** Secrets set with this upload. */
+  /**
+   * Secrets set with this upload (`bun erga setup`'s first deploy gives them). The Worker's other secrets stay from its
+   * last version, as `cf deploy` keeps them: no later deploy sends one.
+   */
   secrets: Record<string, string>;
-  /** Keep the Worker's other secrets from its last version (set once, by hand or by `bun erga setup`), as `cf deploy` does. */
-  keepSecrets?: boolean;
-  /** Service bindings, by binding name: the Worker, and its entrypoint if not the default. */
-  services?: Record<string, string | { service: string; entrypoint?: string }>;
 }
 
 /** What runs on from one step to the next: the database, the version, and whether the Worker was there. */
@@ -212,17 +211,17 @@ export async function runPipeline(
   const unknown = bindingsProblem(release);
   if (unknown) throw new DeployError({ message: unknown });
   const steps = STEPS.map((s) => s.id);
-  const needRelease = () => release;
   carry.version = release.version;
 
   /** The Worker's upload: its modules, and its metadata. */
-  const uploadWorker = async (rel: Release, assetsJwt: string) => {
+  const uploadWorker = async (assetsJwt: string) => {
     // Whether the Worker was there: the account step's answer, kept in the carry.
-    await ensureBuckets(cf, acc, rel, target);
-    const metadata = workerMetadata(rel, target, { dbId: carry.dbId!, assetsJwt, pagesHost });
+    await ensureBuckets(cf, acc, release, target);
+    const metadata = workerMetadata(release, target, { dbId: carry.dbId!, assetsJwt, pagesHost });
     const form = new FormData();
     form.set("metadata", JSON.stringify(metadata));
-    for (const [name, bytes] of Object.entries(rel.modules)) form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
+    for (const [name, bytes] of Object.entries(release.modules))
+      form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
     await cf.call("PUT", `${acc}/workers/scripts/${target.workerName}`, "upload the Worker", form);
   };
 
@@ -231,7 +230,7 @@ export async function runPipeline(
     async account() {
       // A narrow credential (a token without Account Settings: Read) may not read the account itself: its id is enough.
       const account = await cf.call<{ id: string; name: string }>("GET", acc, "read your account").catch((e) => {
-        if (target.keepSecrets && e instanceof DeployError && e.status == 403) return null;
+        if (e instanceof DeployError && e.status == 403) return null;
         throw e;
       });
       if (target.subdomain) {
@@ -263,7 +262,7 @@ export async function runPipeline(
         });
       }
       carry.existing = !!found;
-      return `${account?.name ?? target.accountId}${found ? `; ${target.workerName} is already there and will be replaced${target.keepSecrets ? "" : " (everyone signs in again)"}` : ""}`;
+      return `${account?.name ?? target.accountId}${found ? `; ${target.workerName} is already there and will be replaced` : ""}`;
     },
 
     // The database: the one by this name if it's Erga's, else a new one.
@@ -292,17 +291,30 @@ export async function runPipeline(
     // server/migrations/, each once, recorded in d1_migrations as the cf CLI does.
     // First, the restore point: the last thing before the deploy changes what the target runs on.
     async migrations() {
-      const rel = needRelease();
       const db = carry.dbId!;
       const restore = await restorePoint(cf, target, { dbId: db, existing: !!carry.existing });
       carry.restore = restore.point;
-      const noted = restore.point.versionId || restore.point.bookmark ? `restore point: ${restore.point.versionId ? `version ${restore.point.versionId.slice(0, 8)}${restore.point.version ? ` (release ${restore.point.version})` : ""}` : "no version"}, ${restore.point.bookmark ? `database bookmark ${restore.point.bookmark}` : "no database bookmark"}` : `no restore point (${restore.why})`;
-      await d1(cf, acc, db, "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)", [], "set up the database");
-      const done = new Set(((await d1(cf, acc, db, "SELECT name FROM d1_migrations", [], "read the database's migrations")) ?? []).map((r) => String(r.name)));
-      const pending = Object.keys(rel.migrations).sort().filter((n) => !done.has(n));
+      const noted =
+        restore.point.versionId || restore.point.bookmark
+          ? `restore point: ${restore.point.versionId ? `version ${restore.point.versionId.slice(0, 8)}${restore.point.version ? ` (release ${restore.point.version})` : ""}` : "no version"}, ${restore.point.bookmark ? `database bookmark ${restore.point.bookmark}` : "no database bookmark"}`
+          : `no restore point (${restore.why})`;
+      await d1(
+        cf,
+        acc,
+        db,
+        "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)",
+        [],
+        "set up the database"
+      );
+      const done = new Set(
+        ((await d1(cf, acc, db, "SELECT name FROM d1_migrations", [], "read the database's migrations")) ?? []).map((r) => String(r.name))
+      );
+      const pending = Object.keys(release.migrations)
+        .sort()
+        .filter((n) => !done.has(n));
       for (const name of pending) {
         // The file and its record in d1_migrations, in one /query call (statements run as one batch, so all or nothing), as wrangler's `d1 migrations apply --remote` sends it.
-        const sql = rel.migrations[name].trim();
+        const sql = release.migrations[name].trim();
         await d1(cf, acc, db, `${sql}${sql.endsWith(";") ? "" : ";"}\nINSERT INTO d1_migrations (name) VALUES ('${name.replace(/'/g, "''")}');`, [], `apply the database migration ${name}`);
       }
       return `${pending.length ? `applied ${pending.join(", ")}` : "already up to date"}; ${noted}`;
@@ -310,24 +322,22 @@ export async function runPipeline(
 
     // The static assets: the manifest, then each bucket Cloudflare asks for.
     async assets() {
-      const rel = needRelease();
-      const files = servedAssets(rel);
+      const files = servedAssets(release);
       (carry as Carry & { assetsJwt?: string }).assetsJwt = await runWith(opts.sleep, uploadAssets(cf, acc, target.workerName, files));
       return `${Object.keys(files).length} files`;
     },
 
     // The Worker: modules, bindings (from the build's config, made the target's own), secrets, its Durable Objects.
     async worker() {
-      const rel = needRelease();
       const assetsJwt = (carry as Carry & { assetsJwt?: string }).assetsJwt;
       if (!assetsJwt) throw new DeployError({ message: "The editor's files weren't uploaded first: deploy again." });
       // Whether the server's scheduled run runs already (a row of the last minutes): the live step waits by it.
       carry.ticking = readHealth(await healthRow(cf, acc, carry.dbId!).catch(() => null), null, Date.now()).healthy != null;
-      await uploadWorker(rel, assetsJwt);
+      await uploadWorker(assetsJwt);
       delete (carry as Carry & { assetsJwt?: string }).assetsJwt;
       // Its Cron Trigger, each minute: the server's own health into its database, and the default homepage.
       await setSchedule(cf, acc, target.workerName);
-      return `${target.workerName}, release ${rel.version}; its Cron Trigger runs each minute`;
+      return `${target.workerName}, release ${release.version}; its Cron Trigger runs each minute`;
     },
 
     // Its address, and its custom domains.
@@ -404,11 +414,14 @@ export async function runPipeline(
           await cf.call("POST", `${zone}/workers/routes`, `route ${pattern} to the Worker`, { pattern, script: target.workerName });
         return `https://<document>.${name}`;
       }
-      const rel = needRelease();
       const proxy = new FormData();
       const name = `${target.workerName}-pages`;
-      proxy.set("metadata", JSON.stringify({
-        main_module: "pages.js", compatibility_date: rel.worker.compatibilityDate, tags: [WORKER_TAG],
+      proxy.set(
+        "metadata",
+        JSON.stringify({
+          main_module: "pages.js",
+          compatibility_date: release.worker.compatibilityDate,
+          tags: [WORKER_TAG],
         bindings: [{ type: "service", name: "APP", service: target.workerName }],
       }));
       proxy.append("pages.js", new File([PAGES_PROXY], "pages.js", { type: "application/javascript+module" }));

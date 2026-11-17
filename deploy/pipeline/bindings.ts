@@ -1,7 +1,7 @@
 // The app Worker's bindings in Cloudflare's upload form. Two sorts:
 //
-//   - the kinds the pipeline makes for each target (TARGET_KINDS): a database, a bucket, the target's settings,
-//     secrets and services. Their metadata differs from target to target: account.ts (workerMetadata) makes it.
+//   - the kinds the pipeline makes for each target (TARGET_KINDS): a database, a bucket, the target's settings and
+//     secrets. Their metadata differs from target to target: account.ts (workerMetadata) makes it.
 //   - every other kind: the same metadata on every target. The release carries it, written by the release's own
 //     code (deploy/release.ts: `bindings` in release.json), and the pipeline sends it as it is.
 //
@@ -11,7 +11,7 @@
 import type { BuiltBinding, Release } from "./release-format";
 
 /** The kinds of binding (as `cf build` names them) whose metadata the pipeline makes for each target. */
-export const TARGET_KINDS: readonly string[] = ["durable-object", "d1", "text", "secret", "service", "r2"];
+export const TARGET_KINDS: readonly string[] = ["durable-object", "d1", "text", "secret", "r2"];
 
 /** A name as Cloudflare's API writes it: `worker-loader` and `exportName` become `worker_loader` and `export_name`. */
 const snake = (s: string) =>

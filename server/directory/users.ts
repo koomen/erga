@@ -109,7 +109,6 @@ interface Row {
   name: string;
   role: ServerRole;
   access?: string | null;
-  deploy?: number | null;
   created: number;
   added_by: string | null;
   added_via?: string | null;

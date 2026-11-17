@@ -149,8 +149,8 @@ export interface Platform {
     siteRecheckMs: number;
   };
   /**
-   * This server's own small storage, which a copy of production's data never
-   * replaces (the sign-in values set on /admin/auth live here, not in the database).
+   * This server's own small storage, which a database that is replaced (a restore) never
+   * changes (the sign-in values set on /admin/auth live here, not in the database).
    */
   own: AuthStorage;
   docs: {

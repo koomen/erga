@@ -6,7 +6,7 @@
 //   documents   everything the person can do with documents, but no admin power
 //   admin       everything the person can do, admin power included while they
 //               are an admin (Users.isAdmin, checked on every request); only an
-//               admin can make one, and pushing to Erga's Git endpoint needs one
+//               admin can make one
 //
 // and, if its maker chose one, an expiry, after which it stops working. The
 // share button in the editor makes a documents token, /tokens makes and

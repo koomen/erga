@@ -6,13 +6,12 @@
 //   their agent                 their own agent (agents/person/), on any page
 //   their admin agent           the admin pages' agent before each person had one (the change log's older rows)
 //   a shared agent (<label>)    an agent with one of their tokens: the server's
-//                               API (/api/tools), MCP, Git pushes
+//                               API (/api/tools), MCP
 //   an agent's view of the page the server's browser, which renders a page for
 //                               one of their agents (view_page, eval_in_page)
-//   the factory (task #<n>)     a factory VM, before the factory went (the change log's older rows)
 //
 // Shown together: "koomen, via their agent". Nothing is attributed to an
-// agent, a token or the factory alone. What the server does by itself (a
+// agent or a token alone. What the server does by itself (a
 // scheduled restart, a deploy no one asked for) is by the person who set it
 // up when there is one, else by SYSTEM, shown as "the system".
 
@@ -26,8 +25,6 @@ export const VIA = {
   token: (label: string) => `a shared agent (${label.trim() || "no label"})`,
   /** The server's browser, rendering a page for one of their agents, whose code it may run (Session.view). */
   view: "an agent's view of the page",
-  /** A push on GitHub (the webhook), synced back into Erga's repository. */
-  github: "a push on GitHub",
 } as const;
 
 /** The actor of what the server does by itself, with nobody behind it. Not a GitHub login (those have no parentheses). */

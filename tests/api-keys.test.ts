@@ -142,3 +142,31 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   expect(html).not.toContain("DEPLOY_HOOK_SECRET");
   expect(html).toContain(`href="/admin/api-keys" aria-current="page"`);
 });
+
+test("the change log shows a row of the removed factory as plain values: it has no code of its own", async () => {
+  // Rows as the factory wrote them, before it went: a task, main moved with its commits, a push past the old staging
+  // rule, a user's deploy role. The production database still has such rows.
+  const old = [
+    { key: "task", from: null, to: null, task: { id: 12, title: "A task", event: "merged", commit: "a".repeat(40) } },
+    {
+      key: "main",
+      from: "1".repeat(40),
+      to: "2".repeat(40),
+      release: { commits: [{ sha: "2".repeat(40), subject: "A commit" }], total: 1 },
+    },
+    { key: "staging", from: null, to: null, stagingOverride: { reason: "an emergency", until: 1 } },
+    { key: "user", from: null, to: null, user: { login: "bo", event: "deploy", deploy: true } },
+  ];
+  await dir.config.record("ada", old as never, Date.UTC(2026, 9, 1), "the factory (task #12)");
+  const r = await fetch(`${origin}/admin/changes`);
+  expect(r.status).toBe(200);
+  const log = await r.text();
+  // Each row is there, as a key with its values; the via is the text as it was recorded.
+  expect(log).toContain(`<span class="key" title="main">main</span> <span class="was">“${"1".repeat(40)}”</span>`);
+  expect(log).toContain(`<span class="key" title="task">task</span> <span class="was">never</span>`);
+  expect(log).toContain(`<span class="key">User</span> <span class="title">bo</span> deploy`);
+  expect(log).toContain(`title="via the factory (task #12)">the factory (task #12)</span>`);
+  // Nothing of the factory's own lines.
+  for (const gone of ["Task #12", "A task", "A commit", "merged into", "overridden", "an emergency", "deploy role", "factory #12"])
+    expect(log).not.toContain(gone);
+});

@@ -39,7 +39,6 @@ export const fleet = (): Target => ({
   pages: { kind: "zone", zoneName: "example-pages.com", domain: "example-pages.com" },
   vars: { GITHUB_CLIENT_ID: "Ov23fleet" },
   secrets: {},
-  keepSecrets: true,
 });
 /** The secrets of a second instance, as its first deploy from a machine gives them. */
 export const nextSecrets = {
@@ -56,7 +55,6 @@ export const next = (over: Partial<Target> = {}): Target => ({
   pages: { kind: "zone", zoneName: "example-pages-next.com", domain: "example-pages-next.com" },
   vars: { GITHUB_CLIENT_ID: "Ov23next" },
   secrets: {},
-  keepSecrets: true,
   ...over,
 });
 

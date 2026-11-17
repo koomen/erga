@@ -329,17 +329,6 @@ export async function main(argv: string[]) {
       !x.startsWith("-") &&
       !["-m", "--port", "--repo", "--branch", "--domain", "--host", "--profile", "--region"].includes(rest[i - 1] ?? "")
   );
-  // A config file from before an instance tracked a branch moves to today's fields, one time (old-config.ts), at the
-  // first command that reads the file.
-  if (["", "status", "merge", "promote", "deploy", "rollback", "register", "track", "setup"].includes(cmd)) {
-    const { ergaDir } = await import("./config");
-    const { moveOldConfig } = await import("./old-config");
-    try {
-      moveOldConfig(ergaDir());
-    } catch {
-      // Not in a clone, or a file that nothing can write: the command itself says what is wrong.
-    }
-  }
   switch (cmd) {
     case "skill":
       return say(readFileSync(join(ROOT, "deploy/cli/SKILL.md"), "utf8"));

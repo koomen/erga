@@ -215,7 +215,7 @@ function server(proxy: Proxy | string = AWS, admins: string[] = []) {
     own: { get: async () => undefined },
     directory,
     signIn: { ...signIn, devLogin: null, encryptionKey: null },
-    deploy: { version: null, primary: null },
+    deploy: { version: null },
     sessionOf: (request: Request) => sessionOf(platform, request),
     tokens: new Tokens(sql, "session-secret", directory),
   } as unknown as Platform;

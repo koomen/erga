@@ -1,8 +1,7 @@
 // The browser the tests drive: Chromium through e2e's web engine (Playwright
 // underneath, pinned by @e2e-dev/web). One instance, shared by the config and
 // the fixtures: surfaceOf(engine) is how a test reaches the attempt's page.
-// A factory VM's image has Chromium of its own, but the
-// engine launches the browser its Playwright pins: `bunx @e2e-dev/web install chromium`.
+// The engine launches the browser its Playwright pins: `bunx @e2e-dev/web install chromium`.
 //
 // Trap: at a worker's end the engine closes its browser and waits for it to go, and e2e gives that 10 s
 // (cleanupTimeout), else the run fails with "disposing the engine timed out" after every test passed. On a busy

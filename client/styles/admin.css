@@ -235,11 +235,6 @@ ol.users .avatar.waiting { background: transparent; border: 1.5px dashed var(--r
 .changes .to { color: var(--soft); margin: 0 4px; }
 .changes .badge { margin: 0 0 0 4px; }
 .changes .title { color: var(--fg-strong); }
-.changes .commits { list-style: none; margin: 4px 0 2px; padding: 0 0 0 12px; border-left: 2px solid var(--rule); font-size: 12.5px; }
-.changes .commits li { padding: 1px 0; }
-.changes .commits .more { color: var(--soft); }
-.changes details { display: inline; font-size: 12.5px; }
-.changes details summary { display: inline; color: var(--soft); cursor: pointer; }
 .changes-empty { margin: 0; padding: 48px 24px; border: 1px dashed var(--rule); border-radius: 12px; text-align: center; font-size: 13.5px; color: var(--soft); }
 
 /* The Feedback page: each feedback's text, then when, the page, its id and its GitHub issue. */

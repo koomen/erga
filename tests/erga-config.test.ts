@@ -1,6 +1,5 @@
 // .erga/config.json (deploy/cli/config.ts): the instances `bun erga register` adds, read and written with their schema,
-// the repository and branch that each tracks, the move of a file from before those fields
-// (old-config.ts), and the file's place in the main clone, also from a worktree.
+// the repository and branch that each tracks, and the file's place in the main clone, also from a worktree.
 
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -18,7 +17,6 @@ import {
   withEntry,
   writeConfig,
 } from "../deploy/cli/config";
-import { movedConfig, moveOldConfig } from "../deploy/cli/old-config";
 
 const entry = (host: string, over: Partial<Entry> = {}): Entry => ({
   host,
@@ -94,59 +92,6 @@ describe(".erga/config.json", () => {
       git(root, "remote", "add", "origin", "git@example.com:team/erga.git");
       expect(remoteOf(root, "example.com/team/erga")).toBe("origin");
       expect(remoteOf(root, "github.com/koomen/erga")).toBe("https://github.com/koomen/erga");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test("a file from before moves, one time: what each entry tracks comes in, and the names of another instance go", () => {
-    const { repo: _r, branch: _b, ...plain } = entry("a.com");
-    // From before an instance tracked a branch: one entry named another, whose data it ran on a copy of.
-    const named = { ...plain, host: "staging.a.com", stagingOf: "a.com" };
-    const moved = movedConfig({ instances: [plain, named] }, "example.com/team/erga")!;
-    expect(moved.instances.map((e) => [e.host, e.repo, e.branch])).toEqual([
-      ["a.com", "example.com/team/erga", "main"],
-      ["staging.a.com", "example.com/team/erga", "staging"],
-    ]);
-    // Nothing else changes, and a moved file is not moved again.
-    expect(moved.instances[1]).toMatchObject({ account: "acc", vars: plain.vars });
-    expect(JSON.stringify(moved)).not.toMatch(/stagingOf|copyOf|SNAPSHOT_FROM/);
-    expect(movedConfig(moved, "x")).toBeNull();
-    // From after that, and before every instance was alike: copyOf, and SNAPSHOT_FROM in the entry's vars. What it
-    // tracks stays; the names of the other instance go, also the one that a deploy would send to the server.
-    const later = {
-      ...entry("staging.a.com", { branch: "next" }),
-      copyOf: "a.com",
-      vars: { GITHUB_CLIENT_ID: "Ov23abc", SNAPSHOT_FROM: "https://a.com" },
-    };
-    expect(movedConfig({ instances: [entry("a.com"), later] }, "x")!.instances).toEqual([
-      entry("a.com"),
-      { ...entry("staging.a.com", { branch: "next" }), vars: { GITHUB_CLIENT_ID: "Ov23abc" } },
-    ]);
-    // An entry that a command of the older code wrote back, without the fields it did not know: its vars still name
-    // the other instance, so it tracks staging.
-    const stripped = { ...plain, host: "staging.a.com", vars: { ...plain.vars, SNAPSHOT_FROM: "https://a.com" } };
-    expect(movedConfig({ instances: [stripped] }, "x")!.instances[0]).toMatchObject({ branch: "staging", vars: plain.vars });
-
-    const root = tmp();
-    try {
-      git(root, "init", "--quiet");
-      git(root, "remote", "add", "origin", "https://example.com/team/erga.git");
-      const dir = join(root, ".erga");
-      writeConfig(dir, { instances: [plain, named] } as never);
-      expect(() => readConfig(dir)).toThrow("is not a config file this CLI reads");
-      const said: string[] = [];
-      moveOldConfig(dir, (l) => said.push(l));
-      expect(readConfig(dir).instances.map((e) => [e.host, e.repo, e.branch])).toEqual([
-        ["a.com", "example.com/team/erga", "main"],
-        ["staging.a.com", "example.com/team/erga", "staging"],
-      ]);
-      expect(statSync(configPath(dir)).mode & 0o777).toBe(0o600);
-      expect(said.join("\n")).toContain("staging.a.com tracks example.com/team/erga staging");
-      const before = statSync(configPath(dir)).mtimeMs;
-      moveOldConfig(dir, (l) => said.push(l));
-      expect(statSync(configPath(dir)).mtimeMs).toBe(before);
-      expect(said.length).toBe(2);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

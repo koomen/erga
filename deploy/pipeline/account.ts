@@ -31,7 +31,7 @@ export const servedAssets = (release: Release) => Object.fromEntries(Object.entr
 /**
  * The Worker's upload metadata: the build's bindings (cloudflare.config.ts
  * as `cf build` wrote it), each made the target's own: its database, its
- * text settings, its secrets, its services and where its pages run.
+ * text settings, its secrets and where its pages run.
  */
 export function workerMetadata(release: Release, target: Target, o: { dbId: string; assetsJwt: string; pagesHost: string | null }) {
   const w = release.worker;
@@ -47,7 +47,6 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     else if (b.type == "assets") bindings.push({ type: "assets", name });
     else if (b.type == "text") bindings.push({ type: "plain_text", name, text: text[name] ?? b.value ?? "" });
     else if (b.type == "secret") { if (secrets[name] != null) bindings.push({ type: "secret_text", name, text: secrets[name] }); }
-    else if (b.type == "service" && b.name && target.services?.[name]) bindings.push(serviceBinding(name, target.services[name]));
     // A bucket of the target's own (documents' files: FILES), made before the upload if it isn't there (ensureBuckets).
     else if (b.type == "r2") bindings.push({ type: "r2_bucket", name, bucket_name: bucketName(target, name) });
     // Any other kind is the same on every target: the release's own metadata for it, sent as it is (bindings.ts).
@@ -57,10 +56,9 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
       bindings.push(passed);
     }
   }
-  // Settings and secrets the build doesn't declare (the version, the account, the branch deploys' own secrets), and services.
+  // Settings and secrets the build doesn't declare (the version, the deploy facts).
   for (const [name, value] of Object.entries(text)) if (!named.has(name)) { bindings.push({ type: "plain_text", name, text: value }); named.add(name); }
   for (const [name, value] of Object.entries(secrets)) if (!named.has(name)) { bindings.push({ type: "secret_text", name, text: value }); named.add(name); }
-  for (const [name, service] of Object.entries(target.services ?? {})) if (!named.has(name)) { bindings.push(serviceBinding(name, service)); named.add(name); }
   // Where documents' pages run: a domain of their own, or the shared host.
   if (target.pages.kind == "zone") bindings.push({ type: "plain_text", name: "PAGES_DOMAIN", text: target.pages.domain ?? target.pages.zoneName });
   else bindings.push({ type: "plain_text", name: "PAGES_HOST", text: o.pagesHost });
@@ -77,7 +75,7 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     compatibility_flags: w.compatibilityFlags ?? [],
     bindings,
     // Secrets set once on the Worker stay from version to version, as with `cf deploy`.
-    ...(target.keepSecrets ? { keep_bindings: ["secret_text", "secret_key"] } : {}),
+    keep_bindings: ["secret_text", "secret_key"],
     assets: {
       jwt: o.assetsJwt,
       config: {
@@ -134,10 +132,6 @@ export async function ensureBuckets(cf: Cloudflare, acc: string, release: Releas
   }
 }
 
-/** A service binding's metadata: the Worker, and its entrypoint when it isn't the default export. */
-const serviceBinding = (name: string, to: string | { service: string; entrypoint?: string }) =>
-  typeof to == "string" ? { type: "service", name, service: to } : { type: "service", name, service: to.service, ...(to.entrypoint ? { entrypoint: to.entrypoint } : {}) };
-
 /**
  * The account's Workers, as the account step needs them (is the target's
  * there, and is it Erga's). A token scoped to some Workers only may not list the account's: then the
@@ -151,9 +145,9 @@ export async function listScripts(
   try {
     const all = (await cf.call<{ id: string; tags?: string[]; named_handlers?: { name?: string }[] }[]>("GET", `${acc}/workers/scripts`, "list your Workers")) ?? [];
     // A scoped token's list may hold only the Workers it can see: the target's own settings are the answer then.
-    if (all.some((s) => s.id == target.workerName) || !target.keepSecrets) return all;
+    if (all.some((s) => s.id == target.workerName)) return all;
   } catch (e) {
-    if (!(target.keepSecrets && e instanceof DeployError && e.status == 403)) throw e;
+    if (!(e instanceof DeployError && e.status == 403)) throw e;
   }
   const settings = await cf.call<{ tags?: string[]; bindings?: { type: string; class_name?: string }[] }>("GET", `${acc}/workers/scripts/${target.workerName}/settings`, `read ${target.workerName}'s settings`, undefined, { allow404: true });
   if (!settings) return [];

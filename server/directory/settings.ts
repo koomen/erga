@@ -270,18 +270,8 @@ export interface SettingChange {
   reset?: boolean;
   /** An API key admins enter, by its Worker secret's name: what happened to it. `from` and `to` are null, never the key. */
   credential?: "set" | "replaced" | "cleared";
-  /** A factory task (key "task", from before the factory was removed): added to the board, or merged into staging (`commit`: the merge commit). `from` and `to` are null. */
-  task?: { id: number; title: string; event: "added" | "merged"; commit?: string };
-  /** main moved forward to staging (key "main"): the production deploy; or staging moved by a push past the staging rule (key "staging", with `override`). `from` and `to` are the branch's old and new heads (null: none); `commits`, the newest that came (at most 50), of `total`. */
-  release?: {
-    commits: { sha: string; subject: string }[]; total: number;
-    /** main moved past the production gate (its tests hadn't passed), or staging past the staging rule: an admin's emergency override, with their reason and what the gate or rule said. */
-    override?: { reason: string; gate: string };
-  };
-  /** An admin opened an override of the staging rule (key "staging"; the old control Worker's repository): their pushes to staging land until `until` (ms). `from` and `to` are null. A push made under it is a `release` with `override`. The change log keeps the ones from before. */
-  stagingOverride?: { reason: string; until: number };
-  /** A user (key "user"): added, their role changed, or removed (or, before 2026-11-04, their deploy role changed). `from` and `to` are null. */
-  user?: { login: string; event: "added" | "role" | "deploy" | "removed"; role?: string; deploy?: boolean };
+  /** A user (key "user"): added, their role changed, or removed. `from` and `to` are null. */
+  user?: { login: string; event: "added" | "role" | "removed"; role?: string };
   /** An access rule (key "access"; server/directory/access.ts): added, its access changed, or removed. `from` and `to` are null. */
   access?: { event: "added" | "changed" | "removed"; kind: string; value: string; access: string; from?: string };
   /** An agent token (key "token"): revoked (`by` revoked it; `of`, whose it was). `from` and `to` are null. */
@@ -307,7 +297,7 @@ export interface SettingsVersion {
   at: number;
   /** The person's login (SYSTEM for the server itself: shared/attribution.ts). */
   by: string;
-  /** How they did it, when not in person: "their admin agent", "a shared agent (label)", "the factory (task #3)". */
+  /** How they did it, when not in person: "their agent", "a shared agent (label)". */
   via?: string;
   changes: SettingChange[];
 }
@@ -453,7 +443,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
 
   /**
    * The server's own record of something an admin did that isn't a setting
-   * (a factory task added or merged, main moved to production): a version
+   * (a user, an access rule, a sign-in app or a token changed): a version
    * with these changes, by `by` (a login, or SYSTEM), `via` how when not in
    * person. No check here: the caller made the change
    * already, as `by`.
