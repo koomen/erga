@@ -81,11 +81,12 @@ function docTool(spec: DocumentOperation, document: Schema.Top): Tool {
 }
 
 /** A tool's arguments as JSON Schema, as outside agents read them (GET /api/tools, MCP). */
-const schemas = new WeakMap<Tool, { required?: string[] }>();
-export const jsonSchemaOf = (t: Tool): { type: "object"; required?: string[] } => {
+type JsonSchema = { type: "object"; required?: string[]; properties?: Record<string, { enum?: string[] }> };
+const schemas = new WeakMap<Tool, JsonSchema>();
+export const jsonSchemaOf = (t: Tool): JsonSchema => {
   let s = schemas.get(t);
-  if (!s) schemas.set(t, (s = argumentsSchema(t.parameters)));
-  return s as { type: "object"; required?: string[] };
+  if (!s) schemas.set(t, (s = argumentsSchema(t.parameters) as JsonSchema));
+  return s;
 };
 
 // ---------------------------------------------------------------- the agents' tools: a few, each a kind of action
@@ -229,13 +230,13 @@ function kindOf(k: (typeof KINDS)[number], members: Tool[], open: boolean): Kind
       ).properties.x;
       seen.set(key, [...(seen.get(key) ?? []), { op: t.name, schema, shape: JSON.stringify(shape), description, required }]);
     }
-  // Each op on a line, with the arguments it takes: the fields then need no op's name, and `op` no enum of the names.
+  // Each op on a line, with the arguments it takes: the fields then need no op's name.
   const line = (t: Tool) =>
     `${t.name}(${Object.keys(fieldsOf(t))
       .filter((f) => f != "document")
       .join(", ")}): ${t.description}`;
   const fields: Record<string, Schema.Top> = {
-    op: Schema.optionalKey(Schema.String.annotate({ description: members.map(line).join("\n") })),
+    op: Schema.optionalKey(Schema.Literals(ops).annotate({ description: members.map(line).join("\n") })),
   };
   for (const [key, all] of seen) {
     const shapes = [...new Map(all.map((v) => [v.shape, v.schema])).entries()];
@@ -297,16 +298,59 @@ export async function toolsFor(caller: Caller, open = false): Promise<Tool[]> {
  * A tool's arguments, checked as the tool takes them: the required ones there, and decoded by its schema (one that
  * checks its own: as they are). Not for one the caller may not use at all: its refusal comes first.
  */
-async function checked(tool: Tool, args: Record<string, unknown>, caller: Caller | null): Promise<Record<string, unknown>> {
+async function checked(tool: Tool, args: Record<string, unknown>, caller: Caller | null, kind?: string): Promise<Record<string, unknown>> {
   if (caller ? !(await offered(tool, caller)) : tool.admin) return args;
-  for (const key of jsonSchemaOf(tool).required ?? [])
-    if (args[key] === undefined) throw new OperationError({ message: `${tool.name} needs "${key}".`, status: 400 });
+  const schema = jsonSchemaOf(tool);
+  const known = Object.keys(schema.properties ?? {});
+  args = withPagePath(args, known);
+  const missing = (schema.required ?? []).filter((key) => args[key] === undefined);
+  const unknown = Object.keys(args).filter((key) => !known.includes(key));
+  if (missing.length || unknown.length) {
+    const quoted = (keys: string[]) => keys.map((k) => `"${k}"`).join(", ");
+    throw new OperationError({
+      message: [
+        missing.length ? `${tool.name} needs ${quoted(missing)}.` : "",
+        unknown.length ? `${tool.name} takes no ${quoted(unknown)}.` : "",
+        `Usage: ${usage(tool, schema.required ?? [], known, kind)}`,
+      ]
+        .filter(Boolean)
+        .join(" "),
+      status: 400,
+    });
+  }
   if (tool.loose) return args;
   try {
     return Schema.decodeUnknownSync(tool.parameters as Schema.Codec<Record<string, unknown>>)(args, { errors: "all" });
   } catch (e) {
     throw new OperationError({ message: `Validation failed for tool "${tool.name}":\n${(e as Error).message}`, status: 400 });
   }
+}
+
+/** How to call a tool: `read(op="read", document, path, [limit])`, the required arguments first. */
+const usage = (tool: Tool, required: string[], known: string[], kind?: string) =>
+  `${kind ?? tool.name}(${[
+    ...(kind ? [`op="${tool.name}"`] : []),
+    ...required,
+    ...known.filter((k) => !required.includes(k)).map((k) => `[${k}]`),
+  ].join(", ")})`;
+
+/**
+ * A document named with a file in it (/ada/notes/index.html, or its URL), for a tool that takes `path` and got none:
+ * the document, and the file as `path`.
+ */
+function withPagePath(args: Record<string, unknown>, known: string[]): Record<string, unknown> {
+  const ref = args.document;
+  if (typeof ref != "string" || args.path !== undefined || !known.includes("path")) return args;
+  let at = ref.trim();
+  try {
+    at = new URL(at).pathname;
+  } catch {
+    /* not a URL */
+  }
+  const parts = at.split("/").filter(Boolean);
+  const cut = parts[0] == "_home" ? 1 : 2;
+  if (parts.length <= cut) return args;
+  return { ...args, document: `/${parts.slice(0, cut).join("/")}`, path: parts.slice(cut).map(decodeURIComponent).join("/") };
 }
 
 /** What a tool that needs no one runs with: nothing of the directory. */
@@ -326,8 +370,12 @@ export async function runTool(
   caller: Caller | null,
   checks = false
 ): Promise<string | object | ToolContent[]> {
-  if (isKind(tool)) ({ tool, args } = tool.pick(args));
-  else if (!checks) return runChecked(tool, args, caller);
+  if (isKind(tool)) {
+    const kind = tool.name;
+    ({ tool, args } = tool.pick(args));
+    return runChecked(tool, await checked(tool, args, caller, kind), caller);
+  }
+  if (!checks) return runChecked(tool, args, caller);
   return runChecked(tool, await checked(tool, args, caller), caller);
 }
 

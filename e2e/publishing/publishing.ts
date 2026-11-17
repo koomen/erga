@@ -76,7 +76,7 @@ export async function write(server: Server, document: string, files: Record<stri
 /** A project of DEV_LOGIN's with these files: its id, address and title. */
 export async function makeSite(server: Server, files: Record<string, string>) {
   const title = unique("Site home ");
-  const made = await runTool<{ id: string; address: string }>(server.root, "create_document", { title, kind: "project", files });
+  const made = await runTool<{ id: string; address: string }>(server.root, "create_document", { title, files });
   if (!made.ok) throw new Error(`create_document: ${made.error}`);
   return { id: made.result!.id, address: made.result!.address, title };
 }

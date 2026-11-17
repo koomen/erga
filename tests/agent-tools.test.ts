@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, type Who } from "../server/directory/index.ts";
-import { agentTools, allTools, documentTools, documentToolsHere, KINDS, opsOf, runTool, toolsFor } from "../agents/tools";
+import { agentTools, allTools, documentTools, documentToolsHere, jsonSchemaOf, KINDS, opsOf, runTool, toolsFor } from "../agents/tools";
 import { type Caller, OPERATIONS, OperationError } from "../server/operations/index.ts";
 import { VIA } from "../shared/attribution";
 import type { Platform } from "../server/platform";
@@ -336,6 +336,31 @@ test("a person's agent's document tools: the document open on their page, or ano
   // Someone else's, not shared with her: refused, as it would be to her.
   expect((await failure(runTool(read, { document: "cccccccc", path: "index.html" }, agent))).status).toBe(403);
   expect(sent.length).toBe(2);
+});
+
+test("an outside agent's wrong call: every missing and unknown argument named at once, with a usage line; a file in the document's address is its path", async () => {
+  const dir = fresh();
+  await dir.add({ id: "aaaaaaaa", owner: "ada", slug: "plan", title: "Plan", created: 1 });
+  const sent: Request[] = [];
+  const platform = {
+    directory: dir,
+    docs: {
+      fetch: async (_doc: unknown, r: Request) => {
+        sent.push(r);
+        return Response.json({ ok: true, content: [{ type: "text", text: "<h1>Plan</h1>" }] });
+      },
+    },
+  } as unknown as Platform;
+  const agent: Caller = { dir, who: { login: "ada", via: VIA.agent }, name: "Ada", platform };
+  const read = (await toolsFor(agent)).find((t) => t.name == "read")!;
+  expect((await failure(runTool(read, { op: "read", file: "index.html" }, agent))).message).toBe(
+    'read needs "document", "path". read takes no "file". Usage: read(op="read", document, path, [offset], [limit], [pages], [selector], [css_rule], [version])'
+  );
+  // An agent's usual second try: the page's address, with its file.
+  await runTool(read, { op: "read", document: "https://erga.test/ada/plan/index.html" }, agent);
+  expect(JSON.parse(await sent[0].text())).toEqual({ path: "index.html" });
+  // op: its values, listed.
+  expect(jsonSchemaOf(read).properties?.op.enum).toEqual([...opsOf(read)]);
 });
 
 test("list_documents' all is an admin's: someone else is refused", async () => {
