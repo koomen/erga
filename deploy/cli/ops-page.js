@@ -2,9 +2,9 @@
 // server says something changed (/api/events), when another instance or tab is chosen (the hash: #<host>/<tab>),
 // and each minute (the times).
 // A job's log that was scrolled to its end stays at its end. When the server stops, it says so; when it runs again, the page follows, and reloads if the server's script or styles changed.
-// A commit row's cell shows a Deploy button in an instance's column on hover or focus, which asks a question first (the
-// instance and the commit). It starts its job (POST /api/deploy); the page stays on its tab, and the job line shows the
-// job as it runs. An open question stays open when the page draws again.
+// A commit row's cell shows a Deploy button on hover or focus, and the live row a Roll back button; each asks a question
+// first (the instance, and the commit). It starts its job (POST /api/deploy, /api/rollback); the page stays on its tab,
+// and the job line shows the job as it runs. An open question stays open when the page draws again.
 (() => {
   const ops = document.getElementById("ops");
   const gone = document.getElementById("gone");
@@ -22,10 +22,12 @@
   function question(d, err = "") {
     const ask = ops.querySelector("#deploy-confirm");
     if (!ask) return;
+    // A Roll back has no commit: the question's last commit goes.
+    delete ask.dataset.sha;
     Object.assign(ask.dataset, d);
     ask.querySelector('[data-s="ask"]').textContent = d.ask;
     ask.querySelector('[data-s="note"]').textContent = d.note;
-    ask.querySelector("[data-go]").textContent = `Deploy to ${d.host}`;
+    ask.querySelector("[data-go]").textContent = d.sha ? `Deploy to ${d.host}` : `Roll back ${d.host}`;
     ask.querySelector(".err").textContent = err;
     ask.showPopover();
   }
@@ -71,11 +73,17 @@
       const { host, sha, ask, note } = deploy.dataset;
       return question({ host, sha, ask, note });
     }
+    const back = e.target.closest("[data-rollback]");
+    if (back) {
+      const { host, ask, note } = back.dataset;
+      return question({ host, ask, note });
+    }
     const go = e.target.closest("[data-go]");
     if (go) {
       const ask = go.closest("#deploy-confirm");
       go.disabled = true;
-      act("/api/deploy", { host: ask.dataset.host, sha: ask.dataset.sha }, ask.querySelector(".err")).then((ok) => {
+      const { host, sha } = ask.dataset;
+      act(sha ? "/api/deploy" : "/api/rollback", sha ? { host, sha } : { host }, ask.querySelector(".err")).then((ok) => {
         go.disabled = false;
         if (ok) ask.hidePopover();
       });

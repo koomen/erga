@@ -4,9 +4,9 @@
 // tracks, for its branches' heads (one git ls-remote, at most once a minute: the instance's commits on the page are the
 // log of that head), each instance's commit (from its platform: running.ts) and health every 15 seconds, and GitHub,
 // with a git fetch of the clone, at most once a minute, for the tests' queue. The page
-// shows the chosen instance's own checks. It serves each branch's proof page (bun erga proof) at /proof/<branch>/. Every command works without it. Its Deploy buttons run
-// `bun erga deploy` (POST /api/deploy) in a process of its own, as a terminal does: the same code, locks and job
-// records. The page merges nothing: `bun erga merge` does.
+// shows the chosen instance's own checks. It serves each branch's proof page (bun erga proof) at /proof/<branch>/. Every command works without it. Its Deploy and Roll back buttons run
+// `bun erga deploy` and `bun erga rollback` (POST /api/deploy, /api/rollback) in a process of their own, as a terminal
+// does: the same code, locks and job records. The page merges nothing: `bun erga merge` does.
 // With --auto-deploy it is auto-deploy too (auto-state.ts): it starts `bun erga deploy <head> <host>` for an instance
 // that does not run its branch's head, one job at a time, as its buttons do.
 // It works the tests' queue (gate.ts, stepQueue): for each pushed branch whose merge has no test record, `bun erga test
@@ -92,7 +92,7 @@ export interface OpsPageOptions {
   ask?: (e: Entry) => Promise<Answer>;
   /** fetchGitHub (null: it worked, else why not), or a fake in the tests. */
   fetch?: (cwd: string) => Promise<string | null>;
-  /** Runs `bun erga <args>` for the Deploy buttons and for auto-deploy (default: the CLI, in a process of its own), or a fake. */
+  /** Runs `bun erga <args>` for the Deploy and Roll back buttons and for auto-deploy (default: the CLI, in a process of its own), or a fake. */
   run?: (args: string[], from: From) => Run;
   /** --auto-deploy: auto-deploy is on. */
   autoDeploy?: boolean;
@@ -357,11 +357,17 @@ export function serveOpsPage(o: OpsPageOptions) {
     });
     return Response.json({ ok: true, command }, { status: 202 });
   };
-  /** POST /api/deploy {host, sha}: a row's Deploy, a commit of the log to an instance that does not run it now. What the button shows, checked again here. */
-  const act = async (req: Request) => {
+  /**
+   * POST /api/deploy {host, sha}: a row's Deploy, a commit of the instance's branch that it does not run now. POST
+   * /api/rollback {host}: the live row's Roll back. What the button shows, checked again here.
+   */
+  const act = async (req: Request, what: string) => {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const no = (error: string) => Response.json({ error }, { status: 409 });
     const e = "error" in facts.config ? null : facts.config.instances.find((x) => x.host == body.host);
+    // The live row's Roll back: the instance's version from before its last deploy.
+    if (e && what == "rollback")
+      return start(["rollback", e.host], { kind: "rollback", host: e.host, commit: null, branch: null, phase: "starting" });
     const c = e ? facts.logs[e.host]?.find((x) => x.sha == body.sha) : null;
     if (!e) return no(`${String(body.host)} has no entry in .erga/config.json.`);
     if (!c) return no(`${e.branch}, the branch that ${e.host} tracks, has no commit ${String(body.sha).slice(0, 12)} in this clone.`);
@@ -389,10 +395,11 @@ export function serveOpsPage(o: OpsPageOptions) {
       // Only this machine's browser, by this server's name: another site can't reach it through DNS rebinding.
       const names = [`localhost:${srv.port}`, `127.0.0.1:${srv.port}`];
       if (!names.includes(req.headers.get("host") ?? "")) return new Response("Wrong host.", { status: 403 });
-      // A POST only from this page (Deploy): no other site.
+      // A POST only from this page (Deploy, Roll back): no other site.
       if (req.method != "GET" && !names.some((n) => req.headers.get("origin") == `http://${n}`))
         return new Response("Wrong origin.", { status: 403 });
-      if (req.method == "POST" && url.pathname == "/api/deploy") return act(req);
+      if (req.method == "POST" && (url.pathname == "/api/deploy" || url.pathname == "/api/rollback"))
+        return act(req, url.pathname.slice(5));
       if (url.pathname == "/") return html(pageHtml(viewHtml(facts, ""), script, code()));
       if (url.pathname == "/view") return html(viewHtml(facts, url.searchParams.get("hash") ?? ""), { "X-Ops-Code": code() });
       if (url.pathname == "/api/events") {

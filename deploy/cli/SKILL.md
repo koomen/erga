@@ -149,7 +149,8 @@ and `main`. There are no pull requests.
   (its deploys and rollbacks). Deploys shows the commits of its branch, as its repository has them now: a green dot
   where the commit is live on the instance, an orange ring where it is not yet, and "live" at the commit that runs.
   A commit row shows a Deploy button on hover (`bun erga deploy <commit> <host>`); the head's row shows it always
-  while the head is not live. It runs the same command, with the same locks, and only one job at a time. Only when
+  while the head is not live. The live row shows a Roll back button on hover (`bun erga rollback <host>`). Each
+  asks a question first, and runs the same command, with the same locks, and only one job at a time. Only when
   Pete asks. Under the commits, one line says when the page last asked the instance's repository and the instance
   itself (from Cloudflare's API or AWS's, never from the instance), and why one gave no answer. The page asks each
   repository at most once a minute (`git ls-remote`), and each instance every 15 seconds. It shows no feature

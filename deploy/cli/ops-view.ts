@@ -3,7 +3,7 @@
 // whether auto-deploy is on. The right side is about the chosen instance only, and names no other one: its tabs, its
 // job line (the command that runs, or its last one), and the chosen tab. Deploys: the commits of its branch, green
 // where it is live and orange where it is not yet, with a Deploy button on a row, and one line of its own sources'
-// checks. Logs: a job's output. History: its deploys and rollbacks. The page shows no feature branch and merges
+// checks; the live row has Roll back. Logs: a job's output. History: its deploys and rollbacks. The page shows no feature branch and merges
 // nothing: `bun erga status` lists the branches, and `bun erga merge` merges.
 
 import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo";
@@ -221,6 +221,7 @@ const button = (label: string, attrs: string, block: string | null = null) =>
 /** A button's label while its own job runs: a small spinner, and the word. */
 const running = (word: string) => `<i class="spin" aria-hidden="true"></i>${word}…`;
 const DEPLOYING = "It deploys now. The job line and Logs show its output.";
+const ROLLING = "It rolls back now. The job line and Logs show its output.";
 
 /** "12 s ago", then as timeAgo. */
 const ago = (t: number, now: number) => (now - t < 60_000 ? `${Math.max(0, Math.round((now - t) / 1000))} s ago` : timeAgo(t, now));
@@ -261,9 +262,22 @@ function deployButton(e: Entry, c: Commit, busy: boolean, deploying: boolean, sh
 }
 
 /**
+ * The live row's cell: the "live" mark with the time of its deploy, and the Roll back button, which takes the mark's
+ * place under the mouse or with the focus (`bun erga rollback <host>`, after its question). While the rollback runs,
+ * the cell says so.
+ */
+function liveCell(e: Entry, at: string, busy: boolean, rolling: boolean): string {
+  if (rolling) return `<span class="deps here busy">${button(running("Rolling back"), 'aria-busy="true"', ROLLING)}</span>`;
+  const ask = `Roll back ${e.host} to the version from before its last deploy?`;
+  const note = `bun erga rollback ${e.host}. No branch moves. The next deploy goes forward again.`;
+  const back = `<span class="tip"${busy ? ` title="${esc(BUSY)}"` : ""}><button class="btn quiet" type="button" data-rollback data-host="${esc(e.host)}" data-ask="${esc(ask)}" data-note="${esc(note)}" aria-label="${esc(`Roll back ${e.host}`)}"${busy ? " disabled" : ""}>Roll back</button></span>`;
+  return `<span class="deps here back"><span class="dep live" data-host="${esc(e.host)}" title="${esc(`${e.host} runs this commit`)}"><span class="w">live</span><span class="at">${at}</span></span>${back}</span>`;
+}
+
+/**
  * The commits of the instance's branch, in one column. Green (a filled dot): live on the instance, the commit that it
- * runs and those before it. Orange (a ring): not on it yet. "live" at the commit that runs; a Deploy button on each
- * other row under the mouse, and always on the head's row while the head is not live.
+ * runs and those before it. Orange (a ring): not on it yet. "live" at the commit that runs, with Roll back; a Deploy
+ * button on each other row under the mouse, and always on the head's row while the head is not live.
  */
 function commits(g: Entry, f: Facts, now: number): string {
   const all = f.logs[g.host];
@@ -279,6 +293,7 @@ function commits(g: Entry, f: Facts, now: number): string {
   const note =
     a?.version && on < 0 ? `<p class="note">${esc(`${g.host} runs ${a.version}, which ${g.branch} does not have in this clone.`)}</p>` : "";
   const active = activeJobs(f.jobs, f.run);
+  const rolling = active.some((j) => j.kind == "rollback" && j.host == g.host);
   const body = rows
     .map((c, i) => {
       const kind = on >= 0 && i >= on ? "on" : "off";
@@ -288,7 +303,7 @@ function commits(g: Entry, f: Facts, now: number): string {
       const cell =
         !runs(a, c.sha) || deploying
           ? deployButton(g, c, active.length > 0, deploying, i == 0)
-          : `<span class="deps"><span class="dep live" data-host="${esc(g.host)}" title="${esc(`${g.host} runs this commit`)}"><span class="w">live</span><span class="at">${at ? short(at, now) : ""}</span></span></span>`;
+          : liveCell(g, at ? short(at, now) : "", active.length > 0, rolling);
       const tip = kind == "on" ? `Live on ${g.host}` : `On ${g.branch}, not on ${g.host} yet`;
       return `<div class="row ${kind}" data-sha="${esc(c.sha)}"><span class="rail${i ? " up" : ""}${i < rows.length - 1 ? " down" : ""} ${kind}" title="${esc(tip)}"><i class="dot ${kind}"></i></span><span class="subj" title="${esc(c.subject)}">${esc(c.subject)}</span><span class="who">${esc(c.author)}</span><code class="sha">${esc(sha7(c.sha))}</code><time>${esc(timeAgo(c.at, now))}</time>${cell}</div>`;
     })

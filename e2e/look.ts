@@ -14,7 +14,8 @@ import { copyFixture, descendants, startServer, type Server } from "./helpers/se
 const HELP = `bun run look [--doc <fixture | file.html | folder>] [--out <file.png>] [--source] [--latency <ms>] [--keep | --stop] [step ...]
 bun run look --view [--doc ...] [--out <file.png>]     the document as a reader sees it, with no editor and no steps
 bun run look --path /documents [--out <file.png>]           a page of the server by its path, signed in
-bun run look --ops <host>[/<tab>] [--out <file.png>]        the ops page (bun erga) of an instance, with made-up facts
+bun run look --ops <host>[/<tab>] [--out <file.png>] [hover:<selector> | tap:<selector>]...
+                                                            the ops page (bun erga) of an instance, with made-up facts
 
 Opens a copy of the document in the editor, clicks at the end of its first text block, runs the steps,
 then saves a screenshot and prints the page as a person sees it: "|" is the caret, "[" "]" a selection.
@@ -176,22 +177,29 @@ if (opsArg != undefined) {
       })
     );
     const runs: Record<string, string> = { "example.net": main, "staging.example.net": shas[5], "notes.example.org": shas[2] };
-    const job = (host: string, sha: string, ago: number, from: string) => {
+    /** A job record: a deploy of `sha` (a rollback with no commit), which ended well, or with `error`. */
+    const job = (host: string, sha: string | null, ago: number, from: string, error?: string) => {
       const started = new Date(now - ago * 60_000).toISOString();
+      const ended = new Date(now - ago * 60_000 + 64_000).toISOString();
       const lines = [
-        { command: `bun erga deploy ${sha.slice(0, 12)} ${host}`, host, from, pid: 1, started },
-        { commit: sha },
-        { out: `PASS  ${host} runs ${sha.slice(0, 12)}.` },
-        { result: "ok", ended: new Date(now - ago * 60_000 + 64_000).toISOString() },
+        { command: sha ? `bun erga deploy ${sha.slice(0, 12)} ${host}` : `bun erga rollback ${host}`, host, from, pid: 1, started },
+        ...(sha ? [{ commit: sha }] : []),
+        { out: error ? `FAIL  ${error}` : `PASS  ${host} runs ${sha ? sha.slice(0, 12) : "the version from before"}.` },
+        error ? { result: "failed", error, ended } : { result: "ok", ended },
       ];
       writeFileSync(
         join(erga, "jobs", `${started.replace(/[:.]/g, "-")}-${host}-1.jsonl`),
         lines.map((l) => `${JSON.stringify(l)}\n`).join("")
       );
     };
+    // Each head has a job record, so auto-deploy starts nothing and the buttons are on. staging.example.net's deploy of
+    // its head failed; notes.example.org took its head, and then a rollback.
     job("example.net", main, 290, "auto-deploy");
     job("staging.example.net", shas[5], 110, "auto-deploy");
+    job("staging.example.net", staging, 38, "auto-deploy", `1 test failed on ${staging.slice(0, 12)}.`);
     job("notes.example.org", shas[2], 2300, "terminal");
+    job("notes.example.org", main, 250, "auto-deploy");
+    job("notes.example.org", null, 240, "terminal");
     const { serveOpsPage } = (await import(join(ROOT, "deploy/cli/ops-page.ts"))) as typeof import("../deploy/cli/ops-page");
     const served = serveOpsPage({
       dir: erga,
@@ -204,12 +212,10 @@ if (opsArg != undefined) {
         heads: Object.fromEntries(branches.map((b) => [b, b == "staging" ? staging : main])),
         error: null,
       }),
-      // No deploy: a job that would start stays out.
+      // No deploy and no rollback: a job that a step starts never ends, and does nothing.
       run: () => ({ pid: 1, done: new Promise(() => {}) }),
     });
     stop = () => served.stop();
-    // Auto-deploy would start a deploy for an instance behind its head: each head here has its job record, but for
-    // staging.example.net's, which the picture shows as not deployed yet.
     const page = await browser.newPage({ viewport });
     await page.goto(`http://127.0.0.1:${served.server.port}/#${opsArg}`);
     await page
@@ -223,6 +229,12 @@ if (opsArg != undefined) {
       .first()
       .waitFor({ timeout: 15_000 })
       .catch(() => {});
+    // The steps: the mouse over an element, or a click on it.
+    for (const step of args) {
+      const [, what, selector] = /^(hover|tap):(.+)$/.exec(step) ?? [];
+      if (!what) throw new Error(`the ops page has no step ${step}: hover:<selector> or tap:<selector>`);
+      await (what == "hover" ? page.hover(selector) : page.click(selector));
+    }
     await page.screenshot({ path: out, fullPage: true });
     console.log(`screenshot: ${out}`);
   } catch (e) {

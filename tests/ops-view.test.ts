@@ -332,6 +332,30 @@ test("while its deploy runs, its cell says Deploying… with a spinner, on its i
   }
 });
 
+test("Roll back: on the live row, in place of the live mark under the mouse; it says Rolling back… while it runs", () => {
+  const SPIN = '<i class="spin" aria-hidden="true"></i>';
+  const html = right(viewHtml(facts(), "staging.example.net", NOW));
+  // The live row has the mark and the button; no other row has a Roll back.
+  expect(rowOf(html, "4")).toContain(
+    '<span class="deps here back"><span class="dep live" data-host="staging.example.net" title="staging.example.net runs this commit"><span class="w">live</span><span class="at"></span></span><span class="tip"><button class="btn quiet" type="button" data-rollback data-host="staging.example.net" data-ask="Roll back staging.example.net to the version from before its last deploy?" data-note="bun erga rollback staging.example.net. No branch moves. The next deploy goes forward again." aria-label="Roll back staging.example.net">Roll back</button></span></span>'
+  );
+  expect(html.match(/data-rollback/g)?.length).toBe(1);
+  // While another job runs, it is off, and says only that a job runs.
+  const off = right(viewHtml(facts({ jobs: [job("o", "notes.example.org", "3", { ends: null })] }), "staging.example.net", NOW));
+  expect(rowOf(off, "4")).toContain(
+    '<span class="tip" title="Another job runs. Wait for it to end."><button class="btn quiet" type="button" data-rollback'
+  );
+  expect(rowOf(off, "4")).toMatch(/data-rollback [^>]* disabled>/);
+  // Its own rollback runs: the live row says so, and the list says "rolling back".
+  const back = job("b", "staging.example.net", "", { command: "bun erga rollback staging.example.net", ends: null });
+  const rolling = viewHtml(facts({ jobs: [back] }), "staging.example.net", NOW);
+  expect(rowOf(right(rolling), "4")).toContain(`aria-busy="true" disabled>${SPIN}Rolling back…</button>`);
+  expect(rowOf(right(rolling), "4")).not.toContain("dep live");
+  expect(words(rolling)["staging.example.net"]).toBe("rolling back");
+  // An instance whose commit the page does not know has no live row, and so no Roll back.
+  expect(right(viewHtml(facts({ answers: {} }), "staging.example.net", NOW))).not.toContain("data-rollback");
+});
+
 test("auto-deploy that stopped for the instance says at which commit, and what starts it again", () => {
   const stopped = (why: string) =>
     right(viewHtml(facts({ auto: { "notes.example.org": { at: "failed", head: "3".repeat(40), why } } }), "notes.example.org", NOW));
@@ -376,7 +400,7 @@ test("Checked: one line with the chosen instance's own sources, its repository a
   );
 });
 
-test("the page's server: Deploy starts its `bun erga` command, one job at a time, only from the page; it has no merge", async () => {
+test("the page's server: Deploy and Roll back start their `bun erga` command, one job at a time, only from the page; it has no merge", async () => {
   const { execFileSync } = await import("node:child_process");
   const { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -445,6 +469,17 @@ test("the page's server: Deploy starts its `bun erga` command, one job at a time
     expect((await post("/api/deploy", { host: "nope.dev", sha: c1 })).status).toBe(409);
     expect((await post("/api/deploy", { host: "staging.example.net", sha: c3 })).status).toBe(202);
     expect(runs.at(-1)).toEqual(["deploy", c3.slice(0, 12), "staging.example.net"]);
+    // Roll back: `bun erga rollback <host>`, with the same rules: only from the page, a registered instance, one job at a time.
+    expect((await post("/api/rollback", { host: "example.net" })).status).toBe(409);
+    end({ code: 0, out: "" });
+    for (let i = 0; i < 100 && (await view()).includes("Another job runs"); i++) await Bun.sleep(20);
+    expect((await post("/api/rollback", { host: "example.net" }, "https://evil.example")).status).toBe(403);
+    expect((await post("/api/rollback", { host: "nope.dev" })).status).toBe(409);
+    expect((await post("/api/rollback", { host: "example.net" })).status).toBe(202);
+    expect(runs.at(-1)).toEqual(["rollback", "example.net"]);
+    expect(await view("example.net")).toContain(
+      '<div class="job running"><i class="light"></i><code>bun erga rollback example.net</code><span>starts · from this page</span></div>'
+    );
   } finally {
     end({ code: 0, out: "" });
     page.stop();

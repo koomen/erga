@@ -102,6 +102,10 @@ a.job:hover { border-color: var(--chrome); }
    the head's button shows always while the head is not live (.show). */
 .deps.here .tip { opacity: 0; }
 .deps.here:hover .tip, .deps.here:focus-within .tip, .deps.here.show .tip { opacity: 1; }
+/* The live row: Roll back takes the place of the "live" mark under the mouse, or with the keyboard's focus. */
+.deps.back { position: relative; }
+.deps.back .tip { position: absolute; inset: 0 6px 0 2px; width: auto; align-items: center; }
+.deps.back:hover .dep, .deps.back:focus-within .dep { visibility: hidden; }
 .confirm { width: min(440px, calc(100vw - 32px)); margin: auto; padding: 16px 18px; border: 1px solid var(--rule); border-radius: 12px; background: var(--bg);
   color: var(--fg); font-size: 14px; box-shadow: 0 12px 40px rgb(0 0 0 / 18%); }
 .confirm::backdrop { background: rgb(0 0 0 / 18%); }
