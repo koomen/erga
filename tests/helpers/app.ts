@@ -167,7 +167,7 @@ export function server(o: ServerOptions = {}) {
     pagesShared: () => null,
     secret: "session-secret",
     tokens: new Tokens(sql, "session-secret", dir),
-    deploy: { version: null, facts: null, domains: o.domains ?? [], app: null },
+    deploy: { version: null, domains: o.domains ?? [], app: null },
     signIn: {
       mode: "oauth",
       apps: { github: { clientId: "", secret: "" }, google: { clientId: "", secret: "" } },

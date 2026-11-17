@@ -10,6 +10,7 @@ import { WORKER_TAG } from "../pipeline/account";
 import { machineCredential } from "../local-credential";
 import { nothingSeen, type Seen } from "./flow";
 import { type Answers, proxyExpects, sso, zoneOf } from "./plan";
+import { adminOn } from "./first";
 import { DIR, githubIdOf, loadSecrets, namesAt } from "./store";
 
 export interface Connection {
@@ -125,7 +126,7 @@ export async function liveOf(net: Fetch, a: Answers, githubId: string | undefine
 /** What the flow decides from, on Cloudflare: the login, the accounts that hold the domain, and the server. */
 export async function observe(a: Answers, dir = DIR): Promise<Seen> {
   const entry = entryOf(readConfig(dir), a.host);
-  const seen: Seen = { ...nothingSeen, admin: !!entry?.token, vars: entry ? { ...entry.vars } : null, github: githubIdOf(a.host, dir) };
+  const seen: Seen = { ...nothingSeen, vars: entry ? { ...entry.vars } : null, github: githubIdOf(a.host, dir) };
   if (!a.where) return seen;
   if (a.where == "aws") return (await import("../aws/setup")).observeAws(dir, a, seen, site);
   const c = await cloudflare();
@@ -200,6 +201,7 @@ export async function observe(a: Answers, dir = DIR): Promise<Seen> {
       .catch(() => null);
     seen.held = (settings?.bindings ?? []).filter((b) => b.type == "secret_text").map((b) => b.name);
     seen.live = await liveOf(net, a, githubIdOf(a.host, dir));
+    seen.admin = !!(await adminOn(cf, acc, n.worker).catch(() => null));
   }
   seen.app = !!githubIdOf(a.host, dir) && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
   return seen;

@@ -66,7 +66,7 @@ yes. Then the build writes the templates again, makes AWS's change sets, shows t
   - The setup reads the sign-in's endpoints from its issuer. The client's secret is never in a file: the user types
     it on a page that setup opens on this machine, which stores it in Secrets Manager as `erga/<stack>/oidc-client-secret`, and the stack reads it there.
   - Without the sign-in pass only: a document's own address (its files by their token; a frame can't sign in); on the
-    app's address, what Erga's tokens guard (MCP and its OAuth, the operations, the CLI's token request, the deploy's
+    app's address, what Erga's tokens guard (MCP and its OAuth, the operations, an agent's token request, the deploy's
     checks: `deploy/proxy-paths.ts`), a page's keyed requests to its room, and the server's own browser, by the NAT's fixed
     address. A user approves an agent on a page behind the sign-in.
   - The proxy refuses a request that brings its own `X-Forwarded-Host`, which celld would take for the host.
@@ -126,6 +126,10 @@ That run used an earlier deploy script, Caddy and temporary names, with the same
 - The app has a domain in Route 53. The documents' pages have a zone of their own; with the organization's sign-in, a name
   under the app's (pages.<host>).
 - A secret set in Parameter Store reaches the Worker at the next deploy.
+- `bun erga status` and the ops page read the release that an instance runs from the parameter `/erga-live/<stack>`
+  (a plain String), which each deploy and rollback writes with the AWS CLI. The admin's login needs
+  `ssm:PutParameter` and `ssm:GetParameter` on it. An instance from before this parameter shows "no release on record
+  yet" until its next deploy. This is not tested on a real AWS account yet.
 - One machine: each write waits for S3 (about 90 ms by celld's docs). A second machine on the same bucket makes
   writes faster and takes over if the first one stops.
 - A deploy reaches the machine about 10 s after `celld deploy`. An editor that opens in those seconds can fail to

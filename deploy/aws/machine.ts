@@ -228,6 +228,27 @@ echo "runs ${o.version}"
 `;
 }
 
+/** One release's deploy facts (ERGA_DEPLOY in its settings, as the bucket has them), as one line of JSON. */
+export const factsScript = (o: { bucket: string; region: string; version: string }) =>
+  `set -euo pipefail
+export AWS_REGION=${o.region}
+aws s3 cp s3://${o.bucket}/releases/${o.version}.tgz - --quiet | tar -xzO ./wrangler.json | python3 -c 'import json, sys
+print(json.load(sys.stdin)["vars"]["ERGA_DEPLOY"])'
+`;
+
+/**
+ * One SQL statement on the instance's database (celld d1 execute, in the release that runs, as deployScript's `first`
+ * does): its output, as celld prints it.
+ */
+export const sqlScript = (o: { bucket: string; region: string; sql: string }) =>
+  `set -euo pipefail
+export AWS_REGION=${o.region}
+version=$(tail -1 /var/lib/erga/deployed)
+dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && cd "$dir"
+aws s3 cp s3://${o.bucket}/releases/$version.tgz - --quiet | tar -xz
+celld d1 execute erga . --bucket ${fleet(o.bucket)} --command "${o.sql.replace(/"/g, '\\"')}" 2>&1
+`;
+
 /** The releases the machine ran, oldest first (the last one runs now). */
 export const deployedScript = () => "cat /var/lib/erga/deployed 2>/dev/null || true";
 

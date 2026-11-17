@@ -37,7 +37,7 @@ import { findDatabase } from "../pipeline/account";
 import { fail, pass, ROOT, say } from "../root";
 import { askSecret, githubApp, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
 import { checkSignIn, cloudflare, type Connection, observe, site } from "./facts";
-import { firstDeploy, register, secretsFor } from "./first";
+import { adminOn, firstDeploy, secretsFor } from "./first";
 import { checksOf, missing, planText, type Seen, type State, step } from "./flow";
 import { type Answers, noAnswers, parseAnswer, type TextAnswer } from "./plan";
 import { DIR, githubIdOf, loadSecrets, namesAt, saveSecrets } from "./store";
@@ -172,27 +172,45 @@ async function build(a: Answers, seen: Seen, o: Run) {
 }
 
 /**
- * The admin's step: the server asks for the ops token, and the browser opens the one-time link that carries its code.
- * The link makes the user the new server's admin as they sign in (server/identity/claim.ts). The result: the user's
- * login, or "" when the wait ended first.
+ * The admin's step: the browser opens the one-time link, and the user signs in there: they become the server's admin
+ * (server/identity/claim.ts). Setup then sees the admin in the database, which it reads through the platform (the
+ * Cloudflare D1 API; on AWS, the machine): it asks the server nothing. The result: the admin's login, or "" when the
+ * wait ended first.
  */
 async function admin(a: Answers, o: Run): Promise<string> {
-  const net = a.where == "aws" ? site : (await connect()).net;
   const secret = loadSecrets(DIR)[a.host]?.SESSION_SECRET;
-  const opened = async (code: string) => {
-    const to = secret
-      ? `https://${a.host}/auth/claim?t=${encodeURIComponent(await Claim.seal(secret, {}))}&approve=${encodeURIComponent(code)}`
-      : `https://${a.host}/tokens/approve?code=${encodeURIComponent(code)}`;
-    if (a.remote) tellUser(`Open this link in your browser. It works one time; never give it to your agent.\n${to}`);
-    else openBrowser(to);
-  };
+  if (!secret)
+    return fail(
+      `This machine does not hold the SESSION_SECRET of ${a.host} (.erga/secrets.json), so it can't make the admin's link.`,
+      `Run the command on the machine that set ${a.host} up: ${o.again}`
+    );
+  const entry = entryOf(readConfig(DIR), a.host);
+  if (!entry) return fail(`${a.host} has no entry in .erga/config.json yet: its first deploy writes it.`, o.again);
+  let found: () => Promise<string | null>;
+  if (isAws(entry)) {
+    const { awsCli } = await import("../aws/cli");
+    const { adminOnAws } = await import("../aws/setup");
+    const aws = awsCli({ profile: entry.profile, region: entry.aws.region });
+    found = () => adminOnAws(aws, entry.aws);
+  } else {
+    const { cf } = await connect();
+    found = () => adminOn(cf, `/accounts/${entry.account}`, entry.worker);
+  }
+  const to = `https://${a.host}/auth/claim?t=${encodeURIComponent(await Claim.seal(secret, {}))}`;
+  if (a.remote) tellUser(`Open this link in your browser. It works one time; never give it to your agent.\n${to}`);
+  else openBrowser(to);
   say(
     a.remote
       ? `WAIT  The user's terminal shows a link to ${a.host}. The user opens it in their browser, and signs in there: they become the admin.`
       : `WAIT  A tab opens on ${a.host}, with a link that works one time. The user signs in there, and becomes the admin.`
   );
-  const approved = register(DIR, a.host, { site: net, asked: (code) => void opened(code) });
-  return Promise.race([approved, Bun.sleep(WAIT_MS).then(() => "")]).catch((e: Error) => fail(e.message, o.again));
+  const until = Date.now() + WAIT_MS;
+  while (Date.now() < until) {
+    await Bun.sleep(isAws(entry) ? 10_000 : 3000);
+    const who = await found().catch((e: Error) => fail(e.message, o.again));
+    if (who) return who;
+  }
+  return "";
 }
 
 /** Prints what the dry run found: the checks, and the plan. */

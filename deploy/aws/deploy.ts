@@ -1,16 +1,17 @@
 // `bun erga deploy` and `bun erga rollback` of an instance on AWS (deploy/cli/deploy.ts calls these for an entry with
 // AWS facts). A deploy: the release as a celld project (project.ts) into the bucket, then the machine loads it
 // (machine.ts, deployScript: the migrations, the Worker, its answer). A release that doesn't answer is rolled back to the
-// one before it. A rollback loads the release before the one that runs; the bucket keeps every release.
+// one before it. A rollback loads the release before the one that runs; the bucket keeps every release. Each deploy
+// and each rollback writes the release that runs into one plain parameter (liveParam): `bun erga status` reads it
+// there (the AWS CLI), with no command on the machine and no request to the instance.
 
-import type { AwsEntry } from "../cli/config";
-import type { AwsFacts } from "../cli/ops";
+import type { AwsEntry, AwsFacts } from "../cli/config";
 import type { Release } from "../pipeline/release-format";
-import { awsCli } from "./cli";
-import { CHROME_DEVTOOLS, deployedScript, deployScript, onMachine, putRelease } from "./machine";
+import { type Aws, awsCli } from "./cli";
+import { CHROME_DEVTOOLS, deployedScript, deployScript, factsScript, onMachine, putRelease } from "./machine";
 import { celldProject } from "./project";
 
-/** An entry's facts, as the server keeps them (ERGA_DEPLOY, GET /api/ops): its AWS names and its plain settings. */
+/** An entry's facts, as the release keeps them (ERGA_DEPLOY, in its settings in the bucket): its AWS names and its plain settings. */
 export const awsFacts = (e: AwsEntry): AwsFacts => ({ aws: e.aws, vars: e.vars });
 
 /** The Worker's plain settings on AWS: the entry's, which release it is, its facts, where its pages and its Chrome are. */
@@ -25,6 +26,39 @@ export function awsVars(e: AwsEntry, version: string): Record<string, string> {
 }
 
 const awsOf = (e: AwsEntry) => awsCli({ profile: e.profile, region: e.aws.region });
+
+/**
+ * The parameter (Parameter Store, a plain String) that holds the release an instance runs. Trap: it is not in the
+ * stack's folder (template.ts, paramFolder): the machine loads every parameter of that folder into the Worker's settings.
+ */
+export const liveParam = (stack: string) => `/erga-live/${stack}`;
+
+const putLive = (aws: Aws, stack: string, version: string) =>
+  aws("ssm", "put-parameter", "--name", liveParam(stack), "--type", "String", "--overwrite", "--value", version);
+
+/** The release that the stack's instance runs, as its last deploy or rollback wrote it. Null: none wrote it yet. */
+export async function liveOnAws(aws: Aws, stack: string): Promise<string | null> {
+  const r = await aws<{ Parameter: { Value: string } }>("ssm", "get-parameter", "--name", liveParam(stack)).catch((e: Error) => {
+    if (/ParameterNotFound/.test(e.message)) return null;
+    throw e;
+  });
+  return r?.Parameter.Value ?? null;
+}
+
+/**
+ * The deploy facts of the release that the stack's instance runs, for `bun erga register`: the release's own settings
+ * in the bucket (ERGA_DEPLOY), which only the machine can read (the bucket's key lets the admins encrypt only).
+ */
+export async function factsOnAws(
+  aws: Aws,
+  stack: string,
+  o: { bucket: string; machine: string; region: string }
+): Promise<{ version: string; facts: unknown }> {
+  const version = await liveOnAws(aws, stack);
+  if (!version) throw new Error(`The stack ${stack} has no release on record (${liveParam(stack)}): a deploy writes it.`);
+  const out = await onMachine(aws, o.machine, factsScript({ bucket: o.bucket, region: o.region, version }), 120);
+  return { version, facts: JSON.parse(out.trim().split("\n").at(-1) ?? "null") };
+}
 
 /** The releases the machine ran, oldest first: the last one runs now. */
 export async function deployedReleases(e: AwsEntry): Promise<string[]> {
@@ -45,6 +79,7 @@ export async function deployToAws(e: AwsEntry, release: Release, log: (line: str
   log(`The machine ${e.aws.machine} loads it: the migrations, then the Worker${before ? ` (it runs ${before} now)` : ""}...`);
   try {
     log((await onMachine(aws, e.aws.machine, deployScript({ ...where, version: release.version, first }))).trim().split("\n").at(-1) ?? "");
+    await putLive(aws, e.aws.stack, release.version);
   } catch (err) {
     if (!before || before == release.version) throw err;
     log(`Release ${release.version} didn't answer: the machine goes back to ${before}.`);
@@ -61,10 +96,8 @@ export async function rollbackAws(e: AwsEntry, log: (line: string) => void, ask?
   if (!now || !before) throw new Error(`${e.host} has no release before ${now ?? "the one it runs"} to go back to.`);
   log(`${e.host} runs release ${now}. Rollback goes to the release before it: ${before}. The database stays as it is.`);
   if (ask && !ask("Roll back now? [y/N]")) throw new Error("Not rolled back.");
-  await onMachine(
-    awsOf(e),
-    e.aws.machine,
-    deployScript({ bucket: e.aws.bucket, region: e.aws.region, stack: e.aws.stack, version: before })
-  );
+  const aws = awsOf(e);
+  await onMachine(aws, e.aws.machine, deployScript({ bucket: e.aws.bucket, region: e.aws.region, stack: e.aws.stack, version: before }));
+  await putLive(aws, e.aws.stack, before);
   return before;
 }

@@ -133,7 +133,11 @@ and `main`. There are no pull requests.
   repository and branch that it tracks, its commit, how many commits it is
   behind that branch, and its health, the feature branches (ahead, behind, conflicts, and the
   state of the tests on its merge, with each failed test) and the
-  commits on staging that are not on main. It only reads: no fetch. It asks
+  commits on staging that are not on main. It only reads: no fetch. An
+  instance's commit comes from its platform, with this machine's login: on
+  Cloudflare, the Worker's deployment (its API); on AWS, a parameter that
+  each deploy and rollback writes. The instance itself is asked only for
+  its health. It asks
   GitHub for its branches (`git ls-remote`) and leaves out a branch that a
   merge deleted; offline, it lists the clone's branches, with a note.
 - `bun erga`: the ops page on localhost. It lists the instances of `.erga/config.json`,
@@ -141,7 +145,7 @@ and `main`. There are no pull requests.
   chosen one's repository and "live" at its commit, and the job that runs. Its tabs: Setup (the steps of `bun erga setup`), Deploys,
   Logs (a job's output, live) and History (the jobs). It checks its sources, each on its own
   period, whatever happens: GitHub at most once a minute, with `git fetch --prune` in the main
-  clone, and each instance's commit and health every 5 seconds. The Deploys tab's Sources box shows each source's
+  clone, and each instance's commit (from Cloudflare's API or AWS's, never from the instance) and health every 15 seconds. The Deploys tab's Sources box shows each source's
   last check, its answer or its error, and "stale" after three of its periods with no good answer. A new job
   on an instance that the page does not show switches the page to that instance. Each feature branch is one row: its tests' state (in the queue, running, passed, or failed, which opens
   to the failed tests), its Proof link (`bun erga proof`) and its Merge button (`bun erga merge <branch> -m <text>`),
@@ -182,10 +186,13 @@ and `main`. There are no pull requests.
 - A deploy or a rollback holds the lock `.erga/jobs/<host>.lock` and writes
   its record in `.erga/jobs/`. A second one on the same instance stops.
 - `bun erga register <host> [--repo <repo>] [--branch <branch>]`:
-  signs in to an instance as an admin (Pete approves in the browser), and
-  writes its deploy facts, its plain settings, an ops token and what it
-  tracks into `.erga/config.json` in the main clone. Only when Pete asks.
-- `bun erga login <host>`: a new ops token for a registered instance.
+  adds an instance that runs already to `.erga/config.json` in the main
+  clone: its deploy facts and its plain settings, read from Cloudflare's API
+  with this machine's Cloudflare login (the Worker at the host, and the
+  bindings of the version that serves), and what it tracks. With
+  `--host aws [--profile <name>] [--region <region>]`: from AWS, with the
+  AWS CLI's login. It asks the instance nothing, and there is no token.
+  Only when Pete asks.
 - `bun erga setup <host> --host ... --sign-in ...`: a new instance, from
   nothing to a registered one, on Cloudflare or AWS. The agent asks the user
   the README's questions first; `--dry-run` checks the answers and prints the

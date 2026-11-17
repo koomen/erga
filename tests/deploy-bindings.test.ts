@@ -52,7 +52,7 @@ describe("the app Worker's bindings", () => {
     expect(meta.find((b) => b.name == "AI")).toEqual({ type: "ai", name: "AI" });
   });
 
-  test("the Worker gets its own deploy facts (ERGA_DEPLOY), which GET /api/ops answers: the target's account, Worker, database, addresses and plain settings", () => {
+  test("the Worker gets its own deploy facts (ERGA_DEPLOY), which bun erga register reads from Cloudflare: the target's account, Worker, database, addresses and plain settings", () => {
     const target = next();
     const facts = JSON.parse(nextMeta(release).find((b) => b.name == "ERGA_DEPLOY").text);
     expect(facts).toEqual({

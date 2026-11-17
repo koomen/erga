@@ -67,7 +67,8 @@ export interface Env {
   /**
    * The facts a deploy from a machine needs to deploy this server again, as JSON (the pipeline sets it:
    * deploy/pipeline/account.ts `deployFacts`): the Cloudflare account, the Worker, the database, the app's address and
-   * the pages'. GET /api/ops (server/api.ts) answers it, to an admin's ops token only.
+   * the pages'. The server reads its custom domains and its app's host from it; `bun erga register` reads it from
+   * Cloudflare, in the bindings of the Worker's version (deploy/cli/running.ts).
    */
   ERGA_DEPLOY?: string;
   /** A Worker secret: a GitHub token that may open issues in the setting feedback_repository, for the feedback people send (server/feedback.ts). */

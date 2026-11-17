@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { type CloudflareEntry, type Entry, entryOf, readConfig, withEntry, writeConfig } from "../deploy/cli/config";
 import { commitOf, deployInstance, entryTarget, rollbackInstance, trackedHead } from "../deploy/cli/deploy";
 import { promote, promoteRefusal } from "../deploy/cli/promote";
+import { findInstance, instanceReader } from "../deploy/cli/running";
 import { lockPath, takeLock } from "../deploy/cli/jobs";
 import { deployFacts } from "../deploy/pipeline/account";
 import { mockCloudflare } from "../dev/mock-cloudflare";
@@ -33,7 +34,7 @@ quietConsole();
 
 const HEAD = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: ROOT }).stdout.toString().trim();
 const REPO = "github.com/koomen/erga";
-const fleet: Entry = { host: "example.com", repo: REPO, branch: "main", ...deployFacts(fleetTarget()), token: "erga_ops_fleet" };
+const fleet: Entry = { host: "example.com", repo: REPO, branch: "main", ...deployFacts(fleetTarget()) };
 const nextFacts = deployFacts(nextTarget());
 const next: Entry = {
   host: "next.example.com",
@@ -42,7 +43,6 @@ const next: Entry = {
   ...nextFacts,
   // A plain setting that only the entry has: the upload must carry it.
   vars: { ...nextFacts.vars, GITHUB_CLIENT_ID: "Ov23-from-the-entry" },
-  token: "erga_ops_next",
 };
 
 let dir = "";
@@ -198,6 +198,59 @@ describe("bun erga deploy", () => {
   }, 60_000);
 });
 
+describe("what an instance runs comes from Cloudflare, never from the instance", () => {
+  /** An instance that answers nothing: every request to it is recorded, and fails. */
+  const silent = () => {
+    const asked: string[] = [];
+    const site = async (url: string) => (asked.push(new URL(url).pathname), Promise.reject(new TypeError("no app server")));
+    return { asked, site };
+  };
+
+  test("status with no app server: the commit of the version that serves, after a deploy and after a rollback", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    fresh(fleet, next);
+    const { asked, site } = silent();
+    const ask = instanceReader({ net: mock.fetch, site });
+    // The fleet's Worker, as its last deploy left it; the instance itself gives no answer (its health: unknown).
+    expect(await ask(fleet)).toEqual({ version: "prim00000000", healthy: null });
+    expect(await ask(next)).toEqual({ version: SHA1.slice(0, 12), healthy: null });
+    await deployInstance({ dir, host: "next.example.com", commit: "HEAD", net: mock.fetch, print: () => {} });
+    expect((await ask(next)).version).toBe(HEAD.slice(0, 12));
+    // An instance whose deployment did not change costs one call: its deployments. The version is read one time.
+    const calls = mock.state.calls.length;
+    expect((await ask(next)).version).toBe(HEAD.slice(0, 12));
+    expect(mock.state.calls.slice(calls)).toEqual([`GET /accounts/${nextFacts.account}/workers/scripts/erga-next/deployments`]);
+    // A rollback is a new deployment of the version before: the reader sees that version's commit.
+    await rollbackInstance({ dir, host: "next.example.com", net: mock.fetch, print: () => {} });
+    expect((await ask(next)).version).toBe(SHA1.slice(0, 12));
+    // The reader asked the instance for its health only, and Cloudflare with reads only.
+    expect([...new Set(asked)]).toEqual(["/api/health"]);
+    // A Worker that is not there, and a credential that Cloudflare refuses: the answer says so.
+    expect(await ask({ ...next, host: "new.example.com", worker: "erga-new" } as Entry)).toEqual({
+      version: null,
+      error: "Cloudflare has no deployment of the Worker erga-new: bun erga deploy new.example.com",
+      healthy: null,
+    });
+    const refused = await instanceReader({ net: mock.fetch, token: "not-a-token", site })(fleet);
+    expect(refused.error).toContain("Cloudflare didn't accept the credential");
+  }, 60_000);
+
+  test("bun erga register: the entry's facts come from the bindings of the Worker's version that serves", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const mark = mock.state.calls.length;
+    const found = await findInstance("next.example.com", { net: mock.fetch });
+    expect(found.version).toBe(SHA1.slice(0, 12));
+    expect(found.facts).toEqual(nextFacts);
+    // The fleet's first Worker is from before the pipeline gave a Worker its facts; no Worker answers at an unknown host.
+    await expect(findInstance("example.com", { net: mock.fetch })).rejects.toThrow("The Worker erga at example.com holds no deploy facts");
+    await expect(findInstance("nowhere.example.com", { net: mock.fetch })).rejects.toThrow("No Worker answers at nowhere.example.com");
+    // It only reads, and only Cloudflare's API.
+    expect(mock.state.calls.slice(mark).every((c) => c.startsWith("GET /accounts"))).toBe(true);
+  }, 60_000);
+});
+
 describe("every entry takes one path", () => {
   test("an entry's target is its names and its vars, and nothing says which instance it is", () => {
     const a = entryTarget(fleet as CloudflareEntry),
@@ -210,7 +263,7 @@ describe("every entry takes one path", () => {
 });
 
 describe("bun erga deploy --domain", () => {
-  test("registers each custom domain on the instance; the server keeps them, and the entry copies them from the server", async () => {
+  test("registers each custom domain on the instance; the Worker holds them, and the entry gets what the deploy sent", async () => {
     const mock = mockCloudflare({ fleet: true });
     mock.state.zones.push({ id: "zone00000000000000000000000e7ga4", name: "example.org", status: "active" });
     fresh(fleet, next);
@@ -332,7 +385,6 @@ describe("the branches", () => {
       expect(mock.state.calls.length).toBe(calls);
       // An older commit of its branch deploys.
       expect(await deployInstance({ dir, host: "next.example.com", commit: c1, clone, net: mock.fetch, print })).toBe(c1);
-      expect(await deployInstance({ dir, host: "next.example.com", clone, net: mock.fetch, print })).toBe(c2);
 
       // A plain git push to main still stops.
       const plain = run("git", "push", "origin", `${c2}:refs/heads/main`);
@@ -340,24 +392,23 @@ describe("the branches", () => {
       expect(plain.err).toContain("erga: Don't push to main directly");
 
       // promote: main moves to staging's head when the instance that tracks staging runs it, healthy. It deploys nothing.
-      let runs = c1;
-      const site = async (url: string) =>
-        Response.json(url.endsWith("/api/ops") ? { version: runs.slice(0, 12), host: "x", deploy: null } : { ok: true });
-      await expect(promote({ dir, clone, site, print })).rejects.toThrow(
+      // What the instance runs comes from Cloudflare (the Worker's deployment); only its health is the instance's answer.
+      const ask = instanceReader({ net: mock.fetch, site: (url, init) => mock.fetch(url, init) });
+      await expect(promote({ dir, clone, ask, print })).rejects.toThrow(
         `next.example.com (runs ${c1.slice(0, 12)}) tracks staging, and does not run ${c2.slice(0, 12)}, healthy.`
       );
       expect(remote("main")).toBe(c1);
-      runs = c2;
-      const uploads = mock.state.calls.length;
-      expect(await promote({ dir, clone, site, print })).toBe(c2);
+      expect(await deployInstance({ dir, host: "next.example.com", clone, net: mock.fetch, print })).toBe(c2);
+      const uploads = mock.state.calls.filter((c) => !c.startsWith("GET ")).length;
+      expect(await promote({ dir, clone, ask, print })).toBe(c2);
       expect([remote("staging"), remote("main")]).toEqual([c2, c2]);
       expect(lines).toContain(`main is at ${c2.slice(0, 12)} on origin.`);
       expect(lines).toContain("NEXT  example.com tracks main. Deploy the commit to it: bun erga deploy example.com");
-      expect(mock.state.calls.length).toBe(uploads);
+      expect(mock.state.calls.filter((c) => !c.startsWith("GET ")).length).toBe(uploads);
       expect(versionOf("erga")).toBe(c1.slice(0, 12));
       expect(records().at(-1)?.[0]).toMatchObject({ command: "bun erga promote", host: "main" });
       // Again: main has it.
-      expect(await promote({ dir, clone, site, print })).toBeNull();
+      expect(await promote({ dir, clone, ask, print })).toBeNull();
       // The instance that tracks main gets the commit with its own deploy.
       expect(await deployInstance({ dir, host: "example.com", clone, net: mock.fetch, print })).toBe(c2);
       expect(versionOf("erga")).toBe(c2.slice(0, 12));
@@ -366,7 +417,7 @@ describe("the branches", () => {
       const c3 = (run("git", "checkout", "-q", "--detach", c2), commit("C3: its tests fail"));
       Bun.spawnSync(["git", "push", "-q", "origin", `${c3}:refs/heads/staging`], { cwd: clone, env: { ...env, ERGA_CLI_PUSH: "1" } });
       const failing: Suite = (_, log) => (writeFileSync(log, "FAILED (1 s)\n"), null);
-      await expect(promote({ dir, clone, site, print, suite: failing })).rejects.toThrow("main stays.");
+      await expect(promote({ dir, clone, ask, print, suite: failing })).rejects.toThrow("main stays.");
       expect(remote("main")).toBe(c2);
 
       // `main` and `staging` name origin's branches: the clone's own main, which nothing moves, is still at C1.

@@ -134,7 +134,6 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     tokens: tokensOf(env),
     deploy: {
       version: settings.version || null,
-      facts: settings.deployFacts,
       domains: domainsOf(settings.deployFacts),
       app: appOf(settings.deployFacts),
     },

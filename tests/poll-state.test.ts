@@ -48,24 +48,24 @@ test("GitHub is fetched at most once a minute, from the start of one fetch to th
   expect(wake).toBeNull();
 });
 
-test("each instance is asked every 5 seconds; the step names its next wake; a gone source is dropped", () => {
+test("each instance is asked every 15 seconds; the step names its next wake; a gone source is dropped", () => {
   const { p, checks, wake } = drive([
     { type: "sources", names: [GITHUB, "example.net"], now: 0 },
     { type: "answer", name: "example.net", now: 1 * S, error: null },
-    { type: "tick", now: 4.9 * S },
-    { type: "tick", now: 5 * S },
-    { type: "answer", name: "example.net", now: 5.2 * S, error: "no answer" },
-    { type: "answer", name: GITHUB, now: 8 * S, error: null },
+    { type: "tick", now: 14.9 * S },
+    { type: "tick", now: 15 * S },
+    { type: "answer", name: "example.net", now: 15.2 * S, error: "no answer" },
+    { type: "answer", name: GITHUB, now: 18 * S, error: null },
     // An answer for a source that is not asked changes nothing.
-    { type: "answer", name: "nope", now: 9 * S, error: null },
+    { type: "answer", name: "nope", now: 19 * S, error: null },
   ]);
   expect(checks).toEqual([[GITHUB, "example.net"], [], [], ["example.net"], [], [], []]);
-  // example.net is next, at 10 s: 5 seconds after its last check started.
-  expect(wake).toBe(10 * S);
+  // example.net is next, at 30 s: 15 seconds after its last check started.
+  expect(wake).toBe(30 * S);
   // No good answer for three of its periods: stale. GitHub's period is a minute.
-  expect(isStale(p.sources["example.net"], 16.1 * S)).toBe(true);
-  expect(isStale(p.sources["example.net"], 15.9 * S)).toBe(false);
-  expect(isStale(p.sources[GITHUB], 180 * S)).toBe(false);
-  expect(isStale(p.sources[GITHUB], 189 * S)).toBe(true);
-  expect(Object.keys(stepPolls(p, { type: "sources", names: [GITHUB], now: 10 * S }).polls.sources)).toEqual([GITHUB]);
+  expect(isStale(p.sources["example.net"], 46.1 * S)).toBe(true);
+  expect(isStale(p.sources["example.net"], 45.9 * S)).toBe(false);
+  expect(isStale(p.sources[GITHUB], 190 * S)).toBe(false);
+  expect(isStale(p.sources[GITHUB], 199 * S)).toBe(true);
+  expect(Object.keys(stepPolls(p, { type: "sources", names: [GITHUB], now: 30 * S }).polls.sources)).toEqual([GITHUB]);
 });

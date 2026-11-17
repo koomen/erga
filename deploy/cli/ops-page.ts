@@ -1,7 +1,7 @@
 // `bun erga`: the ops page, a local server on 127.0.0.1 and the page it serves (deploy/cli/ops-view.ts draws it). It
 // reads .erga/config.json, .erga/jobs/ and .erga/tests/ (the tests' runs, test-run.ts) in the main clone, which it watches (a change reaches the page at once,
 // through /api/events), and the clone's git. It checks its sources (poll-state.ts): GitHub, with a git fetch of the
-// clone, at most once a minute, and each instance's commit and health, with its ops token, every 5 seconds. The page
+// clone, at most once a minute, and each instance's commit (from its platform: running.ts) and health every 15 seconds. The page
 // shows each source's last check. It serves each branch's proof page (bun erga proof) at /proof/<branch>/. Every command works without it. Its Merge and Deploy buttons run
 // `bun erga merge` and `bun erga deploy` (POST /api/merge, /api/deploy) in a process of their own, as a terminal does:
 // the same code, locks and job records. A merge's tests take minutes, and this server must answer while they run.
@@ -20,11 +20,12 @@ import { readRuns } from "./test-run";
 import { type Queue, stepQueue, testOf } from "./gate";
 import { readProofs } from "./proof";
 import type { From } from "./jobs";
-import { askInstance, branchesOf, commitsIn, fetchGitHub, inHistory, repoHeads } from "./observe";
+import { branchesOf, commitsIn, fetchGitHub, inHistory, repoHeads } from "./observe";
 import { busyWith, type Facts, type Git, type JobRecord, jobOf, mergeBlock, pageHtml, repoSource, viewHtml } from "./ops-view";
 import { alive } from "./pid";
 import { type JobState, stepRun } from "./job-state";
 import { GITHUB, type PollEvent, startPolls, stepPolls } from "./poll-state";
+import { instanceReader } from "./running";
 import { ROOT, sh } from "../root";
 
 const git = (cwd: string, ...args: string[]) => sh(["git", ...args], { cwd });
@@ -90,7 +91,7 @@ export interface OpsPageOptions {
   /** Where git reads the clone. */
   cwd: string;
   port: number;
-  /** askInstance (observe.ts), or a fake in the tests. */
+  /** What an instance runs, and its health (running.ts, instanceReader), or a fake in the tests. */
   ask?: (e: Entry) => Promise<Answer>;
   /** fetchGitHub (null: it worked, else why not), or a fake in the tests. */
   fetch?: (cwd: string) => Promise<string | null>;
@@ -111,7 +112,7 @@ const FILES: Record<string, [string, string]> = {
 
 /** The ops page's server, on 127.0.0.1. */
 export function serveOpsPage(o: OpsPageOptions) {
-  const ask = o.ask ?? askInstance;
+  const ask = o.ask ?? instanceReader();
   const run = o.run ?? runCli(o.cwd);
   const fetchGit = o.fetch ?? fetchGitHub;
   const askRepo = o.heads ?? repoHeads;

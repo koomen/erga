@@ -9,8 +9,7 @@ import { isAncestor, pushTo, remoteHead } from "./deploy";
 import type { Instance } from "./flow";
 import { gateRefusal } from "./gate";
 import { type From, startJob, takeLock } from "./jobs";
-import { askInstance } from "./observe";
-import type { Site } from "./ops";
+import { type Ask, instanceReader } from "./running";
 import { type Suite, testRun, treeOf } from "./test-run";
 import { ROOT, sh } from "../root";
 
@@ -36,7 +35,8 @@ export async function promote(o: {
   print?: (line: string) => void;
   clone?: string;
   suite?: Suite;
-  site?: Site;
+  /** What each instance runs, and its health (running.ts): a fake, in the tests. */
+  ask?: Ask;
 }): Promise<string | null> {
   const clone = o.clone ?? ROOT;
   const command = "bun erga promote";
@@ -61,8 +61,9 @@ export async function promote(o: {
     const run = await testRun({ dir: o.dir, clone, tree: treeOf(clone, sha)!, commit: sha, what: sha.slice(0, 12), log, suite: o.suite });
     const failed = gateRefusal(run, sha.slice(0, 12));
     if (failed) throw new Error(`${failed}\nmain stays.`);
+    const ask = o.ask ?? instanceReader();
     const answers = await Promise.all(
-      tracking(readConfig(o.dir), clone, "staging").map(async (e) => ({ host: e.host, ...(await askInstance(e, o.site)) }))
+      tracking(readConfig(o.dir), clone, "staging").map(async (e) => ({ host: e.host, ...(await ask(e)) }))
     );
     const no = promoteRefusal(sha, answers);
     if (no) throw new Error(`${no} main stays.`);

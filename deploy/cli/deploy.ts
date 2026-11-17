@@ -15,7 +15,7 @@
 // .build/release/ for the build: nothing real is touched, and no repository is asked: with no commit named, the
 // checkout's own deploys. In a clone that a test gives, the repository is asked as always.
 
-import { rollbackTo } from "../pipeline/account";
+import { deployFacts, rollbackTo } from "../pipeline/account";
 import { Cloudflare, DeployError, type Fetch, Unhealthy } from "../pipeline/cloudflare-api";
 import {
   STEPS,
@@ -45,7 +45,6 @@ import { testRun, type Suite, treeOf } from "./test-run";
 import { gateRefusal } from "./gate";
 import { type From, startJob, takeLock } from "./jobs";
 import { healthOf } from "./observe";
-import { readOps } from "./ops";
 import { parseDeployed } from "../../server/directory/index.ts";
 import { ROOT, sh } from "../root";
 
@@ -309,8 +308,13 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
         throw e instanceof DeployError ? new Error(e.message) : e;
       }
       log(`Deployed ${sha.slice(0, 12)} to https://${targetHost(t)}: healthy.`);
+      // The entry gets the facts that this deploy sent: they are what the Worker holds now (a new --domain is in them).
+      const now = entryOf(readConfig(o.dir), o.host);
+      if (now && !isAws(now)) {
+        const { domains: _, ...was } = now;
+        writeConfig(o.dir, withEntry(readConfig(o.dir), { ...was, ...deployFacts(t) }));
+      }
     }
-    await copyFacts(o.dir, o.host, net, log);
     job.end("ok");
     return sha;
   } catch (e) {
@@ -318,23 +322,6 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     throw e;
   } finally {
     free();
-  }
-}
-
-/**
- * The entry's copy of the deploy facts, read again from the server (GET /api/ops), which keeps them: a deploy may have
- * changed them (--domain). Without a working ops token, the entry stays as it was, and the log says so.
- */
-async function copyFacts(dir: string, host: string, net: Fetch, log: (line: string) => void) {
-  const entry = entryOf(readConfig(dir), host);
-  if (!entry?.token) return log(`NOTE  ${host} has no ops token: its entry keeps its facts as they were (bun erga login ${host}).`);
-  try {
-    const facts = await readOps(entryOrigin(entry), entry.token, net);
-    if (!facts.deploy) return;
-    const { domains: _, ...was } = entry as CloudflareEntry;
-    writeConfig(dir, withEntry(readConfig(dir), { ...was, ...facts.deploy, token: entry.token } as Entry));
-  } catch (e) {
-    log(`NOTE  ${host}'s entry keeps its facts as they were: ${(e as Error).message}`);
   }
 }
 

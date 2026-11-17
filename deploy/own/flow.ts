@@ -37,7 +37,7 @@ export interface Seen {
   live: { version: string | null; healthy: boolean; signIn: "ok" | { bad: string } | null } | null;
   /** The secrets the server holds already (their names). */
   held: string[];
-  /** The instance is registered: its entry has an ops token (an admin approved it). */
+  /** The server has an admin: its database has a user with that role (the platform's database API reads it). */
   admin: boolean;
   /** The plain settings of the instance's entry in .erga/config.json, or null: no entry yet. */
   vars: Record<string, string> | null;
@@ -75,10 +75,10 @@ export type State =
   | { at: "build" }
   /**
    * The instance runs with no admin yet, but the answers give other settings than its entry's (a run again): setup
-   * writes the entry and deploys again. A registered instance is what its entry says: `bun erga deploy` changes it.
+   * writes the entry and deploys again. An instance with an admin is what its entry says: `bun erga deploy` changes it.
    */
   | { at: "update"; vars: string[] }
-  /** The user signs in to the new server with a one-time link: they become its admin, and approve the ops token. */
+  /** The user signs in to the new server with a one-time link: they become its admin. */
   | { at: "admin" }
   /** --remote: the next step is the user's, in their terminal, and this command has none. The user runs it in theirs. */
   | { at: "terminal" }

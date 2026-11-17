@@ -1,20 +1,18 @@
 // The build of a new instance on Cloudflare (`bun erga setup <host>`, the flow's build and admin steps), around
 // `bun erga deploy`'s code (deploy/cli/deploy.ts, deployInstance):
 //
-// 1. The entry in .erga/config.json, from the answers alone, with no token yet. A registered instance's entry stays
-//    as it is: an instance is what its entry says.
+// 1. The entry in .erga/config.json, from the answers alone. An entry with other names is not this setup's: it stops.
 // 2. The first deploy, with the secrets that the Worker doesn't hold yet: its own SESSION_SECRET and FACTORY_KEY, and
 //    the GitHub App's secret. Each is made one time and kept in .erga/secrets.json under its host; a Worker that holds a secret keeps
 //    it, and no later deploy sends one.
 // 3. After the health check: the access rule that the answers name (plan.ts, firstRows), written into the new
 //    database with the Cloudflare D1 API. A database that has an admin already gets nothing.
-// 4. The ops token (register): the server asks for one, the user approves it from the link that setup opens (a
-//    new server: as they claim it, server/identity/claim.ts), and the entry gets it.
+// 4. The first admin: the user signs in from the one-time link that setup opens (server/identity/claim.ts). Setup
+//    sees the admin in the database (adminOn), with the Cloudflare D1 API: it asks the server nothing.
 
 import { randomBytes } from "node:crypto";
-import { type CloudflareEntry, type Config, entryOf, entryOrigin, readConfig, withEntry, writeConfig } from "../cli/config";
+import { type CloudflareEntry, type Config, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
 import { type DeployOptions, deployInstance } from "../cli/deploy";
-import { askOpsToken, readOps } from "../cli/ops";
 import { d1 } from "../pipeline/account";
 import { Cloudflare, type Fetch } from "../pipeline/cloudflare-api";
 import type { Seen } from "./flow";
@@ -37,18 +35,17 @@ export interface First {
 }
 
 /**
- * Writes the setup's entry into .erga/config.json. A registered instance (its entry has an ops token) keeps its entry
- * as it is. An entry with other names is not this setup's, and stops it.
+ * Writes the setup's entry into .erga/config.json. An entry with other names is not this setup's, and stops it: an
+ * instance that runs already is what its entry says.
  */
 export function writeEntry(o: First): Config {
   const config = readConfig(o.dir);
   const want = setupEntry(o.answers, { ...o.seen, github: o.github });
   const had = entryOf(config, want.host) as CloudflareEntry | null;
   if (had && "aws" in had) throw new Error(`${want.host} has an entry already, on AWS.`);
-  if (had?.token) return config;
   if (had && (had.account != want.account || had.worker != want.worker || had.database != want.database))
     throw new Error(
-      `${want.host} has an entry already, with the Worker ${had.worker} and the database ${had.database}, and no ops token. Register it (bun erga register ${want.host}), or take its entry out of .erga/config.json.`
+      `${want.host} has an entry already, with the Worker ${had.worker} and the database ${had.database}: setup would name them ${want.worker} and ${want.database}. Deploy it as it is (bun erga deploy ${want.host}), or take its entry out of .erga/config.json.`
     );
   const next = withEntry(config, want);
   writeConfig(o.dir, next);
@@ -99,6 +96,29 @@ export async function firstDeploy(o: First): Promise<string> {
   return sha;
 }
 
+/** The database that `worker` binds as DB, or null: no such Worker, or no database. */
+async function databaseOf(cf: Cloudflare, acc: string, worker: string): Promise<string | null> {
+  const settings = await cf.call<{ bindings?: { type: string; name: string; database_id?: string }[] }>(
+    "GET",
+    `${acc}/workers/scripts/${worker}/settings`,
+    `read ${worker}'s settings`,
+    undefined,
+    { allow404: true }
+  );
+  return settings?.bindings?.find((b) => b.type == "d1" && b.name == "DB")?.database_id ?? null;
+}
+
+/**
+ * The login of an admin in the database that `worker` binds, read with the Cloudflare D1 API, or null: no admin yet (or
+ * no Worker, no database, no tables). Setup's admin step waits for it: the user's own sign-in makes the row.
+ */
+export async function adminOn(cf: Cloudflare, acc: string, worker: string): Promise<string | null> {
+  const db = await databaseOf(cf, acc, worker);
+  if (!db) return null;
+  const [admin] = (await d1(cf, acc, db, "SELECT login FROM users WHERE role = 'admin' LIMIT 1", [], "look for an admin")) ?? [];
+  return admin ? String(admin.login) : null;
+}
+
 /**
  * The access rule that the answers name (plan.ts, firstRows): written only into a database with no admin yet, the one
  * `worker` binds as DB. A run again, or an admin's later change, stays as it is.
@@ -106,16 +126,11 @@ export async function firstDeploy(o: First): Promise<string> {
 export async function writeFirstRows(cf: Cloudflare, acc: string, worker: string, a: Answers, print: (line: string) => void) {
   const rows = firstRows(a);
   if (!rows.length) return;
-  const settings = await cf.call<{ bindings?: { type: string; name: string; database_id?: string }[] }>(
-    "GET",
-    `${acc}/workers/scripts/${worker}/settings`,
-    `read ${worker}'s settings`
-  );
-  const db = settings?.bindings?.find((b) => b.type == "d1" && b.name == "DB")?.database_id;
+  const db = await databaseOf(cf, acc, worker);
   if (!db) throw new Error(`The Worker ${worker} binds no database (DB) after the deploy.`);
   const q = (sql: string, ...p: (string | number)[]) => d1(cf, acc, db, sql, p, "write the access rule");
-  const [admin] = (await q("SELECT login FROM users WHERE role = 'admin' LIMIT 1")) ?? [];
-  if (admin) return print(`The database of ${worker} has an admin already (${admin.login}): setup writes nothing into it.`);
+  const admin = await adminOn(cf, acc, worker);
+  if (admin) return print(`The database of ${worker} has an admin already (${admin}): setup writes nothing into it.`);
   for (const { table, row, onConflict } of rows)
     await q(
       `INSERT INTO ${table} (${Object.keys(row).join(", ")}) VALUES (${Object.keys(row)
@@ -124,27 +139,4 @@ export async function writeFirstRows(cf: Cloudflare, acc: string, worker: string
       ...Object.values(row)
     );
   print(`The access rule is in the database of ${worker}: ${rows.map((r) => `${r.row.kind} ${r.row.value}`.trim()).join(", ")} may write.`);
-}
-
-/**
- * The ops token of the setup's server: the server asks for one, `asked` gets the request's code (the link that setup opens
- * carries it), and the call waits until the user approves it. The entry gets the token and the instance's own deploy
- * facts. The result: the user's login.
- */
-export async function register(dir: string, host: string, o: { site?: Fetch; asked: (code: string) => void }): Promise<string> {
-  const known = entryOf(readConfig(dir), host);
-  if (!known) throw new Error(`${host} has no entry in .erga/config.json yet: its first deploy writes it.`);
-  const origin = entryOrigin(known);
-  const { token, login } = await askOpsToken(origin, {
-    label: "bun erga setup",
-    site: o.site,
-    asked: (url) => o.asked(new URL(url).searchParams.get("code") ?? ""),
-  });
-  const facts = await readOps(origin, token, o.site);
-  // Read the file again: another terminal can have changed it while the user approved.
-  const config = readConfig(dir);
-  const entry = entryOf(config, host);
-  if (!entry) throw new Error(`${host}'s entry left .erga/config.json while the user approved.`);
-  writeConfig(dir, withEntry(config, { ...entry, ...(facts.deploy ?? {}), token }));
-  return login;
 }

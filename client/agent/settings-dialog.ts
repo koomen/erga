@@ -40,7 +40,6 @@ const SCOPES: Record<string, string> = {
   document: "One document",
   documents: "All my documents",
   admin: "Admin",
-  ops: "Ops (deploy facts)",
 };
 const day = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "Never";

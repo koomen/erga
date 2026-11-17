@@ -30,7 +30,6 @@ const entry = (host: string, over: Partial<Entry> = {}): Entry => ({
   app: { kind: "domain", zoneName: "example.com", hostname: host },
   pages: { kind: "zone", zoneName: "example-pages.com", domain: "example-pages.com" },
   vars: { GITHUB_CLIENT_ID: "Ov23abc", SERVER_DEFAULTS: "{}" },
-  token: `erga_${host}`,
   ...over,
 });
 
@@ -60,10 +59,10 @@ describe(".erga/config.json", () => {
 
   test("register again replaces the host's entry in its place", () => {
     const config = withEntry(withEntry({ instances: [] }, entry("a.com")), entry("b.com"));
-    const again = withEntry(config, entry("a.com", { token: "erga_new" }));
-    expect(again.instances.map((e) => [e.host, e.token])).toEqual([
-      ["a.com", "erga_new"],
-      ["b.com", "erga_b.com"],
+    const again = withEntry(config, entry("a.com", { branch: "staging" }));
+    expect(again.instances.map((e) => [e.host, e.branch])).toEqual([
+      ["a.com", "staging"],
+      ["b.com", "main"],
     ]);
   });
 
@@ -103,14 +102,14 @@ describe(".erga/config.json", () => {
   test("a file from before moves, one time: what each entry tracks comes in, and the names of another instance go", () => {
     const { repo: _r, branch: _b, ...plain } = entry("a.com");
     // From before an instance tracked a branch: one entry named another, whose data it ran on a copy of.
-    const named = { ...plain, host: "staging.a.com", stagingOf: "a.com", token: "erga_staging" };
+    const named = { ...plain, host: "staging.a.com", stagingOf: "a.com" };
     const moved = movedConfig({ instances: [plain, named] }, "example.com/team/erga")!;
     expect(moved.instances.map((e) => [e.host, e.repo, e.branch])).toEqual([
       ["a.com", "example.com/team/erga", "main"],
       ["staging.a.com", "example.com/team/erga", "staging"],
     ]);
     // Nothing else changes, and a moved file is not moved again.
-    expect(moved.instances[1]).toMatchObject({ token: "erga_staging", account: "acc", vars: plain.vars });
+    expect(moved.instances[1]).toMatchObject({ account: "acc", vars: plain.vars });
     expect(JSON.stringify(moved)).not.toMatch(/stagingOf|copyOf|SNAPSHOT_FROM/);
     expect(movedConfig(moved, "x")).toBeNull();
     // From after that, and before every instance was alike: copyOf, and SNAPSHOT_FROM in the entry's vars. What it

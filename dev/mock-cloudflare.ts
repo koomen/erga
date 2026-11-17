@@ -340,6 +340,16 @@ export function mockCloudflare(
           return ok({ id, strategy: "percentage", versions: [{ version_id: kept.id, percentage: 100 }] });
         }
       }
+      // One version of a Worker, as it was uploaded: its bindings (a secret's name and type, never its text).
+      if (m == "GET" && (r = /^\/workers\/scripts\/([^/]+)\/versions\/([^/?]+)$/.exec(rest))) {
+        const list = state.kept[r[1]] ?? [];
+        const i = list.findIndex((v) => v.id == r![2]);
+        if (i < 0) return fail(404, 10007, "This Worker version does not exist.");
+        const bindings = (list[i].script.metadata.bindings ?? []).map((b: any) =>
+          b.type == "secret_text" ? { type: b.type, name: b.name } : b
+        );
+        return ok({ id: list[i].id, number: i + 1, resources: { bindings, script: { handlers: ["fetch"] } } });
+      }
       if (m == "DELETE" && (r = /^\/workers\/scripts\/([^/?]+)(?:\?.*)?$/.exec(rest))) {
         if (!state.scripts[r[1]]) return fail(404, 10007, "This Worker does not exist on your account.");
         if (state.domains.some((d) => d.service == r![1]) && !rest.includes("force=true")) return fail(400, 10064, "This Worker is still attached to a custom domain");
@@ -405,13 +415,6 @@ export function mockCloudflare(
       homes.push(name);
       return Response.json({ home: "made" });
     }
-    // The deploy facts, as the app answers an ops token (any, here).
-    if (url.pathname == "/api/ops")
-      return Response.json({
-        version: text("ERGA_VERSION") ?? null,
-        host,
-        deploy: JSON.parse(text("ERGA_DEPLOY") || "null"),
-      });
     // The app's health check: healthy, unless a test says this release isn't (state.unhealthy).
     if (url.pathname == "/api/health") {
       const version = text("ERGA_VERSION") ?? null;

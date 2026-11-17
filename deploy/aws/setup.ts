@@ -18,7 +18,7 @@ import type { Answers } from "../own/plan";
 import { firstRows, pagesOf, sso, stackOf, varsOf } from "../own/plan";
 import { DIR, githubIdOf, loadSecrets } from "../own/store";
 import { type Aws, awsCli, whoAmI, type Where } from "./cli";
-import { provisionScript, putPrograms, onMachine, untilReachable } from "./machine";
+import { provisionScript, putPrograms, onMachine, sqlScript, untilReachable } from "./machine";
 import {
   applyStack,
   CERT_REGION,
@@ -85,7 +85,7 @@ export async function shapeOf(a: Answers, net: Fetch = fetch): Promise<AwsShape>
 // ------------------------------------------------------------------ what setup observes
 
 /** What the AWS CLI's configuration says, or "": no AWS call, so it works before the login. */
-const configured = (key: string, profile: string) => {
+export const configured = (key: string, profile: string) => {
   const r = Bun.spawnSync(["aws", "configure", "get", key, "--profile", profile], { stdout: "pipe", stderr: "ignore" });
   return r.exitCode == 0 ? r.stdout.toString().trim() : "";
 };
@@ -137,8 +137,23 @@ export async function observeAws(dir: string, a: Answers, seen: Seen, net: Fetch
     ? await secretThere(aws, oidcSecretName(name))
     : !!githubIdOf(a.host, dir) && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
   if (st.outputs.Machine) seen.live = await (await import("../own/facts")).liveOf(net, a, githubIdOf(a.host, dir));
+  if (seen.live?.healthy)
+    seen.admin = !!(await adminOnAws(aws, { machine: st.outputs.Machine, bucket: st.outputs.Bucket, region: where.region }).catch(
+      () => null
+    ));
   return seen;
 }
+
+/**
+ * The login of an admin in the instance's database, or null: none yet. The machine asks its own database (Systems
+ * Manager), and marks the row so that celld's other words can't look like one.
+ */
+export async function adminOnAws(aws: Aws, o: { machine: string; bucket: string; region: string }): Promise<string | null> {
+  return adminIn(await onMachine(aws, o.machine, sqlScript({ bucket: o.bucket, region: o.region, sql: ADMIN_SQL }), 120));
+}
+export const ADMIN_SQL = "SELECT 'admin:' || login AS who FROM users WHERE role = 'admin' LIMIT 1";
+/** The admin's login in celld's output of ADMIN_SQL (a table or JSON: the mark is in both), or null. */
+export const adminIn = (out: string) => /admin:([^\s"'|,]+)/.exec(out)?.[1] ?? null;
 
 /** Each resource of a template on disk, as "Name (Type)": what the stack makes. */
 function resourcesOf(file: string): string[] {
@@ -216,12 +231,11 @@ export async function applyStacks(dir: string, a: Answers, log: (l: string) => v
 // ------------------------------------------------------------------ the first deploy
 
 /** The instance's entry, from the answers and the stack's outputs. */
-export function awsEntry(a: Answers, account: string, outputs: Record<string, string>, github: string | undefined, token = ""): AwsEntry {
+export function awsEntry(a: Answers, account: string, outputs: Record<string, string>, github: string | undefined): AwsEntry {
   return {
     host: a.host,
     repo: a.repo,
     branch: a.branch,
-    token,
     ...(whereOf(a).profile ? { profile: a.profile } : {}),
     aws: {
       account,
@@ -295,7 +309,7 @@ export async function firstDeployAws(o: FirstAws): Promise<string> {
   if (!o.outputs.Machine) throw new Error("The stack has no machine yet.");
   const had = entryOf(readConfig(o.dir), a.host);
   if (had && !("aws" in had)) throw new Error(`${a.host} is registered already, on Cloudflare. Setup makes a new instance.`);
-  const config: Config = withEntry(readConfig(o.dir), awsEntry(a, o.account, o.outputs, o.github, had?.token ?? ""));
+  const config: Config = withEntry(readConfig(o.dir), awsEntry(a, o.account, o.outputs, o.github));
   writeConfig(o.dir, config);
   const entry = entryOf(config, a.host) as AwsEntry;
   const aws = awsCli(whereOf(a));

@@ -39,11 +39,11 @@
 //   bun erga track <host> [--repo <repo>] [--branch <branch>]  the repository and the branch that a registered
 //                                       instance tracks (github.com/koomen/erga, main); with no option, it prints them
 //   bun erga rollback <host> [--yes]    a registered instance's Worker version from before its last deploy
-//   bun erga register <host> [--repo <repo>] [--branch <branch>]
-//                                       signs in to an instance as an admin, in the browser, and adds it to
-//                                       .erga/config.json: its deploy facts, its plain settings, an ops token, and the
-//                                       repository and branch it tracks
-//   bun erga login <host>               a new ops token for a registered instance, when its token runs out
+//   bun erga register <host> [--repo <repo>] [--branch <branch>] [--host aws [--profile <name>] [--region <region>]]
+//                                       adds an instance that runs already to .erga/config.json: its deploy facts and
+//                                       its plain settings, read from its platform with this machine's login
+//                                       (Cloudflare's API; with --host aws, the AWS CLI), and the repository and
+//                                       branch it tracks
 //   bun erga setup <host> --host ... --sign-in ... [--repo <repo>] [--branch <branch>] [--dry-run]
 //                                       a new instance, on Cloudflare or AWS, from the user's answers: the checks and
 //                                       the plan (--dry-run), then the build and the first admin (bun erga setup --help)
@@ -248,7 +248,7 @@ async function rollback(arg: string | undefined, yes: boolean) {
   say("NOTE  The next deploy goes forward again.");
 }
 
-// ------------------------------------------------------------------ register and login
+// ------------------------------------------------------------------ register
 
 /** An instance's host and address, from a host or a URL. */
 const instanceOf = async (arg: string | undefined, usage: string) => {
@@ -258,17 +258,12 @@ const instanceOf = async (arg: string | undefined, usage: string) => {
   return { origin, host: new URL(origin).host };
 };
 
-/** Asks the instance for an ops token, which an admin approves in the browser, and reads its facts with it. */
-async function signInTo(origin: string) {
-  const { askOpsToken, readOps } = await import("./ops");
-  say(`Ask ${origin} for an ops token (an admin only, 90 days at most).`);
-  const { token, login } = await askOpsToken(origin, { say: (line) => say(`      ${line}`) });
-  pass(`${login} approved the ops token.`);
-  return { token, facts: await readOps(origin, token) };
-}
-
-async function register(arg: string | undefined, o: { repo?: string; branch?: string }) {
-  const { host, origin } = await instanceOf(arg, "bun erga register <host> [--repo <repo>] [--branch <branch>]");
+async function register(arg: string | undefined, o: { repo?: string; branch?: string; where?: string; profile?: string; region?: string }) {
+  const { host } = await instanceOf(
+    arg,
+    "bun erga register <host> [--repo <repo>] [--branch <branch>] [--host aws [--profile <name>] [--region <region>]]"
+  );
+  if (o.where && o.where != "aws" && o.where != "cloudflare") fail(`--host ${o.where}: cloudflare (the default) or aws.`);
   const {
     configPath,
     DEFAULT_BRANCH,
@@ -280,25 +275,25 @@ async function register(arg: string | undefined, o: { repo?: string; branch?: st
     withEntry,
     writeConfig,
   } = await import("./config");
+  const { findInstance } = await import("./running");
   const dir = ergaDir();
-  const { token, facts } = await signInTo(origin);
-  if (!facts.deploy)
-    fail(
-      `${host} gave no deploy facts: no deploy from the pipeline set them.`,
-      `Deploy ${host} with this commit or a later one, then register again.`
-    );
-  // Read the file again: another terminal can have changed it while the admin approved. The entry keeps what it tracks.
-  const now = entryOf(readConfig(dir), host);
-  const repo = o.repo ? repoName(o.repo) : (now?.repo ?? DEFAULT_REPO);
-  const branch = o.branch ?? now?.branch ?? DEFAULT_BRANCH;
-  writeConfig(dir, withEntry(readConfig(dir), { host, repo, branch, ...facts.deploy!, token }));
+  const had = entryOf(readConfig(dir), host);
+  // The platform's own login is the authority: the instance is asked nothing.
+  const { facts, version } = await findInstance(host, {
+    where: o.where == "aws" ? "aws" : "cloudflare",
+    profile: o.profile,
+    region: o.region,
+  });
+  // The entry keeps what it tracks.
+  const repo = o.repo ? repoName(o.repo) : (had?.repo ?? DEFAULT_REPO);
+  const branch = o.branch ?? had?.branch ?? DEFAULT_BRANCH;
+  writeConfig(dir, withEntry(readConfig(dir), { host, repo, branch, ...facts }));
   pass(`${host} is registered in ${configPath(dir)}: it tracks ${repo} ${branch}.`);
-  const d = facts.deploy!;
   const where =
-    "aws" in d
-      ? `AWS account ${d.aws.account}, ${d.aws.region}, stack ${d.aws.stack}`
-      : `Worker ${d.worker}, database ${d.database}, account ${d.account}`;
-  say(`      ${where}, ${Object.keys(d.vars).length} plain settings. It runs ${facts.version ?? "no known commit"}.`);
+    "aws" in facts
+      ? `AWS account ${facts.aws.account}, ${facts.aws.region}, stack ${facts.aws.stack}`
+      : `Worker ${facts.worker}, database ${facts.database}, account ${facts.account}`;
+  say(`      ${where}, ${Object.keys(facts.vars).length} plain settings. It runs ${version ?? "no known commit"}.`);
 }
 
 /** `bun erga track <host> [--repo <repo>] [--branch <branch>]`: what a registered instance tracks. It deploys nothing. */
@@ -319,19 +314,6 @@ async function track(arg: string | undefined, o: { repo?: string; branch?: strin
   say(`NEXT  Nothing deployed. To deploy the branch's head: bun erga deploy ${host}`);
 }
 
-async function login(arg: string | undefined) {
-  const { host } = await instanceOf(arg, "bun erga login <host>");
-  const { configPath, entryOf, entryOrigin, ergaDir, readConfig, withEntry, writeConfig } = await import("./config");
-  const dir = ergaDir();
-  const had = entryOf(readConfig(dir), host) ?? fail(`${host} has no entry in ${configPath(dir)}.`, `bun erga register ${host}`);
-  const { token } = await signInTo(entryOrigin(had));
-  const entry =
-    entryOf(readConfig(dir), host) ??
-    fail(`${host}'s entry left ${configPath(dir)} while the admin approved.`, `bun erga register ${host}`);
-  writeConfig(dir, withEntry(readConfig(dir), { ...entry, token }));
-  pass(`${host} has a new ops token in ${configPath(dir)}.`);
-}
-
 // ------------------------------------------------------------------ the commands
 
 export async function main(argv: string[]) {
@@ -343,11 +325,13 @@ export async function main(argv: string[]) {
     return i >= 0 ? rest[i + 1] : undefined;
   };
   const plain = rest.filter(
-    (x, i) => !x.startsWith("-") && !["-m", "--port", "--repo", "--branch", "--domain"].includes(rest[i - 1] ?? "")
+    (x, i) =>
+      !x.startsWith("-") &&
+      !["-m", "--port", "--repo", "--branch", "--domain", "--host", "--profile", "--region"].includes(rest[i - 1] ?? "")
   );
   // A config file from before an instance tracked a branch moves to today's fields, one time (old-config.ts), at the
   // first command that reads the file.
-  if (["", "status", "merge", "promote", "deploy", "rollback", "register", "login", "track", "setup"].includes(cmd)) {
+  if (["", "status", "merge", "promote", "deploy", "rollback", "register", "track", "setup"].includes(cmd)) {
     const { ergaDir } = await import("./config");
     const { moveOldConfig } = await import("./old-config");
     try {
@@ -377,7 +361,8 @@ export async function main(argv: string[]) {
       const { ergaDir, readConfig } = await import("./config");
       const { readRuns } = await import("./test-run");
       const { testOf, testText } = await import("./gate");
-      const s = await readState(readConfig(ergaDir()));
+      const { instanceReader } = await import("./running");
+      const s = await readState(readConfig(ergaDir()), instanceReader());
       const runs = readRuns(ergaDir());
       s.branches = s.branches.map((b) => {
         const t = testOf({ name: b.name, tree: b.tree ?? null }, runs);
@@ -416,12 +401,16 @@ export async function main(argv: string[]) {
     case "rollback":
       return rollback(plain[0], flag("--yes"));
     case "register":
-      // The server's or the file's error, in its own words.
-      return register(plain[0], { repo: opt("--repo"), branch: opt("--branch") }).catch((e: Error) => fail(e.message));
+      // The platform's or the file's error, in its own words.
+      return register(plain[0], {
+        repo: opt("--repo"),
+        branch: opt("--branch"),
+        where: opt("--host"),
+        profile: opt("--profile"),
+        region: opt("--region"),
+      }).catch((e: Error) => fail(e.message));
     case "track":
       return track(plain[0], { repo: opt("--repo"), branch: opt("--branch") }).catch((e: Error) => fail(e.message));
-    case "login":
-      return login(plain[0]).catch((e: Error) => fail(e.message));
     case "setup": {
       const { setupMain } = await import("../own/cli");
       return setupMain(rest);

@@ -2,15 +2,16 @@
 // auto-deploy, each repository that an instance tracks (its branches' heads: a source named "repo <name>"). One state value,
 // one pure step: ops-page.ts keeps the value, does each check that a step asks for, gives its end back as an event, and
 // wakes the step at the time it names. Each source has its own period, from the start of one check to the start of the
-// next, whatever happens (a page load, a job): GitHub once a minute at most, each instance every 5 seconds. A new source
+// next, whatever happens (a page load, a job): GitHub once a minute at most, each instance every 15 seconds (its platform's
+// API has a limit: Cloudflare's is 1,200 requests in 5 minutes). A new source
 // is checked at once. A check never overlaps another of the same source: a source that is asked waits for its answer
 // (each check has its own timeout).
 
 /** The name of the GitHub source; the others are the instances' hosts. */
 export const GITHUB = "github";
 
-/** A source's period: GitHub's fetch and a repository's heads at most once a minute, an instance's answer every 5 seconds. */
-export const periodOf = (name: string) => (name == GITHUB || name.startsWith("repo ") ? 60_000 : 5_000);
+/** A source's period: GitHub's fetch and a repository's heads at most once a minute, an instance's answer every 15 seconds. */
+export const periodOf = (name: string) => (name == GITHUB || name.startsWith("repo ") ? 60_000 : 15_000);
 
 /** A source without a good answer for this many periods is stale. */
 const STALE_PERIODS = 3;

@@ -7,9 +7,6 @@
 //   admin       everything the person can do, admin power included while they
 //               are an admin (Users.isAdmin, checked on every request); only an
 //               admin can make one, and pushing to Erga's Git endpoint needs one
-//   ops         the server's deploy facts (GET /api/ops: server/api.ts) and nothing else: no session,
-//               so no documents, API or admin power anywhere; for an admin only, and for OPS_DAYS at most. The
-//               CLI (deploy/cli/ops.ts) asks for one with the device flow below
 //
 // and, if its maker chose one, an expiry, after which it stops working. The
 // share button in the editor makes a documents token, /tokens makes and
@@ -63,10 +60,8 @@ export interface AgentToken {
   lastUsed: number | null;
 }
 
-export type Scope = "document" | "documents" | "admin" | "ops";
-export const SCOPES: readonly Scope[] = ["document", "documents", "admin", "ops"];
-/** An ops token's longest life, in days: it ends then, or sooner if asked. */
-export const OPS_DAYS = 90;
+export type Scope = "document" | "documents" | "admin";
+export const SCOPES: readonly Scope[] = ["document", "documents", "admin"];
 /** The most days an admin token lasts: its person approves again after that. */
 export const ADMIN_DAYS = 30;
 /** An admin token's end: the one asked for, but never more than ADMIN_DAYS from now. */
@@ -74,9 +69,7 @@ export const adminEnd = (expires: number | null | undefined, now = Date.now()) =
   Math.min(expires ?? Infinity, now + ADMIN_DAYS * 86_400_000);
 /** The most requests for a token that one network address has waiting at one time (askForToken, server/api.ts). */
 export const REQUESTS_WAITING = 20;
-/** An ops token's end: the one asked for, but never more than OPS_DAYS from now. */
-const opsEnd = (expires: number | null | undefined) => Math.min(expires ?? Infinity, Date.now() + OPS_DAYS * 86_400_000);
-const NOT_A_SCOPE = (s: string) => `"${s}" isn't a scope: document, documents, admin or ops.`;
+const NOT_A_SCOPE = (s: string) => `"${s}" isn't a scope: document, documents or admin.`;
 
 /** What a token is for, as its maker asks: its scope, a document token's document, and when it ends (or never). */
 export interface Grant { scope: Scope; docId?: string | null; expires?: number | null }
@@ -218,9 +211,8 @@ export class Tokens {
     if (!SCOPES.includes(grant.scope)) throw new ScopeError({ message: NOT_A_SCOPE(grant.scope) });
     let expires = grant.expires == null ? null : Number(grant.expires);
     if (expires != null && !(expires > Date.now())) throw new ScopeError({ message: "The expiry must be in the future." });
-    if ((grant.scope == "admin" || grant.scope == "ops") && !(await this.dir.users.isAdmin(who.login)))
-      throw new ScopeError({ message: `Only an admin can make an ${grant.scope} token.` });
-    if (grant.scope == "ops") expires = opsEnd(expires);
+    if (grant.scope == "admin" && !(await this.dir.users.isAdmin(who.login)))
+      throw new ScopeError({ message: "Only an admin can make an admin token." });
     if (grant.scope == "admin") expires = adminEnd(expires);
     if (grant.scope != "document") return { scope: grant.scope, docId: null, expires };
     const doc = grant.docId ? await this.dir.find(grant.docId) : null;
@@ -308,6 +300,8 @@ export class Tokens {
     // its tokens' hashes, but their tokens were made with that server's secret, not ours.
     if (!row || (await this.tokenFor(row.id)) != token) return null;
     if (row.expires != null && Number(row.expires) <= now) return null;
+    // A scope that this code does not know (a row of other code) gives nothing: never a wider scope in its place.
+    if (!SCOPES.includes(row.scope as Scope)) return null;
 
     if (row.last_used == null || now - Number(row.last_used) > TOUCH_MS) {
       await this.sql.run("UPDATE agent_tokens SET last_used = ?2 WHERE id = ?1", row.id, now).catch(() => {});
@@ -402,7 +396,7 @@ export class Tokens {
       expires,
       grant.scope,
       grant.scope == "document" ? String(grant.docId).slice(0, 300) : null,
-      grant.scope == "ops" ? opsEnd(grant.expires) : grant.expires == null ? null : Number(grant.expires),
+      grant.expires == null ? null : Number(grant.expires),
       oauth?.client ?? null,
       oauth?.redirectUri ?? null,
       oauth?.challenge ?? null,

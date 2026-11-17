@@ -21,7 +21,6 @@ const entry = (host: string, branch = "main", more: Partial<Entry> = {}): Entry 
   app: { kind: "workers.dev" },
   pages: { kind: "shared" },
   vars: {},
-  token: "t",
 });
 const line = (x: object) => `${JSON.stringify(x)}\n`;
 const start = {
@@ -525,7 +524,7 @@ test("the page's server checks GitHub and each instance at start, not on a page 
     expect(first).toContain('<li class="source bad" data-source="github">');
     expect(first).toMatch(/<li class="source ok" data-source="example.net">.*runs 111111111111 · healthy/);
     expect(calls.sort()).toEqual(["ask", "fetch"]);
-    // A page load checks nothing again: GitHub's fetch keeps its minute, an instance its 5 seconds (poll-state.ts).
+    // A page load checks nothing again: GitHub's fetch keeps its minute, an instance its 15 seconds (poll-state.ts).
     await fetch(`${at}/`);
     expect(calls.sort()).toEqual(["ask", "fetch"]);
   } finally {

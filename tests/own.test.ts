@@ -314,7 +314,6 @@ test("an instance's names come from its entry, or from its address; its entry fr
     app: { kind: "domain", zoneName: "example.com", hostname: HOST },
     pages: { kind: "shared" },
     vars: { GITHUB_CLIENT_ID: "Iv1.ada", SERVER_DEFAULTS: '{"public_sharing":true,"delete_docs_after_hours":null}' },
-    token: "",
   });
 });
 

@@ -33,7 +33,7 @@ export const servedAssets = (release: Release) => Object.fromEntries(Object.entr
  */
 export function workerMetadata(release: Release, target: Target, o: { dbId: string; assetsJwt: string; pagesHost: string | null }) {
   const w = release.worker;
-  // Which release this is (GET /api/deploys/version answers it).
+  // Which release this is, and where it is deployed: the CLI reads both from the version's bindings (liveRelease).
   const text: Record<string, string> = { ERGA_VERSION: release.version, ERGA_DEPLOY: JSON.stringify(deployFacts(target)), ...target.vars };
   const secrets = target.secrets;
   const bindings: Record<string, unknown>[] = [];
@@ -91,9 +91,10 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
 }
 
 /**
- * What the server answers an admin's ops token (GET /api/ops) of where it is deployed: the target's own names and its
- * plain settings (vars), so a deploy from a machine can deploy it again with no list of instances in the code. Never a
- * secret: the secrets stay on the Worker.
+ * Where a target is deployed, as its Worker holds it (the binding ERGA_DEPLOY) and its entry in .erga/config.json: the
+ * target's own names and its plain settings (vars). `bun erga register` reads it from Cloudflare (liveRelease), so a
+ * machine can deploy the instance again with no list of instances in the code. Never a secret: the secrets stay on the
+ * Worker.
  */
 export const deployFacts = (t: Target) => ({
   account: t.accountId,
@@ -169,8 +170,17 @@ export async function restorePoint(cf: Cloudflare, target: Pick<Target, "account
   const point: RestorePoint = { versionId: null, version: null, bookmark: null, at: Date.now() };
   const why: string[] = [];
   if (o.existing) {
-    try { point.versionId = await liveVersion(cf, target.accountId, target.workerName); if (!point.versionId) why.push("the Worker has no deployment yet"); } catch (e) { why.push(`the Worker's deployments couldn't be read: ${(e as Error).message}`); }
-    try { point.version = await workerVersion(cf, target.accountId, target.workerName); } catch { /* the version id is what a rollback needs */ }
+    try {
+      point.versionId = (await liveDeployment(cf, target.accountId, target.workerName))?.versionId ?? null;
+      if (!point.versionId) why.push("the Worker has no deployment yet");
+    } catch (e) {
+      why.push(`the Worker's deployments couldn't be read: ${(e as Error).message}`);
+    }
+    try {
+      if (point.versionId) point.version = (await liveRelease(cf, target.accountId, target.workerName, point.versionId)).version;
+    } catch {
+      /* the version id is what a rollback needs */
+    }
   } else why.push("a new Worker");
   try {
     const b = await cf.call<{ bookmark?: string }>("GET", `${acc}/d1/database/${o.dbId}/time_travel/bookmark`, "read the database's Time Travel bookmark");
@@ -182,11 +192,43 @@ export async function restorePoint(cf: Cloudflare, target: Pick<Target, "account
   return { point, why: why.join("; ") };
 }
 
-/** The Worker version serving now: the one its latest deployment names (null: no deployment). */
-export async function liveVersion(cf: Cloudflare, accountId: string, worker: string): Promise<string | null> {
-  const r = await cf.call<{ deployments?: { versions?: { version_id: string; percentage: number }[] }[] }>("GET", `/accounts/${accountId}/workers/scripts/${worker}/deployments?per_page=1`, `read ${worker}'s deployments`);
-  const latest = r?.deployments?.[0]?.versions ?? [];
-  return [...latest].sort((a, b) => b.percentage - a.percentage)[0]?.version_id ?? null;
+/**
+ * What serves a Worker's requests now: its latest deployment, and the Worker version that the deployment gives the most
+ * requests (after a rollback, in the dashboard too, an older one). Null: no Worker by that name, or no deployment yet.
+ */
+export async function liveDeployment(cf: Cloudflare, accountId: string, worker: string): Promise<{ id: string; versionId: string } | null> {
+  const r = await cf.call<{ deployments?: { id: string; created_on: string; versions?: { version_id: string; percentage: number }[] }[] }>(
+    "GET",
+    `/accounts/${accountId}/workers/scripts/${worker}/deployments`,
+    `read ${worker}'s deployments`,
+    undefined,
+    { allow404: true }
+  );
+  const latest = [...(r?.deployments ?? [])].sort((x, y) => Date.parse(y.created_on) - Date.parse(x.created_on))[0];
+  const versionId = [...(latest?.versions ?? [])].sort((a, b) => b.percentage - a.percentage)[0]?.version_id;
+  return latest && versionId ? { id: latest.id, versionId } : null;
+}
+
+/**
+ * The release that one version of a Worker is, and where the pipeline deployed it: the version's own bindings
+ * ERGA_VERSION and ERGA_DEPLOY (workerMetadata sets both), read from Cloudflare. `facts`: ERGA_DEPLOY as JSON, or null.
+ */
+export async function liveRelease(
+  cf: Cloudflare,
+  accountId: string,
+  worker: string,
+  versionId: string
+): Promise<{ version: string | null; facts: unknown }> {
+  const v = await cf.call<{ resources?: { bindings?: { name: string; type: string; text?: string }[] } }>(
+    "GET",
+    `/accounts/${accountId}/workers/scripts/${worker}/versions/${versionId}`,
+    `read ${worker}'s version ${versionId.slice(0, 8)}`
+  );
+  const text = (name: string) => v?.resources?.bindings?.find((b) => b.name == name && b.type == "plain_text")?.text ?? null;
+  return {
+    version: text("ERGA_VERSION"),
+    facts: Option.getOrNull(Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))(text("ERGA_DEPLOY") ?? "")),
+  };
 }
 
 /** What the health check answers (GET /api/health: the app's own checks), as the pipeline reads it. */
@@ -283,12 +325,6 @@ export async function rollbackTo(cf: Cloudflare, target: Pick<Target, "accountId
     // Only the message: Cloudflare refuses any other annotation ("workers/triggered_by" is its own; it refused it on 2026-10-12).
     strategy: "percentage", versions: [{ version_id: versionId, percentage: 100 }], annotations: { "workers/message": message.slice(0, 900) },
   });
-}
-
-/** The release a Worker runs, by its ERGA_VERSION setting (the pipeline sets it), or null. */
-export async function workerVersion(cf: Cloudflare, accountId: string, worker: string): Promise<string | null> {
-  const settings = await cf.call<{ bindings?: { name: string; type: string; text?: string }[] }>("GET", `/accounts/${accountId}/workers/scripts/${worker}/settings`, `read ${worker}'s settings`, undefined, { allow404: true });
-  return settings?.bindings?.find((b) => b.name == "ERGA_VERSION" && b.type == "plain_text")?.text ?? null;
 }
 
 /** A D1 database's id by name, or null. */

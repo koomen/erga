@@ -175,7 +175,7 @@ const NewToken = Schema.Struct({
   expires: Schema.optionalKey(Schema.String),
 });
 
-const SCOPE_NAMES: Record<Scope, string> = { document: "One document", documents: "All my documents", admin: "Admin", ops: "Ops" };
+const SCOPE_NAMES: Record<Scope, string> = { document: "One document", documents: "All my documents", admin: "Admin" };
 
 /** A document token's document, as a line shows it: its title and address, or "a document that's gone". */
 async function docLabel(platform: Platform, ref: string | null): Promise<string> {
@@ -206,12 +206,7 @@ async function approvalCard(
         ]
       : g.scope == "documents"
         ? ["reading and editing your documents.", ""]
-        : g.scope == "ops"
-          ? [
-              "reading this server's deploy facts.",
-              "The commit it runs, and its Cloudflare account, Worker, database and domains. It reads nothing else: no documents, and no admin power.",
-            ]
-          : [
+        : [
               "reading and editing your documents, and admin power.",
               "Admin power is everything you can do in Erga, the server's settings, users, source and deploys included, while you're an admin.",
             ];

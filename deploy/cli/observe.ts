@@ -1,10 +1,13 @@
-// What `bun erga` reads: git (the checkout's view of GitHub), and each registered instance's GET /api/ops (with its ops
-// token) and GET /api/health. Each call says what it saw; nothing here decides (flow.ts).
+// What `bun erga` reads: git (the checkout's view of GitHub), and each registered instance's GET /api/health. What an
+// instance runs comes from its platform (running.ts). Each call says what it saw; nothing here decides (flow.ts).
 
-import { type Config, type Entry, entryOrigin, remoteOf, repoName } from "./config";
-import { type Answer, type Commit, type Instance, PROTECTED, type State, stateOf } from "./flow";
-import { readOps, type Site } from "./ops";
+import { type Config, type Entry, remoteOf, repoName } from "./config";
+import { type Commit, type Instance, PROTECTED, type State, stateOf } from "./flow";
+import type { Ask } from "./running";
 import { git, ROOT, sh } from "../root";
+
+/** fetch, or a test's stand-in for an instance. */
+export type Site = (url: string, init?: RequestInit) => Promise<Response>;
 
 /** The GitHub repository of `origin` (owner/name), or null. */
 export const repoOf = (): string | null => {
@@ -201,33 +204,6 @@ export const healthOf = (origin: string, site: Site): Promise<boolean | null> =>
   );
 
 /**
- * What an instance answers now: the commit it runs (GET /api/ops, with its ops token, in 8 seconds) and its health.
- * For `bun erga status`, the ops page, and `bun erga promote`.
- */
-export async function askInstance(e: Entry, site: Site = fetch): Promise<Answer> {
-  const origin = entryOrigin(e);
-  const [ops, healthy] = await Promise.all([
-    // An instance that setup has not registered yet has no token.
-    (e.token
-      ? readOps(origin, e.token, (url, init) => site(url, { ...init, signal: AbortSignal.timeout(8000) }))
-      : Promise.reject(new Error("no token"))
-    ).then(
-      (f) => ({ version: f.version }),
-      (err: Error) => ({
-        version: null,
-        error: !e.token
-          ? `not registered yet: bun erga setup ${e.host}`
-          : /refused/.test(err.message)
-            ? `refuses its ops token: bun erga login ${e.host}`
-            : "no answer",
-      })
-    ),
-    healthOf(origin, site),
-  ]);
-  return { ...ops, healthy };
-}
-
-/**
  * How many commits of the branch that `e` tracks are after `version`, the commit it runs, as the clone last saw the
  * branch (no fetch). Null: the clone can't say: no commit, a repository that is not the clone's origin, a branch or a
  * commit that the clone does not have, or a commit that is not on the branch.
@@ -241,11 +217,11 @@ export function behindOf(e: Pick<Entry, "repo" | "branch">, version: string | nu
   return n.ok ? Number(n.out) : null;
 }
 
-/** What each registered instance answers now. */
-const instancesOf = (config: Config, site?: Site): Promise<Instance[]> =>
+/** What each registered instance runs now, and its health. */
+const instancesOf = (config: Config, ask: Ask): Promise<Instance[]> =>
   Promise.all(
     config.instances.map(async (e) => {
-      const a = await askInstance(e, site);
+      const a = await ask(e);
       return {
         host: e.host,
         repo: e.repo,
@@ -257,12 +233,12 @@ const instancesOf = (config: Config, site?: Site): Promise<Instance[]> =>
   );
 
 /** Everything `bun erga status` shows. It only reads: no fetch; GitHub's branch list leaves out the ones it deleted. */
-export async function readState(config: Config, site?: Site): Promise<State> {
+export async function readState(config: Config, ask: Ask): Promise<State> {
   const live = await githubHeads();
   return stateOf({
     github: live != null,
     heads: { main: headOf("origin/main"), staging: headOf("origin/staging") },
-    instances: await instancesOf(config, site),
+    instances: await instancesOf(config, ask),
     branches: branchesOf(live),
     waiting: commitsOf("origin/main..origin/staging"),
     log: commitsOf("-n", "20", "origin/main"),

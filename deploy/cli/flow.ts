@@ -17,7 +17,7 @@ export interface Commit {
   author?: string;
 }
 
-/** What an instance answers now (observe.ts, askInstance): the commit it runs (GET /api/ops) and its health. */
+/** What an instance runs now, as its platform says (running.ts, instanceReader), and its health. */
 export interface Answer {
   version: string | null;
   /** Null: no answer. */

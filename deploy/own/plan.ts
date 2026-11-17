@@ -257,8 +257,7 @@ export const callbackOf = (host: string) => `https://${host}/auth/github/callbac
 
 /**
  * The entry of `.erga/config.json` for a new instance on Cloudflare, from the answers alone: its names, its plain
- * settings, the repository and the branch that it tracks (its first deploy takes that branch's head), and no token yet
- * (the token comes at the end, when the admin approves it).
+ * settings, and the repository and the branch that it tracks (its first deploy takes that branch's head).
  */
 export function setupEntry(a: Answers, o: { zones: string[]; subdomain: string | null; github?: string }): CloudflareEntry {
   const n = namesOf(a.host);
@@ -279,7 +278,6 @@ export function setupEntry(a: Answers, o: { zones: string[]; subdomain: string |
     repo: a.repo,
     branch: a.branch,
     ...deployFacts(target),
-    token: "",
   };
 }
 

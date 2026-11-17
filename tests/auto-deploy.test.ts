@@ -22,7 +22,6 @@ const entry = (host: string, branch: string): Entry => ({
   app: { kind: "workers.dev" },
   pages: { kind: "shared" },
   vars: {},
-  token: "t",
 });
 
 /** A clone with three commits in a line, and one apart from them. */

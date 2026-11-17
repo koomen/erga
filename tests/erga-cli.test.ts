@@ -99,7 +99,7 @@ test("bun erga status: each instance with what it tracks and where its commit is
         ...tracks("main"),
         version: null,
         healthy: null,
-        error: "refuses its ops token: bun erga login other.example.org",
+        error: "Cloudflare has no deployment of the Worker other: bun erga deploy other.example.org",
         behind: null,
       },
       { host: "example.com", ...tracks("main"), version: M.slice(0, 12), healthy: true, behind: 2 },
@@ -127,7 +127,7 @@ test("bun erga status: each instance with what it tracks and where its commit is
   expect(s.latestRelease).toBe("v0.1.0");
   const text = statusText(s, (sha) => sha != "111111111111");
   expect(text).toContain(
-    "- other.example.org: tracks github.com/koomen/erga main; refuses its ops token: bun erga login other.example.org; health unknown"
+    "- other.example.org: tracks github.com/koomen/erga main; Cloudflare has no deployment of the Worker other: bun erga deploy other.example.org; health unknown"
   );
   expect(text).toContain(`- example.com: tracks github.com/koomen/erga main; runs ${M.slice(0, 12)}, 2 commits behind main; health ok`);
   expect(text).toContain(`- next.example.com: tracks github.com/koomen/erga staging; runs ${S.slice(0, 12)}, staging's head; health ok`);

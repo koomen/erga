@@ -130,8 +130,7 @@ async function onDocument(platform: Platform, path: string, doc: string): Promis
 async function tokenSession(platform: Platform, bearer: string, url: URL): Promise<Session | null> {
   const users = platform.directory.users;
   const token = await platform.tokens.verify(bearer).catch(() => null);
-  // An ops token signs no one in: it reads only GET /api/ops (server/api.ts), which checks it itself.
-  if (!token || token.scope == "ops") return null;
+  if (!token) return null;
   const session: Session = {
     login: token.login,
     name: token.name,

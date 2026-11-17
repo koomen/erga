@@ -67,7 +67,6 @@ test("a branch that GitHub deleted after the last fetch shows on neither the ops
       app: { kind: "workers.dev" as const },
       pages: { kind: "shared" as const },
       vars: {},
-      token: "t",
     };
     let polls = stepPolls(startPolls(), { type: "sources", names: [GITHUB], now: 0 }).polls;
     polls = stepPolls(polls, { type: "answer", name: GITHUB, now: 1000, error }).polls;

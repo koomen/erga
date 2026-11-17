@@ -1,7 +1,8 @@
 // `bun erga setup`'s build (deploy/own/first.ts) against the mock Cloudflare (ERGA_DEPLOY_MOCK=1), from the answers to
 // a healthy deploy of a new instance: its entry in .erga/config.json, the secrets set one time, the access rule in its
-// database, and no admin's row. Then a second instance, by the same flow. Then the ops token, from a fake
-// server's device flow. And an instance that runs already, with names that setup would not give: its entry stays.
+// database, and no admin's row. Then a second instance, by the same flow. Then the admin, whom setup sees in the
+// database through Cloudflare's D1 API. And an instance that runs already, with names that setup would not give: setup
+// stops, and its entry stays.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -10,7 +11,8 @@ import { join } from "node:path";
 import { type CloudflareEntry, type Entry, readConfig, withEntry, writeConfig } from "../deploy/cli/config";
 import type { MockState } from "../dev/mock-cloudflare";
 import { writePass } from "./helpers/pass.ts";
-import { type First, firstDeploy, register } from "../deploy/own/first";
+import { Cloudflare } from "../deploy/pipeline/cloudflare-api";
+import { adminOn, type First, firstDeploy, writeEntry } from "../deploy/own/first";
 import { noAnswers } from "../deploy/own/plan";
 import { loadSecrets, namesAt, putSecret } from "../deploy/own/store";
 import { deployFacts } from "../deploy/pipeline/account";
@@ -71,9 +73,9 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
   putSecret(HOST, "GITHUB_CLIENT_SECRET", "github-app-secret", dir);
   expect(await firstDeploy(first(mock, HOST))).toBe(HEAD);
 
-  // The entry: written from the answers, with no token yet.
-  expect(readConfig(dir).instances.map((e) => [e.host, (e as CloudflareEntry).worker, e.token])).toEqual([
-    [HOST, "erga-ada-example-com", ""],
+  // The entry: written from the answers. It holds no token.
+  expect(readConfig(dir).instances.map((e) => [e.host, (e as CloudflareEntry).worker, "token" in e])).toEqual([
+    [HOST, "erga-ada-example-com", false],
   ]);
   // The secrets: made one time, kept in .erga/secrets.json, sent with this deploy.
   const file = loadSecrets(dir);
@@ -111,7 +113,6 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
 
   // A second instance, set up later with a branch of its own: the same path, its own names, secrets, database and
   // rule. Nothing of the first one goes to it.
-  writeConfig(dir, withEntry(readConfig(dir), { ...readConfig(dir).instances[0], token: "erga_ops_first" }));
   putSecret(SECOND, "GITHUB_CLIENT_SECRET", "second-app-secret", dir);
   expect(await firstDeploy({ ...first(mock, SECOND, { branch: "staging" }), github: "Iv1.second" })).toBe(HEAD);
   expect(readConfig(dir).instances.map((e) => [e.host, e.branch])).toEqual([
@@ -130,69 +131,53 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
   expect(rowsOf(mock.state, "erga-next-ada-example-com").join("\n")).toContain("INSERT INTO access_rules");
 }, 120_000);
 
-test("the setup ends with the ops token: the page gets the request's code, the user approves, and the entry gets the token", async () => {
-  const asked: string[] = [];
-  const server = Bun.serve({
-    // (Its own address: with all addresses, a test server of the browser tests can take the same port on 127.0.0.1.)
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch: async (req) => {
-      const path = new URL(req.url).pathname;
-      asked.push(path);
-      if (path == "/api/auth/request")
-        return Response.json({
-          code: "c0de",
-          approve_url: `${new URL(req.url).origin}/tokens/approve?code=ABCD-EFGH`,
-          interval: 0,
-          expires_in: 60,
-        });
-      if (path == "/api/auth/poll") return Response.json({ status: "approved", token: "erga_ops_new", login: "ada" });
-      if (path == "/api/ops") return Response.json({ version: HEAD.slice(0, 12), host: "x", deploy: null });
-      return new Response("no", { status: 404 });
-    },
+test("the setup ends with the admin: setup sees the user's row in the database, through Cloudflare's API", async () => {
+  const mock = mockCloudflare();
+  putSecret(HOST, "GITHUB_CLIENT_SECRET", "github-app-secret", dir);
+  await firstDeploy(first(mock, HOST));
+  const cf = new Cloudflare("mock-machine-token", mock.fetch);
+  const acc = `/accounts/${ACCOUNT_ID}`;
+  // A new server has no admin; a Worker that is not there has none.
+  expect(await adminOn(cf, acc, "erga-ada-example-com")).toBeNull();
+  expect(await adminOn(cf, acc, "erga-nowhere")).toBeNull();
+  // The user's own sign-in, from the one-time link, makes the row (server/identity/claim.ts): here, as the server writes it.
+  const db = bindingsOf(mock.state, "erga-ada-example-com").DB.database_id;
+  const calls = mock.state.calls.length;
+  await cf.call("POST", `${acc}/d1/database/${db}/query`, "the server's own write", {
+    sql: "INSERT INTO users (login, name, role, created) VALUES (?1, ?2, ?3, ?4)",
+    params: ["ada", "Ada", "admin", 1],
   });
-  try {
-    const host = `127.0.0.1:${server.port}`;
-    const entry = { ...readConfig(dir).instances[0], host, token: "" };
-    writeConfig(dir, withEntry(readConfig(dir), entry));
-    const codes: string[] = [];
-    expect(await register(dir, host, { asked: (code) => codes.push(code) })).toBe("ada");
-    // Only the code that the user's link carries goes to the page: the code that collects the token stays here.
-    expect(codes).toEqual(["ABCD-EFGH"]);
-    expect(asked).toEqual(["/api/auth/request", "/api/auth/poll", "/api/ops"]);
-    expect(readConfig(dir).instances.find((e) => e.host == host)).toEqual({ ...entry, token: "erga_ops_new" });
-  } finally {
-    server.stop(true);
-  }
+  expect(await adminOn(cf, acc, "erga-ada-example-com")).toBe("ada");
+  // Setup read the Worker's settings and its database: it asked the server nothing.
+  expect(mock.state.calls.slice(calls + 1)).toEqual([
+    `GET ${acc}/workers/scripts/erga-ada-example-com/settings`,
+    `POST ${acc}/d1/database/${db}/query`,
+  ]);
 });
 
-test("an instance that runs already, with names of its own: setup keeps its entry, and deploys it by the same path", async () => {
+test("an instance that runs already, with names of its own: setup stops, and its entry stays", async () => {
   const mock = mockCloudflare({ fleet: true });
   await bootstrap(mock);
   const own = join(mkdtempSync(join(tmpdir(), "erga-setup-")), ".erga");
   try {
     writePass(own, HEAD);
-    // A registered entry, as `bun erga register` writes it: the Worker "erga", which no address gives.
-    const entries: Entry[] = [
-      { host: "example.com", repo: "example.com/team/erga", branch: "main", ...deployFacts(fleet()), token: "erga_ops_fleet" },
-    ];
+    // An entry as `bun erga register` writes it: the Worker "erga", which no address gives.
+    const entries: Entry[] = [{ host: "example.com", repo: "example.com/team/erga", branch: "main", ...deployFacts(fleet()) }];
     writeConfig(own, { instances: entries });
-    const rows = JSON.stringify(mock.state.databases.map((d) => d.rows));
-    expect(
-      await firstDeploy({
+    const calls = mock.state.calls.length;
+    // The answers would give other names (erga-example-com): setup makes no second Worker beside the one that runs.
+    expect(() =>
+      writeEntry({
         ...first(mock, "example.com", { account: FLEET_ACCOUNT }),
         dir: own,
         seen: { zones: ["example.com"], subdomain: "erga", held: ["SESSION_SECRET", "FACTORY_KEY"] },
-        github: "Ov23fleet",
       })
-    ).toBe(HEAD);
-    // The entry stays as it was: the answers would give other names (example-com), and other pages.
+    ).toThrow(
+      "example.com has an entry already, with the Worker erga and the database erga: setup would name them example-com and example-com."
+    );
     expect(readConfig(own).instances).toEqual(entries);
     expect(namesAt("example.com", own)).toMatchObject({ worker: "erga", database: "erga", bucket: "erga-files" });
-    expect(Object.keys(mock.state.scripts)).toContain("erga");
-    expect(bindingsOf(mock.state, "erga").ERGA_VERSION.text).toBe(HEAD.slice(0, 12));
-    // It has an admin already: setup writes no row.
-    expect(JSON.stringify(mock.state.databases.map((d) => d.rows))).toBe(rows);
+    expect(mock.state.calls.length).toBe(calls);
   } finally {
     rmSync(join(own, ".."), { recursive: true, force: true });
   }

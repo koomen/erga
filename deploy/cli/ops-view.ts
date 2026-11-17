@@ -141,11 +141,8 @@ function side(config: Config, chosen: Entry | null, f: Facts, now: number): stri
   if (!config.instances.length) return `<p class="none">No instances.</p>`;
   const item = (e: Entry) => {
     const source = f.polls.sources[e.host];
-    const st = !e.token
-      ? { cls: "", what: "not registered yet: bun erga setup" }
-      : source && isStale(source, now)
-        ? { cls: "stale", what: `stale: ${source.error ?? "no answer yet"}` }
-        : stateOf(f.answers[e.host]);
+    const st =
+      source && isStale(source, now) ? { cls: "stale", what: `stale: ${source.error ?? "no answer yet"}` } : stateOf(f.answers[e.host]);
     const tracks = `tracks ${e.repo} ${e.branch}`;
     return `<span class="host" title="${esc(`${e.host}: ${st.what}`)}"><i class="light ${st.cls}"></i><span>${esc(e.host)}</span></span><span class="tracks" title="${esc(tracks)}"><span>${esc(e.branch)}</span></span>`;
   };

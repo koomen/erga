@@ -66,7 +66,6 @@ beforeEach(() => {
         app: { kind: "workers.dev" },
         pages: { kind: "shared" },
         vars: {},
-        token: "",
       },
     ],
   });

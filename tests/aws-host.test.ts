@@ -5,10 +5,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Aws } from "../deploy/aws/cli";
-import { deployScript, provisionScript, putObject } from "../deploy/aws/machine";
-import { awsEntry, discoverOidc, firstSql } from "../deploy/aws/setup";
+import { liveOnAws, liveParam } from "../deploy/aws/deploy";
+import { deployScript, factsScript, provisionScript, putObject, sqlScript } from "../deploy/aws/machine";
+import { ADMIN_SQL, adminIn, awsEntry, discoverOidc, firstSql } from "../deploy/aws/setup";
 import { changeSetKind } from "../deploy/aws/stack";
-import { type AwsShape, certificatesTemplate, NAT_USER_DATA, stackTemplate, TOKEN_PATHS } from "../deploy/aws/template";
+import { type AwsShape, certificatesTemplate, NAT_USER_DATA, paramPath, stackTemplate, TOKEN_PATHS } from "../deploy/aws/template";
+import { instanceReader } from "../deploy/cli/running";
 import { proxySignInCheck } from "../deploy/own/facts";
 import { noAnswers, pagesProblem } from "../deploy/own/plan";
 
@@ -83,7 +85,6 @@ test("on AWS the entry comes from the stack's outputs, and the pages need a doma
   );
   expect(entry).toMatchObject({
     host: "erga.example.com",
-    token: "",
     profile: "work",
     aws: {
       account: "123456789012",
@@ -203,13 +204,14 @@ test("what passes the proxy without the sign-in: the pages by their token, the t
   const by = Object.fromEntries(open.map((r) => [r.name, r.Conditions.map(valuesOf)]));
   // A document's own address: its files by their token and the offline worker, never the app's pages.
   expect(by.PagesRule).toEqual([["*.pages.erga.example.com"], ["/t/*", "/erga-sw.js", "/erga-clear"]]);
-  // The app's address: MCP and its OAuth for the client, the operations, the CLI's token request, the deploy's checks.
+  // The app's address: MCP and its OAuth for the client, the operations, an agent's token request, the deploy's checks.
   const tokens = open.filter((r) => r.name.startsWith("TokenRule"));
   expect(tokens.every((r) => r.Conditions[0].HostHeaderConfig.Values[0] == "erga.example.com")).toBe(true);
   const paths = tokens.flatMap((r) => r.Conditions[1].PathPatternConfig.Values);
   expect(paths).toEqual(TOKEN_PATHS.flat());
-  for (const p of ["/mcp", "/oauth/token", "/oauth/register", "/api/tools/*", "/api/auth/poll", "/api/ops", "/api/health"])
-    expect(paths).toContain(p);
+  for (const p of ["/mcp", "/oauth/token", "/oauth/register", "/api/tools/*", "/api/auth/poll", "/api/health"]) expect(paths).toContain(p);
+  // The CLI reads what an instance runs from AWS: no path of its own passes the proxy.
+  expect(paths).not.toContain("/api/ops");
   // Where a user approves an agent, signs in or is an admin stays behind the sign-in.
   expect(paths.filter((p) => /^\/(oauth\/authorize|tokens|auth|admin)\b/.test(p) || p == "/*")).toEqual([]);
   expect(by.KeyRule).toEqual([["erga.example.com"], ["/d/*/api/*"], [{ Key: "key", Value: "*" }]]);
@@ -388,6 +390,85 @@ esac`
     expect(deploy("old")).toEqual({ PROXY_SIGN_IN: "old", SESSION_SECRET: "s" });
     expect(deploy("new")).toEqual({ PROXY_SIGN_IN: "new", SESSION_SECRET: "s" });
     expect(readFileSync(join(dir, "state", "deployed"), "utf8")).toBe("v1\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("what an instance on AWS runs: the parameter that each deploy and rollback writes, read with the AWS CLI", async () => {
+  // Not in the stack's folder: the machine loads every parameter of that folder into the Worker's settings.
+  expect(liveParam("erga")).toBe("/erga-live/erga");
+  expect(liveParam("erga").startsWith(paramPath("erga"))).toBe(false);
+  const calls: string[] = [];
+  let live: string | null = null;
+  const fake: Aws = async (...args) => {
+    calls.push(args.join(" "));
+    if (args[1] != "get-parameter") throw new Error(`aws ${args.slice(0, 2).join(" ")} failed: not faked`);
+    if (!live)
+      throw new Error("aws ssm get-parameter failed: An error occurred (ParameterNotFound) when calling the GetParameter operation: ");
+    return { Parameter: { Value: live } } as never;
+  };
+  expect(await liveOnAws(fake, "erga")).toBeNull();
+  const entry = awsEntry(
+    { ...aws, pages: "example-pages.com" },
+    "123456789012",
+    { AppHost: "erga.example.com", Bucket: "b", Machine: "i-1" },
+    "Iv1.ada"
+  );
+  const asked: string[] = [];
+  const ask = instanceReader({
+    aws: (where) => (calls.push(`as ${where.profile} in ${where.region}`), fake),
+    site: async (url) => (asked.push(new URL(url).pathname), Response.json({ ok: true })),
+  });
+  // Before the first deploy with this code: no record, and the answer says what makes one.
+  expect(await ask(entry)).toEqual({ version: null, error: "no release on record yet: bun erga deploy erga.example.com", healthy: true });
+  live = "abc123def456";
+  expect(await ask(entry)).toEqual({ version: "abc123def456", healthy: true });
+  expect(calls.at(-2)).toBe("as work in eu-west-1");
+  expect(calls.at(-1)).toBe(`ssm get-parameter --name /erga-live/${entry.aws.stack}`);
+  // The instance is asked for its health only; an AWS error is the answer's error.
+  expect([...new Set(asked)]).toEqual(["/api/health"]);
+  const broken = instanceReader({
+    aws: () => async () => Promise.reject(new Error("aws ssm get-parameter failed: ExpiredToken")),
+    site: async () => Response.json({ ok: true }),
+  });
+  expect((await broken(entry)).error).toBe("aws ssm get-parameter failed: ExpiredToken");
+});
+
+test("on the machine: a release's deploy facts for bun erga register, and setup's look for an admin in the database", () => {
+  const dir = mkdtempSync(join(tmpdir(), "erga-machine-"));
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  const tool = (name: string, body: string) => writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
+  // The bucket gives the release that the machine's list names last; celld prints its command's rows as a table.
+  tool("aws", `[ "$1 $2" = "s3 cp" ] && { echo "$3" > "$FAKE/asked"; cat "$FAKE/release.tgz"; }`);
+  tool("celld", `echo "$@" > "$FAKE/celld"; printf '| who |\\n| admin:ada@example.com |\\n'`);
+  const facts = { aws: { stack: "erga" }, vars: { PROXY_SIGN_IN: "p" } };
+  const release = join(dir, "release");
+  mkdirSync(release);
+  writeFileSync(join(release, "wrangler.json"), JSON.stringify({ vars: { ERGA_DEPLOY: JSON.stringify(facts), SESSION_SECRET: "never" } }));
+  Bun.spawnSync(["tar", "-czf", join(dir, "release.tgz"), "-C", release, "."]);
+  mkdirSync(join(dir, "state"));
+  writeFileSync(join(dir, "state", "deployed"), "v0\nv1\n");
+  const run = (script: string) => {
+    const r = Bun.spawnSync(["bash", "-c", script.replaceAll("/var/lib/erga", join(dir, "state"))], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE: dir },
+    });
+    expect([r.exitCode, r.stderr.toString()]).toEqual([0, ""]);
+    return r.stdout.toString();
+  };
+  try {
+    // The facts: one line of JSON, the release's ERGA_DEPLOY and nothing else of its settings.
+    expect(JSON.parse(run(factsScript({ bucket: "bucket", region: "us-west-2", version: "v1" })))).toEqual(facts);
+    expect(readFileSync(join(dir, "asked"), "utf8").trim()).toBe("s3://bucket/releases/v1.tgz");
+    // The admin: the statement reaches celld whole, in the release that runs (the list's last), and its mark is read.
+    const out = run(sqlScript({ bucket: "bucket", region: "us-west-2", sql: ADMIN_SQL }));
+    expect(readFileSync(join(dir, "asked"), "utf8").trim()).toBe("s3://bucket/releases/v1.tgz");
+    expect(readFileSync(join(dir, "celld"), "utf8").trim()).toBe(`d1 execute erga . --bucket s3://bucket/fleet --command ${ADMIN_SQL}`);
+    expect(adminIn(out)).toBe("ada@example.com");
+    // No admin: no row. celld's echo of the statement is not a row.
+    expect(adminIn("| who |\n")).toBeNull();
+    expect(adminIn(`Executing: ${ADMIN_SQL}`)).toBeNull();
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

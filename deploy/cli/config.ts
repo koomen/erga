@@ -1,14 +1,75 @@
 // The instances this clone deploys: .erga/config.json in the main clone, which git ignores. An instance is a host that
-// tracks one branch of one repository: `bun erga deploy <host>` deploys that branch's head. `bun erga register <host>`
-// adds an instance with its deploy facts (GET /api/ops), its plain settings and its ops token; `bun erga track <host>`
-// changes its repository and branch; `bun erga login <host>` gives it a new token. Each worktree of the clone uses the
-// main clone's file. The file holds tokens: mode 600.
+// tracks one branch of one repository: `bun erga deploy <host>` deploys that branch's head. `bun erga setup <host>`
+// writes a new instance's entry; `bun erga register <host>` adds an instance that runs already, with the deploy facts
+// that its platform holds (running.ts); `bun erga track <host>` changes its repository and branch. Each worktree of the
+// clone uses the main clone's file. The file holds no secret and no token: the platform's own login (Cloudflare's, AWS's)
+// is the authority of every command.
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as Schema from "effect/Schema";
-import { AwsFacts, CloudflareFacts } from "./ops";
 import { sh } from "../root";
+
+/** The app's address: its workers.dev address, or a hostname on one of the account's zones (deploy/pipeline/pipeline.ts, Target). */
+const App = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("workers.dev") }),
+  Schema.Struct({
+    kind: Schema.Literal("domain"),
+    zoneId: Schema.optionalKey(Schema.String),
+    zoneName: Schema.String,
+    hostname: Schema.String,
+  }),
+]);
+/** Where documents' pages run: the shared workers.dev host, or a domain of their own (Target's pages). */
+const Pages = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("shared") }),
+  Schema.Struct({
+    kind: Schema.Literal("zone"),
+    zoneId: Schema.optionalKey(Schema.String),
+    zoneName: Schema.String,
+    domain: Schema.optionalKey(Schema.String),
+  }),
+]);
+
+/**
+ * Where a deploy finds an instance on Cloudflare: the pipeline's own names for it, and the Worker's plain settings as
+ * the pipeline sent them (deploy/pipeline/account.ts, deployFacts). The Worker holds them too, in its binding
+ * ERGA_DEPLOY: `bun erga register` reads them there, through Cloudflare's API.
+ */
+export const CloudflareFacts = Schema.Struct({
+  account: Schema.String,
+  worker: Schema.String,
+  database: Schema.String,
+  subdomain: Schema.optionalKey(Schema.String),
+  app: App,
+  pages: Pages,
+  /** The custom domains registered for publishing (Target's domains). */
+  domains: Schema.optionalKey(Schema.Array(Schema.String)),
+  vars: Schema.Record(Schema.String, Schema.String),
+});
+
+/**
+ * Where a deploy finds an instance on AWS: its stack and what the stack made (deploy/aws/deploy.ts, awsFacts), and the
+ * Worker's plain settings.
+ */
+export const AwsFacts = Schema.Struct({
+  aws: Schema.Struct({
+    account: Schema.String,
+    region: Schema.String,
+    stack: Schema.String,
+    bucket: Schema.String,
+    machine: Schema.String,
+    /** The app's host: its domain, or its CloudFront name. */
+    app: Schema.String,
+    /** Documents' pages: one shared CloudFront name, or an origin each under a domain. */
+    pages: Schema.Union([
+      Schema.Struct({ kind: Schema.Literal("shared"), host: Schema.String }),
+      Schema.Struct({ kind: Schema.Literal("domain"), domain: Schema.String }),
+    ]),
+  }),
+  vars: Schema.Record(Schema.String, Schema.String),
+});
+export type AwsFacts = typeof AwsFacts.Type;
 
 /** The repository and the branch of an instance that names none. */
 export const DEFAULT_REPO = "github.com/koomen/erga";
@@ -18,12 +79,10 @@ const Own = {
   host: Schema.String,
   repo: Schema.String,
   branch: Schema.String,
-  token: Schema.String,
 };
 /**
  * One instance: its host (its address on Cloudflare; on AWS, its name in setup), the repository and the branch whose
- * commits it runs, its deploy facts and vars, and its ops token. On AWS, also the AWS CLI's profile this machine
- * reaches it with.
+ * commits it runs, and its deploy facts and vars. On AWS, also the AWS CLI's profile this machine reaches it with.
  */
 const Entry = Schema.Union([
   Schema.Struct({ ...Own, ...CloudflareFacts.fields }),

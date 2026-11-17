@@ -193,7 +193,7 @@ export const ROUTES: readonly RouteRow<Route>[] = [
     method: "POST",
     path: "/auth/claim",
     run: claimRoute,
-    action: "Become a new server's first admin, and connect the setup's ops page",
+    action: "Become a new server's first admin",
     ...SIGN,
   },
   { method: "GET", path: "/auth/domain-pass", run: domainPass, action: "Sign in on a custom domain, through this one", ...SIGN },

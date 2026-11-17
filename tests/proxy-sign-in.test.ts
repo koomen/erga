@@ -477,7 +477,7 @@ test("the OAuth mode (no PROXY_SIGN_IN): /auth/proxy is nothing and GitHub's way
   );
 });
 
-test("a new server's first admin: setup's one-time link lets its person in and makes them the admin, one time, and connects the ops page", async () => {
+test("a new server's first admin: setup's one-time link lets its person in and makes them the admin, one time", async () => {
   const { platform, directory } = server();
   const at = (path: string, init: RequestInit = {}) => respond(claimRoute, new Request(`${ORIGIN}${path}`, init), platform);
   const form = (cookie: string, fields: Record<string, string>) =>
@@ -495,10 +495,8 @@ test("a new server's first admin: setup's one-time link lets its person in and m
     expect(no.status).toBe(410);
     expect(await no.text()).toContain("<h1>This link does not work any more</h1>");
   }
-  // The setup's request for its ops token waits; the link carries its code.
-  const asked = await platform.tokens.request("bun erga setup", { scope: "ops" });
   const claim = await Claim.seal("session-secret", {});
-  const here = `/auth/claim?t=${encodeURIComponent(claim)}&approve=${asked.userCode}`;
+  const here = `/auth/claim?t=${encodeURIComponent(claim)}`;
   // Not signed in: on to the sign-in, with the claim in a cookie.
   const first = await at(here);
   expect([first.status, first.headers.get("location")]).toEqual([302, `/auth/sign-in?next=${encodeURIComponent(here)}`]);
@@ -528,21 +526,15 @@ test("a new server's first admin: setup's one-time link lets its person in and m
   expect(card.status).toBe(200);
   expect(await card.text()).toContain(`<button class="new">Become the admin of erga.example</button>`);
   expect(await directory.users.isAdmin("ada")).toBe(false);
-  // Another site's form is refused. The person's own click makes them the admin, and approves the setup's request.
+  // Another site's form is refused. The person's own click makes them the admin.
   expect((await at("/auth/claim", { method: "POST", headers: { cookie: session, origin: "https://evil.example" } })).status).toBe(403);
-  const done = await form(session, { t: claim, approve: asked.userCode });
+  const done = await form(session, { t: claim });
   expect(done.status).toBe(200);
   expect(await done.text()).toContain("<h1>You are the admin</h1>");
   expect(await directory.users.isAdmin("ada")).toBe(true);
-  expect(await platform.tokens.collect(asked.code)).toMatchObject({
-    status: "ready",
-    login: "ada",
-    token: expect.stringMatching(/^erga_/),
-  });
-  // One time: the server has its admin, so the same link claims nothing. It sends an admin on to approve a request.
+  // One time: the server has its admin, so the same link claims nothing.
   const again = await at(here, { headers: { cookie: session } });
-  expect([again.status, again.headers.get("location")]).toEqual([302, `/tokens/approve?code=${asked.userCode}`]);
-  expect((await at(`/auth/claim?t=${encodeURIComponent(claim)}`)).headers.get("location")).toBe("/");
+  expect([again.status, again.headers.get("location")]).toEqual([302, "/"]);
   // And it lets nobody else in.
   const eve = await respond(
     proxySignIn,
@@ -554,7 +546,7 @@ test("a new server's first admin: setup's one-time link lets its person in and m
   expect(eve.status).toBe(403);
 });
 
-test("the link approves only the setup's own request: a wider one stays for the person's own decision", async () => {
+test("the link approves no request for a token: one that waits stays for the person's own decision", async () => {
   const { platform, directory } = server();
   const claim = await Claim.seal("session-secret", {});
   const asked = await platform.tokens.request("an agent", { scope: "admin" });

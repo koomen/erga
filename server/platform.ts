@@ -123,12 +123,6 @@ export interface Platform {
   deploy: {
     /** The release this server runs (the commit), or null where no deploy named one. */
     version: string | null;
-    /**
-     * Where the pipeline deployed it: the Cloudflare account, the Worker, the database, the app's address and the pages'
-     * (deploy/pipeline/account.ts, deployFacts), as JSON; null where no deploy said (local development). GET /api/ops
-     * answers it, to an admin's ops token only.
-     */
-    facts: unknown;
     /** The custom domains a document can be published to (the deploy facts' domains: `bun erga deploy <host> --domain <domain>`). */
     domains: string[];
     /** The app's own host in the deploy facts (app), or null: where a custom domain sends a visitor to sign in. */
