@@ -15,8 +15,8 @@ import { ENTRIES as BUILT } from "../client/build.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 const ENTRIES = Object.values(BUILT);
-/** Outside client/, libs/ and shared/, the files the browser may have. */
-const ALLOWED = new Set(["document/model/content.ts", "document/model/pages.ts", "document/model/merge.ts"]);
+/** Outside client/, libs/ and shared/, the files the browser may have: the document's model, and Erga's logo (data). */
+const ALLOWED = new Set(["document/model/content.ts", "document/model/pages.ts", "document/model/merge.ts", "assets/logo/logo.ts"]);
 
 /** The specifiers of a file's value imports (`import type` and `export type` left out), and of its import()s; with `bare`, the packages' too. */
 function valueImports(source: string, bare = false): string[] {

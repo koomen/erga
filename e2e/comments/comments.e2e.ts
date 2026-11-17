@@ -129,7 +129,8 @@ journey("comments in the editor", () => {
       runTool(s.root, "comment", { document: id, action: "reply", thread, text }, as);
     expect((await reply("Me too.", { cookie: await signIn(s.root, cy) })).ok).toBe(true);
     expect((await reply("Noted.", { token: (await newToken(s.root, { label: "Edit test" })).token })).ok).toBe(true);
-    const others = `C ${cy} now Me too. T tester via a shared agent (Edit test) now Noted.`;
+    // An agent's comment shows the agent: its name, then whose it is; a shared agent's picture is its label's letter.
+    const others = `C ${cy} now Me too. E Edit test tester’s agent now Noted.`;
     await expect.poll(() => cards(ed)).toEqual([`${ASKED} ${others}`]);
     // Only the person's own two comments have a pencil.
     expect(await ed.comments<number>(`C.querySelectorAll("[data-act=edit]").length`)).toBe(2);
@@ -234,7 +235,7 @@ journey("comments in the editor", () => {
     await clickOn(page, "#agent-ask-run");
     const card = async () => (await cards(ed))?.find((c) => c.includes("June, then.")) ?? "";
     await until(
-      async () => (await card()).includes("T tester via their agent now Yes: May has fewer people."),
+      async () => (await card()).includes("Erga tester’s agent now Yes: May has fewer people."),
       10_000,
       "the agent's reply shows",
       async () => [
@@ -242,6 +243,12 @@ journey("comments in the editor", () => {
         await page.evaluate(`[window.__press?.said, window.__press?.on, document.getElementById("agent-ask").hidden]`),
       ]
     );
+    // Its picture is Erga's mark on black, never the person's letter or colour.
+    expect(
+      await ed.comments<string[]>(
+        `[...C.querySelectorAll('.card.th[data-thread="${thread}"] .who .a')].slice(-1).map((a) => [getComputedStyle(a).backgroundColor, a.querySelector("svg.erga-mark") ? "mark" : a.textContent].join(" "))`
+      )
+    ).toEqual(["rgb(28, 28, 31) mark"]);
     expect((await threadsOf(s.root, id)).find((t) => t.id == thread)!.comments.at(-1)).toMatchObject({
       by: "tester",
       via: "their agent",
@@ -350,7 +357,7 @@ journey("comments in the viewer", () => {
     expect(asked.result?.agent).toMatch(/took the thread/);
     // Its reply comes to her open page by itself.
     await until(
-      async () => (await cards(ed))?.some((c) => c.includes("via their agent now I can't edit it, only comment.")),
+      async () => (await cards(ed))?.some((c) => c.includes(`Erga ${ada}’s agent now I can't edit it, only comment.`)),
       10_000,
       "her agent's reply shows"
     );

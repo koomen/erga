@@ -70,13 +70,27 @@ export function agentLabel(
 ): { label: string; title: string } {
   const title = activity ? `${agent.name} · ${activity}` : agent.name;
   if (!agent.via) return { label: title, title };
-  const shared = /^a shared agent \((.*)\)$/
-    .exec(agent.via)?.[1]
-    .replace(/\s*\([^()]*\)$/, "")
-    .trim();
-  const what = shared && shared != "no label" ? shared : "agent";
+  const what = sharedLabel(agent.via) || "agent";
   const person = agent.name.split(", via ")[0];
   const who = many ? `${person}’s ${what}` : what[0].toUpperCase() + what.slice(1);
   const doing = activity?.trim().split(/\s+/)[0];
   return { label: doing ? `${who} · ${doing}` : who, title };
+}
+
+/**
+ * An agent as its comment names it: its own name, then whose agent it is ("Erga", "Pete’s agent"; "Claude Code",
+ * "Pete’s agent"). `mark`: Erga's own agent, whose picture is Erga's mark; a shared agent's is its name's first letter.
+ * null: the person, in person.
+ */
+export function agentByline(person: string, via: string | null | undefined): { name: string; whose: string; mark: boolean } | null {
+  if (!via) return null;
+  const shared = sharedLabel(via);
+  return { name: shared == null ? "Erga" : shared || "Agent", whose: `${person}’s agent`, mark: shared == null };
+}
+
+/** A shared agent's token label (VIA.token), without what it has in parentheses at its end: "" with no label; null: not a shared agent. */
+function sharedLabel(via: string): string | null {
+  const label = /^a shared agent \((.*)\)$/.exec(via)?.[1];
+  if (label == null) return null;
+  return label == "no label" ? "" : label.replace(/\s*\([^()]*\)$/, "").trim();
 }

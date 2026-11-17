@@ -8,6 +8,8 @@
 // (through `o.call`), the undo's timer, the focus.
 
 import type * as Y from "yjs";
+import { MARK } from "../../../assets/logo/logo";
+import { agentByline } from "../../../shared/attribution";
 import { esc } from "../../../shared/html";
 import { anchorFromJSON, anchorOf, anchorToJSON, resolveAnchor, type Anchor } from "../api/anchors";
 import { editKey, initial, step, type Comment, type CommentEvent, type Effect, type Thread } from "./comments-state";
@@ -61,6 +63,9 @@ ${LOOK}
 .th.dim { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); cursor: pointer; }
 .who { display: flex; align-items: center; gap: 8px; margin: 0; }
 .a { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: #fff; font: 600 11px/1 var(--font); flex: none; }
+/* An agent's picture: Erga's mark, or a shared agent's letter, on black. */
+.a.ag { background: #1c1c1f; }
+.a.ag svg { width: 13px; height: 13px; stroke: none; }
 .nm { font-weight: 600; }
 .via { color: var(--soft); font-size: 12px; font-weight: 400; }
 .t { color: var(--soft); font-size: 12px; }
@@ -364,7 +369,7 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
   }
 
   /**
-   * A comment's first line: who, how (an agent), when (as it shows), "· edited" (`edited`: when), ✎ to edit it
+   * A comment's first line: who (the person, or an agent and whose it is: agentByline), when (as it shows), "· edited" (`edited`: when), ✎ to edit it
    * (`edit`: the comment's id), and ✓ to resolve its thread.
    */
   function whoHTML(
@@ -374,9 +379,13 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     resolve: boolean,
     more: { edited?: string; edit?: string } = {}
   ): string {
-    const p = o.person(login);
-    return `<p class="who"><span class="a" style="background:${esc(p.color)}">${esc([...p.name][0]?.toUpperCase() ?? "?")}</span><span class="nm">${esc(p.name)}${
-      via ? ` <span class="via">via ${esc(via)}</span>` : ""
+    const p = o.person(login),
+      agent = agentByline(p.name, via),
+      initial = esc([...(agent?.name ?? p.name)][0]?.toUpperCase() ?? "?");
+    return `<p class="who">${
+      agent
+        ? `<span class="a ag">${agent.mark ? MARK : initial}</span><span class="nm">${esc(agent.name)} <span class="via">${esc(agent.whose)}</span>`
+        : `<span class="a" style="background:${esc(p.color)}">${initial}</span><span class="nm">${esc(p.name)}`
     }</span>${when ? `<span class="t">${esc(when)}</span>` : ""}${
       more.edited ? `<span class="t" title="Edited ${esc(new Date(more.edited).toLocaleString())}">· edited</span>` : ""
     }${resolve || more.edit ? '<span class="sp"></span>' : ""}${
