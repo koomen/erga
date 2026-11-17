@@ -8,15 +8,31 @@
 // A card is at most 60% of the place high (a sheet: half of it): a long thread scrolls in it, and its box for a reply
 // stays at its bottom.
 //
+// The box a person types in is not here: a script of the page could read it, type in it and send it as the person.
+// The window around the page draws it (client/common/comment-box.ts) over the open card's empty place for it (.slot),
+// and sends its comment with the person's session. This asks for it (`o.box`: the card, what it is for, and where,
+// never text), makes its place as high as the box says, and hears what was sent and the answer (`fromShell`).
+//
 // The state and what moves it are comments-state.ts. This draws it, and does what its steps say: the edit op comment
-// (through `o.call`), the undo's timer, the focus.
+// (through `o.call`: resolve and reopen), the undo's timer, the focus.
 
 import type * as Y from "yjs";
 import { MARK } from "../../../assets/logo/logo";
-import { agentByline } from "../../../shared/attribution";
+import { agentByline, VIA, type AgentNote } from "../../../shared/attribution";
 import { esc } from "../../../shared/html";
 import { anchorFromJSON, anchorOf, anchorToJSON, resolveAnchor, type Anchor } from "../api/anchors";
-import { editKey, initial, step, type Comment, type CommentEvent, type Effect, type Thread } from "./comments-state";
+import {
+  agentOf,
+  boxOf,
+  editKey,
+  initial,
+  step,
+  type Action,
+  type Comment,
+  type CommentEvent,
+  type Effect,
+  type Thread,
+} from "./comments-state";
 import { KEPT, LOOK } from "./controls";
 import type { Shows } from "./mode";
 import { ms } from "./timescale";
@@ -51,6 +67,8 @@ export interface CommentsOptions {
   shown: boolean;
   /** A "Comment" button at the page's selection: where the editor's style bar, which has one, isn't (a commenter's page). */
   button?: boolean;
+  /** Asks the window around the page for the box (comment-box.ts), or none (null). */
+  box: (box: unknown) => void;
 }
 
 /** How long "Resolved · Undo" stays. */
@@ -94,27 +112,25 @@ ${LOOK}
 .msg.pending { color: var(--soft); }
 .err { margin: 0 0 6px; color: #c2410c; font-size: 12.5px; }
 .c.dark .err { color: #f59a6a; }
-.reply.busy { opacity: 0.6; }
+/* The box's place: the window around the page draws the box over it (comment-box.ts), and says how high it is. */
+.slot { margin: 2px 0 0; height: 36px; flex: none; }
+.draft .slot { margin-top: 10px; }
 /* A comment open for editing: its box in its place, under its name. */
-.reply.edit { margin: 4px 0 10px 30px; }
+.slot.edit { margin: 4px 0 10px 30px; }
 .err.edit { margin: 4px 0 0 30px; }
+/* The person's agent, asked with @erga: at work until its reply comes, or why it didn't start. */
+.dots { display: inline-flex; gap: 3px; vertical-align: middle; margin-left: 2px; }
+.dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--chrome); display: block; animation: dot 1.2s ease-in-out infinite; }
+.dots i:nth-child(2) { animation-delay: 0.2s; }
+.dots i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dot { 50% { opacity: 0.35; } }
+.msg.why { color: var(--soft); }
 button { border: 0; background: transparent; padding: 0; font: inherit; color: inherit; cursor: pointer; display: grid; place-items: center; flex: none; }
 button:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 svg { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
 .rs { width: 26px; height: 26px; border-radius: 7px; color: var(--chrome); }
 .rs:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
 .rs svg { width: 17px; height: 17px; stroke-width: 1.8; }
-.reply { display: flex; align-items: flex-end; gap: 6px; margin: 2px 0 0; border: 1px solid var(--rule); border-radius: 9px; padding: 5px 5px 5px 10px; }
-.reply:focus-within { border-color: var(--caret); }
-.draft .reply { margin-top: 10px; }
-/* One line is as high as the send button (3 + 18 + 3 = 24), so the line and the button share a middle. Border-box: its
-   height is the scrollHeight that grow() sets, padding and all. */
-textarea { flex: 1; min-width: 0; border: 0; outline: none; resize: none; background: transparent; color: var(--fg); font: 13px/18px var(--font);
-  box-sizing: border-box; padding: 3px 0; margin: 0; height: 24px; max-height: 160px; }
-textarea::placeholder { color: var(--chrome); }
-.go { width: 24px; height: 24px; border-radius: 6px; background: var(--rule); color: var(--soft); }
-.reply.has .go { background: var(--caret); color: #fff; }
-.go svg { width: 14px; height: 14px; stroke-width: 2; }
 .pill { left: 50%; bottom: 20px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; border-radius: 10px;
   padding: 7px 8px 7px 12px; white-space: nowrap; }
 /* The button at the selection, on a commenter's page. */
@@ -127,7 +143,6 @@ textarea::placeholder { color: var(--chrome); }
 .sheet { bottom: 0; border-radius: 16px 16px 0 0; padding: 8px 14px 72px; overflow-y: auto; overscroll-behavior: contain; }
 .grab { width: 36px; height: 4px; border-radius: 2px; background: var(--rule); margin: 0 auto 10px; }
 .th:not(.sheet) .grab { display: none; }
-@media (pointer: coarse) { textarea { font-size: 16px; line-height: 22px; padding: 1px 0; } }
 `;
 
 const ICON = {
@@ -186,42 +201,70 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
 
   function run(f: Effect) {
     if (f.do == "focus") page.focus();
+    else if (f.do == "refresh") void refresh();
     else if (f.do == "explain") o.explain(f.message);
-    else if (f.do == "cleared" || f.do == "restore") {
-      const area = cards.get(f.card)?.el.querySelector("textarea");
-      if (area) {
-        area.value = f.do == "restore" ? f.text : "";
-        grow(area);
-      }
-    } else if (f.do == "timer") {
+    else if (f.do == "timer") {
       const t = win.setTimeout(() => {
         timers.delete(t);
         send({ type: "expired", n: f.n });
       }, ms(UNDO_MS));
       timers.add(t);
-    } else {
-      const args =
-        f.action == "add"
-          ? { action: "add", anchor: f.anchor, text: f.text }
-          : f.action == "reply"
-            ? { action: "reply", thread: f.thread, text: f.text }
-            : f.action == "edit"
-              ? { action: "edit", comment: f.comment, text: f.text }
-              : { action: f.action, thread: f.thread.id };
-      // What a failure is about: the card whose text it sent, or the thread it changed.
-      const about =
-        f.action == "add"
-          ? { card: "" }
-          : f.action == "reply"
-            ? { card: f.thread }
-            : f.action == "edit"
-              ? { card: editKey(f.comment) }
-              : { thread: f.thread };
-      o.call("comment", args).then(
-        (r) => send({ type: "answered", action: f.action, thread: r.thread ?? null, ...("card" in about ? { card: about.card } : {}) }),
-        (err: Error) => send({ type: "failed", action: f.action, message: err.message, ...about })
+    } else
+      o.call("comment", { action: f.action, thread: f.thread.id }).then(
+        (r) => send({ type: "answered", action: f.action, thread: r.thread ?? null }),
+        (err: Error) => send({ type: "failed", action: f.action, message: err.message, thread: f.thread })
       );
+  }
+
+  // ------------------------------------------------------------ the box, in the window around the page
+
+  /** The box's height, as the window around the page last said, for its card. */
+  let boxHeight = { card: "", height: 36 };
+  /** What the window was told last; and whether the box takes the focus with the next word (a new box, a click on its card). */
+  let boxTold = "";
+  let boxFocus = false;
+  /** The box's place in the open card, where it is now (px of the page's window): the window draws the box there. */
+  function askBox() {
+    const b = state.shown ? boxOf(state) : null;
+    const slot = b && cards.get(b.act == "edit" ? state.editing!.thread : b.card)?.el.querySelector<HTMLElement>(".slot");
+    const r = slot?.getBoundingClientRect();
+    const word = b && r?.width ? { ...b, place: { x: r.left, y: r.top, w: r.width }, dark: box.classList.contains("dark") } : null;
+    const json = JSON.stringify(word);
+    if (json == boxTold && !(word && boxFocus)) return;
+    boxTold = json;
+    o.box(word && boxFocus ? { ...word, focus: true } : word);
+    if (word && boxFocus) {
+      boxFocus = false;
+      // The keys are the box's from now on: none goes into the page's text before the box has the focus. (The editor
+      // keeps its selection, for the way back.)
+      (doc.activeElement as HTMLElement | null)?.blur?.();
     }
+  }
+
+  /** What the window around the page says of its box (frame.ts hears it from there, and only from there). */
+  function fromShell(m: Record<string, unknown>) {
+    if (m.type == "erga-comment-turn" && typeof m.why == "string") return send({ type: "ended", why: m.why.slice(0, 300) });
+    const card = typeof m.card == "string" ? m.card : null,
+      action = m.action as Action;
+    if (card == null) return;
+    if (m.type == "erga-comment-height" && typeof m.height == "number" && m.height > 0 && m.height < 400) {
+      boxHeight = { card, height: Math.round(m.height) };
+      const slot = [...cards.values()].map((c) => c.el.querySelector<HTMLElement>(".slot")).find(Boolean);
+      if (slot) slot.style.height = boxHeight.height + "px";
+      queue();
+    } else if (m.type == "erga-comment-sent" && typeof m.text == "string") send({ type: "sent", card, text: m.text });
+    else if (m.type == "erga-comment-cancel") send({ type: "cancel" });
+    else if (m.type == "erga-comment-answered" && ["add", "reply", "edit"].includes(action)) {
+      const agent = m.agent as AgentNote | undefined;
+      send({
+        type: "answered",
+        action,
+        thread: (m.thread as Thread | null) ?? null,
+        card,
+        ...(agent && ("working" in agent || typeof (agent as { reason?: unknown }).reason == "string") ? { agent } : {}),
+      });
+    } else if (m.type == "erga-comment-failed" && typeof m.message == "string" && ["add", "reply", "edit"].includes(action))
+      send({ type: "failed", action, message: m.message, card });
   }
 
   /** The server's open threads again: after a change the document told of, and at the start. */
@@ -318,7 +361,9 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
       if (!rail && !on) continue;
       want.add(t.id);
       const editing = state.editing?.thread == t.id ? state.editing : null;
-      const el = card(t.id, JSON.stringify([t.comments, on, state.sending, state.errors, editing]), () => threadHTML(t, on));
+      const el = card(t.id, JSON.stringify([t.comments, on, state.sending, state.errors, editing, state.asked[t.id]]), () =>
+        threadHTML(t, on)
+      );
       el.classList.toggle("dim", !on);
       el.classList.toggle("sheet", narrow);
       el.classList.toggle("under", !rail && !narrow);
@@ -383,6 +428,7 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
         el.style.top = (under + h > tall - 8 && over >= 8 ? over : under) + "px";
       }
     for (const c of cards.values()) fade(c.el);
+    askBox();
     pill.hidden = !state.resolved;
     if (o.button) placeButton(z, view);
   }
@@ -436,23 +482,14 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
       else registry.delete(name);
   }
 
-  /**
-   * The card for `id`, made again when what it shows (`drawn`) changed; what's typed in each of its boxes (data-box:
-   * reply, edit) stays, and so does the focus. A box that's new takes the focus: the new comment's, and an edit's.
-   */
+  /** The card for `id`, made again when what it shows (`drawn`) changed; its thread keeps its place in its scroll. */
   function card(id: string, drawn: string, html: () => string): HTMLElement {
     const had = cards.get(id);
     if (had?.drawn == drawn) return had.el;
-    const typed = new Map<string, string>();
-    let focused: string | null = null;
     // Its thread's place in its scroll: the same again, or the end when it was at the end (a new comment shows there).
     const was = had?.el.querySelector<HTMLElement>(".msgs");
     const end = !!was && was.scrollTop + was.clientHeight >= was.scrollHeight - 2,
       scrolled = was?.scrollTop ?? 0;
-    for (const a of had?.el.querySelectorAll("textarea") ?? []) {
-      typed.set(a.dataset.box!, a.value);
-      if (root.activeElement == a) focused = a.dataset.box!;
-    }
     const el = had?.el ?? doc.createElement("div");
     el.className = `card th${id ? "" : " draft"}`;
     if (id) el.dataset.thread = id;
@@ -461,16 +498,6 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     cards.set(id, { el, drawn });
     const msgs = el.querySelector<HTMLElement>(".msgs");
     if (msgs && was) msgs.scrollTop = end ? msgs.scrollHeight : scrolled;
-    for (const a of el.querySelectorAll("textarea")) {
-      const name = a.dataset.box!,
-        isNew = !typed.has(name);
-      a.value = isNew ? (name == "edit" ? (state.editing?.text ?? "") : "") : typed.get(name)!;
-      grow(a);
-      if (focused == name || (isNew && (name == "edit" || (name == "reply" && !id && !had)))) {
-        a.focus();
-        a.setSelectionRange(a.value.length, a.value.length);
-      }
-    }
     return el;
   }
 
@@ -502,13 +529,10 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
       resolve ? `<button type="button" class="rs" data-act="resolve" aria-label="Resolve" title="Resolve">${svg(ICON.check)}</button>` : ""
     }</p>`;
   }
-  /** A card's box: it waits while its text is on its way; the reason the server refused it shows above it. */
-  const replyHTML = (label: string, card: string) => {
-    const busy = card in state.sending,
-      error = state.errors[card];
-    return `${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}<div class="reply${busy ? " busy" : ""}"><textarea data-box="reply" rows="1" placeholder="${label}" aria-label="${label}"${
-      busy ? ' readonly aria-disabled="true"' : ""
-    }></textarea><button type="button" class="go" data-act="send" aria-label="Send (Enter)" title="Send  Enter"${busy ? ' aria-disabled="true"' : ""}>${svg(ICON.up)}</button></div>`;
+  /** A card's place for the box (the window around the page draws it), with the reason the server refused its text over it. */
+  const slotHTML = (card: string, edit = false) => {
+    const error = state.errors[card];
+    return `${error ? `<p class="err${edit ? " edit" : ""}" role="alert">${esc(error)}</p>` : ""}<div class="slot${edit ? " edit" : ""}" style="height:${boxHeight.card == card ? boxHeight.height : 36}px"></div>`;
   };
   /** The text a card sent, as it shows until the server answers. */
   const pendingHTML = (card: string, who: boolean) =>
@@ -524,33 +548,30 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
           ...(edit && c.by == o.me && !c.via ? { edit: c.id } : {}),
         });
     if (key in state.sending) return who(false) + `<p class="msg pending">${esc(state.sending[key])}</p>`;
-    if (state.editing?.comment == c.id)
-      return (
-        who(false) +
-        (state.errors[key] ? `<p class="err edit" role="alert">${esc(state.errors[key])}</p>` : "") +
-        `<div class="reply edit"><textarea data-box="edit" data-comment="${esc(c.id)}" rows="1" aria-label="Edit your comment"></textarea><button type="button" class="go" data-act="send" aria-label="Save (Enter)" title="Save  Enter">${svg(ICON.up)}</button></div>`
-      );
+    if (state.editing?.comment == c.id) return who(false) + slotHTML(key, true);
     return who(true) + `<p class="msg">${esc(c.text)}</p>`;
   }
+  /** The person's agent, asked in this thread with @erga: at work, or why it didn't start. */
+  const agentHTML = (t: Thread) => {
+    const a = agentOf(state, t);
+    if (!a) return "";
+    const working = `<span class="t">working <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></span>`;
+    return (
+      whoHTML(o.me, VIA.agent, null, false).replace(/<\/p>$/, `${a.reason == null ? working : ""}</p>`) +
+      `<p class="msg${a.reason == null ? "" : " why"}">${esc(a.reason ?? "")}</p>`
+    );
+  };
   const threadHTML = (t: Thread, on: boolean) =>
-    `<div class="msgs">${t.comments.map((c, i) => commentHTML(c, i == 0, on)).join("") + pendingHTML(t.id, true)}</div><div class="more" hidden></div>` +
-    (on ? replyHTML("Reply", t.id) : "");
+    `<div class="msgs">${t.comments.map((c, i) => commentHTML(c, i == 0, on)).join("") + pendingHTML(t.id, true) + agentHTML(t)}</div><div class="more" hidden></div>` +
+    (on && state.editing?.thread != t.id ? slotHTML(t.id) : "");
   const draftHTML = () =>
     `<div class="msgs">${whoHTML(o.me, undefined, "" in state.sending ? "sending…" : null, false) + pendingHTML("", false)}</div><div class="more" hidden></div>` +
-    replyHTML("Comment", "");
-
-  function grow(area: HTMLTextAreaElement) {
-    area.style.height = "";
-    area.style.height = Math.min(160, area.scrollHeight) + "px";
-    area.closest(".reply")?.classList.toggle("has", !!area.value.trim());
-  }
+    slotHTML("");
 
   // ------------------------------------------------------------ their events
 
   const threadOf = (el: Element) => (el.closest("[data-thread]") as HTMLElement | null)?.dataset.thread;
-  box.addEventListener("mousedown", (e) => {
-    if (!(e.target instanceof HTMLTextAreaElement)) e.preventDefault();
-  });
+  box.addEventListener("mousedown", (e) => e.preventDefault());
   box.addEventListener("click", (e) => {
     const target = e.target as Element;
     if (target.closest("#undo")) return send({ type: "undo" });
@@ -558,10 +579,16 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     const id = threadOf(target);
     const act = (target.closest("button") as HTMLButtonElement | null)?.dataset.act;
     if (act == "resolve" && id) return send({ type: "resolve", id });
-    if (act == "edit" && id) return send({ type: "edit", thread: id, comment: (target.closest("button") as HTMLElement).dataset.comment! });
-    if (act == "send") return submit(target.closest(".reply")!.querySelector("textarea")!);
+    if (act == "edit" && id) {
+      boxFocus = true;
+      return send({ type: "edit", thread: id, comment: (target.closest("button") as HTMLElement).dataset.comment! });
+    }
     if (id && id != state.active) send({ type: "activate", id });
-    if (!(target instanceof HTMLTextAreaElement)) target.closest(".card")?.querySelector<HTMLElement>("[data-box=reply]")?.focus();
+    // A click on a card: the box takes the focus.
+    if (target.closest(".card.th")) {
+      boxFocus = true;
+      queue();
+    }
   });
   root.addEventListener(
     "scroll",
@@ -571,25 +598,6 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     },
     true
   );
-  box.addEventListener("input", (e) => {
-    if (e.target instanceof HTMLTextAreaElement) grow(e.target);
-  });
-  box.addEventListener("keydown", (e) => {
-    if (!(e.target instanceof HTMLTextAreaElement) || e.isComposing) return;
-    if (e.key == "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      submit(e.target);
-    } else if (e.key == "Escape") {
-      e.preventDefault();
-      send({ type: "cancel" });
-    }
-  });
-  function submit(area: HTMLTextAreaElement) {
-    const id = threadOf(area),
-      comment = area.dataset.comment;
-    send({ type: "send", text: area.value, ...(id ? { thread: id } : {}), ...(comment ? { comment } : {}) });
-  }
-
   // A click on a highlight opens its thread; a click elsewhere on the page closes the one open. (Read from the click's
   // place: the highlights are no elements.)
   const onClick = (e: MouseEvent) => {
@@ -614,6 +622,7 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
       { from, to } = page.selectionNow();
     const a = text && anchorOf(text, from, to);
     if (!a) return o.explain("Select the text to comment on, then press Comment.");
+    boxFocus = true;
     send({ type: "compose", anchor: anchorToJSON(a) });
     // (At once: the next key typed goes into its box, not the page.)
     draw();
@@ -625,6 +634,9 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     queue,
     refresh,
     compose,
+    fromShell,
+    /** A box is open and has the keys (the page has no focus): the style bar waits. */
+    writing: () => !!boxOf(state) && !doc.hasFocus(),
     /** The page's colours: the cards take their dark look on a dark page. */
     dark(on: boolean) {
       box.classList.toggle("dark", on);
@@ -644,6 +656,7 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
       for (const t of timers) win.clearTimeout(t);
       doc.removeEventListener("click", onClick, true);
       paint([], []);
+      o.box(null);
       host.remove();
     },
   };

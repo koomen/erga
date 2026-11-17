@@ -1,5 +1,5 @@
 // Comments on a document: a person comments on a selection in the editor (the box, reply, resolve, undo, edit, a
-// phone's sheet), asks their agent with @erga, and a person who "Can comment" comments from the viewer and can change
+// phone's sheet), asks their agent with @erga, which runs at once, and a person who "Can comment" comments from the viewer and can change
 // no text. The page shows a comment's highlight as "{...}" in the visible snapshot: a CSS highlight, never in its HTML.
 import { agentClosed, expect, journey, servers, test, until } from "../helpers/fixtures";
 import { editor, openEditor, type Editor } from "../helpers/editor";
@@ -7,7 +7,19 @@ import { newToken } from "../helpers/new-token";
 import { clickOn } from "../helpers/press";
 import { runTool } from "../helpers/tools";
 import { secondPage } from "../sync/room";
-import { cards, conversation, draftBox, onScreen, selectText, signIn, threadsOf, unique } from "./comments";
+import {
+  boxFocused,
+  cards,
+  clickBox,
+  conversation,
+  onScreen,
+  selectText,
+  signIn,
+  slotOnScreen,
+  theBox,
+  threadsOf,
+  unique,
+} from "./comments";
 
 const s = await servers.main();
 
@@ -24,7 +36,9 @@ journey("comments in the editor", () => {
   let wide = { width: 0, height: 0 };
   const cy = unique("cy");
 
-  test("the new comment's box is one line high and grows as the text wraps; Esc closes it, and nothing is sent", async ({ tab }) => {
+  test("the new comment's box is Erga's, over its card: one line high, it grows as the text wraps; Esc closes it, and nothing is sent", async ({
+    tab,
+  }) => {
     // (Real time: "Resolved · Undo" stays for 6 s, and for 0.6 s at the tests' usual speed.)
     // A window of 1440 px, and a page with a column of 40rem: room for the rail beside it, at 100%.
     await tab.page.setViewportSize({ width: 1440, height: 900 });
@@ -41,18 +55,26 @@ journey("comments in the editor", () => {
     `);
     await ed.press("ControlOrMeta+Alt+m");
     await expect.poll(() => cards(ed)).toEqual(["T tester"]);
+    // The box is the window's, not the page's (the page's scripts can't reach it), in the card's place for it.
+    await boxFocused(ed, "Comment");
+    expect(await ed.comments<number>(`C.querySelectorAll("textarea").length`)).toBe(0);
     await ed.type("Or five?");
-    const one = (await draftBox(ed))!;
+    const one = (await theBox(ed))!;
+    expect(one.value).toBe("Or five?");
+    expect(await ed.frame<string>("document.querySelector('p').textContent")).not.toContain("five");
+    expect(one.rect).toEqual(await slotOnScreen(ed));
     // One line, with the box's padding and border (5 + 5 + 2) and the text's own (3 + 3): no more.
-    expect(one.box - one.line).toBeLessThanOrEqual(18);
-    expect(Math.abs(one.boxMid)).toBeLessThanOrEqual(1);
-    expect(Math.abs(one.goMid)).toBeLessThanOrEqual(1);
-    // Text that wraps: the box grows a line at a time.
+    expect(one.lines.box - one.lines.line).toBeLessThanOrEqual(18);
+    expect(Math.abs(one.lines.boxMid)).toBeLessThanOrEqual(1);
+    expect(Math.abs(one.lines.goMid)).toBeLessThanOrEqual(1);
+    // Text that wraps: the box grows a line at a time, and so does its place in the card.
     await tab.page.keyboard.insertText(" We could fly out on the Saturday instead, and come back on the Thursday after.");
-    await until(async () => (await draftBox(ed))!.box >= one.box + one.line, 5_000, "the box grows by a line");
+    await until(async () => (await theBox(ed))!.lines.box >= one.lines.box + one.lines.line, 5_000, "the box grows by a line");
+    await expect.poll(async () => (await slotOnScreen(ed)).height).toBe((await theBox(ed))!.rect.height);
 
     await ed.press("Escape");
     await expect.poll(() => cards(ed)).toEqual([]);
+    expect(await theBox(ed)).toBeNull();
     expect(await threadsOf(s.root, id)).toEqual([]);
     await ed.shows(`
       We go to [Lisbon in May], before the crowds.
@@ -62,6 +84,7 @@ journey("comments in the editor", () => {
   test("⌘⌥M on a selection, then Enter: the comment's card and its highlight show; a reply joins it", async () => {
     await ed.press("ControlOrMeta+Alt+m");
     await expect.poll(() => cards(ed)).toEqual(["T tester"]);
+    await boxFocused(ed, "Comment");
     await ed.type("June is cheaper?");
     await ed.press("Enter");
     await expect.poll(() => cards(ed)).toEqual(["T tester now June is cheaper?"]);
@@ -69,7 +92,7 @@ journey("comments in the editor", () => {
       We go to [{Lisbon in May}], before the crowds.
     `);
     // A reply, in the thread's own box.
-    await ed.clickIn("erga-comments", ".card.th textarea");
+    await clickBox(ed, "Reply");
     await ed.type("Or July.");
     await ed.press("Enter");
     await expect.poll(() => cards(ed)).toEqual([ASKED]);
@@ -118,7 +141,7 @@ journey("comments in the editor", () => {
     // The server's answers to an edit wait for the test (or the test answers itself with an error).
     let release = () => {};
     let refuse = false;
-    await tab.page.route("**/api/tools/comment?*", async (route) => {
+    await tab.page.route("**/api/tools/comment", async (route) => {
       if (route.request().method() != "POST" || !route.request().postData()?.includes('"edit"')) return route.continue();
       // (The API's refusal as its body says it: a status of 4xx or 5xx would also put an error in the console.)
       if (refuse)
@@ -137,12 +160,16 @@ journey("comments in the editor", () => {
     await expect.poll(() => cards(ed)).toEqual([`${ASKED} ${others}`]);
     // Only the person's own two comments have a pencil.
     expect(await ed.comments<number>(`C.querySelectorAll("[data-act=edit]").length`)).toBe(2);
-    const editBox = () => ed.comments<string | null>(`C.querySelector("[data-box=edit]")?.value ?? null`);
+    const editBox = async () => {
+      const b = await theBox(ed);
+      return b?.label == "Edit your comment" ? b.value : null;
+    };
     const pending = () => ed.comments<string[]>(`[...C.querySelectorAll(".msg.pending")].map((m) => m.textContent)`);
 
     // ✎: the text in a box in its place, the caret at its end. Enter: the new text shows at once, pending.
     await ed.clickIn("erga-comments", "[data-act=edit]");
     await expect.poll(editBox).toEqual("June is cheaper?");
+    await boxFocused(ed, "Edit your comment");
     for (let i = 0; i < 16; i++) await ed.press("Backspace");
     await ed.type("June, then.");
     await ed.press("Enter");
@@ -151,26 +178,29 @@ journey("comments in the editor", () => {
     release();
     const edited = `T tester now · edited June, then. T tester now Or July. ${others}`;
     await expect.poll(() => cards(ed)).toEqual([edited]);
-    expect(await pending()).toEqual([]);
+    await expect.poll(pending).toEqual([]);
 
     // Esc: as it was, and nothing is sent.
     await ed.clickIn("erga-comments", "[data-act=edit]");
     await expect.poll(editBox).toEqual("June, then.");
+    await boxFocused(ed, "Edit your comment");
     await ed.type(" Or August.");
     await ed.press("Escape");
-    await expect.poll(editBox).toEqual(null);
-    expect(await cards(ed)).toEqual([edited]);
+    await expect.poll(() => cards(ed)).toEqual([edited]);
+    expect(await editBox()).toBeNull();
 
     // Refused: the box stays open with the text it sent, and the reason above it.
     refuse = true;
     await ed.clickIn("erga-comments", "[data-act=edit]");
+    await expect.poll(editBox).toEqual("June, then.");
+    await boxFocused(ed, "Edit your comment");
     await ed.type("!");
     await ed.press("Enter");
     await expect.poll(() => ed.comments<string | null>(`C.querySelector(".err")?.textContent ?? null`)).toEqual("The server is busy.");
     expect(await editBox()).toBe("June, then.!");
     await ed.press("Escape");
     await expect.poll(editBox).toEqual(null);
-    await tab.page.unroute("**/api/tools/comment?*");
+    await tab.page.unroute("**/api/tools/comment");
 
     // In the table: the new text, and when it was edited.
     const [c] = (await threadsOf(s.root, id))[0].comments;
@@ -248,7 +278,7 @@ journey("comments in the editor", () => {
     // What the person sees: the card at most 60% of the window high, its box in the window, and the newest reply in view.
     const seen = () =>
       ed.comments<{ card: number; box: number; last: boolean; place: number }>(`(() => {
-        const card = C.querySelector(".card.th:not(.dim)"), box = card.querySelector(".reply").getBoundingClientRect();
+        const card = C.querySelector(".card.th:not(.dim)"), box = card.querySelector(".slot").getBoundingClientRect();
         const scroll = card.querySelector(".msgs").getBoundingClientRect(), last = [...card.querySelectorAll(".msg")].at(-1).getBoundingClientRect();
         return { card: card.offsetHeight, box: box.bottom, last: last.bottom <= scroll.bottom + 1 && last.top >= scroll.top, place: innerHeight };
       })()`);
@@ -293,6 +323,8 @@ journey("comments in the editor", () => {
     await ed.press("ArrowLeft");
     for (let i = 0; i < 6; i++) await ed.press("Shift+ArrowLeft");
     await ed.clickIn("erga-controls", "[data-act=comment]");
+    await boxFocused(ed, "Comment");
+    expect((await theBox(ed))!.rect).toEqual(await slotOnScreen(ed));
     await ed.type("Or five?");
     await ed.press("Enter");
     await expect.poll(() => cards(ed)).toEqual(["T tester now Or five?"]);
@@ -325,56 +357,66 @@ journey("comments in the editor", () => {
     expect(await sheet()).toEqual([0, 0, 0]);
   });
 
-  test("@erga in a reply: the agent panel asks first, and Run gives the thread to the person's agent, which replies in it", async ({
+  test("@erga in a reply: no question; the thread shows the person's agent at work, then its reply as Erga, their agent; or why none", async ({
     tab,
   }) => {
     const page = tab.page;
     await page.setViewportSize(wide);
     const before = (await conversation(s.root)).items.length;
-    // The scripted model's steps ride in the comment, as a person's words would.
+    // The scripted model's steps ride in the comment, as a person's words would. (Its first waits: "working" shows.)
     const steps = [
-      { tool: "edit", args: { op: "comment", action: "reply", thread, text: "Yes: May has fewer people." } },
+      { tool: "edit", args: { op: "comment", action: "reply", thread, text: "Yes: May has fewer people." }, delay: 500 },
       { text: "Replied." },
     ];
-    const asked = `@erga check it @script ${JSON.stringify(steps)}`;
+    const asked = `@erga what does May mean here? @script ${JSON.stringify(steps)}`;
     // A click on the thread's highlight opens it, with its box for a reply.
     const word = await ed.charAt("p", TEXT.indexOf("Lisbon") + 2);
     await ed.click(word.x, word.y);
-    await ed.clickIn("erga-comments", `.card.th[data-thread="${thread}"] .reply textarea`);
+    await clickBox(ed, "Reply");
     await page.keyboard.insertText(asked);
     await ed.press("Enter");
-    // A script in the page could write such a comment as the person: no agent starts, and their panel asks them.
-    await expect
-      .poll(() =>
-        page.evaluate(() => (document.getElementById("agent-ask")!.hidden ? null : document.getElementById("agent-ask-text")!.textContent))
-      )
-      .toEqual(asked);
-    expect((await conversation(s.root)).items.length).toBe(before);
-    await clickOn(page, "#agent-ask-run");
     const card = async () => (await cards(ed))?.find((c) => c.includes("June, then.")) ?? "";
+    // The box went with the person's session: the agent starts at once, and the thread says so.
     await until(
-      async () => (await card()).includes("Erga tester’s agent now Yes: May has fewer people."),
+      async () => (await card()).endsWith(`${asked} Erga tester’s agent working`),
+      5_000,
+      "the thread shows the agent at work",
+      card
+    );
+    await until(
+      async () => (await card()).endsWith(`${asked} Erga tester’s agent now Yes: May has fewer people.`),
       10_000,
       "the agent's reply shows",
-      async () => [
-        await card(),
-        await page.evaluate(`[window.__press?.said, window.__press?.on, document.getElementById("agent-ask").hidden]`),
-      ]
+      card
     );
+    // No question: the agent's panel never asked.
+    expect(await page.evaluate(() => document.getElementById("agent-ask")?.hidden ?? true)).toBe(true);
     // Its picture is Erga's mark on black, never the person's letter or colour.
     expect(
       await ed.comments<string[]>(
         `[...C.querySelectorAll('.card.th[data-thread="${thread}"] .who .a')].slice(-1).map((a) => [getComputedStyle(a).backgroundColor, a.querySelector("svg.erga-mark") ? "mark" : a.textContent].join(" "))`
       )
     ).toEqual(["rgb(28, 28, 31) mark"]);
-    expect((await threadsOf(s.root, id)).find((t) => t.id == thread)!.comments.at(-1)).toMatchObject({
-      by: "tester",
-      via: "their agent",
-      text: "Yes: May has fewer people.",
-    });
+    expect((await threadsOf(s.root, id)).find((t) => t.id == thread)!.comments.slice(-2)).toMatchObject([
+      { by: "tester", text: asked },
+      { by: "tester", via: "their agent", text: "Yes: May has fewer people." },
+    ]);
     // It ran in the person's own conversation, as their message.
     const said = (await conversation(s.root)).items.slice(before).filter((i) => i.kind == "user");
-    expect(said.map((i) => i.text)).toEqual([expect.stringMatching(/^In a comment on ".*": @erga check it/)]);
+    expect(said.map((i) => i.text)).toEqual([expect.stringMatching(/^In a comment on ".*": @erga what does May mean here\?/)]);
+
+    // A turn that ends with no reply in the thread: "working" goes, and the thread says why.
+    const silent = `@erga and June? @script ${JSON.stringify([{ text: "I looked.", delay: 300 }])}`;
+    await clickBox(ed, "Reply");
+    await page.keyboard.insertText(silent);
+    await ed.press("Enter");
+    await until(async () => (await card()).endsWith(`${silent} Erga tester’s agent working`), 5_000, "the agent at work", card);
+    await until(
+      async () => (await card()).endsWith(`${silent} Erga tester’s agent Its turn ended with no reply here.`),
+      10_000,
+      "the thread says why there's no reply",
+      card
+    );
   });
 });
 
@@ -445,7 +487,7 @@ journey("comments in the viewer", () => {
     await expect.poll(() => ed.frame<string>("String(getSelection())")).toEqual("Lisbon in May");
     // The Comment button shows at the selection; a click opens the box, and Enter sends.
     await ed.clickIn("erga-comments", "#cbtn");
-    await ed.clickIn("erga-comments", ".card.draft textarea");
+    await boxFocused(ed, "Comment");
     await page.keyboard.type("June is cheaper?");
     await page.keyboard.press("Enter");
     await until(async () => (await cards(ed))?.some((c) => c.includes("June is cheaper?")), 5000, "her comment shows");
@@ -479,8 +521,8 @@ journey("comments in the viewer", () => {
     // In person, with her session (not from a page, with its key): her agent starts at once.
     const cookie = await signIn(s.root, ada);
     const text = `@erga fix the title @script ${JSON.stringify(steps)}`;
-    const asked = await runTool<{ agent: string }>(s.root, "comment", { document: id, action: "reply", thread: mine, text }, { cookie });
-    expect(asked.result?.agent).toMatch(/took the thread/);
+    const asked = await runTool<{ agent: unknown }>(s.root, "comment", { document: id, action: "reply", thread: mine, text }, { cookie });
+    expect(asked.result?.agent).toEqual({ working: true });
     // Its reply comes to her open page by itself: in her thread's card, which a click on its highlight opens.
     const lisbon = await ed.charAt("p", TEXT.indexOf("Lisbon") + 2);
     await ed.click(lisbon.x, lisbon.y);

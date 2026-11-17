@@ -169,7 +169,11 @@ export const KEPT = [
  * The controls, on the page in `win`: `place` says where links on it go (client/common/link-target.ts), `zoom` the
  * shell's zoom, `comment` starts a comment on the selection (comments.ts).
  */
-export function mountControls(win: Window, page: ControlsPage, o: { place: () => Place | null; zoom: () => number; comment: () => void }) {
+export function mountControls(
+  win: Window,
+  page: ControlsPage,
+  o: { place: () => Place | null; zoom: () => number; comment: () => void; writing: () => boolean }
+) {
   const doc = win.document;
   const host = doc.createElement("erga-controls");
   const root = host.attachShadow({ mode: "open" });
@@ -305,7 +309,8 @@ export function mountControls(win: Window, page: ControlsPage, o: { place: () =>
   function render() {
     unzoom();
     if (linking == "selection" || morphing || linkPane.contains(root.activeElement)) return;
-    if (pointerDown) {
+    // (While a comment's box has the keys, as while the pointer is down: no bar.)
+    if (pointerDown || o.writing()) {
       hide();
       return;
     }

@@ -143,6 +143,8 @@ window.addEventListener("message", (e: MessageEvent) => {
     commentsShown = e.data.show !== false;
     comments?.show(commentsShown);
   }
+  // The comment box, in the viewer (client/common/comment-box.ts): its height, what it sent, and the answer.
+  else if (typeof e.data?.type == "string" && e.data.type.startsWith("erga-comment-")) comments?.fromShell(e.data);
 });
 
 /** The viewer says edit or view. Edit again: a new key (for the next socket), or another zoom. */
@@ -448,6 +450,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
               place: () => placeOf(window, reader),
               zoom: () => zoom,
               comment: () => comments?.compose(),
+              writing: () => !!comments?.writing(),
             });
             controls = made;
             made.lift(notes);
@@ -472,6 +475,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
             shows: () => shows,
             shown: commentsShown,
             button: !!m.comment,
+            box: (box) => window.parent?.postMessage({ type: "erga-comment-box", box }, SHELL),
           });
           comments = drawn;
           unwatch.push(() => {
@@ -668,8 +672,9 @@ function person(login: string) {
 }
 
 /**
- * The comment ops, from the page (comments.ts): POST /api/tools/<op> on the viewer's origin with the edit key, which
- * names the person (server/api.ts, keyedComment). On this page, of this document.
+ * The comment ops, from the page (comments.ts): the read, resolve and reopen. POST /api/tools/<op> on the viewer's
+ * origin with the edit key, which names the person (server/api.ts, keyedComment). On this page, of this document. (A
+ * comment, a reply and an edit go from the viewer's box, with the person's session: client/common/comment-box.ts.)
  */
 async function commentOp(op: "comment" | "comments", args: Record<string, unknown>) {
   const m = editing();
@@ -862,7 +867,9 @@ function watchPage() {
   unwatch.push(listenAsEditor(d, "mouseup", () => (controls?.released(), comments?.queue()), true));
   // (Focusing or using this tab's page makes it the one its person is shown by: Collab.activate.)
   on(d, "keydown", () => collab?.activate(), true);
-  on(win, "focus", () => collab?.activate(), true);
+  on(win, "focus", () => (collab?.activate(), controls?.queue()), true);
+  // (The focus went to the window around the page: its comment box, say. The style bar waits: controls.ts.)
+  on(win, "blur", () => controls?.queue());
   on(d, "scroll", () => (controls?.queue(), comments?.queue()), { passive: true });
   // The style bar follows selected text that moves another way: a scroll in an element, a pan of the page's own (moves.ts).
   watchMoves(d, win, () => {

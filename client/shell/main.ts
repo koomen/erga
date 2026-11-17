@@ -9,6 +9,7 @@
 import { Collab, type EarlySocket, type SocketEvent } from "../../libs/text/ui/collab";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { mountPageFrame } from "./page-frame";
+import { mountCommentBox } from "../common/comment-box";
 import { isMac, type Keys } from "../common/app-keys";
 import { describeProblem } from "./problems";
 import { colorFor, files, roomInfo, type Author } from "../../document/model/content";
@@ -396,6 +397,12 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     onPan: (dx) => editing() && zoomSend({ type: "pan", dx, width: shell.frame.offsetWidth }),
     onZooms: () => syncZoom(),
   }));
+  // The comment box, over the page, while it is in the editor: the page's comments ask for it.
+  mountCommentBox(
+    shell.docId,
+    () => shell.pagePath,
+    () => editing()
+  );
   // This page and its files, kept in this browser for a reload with no connection (client/common/offline.ts).
   void keepOffline(location.href);
   rememberOrigin(pagesOrigin);
@@ -531,8 +538,8 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     }
     if (e.key == "Escape" && shell.alerts.close()) return true;
     if (e.key == "Escape") {
-      // Naming something in the pages tree, a question in it or one of its menus: Escape is theirs to cancel.
-      if (document.activeElement?.closest(".et-input, .et-row.confirm, .et-menu")) return false;
+      // Naming something in the pages tree, a question in it or one of its menus, or the comment box: Escape is theirs to cancel.
+      if (document.activeElement?.closest(".et-input, .et-row.confirm, .et-menu, erga-comment-box")) return false;
       if (shell.docSettings?.escape()) {
         /* its menu, or itself, closed */
       } else if (!$("account").hidden) {

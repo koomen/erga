@@ -10,6 +10,8 @@
 // (agents/person/): the agent gets the thread as its task, in their panel's conversation, and replies in the thread.
 // The rest of the thread stays data. An agent's own comment never asks one, so agents don't ask each other.
 //
+// A person types a comment in the box that the window around the page draws (client/common/comment-box.ts), and it
+// comes with their session: their @erga runs at once, and the answer says so (`agent`: working, or why not).
 // A comment that comes with the page's edit key (Caller.fromPage) never starts the agent: a script in the page can
 // read that key and write as the person. The person's agent panel, which the page can't reach, shows the comment and
 // asks them; their click there (POST /api/agent/comment, runComment) is the request.
@@ -18,7 +20,7 @@ import * as Schema from "effect/Schema";
 import type { DocRow } from "../directory/index.ts";
 import type { Anchor, Comment, CommentAnswer, CommentCall, Thread } from "../../document/api/comments.ts";
 import { addressOf } from "../../document/model/names.ts";
-import type { CommentAsk } from "../../shared/attribution.ts";
+import type { AgentNote, CommentAsk } from "../../shared/attribution.ts";
 import { fromBase64 } from "../../shared/bytes.ts";
 import { type Caller, DOCUMENT, findDocument, type Operation, OperationError, platformOf, str } from "./operation.ts";
 
@@ -98,13 +100,13 @@ export async function runComment(
   }
 }
 
-/** What a comment's answer says of the agent: it took the thread, the panel asks first (a page's edit key), or why not. */
-async function agentFor(caller: Caller, doc: DocRow, thread: Thread): Promise<string> {
+/** What a comment's answer says of the agent: it took the thread, or why not (a page's edit key: the panel asks first). */
+async function agentFor(caller: Caller, doc: DocRow, thread: Thread): Promise<AgentNote> {
   const asked = lastOwn(thread, caller.who.login.toLowerCase());
-  if (!asked) return "Your agent wasn't asked: the comment is gone.";
+  if (!asked) return { reason: "the comment is gone" };
   if (!caller.fromPage) {
     const r = await askAgent(caller, doc, thread, asked);
-    return r.ok ? "Your agent took the thread as its task: it replies in it." : `Your agent wasn't asked: ${r.reason}.`;
+    return r.ok ? { working: true } : { reason: r.reason ?? "it didn't start" };
   }
   const login = caller.who.login.toLowerCase();
   const ask: CommentAsk = { doc: doc.id, title: doc.title, thread: thread.id, comment: asked.id, text: asked.text };
@@ -113,8 +115,8 @@ async function agentFor(caller: Caller, doc: DocRow, thread: Thread): Promise<st
     .personAgent(login)
     .askComment(login, ask)
     .then(
-      () => "Your agent panel asks you first: run the comment there.",
-      () => "Your agent wasn't asked: its panel didn't answer."
+      () => ({ reason: "your agent panel asks you first: run the comment there" }),
+      () => ({ reason: "its panel didn't answer" })
     );
 }
 

@@ -52,6 +52,19 @@ export interface Log { items: LogItem[]; busy: boolean; undoable: number }
 
 export const emptyLog = (): Log => ({ items: [], busy: false, undoable: 0 });
 
+/**
+ * Why a turn that just ended left no reply, in one short sentence (a comment's thread shows it: libs/text/ui/comments.ts):
+ * it stopped on an error, it waits for the person's answer to a call, or it just ended.
+ */
+export function turnEnded(log: Log): string {
+  const user = log.items.map((i) => i.kind).lastIndexOf("user");
+  const turn = log.items.slice(user + 1);
+  const error = turn.filter((i) => i.kind == "error").at(-1);
+  if (error) return `It stopped: ${error.text.trim().replace(/\.$/, "")}.`;
+  if (turn.some((i) => i.kind == "tool" && i.status == "asking")) return "It waits for your answer in your agent panel.";
+  return "Its turn ended with no reply here.";
+}
+
 /** Applies one event in place; returns the index of the item it touched, or -1. */
 export function reduce(log: Log, ev: LogEvent): number {
   const items = log.items;

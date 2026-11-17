@@ -19,7 +19,7 @@ import { chat } from "./agent-chat";
 import { classify, fileRefs, type Attachment } from "../../shared/attach";
 import { attachments } from "./attach-ui";
 import { canSend, type SendPath } from "./send-gate";
-import type { Log, LogEvent } from "../../shared/agent-log";
+import { turnEnded, type Log, type LogEvent } from "../../shared/agent-log";
 import type { CommentAsk } from "../../shared/attribution";
 import { backoff, live, transient } from "../live/client";
 import { liveSocket } from "../live/socket";
@@ -165,6 +165,8 @@ let wasBusy: boolean | null = null;
 /** The agent started or stopped (renderBusy calls it): the turn's line follows, with the counts as the turn left them. */
 function busyChanged() {
   if (log.busy == wasBusy) return;
+  // A turn that ended: the comment box hears it, for a thread that waits for a reply (client/common/comment-box.ts).
+  if (wasBusy && !log.busy) window.dispatchEvent(new CustomEvent("erga:agent-turn-end", { detail: turnEnded(log) }));
   wasBusy = log.busy;
   turn?.busy(log.busy);
   if (!log.busy) void readUndo();

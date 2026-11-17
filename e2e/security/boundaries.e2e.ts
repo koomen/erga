@@ -169,11 +169,11 @@ journey("a hostile page, opened in the editor by the person it attacks", () => {
     await docFrame(page)!.evaluate(() => void (window as any).__steal());
     const answer = (await until(() => docFrame(page)!.evaluate(() => (window as any).__answer), 10_000, "the page's comment")) as {
       ok: boolean;
-      result: { agent: string; thread: { comments: { by: string; via?: string; text: string }[] } };
+      result: { agent: unknown; thread: { comments: { by: string; via?: string; text: string }[] } };
     };
     expect(answer.ok, JSON.stringify(answer)).toBe(true);
     expect(answer.result.thread.comments.map((c) => [c.by, c.via])).toEqual([[user, undefined]]);
-    expect(answer.result.agent).toBe("Your agent panel asks you first: run the comment there.");
+    expect(answer.result.agent).toEqual({ reason: "your agent panel asks you first: run the comment there" });
     // The panel, which the page can't reach, opens and asks the person, with the comment's words.
     await until(() => page.evaluate(() => !document.getElementById("agent-ask")!.hidden), 10_000, "the panel's question");
     expect(await page.evaluate(() => document.body.classList.contains("agent-open"))).toBe(true);

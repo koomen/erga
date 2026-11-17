@@ -2,14 +2,19 @@
 // runs its half of the editor for the comments alone (libs/text/ui/mode.ts, `comment`): read-only, with a "Comment"
 // button at the selection. This script says so to each page that comes in the frame, with an edit key for the document
 // (POST <base>/api/key: it opens the room to read, and names the person for the comment ops), and a new key before
-// the last one ends. The page answers "erga-commenting" once its comments are up: from then on it shows each change in
+// the last one ends. A comment, a reply and an edit go from the box this window draws over the page, with the
+// person's session (client/common/comment-box.ts), never with that key. The page answers "erga-commenting" once its comments are up: from then on it shows each change in
 // place, and the viewer's own reload stops (viewer-live.ts reads the class).
 
 import { asUser } from "../common/tools";
+import { mountCommentBox } from "../common/comment-box";
 import { live } from "../live/client";
 
 export default function viewerComment(base: string, me: { user: string; name: string; color: string; avatar?: string }): void {
   const tab = Math.random().toString(36).slice(2);
+  const page = () => document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || "index.html";
+  // The box a comment is typed in, over the page (client/common/comment-box.ts): it sends with the person's session.
+  mountCommentBox(base.replace(/^\/d\//, ""), page);
   let key = "";
   const say = () => {
     if (!key) return;
@@ -20,7 +25,7 @@ export default function viewerComment(base: string, me: { user: string; name: st
       doc: location.origin + base,
       key,
       me: { ...me, kind: "person" },
-      path: document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || "index.html",
+      path: page(),
       tab,
       zoom: 1,
       tall: innerHeight,

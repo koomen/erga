@@ -1,6 +1,8 @@
-// Helpers for the comments' journey (comments.e2e.ts): the comments' cards as the page shows them, the document's
-// comment table as a person reads it, a person's agent's conversation, and a selection made with the mouse.
+// Helpers for the comments' journey (comments.e2e.ts): the comments' cards as the page shows them, the box over them
+// that the window around the page draws, the document's comment table as a person reads it, a person's agent's
+// conversation, and a selection made with the mouse.
 import type { Editor } from "../helpers/editor";
+import { expect } from "../helpers/fixtures";
 import { runTool } from "../helpers/tools";
 
 /** A name that no other test (nor a repeat of this one) uses: for logins and titles. */
@@ -41,17 +43,60 @@ export async function conversation(root: string, cookie?: string) {
 }
 
 /**
- * The new comment's box, as the page draws it: its height, its line's height, and how far from the line's middle the
- * box's middle and the send button's middle are (px). The text starts at the box's top, after its padding.
+ * The comment box, as the window around the page draws it over the page (client/common/comment-box.ts): its label, its
+ * text, whether it has the focus, and where it is on the screen; null while none shows. `lines`: its height, its line's
+ * height, and how far from the line's middle the box's middle and the send button's middle are (px).
  */
-export const draftBox = (ed: Editor) =>
-  ed.comments<{ box: number; line: number; boxMid: number; goMid: number }>(`(() => {
-    const box = C.querySelector(".card.draft .reply"), area = box.querySelector("textarea"), go = box.querySelector(".go");
+export const theBox = (ed: Editor) =>
+  ed.eval<{
+    label: string;
+    value: string;
+    focused: boolean;
+    rect: { left: number; top: number; width: number; height: number };
+    lines: { box: number; line: number; boxMid: number; goMid: number };
+  } | null>(`(() => {
+    const R = document.querySelector("erga-comment-box")?.shadowRoot, box = R?.getElementById("box");
+    if (!box || box.hidden) return null;
+    const area = box.querySelector("textarea"), go = box.querySelector(".go");
     const s = getComputedStyle(area), lh = parseFloat(s.lineHeight);
     const b = box.getBoundingClientRect(), a = area.getBoundingClientRect(), g = go.getBoundingClientRect();
     const line = a.top + parseFloat(s.borderTopWidth) + parseFloat(s.paddingTop) + lh / 2;
-    return { box: Math.round(b.height), line: Math.round(lh), boxMid: Math.round(b.top + b.height / 2 - line), goMid: Math.round(g.top + g.height / 2 - line) };
+    return { label: area.placeholder, value: area.value, focused: R.activeElement == area,
+      rect: { left: Math.round(b.left), top: Math.round(b.top), width: Math.round(b.width), height: Math.round(b.height) },
+      lines: { box: Math.round(b.height), line: Math.round(lh), boxMid: Math.round(b.top + b.height / 2 - line), goMid: Math.round(g.top + g.height / 2 - line) } };
   })()`);
+
+/** Waits until the box with this label has the focus, as a person sees its caret before they type. */
+export async function boxFocused(ed: Editor, label: string) {
+  await expect
+    .poll(async () => {
+      const b = await theBox(ed);
+      return b?.focused ? b.label : null;
+    })
+    .toBe(label);
+}
+
+/** A click on the open card (its first line): the box with this label, in it, takes the focus. */
+export async function clickBox(ed: Editor, label: string) {
+  await expect.poll(async () => (await theBox(ed))?.label ?? null).toBe(label);
+  await ed.clickIn("erga-comments", ".card.th:not(.dim) .who .nm");
+  await boxFocused(ed, label);
+}
+
+/** The open card's place for the box, on the screen (px in the tab, after the zoom). */
+export async function slotOnScreen(ed: Editor) {
+  const r = await ed.comments<{ left: number; top: number; width: number; height: number; z: number }>(`(() => {
+    const r = C.querySelector(".slot").getBoundingClientRect();
+    return { left: r.left, top: r.top, width: r.width, height: r.height, z: window.ergaFrame.zoom };
+  })()`);
+  const f = await ed.frameAt();
+  return {
+    left: Math.round(f.x + r!.left * r!.z),
+    top: Math.round(f.y + r!.top * r!.z),
+    width: Math.round(r!.width * r!.z),
+    height: Math.round(r!.height * r!.z),
+  };
+}
 
 /** Selects characters [from, to) of an element's first text node with the mouse, as a reader does (no editor's keys). */
 export async function selectText(ed: Editor, selector: string, from: number, to: number) {

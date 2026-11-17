@@ -58,6 +58,12 @@ export interface CommentAsk {
 }
 
 /**
+ * What a person's comment with @erga did (server/operations/comments.ts, the answer's `agent`): their agent took the
+ * thread and works on it, or the reason it didn't start. Their thread shows it until the agent's reply comes.
+ */
+export type AgentNote = { working: true } | { reason: string };
+
+/**
  * How an agent shows on a page, at its caret: short, so it fits. `label`: the name of its connection (a shared agent's
  * token label, without what it has in parentheses at its end: "Claude Code"), or "Agent" for the person's own; with
  * `many` (more than one person is in the document), whose it is ("Pete’s Claude Code"); then one word for what it does

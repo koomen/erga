@@ -266,12 +266,12 @@ let root: string, scratch: string, stop: (() => void) | undefined;
 const k = await kept();
 if (k) ({ root, scratch } = k);
 else {
-  // (With a say: step, the agent is on, on the scripted model.)
+  // (With a say: step, or a step that types "@script" (a comment to the agent), the agent is on, on the scripted model.)
   const s = await startServer({
     keep,
     latency,
     env: {
-      ...(args.some((a) => a.startsWith("say:")) ? { ERGA_AGENT_MODEL: "script" } : {}),
+      ...(args.some((a) => a.startsWith("say:") || a.includes("@script")) ? { ERGA_AGENT_MODEL: "script" } : {}),
       ...(proxy ? { ERGA_PROXY_SIGN_IN: proxy } : {}),
     },
   });
