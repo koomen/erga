@@ -1,8 +1,8 @@
 // bun erga setup: the options (deploy/own/cli.ts, readOptions), the flow (flow.ts), the answers and what follows from
 // them (plan.ts), and the GitHub App's page on the loopback (browser.ts). The flow is pure: each test gives it the
-// answers and what the command saw, as the command does.
+// answers and what the command saw, as the command does. The last test runs the command itself, with a fake AWS CLI.
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { githubApp, openTerminal } from "../deploy/own/browser";
@@ -372,4 +372,119 @@ test("a run again with other sign-in answers writes the entry again and deploys,
   // Other settings of the entry are not the answers'. A registered instance is what its entry says (bun erga deploy).
   expect(run(a, { ...built, vars: { ...vars, OTHER: "x" } }).state).toEqual({ at: "admin" });
   expect(run(corp, { ...built, vars, admin: true }).state).toEqual({ at: "done" });
+});
+
+/**
+ * A fake AWS CLI: `aws` answers each call with the JSON of the first pattern (the shell's) that its arguments match,
+ * and writes the call's first line into aws.log beside it. The account has one instance that runs, with an admin.
+ */
+function fakeAws(dir: string) {
+  const stack = {
+    StackStatus: "UPDATE_COMPLETE",
+    Outputs: Object.entries({ Machine: "i-0abc", Bucket: "erga-bucket", AppCertificate: "arn:app", PagesCertificate: "arn:pages" }).map(
+      ([OutputKey, OutputValue]) => ({ OutputKey, OutputValue })
+    ),
+  };
+  const zone = (Id: string, Name: string) => ({ Id: `/hostedzone/${Id}`, Name, Config: { PrivateZone: false } });
+  const ran = (out: string) => ({ Status: "Success", StandardOutputContent: out, StandardErrorContent: "" });
+  const answers: [string, unknown][] = [
+    ['"configure list-profiles"*', "default"],
+    ['"configure get region"*', "us-west-2"],
+    ['"sts get-caller-identity"*', { Account: "444455556666", Arn: "arn:aws:iam::444455556666:user/ada" }],
+    ['"route53 list-hosted-zones"*', { HostedZones: [zone("Z1", "example.com."), zone("Z2", "example-pages.com.")] }],
+    ['"ec2 describe-managed-prefix-lists"*', { PrefixLists: [{ PrefixListId: "pl-1" }] }],
+    ['"cloudformation describe-stacks"*', { Stacks: [stack] }],
+    ['"ssm get-parameters-by-path"*', { Parameters: [] }],
+    ['"ssm get-parameter "*', { Parameter: { Value: "abc123" } }],
+    // What the machine runs: the admin's row, the server's health, the release's settings.
+    [`"ssm send-command"*"'admin:'"*`, { Command: { CommandId: "admin" } }],
+    ['"ssm send-command"*"/api/health"*', { Command: { CommandId: "health" } }],
+    ['"ssm send-command"*', { Command: { CommandId: "facts" } }],
+    ['"ssm get-command-invocation --command-id admin"*', ran("admin:ada")],
+    ['"ssm get-command-invocation --command-id health"*', ran(JSON.stringify({ ok: true, version: "abc123" }))],
+    ['"ssm get-command-invocation"*', ran("null")],
+    // The template differs from the main stack in one resource, and from the certificates' stack in none.
+    [
+      '"cloudformation describe-change-set --stack-name erga-example-com-certs "*',
+      { Status: "FAILED", StatusReason: "No updates", Changes: [] },
+    ],
+    [
+      '"cloudformation describe-change-set"*',
+      {
+        Status: "CREATE_COMPLETE",
+        Changes: [{ ResourceChange: { Action: "Modify", LogicalResourceId: "Nat", ResourceType: "AWS::EC2::Instance" } }],
+      },
+    ],
+    ['"cloudformation "*"-change-set"*', {}],
+  ];
+  const cases = answers.map(
+    ([pattern, json]) => `  ${pattern}) cat <<'JSON'\n${typeof json == "string" ? json : JSON.stringify(json)}\nJSON\n  ;;`
+  );
+  writeFileSync(
+    join(dir, "aws"),
+    [
+      "#!/bin/sh",
+      'echo "$*" | head -1 >> "$0.log"',
+      'case "$*" in',
+      ...cases,
+      '  *) echo "no answer for: $*" >&2; exit 1 ;;',
+      "esac",
+      "",
+    ].join("\n")
+  );
+  chmodSync(join(dir, "aws"), 0o755);
+  /** The change-set calls since the last read: "<call> <stack> [<kind>]". */
+  return () => {
+    const calls = readFileSync(join(dir, "aws.log"), "utf8").split("\n");
+    writeFileSync(join(dir, "aws.log"), "");
+    return calls.flatMap((c) => {
+      const m = /^cloudformation (\S+-change-set) --stack-name (\S+)(?:.* --change-set-type (\S+))?/.exec(c);
+      return m ? [m.slice(1).filter(Boolean).join(" ")] : [];
+    });
+  };
+}
+
+test("AWS: setup on an instance that is done updates its stacks to the code's template; a dry run makes no change set", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "erga-aws-"));
+  try {
+    const changeSets = fakeAws(tmp);
+    // The command's .erga folder is beside its clone's .git (deploy/cli/config.ts, ergaDir): a new clone, so a folder of its own.
+    Bun.spawnSync(["git", "init", "-q", tmp]);
+    // No SSH_CONNECTION: over SSH the command takes --remote by itself.
+    const env = { ...process.env, GIT_DIR: join(tmp, ".git"), PATH: `${tmp}:${process.env.PATH}`, SSH_CONNECTION: undefined };
+    const setup = async (...more: string[]) => {
+      const main = join(import.meta.dir, "../deploy/cli/main.ts");
+      const args = ["setup", HOST, "--host", "aws", "--sign-in", "invite", "--pages", "example-pages.com", ...more];
+      const p = Bun.spawn([process.execPath, main, ...args], { env, stdout: "pipe", stderr: "pipe" });
+      const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+      expect([code, err]).toEqual([0, ""]);
+      return out.trim().split("\n");
+    };
+
+    // The dry run: the plan says that the stacks follow the code. It writes the templates, and asks AWS for no change.
+    const dry = await setup("--dry-run");
+    expect(dry.slice(0, 2)).toEqual([
+      `PASS  ${HOST} runs already, with an admin.`,
+      "PLAN  Its stacks change to this code's template, if it differs (each change shows as it's made).",
+    ]);
+    expect(dry.at(-1)).toStartWith("DRY RUN  Nothing is made.");
+    expect(readdirSync(join(tmp, ".erga/aws")).sort()).toEqual(["erga-example-com-certs.json", "erga-example-com.json"]);
+    expect(changeSets()).toEqual([]);
+
+    // The run: a change set for each stack, shown; AWS applies the one that has a change.
+    const real = await setup();
+    expect(real).toContain("    no change");
+    expect(real).toContain("    Modify  Nat (AWS::EC2::Instance)");
+    expect(real.at(-1)).toStartWith(`DONE  Tell the user: Erga is live at https://${HOST}`);
+    expect(changeSets()).toEqual([
+      "create-change-set erga-example-com-certs UPDATE",
+      "describe-change-set erga-example-com-certs",
+      "delete-change-set erga-example-com-certs",
+      "create-change-set erga-example-com UPDATE",
+      "describe-change-set erga-example-com",
+      "execute-change-set erga-example-com",
+    ]);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });

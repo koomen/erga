@@ -25,7 +25,8 @@
 //                                            and secrets; the bucket stays, with the data)
 //
 // Each run ends in one of these lines: DRY RUN (the plan), DONE, WAIT (the user's step is still open: run the same
-// command again) or FAIL (what is wrong, and what to do). A run again goes on from where the last one stopped.
+// command again) or FAIL (what is wrong, and what to do). A run again goes on from where the last one stopped. On
+// AWS, a run on an instance that is done updates its stacks to this code's template (a deploy changes only the code).
 //
 // Trap: nothing here prints a secret, or a link that signs someone in: the agent reads this command's output. The
 // admin's link goes to the browser only, or with --remote to the user's terminal (/dev/tty), never to stdout.
@@ -303,6 +304,13 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
       }
       case "done":
         if (o.dryRun) pass(`${a.host} runs already, with an admin.`);
+        if (a.where == "aws") {
+          // Its stacks, to this code's template: a new rule of the proxy reaches AWS only this way (a deploy doesn't).
+          const aws = await import("../aws/setup");
+          await aws.writePlan(DIR, a);
+          if (o.dryRun) say("PLAN  Its stacks change to this code's template, if it differs (each change shows as it's made).");
+          else await aws.applyStacks(DIR, a, (line) => say(`  ${line.slice(0, 200)}`));
+        }
         return o.dryRun ? "dry" : "done";
     }
   }
