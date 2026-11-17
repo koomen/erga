@@ -150,9 +150,13 @@ const sessionFor = (login: string, v: Vouched): Session => ({ login, name: v.nam
  * Whether Erga names a new account itself, with no username step: this sign-in is the server's one way in, and what it
  * calls people is one person's each. A provider's logins are. Its email addresses are only when one group rule lets
  * people in, of this provider's kind (one Google Workspace), and this person is in that group: the part before the @
- * is then one person's. The server's only sign-in (the proxy) names nobody: its people choose.
+ * is then one person's. The server's only sign-in (the proxy) names nobody: its people choose. With the setting
+ * auto_usernames, any sign-in that vouches for its email address names the account by it.
  */
 async function namesItself(platform: Pick<Platform, "own" | "signIn" | "directory">, v: Vouched): Promise<boolean> {
+  const handle = v.handle.toLowerCase();
+  if (handle.includes("@") && v.emails.some((e) => e.verified && e.email.toLowerCase() == handle))
+    if (await platform.directory.config.get("auto_usernames")) return true;
   const info = SIGN_IN_PROVIDERS[v.provider];
   const ways = await signInChoices(platform);
   if (!info || info.only || ways.length != 1 || ways[0].id != v.provider) return false;

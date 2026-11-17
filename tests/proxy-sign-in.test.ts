@@ -577,3 +577,27 @@ test("the link approves no request for a token: one that waits stays for the per
   expect(await directory.users.isAdmin("ada")).toBe(true);
   expect(await platform.tokens.collect(asked.code)).toEqual({ status: "pending" });
 });
+
+test("auto_usernames: a new user with a verified address gets its first part as their username, at once; a taken one, a number", async () => {
+  const CORP = { ...AWS, email: { claim: "preferred_username", prefix: "corp|" } } satisfies Proxy;
+  const { platform, directory } = server(CORP, ["root"]);
+  const admin = { login: "root", admin: true };
+  await directory.rules.change(admin, (await directory.rules.list(admin)).find((r) => r.kind == "everybody")!.id, "write");
+  const join = async (sub: string, address: string) =>
+    respond(
+      proxySignIn,
+      new Request(`${ORIGIN}/auth/proxy`, {
+        headers: await aws({ sub, preferred_username: `corp|${address}`, exp: 9e9, iss: AWS.issuer }),
+      }),
+      platform
+    );
+  // Off, as a new server has it: they choose a username.
+  expect((await join("sub-pete", "Pete@Example.com")).headers.get("location")).toBe("/auth/username");
+  await directory.config.set(admin, "auto_usernames", true);
+  const pete = await join("sub-pete", "Pete@Example.com");
+  expect([pete.status, pete.headers.get("location")]).toEqual([302, "/"]);
+  expect((await directory.identities.find("proxy", "sub-pete"))?.login).toBe("pete");
+  const other = await join("sub-pete-2", "pete@other.example");
+  expect(other.headers.get("location")).toBe("/");
+  expect((await directory.identities.find("proxy", "sub-pete-2"))?.login).toBe("pete2");
+});

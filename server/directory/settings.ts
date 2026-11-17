@@ -151,6 +151,14 @@ export const SETTINGS = {
       return repo;
     },
   }),
+  auto_usernames: setting<boolean>({
+    label: "Usernames from email addresses",
+    description:
+      "A new user's username is the part of their email address before the @ (pete@example.com: pete), with no step to choose one.",
+    values: "true: only for a verified address; a taken name gets a number (pete2). false: each new user chooses their username.",
+    default: false,
+    parse: boolean,
+  }),
   agent_keys: setting<"server" | "own">({
     label: "Whose keys the agents use",
     description:
