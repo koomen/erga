@@ -7,7 +7,7 @@ import { newToken } from "../helpers/new-token";
 import { clickOn } from "../helpers/press";
 import { runTool } from "../helpers/tools";
 import { secondPage } from "../sync/room";
-import { cards, conversation, draftBox, selectText, signIn, threadsOf, unique } from "./comments";
+import { cards, conversation, draftBox, onScreen, selectText, signIn, threadsOf, unique } from "./comments";
 
 const s = await servers.main();
 
@@ -26,7 +26,9 @@ journey("comments in the editor", () => {
 
   test("the new comment's box is one line high and grows as the text wraps; Esc closes it, and nothing is sent", async ({ tab }) => {
     // (Real time: "Resolved · Undo" stays for 6 s, and for 0.6 s at the tests' usual speed.)
-    ed = await openEditor(tab, s, "empty", { timescale: 1 }); // the one page load of this journey
+    // A window of 1440 px, and a page with a column of 40rem: room for the rail beside it, at 100%.
+    await tab.page.setViewportSize({ width: 1440, height: 900 });
+    ed = await openEditor(tab, s, "column", { timescale: 1 }); // the one page load of this journey
     wide = tab.page.viewportSize()!;
     id = (await ed.eval<string>(`document.querySelector('meta[name="erga-base"]').content`)).replace(/^\/d\//, "");
     await ed.clickEnd("p");
@@ -176,6 +178,68 @@ journey("comments in the editor", () => {
     expect(c.edited_at).toBeTruthy();
   });
 
+  test("a thread sits by the room on the screen: the rail beside the column, else its card under its text, at its own size", async ({
+    tab,
+  }) => {
+    const page = tab.page;
+    const near = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEqual(1);
+    const zoomLabel = () =>
+      page.evaluate(() => {
+        const b = document.getElementById("btn-zoom")!;
+        return b.hidden ? null : b.textContent;
+      });
+    // 100%: 384 px are free beside the column. The card stands in the rail, 24 px from the column, at its text's top.
+    let at = await onScreen(ed, thread);
+    expect(at.card!.width).toBe(272);
+    near(at.card!.left, at.column.right + 24);
+    near(at.card!.top, at.text.top);
+    // A click elsewhere closes the thread; the rail keeps its card.
+    const elsewhere = await ed.charAt("p", 2);
+    await ed.click(elsewhere.x, elsewhere.y);
+    await expect.poll(async () => (await cards(ed))?.length).toBe(1);
+
+    // 67%: too little room on the screen for the rail. Only the highlight shows; a click on it opens the card under
+    // its text, at the same size on the screen.
+    for (let i = 0; i < 4; i++) await ed.press("ControlOrMeta+Minus");
+    await expect.poll(zoomLabel).toBe("67%");
+    await expect.poll(() => cards(ed)).toEqual([]);
+    const word = async () => {
+      const t = (await onScreen(ed, thread)).text;
+      return { x: t.left + 4, y: (t.top + t.bottom) / 2 };
+    };
+    let w = await word();
+    await ed.click(w.x, w.y);
+    await expect.poll(async () => (await cards(ed))?.length).toBe(1);
+    const under = async () => {
+      at = await onScreen(ed, thread);
+      expect(at.card!.width).toBe(320);
+      expect(at.card!.top).toBeGreaterThanOrEqual(at.text.bottom + 7);
+      expect(at.card!.left).toBeGreaterThanOrEqual(at.place.left);
+      expect(at.card!.right).toBeLessThanOrEqual(at.place.right);
+    };
+    await under();
+
+    // 150%: the page is larger and cut at its sides; the card is the same, in the part of the page that shows.
+    await ed.press("ControlOrMeta+0");
+    for (let i = 0; i < 3; i++) await ed.press("ControlOrMeta+Equal");
+    await expect.poll(zoomLabel).toBe("150%");
+    await expect.poll(async () => (await onScreen(ed, thread)).card?.width).toBe(320);
+    await under();
+
+    // 100% with the agent's panel open: the page's place is narrower, and the card stays under its text.
+    await ed.press("ControlOrMeta+0");
+    await expect.poll(zoomLabel).toBe(null);
+    await clickOn(page, "#agent-fab");
+    await until(() => page.evaluate(() => document.body.classList.contains("agent-open")), 3000, "the agent's panel opens");
+    await ed.frameAt();
+    await expect.poll(async () => (await onScreen(ed, thread)).card?.width).toBe(320);
+    await under();
+    await clickOn(page, "#agent-close");
+    await until(() => page.evaluate(() => !document.body.classList.contains("agent-open")), 3000, "the agent's panel closes");
+    await ed.frameAt();
+    await expect.poll(async () => (await onScreen(ed, thread)).card?.width).toBe(272);
+  });
+
   test("a long thread scrolls in its card: the card stays in the window, with its box; every caret is under it", async ({ tab }) => {
     const long = "May is mild, and the trams are less full. ".repeat(8).trim();
     for (const by of ["Ana", "Ben", "Cy"])
@@ -238,6 +302,13 @@ journey("comments in the editor", () => {
         `(() => { const r = C.querySelector(".card.sheet").getBoundingClientRect(); return [r.left, innerWidth - r.right, innerHeight - r.bottom]; })()`
       );
     expect(await sheet()).toEqual([0, 0, 0]);
+    // At most half the screen high, and its text shows over it.
+    const half = await ed.comments<{ height: number; top: number; text: number }>(`(() => {
+      const r = C.querySelector(".card.sheet").getBoundingClientRect(), t = [...CSS.highlights.get("erga-comment-on")][0].getBoundingClientRect();
+      return { height: r.height, top: r.top, text: t.bottom };
+    })()`);
+    expect(half!.height).toBeLessThanOrEqual(380);
+    expect(half!.text).toBeLessThanOrEqual(half!.top);
     await ed.shows(`
       We go to {Lisbon in May}, before the [{crowds}].
     `);
@@ -357,9 +428,17 @@ journey("comments in the viewer", () => {
     // No pencil, and nothing on the page is editable.
     expect(await page.locator(".erga-edit-button").count()).toBe(0);
     expect(await ed.frame<boolean>("document.body.isContentEditable")).toBe(false);
-    // The owner's thread shows, with its highlight.
+    // The owner's thread shows its highlight; with no room for the rail beside the page's text, a click on the
+    // highlight opens its card.
+    await until(() => ed.frame<boolean>(`CSS.highlights.has("erga-comment")`), 5000, "the owner's highlight shows");
+    expect(await cards(ed)).toEqual([]);
+    const title = await ed.charAt("h1", 1);
+    await ed.click(title.x, title.y);
     await expect.poll(() => cards(ed)).toEqual(["T tester now A better title?"]);
-    expect(await ed.frame<boolean>(`CSS.highlights.has("erga-comment")`)).toBe(true);
+    // The card is over the next line; a click beside the heading closes it.
+    const beside = await ed.rectOf("h1", 0.9);
+    await ed.click(beside.x, beside.y);
+    await expect.poll(() => cards(ed)).toEqual([]);
 
     // She selects "Lisbon in May" with the mouse.
     await selectText(ed, "p", TEXT.indexOf("Lisbon"), TEXT.indexOf(", before"));
@@ -402,7 +481,9 @@ journey("comments in the viewer", () => {
     const text = `@erga fix the title @script ${JSON.stringify(steps)}`;
     const asked = await runTool<{ agent: string }>(s.root, "comment", { document: id, action: "reply", thread: mine, text }, { cookie });
     expect(asked.result?.agent).toMatch(/took the thread/);
-    // Its reply comes to her open page by itself.
+    // Its reply comes to her open page by itself: in her thread's card, which a click on its highlight opens.
+    const lisbon = await ed.charAt("p", TEXT.indexOf("Lisbon") + 2);
+    await ed.click(lisbon.x, lisbon.y);
     await until(
       async () => (await cards(ed))?.some((c) => c.includes(`Erga ${ada}’s agent now I can't edit it, only comment.`)),
       10_000,

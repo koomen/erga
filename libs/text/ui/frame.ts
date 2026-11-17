@@ -29,7 +29,7 @@ import { watchUnsaved } from "./unsaved";
 import { imageSize, pathFor } from "./uploads";
 import { mountPending } from "./pending";
 import { apiCode, runPageEdit, warm } from "./page-edits";
-import type { EditMode } from "./mode";
+import type { EditMode, Shows } from "./mode";
 import { step, type Editing, type FrameEvent, type State } from "./frame-state";
 import { changesBetween } from "../../../document/model/merge";
 import { baseName, encodePath } from "../../../document/model/pages";
@@ -110,6 +110,8 @@ const placed = new Map<string, string>();
 let unwatch: (() => void)[] = [];
 /** The level the shell draws the page at (zoom.ts): the frame scaled; the controls keep their own size. */
 let zoom = 1;
+/** The part of the page that shows on the screen (mode.ts): the comments stand in it. */
+let shows: Shows = { left: 0, right: Infinity };
 /** How much of the window's bottom the viewer's alerts take, in px: the controls' notes sit over them. */
 let notes = 0;
 function setNotes(px: unknown) {
@@ -148,7 +150,9 @@ function setMode(m: EditMode) {
   if (m.mode == "edit") {
     if (m.timescale) window.__ergaTimescale = m.timescale;
     if (typeof m.zoom == "number") setZoom(m.zoom);
+    if (m.shows) shows = m.shows;
     setNotes(m.notes);
+    comments?.queue();
   }
   send(m.mode == "view" ? { type: "view" } : { type: "edit", mode: m });
 }
@@ -465,6 +469,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
             call: commentOp,
             explain: (message) => (controls ? controls.explain(message) : sayOnPage(message)),
             zoom: () => zoom,
+            shows: () => shows,
             shown: commentsShown,
             button: !!m.comment,
           });

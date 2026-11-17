@@ -7,7 +7,7 @@
 // hands over the files a person dropped on the page (erga-upload), and hears each one's state (erga-uploads).
 // Everything that comes from the page is checked: the page itself could have sent it.
 
-import type { EditMode } from "../../libs/text/ui/mode";
+import type { EditMode, Shows } from "../../libs/text/ui/mode";
 import type { Word } from "./editor-state";
 import type { Keys } from "../common/app-keys";
 import { clampZoom, type ZoomBy } from "../common/zoom";
@@ -23,7 +23,7 @@ const PAGE_KEY = "page/";
 /** What "edit" says, but the zoom and the tests' settings, which this adds. */
 export type EditWord = Omit<
   Extract<EditMode, { mode: "edit" }>,
-  "type" | "mode" | "zoom" | "tall" | "pinched" | "notes" | "timescale" | "check"
+  "type" | "mode" | "zoom" | "tall" | "pinched" | "shows" | "notes" | "timescale" | "check"
 >;
 
 export interface PageFrameConfig {
@@ -74,6 +74,8 @@ export function mountPageFrame(c: PageFrameConfig) {
   let zoom = 1;
   /** The height of the frame's place on the screen: what the frame, scaled, covers. */
   let tall = 0;
+  /** The part of the page that shows (mode.ts): all of it, but at a zoom over 100%. */
+  let shows: Shows = { left: 0, right: 0 };
   /** The browser has the whole window zoomed (its own pinch): the page leaves a pinch to it (zoom.ts, the trap). */
   let pinched = false;
   /** The page zooms itself (window.ergaZoom), so the viewer's zoom goes to it, not to the frame. */
@@ -110,6 +112,7 @@ export function mountPageFrame(c: PageFrameConfig) {
       zoom,
       tall,
       pinched,
+      shows,
       notes,
       ...(timescale ? { timescale } : {}),
       ...(check ? { check } : {}),
@@ -284,7 +287,7 @@ export function mountPageFrame(c: PageFrameConfig) {
     setZoom(level: number, x: number, pinching: boolean, windowZoomed: boolean) {
       const z = clampZoom(level),
         root = document.documentElement,
-        was = `${zoom} ${tall} ${pinched}`;
+        was = `${zoom} ${tall} ${pinched} ${shows.left} ${shows.right}`;
       zoom = z;
       pinched = windowZoomed;
       if (z == 1) root.style.removeProperty("--erga-zoom");
@@ -293,8 +296,16 @@ export function mountPageFrame(c: PageFrameConfig) {
       else root.style.removeProperty("--erga-x");
       root.classList.toggle("erga-zoomed", z != 1);
       root.classList.toggle("erga-zooming", pinching);
-      tall = Math.round(c.frame().getBoundingClientRect().height * 100) / 100;
-      if (was != `${zoom} ${tall} ${pinched}` && active()) say();
+      // The frame's place is its own box, before the zoom; the frame as drawn is larger or smaller, from `drawn.left`.
+      const frame = c.frame(),
+        drawn = frame.getBoundingClientRect(),
+        round = (n: number) => Math.round(n * 100) / 100;
+      tall = round(drawn.height);
+      shows = {
+        left: round(Math.max(0, (frame.offsetLeft - drawn.left) / z)),
+        right: round(Math.min(frame.offsetWidth, (frame.offsetLeft + frame.offsetWidth - drawn.left) / z)),
+      };
+      if (was != `${zoom} ${tall} ${pinched} ${shows.left} ${shows.right}` && active()) say();
     },
   };
 }

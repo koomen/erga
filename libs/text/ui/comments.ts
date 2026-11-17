@@ -1,9 +1,12 @@
 // The comments on the page, in the editor: erga/text's own drawing of the document's comment table. Highlights are CSS
 // highlights over the text (erga-comment, erga-comment-on: render.ts), never written into the page. The cards, the
 // new comment's box and the "Resolved · Undo" pill draw in a shadow root of their own on the page's <html>, in the
-// controls' look (controls.ts), and their events stay theirs. Wide, the threads stand in a rail at the right, each
-// beside its text; narrow (a phone), a tap on a highlight opens its thread in a sheet at the bottom.
-// A card is at most 60% of the window high: a long thread scrolls in it, and its box for a reply stays at its bottom.
+// controls' look (controls.ts), and their events stay theirs. They keep their size on the screen at every zoom, and
+// stand by the room that shows (all measures on the screen, after the zoom): with room beside the text's column, in a
+// rail there, each beside its text; with less, a click on a highlight opens its thread under its text; on a phone
+// (a narrow place), in a sheet at the bottom, and the page scrolls its text over the sheet.
+// A card is at most 60% of the place high (a sheet: half of it): a long thread scrolls in it, and its box for a reply
+// stays at its bottom.
 //
 // The state and what moves it are comments-state.ts. This draws it, and does what its steps say: the edit op comment
 // (through `o.call`), the undo's timer, the focus.
@@ -15,6 +18,7 @@ import { esc } from "../../../shared/html";
 import { anchorFromJSON, anchorOf, anchorToJSON, resolveAnchor, type Anchor } from "../api/anchors";
 import { editKey, initial, step, type Comment, type CommentEvent, type Effect, type Thread } from "./comments-state";
 import { KEPT, LOOK } from "./controls";
+import type { Shows } from "./mode";
 import { ms } from "./timescale";
 
 /** What the comments ask of the editor on the page. */
@@ -42,6 +46,8 @@ export interface CommentsOptions {
   call: (op: "comment" | "comments", args: Record<string, unknown>) => Promise<{ thread?: Thread | null; threads?: Thread[] }>;
   explain: (message: string) => void;
   zoom: () => number;
+  /** The part of the page that shows on the screen (mode.ts). */
+  shows: () => Shows;
   shown: boolean;
   /** A "Comment" button at the page's selection: where the editor's style bar, which has one, isn't (a commenter's page). */
   button?: boolean;
@@ -49,9 +55,11 @@ export interface CommentsOptions {
 
 /** How long "Resolved · Undo" stays. */
 const UNDO_MS = 6000;
-/** The rail's width, and its gap to the window's edge. */
-const RAIL = { width: 272, gap: 16 };
-/** Under this width (CSS pixels of the window), the sheet takes the place of the rail. */
+/** The rail's cards: their width, their gap to the text's column, and the room they need after it (8 px). */
+const RAIL = { width: 272, gap: 24, after: 8 };
+/** A thread's card under its text, where the rail has no room: its width. */
+const UNDER = 320;
+/** Under this width of the page's place on the screen (px), a thread opens in the sheet. */
 const NARROW = 720;
 /** A card's largest height: this fraction of the window's. */
 const TALL = 0.6;
@@ -115,7 +123,8 @@ textarea::placeholder { color: var(--chrome); }
 .cbtn svg { width: 16px; height: 16px; stroke-width: 1.8; }
 .pill .u { color: var(--caret); font-weight: 600; padding: 2px 4px; border-radius: 6px; }
 /* (Its bottom leaves room for the shell's agent circle, which floats over the page's bottom left.) */
-.sheet { left: 0; right: 0; bottom: 0; width: auto; border-radius: 16px 16px 0 0; padding: 8px 14px 72px; }
+.under { width: ${UNDER}px; }
+.sheet { bottom: 0; border-radius: 16px 16px 0 0; padding: 8px 14px 72px; overflow-y: auto; overscroll-behavior: contain; }
 .grab { width: 36px; height: 4px; border-radius: 2px; background: var(--rule); margin: 0 auto 10px; }
 .th:not(.sheet) .grab { display: none; }
 @media (pointer: coarse) { textarea { font-size: 16px; line-height: 22px; padding: 1px 0; } }
@@ -260,11 +269,30 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     });
   }
 
+  /** The thread whose text the page last scrolled over the sheet (a phone). */
+  let lifted: string | null = null;
+
+  /**
+   * The right edge of the text's column, px of the page: the outermost element around the text that leaves room at
+   * the window's sides (more than 16 px at each); else the text's own element.
+   */
+  function columnRight(r: Range): number {
+    const first = r.startContainer.nodeType == 1 ? (r.startContainer as Element) : r.startContainer.parentElement;
+    let col = first;
+    for (let el = first; el && el != doc.documentElement; el = el.parentElement) {
+      if (el.getBoundingClientRect().width >= win.innerWidth - 32) break;
+      col = el;
+    }
+    return col?.getBoundingClientRect().right ?? 0;
+  }
+
   function draw() {
     if (gone) return;
     const z = o.zoom();
     host.style.zoom = String(1 / z);
-    const narrow = win.innerWidth * z < NARROW;
+    const view = viewOf(z),
+      tall = win.innerHeight * z;
+    const narrow = win.innerWidth < NARROW;
     // The threads that show, each with its ranges on the page (a thread with no anchor: on the page as a whole).
     const placed = state.shown
       ? state.threads.flatMap((t) => {
@@ -278,19 +306,23 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
       placed.filter((p) => p.t.id != state.active).flatMap((p) => p.ranges),
       [...(placed.find((p) => p.t.id == state.active)?.ranges ?? []), ...draftRanges]
     );
+    // The rail: beside the widest column of the threads' texts, where the room that shows there takes a card.
+    const column = Math.max(...placed.flatMap((p) => (p.ranges[0] ? [columnRight(p.ranges[0]) * z] : [])));
+    const railLeft = Number.isFinite(column) ? column + RAIL.gap : view.right - RAIL.width - RAIL.after;
+    const rail = !narrow && view.right - railLeft >= RAIL.width + RAIL.after;
 
     const want = new Set<string>();
-    const rects: { el: HTMLElement; top: number }[] = [];
+    const shown: { el: HTMLElement; id: string; rects: DOMRect[] }[] = [];
     for (const { t, ranges } of placed) {
       const on = t.id == state.active;
-      if (narrow && !on) continue;
+      if (!rail && !on) continue;
       want.add(t.id);
       const editing = state.editing?.thread == t.id ? state.editing : null;
       const el = card(t.id, JSON.stringify([t.comments, on, state.sending, state.errors, editing]), () => threadHTML(t, on));
       el.classList.toggle("dim", !on);
       el.classList.toggle("sheet", narrow);
-      const top = ranges[0]?.getClientRects()[0]?.top ?? 0;
-      rects.push({ el, top: top * z });
+      el.classList.toggle("under", !rail && !narrow);
+      shown.push({ el, id: t.id, rects: ranges.flatMap((r) => [...r.getClientRects()]) });
     }
     if (state.draft && (!narrow || !state.active)) {
       want.add("");
@@ -299,44 +331,91 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
       const last = draftRanges.at(-1)?.getClientRects();
       const r = last?.[last.length - 1];
       if (!narrow && r) {
-        const width = win.innerWidth * z;
-        el.style.left = Math.max(8, Math.min(width - RAIL.width - 8, r.left * z)) + "px";
+        el.style.width = "";
+        el.style.left = Math.max(view.left + 8, Math.min(view.right - RAIL.width - 8, r.left * z)) + "px";
         el.style.top = r.bottom * z + 8 + "px";
       }
-      if (narrow) el.style.left = el.style.top = "";
     }
     for (const [id, c] of cards)
       if (!want.has(id)) {
         c.el.remove();
         cards.delete(id);
       }
-    for (const c of cards.values()) {
-      c.el.style.maxHeight = Math.round(win.innerHeight * z * TALL) + "px";
-      fade(c.el);
-    }
-    // The rail: each card beside its text, below the one before it.
-    if (!narrow) {
+    // A card is at most 60% of the place high; then a sheet (a phone) takes half of it (sheet()).
+    for (const c of cards.values()) c.el.style.maxHeight = Math.round(tall * TALL) + "px";
+    if (narrow && want.has("")) sheet(cards.get("")!.el, view, tall);
+    if (!state.active) lifted = null;
+    // Room to scroll under the page's end, as high as an open thread's sheet: its text can come over the sheet.
+    const sheetOn = narrow && shown.length ? shown[0].el : null;
+    if (sheetOn) sheet(sheetOn, view, tall);
+    host.style.display = sheetOn ? "block" : "";
+    host.style.height = sheetOn ? sheetOn.offsetHeight + "px" : "";
+    if (narrow)
+      for (const { el, id, rects } of shown) {
+        sheet(el, view, tall);
+        // Its text over the sheet: the page scrolls, once each time the thread opens.
+        const first = rects[0],
+          last = rects.at(-1);
+        if (id != state.active || lifted == id || !first || !last) continue;
+        lifted = id;
+        // (Down until its last line is over the sheet, but never past its first line's top.)
+        const by = first.top < 0 ? first.top * z - 8 : Math.min(last.bottom * z - (tall - el.offsetHeight - 8), first.top * z - 8);
+        if (by > 0 || first.top < 0) win.scrollBy(0, by / z);
+      }
+    else if (rail) {
+      // Each card beside its text, below the one before it.
       let below = -Infinity;
-      for (const r of rects.sort((a, b) => a.top - b.top)) {
+      for (const r of shown.map((c) => ({ ...c, top: (c.rects[0]?.top ?? 0) * z })).sort((a, b) => a.top - b.top)) {
         const top = Math.max(r.top, below);
-        r.el.style.top = top + "px";
-        r.el.style.left = "";
-        r.el.style.right = RAIL.gap + "px";
+        Object.assign(r.el.style, { top: top + "px", left: railLeft + "px", width: "" });
         below = top + r.el.offsetHeight + 10;
       }
-    } else for (const r of rects) r.el.style.top = r.el.style.right = "";
+    } else
+      for (const { el, rects } of shown) {
+        // Under the last line of its text, or over its first line when the place has no room below it.
+        const first = rects[0],
+          last = rects.at(-1);
+        el.style.width = "";
+        el.style.left = Math.max(view.left + 8, Math.min(view.right - UNDER - 8, (last?.left ?? 0) * z)) + "px";
+        const h = el.offsetHeight,
+          under = (last?.bottom ?? 0) * z + 8,
+          over = (first?.top ?? 0) * z - 8 - h;
+        el.style.top = (under + h > tall - 8 && over >= 8 ? over : under) + "px";
+      }
+    for (const c of cards.values()) fade(c.el);
     pill.hidden = !state.resolved;
-    if (o.button) placeButton(z);
+    if (o.button) placeButton(z, view);
+  }
+
+  /**
+   * The part of the page that shows, across, in the cards' px: the screen's (the host is drawn at 1 / z). No more than
+   * the page's own window.
+   */
+  function viewOf(z: number) {
+    const s = o.shows(),
+      left = Math.max(0, s.left),
+      right = Math.min(win.innerWidth, s.right);
+    return right > left ? { left: left * z, right: right * z } : { left: 0, right: win.innerWidth * z };
+  }
+
+  /** A card as the sheet: across the part of the page that shows, at its bottom, at most half the place's height. */
+  function sheet(el: HTMLElement, view: { left: number; right: number }, tall: number) {
+    Object.assign(el.style, {
+      left: view.left + "px",
+      width: view.right - view.left + "px",
+      top: "",
+      maxHeight: Math.floor(tall / 2) + "px",
+    });
   }
 
   /** The "Comment" button under the end of the page's selection, while it has text and no comment is being written. */
-  function placeButton(z: number) {
+  function placeButton(z: number, view: { left: number; right: number }) {
     const { from, to } = state.draft ? { from: 0, to: 0 } : page.selectionNow();
     const rects = from < to ? page.textRanges(from, to).at(-1)?.getClientRects() : undefined;
     const r = rects?.[rects.length - 1];
     cbtn.hidden = !r;
     if (!r) return;
-    cbtn.style.left = Math.max(8, Math.min(win.innerWidth * z - cbtn.offsetWidth - 8, r.right * z - cbtn.offsetWidth)) + "px";
+    cbtn.style.left = Math.max(view.left + 8, Math.min(view.right - cbtn.offsetWidth - 8, r.right * z - cbtn.offsetWidth)) + "px";
     cbtn.style.top = r.bottom * z + 8 + "px";
   }
 

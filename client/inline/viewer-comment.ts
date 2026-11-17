@@ -25,6 +25,8 @@ export default function viewerComment(base: string, me: { user: string; name: st
       zoom: 1,
       tall: innerHeight,
       pinched: false,
+      // (No zoom here: all of the page shows. The page takes no more than its own window.)
+      shows: { left: 0, right: innerWidth },
       notes: 0,
     });
   };

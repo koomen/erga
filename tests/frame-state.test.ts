@@ -13,6 +13,7 @@ const mode = (key = "k1"): Editing => ({
   zoom: 1,
   tall: 800,
   pinched: false,
+  shows: { left: 0, right: 1000 },
   notes: 0,
 });
 

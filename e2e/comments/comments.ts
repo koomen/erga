@@ -68,3 +68,44 @@ export async function selectText(ed: Editor, selector: string, from: number, to:
   await mouse.move(f.x + at.x2, f.y + at.y, { steps: 4 });
   await mouse.up();
 }
+
+export interface Box {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Where things are on the screen (px in the tab, after the zoom): a thread's card (null when it shows no card), its
+ * highlighted text, the page's text column (the page's <body>), and the part of the page's frame that shows (its place).
+ */
+export async function onScreen(ed: Editor, thread: string) {
+  const inFrame = await ed.frame<{ z: number; card: Box | null; text: Box; column: Box }>(`(() => {
+    const box = (r) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+    const C = document.querySelector("erga-comments").shadowRoot;
+    const card = C.querySelector('.card.th[data-thread="${thread}"]');
+    const ranges = [...(CSS.highlights.get("erga-comment-on") ?? []), ...(CSS.highlights.get("erga-comment") ?? [])];
+    const rects = ranges.flatMap((r) => [...r.getClientRects()]);
+    const text = { left: Math.min(...rects.map((r) => r.left)), right: Math.max(...rects.map((r) => r.right)),
+      top: Math.min(...rects.map((r) => r.top)), bottom: Math.max(...rects.map((r) => r.bottom)) };
+    return { z: window.ergaFrame.zoom, card: card ? box(card.getBoundingClientRect()) : null, text, column: box(document.body.getBoundingClientRect()) };
+  })()`);
+  const shell = await ed.eval<{ x: number; y: number; left: number; right: number }>(`(() => {
+    const f = document.getElementById("frame"), r = f.getBoundingClientRect();
+    return { x: r.left, y: r.top, left: f.offsetLeft, right: f.offsetLeft + f.offsetWidth };
+  })()`);
+  const z = inFrame.z;
+  const screen = (b: Omit<Box, "width" | "height">): Box => {
+    const s = { left: shell.x + b.left * z, right: shell.x + b.right * z, top: shell.y + b.top * z, bottom: shell.y + b.bottom * z };
+    return { ...s, width: Math.round(s.right - s.left), height: Math.round(s.bottom - s.top) };
+  };
+  return {
+    card: inFrame.card && screen(inFrame.card),
+    text: screen(inFrame.text),
+    column: screen(inFrame.column),
+    place: { left: shell.left, right: shell.right },
+  };
+}
