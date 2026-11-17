@@ -62,7 +62,6 @@ import {
   fromRow,
   ID,
   idShaped,
-  NO_PUBLIC,
   NO_WRITE,
   type NewDoc,
   type News,
@@ -685,7 +684,8 @@ export class Directory {
   }
 
   /**
-   * Gives someone ("*": anyone signed in who has the link) a role on a
+   * Gives someone ("*": anyone who signs in here and has the link; while the server lets users share content
+   * publicly, people who aren't signed in too, as viewers) a role on a
    * document, or takes theirs away (null), as `who`, whom `may` must allow
    * to share it. The owner's own permission can't be changed. Returns
    * everyone's permissions now.
@@ -699,9 +699,6 @@ export class Directory {
       throw new NotAllowed({ message: `"${login}" isn't a login (or "*" for anyone with the link).` });
     if (login == doc.owner) throw new NotAllowed({ message: "The owner's own permission can't be changed." });
     if (role != null && !GRANTS.includes(role)) throw new NotAllowed({ message: `"${role}" isn't a role: editor, commenter or viewer.` });
-    // Anyone with the link: only while the server lets users share content publicly (the Access page). Stopping one
-    // made before is always allowed.
-    if (login == ANYONE && role != null && !(await this.config.get("public_sharing"))) throw new NotAllowed({ message: NO_PUBLIC });
     // A person: only one who may sign in (the access rules). A share made before stays: sign-in checks them anyway.
     if (login != ANYONE && role != null) {
       const why = await this.whyNoShare(login);

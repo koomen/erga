@@ -5,7 +5,7 @@
 // open editor; Ada asks for access; the owner shares from the documents list and its Share dialog. A reader has
 // their agent in the viewer. The rules of access are checked with requests (`?user=`), the dialogs on the page.
 // The second journey is the admin's switch "Users can share content publicly", on a server of this file's own: it
-// changes the whole server.
+// changes the whole server. With it off, anyone with the link is everyone who can sign in.
 import { framed, pagesFetch } from "../helpers/pages-fetch";
 import { agentClosed, expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
 import { joinRoom } from "../helpers/room";
@@ -335,24 +335,24 @@ journey("the admin's switch: users can share content publicly", () => {
     r = await stranger(open.address);
     expect(r.status).toBe(302);
     expect(r.headers.get("location")?.startsWith("/auth/sign-in")).toBe(true);
-    // A new share with anyone with the link: refused, saying why.
-    const refused = await share(root, closed.id, "*", "viewer");
-    expect(refused.status).toBe(403);
-    expect(refused.error).toContain("doesn't let users share content publicly");
   });
 
-  test("off: the Share dialog does not offer anyone with the link, and shows a share made before, to stop it; on again: it opens", async () => {
+  test("off: the Share dialog offers anyone with the link, as everyone who can sign in; on again: it opens to people signed out", async () => {
+    const cy = unique("cy");
+    const signedIn = async () => (await fetch(`${root}${closed.address}?user=${cy}`, { redirect: "manual" })).status;
+    expect(await signedIn()).toBe(403);
     await page.goto(`${root}/documents`);
     await page.click(`button.share[data-id="${closed.id}"]`);
     await until(async () => (await page.textContent("#share-hint")) == "", 5000, "the share dialog loaded");
-    expect(await page.isVisible("#share .anyone")).toBe(false);
-    await page.keyboard.press("Escape");
-    await page.click(`button.share[data-id="${open.id}"]`);
-    await until(async () => (await page.inputValue("#share-anyone")) == "viewer", 5000, "the kept share shows");
-    expect(await page.textContent("#share-anyone-note")).toContain("Public sharing is off");
+    expect(await page.isVisible("#share .anyone")).toBe(true);
+    expect(await page.textContent("#share-anyone-note")).toBe("Everyone who can sign in here");
+    // A new share with anyone with the link: for people who sign in only.
+    await page.selectOption("#share-anyone", "viewer");
+    await soon(signedIn).toBe(200);
+    expect((await stranger(closed.address)).status).toBe(302);
     await page.keyboard.press("Escape");
     await setPublic(true);
-    expect((await stranger(open.address)).status).toBe(200);
+    expect((await stranger(closed.address)).status).toBe(200);
   });
 
   // (Cut list, brought back.) The homepage project has no owner: only an owner shares.

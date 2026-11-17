@@ -80,11 +80,10 @@ export default function docs(c: DocsConfig): void {
     status: document.getElementById("share-hint")!,
     shown: () => share.open,
     look: { row: "", role: "", remove: { className: "act", innerHTML: c.close } },
-    link(offered, publicSharing) {
-      anyone.closest<HTMLElement>(".anyone")!.hidden = !offered;
+    link(publicSharing) {
       document.getElementById("share-anyone-note")!.textContent = publicSharing
         ? "Signed in or not; people who aren't signed in view it"
-        : "Public sharing is off here: only people who sign in can open it";
+        : "Everyone who can sign in here";
     },
   });
   /** A row's Share: the dialog, with who it's shared with. */

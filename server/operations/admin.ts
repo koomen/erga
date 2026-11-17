@@ -393,7 +393,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
       on: Schema.optionalKey(
         Schema.Boolean.annotate({
           description:
-            "public: true lets owners share with anyone with the link, signed in or not; false stops it (old links then need a sign-in)",
+            "public: true opens documents shared with anyone with the link also to people who aren't signed in; false: those links need a sign-in",
         })
       ),
     }),

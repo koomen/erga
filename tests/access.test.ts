@@ -263,22 +263,21 @@ test("Add user: GitHub's rate limit is said as such; with the sign-in app, a pas
   }
 });
 
-test("public sharing: off by default; then anyone with the link is refused, saying why, kept shares open to no one signed out; on restores them", async () => {
+test("public sharing: off by default; then anyone with the link means anyone who signs in, and no one signed out; on opens it to them too", async () => {
   const dir = fresh();
   await dir.users.add(ADMIN, "ada");
   await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1, expires: null });
   expect(await dir.config.get("public_sharing")).toBe(false);
-  await expect(dir.share({ login: "ada" }, "aaaaaaaa", "*", "viewer")).rejects.toThrow("doesn't let users share content publicly");
-  // Sharing with people by name is unaffected (Bo may sign in).
-  await dir.users.add(ADMIN, "bo");
-  await dir.share({ login: "ada" }, "aaaaaaaa", "bo", "viewer");
-  await dir.config.set(ADMIN, "public_sharing", true);
+  // Off: anyone with the link is everyone who signs in here, and no one signed out.
   await dir.share({ login: "ada" }, "aaaaaaaa", "*", "viewer");
-  expect(await dir.isPublic("aaaaaaaa")).toBe(true);
-  // A signed-in person without a share of their own opens it through anyone with the link.
+  expect(await dir.isPublic("aaaaaaaa")).toBe(false);
   await dir.users.add(ADMIN, "cy");
   expect(await dir.access({ login: "cy" }, (await dir.get("aaaaaaaa"))!)).toBe("viewer");
-  // Off: kept, and still for people who sign in, but not public; stopping it is allowed.
+  expect(await dir.access(null, (await dir.get("aaaaaaaa"))!)).toBe(null);
+  // On: people not signed in open it too, as viewers.
+  await dir.config.set(ADMIN, "public_sharing", true);
+  expect(await dir.isPublic("aaaaaaaa")).toBe(true);
+  // Off again: kept, and still for people who sign in, but not public; stopping it is allowed.
   await dir.config.set(ADMIN, "public_sharing", false);
   expect((await dir.permissions("aaaaaaaa")).some((p) => p.login == "*")).toBe(true);
   expect(await dir.isPublic("aaaaaaaa")).toBe(false);
@@ -334,7 +333,7 @@ test("a share goes only to someone who may sign in, and the page says why not; o
   // Shares made before stay when the rules change (sign-in still checks them).
   await everybody(dir, "none");
   expect((await dir.permissions("cccccccc")).map((p) => p.login)).toContain("fox");
-  // Stopping a share is always allowed; so is an admin, and anyone with the link is the public switch's.
+  // Stopping a share is always allowed; so is an admin.
   await dir.share({ login: "ada" }, "cccccccc", "fox", null);
   await shareTo("koomen");
 });

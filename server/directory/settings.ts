@@ -114,8 +114,8 @@ export const SETTINGS = {
   }),
   public_sharing: setting<boolean>({
     label: "Public sharing",
-    description: "Owners can share a document with anyone who has the link, signed in or not.",
-    values: "false: those links open only after a sign-in. A published document is always public on its domain.",
+    description: "A document shared with anyone with the link opens also for people who aren't signed in, as viewers.",
+    values: "false: those links open only for people who sign in here. A published document is always public on its domain.",
     default: false,
     parse: boolean,
   }),

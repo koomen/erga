@@ -341,7 +341,11 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         : null,
     parameters: Schema.Struct({
       document: DOCUMENT,
-      login: Schema.optionalKey(str('A GitHub login, or "*" for anyone with the link.')),
+      login: Schema.optionalKey(
+        str(
+          'A login, or "*" for anyone with the link who signs in here (and, while public sharing is on, people not signed in, as viewers).'
+        )
+      ),
       role: Schema.optionalKey(Schema.Literals(["editor", "commenter", "viewer", "none"]).annotate({ description: "none stops sharing." })),
       page_llm: bool("Its script may call a model (window.ergaLLM)."),
       page_llm_model: Schema.optionalKey(

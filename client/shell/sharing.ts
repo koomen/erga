@@ -19,8 +19,7 @@ export function mountSharing(shell: Shell) {
   // as on My Documents' share dialog.
   const sharing = $("sharing");
   const sharingAnyone = $("sharing-anyone") as HTMLSelectElement,
-    linkHint = $("sharing-hint"),
-    anyoneLabel = document.querySelector<HTMLLabelElement>("label[for=sharing-anyone]")!;
+    linkHint = $("sharing-hint");
   const shareAt = !!document.querySelector<HTMLMetaElement>('meta[name="erga-share"]');
   if (!shareAt) {
     shareBtn.setAttribute("aria-disabled", "true");
@@ -36,11 +35,9 @@ export function mountSharing(shell: Shell) {
     status: $("sharing-status"),
     shown: () => !sharing.hidden,
     look: { row: "share-grid", role: "role", remove: { className: "remove", innerHTML: "×" }, color: colorFor },
-    link(offered, publicSharing) {
-      sharingAnyone.hidden = !offered;
-      // Who the link lets in, where its menu doesn't say: no menu, or a share made before public sharing went off.
-      linkHint.textContent = !offered ? "only people added" : !publicSharing ? "they sign in first" : "";
-      anyoneLabel.textContent = offered ? "Anyone with the link" : "Link";
+    link(publicSharing) {
+      // Whom the link lets in, where its menu doesn't say: with public sharing off, only people who sign in.
+      linkHint.textContent = publicSharing ? "" : "they sign in first";
     },
   });
   // Who it's shared with: read once the editor is idle, again behind as the pointer or focus comes to Share, and after

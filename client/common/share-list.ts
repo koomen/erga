@@ -28,8 +28,8 @@ export interface ShareList {
   shown(): boolean;
   /** The page's look: the classes of a row and of its role menu, its Remove button, and a face's colour (none: the style's). */
   look: { row: string; role: string; remove: { className: string; innerHTML: string }; color?(login: string): string };
-  /** After each draw, the page's words beside the link's menu. `offered`: the menu has a use; else public sharing is off, and the link is shared with nobody. */
-  link(offered: boolean, publicSharing: boolean): void;
+  /** After each draw, the page's words beside the link's menu: whom the link lets in. */
+  link(publicSharing: boolean): void;
 }
 
 const ROLES = [
@@ -97,9 +97,8 @@ export function shareList(o: ShareList) {
       o.people.append(li);
     }
     o.anyone.value = all;
-    // Anyone with the link, only while the server lets users share content publicly; a share made before stays, to stop.
-    for (const opt of o.anyone.options) opt.disabled = !publicSharing && opt.value != "none" && opt.value != all;
-    o.link(!!publicSharing || all != "none", !!publicSharing);
+    // Anyone with the link: whoever signs in here; while the server lets users share content publicly, people not signed in too.
+    o.link(!!publicSharing);
   }
   /** A change of the sharing: the list shows it at once; if the server refuses, the list is as before, and says why. */
   async function change(login: string, role: string): Promise<boolean> {
