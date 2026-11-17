@@ -541,11 +541,11 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
     },
     // A notice the agent can fix (a paragraph whose HTML is broken) is an alert, with the fix as its button: what is
     // wrong in a few words, then the rest. Any other says why, here.
-    onNotice: (message, fix, draft) => {
+    onNotice: (message, fix) => {
       if (m.comment) return;
       if (!fix) return controls?.explain(message);
       const [, title, detail] = /^(.*?)(?:: |\. )(.+)$/s.exec(message) ?? [null, message.replace(/\.$/, ""), undefined];
-      alerts.raise({ key: `notice:${message}`, kind: "error", source: "editor", title: title!, detail, fix, ...(draft ? { draft } : {}) });
+      alerts.raise({ key: `notice:${message}`, kind: "error", source: "editor", title: title!, detail, fix });
     },
     // In the page: its change shows at once (page-edits.ts).
     pageEdit(html, edit, input) {

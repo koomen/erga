@@ -142,7 +142,8 @@ export abstract class EditorRender extends EditorMarks {
 
   /**
    * Checks that the page shows its HTML (check.ts), and logs each difference as an error. At the start (`start`), a
-   * part that differs is the page's own (its script built it), and is not checked again.
+   * part that differs is the page's own (its script built it), and is not checked again. A part marked not editable by
+   * hand is the page's script's to change at any time.
    */
   protected checkView(start = false): void {
     const doc = this.doc,
@@ -150,7 +151,9 @@ export abstract class EditorRender extends EditorMarks {
     if (!doc?.body || !own || this.rendering || this.stopped) return;
     const want = new DOMParser().parseFromString(this.src, "text/html").body;
     const skip = (n: Node) =>
-      own.owned.has(n) || (n.nodeType == 1 && ((n as Element).classList.contains("erga-locked") || pageOwnBox(n as Element)));
+      own.owned.has(n) ||
+      (n.nodeType == 1 &&
+        ((n as Element).classList.contains("erga-locked") || (n as Element).hasAttribute(M.NO_EDIT_ATTR) || pageOwnBox(n as Element)));
     for (let i = 0; i < 100; i++) {
       const d = differ(doc.body, want, skip, own.foreign, own.theirs, (n) => !!this.mirror?.sourceOf(n));
       if (!d) return;

@@ -99,23 +99,22 @@ test("Close dismisses every error and tells its source; an upload that runs stay
   expect(view(over)).toBe("line");
 });
 
-test("a button acts on its own alert; Fix with agent takes only its alert off; Fix all takes those the agent can do as they are", () => {
+test("a button acts on its own alert; Fix with agent takes only its alert off; Fix all takes every alert the agent can fix", () => {
   const s = run(
     initial,
     error("a", { fix: "fix a", once: true }),
     error("b", { fix: "fix b" }),
-    error("c", { fix: "Change “42” to: ", draft: true }),
     error("d")
   ).state;
   expect(run(s, { t: "act", key: "d", action: "retry", row: "1" }).effects).toEqual([[{ t: "tell", key: "d", action: "retry", row: "1" }]]);
   const one = run(s, { t: "act", key: "a", action: FIX });
-  expect(keys(one.state)).toEqual(["d", "c", "b"]);
+  expect(keys(one.state)).toEqual(["d", "b"]);
   expect(one.effects[0][0]).toMatchObject({ t: "fix", alerts: [{ key: "a" }] });
   // (Asked to fix it: if it's still wrong, it says so again.)
   expect(one.state.seen).toEqual([]);
   expect(run(s, { t: "act", key: "d", action: FIX }).effects).toEqual([[]]);
   const all = run(s, { t: "fix-all" });
-  expect(keys(all.state)).toEqual(["d", "c"]);
+  expect(keys(all.state)).toEqual(["d"]);
   expect(all.effects[0][0]).toMatchObject({ t: "fix", alerts: [{ key: "b" }, { key: "a" }] });
 });
 

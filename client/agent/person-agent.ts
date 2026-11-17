@@ -608,8 +608,6 @@ declare global {
     /** The panel, for the editor's own "Fix with agent" buttons and its reload (client/shell/). */
     ergaAgentPanel?: {
       ask(text: string, context: string | null): void;
-      /** Opens the panel with `text` in its box, the caret after it, for the person to complete and send. */
-      draft(text: string): void;
       readonly off: string | null;
       readonly busy: boolean;
       files: typeof att;
@@ -622,13 +620,6 @@ window.ergaAgentPanel = {
     const why = gate("editor", text);
     if (why) showHint(why, why == off);
     else ask(text, ctx ?? context());
-  },
-  draft: (text) => {
-    window.ergaAgent?.show(true);
-    input.value = text;
-    input.dispatchEvent(new Event("input"));
-    input.focus();
-    input.setSelectionRange(text.length, text.length);
   },
   get off() {
     return off;

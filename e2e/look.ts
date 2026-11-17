@@ -347,7 +347,8 @@ try {
       );
     } else if (verb == "click") {
       await ed.clickEnd(rest);
-      await ed.idle();
+      // (A click where the caret can't go: a widget, a part not editable by hand.)
+      await ed.idle().catch(() => ed.settle());
     } else if (verb == "tap") {
       await page.click(rest);
       await ed.settle();

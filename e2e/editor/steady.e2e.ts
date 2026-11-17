@@ -13,6 +13,7 @@ import { dragAt, dragTo, folderOnDisk, onDisk, SIGN } from "../helpers/drops";
 import { clickOn, pointerOnPage, pressOn } from "../helpers/press";
 import { runTool } from "../helpers/tools";
 import { WAIT_MS } from "../../client/common/frame-swap";
+import { FIX_REPORTED } from "../../shared/page-report";
 import {
   agentBox,
   agentPlays,
@@ -137,100 +138,28 @@ journey("a page with parts of its own: keys go where the caret is", () => {
     await expect.poll(() => ed.source()).toContain("<h1>Page parts!</h1>");
   });
 
-  test("clicking a no-edit part says why, typing there changes nothing, and the paragraph beside it still edits", async () => {
+  // A demo's buttons are often a <div> with a click handler: each click on one said, in the problems, that the part was not
+  // editable by hand. A click there does what the page does, and the editor says nothing.
+  test("clicks on a demo's controls, a no-edit part and a locked paragraph raise nothing; typing there changes nothing, and the paragraph beside it still edits", async () => {
     const before = await ed.source();
-    const r = await ed.rectOf(".fixed p", 0.3);
-    await ed.click(r.x, r.y);
-    await expect
-      .poll(async () => (await ed.alerts()).alerts.map((a) => a.title))
-      .toEqual(["This part of the page is marked as not editable by hand"]);
-    await ed.type("xyz");
+    const press = await ed.rectOf(".press", 0.5);
+    for (let i = 0; i < 3; i++) await ed.click(press.x, press.y);
+    await expect.poll(() => ed.textOf("#presses")).toBe("3");
+    for (const sel of [".fixed p", ".typo p", "#now"]) {
+      const r = await ed.rectOf(sel, 0.3);
+      await ed.click(r.x, r.y);
+      await ed.type("xyz");
+    }
     await ed.settle();
     expect(await ed.source()).toBe(before);
     await ed.clickEnd(".free");
     await ed.type("!");
     await expect.poll(() => ed.source()).toContain("items.!</p>");
-  });
-
-  test("a paragraph with a stray end tag: a second problem in the same card, with the agent's help; a click there again counts, typing changes nothing; the card stays while the person types elsewhere", async () => {
-    const before = await ed.source();
-    const r = await ed.rectOf(".typo p", 0.3);
-    await ed.click(r.x, r.y);
-    // The card has both problems now, the newest first: never a second card, and none waits behind another.
-    await expect.poll(async () => (await ed.alerts()).head).toBe("2 problems");
-    const [stray, fixed] = (await ed.alerts()).alerts;
-    expect(stray).toEqual({
-      title: "This paragraph can't be edited",
-      count: "",
-      detail: "Editor · its HTML has a stray </h2> that the browser ignores, so the page's text no longer lines up with the file.",
-      rows: [],
-      buttons: ["Fix with agent"],
-    });
-    expect(stray.detail).not.toMatch(/HTML view|⌘⇧P/);
-    expect(fixed.title).toMatch(/not editable by hand/);
-    // Typing into it changes nothing. A click on it again says so in the same block, with a count.
-    await ed.type("xyz");
-    await ed.click(r.x, r.y);
-    await expect.poll(async () => (await ed.alerts()).alerts[0].count).toBe("×2");
-    expect((await ed.alerts()).alerts.length).toBe(2);
-    expect(await ed.source()).toBe(before);
-    // The card never takes the focus, and stays up while the person works: the paragraph below it still edits.
-    await ed.clickEnd("#last");
-    await ed.type("?");
-    await expect.poll(() => ed.source()).toContain("Last paragraph.123456!?</p>");
-    expect((await ed.alerts()).head).toBe("2 problems");
-  });
-
-  test("a no-edit part's Fix with agent opens the agent's panel with the request ready to complete, sends nothing, and takes only its own alert off", async () => {
-    // (A person has one conversation with their agent, in every document: a new one, so that this journey counts its own messages.)
-    await newConversation(s);
-    const r = await ed.rectOf(".count", 0.5);
-    await ed.click(r.x, r.y);
-    // The same problem as before (another no-edit part): its block counts.
-    await expect.poll(async () => (await ed.alerts()).alerts.find((a) => /not editable by hand/.test(a.title))?.count).toBe("×2");
-    // Was a bug: news drew the card again (a new alert, or the agent's state, which its panel reads as its socket
-    // opens), with new buttons. A click whose press was on the old button and whose release was on the new one did
-    // nothing. Here the agent's state comes during the press: the card waits for the release (client/common/pressed.ts).
-    await ed.eval(
-      `(document.addEventListener("mousedown", () => window.dispatchEvent(new Event("erga:agent-state")), { capture: true, once: true }), true)`
-    );
-    // (clickOn: the press is checked as it lands, and made again if it missed.)
-    await clickOn(ed.page, await fixButton(ed, /not editable by hand/));
-    // (The alerts with the box: a click that the agent could not take says so in an alert of its own.)
-    await expect
-      .poll(async () => ({ ...(await agentBox(ed)), alerts: (await ed.alerts()).alerts.map((a) => a.title) }))
-      .toEqual({ text: "Change the text “42” to: ", open: true, sent: 0, alerts: ["This paragraph can't be edited"] });
-    expect(await ed.eval<boolean>(`document.activeElement == document.getElementById("agent-input")`)).toBe(true);
-  });
-
-  test("text that the page's script changed: its Fix with agent asks the agent to make it editable by hand; Escape closes the card with what is left", async () => {
-    // (The panel opened in the step before, and the page slides over beside it: a click waits for the page to be still.)
-    await pageStill(ed);
-    const r = await ed.rectOf("#now", 0.3);
-    await ed.click(r.x, r.y);
-    const changed = {
-      title: "This paragraph can't be edited here",
-      detail: "Editor · the page's script changed its text after the page loaded.",
-    };
-    await expect.poll(async () => (await ed.alerts()).alerts[0]).toMatchObject(changed);
-    // Beside the agent's panel, not under it.
-    const clear = await ed.eval<boolean>(
-      `document.querySelector("#alerts .alerts-card").getBoundingClientRect().left >= document.getElementById("agent").getBoundingClientRect().right`
-    );
-    expect(clear).toBe(true);
-    await clickOn(ed.page, await fixButton(ed, /edited here/));
-    await expect.poll(async () => (await agentBox(ed)).sent).toBe(1);
-    expect(await ed.eval<string>(`document.querySelector(".msg-user").textContent`)).toContain(
-      "Fix the problem with this page that the editor reported"
-    );
-    // One problem is left, with its own button. Escape, in the text, dismisses it.
-    expect((await ed.alerts()).head).toBe("1 problem");
-    await ed.clickEnd("#last");
-    await ed.press("Escape");
-    await expect.poll(async () => (await ed.alerts()).view).toBe("none");
+    expect((await ed.alerts()).view).toBe("none");
   });
 
   test("the agent stops on an error while its panel is closed: an alert says so, and its Show opens the panel", async () => {
+    await ed.openAgent();
     await agentPlays(ed, [{ error: "overloaded", delay: 1000 }]);
     // (pressOn, not Playwright's click, which waits first until the button has stopped: the panel closes before the
     // agent's error comes, 1 s after the message. With 300 ms, a busy machine closed it too late, and no alert came.)
@@ -856,17 +785,48 @@ journey("a broken page says what is wrong, all of it in one card", () => {
     expect((await ed.alerts()).head).toBe("2 problems");
   });
 
-  test("one click on × closes both problems; neither comes back when the page loads again", async () => {
+  test("a problem's Fix with agent asks the agent, takes only its own alert off, and the card shows beside the agent's panel", async () => {
+    // (A person has one conversation with their agent, in every document: a new one, so that this journey counts its own messages.)
+    await newConversation(s);
+    // Was a bug: news drew the card again (a new alert, or the agent's state, which its panel reads as its socket
+    // opens), with new buttons. A click whose press was on the old button and whose release was on the new one did
+    // nothing. Here the agent's state comes during the press: the card waits for the release (client/common/pressed.ts).
+    await ed.eval(
+      `(document.addEventListener("mousedown", () => window.dispatchEvent(new Event("erga:agent-state")), { capture: true, once: true }), true)`
+    );
+    // (clickOn: the press is checked as it lands, and made again if it missed.)
+    const sent = ed.page.waitForRequest((r) => r.method() == "POST" && new URL(r.url()).pathname.endsWith("/api/agent"));
+    await clickOn(ed.page, await fixButton(ed, /stylesheet/));
+    await expect.poll(async () => (await agentBox(ed)).sent).toBe(1);
+    expect(await ed.eval<string>(`document.querySelector(".msg-user").textContent`)).toBe(FIX_REPORTED);
+    // The prompt is the shell's own words; the problem goes with it as a report, which the agent reads as data.
+    const body = JSON.parse((await sent).postData() ?? "{}") as { text: string; context: string };
+    expect(body.text).toBe(FIX_REPORTED);
+    expect(/<page-report>\n([\s\S]*)\n<\/page-report>/.exec(body.context)?.[1]).toMatch(/missing\.css/);
+    expect(await titles()).toEqual(["The page's script hit an error"]);
+    // Beside the agent's panel, not under it (the panel slides in).
+    await expect
+      .poll(() =>
+        ed.eval<boolean>(
+          `document.querySelector("#alerts .alerts-card").getBoundingClientRect().left >= document.getElementById("agent").getBoundingClientRect().right`
+        )
+      )
+      .toBe(true);
+    await pageStill(ed);
+  });
+
+  test("one click on × closes the problem that is left; when the page loads again, it does not come back, and the one the agent was asked to fix, still there, does", async () => {
     await ed.page.click("#alerts .alerts-close");
     expect((await ed.alerts()).view).toBe("none");
-    // The click left the caret in the text.
+    // (The agent's panel had the focus: the text takes it back.)
+    await ed.clickEnd("h1");
     await ed.type("?");
     await expect.poll(() => ed.source()).toContain("<h1>Something is off here!?</h1>");
-    // The page made afresh: its script throws again, and its stylesheet fails again. Neither shows again.
+    // The page made afresh: its script throws again, and its stylesheet fails again.
     await ed.frame(`ergaFrame.page.render()`);
     await ed.loaded();
     await until(() => ed.frame<boolean>(`document.readyState == "complete"`), 5000, "the page has loaded, with its problems");
     await ed.settle();
-    expect((await ed.alerts()).view).toBe("none");
+    await expect.poll(titles).toEqual(["The stylesheet “missing.css” didn't load"]);
   });
 });

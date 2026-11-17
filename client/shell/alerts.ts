@@ -63,12 +63,10 @@ export function mountAlerts(shell: Shell) {
   // The page editor's report goes to your agent as data, in the page note (shared/page-report.ts).
   function askAgent(alerts: A.Alert[]) {
     const agent = window.ergaAgentPanel!;
-    if (alerts.length == 1 && alerts[0].draft) agent.draft(alerts[0].fix!.replace(/\s+/g, " ").slice(0, 200));
-    else
-      agent.ask(
-        alerts.length == 1 ? FIX_REPORTED : FIX_ALL_REPORTED,
-        `${editorContext(shell)}\n${alerts.map((a) => pageReport(a.fix!)).join("\n")}`
-      );
+    agent.ask(
+      alerts.length == 1 ? FIX_REPORTED : FIX_ALL_REPORTED,
+      `${editorContext(shell)}\n${alerts.map((a) => pageReport(a.fix!)).join("\n")}`
+    );
   }
   /** A fix button: the agent is asked, or an alert says why it can't be. */
   function fix(event: A.Event) {

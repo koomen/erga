@@ -1,3 +1,5 @@
-/* A page with parts of its own (e2e/editor/steady.e2e.ts): a box the page edits itself, parts marked data-erga-noedit,
-   text that its script changes, a paragraph with a stray end tag, a block with an id. */
+/* A page with parts of its own (e2e/editor/steady.e2e.ts): a box the page edits itself, parts marked data-erga-noedit
+   (one a demo, with a <div> its script makes a button), text that its script changes, a paragraph with a stray end
+   tag, a block with an id. */
 body { font: 17px/1.6 sans-serif; margin: 40px; }
+.press { display: inline-block; padding: 4px 12px; border: 1px solid #888; border-radius: 6px; cursor: pointer; user-select: none; }

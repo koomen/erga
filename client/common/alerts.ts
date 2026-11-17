@@ -55,11 +55,10 @@ export interface Raise {
   p?: number;
   /**
    * A request the agent can do for it ("Fix with agent", or `fixLabel`: "Ask the agent again"; the viewer's own alerts
-   * only: a page can't name the agent's button). `draft`: the start of one, for the person to complete.
+   * only: a page can't name the agent's button).
    */
   fix?: string;
   fixLabel?: string;
-  draft?: boolean;
   /** Shown one time in a view of the page (a page's problem), until the agent is asked to fix it. */
   once?: boolean;
   /**
@@ -132,8 +131,8 @@ const failed = (a: Alert) => a.rows.filter((r) => r.state == "error").length;
 export const shows = (a: Alert) => a.kind == "error" || !a.quiet || a.done || failed(a) > 0;
 /** How many problems show: the errors, and the rows that failed. */
 export const problems = (s: State) => s.alerts.reduce((n, a) => n + (a.kind == "error" ? Math.max(1, failed(a)) : failed(a)), 0);
-/** The alerts with a request the agent can do as it is. */
-export const fixable = (s: State) => s.alerts.filter((a) => a.fix && !a.draft);
+/** The alerts with a request the agent can do. */
+export const fixable = (s: State) => s.alerts.filter((a) => a.fix);
 /** What shows: nothing, the one line (progress alone), or the card. */
 export function view(s: State): "none" | "line" | "card" {
   if (!s.alerts.some(shows)) return "none";
@@ -330,7 +329,7 @@ export function readMessage(m: unknown, prefix: string): Extract<Event, { t: "ra
       actions: actions(a.actions),
       rows: (Array.isArray(a.rows) ? a.rows : []).slice(0, 50).flatMap((r) => row(r) ?? []),
       p: p(a.p),
-      ...(fix ? { fix, ...(a.draft === true ? { draft: true } : {}) } : {}),
+      ...(fix ? { fix } : {}),
       life: "load",
     },
   };

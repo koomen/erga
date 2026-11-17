@@ -50,10 +50,9 @@ export interface PageEditorConfig {
   /** Unhandled keydowns inside the page (for app-level shortcuts). */
   onKey?: (e: KeyboardEvent) => boolean;
   /**
-   * Why something can't be done. `fix`: a request the agent can do for it (the viewer offers "Fix with agent"); with
-   * `draft`, the start of a request that the person completes ("Change the text “42” to: ").
+   * Why something can't be done. `fix`: a request the agent can do for it (the viewer offers "Fix with agent").
    */
-  onNotice?: (message: string, fix?: string, draft?: boolean) => void;
+  onNotice?: (message: string, fix?: string) => void;
   /**
    * Files dropped or pasted on the page: for source position `at` of its text, or dropped at a `point` of its window
    * that isn't the text's (the page may place them there itself: placeAt; else they have no place on it). The caller

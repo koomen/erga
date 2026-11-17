@@ -260,7 +260,7 @@ export abstract class EditorCore {
     return ok;
   }
 
-  /** Locks a unit: its text can't be edited on the page, and a click on it says why. */
+  /** Locks a unit: its text can't be edited on the page. */
   protected lock(unit: M.Unit, el: Element): void {
     el.classList.add("erga-locked");
     this.keepOwn(el);

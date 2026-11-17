@@ -328,31 +328,6 @@ export abstract class EditorInput extends EditorClipboard {
       this.leftText = false;
       this.editable(true);
     }
-    // A locked unit takes no caret; say why instead of doing nothing.
-    // (A page's own editable box is its own; the editing host is the editor's.)
-    const ownBox = (e.target as Element).closest?.('[contenteditable]:not([contenteditable="false"])');
-    const pageOwn = !!ownBox && ownBox != this.host;
-    const locked = (e.target as Element).closest?.(".erga-locked");
-    if (locked && !pageOwn && !(e.target as Element).closest("button, a[href], input, textarea, select")) {
-      const why = this.lockReasons.get(locked);
-      if (why) this.config.onNotice?.(why.message, why.fix);
-    }
-    // So does text the document marked as not editable by hand (on a widget, the click is the widget's).
-    const fixed = (e.target as Element).closest?.(`[${M.NO_EDIT_ATTR}]`);
-    if (
-      fixed &&
-      !pageOwn &&
-      !(e.target as Element).closest("button, a[href], input, textarea, select, label, canvas, svg, video, audio, iframe")
-    ) {
-      // (The agent changes it: the note's button starts the request, with the text, for the person to complete.)
-      const text = (fixed.textContent ?? "").replace(/\s+/g, " ").trim();
-      const quote = text.length > 60 ? text.slice(0, 57).trimEnd() + "…" : text;
-      this.config.onNotice?.(
-        "This part of the page is marked as not editable by hand. Ask the agent to change it.",
-        `Change the text “${quote}” to: `,
-        true
-      );
-    }
     if (e.button == 0) {
       // A press in the selection would drag its text, which the editor doesn't do (dragstart): it starts a new one.
       const sel = this.doc!.getSelection();
