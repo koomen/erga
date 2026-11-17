@@ -25,7 +25,6 @@ import { backoff, live, transient } from "../live/client";
 import { liveSocket } from "../live/socket";
 import { restoredFor } from "../live/restore";
 import { sleep } from "../../shared/time";
-import { ms } from "../../libs/text/ui/timescale";
 import { agentPrompt } from "../common/agent-prompt";
 import { showCopied } from "../common/copied";
 import { asUser } from "../common/tools";
@@ -102,20 +101,6 @@ const talk = chat({
 });
 const log = talk.log;
 let off: string | null = "Connecting to the agent…";
-/**
- * The live voice session (voice mode, below), or null when it's off. `sent` counts the session's results already sent, of
- * `results` heard so far; `due`: a pause came while the message couldn't go (a file still read), so it goes once it can.
- */
-let voice: {
-  rec: Recognition;
-  before: string;
-  sent: number;
-  results: number;
-  heard: string;
-  partial: boolean;
-  timer: number;
-  due: boolean;
-} | null = null;
 let hintTimer = 0;
 /** The alert for a turn that failed while the panel was closed: it goes when the panel opens. */
 const TURN_FAILED = "agent:turn";
@@ -156,10 +141,7 @@ const att = attachments({
     );
     return true;
   },
-  changed: () => {
-    renderBusy();
-    if (voice?.due) voiceSend();
-  },
+  changed: () => renderBusy(),
 });
 
 // The end of a turn: what it changed here, with "See changes" and "Undo the turn" (turn-summary.ts).
@@ -227,15 +209,14 @@ $("agent-ask-run").addEventListener("click", async () => {
   showHint(`Your agent wasn't asked: ${a?.reason ?? a?.error?.replace(/\.$/, "") ?? "the server didn't answer"}.`, true);
 });
 /** Why a message can't go by this path now (send-gate.ts), or null if it can. */
-const gate = (path: SendPath, text: string) => canSend(path, { off, voice: !!voice, reading: att.reading, text, files: att.files.length });
+const gate = (path: SendPath, text: string) => canSend(path, { off, reading: att.reading, text, files: att.files.length });
 /** Why Send can't send right now, or null if it can. */
 const blocker = () => gate("box", input.value);
 function renderBusy() {
   busyChanged();
   // At work: as the server says, or a message of this tab's on its way to it.
   const busy = log.busy || talk.sending();
-  // In voice mode the button can't send, so while the agent works it's Stop.
-  const stop = busy && (!!voice || (!input.value.trim() && !att.files.length && !att.reading));
+  const stop = busy && !input.value.trim() && !att.files.length && !att.reading;
   const why = off ?? (stop ? null : blocker());
   send.textContent = stop ? "Stop" : "Send";
   send.classList.toggle("stop", stop);
@@ -244,11 +225,9 @@ function renderBusy() {
   $("agent-fab").classList.toggle("busy", busy);
   input.placeholder = off
     ? "The agent is off"
-    : voice
-      ? "Listening… pause to send"
-      : busy
-        ? "Add to what the agent is doing…"
-        : "Ask the agent…";
+    : busy
+      ? "Add to what the agent is doing…"
+      : "Ask the agent…";
   // (Drawn again only when it changed: the key field below it keeps what's typed.)
   if (off) {
     if (hint.dataset.off != off || hint.hidden) {
@@ -620,110 +599,6 @@ if (BASE) {
   void readUndo();
 }
 
-// ---------------------------------------------------------------- voice mode
-
-// What you say is dictated into the box and sent when you pause, through the browser's speech recognition (Chrome
-// sends the audio to Google; Safari to Apple). While the agent works, each send steers it, as typing does. The
-// browser's own final results come at every breath, so a pause is our own: no new words for PAUSE_MS. Then everything
-// heard is sent, words not yet final included, and if there were any the session is restarted so they can't arrive
-// again later.
-type Recognition = EventTarget & {
-  continuous: boolean; interimResults: boolean; lang: string;
-  start(): void; stop(): void; abort(): void;
-  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null;
-  onerror: ((e: { error: string }) => void) | null;
-  onend: (() => void) | null;
-};
-const Speech = ((window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).SpeechRecognition ??
-  (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition) as (new () => Recognition) | undefined;
-const PAUSE_MS = 1000;
-const voiceBtn = $("agent-voice") as HTMLButtonElement;
-voiceBtn.hidden = !Speech;
-function listenVoice(before: string) {
-  const rec = new Speech!();
-  rec.continuous = true;
-  rec.interimResults = true;
-  rec.lang = navigator.language;
-  const v = (voice = { rec, before, sent: 0, results: 0, heard: "", partial: false, timer: 0, due: false });
-  rec.onresult = (e) => {
-    if (voice != v) return;
-    let heard = "", partial = false;
-    for (let i = v.sent; i < e.results.length; i++) {
-      heard += e.results[i][0].transcript;
-      if (!e.results[i].isFinal) partial = true;
-    }
-    Object.assign(v, { heard, partial, results: e.results.length });
-    input.value = (v.before + " " + heard).trim();
-    sizeInput();
-    clearTimeout(v.timer);
-    v.due = false;
-    v.timer = window.setTimeout(voiceSend, ms(PAUSE_MS));
-  };
-  rec.onerror = (e) => {
-    if (voice != v) return;
-    if (e.error == "not-allowed" || e.error == "service-not-allowed") { stopVoice(); showHint("Voice mode needs the microphone: allow it for this site, then try again.", true); }
-    else if (e.error == "network") { stopVoice(); showHint("Voice mode couldn't reach the browser's speech service."); }
-    else if (e.error == "audio-capture") { stopVoice(); showHint("Voice mode couldn't find a microphone."); }
-    // "no-speech" and "aborted": the session ends and onend starts another.
-  };
-  // Recognition ends on its own (silence, a time limit); keep listening.
-  rec.onend = () => {
-    if (voice != v) return;
-    listenVoice((v.before + " " + v.heard).trim());
-    if (voice) voice.due = v.due;
-  };
-  try { rec.start(); } catch { stopVoice(); }
-}
-function voiceSend() {
-  const v = voice;
-  if (!v) return;
-  const text = (v.before + " " + v.heard).trim();
-  if (!text) return;
-  // Kept in the box until it can go: the agent back on, the files read (then it goes by itself).
-  const why = gate("voice", text);
-  v.due = !!why;
-  if (why) {
-    showHint(why, why == off);
-    return;
-  }
-  v.before = "";
-  v.heard = "";
-  input.value = "";
-  store.set(DRAFT, null);
-  const files = att.files;
-  att.clear();
-  sizeInput();
-  ask(text, context(), files);
-  // Words sent before they were final would come back final: start afresh.
-  if (v.partial) { v.partial = false; v.rec.abort(); }
-  else v.sent = v.results;
-}
-function startVoice() {
-  if (!Speech || voice) return;
-  voiceBtn.setAttribute("aria-pressed", "true");
-  input.readOnly = true;
-  listenVoice(input.value.trim());
-  renderBusy();
-}
-/** Leaves voice mode; anything heard since the last send stays in the box, to edit or send. */
-function stopVoice() {
-  const v = voice;
-  if (!v) return;
-  voice = null;
-  clearTimeout(v.timer);
-  v.rec.abort();
-  voiceBtn.setAttribute("aria-pressed", "false");
-  input.readOnly = false;
-  store.set(DRAFT, input.value || null);
-  renderBusy();
-  if (document.body.classList.contains("agent-open")) input.focus();
-}
-voiceBtn.addEventListener("click", () => (voice ? stopVoice() : startVoice()));
-// The mic never listens behind a closed panel.
-new MutationObserver(() => {
-  if (!document.body.classList.contains("agent-open")) stopVoice();
-}).observe(document.body, { attributes: true, attributeFilter: ["class"] });
-
 // ---------------------------------------------------------------- for the editor
 
 declare global {
@@ -735,8 +610,6 @@ declare global {
       draft(text: string): void;
       readonly off: string | null;
       readonly busy: boolean;
-      readonly voice: boolean;
-      stopVoice(): void;
       files: typeof att;
     };
   }
@@ -761,10 +634,6 @@ window.ergaAgentPanel = {
   get busy() {
     return log.busy;
   },
-  get voice() {
-    return !!voice;
-  },
-  stopVoice,
   files: att,
 };
 

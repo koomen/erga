@@ -37,7 +37,6 @@ const PANEL = `<div class="agent-glass">
 </div>
 <form class="agent-compose" id="agent-form">
 <div class="agent-field" id="agent-field"><textarea id="agent-input" rows="1" placeholder="Ask the agent…" aria-label="Message the agent"></textarea></div>
-<button type="button" class="icon-btn agent-voice" id="agent-voice" aria-label="Voice mode" title="Voice mode: talk, and what you say is sent when you pause" aria-pressed="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 9.5v5"/><path d="M8.25 6.5v11"/><path d="M12 4v16"/><path d="M15.75 6.5v11"/><path d="M19.5 9.5v5"/></svg></button>
 <button type="submit" class="agent-send" id="agent-send">Send</button>
 </form>
 </div></div></aside>`;

@@ -494,18 +494,6 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 .agent-send { flex: none; height: 38px; padding: 0 12px; border: 0; border-radius: 12px; background: var(--fg-strong); color: var(--bg); font: 600 13px var(--font-text); cursor: pointer; }
 .agent-send.stop { background: var(--code-bg); color: var(--fg); }
 .agent-send[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
-/* Voice mode: a round button with a waveform, which moves while it listens. */
-.agent-voice { flex: none; height: 38px; width: 38px; border-radius: 50%; color: var(--fg); background: var(--code-bg); }
-.agent-voice svg { width: 20px; height: 20px; stroke-width: 2.4; overflow: visible; }
-.agent-voice[hidden] { display: none; }
-.agent-voice[aria-pressed="true"], .agent-voice[aria-pressed="true"]:hover { color: var(--bg); background: var(--fg-strong); }
-.agent-voice[aria-pressed="true"] path { transform-box: fill-box; transform-origin: center; animation: agent-wave 900ms ease-in-out infinite alternate; }
-.agent-voice path:nth-child(2) { animation-delay: -300ms; }
-.agent-voice path:nth-child(3) { animation-delay: -600ms; }
-.agent-voice path:nth-child(4) { animation-delay: -150ms; }
-.agent-voice path:nth-child(5) { animation-delay: -450ms; }
-@keyframes agent-wave { from { transform: scaleY(0.45); } to { transform: scaleY(1); } }
-@media (prefers-reduced-motion: reduce) { .agent-voice path { animation: none !important; } }
 /* Attachments: the paperclip, the chips above the box, the panel lit up while files are dragged over it, and the chips in a sent message. */
 .agent-attach { flex: none; height: 38px; width: 34px; color: var(--soft); }
 .agent-attach svg { width: 19px; height: 19px; }
@@ -643,7 +631,7 @@ body.agent-open .agent-fab { opacity: 0; pointer-events: none; transition: opaci
 /* Its insides on the glass: the box and your messages as faint fills of it, not white cards. */
 .agent .agent-compose { border-top: 0; }
 .agent .agent-compose textarea { background: rgba(255, 255, 255, 0.6); border-color: rgba(0, 0, 0, 0.08); }
-.agent :is(.msg-user, .agent-voice:not([aria-pressed="true"])) { background: rgba(0, 0, 0, 0.045); }
+.agent .msg-user { background: rgba(0, 0, 0, 0.045); }
 html.page-dark body:not(.source) .agent .agent-compose textarea { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.12); }
-html.page-dark body:not(.source) .agent :is(.msg-user, .agent-voice:not([aria-pressed="true"])) { background: rgba(255, 255, 255, 0.08); }
+html.page-dark body:not(.source) .agent .msg-user { background: rgba(255, 255, 255, 0.08); }
 body.no-motion, body.no-motion * { transition: none !important; }

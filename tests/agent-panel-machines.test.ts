@@ -34,19 +34,16 @@ test("a new conversation drops a failed message; one on its way stays", () => {
   expect(run([{ t: "echo" }, { t: "echo" }, { t: "fail", reason: "x" }])).toEqual({ state: "echoed", effects: ["remove"] });
 });
 
-const facts = (f: Partial<SendFacts>): SendFacts => ({ off: null, voice: false, reading: 0, text: "hi", files: 0, ...f });
+const facts = (f: Partial<SendFacts>): SendFacts => ({ off: null, reading: 0, text: "hi", files: 0, ...f });
 
-test("no message goes while a file is still being read, by Send or by voice; the editor's own buttons send no files", () => {
+test("no message goes while a file is still being read; the editor's own buttons send no files", () => {
   expect(canSend("box", facts({ reading: 1 }))).toBe("Reading the attached files…");
-  expect(canSend("voice", facts({ voice: true, reading: 1 }))).toBe("Reading the attached files…");
   expect(canSend("editor", facts({ reading: 1 }))).toBeNull();
-  expect(canSend("voice", facts({ voice: true }))).toBeNull();
 });
 
-test("the gate says why: the agent off first; Send in voice mode; nothing to send", () => {
+test("the gate says why: the agent off first; nothing to send", () => {
   expect(canSend("editor", facts({ off: "The agent is off: no key." }))).toBe("The agent is off: no key.");
-  expect(canSend("voice", facts({ off: "The agent is off: no key.", reading: 1 }))).toBe("The agent is off: no key.");
-  expect(canSend("box", facts({ voice: true }))).toMatch(/^Voice mode is on/);
+  expect(canSend("box", facts({ off: "The agent is off: no key.", reading: 1 }))).toBe("The agent is off: no key.");
   expect(canSend("box", facts({ text: "  " }))).toBe("Type a message to send it.");
   expect(canSend("box", facts({ text: "", files: 1 }))).toBeNull();
 });

@@ -606,14 +606,14 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
   // ---------------------------------------------------------------- a new release
 
   // The page reloads by itself for a new release of the editor, once the room has this tab's edits,
-  // never while you drag or compose or speak, and comes back as it was: the page and its caret, where it was
+  // never while you drag or compose, and comes back as it was: the page and its caret, where it was
   // scrolled to, the view (page or source), the cards that were open, the files attached to the next message.
   // (The agent's draft, the pane and its layout are kept in this browser anyway.) A reload by hand comes back
   // the same way, and so does the editor's look: the document's page opens with it from its first frame,
   // before this script has loaded.
   live((l) => {
     l.flush(() => collab.flushed());
-    l.hold(() => (agentPanel()?.voice ? "voice mode is on" : agentPanel()?.files.reading ? "files are being read" : null));
+    l.hold(() => (agentPanel()?.files.reading ? "files are being read" : null));
     l.keep(
       "editor",
       (): EditorKept => ({

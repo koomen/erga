@@ -231,9 +231,9 @@ journey("a page with parts of its own: keys go where the caret is", () => {
   });
 
   test("the agent stops on an error while its panel is closed: an alert says so, and its Show opens the panel", async () => {
-    await agentPlays(ed, [{ error: "overloaded", delay: 300 }]);
+    await agentPlays(ed, [{ error: "overloaded", delay: 1000 }]);
     // (pressOn, not Playwright's click, which waits first until the button has stopped: the panel closes before the
-    // agent's error comes, 300 ms after the message.)
+    // agent's error comes, 1 s after the message. With 300 ms, a busy machine closed it too late, and no alert came.)
     await pressOn(ed.page, "#agent-close");
     const stopped = {
       title: "Your agent stopped",

@@ -1,5 +1,5 @@
 // The person's agent in its panel. In the editor: a turn's edits show, to the other people too; the turn's line, See
-// changes, Undo and Redo; files attached; a message that fails or waits; voice; the pane across a reload. On the
+// changes, Undo and Redo; files attached; a message that fails or waits; the pane across a reload. On the
 // documents' list: the agent's delete waits for Approve; the day's token limit; the panel from page to page.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -28,40 +28,6 @@ journey("a turn of the agent in the editor", () => {
 
   test("coming into the editor for the first time, the pane opens by itself", async ({ tab }) => {
     page = tab.page;
-    // A stand-in for the browser's speech recognition (the voice button shows only where there is one): each session in __recs.
-    await page.addInitScript(() => {
-      const w = window as any;
-      if (w.top != w) return;
-      w.__recs = [];
-      w.SpeechRecognition = class extends EventTarget {
-        running = false;
-        onend?: () => void;
-        start() {
-          this.running = true;
-          w.__recs.push(this);
-        }
-        stop() {
-          this.abort();
-        }
-        abort() {
-          if (!this.running) return;
-          this.running = false;
-          setTimeout(() => this.onend?.());
-        }
-      };
-      w.__hear = (...rs: [string, boolean][]) =>
-        w.__recs.at(-1).onresult({ results: rs.map(([t, f]) => Object.assign([{ transcript: t }], { isFinal: f })) });
-      // While __holdFiles is set, a text file is read only when the step says so (__read()): until then its chip says "Reading…".
-      const text = File.prototype.text;
-      let held: (() => void)[] = [];
-      File.prototype.text = function () {
-        return w.__holdFiles ? new Promise<void>((r) => held.push(r)).then(() => text.call(this)) : text.call(this);
-      };
-      w.__read = () => {
-        for (const r of held) r();
-        held = [];
-      };
-    });
     ada = await openEditor(tab, s, "page", { agent: true, query: `?user=${ADA}` });
     await expect.poll(() => paneOpen(page)).toBe(true);
     await agentOn(page);
@@ -373,67 +339,6 @@ journey("a turn of the agent in the editor", () => {
     expect(await ada.eval<string>(`document.activeElement.id`)).toBe("agent-input");
   });
 
-  test("voice mode: words show as heard and each pause sends them; they wait for a file that is still read; leaving keeps the unsent words; collapsing stops listening", async () => {
-    // Messages to the agent are caught here (__sent, with their files in __sentFiles), not sent.
-    await ada.eval(
-      `window.__sent = []; window.__sentFiles = []; window.__realFetch = window.fetch; window.fetch = (u, o) => { if (!(String(u).split("?")[0].endsWith("/api/agent") && o?.method == "POST")) return window.__realFetch(u, o); const m = JSON.parse(String(o.body)); __sent.push(m.text); __sentFiles.push(m.files.map((f) => f.name)); return Promise.resolve(new Response("{}")); }`
-    );
-    type Voice = { on: string | null; input: string; readOnly: boolean; send: string | null; title: string; sent: string[]; recs: number };
-    // `before` runs in the same evaluation as the read: the pause timer is a tenth of real time here, shorter than a round trip on a busy machine.
-    const st = (before = "") =>
-      ada.eval<Voice>(
-        `(() => { ${before}; const v = document.getElementById("agent-voice"), i = document.getElementById("agent-input"), b = document.getElementById("agent-send"); return { on: v.getAttribute("aria-pressed"), input: i.value, readOnly: i.readOnly, send: b.getAttribute("aria-disabled"), title: b.title, sent: [...__sent], recs: __recs.length }; })()`
-      );
-    const BLUE = `["make the title blue", true]`;
-    expect(await ada.eval<boolean>(`!document.getElementById("agent-voice").hidden`)).toBe(true);
-    await page.click("#agent-voice");
-    let v = await st();
-    expect(v).toMatchObject({ on: "true", recs: 1, readOnly: true, send: "true" });
-    expect(v.title).toMatch(/Voice mode/);
-    v = await st(`__hear(["make the title", false])`);
-    expect(v).toMatchObject({ input: "make the title", sent: [] });
-    // From here the pause that sends the words is a tenth of its time (the tests' timescale), so the step does not wait for it.
-    // The panel's pause takes the timescale (it read another name before, so the pause was a whole second in the tests):
-    // the timer that it sets is for a tenth of its second. Read from the timers set, so the check costs no time.
-    await ada.eval(
-      `window.__ergaTimescale = 0.1; window.__timers = []; window.__setTimeout = window.setTimeout; window.setTimeout = (f, ms, ...a) => (window.__timers.push(ms), window.__setTimeout(f, ms, ...a)); __hear(${BLUE})`
-    );
-    await expect.poll(async () => (await st()).sent.length).toBe(1);
-    expect(await st()).toMatchObject({ sent: ["make the title blue"], input: "" });
-    const timers = await ada.eval<number[]>(`(window.setTimeout = window.__setTimeout, window.__timers)`);
-    expect([timers.includes(100), timers.includes(1000)], `the pause's timer, of ${timers.join(" ")}`).toEqual([true, false]);
-
-    // The next words show alone. A pause sends them too, though they are not final yet; then a new session takes over.
-    v = await st(`__hear(${BLUE}, [" and bigger", false])`);
-    expect(v.input).toBe("and bigger");
-    await expect.poll(async () => (await st()).sent).toEqual(["make the title blue", "and bigger"]);
-    await expect.poll(async () => (await st()).recs).toBe(2);
-
-    // A pause while an attached file is still read keeps the words: they go with the file once it is read.
-    await ada.eval(
-      `(() => { window.__holdFiles = true; const dt = new DataTransfer(); dt.items.add(new File(["a,b\\n1,2\\n"], "notes.csv", { type: "text/csv" })); document.getElementById("agent-input").dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })); })()`
-    );
-    await expect.poll(() => ada.eval<number>(`document.querySelectorAll(".agent-attachments .file-chip.reading").length`)).toBe(1);
-    await ada.eval(`__hear(["what does this show", true])`);
-    await expect.poll(() => ada.eval<string>(`document.getElementById("agent-hint").textContent`)).toMatch(/Reading the attached files/);
-    expect(await st()).toMatchObject({ sent: ["make the title blue", "and bigger"], input: "what does this show" });
-    await ada.eval(`window.__holdFiles = false; __read()`);
-    await expect.poll(async () => (await st()).sent).toEqual(["make the title blue", "and bigger", "what does this show"]);
-    expect(await ada.eval<string[][]>(`__sentFiles`)).toEqual([[], [], ["notes.csv"]]);
-
-    // Leaving voice mode keeps what wasn't sent in the box, to edit.
-    v = await st(`__hear(["what does this show", true], [" thanks", true]); document.getElementById("agent-voice").click()`);
-    expect(v).toMatchObject({ on: "false", input: "thanks", readOnly: false });
-    expect(v.sent).toHaveLength(3);
-    // Collapsing the panel stops listening.
-    await page.click("#agent-voice");
-    await ada.press("ControlOrMeta+j");
-    await expect.poll(async () => (await st()).on).toBe("false");
-    expect(await ada.eval<boolean>(`!__recs.at(-1).running`)).toBe(true);
-    expect(await paneOpen(page)).toBe(false);
-    await ada.eval(`window.fetch = window.__realFetch`);
-  });
-
   // The bug: after a mouse click on Collapse, the agent's circle showed hints of a blue focus ring.
   test("collapsing the agent with the mouse leaves no ring or selection on its circle; Tab still shows a ring", async () => {
     const ring = `(() => {
@@ -460,18 +365,18 @@ journey("a turn of the agent in the editor", () => {
   });
 
   test("an open pane is open after a reload from the first frame, with its unsent message; a collapsed pane and a cleared box stay so", async () => {
-    // (The pane is collapsed. The box has "thanks", the words that voice mode left.)
-    expect(await input()).toBe("thanks");
+    // (The pane is collapsed, and the box is empty.)
+    expect(await input()).toBe("");
     await ada.press("ControlOrMeta+j");
     await expect.poll(() => paneOpen(page)).toBe(true);
     await page.focus("#agent-input");
-    await ada.type(" for half a thought");
+    await ada.type("half a thought");
     // Checked as soon as the new page's script has run.
     await ada.eval(`window.__beforeReload = true; location.reload()`);
     await expect.poll(() => ada.eval<boolean>(`!window.__beforeReload && !!window.ergaPage`).catch(() => false)).toBe(true);
     expect(await paneOpen(page)).toBe(true);
     await ada.loaded();
-    expect(await input()).toBe("thanks for half a thought");
+    expect(await input()).toBe("half a thought");
     // The messages sent before show their files as they did.
     await expect.poll(() => sentFiles("What do these show?")).toEqual(SENT);
 
