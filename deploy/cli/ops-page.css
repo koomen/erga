@@ -1,6 +1,6 @@
 /* The look of the ops page (`bun erga`, deploy/cli/ops-view.ts): the app's tokens (client/style.css), the glass bars
-   (client/inline/bars.css, which the page also loads), a sidebar of the instances, and the
-   Deploys, Logs, History and Setup tabs. */
+   (client/inline/bars.css, which the page also loads), a sidebar of the instances, and the chosen instance's
+   Deploys, Logs and History tabs. */
 
 :root {
   --bg: #ffffff; --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73; --chrome: #a1a1a9; --rule: #e6e6ea; --code-bg: #f4f4f6;
@@ -29,7 +29,8 @@ code { font-family: var(--font-mono); }
   padding: calc(var(--bars-bottom) + 12px) max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left)); }
 @media (max-width: 760px) { .ops { grid-template-columns: minmax(0, 1fr); } }
 
-/* The sidebar: each instance, the branch it tracks under it. */
+/* The sidebar: each instance, the branch it tracks under it, and one word at the right when it is not at its branch's
+   head. Under the list: whether auto-deploy is on, for the whole page. */
 .side { position: sticky; top: calc(var(--bars-bottom) + 12px); align-self: start; min-width: 0; }
 .side-head { margin: 6px 10px 8px; font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--soft); }
 .instances { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -40,6 +41,13 @@ code { font-family: var(--font-mono); }
 .group > span > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group .host { font-size: 14px; font-weight: 600; color: var(--fg-strong); }
 .group .tracks { padding-left: 16px; font: 12px var(--font-mono); color: var(--soft); }
+.group .tracks { justify-content: space-between; }
+.group .g-state { flex: none; font: 500 11.5px var(--font-text); color: var(--soft); }
+.g-state.behind, .g-state.unread { color: var(--off); }
+.g-state.failed { color: var(--bad); }
+.g-state.deploying { color: var(--fg); }
+.side-auto { display: flex; align-items: center; gap: 8px; margin: 14px 10px 0; padding-top: 12px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--soft); }
+.side-auto .light { width: 7px; height: 7px; }
 .light { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--chrome); }
 .light.ok { background: var(--ok); }
 .light.bad { background: var(--bad); }
@@ -69,15 +77,11 @@ a.job:hover { border-color: var(--chrome); }
 .note.bad { color: var(--bad); }
 .note code { font-size: 12.5px; }
 
-/* Deploys: the boxes. */
-.box { border: 1px solid var(--rule); border-radius: 12px; padding: 12px 16px 6px; margin-bottom: 18px; }
-.box h3 { margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--fg-strong); }
-.sources ul { list-style: none; margin: 0; padding: 0 0 6px; }
-.source { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; font-size: 13.5px; flex-wrap: wrap; }
-.source .light { align-self: center; }
 .light.stale { background: var(--off); }
-.source b { font-weight: 600; min-width: 9em; }
-.s-when, .s-what { color: var(--soft); }
+/* Deploys: the checks of the instance's own sources, in one line under the commits. */
+.checked { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; margin: 16px 4px 0; font-size: 12px; color: var(--soft); }
+.checked > span { display: inline-flex; align-items: center; gap: 6px; }
+.checked .light { width: 7px; height: 7px; }
 .s-stale { padding: 0 6px; border-radius: 6px; font-size: 12px; color: var(--off); border: 1px solid currentColor; }
 .s-err { color: var(--bad); }
 .err { flex-basis: 100%; color: var(--bad); font-size: 13px; }
@@ -94,9 +98,10 @@ a.job:hover { border-color: var(--chrome); }
 .tip { display: inline-flex; }
 .deps .tip, .deps .btn { width: 100%; }
 .deps .btn { height: 22px; padding: 0 6px; font-size: 12px; line-height: 22px; }
-/* A row's Deploy button shows only in the cell under the mouse, or in the cell whose button has the keyboard's focus. */
+/* A row's Deploy button shows only in the cell under the mouse, or in the cell whose button has the keyboard's focus;
+   the head's button shows always while the head is not live (.show). */
 .deps.here .tip { opacity: 0; }
-.deps.here:hover .tip, .deps.here:focus-within .tip { opacity: 1; }
+.deps.here:hover .tip, .deps.here:focus-within .tip, .deps.here.show .tip { opacity: 1; }
 .confirm { width: min(440px, calc(100vw - 32px)); margin: auto; padding: 16px 18px; border: 1px solid var(--rule); border-radius: 12px; background: var(--bg);
   color: var(--fg); font-size: 14px; box-shadow: 0 12px 40px rgb(0 0 0 / 18%); }
 .confirm::backdrop { background: rgb(0 0 0 / 18%); }
@@ -107,21 +112,12 @@ a.job:hover { border-color: var(--chrome); }
 .confirm .acts { display: flex; gap: 8px; margin-top: 12px; }
 .confirm .btn { padding: 5px 14px; font-size: 13.5px; }
 
-/* Deploys: the log, with a column for each instance. */
+/* Deploys: the instance's commits, in one column. */
+.c-head { margin: 0; padding: 0 0 6px 6px; border-bottom: 1px solid var(--rule); font-size: 11.5px; font-weight: 600; color: var(--soft); }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .dot.off { background: var(--bg); border: 2px solid var(--off); }
 .dot.on { background: var(--ok); border: 2px solid var(--ok); }
-.grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 104px repeat(var(--cols, 2), 124px); align-items: center; }
-.grid > .head { position: sticky; top: var(--bars-bottom); z-index: 2; height: 62px; display: flex; align-items: flex-end; padding: 0 0 6px 6px; background: var(--bg);
-  border-bottom: 1px solid var(--rule); font-size: 11.5px; font-weight: 600; color: var(--soft); white-space: nowrap; }
-.grid > .head.col { flex-direction: column; align-items: flex-start; justify-content: flex-end; gap: 1px; min-width: 0; }
-.col b { font-size: 11.5px; font-weight: 650; color: var(--fg-strong); }
-.col .host { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font: 11px var(--font-mono); color: var(--soft); }
-.col .st { display: inline-flex; align-items: center; gap: 5px; font-weight: 500; }
-.col .light { width: 7px; height: 7px; }
-.col .auto { font-size: 11px; font-weight: 500; color: var(--soft); white-space: nowrap; }
-.col .auto.deploying, .col .auto.due { color: var(--fg); }
-.col .auto.failed { color: var(--bad); }
+.grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 104px 124px; align-items: center; }
 .row { display: contents; }
 .row > * { height: var(--row); display: flex; align-items: center; }
 .row:hover > * { background: color-mix(in srgb, var(--chrome) 8%, transparent); }
@@ -144,9 +140,8 @@ a.job:hover { border-color: var(--chrome); }
 .dep .at { font-size: 11.5px; color: color-mix(in srgb, var(--ok) 70%, var(--soft)); font-variant-numeric: tabular-nums; }
 .grid > .none { grid-column: 1 / -1; padding: 18px 4px; margin: 0; }
 @container (max-width: 680px) {
-  .grid { grid-template-columns: 22px minmax(0, 1fr) repeat(var(--cols, 2), 76px); }
+  .grid { grid-template-columns: 22px minmax(0, 1fr) 104px; }
   .grid .who, .grid .sha, .grid .time, .grid time { display: none !important; }
-  .col .host { display: none; }
 }
 
 /* Logs: a job's output. */
@@ -163,7 +158,7 @@ a.job:hover { border-color: var(--chrome); }
 .log .bad { color: var(--bad); font-weight: 600; }
 
 /* History: the jobs. */
-.history { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto auto auto auto; border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; }
+.history { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto auto auto; border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; }
 .h-row { display: contents; color: var(--fg); text-decoration: none; }
 .h-row > * { display: flex; align-items: center; min-width: 0; padding: 7px 10px; border-top: 1px solid var(--rule); font-size: 13px; white-space: nowrap; }
 .h-head > * { border-top: 0; font-size: 11.5px; font-weight: 600; color: var(--soft); }
@@ -173,11 +168,11 @@ a.h-row:hover > * { background: color-mix(in srgb, var(--chrome) 8%, transparent
 .h-row.failed .light { background: var(--bad); }
 .h-row.failed .h-state { color: var(--bad); }
 .h-cmd { display: block !important; overflow: hidden; text-overflow: ellipsis; line-height: 1.6; font-size: 12.5px; color: var(--fg-strong); }
-.h-host, .h-from, .history time, .h-took { color: var(--soft); }
+.h-from, .history time, .h-took { color: var(--soft); }
 .h-took { justify-content: flex-end; font-variant-numeric: tabular-nums; }
 @container (max-width: 560px) {
   .history { grid-template-columns: 80px minmax(0, 1fr) auto; }
-  .h-host, .h-from, .h-took { display: none !important; }
+  .h-from, .h-took { display: none !important; }
 }
 
 /* A button whose job runs: "Deploying…", with a small spinner; its cell stays shown. */

@@ -56,7 +56,7 @@ export const deploysTo = (j: JobState, sha: string, host: string) =>
   j.kind == "deploy" && !!j.commit && j.commit.slice(0, 12) == sha.slice(0, 12) && j.host == host;
 
 /** The ops page's own command: none, one that starts (until it ends), or why the last one stopped before its record. */
-export type Run = { at: "idle" } | { at: "starting"; command: string; job: JobState } | { at: "failed"; why: string };
+export type Run = { at: "idle" } | { at: "starting"; command: string; job: JobState } | { at: "failed"; host: string; why: string };
 
 export type RunEvent =
   | { type: "start"; command: string; job: JobState }
@@ -67,7 +67,11 @@ export function stepRun(run: Run, e: RunEvent): Run {
   if (e.type == "start") return { at: "starting", command: e.command, job: { ...e.job, phase: "starting" } };
   if (run.at != "starting") return run;
   if (e.code == 0 || e.recorded) return { at: "idle" };
-  return { at: "failed", why: `${run.command} stopped: ${e.out.trim().split("\n").slice(-4).join(" ") || `exit ${e.code}`}` };
+  return {
+    at: "failed",
+    host: run.job.host,
+    why: `${run.command} stopped: ${e.out.trim().split("\n").slice(-4).join(" ") || `exit ${e.code}`}`,
+  };
 }
 
 /** The jobs that keep the buttons busy: each record that runs, and the page's own command until it ends. */

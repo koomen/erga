@@ -59,17 +59,3 @@ export function stepAuto(s: Auto, e: AutoEvent): { auto: Auto; deploy: string | 
     }
   }
 }
-
-/** A state in a few words, for the instance's column on the ops page. */
-export function autoText(s: Auto, at: { head: string | null; runs: string | null }): string {
-  switch (s.at) {
-    case "idle":
-      return at.head && at.runs && !at.head.startsWith(at.runs) ? "waits for a new commit" : "idle";
-    case "due":
-      return `${s.head.slice(0, 7)} is next`;
-    case "deploying":
-      return `deploys ${s.head.slice(0, 7)}`;
-    case "failed":
-      return `failed at ${s.head.slice(0, 7)}`;
-  }
-}

@@ -125,10 +125,16 @@ async function gitAsync(cwd: string, args: string[]): Promise<{ ok: boolean; out
   }
 }
 
+/** The clone's own ref for a branch of a repository that an instance tracks: it keeps the branch's commits in the clone, and no push sends it. */
+export const trackedRef = (repo: string, branch: string) =>
+  `refs/erga/${repoName(repo)
+    .replace(/[^\w.-]+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")}/${branch}`;
+
 /**
- * The heads of `branches` on `repo` now (one git ls-remote: a read), for auto-deploy; each head that the clone does
- * not have yet is fetched into it, so that a deploy and the page's checks have the commit. `error`: why the repository
- * gave no answer, or null.
+ * The heads of `branches` on `repo` now (one git ls-remote: a read), for the ops page's commits and for auto-deploy.
+ * A head that the clone's own ref (trackedRef) is not at is fetched into that ref, so that the page's log, a deploy and
+ * the checks have the commit, and git keeps it. `error`: why the repository gave no answer, or null.
  */
 export async function repoHeads(
   cwd: string,
@@ -144,8 +150,11 @@ export async function repoHeads(
       return m ? [[m[2], m[1]]] : [];
     })
   );
-  for (const [branch, sha] of Object.entries(heads))
-    if (!sh(["git", "cat-file", "-e", `${sha}^{commit}`], { cwd }).ok) await gitAsync(cwd, ["fetch", "--quiet", remote, branch]);
+  for (const [branch, sha] of Object.entries(heads)) {
+    const ref = trackedRef(repo, branch);
+    if (sh(["git", "rev-parse", "--verify", "--quiet", ref], { cwd }).out != sha)
+      await gitAsync(cwd, ["fetch", "--quiet", "--no-tags", remote, `+refs/heads/${branch}:${ref}`]);
+  }
   return { heads, error: null };
 }
 

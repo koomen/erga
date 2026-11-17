@@ -1,13 +1,14 @@
 // `bun erga`: the ops page, a local server on 127.0.0.1 and the page it serves (deploy/cli/ops-view.ts draws it). It
 // reads .erga/config.json, .erga/jobs/ and .erga/tests/ (the tests' runs, test-run.ts) in the main clone, which it watches (a change reaches the page at once,
-// through /api/events), and the clone's git. It checks its sources (poll-state.ts): GitHub, with a git fetch of the
-// clone, at most once a minute, and each instance's commit (from its platform: running.ts) and health every 15 seconds. The page
-// shows each source's last check. It serves each branch's proof page (bun erga proof) at /proof/<branch>/. Every command works without it. Its Deploy buttons run
+// through /api/events), and the clone's git. It checks its sources (poll-state.ts): each repository that an instance
+// tracks, for its branches' heads (one git ls-remote, at most once a minute: the instance's commits on the page are the
+// log of that head), each instance's commit (from its platform: running.ts) and health every 15 seconds, and GitHub,
+// with a git fetch of the clone, at most once a minute, for the tests' queue. The page
+// shows the chosen instance's own checks. It serves each branch's proof page (bun erga proof) at /proof/<branch>/. Every command works without it. Its Deploy buttons run
 // `bun erga deploy` (POST /api/deploy) in a process of its own, as a terminal does: the same code, locks and job
 // records. The page merges nothing: `bun erga merge` does.
-// With --auto-deploy it is auto-deploy too (auto-state.ts): it asks each tracked repository for its branches' heads once a
-// minute (one git ls-remote), and starts `bun erga deploy <head> <host>` for an instance that does not run its
-// branch's head, one job at a time, as its buttons do.
+// With --auto-deploy it is auto-deploy too (auto-state.ts): it starts `bun erga deploy <head> <host>` for an instance
+// that does not run its branch's head, one job at a time, as its buttons do.
 // It works the tests' queue (gate.ts, stepQueue): for each pushed branch whose merge has no test record, `bun erga test
 // <branch>` (about a minute), one at a time, the oldest first. A branch or a staging head that moves makes a new tree: it waits again.
 // The page shows nothing of the queue: `bun erga status` does.
@@ -16,12 +17,12 @@ import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch
 import { join } from "node:path";
 import { startAuto, stepAuto } from "./auto-state";
 import { type Entry, readConfig } from "./config";
-import type { Answer } from "./flow";
+import type { Answer, Branch as StatusBranch } from "./flow";
 import { readRuns } from "./test-run";
 import { type Queue, stepQueue } from "./gate";
 import type { From } from "./jobs";
 import { branchesOf, commitsIn, fetchGitHub, inHistory, repoHeads } from "./observe";
-import { busyWith, type Facts, type Git, type JobRecord, jobOf, pageHtml, repoSource, viewHtml } from "./ops-view";
+import { busyWith, type Facts, type JobRecord, jobOf, pageHtml, repoSource, viewHtml } from "./ops-view";
 import { alive } from "./pid";
 import { type JobState, stepRun } from "./job-state";
 import { GITHUB, type PollEvent, startPolls, stepPolls } from "./poll-state";
@@ -33,17 +34,13 @@ const git = (cwd: string, ...args: string[]) => sh(["git", ...args], { cwd });
 /** The origin's branches in the clone, with their commits: the key that says when to read git again. */
 const refsOf = (cwd: string) => git(cwd, "for-each-ref", "refs/remotes/origin", "--format=%(objectname) %(refname:short)").out;
 
-/** The clone's log and feature branches, as the last fetch left them. */
-export function readGit(cwd: string, versions: string[]): Git {
-  const has = (ref: string) => git(cwd, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`).ok;
-  const heads = ["origin/staging", "origin/main"].filter(has);
-  const base = heads[0] ?? "HEAD";
-  const head = (ref: string) => (has(ref) ? git(cwd, "rev-parse", ref).out : null);
-  const log = commitsIn(cwd, "--topo-order", "-n", "200", ...(heads.length ? heads : ["HEAD"]));
-  const branches = branchesOf(null, cwd, base);
-  const elsewhere: Record<string, boolean> = {};
-  for (const v of versions) if (!log.some((c) => c.sha.startsWith(v))) elsewhere[v] = has(v);
-  return { log, branches, base: base.replace(/^origin\//, ""), main: head("origin/main"), staging: head("origin/staging"), elsewhere };
+/** A feature branch, for the tests' queue: with the tree of its merge (observe.ts, branchesOf). */
+export type Branch = StatusBranch & { author: string; tree: string | null };
+
+/** The clone's feature branches, as the last fetch left them, and the branch they are counted against: what the tests' queue reads. */
+export function readGit(cwd: string): { branches: Branch[]; base: string } {
+  const base = git(cwd, "rev-parse", "--verify", "--quiet", "origin/staging^{commit}").ok ? "origin/staging" : "HEAD";
+  return { branches: branchesOf(null, cwd, base), base: base.replace(/^origin\//, "") };
 }
 
 /** Each job record in .erga/jobs/, newest last (the file names start with the time). */
@@ -120,7 +117,7 @@ export function serveOpsPage(o: OpsPageOptions) {
   const facts: Facts = {
     config: { instances: [] },
     answers: {},
-    git: { error: "Fetching from GitHub…" },
+    logs: {},
     jobs: [],
     run: { at: "idle" },
     polls: startPolls(),
@@ -128,6 +125,10 @@ export function serveOpsPage(o: OpsPageOptions) {
     auto: o.autoDeploy ? {} : null,
     heads: {},
   };
+  /** The clone's feature branches, for the tests' queue: none before the first fetch ends. */
+  let clone: ReturnType<typeof readGit> | null = null;
+  /** The head whose log each instance has in the facts: git reads a log again only when its head moves. */
+  const logHeads: Record<string, string> = {};
   /** The tests' queue: the run that this page started, if one is on. */
   let queue: Queue = { at: "idle" };
   let refs = "";
@@ -159,7 +160,6 @@ export function serveOpsPage(o: OpsPageOptions) {
     send("data: change\n\n");
   };
   const entries = () => ("error" in facts.config ? [] : facts.config.instances);
-  const versions = () => Object.values(facts.answers).flatMap((a) => (a.version ? [a.version] : []));
   const readFiles = () => {
     try {
       facts.config = readConfig(o.dir);
@@ -169,9 +169,10 @@ export function serveOpsPage(o: OpsPageOptions) {
     const hosts = new Set(entries().map((e) => e.host));
     for (const h of Object.keys(facts.answers)) if (!hosts.has(h)) delete facts.answers[h];
     for (const h of Object.keys(facts.heads)) if (!hosts.has(h)) delete facts.heads[h];
+    for (const h of Object.keys(facts.logs)) if (!hosts.has(h)) delete facts.logs[h], delete logHeads[h];
     for (const h of Object.keys(facts.auto ?? {})) if (!hosts.has(h)) delete facts.auto![h];
-    // Auto-deploy asks each repository that an instance tracks.
-    const repos = facts.auto ? [...new Set(entries().map((e) => repoSource(e.repo)))] : [];
+    // Each repository that an instance tracks: its branches' heads, for the commits on the page and for auto-deploy.
+    const repos = [...new Set(entries().map((e) => repoSource(e.repo)))];
     facts.jobs = readJobs(o.dir);
     facts.runs = readRuns(o.dir);
     poll({ type: "sources", names: [GITHUB, ...repos, ...hosts], now: Date.now() });
@@ -208,8 +209,8 @@ export function serveOpsPage(o: OpsPageOptions) {
   };
   /** Steps the tests' queue with what git and the records say now, and starts the run it asks for. Its end is an event. */
   const work = () => {
-    if (stopped || !o.test || "error" in facts.git) return;
-    const wanted = facts.git.branches.flatMap((b) => (b.tree ? [{ branch: b.name, tree: b.tree, at: b.at }] : []));
+    if (stopped || !o.test || !clone) return;
+    const wanted = clone.branches.flatMap((b) => (b.tree ? [{ branch: b.name, tree: b.tree, at: b.at }] : []));
     const r = stepQueue(queue, { type: "look", wanted, runs: facts.runs });
     queue = r.queue;
     if (!r.start) return;
@@ -228,13 +229,25 @@ export function serveOpsPage(o: OpsPageOptions) {
       changed();
     });
   };
-  /** Reads git, once the first fetch ended. */
+  /** Reads the clone's feature branches, once the first fetch ended. */
   const readClone = () => {
     if (!fetched) return;
     try {
-      facts.git = readGit(o.cwd, versions());
-    } catch (e) {
-      facts.git = { error: `git: ${(e as Error).message}` };
+      clone = readGit(o.cwd);
+    } catch {
+      clone = null;
+    }
+  };
+  /** Each instance's commits: the log of the head that its repository last answered, read when that head moves. */
+  const readLogs = () => {
+    for (const e of entries()) {
+      const head = facts.heads[e.host];
+      if (!head || logHeads[e.host] == head) continue;
+      const log = commitsIn(o.cwd, "-n", "200", head);
+      // The clone does not have the head (its fetch failed): the last log stays.
+      if (!log.length) continue;
+      logHeads[e.host] = head;
+      facts.logs[e.host] = log;
     }
   };
   /** Steps the sources' state, starts each check it asks for, and wakes it at the time it names. */
@@ -270,16 +283,15 @@ export function serveOpsPage(o: OpsPageOptions) {
       if (stopped) return;
       // A repository that gave no answer: the last heads stay.
       if (!r.error) for (const e of tracking) facts.heads[e.host] = r.heads[e.branch] ?? null;
+      readLogs();
       const gone = branches.filter((b) => !r.heads[b]);
       error = r.error ?? (gone.length ? `no branch ${gone.join(", ")}` : null);
     } else {
       const e = entries().find((x) => x.host == name);
-      const before = versions().join();
       const a = e ? await ask(e).catch((err: Error): Answer => ({ version: null, healthy: null, error: err.message })) : null;
       if (stopped) return;
       if (a && entries().some((x) => x.host == name)) facts.answers[name] = a;
       error = a?.error ?? null;
-      if (versions().join() != before) readClone();
     }
     poll({ type: "answer", name, now: Date.now(), error });
   };
@@ -349,11 +361,10 @@ export function serveOpsPage(o: OpsPageOptions) {
   const act = async (req: Request) => {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const no = (error: string) => Response.json({ error }, { status: 409 });
-    if ("error" in facts.git) return no(facts.git.error);
     const e = "error" in facts.config ? null : facts.config.instances.find((x) => x.host == body.host);
-    const c = facts.git.log.find((x) => x.sha == body.sha);
+    const c = e ? facts.logs[e.host]?.find((x) => x.sha == body.sha) : null;
     if (!e) return no(`${String(body.host)} has no entry in .erga/config.json.`);
-    if (!c) return no(`This clone's log has no commit ${String(body.sha).slice(0, 12)}.`);
+    if (!c) return no(`${e.branch}, the branch that ${e.host} tracks, has no commit ${String(body.sha).slice(0, 12)} in this clone.`);
     const v = facts.answers[e.host]?.version;
     if (v && c.sha.startsWith(v)) return no(`${e.host} runs ${v} already.`);
     return start(["deploy", c.sha.slice(0, 12), e.host], { kind: "deploy", host: e.host, commit: c.sha, branch: null, phase: "starting" });

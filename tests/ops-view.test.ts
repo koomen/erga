@@ -1,19 +1,20 @@
-// The ops page's view (deploy/cli/ops-view.ts): a job record read from its lines, the instances with the branch each
-// tracks, and the Deploys tab drawn from fake facts, with its Deploy buttons. The page has no feature branch and no
-// Merge: `bun erga merge` merges. The page's server (deploy/cli/ops-page.ts) starts a deploy with a fake `bun erga`:
-// nothing deploys.
+// The ops page's view (deploy/cli/ops-view.ts): a job record read from its lines, the list of the instances, and the
+// right side, which is about the chosen instance only: its job line, the commits of its branch with its Deploy buttons,
+// its Logs and its History, drawn from fake facts. The page's server (deploy/cli/ops-page.ts) starts a deploy with a
+// fake `bun erga`: nothing deploys.
 
 import { expect, test } from "bun:test";
 import type { Entry } from "../deploy/cli/config";
 import { type Run, stepRun } from "../deploy/cli/job-state";
-import { type Branch, columnsOf, type Facts, jobOf, viewHtml } from "../deploy/cli/ops-view";
-import { startPolls } from "../deploy/cli/poll-state";
+import { type Facts, jobOf, viewHtml } from "../deploy/cli/ops-view";
+import { REWRITTEN } from "../deploy/cli/auto-state";
+import { startPolls, stepPolls } from "../deploy/cli/poll-state";
 import { runOf } from "./helpers/pass.ts";
 
 const NOW = Date.parse("2026-11-05T12:00:00Z");
 const entry = (host: string, branch = "main", more: Partial<Entry> = {}): Entry => ({
   host,
-  repo: "example.net/team/erga",
+  repo: "example.com/team/erga",
   branch,
   ...more,
   account: "a",
@@ -44,209 +45,335 @@ test("a job runs while it has no result and its process lives", () => {
   expect(jobOf("not json\n", () => true)).toBeNull();
 });
 
-test("the view: each instance with its branch, a column for each one of the same repository, the job line, and live at each one's commit", () => {
-  const config = {
-    instances: [
-      entry("example.net"),
-      entry("erga.example.org", "main", { repo: "example.org/team/erga" }),
-      entry("staging.example.net", "staging"),
+/** staging has five commits; main has the first three of them. */
+const STAGING = ["5", "4", "3", "2", "1"].map((n, i) => ({
+  sha: n.repeat(40),
+  subject: `Change ${n}`,
+  author: "Pete",
+  at: NOW - i * 3_600_000,
+}));
+const MAIN = STAGING.slice(2);
+const HOSTS = ["example.net", "staging.example.net", "notes.example.org"];
+/**
+ * Three instances. example.net tracks main and runs its head (3). staging.example.net tracks staging and runs 4: its
+ * head (5) is not deployed. notes.example.org tracks main and runs 2: one commit behind.
+ */
+const facts = (more: Partial<Facts> = {}): Facts => ({
+  config: { instances: [entry("example.net"), entry("staging.example.net", "staging"), entry("notes.example.org")] },
+  answers: {
+    "example.net": { version: "3".repeat(12), healthy: true },
+    "staging.example.net": { version: "4".repeat(12), healthy: true },
+    "notes.example.org": { version: "2".repeat(12), healthy: true },
+  },
+  logs: { "example.net": MAIN, "staging.example.net": STAGING, "notes.example.org": MAIN },
+  heads: { "example.net": "3".repeat(40), "staging.example.net": "5".repeat(40), "notes.example.org": "3".repeat(40) },
+  jobs: [],
+  run: { at: "idle" },
+  polls: startPolls(),
+  runs: [],
+  auto: null,
+  ...more,
+});
+/** A job's record: a deploy of commit n...n to `host` (or another command), done unless `more` says otherwise. */
+const job = (id: string, host: string, n: string, more: { command?: string; from?: string; ends?: string | null; started?: string } = {}) =>
+  jobOf(
+    line({
+      ...start,
+      command: more.command ?? `bun erga deploy ${n.repeat(12)} ${host}`,
+      host,
+      from: more.from ?? "terminal",
+      started: more.started ?? start.started,
+    }) +
+      (n ? line({ commit: n.repeat(40) }) : "") +
+      line({ out: `out of ${id}` }) +
+      (more.ends === null ? "" : line({ result: "ok", ended: more.ends ?? "2026-11-05T11:55:00.000Z" })),
+    () => true,
+    id
+  )!;
+/** The page's own command as it starts: a deploy of commit n...n to `host`. */
+const starts = (n: string, host = "staging.example.net"): Run =>
+  stepRun(
+    { at: "idle" },
+    {
+      type: "start",
+      command: `bun erga deploy ${n.repeat(12)} ${host}`,
+      job: { kind: "deploy", host, commit: n.repeat(40), branch: null, phase: "starting" },
+    }
+  );
+/** A merge that runs, from a terminal: its job record. */
+const merging = () => jobOf(line({ ...start, command: "bun erga merge clean", host: "staging" }), () => true, "merge-1")!;
+/** The right side of the page, and the list on the left. */
+const right = (html: string) => html.slice(html.indexOf('<section class="main"'));
+const left = (html: string) => html.slice(0, html.indexOf('<section class="main"'));
+/** The row of a commit, in the view's HTML. */
+const rowOf = (html: string, n: string) =>
+  new RegExp(`<div class="row \\w+" data-sha="${n.repeat(40)}">.*?</div>(?=<div class="row|</div>)`).exec(html)?.[0] ?? "";
+/** Whether the HTML names the host: a name counts only when it stands alone (erga.example.net does not name example.net). */
+const names = (html: string, host: string) => new RegExp(`(^|[^\\w.-])${host.replaceAll(".", "\\.")}([^\\w.-]|$)`).test(html);
+/** Each instance's word in the list, by its host; "": none. */
+const words = (html: string) =>
+  Object.fromEntries(
+    [...left(html).matchAll(/href="#([^"]+)".*?<\/a>/g)].map((m) => [m[1], /class="g-state \w+"[^>]*>([^<]*)</.exec(m[0])?.[1] ?? ""])
+  );
+
+test("the right side is about the chosen instance only: it names no other instance, in text or in a tooltip", () => {
+  // Every other instance has a job: one that ended, one that runs, one that the page starts; a merge and a promote too.
+  const busy = facts({
+    jobs: [
+      job("d1", "example.net", "3"),
+      job("d2", "staging.example.net", "4"),
+      job("d3", "notes.example.org", "2"),
+      job("runs", "notes.example.org", "3", { ends: null, from: "auto-deploy" }),
+      merging(),
+      job("p1", "main", "", { command: "bun erga promote" }),
     ],
-  };
-  expect(config.instances.map((e) => columnsOf(config, e).map((c) => c.host))).toEqual([
-    ["example.net", "staging.example.net"],
-    ["erga.example.org"],
-    ["example.net", "staging.example.net"],
-  ]);
-  const log = ["3", "2", "1"].map((n, i) => ({ sha: n.repeat(40), subject: `Change ${n}`, author: "Pete", at: NOW - i * 3_600_000 }));
-  const facts: Facts = {
-    config,
-    answers: {
-      "example.net": { version: "1".repeat(12), healthy: true },
-      "staging.example.net": { version: "3".repeat(12), healthy: true },
-      "erga.example.org": { version: "9".repeat(12), healthy: true },
+    auto: {
+      "example.net": { at: "idle", done: null },
+      "staging.example.net": { at: "due", head: "5".repeat(40) },
+      "notes.example.org": { at: "deploying", head: "3".repeat(40), newer: null },
     },
-    git: { log, branches: [], base: "staging", main: "1".repeat(40), staging: "3".repeat(40), elsewhere: { ["9".repeat(12)]: false } },
-    jobs: [jobOf(line(start) + line({ commit: "1".repeat(40) }) + line({ result: "ok", ended: "2026-11-05T11:55:00.000Z" }), () => true)!],
-    run: { at: "idle" },
-    polls: startPolls(),
-    runs: [],
-    auto: null,
-    heads: {},
-  };
-  const html = viewHtml(facts, "example.net", NOW);
-  // The sidebar is a flat list: each instance, with the branch it tracks under its name. No instance stands under another.
+  });
+  for (const f of [
+    facts(),
+    busy,
+    facts({ run: starts("5") }),
+    facts({ run: { at: "failed", host: "staging.example.net", why: "bun erga deploy 555555555555 staging.example.net stopped: no" } }),
+  ])
+    for (const host of HOSTS)
+      for (const tab of ["", "/logs", "/history"]) {
+        const html = right(viewHtml(f, host + tab, NOW));
+        // erga.example.net would hold example.net: a name counts only when it stands alone.
+        for (const other of HOSTS.filter((h) => h != host)) expect(names(html, other), `${host}${tab} names ${other}`).toBe(false);
+        expect(html, `${host}${tab}`).not.toMatch(/bun erga (merge|promote)/);
+      }
+  // A button that is off for another instance's job says only that a job runs.
+  const off = right(viewHtml(busy, "staging.example.net", NOW));
+  expect(off).toContain('<span class="tip" title="Another job runs. Wait for it to end."><button class="btn" type="button" data-deploy');
+  expect(off.match(/data-deploy [^>]* disabled>/g)?.length).toBe(4);
+  // The page's own failed command shows on its instance's page only.
+  const failed = facts({
+    run: { at: "failed", host: "staging.example.net", why: "bun erga deploy 555555555555 staging.example.net stopped: no" },
+  });
+  expect(right(viewHtml(failed, "staging.example.net", NOW))).toContain('<p class="note bad failed">');
+  expect(right(viewHtml(failed, "example.net", NOW))).not.toContain("note bad failed");
+});
+
+test("the list: each instance with its branch, one word when it is not at its branch's head, and auto-deploy one time", () => {
+  const html = viewHtml(facts(), "example.net", NOW);
+  // A flat list: each instance, with the branch it tracks under its name.
   expect(
     [...html.matchAll(/<a class="group( sel)?" href="#([^"]+)"[^>]*>.*?<span class="tracks"[^>]*><span>(\w+)<\/span>/g)].map((m) =>
       m.slice(1).map((x) => x ?? "")
     )
   ).toEqual([
     [" sel", "example.net", "main"],
-    ["", "erga.example.org", "main"],
     ["", "staging.example.net", "staging"],
+    ["", "notes.example.org", "main"],
   ]);
-  expect(html).not.toMatch(/class="(primary|staging|primaries)"/);
-  expect(html).toContain("Tracks <code>example.net/team/erga</code> <code>main</code>.");
-  // Each column's head is its instance's branch.
-  expect([...html.matchAll(/<div class="head col"[^>]*><b>(\w+)<\/b><span class="host">([^<]+)</g)].map((m) => m.slice(1))).toEqual([
-    ["main", "example.net"],
-    ["staging", "staging.example.net"],
+  expect(words(html)).toEqual({ "example.net": "", "staging.example.net": "1 behind", "notes.example.org": "1 behind" });
+  // A deploy that runs, an auto-deploy that stopped, a repository that gave no answer.
+  const polls = stepPolls(stepPolls(startPolls(), { type: "sources", names: ["repo example.com/team/erga"], now: 0 }).polls, {
+    type: "answer",
+    name: "repo example.com/team/erga",
+    now: 1000,
+    error: "fatal: could not read",
+  }).polls;
+  expect(words(viewHtml(facts({ run: starts("5") }), "example.net", NOW))["staging.example.net"]).toBe("deploying");
+  expect(
+    words(viewHtml(facts({ jobs: [job("r", "notes.example.org", "3", { ends: null })] }), "example.net", NOW))["notes.example.org"]
+  ).toBe("deploying");
+  expect(
+    words(viewHtml(facts({ auto: { "notes.example.org": { at: "failed", head: "3".repeat(40), why: "no" } } }), "example.net", NOW))[
+      "notes.example.org"
+    ]
+  ).toBe("failed");
+  expect(Object.values(words(viewHtml(facts({ polls }), "example.net", NOW)))).toEqual([
+    "can&#39;t read",
+    "can&#39;t read",
+    "can&#39;t read",
   ]);
-  expect(html).toContain('<a class="job ok"');
-  expect(html).toContain("done 5 minutes ago · from a terminal");
-  // The chosen instance's live mark has its deploy's time; its commit and those before it are green.
-  expect(html).toMatch(/data-sha="3{40}">.*data-host="staging.example.net"/);
-  expect(html).toMatch(/data-sha="1{40}">.*data-host="example.net".*<span class="at">5m<\/span>/);
-  expect(html).toContain('<div class="row off" data-sha="2');
-  expect(html).toContain('<div class="row on" data-sha="1');
-  // Each instance is chosen by its own name.
-  const other2 = viewHtml(facts, "staging.example.net", NOW);
-  expect(other2).toContain('<a class="group sel" href="#staging.example.net"');
-  expect(other2).toContain("Tracks <code>example.net/team/erga</code> <code>staging</code>.");
-  // An instance of another repository has the log to itself. It runs a commit the clone does not have: the page says so.
-  const other = viewHtml(facts, "erga.example.org", NOW);
-  expect([...other.matchAll(/<div class="head col"/g)].length).toBe(1);
-  expect(other).toContain("erga.example.org runs 999999999999, which this clone does not have. git fetch gets it.");
-  expect(other).toContain("No job yet.");
+  // Auto-deploy is a fact of the whole page: one line under the list, and nothing on the right side.
+  const on = viewHtml(facts({ auto: {} }), "example.net", NOW);
+  expect(left(on)).toContain('<p class="side-auto"><i class="light ok"></i><span>Auto-deploy is on</span></p>');
+  expect(left(html)).toContain("<span>Auto-deploy is off</span>");
+  expect(right(on)).not.toMatch(/auto-deploy/i);
+  expect(right(html)).toContain("Tracks <code>example.com/team/erga</code> <code>main</code>.</p>");
+  expect(viewHtml(facts(), "staging.example.net", NOW)).toContain('<a class="group sel" href="#staging.example.net"');
 });
 
-test("Logs shows the job that runs, else the last one, or the one the hash names; History lists the jobs of the columns' instances", () => {
-  const config = {
-    instances: [
-      entry("example.net"),
-      entry("staging.example.net", "staging"),
-      entry("erga.example.org", "main", { repo: "example.org/team/erga" }),
-    ],
-  };
-  const job = (id: string, host: string, started: string, more = "") =>
-    jobOf(line({ ...start, command: `bun erga deploy ${host}`, host, started }) + line({ out: `out of ${id}` }) + more, () => true, id)!;
-  const done = (ended: string) => line({ result: "ok", ended });
-  const facts: Facts = {
-    config,
-    answers: {},
-    git: { error: "no git" },
+test("the commits are the chosen instance's branch, in one column: green where it is live, orange where it is not yet", () => {
+  // An instance on main shows no commit of staging.
+  const main = right(viewHtml(facts({ jobs: [job("d1", "example.net", "3")] }), "example.net", NOW));
+  expect([...main.matchAll(/<div class="row (\w+)" data-sha="(\d)/g)].map((m) => m[2] + m[1])).toEqual(["3on", "2on", "1on"]);
+  expect(main).toContain('<div class="grid" style="--cols: 1">');
+  expect(main).not.toContain("head col");
+  // No feature branch, no Merge, no proof link and no legend: bun erga status and bun erga merge have them.
+  for (const gone of ["Feature branches", "data-merge", "f-proof", 'class="legend"']) expect(main, gone).not.toContain(gone);
+  expect(rowOf(main, "3")).toMatch(/<span class="dep live"[^>]*><span class="w">live<\/span><span class="at">5m<\/span>/);
+  expect(rowOf(main, "3")).toContain('title="Live on example.net"');
+  // An instance on staging, one commit behind its head: the head is orange, and its Deploy button shows always.
+  const staging = right(viewHtml(facts(), "staging.example.net", NOW));
+  expect([...staging.matchAll(/<div class="row (\w+)" data-sha="(\d)/g)].map((m) => m[2] + m[1])).toEqual([
+    "5off",
+    "4on",
+    "3on",
+    "2on",
+    "1on",
+  ]);
+  expect(rowOf(staging, "5")).toContain('title="On staging, not on staging.example.net yet"');
+  expect(rowOf(staging, "5")).toContain(
+    `<span class="deps here show"><span class="tip"><button class="btn" type="button" data-deploy data-host="staging.example.net" data-sha="${"5".repeat(40)}" data-ask="Deploy 5555555 Change 5 to staging.example.net?"`
+  );
+  // An older commit: its button shows under the mouse or with the focus (ops-page.css, .deps.here).
+  expect(rowOf(staging, "3")).toContain('<span class="deps here"><span class="tip"><button class="btn" type="button" data-deploy');
+  expect(rowOf(staging, "3")).toContain('data-note="staging.example.net tracks staging. No branch moves."');
+  expect(staging.match(/data-deploy /g)?.length).toBe(4);
+  expect(staging).toContain('<div class="confirm" id="deploy-confirm" popover>');
+  // It runs a commit that its branch does not have: the page says so, and no row is green.
+  const lost = right(viewHtml(facts({ answers: { "example.net": { version: "9".repeat(12), healthy: true } } }), "example.net", NOW));
+  expect(lost).toContain("example.net runs 999999999999, which main does not have in this clone.");
+  expect(lost).not.toContain('class="row on"');
+  // The commits are not here yet; or its repository gave no answer.
+  expect(right(viewHtml(facts({ logs: {} }), "example.net", NOW))).toContain(
+    '<div class="none">The commits of main are not here yet.</div>'
+  );
+});
+
+test("the job line, Logs and History are the chosen instance's deploys and rollbacks", () => {
+  const f = facts({
     jobs: [
-      job("old", "example.net", "2026-11-05T10:00:00.000Z", done("2026-11-05T10:00:30.000Z")),
-      job("runs", "staging.example.net", "2026-11-05T11:00:00.000Z"),
-      job("other", "erga.example.org", "2026-11-05T11:30:00.000Z", done("2026-11-05T11:31:00.000Z")),
+      job("old", "example.net", "2", { started: "2026-11-05T10:00:00.000Z", ends: "2026-11-05T10:00:30.000Z" }),
+      job("back", "example.net", "", {
+        command: "bun erga rollback example.net",
+        started: "2026-11-05T10:30:00.000Z",
+        ends: "2026-11-05T10:30:04.000Z",
+      }),
+      job("runs", "staging.example.net", "5", { ends: null, started: "2026-11-05T11:00:00.000Z" }),
+      job("other", "notes.example.org", "2", { started: "2026-11-05T11:30:00.000Z" }),
+      merging(),
     ],
-    run: { at: "idle" },
-    polls: startPolls(),
-    runs: [],
-    auto: null,
-    heads: {},
-  };
-  const logs = viewHtml(facts, "example.net/logs", NOW);
-  expect(logs).toContain('<section class="logs" data-job="runs"');
-  expect(logs).toContain("<span>out of runs</span>");
+  });
+  // The job line: its own last job, though another instance's job runs.
+  const page = right(viewHtml(f, "example.net", NOW));
+  expect(page).toContain('<a class="job ok" href="#example.net/logs/back"');
+  expect(page).toContain("<code>bun erga rollback example.net</code>");
+  expect(right(viewHtml(f, "staging.example.net", NOW))).toContain('<a class="job running" href="#staging.example.net/logs/runs"');
+  expect(right(viewHtml(facts(), "example.net", NOW))).toContain("No job yet.");
+  // The page's own command, before its job record shows: on its instance's page.
+  const own = facts({ run: starts("5") });
+  expect(right(viewHtml(own, "staging.example.net", NOW))).toContain(
+    '<div class="job running"><i class="light"></i><code>bun erga deploy 555555555555 staging.example.net</code><span>starts · from this page</span></div>'
+  );
+  expect(right(viewHtml(own, "example.net", NOW))).toContain("No job yet.");
+  // Logs: the job that runs, else the last one, or the one the hash names.
+  const logs = viewHtml(f, "example.net/logs", NOW);
+  expect(logs).toContain('<section class="logs" data-job="back"');
+  expect(logs).toContain("<span>out of back</span>");
   expect(logs).toContain('<a class="tab" role="tab" href="#example.net/logs" aria-selected="true">Logs</a>');
-  expect(viewHtml(facts, "example.net/logs/old", NOW)).toContain('<section class="logs" data-job="old"');
-  // The newest job of all, for the page's switch to an instance that it does not show.
-  expect(logs).toContain('data-newest="other" data-newest-host="erga.example.org"');
-  const history = viewHtml(facts, "example.net/history", NOW);
-  expect([...history.matchAll(/class="h-row [^"]*" href="[^"]*" data-job="(\w+)"/g)].map((m) => m[1])).toEqual(["runs", "old"]);
+  expect(viewHtml(f, "example.net/logs/old", NOW)).toContain('<section class="logs" data-job="old"');
+  expect(viewHtml(f, "example.net/logs/other", NOW)).toContain('<section class="logs" data-job="back"');
+  // History: its jobs, newest first, with no Instance column.
+  const history = viewHtml(f, "example.net/history", NOW);
+  expect([...history.matchAll(/class="h-row [^"]*" href="[^"]*" data-job="(\w+)"/g)].map((m) => m[1])).toEqual(["back", "old"]);
   expect(history).toContain('<span class="h-took">30 s</span>');
+  expect(history).toContain("<span>Result</span><span>Command</span><span>From</span><span>Started</span><span>Took</span>");
+  expect(history).not.toContain("h-host");
   // A job that auto-deploy started says so.
-  const auto = jobOf(
-    line({ ...start, from: "auto-deploy" }) + line({ result: "ok", ended: "2026-11-05T11:55:00.000Z" }),
-    () => true,
-    "auto-1"
-  )!;
-  const withAuto = viewHtml({ ...facts, jobs: [auto] }, "example.net/history", NOW);
-  expect(withAuto).toContain('<span class="h-from">auto-deploy</span>');
-  expect(viewHtml({ ...facts, jobs: [auto] }, "example.net", NOW)).toContain("done 5 minutes ago · from auto-deploy");
-  expect(history).toContain('<span class="h-took">1 h 0 min</span>');
+  const auto = facts({ jobs: [job("a1", "example.net", "3", { from: "auto-deploy" })] });
+  expect(viewHtml(auto, "example.net/history", NOW)).toContain('<span class="h-from">auto-deploy</span>');
+  expect(viewHtml(auto, "example.net", NOW)).toContain("done 5 minutes ago · from auto-deploy");
   // An unknown tab is Deploys.
-  expect(viewHtml(facts, "example.net/nope", NOW)).toContain('data-tab="deploys"');
+  expect(viewHtml(f, "example.net/nope", NOW)).toContain('data-tab="deploys"');
 });
 
-const commits = ["3", "2", "1"].map((n, i) => ({ sha: n.repeat(40), subject: `Change ${n}`, author: "Pete", at: NOW - i * 3_600_000 }));
-const branch = (name: string, more: Partial<Branch> = {}): Branch => ({
-  name,
-  sha: "f".repeat(40),
-  subject: `The last commit of ${name}`,
-  author: "Pete",
-  at: NOW,
-  ahead: 1,
-  behind: 0,
-  conflicts: [],
-  // The tree of its merge: none when it has no merge.
-  tree: more.ahead == 0 || more.conflicts?.length ? null : `tree-${name}`,
-  ...more,
-});
-const deploys = (more: Partial<Facts> = {}, staging = "3", production = "1"): Facts => ({
-  config: { instances: [entry("example.net"), entry("staging.example.net", "staging")] },
-  answers: {
-    "example.net": { version: production.repeat(12), healthy: true },
-    "staging.example.net": { version: staging.repeat(12), healthy: true },
-  },
-  git: {
-    log: commits,
-    branches: [branch("clean"), branch("clash", { conflicts: ["a.ts"] }), branch("done", { ahead: 0 })],
-    base: "staging",
-    main: "1".repeat(40),
-    staging: "3".repeat(40),
-    elsewhere: {},
-  },
-  jobs: [],
-  run: { at: "idle" },
-  polls: startPolls(),
-  // Every test passed on the merge of clean.
-  runs: [runOf("tree-clean")],
-  auto: null,
-  heads: {},
-  ...more,
-});
-/** The page's own command as it starts: a deploy of commit n...n to staging.example.net. */
-const starts = (what: string): Run =>
-  stepRun(
-    { at: "idle" },
-    {
-      type: "start",
-      command: `bun erga deploy ${what.repeat(12)} staging.example.net`,
-      job: { kind: "deploy", host: "staging.example.net", commit: what.repeat(40), branch: null, phase: "starting" },
-    }
+test("while its deploy runs, its cell says Deploying… with a spinner, on its instance's page", () => {
+  const SPIN = '<i class="spin" aria-hidden="true"></i>';
+  // The page started it: only its cell says Deploying…, and it stays shown with no hover.
+  const deploying = right(viewHtml(facts({ run: starts("3") }), "staging.example.net", NOW));
+  expect(rowOf(deploying, "3")).toContain(
+    `<span class="deps here busy"><span class="tip" title="It deploys now. The job line and Logs show its output."><button class="btn" type="button" data-deploy data-host="staging.example.net"`
   );
-/** A merge that runs, from a terminal: its job record. */
-const merging = () => jobOf(line({ ...start, command: "bun erga merge clean", host: "staging" }), () => true, "merge-1")!;
-
-test("the page has no feature branch, no Merge, no proof link and no legend", () => {
-  // Three pushed branches, a passed run and a proof are in the clone: the page shows none of them.
-  const html = viewHtml(deploys(), "example.net", NOW);
-  for (const gone of ["Feature branches", "clean", "clash", "data-merge", "f-merge", "f-proof", "Tests passed", 'class="legend"'])
-    expect(html, gone).not.toContain(gone);
-  expect(html).toContain('<section class="commits"');
+  expect(rowOf(deploying, "3")).toContain(`aria-busy="true" disabled>${SPIN}Deploying…</button>`);
+  expect(deploying.match(/class="spin"/g)?.length).toBe(1);
+  // The instance answers the new commit before the job ends: the cell still says Deploying…, not live.
+  const answered = facts({
+    run: starts("3"),
+    answers: { ...facts().answers, "staging.example.net": { version: "3".repeat(12), healthy: true } },
+  });
+  expect(rowOf(right(viewHtml(answered, "staging.example.net", NOW)), "3")).toContain(`${SPIN}Deploying…`);
+  expect(rowOf(right(viewHtml(answered, "staging.example.net", NOW)), "3")).not.toContain("live");
+  // A terminal's deploy: from its record's host and commit, whatever its flags.
+  for (const command of [
+    `bun erga deploy ${"3".repeat(12)} staging.example.net --no-tests`,
+    "bun erga deploy staging.example.net",
+    `bun erga deploy ${"3".repeat(12)} https://staging.example.net`,
+  ]) {
+    const html = right(
+      viewHtml(facts({ jobs: [job("t", "staging.example.net", "3", { command, ends: null })] }), "staging.example.net", NOW)
+    );
+    expect(rowOf(html, "3"), command).toContain(`${SPIN}Deploying…`);
+    expect(html.match(/class="spin"/g)?.length, command).toBe(1);
+  }
+  // Before its record names the commit, no cell says Deploying…; every button waits.
+  const early = right(
+    viewHtml(
+      facts({ jobs: [job("e", "staging.example.net", "", { command: "bun erga deploy staging.example.net", ends: null })] }),
+      "staging.example.net",
+      NOW
+    )
+  );
+  expect(early).not.toContain("spin");
+  expect(early.match(/data-deploy [^>]* disabled>/g)?.length).toBe(4);
+  // Another instance's deploy, or a merge, spins nothing here: the buttons wait.
+  for (const jobs of [[job("o", "notes.example.org", "3", { ends: null })], [merging()]]) {
+    const waits = right(viewHtml(facts({ jobs }), "staging.example.net", NOW));
+    expect(waits).not.toContain("spin");
+    expect(waits.match(/data-deploy [^>]* disabled>/g)?.length).toBe(4);
+  }
 });
 
-/** The row of a commit, in the view's HTML. */
-const rowOf = (html: string, n: string) =>
-  new RegExp(`<div class="row \\w+" data-sha="${n.repeat(40)}">.*?</div>(?=<div class="row|</div>)`).exec(html)?.[0] ?? "";
+test("auto-deploy that stopped for the instance says at which commit, and what starts it again", () => {
+  const stopped = (why: string) =>
+    right(viewHtml(facts({ auto: { "notes.example.org": { at: "failed", head: "3".repeat(40), why } } }), "notes.example.org", NOW));
+  expect(stopped("1 test failed on 333.")).toContain(
+    '<p class="note bad">Auto-deploy stopped at 3333333: 1 test failed on 333. A new commit on main starts it again, or Deploy on its row.</p>'
+  );
+  expect(stopped(REWRITTEN)).toContain("To accept the new head: bun erga deploy notes.example.org</p>");
+  expect(
+    right(viewHtml(facts({ auto: { "notes.example.org": { at: "failed", head: "3".repeat(40), why: "no" } } }), "example.net", NOW))
+  ).not.toContain("Auto-deploy stopped");
+});
 
-test("Deploy: a commit row has a button in an instance's column when the commit is on its branch and it does not run it", () => {
-  const html = viewHtml(deploys(), "example.net", NOW);
-  const hosts = (n: string) => [...rowOf(html, n).matchAll(/data-deploy data-host="([^"]+)"/g)].map((m) => m[1]);
-  // main is at commit 1: example.net, which tracks main, takes no commit after it. staging is at commit 3.
-  expect(hosts("3")).toEqual([]);
-  expect(hosts("2")).toEqual(["staging.example.net"]);
-  expect(hosts("1")).toEqual(["staging.example.net"]);
-  expect(rowOf(html, "3")).toContain('<span class="deps" title="Not on main, the branch that example.net tracks"></span>');
-  // After a promote, main is at commit 3: example.net takes it.
-  const promoted = deploys();
-  const at3 = viewHtml({ ...promoted, git: { ...promoted.git, main: "3".repeat(40) } } as Facts, "example.net", NOW);
-  expect([...rowOf(at3, "3").matchAll(/data-deploy data-host="([^"]+)"/g)].map((m) => m[1])).toEqual(["example.net"]);
-  expect(rowOf(at3, "3")).toContain('data-note="example.net tracks main. No branch moves."');
-  // Its question names the host and the commit; the page shows it only in the cell under the mouse or
-  // with the focus (ops-page.css, .deps.here).
-  expect(rowOf(html, "2")).toContain(
-    `<span class="deps here"><span class="tip"><button class="btn" type="button" data-deploy data-host="staging.example.net" data-sha="${"2".repeat(40)}" data-ask="Deploy 2222222 Change 2 to staging.example.net?"`
+test("Checked: one line with the chosen instance's own sources, its repository and itself", () => {
+  let polls = stepPolls(startPolls(), {
+    type: "sources",
+    names: ["github", "repo example.com/team/erga", ...HOSTS],
+    now: NOW - 60_000,
+  }).polls;
+  for (const name of ["github", "repo example.com/team/erga", ...HOSTS])
+    polls = stepPolls(polls, { type: "answer", name, now: NOW - 42_000, error: null }).polls;
+  const html = right(viewHtml(facts({ polls }), "example.net", NOW));
+  expect(html).toContain(
+    '<p class="checked" aria-label="Checks"><span>Checked:</span><span class="check ok" data-source="repo example.com/team/erga"><i class="light ok"></i>example.com/team/erga main, 42 s ago</span><span class="check ok" data-source="example.net"><i class="light ok"></i>example.net, 42 s ago</span></p>'
   );
-  expect(html).toContain('<div class="confirm" id="deploy-confirm" popover>');
-  expect(html.match(/data-deploy /g)?.length).toBe(2);
-  // While a job runs, each is disabled and says why.
-  const busy = viewHtml(deploys({ jobs: [merging()] }), "example.net", NOW);
-  expect(busy).toContain(
-    '<span class="tip" title="Another job runs: bun erga merge clean. Wait for it to end."><button class="btn" type="button" data-deploy'
+  expect(html).not.toContain("Sources");
+  expect(html).not.toContain('data-source="github"');
+  // Its repository gave no answer: the line says why, and the commits say what the page can't show.
+  const bad = stepPolls(polls, { type: "answer", name: "repo example.com/team/erga", now: NOW, error: "x" }).polls;
+  const asked = stepPolls(bad, { type: "tick", now: NOW + 61_000 }).polls;
+  const failed = stepPolls(asked, {
+    type: "answer",
+    name: "repo example.com/team/erga",
+    now: NOW + 62_000,
+    error: "fatal: Permission denied (publickey).",
+  }).polls;
+  const none = right(viewHtml(facts({ polls: failed, logs: {} }), "example.net", NOW + 62_000));
+  expect(none).toContain(
+    '<span class="check bad" data-source="repo example.com/team/erga"><i class="light bad"></i>example.com/team/erga main: <span class="s-err">fatal: Permission denied (publickey).</span></span>'
   );
-  expect(busy.match(/data-deploy [^>]* disabled>/g)?.length).toBe(2);
+  expect(none).toContain(
+    '<div class="none">This machine can&#39;t read example.com/team/erga: fatal: Permission denied (publickey).</div>'
+  );
 });
 
 test("the page's server: Deploy starts its `bun erga` command, one job at a time, only from the page; it has no merge", async () => {
@@ -255,31 +382,28 @@ test("the page's server: Deploy starts its `bun erga` command, one job at a time
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const { serveOpsPage } = await import("../deploy/cli/ops-page");
-  // A clone: main at the first commit, staging at the second, a feature branch on top.
+  // A clone: main at the first commit, staging at the third.
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "erga-ops-buttons-")));
   const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim();
   git("init", "--quiet");
-  for (const m of ["Change 1", "Change 2", "A feature"])
+  for (const m of ["Change 1", "Change 2", "Change 3"])
     git("-c", "user.name=Pete", "-c", "user.email=p@example.com", "commit", "--quiet", "--allow-empty", "-m", m);
-  git("update-ref", "refs/remotes/origin/main", "HEAD~2");
-  git("update-ref", "refs/remotes/origin/staging", "HEAD~1");
-  git("update-ref", "refs/remotes/origin/a-feature", "HEAD");
+  const [c1, c2, c3] = ["HEAD~2", "HEAD~1", "HEAD"].map((r) => git("rev-parse", r));
   mkdirSync(join(dir, ".erga"));
   writeFileSync(
     join(dir, ".erga/config.json"),
     JSON.stringify({ instances: [entry("example.net"), entry("staging.example.net", "staging")] })
   );
-  const version = {
-    "example.net": git("rev-parse", "HEAD~2").slice(0, 12),
-    "staging.example.net": git("rev-parse", "HEAD~1").slice(0, 12),
-  };
+  // example.net runs main's head; staging.example.net runs the second commit of staging's three.
+  const version = { "example.net": c1.slice(0, 12), "staging.example.net": c2.slice(0, 12) };
   const runs: string[][] = [];
-  const { writePass } = await import("./helpers/pass.ts");
   let end = (_: { code: number; out: string }) => {};
   const page = serveOpsPage({
     dir: join(dir, ".erga"),
     cwd: dir,
     port: 0,
+    fetch: async () => null,
+    heads: async () => ({ heads: { main: c1, staging: c3 }, error: null }),
     ask: async (e) => ({ version: version[e.host as keyof typeof version], healthy: true }),
     run: (args) => {
       runs.push(args);
@@ -289,41 +413,38 @@ test("the page's server: Deploy starts its `bun erga` command, one job at a time
   const at = `http://127.0.0.1:${page.server.port}`;
   const post = (path: string, body: object, origin = at) =>
     fetch(`${at}${path}`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const view = async () => (await fetch(`${at}/view?hash=example.net`)).text();
+  const view = async (host = "staging.example.net") => (await fetch(`${at}/view?hash=${host}`)).text();
   try {
     for (let i = 0; i < 100 && !(await view()).includes("dep live"); i++) await Bun.sleep(20);
-    // The page merges nothing: the address is not there, whatever the branch's tests say.
-    writePass(join(dir, ".erga"), "HEAD", dir);
+    // The page merges nothing: the address is not there.
     expect((await post("/api/merge", { branch: "a-feature", message: "A feature" })).status).toBe(404);
     expect(runs).toEqual([]);
-    expect((await post("/api/deploy", { host: "example.net", sha: git("rev-parse", "HEAD~1") }, "https://evil.example")).status).toBe(403);
-    expect((await post("/api/deploy", { host: "example.net", sha: git("rev-parse", "HEAD~1") })).status).toBe(202);
-    expect(runs).toEqual([["deploy", git("rev-parse", "HEAD~1").slice(0, 12), "example.net"]]);
-    // While it runs: no second job, and the buttons say why.
-    const busy = await post("/api/deploy", { host: "staging.example.net", sha: git("rev-parse", "HEAD~2") });
+    expect((await post("/api/deploy", { host: "staging.example.net", sha: c1 }, "https://evil.example")).status).toBe(403);
+    expect((await post("/api/deploy", { host: "staging.example.net", sha: c1 })).status).toBe(202);
+    expect(runs).toEqual([["deploy", c1.slice(0, 12), "staging.example.net"]]);
+    // While it runs: no second job. The server names the job; the page's buttons say only that one runs.
+    const busy = await post("/api/deploy", { host: "staging.example.net", sha: c3 });
     expect(busy.status).toBe(409);
-    const command = `bun erga deploy ${git("rev-parse", "HEAD~1").slice(0, 12)} example.net`;
+    const command = `bun erga deploy ${c1.slice(0, 12)} staging.example.net`;
     expect(((await busy.json()) as { error: string }).error).toBe(`Another job runs: ${command}. Wait for it to end.`);
-    expect(await view()).toContain(`title="Another job runs: ${command}. Wait for it to end."`);
-    // The Deploys tab's job line shows it before its job record does.
+    expect(await view()).toContain('title="Another job runs. Wait for it to end."');
+    // Its instance's job line shows it before its job record does; another instance's page does not.
     expect(await view()).toContain('data-tab="deploys"');
     expect(await view()).toContain(
       `<div class="job running"><i class="light"></i><code>${command}</code><span>starts · from this page</span></div>`
     );
-    // It stops before its job record: the page shows its last words.
-    end({ code: 1, out: "FAIL  example.net.lock is locked\n" });
+    expect(await view("example.net")).toContain("No job yet.");
+    // It stops before its job record: its instance's page shows its last words.
+    end({ code: 1, out: "FAIL  staging.example.net.lock is locked\n" });
     for (let i = 0; i < 100 && (await view()).includes("Another job runs"); i++) await Bun.sleep(20);
-    expect(await view()).toContain(`<p class="note bad failed">${command} stopped: FAIL  example.net.lock is locked</p>`);
-    // Deploy: a commit of the log, to an instance that does not run it.
-    expect((await post("/api/deploy", { host: "example.net", sha: git("rev-parse", "HEAD") })).status).toBe(409);
-    expect((await post("/api/deploy", { host: "example.net", sha: git("rev-parse", "HEAD~2") })).status).toBe(409);
-    expect((await post("/api/deploy", { host: "nope.dev", sha: git("rev-parse", "HEAD~1") })).status).toBe(409);
-    expect((await post("/api/deploy", { host: "example.net", sha: git("rev-parse", "HEAD~1") })).status).toBe(202);
-    expect(runs.at(-1)).toEqual(["deploy", git("rev-parse", "HEAD~1").slice(0, 12), "example.net"]);
-    end({ code: 0, out: "" });
-    for (let i = 0; i < 100 && (await view()).includes("Another job runs"); i++) await Bun.sleep(20);
-    expect((await post("/api/deploy", { host: "staging.example.net", sha: git("rev-parse", "HEAD~2") })).status).toBe(202);
-    expect(runs.at(-1)).toEqual(["deploy", git("rev-parse", "HEAD~2").slice(0, 12), "staging.example.net"]);
+    expect(await view()).toContain(`<p class="note bad failed">${command} stopped: FAIL  staging.example.net.lock is locked</p>`);
+    expect(await view("example.net")).not.toContain("note bad failed");
+    // Deploy: a commit of the instance's own branch, to an instance that does not run it.
+    expect((await post("/api/deploy", { host: "example.net", sha: c3 })).status).toBe(409);
+    expect((await post("/api/deploy", { host: "example.net", sha: c1 })).status).toBe(409);
+    expect((await post("/api/deploy", { host: "nope.dev", sha: c1 })).status).toBe(409);
+    expect((await post("/api/deploy", { host: "staging.example.net", sha: c3 })).status).toBe(202);
+    expect(runs.at(-1)).toEqual(["deploy", c3.slice(0, 12), "staging.example.net"]);
   } finally {
     end({ code: 0, out: "" });
     page.stop();
@@ -345,65 +466,7 @@ test("the tests that a merge or a deploy runs get no ERGA_JOB_FROM, so their own
   }
 });
 
-test("while its deploy runs, its cell says Deploying… with a spinner", () => {
-  const SPIN = '<i class="spin" aria-hidden="true"></i>';
-  // A deploy: only its cell says Deploying…, and it stays shown with no hover.
-  const deploying = viewHtml(deploys({ run: starts("2") }), "example.net", NOW);
-  expect(rowOf(deploying, "2")).toContain(
-    `<span class="deps here busy"><span class="tip" title="It deploys now. The job line and Logs show its output."><button class="btn" type="button" data-deploy data-host="staging.example.net"`
-  );
-  expect(rowOf(deploying, "2")).toContain(`aria-busy="true" disabled>${SPIN}Deploying…</button>`);
-  expect(deploying.match(/class="spin"/g)?.length).toBe(1);
-  expect(deploying).toContain(`${SPIN}Deploying…`);
-  // The instance answers the new commit before the job ends: the cell still says Deploying…, not live.
-  const answered = viewHtml(deploys({ run: starts("2") }, "2"), "example.net", NOW);
-  expect(rowOf(answered, "2")).toContain(`${SPIN}Deploying…`);
-  expect(rowOf(answered, "2")).not.toContain("live");
-  // A merge that runs spins nothing on the page: the buttons wait.
-  const waits = viewHtml(deploys({ jobs: [merging()] }), "example.net", NOW);
-  expect(waits).not.toContain("spin");
-});
-
-test("a terminal's deploy says Deploying… in its cell, from its record's host and commit, whatever its flags", () => {
-  const SPIN = '<i class="spin" aria-hidden="true"></i>';
-  const two = "2".repeat(40);
-  // Each command that main.ts builds, for a deploy of commit 2 that staging (or production) already answers.
-  for (const [command, host] of [
-    [`bun erga deploy ${two.slice(0, 12)} staging.example.net --no-tests`, "staging.example.net"],
-    [`bun erga deploy ${two.slice(0, 12)} staging.example.net --fresh`, "staging.example.net"],
-    ["bun erga deploy example.net", "example.net"],
-    ["bun erga deploy main example.net", "example.net"],
-    [`bun erga deploy ${two.slice(0, 12)} https://staging.example.net`, "staging.example.net"],
-  ]) {
-    const record = jobOf(line({ ...start, command, host }) + line({ commit: two }), () => true)!;
-    const html = viewHtml(deploys({ jobs: [record] }, "2", "2"), "example.net", NOW);
-    const cell = new RegExp(`<span class="deps here busy">[^]*?data-host="${host}" data-sha="${two}"[^]*?${SPIN}Deploying…`);
-    expect(rowOf(html, "2"), command).toMatch(cell);
-    expect(html.match(/class="spin"/g)?.length, command).toBe(1);
-  }
-  // Before its record names the commit, no cell says Deploying…; every button waits.
-  const early = jobOf(line({ ...start, command: "bun erga deploy example.net", host: "example.net" }), () => true)!;
-  const html = viewHtml(deploys({ jobs: [early] }), "example.net", NOW);
-  expect(html).not.toContain("spin");
-  expect(html.match(/data-deploy [^>]* disabled>/g)?.length).toBe(2);
-});
-
-test("a merge deploys to no instance: no cell says Deploying…, and its job shows for each instance", () => {
-  const two = "2".repeat(40);
-  const merge = jobOf(line({ ...start, command: "bun erga merge clean", host: "staging" }) + line({ commit: two }), () => true, "merge-1")!;
-  const html = viewHtml(deploys({ jobs: [merge] }), "example.net", NOW);
-  expect(rowOf(html, "2")).not.toContain("Deploying…");
-  expect(html).toContain('<a class="job running" href="#example.net/logs/merge-1"');
-  // A promote's job too.
-  const promote = jobOf(
-    line({ ...start, command: "bun erga promote", host: "main" }) + line({ result: "ok", ended: start.started }),
-    () => true,
-    "p-1"
-  )!;
-  expect(viewHtml(deploys({ jobs: [promote] }), "staging.example.net/history", NOW)).toContain('data-job="p-1"');
-});
-
-test("the page's server checks GitHub and each instance at start, not on a page load, and shows each source", async () => {
+test("the page's server checks its sources at start, not on a page load, and the page shows the instance's own", async () => {
   const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -417,6 +480,7 @@ test("the page's server checks GitHub and each instance at start, not on a page 
     cwd: dir,
     port: 0,
     fetch: async () => (calls.push("fetch"), "fatal: unable to access GitHub"),
+    heads: async () => (calls.push("heads"), { heads: {}, error: "fatal: could not read from the repository" }),
     ask: async () => (calls.push("ask"), { version: "1".repeat(12), healthy: true }),
   });
   const at = `http://127.0.0.1:${page.server.port}`;
@@ -426,13 +490,16 @@ test("the page's server checks GitHub and each instance at start, not on a page 
     return view();
   };
   try {
-    const first = await until((h) => h.includes("healthy") && h.includes("unable to access"));
-    expect(first).toContain('<li class="source bad" data-source="github">');
-    expect(first).toMatch(/<li class="source ok" data-source="example.net">.*runs 111111111111 · healthy/);
-    expect(calls.sort()).toEqual(["ask", "fetch"]);
-    // A page load checks nothing again: GitHub's fetch keeps its minute, an instance its 15 seconds (poll-state.ts).
+    const first = await until((h) => h.includes('class="check ok"') && h.includes("could not read"));
+    // Its repository gave no answer, and the instance did. The fetch of the clone, for the tests' queue, is not on the page.
+    expect(first).toContain('<span class="check bad" data-source="repo example.com/team/erga">');
+    expect(first).toMatch(/<span class="check ok" data-source="example.net"><i class="light ok"><\/i>example.net, \d+ s ago<\/span>/);
+    expect(first).not.toContain("unable to access GitHub");
+    expect(first).toContain("This machine can&#39;t read example.com/team/erga: fatal: could not read from the repository");
+    expect(calls.sort()).toEqual(["ask", "fetch", "heads"]);
+    // A page load checks nothing again: a repository keeps its minute, an instance its 15 seconds (poll-state.ts).
     await fetch(`${at}/`);
-    expect(calls.sort()).toEqual(["ask", "fetch"]);
+    expect(calls.sort()).toEqual(["ask", "fetch", "heads"]);
   } finally {
     page.stop();
     rmSync(dir, { recursive: true, force: true });

@@ -53,13 +53,14 @@ test("the page's run: it starts, then it ends; it stops before its record, with 
   expect(stepRun(started, { type: "exit", code: 1, out: "boom", recorded: true })).toEqual({ at: "idle" });
   expect(stepRun(started, { type: "exit", code: 1, out: "a\nb\nFAIL  locked\n", recorded: false })).toEqual({
     at: "failed",
+    host: job.host,
     why: "bun erga deploy c s.dev stopped: a b FAIL  locked",
   });
   expect(stepRun(started, { type: "exit", code: 2, out: " ", recorded: false })).toMatchObject({
     why: "bun erga deploy c s.dev stopped: exit 2",
   });
   // An exit with nothing that starts changes nothing; a new start clears the old failure.
-  const failed: Run = { at: "failed", why: "w" };
+  const failed: Run = { at: "failed", host: job.host, why: "w" };
   expect(stepRun(failed, { type: "exit", code: 1, out: "", recorded: false })).toBe(failed);
   expect(stepRun(failed, { type: "start", command: "x", job }).at).toBe("starting");
   // What keeps the buttons busy: the records that run, then the page's own command.

@@ -4,7 +4,7 @@
 // again stops it.
 
 import { expect, test } from "bun:test";
-import { type Auto, type AutoEvent, autoText, stepAuto } from "../deploy/cli/auto-state";
+import { type Auto, type AutoEvent, stepAuto } from "../deploy/cli/auto-state";
 
 const A = "a".repeat(40),
   B = "b".repeat(40),
@@ -105,14 +105,4 @@ test("a branch that was written again stops: the new head does not have the comm
   expect(r.deploys).toEqual([]);
   // A deploy by hand accepts it.
   expect(run(r.auto, seen(B, B)).auto).toEqual({ at: "idle", done: B });
-});
-
-test("each state in a few words, for the page", () => {
-  const at = { head: B, runs: A.slice(0, 12) };
-  expect(autoText(IDLE, { head: A, runs: A.slice(0, 12) })).toBe("idle");
-  expect(autoText(IDLE, { head: null, runs: null })).toBe("idle");
-  expect(autoText(IDLE, at)).toBe("waits for a new commit");
-  expect(autoText({ at: "due", head: B }, at)).toBe("bbbbbbb is next");
-  expect(autoText({ at: "deploying", head: B, newer: null }, at)).toBe("deploys bbbbbbb");
-  expect(autoText({ at: "failed", head: B, why: "x" }, at)).toBe("failed at bbbbbbb");
 });

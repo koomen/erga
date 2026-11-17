@@ -1,6 +1,6 @@
 // The ops page's script (deploy/cli/ops-view.ts puts it in the page): it draws the page again (GET /view) when the
 // server says something changed (/api/events), when another instance or tab is chosen (the hash: #<host>/<tab>),
-// and each minute (the times). When a new job starts on an instance that the page does not show, it switches to that instance.
+// and each minute (the times).
 // A job's log that was scrolled to its end stays at its end. When the server stops, it says so; when it runs again, the page follows, and reloads if the server's script or styles changed.
 // A commit row's cell shows a Deploy button in an instance's column on hover or focus, which asks a question first (the
 // instance and the commit). It starts its job (POST /api/deploy); the page stays on its tab, and the job line shows the
@@ -9,8 +9,6 @@
   const ops = document.getElementById("ops");
   const gone = document.getElementById("gone");
   const chosen = () => decodeURIComponent(location.hash.slice(1));
-  const main = () => ops.querySelector(".main");
-  let newest = main()?.dataset.newest ?? "";
   let asked = 0;
   /** What the person has open now: the deploy question. */
   function opened() {
@@ -48,11 +46,6 @@
       reopen(open);
       const log = ops.querySelector(".log");
       if (log) log.scrollTop = atEnd || ops.querySelector(".logs")?.dataset.job != job ? log.scrollHeight : old.scrollTop;
-      const m = main();
-      if (m?.dataset.newest && m.dataset.newest != newest) {
-        newest = m.dataset.newest;
-        if (m.dataset.newestHost != m.dataset.host) location.hash = `${m.dataset.newestHost}/${m.dataset.tab}`;
-      }
     } catch {}
   }
   /** Starts a job; the page stays on its tab, and the job line shows the job. Else `err` says why. */

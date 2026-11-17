@@ -1,20 +1,20 @@
 // The ops page's view (`bun erga`, deploy/cli/ops-page.ts serves it): pure, the facts in and HTML out. On the left, the
-// instances of .erga/config.json, each with the branch it tracks. On the right, the chosen instance's tabs, the job line
-// under them, and the chosen tab. Deploys: the clone's log with a column for each instance that tracks the chosen one's
-// repository, and "live" at the commit it runs. Logs: a job's output. History: the jobs of those instances, and the
-// merges and promotes. With auto-deploy on (`bun erga --auto-deploy`), each column's head shows its instance's state
-// (auto-state.ts), and the page says why a stopped one stopped. The page shows no feature branch and merges nothing:
-// `bun erga status` lists the branches, and `bun erga merge` merges.
+// instances of .erga/config.json, each with the branch it tracks and one word when it is not at its branch's head, and
+// whether auto-deploy is on. The right side is about the chosen instance only, and names no other one: its tabs, its
+// job line (the command that runs, or its last one), and the chosen tab. Deploys: the commits of its branch, green
+// where it is live and orange where it is not yet, with a Deploy button on a row, and one line of its own sources'
+// checks. Logs: a job's output. History: its deploys and rollbacks. The page shows no feature branch and merges
+// nothing: `bun erga status` lists the branches, and `bun erga merge` merges.
 
 import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo";
 import { esc } from "../../shared/html";
-import { timeAgo } from "../../shared/time";
-import { type Auto, autoText, REWRITTEN } from "./auto-state";
+import { plural, timeAgo } from "../../shared/time";
+import { type Auto, REWRITTEN } from "./auto-state";
 import { type Config, type Entry, repoName } from "./config";
-import type { Answer, Branch as StatusBranch, Commit as StatusCommit } from "./flow";
+import type { Answer, Commit as StatusCommit } from "./flow";
 import type { TestRun } from "./gate";
 import { type Alive, activeJobs, deploysTo, type JobState, jobState, type Line, type Run } from "./job-state";
-import { GITHUB, isStale, type Polls } from "./poll-state";
+import { isStale, type Polls } from "./poll-state";
 
 /** A job's record in .erga/jobs/ (deploy/cli/jobs.ts, startJob), as the page reads it: its state, and what it says. */
 export interface JobRecord extends JobState {
@@ -31,37 +31,24 @@ export interface JobRecord extends JobState {
 
 const OUT_LINES = 2000;
 
-/** A commit and a branch (flow.ts), with the fields that the page shows and `bun erga status` does not: git gives them all. */
+/** A commit (flow.ts), with the fields that the page shows and `bun erga status` does not: git gives them all. */
 export type Commit = StatusCommit & { author: string; at: number };
-export type Branch = StatusBranch & { author: string; tree: string | null };
-
-/** What the clone shows, as the last fetch left it. */
-export interface Git {
-  /** origin/staging's and origin/main's commits, newest first. */
-  log: Commit[];
-  branches: Branch[];
-  /** The branch the feature branches are counted against. */
-  base: string;
-  main: string | null;
-  staging: string | null;
-  /** The instances' commits that are not in `log`, and whether the clone has each one. */
-  elsewhere: Record<string, boolean>;
-}
 
 export interface Facts {
   config: Config | { error: string };
   answers: Record<string, Answer>;
-  git: Git | { error: string };
+  /** Each instance's commits, by its host, newest first: the log of the branch that it tracks, from its head. None: the clone does not have them yet. */
+  logs: Record<string, Commit[]>;
   jobs: JobRecord[];
   /** The command that this page started (job-state.ts, stepRun). */
   run: Run;
-  /** The checks of GitHub and of each instance (poll-state.ts). */
+  /** The checks of GitHub, of each repository and of each instance (poll-state.ts). */
   polls: Polls;
   /** The records of the tests' runs (test-run.ts, readRuns), each under the tree it tested. */
   runs: TestRun[];
   /** Auto-deploy: each instance's state, by its host; null: the mode is off. */
   auto: Record<string, Auto> | null;
-  /** The head of the branch that each instance tracks, by its host, as its repository last answered (auto-deploy asks it). */
+  /** The head of the branch that each instance tracks, by its host, as its repository last answered. */
   heads: Record<string, string | null>;
 }
 
@@ -100,21 +87,13 @@ export function jobOf(text: string, alive: Alive, id = ""): JobRecord | null {
 export const chosenOf = (config: Config, name: string): Entry | null =>
   config.instances.find((e) => e.host == name) ?? config.instances[0] ?? null;
 
-/** The log's columns: each instance that tracks the chosen one's repository, in the file's order. */
-export const columnsOf = (config: Config, chosen: Entry): Entry[] =>
-  config.instances.filter((e) => repoName(e.repo) == repoName(chosen.repo));
-
 /** Whether the instance runs `sha` (it answers the commit's first 12 characters). */
 const runs = (a: Answer | undefined, sha: string) => !!a?.version && sha.startsWith(a.version);
 
-/** The log's rows: at least 15, and down to the oldest commit that an instance of the columns runs. */
-export function rowsOf(log: Commit[], versions: (string | null)[]): Commit[] {
-  let last = 14;
-  for (const v of versions) {
-    const i = v ? log.findIndex((c) => c.sha.startsWith(v)) : -1;
-    if (i > last) last = i;
-  }
-  return log.slice(0, last + 1);
+/** The log's rows: at least 15, and down to the commit that the instance runs. */
+export function rowsOf(log: Commit[], version: string | null): Commit[] {
+  const i = version ? log.findIndex((c) => c.sha.startsWith(version)) : -1;
+  return log.slice(0, Math.max(14, i) + 1);
 }
 
 /** "now", "5m", "2h", "3d". */
@@ -135,28 +114,44 @@ function stateOf(a: Answer | undefined): { cls: string; what: string } {
   return { cls: "ok", what: `runs ${a.version ?? "no known commit"}` };
 }
 
+/** An instance's word in the list, when it is not at its branch's head: what happens to it now, or how far it is behind. */
+function wordOf(e: Entry, f: Facts): { cls: string; text: string; tip: string } | null {
+  const job = activeJobs(f.jobs, f.run).find((j) => j.host == e.host && (j.kind == "deploy" || j.kind == "rollback"));
+  if (job) return { cls: "deploying", text: job.kind == "deploy" ? "deploying" : "rolling back", tip: job.command };
+  const repo = f.polls.sources[repoSource(e.repo)];
+  if (repo?.error) return { cls: "unread", text: "can't read", tip: `${e.repo}: ${repo.error}` };
+  const a = f.auto?.[e.host];
+  if (a?.at == "failed") return { cls: "failed", text: "failed", tip: `Auto-deploy stopped at ${sha7(a.head)}: ${a.why}` };
+  const v = f.answers[e.host]?.version;
+  const n = v ? (f.logs[e.host]?.findIndex((c) => c.sha.startsWith(v)) ?? -1) : -1;
+  return n > 0 ? { cls: "behind", text: `${n} behind`, tip: `${plural(n, "commit")} of ${e.branch} not deployed` } : null;
+}
+
+/** The list: each instance, and under it whether auto-deploy is on, a fact of the whole page. */
 function side(config: Config, chosen: Entry | null, f: Facts, now: number): string {
   if (!config.instances.length) return `<p class="none">No instances.</p>`;
   const item = (e: Entry) => {
     const source = f.polls.sources[e.host];
     const st =
       source && isStale(source, now) ? { cls: "stale", what: `stale: ${source.error ?? "no answer yet"}` } : stateOf(f.answers[e.host]);
-    const tracks = `tracks ${e.repo} ${e.branch}`;
-    return `<span class="host" title="${esc(`${e.host}: ${st.what}`)}"><i class="light ${st.cls}"></i><span>${esc(e.host)}</span></span><span class="tracks" title="${esc(tracks)}"><span>${esc(e.branch)}</span></span>`;
+    const w = wordOf(e, f);
+    const word = w ? `<span class="g-state ${w.cls}" title="${esc(w.tip)}">${esc(w.text)}</span>` : "";
+    return `<span class="host" title="${esc(`${e.host}: ${st.what}`)}"><i class="light ${st.cls}"></i><span>${esc(e.host)}</span></span><span class="tracks" title="${esc(`tracks ${e.repo} ${e.branch}`)}"><span>${esc(e.branch)}</span>${word}</span>`;
   };
+  const auto = f.auto
+    ? `<p class="side-auto"><i class="light ok"></i><span>Auto-deploy is on</span></p>`
+    : `<p class="side-auto" title="bun erga --auto-deploy turns it on"><i class="light"></i><span>Auto-deploy is off</span></p>`;
   return `<ul class="instances">${config.instances
     .map(
       (e) =>
         `<li><a class="group${e == chosen ? " sel" : ""}" href="#${esc(e.host)}"${e == chosen ? ' aria-current="true"' : ""}>${item(e)}</a></li>`
     )
-    .join("")}</ul>`;
+    .join("")}</ul>${auto}`;
 }
 
-/** The jobs of the columns' instances, and the jobs that move a branch (a merge, a promote), newest first. */
-const jobsOf = (cols: Entry[], jobs: JobRecord[]) =>
-  jobs
-    .filter((j) => j.kind == "merge" || j.kind == "promote" || cols.some((e) => e.host == j.host))
-    .sort((a, b) => b.started.localeCompare(a.started));
+/** An instance's own jobs, its deploys and its rollbacks, newest first: no merge, no promote, no job of another instance. */
+const jobsOf = (g: Entry, jobs: JobRecord[]) =>
+  jobs.filter((j) => j.host == g.host && (j.kind == "deploy" || j.kind == "rollback")).sort((a, b) => b.started.localeCompare(a.started));
 
 /** A job's light (its class) and its state in words: "done 5 minutes ago · from a terminal". */
 function jobLook(job: JobRecord, now: number): { cls: string; what: string } {
@@ -177,7 +172,7 @@ function jobLook(job: JobRecord, now: number): { cls: string; what: string } {
 function jobLine(g: Entry, mine: JobRecord[], run: Run, now: number): string {
   const job = mine.find((j) => j.phase == "running") ?? mine[0];
   // A command that this page started, before its job record shows.
-  if (run.at == "starting" && job?.phase != "running")
+  if (run.at == "starting" && run.job.host == g.host && job?.phase != "running")
     return `<div class="job running"><i class="light"></i><code>${esc(run.command)}</code><span>starts · from this page</span></div>`;
   if (!job) return `<div class="job none">No job yet. A deploy or a rollback of ${esc(g.host)} shows here as it runs.</div>`;
   const st = jobLook(job, now);
@@ -205,15 +200,15 @@ function logs(g: Entry, mine: JobRecord[], id: string, now: number): string {
 
 /** History: the jobs, newest first. */
 function history(g: Entry, mine: JobRecord[], now: number): string {
-  if (!mine.length) return `<p class="note">No job yet. Each deploy and rollback of ${esc(g.host)}, and each merge, shows here.</p>`;
+  if (!mine.length) return `<p class="note">No job yet. Each deploy and rollback of ${esc(g.host)} shows here.</p>`;
   const rows = mine
     .map((j) => {
       const st = jobLook(j, now);
       const result = j.phase == "running" ? "runs" : j.phase == "ok" ? "done" : j.phase;
-      return `<a class="h-row ${st.cls}" href="#${esc(g.host)}/logs/${esc(j.id)}" data-job="${esc(j.id)}"><span class="h-state"><i class="light"></i>${result}</span><code class="h-cmd" title="${esc(j.error ?? j.command)}">${esc(j.command)}</code><span class="h-host">${esc(j.host)}</span><span class="h-from">${esc(j.from == "page" ? "this page" : j.from)}</span><time datetime="${esc(j.started)}" title="${esc(j.started)}">${esc(timeAgo(Date.parse(j.started) || now, now))}</time><span class="h-took">${esc(took(j, now))}</span></a>`;
+      return `<a class="h-row ${st.cls}" href="#${esc(g.host)}/logs/${esc(j.id)}" data-job="${esc(j.id)}"><span class="h-state"><i class="light"></i>${result}</span><code class="h-cmd" title="${esc(j.error ?? j.command)}">${esc(j.command)}</code><span class="h-from">${esc(j.from == "page" ? "this page" : j.from)}</span><time datetime="${esc(j.started)}" title="${esc(j.started)}">${esc(timeAgo(Date.parse(j.started) || now, now))}</time><span class="h-took">${esc(took(j, now))}</span></a>`;
     })
     .join("");
-  return `<section class="history" aria-label="Jobs"><div class="h-row h-head"><span>Result</span><span>Command</span><span>Instance</span><span>From</span><span>Started</span><span>Took</span></div>${rows}</section>`;
+  return `<section class="history" aria-label="Jobs"><div class="h-row h-head"><span>Result</span><span>Command</span><span>From</span><span>Started</span><span>Took</span></div>${rows}</section>`;
 }
 
 /** The command of the job that runs (or that this page starts), or "": while one runs, the page starts no other. */
@@ -230,47 +225,23 @@ const DEPLOYING = "It deploys now. The job line and Logs show its output.";
 /** "12 s ago", then as timeAgo. */
 const ago = (t: number, now: number) => (now - t < 60_000 ? `${Math.max(0, Math.round((now - t) / 1000))} s ago` : timeAgo(t, now));
 
-/**
- * Sources: what the page knows and from where. GitHub (the clone's fetch) and each instance of the columns, each with
- * its last check, what it answered, its error, and "stale" when it had no good answer for a few periods.
- */
-function sources(cols: Entry[], f: Facts, now: number): string {
-  const row = (name: string, label: string, said: string) => {
+/** A button that is off while a job runs: the page says no more, since the job can be another instance's. */
+const BUSY = "Another job runs. Wait for it to end.";
+
+/** The checks of the instance's own sources, in one line: its repository (its branch's head) and the instance itself. */
+function checked(e: Entry, f: Facts, now: number): string {
+  const item = (name: string, label: string) => {
     const s = f.polls.sources[name];
     if (!s) return "";
     const stale = isStale(s, now);
-    const when =
-      s.at == "asking" && s.checked == null
-        ? "checking…"
-        : s.checked == null
-          ? "not checked yet"
-          : `checked ${ago(s.checked, now)}${s.at == "asking" ? " · checking…" : ""}`;
     const cls = stale ? "stale" : s.error ? "bad" : s.checked != null ? "ok" : "";
     const what = s.error
-      ? `<span class="s-err">${esc(s.error)}</span>${s.good ? ` · last good ${esc(ago(s.good, now))}` : ""}`
-      : s.checked != null
-        ? esc(said)
-        : "";
-    return `<li class="source ${cls}" data-source="${esc(name)}"><i class="light ${cls}"></i><b>${esc(label)}</b><span class="s-when" title="${esc(s.checked ? new Date(s.checked).toLocaleString() : "")}">${esc(when)}</span>${stale ? `<span class="s-stale">stale</span>` : ""}<span class="s-what">${what}</span></li>`;
+      ? `${esc(label)}: <span class="s-err">${esc(s.error)}</span>${stale ? `<span class="s-stale">stale</span>` : ""}`
+      : `${esc(label)}, ${s.checked == null ? "checking…" : esc(ago(s.checked, now))}`;
+    return `<span class="check ${cls}" data-source="${esc(name)}"><i class="light ${cls}"></i>${what}</span>`;
   };
-  const git = "error" in f.git ? null : f.git;
-  const heads = git
-    ? [git.staging && `staging ${sha7(git.staging)}`, git.main && `main ${sha7(git.main)}`].filter(Boolean).join(" · ")
-    : "";
-  const instance = (e: Entry) => {
-    const a = f.answers[e.host];
-    return row(
-      e.host,
-      e.host,
-      a ? `runs ${a.version ?? "no known commit"} · ${a.healthy == null ? "health unknown" : a.healthy ? "healthy" : "not healthy"}` : ""
-    );
-  };
-  // Auto-deploy's check of the columns' repository: each tracked branch's head.
-  const tracked = [...new Map(cols.map((e) => [e.branch, f.heads[e.host]])).entries()]
-    .map(([branch, head]) => `${branch} ${head ? sha7(head) : "?"}`)
-    .join(" · ");
-  const repo = cols[0] ? row(repoSource(cols[0].repo), repoName(cols[0].repo), `git ls-remote: ${tracked}`) : "";
-  return `<section class="box sources" aria-labelledby="sources-head"><h3 id="sources-head">Sources</h3><ul>${row(GITHUB, "GitHub", `git fetch: ${heads || "no staging or main"}`)}${repo}${cols.map(instance).join("")}</ul></section>`;
+  const items = item(repoSource(e.repo), `${repoName(e.repo)} ${e.branch}`) + item(e.host, e.host);
+  return items ? `<p class="checked" aria-label="Checks"><span>Checked:</span>${items}</p>` : "";
 }
 
 /** The time of the last good deploy of `sha` to `host`, from the job records. */
@@ -281,104 +252,67 @@ const deployedAt = (jobs: JobRecord[], host: string, sha: string) =>
     .filter(Boolean)
     .sort((a, b) => b - a)[0];
 
-/** The Deploy button of a row, in an instance's column: `bun erga deploy <commit> <host>`, after its question. */
-function deployButton(e: Entry, c: Commit, busy: string, deploying: boolean): string {
+/** The Deploy button of a row: `bun erga deploy <commit> <host>`, after its question. `show`: always, not only under the mouse. */
+function deployButton(e: Entry, c: Commit, busy: boolean, deploying: boolean, show: boolean): string {
   const note = `${e.host} tracks ${e.branch}. No branch moves.`;
   const data = `data-deploy data-host="${esc(e.host)}" data-sha="${esc(c.sha)}" data-ask="${esc(`Deploy ${sha7(c.sha)} ${c.subject} to ${e.host}?`)}" data-note="${esc(note)}" aria-label="${esc(`Deploy ${sha7(c.sha)} to ${e.host}`)}"`;
   if (deploying) return `<span class="deps here busy">${button(running("Deploying"), `${data} aria-busy="true"`, DEPLOYING)}</span>`;
-  return `<span class="deps here">${button("Deploy", data, busy ? `Another job runs: ${busy}. Wait for it to end.` : null)}</span>`;
+  return `<span class="deps here${show ? " show" : ""}">${button("Deploy", data, busy ? BUSY : null)}</span>`;
 }
 
-function log(g: Entry, cols: Entry[], f: Facts & { git: Git }, now: number): string {
-  const git = f.git;
-  const answer = (e: Entry) => f.answers[e.host];
-  const rows = rowsOf(
-    git.log,
-    cols.map((e) => answer(e)?.version ?? null)
-  );
-  // Green: the commits that the chosen instance runs (that commit and the ones before it); else main's.
-  const top = answer(g)?.version ?? git.main?.slice(0, 12) ?? null;
-  const on = top ? rows.findIndex((c) => c.sha.startsWith(top)) : -1;
-  const isOn = (i: number) => on >= 0 && i >= on;
-  // A commit of the branch that an instance tracks: its head's row, and the rows after it (the log is one line). An
-  // instance deploys no other commit. A branch whose head the page does not know: the deploy itself checks.
-  const headRow = (e: Entry) => {
-    const head = e.branch == "staging" ? git.staging : e.branch == "main" ? git.main : null;
-    return head ? rows.findIndex((c) => c.sha == head) : 0;
-  };
-  const heads = new Map(cols.map((e) => [e.host, headRow(e)]));
-  const onBranch = (e: Entry, i: number) => heads.get(e.host)! >= 0 && i >= heads.get(e.host)!;
-  const notes = cols
-    .map((e) => {
-      const v = answer(e)?.version;
-      if (!v || rows.some((c) => c.sha.startsWith(v))) return "";
-      return git.elsewhere[v]
-        ? `${e.host} runs ${v}, which is not on origin/staging or origin/main.`
-        : `${e.host} runs ${v}, which this clone does not have. git fetch gets it.`;
-    })
-    .filter(Boolean);
-  const head = cols
-    .map((e) => {
-      const st = stateOf(answer(e));
-      const a = f.auto?.[e.host];
-      const auto = a
-        ? `<span class="auto ${a.at}" data-auto-host="${esc(e.host)}" data-auto="${a.at}"${a.at == "failed" ? ` title="${esc(a.why)}"` : ""}>auto: ${esc(autoText(a, { head: f.heads[e.host] ?? null, runs: answer(e)?.version ?? null }))}</span>`
-        : "";
-      return `<div class="head col" title="${esc(`${e.host}: ${st.what}`)}"><b>${esc(e.branch)}</b><span class="host">${esc(e.host)}</span><span class="st"><i class="light ${st.cls}"></i>${esc(answer(e)?.error ? "no answer" : st.cls == "bad" ? "not healthy" : answer(e) ? "live" : "asking…")}</span>${auto}</div>`;
-    })
-    .join("");
-  // Auto-deploy stopped for an instance: why, and what starts it again.
-  const stopped = cols.flatMap((e) => {
-    const a = f.auto?.[e.host];
-    if (a?.at != "failed") return [];
-    const next =
-      a.why == REWRITTEN
-        ? `To accept the new head: bun erga deploy ${e.host}`
-        : `A new commit on ${e.branch} starts it again, or: bun erga deploy ${e.host}`;
-    return [`Auto-deploy of ${e.host} stopped: ${a.why} ${next}`];
-  });
+/**
+ * The commits of the instance's branch, in one column. Green (a filled dot): live on the instance, the commit that it
+ * runs and those before it. Orange (a ring): not on it yet. "live" at the commit that runs; a Deploy button on each
+ * other row under the mouse, and always on the head's row while the head is not live.
+ */
+function commits(g: Entry, f: Facts, now: number): string {
+  const all = f.logs[g.host];
+  const head = `<h3 class="c-head">Commits</h3>`;
+  if (!all?.length) {
+    const repo = f.polls.sources[repoSource(g.repo)];
+    const why = repo?.error ? `This machine can't read ${g.repo}: ${repo.error}` : `The commits of ${g.branch} are not here yet.`;
+    return `<section class="commits" aria-label="Commits">${head}<div class="grid" style="--cols: 1"><div class="none">${esc(why)}</div></div></section>`;
+  }
+  const a = f.answers[g.host];
+  const rows = rowsOf(all, a?.version ?? null);
+  const on = a?.version ? rows.findIndex((c) => c.sha.startsWith(a.version!)) : -1;
+  const note =
+    a?.version && on < 0 ? `<p class="note">${esc(`${g.host} runs ${a.version}, which ${g.branch} does not have in this clone.`)}</p>` : "";
   const active = activeJobs(f.jobs, f.run);
-  const busy = active[0]?.command ?? "";
   const body = rows
     .map((c, i) => {
-      const kind = isOn(i) ? "on" : "off";
-      const marks = cols
-        .map((e) => {
-          // Its own deploy stays "Deploying…" until the job ends, even when the instance answers the new commit before.
-          const deploying = active.some((j) => deploysTo(j, c.sha, e.host));
-          if (!runs(answer(e), c.sha) || deploying)
-            return onBranch(e, i) || deploying
-              ? deployButton(e, c, busy, deploying)
-              : `<span class="deps" title="${esc(`Not on ${e.branch}, the branch that ${e.host} tracks`)}"></span>`;
-          const at = deployedAt(f.jobs, e.host, c.sha);
-          return `<span class="deps"><span class="dep live" data-host="${esc(e.host)}" title="${esc(`${e.host} runs this commit`)}"><span class="w">live</span><span class="at">${at ? short(at, now) : ""}</span></span></span>`;
-        })
-        .join("");
-      return `<div class="row ${kind}" data-sha="${esc(c.sha)}"><span class="rail${i ? " up" : ""}${i < rows.length - 1 ? " down" : ""} ${kind}"><i class="dot ${kind}"></i></span><span class="subj" title="${esc(c.subject)}">${esc(c.subject)}</span><span class="who">${esc(c.author)}</span><code class="sha">${esc(sha7(c.sha))}</code><time>${esc(timeAgo(c.at, now))}</time>${marks}</div>`;
+      const kind = on >= 0 && i >= on ? "on" : "off";
+      // Its own deploy stays "Deploying…" until the job ends, even when the instance answers the new commit before.
+      const deploying = active.some((j) => deploysTo(j, c.sha, g.host));
+      const at = deployedAt(f.jobs, g.host, c.sha);
+      const cell =
+        !runs(a, c.sha) || deploying
+          ? deployButton(g, c, active.length > 0, deploying, i == 0)
+          : `<span class="deps"><span class="dep live" data-host="${esc(g.host)}" title="${esc(`${g.host} runs this commit`)}"><span class="w">live</span><span class="at">${at ? short(at, now) : ""}</span></span></span>`;
+      const tip = kind == "on" ? `Live on ${g.host}` : `On ${g.branch}, not on ${g.host} yet`;
+      return `<div class="row ${kind}" data-sha="${esc(c.sha)}"><span class="rail${i ? " up" : ""}${i < rows.length - 1 ? " down" : ""} ${kind}" title="${esc(tip)}"><i class="dot ${kind}"></i></span><span class="subj" title="${esc(c.subject)}">${esc(c.subject)}</span><span class="who">${esc(c.author)}</span><code class="sha">${esc(sha7(c.sha))}</code><time>${esc(timeAgo(c.at, now))}</time>${cell}</div>`;
     })
     .join("");
-  return `<section class="commits" aria-label="Commits">
-    ${stopped.map((n) => `<p class="note bad">${esc(n)}</p>`).join("")}${notes.map((n) => `<p class="note">${esc(n)}</p>`).join("")}
-    <div class="grid" style="--cols: ${cols.length}"><div class="head"></div><div class="head">Commit</div><div class="head who"></div><div class="head sha"></div><div class="head time"></div>${head}${body || `<div class="none">No commits on origin/staging or origin/main in this clone.</div>`}</div>
+  return `${note}<section class="commits" aria-label="Commits">${head}<div class="grid" style="--cols: 1">${body}</div>
     <div class="confirm" id="deploy-confirm" popover><p data-s="ask"></p><p class="soft" data-s="note"></p><div class="acts"><button class="btn" type="button" data-go>Deploy</button><button class="btn quiet" type="button" popovertarget="deploy-confirm" popovertargetaction="hide">Cancel</button></div><p class="err" role="alert"></p></div>
   </section>`;
+}
+
+/** Auto-deploy stopped for the instance: at which commit, why, and what starts it again. No other place says that it does not try again. */
+function stopped(g: Entry, f: Facts): string {
+  const a = f.auto?.[g.host];
+  if (a?.at != "failed") return "";
+  const next =
+    a.why == REWRITTEN
+      ? `To accept the new head: bun erga deploy ${g.host}`
+      : `A new commit on ${g.branch} starts it again, or Deploy on its row.`;
+  return `<p class="note bad">${esc(`Auto-deploy stopped at ${sha7(a.head)}: ${a.why} ${next}`)}</p>`;
 }
 
 /** The tabs of an instance, by their name in the hash (#<host>/<tab>). */
 const TABS: Record<string, string> = { deploys: "Deploys", logs: "Logs", history: "History" };
 
-/**
- * The newest job of all, for the page's script: when another one starts on an instance that the page does not show
- * (one that is not in the columns), the page switches to that instance.
- */
-function newest(g: Entry, cols: Entry[], config: Config, jobs: JobRecord[]): string {
-  const job = jobs.reduce<JobRecord | null>((a, j) => (!a || j.started > a.started ? j : a), null);
-  if (!job) return "";
-  const shown = cols.some((e) => e.host == job.host) || !config.instances.some((e) => e.host == job.host);
-  return ` data-newest="${esc(job.id)}" data-newest-host="${esc(shown ? g.host : job.host)}"`;
-}
-
-/** The live part of the page: the sidebar and the chosen instance. `name` is the page's hash: <host>[/<tab>[/<job>]]. */
+/** The live part of the page: the list and the chosen instance. `name` is the page's hash: <host>[/<tab>[/<job>]]. */
 export function viewHtml(f: Facts, name: string, now = Date.now()): string {
   if ("error" in f.config)
     return `<aside class="side"></aside><section class="main"><p class="note bad">${esc(f.config.error)}</p></section>`;
@@ -391,16 +325,16 @@ export function viewHtml(f: Facts, name: string, now = Date.now()): string {
   const tabs = `<nav class="tabs" role="tablist">${Object.entries(TABS)
     .map(([k, t]) => `<a class="tab" role="tab" href="#${esc(g.host)}/${k}" aria-selected="${k == tab}">${t}</a>`)
     .join("")}</nav>`;
-  const cols = columnsOf(f.config, g);
-  const mine = jobsOf(cols, f.jobs);
+  const mine = jobsOf(g, f.jobs);
   const body =
     tab == "logs"
       ? logs(g, mine, id, now)
       : tab == "history"
         ? history(g, mine, now)
-        : sources(cols, f, now) +
-          ("error" in f.git ? `<p class="note bad">${esc(f.git.error)}</p>` : log(g, cols, { ...f, git: f.git }, now));
-  return `${sidebar}<section class="main" data-host="${esc(g.host)}" data-tab="${tab}"${newest(g, cols, f.config, f.jobs)}><h2 class="title">${esc(g.host)}</h2><p class="tracks-line">Tracks <code>${esc(g.repo)}</code> <code>${esc(g.branch)}</code>. ${f.auto ? "Auto-deploy is on." : "Auto-deploy is off: <code>bun erga --auto-deploy</code> turns it on."}</p>${tabs}${jobLine(g, mine, f.run, now)}${f.run.at == "failed" ? `<p class="note bad failed">${esc(f.run.why)}</p>` : ""}<div class="tab-body">${body}</div></section>`;
+        : stopped(g, f) + commits(g, f, now) + checked(g, f, now);
+  // The page's own command that stopped before its job record: on its instance's page.
+  const failed = f.run.at == "failed" && f.run.host == g.host ? `<p class="note bad failed">${esc(f.run.why)}</p>` : "";
+  return `${sidebar}<section class="main" data-host="${esc(g.host)}" data-tab="${tab}"><h2 class="title">${esc(g.host)}</h2><p class="tracks-line">Tracks <code>${esc(g.repo)}</code> <code>${esc(g.branch)}</code>.</p>${tabs}${jobLine(g, mine, f.run, now)}${failed}<div class="tab-body">${body}</div></section>`;
 }
 
 /** The whole page: Erga's bar, the live part, and the page's script. */

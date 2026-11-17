@@ -1,6 +1,6 @@
 // Auto-deploy on the ops page's server (`bun erga --auto-deploy`, deploy/cli/ops-page.ts), with fake repositories, instances
 // and a fake `bun erga`: an instance that does not run its branch's head gets `bun erga deploy <head> <host>`, one job
-// at a time, from "auto-deploy"; a failed one stays failed, with its reason on the page; a head that a job record has is not
+// at a time, from "auto-deploy"; a failed one stays failed, with its reason on its page; a head that a job record has is not
 // tried again; a branch that was written again stops; and without --auto-deploy nothing deploys. The state's rules are
 // tests/auto-state.test.ts.
 
@@ -93,46 +93,42 @@ test("auto-deploy: each instance behind its branch's head deploys it, one job at
     for (let i = 0; i < 200 && !ok(await view()); i++) await Bun.sleep(20);
     return view();
   };
-  /** Each instance's state, from its column's head. */
-  const states = (html: string) =>
+  /** Each instance's word in the list, by the first part of its host: "" when it has none. */
+  const words = (html: string) =>
     Object.fromEntries(
-      [...html.matchAll(/data-auto-host="([^"]+)" data-auto="(\w+)"[^>]*>([^<]*)</g)].map((m) => [m[1].split(".")[0], `${m[2]}: ${m[3]}`])
+      [...html.slice(0, html.indexOf('<section class="main"')).matchAll(/href="#([^".]+)[^"]*".*?<\/a>/g)].map((m) => [
+        m[1],
+        /class="g-state \w+"[^>]*>([^<]*)</.exec(m[0])?.[1] ?? "",
+      ])
     );
   try {
     // One check of the one repository, for both branches. The first instance in the file deploys; the next one waits.
-    const first = await until((h) => h.includes('data-auto="deploying"'));
+    const first = await until((h) => h.includes(">deploying<"));
     expect(asked).toEqual([["example.net/team/erga", "main", "staging"]]);
     expect(started).toEqual([["deploy", c3.slice(0, 12), "a.example.net", "auto-deploy"]]);
-    expect(states(first)).toEqual({
-      a: `deploying: auto: deploys ${c3.slice(0, 7)}`,
-      b: `due: auto: ${c2.slice(0, 7)} is next`,
-      tried: "idle: auto: waits for a new commit",
-      rewritten: `failed: auto: failed at ${c3.slice(0, 7)}`,
-      silent: "idle: auto: idle",
-      current: "idle: auto: idle",
-    });
-    expect(first).toContain("Auto-deploy is on.");
-    expect(first).toContain(
-      "Auto-deploy of rewritten.example.net stopped: Its branch was written again: the new head does not have the commit that runs. To accept the new head: bun erga deploy rewritten.example.net"
+    expect(words(first)).toEqual({ a: "deploying", b: "1 behind", tried: "1 behind", rewritten: "failed", silent: "", current: "" });
+    expect(first).toContain("<span>Auto-deploy is on</span>");
+    // An instance whose auto-deploy stopped says why on its own page, and no other page does.
+    expect(await view("rewritten.example.net")).toContain(
+      `Auto-deploy stopped at ${c3.slice(0, 7)}: Its branch was written again: the new head does not have the commit that runs. To accept the new head: bun erga deploy rewritten.example.net`
     );
-    expect(first).toMatch(/data-source="repo example.net\/team\/erga">.*main [0-9a-f]{7} · staging [0-9a-f]{7}/);
+    expect(first.slice(first.indexOf('<section class="main"'))).not.toContain("Auto-deploy stopped");
+    expect(first).toContain('data-source="repo example.net/team/erga"');
 
     // Its deploy fails: it stays failed, with the reason, and the next instance's deploy starts.
     end({ code: 1, out: "FAIL  1 test failed on 333\n" });
-    const second = await until((h) => h.includes(`deploys ${c2.slice(0, 7)}`));
+    const second = await until((h) => words(h).b == "deploying");
     expect(started.slice(1)).toEqual([["deploy", c2.slice(0, 12), "b.example.net", "auto-deploy"]]);
-    expect(states(second)).toMatchObject({
-      a: `failed: auto: failed at ${c3.slice(0, 7)}`,
-      b: `deploying: auto: deploys ${c2.slice(0, 7)}`,
-    });
-    expect(second).toContain("Auto-deploy of a.example.net stopped: FAIL  1 test failed on 333");
-    expect(second).toContain("A new commit on main starts it again, or: bun erga deploy a.example.net");
+    expect(words(second)).toMatchObject({ a: "failed", b: "deploying" });
+    expect(second).toContain(
+      `Auto-deploy stopped at ${c3.slice(0, 7)}: FAIL  1 test failed on 333 A new commit on main starts it again, or Deploy on its row.`
+    );
 
     // It ends well: nothing more deploys. The failed head, the tried one and the rewritten branch are not tried again.
     runs["b.example.net"] = c2;
     end({ code: 0, out: "" });
-    const last = await until((h) => !h.includes('data-auto="deploying"'));
-    expect(states(last)).toMatchObject({ a: `failed: auto: failed at ${c3.slice(0, 7)}`, tried: "idle: auto: waits for a new commit" });
+    const last = await until((h) => !h.includes(">deploying<"));
+    expect(words(last)).toMatchObject({ a: "failed", tried: "1 behind" });
     expect(started.length).toBe(2);
   } finally {
     page.stop();
@@ -140,7 +136,7 @@ test("auto-deploy: each instance behind its branch's head deploys it, one job at
   }
 });
 
-test("without --auto-deploy, the page deploys nothing and asks no repository", async () => {
+test("without --auto-deploy, the page deploys nothing: it asks the repository for the commits only", async () => {
   const { dir, c1, c3 } = world();
   writeFileSync(join(dir, ".erga/config.json"), JSON.stringify({ instances: [entry("a.example.net", "main")] }));
   const started: string[][] = [];
@@ -156,13 +152,39 @@ test("without --auto-deploy, the page deploys nothing and asks no repository", a
   });
   try {
     const view = async () => (await fetch(`http://127.0.0.1:${page.server.port}/view?hash=a.example.net`)).text();
-    for (let i = 0; i < 200 && !(await view()).includes("healthy"); i++) await Bun.sleep(20);
+    for (let i = 0; i < 200 && !(await view()).includes("2 behind"); i++) await Bun.sleep(20);
     const html = await view();
-    expect(html).toContain("Auto-deploy is off: <code>bun erga --auto-deploy</code> turns it on.");
-    expect(html).not.toContain("data-auto=");
-    expect([started, asked]).toEqual([[], 0]);
+    expect(html).toContain("<span>Auto-deploy is off</span>");
+    expect(html).toContain('class="g-state behind"');
+    expect([started, asked]).toEqual([[], 1]);
   } finally {
     page.stop();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a repository's heads: the clone keeps each tracked head under its own ref, and says why a repository gave none", async () => {
+  const { repoHeads, trackedRef } = await import("../deploy/cli/observe");
+  const { commit, gitWorld, sh } = await import("./helpers/git-world.ts");
+  const { top, origin, clone, base } = gitWorld("erga-heads-");
+  try {
+    // Another clone pushes a commit: this clone has not fetched it.
+    const other = join(top, "other");
+    sh(top, "git", "clone", "--quiet", origin, other);
+    const next = commit(other, "b.txt", "two");
+    sh(other, "git", "push", "--quiet", "origin", "staging");
+    const ref = trackedRef(origin, "staging");
+    expect(ref).toMatch(/^refs\/erga\/[\w.-]+\/staging$/);
+    expect(await repoHeads(clone, origin, ["staging", "nope"])).toEqual({ heads: { staging: next }, error: null });
+    // The clone has the commit now, under a ref that no push sends; its checkout did not move.
+    expect(sh(clone, "git", "rev-parse", ref)).toBe(next);
+    expect(sh(clone, "git", "rev-parse", "HEAD")).toBe(base);
+    expect(sh(clone, "git", "log", "--format=%s", "-n", "2", next)).toBe("two\none");
+    // A repository that this machine can't read: git's own words.
+    const none = await repoHeads(clone, join(top, "nowhere.git"), ["staging"]);
+    expect(none.heads).toEqual({});
+    expect(none.error).toContain("nowhere.git");
+  } finally {
+    rmSync(top, { recursive: true, force: true });
   }
 });

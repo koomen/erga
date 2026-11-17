@@ -142,22 +142,24 @@ and `main`. There are no pull requests.
   nothing. It asks
   GitHub for its branches (`git ls-remote`) and leaves out a branch that a
   merge deleted; offline, it lists the clone's branches, with a note.
-- `bun erga`: the ops page on localhost. It lists the instances of `.erga/config.json`,
-  each with the branch that it tracks, the log with a column for each instance that tracks the
-  chosen one's repository and "live" at its commit, and the job that runs. Its tabs: Setup (the steps of `bun erga setup`), Deploys,
-  Logs (a job's output, live) and History (the jobs). It checks its sources, each on its own
-  period, whatever happens: GitHub at most once a minute, with `git fetch --prune` in the main
-  clone, and each instance's commit (from Cloudflare's API or AWS's, never from the instance) and health every 15 seconds. The Deploys tab's Sources box shows each source's
-  last check, its answer or its error, and "stale" after three of its periods with no good answer. A new job
-  on an instance that the page does not show switches the page to that instance. The page shows no feature branch and merges nothing: `bun erga status` lists the branches with their tests' state,
-  and `bun erga merge` merges. The page's server works the tests' queue all the same. A commit row shows a Deploy button on hover in each
-  column whose instance does not run it, when the commit is on that instance's branch (`bun erga deploy <commit> <host>`). It runs the same
-  command, with the same locks, and only one job at a time. Only when Pete asks.
+- `bun erga`: the ops page on localhost. On the left: the instances of `.erga/config.json`, each with the branch
+  that it tracks and one word when it is not at its branch's head (`deploying`, `2 behind`, `failed`, `can't read`),
+  and whether auto-deploy is on. The right side is about the chosen instance only, and names no other one. Its job
+  line: the command that runs for it, or its last one. Its tabs: Deploys, Logs (a job's output, live) and History
+  (its deploys and rollbacks). Deploys shows the commits of its branch, as its repository has them now: a green dot
+  where the commit is live on the instance, an orange ring where it is not yet, and "live" at the commit that runs.
+  A commit row shows a Deploy button on hover (`bun erga deploy <commit> <host>`); the head's row shows it always
+  while the head is not live. It runs the same command, with the same locks, and only one job at a time. Only when
+  Pete asks. Under the commits, one line says when the page last asked the instance's repository and the instance
+  itself (from Cloudflare's API or AWS's, never from the instance), and why one gave no answer. The page asks each
+  repository at most once a minute (`git ls-remote`), and each instance every 15 seconds. It shows no feature
+  branch and merges nothing: `bun erga status` lists the branches with their tests' state, and `bun erga merge`
+  merges. The page's server works the tests' queue all the same.
 - `bun erga --auto-deploy`: the ops page with auto-deploy on. Pete starts it. It asks each repository that an instance
   tracks for its branches' heads once a minute (`git ls-remote`). When an instance does not run its branch's head, it
-  starts `bun erga deploy <head> <host>`: one job at a time, with the same gate (the tests) as every deploy. Each
-  column's head on the page shows its instance's state: idle, a commit that is next, a deploy that runs, or failed.
-  A head is tried one time: a failed deploy stays failed, and the page says why. A new commit on the branch, or
+  starts `bun erga deploy <head> <host>`: one job at a time, with the same gate (the tests) as every deploy. The
+  list on the page shows each instance's word (`deploying`, `failed`), and one line under it says that auto-deploy is on.
+  A head is tried one time: a failed deploy stays failed, and the instance's page says why. A new commit on the branch, or
   `bun erga deploy <host>`, starts it again. After `bun erga rollback`, it does not deploy the same commit again. A
   branch that was written again (a force push) stops it, until `bun erga deploy <host>` accepts the new head.
 - `bun erga deploy [<commit>] <host>`: deploys a registered instance from
