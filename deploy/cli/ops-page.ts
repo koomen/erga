@@ -2,14 +2,15 @@
 // reads .erga/config.json, .erga/jobs/ and .erga/tests/ (the tests' runs, test-run.ts) in the main clone, which it watches (a change reaches the page at once,
 // through /api/events), and the clone's git. It checks its sources (poll-state.ts): GitHub, with a git fetch of the
 // clone, at most once a minute, and each instance's commit (from its platform: running.ts) and health every 15 seconds. The page
-// shows each source's last check. It serves each branch's proof page (bun erga proof) at /proof/<branch>/. Every command works without it. Its Merge and Deploy buttons run
-// `bun erga merge` and `bun erga deploy` (POST /api/merge, /api/deploy) in a process of their own, as a terminal does:
-// the same code, locks and job records. A merge's tests take minutes, and this server must answer while they run.
+// shows each source's last check. It serves each branch's proof page (bun erga proof) at /proof/<branch>/. Every command works without it. Its Deploy buttons run
+// `bun erga deploy` (POST /api/deploy) in a process of its own, as a terminal does: the same code, locks and job
+// records. The page merges nothing: `bun erga merge` does.
 // With --auto-deploy it is auto-deploy too (auto-state.ts): it asks each tracked repository for its branches' heads once a
 // minute (one git ls-remote), and starts `bun erga deploy <head> <host>` for an instance that does not run its
 // branch's head, one job at a time, as its buttons do.
 // It works the tests' queue (gate.ts, stepQueue): for each pushed branch whose merge has no test record, `bun erga test
 // <branch>` (about a minute), one at a time, the oldest first. A branch or a staging head that moves makes a new tree: it waits again.
+// The page shows nothing of the queue: `bun erga status` does.
 
 import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -17,11 +18,10 @@ import { startAuto, stepAuto } from "./auto-state";
 import { type Entry, readConfig } from "./config";
 import type { Answer } from "./flow";
 import { readRuns } from "./test-run";
-import { type Queue, stepQueue, testOf } from "./gate";
-import { readProofs } from "./proof";
+import { type Queue, stepQueue } from "./gate";
 import type { From } from "./jobs";
 import { branchesOf, commitsIn, fetchGitHub, inHistory, repoHeads } from "./observe";
-import { busyWith, type Facts, type Git, type JobRecord, jobOf, mergeBlock, pageHtml, repoSource, viewHtml } from "./ops-view";
+import { busyWith, type Facts, type Git, type JobRecord, jobOf, pageHtml, repoSource, viewHtml } from "./ops-view";
 import { alive } from "./pid";
 import { type JobState, stepRun } from "./job-state";
 import { GITHUB, type PollEvent, startPolls, stepPolls } from "./poll-state";
@@ -95,7 +95,7 @@ export interface OpsPageOptions {
   ask?: (e: Entry) => Promise<Answer>;
   /** fetchGitHub (null: it worked, else why not), or a fake in the tests. */
   fetch?: (cwd: string) => Promise<string | null>;
-  /** Runs `bun erga <args>` for the Merge and Deploy buttons and for auto-deploy (default: the CLI, in a process of its own), or a fake. */
+  /** Runs `bun erga <args>` for the Deploy buttons and for auto-deploy (default: the CLI, in a process of its own), or a fake. */
   run?: (args: string[], from: From) => Run;
   /** --auto-deploy: auto-deploy is on. */
   autoDeploy?: boolean;
@@ -125,7 +125,6 @@ export function serveOpsPage(o: OpsPageOptions) {
     run: { at: "idle" },
     polls: startPolls(),
     runs: [],
-    proofs: {},
     auto: o.autoDeploy ? {} : null,
     heads: {},
   };
@@ -175,7 +174,6 @@ export function serveOpsPage(o: OpsPageOptions) {
     const repos = facts.auto ? [...new Set(entries().map((e) => repoSource(e.repo)))] : [];
     facts.jobs = readJobs(o.dir);
     facts.runs = readRuns(o.dir);
-    facts.proofs = readProofs(o.dir);
     poll({ type: "sources", names: [GITHUB, ...repos, ...hosts], now: Date.now() });
   };
   /**
@@ -347,21 +345,11 @@ export function serveOpsPage(o: OpsPageOptions) {
     });
     return Response.json({ ok: true, command }, { status: 202 });
   };
-  /** POST /api/merge {branch, message} and /api/deploy {host, sha}: what the buttons show, checked again here. */
-  const act = async (req: Request, what: string) => {
+  /** POST /api/deploy {host, sha}: a row's Deploy, a commit of the log to an instance that does not run it now. What the button shows, checked again here. */
+  const act = async (req: Request) => {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const no = (error: string) => Response.json({ error }, { status: 409 });
     if ("error" in facts.git) return no(facts.git.error);
-    if (what == "merge") {
-      const b = facts.git.branches.find((x) => x.name == body.branch);
-      const message = typeof body.message == "string" ? body.message.trim() : "";
-      if (!b) return no(`There is no branch ${String(body.branch)} in this clone.`);
-      const block = mergeBlock(b, facts.git.base, "", testOf(b, facts.runs));
-      if (block) return no(block);
-      if (!message) return no("Write the message of the commit on staging.");
-      return start(["merge", b.name, "-m", message], { kind: "merge", host: "staging", commit: null, branch: b.name, phase: "starting" });
-    }
-    // A row's Deploy: a commit of the log, to an instance that does not run it now.
     const e = "error" in facts.config ? null : facts.config.instances.find((x) => x.host == body.host);
     const c = facts.git.log.find((x) => x.sha == body.sha);
     if (!e) return no(`${String(body.host)} has no entry in .erga/config.json.`);
@@ -390,10 +378,10 @@ export function serveOpsPage(o: OpsPageOptions) {
       // Only this machine's browser, by this server's name: another site can't reach it through DNS rebinding.
       const names = [`localhost:${srv.port}`, `127.0.0.1:${srv.port}`];
       if (!names.includes(req.headers.get("host") ?? "")) return new Response("Wrong host.", { status: 403 });
-      // A POST only from this page (Merge and Deploy): no other site.
+      // A POST only from this page (Deploy): no other site.
       if (req.method != "GET" && !names.some((n) => req.headers.get("origin") == `http://${n}`))
         return new Response("Wrong origin.", { status: 403 });
-      if (req.method == "POST" && (url.pathname == "/api/merge" || url.pathname == "/api/deploy")) return act(req, url.pathname.slice(5));
+      if (req.method == "POST" && url.pathname == "/api/deploy") return act(req);
       if (url.pathname == "/") return html(pageHtml(viewHtml(facts, ""), script, code()));
       if (url.pathname == "/view") return html(viewHtml(facts, url.searchParams.get("hash") ?? ""), { "X-Ops-Code": code() });
       if (url.pathname == "/api/events") {

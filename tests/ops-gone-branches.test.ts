@@ -1,7 +1,7 @@
 // A branch that `bun erga merge` deleted on GitHub stays in the clone's refs/remotes/origin until a fetch with --prune.
 // `bun erga status` (branchesOf) asks GitHub for its list (git ls-remote, a read) and leaves it out; the ops page
-// fetches with --prune. When GitHub does not answer, both show the clone's list as it is: status with a note, the page
-// with the fetch's error in its Sources.
+// fetches with --prune, so its tests' queue forgets the branch. When GitHub does not answer, status shows the clone's
+// list as it is, with a note, and the page shows the fetch's error in its Sources.
 
 import { expect, test } from "bun:test";
 import { rmSync } from "node:fs";
@@ -13,7 +13,7 @@ import { viewHtml } from "../deploy/cli/ops-view";
 import { GITHUB, startPolls, stepPolls } from "../deploy/cli/poll-state";
 import { commit, gitWorld, sh } from "./helpers/git-world.ts";
 
-test("a branch that GitHub deleted after the last fetch shows on neither the ops page nor status", async () => {
+test("a branch that GitHub deleted after the last fetch is in neither status nor the ops page's queue", async () => {
   const { top: root, origin, clone } = gitWorld("erga-gone-");
   try {
     sh(clone, "git", "push", "--quiet", "origin", "staging:main");
@@ -79,7 +79,6 @@ test("a branch that GitHub deleted after the last fetch shows on neither the ops
         run: { at: "idle" },
         polls,
         runs: [],
-        proofs: {},
         auto: null,
         heads: {},
       },
@@ -88,7 +87,6 @@ test("a branch that GitHub deleted after the last fetch shows on neither the ops
     );
     expect(html).toContain('<li class="source bad" data-source="github">');
     expect(html).toContain("nowhere.git");
-    expect(html).toContain('data-branch="merged"');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

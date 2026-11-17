@@ -54,7 +54,7 @@ and `main`. There are no pull requests.
    takes each picture before the change and after it, at desktop width
    and at phone width. A change with nothing to show names its tests:
    `--no-picture "<the tests that prove it>"`. Look at the page yourself.
-   The ops page has the link beside the branch's Merge button.
+   The command prints its address on the ops page: give it to Pete.
 4. Your branch must be green before Pete merges it. The ops page runs
    the tests (`bun run test`, about a minute) on the commit that the merge
    of your branch would make: your branch as one commit on staging's
@@ -143,17 +143,16 @@ and `main`. There are no pull requests.
   GitHub for its branches (`git ls-remote`) and leaves out a branch that a
   merge deleted; offline, it lists the clone's branches, with a note.
 - `bun erga`: the ops page on localhost. It lists the instances of `.erga/config.json`,
-  each with the branch that it tracks, the feature branches, the log with a column for each instance that tracks the
+  each with the branch that it tracks, the log with a column for each instance that tracks the
   chosen one's repository and "live" at its commit, and the job that runs. Its tabs: Setup (the steps of `bun erga setup`), Deploys,
   Logs (a job's output, live) and History (the jobs). It checks its sources, each on its own
   period, whatever happens: GitHub at most once a minute, with `git fetch --prune` in the main
   clone, and each instance's commit (from Cloudflare's API or AWS's, never from the instance) and health every 15 seconds. The Deploys tab's Sources box shows each source's
   last check, its answer or its error, and "stale" after three of its periods with no good answer. A new job
-  on an instance that the page does not show switches the page to that instance. Each feature branch is one row: its tests' state (in the queue, running, passed, or failed, which opens
-  to the failed tests), its Proof link (`bun erga proof`) and its Merge button (`bun erga merge <branch> -m <text>`),
-  which works only when the tests (`bun run test`) passed on the branch's merge. The page's server works the tests' queue. A commit row shows a Deploy button on hover in each
-  column whose instance does not run it, when the commit is on that instance's branch (`bun erga deploy <commit> <host>`). They run the same
-  commands, with the same locks, and only one job at a time. Only when Pete asks.
+  on an instance that the page does not show switches the page to that instance. The page shows no feature branch and merges nothing: `bun erga status` lists the branches with their tests' state,
+  and `bun erga merge` merges. The page's server works the tests' queue all the same. A commit row shows a Deploy button on hover in each
+  column whose instance does not run it, when the commit is on that instance's branch (`bun erga deploy <commit> <host>`). It runs the same
+  command, with the same locks, and only one job at a time. Only when Pete asks.
 - `bun erga --auto-deploy`: the ops page with auto-deploy on. Pete starts it. It asks each repository that an instance
   tracks for its branches' heads once a minute (`git ls-remote`). When an instance does not run its branch's head, it
   starts `bun erga deploy <head> <host>`: one job at a time, with the same gate (the tests) as every deploy. Each

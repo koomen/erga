@@ -2,10 +2,9 @@
 // server says something changed (/api/events), when another instance or tab is chosen (the hash: #<host>/<tab>),
 // and each minute (the times). When a new job starts on an instance that the page does not show, it switches to that instance.
 // A job's log that was scrolled to its end stays at its end. When the server stops, it says so; when it runs again, the page follows, and reloads if the server's script or styles changed.
-// Merge opens a field for the commit's message under its branch. A commit row's cell shows a Deploy button in an instance's column on hover or focus, which asks a question
-// first (the instance and the commit). Each starts its job (POST /api/merge, /api/deploy); the page stays on its tab,
-// and the job line shows the job as it runs. An open field or question stays open, with what the person typed, when the
-// page draws again, and so does a failed branch's list of tests.
+// A commit row's cell shows a Deploy button in an instance's column on hover or focus, which asks a question first (the
+// instance and the commit). It starts its job (POST /api/deploy); the page stays on its tab, and the job line shows the
+// job as it runs. An open question stays open when the page draws again.
 (() => {
   const ops = document.getElementById("ops");
   const gone = document.getElementById("gone");
@@ -13,35 +12,13 @@
   const main = () => ops.querySelector(".main");
   let newest = main()?.dataset.newest ?? "";
   let asked = 0;
-  /** What the person has open now: the merge field (its branch, text, caret, error), and the deploy question. */
+  /** What the person has open now: the deploy question. */
   function opened() {
-    const form = ops.querySelector(".f-merge:not([hidden])");
-    const input = form?.querySelector("input");
     const ask = ops.querySelector("#deploy-confirm");
-    return {
-      branch: form?.dataset.branch,
-      value: input?.value,
-      focus: input && document.activeElement == input ? [input.selectionStart, input.selectionEnd] : null,
-      err: form?.querySelector(".err").textContent,
-      deploy: ask?.matches(":popover-open") ? { ...ask.dataset } : null,
-      deployErr: ask?.querySelector(".err").textContent,
-      fails: [...ops.querySelectorAll(".f-fails[open]")].map((d) => d.closest(".feature").dataset.branch),
-    };
+    return { deploy: ask?.matches(":popover-open") ? { ...ask.dataset } : null, deployErr: ask?.querySelector(".err").textContent };
   }
   function reopen(o) {
-    const form = o.branch && [...ops.querySelectorAll(".f-merge")].find((f) => f.dataset.branch == o.branch);
-    if (form) {
-      form.hidden = false;
-      const input = form.querySelector("input");
-      input.value = o.value;
-      form.querySelector(".err").textContent = o.err;
-      if (o.focus) {
-        input.focus();
-        input.setSelectionRange(...o.focus);
-      }
-    }
     if (o.deploy) question(o.deploy, o.deployErr);
-    for (const d of ops.querySelectorAll(".f-fails")) d.open = o.fails.includes(d.closest(".feature").dataset.branch);
   }
   /** The deploy question for a row's button (its data: host, sha, ask, note). */
   function question(d, err = "") {
@@ -95,20 +72,7 @@
       return false;
     }
   }
-  const hide = (form) => {
-    form.hidden = true;
-    form.querySelector(".err").textContent = "";
-  };
   ops.addEventListener("click", (e) => {
-    const merge = e.target.closest("[data-merge]");
-    if (merge) {
-      for (const f of ops.querySelectorAll(".f-merge")) hide(f);
-      const form = [...ops.querySelectorAll(".f-merge")].find((f) => f.dataset.branch == merge.dataset.merge);
-      form.hidden = false;
-      form.querySelector("input").select();
-      return;
-    }
-    if (e.target.closest("[data-cancel]")) return hide(e.target.closest(".f-merge"));
     const deploy = e.target.closest("[data-deploy]");
     if (deploy) {
       const { host, sha, ask, note } = deploy.dataset;
@@ -123,22 +87,6 @@
         if (ok) ask.hidePopover();
       });
     }
-  });
-  ops.addEventListener("submit", (e) => {
-    const form = e.target.closest(".f-merge");
-    if (!form) return;
-    e.preventDefault();
-    const button = form.querySelector("button");
-    button.disabled = true;
-    const message = form.querySelector("input").value;
-    act("/api/merge", { branch: form.dataset.branch, message }, form.querySelector(".err")).then((ok) => {
-      button.disabled = false;
-      if (ok) hide(form);
-    });
-  });
-  ops.addEventListener("keydown", (e) => {
-    const form = e.key == "Escape" && e.target.closest(".f-merge");
-    if (form) hide(form);
   });
   const events = new EventSource("/api/events");
   events.onmessage = draw;

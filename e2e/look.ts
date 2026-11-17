@@ -14,6 +14,7 @@ import { copyFixture, descendants, startServer, type Server } from "./helpers/se
 const HELP = `bun run look [--doc <fixture | file.html | folder>] [--out <file.png>] [--source] [--latency <ms>] [--keep | --stop] [step ...]
 bun run look --view [--doc ...] [--out <file.png>]     the document as a reader sees it, with no editor and no steps
 bun run look --path /documents [--out <file.png>]           a page of the server by its path, signed in
+bun run look --ops <host>[/<tab>] [--out <file.png>]        the ops page (bun erga) of an instance, with made-up facts
 
 Opens a copy of the document in the editor, clicks at the end of its first text block, runs the steps,
 then saves a screenshot and prints the page as a person sees it: "|" is the caret, "[" "]" a selection.
@@ -106,11 +107,133 @@ const keep = flag("--keep"),
   view = flag("--view");
 const pathArg = option("--path");
 const proxy = option("--proxy");
+const opsArg = option("--ops");
 const viewport = { width: Number(option("--width")) || 1100, height: Number(option("--height")) || 800 };
 const unknown = args.find((a) => a.startsWith("--"));
 if (unknown) {
   console.error(`unknown option ${unknown}\n\n${HELP}`);
   process.exit(2);
+}
+
+// The ops page of this checkout (deploy/cli/ops-page.ts), on a small clone of its own with three made-up instances:
+// example.net and notes.example.org track main, staging.example.net tracks staging. No instance is asked, and nothing
+// deploys. The page is whole in this file: a proof runs this file in the folder of "before" too (deploy/cli/proof.ts).
+if (opsArg != undefined) {
+  const top = mkdtempSync(join(tmpdir(), "erga-look-ops-"));
+  const git = (...a: string[]) => spawnSync("git", a, { cwd: top, encoding: "utf8" }).stdout.trim();
+  const erga = join(top, ".erga");
+  let code = 0;
+  let stop = () => {};
+  const browser = await chromium.launch();
+  try {
+    git("init", "--quiet", "-b", "work");
+    const subjects = [
+      "The list shows each document's owner",
+      "A page keeps its place after a reload",
+      "Sign-in says why it refused",
+      "Search finds a document by its title",
+    ];
+    const more = ["A comment shows its author's picture", "The editor keeps the caret after an undo", "Export makes a PDF of a page"];
+    const now = Date.now();
+    const commit = (subject: string, ago: number) => {
+      const date = `${Math.round((now - ago * 60_000) / 1000)} +0000`;
+      writeFileSync(join(top, `${subject.length}-${ago}.txt`), subject);
+      git("add", "-A");
+      spawnSync("git", ["-c", "user.name=Sam Reed", "-c", "user.email=sam@example.com", "commit", "--quiet", "-m", subject], {
+        cwd: top,
+        env: { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date },
+      });
+      return git("rev-parse", "HEAD");
+    };
+    const shas = [...subjects.map((x, i) => commit(x, 3000 - i * 300)), ...more.map((x, i) => commit(x, 200 - i * 80))];
+    const main = shas[3],
+      staging = shas[6];
+    git("update-ref", "refs/remotes/origin/main", main);
+    git("update-ref", "refs/remotes/origin/staging", staging);
+    const feature = commit("A table sorts by a click on its head", 12);
+    git("update-ref", "refs/remotes/origin/sort-tables", feature);
+    const entry = (host: string, branch: string, upstream?: object) => ({
+      host,
+      repo: "example.net/team/erga",
+      branch,
+      ...(upstream ? { upstream } : {}),
+      account: "a",
+      worker: "w",
+      database: "d",
+      app: { kind: "workers.dev" },
+      pages: { kind: "shared" },
+      vars: {},
+    });
+    mkdirSync(join(erga, "jobs"), { recursive: true });
+    writeFileSync(
+      join(erga, "config.json"),
+      JSON.stringify({
+        instances: [
+          entry("example.net", "main", { repo: "example.net/team/erga", branch: "staging" }),
+          entry("staging.example.net", "staging", { repo: "example.net/team/erga", branch: "main" }),
+          entry("notes.example.org", "main"),
+        ],
+      })
+    );
+    const runs: Record<string, string> = { "example.net": main, "staging.example.net": shas[5], "notes.example.org": shas[2] };
+    const job = (host: string, sha: string, ago: number, from: string) => {
+      const started = new Date(now - ago * 60_000).toISOString();
+      const lines = [
+        { command: `bun erga deploy ${sha.slice(0, 12)} ${host}`, host, from, pid: 1, started },
+        { commit: sha },
+        { out: `PASS  ${host} runs ${sha.slice(0, 12)}.` },
+        { result: "ok", ended: new Date(now - ago * 60_000 + 64_000).toISOString() },
+      ];
+      writeFileSync(
+        join(erga, "jobs", `${started.replace(/[:.]/g, "-")}-${host}-1.jsonl`),
+        lines.map((l) => `${JSON.stringify(l)}\n`).join("")
+      );
+    };
+    job("example.net", main, 290, "auto-deploy");
+    job("staging.example.net", shas[5], 110, "auto-deploy");
+    job("notes.example.org", shas[2], 2300, "terminal");
+    const { serveOpsPage } = (await import(join(ROOT, "deploy/cli/ops-page.ts"))) as typeof import("../deploy/cli/ops-page");
+    const served = serveOpsPage({
+      dir: erga,
+      cwd: top,
+      port: 0,
+      autoDeploy: true,
+      ask: async (e) => ({ version: runs[e.host].slice(0, 12), healthy: true }),
+      fetch: async () => null,
+      heads: async (_cwd, _repo, branches) => ({
+        heads: Object.fromEntries(branches.map((b) => [b, b == "staging" ? staging : main])),
+        error: null,
+      }),
+      // No deploy: a job that would start stays out.
+      run: () => ({ pid: 1, done: new Promise(() => {}) }),
+    });
+    stop = () => served.stop();
+    // Auto-deploy would start a deploy for an instance behind its head: each head here has its job record, but for
+    // staging.example.net's, which the picture shows as not deployed yet.
+    const page = await browser.newPage({ viewport });
+    await page.goto(`http://127.0.0.1:${served.server.port}/#${opsArg}`);
+    await page
+      .locator(".main .row")
+      .first()
+      .or(page.locator(".main .logs, .main .history, .main .note"))
+      .first()
+      .waitFor({ timeout: 15_000 });
+    await page
+      .locator(".dep.live")
+      .first()
+      .waitFor({ timeout: 15_000 })
+      .catch(() => {});
+    await page.screenshot({ path: out, fullPage: true });
+    console.log(`screenshot: ${out}`);
+  } catch (e) {
+    console.error((e as Error).message);
+    code = 1;
+  } finally {
+    await browser.close();
+    stop();
+    rmSync(top, { recursive: true, force: true });
+  }
+  process.exit(code);
 }
 
 // The document: a fixture's folder, or a file or folder of yours. A copy opens, so the steps never change the original.

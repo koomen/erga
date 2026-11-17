@@ -1,18 +1,18 @@
 // The ops page's view (`bun erga`, deploy/cli/ops-page.ts serves it): pure, the facts in and HTML out. On the left, the
 // instances of .erga/config.json, each with the branch it tracks. On the right, the chosen instance's tabs, the job line
-// under them, and the chosen tab. Deploys: the feature branches, each in one row with its tests' state (gate.ts), its
-// proof and its Merge button, which only a passed run of the tests opens; then the clone's log with a column for
-// each instance that tracks the chosen one's repository, and "live" at the commit it runs. Logs: a job's output.
-// History: the jobs of those instances, and the merges and promotes. With auto-deploy on (`bun erga --auto-deploy`), each
-// column's head shows its instance's state (auto-state.ts), and the page says why a stopped one stopped.
+// under them, and the chosen tab. Deploys: the clone's log with a column for each instance that tracks the chosen one's
+// repository, and "live" at the commit it runs. Logs: a job's output. History: the jobs of those instances, and the
+// merges and promotes. With auto-deploy on (`bun erga --auto-deploy`), each column's head shows its instance's state
+// (auto-state.ts), and the page says why a stopped one stopped. The page shows no feature branch and merges nothing:
+// `bun erga status` lists the branches, and `bun erga merge` merges.
 
 import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo";
 import { esc } from "../../shared/html";
-import { plural, timeAgo } from "../../shared/time";
+import { timeAgo } from "../../shared/time";
 import { type Auto, autoText, REWRITTEN } from "./auto-state";
 import { type Config, type Entry, repoName } from "./config";
 import type { Answer, Branch as StatusBranch, Commit as StatusCommit } from "./flow";
-import { secondsOf, TARGET_S, type Test, type TestRun, testOf, testText } from "./gate";
+import type { TestRun } from "./gate";
 import { type Alive, activeJobs, deploysTo, type JobState, jobState, type Line, type Run } from "./job-state";
 import { GITHUB, isStale, type Polls } from "./poll-state";
 
@@ -59,8 +59,6 @@ export interface Facts {
   polls: Polls;
   /** The records of the tests' runs (test-run.ts, readRuns), each under the tree it tested. */
   runs: TestRun[];
-  /** Each branch's proof page (bun erga proof): the commit it shows, and when it was made. */
-  proofs: Record<string, { sha: string; at: string }>;
   /** Auto-deploy: each instance's state, by its host; null: the mode is off. */
   auto: Record<string, Auto> | null;
   /** The head of the branch that each instance tracks, by its host, as its repository last answered (auto-deploy asks it). */
@@ -221,72 +219,13 @@ function history(g: Entry, mine: JobRecord[], now: number): string {
 /** The command of the job that runs (or that this page starts), or "": while one runs, the page starts no other. */
 export const busyWith = (f: Pick<Facts, "jobs" | "run">) => activeJobs(f.jobs, f.run)[0]?.command ?? "";
 
-/** Why the branch can't merge now, or null: only a passed run of the tests, on the tree of its merge, opens it. */
-export function mergeBlock(b: Branch, base: string, busy: string, test: Test): string | null {
-  if (!b.ahead) return `Nothing to merge: ${base} has its commits.`;
-  if (b.conflicts.length) return `It conflicts with ${base}. Rebase it on origin/${base}, and push it.`;
-  if (test.at == "failed") return "Its tests failed. The task's agent repairs them on the branch, and pushes it.";
-  if (test.at == "running") return "The tests must pass first. They run now.";
-  if (test.at != "passed") return "The tests must pass first. Its run waits in the queue.";
-  if (busy) return `Another job runs: ${busy}. Wait for it to end.`;
-  return null;
-}
-
 /** A button with the page's look; a disabled one says why in its tip. */
 const button = (label: string, attrs: string, block: string | null = null) =>
   `<span class="tip"${block ? ` title="${esc(block)}"` : ""}><button class="btn" type="button" ${attrs}${block ? " disabled" : ""}>${label}</button></span>`;
 
 /** A button's label while its own job runs: a small spinner, and the word. */
 const running = (word: string) => `<i class="spin" aria-hidden="true"></i>${word}…`;
-const MERGING = "It merges now. The job line and Logs show its output.";
 const DEPLOYING = "It deploys now. The job line and Logs show its output.";
-
-/** A branch's tests in its row: a light and one line; a failed run opens to its failed tests, what the failed step said, and its log. */
-function testCell(t: Test, now: number): { chip: string; more: string } {
-  if (t.at == "none") return { chip: "", more: "" };
-  const cls = { waiting: "wait", running: "run", passed: "ok", failed: "bad" }[t.at];
-  const tip = t.at == "waiting" && t.before ? ' title="The branch or staging changed since that run: the merge is other code now."' : "";
-  // A run's time, in the warning colour when it is over the suite's target.
-  const slow = t.at != "waiting" && secondsOf(t.run, now) > TARGET_S;
-  const text = esc(testText(t, now)).replace(/\d+ s$/, (time) =>
-    slow ? `<b class="f-slow" title="Over the target of ${TARGET_S} s for bun run test">${time}</b>` : time
-  );
-  const chip = `<span class="f-test ${cls}" data-test="${t.at}"${tip}><i class="light ${cls}"></i>${text}</span>`;
-  if (t.at != "failed") return { chip, more: "" };
-  const list = t.run.failed.length ? `<ul>${t.run.failed.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
-  const note = t.run.note ? `<pre>${esc(t.run.note)}</pre>` : "";
-  const more = `<details class="f-fails"><summary>What failed</summary>${list}${note}<p class="soft">The log: <code>${esc(t.run.log)}</code></p></details>`;
-  return { chip, more };
-}
-
-function branches(git: Git, f: Pick<Facts, "proofs" | "runs">, active: JobState[], busy: string, now: number): string {
-  const list = git.branches.length
-    ? git.branches
-        .map((b) => {
-          const test = testOf(b, f.runs);
-          const cell = testCell(test, now);
-          const state = !b.ahead
-            ? `<span class="f-state">On ${esc(git.base)} already</span>`
-            : b.conflicts.length
-              ? `<span class="f-state bad" title="${esc(b.conflicts.join(", "))}">Conflicts in ${plural(b.conflicts.length, "file")}: ${esc(b.conflicts.join(", "))}</span>`
-              : cell.chip;
-          const merge = active.some((j) => j.kind == "merge" && j.branch == b.name)
-            ? button(running("Merging"), `data-merge="${esc(b.name)}" aria-busy="true"`, MERGING)
-            : button("Merge", `data-merge="${esc(b.name)}"`, mergeBlock(b, git.base, busy, test));
-          // The proof page, to look at before the merge: old, when the branch got a commit after it.
-          const p = f.proofs[b.name];
-          const proof = !p
-            ? b.ahead
-              ? `<span class="f-proof none" title="The task's agent makes it: bun erga proof">No proof</span>`
-              : ""
-            : `<a class="f-proof${p.sha == b.sha ? "" : " old"}" href="/proof/${esc(encodeURIComponent(b.name.replaceAll("/", "~")))}/" target="_blank" title="${esc(p.sha == b.sha ? "Pictures of this commit, before and after" : `Made for ${sha7(p.sha)}: the branch has a newer commit`)}">${p.sha == b.sha ? "Proof" : "Proof (old)"}</a>`;
-          const form = `<form class="f-merge" data-branch="${esc(b.name)}" hidden><input name="message" value="${esc(b.subject)}" aria-label="The message of the commit on ${esc(git.base)}" autocomplete="off"><button class="btn">Merge</button><button class="btn quiet" type="button" data-cancel>Cancel</button><span class="err" role="alert"></span></form>`;
-          return `<li class="feature" data-branch="${esc(b.name)}"><div class="f-top"><code class="f-name">${esc(b.name)}</code><span class="f-count">${plural(b.ahead, "commit")} ahead · ${b.behind} behind ${esc(git.base)}</span>${state}${proof}${merge}</div><div class="f-last"><span class="f-subject">${esc(b.subject)}</span> · ${esc(b.author)} · ${esc(timeAgo(b.at, now))} · <code>${esc(sha7(b.sha))}</code></div>${cell.more}${form}</li>`;
-        })
-        .join("")
-    : `<li class="feature none">No feature branches in this clone.</li>`;
-  return `<section class="box" aria-labelledby="features-head"><h3 id="features-head">Feature branches</h3><ul class="features">${list}</ul></section>`;
-}
 
 /** "12 s ago", then as timeAgo. */
 const ago = (t: number, now: number) => (now - t < 60_000 ? `${Math.max(0, Math.round((now - t) / 1000))} s ago` : timeAgo(t, now));
@@ -419,7 +358,6 @@ function log(g: Entry, cols: Entry[], f: Facts & { git: Git }, now: number): str
     })
     .join("");
   return `<section class="commits" aria-label="Commits">
-    <div class="legend"><span><i class="dot off"></i>not on ${esc(g.host)} yet</span><span><i class="dot on"></i>on ${esc(g.host)}</span></div>
     ${stopped.map((n) => `<p class="note bad">${esc(n)}</p>`).join("")}${notes.map((n) => `<p class="note">${esc(n)}</p>`).join("")}
     <div class="grid" style="--cols: ${cols.length}"><div class="head"></div><div class="head">Commit</div><div class="head who"></div><div class="head sha"></div><div class="head time"></div>${head}${body || `<div class="none">No commits on origin/staging or origin/main in this clone.</div>`}</div>
     <div class="confirm" id="deploy-confirm" popover><p data-s="ask"></p><p class="soft" data-s="note"></p><div class="acts"><button class="btn" type="button" data-go>Deploy</button><button class="btn quiet" type="button" popovertarget="deploy-confirm" popovertargetaction="hide">Cancel</button></div><p class="err" role="alert"></p></div>
@@ -461,9 +399,7 @@ export function viewHtml(f: Facts, name: string, now = Date.now()): string {
       : tab == "history"
         ? history(g, mine, now)
         : sources(cols, f, now) +
-            ("error" in f.git
-              ? `<p class="note bad">${esc(f.git.error)}</p>`
-              : branches(f.git, f, activeJobs(f.jobs, f.run), busyWith(f), now) + log(g, cols, { ...f, git: f.git }, now));
+          ("error" in f.git ? `<p class="note bad">${esc(f.git.error)}</p>` : log(g, cols, { ...f, git: f.git }, now));
   return `${sidebar}<section class="main" data-host="${esc(g.host)}" data-tab="${tab}"${newest(g, cols, f.config, f.jobs)}><h2 class="title">${esc(g.host)}</h2><p class="tracks-line">Tracks <code>${esc(g.repo)}</code> <code>${esc(g.branch)}</code>. ${f.auto ? "Auto-deploy is on." : "Auto-deploy is off: <code>bun erga --auto-deploy</code> turns it on."}</p>${tabs}${jobLine(g, mine, f.run, now)}${f.run.at == "failed" ? `<p class="note bad failed">${esc(f.run.why)}</p>` : ""}<div class="tab-body">${body}</div></section>`;
 }
 

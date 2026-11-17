@@ -1,12 +1,11 @@
 // `bun erga proof` (deploy/cli/proof.ts), on a real clone with a fake `bun run look`: the proof page has the sentence,
-// each picture before and after at both widths, the tests' result and the changed files; the ops page serves it and
-// links it beside the branch's Merge button (tests/ops-view.test.ts: an old proof, and no proof).
+// each picture before and after at both widths, the tests' result and the changed files; the ops page serves it.
 
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { serveOpsPage } from "../deploy/cli/ops-page";
-import { type Look, lookArgs, makeProof, proofDir, proofRefusal, readProofs } from "../deploy/cli/proof";
+import { type Look, lookArgs, makeProof, proofDir, proofRefusal } from "../deploy/cli/proof";
 import { commit, gitWorld, sh } from "./helpers/git-world.ts";
 
 /** A clone on the branch `task`, one commit ahead of origin/staging, pushed or not. */
@@ -78,7 +77,7 @@ test("a proof: the sentence, before and after at both widths, the tests' result,
     "all passing",
   ])
     expect(html).toContain(text);
-  expect(readProofs(w.dir)).toEqual({ task: { sha: w.head, at: p.at } });
+  expect(JSON.parse(readFileSync(join(out, "proof.json"), "utf8"))).toMatchObject({ branch: "task", sha: w.head, at: p.at });
   // The scratch folder of "before" is gone.
   expect(sh(w.root, "git", "worktree", "list").split("\n").length).toBe(1);
 });
@@ -103,7 +102,7 @@ test("a commit that is not pushed has no test result; no picture at all is an er
   expect(readFileSync(join(proofDir(w.dir, "task"), "index.html"), "utf8")).toContain("tests/deploy.test.ts proves it.");
 });
 
-test("the ops page links the proof beside Merge, and serves its files and nothing else", async () => {
+test("the ops page serves the proof's files and nothing else, and shows no link to it", async () => {
   const w = world();
   makeProof({ dir: w.dir, root: w.root, sentence: "The page says new.", looks: ["--path /documents"], log: () => {}, look });
   writeFileSync(
@@ -133,13 +132,8 @@ test("the ops page links the proof beside Merge, and serves its files and nothin
     fetch: async () => null,
   });
   const at = `http://127.0.0.1:${page.server.port}`;
-  const view = async () => (await fetch(`${at}/view?hash=example.net`)).text();
-  const until = async (text: string) => {
-    for (let i = 0; i < 200 && !(await view()).includes(text); i++) await Bun.sleep(20);
-    return view();
-  };
   try {
-    expect(await until('data-merge="task"')).toContain('<a class="f-proof" href="/proof/task/" target="_blank"');
+    expect(await (await fetch(`${at}/view?hash=example.net`)).text()).not.toContain("/proof/");
     expect(await (await fetch(`${at}/proof/task/`)).text()).toContain("The page says new.");
     expect(await (await fetch(`${at}/proof/task/1-phone-after.png`)).text()).toBe("new page");
     expect((await fetch(`${at}/proof/task/..%2Fconfig.json`)).status).toBe(404);

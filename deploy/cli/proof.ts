@@ -6,10 +6,10 @@
 // A task with nothing to show says which tests prove it (--no-picture).
 //
 // The page is a folder in the main clone, .erga/proofs/<branch>/ (index.html, the pictures, proof.json). The ops page
-// serves it at /proof/<branch>/ and links it beside the branch's Merge button (ops-page.ts, ops-view.ts). It is not an
+// serves it at /proof/<branch>/ (ops-page.ts), and `bun erga proof` prints that address. It is not an
 // Erga document: the CLI has no token that makes documents, and an agent never makes one.
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { esc } from "../../shared/html";
@@ -107,20 +107,6 @@ ${views}${none}
 <section><h2>Changed files (${p.files.length})</h2><ul>${p.files.map((f) => `<li><code>${esc(f)}</code></li>`).join("")}</ul></section>
 </body></html>
 `;
-}
-
-/** Each branch's proof in .erga/proofs/: its commit and its time, by branch. */
-export function readProofs(dir: string): Record<string, { sha: string; at: string }> {
-  const at = join(dir, "proofs");
-  const out: Record<string, { sha: string; at: string }> = {};
-  if (!existsSync(at)) return out;
-  for (const name of readdirSync(at)) {
-    try {
-      const p = JSON.parse(readFileSync(join(at, name, "proof.json"), "utf8")) as Proof;
-      out[p.branch] = { sha: p.sha, at: p.at };
-    } catch {}
-  }
-  return out;
 }
 
 /** `bun run look <args>` in a checkout, at a size, into `out`: null when the picture is there, else why not. */

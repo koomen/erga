@@ -1,6 +1,7 @@
 // The ops page's view (deploy/cli/ops-view.ts): a job record read from its lines, the instances with the branch each
-// tracks, and the Deploys tab drawn from fake facts, with its Merge and Deploy buttons. The page's server
-// (deploy/cli/ops-page.ts) starts their jobs with a fake `bun erga`: nothing merges or deploys.
+// tracks, and the Deploys tab drawn from fake facts, with its Deploy buttons. The page has no feature branch and no
+// Merge: `bun erga merge` merges. The page's server (deploy/cli/ops-page.ts) starts a deploy with a fake `bun erga`:
+// nothing deploys.
 
 import { expect, test } from "bun:test";
 import type { Entry } from "../deploy/cli/config";
@@ -69,7 +70,6 @@ test("the view: each instance with its branch, a column for each one of the same
     run: { at: "idle" },
     polls: startPolls(),
     runs: [],
-    proofs: {},
     auto: null,
     heads: {},
   };
@@ -132,7 +132,6 @@ test("Logs shows the job that runs, else the last one, or the one the hash names
     run: { at: "idle" },
     polls: startPolls(),
     runs: [],
-    proofs: {},
     auto: null,
     heads: {},
   };
@@ -193,102 +192,29 @@ const deploys = (more: Partial<Facts> = {}, staging = "3", production = "1"): Fa
   polls: startPolls(),
   // Every test passed on the merge of clean.
   runs: [runOf("tree-clean")],
-  proofs: {},
   auto: null,
   heads: {},
   ...more,
 });
-/** The page's own command as it starts: a merge of a branch, or a deploy of commit n...n to staging.example.net. */
-const starts = (kind: "merge" | "deploy", what: string): Run =>
-  kind == "merge"
-    ? stepRun(
-        { at: "idle" },
-        {
-          type: "start",
-          command: `bun erga merge ${what}`,
-          job: { kind, host: "staging", commit: null, branch: what, phase: "starting" },
-        }
-      )
-    : stepRun(
-        { at: "idle" },
-        {
-          type: "start",
-          command: `bun erga deploy ${what.repeat(12)} staging.example.net`,
-          job: { kind, host: "staging.example.net", commit: what.repeat(40), branch: null, phase: "starting" },
-        }
-      );
-/** The Merge button of a branch: its tip, and whether it is disabled. */
-const mergeOf = (html: string, name: string) => {
-  const m = new RegExp(`<span class="tip"(?: title="([^"]*)")?><button class="btn" type="button" data-merge="${name}"( disabled)?>`).exec(
-    html
+/** The page's own command as it starts: a deploy of commit n...n to staging.example.net. */
+const starts = (what: string): Run =>
+  stepRun(
+    { at: "idle" },
+    {
+      type: "start",
+      command: `bun erga deploy ${what.repeat(12)} staging.example.net`,
+      job: { kind: "deploy", host: "staging.example.net", commit: what.repeat(40), branch: null, phase: "starting" },
+    }
   );
-  return m && { tip: m[1] ?? "", disabled: !!m[2] };
-};
+/** A merge that runs, from a terminal: its job record. */
+const merging = () => jobOf(line({ ...start, command: "bun erga merge clean", host: "staging" }), () => true, "merge-1")!;
 
-test("Merge: a button on each feature branch, with a field for the message; disabled, with a tip, when it can't merge", () => {
+test("the page has no feature branch, no Merge, no proof link and no legend", () => {
+  // Three pushed branches, a passed run and a proof are in the clone: the page shows none of them.
   const html = viewHtml(deploys(), "example.net", NOW);
-  expect(mergeOf(html, "clean")).toEqual({ tip: "", disabled: false });
-  expect(html).toContain('<form class="f-merge" data-branch="clean" hidden><input name="message" value="The last commit of clean"');
-  expect(mergeOf(html, "clash")).toEqual({ tip: "It conflicts with staging. Rebase it on origin/staging, and push it.", disabled: true });
-  expect(mergeOf(html, "done")).toEqual({ tip: "Nothing to merge: staging has its commits.", disabled: true });
-  // While a job runs, or one this page started, no branch merges.
-  const job = jobOf(line(start), () => true)!;
-  expect(mergeOf(viewHtml(deploys({ jobs: [job] }), "example.net", NOW), "clean")).toEqual({
-    tip: "Another job runs: bun erga deploy example.net. Wait for it to end.",
-    disabled: true,
-  });
-  expect(mergeOf(viewHtml(deploys({ run: starts("merge", "clash") }), "example.net", NOW), "clean")?.disabled).toBe(true);
-});
-
-/** A branch's row, in the view's HTML. */
-const featureOf = (html: string, name: string) =>
-  html.split('<li class="feature"').find((li) => /data-branch="([\w-]+)"/.exec(li)?.[1] == name) ?? "";
-
-test("a branch's row shows one test state, and only a passed run of its merge's tree opens Merge", () => {
-  const row = (runs: Facts["runs"]) => {
-    const html = viewHtml(deploys({ runs }), "example.net", NOW);
-    return { html: featureOf(html, "clean"), merge: mergeOf(html, "clean") };
-  };
-  // No record of the tree: it waits in the queue. A record of another tree of the branch: the row says it is stale.
-  const waiting = row([]);
-  expect(waiting.html).toContain('data-test="waiting"><i class="light wait"></i>Tests wait in the queue</span>');
-  expect(waiting.merge).toEqual({ tip: "The tests must pass first. Its run waits in the queue.", disabled: true });
-  const stale = row([runOf("tree-before", { branch: "clean" })]);
-  expect(stale.html).toContain("Tests wait in the queue (the last run, passed, is stale)");
-  expect(stale.merge?.disabled).toBe(true);
-  const running = row([runOf("tree-clean", { state: "running", ended: undefined })]);
-  expect(running.html).toContain(
-    'data-test="running"><i class="light run"></i>Tests run, <b class="f-slow" title="Over the target of 60 s for bun run test">600 s</b></span>'
-  );
-  expect(running.merge).toEqual({ tip: "The tests must pass first. They run now.", disabled: true });
-  const passed = row([runOf("tree-clean")]);
-  expect(passed.html).toContain('data-test="passed"><i class="light ok"></i>Tests passed in 24 s</span>');
-  // A run over the target of 60 s: its time is in the warning colour.
-  expect(row([runOf("tree-clean", { ended: "2026-11-05T11:51:01.000Z" })]).html).toContain(
-    'Tests passed in <b class="f-slow" title="Over the target of 60 s for bun run test">61 s</b></span>'
-  );
-  expect(row([runOf("tree-clean", { ended: "2026-11-05T11:51:00.000Z" })]).html).toContain("Tests passed in 60 s</span>");
-  expect(passed.merge).toEqual({ tip: "", disabled: false });
-  // A failed run opens to its failed tests, what the failed step said, and its log.
-  const names = ["e2e/smoke/a.e2e.ts: typing shows", "e2e/smoke/b.e2e.ts: undo works"];
-  const failed = row([runOf("tree-clean", { state: "failed", failed: names, note: "== smoke run: FAILED (9 s)" })]);
-  expect(failed.html).toContain('data-test="failed"><i class="light bad"></i>2 tests failed in 24 s</span>');
-  expect(failed.html).toContain(
-    `<details class="f-fails"><summary>What failed</summary><ul><li>${names[0]}</li><li>${names[1]}</li></ul><pre>== smoke run: FAILED (9 s)</pre>`
-  );
-  expect(failed.html).toContain("The log: <code>/tmp/erga-tests.log</code>");
-  expect(failed.merge).toEqual({
-    tip: "Its tests failed. The task&#39;s agent repairs them on the branch, and pushes it.",
-    disabled: true,
-  });
-  // A run with no failed browser test (the typecheck failed): what that step said.
-  const broke = row([runOf("tree-clean", { state: "failed", note: "== typecheck: FAILED (9 s)" })]);
-  expect(broke.html).toContain("Tests failed in 24 s</span>");
-  expect(broke.html).toContain("<summary>What failed</summary><pre>== typecheck: FAILED (9 s)</pre>");
-  // A branch with a conflict has no merge to test; and the page has no other box of tests or times.
-  const all = viewHtml(deploys(), "example.net", NOW);
-  expect(featureOf(all, "clash")).not.toContain("f-test");
-  expect(all).not.toContain("tests-head");
+  for (const gone of ["Feature branches", "clean", "clash", "data-merge", "f-merge", "f-proof", "Tests passed", 'class="legend"'])
+    expect(html, gone).not.toContain(gone);
+  expect(html).toContain('<section class="commits"');
 });
 
 /** The row of a commit, in the view's HTML. */
@@ -316,14 +242,14 @@ test("Deploy: a commit row has a button in an instance's column when the commit 
   expect(html).toContain('<div class="confirm" id="deploy-confirm" popover>');
   expect(html.match(/data-deploy /g)?.length).toBe(2);
   // While a job runs, each is disabled and says why.
-  const busy = viewHtml(deploys({ run: starts("merge", "clean") }), "example.net", NOW);
+  const busy = viewHtml(deploys({ jobs: [merging()] }), "example.net", NOW);
   expect(busy).toContain(
     '<span class="tip" title="Another job runs: bun erga merge clean. Wait for it to end."><button class="btn" type="button" data-deploy'
   );
   expect(busy.match(/data-deploy [^>]* disabled>/g)?.length).toBe(2);
 });
 
-test("the page's server: Merge and Deploy start their `bun erga` command, one job at a time, only from the page", async () => {
+test("the page's server: Deploy starts its `bun erga` command, one job at a time, only from the page; it has no merge", async () => {
   const { execFileSync } = await import("node:child_process");
   const { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -366,36 +292,28 @@ test("the page's server: Merge and Deploy start their `bun erga` command, one jo
   const view = async () => (await fetch(`${at}/view?hash=example.net`)).text();
   try {
     for (let i = 0; i < 100 && !(await view()).includes("dep live"); i++) await Bun.sleep(20);
-    // No test record of its merge yet: the server refuses the merge, as the button does.
-    const early = await post("/api/merge", { branch: "a-feature", message: "A feature" });
-    expect([early.status, ((await early.json()) as { error: string }).error]).toEqual([
-      409,
-      "The tests must pass first. Its run waits in the queue.",
-    ]);
+    // The page merges nothing: the address is not there, whatever the branch's tests say.
     writePass(join(dir, ".erga"), "HEAD", dir);
-    for (let i = 0; i < 100 && !(await view()).includes('data-merge="a-feature">Merge'); i++) await Bun.sleep(20);
-    expect(await view()).toContain('data-merge="a-feature">Merge');
-    expect((await post("/api/merge", { branch: "a-feature", message: "A feature" }, "https://evil.example")).status).toBe(403);
-    expect((await post("/api/merge", { branch: "nope", message: "x" })).status).toBe(409);
-    expect((await post("/api/merge", { branch: "a-feature", message: " " })).status).toBe(409);
-    // A message of any length: here, eleven words, as a prefilled subject can be.
-    const long = "A feature, all of it, with more words than ten here";
-    expect((await post("/api/merge", { branch: "a-feature", message: long })).status).toBe(202);
-    expect(runs).toEqual([["merge", "a-feature", "-m", long]]);
+    expect((await post("/api/merge", { branch: "a-feature", message: "A feature" })).status).toBe(404);
+    expect(runs).toEqual([]);
+    expect((await post("/api/deploy", { host: "example.net", sha: git("rev-parse", "HEAD~1") }, "https://evil.example")).status).toBe(403);
+    expect((await post("/api/deploy", { host: "example.net", sha: git("rev-parse", "HEAD~1") })).status).toBe(202);
+    expect(runs).toEqual([["deploy", git("rev-parse", "HEAD~1").slice(0, 12), "example.net"]]);
     // While it runs: no second job, and the buttons say why.
-    const busy = await post("/api/deploy", { host: "example.net", sha: git("rev-parse", "HEAD~1") });
+    const busy = await post("/api/deploy", { host: "staging.example.net", sha: git("rev-parse", "HEAD~2") });
     expect(busy.status).toBe(409);
-    expect(((await busy.json()) as { error: string }).error).toBe("Another job runs: bun erga merge a-feature. Wait for it to end.");
-    expect(await view()).toContain('title="Another job runs: bun erga merge a-feature. Wait for it to end."');
+    const command = `bun erga deploy ${git("rev-parse", "HEAD~1").slice(0, 12)} example.net`;
+    expect(((await busy.json()) as { error: string }).error).toBe(`Another job runs: ${command}. Wait for it to end.`);
+    expect(await view()).toContain(`title="Another job runs: ${command}. Wait for it to end."`);
     // The Deploys tab's job line shows it before its job record does.
     expect(await view()).toContain('data-tab="deploys"');
     expect(await view()).toContain(
-      '<div class="job running"><i class="light"></i><code>bun erga merge a-feature</code><span>starts · from this page</span></div>'
+      `<div class="job running"><i class="light"></i><code>${command}</code><span>starts · from this page</span></div>`
     );
     // It stops before its job record: the page shows its last words.
-    end({ code: 1, out: "FAIL  staging.lock is locked\n" });
+    end({ code: 1, out: "FAIL  example.net.lock is locked\n" });
     for (let i = 0; i < 100 && (await view()).includes("Another job runs"); i++) await Bun.sleep(20);
-    expect(await view()).toContain('<p class="note bad failed">bun erga merge a-feature stopped: FAIL  staging.lock is locked</p>');
+    expect(await view()).toContain(`<p class="note bad failed">${command} stopped: FAIL  example.net.lock is locked</p>`);
     // Deploy: a commit of the log, to an instance that does not run it.
     expect((await post("/api/deploy", { host: "example.net", sha: git("rev-parse", "HEAD") })).status).toBe(409);
     expect((await post("/api/deploy", { host: "example.net", sha: git("rev-parse", "HEAD~2") })).status).toBe(409);
@@ -427,19 +345,10 @@ test("the tests that a merge or a deploy runs get no ERGA_JOB_FROM, so their own
   }
 });
 
-test("while its job runs, a button says so with a spinner: Merging… on its branch, Deploying… in its cell", () => {
+test("while its deploy runs, its cell says Deploying… with a spinner", () => {
   const SPIN = '<i class="spin" aria-hidden="true"></i>';
-  // The page started the merge, and then its job record runs: the branch's button says Merging…, disabled.
-  const merging = `<span class="tip" title="It merges now. The job line and Logs show its output."><button class="btn" type="button" data-merge="clean" aria-busy="true" disabled>${SPIN}Merging…</button></span>`;
-  expect(viewHtml(deploys({ run: starts("merge", "clean") }), "example.net", NOW)).toContain(merging);
-  const record = jobOf(line({ ...start, command: "bun erga merge clean", host: "staging" }), () => true)!;
-  const html = viewHtml(deploys({ jobs: [record] }), "example.net", NOW);
-  expect(html).toContain(merging);
-  // The other buttons wait, and say why; no other button spins.
-  expect(mergeOf(html, "clash")?.disabled).toBe(true);
-  expect(html.match(/class="spin"/g)?.length).toBe(1);
   // A deploy: only its cell says Deploying…, and it stays shown with no hover.
-  const deploying = viewHtml(deploys({ run: starts("deploy", "2") }), "example.net", NOW);
+  const deploying = viewHtml(deploys({ run: starts("2") }), "example.net", NOW);
   expect(rowOf(deploying, "2")).toContain(
     `<span class="deps here busy"><span class="tip" title="It deploys now. The job line and Logs show its output."><button class="btn" type="button" data-deploy data-host="staging.example.net"`
   );
@@ -447,14 +356,12 @@ test("while its job runs, a button says so with a spinner: Merging… on its bra
   expect(deploying.match(/class="spin"/g)?.length).toBe(1);
   expect(deploying).toContain(`${SPIN}Deploying…`);
   // The instance answers the new commit before the job ends: the cell still says Deploying…, not live.
-  const answered = viewHtml(deploys({ run: starts("deploy", "2") }, "2"), "example.net", NOW);
+  const answered = viewHtml(deploys({ run: starts("2") }, "2"), "example.net", NOW);
   expect(rowOf(answered, "2")).toContain(`${SPIN}Deploying…`);
   expect(rowOf(answered, "2")).not.toContain("live");
-  // The job ends: the buttons are as before.
-  const done = jobOf(line({ ...start, command: "bun erga merge clean" }) + line({ result: "ok", ended: start.started }), () => true)!;
-  const after = viewHtml(deploys({ jobs: [done] }), "example.net", NOW);
-  expect(after).not.toContain("spin");
-  expect(mergeOf(after, "clean")).toEqual({ tip: "", disabled: false });
+  // A merge that runs spins nothing on the page: the buttons wait.
+  const waits = viewHtml(deploys({ jobs: [merging()] }), "example.net", NOW);
+  expect(waits).not.toContain("spin");
 });
 
 test("a terminal's deploy says Deploying… in its cell, from its record's host and commit, whatever its flags", () => {
@@ -486,7 +393,6 @@ test("a merge deploys to no instance: no cell says Deploying…, and its job sho
   const merge = jobOf(line({ ...start, command: "bun erga merge clean", host: "staging" }) + line({ commit: two }), () => true, "merge-1")!;
   const html = viewHtml(deploys({ jobs: [merge] }), "example.net", NOW);
   expect(rowOf(html, "2")).not.toContain("Deploying…");
-  expect(html).toContain("Merging…");
   expect(html).toContain('<a class="job running" href="#example.net/logs/merge-1"');
   // A promote's job too.
   const promote = jobOf(
@@ -531,25 +437,6 @@ test("the page's server checks GitHub and each instance at start, not on a page 
     page.stop();
     rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test("a branch's proof is a link beside Merge: old when the branch has a newer commit, and named when there is none", () => {
-  const sha = (name: string) => /data-branch="(\w+)"/.exec(name);
-  const of = (html: string, name: string) => html.split('<li class="feature"').find((li) => sha(li)?.[1] == name) ?? "";
-  const clean = branch("clean");
-  const html = viewHtml(
-    deploys({
-      proofs: { clean: { sha: clean.sha, at: "2026-11-05T11:00:00.000Z" }, clash: { sha: "0".repeat(40), at: "2026-11-05T10:00:00.000Z" } },
-    }),
-    "example.net",
-    NOW
-  );
-  expect(of(html, "clean")).toContain('<a class="f-proof" href="/proof/clean/" target="_blank"');
-  expect(of(html, "clean")).toContain(">Proof</a>");
-  expect(of(html, "clash")).toContain(">Proof (old)</a>");
-  // A branch with nothing to merge needs no proof.
-  expect(of(viewHtml(deploys(), "example.net", NOW), "clean")).toContain("No proof");
-  expect(of(viewHtml(deploys(), "example.net", NOW), "done")).not.toContain("f-proof");
 });
 
 test("the page's server works the tests' queue: each branch's merge runs one time, one at a time, the oldest first; a new commit runs again", async () => {
@@ -597,7 +484,6 @@ test("the page's server works the tests' queue: each branch's merge runs one tim
       return { pid: 999_999, done: new Promise((done) => (end = () => done({ code: 0, out: "" }))) };
     },
   });
-  const view = async () => (await fetch(`http://127.0.0.1:${page.server.port}/view?hash=example.net`)).text();
   const until = async (is: () => boolean | Promise<boolean>) => {
     // The server sees a moved ref at its next 5 seconds' tick.
     for (let i = 0; i < 500 && !(await is()); i++) await Bun.sleep(20);
@@ -609,22 +495,17 @@ test("the page's server works the tests' queue: each branch's merge runs one tim
   try {
     await until(() => started.length == 1);
     expect(started).toEqual(["old"]);
-    expect(featureOf(await view(), "new")).toContain("Tests wait in the queue");
     finish(trees.old, "failed");
     await until(() => started.length == 2);
     expect(started).toEqual(["old", "new"]);
-    expect(featureOf(await view(), "old")).toContain('data-test="failed"');
     finish(newer, "passed");
-    await until(async () => featureOf(await view(), "new").includes('data-test="passed"'));
-    // Each has its record: nothing more runs. The failed branch gets a commit: its merge is a new tree, and it runs again.
+    // Each has its record: nothing more runs (a run between would show in the order below). The failed branch gets a commit: its merge is a new tree, and it runs again.
     git("checkout", "--quiet", "--detach", "origin/old");
     const repaired = commit("repair.txt");
     git("update-ref", "refs/remotes/origin/old", "HEAD");
     await until(() => started.length == 3);
     expect(started).toEqual(["old", "new", "old"]);
-    expect(featureOf(await view(), "old")).toContain("the last run, failed, is stale");
     finish(repaired, "passed");
-    await until(async () => featureOf(await view(), "old").includes('data-test="passed"'));
     expect(started.length).toBe(3);
   } finally {
     end();

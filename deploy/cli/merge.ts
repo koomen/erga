@@ -1,4 +1,4 @@
-// `bun erga merge <branch>... [-m text]`, and the ops page's Merge button (deploy/cli/ops-page.ts runs this command):
+// `bun erga merge <branch>... [-m text]`:
 // each branch onto staging as one commit, in a worktree of its own, then the gate (gate.ts) on the result, and the push
 // of staging. It deploys nothing: an instance that tracks staging gets the commit from `bun erga deploy <host>`. The gate: the tests (bun run test) must have passed on the last commit's tree. A
 // tree with a record (.erga/tests/, test-run.ts: the ops page ran it for the branch's row) runs no test here; a tree with
