@@ -72,9 +72,6 @@ export abstract class EditorCore {
   protected staleSince: string | null = null;
   /** Escape took the focus off the text (see leaveText): no caret comes back until a unit takes the focus again. */
   protected leftText = false;
-  /** Reports a problem with the page as the page's own watcher would (set once it renders). */
-  /** Why each locked unit (see `verify`) can't be edited, for when someone clicks it. */
-  protected lockReasons = new WeakMap<Element, { message: string; fix?: string }>();
   /** Keys and input held while the editor couldn't take them, oldest first (see release). */
   protected held: HeldInput[] = [];
   /** Set while the shell has the document (see hold). */
@@ -265,7 +262,6 @@ export abstract class EditorCore {
     el.classList.add("erga-locked");
     this.keepOwn(el);
     el.setAttribute("contenteditable", "false");
-    this.lockReasons.set(el, this.whyLocked(unit));
   }
 
   /**
@@ -283,43 +279,6 @@ export abstract class EditorCore {
 
   /** Draws a unit's content again from its HTML (render.ts); whether its text then matches. */
   protected abstract redraw(unit: M.Unit, el: Element): boolean;
-
-  /**
-   * Why a unit's text can't be mapped to the source, in words someone can
-   * act on, and when the document is at fault, a prompt for the agent to
-   * fix it. Worked out from the unit's own source, so it names the actual
-   * problem (the stray tag, the line).
-   */
-  protected whyLocked(unit: M.Unit): { message: string; fix?: string } {
-    const src = this.state.doc.sliceString(unit.contentFrom, unit.contentTo);
-    const what = unit.tag == "p" ? "paragraph" : HEADING.test(unit.tag) ? "heading" : unit.tag == "li" ? "list item" : `<${unit.tag}>`;
-    const text = unit.runs
-      .map((r) => r.text)
-      .join("")
-      .replace(/\s+/g, " ")
-      .trim();
-    const quote = text.length > 60 ? text.slice(0, 57).trimEnd() + "…" : text;
-    const line = this.state.doc.lineAt(unit.from).number;
-    // An end tag with nothing open to close: the browser drops it, so the
-    // page's text no longer lines up with the file's.
-    const open: string[] = [];
-    for (const m of src.matchAll(/<(\/?)([a-zA-Z][\w-]*)[^>]*?(\/?)>/g)) {
-      const [, close, name, selfClose] = m,
-        tag = name.toLowerCase();
-      if (selfClose || /^(br|img|wbr|hr|input|meta|link|source|area|col|embed|track)$/.test(tag)) continue;
-      if (!close) open.push(tag);
-      else if (open.at(-1) == tag) open.pop();
-      else
-        return {
-          message: `This ${what} can't be edited: its HTML has a stray </${tag}> that the browser ignores, so the page's text no longer lines up with the file.`,
-          fix: `The ${what} “${quote}” (line ${line}) has a stray </${tag}> in its HTML, which the browser ignores, so I can't edit it on the page. Fix the markup so it's well-formed, keeping its text exactly as it is.`,
-        };
-    }
-    return {
-      message: `This ${what} can't be edited here: the page's script changed its text after the page loaded.`,
-      fix: `The ${what} “${quote}” (line ${line}) is changed by the page's script after the page loads, so I can't edit it on the page. Change the page so that this text can be edited by hand: a script must not change text that is in the source. Give the script an empty element to fill, or mark the text data-erga-noedit if a script must own it.`,
-    };
-  }
 
   protected unitOf(node: Node): M.Unit | null {
     for (let el = node.nodeType == 1 ? (node as Element) : node.parentElement; el; el = el.parentElement) {

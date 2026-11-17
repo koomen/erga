@@ -592,11 +592,10 @@ export abstract class EditorInput extends EditorClipboard {
     // the edit would land there.
     if (!type.startsWith("history") && !this.readSelection()) {
       e.preventDefault();
+      // In a locked unit the key is dropped: its text can't be edited on the page.
       const u = this.unitOf(e.target as Node);
-      const el = u ? this.elOf(u) : null;
-      const why = el ? this.lockReasons.get(el) : undefined;
-      if (u && el && !this.verify(u)) this.config.onNotice?.(why?.message ?? "This text can't be edited here.", why?.fix);
-      else this.config.onNotice?.("Can't tell where the caret is in the file, so that wasn't typed. Click into the text again.");
+      if (!u || this.verify(u))
+        this.config.onNotice?.("Can't tell where the caret is in the file, so that wasn't typed. Click into the text again.");
       return;
     }
     switch (type) {

@@ -414,7 +414,6 @@ export abstract class EditorRender extends EditorMarks {
       if (!el) continue;
       if (el.classList.contains("erga-locked")) {
         el.classList.remove("erga-locked");
-        this.lockReasons.delete(el);
         this.prepareUnit(el);
       }
       if (markup && !this.readsAsParsed(u)) this.lock(u, el);
@@ -506,7 +505,6 @@ export abstract class EditorRender extends EditorMarks {
       if (!el) continue;
       ids.add(u.id);
       el.classList.remove("erga-locked");
-      this.lockReasons.delete(el);
       this.prepareUnit(el);
       if (this.verify(u)) this.showSpaces(u, src);
     }
