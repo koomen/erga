@@ -15,7 +15,7 @@
 // .build/release/ for the build: nothing real is touched, and no repository is asked: with no commit named, the
 // checkout's own deploys. In a clone that a test gives, the repository is asked as always.
 
-import { deployFacts, liveRelease, rollbackTo, settledHealth } from "../pipeline/account";
+import { deployFacts, liveDeployment, liveRelease, rollbackTo, settledHealth } from "../pipeline/account";
 import { Cloudflare, DeployError, type Fetch, Unhealthy } from "../pipeline/cloudflare-api";
 import {
   STEPS,
@@ -144,7 +144,7 @@ export interface DeployOptions {
   command?: string;
   /** Where the command was typed, for the job record (default: a terminal). */
   from?: From;
-  /** The Cloudflare API and the servers (the mock's, under ERGA_DEPLOY_MOCK). */
+  /** The Cloudflare API (the mock's, under ERGA_DEPLOY_MOCK). */
   net?: Fetch;
   token?: string;
   print?: (line: string) => void;
@@ -219,8 +219,8 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   const sent = Object.keys(target?.secrets ?? {});
   const wrong = target && guardTarget(target);
   if (wrong) throw new Error(wrong);
-  // On AWS: the servers only (the AWS CLI is this machine's own). On Cloudflare: its API too, with this machine's credential.
-  const { net, token, quick } = aws ? { net: o.net ?? globalThis.fetch.bind(globalThis), token: "", quick: {} as Quick } : await netOf(o);
+  // On AWS: the AWS CLI, which is this machine's own. On Cloudflare: its API, with this machine's credential.
+  const { net, token, quick } = aws ? { net: globalThis.fetch.bind(globalThis), token: "", quick: {} as Quick } : await netOf(o);
   const cf = new Cloudflare(token, net);
   const command = o.command ?? `bun erga deploy ${o.commit ? `${o.commit} ` : ""}${o.host}${domains.map((d) => ` --domain ${d}`).join("")}`;
   const free = takeLock(o.dir, o.host, command);
@@ -270,8 +270,11 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       log(
         `  ${entryOrigin(aws)}, documents' pages on ${aws.aws.pages.kind == "domain" ? `*.${aws.aws.pages.domain}` : aws.aws.pages.host}`
       );
-      const release = await keepLast(await built(sha), entryOrigin(aws), net, log);
-      const { deployToAws } = await import("../aws/deploy");
+      const { awsCli } = await import("../aws/cli");
+      const { deployToAws, liveOnAws } = await import("../aws/deploy");
+      // The files of the release that the instance runs now (AWS says which), as this machine kept them.
+      const serving = await liveOnAws(awsCli({ profile: aws.profile, region: aws.aws.region }), aws.aws.stack).catch(() => null);
+      const release = keepLast(await built(sha), { dir: o.dir, host: o.host, serving }, log);
       log("Deploy to the machine...");
       // The machine's own script waits until the release answers its health check, healthy, on the loopback.
       await deployToAws(aws, release, log, o.first);
@@ -293,7 +296,10 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       log(
         `  https://${targetHost(t)}, documents' pages on ${targetPagesShown(t)}; ${sent.length ? `the secrets sent: ${sent.join(", ")}` : "no secret sent"}`
       );
-      const release = await keepLast(await built(sha), `https://${targetHost(t)}`, net, log);
+      // The files of the release that the Worker serves now (Cloudflare says which), as this machine kept them.
+      const live = await liveDeployment(cf, t.accountId, t.workerName).catch(() => null);
+      const serving = live ? ((await liveRelease(cf, t.accountId, t.workerName, live.versionId).catch(() => null))?.version ?? null) : null;
+      const release = keepLast(await built(sha), { dir: o.dir, host: o.host, serving }, log);
       const carry: Carry = {};
       try {
         await runPipeline(cf, release, t, {
@@ -348,7 +354,7 @@ export async function rollbackInstance(o: RollbackOptions): Promise<string | nul
   const entry = entryOf(config, o.host);
   if (!entry) throw new Error(`${o.host} has no entry in .erga/config.json. Register it first: bun erga register ${o.host}`);
   const aws = isAws(entry) ? entry : null;
-  const { net, token, quick } = aws ? { net: o.net ?? globalThis.fetch.bind(globalThis), token: "", quick: {} as Quick } : await netOf(o);
+  const { net, token, quick } = aws ? { net: globalThis.fetch.bind(globalThis), token: "", quick: {} as Quick } : await netOf(o);
   const command = `bun erga rollback ${o.host}`;
   const free = takeLock(o.dir, o.host, command);
   const job = startJob(o.dir, { command, host: o.host, print: o.print });

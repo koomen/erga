@@ -215,8 +215,13 @@ describe("what an instance runs comes from Cloudflare, never from the instance",
     // writes its row each minute (its Cron Trigger).
     expect(await ask(fleet)).toEqual({ version: "prim00000000", healthy: null, health: "the server wrote no health row yet" });
     expect(await ask(next)).toEqual({ version: SHA1.slice(0, 12), healthy: true });
-    await deployInstance({ dir, host: "next.example.com", commit: "HEAD", net: mock.fetch, print: () => {} });
+    const said: string[] = [];
+    await deployInstance({ dir, host: "next.example.com", commit: "HEAD", net, print: (l) => said.push(l) });
     expect(await ask(next)).toEqual({ version: HEAD.slice(0, 12), healthy: true });
+    // The files of the release before come from this machine's own copy: it has none of the bootstrap's release.
+    expect(said).toContain(
+      `This machine has no copy of the files of release ${SHA1.slice(0, 12)}, which next.example.com runs (another machine deployed it): the release keeps none of the release before.`
+    );
     // An instance whose deployment did not change costs two calls: its deployments, and its health row.
     const calls = mock.state.calls.length;
     expect((await ask(next)).version).toBe(HEAD.slice(0, 12));
@@ -238,7 +243,7 @@ describe("what an instance runs comes from Cloudflare, never from the instance",
       healthy: false,
       health: "documents: a document didn't open (the mock says this release is unhealthy)",
     });
-    // Neither the reader nor the rollback asked a server anything.
+    // Neither the reader, the deploy nor the rollback asked a server anything.
     expect(servers).toEqual([]);
     // A Worker that is not there, and a credential that Cloudflare refuses: the answer says so.
     expect(await ask({ ...next, host: "new.example.com", worker: "erga-new" } as Entry)).toEqual({
@@ -397,8 +402,10 @@ describe("the branches", () => {
         `${c2.slice(0, 12)} is not a commit of main on ${origin} (its head: ${c1.slice(0, 12)}). example.com deploys only a commit of the branch it tracks.`
       );
       expect(mock.state.calls.length).toBe(calls);
-      // An older commit of its branch deploys.
+      // An older commit of its branch deploys. It keeps the files of the release that ran (this machine deployed it,
+      // and kept them: here both builds have the same files, so none is lacking).
       expect(await deployInstance({ dir, host: "next.example.com", commit: c1, clone, net: mock.fetch, print })).toBe(c1);
+      expect(lines).toContain(`The release keeps 0 files of the release before (${c2.slice(0, 12)}), for pages still open.`);
 
       // A plain git push to main still stops.
       const plain = run("git", "push", "origin", `${c2}:refs/heads/main`);

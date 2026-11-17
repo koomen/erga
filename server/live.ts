@@ -3,8 +3,7 @@
 //
 //   - GET /api/release: the address of each of the editor's files, as the client
 //     build named them by their content's hash (client/build.ts, manifest.json),
-//     and the release ({ files: { "page.js": "/_erga/main-<hash>.js", ... },
-//     version, assets: the whole manifest });
+//     and the release ({ files: { "page.js": "/_erga/main-<hash>.js", ... }, version });
 //   - every HTML page of the site's own gets live.js, and a meta erga-build:
 //     a digest of the page's inline scripts (and the scripts it names), so a
 //     page can tell when the server now makes it with other code;
@@ -26,12 +25,9 @@ let boot = "";
 
 /** GET /api/release: the files' addresses, and the release (the deploy's version, ERGA_VERSION). */
 export const releaseApi = Effect.map(platform, (p) => {
-  const assets = assetManifest();
-  // (Without the editor's shell, the largest part, which only the app's own document pages put in: shared/assets.ts.)
   return json({
-    files: assets?.files ?? {},
+    files: assetManifest()?.files ?? {},
     version: p.deploy.version ?? `boot-${(boot ||= crypto.randomUUID().slice(0, 8))}`,
-    assets: assets && { ...assets, shell: undefined },
   });
 });
 

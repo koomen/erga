@@ -293,7 +293,6 @@ export interface FirstAws {
   github?: string;
   /** The secrets the server doesn't hold yet (deploy/own/first.ts, secretsFor). */
   secrets: Record<string, string>;
-  net?: Fetch;
   print: (line: string) => void;
   noTests?: boolean;
   suite?: DeployOptions["suite"];
@@ -340,7 +339,6 @@ export async function firstDeployAws(o: FirstAws): Promise<string> {
     command: `bun erga setup ${a.host}`,
     noTests: o.noTests,
     suite: o.suite,
-    ...(o.net ? { net: o.net } : {}),
     print: o.print,
     first: firstSql(a),
   });

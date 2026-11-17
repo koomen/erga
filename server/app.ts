@@ -47,7 +47,7 @@
 // This is the order of the parts, by the start of the address. Each part's routes are a list in its own file
 // (shared/routes.ts); this file's own are ROUTES, below.
 //
-// The routes that run only on Cloudflare (what the deploy pipeline asks, the
+// The routes that run only on Cloudflare (the server's health report, the
 // dev server's) are `outside`'s: cloudflare/index.ts answers them, at their place
 // in the table.
 

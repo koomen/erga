@@ -28,7 +28,7 @@ export interface AssetManifest {
   };
   /**
    * The editor's shell (client/editor.html), which the server puts into a document's page: its styles, and its controls'
-   * HTML. Not in GET /api/release's copy (server/live.ts): only the app's own Worker makes those pages.
+   * HTML.
    */
   shell?: { style: string; body: string };
 }
