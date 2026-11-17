@@ -130,7 +130,8 @@ and `main`. There are no pull requests.
   with a change that no commit has, stays. It also removes a scratch
   folder that a crashed merge left.
 - `bun erga status`: each instance in `.erga/config.json` with the
-  repository and branch that it tracks, its commit, how many commits it is
+  repository and branch that it tracks, its upstream with how far its
+  branch is ahead of it and behind it, its commit, how many commits it is
   behind that branch, and its health, the feature branches (ahead, behind, conflicts, and the
   state of the tests on its merge, with each failed test) and the
   commits on staging that are not on main. It only reads: no fetch. An
@@ -183,6 +184,16 @@ and `main`. There are no pull requests.
   repository and the branch that a registered instance tracks. The
   defaults are `github.com/koomen/erga` and `main`. With no option, it
   prints them. It deploys nothing. Only when Pete asks.
+- `bun erga track <host> --upstream <branch> [--upstream-repo <repo>]`: the
+  instance's upstream, a branch to compare its branch with: of its own
+  repository, or of another one (a fork names `main` of
+  `github.com/koomen/erga`). `--no-upstream` removes it. `bun erga status`
+  then says how many commits the instance's branch has that the upstream
+  lacks (ahead), and lacks of it (behind). Nothing else reads the upstream:
+  no deploy, and no command that moves a branch. The numbers are git's
+  history: a cherry-pick with the same patch counts on no side, and a
+  branch that took its upstream as one squashed commit stays behind for
+  good. Take an upstream with a merge commit or a rebase.
 - `bun erga rollback <host>`: a registered instance's Worker version from
   before its last deploy, in seconds. Only when Pete asks. The next deploy
   goes forward again.

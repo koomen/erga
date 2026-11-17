@@ -72,7 +72,12 @@ those words.
 
 A server tracks one branch of one repository: Erga's `main`, unless
 `--repo <repo>` and `--branch <branch>` say another (`bun erga track
-<address>` changes them later). Later deploys run from your clone:
+<address>` changes them later). A server that tracks your own fork can
+name Erga's `main` as its upstream: `bun erga track <address> --upstream
+main --upstream-repo github.com/koomen/erga`. `bun erga status` then
+says how many of Erga's commits your fork lacks. Take them with a merge
+commit or a rebase, not as one squashed commit: git can then tell which
+ones you have. Later deploys run from your clone:
 `git pull`, then `bun erga deploy <address>`, which gives the server that
 branch's newest commit.
 

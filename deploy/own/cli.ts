@@ -32,7 +32,7 @@
 
 import { closeSync, readFileSync } from "node:fs";
 import { Claim } from "../../server/identity/claim-link";
-import { entryOf, isAws, originOf, readConfig } from "../cli/config";
+import { DEFAULT_REPO, entryOf, isAws, originOf, readConfig, repoName } from "../cli/config";
 import { findDatabase } from "../pipeline/account";
 import { fail, pass, ROOT, say } from "../root";
 import { askSecret, githubApp, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
@@ -322,6 +322,11 @@ async function run(a: Answers, o: Run) {
   say(
     `DONE  Tell the user: Erga is live at https://${a.host}, and they are the admin. It tracks ${a.branch} of ${a.repo}: bun erga deploy ${a.host} gives it that branch's newest commit. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page). Settings has the rest: Google sign-in, a feedback repository, the homepage.`
   );
+  // A repository of the user's own (a fork): Erga's main is the upstream to compare it with. Setup sets none itself.
+  if (repoName(a.repo) != DEFAULT_REPO)
+    say(
+      `NOTE  It tracks a repository of your own. To see which of Erga's commits it lacks (bun erga status, and the ops page): bun erga track ${a.host} --upstream main --upstream-repo ${DEFAULT_REPO}`
+    );
 }
 
 async function remove(host: string, yes: boolean) {

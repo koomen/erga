@@ -216,6 +216,45 @@ export function behindOf(e: Pick<Entry, "repo" | "branch">, version: string | nu
   return n.ok ? Number(n.out) : null;
 }
 
+/** A commit of a comparison: what a list shows of it. */
+export type Compared = { sha: string; subject: string; at: number; author: string };
+
+/**
+ * What `branch` and `upstream` (two commits or refs of the clone) each have that the other lacks, newest first: `ahead`
+ * only on the branch, `behind` only on the upstream. `same`: how many commits are on both as the same patch with
+ * another id (a cherry-pick): they are on neither list. A merge commit is on no list. Null: the clone does not have both.
+ * By git's history: a branch that took its upstream as one squashed commit stays behind by each upstream commit.
+ */
+export function compare(cwd: string, branch: string, upstream: string): { ahead: Compared[]; behind: Compared[]; same: number } | null {
+  const r = sh(
+    ["git", "log", "--left-right", "--cherry-mark", "--no-merges", "--format=%m%x1f%H%x1f%s%x1f%ct%x1f%an%x1e", `${branch}...${upstream}`],
+    { cwd }
+  );
+  if (!r.ok) return null;
+  const marks = r.out
+    .split("\x1e")
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .map((x) => {
+      const [mark, sha, subject, at, author] = x.split("\x1f");
+      return { mark, sha, subject, at: Number(at) * 1000, author };
+    });
+  const side = (mark: string) => marks.filter((c) => c.mark == mark).map(({ mark: _, ...c }) => c);
+  // The same patch shows one time on each side.
+  return { ahead: side("<"), behind: side(">"), same: Math.ceil(side("=").length / 2) };
+}
+
+/** The clone's ref of a branch of a repository: origin's when the repository is the clone's origin, else the clone's own (trackedRef), which the ops page keeps. */
+const refOf = (cwd: string, repo: string, branch: string) =>
+  remoteOf(cwd, repo) == "origin" ? `origin/${branch}` : trackedRef(repo, branch);
+
+/** An instance's upstream with the two numbers, as the clone last saw both branches (no fetch). */
+export function upstreamOf(e: Pick<Entry, "repo" | "branch" | "upstream">, cwd = ROOT): Instance["upstream"] {
+  if (!e.upstream) return undefined;
+  const c = compare(cwd, refOf(cwd, e.repo, e.branch), refOf(cwd, e.upstream.repo, e.upstream.branch));
+  return { ...e.upstream, ahead: c?.ahead.length ?? null, behind: c?.behind.length ?? null };
+}
+
 /** What each registered instance runs now, and its health. */
 const instancesOf = (config: Config, ask: Ask): Promise<Instance[]> =>
   Promise.all(
@@ -227,6 +266,7 @@ const instancesOf = (config: Config, ask: Ask): Promise<Instance[]> =>
         branch: e.branch,
         ...a,
         behind: behindOf(e, a.version),
+        ...(e.upstream ? { upstream: upstreamOf(e) } : {}),
       };
     })
   );

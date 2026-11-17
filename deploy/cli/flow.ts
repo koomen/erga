@@ -39,6 +39,11 @@ export interface Instance extends Answer {
    * the clone can't say (no answer, another repository, a commit that the branch or the clone does not have).
    */
   behind: number | null;
+  /**
+   * Its upstream, and how many commits its branch has that the upstream lacks (ahead) and lacks of it (behind), as the
+   * clone knows both (observe.ts, upstreamOf). Null: the clone does not have both branches.
+   */
+  upstream?: { repo: string; branch: string; ahead: number | null; behind: number | null };
 }
 
 export interface Branch {
@@ -195,6 +200,14 @@ function placeOf(i: Instance, has: (sha: string) => boolean): string {
   return has(i.version!) ? `not on ${i.branch} as this clone knows it` : "a commit this clone does not have (git fetch)";
 }
 
+/** An instance's upstream in the status: its name, and the two numbers; "" when it names none. */
+const upstreamText = (i: Instance) => {
+  const u = i.upstream;
+  if (!u) return "";
+  const name = u.repo == i.repo ? u.branch : `${u.repo} ${u.branch}`;
+  return `upstream ${name}: ${u.ahead == null || u.behind == null ? "not compared (this clone does not have both branches)" : `${u.ahead} ahead, ${u.behind} behind`}; `;
+};
+
 /** `bun erga status` as text. `has`: whether the clone has a commit. */
 export function statusText(s: State, has: (sha: string) => boolean = () => true): string {
   const out: string[] = [
@@ -205,7 +218,7 @@ export function statusText(s: State, has: (sha: string) => boolean = () => true)
   if (!s.instances.length) out.push("- none: bun erga register <host>");
   for (const i of s.instances)
     out.push(
-      `- ${i.host}: tracks ${i.repo} ${i.branch}; ${i.version ? `runs ${i.version}, ${placeOf(i, has)}` : (i.error ?? "no answer")}; health ${i.healthy == null ? "unknown" : i.healthy ? "ok" : "FAIL"}${i.health && !i.healthy ? ` (${i.health})` : ""}`
+      `- ${i.host}: tracks ${i.repo} ${i.branch}; ${upstreamText(i)}${i.version ? `runs ${i.version}, ${placeOf(i, has)}` : (i.error ?? "no answer")}; health ${i.healthy == null ? "unknown" : i.healthy ? "ok" : "FAIL"}${i.health && !i.healthy ? ` (${i.health})` : ""}`
     );
   out.push("", "Feature branches:");
   if (!s.github) out.push("(GitHub did not answer git ls-remote: the list is as this clone last saw it, deleted branches too.)");

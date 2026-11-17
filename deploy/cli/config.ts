@@ -79,10 +79,13 @@ const Own = {
   host: Schema.String,
   repo: Schema.String,
   branch: Schema.String,
+  upstream: Schema.optionalKey(Schema.Struct({ repo: Schema.String, branch: Schema.String })),
 };
 /**
  * One instance: its host (its address on Cloudflare; on AWS, its name in setup), the repository and the branch whose
  * commits it runs, and its deploy facts and vars. On AWS, also the AWS CLI's profile this machine reaches it with.
+ * `upstream`: a repository and a branch that the ops page and `bun erga status` compare its branch with (observe.ts,
+ * compare). Nothing else reads it: no deploy, and no command that moves a branch.
  */
 const Entry = Schema.Union([
   Schema.Struct({ ...Own, ...CloudflareFacts.fields }),
@@ -145,6 +148,28 @@ export function remoteOf(clone: string, repo: string): string {
   const origin = sh(["git", "remote", "get-url", "origin"], { cwd: clone });
   return origin.ok && repoName(origin.out) == repoName(repo) ? "origin" : repoUrl(repo);
 }
+
+/**
+ * The entry with the upstream that `bun erga track`'s options say: --upstream <branch> names a branch of the instance's
+ * own repository, or of --upstream-repo <repo>; --no-upstream removes it; no option leaves it. Or why the options
+ * don't fit.
+ */
+export function withUpstream(e: Entry, o: { upstream?: string; upstreamRepo?: string; noUpstream?: boolean }): Entry | string {
+  if (o.noUpstream) {
+    if (o.upstream || o.upstreamRepo) return "--no-upstream takes no --upstream and no --upstream-repo.";
+    const { upstream: _, ...rest } = e;
+    return rest;
+  }
+  if (!o.upstream) return o.upstreamRepo ? "--upstream-repo needs --upstream <branch>: the branch of that repository." : e;
+  const upstream = { repo: o.upstreamRepo ? repoName(o.upstreamRepo) : e.repo, branch: o.upstream };
+  if (upstream.repo == e.repo && upstream.branch == e.branch)
+    return `${e.host} tracks ${e.repo} ${e.branch} itself: an upstream is another branch.`;
+  return { ...e, upstream };
+}
+
+/** An instance's upstream in words: its branch, with its repository when that is another one. */
+export const upstreamName = (e: Pick<Entry, "repo"> & { upstream: { repo: string; branch: string } }) =>
+  e.upstream.repo == e.repo ? e.upstream.branch : `${e.upstream.repo} ${e.upstream.branch}`;
 
 /** The config with `entry` in it: it replaces the entry of the same host, in its place. */
 export function withEntry(config: Config, entry: Entry): Config {
