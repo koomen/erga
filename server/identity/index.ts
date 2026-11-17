@@ -11,7 +11,6 @@ export { claimRoute } from "./claim.ts";
 export { providersOf, type SignIn, signInOf } from "./mode.ts";
 export { proxySignIn, type ProxyStatus } from "./proxy.ts";
 export { accountLookup, authOps, signInChoices } from "./settings.ts";
-export { adminsOnlyGate } from "./admins-only.ts";
 export { DOMAIN_ERGA, DOMAIN_SIGN_OUT, domainPass, domainSignIn, domainVisitor } from "./domain-pass.ts";
 export { isOAuthPath, oauthRoutes, resourceMetadataUrl } from "./mcp-oauth.ts";
 

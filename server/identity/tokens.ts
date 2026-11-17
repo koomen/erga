@@ -29,8 +29,8 @@
 // its SHA-256 is stored, so the database alone holds no working token. That
 // lets the share button show its token again each time it's asked (until
 // it's rotated); a token made at /tokens or for an agent is shown once.
-// It also means a token works only on the server that made it: staging's
-// database copies the rows, but staging's secret is its own.
+// It also means a token works only on the server that made it: a copy of
+// its database has the rows, but another server's secret is its own.
 
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Schema from "effect/Schema";
@@ -200,8 +200,8 @@ export class Tokens {
   }
 
   /**
-   * The working token for a row, or null if this server didn't make it: a copy of another server's database (staging
-   * takes production's) holds that server's share tokens, which our secret can't make again (verify refuses them).
+   * The working token for a row, or null if this server didn't make it: a copy of another server's database
+   * holds that server's share tokens, which our secret can't make again (verify refuses them).
    */
   private async ownToken(id: string): Promise<string | null> {
     const token = await this.tokenFor(id);
@@ -304,7 +304,7 @@ export class Tokens {
     const had = this.good.get(hash);
     if (had && now - had.at < REMEMBER_MS) return had.info.expires != null && had.info.expires <= now ? null : had.info;
     const [row] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE hash = ?1`, hash);
-    // The row must be this server's: a copy of another server's database (staging takes production's) holds
+    // The row must be this server's: a copy of another server's database holds
     // its tokens' hashes, but their tokens were made with that server's secret, not ours.
     if (!row || (await this.tokenFor(row.id)) != token) return null;
     if (row.expires != null && Number(row.expires) <= now) return null;

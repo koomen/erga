@@ -6,8 +6,7 @@
 //
 // The routes that are this Worker's own, at their place in the app's table:
 //
-//   /api/deploys/version, /api/health, /api/snapshot/...   what the deploy pipeline asks of this server, and staging's
-//                                                          snapshot endpoints (deploy-routes.ts)
+//   /api/deploys/version, /api/health   what the deploy pipeline asks of this server (deploy-routes.ts)
 //   /__erga/...                the dev server's (dev.ts)
 //
 // Trap: Cloudflare refuses an upload that marks a Durable Object class deleted (cloudflare.config.ts, `state:

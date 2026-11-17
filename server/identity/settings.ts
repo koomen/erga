@@ -133,7 +133,7 @@ const DEFAULT_ON: ProvidersOn = { github: true, google: false };
 
 /**
  * Which providers people may sign in with here, as an admin chose on /admin/auth: kept in the server's own storage, as
- * the apps are (a copy of production's data never changes staging's).
+ * the apps are (a database that came from another server never changes them).
  */
 export async function providersOn(platform: Pick<Platform, "own">): Promise<ProvidersOn> {
   try {

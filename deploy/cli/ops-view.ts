@@ -146,7 +146,7 @@ function side(config: Config, chosen: Entry | null, f: Facts, now: number): stri
       : source && isStale(source, now)
         ? { cls: "stale", what: `stale: ${source.error ?? "no answer yet"}` }
         : stateOf(f.answers[e.host]);
-    const tracks = `tracks ${e.repo} ${e.branch}${e.copyOf ? `, on a copy of ${e.copyOf}'s data` : ""}`;
+    const tracks = `tracks ${e.repo} ${e.branch}`;
     return `<span class="host" title="${esc(`${e.host}: ${st.what}`)}"><i class="light ${st.cls}"></i><span>${esc(e.host)}</span></span><span class="tracks" title="${esc(tracks)}"><span>${esc(e.branch)}</span></span>`;
   };
   return `<ul class="instances">${config.instances
@@ -347,7 +347,7 @@ const deployedAt = (jobs: JobRecord[], host: string, sha: string) =>
 
 /** The Deploy button of a row, in an instance's column: `bun erga deploy <commit> <host>`, after its question. */
 function deployButton(e: Entry, c: Commit, busy: string, deploying: boolean): string {
-  const note = e.copyOf ? `It keeps its copy of ${e.copyOf}'s data.` : `${e.host} tracks ${e.branch}. No branch moves.`;
+  const note = `${e.host} tracks ${e.branch}. No branch moves.`;
   const data = `data-deploy data-host="${esc(e.host)}" data-sha="${esc(c.sha)}" data-ask="${esc(`Deploy ${sha7(c.sha)} ${c.subject} to ${e.host}?`)}" data-note="${esc(note)}" aria-label="${esc(`Deploy ${sha7(c.sha)} to ${e.host}`)}"`;
   if (deploying) return `<span class="deps here busy">${button(running("Deploying"), `${data} aria-busy="true"`, DEPLOYING)}</span>`;
   return `<span class="deps here">${button("Deploy", data, busy ? `Another job runs: ${busy}. Wait for it to end.` : null)}</span>`;
@@ -467,7 +467,7 @@ export function viewHtml(f: Facts, name: string, now = Date.now()): string {
             ("error" in f.git
               ? `<p class="note bad">${esc(f.git.error)}</p>`
               : branches(f.git, f, activeJobs(f.jobs, f.run), busyWith(f), now) + log(g, cols, { ...f, git: f.git }, now));
-  return `${sidebar}<section class="main" data-host="${esc(g.host)}" data-tab="${tab}"${newest(g, cols, f.config, f.jobs)}><h2 class="title">${esc(g.host)}</h2><p class="tracks-line">Tracks <code>${esc(g.repo)}</code> <code>${esc(g.branch)}</code>${g.copyOf ? `, on a copy of ${esc(g.copyOf)}'s data, for admins only` : ""}. ${f.auto ? "Auto-deploy is on." : "Auto-deploy is off: <code>bun erga --auto-deploy</code> turns it on."}</p>${tabs}${jobLine(g, mine, f.run, now)}${f.run.at == "failed" ? `<p class="note bad failed">${esc(f.run.why)}</p>` : ""}<div class="tab-body">${body}</div></section>`;
+  return `${sidebar}<section class="main" data-host="${esc(g.host)}" data-tab="${tab}"${newest(g, cols, f.config, f.jobs)}><h2 class="title">${esc(g.host)}</h2><p class="tracks-line">Tracks <code>${esc(g.repo)}</code> <code>${esc(g.branch)}</code>. ${f.auto ? "Auto-deploy is on." : "Auto-deploy is off: <code>bun erga --auto-deploy</code> turns it on."}</p>${tabs}${jobLine(g, mine, f.run, now)}${f.run.at == "failed" ? `<p class="note bad failed">${esc(f.run.why)}</p>` : ""}<div class="tab-body">${body}</div></section>`;
 }
 
 /** The whole page: Erga's bar, the live part, and the page's script. */

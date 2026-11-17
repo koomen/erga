@@ -3,9 +3,9 @@
 // The first journey is on the shared server: a person approves an agent in the browser (the device flow, and MCP's
 // sign-in as an MCP app does it), then a new person uses Settings, the dialog on every page: their own API key gives
 // their agent its models, and their tokens are listed, made and revoked there.
-// The second journey is on a server of this file's own, a staging deploy with no agent key: an admin's token of a
-// smaller scope reaches nothing of the admins', the agent's panel says how to turn the agent on, and the admin saves
-// the server's keys on /admin/api-keys (they are the whole server's).
+// The second journey is on a server of this file's own, with no agent key: a token of a smaller scope reaches its
+// document and nothing else, the agent's panel says how to turn the agent on, and the admin saves the server's keys
+// on /admin/api-keys (they are the whole server's).
 // A test never makes a token by itself: it asks as the Settings dialog does (POST /tokens/new), or as an agent does.
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -13,7 +13,7 @@ import type { Route } from "playwright-core";
 import { agentClosed, expect, journey, servers, test, until, type Page } from "../helpers/fixtures";
 import { getter, mint, signIn, soon, tool, unique, upload } from "./access";
 
-const [s, own] = await Promise.all([servers.main(), servers.of("tokens", { env: { ERGA_SNAPSHOT_FROM: "https://primary.example.com" } })]);
+const [s, own] = await Promise.all([servers.main(), servers.of("tokens")]);
 
 const b64url = (b: ArrayBuffer | Uint8Array) => Buffer.from(b instanceof Uint8Array ? b : new Uint8Array(b)).toString("base64url");
 const pkce = async () => {
@@ -348,7 +348,7 @@ const menu = (page: Page) =>
     return s ? { options: [...s.options].map((o) => o.text), chosen: s.selectedOptions[0]?.text ?? "" } : null;
   });
 
-journey("on a staging server with no agent key: a token's reach, the agent's panel, and the server's keys", () => {
+journey("on a server with no agent key: a token's reach, the agent's panel, and the server's keys", () => {
   let page: Page;
   const root = own?.root,
     get = getter(root);
@@ -358,18 +358,17 @@ journey("on a staging server with no agent key: a token's reach, the agent's pan
     hint = () => page.textContent(`${row} .hint`);
   const box = (model: string) => `${row} input[value="${model}"]`;
 
-  // A token of a smaller scope once reached nothing at all on staging, where only admins come in.
-  test("on staging an admin's document token reads and edits its document (API, MCP, its routes), and nothing else", async () => {
-    const one = await upload(root, await mint(root, null, { label: "Docs", scope: "documents" }), "Staging one"),
-      two = await upload(root, await mint(root, null, { label: "Docs 2", scope: "documents" }), "Staging two");
+  test("a document token reads and edits its document (API, MCP, its routes), and nothing else", async () => {
+    const one = await upload(root, await mint(root, null, { label: "Docs", scope: "documents" }), "Own one"),
+      two = await upload(root, await mint(root, null, { label: "Docs 2", scope: "documents" }), "Own two");
     expect(one.id && two.id).toBeTruthy();
     const token = await mint(root, null, { label: "One", scope: "document", doc: one.id });
 
-    expect((await tool(root, token, "read", { document: one.id, path: "index.html" })).text).toContain("Staging one");
-    expect((await tool(root, token, "write", { document: one.id, path: "index.html", content: "<h1>Edited on staging</h1>" })).status).toBe(
-      200
-    );
-    expect((await mcpTool(root, token, "read", { document: one.id, path: "index.html" })).text).toContain("Edited on staging");
+    expect((await tool(root, token, "read", { document: one.id, path: "index.html" })).text).toContain("Own one");
+    expect(
+      (await tool(root, token, "write", { document: one.id, path: "index.html", content: "<h1>Edited by its token</h1>" })).status
+    ).toBe(200);
+    expect((await mcpTool(root, token, "read", { document: one.id, path: "index.html" })).text).toContain("Edited by its token");
     const wrote = await mcpTool(root, token, "write", { document: one.id, path: "notes.md", content: "Over MCP" });
     expect([wrote.status, wrote.isError]).toEqual([200, false]);
     const auth = { headers: { Authorization: `Bearer ${token}` } };
@@ -379,7 +378,7 @@ journey("on a staging server with no agent key: a token's reach, the agent's pan
       "the note on the document's route"
     );
     expect((await tool(root, token, "versions", { document: one.id })).status).toBe(200);
-    // Its scope, as on production: not the other document, no list.
+    // Its scope: not the other document, no list.
     expect((await tool(root, token, "read", { document: two.id, path: "index.html" })).status).toBe(403);
     expect((await get(`/d/${two.id}/doc/index.html`, auth)).status).toBe(403);
     expect((await tool(root, token, "list_documents")).status).toBe(403);
@@ -394,48 +393,23 @@ journey("on a staging server with no agent key: a token's reach, the agent's pan
     expect(share).toMatch(/^erga_/);
     // The Share card's prompt, step by step: the tools, with the document's address as "document".
     const document = root + one.address;
-    expect((await tool(root, share, "read", { document, path: "index.html" })).text).toContain("Edited on staging");
+    expect((await tool(root, share, "read", { document, path: "index.html" })).text).toContain("Edited by its token");
     // (In the other document: in this one, the first token's run of edits holds the lock for source edits for some
     // seconds more, and each agent of a user is a participant of its own.)
     const other = root + two.address;
     const edit = {
       document: other,
       path: "index.html",
-      edits: [{ oldText: "Staging two", newText: "Staging two, edited by the Share prompt" }],
+      edits: [{ oldText: "Own two", newText: "Own two, edited by the Share prompt" }],
     };
     expect((await tool(root, share, "edit", edit)).status).toBe(200);
     expect((await tool(root, share, "read", { document: other, path: "index.html" })).text).toContain("edited by the Share prompt");
-    expect((await tool(root, share, "list_documents")).text).toContain("Staging two");
-    // Was a bug (seen on staging): the viewer's check of its code (GET /api/release) got a 403 in the server's browser.
+    expect((await tool(root, share, "list_documents")).text).toContain("Own two");
+    // Was a bug: the viewer's check of its code (GET /api/release) got a 403 in the server's browser.
     const view = await tool(root, share, "view_page", { document });
     expect(view.text).toContain("Shown as its user sees it, in Erga's viewer.");
     expect(view.text).not.toContain("The page threw");
     expect((await tool(root, share, "set_user", { action: "role", login: "tester", role: "write" })).status).toBe(403);
-
-    // Each of these needs an admin with admin power: a token of another scope gets 403 from the guard.
-    const ADMINS = [
-      ["GET", "/admin"],
-      ["GET", "/admin/api-keys"],
-      ["GET", "/admin/users"],
-      ["POST", "/api/tools/set_setting"],
-      ["GET", "/api/agent"],
-      ["GET", "/settings"],
-      ["GET", "/tokens"],
-      ["POST", "/tokens/new"],
-      ["GET", "/documents"],
-      ["GET", "/new"],
-      ["POST", "/api/tools/publish_document"],
-      ["GET", one.address],
-    ] as const;
-    const answers = await Promise.all(
-      [token, share].flatMap((t) =>
-        ADMINS.map(async ([method, path]) => {
-          const r = await get(path, { method, headers: { Authorization: `Bearer ${t}`, ...(method == "POST" ? { Origin: root } : {}) } });
-          return `${method} ${path}: ${r.status}`;
-        })
-      )
-    );
-    expect(answers).toEqual([...ADMINS, ...ADMINS].map(([method, path]) => `${method} ${path}: 403`));
   });
 
   test("no key: the panel's link opens Settings, the person pastes their own key, and the agent turns on; the other link shows the prompt", async ({

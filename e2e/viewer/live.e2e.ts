@@ -218,7 +218,7 @@ journey("a reader's open page shows an agent's change", () => {
       expect(await inDoc<number>(page, "scrollY")).toBe(900);
     });
     expect(edited, "the agent's change: no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
-    // Was a bug (seen on staging, in a browser with a process for each site): the old page, as its frame went, wrote a
+    // Was a bug (in a browser with a process for each site): the old page, as its frame went, wrote a
     // view at the page's top over the kept one, so the next change in a row opened the page at its top.
     const second = await agent("edit", {
       document: own.id,

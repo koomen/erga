@@ -6,7 +6,7 @@
 // AWS alike (both send `release.assets`). Only one release back: the files kept are not in the new manifest, so the
 // next deploy does not keep them again.
 //
-// It never stops a deploy: an instance that does not answer (its first deploy, or one that is for admins only)
+// It never stops a deploy: an instance that does not answer (its first deploy)
 // keeps nothing, and the deploy says so.
 
 import { ASSET_PREFIX, namedBy, type AssetManifest } from "../../shared/assets";

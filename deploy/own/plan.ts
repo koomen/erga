@@ -18,11 +18,6 @@ export interface Answers {
   /** --repo, --branch: the repository and the branch that the instance tracks: each deploy gives it that branch's head. */
   repo: string;
   branch: string;
-  /**
-   * --copy-of: the host of a registered instance (Cloudflare only). This one runs on a copy of its data, for admins
-   * only, in its account.
-   */
-  copyOf: string;
   where: Where | "";
   /** Cloudflare: the account that holds the host's domain: its id, or its name (found; asked only when two accounts hold it). */
   account: string;
@@ -54,7 +49,6 @@ export const noAnswers = (host: string): Answers => ({
   host,
   repo: DEFAULT_REPO,
   branch: DEFAULT_BRANCH,
-  copyOf: "",
   where: "",
   account: "",
   profile: "",
@@ -90,7 +84,6 @@ export function parseAnswer(key: TextAnswer, raw: string): { value: string } | {
   const is = (ok: boolean, value: string, problem: string) => (ok ? { value } : { problem });
   switch (key) {
     case "host":
-    case "copyOf":
       return is(HOST.test(low), low, `"${v}" isn't an address like erga.example.com.`);
     case "repo":
       return is(/^[^\s-]\S{2,300}$/.test(v), repoName(v), `"${v}" isn't a repository like ${DEFAULT_REPO}.`);
@@ -265,13 +258,9 @@ export const callbackOf = (host: string) => `https://${host}/auth/github/callbac
 /**
  * The entry of `.erga/config.json` for a new instance on Cloudflare, from the answers alone: its names, its plain
  * settings, the repository and the branch that it tracks (its first deploy takes that branch's head), and no token yet
- * (the token comes at the end, when the admin approves it). An instance on a copy of another's data names that
- * instance, and takes the settings' defaults from it (`base`: that instance's vars).
+ * (the token comes at the end, when the admin approves it).
  */
-export function setupEntry(
-  a: Answers,
-  o: { zones: string[]; subdomain: string | null; github?: string; base?: Record<string, string> }
-): CloudflareEntry {
+export function setupEntry(a: Answers, o: { zones: string[]; subdomain: string | null; github?: string }): CloudflareEntry {
   const n = namesOf(a.host);
   const pages = pagesOf(a);
   const target: Target = {
@@ -282,14 +271,13 @@ export function setupEntry(
     ...(pages == "shared" ? { subdomain: o.subdomain ?? n.worker.slice(0, 40), createSubdomain: !o.subdomain } : {}),
     app: { kind: "domain", zoneName: zoneOf(a.host, o.zones)!, hostname: a.host },
     pages: pages == "shared" ? { kind: "shared" } : { kind: "zone", zoneName: pages },
-    vars: { ...varsOf(a, o.github), ...(o.base?.SERVER_DEFAULTS ? { SERVER_DEFAULTS: o.base.SERVER_DEFAULTS } : {}) },
+    vars: varsOf(a, o.github),
     secrets: {},
   };
   return {
     host: a.host,
     repo: a.repo,
     branch: a.branch,
-    ...(a.copyOf ? { copyOf: a.copyOf } : {}),
     ...deployFacts(target),
     token: "",
   };

@@ -1,6 +1,6 @@
 // `bun erga setup`'s build (deploy/own/first.ts) against the mock Cloudflare (ERGA_DEPLOY_MOCK=1), from the answers to
 // a healthy deploy of a new instance: its entry in .erga/config.json, the secrets set one time, the access rule in its
-// database, and no admin's row. Then a staging instance of it, by the same flow. Then the ops token, from a fake
+// database, and no admin's row. Then a second instance, by the same flow. Then the ops token, from a fake
 // server's device flow. And an instance that runs already, with names that setup would not give: its entry stays.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -15,14 +15,14 @@ import { noAnswers } from "../deploy/own/plan";
 import { loadSecrets, namesAt, putSecret } from "../deploy/own/store";
 import { deployFacts } from "../deploy/pipeline/account";
 import { ACCOUNT_ID, FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
-import { bindingsOf, bootstrap, prepareRelease, primary, ROOT } from "./helpers/deploys.ts";
+import { bindingsOf, bootstrap, fleet, prepareRelease, ROOT } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 
 quietConsole();
 
 const HEAD = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: ROOT }).stdout.toString().trim();
 const HOST = "erga.ada-example.com",
-  STAGING = "erga-staging.ada-example.com";
+  SECOND = "erga-next.ada-example.com";
 let dir = "";
 
 beforeAll(async () => {
@@ -65,15 +65,15 @@ const first = (mock: { state: MockState; fetch: First["net"] }, host: string, mo
 const rowsOf = (state: MockState, worker: string) =>
   state.databases.find((d) => d.uuid == bindingsOf(state, worker).DB.database_id)?.rows ?? [];
 
-test("from the answers to a healthy deploy: the entry, the secrets one time, the access rule, and no admin; then its staging instance", async () => {
+test("from the answers to a healthy deploy: the entry, the secrets one time, the access rule, and no admin; then a second instance", async () => {
   const mock = mockCloudflare();
   // The GitHub App's secret, as setup's GitHub page keeps it.
   putSecret(HOST, "GITHUB_CLIENT_SECRET", "github-app-secret", dir);
   expect(await firstDeploy(first(mock, HOST))).toBe(HEAD);
 
   // The entry: written from the answers, with no token yet.
-  expect(readConfig(dir).instances.map((e) => [e.host, e.copyOf ?? null, (e as CloudflareEntry).worker, e.token])).toEqual([
-    [HOST, null, "erga-ada-example-com", ""],
+  expect(readConfig(dir).instances.map((e) => [e.host, (e as CloudflareEntry).worker, e.token])).toEqual([
+    [HOST, "erga-ada-example-com", ""],
   ]);
   // The secrets: made one time, kept in .erga/secrets.json, sent with this deploy.
   const file = loadSecrets(dir);
@@ -109,32 +109,25 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
   expect(jobs().at(-1)).toContainEqual({ commit: HEAD });
   // (The rule's statement says ON CONFLICT: written again before there is an admin, it changes nothing.)
 
-  // Its staging instance, set up later: the primary gets the secret they share, and the new instance a copy of its data.
-  writeConfig(dir, withEntry(readConfig(dir), { ...readConfig(dir).instances[0], token: "erga_ops_primary" }));
-  putSecret(STAGING, "GITHUB_CLIENT_SECRET", "staging-app-secret", dir);
-  expect(await firstDeploy({ ...first(mock, STAGING, { copyOf: HOST, branch: "staging" }), github: "Iv1.staging" })).toBe(HEAD);
-  expect(readConfig(dir).instances.map((e) => e.branch)).toEqual(["main", "staging"]);
-  expect(readConfig(dir).instances.map((e) => [e.host, e.copyOf ?? null])).toEqual([
-    [HOST, null],
-    [STAGING, HOST],
+  // A second instance, set up later with a branch of its own: the same path, its own names, secrets, database and
+  // rule. Nothing of the first one goes to it.
+  writeConfig(dir, withEntry(readConfig(dir), { ...readConfig(dir).instances[0], token: "erga_ops_first" }));
+  putSecret(SECOND, "GITHUB_CLIENT_SECRET", "second-app-secret", dir);
+  expect(await firstDeploy({ ...first(mock, SECOND, { branch: "staging" }), github: "Iv1.second" })).toBe(HEAD);
+  expect(readConfig(dir).instances.map((e) => [e.host, e.branch])).toEqual([
+    [HOST, "main"],
+    [SECOND, "staging"],
   ]);
-  const shared = loadSecrets(dir)[HOST].SNAPSHOT_TOKEN;
-  expect(shared).toMatch(/^[0-9a-f]{64}$/);
-  expect(mock.state.secrets["erga-ada-example-com"].SNAPSHOT_TOKEN).toBe(shared);
-  expect(mock.state.secrets["erga-staging-ada-example-com"]).toMatchObject({
-    SNAPSHOT_TOKEN: shared,
-    GITHUB_CLIENT_SECRET: "staging-app-secret",
-  });
-  expect(mock.state.secrets["erga-staging-ada-example-com"].SESSION_SECRET).not.toBe(held.SESSION_SECRET);
-  expect(bindingsOf(mock.state, "erga-staging-ada-example-com").SNAPSHOT_FROM.text).toBe(`https://${HOST}`);
-  expect(bindingsOf(mock.state, "erga-staging-ada-example-com").GITHUB_CLIENT_ID.text).toBe("Iv1.staging");
-  // The settings' defaults are its primary's, and its database is a copy: the rule came with it.
-  expect(bindingsOf(mock.state, "erga-staging-ada-example-com").SERVER_DEFAULTS.text).toBe(
-    bindingsOf(mock.state, "erga-ada-example-com").SERVER_DEFAULTS.text
+  const second = mock.state.secrets["erga-next-ada-example-com"];
+  expect(Object.keys(second).sort()).toEqual(["FACTORY_KEY", "GITHUB_CLIENT_SECRET", "SESSION_SECRET"]);
+  expect(second.GITHUB_CLIENT_SECRET).toBe("second-app-secret");
+  expect(second.SESSION_SECRET).not.toBe(held.SESSION_SECRET);
+  expect(bindingsOf(mock.state, "erga-next-ada-example-com").GITHUB_CLIENT_ID.text).toBe("Iv1.second");
+  expect(bindingsOf(mock.state, "erga-next-ada-example-com").SNAPSHOT_FROM).toBeUndefined();
+  expect(mock.state.databases.find((d) => d.uuid == bindingsOf(mock.state, "erga-next-ada-example-com").DB.database_id)?.name).toBe(
+    "erga-next-ada-example-com"
   );
-  expect(
-    mock.state.databases.find((d) => d.uuid == bindingsOf(mock.state, "erga-staging-ada-example-com").DB.database_id)?.name
-  ).toStartWith("erga-staging-ada-example-com-");
+  expect(rowsOf(mock.state, "erga-next-ada-example-com").join("\n")).toContain("INSERT INTO access_rules");
 }, 120_000);
 
 test("the setup ends with the ops token: the page gets the request's code, the user approves, and the entry gets the token", async () => {
@@ -181,7 +174,7 @@ test("an instance that runs already, with names of its own: setup keeps its entr
     writePass(own, HEAD);
     // A registered entry, as `bun erga register` writes it: the Worker "erga", which no address gives.
     const entries: Entry[] = [
-      { host: "example.com", repo: "example.com/team/erga", branch: "main", ...deployFacts(primary()), token: "erga_ops_primary" },
+      { host: "example.com", repo: "example.com/team/erga", branch: "main", ...deployFacts(fleet()), token: "erga_ops_fleet" },
     ];
     writeConfig(own, { instances: entries });
     const rows = JSON.stringify(mock.state.databases.map((d) => d.rows));
@@ -190,7 +183,7 @@ test("an instance that runs already, with names of its own: setup keeps its entr
         ...first(mock, "example.com", { account: FLEET_ACCOUNT }),
         dir: own,
         seen: { zones: ["example.com"], subdomain: "erga", held: ["SESSION_SECRET", "FACTORY_KEY"] },
-        github: "Ov23primary",
+        github: "Ov23fleet",
       })
     ).toBe(HEAD);
     // The entry stays as it was: the answers would give other names (example-com), and other pages.

@@ -49,7 +49,7 @@ test("a person's key is stored encrypted, bound to them: never answered, never a
   ).run();
   expect(await dir.personKeys.opened("ada")).toEqual({});
   expect((await dir.personKeys.list(ada)).find((k) => k.name == "openai")).toMatchObject({ set: true, unreadable: true });
-  // Another server's secret (staging's) opens none.
+  // Another server's secret opens none.
   expect(await fresh().dir.personKeys.opened("bob")).toEqual({});
   // Removed: gone.
   expect(await dir.personKeys.clear(bob, "openai")).toMatchObject({ set: false, last4: null });

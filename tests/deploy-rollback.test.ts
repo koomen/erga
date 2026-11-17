@@ -6,7 +6,7 @@ import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
 import { rollbackTo } from "../deploy/pipeline/account";
 import { Cloudflare, Unhealthy } from "../deploy/pipeline/cloudflare-api";
 import { runPipeline, type Carry } from "../deploy/pipeline/pipeline";
-import { prepareRelease, release, SHA2, SHA3, staging, bindingsOf, bootstrap, quick } from "./helpers/deploys.ts";
+import { prepareRelease, release, SHA2, SHA3, next, bindingsOf, bootstrap, quick } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 
 quietConsole();
@@ -19,9 +19,9 @@ describe("rollbacks", () => {
     await bootstrap(mock);
     const cf = new Cloudflare("mock-deploy-token", mock.fetch);
     const run = (version: string, carry: Carry = {}) =>
-      runPipeline(cf, { ...release, version: version.slice(0, 12) }, staging(), { ...quick, site: mock.fetch, carry, report: () => {} });
+      runPipeline(cf, { ...release, version: version.slice(0, 12) }, next(), { ...quick, site: mock.fetch, carry, report: () => {} });
     await run(SHA2);
-    expect(bindingsOf(mock.state, "erga-staging").ERGA_VERSION.text).toBe(SHA2.slice(0, 12));
+    expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(SHA2.slice(0, 12));
 
     // The Worker has the new code before its objects have it: health fails for 40 seconds (8 checks), then passes. No rollback.
     let behind = 8;
@@ -31,7 +31,7 @@ describe("rollbacks", () => {
             Response.json({ ok: false, checks: { documents: { ok: false, error: "the object runs the code before" } } }, { status: 503 })
           )
         : mock.fetch(input, init);
-    await runPipeline(cf, release, staging(), { ...quick, site: late, report: () => {} });
+    await runPipeline(cf, release, next(), { ...quick, site: late, report: () => {} });
     expect(behind).toBe(-1);
     await run(SHA2);
 
@@ -40,7 +40,7 @@ describe("rollbacks", () => {
     const failed = await run(SHA3, carry).catch((e) => e);
     expect(failed).toBeInstanceOf(Unhealthy);
     expect(failed.message).toContain(
-      `Release ${SHA3.slice(0, 12)} is up at https://staging.example.com, but its health check fails: documents: a document didn't open`
+      `Release ${SHA3.slice(0, 12)} is up at https://next.example.com, but its health check fails: documents: a document didn't open`
     );
     // The restore point: the Worker version and release before this deploy.
     const before = carry.restore!.versionId!;
@@ -48,8 +48,8 @@ describe("rollbacks", () => {
     expect(carry.restore!.version).toBe(SHA2.slice(0, 12));
 
     const calls = mock.state.calls.length;
-    await rollbackTo(cf, staging(), before, "unhealthy");
-    expect(mock.state.calls.slice(calls)).toEqual([`POST /accounts/${FLEET_ACCOUNT}/workers/scripts/erga-staging/deployments?force=true`]);
-    expect(bindingsOf(mock.state, "erga-staging").ERGA_VERSION.text).toBe(SHA2.slice(0, 12));
+    await rollbackTo(cf, next(), before, "unhealthy");
+    expect(mock.state.calls.slice(calls)).toEqual([`POST /accounts/${FLEET_ACCOUNT}/workers/scripts/erga-next/deployments?force=true`]);
+    expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(SHA2.slice(0, 12));
   });
 });

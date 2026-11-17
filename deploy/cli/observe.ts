@@ -250,7 +250,6 @@ const instancesOf = (config: Config, site?: Site): Promise<Instance[]> =>
         host: e.host,
         repo: e.repo,
         branch: e.branch,
-        ...(e.copyOf ? { copyOf: e.copyOf } : {}),
         ...a,
         behind: behindOf(e, a.version),
       };

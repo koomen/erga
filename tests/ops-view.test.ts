@@ -49,7 +49,7 @@ test("the view: each instance with its branch, a column for each one of the same
     instances: [
       entry("example.net"),
       entry("erga.example.org", "main", { repo: "example.org/team/erga" }),
-      entry("staging.example.net", "staging", { copyOf: "example.net" }),
+      entry("staging.example.net", "staging"),
     ],
   };
   expect(config.instances.map((e) => columnsOf(config, e).map((c) => c.host))).toEqual([
@@ -99,12 +99,10 @@ test("the view: each instance with its branch, a column for each one of the same
   expect(html).toMatch(/data-sha="1{40}">.*data-host="example.net".*<span class="at">5m<\/span>/);
   expect(html).toContain('<div class="row off" data-sha="2');
   expect(html).toContain('<div class="row on" data-sha="1');
-  // The instance on a copy is chosen by its own name, and says whose data it has.
-  const copy = viewHtml(facts, "staging.example.net", NOW);
-  expect(copy).toContain('<a class="group sel" href="#staging.example.net"');
-  expect(copy).toContain(
-    "Tracks <code>example.net/team/erga</code> <code>staging</code>, on a copy of example.net's data, for admins only."
-  );
+  // Each instance is chosen by its own name.
+  const other2 = viewHtml(facts, "staging.example.net", NOW);
+  expect(other2).toContain('<a class="group sel" href="#staging.example.net"');
+  expect(other2).toContain("Tracks <code>example.net/team/erga</code> <code>staging</code>.");
   // An instance of another repository has the log to itself. It runs a commit the clone does not have: the page says so.
   const other = viewHtml(facts, "erga.example.org", NOW);
   expect([...other.matchAll(/<div class="head col"/g)].length).toBe(1);
@@ -116,7 +114,7 @@ test("Logs shows the job that runs, else the last one, or the one the hash names
   const config = {
     instances: [
       entry("example.net"),
-      entry("staging.example.net", "staging", { copyOf: "example.net" }),
+      entry("staging.example.net", "staging"),
       entry("erga.example.org", "main", { repo: "example.org/team/erga" }),
     ],
   };
@@ -178,7 +176,7 @@ const branch = (name: string, more: Partial<Branch> = {}): Branch => ({
   ...more,
 });
 const deploys = (more: Partial<Facts> = {}, staging = "3", production = "1"): Facts => ({
-  config: { instances: [entry("example.net"), entry("staging.example.net", "staging", { copyOf: "example.net" })] },
+  config: { instances: [entry("example.net"), entry("staging.example.net", "staging")] },
   answers: {
     "example.net": { version: production.repeat(12), healthy: true },
     "staging.example.net": { version: staging.repeat(12), healthy: true },
@@ -344,7 +342,7 @@ test("the page's server: Merge and Deploy start their `bun erga` command, one jo
   mkdirSync(join(dir, ".erga"));
   writeFileSync(
     join(dir, ".erga/config.json"),
-    JSON.stringify({ instances: [entry("example.net"), entry("staging.example.net", "staging", { copyOf: "example.net" })] })
+    JSON.stringify({ instances: [entry("example.net"), entry("staging.example.net", "staging")] })
   );
   const version = {
     "example.net": git("rev-parse", "HEAD~2").slice(0, 12),

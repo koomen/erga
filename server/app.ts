@@ -51,9 +51,7 @@
 //
 // The routes that run only on Cloudflare (what the deploy pipeline asks, the
 // dev server's) are `outside`'s: cloudflare/index.ts answers them, at their place
-// in the table. On a staging instance (the deploy names its primary: SNAPSHOT_FROM) every route, and
-// the documents' pages origin, is for Erga's admins only: one guard before
-// them all (server/identity/admins-only.ts lists what's exempt, and why).
+// in the table.
 
 import * as Effect from "effect/Effect";
 import { adminGate, isAdminPath } from "./admin/index.ts";
@@ -63,7 +61,6 @@ import { serverApi } from "./api.ts";
 import { documentRoutes, ergaAddress, isPagesSite, makeHomeRoute, workerHere } from "./documents/index.ts";
 import { domainOf, ERGA, LIVE_FILES, liveDoc, nothing, serveDomain, serveLiveFile, serveRoot, serveSitePath } from "./sites/index.ts";
 import {
-  adminsOnlyGate,
   chooseSignIn,
   claimRoute,
   DOMAIN_ERGA,
@@ -112,14 +109,11 @@ export const app = (outside: Outside): Route =>
     const request = yield* webRequest,
       p = yield* platform;
     const url = new URL(request.url);
-    // A custom domain is its site's alone: the published files as they are, and nothing of Erga's. (On staging, as every
-    // origin, for admins only; but a staging server never has one: deploy/pipeline/pipeline.ts, guardTarget.)
+    // A custom domain is its site's alone: the published files as they are, and nothing of Erga's.
     // Under /_erga/ only, Erga's: the pages' model (window.ergaLLM) and signing in for it (identity/domain-pass.ts);
     // not while nothing is published there.
     const domain = domainOf(p, url);
     if (domain != ERGA) {
-      const refused = yield* adminsOnlyGate;
-      if (refused) return refused;
       if (!url.pathname.startsWith(DOMAIN_ERGA)) return yield* serveDomain(domain);
       // (Sign-out passes through every custom domain, published or not: it only ends the domain's cookie, and goes on.)
       if (url.pathname != DOMAIN_SIGN_OUT && !(yield* call(() => liveDoc(p, url)))) return fromWeb(nothing());
@@ -229,10 +223,6 @@ const route = (url: URL, outside: Outside): Route =>
       p = yield* platform;
     const path = url.pathname;
     const assets = isAsset(path);
-    // Staging is for Erga's admins only: every route after this, and the pages origin, needs an admin's session or
-    // admin-scope token, but for the exemptions server/identity/admins-only.ts lists and explains.
-    const refused = yield* adminsOnlyGate;
-    if (refused) return refused;
     // Erga's service worker (pages/worker.ts), on the app's origin and on a document's own pages origin: never on a
     // shared pages host, where the origin isn't one document's.
     if (path == WORKER_PATH && (request.method == "GET" || request.method == "HEAD"))

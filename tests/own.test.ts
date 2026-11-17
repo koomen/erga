@@ -53,20 +53,16 @@ test("each answer is an option of the command; a bad one, or an unknown one, say
     "--dry-run"
   );
   expect([answers.where, answers.signIn, answers.organization, problems, rest]).toEqual(["cloudflare", "organization", "acme.com", [], []]);
-  // What the instance tracks: the default repository's main, or the options'. A copy names its source.
-  expect([answers.repo, answers.branch, answers.copyOf]).toEqual(["github.com/koomen/erga", "main", ""]);
-  const tracked = options("--repo", "https://example.com/team/erga.git", "--branch", "staging", "--copy-of", "Live.Example.com");
-  expect([tracked.answers.repo, tracked.answers.branch, tracked.answers.copyOf, tracked.problems]).toEqual([
-    "example.com/team/erga",
-    "staging",
-    "live.example.com",
-    [],
-  ]);
+  // What the instance tracks: the default repository's main, or the options'.
+  expect([answers.repo, answers.branch]).toEqual(["github.com/koomen/erga", "main"]);
+  const tracked = options("--repo", "https://example.com/team/erga.git", "--branch", "staging");
+  expect([tracked.answers.repo, tracked.answers.branch, tracked.problems]).toEqual(["example.com/team/erga", "staging", []]);
   expect(options("--branch", "-x").problems).toEqual(["--branch: \"-x\" isn't a branch's name."]);
-  // The options from before an instance tracked a branch are gone.
-  expect(options("--staging", "staging.example.com", "--commit", "HEAD").problems).toEqual([
+  // The options from before an instance tracked a branch, and from before every instance was alike, are gone.
+  expect(options("--staging", "staging.example.com", "--commit", "HEAD", "--copy-of", "live.example.com").problems).toEqual([
     "--staging isn't an option of bun erga setup.",
     "--commit isn't an option of bun erga setup.",
+    "--copy-of isn't an option of bun erga setup.",
   ]);
   // An account is a name or an id.
   expect(options("--account", "Ada Lovelace").answers.account).toBe("Ada Lovelace");
@@ -98,13 +94,9 @@ test("the command says each option it still needs, before it looks at anything",
   expect(missing(options("--host", "cloudflare", "--sign-in", "sso", "--team", "acme").answers)).toEqual([
     "--aud <tag>: the Access application's Audience tag.",
   ]);
-  // AWS: no copy of another instance's data yet, and without single sign-on the pages need a domain of their own.
-  expect(missing(options("--host", "aws", "--sign-in", "invite", "--copy-of", "live.example.com").answers)).toEqual([
+  // AWS: without single sign-on the pages need a domain of their own.
+  expect(missing(options("--host", "aws", "--sign-in", "invite").answers)).toEqual([
     "--pages <domain>: a second Route 53 domain of the account, for the documents' pages.",
-    "A copy of another instance's data is not on AWS yet: leave out --copy-of.",
-  ]);
-  expect(missing(options("--host", "cloudflare", "--sign-in", "invite", "--copy-of", HOST).answers)).toEqual([
-    "--copy-of names another instance: the one whose data this one copies.",
   ]);
   expect(missing(options("--host", "aws", "--sign-in", "sso", "--issuer", "https://idp.example.com", "--client", "c1").answers)).toEqual(
     []
@@ -278,46 +270,7 @@ test("--remote: the user's steps need their terminal; an agent's shell, with non
   expect(asked).toEqual(["/dev/tty"]);
 });
 
-test("--copy-of and --branch: an instance of its own, with its own GitHub App, on a copy of a registered one's data", () => {
-  const s = {
-    ...readOptions("staging.example.com", ["--host", "cloudflare", "--sign-in", "invite", "--copy-of", HOST, "--branch", "staging"])
-      .answers,
-    account: ADA,
-  };
-  // Its GitHub App is its own: one callback, its address.
-  expect(githubManifest(s, "http://127.0.0.1:5000/created")).toMatchObject({
-    name: "Erga staging.example.com",
-    redirect_url: "http://127.0.0.1:5000/created",
-    callback_urls: ["https://staging.example.com/auth/github/callback"],
-    default_permissions: {},
-    public: false,
-  });
-  // The same steps as every instance: the app, then the build.
-  expect(run(s, CF).state).toEqual({ at: "app", kind: "github" });
-  expect(run(s, CF, { ...CF, app: true }).state).toEqual({ at: "build" });
-  expect(planText(s, seen(CF))).toEqual([
-    `I will make Erga at staging.example.com, in the account of ${HOST}, on a copy of its data, for admins only:`,
-    "• a Worker (staging-example-com), a D1 database, an R2 bucket and a DNS record",
-    "• a GitHub App, for sign-in (you click one button)",
-    "• it tracks staging of github.com/koomen/erga: a deploy gives it that branch's newest commit",
-    "It is in the same Workers Paid plan.",
-  ]);
-  const entry = setupEntry(s, {
-    zones: ["example.com"],
-    subdomain: "ada",
-    github: "Iv1.own",
-    base: { SERVER_DEFAULTS: '{"public_sharing":false}' },
-  });
-  expect(entry).toMatchObject({
-    host: "staging.example.com",
-    repo: "github.com/koomen/erga",
-    branch: "staging",
-    copyOf: HOST,
-    worker: "staging-example-com",
-    token: "",
-  });
-  expect(entry.vars).toMatchObject({ GITHUB_CLIENT_ID: "Iv1.own", SERVER_DEFAULTS: '{"public_sharing":false}' });
-  // The repository and the branch of the options go into every entry.
+test("--repo and --branch: the instance's entry tracks them, and the plan says so", () => {
   const forked = readOptions(HOST, [
     "--host",
     "cloudflare",
@@ -328,9 +281,16 @@ test("--copy-of and --branch: an instance of its own, with its own GitHub App, o
     "--branch",
     "stable",
   ]);
-  expect(setupEntry({ ...forked.answers, account: ADA }, { zones: ["example.com"], subdomain: "ada" })).toMatchObject({
-    repo: "example.com/team/erga",
-    branch: "stable",
+  const a = { ...forked.answers, account: ADA };
+  expect(setupEntry(a, { zones: ["example.com"], subdomain: "ada" })).toMatchObject({ repo: "example.com/team/erga", branch: "stable" });
+  expect(planText(a, seen(CF))).toContain("• it tracks stable of example.com/team/erga: a deploy gives it that branch's newest commit");
+  // Its GitHub App is its own: one callback, its address.
+  expect(githubManifest(a, "http://127.0.0.1:5000/created")).toMatchObject({
+    name: `Erga ${HOST}`,
+    redirect_url: "http://127.0.0.1:5000/created",
+    callback_urls: [`https://${HOST}/auth/github/callback`],
+    default_permissions: {},
+    public: false,
   });
 });
 

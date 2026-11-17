@@ -220,11 +220,7 @@ async function address(
     // A file that isn't a page (style.css, assets/owl.png: a document's tree links to them) opens as itself, on the
     // document's pages origin, where its scripts can't reach the app; the pages origin answers 404 if it isn't there.
     if (answer.file == null && FILE.test(wanted)) {
-      const by = platform.adminsOnly ? session.login : null;
-      const token = await pagesToken(platform.secret, name.owner, id, url.origin, undefined, {
-        ...(by ? { by } : {}),
-        shares: answer.shares,
-      });
+      const token = await pagesToken(platform.secret, name.owner, id, url.origin, undefined, { shares: answer.shares });
       return redirect(`${pagesOrigin(name.owner, id, url, platform)}/t/${token}/${wanted}`, 302, {
         "Cache-Control": "no-store",
         "Referrer-Policy": "no-referrer",
@@ -335,10 +331,7 @@ async function render(
   // Someone who may comment and not edit: the comments alone, on the page (client/inline/viewer-comment.ts).
   const canComment = !canEdit && !!session && !session.agent && roleMay(d.role, "comment");
   const admin = session ? await dir.users.isAdmin(whoOf(session)) : false;
-  // On a server for admins alone (staging), the token names the admin.
-  const by = platform.adminsOnly && session ? session.login : null;
   const token = await pagesToken(platform.secret, d.owner, d.id, url.origin, undefined, {
-    ...(by ? { by } : {}),
     ...(canEdit || canComment ? { edit: true } : {}),
     shares: d.shares,
   });

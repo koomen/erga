@@ -100,7 +100,7 @@ export const startOAuth = (provider: Provider): Route =>
     if (!testing && !offTest && !(yield* call(() => providersOn(platform)))[provider]) return yield* providerOff(platform, provider, next);
     const app = yield* call(() => signInApp(platform, testing ? "pending" : "active", provider));
     if (testing && !app) return nothingToTest();
-    // No app yet (staging's, until an admin makes one): the provider would answer an error, so say so here instead.
+    // No app yet (until an admin makes one): the provider would answer an error, so say so here instead.
     if (!app?.clientId) return notSetUp(provider, url.origin);
     const p = PROVIDERS[provider];
     const state = (testing ? TESTING : offTest ? OFF_TEST : "") + randomToken(18);

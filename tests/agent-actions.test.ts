@@ -122,9 +122,9 @@ test("every endpoint of the document API carries its audit", () => {
 });
 
 test("a row's path finds its route, with the path's parts", () => {
-  const rows = ROUTES["cloudflare/deploy-routes.ts"];
-  expect(routeFor(rows, "GET", "/api/snapshot/blob/abc")?.params).toEqual({ "sha-256": "abc" });
-  expect(routeFor(rows, "POST", "/api/snapshot/blob/abc")).toBeNull();
+  const rows = ROUTES["server/api.ts"];
+  expect(routeFor(rows, "POST", "/api/tools/read")?.params).toEqual({ name: "read" });
+  expect(routeFor(rows, "GET", "/api/tools/read")).toBeNull();
   expect(routeFor(DOCUMENT_ACTIONS, "PUT", "/api/files/a/b.png")?.params).toEqual({ path: "a/b.png" });
   expect(routeFor(DOCUMENT_ACTIONS, "GET", "/d/x/y/api/start")).toBeNull();
 });

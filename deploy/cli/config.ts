@@ -6,7 +6,6 @@
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AwsFacts, CloudflareFacts } from "./ops";
 import { sh } from "../root";
@@ -19,14 +18,12 @@ const Own = {
   host: Schema.String,
   repo: Schema.String,
   branch: Schema.String,
-  copyOf: Schema.optionalKey(Schema.String),
   token: Schema.String,
 };
 /**
  * One instance: its host (its address on Cloudflare; on AWS, its name in setup), the repository and the branch whose
- * commits it runs, its deploy facts and vars, and its ops token. `copyOf`: the host of the instance whose data it runs
- * on a copy of; such an instance is for admins only (deploy.ts, entryTarget), and nothing else reads the field. On
- * AWS, also the AWS CLI's profile this machine reaches it with.
+ * commits it runs, its deploy facts and vars, and its ops token. On AWS, also the AWS CLI's profile this machine
+ * reaches it with.
  */
 const Entry = Schema.Union([
   Schema.Struct({ ...Own, ...CloudflareFacts.fields }),
@@ -72,15 +69,6 @@ export function writeConfig(dir: string, config: Config) {
 
 export const entryOf = (config: Config, host: string) => config.instances.find((e) => e.host == host) ?? null;
 
-/** Why `host` can't run on a copy of `source`'s data, or null. */
-export function copyRefusal(config: Config, host: string, source: string): string | null {
-  if (source == host) return `${host} can't be a copy of its own data.`;
-  const s = entryOf(config, source);
-  if (!s) return `${source} has no entry in .erga/config.json. Register it first: bun erga register ${source}`;
-  if (s.copyOf) return `${source} runs on a copy of ${s.copyOf}'s data itself: name ${s.copyOf}.`;
-  return null;
-}
-
 /** A repository's name from a git address: github.com/owner/name for an https, ssh or scp-like address; a path as it is. */
 export const repoName = (url: string) =>
   url
@@ -109,21 +97,4 @@ export function withEntry(config: Config, entry: Entry): Config {
 export function originOf(host: string): string {
   if (host.includes("://")) return new URL(host).origin;
   return /^(localhost|127\.0\.0\.1)(:|$)/.test(host) ? `http://${host}` : `https://${host}`;
-}
-
-export const secretsPath = (dir: string) => join(dir, "secrets.json");
-
-const SnapshotSecret = Schema.Struct({ SNAPSHOT_TOKEN: Schema.String });
-
-/**
- * An instance's SNAPSHOT_TOKEN, for a copy of its documents: SNAPSHOT_TOKEN in the environment, else
- * `{ "<its host>": { "SNAPSHOT_TOKEN": "..." } }` in .erga/secrets.json. "" if neither has it.
- */
-export function snapshotTokenOf(dir: string, source: string): string {
-  const own = process.env.SNAPSHOT_TOKEN?.trim();
-  if (own) return own;
-  const path = secretsPath(dir);
-  if (!existsSync(path)) return "";
-  const file = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  return Option.getOrUndefined(Schema.decodeUnknownOption(SnapshotSecret)(file[source]))?.SNAPSHOT_TOKEN.trim() ?? "";
 }

@@ -229,36 +229,6 @@ const trade = async (s: Server, endpoint: string, fields: Record<string, string>
   return { status: r.status, body: (await r.json()) as { access_token?: string; token_type?: string; error?: string; scope?: string } };
 };
 
-test("on staging the app finds and registers without a cookie, and an admin's sign-in gets a token that /mcp takes", async () => {
-  const s = app({ staging: true });
-  const as = await discover(s);
-  const redirect = "http://127.0.0.1:9/callback";
-  const client = await register(s, as.registration_endpoint, redirect);
-  expect((await s.fetch("/llms.txt")).status).toBe(200);
-  expect(
-    (await trade(s, as.token_endpoint, { code: "nope", client_id: client, redirect_uri: redirect, code_verifier: "x".repeat(43) })).body
-      .error
-  ).toBe("invalid_grant");
-  // The admin (the dev login) approves; the token is an admin token, which staging lets reach /mcp.
-  const { verifier, challenge } = await pkce();
-  const approve = (
-    await s.fetch(
-      `${as.authorization_endpoint}?${new URLSearchParams({ response_type: "code", client_id: client, redirect_uri: redirect, code_challenge: challenge, code_challenge_method: "S256" })}`
-    )
-  ).headers.get("location")!;
-  const userCode = new URL(approve, s.root).searchParams.get("code")!;
-  const sent = await s.fetch("/tokens/approve", {
-    method: "POST",
-    headers: { Origin: s.root },
-    body: new URLSearchParams({ code: userCode, answer: "approve", scope: "admin" }),
-  });
-  expect(sent.status).toBe(303);
-  const code = new URL(sent.headers.get("location")!).searchParams.get("code")!;
-  const token = (await trade(s, as.token_endpoint, { code, client_id: client, redirect_uri: redirect, code_verifier: verifier })).body
-    .access_token!;
-  expect((await mcp(s, token, "tools/list")).status).toBe(200);
-});
-
 /** The whole sign-in, as an MCP app does it, by `cookie`'s person (none: the dev login, an admin): the approval card's text and the token. */
 async function signInOver(s: Server, cookie: string | null, give?: "admin") {
   const as = await discover(s);

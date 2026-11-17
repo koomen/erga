@@ -98,8 +98,6 @@ export function missing(a: Answers): string[] {
   if (sso(a) && aws && !a.client) need.push("--client <ID>: Erga's client ID at the organization's sign-in.");
   if (a.emailClaim && !(sso(a) && aws)) need.push("--email-claim is only for --sign-in sso on AWS: leave it out.");
   if (aws && !pagesOf(a)) need.push("--pages <domain>: a second Route 53 domain of the account, for the documents' pages.");
-  if (aws && a.copyOf) need.push("A copy of another instance's data is not on AWS yet: leave out --copy-of.");
-  if (a.copyOf && a.copyOf == a.host) need.push("--copy-of names another instance: the one whose data this one copies.");
   return need;
 }
 
@@ -153,13 +151,13 @@ export function stateOf(a: Answers, s: Seen): State {
 
 /**
  * The settings that the answers give (plan.ts, varsOf) and the entry doesn't have: their names. A left-out option is
- * its default: the options of each run are the whole answer. An instance on a copy takes its defaults from its source.
+ * its default: the options of each run are the whole answer.
  */
 export function changedVars(a: Answers, s: Seen): string[] {
   if (!s.vars) return [];
   const want: Record<string, string> = varsOf(a, s.github || undefined, s.stack?.outputs.Proxy);
   const had = s.vars;
-  return ANSWER_VARS.filter((k) => !(a.copyOf && k == "SERVER_DEFAULTS") && (want[k] ?? "") != (had[k] ?? ""));
+  return ANSWER_VARS.filter((k) => (want[k] ?? "") != (had[k] ?? ""));
 }
 
 /** Folds what was seen in: the answers with what the code found, and the state. `look`: an answer changed, so observe again. */
@@ -215,12 +213,10 @@ export function planText(a: Answers, s: Seen): string[] {
     ];
   const n = namesOf(a.host);
   return [
-    a.copyOf
-      ? `I will make Erga at ${a.host}, in the account of ${a.copyOf}, on a copy of its data, for admins only:`
-      : `I will make Erga at ${a.host}, in the Cloudflare account ${accountName(a, s)}:`,
+    `I will make Erga at ${a.host}, in the Cloudflare account ${accountName(a, s)}:`,
     `• a Worker (${n.worker}), a D1 database, an R2 bucket and a DNS record`,
     signIn,
     tracks,
-    a.copyOf ? "It is in the same Workers Paid plan." : "It costs $5 a month: the Workers Paid plan.",
+    "It costs $5 a month: the Workers Paid plan.",
   ];
 }

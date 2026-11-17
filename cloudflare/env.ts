@@ -62,12 +62,6 @@ export interface Env {
    */
   PAGES_DOMAIN?: string;
   PAGES_HOST?: string;
-  /**
-   * A staging instance's primary, https://<host>: the deploy sets it from the instance's entry (copyOf), and no
-   * other instance has it. So this server is a staging instance: for admins only (server/identity/admins-only.ts), it
-   * takes its primary's documents in, and its blobs come from there. Locally: ERGA_SNAPSHOT_FROM.
-   */
-  SNAPSHOT_FROM?: string;
   /** The release this server runs (the commit, 12 characters; the pipeline sets it). GET /api/deploys/version answers it. */
   ERGA_VERSION?: string;
   /**
@@ -76,8 +70,6 @@ export interface Env {
    * the pages'. GET /api/ops (server/api.ts) answers it, to an admin's ops token only.
    */
   ERGA_DEPLOY?: string;
-  /** A secret, the same on an instance and its staging instances: the read-only snapshot endpoint takes it, and a staging instance's import. */
-  SNAPSHOT_TOKEN?: string;
   /** A Worker secret: a GitHub token that may open issues in the setting feedback_repository, for the feedback people send (server/feedback.ts). */
   GITHUB_ISSUES_TOKEN?: string;
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */

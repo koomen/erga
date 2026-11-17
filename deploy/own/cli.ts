@@ -9,8 +9,6 @@
 //       --repo <repo>          the repository that the instance tracks (default: github.com/koomen/erga)
 //       --branch <branch>      the branch of it that the instance tracks (default: main): its first deploy, and each
 //                              deploy after, takes that branch's head. bun erga track <host> changes both later.
-//       --copy-of <address>    the instance runs on a copy of that registered instance's data, for admins only, in
-//                              its account (Cloudflare only): a server to try updates on, often with --branch staging
 //       --account <name|id>    Cloudflare: the account, when two hold the domain
 //       --profile <name>       AWS: the AWS CLI's profile, when there are several (the region is the profile's)
 //       --organization <org|domain>      --sign-in organization: a GitHub organization, or an email domain
@@ -34,7 +32,7 @@
 
 import { closeSync, readFileSync } from "node:fs";
 import { Claim } from "../../server/identity/claim-link";
-import { copyRefusal, entryOf, isAws, originOf, readConfig } from "../cli/config";
+import { entryOf, isAws, originOf, readConfig } from "../cli/config";
 import { findDatabase } from "../pipeline/account";
 import { fail, pass, ROOT, say } from "../root";
 import { askSecret, githubApp, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
@@ -53,7 +51,6 @@ const OPTIONS: Record<string, TextAnswer> = {
   "--sign-in": "signIn",
   "--repo": "repo",
   "--branch": "branch",
-  "--copy-of": "copyOf",
   "--account": "account",
   "--profile": "profile",
   "--organization": "organization",
@@ -176,12 +173,12 @@ async function build(a: Answers, seen: Seen, o: Run) {
 
 /**
  * The admin's step: the server asks for the ops token, and the browser opens the one-time link that carries its code.
- * A new server: the link makes the user its admin as they sign in (server/identity/claim.ts). An instance on a copy
- * has its source's users: an admin approves. The result: the user's login, or "" when the wait ended first.
+ * The link makes the user the new server's admin as they sign in (server/identity/claim.ts). The result: the user's
+ * login, or "" when the wait ended first.
  */
 async function admin(a: Answers, o: Run): Promise<string> {
   const net = a.where == "aws" ? site : (await connect()).net;
-  const secret = a.copyOf ? "" : loadSecrets(DIR)[a.host]?.SESSION_SECRET;
+  const secret = loadSecrets(DIR)[a.host]?.SESSION_SECRET;
   const opened = async (code: string) => {
     const to = secret
       ? `https://${a.host}/auth/claim?t=${encodeURIComponent(await Claim.seal(secret, {}))}&approve=${encodeURIComponent(code)}`
@@ -191,9 +188,7 @@ async function admin(a: Answers, o: Run): Promise<string> {
   };
   say(
     a.remote
-      ? `WAIT  The user's terminal shows a link to ${a.host}. The user opens it in their browser, and ${a.copyOf ? `approves there, as an admin of ${a.copyOf}` : "signs in there: they become the admin"}.`
-      : a.copyOf
-        ? `WAIT  A tab opens on ${a.host}. The user approves there, as an admin of ${a.copyOf}.`
+      ? `WAIT  The user's terminal shows a link to ${a.host}. The user opens it in their browser, and signs in there: they become the admin.`
       : `WAIT  A tab opens on ${a.host}, with a link that works one time. The user signs in there, and becomes the admin.`
   );
   const approved = register(DIR, a.host, { site: net, asked: (code) => void opened(code) });
@@ -302,17 +297,6 @@ async function run(a: Answers, o: Run) {
   const need = missing(a);
   if (need.length)
     return fail(`The command needs: ${need.join(" ")}`, "Ask the user what the README's setup asks, then run the command again.");
-  // An instance on a copy of another's data is in that instance's account: the copy is made inside one account.
-  if (a.copyOf) {
-    const no = copyRefusal(readConfig(DIR), a.host, a.copyOf);
-    const source = entryOf(readConfig(DIR), a.copyOf);
-    if (no || !source || isAws(source))
-      return fail(
-        no ?? `${a.copyOf} is on AWS: a copy of another instance's data is on Cloudflare only.`,
-        `Set up ${a.copyOf} first, or leave out --copy-of.`
-      );
-    a = { ...a, account: source.account };
-  }
   const end = await setUp(a, o);
   if (end == "wait") return say(`WAIT  The user's step is still open. Run the same command again: ${o.again}`);
   if (o.dryRun)
@@ -320,7 +304,7 @@ async function run(a: Answers, o: Run) {
       "DRY RUN  Nothing is made. Tell the user the plan, and ask: Shall I make it? On yes, run the same command without --dry-run."
     );
   say(
-    `DONE  Tell the user: Erga is live at https://${a.host}${a.copyOf ? `, on a copy of ${a.copyOf}'s data, for admins only` : ""}, and they are the admin. It tracks ${a.branch} of ${a.repo}: bun erga deploy ${a.host} gives it that branch's newest commit. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page). Settings has the rest: Google sign-in, a feedback repository, the homepage.`
+    `DONE  Tell the user: Erga is live at https://${a.host}, and they are the admin. It tracks ${a.branch} of ${a.repo}: bun erga deploy ${a.host} gives it that branch's newest commit. .erga/secrets.json in this folder holds the server's secrets: keep a copy in a password manager, and share it with no one. Later deploys: bun erga (the ops page). Settings has the rest: Google sign-in, a feedback repository, the homepage.`
   );
 }
 

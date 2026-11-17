@@ -1,5 +1,5 @@
-// The pretend Cloudflare's D1 (dev/mock-cloudflare.ts): the few statements the deploy and `bun erga setup` run, and
-// D1's export and import.
+// The pretend Cloudflare's D1 (dev/mock-cloudflare.ts): the few statements the deploy and `bun erga setup` run.
+
 
 import type { MockState } from "./mock-cloudflare";
 
@@ -63,40 +63,4 @@ export function d1Query(
   db.tables = [...new Set([...have, ...made.map((m) => m[2])])];
   for (const m of sql.matchAll(/INSERT INTO d1_migrations \(name\) VALUES \('([^']+)'\)/g)) db.migrations.push(m[1]);
   return [];
-}
-
-/** A database as D1's export writes it: its tables, its migrations, its rows. */
-export function dumpOf(db: MockState["databases"][number]): string {
-  const lines = ["PRAGMA defer_foreign_keys=TRUE;"];
-  for (const t of db.tables)
-    lines.push(
-      t == "d1_migrations"
-        ? "CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL);"
-        : `CREATE TABLE ${t} (mock);`
-    );
-  for (const name of db.migrations) lines.push(`INSERT INTO d1_migrations (name) VALUES ('${name}');`);
-  lines.push(...(db.rows ?? []));
-  return lines.join("\n") + "\n";
-}
-
-/** SQL loaded into a database (D1's import): its tables, migrations and rows, as dumpOf writes them. */
-export function applySql(db: MockState["databases"][number], sql: string) {
-  for (const line of sql
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)) {
-    const made = /^CREATE TABLE (?:IF NOT EXISTS )?(\w+)/i.exec(line);
-    if (made) {
-      if (db.tables.includes(made[1])) throw new D1Error(`table ${made[1]} already exists`);
-      db.tables.push(made[1]);
-      continue;
-    }
-    const mig = /^INSERT INTO d1_migrations \(name\) VALUES \('([^']+)'\)/.exec(line);
-    if (mig) {
-      db.migrations.push(mig[1]);
-      continue;
-    }
-    if (/^INSERT INTO/i.test(line)) (db.rows ??= []).push(line);
-  }
-  db.statements.push(`(import of ${sql.length} bytes)`);
 }

@@ -5,10 +5,7 @@
 import type { Platform } from "../platform.ts";
 import type { SiteStatus } from "./state.ts";
 
-/**
- * The Erga domain's key. Not its host: a staging instance runs on a copy of its primary's data, at another host, and
- * the Erga domain is still its own.
- */
+/** The Erga domain's key. Not its host: a server whose address changes keeps what it published there. */
 export const ERGA = "";
 
 /** Every domain's key: the Erga domain first, then the deploy's. */

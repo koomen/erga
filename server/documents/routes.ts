@@ -345,18 +345,6 @@ export async function keyedOp(
   return { doc, person, who: person && keyWho(person, doc.id), origin: pagesOrigin(doc.owner, doc.id, url, platform) };
 }
 
-/** The person a request's edit key names (/<owner or d>/<doc>/api/... ?key=, what it opens), if it's good: for the staging guard. */
-export async function keyedPerson(platform: Platform, request: Request, url: URL): Promise<KeyPerson | null> {
-  const op = await keyedOp(platform, url);
-  if (op) return op.person;
-  const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/api\/.*)$/.exec(url.pathname) ?? [];
-  const key = url.searchParams.get("key");
-  if (!first || !second || key == null || !keyed(request, rest)) return null;
-  const route = await documentRoute(platform, first, second);
-  const doc = route && (await platform.directory.route(route.id));
-  return doc ? readEditKey(platform.secret, key, doc.owner, doc.id) : null;
-}
-
 /** The pages documentRoutes answers by name, whatever the Erga domain's published site has. */
 const ERGA_PAGES = /^\/(new|scratch|documents|admin|_home|d)(\/|$)/;
 

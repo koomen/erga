@@ -41,7 +41,7 @@ export default defineConfig(({ mode }) => ({
     // The Worker runs first for every path, and decides everything (view mode at /, documents under /<owner>/<id>),
     // the editor's hashed files (/_erga/..., client/build.ts) too: it serves them from the static assets with a year in
     // the browser's cache, to any origin, and a missing one with no-store (server/pages/assets.ts, serveAsset). They are
-    // public code, which staging's admins-only guard lets anyone have (server/identity/admins-only.ts). Not the static
+    // public code. Not the static
     // assets alone for /_erga/*: their 404 carried the year-long header (the build's _headers), and a custom
     // domain answers its /_erga/ routes in the Worker (server/app.ts).
     assets: { htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: true },
@@ -81,10 +81,6 @@ export default defineConfig(({ mode }) => ({
       SERVER_CONFIG: mode == "development" ? local(process.env.ERGA_SERVER_CONFIG ?? "") : bindings.text(""),
       // The GitHub OAuth app's client ID: each instance's own, from its entry's vars. Locally, ERGA_GITHUB_CLIENT_ID only.
       GITHUB_CLIENT_ID: mode == "development" ? local(process.env.ERGA_GITHUB_CLIENT_ID ?? "") : bindings.text(""),
-
-      // A staging instance's primary (https://<host>): `bun erga deploy` sets it from the entry's copyOf, and the
-      // server is then for admins only. Locally: ERGA_SNAPSHOT_FROM.
-      SNAPSHOT_FROM: mode == "development" ? local(process.env.ERGA_SNAPSHOT_FROM ?? "") : bindings.text(""),
       ...optionalSecret(mode, "GITHUB_CLIENT_SECRET"),
       // Opens an issue in Erga's repository for each feedback (server/feedback.ts). Locally the pretend GitHub takes its own.
       ...optionalSecret(mode, "GITHUB_ISSUES_TOKEN"),

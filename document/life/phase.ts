@@ -1,5 +1,5 @@
 // A document's room through its life: closed, opening, open, closing (idle: its room writes its last edits), and
-// destroying (deleted, or replaced by a snapshot: its storage is emptied). One value, and one pure step from it, so
+// destroying (deleted: its storage is emptied). One value, and one pure step from it, so
 // a call that comes at any moment does one clear thing: it uses the room, opens it, waits, or is refused. The Document
 // (document.ts) keeps the value and does what each step says.
 
@@ -20,7 +20,7 @@ export type PhaseEvent<O> =
   /** Idle: the room starts to close. */
   | { on: "closing"; done: Promise<void> }
   | { on: "closed" }
-  /** Its storage is about to go (a delete, a snapshot): what the room holds must be closed first. */
+  /** Its storage is about to go (a delete): what the room holds must be closed first. */
   | { on: "destroy" }
   | { on: "destroying"; done: Promise<void> }
   | { on: "destroyed" };

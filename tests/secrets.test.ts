@@ -8,32 +8,34 @@ import { freshLogin, runTool, server as app, type Server } from "./helpers/app";
 import { memory } from "./helpers/memory-sql";
 
 
-test("an agent token works only on the server whose secret made it, not on a copy of its database (staging's)", async () => {
+test("an agent token works only on the server whose secret made it, not on a copy of its database", async () => {
   const sql = memory();
   const dir = new Directory(sql);
-  const production = new Tokens(sql, "production-secret-".repeat(3), dir), staging = new Tokens(sql, "staging-secret-".repeat(3), dir);
-  const { token } = await production.mint({ login: "ada", name: "Ada" }, "Claude Code", { scope: "documents" });
-  expect((await production.verify(token))?.login).toBe("ada");
-  // Staging holds the same rows (its database is a copy of production's), but not production's secret.
-  expect(await staging.verify(token)).toBeNull();
+  const first = new Tokens(sql, "first-secret-".repeat(3), dir),
+    copy = new Tokens(sql, "copy-secret-".repeat(3), dir);
+  const { token } = await first.mint({ login: "ada", name: "Ada" }, "Claude Code", { scope: "documents" });
+  expect((await first.verify(token))?.login).toBe("ada");
+  // The copy holds the same rows, but not the first server's secret.
+  expect(await copy.verify(token)).toBeNull();
   // Its own tokens still work there.
-  const own = await staging.mint({ login: "ada", name: "Ada" }, "Claude Code", { scope: "documents" });
-  expect((await staging.verify(own.token))?.login).toBe("ada");
-  expect(await production.verify(own.token)).toBeNull();
+  const own = await copy.mint({ login: "ada", name: "Ada" }, "Claude Code", { scope: "documents" });
+  expect((await copy.verify(own.token))?.login).toBe("ada");
+  expect(await first.verify(own.token)).toBeNull();
 });
 
-test("the Share buttons on a copy of production's database (staging's) give a token that works there, not production's row", async () => {
+test("the Share buttons on a copy of another server's database give a token that works there, not the other server's row", async () => {
   const sql = memory();
   const dir = new Directory(sql);
-  const production = new Tokens(sql, "production-secret-".repeat(3), dir), staging = new Tokens(sql, "staging-secret-".repeat(3), dir);
+  const first = new Tokens(sql, "first-secret-".repeat(3), dir),
+    copy = new Tokens(sql, "copy-secret-".repeat(3), dir);
   const ada = { login: "ada", name: "Ada" };
-  const before = await production.share(ada, false);
-  const shared = await staging.share(ada, false);
-  expect((await staging.verify(shared.token))?.login).toBe("ada");
+  const before = await first.share(ada, false);
+  const shared = await copy.share(ada, false);
+  expect((await copy.verify(shared.token))?.login).toBe("ada");
   expect(shared.token).not.toBe(before.token);
-  // The next time, the same token (staging's own now), as on production.
-  expect((await staging.share(ada, false)).token).toBe(shared.token);
-  expect((await production.share(ada, false)).token).not.toBe(shared.token);
+  // The next time, the same token (the copy's own now), as on the first server.
+  expect((await copy.share(ada, false)).token).toBe(shared.token);
+  expect((await first.share(ada, false)).token).not.toBe(shared.token);
 });
 
 test("a document's pages token is checked whole (its MAC compared in constant time): a changed one opens nothing", async () => {

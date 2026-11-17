@@ -19,8 +19,8 @@ test("a wait: a write starts it, its bytes end it one time, and it ends by itsel
   ).waits;
   expect(Object.keys(waits)).toEqual(["a.png", "copy/a.png", "b.png"]);
   expect(waits["a.png"]).toEqual({ ...ada, ...a, until: WAIT_MINUTES * MINUTE });
-  // A copy of the document on another server (staging's) takes no bytes for it.
-  expect(step(waits, { on: "bytes", hash: a.hash, origin: "https://staging.erga.dev", now: 1 }).put).toEqual([]);
+  // A copy of the document on another server takes no bytes for it.
+  expect(step(waits, { on: "bytes", hash: a.hash, origin: "https://other.example.com", now: 1 }).put).toEqual([]);
   // The bytes: every path that waits for them, and they wait no more.
   const came = step(waits, { on: "bytes", hash: a.hash, origin: ada.origin, now: MINUTE });
   expect(came.put.map(([path, w]) => `${path} by ${w.who.login}`)).toEqual(["a.png by ada", "copy/a.png by ada"]);
@@ -77,14 +77,13 @@ async function send(s: Server, id: string, hash: string, bytes: Uint8Array<Array
   return { status: r.status, ...((await r.json()) as { ok: boolean; written?: string[]; error?: string }) };
 }
 
-async function setup(o: { staging?: boolean } = {}) {
-  const s = server(o);
-  // (On a server for admins only, the dev login: its admin.)
-  const p = o.staging ? null : await person(s);
-  const token = p ? await p.token() : (await mint(s, null, { label: "Agent", scope: "documents" })).token;
+async function setup() {
+  const s = server();
+  const p = await person(s);
+  const token = await p.token();
   const id = (await tool(s, token, "create_document", { template: "page", title: "Shots" })).data.id as string;
   const file = async (path: string) => {
-    const r = await s.fetch(`/d/${id}/doc/${path}`, p ? { headers: { Cookie: p.cookie } } : {});
+    const r = await s.fetch(`/d/${id}/doc/${path}`, { headers: { Cookie: p.cookie } });
     return r.ok ? new Uint8Array(await r.arrayBuffer()) : r.status;
   };
   return { s, p, token, id, file };
@@ -212,16 +211,4 @@ test("who may: only a write by someone who may edit waits, the bytes land only w
   expect((await write(s, one, other, files)).waiting).toEqual(["shot.png"]);
   expect((await send(s, id, hash, png)).status).toBe(403);
   expect((await send(s, other, hash, png)).written).toEqual(["shot.png"]);
-});
-
-test("staging, for admins only: the bytes of an admin's write get in with no session, and nothing else of the address does", async () => {
-  const { s, token, id, file } = await setup({ staging: true });
-  const png = bytesOf(4000);
-  const hash = await sha256Hex(png);
-  expect((await send(s, id, hash, png)).status).toBe(404);
-  expect((await s.fetch(`/d/${id}/api/blobs/${hash}`, { headers: signedOut() })).status).toBe(403);
-  expect((await s.fetch(`/d/${id}/api/files/shot.png`, { method: "PUT", body: png, headers: signedOut() })).status).toBe(403);
-  expect((await write(s, token, id, { "shot.png": { blob: hash, size: png.length } })).waiting).toEqual(["shot.png"]);
-  expect((await send(s, id, hash, png)).written).toEqual(["shot.png"]);
-  expect(await file("shot.png")).toEqual(png);
 });

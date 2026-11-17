@@ -34,19 +34,17 @@
 //   bun erga deploy [<commit>] <host> [--no-tests]            deploys a registered instance from this machine: the head
 //                                       of the branch it tracks, or a commit of that branch; no branch moves;
 //                                       the commits main and staging are origin's branches, never the clone's own;
-//                                       --fresh: an instance on a copy of another's data gets a new copy;
 //                                       --domain <domain> (it can repeat): the instance takes a custom domain, which
-//                                       a document can be published to from now on (never one on a copy)
+//                                       a document can be published to from now on
 //   bun erga track <host> [--repo <repo>] [--branch <branch>]  the repository and the branch that a registered
 //                                       instance tracks (github.com/koomen/erga, main); with no option, it prints them
 //   bun erga rollback <host> [--yes]    a registered instance's Worker version from before its last deploy
-//   bun erga snapshot-secret <host>     a new SNAPSHOT_TOKEN on an instance and each copy of it: the old one stops
-//   bun erga register <host> [--repo <repo>] [--branch <branch>] [--copy-of <host>]
+//   bun erga register <host> [--repo <repo>] [--branch <branch>]
 //                                       signs in to an instance as an admin, in the browser, and adds it to
-//                                       .erga/config.json: its deploy facts, its plain settings, an ops token, the
-//                                       repository and branch it tracks, and the instance whose data it is a copy of
+//                                       .erga/config.json: its deploy facts, its plain settings, an ops token, and the
+//                                       repository and branch it tracks
 //   bun erga login <host>               a new ops token for a registered instance, when its token runs out
-//   bun erga setup <host> --host ... --sign-in ... [--repo <repo>] [--branch <branch>] [--copy-of <host>] [--dry-run]
+//   bun erga setup <host> --host ... --sign-in ... [--repo <repo>] [--branch <branch>] [--dry-run]
 //                                       a new instance, on Cloudflare or AWS, from the user's answers: the checks and
 //                                       the plan (--dry-run), then the build and the first admin (bun erga setup --help)
 
@@ -217,9 +215,8 @@ function release(asked: string | undefined, dry: boolean) {
 /** A host from a host or a URL. */
 const hostOf = async (arg: string) => new URL((await import("./config")).originOf(arg)).host;
 
-async function deploy(args: string[], noTests: boolean, fresh: boolean, domains: string[]) {
-  if (!args.length || args.length > 2)
-    fail("Name the instance: bun erga deploy [<commit>] <host> [--no-tests] [--fresh] [--domain <domain>]...");
+async function deploy(args: string[], noTests: boolean, domains: string[]) {
+  if (!args.length || args.length > 2) fail("Name the instance: bun erga deploy [<commit>] <host> [--no-tests] [--domain <domain>]...");
   const [commit, host] = args.length == 2 ? [args[0], await hostOf(args[1])] : [undefined, await hostOf(args[0])];
   const { ergaDir } = await import("./config");
   const { deployInstance } = await import("./deploy");
@@ -227,7 +224,6 @@ async function deploy(args: string[], noTests: boolean, fresh: boolean, domains:
     "bun erga deploy",
     ...args,
     ...(noTests ? ["--no-tests"] : []),
-    ...(fresh ? ["--fresh"] : []),
     ...domains.flatMap((d) => ["--domain", d]),
   ].join(" ");
   const sha = await deployInstance({
@@ -235,7 +231,6 @@ async function deploy(args: string[], noTests: boolean, fresh: boolean, domains:
     host,
     commit,
     noTests,
-    fresh,
     command,
     from: fromOf(),
     ...(domains.length ? { domains } : {}),
@@ -272,26 +267,20 @@ async function signInTo(origin: string) {
   return { token, facts: await readOps(origin, token) };
 }
 
-async function register(arg: string | undefined, o: { repo?: string; branch?: string; copyOf?: string }) {
-  const { host, origin } = await instanceOf(arg, "bun erga register <host> [--repo <repo>] [--branch <branch>] [--copy-of <host>]");
+async function register(arg: string | undefined, o: { repo?: string; branch?: string }) {
+  const { host, origin } = await instanceOf(arg, "bun erga register <host> [--repo <repo>] [--branch <branch>]");
   const {
     configPath,
-    copyRefusal,
     DEFAULT_BRANCH,
     DEFAULT_REPO,
     entryOf,
     ergaDir,
-    originOf,
     readConfig,
     repoName,
     withEntry,
     writeConfig,
   } = await import("./config");
   const dir = ergaDir();
-  const had = entryOf(readConfig(dir), host);
-  const source = o.copyOf ? new URL(originOf(o.copyOf)).host : had?.copyOf;
-  const no = source ? copyRefusal(readConfig(dir), host, source) : null;
-  if (no) fail(no);
   const { token, facts } = await signInTo(origin);
   if (!facts.deploy)
     fail(
@@ -302,8 +291,8 @@ async function register(arg: string | undefined, o: { repo?: string; branch?: st
   const now = entryOf(readConfig(dir), host);
   const repo = o.repo ? repoName(o.repo) : (now?.repo ?? DEFAULT_REPO);
   const branch = o.branch ?? now?.branch ?? DEFAULT_BRANCH;
-  writeConfig(dir, withEntry(readConfig(dir), { host, repo, branch, ...(source ? { copyOf: source } : {}), ...facts.deploy!, token }));
-  pass(`${host} is registered in ${configPath(dir)}: it tracks ${repo} ${branch}${source ? `, on a copy of ${source}'s data` : ""}.`);
+  writeConfig(dir, withEntry(readConfig(dir), { host, repo, branch, ...facts.deploy!, token }));
+  pass(`${host} is registered in ${configPath(dir)}: it tracks ${repo} ${branch}.`);
   const d = facts.deploy!;
   const where =
     "aws" in d
@@ -354,11 +343,11 @@ export async function main(argv: string[]) {
     return i >= 0 ? rest[i + 1] : undefined;
   };
   const plain = rest.filter(
-    (x, i) => !x.startsWith("-") && !["-m", "--port", "--repo", "--branch", "--copy-of", "--domain"].includes(rest[i - 1] ?? "")
+    (x, i) => !x.startsWith("-") && !["-m", "--port", "--repo", "--branch", "--domain"].includes(rest[i - 1] ?? "")
   );
   // A config file from before an instance tracked a branch moves to today's fields, one time (old-config.ts), at the
   // first command that reads the file.
-  if (["", "status", "merge", "promote", "deploy", "rollback", "snapshot-secret", "register", "login", "track", "setup"].includes(cmd)) {
+  if (["", "status", "merge", "promote", "deploy", "rollback", "register", "login", "track", "setup"].includes(cmd)) {
     const { ergaDir } = await import("./config");
     const { moveOldConfig } = await import("./old-config");
     try {
@@ -422,23 +411,13 @@ export async function main(argv: string[]) {
       return deploy(
         plain,
         flag("--no-tests"),
-        flag("--fresh"),
         rest.flatMap((x, i) => (rest[i - 1] == "--domain" ? [x] : []))
       );
     case "rollback":
       return rollback(plain[0], flag("--yes"));
-    case "snapshot-secret": {
-      if (!plain[0]) return fail("Name the instance: bun erga snapshot-secret <host>.");
-      const { ergaDir } = await import("./config");
-      const { replaceSnapshotSecret } = await import("./snapshot-secret");
-      await replaceSnapshotSecret({ dir: ergaDir(), host: await hostOf(plain[0]), print: say }).catch((e: Error) => fail(e.message));
-      return;
-    }
     case "register":
       // The server's or the file's error, in its own words.
-      return register(plain[0], { repo: opt("--repo"), branch: opt("--branch"), copyOf: opt("--copy-of") }).catch((e: Error) =>
-        fail(e.message)
-      );
+      return register(plain[0], { repo: opt("--repo"), branch: opt("--branch") }).catch((e: Error) => fail(e.message));
     case "track":
       return track(plain[0], { repo: opt("--repo"), branch: opt("--branch") }).catch((e: Error) => fail(e.message));
     case "login":

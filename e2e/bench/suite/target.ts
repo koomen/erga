@@ -26,8 +26,8 @@ import { dirname, join, relative } from "path";
  *   restart        stop the server gracefully and start it again
  *   kill           stop it abruptly (SIGKILL) and start it again
  *   disk           edit the stored files directly, behind the server's back
- *   scriptedAgent  the agent runs the scripted test model; staging
- *                  only, never a server real people reach (production)
+ *   scriptedAgent  the agent runs the scripted test model: never on a
+ *                  server that real people reach
  *   liveAgent      the agent runs a real model (costs money)
  *   browser        a headless Chrome is available here to open the shell
  *   roles          people can have view-only access (Doc.share); local only

@@ -33,7 +33,6 @@ import { sandboxOf } from "../sandbox";
 import type { Act } from "../../shared/attribution";
 import type { RestoreResult, VersionsState } from "../../document/history/versions";
 import { CommentTables, placeQuote, type CommentAnswer, type CommentCall } from "../../document/api/comments";
-import type { DocSnapshot, Page } from "../../document/store/snapshot";
 import { directoryOf } from "../d1";
 import { forgetDecisions } from "../../server/documents/index.ts";
 import { platform, siteOf } from "../platform";
@@ -173,15 +172,6 @@ export class DocumentObject extends DurableObject<Env> {
   }
   diskPath(): Promise<string | null> {
     return run(this.document.diskPath());
-  }
-  exportStorage(id: string, page: Page): Promise<DocSnapshot | null> {
-    return run(this.document.exportStorage(id, page));
-  }
-  importStorage(snap: DocSnapshot): Promise<void> {
-    return run(this.document.importStorage(snap));
-  }
-  wipeStorage(): Promise<void> {
-    return run(this.document.wipeStorage());
   }
   versionsState(opts: { before?: string | number | null; limit?: number } = {}): Promise<VersionsState | null> {
     return run(this.document.hold(this.document.versionsState(opts)));

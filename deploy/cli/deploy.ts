@@ -6,10 +6,8 @@
 // runPipeline). Every instance's target comes from its entry only (entryTarget): its names, its vars, the secrets the
 // Worker keeps. No secret goes out. No instance has a path of its own: the entries differ, the code does not.
 //
-// An entry with `copyOf` runs on a copy of that instance's data. It gets SNAPSHOT_FROM (its source's address) over its
-// entry's vars, which makes its server one for admins only; its source's names are its guard. It keeps its copy.
-// With --fresh, or when it has no copy yet, it gets a new copy of the source's database and documents, with the
-// source's SNAPSHOT_TOKEN (the environment, or .erga/secrets.json). Each deploy or
+// A Worker that runs keeps its database: when its entry names another one, the entry takes the name of the database
+// that the Worker is bound to, before anything deploys. Each deploy or
 // rollback holds the lock .erga/jobs/<host>.lock and writes its job record in .erga/jobs/ (jobs.ts). A deploy runs only a commit
 // whose tests passed (gate.ts: bun run test): the record .erga/tests/<tree>.json of the commit's tree, which its merge wrote.
 //
@@ -20,16 +18,14 @@
 import { rollbackTo } from "../pipeline/account";
 import { Cloudflare, DeployError, type Fetch, Unhealthy } from "../pipeline/cloudflare-api";
 import {
-  ALL_STEPS,
-  boundDatabase,
+  STEPS,
+  boundDatabaseName,
   type Carry,
-  copiesOf,
   guardTarget,
   runPipeline,
   type Target,
   targetHost,
   targetPagesShown,
-  targetSharedPagesHost,
 } from "../pipeline/pipeline";
 import {
   type CloudflareEntry,
@@ -41,8 +37,6 @@ import {
   originOf,
   readConfig,
   remoteOf,
-  secretsPath,
-  snapshotTokenOf,
   withEntry,
   writeConfig,
 } from "./config";
@@ -52,7 +46,6 @@ import { gateRefusal } from "./gate";
 import { type From, startJob, takeLock } from "./jobs";
 import { healthOf } from "./observe";
 import { readOps } from "./ops";
-import { copyCommitRefusal } from "./copy-commit";
 import { parseDeployed } from "../../server/directory/index.ts";
 import { ROOT, sh } from "../root";
 
@@ -74,40 +67,14 @@ const namesOf = (e: CloudflareEntry) => ({
   ...(e.domains?.length ? { domains: e.domains } : {}),
 });
 
-/**
- * What the pipeline deploys for `entry`, any entry: its names and vars, no secret (the Worker keeps its own). An entry
- * with `copyOf` runs on a copy of that instance's data: it gets SNAPSHOT_FROM over its vars, and may not touch its
- * source's names. It keeps its copy, unless `copy` is given: then the pipeline copies the source's database and
- * documents.
- */
-export function entryTarget(config: Config, entry: CloudflareEntry, copy?: { token: string; fresh: boolean }): Target {
-  const own = { ...namesOf(entry), secrets: {}, keepSecrets: true, checkVersion: true };
-  if (!entry.copyOf) return { ...own, vars: { ...entry.vars } };
-  const source = entryOf(config, entry.copyOf);
-  if (!source)
-    throw new Error(
-      `${entry.host} runs on a copy of ${entry.copyOf}'s data, and ${entry.copyOf} has no entry. Register it: bun erga register ${entry.copyOf}`
-    );
-  if (isAws(source))
-    throw new Error(
-      `${entry.host} is on Cloudflare, and the source of its data, ${source.host}, is on AWS: a copy is on its source's host.`
-    );
-  const p = namesOf(source);
-  const origin = originOf(source.host);
-  return {
-    ...own,
-    vars: { ...entry.vars, SNAPSHOT_FROM: origin },
-    copyOf: {
-      accountId: p.accountId,
-      worker: p.workerName,
-      database: p.databaseName,
-      host: targetHost(p),
-      pages: p.pages.kind == "zone" ? (p.pages.domain ?? p.pages.zoneName) : targetSharedPagesHost(p),
-      origin,
-      ...(copy ? { copy } : {}),
-    },
-  };
-}
+/** What the pipeline deploys for `entry`, any entry: its names and vars, no secret (the Worker keeps its own). */
+export const entryTarget = (entry: CloudflareEntry): Target => ({
+  ...namesOf(entry),
+  secrets: {},
+  keepSecrets: true,
+  checkVersion: true,
+  vars: { ...entry.vars },
+});
 
 // ------------------------------------------------------------------ the commit
 
@@ -165,30 +132,6 @@ export function pushTo(o: { clone?: string; print?: (line: string) => void }, sh
   (o.print ?? console.log)(`${branch} is at ${sha.slice(0, 12)} on origin.`);
 }
 
-// ------------------------------------------------------------------ the copy of the source's data
-
-/** Whether the Worker of a target with a source runs on a copy of its data (the pipeline's database step keeps it). */
-async function hasCopy(cf: Cloudflare, t: Target): Promise<boolean> {
-  const acc = `/accounts/${t.accountId}`;
-  const bound = await boundDatabase(cf, acc, t.workerName);
-  return !!bound && (await copiesOf(cf, acc, t.databaseName)).some((c) => c.uuid == bound);
-}
-
-/** The target that copies its source's data, or null: it keeps its copy. It stops when the token is missing. */
-async function copyTarget(dir: string, config: Config, entry: CloudflareEntry, cf: Cloudflare, fresh: boolean): Promise<Target | null> {
-  const source = entry.copyOf!;
-  if (!fresh && (await hasCopy(cf, entryTarget(config, entry)))) return null;
-  const token = snapshotTokenOf(dir, source);
-  if (token.length < 32)
-    throw new Error(
-      `${fresh ? "--fresh copies" : `${entry.host} has no copy of ${source}'s data yet, so this deploy copies`} ${source}'s documents, with ${source}'s SNAPSHOT_TOKEN. There is none. Put it in ${secretsPath(dir)} as { "${source}": { "SNAPSHOT_TOKEN": "..." } } (mode 600), or set SNAPSHOT_TOKEN.`
-    );
-  const target = entryTarget(config, entry, { token, fresh });
-  const wrong = guardTarget(target);
-  if (wrong) throw new Error(wrong);
-  return target;
-}
-
 // ------------------------------------------------------------------ deploy
 
 export interface DeployOptions {
@@ -197,8 +140,6 @@ export interface DeployOptions {
   host: string;
   /** A commit of the branch that the instance tracks. None: the branch's head, as its repository has it now. */
   commit?: string;
-  /** An instance with `copyOf` only: a new copy of its source's data in place of the one it keeps. */
-  fresh?: boolean;
   /** Skip the tests' gate: the job record says so. */
   noTests?: boolean;
   /** The command as typed, for the lock and the job record. */
@@ -251,13 +192,10 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   const config = readConfig(o.dir);
   const entry = entryOf(config, o.host);
   if (!entry) throw new Error(`${o.host} has no entry in .erga/config.json. Register it first: bun erga register ${o.host}`);
-  if (o.fresh && !entry.copyOf)
-    throw new Error(`${o.host} runs on its own data: --fresh is only for an instance on a copy of another's data (copyOf).`);
   const aws = isAws(entry) ? entry : null;
-  if (aws && entry.copyOf) throw new Error(`${o.host} is on AWS: Erga has no copy of another instance's data on AWS yet.`);
   const domains = (o.domains ?? []).map((d) => d.toLowerCase());
   if (aws && (domains.length || o.createSubdomain)) throw new Error(`${o.host} is on AWS: --domain is only for an instance on Cloudflare.`);
-  // setup's first deploy: its secrets, one time, and a new workers.dev subdomain. A copy's target keeps them.
+  // setup's first deploy: its secrets, one time, and a new workers.dev subdomain.
   const own = {
     ...(o.secrets ? { secrets: o.secrets } : {}),
     ...(o.createSubdomain ? { createSubdomain: true } : {}),
@@ -273,16 +211,14 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
     } catch (e) {
       throw new Error(`${o.host}'s ${key} in .erga/config.json: ${(e as Error).message}`);
     }
-  let target: Target | null = aws ? null : { ...entryTarget(config, entry as CloudflareEntry), ...own };
+  const target: Target | null = aws ? null : { ...entryTarget(entry as CloudflareEntry), ...own };
   const sent = Object.keys(target?.secrets ?? {});
   const wrong = target && guardTarget(target);
   if (wrong) throw new Error(wrong);
   // On AWS: the servers only (the AWS CLI is this machine's own). On Cloudflare: its API too, with this machine's credential.
   const { net, token, quick } = aws ? { net: o.net ?? globalThis.fetch.bind(globalThis), token: "", quick: {} } : await netOf(o);
   const cf = new Cloudflare(token, net);
-  const command =
-    o.command ??
-    `bun erga deploy ${o.commit ? `${o.commit} ` : ""}${o.host}${o.fresh ? " --fresh" : ""}${domains.map((d) => ` --domain ${d}`).join("")}`;
+  const command = o.command ?? `bun erga deploy ${o.commit ? `${o.commit} ` : ""}${o.host}${domains.map((d) => ` --domain ${d}`).join("")}`;
   const free = takeLock(o.dir, o.host, command);
   const job = startJob(o.dir, { command, host: o.host, from: o.from, print: o.print });
   const log = job.log;
@@ -301,14 +237,6 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       if (!o.commit) log(`${entry.branch} on ${entry.repo} is at ${head.slice(0, 12)}: that commit deploys.`);
     }
     job.note({ commit: sha, ...(sent.length ? { secrets: sent } : {}) });
-    const old = entry.copyOf ? copyCommitRefusal(clone, sha, o.host) : null;
-    if (old) throw new Error(old);
-    // Before the tests and the build: a copy that needs a token it does not have stops here.
-    const copying = target && entry.copyOf ? await copyTarget(o.dir, config, entry as CloudflareEntry, cf, !!o.fresh) : null;
-    if (copying) {
-      target = { ...copying, ...own };
-      job.note({ copy: o.fresh ? "fresh" : "no copy yet" });
-    }
 
     if (o.noTests) {
       job.note({ tests: "skipped: --no-tests" });
@@ -347,11 +275,18 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       log("Deploy to the machine: done");
       log(`Deployed ${sha.slice(0, 12)} to ${entryOrigin(aws)}: healthy.`);
     } else {
-      const t = target!;
+      let t = target!;
+      // A Worker that runs keeps its database: an entry that names another one takes the name of the one it is bound to.
+      const bound = await boundDatabaseName(cf, `/accounts/${t.accountId}`, t.workerName);
+      if (bound && bound != t.databaseName) {
+        log(
+          `NOTE  ${t.workerName} is bound to the database ${bound}, and ${o.host}'s entry names ${t.databaseName}: the entry takes ${bound}.`
+        );
+        t = { ...t, databaseName: bound };
+        writeConfig(o.dir, withEntry(readConfig(o.dir), { ...(entry as CloudflareEntry), database: bound }));
+      }
       log(`Deploy ${sha.slice(0, 12)} to ${o.host}${mocked() ? " (the mock Cloudflare: nothing real)" : ""}:`);
-      log(
-        `  account ${t.accountId}, Worker ${t.workerName}, database ${t.databaseName}${!entry.copyOf ? "" : copying ? ` (a new copy of ${entry.copyOf}'s database and documents: ${o.fresh ? "--fresh" : "it has no copy yet"})` : ` (its copy of ${entry.copyOf}'s data kept)`}`
-      );
+      log(`  account ${t.accountId}, Worker ${t.workerName}, database ${t.databaseName}`);
       log(
         `  https://${targetHost(t)}, documents' pages on ${targetPagesShown(t)}; ${sent.length ? `the secrets sent: ${sent.join(", ")}` : "no secret sent"}`
       );
@@ -362,7 +297,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
           site: net,
           carry,
           report: (id, status, detail) =>
-            log(`${ALL_STEPS.find((s) => s.id == id)?.title}${status == "running" ? "..." : `: ${status}${detail ? `, ${detail}` : ""}`}`),
+            log(`${STEPS.find((s) => s.id == id)?.title}${status == "running" ? "..." : `: ${status}${detail ? `, ${detail}` : ""}`}`),
           ...quick,
         });
       } catch (e) {

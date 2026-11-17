@@ -32,8 +32,6 @@ export interface Instance extends Answer {
   /** The repository and the branch it tracks. */
   repo: string;
   branch: string;
-  /** The instance whose data it runs on a copy of. */
-  copyOf?: string;
   /**
    * How many commits of its branch it does not run yet, as the clone knows the branch (observe.ts, behindOf). Null:
    * the clone can't say (no answer, another repository, a commit that the branch or the clone does not have).
@@ -205,7 +203,7 @@ export function statusText(s: State, has: (sha: string) => boolean = () => true)
   if (!s.instances.length) out.push("- none: bun erga register <host>");
   for (const i of s.instances)
     out.push(
-      `- ${i.host}: tracks ${i.repo} ${i.branch}${i.copyOf ? `, on a copy of ${i.copyOf}'s data (admins only)` : ""}; ${i.version ? `runs ${i.version}, ${placeOf(i, has)}` : (i.error ?? "no answer")}; health ${i.healthy == null ? "unknown" : i.healthy ? "ok" : "FAIL"}`
+      `- ${i.host}: tracks ${i.repo} ${i.branch}; ${i.version ? `runs ${i.version}, ${placeOf(i, has)}` : (i.error ?? "no answer")}; health ${i.healthy == null ? "unknown" : i.healthy ? "ok" : "FAIL"}`
     );
   out.push("", "Feature branches:");
   if (!s.github) out.push("(GitHub did not answer git ls-remote: the list is as this clone last saw it, deleted branches too.)");

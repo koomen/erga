@@ -3,7 +3,7 @@
 // (check first, wait for a test sign-in while the app in use works, no clear
 // that stops sign-in), the status the page shows, and sign-in using them,
 // with GitHub and the Durable Object
-// stood in for. The routes and staging's guard are tested in the Worker
+// stood in for. The routes are tested in the Worker
 //.
 
 import { expect, test } from "bun:test";

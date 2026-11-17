@@ -11,10 +11,9 @@
 // Where the page's values are kept, and how:
 //
 //   - In the server's own Pipeline Durable Object, not in
-//     D1: a staging instance's D1 is replaced by a copy of its primary's when an admin asks
-//     for a fresh copy, which would drop
-//     its values and bring in its primary's. The Durable Object is each
-//     server's own.
+//     D1: a database that is replaced (a restore, a copy of another
+//     server's) would drop its values and bring in the other's. The
+//     Durable Object is each server's own.
 //   - The secret is encrypted with AES-GCM, a fresh IV each time, under a key
 //     derived from FACTORY_KEY (KeyBox of server/directory/api-keys.ts, with a
 //     derivation of its own), with the provider and the client ID as the

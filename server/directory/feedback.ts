@@ -19,7 +19,6 @@ export interface FeedbackRow {
   login: string;
   via: string | null;
   page: string | null;
-  target: string;
   at: number;
   issue: number | null;
 }
@@ -30,33 +29,31 @@ export class Feedback {
     private users: Users
   ) {}
 
-  /** Keeps one feedback from `by`, sent from `page` on the server `target`: answers its id. */
-  async add(by: Actor, f: { text: string; page?: string | null; target: string; at?: number }): Promise<string> {
+  /** Keeps one feedback from `by`, sent from `page`: answers its id. (The column `target` is from before: always "".) */
+  async add(by: Actor, f: { text: string; page?: string | null; at?: number }): Promise<string> {
     const id = `fb-${randomString(8, ALPHABET)}`;
     await this.sql.run(
-      "INSERT INTO feedback (id, text, login, via, page, target, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      "INSERT INTO feedback (id, text, login, via, page, target, at) VALUES (?1, ?2, ?3, ?4, ?5, '', ?6)",
       id,
       f.text,
       by.login.toLowerCase(),
       by.via ?? null,
       f.page ?? null,
-      f.target,
       f.at ?? Date.now()
     );
     return id;
   }
 
   /**
-   * The feedback of `target` that has no issue yet, oldest first, and that nobody tried in the last minute: marked
+   * The feedback that has no issue yet, oldest first, and that nobody tried in the last minute: marked
    * as tried now, so a request at the same time doesn't open the same issue.
    */
-  async claim(target: string, now = Date.now()): Promise<Pick<FeedbackRow, "id" | "text" | "at">[]> {
+  async claim(now = Date.now()): Promise<Pick<FeedbackRow, "id" | "text" | "at">[]> {
     const rows = await this.sql.all<{ id: string; text: string; at: number }>(
       `UPDATE feedback SET tried = ?1 WHERE id IN (
-         SELECT id FROM feedback WHERE target = ?2 AND issue IS NULL AND (tried IS NULL OR tried < ?3) ORDER BY at LIMIT ${CLAIM}
-       ) AND (tried IS NULL OR tried < ?3) RETURNING id, text, at`,
+         SELECT id FROM feedback WHERE issue IS NULL AND (tried IS NULL OR tried < ?2) ORDER BY at LIMIT ${CLAIM}
+       ) AND (tried IS NULL OR tried < ?2) RETURNING id, text, at`,
       now,
-      target,
       now - RETRY_MS
     );
     return rows.map((r) => ({ id: r.id, text: r.text, at: Number(r.at) })).sort((a, b) => a.at - b.at);
@@ -71,7 +68,7 @@ export class Feedback {
   async list(by: Actor, limit = 100): Promise<FeedbackRow[]> {
     await this.users.mustAdmin(by);
     const rows = await this.sql.all<FeedbackRow>(
-      "SELECT id, text, login, via, page, target, at, issue FROM feedback ORDER BY at DESC LIMIT ?1",
+      "SELECT id, text, login, via, page, at, issue FROM feedback ORDER BY at DESC LIMIT ?1",
       limit
     );
     return rows.map((r) => ({ ...r, at: Number(r.at), issue: r.issue == null ? null : Number(r.issue) }));

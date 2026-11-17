@@ -33,14 +33,12 @@ git. Give your coding agent this prompt:
       and not in use.
    3. Cloudflare ($5 a month, recommended) or AWS (billed by use)? On AWS:
       which profile, if `aws configure list-profiles` shows several.
-   4. Cloudflare only: a second server too, to try updates on (a copy of
-      the first one's data, for admins only)? No, or its address.
-   5. Who may sign in? 1. Only users you invite (recommended) 2. Anyone in
+   4. Who may sign in? 1. Only users you invite (recommended) 2. Anyone in
       your organization: which GitHub organization or email domain?
       3. Your organization's single sign-on:
       - Cloudflare: the Zero Trust team name, and the Application Audience
         (AUD) tag of a self-hosted Access application that the user adds
-        for the address (and one for the second server's), with a Bypass policy for the
+        for the address, with a Bypass policy for the
         paths that need no sign-in.
       - AWS: the OpenID Connect issuer URL, and Erga's client ID there
         (its callback: `https://<address>/oauth2/idpresponse`). Which claim
@@ -49,7 +47,7 @@ git. Give your coding agent this prompt:
         If the user doesn't know, find it without a change: the user pool's
         identity provider attribute mapping, or how their other apps behind
         the same sign-in read `x-amzn-oidc-data`. Never guess.
-   6. AWS without single sign-on: a second Route 53 domain, not the
+   5. AWS without single sign-on: a second Route 53 domain, not the
       address's, for the documents' pages.
 3. Run this with the answers. It makes nothing and prints the plan:
 
@@ -59,9 +57,7 @@ git. Give your coding agent this prompt:
 
    Show the user the plan. On their yes, run it again without `--dry-run`,
    in the background: the first build takes 10 to 20 minutes, a redeploy
-   about 2. For a second server (question 4), when the first one is
-   done, run the same two steps with its address and
-   `--copy-of <the first address>`.
+   about 2.
 4. The last line of each run (DRY RUN, DONE, WAIT or FAIL) says what to
    do next. Do it. When it needs a choice, ask the user. When it ends in
    WAIT, don't run it again yourself: give the user the exact command to

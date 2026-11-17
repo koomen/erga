@@ -115,11 +115,6 @@ export interface Platform {
   pagesShared?(url: URL): string | null;
   /** Signs the tokens that open a document's files on its pages origin. */
   secret: string;
-  /**
-   * A server for its admins alone (a staging instance: the deploy names its primary, SNAPSHOT_FROM; server/identity/admins-only.ts guards every
-   * request). Its pages tokens name the admin they were made for, so its pages origin can check them again.
-   */
-  adminsOnly?: boolean;
   /** Every document's address, title and permissions; the server's users and settings. */
   directory: Directory;
   /** Agent tokens. */
@@ -134,8 +129,6 @@ export interface Platform {
      * answers it, to an admin's ops token only.
      */
     facts: unknown;
-    /** A staging instance's primary: the origin it copies documents and images from (SNAPSHOT_FROM), or null on any other server. */
-    primary: string | null;
     /** The custom domains a document can be published to (the deploy facts' domains: `bun erga deploy <host> --domain <domain>`). */
     domains: string[];
     /** The app's own host in the deploy facts (app), or null: where a custom domain sends a visitor to sign in. */

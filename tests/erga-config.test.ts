@@ -1,5 +1,5 @@
 // .erga/config.json (deploy/cli/config.ts): the instances `bun erga register` adds, read and written with their schema,
-// the repository and branch that each tracks, the source of a copy's data, the move of a file from before those fields
+// the repository and branch that each tracks, the move of a file from before those fields
 // (old-config.ts), and the file's place in the main clone, also from a worktree.
 
 import { describe, expect, test } from "bun:test";
@@ -8,7 +8,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   configPath,
-  copyRefusal,
   type Entry,
   ergaDir,
   originOf,
@@ -42,19 +41,16 @@ const git = (cwd: string, ...args: string[]) => {
 };
 
 describe(".erga/config.json", () => {
-  test("no file: no instances; written, it reads back the same, with what each tracks and a copy's source; mode 600", () => {
+  test("no file: no instances; written, it reads back the same, with what each tracks; mode 600", () => {
     const dir = join(tmp(), ".erga");
     try {
       expect(readConfig(dir)).toEqual({ instances: [] });
-      const config = withEntry(
-        withEntry(readConfig(dir), entry("example.com")),
-        entry("staging.example.com", { branch: "staging", copyOf: "example.com" })
-      );
+      const config = withEntry(withEntry(readConfig(dir), entry("example.com")), entry("staging.example.com", { branch: "staging" }));
       writeConfig(dir, config);
       expect(readConfig(dir)).toEqual(config);
-      expect(readConfig(dir).instances.map((e) => [e.repo, e.branch, e.copyOf])).toEqual([
-        ["github.com/koomen/erga", "main", undefined],
-        ["github.com/koomen/erga", "staging", "example.com"],
+      expect(readConfig(dir).instances.map((e) => [e.repo, e.branch])).toEqual([
+        ["github.com/koomen/erga", "main"],
+        ["github.com/koomen/erga", "staging"],
       ]);
       expect(statSync(configPath(dir)).mode & 0o777).toBe(0o600);
     } finally {
@@ -81,14 +77,6 @@ describe(".erga/config.json", () => {
     }
   });
 
-  test("a copy's source is a registered instance that runs on its own data", () => {
-    const config = withEntry(withEntry({ instances: [] }, entry("a.com")), entry("staging.a.com", { copyOf: "a.com" }));
-    expect(copyRefusal(config, "staging.a.com", "a.com")).toBeNull();
-    expect(copyRefusal(config, "x.b.com", "b.com")).toContain("b.com has no entry in .erga/config.json");
-    expect(copyRefusal(config, "x.a.com", "staging.a.com")).toContain("runs on a copy of a.com's data itself: name a.com");
-    expect(copyRefusal(config, "a.com", "a.com")).toContain("a copy of its own data");
-  });
-
   test("a repository's name from each form of its address; the short form is fetched over https; origin is used by its name", () => {
     for (const url of [
       "github.com/koomen/erga",
@@ -112,36 +100,50 @@ describe(".erga/config.json", () => {
     }
   });
 
-  test("a file from before an instance tracked a branch moves, one time: origin's repository, staging for a copy, main for the others", () => {
+  test("a file from before moves, one time: what each entry tracks comes in, and the names of another instance go", () => {
     const { repo: _r, branch: _b, ...plain } = entry("a.com");
-    const copy = { ...plain, host: "staging.a.com", stagingOf: "a.com", token: "erga_staging" };
-    const moved = movedConfig({ instances: [plain, copy] }, "example.com/team/erga")!;
-    expect(moved.instances.map((e) => [e.host, e.repo, e.branch, e.copyOf, "stagingOf" in e])).toEqual([
-      ["a.com", "example.com/team/erga", "main", undefined, false],
-      ["staging.a.com", "example.com/team/erga", "staging", "a.com", false],
+    // From before an instance tracked a branch: one entry named another, whose data it ran on a copy of.
+    const named = { ...plain, host: "staging.a.com", stagingOf: "a.com", token: "erga_staging" };
+    const moved = movedConfig({ instances: [plain, named] }, "example.com/team/erga")!;
+    expect(moved.instances.map((e) => [e.host, e.repo, e.branch])).toEqual([
+      ["a.com", "example.com/team/erga", "main"],
+      ["staging.a.com", "example.com/team/erga", "staging"],
     ]);
     // Nothing else changes, and a moved file is not moved again.
     expect(moved.instances[1]).toMatchObject({ token: "erga_staging", account: "acc", vars: plain.vars });
+    expect(JSON.stringify(moved)).not.toMatch(/stagingOf|copyOf|SNAPSHOT_FROM/);
     expect(movedConfig(moved, "x")).toBeNull();
-    // An entry that a command of the older code wrote back, without the fields it did not know: its vars name its source.
+    // From after that, and before every instance was alike: copyOf, and SNAPSHOT_FROM in the entry's vars. What it
+    // tracks stays; the names of the other instance go, also the one that a deploy would send to the server.
+    const later = {
+      ...entry("staging.a.com", { branch: "next" }),
+      copyOf: "a.com",
+      vars: { GITHUB_CLIENT_ID: "Ov23abc", SNAPSHOT_FROM: "https://a.com" },
+    };
+    expect(movedConfig({ instances: [entry("a.com"), later] }, "x")!.instances).toEqual([
+      entry("a.com"),
+      { ...entry("staging.a.com", { branch: "next" }), vars: { GITHUB_CLIENT_ID: "Ov23abc" } },
+    ]);
+    // An entry that a command of the older code wrote back, without the fields it did not know: its vars still name
+    // the other instance, so it tracks staging.
     const stripped = { ...plain, host: "staging.a.com", vars: { ...plain.vars, SNAPSHOT_FROM: "https://a.com" } };
-    expect(movedConfig({ instances: [stripped] }, "x")!.instances[0]).toMatchObject({ branch: "staging", copyOf: "a.com" });
+    expect(movedConfig({ instances: [stripped] }, "x")!.instances[0]).toMatchObject({ branch: "staging", vars: plain.vars });
 
     const root = tmp();
     try {
       git(root, "init", "--quiet");
       git(root, "remote", "add", "origin", "https://example.com/team/erga.git");
       const dir = join(root, ".erga");
-      writeConfig(dir, { instances: [plain, copy] } as never);
+      writeConfig(dir, { instances: [plain, named] } as never);
       expect(() => readConfig(dir)).toThrow("is not a config file this CLI reads");
       const said: string[] = [];
       moveOldConfig(dir, (l) => said.push(l));
-      expect(readConfig(dir).instances.map((e) => [e.host, e.repo, e.branch, e.copyOf])).toEqual([
-        ["a.com", "example.com/team/erga", "main", undefined],
-        ["staging.a.com", "example.com/team/erga", "staging", "a.com"],
+      expect(readConfig(dir).instances.map((e) => [e.host, e.repo, e.branch])).toEqual([
+        ["a.com", "example.com/team/erga", "main"],
+        ["staging.a.com", "example.com/team/erga", "staging"],
       ]);
       expect(statSync(configPath(dir)).mode & 0o777).toBe(0o600);
-      expect(said.join("\n")).toContain("staging.a.com tracks example.com/team/erga staging now, on a copy of a.com's data");
+      expect(said.join("\n")).toContain("staging.a.com tracks example.com/team/erga staging");
       const before = statSync(configPath(dir)).mtimeMs;
       moveOldConfig(dir, (l) => said.push(l));
       expect(statSync(configPath(dir)).mtimeMs).toBe(before);

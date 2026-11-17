@@ -28,12 +28,9 @@
 // see it: the zones example.com and example-pages.com, the
 // instance's Worker "erga" already there (on example.com
 // and *.example-pages.com) with its database "erga" (tables, rows and
-// migrations) and three documents in its Durable Objects. D1's export and import work on
-// it (the SQL as text), secrets are kept per Worker (keep_bindings, the
+// migrations). Secrets are kept per Worker (keep_bindings, the
 // secrets API), and each Worker answers as the real one would where the
-// pipeline needs it: /logo.png, /api/deploys/version (its ERGA_VERSION) and
-// the snapshot endpoints (document/store/snapshot.ts, the real handler, over an
-// in-memory store of its documents). `failNext` makes the next call of a
+// pipeline needs it: /logo.png, /api/deploys/version (its ERGA_VERSION) and /api/health. `failNext` makes the next call of a
 // step fail once (state.failNext = "worker"); `onUpload` hears of each
 // Worker uploaded.
 
@@ -41,11 +38,10 @@ import * as Base64 from "effect/encoding/Base64";
 import * as Result from "effect/Result";
 import { createHash } from "node:crypto";
 import type { Fetch } from "../deploy/pipeline/cloudflare-api";
-import { memoryStore, snapshotRoutes, type DocStore } from "../document/store/snapshot";
 import { hex, randomBytes } from "../shared/bytes";
 import { accountZones, waitsForCertificate, zones } from "./mock-cloudflare-zones";
 import { seedFleet } from "./mock-cloudflare-fleet";
-import { applySql, D1Error, d1Query, dumpOf } from "./mock-cloudflare-d1";
+import { D1Error, d1Query } from "./mock-cloudflare-d1";
 import { sleep } from "../shared/time";
 
 export interface MockState {
@@ -69,10 +65,6 @@ export interface MockState {
   revoked: number;
   /** Each Worker's secrets, by name (never in `scripts`' metadata, which shows only their lengths). */
   secrets: Record<string, Record<string, string>>;
-  /** Each Worker's documents' Durable Objects (the snapshot endpoints read and write these). */
-  docs: Record<string, ReturnType<typeof memoryStore>>;
-  /** The snapshot endpoint's characters in one answer (SNAPSHOT_BUDGET unless a test makes it small, with the stores' rpcLimit). */
-  snapshotBudget?: number;
   /** How many versions of each Worker were uploaded. */
   versions: Record<string, number>;
   /** Each Worker's versions as uploaded (newest last), by id: what a deployment can point back to (a rollback). */
@@ -123,11 +115,8 @@ const COMPLETE = jwt({ kind: "complete" });
 
 /** The example account in the fleet mock (the deploy tests, and `bun erga deploy` with ERGA_DEPLOY_MOCK). */
 export const FLEET_ACCOUNT = ACCOUNT_ID;
-export const PRIMARY_DB = "0b0d0b0d-0000-4000-8000-00000000e9a0";
-/** The example instance's SNAPSHOT_TOKEN in the fleet mock (the tests give its staging instance the same). */
-export const MOCK_SNAPSHOT_TOKEN = "mock-snapshot-token-0123456789abcdef0123456789";
-/** The example instance's documents in the fleet mock: their ids, and what each holds. */
-export const PRIMARY_DOCS = ["abcd2345", "efgh6789", "jkmn2345"];
+/** The example instance's database in the fleet mock. */
+export const FLEET_DB = "0b0d0b0d-0000-4000-8000-00000000e9a0";
 
 export function mockCloudflare(
   opts: {
@@ -161,7 +150,6 @@ export function mockCloudflare(
     calls: [],
     revoked: 0,
     secrets: {},
-    docs: {},
     versions: {},
     kept: {},
     deployments: {},
@@ -171,9 +159,6 @@ export function mockCloudflare(
   // Secrets' values never go out with the state: only the tests read them, in this process.
   Object.defineProperty(state, "secrets", { value: {}, enumerable: false, writable: true });
   if (opts.fleet) seedFleet(state);
-  /** D1 exports ready to download, and imports uploaded, by URL. */
-  const exportsAt = new Map<string, string>(), uploads = new Map<string, string>();
-  const importing = new Map<string, string>();
   let subFor: string | null = null,
     flaked = false,
     onceAt: string | null = null;
@@ -253,41 +238,6 @@ export function mockCloudflare(
           const ttDb = state.databases.find((d) => d.uuid == tt[1]);
           if (!ttDb) return fail(404, 7404, "The database could not be found");
           return ok({ bookmark: `${randomHex(8)}-00000000-00000000-${randomHex(8)}` });
-        }
-        const ex = /^\/d1\/database\/([^/]+)\/export$/.exec(rest);
-        const exDb = ex && state.databases.find((d) => d.uuid == ex[1]);
-        if (m == "POST" && ex) {
-          if (!exDb) return fail(404, 7404, "The database could not be found");
-          const { output_format, current_bookmark } = await body();
-          if (output_format != "polling") return fail(400, 7400, "output_format must be polling");
-          // The first call starts it; the next (with its bookmark) finds it done.
-          if (!current_bookmark) return ok({ success: true, type: "export", at_bookmark: `bm-${exDb.uuid}`, status: "active", messages: ["Generating"] });
-          const url = `https://d1-export.mock/${exDb.uuid}/${randomHex(4)}.sql`;
-          exportsAt.set(url, dumpOf(exDb));
-          return ok({ success: true, type: "export", at_bookmark: current_bookmark, status: "complete", result: { filename: url.split("/").pop(), signed_url: url } });
-        }
-        const im = /^\/d1\/database\/([^/]+)\/import$/.exec(rest);
-        const imDb = im && state.databases.find((d) => d.uuid == im[1]);
-        if (m == "POST" && im) {
-          if (!imDb) return fail(404, 7404, "The database could not be found");
-          const b = await body();
-          if (b.action == "init") {
-            if (!/^[0-9a-f]{32}$/.test(b.etag ?? "")) return fail(400, 7400, "etag must be the file's MD5");
-            return ok({ success: true, filename: `${b.etag}.sql`, upload_url: `https://d1-import.mock/${imDb.uuid}/${b.etag}` });
-          }
-          if (b.action == "ingest") {
-            const sql = uploads.get(`${imDb.uuid}/${b.etag}`);
-            if (sql == null) return fail(400, 7400, "Nothing was uploaded for that etag");
-            applySql(imDb, sql);
-            importing.set(imDb.uuid, `bm-import-${randomHex(4)}`);
-            return ok({ success: true, at_bookmark: importing.get(imDb.uuid), status: "active" });
-          }
-          if (b.action == "poll") {
-            if (!importing.has(imDb.uuid)) return ok({ success: false, error: "Not currently importing anything.", status: "complete" });
-            importing.delete(imDb.uuid);
-            return ok({ success: true, status: "complete", result: { num_queries: (imDb.rows ?? []).length } });
-          }
-          return fail(400, 7400, "action must be init, ingest or poll");
         }
         const q = /^\/d1\/database\/([^/]+)\/query$/.exec(rest);
         const db = q && state.databases.find((d) => d.uuid == q[1]);
@@ -431,12 +381,6 @@ export function mockCloudflare(
   /** A deployed server: it answers, as the real one would where the pipeline needs it. */
   async function site(req: Request, url: URL): Promise<Response | null> {
     const host = url.hostname;
-    if (host == "d1-export.mock") { const sql = exportsAt.get(url.href); return sql == null ? new Response("expired", { status: 403 }) : new Response(sql); }
-    if (host == "d1-import.mock" && req.method == "PUT") {
-      const sql = await req.text();
-      uploads.set(url.pathname.slice(1), sql);
-      return new Response(null, { headers: { ETag: `"${createHash("md5").update(sql).digest("hex")}"` } });
-    }
     const script = Object.entries(state.scripts).find(([name, s]) =>
       (s.workersDev && state.subdomain && host == `${name}.${state.subdomain}.workers.dev`) || state.domains.some((d) => d.hostname == host && d.service == name));
     if (!script || script[0].endsWith("-pages")) return null;
@@ -484,13 +428,6 @@ export function mockCloudflare(
         { status: bad ? 503 : 200 }
       );
     }
-    const snap = await snapshotRoutes(req, {
-      token: state.secrets[name]?.SNAPSHOT_TOKEN,
-      importAllowed: !!text("SNAPSHOT_FROM"),
-      store: (state.docs[name] ??= memoryStore()) as DocStore,
-      budget: state.snapshotBudget,
-    });
-    if (snap) return snap;
     return new Response("Not found", { status: 404 });
   }
 

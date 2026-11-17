@@ -26,7 +26,6 @@ import { isBlobRef, isText, storeBlob, type BlobRef, type BlobStore } from "../s
 import { io, StoreError } from "../store/storage.ts";
 
 import { KEYS, type Storage } from "../store/storage.ts";
-import { decodeValue, exportPage, type DocSnapshot, type Page } from "../store/snapshot.ts";
 import { titleOf } from "../model/pages.ts";
 import { throttle } from "../../shared/time.ts";
 import { later } from "./later.ts";
@@ -622,60 +621,7 @@ export abstract class Document<O extends Open> {
   }
 
   /**
-   * A part of its storage, and its alarm: the snapshot staging copies,
-   * a part at a time, since the whole can be more than
-   * one RPC carries. Only reads: the room isn't opened, nothing is written,
-   * the directory isn't touched. Null if there's no document.
-   */
-  exportStorage(id: string, page: Page): Effect.Effect<DocSnapshot | null, StoreError> {
-    const self = this;
-    return Effect.gen(function* () {
-      const storage = self.storage;
-      if (page.after == null && (yield* io(() => storage.get(INFO))) == null) return null;
-      // An open room writes its files first, so the copy has them as they are (else it writes them as it opens there).
-      if (page.after == null) yield* Effect.ignore(self.flush());
-      const alarm = yield* io(() => storage.getAlarm());
-      return yield* io(() =>
-        exportPage(id, page, alarm, (after, limit) => storage.list(after == null ? { limit } : { startAfter: after, limit }))
-      );
-    });
-  }
-
-  /**
-   * Becomes `snap` (a staging instance only: the app allows it only with
-   * SNAPSHOT_FROM, its primary): whoever has it open is
-   * disconnected and the room closed first (it writes what it holds as it
-   * closes), then its storage is emptied and the snapshot written in. A
-   * later part (`append`) is only written in.
-   */
-  importStorage(snap: DocSnapshot): Effect.Effect<void, StoreError> {
-    return io(() =>
-      this.shutDown(1012, "document replaced by a snapshot", async () => {
-        if (!snap.append) {
-          await this.storage.deleteAlarm();
-          await this.storage.deleteAll();
-        }
-        const entries = Object.fromEntries(snap.entries.map(([k, e]) => [k, decodeValue(e)]));
-        const keys = Object.keys(entries);
-        for (let i = 0; i < keys.length; i += 100)
-          await this.storage.put(Object.fromEntries(keys.slice(i, i + 100).map((k) => [k, entries[k]])));
-        if (snap.alarm != null) await this.storage.setAlarm(snap.alarm);
-      })
-    );
-  }
-
-  /** Empties it (staging only: a document production no longer has). The directory row is already gone with the old database. */
-  wipeStorage(): Effect.Effect<void, StoreError> {
-    return io(() =>
-      this.shutDown(1012, "document replaced by a snapshot", async () => {
-        await this.storage.deleteAlarm();
-        await this.storage.deleteAll();
-      })
-    );
-  }
-
-  /**
-   * Closes the room for good while `work` changes its storage under it (a delete, a snapshot): every tab is
+   * Closes the room for good while `work` changes its storage under it (a delete): every tab is
    * disconnected, and a call meanwhile finds no document. The room writes what it holds as it closes, so it closes
    * before `work` starts; what was read of storage is forgotten after it.
    */

@@ -1,5 +1,5 @@
 // The deploy pipeline on a new instance (as `bun erga setup` deploys one; tests/deploy-targets.test.ts has an instance
-// that runs already, and its staging instance: the same pipeline), against the pretend
+// that runs already, and a second one: the same pipeline), against the pretend
 // Cloudflare, with the release this checkout builds (deploy/release.ts, made here if there's none): every step, what
 // it asks Cloudflare for, a second deploy, what it refuses, its errors, and the pieces around it (the assets' hash,
 // the shared pages host).
@@ -112,9 +112,8 @@ describe("deploying", () => {
     expect(b.DB).toMatchObject({ type: "d1", database_id: db.uuid });
     expect(b.ASSETS.type).toBe("assets");
     expect(b.GITHUB_CLIENT_ID.text).toBe("");
-    // Nothing locked, and no primary: the build's defaults, which an entry's vars may set.
+    // Nothing locked: the build's defaults, which an entry's vars may set.
     expect(b.SERVER_CONFIG.text).toBe("");
-    expect(b.SNAPSHOT_FROM.text).toBe("");
     expect(b.SESSION_SECRET.type).toBe("secret_text");
     expect(b.GITHUB_CLIENT_SECRET).toBeUndefined();
     expect(b.ANTHROPIC_API_KEY).toBeUndefined();
@@ -253,12 +252,14 @@ describe("around it", () => {
     const own = { pagesDomain: () => "erga-pages.dev" } as unknown as Platform;
     expect(pagesOrigin("Ada", "abcd2345", app, own)).toBe("https://abcd2345-ada.erga-pages.dev");
     expect(pagesHost(new URL("https://abcd2345-ada.erga-pages.dev/t/x/"), own)).toEqual({ owner: "ada", id: "abcd2345" });
-    // As staging.erga.dev: an origin each on its own pages zone, one level down (its Universal SSL certificate covers it).
-    const staging = { pagesDomain: () => "erga-pages-staging.dev" } as unknown as Platform;
-    expect(pagesOrigin("Ada", "abcd2345", new URL("https://staging.erga.dev/ada/notes"), staging)).toBe("https://abcd2345-ada.erga-pages-staging.dev");
-    expect(pagesHost(new URL("https://abcd2345-ada.erga-pages-staging.dev/t/x/"), staging)).toEqual({ owner: "ada", id: "abcd2345" });
-    expect(pagesHost(new URL("https://abcd2345-ada.erga-pages.dev/t/x/"), staging)).toBeNull();
-    expect(pagesHost(new URL("https://abcd2345-ada.staging.erga-pages-staging.dev/t/x/"), staging)).toBeNull();
+    // Another instance: an origin each on its own pages zone, one level down (its Universal SSL certificate covers it).
+    const other = { pagesDomain: () => "erga-pages-next.test" } as unknown as Platform;
+    expect(pagesOrigin("Ada", "abcd2345", new URL("https://next.erga.test/ada/notes"), other)).toBe(
+      "https://abcd2345-ada.erga-pages-next.test"
+    );
+    expect(pagesHost(new URL("https://abcd2345-ada.erga-pages-next.test/t/x/"), other)).toEqual({ owner: "ada", id: "abcd2345" });
+    expect(pagesHost(new URL("https://abcd2345-ada.erga-pages.test/t/x/"), other)).toBeNull();
+    expect(pagesHost(new URL("https://abcd2345-ada.next.erga-pages-next.test/t/x/"), other)).toBeNull();
   });
 
   test("DeployError carries Cloudflare's status", () => {

@@ -2,16 +2,10 @@
 // R2, each blob at blobs/<sha-256>, written with that sha-256, which R2
 // checks. A blob never changes, so the edge's cache keeps a whole one by its
 // hash with no time limit: most loads of a page's images never reach R2.
-//
-// A staging instance runs on a copy of its primary's documents, but not of its bucket:
-// a blob it doesn't have is read from its primary's (the read-only
-// snapshot endpoint at SNAPSHOT_FROM, GET /api/snapshot/blob/<sha-256>, behind SNAPSHOT_TOKEN),
-// and kept in its own bucket from then on.
 
 import type { BlobBody, BlobStore } from "../document/store/blobs";
 import type { EdgeCache } from "./kv-cache";
 import type { Env } from "./env";
-import { snapshotAuth, snapshotRefused } from "../document/store/snapshot";
 
 /** The edge keeps a whole blob up to this size (the Cache API takes up to 512 MB). */
 const CACHE_MAX = 512 * 1024 * 1024;
@@ -26,26 +20,13 @@ const key = (hash: string) => `blobs/${hash}`;
  * cache's copy of a blob); without it nothing is cached.
  */
 export function blobsOf(
-  env: Pick<Env, "FILES" | "SNAPSHOT_TOKEN" | "SNAPSHOT_FROM">,
+  env: Pick<Env, "FILES">,
   edge?: { cache: EdgeCache | null; background: (work: Promise<unknown>) => void }
 ): BlobStore | undefined {
   const bucket = env.FILES;
   if (!bucket) return undefined;
   const cache = edge?.cache ?? null;
   const background = edge?.background;
-  // A staging instance: what its copy of its primary's documents needs from its primary's bucket.
-  const primary = env.SNAPSHOT_FROM?.trim().replace(/\/+$/, "");
-  const fromPrimary =
-    primary && (env.SNAPSHOT_TOKEN?.trim().length ?? 0) >= 32
-    ? async (hash: string): Promise<boolean> => {
-        const url = `${primary}/api/snapshot/blob/${hash}`;
-        const r = await fetch(url, { headers: { Authorization: await snapshotAuth(env.SNAPSHOT_TOKEN!, "GET", url) } }).catch(() => null);
-      const size = Number(r?.headers.get("content-length"));
-      if (!r?.ok || !r.body || !Number.isInteger(size)) { await r?.body?.cancel(); return false; }
-      await put(hash, r.body, size);
-      return true;
-    }
-    : null;
   const put = async (hash: string, data: Uint8Array | ReadableStream<Uint8Array>, size: number) => {
     let body: Uint8Array | ReadableStream<Uint8Array> = data;
     if (!(data instanceof Uint8Array)) {
@@ -59,8 +40,7 @@ export function blobsOf(
   const store: BlobStore = {
     async head(hash) {
       const o = await bucket.head(key(hash));
-      if (o) return { size: o.size };
-      return fromPrimary && (await fromPrimary(hash)) ? store.head(hash) : null;
+      return o ? { size: o.size } : null;
     },
     async get(hash, range): Promise<BlobBody | null> {
       if (cache) {
@@ -72,9 +52,7 @@ export function blobsOf(
         }
         await hit?.body?.cancel();
       }
-      let o = await bucket.get(key(hash), range ? { range: { offset: range.start, length: range.end - range.start + 1 } } : undefined);
-      if (!o && fromPrimary && (await fromPrimary(hash)))
-        o = await bucket.get(key(hash), range ? { range: { offset: range.start, length: range.end - range.start + 1 } } : undefined);
+      const o = await bucket.get(key(hash), range ? { range: { offset: range.start, length: range.end - range.start + 1 } } : undefined);
       if (!o) return null;
       if (!range && cache && background && o.size <= CACHE_MAX) {
         const [mine, kept] = o.body.tee();
@@ -86,8 +64,7 @@ export function blobsOf(
       return { body: o.body, size: o.size, ...(range ? { range } : {}) };
     },
     async bytes(hash) {
-      let o = await bucket.get(key(hash));
-      if (!o && fromPrimary && (await fromPrimary(hash))) o = await bucket.get(key(hash));
+      const o = await bucket.get(key(hash));
       return o ? new Uint8Array(await o.arrayBuffer()) : null;
     },
     put,
@@ -97,21 +74,4 @@ export function blobsOf(
     },
   };
   return store;
-}
-
-/**
- * GET /api/snapshot/blob/<sha-256>: one blob, for a server that copies
- * this one's documents (a staging instance, its primary's), behind SNAPSHOT_TOKEN. Only
- * reads. Null for any other path.
- */
-export async function snapshotBlob(request: Request, env: Pick<Env, "FILES" | "SNAPSHOT_TOKEN">): Promise<Response | null> {
-  const m = /^\/api\/snapshot\/blob\/([0-9a-f]{64})$/.exec(new URL(request.url).pathname);
-  if (!m) return null;
-  if (!env.FILES) return Response.json({ error: "Not found" }, { status: 404 });
-  const refused = await snapshotRefused(request, env.SNAPSHOT_TOKEN);
-  if (refused) return refused;
-  if (request.method != "GET") return Response.json({ error: "GET only" }, { status: 405 });
-  const o = await env.FILES.get(key(m[1]));
-  if (!o) return Response.json({ error: "No such blob" }, { status: 404 });
-  return new Response(o.body, { headers: { "Content-Length": String(o.size), "Content-Type": "application/octet-stream", "Cache-Control": "no-store" } });
 }

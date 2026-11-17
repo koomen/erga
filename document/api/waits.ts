@@ -30,7 +30,7 @@ export interface Writer {
   /** The directory's Who (how they act, `via`, too). */
   who: Asker & { via?: string };
   name: string;
-  /** The server's origin: a copy of the document on another server (staging's) takes no bytes for it. */
+  /** The server's origin: a copy of the document on another server takes no bytes for it. */
   origin: string;
 }
 

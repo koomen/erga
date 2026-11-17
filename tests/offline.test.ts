@@ -1,13 +1,12 @@
 // Offline editing's pure parts: the page the editor puts in the browser's copy is the page the pages origin makes from
 // the same text (shared/page-html.ts, pageAgain), the address a page is kept under, and where Erga's service worker
-// may be (server/documents/pages-origin.ts, workerHere; server/identity/admins-only.ts).
+// may be (server/documents/pages-origin.ts, workerHere).
 
 import { expect, test } from "bun:test";
 import { headIn, pageAgain, sourceDigest } from "../shared/page-html.ts";
 import { keptAddress } from "../shared/offline.ts";
 import { readerPage } from "../server/pages/reader.ts";
 import { workerHere } from "../server/documents/index.ts";
-import { adminsOnlyGate } from "../server/identity/admins-only.ts";
 import { runOn } from "../server/http.ts";
 import type { Platform } from "../server/platform.ts";
 
@@ -45,13 +44,4 @@ test("Erga's worker is on the app's origin and a document's own pages origin, ne
   expect(workerHere(new URL("https://abcd1234-ada.erga-pages.test/erga-sw.js"), own)).toBe(true);
   expect(workerHere(new URL("https://pages.erga.test/erga-sw.js"), shared)).toBe(false);
   expect(workerHere(new URL("https://erga.test/erga-sw.js"), shared)).toBe(true);
-});
-
-test("staging lets anyone fetch the worker's script, and nothing else at its name", async () => {
-  const staging = { adminsOnly: true, sessionOf: async () => null, pagesDomain: () => "", directory: { users: {} } } as unknown as Platform;
-  const gate = (path: string, method = "GET") =>
-    runOn(adminsOnlyGate, new Request(`https://staging.erga.test${path}`, { method }), staging);
-  expect(await gate("/erga-sw.js")).toBeNull();
-  expect((await gate("/erga-sw.js", "POST"))?.status).toBe(403);
-  expect((await gate("/erga-sw.json"))?.status).toBe(403);
 });

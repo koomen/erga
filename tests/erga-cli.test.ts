@@ -93,7 +93,7 @@ test("bun erga status: each instance with what it tracks and where its commit is
   const s = stateOf({
     heads: { main: M, staging: S },
     instances: [
-      { host: "next.example.com", ...tracks("staging"), copyOf: "example.com", version: S.slice(0, 12), healthy: true, behind: 0 },
+      { host: "next.example.com", ...tracks("staging"), version: S.slice(0, 12), healthy: true, behind: 0 },
       {
         host: "other.example.org",
         ...tracks("main"),
@@ -130,9 +130,7 @@ test("bun erga status: each instance with what it tracks and where its commit is
     "- other.example.org: tracks github.com/koomen/erga main; refuses its ops token: bun erga login other.example.org; health unknown"
   );
   expect(text).toContain(`- example.com: tracks github.com/koomen/erga main; runs ${M.slice(0, 12)}, 2 commits behind main; health ok`);
-  expect(text).toContain(
-    `- next.example.com: tracks github.com/koomen/erga staging, on a copy of example.com's data (admins only); runs ${S.slice(0, 12)}, staging's head; health ok`
-  );
+  expect(text).toContain(`- next.example.com: tracks github.com/koomen/erga staging; runs ${S.slice(0, 12)}, staging's head; health ok`);
   expect(text).toContain(
     "- old.example.com: tracks github.com/koomen/erga staging; runs 111111111111, a commit this clone does not have (git fetch); health FAIL"
   );

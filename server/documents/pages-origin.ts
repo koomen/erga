@@ -66,7 +66,7 @@ export function pagesHost(url: URL, platform: Platform): { owner: string; id: st
 }
 
 /**
- * A pages token's value (server/signed.ts): the document (d), the viewer's origin (s), whom it was made for (a) and
+ * A pages token's value (server/signed.ts): the document (d), the viewer's origin (s),
  * whether for an editor (w), and the document's share counter when it was made (n).
  */
 const PagesToken = signed(
@@ -74,7 +74,6 @@ const PagesToken = signed(
   Schema.Struct({
     d: Schema.String,
     s: Schema.String,
-    a: Schema.optionalKey(Schema.String),
     w: Schema.optionalKey(Schema.Literal(1)),
     n: Schema.optionalKey(Schema.Number),
   }),
@@ -96,17 +95,14 @@ export async function pagesToken(
   id: string,
   shell: string,
   now = Date.now(),
-  opts: { by?: string; edit?: boolean; ttl?: number; shares?: number } = {}
+  opts: { edit?: boolean; ttl?: number; shares?: number } = {}
 ): Promise<string> {
-  // by: whom it was made for, only on a server for admins alone (staging, Platform.adminsOnly): its pages origin lets the
-  // token in only while they're still an admin. Elsewhere a token names nobody (a page's own
-  // scripts can read its address).
+  // A token names nobody: a page's own scripts can read its address.
   return PagesToken.seal(
     secret,
     {
       d: `${owner.toLowerCase()}/${id}`,
       s: shell,
-      ...(opts.by ? { a: opts.by.toLowerCase() } : {}),
       ...(opts.edit ? { w: 1 as const } : {}),
       ...(opts.shares ? { n: opts.shares } : {}),
     },
@@ -119,21 +115,21 @@ export async function readPagesToken(secret: string, token: string, owner: strin
   return (await readPagesClaims(secret, token, owner, id, now))?.shell ?? null;
 }
 
-/** What a good, current token for this document says: the viewer's origin, whom it was made for (if it says), whether for an editor, and its share counter. */
+/** What a good, current token for this document says: the viewer's origin, whether for an editor, and its share counter. */
 export async function readPagesClaims(
   secret: string,
   token: string,
   owner: string,
   id: string,
   now = Date.now()
-): Promise<{ shell: string; by?: string; edit?: boolean; shares: number } | null> {
+): Promise<{ shell: string; edit?: boolean; shares: number } | null> {
   const c = await PagesToken.open(secret, token, now);
   if (!c || c.d != `${owner.toLowerCase()}/${id}`) return null;
   try {
-    return new URL(c.s).origin == c.s
-      ? { shell: c.s, ...(c.a != null ? { by: c.a } : {}), ...(c.w === 1 ? { edit: true } : {}), shares: c.n ?? 0 }
-      : null;
-  } catch { return null; }
+    return new URL(c.s).origin == c.s ? { shell: c.s, ...(c.w === 1 ? { edit: true } : {}), shares: c.n ?? 0 } : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

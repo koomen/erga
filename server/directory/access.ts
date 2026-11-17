@@ -12,7 +12,7 @@
 //           them; write includes read). ACCESS_LABEL has the words, the same everywhere they show.
 //
 // A person gets the highest of their own role and all the rules that match them; none: they can't sign in. Admins
-// always have write. On staging, the admins-only guard comes first, and wins. The directory applies it (Directory.accessOf):
+// always have write. The directory applies it (Directory.accessOf):
 // read to every session and token (Users.allowed), write to every document (Directory.decide) and every new one.
 
 import { changeLogEntry } from "../../shared/attribution.ts";

@@ -16,10 +16,9 @@
 //   - A server with no key stored uses the Worker secret of the same name
 //     (agents/models.ts), so a server deployed without this page still works.
 //
-// Staging has a FACTORY_KEY of its own, so production's keys, copied into
-// staging's database, don't open there: on each new copy the deploy removes
-// them and puts staging's own back. A
-// key that still doesn't open is shown as such (`unreadable`), and the agents
+// Each server has a FACTORY_KEY of its own, so keys in a copy of another
+// server's database don't open here. A
+// key that doesn't open is shown as such (`unreadable`), and the agents
 // say so. The last four characters are kept in plain text, for the page.
 
 import * as Base64 from "effect/encoding/Base64";
@@ -96,12 +95,6 @@ export const DEPLOY_SECRETS = [
     service: "GitHub",
     description: "Opens an issue for each feedback message. It needs only Issues: read and write.",
     why: "It writes to a repository on GitHub.",
-  },
-  {
-    env: "SNAPSHOT_TOKEN",
-    service: "Erga",
-    description: "Lets a staging instance copy its primary's documents.",
-    why: "An instance and its staging instances must have the same value.",
   },
 ] as const;
 
@@ -287,7 +280,7 @@ export class Credentials {
   /**
    * The stored key, decrypted, for the server's own calls to the provider;
    * null if there is none, or it can't be opened (stored under another
-   * secret, as on staging, whose database is a copy of production's).
+   * secret: a copy of another server's database).
    * Never for a page.
    */
   async value(name: CredentialName): Promise<string | null> {
@@ -326,7 +319,7 @@ export interface PersonKeyEntry {
   set: boolean;
   last4: string | null;
   updated: number | null;
-  /** Stored, but it doesn't open here (another server's FACTORY_KEY: staging's copy of production's data). */
+  /** Stored, but it doesn't open here (another server's FACTORY_KEY: a copy of its database). */
   unreadable: boolean;
   /** This server can store a key. */
   canStore: boolean;

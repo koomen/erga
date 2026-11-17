@@ -43,8 +43,6 @@ const origin = (name: string) => text(name).pipe(Config.map((v) => v.replace(/\/
 /** The Worker's settings that are plain text (its vars and secrets), as the Platform takes them. */
 const SETTINGS = Config.all({
   devLogin: text("DEV_LOGIN"),
-  /** A staging instance: its primary's origin (https://<host>), whose documents and images it copies. */
-  snapshotFrom: origin("SNAPSHOT_FROM"),
   pagesDomain: text("PAGES_DOMAIN"),
   version: text("ERGA_VERSION"),
   /** Where the pipeline deployed this server (ERGA_DEPLOY, JSON: deploy/pipeline/account.ts deployFacts), or null. */
@@ -133,13 +131,10 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     pagesDomain: (url) => (isLocal(url) || !settings.pagesDomain ? "localhost" : settings.pagesDomain),
     pagesShared: (url) => (isLocal(url) ? null : settings.pagesHost || null),
     secret: env.SESSION_SECRET,
-    // A staging instance runs on a copy of its primary's data: for admins only (server/identity/admins-only.ts).
-    adminsOnly: !!settings.snapshotFrom,
     tokens: tokensOf(env),
     deploy: {
       version: settings.version || null,
       facts: settings.deployFacts,
-      primary: settings.snapshotFrom || null,
       domains: domainsOf(settings.deployFacts),
       app: appOf(settings.deployFacts),
     },

@@ -7,9 +7,8 @@
 // (deploy/cli/config.ts, DEFAULT_REPO).
 //
 // And no kind of instance but the two the code has (one on Cloudflare, one on AWS): no flag or value says that an
-// instance is "production". A copy of another instance's data is any instance's feature: its entry names its source
-// (copyOf), and its server gets that address (SNAPSHOT_FROM). Every instance takes one path, so no code may ask which
-// one it is.
+// instance is "production" or "staging", and no instance names another one. Every instance takes one path, so no code
+// may ask which one it is.
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -64,16 +63,26 @@ test("no instance's name in the code", () => {
 });
 
 /**
- * A flag or a value for a kind of instance: the settings that only two instances had (DEPLOY_TARGET, SNAPSHOT_IMPORT),
- * and "production" as a key, a value or a question. (The word in a sentence for a person is not one.)
+ * A flag or a value for a kind of instance, or a link from one instance to another: the settings that only two
+ * instances had (DEPLOY_TARGET, SNAPSHOT_IMPORT), the names of an instance whose data another one copied (stagingOf,
+ * copyOf, SNAPSHOT_FROM, SNAPSHOT_TOKEN), a server for admins only (adminsOnly), and "production" as a key, a value
+ * or a question. (The word in a sentence for a person is not one; staging is a branch's name.)
  */
-const KINDS = /\bDEPLOY_TARGET\b|\bSNAPSHOT_IMPORT\b|\bisProduction\b|\bproduction\??\s*[:=]|[=(,:]\s*["'`]production["'`]/g;
+const KINDS =
+  /\bDEPLOY_TARGET\b|\bSNAPSHOT_(IMPORT|FROM|TOKEN)\b|\b(stagingOf|adminsOnly|isStaging|isProduction)\b|\.copyOf\b|\bcopyOf\??:|\bproduction\??\s*[:=]|[=(,:]\s*["'`]production["'`]/g;
 
-test("no code asks whether an instance is production: every instance takes one path", () => {
+test("no code asks which instance it is, and no instance names another: every instance takes one path", () => {
   const found = (text: string) => uncommented("a.ts", text).match(KINDS) ?? [];
   expect(found('if (env.DEPLOY_TARGET == "production") return;').length).toBe(2);
   expect(found('const t = { production: true }; vars.SNAPSHOT_IMPORT = "1"; kind = "production";').length).toBe(3);
-  expect(found('log("It is on production now."); // production: true\nconst copyOf = entry.copyOf;')).toEqual([]);
-  // The one file about commits from before this rule (deploy/cli/copy-commit.ts) names the old setting, to refuse them.
-  expect(hitsOf(KINDS, ["deploy/cli/copy-commit.ts"])).toEqual([]);
+  expect(
+    found("const source = entry.copyOf ?? entry.stagingOf; if (platform.adminsOnly) vars.SNAPSHOT_FROM = env.SNAPSHOT_TOKEN;").length
+  ).toBe(5);
+  expect(
+    found(
+      'log("It is on production now."); // production: true\nconst branch = "staging"; if (e.branch == "staging") push(sha, "staging");'
+    )
+  ).toEqual([]);
+  // The one file about the config files from before (deploy/cli/old-config.ts) names the old fields, to take them out.
+  expect(hitsOf(KINDS, ["deploy/cli/old-config.ts"])).toEqual([]);
 });

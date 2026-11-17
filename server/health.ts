@@ -8,8 +8,7 @@
 //   documents   the Erga domain's document, opened in its own object (a Durable Object answers), when there is one
 //
 // {ok, version, checks: {<name>: {ok, ms, error?}}}: 200 when every
-// check passes, 503 when one fails. It holds no data and needs no sign-in:
-// on a staging instance the admins-only guard lets it through (server/identity/admins-only.ts).
+// check passes, 503 when one fails. It holds no data and needs no sign-in.
 
 import type { Platform } from "./platform.ts";
 import { ERGA } from "./sites/index.ts";

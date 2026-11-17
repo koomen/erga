@@ -3,9 +3,8 @@
 //
 // 1. The entry in .erga/config.json, from the answers alone, with no token yet. A registered instance's entry stays
 //    as it is: an instance is what its entry says.
-// 2. The first deploy, with the secrets that the Worker doesn't hold yet: its own SESSION_SECRET and FACTORY_KEY, the
-//    GitHub App's secret, and for an instance on a copy its source's SNAPSHOT_TOKEN (a source with none gets one
-//    first). Each is made one time and kept in .erga/secrets.json under its host; a Worker that holds a secret keeps
+// 2. The first deploy, with the secrets that the Worker doesn't hold yet: its own SESSION_SECRET and FACTORY_KEY, and
+//    the GitHub App's secret. Each is made one time and kept in .erga/secrets.json under its host; a Worker that holds a secret keeps
 //    it, and no later deploy sends one.
 // 3. After the health check: the access rule that the answers name (plan.ts, firstRows), written into the new
 //    database with the Cloudflare D1 API. A database that has an admin already gets nothing.
@@ -13,10 +12,9 @@
 //    new server: as they claim it, server/identity/claim.ts), and the entry gets it.
 
 import { randomBytes } from "node:crypto";
-import { type CloudflareEntry, type Config, entryOf, entryOrigin, isAws, readConfig, withEntry, writeConfig } from "../cli/config";
+import { type CloudflareEntry, type Config, entryOf, entryOrigin, readConfig, withEntry, writeConfig } from "../cli/config";
 import { type DeployOptions, deployInstance } from "../cli/deploy";
 import { askOpsToken, readOps } from "../cli/ops";
-import { replaceSnapshotSecret } from "../cli/snapshot-secret";
 import { d1 } from "../pipeline/account";
 import { Cloudflare, type Fetch } from "../pipeline/cloudflare-api";
 import type { Seen } from "./flow";
@@ -40,16 +38,11 @@ export interface First {
 
 /**
  * Writes the setup's entry into .erga/config.json. A registered instance (its entry has an ops token) keeps its entry
- * as it is. An entry with other names is not this setup's, and stops it. The source of a copy must be there.
+ * as it is. An entry with other names is not this setup's, and stops it.
  */
 export function writeEntry(o: First): Config {
   const config = readConfig(o.dir);
-  const source = o.answers.copyOf ? entryOf(config, o.answers.copyOf) : null;
-  if (o.answers.copyOf && (!source || isAws(source)))
-    throw new Error(
-      `${o.answers.copyOf} has no entry on Cloudflare in .erga/config.json: a copy needs the instance whose data it copies there.`
-    );
-  const want = setupEntry(o.answers, { ...o.seen, github: o.github, ...(source ? { base: source.vars } : {}) });
+  const want = setupEntry(o.answers, { ...o.seen, github: o.github });
   const had = entryOf(config, want.host) as CloudflareEntry | null;
   if (had && "aws" in had) throw new Error(`${want.host} has an entry already, on AWS.`);
   if (had?.token) return config;
@@ -67,9 +60,8 @@ const random = () => randomBytes(32).toString("hex");
 /**
  * The secrets that the server gets with its first deploy: each one it doesn't hold yet (`held`). Its own are made one
  * time, under its host. New ones go into the file before the deploy, so a deploy that fails sends the same again.
- * `snapshot`: an instance on a copy gets its source's SNAPSHOT_TOKEN.
  */
-export function secretsFor(dir: string, a: Answers, held: string[], snapshot?: string): Record<string, string> {
+export function secretsFor(dir: string, a: Answers, held: string[]): Record<string, string> {
   const file = loadSecrets(dir);
   const own = (file[a.host] ??= {});
   // A new SESSION_SECRET would sign everyone out, and a new FACTORY_KEY would make the values encrypted with the old one
@@ -80,7 +72,6 @@ export function secretsFor(dir: string, a: Answers, held: string[], snapshot?: s
     SESSION_SECRET: own.SESSION_SECRET,
     FACTORY_KEY: own.FACTORY_KEY,
     GITHUB_CLIENT_SECRET: own.GITHUB_CLIENT_SECRET,
-    SNAPSHOT_TOKEN: snapshot,
   };
   return Object.fromEntries(Object.entries(want).filter((e): e is [string, string] => !!e[1] && !held.includes(e[0])));
 }
@@ -89,10 +80,6 @@ export function secretsFor(dir: string, a: Answers, held: string[], snapshot?: s
 export async function firstDeploy(o: First): Promise<string> {
   const print = o.print ?? console.log;
   const a = o.answers;
-  // An instance on a copy reads its source's documents with the secret they share: a source with none here gets a new
-  // one first, before the new instance has an entry (it gets the secret with its deploy).
-  if (a.copyOf && !loadSecrets(o.dir)[a.copyOf]?.SNAPSHOT_TOKEN)
-    await replaceSnapshotSecret({ dir: o.dir, host: a.copyOf, net: o.net, token: o.token, print });
   const entry = entryOf(writeEntry(o), a.host) as CloudflareEntry;
   const cf = new Cloudflare(o.token, o.net);
   const acc = `/accounts/${entry.account}`;
@@ -105,11 +92,10 @@ export async function firstDeploy(o: First): Promise<string> {
     net: o.net,
     token: o.token,
     print,
-    secrets: secretsFor(o.dir, a, o.seen.held, a.copyOf ? loadSecrets(o.dir)[a.copyOf]?.SNAPSHOT_TOKEN : undefined),
+    secrets: secretsFor(o.dir, a, o.seen.held),
     createSubdomain: !!entry.subdomain && !o.seen.subdomain,
   });
-  // The database of an instance on a copy is a copy of its source's: the rules are there.
-  if (!a.copyOf) await writeFirstRows(cf, acc, entry.worker, a, print);
+  await writeFirstRows(cf, acc, entry.worker, a, print);
   return sha;
 }
 

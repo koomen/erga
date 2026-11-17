@@ -9,8 +9,7 @@
 // of the whole Yjs state, cut into parts of at most PART bytes, and a log of
 // the updates since, one entry per write. It uses the same key-value
 // storage as everything else (in a SQLite-backed Durable Object, one row per
-// key), so a document's storage is still one list of keys: staging copies it
-// whole (document/store/snapshot.ts), local development keeps it beside a folder on
+// key), so a document's storage is still one list of keys: local development keeps it beside a folder on
 // disk, and the tests keep it in memory.
 
 import * as Effect from "effect/Effect";

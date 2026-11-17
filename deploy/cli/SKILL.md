@@ -104,8 +104,7 @@ and `main`. There are no pull requests.
 
    With no commit, an instance gets the head of the branch that it tracks.
    Check the change there (`bun erga status` has its address, and how far
-   it is behind its branch) before you say that it works. An instance on a
-   copy of another's data is for admins only.
+   it is behind its branch) before you say that it works.
 7. Only when Pete asks: `bun erga promote` moves `main` forward to the
    head of `staging`, and pushes it. It refuses when the tests did not pass
    on that commit, or when an instance that tracks `staging` does not run
@@ -162,13 +161,13 @@ and `main`. There are no pull requests.
   entry. With no commit, it gets the head of the branch that it tracks, as
   its repository has it now. It never gets a commit that its branch does
   not have: to try another branch on it, `bun erga track <host> --branch
-  <branch>` first. No deploy moves a branch. An instance on a copy of
-  another's data (its entry's `copyOf`) keeps its copy. It
+  <branch>` first. No deploy moves a branch. A Worker that runs keeps its
+  database: an entry that names another one takes that database's name. It
   deploys only a commit whose tests (`bun run test`) passed (the record
   of its tree in `.erga/tests/`, which its merge wrote). With no record,
   it runs them first; a failed run refuses the deploy, with the failed
   tests. `--no-tests` skips this, and the job record says so. `--domain <domain>`
-  (it can repeat; never an instance on a copy; a name on one of its account's
+  (it can repeat; a name on one of its account's
   zones) registers a custom domain: an admin can publish a document to it
   from then on (the document's settings, "Publish to"). The server keeps
   its domains, and the CLI copies them into the entry after the deploy:
@@ -180,16 +179,12 @@ and `main`. There are no pull requests.
 - `bun erga rollback <host>`: a registered instance's Worker version from
   before its last deploy, in seconds. Only when Pete asks. The next deploy
   goes forward again.
-- `bun erga snapshot-secret <host>`: a new `SNAPSHOT_TOKEN` on an instance and
-  each instance on a copy of its data, and in `.erga/secrets.json`. The old one
-  opens nothing from then on. Only when Pete asks (when it may have leaked).
 - A deploy or a rollback holds the lock `.erga/jobs/<host>.lock` and writes
   its record in `.erga/jobs/`. A second one on the same instance stops.
-- `bun erga register <host> [--repo <repo>] [--branch <branch>] [--copy-of <host>]`:
+- `bun erga register <host> [--repo <repo>] [--branch <branch>]`:
   signs in to an instance as an admin (Pete approves in the browser), and
   writes its deploy facts, its plain settings, an ops token and what it
-  tracks into `.erga/config.json` in the main clone. `--copy-of`: it runs
-  on a copy of that instance's data, for admins only. Only when Pete asks.
+  tracks into `.erga/config.json` in the main clone. Only when Pete asks.
 - `bun erga login <host>`: a new ops token for a registered instance.
 - `bun erga setup <host> --host ... --sign-in ...`: a new instance, from
   nothing to a registered one, on Cloudflare or AWS. The agent asks the user
@@ -197,16 +192,15 @@ and `main`. There are no pull requests.
   plan; then the command does all the work, and opens the browser only for the
   user's own steps (`bun erga setup --help`). `--repo <repo>` and
   `--branch <branch>` say what the instance tracks (the defaults: `github.com/koomen/erga`, `main`): its first deploy
-  takes that branch's head. `--copy-of <host>` makes it an instance on a copy of a registered one's data, for admins
-  only (Cloudflare only).
+  takes that branch's head.
 
 ## The rules
 
 - Never push to `staging` or `main` with git. The pre-push hook stops it
   (`bun install` turns the hook on, in a clone).
 - Never open a pull request. Pull requests are off on GitHub.
-- `merge`, `promote`, `deploy`, `track`, `release`, `rollback` and
-  `snapshot-secret` run only when Pete asks.
+- `merge`, `promote`, `deploy`, `track`, `release` and `rollback` run only
+  when Pete asks.
 - Report what you observed (a version, a health check, a run's result),
   never what you assumed.
 - When a deploy fails, read its output, or its job record in
@@ -223,10 +217,6 @@ and `main`. There are no pull requests.
 - A deploy builds the commit in a scratch worktree, then runs the pipeline:
   the D1 migrations, the static files, the Worker, the addresses, the
   health check. A deploy sends no secret: the Workers keep their own.
-- An instance with `copyOf` runs on a frozen copy of that instance's data.
-  Only `bun erga deploy <host> --fresh` copies it again, with the source's
-  `SNAPSHOT_TOKEN` (in `.erga/secrets.json` under the source's host, or in
-  the environment).
 - A rollback never changes the database: migrations only add.
 
 ## Run it locally

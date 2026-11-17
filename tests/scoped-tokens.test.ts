@@ -383,38 +383,6 @@ test("an agent lists its person's tokens a page at a time and revokes one by its
   expect((await tool(s, third, "documents", { op: "whoami" })).status).toBe(200);
 });
 
-test("on staging a token works only while its person is an admin: refused once they aren't, and a non-admin can't make one", async () => {
-  const s = app({ staging: true });
-  const admin = (await mint(s, null, { label: "Admin", scope: "admin" })).token;
-  expect(admin).toBeTruthy();
-  // Added by their GitHub login, as an admin, before their first sign-in; then that sign-in (the pretend provider, with
-  // the id the pretend GitHub gives the login) makes their account, an admin's. GitHub is the one way in here, so Erga
-  // names the account by the login, with no username step.
-  const login = freshLogin("bo");
-  expect((await tool(s, admin, "set_user", { action: "add", provider: "github", handle: login, role: "admin" })).status).toBe(200);
-  const joining = await s.fetch(`/auth/dev?provider=github&subject=${mockGithubId(login)}&handle=${login}&next=/documents`);
-  expect(joining.headers.get("location")).toBe("/documents");
-  const cookies = (r: Response) => r.headers.getSetCookie().map((x) => x.split(";")[0]);
-  const cookie = cookies(joining).find((x) => /^erga_session(_\d+)?=/.test(x))!;
-  expect(cookie).toBeTruthy();
-  const theirs = (await mint(s, cookie, { label: "Bo's", scope: "documents" })).token;
-  expect(theirs).toBeTruthy();
-  const doc = await publish(s, theirs, "Bo on staging");
-  expect((await tool(s, theirs, "read", { document: doc.id, path: "index.html" })).text).toContain("Bo on staging");
-
-  expect((await tool(s, admin, "set_user", { action: "role", login, role: "write" })).status).toBe(200);
-  expect((await tool(s, theirs, "read", { document: doc.id, path: "index.html" })).status).toBe(403);
-  const refused = await s.fetch("/mcp", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${theirs}`, "Content-Type": "application/json" },
-    body: "{}",
-  });
-  expect(refused.status).toBe(403);
-  expect(((await refused.json()) as { adminsOnly?: boolean }).adminsOnly).toBe(true);
-  // Not an admin: staging lets them make no token at all.
-  expect((await mint(s, cookie, { label: "Again", scope: "documents" })).token).toBe("");
-});
-
 test("the share button's token is a server-wide agent token: the same each time, until New token turns it off", async () => {
   const s = app();
   const p = await person(s);
