@@ -14,7 +14,9 @@
 // blinks like the native caret, and stays solid for a moment after each move,
 // so it doesn't blink away while someone types. It shows only for a collapsed
 // selection in editable text, while the page has the focus. Where it can't
-// tell where the caret is, it lets the native caret show instead.
+// tell where the caret is, it lets the native caret show instead. It is drawn
+// under the comments' cards and the editor's controls (one z-index below them): a card hides the text under it, and
+// the caret there too.
 
 import { watchMoves } from "./moves";
 import { isMac } from "../../../client/common/app-keys";
@@ -28,7 +30,7 @@ const DRAWN = "erga-caret-drawn";
 
 const STYLE = `
 html.${DRAWN} [contenteditable="true"], html.${DRAWN} [contenteditable="true"] :not(input, textarea, select) { caret-color: transparent !important; }
-erga-caret { all: initial; position: absolute; top: 0; left: 0; z-index: 2147483646; pointer-events: none; display: none; border-radius: 1px; }
+erga-caret { all: initial; position: absolute; top: 0; left: 0; z-index: 2147483644; pointer-events: none; display: none; border-radius: 1px; }
 erga-caret.on { display: block; animation: erga-caret-a 1s step-end 0.5s infinite; }
 erga-caret.on.again { animation-name: erga-caret-b; }
 @keyframes erga-caret-a { from, to { opacity: 1; } 50% { opacity: 0; } }

@@ -6,6 +6,7 @@ import { editor, openEditor, type Editor } from "../helpers/editor";
 import { newToken } from "../helpers/new-token";
 import { clickOn } from "../helpers/press";
 import { runTool } from "../helpers/tools";
+import { secondPage } from "../sync/room";
 import { cards, conversation, draftBox, selectText, signIn, threadsOf, unique } from "./comments";
 
 const s = await servers.main();
@@ -173,6 +174,52 @@ journey("comments in the editor", () => {
     const [c] = (await threadsOf(s.root, id))[0].comments;
     expect(c.text).toBe("June, then.");
     expect(c.edited_at).toBeTruthy();
+  });
+
+  test("a long thread scrolls in its card: the card stays in the window, with its box; every caret is under it", async ({ tab }) => {
+    const long = "May is mild, and the trams are less full. ".repeat(8).trim();
+    for (const by of ["Ana", "Ben", "Cy"])
+      expect((await runTool(s.root, "comment", { document: id, action: "reply", thread, text: `${by}: ${long}` })).ok).toBe(true);
+    await until(async () => (await cards(ed))?.some((c) => c.endsWith(`Cy: ${long}`)), 5000, "the long replies show");
+    // What the person sees: the card at most 60% of the window high, its box in the window, and the newest reply in view.
+    const seen = () =>
+      ed.comments<{ card: number; box: number; last: boolean; place: number }>(`(() => {
+        const card = C.querySelector(".card.th:not(.dim)"), box = card.querySelector(".reply").getBoundingClientRect();
+        const scroll = card.querySelector(".msgs").getBoundingClientRect(), last = [...card.querySelectorAll(".msg")].at(-1).getBoundingClientRect();
+        return { card: card.offsetHeight, box: box.bottom, last: last.bottom <= scroll.bottom + 1 && last.top >= scroll.top, place: innerHeight };
+      })()`);
+    const at = (await seen())!;
+    expect(at.card).toBeLessThanOrEqual(Math.ceil(at.place * 0.6));
+    expect(at.box).toBeLessThanOrEqual(at.place);
+    expect(at.last).toBe(true);
+    // The wheel over the card scrolls the thread, not the page.
+    const msgs = await ed.comments<{ x: number; y: number }>(
+      `(() => { const r = C.querySelector(".card.th:not(.dim) .msgs").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`
+    );
+    const f = await ed.frameAt();
+    const top = () => ed.comments<number>(`C.querySelector(".card.th:not(.dim) .msgs").scrollTop`);
+    const was = (await top())!;
+    await tab.page.mouse.move(f.x + msgs!.x, f.y + msgs!.y);
+    await tab.page.mouse.wheel(0, -400);
+    await until(async () => (await top())! < was, 3000, "the thread scrolls up");
+    // The page's caret, in the text again: drawn under the cards, never over them.
+    const word = await ed.charAt("p", 2);
+    await ed.click(word.x, word.y);
+    await ed.idle();
+    const z = await ed.frame<number[]>(
+      `[getComputedStyle(document.querySelector("erga-caret.on")).zIndex, getComputedStyle(document.querySelector("erga-comments").shadowRoot.querySelector(".card.th")).zIndex].map(Number)`
+    );
+    expect(z[0]).toBeLessThan(z[1]);
+    // A second editor's caret, selection and name: under the cards too.
+    const bo = unique("bo");
+    expect((await runTool(s.root, "share_document", { document: id, login: bo, role: "editor" })).error).toBeUndefined();
+    const other = await secondPage(tab, ed, bo);
+    const spot = await other.charAt("p", 4);
+    await other.click(spot.x, spot.y);
+    await until(() => ed.frame<boolean>(`!!document.querySelector("erga-peers erga-peer")`), 5000, "the other editor's caret shows");
+    const peers = await ed.frame<number>(`Number(getComputedStyle(document.querySelector("erga-peers")).zIndex)`);
+    expect(peers).toBeLessThan(z[1]);
+    await other.page.close();
   });
 
   test("on a phone, the Comment button opens a sheet at the bottom; a tap on a highlight opens its thread", async ({ tab }) => {

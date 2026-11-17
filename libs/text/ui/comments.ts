@@ -3,6 +3,7 @@
 // new comment's box and the "Resolved · Undo" pill draw in a shadow root of their own on the page's <html>, in the
 // controls' look (controls.ts), and their events stay theirs. Wide, the threads stand in a rail at the right, each
 // beside its text; narrow (a phone), a tap on a highlight opens its thread in a sheet at the bottom.
+// A card is at most 60% of the window high: a long thread scrolls in it, and its box for a reply stays at its bottom.
 //
 // The state and what moves it are comments-state.ts. This draws it, and does what its steps say: the edit op comment
 // (through `o.call`), the undo's timer, the focus.
@@ -52,6 +53,8 @@ const UNDO_MS = 6000;
 const RAIL = { width: 272, gap: 16 };
 /** Under this width (CSS pixels of the window), the sheet takes the place of the rail. */
 const NARROW = 720;
+/** A card's largest height: this fraction of the window's. */
+const TALL = 0.6;
 
 const STYLE = `
 :host { all: initial; }
@@ -59,7 +62,14 @@ ${LOOK}
 [hidden] { display: none !important; }
 .card { position: fixed; z-index: 2147483645; background: var(--bg); border: 1px solid var(--panel-border); box-shadow: var(--shadow);
   color: var(--fg); font: 13px/1.35 var(--font); box-sizing: border-box; }
-.th { width: ${RAIL.width}px; border-radius: 12px; padding: 12px; cursor: default; }
+.th { width: ${RAIL.width}px; border-radius: 12px; padding: 12px; cursor: default; display: flex; flex-direction: column; }
+/* A long thread scrolls in its card (draw() sets the card's largest height); its box stays at the card's bottom, and a
+   fade over the last line says that more is below. */
+.msgs { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.more { position: relative; height: 0; flex: none; }
+.more::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 28px; pointer-events: none;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 0%, transparent), var(--bg)); }
+.more[hidden] { display: none; }
 .th.dim { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); cursor: pointer; }
 .who { display: flex; align-items: center; gap: 8px; margin: 0; }
 .a { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: #fff; font: 600 11px/1 var(--font); flex: none; }
@@ -71,7 +81,7 @@ ${LOOK}
 .t { color: var(--soft); font-size: 12px; }
 .sp { flex: 1; }
 .msg { margin: 4px 0 10px 30px; font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.msg:last-child { margin-bottom: 0; }
+.dim .msg:last-child { margin-bottom: 0; }
 /* Sent, not answered yet. */
 .msg.pending { color: var(--soft); }
 .err { margin: 0 0 6px; color: #c2410c; font-size: 12.5px; }
@@ -300,6 +310,10 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
         c.el.remove();
         cards.delete(id);
       }
+    for (const c of cards.values()) {
+      c.el.style.maxHeight = Math.round(win.innerHeight * z * TALL) + "px";
+      fade(c.el);
+    }
     // The rail: each card beside its text, below the one before it.
     if (!narrow) {
       let below = -Infinity;
@@ -326,6 +340,13 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     cbtn.style.top = r.bottom * z + 8 + "px";
   }
 
+  /** The fade over a thread's last line, while more of it is below. */
+  function fade(el: Element) {
+    const msgs = el.querySelector<HTMLElement>(".msgs"),
+      more = el.querySelector<HTMLElement>(".more");
+    if (msgs && more) more.hidden = msgs.scrollTop + msgs.clientHeight >= msgs.scrollHeight - 2;
+  }
+
   function paint(dim: Range[], on: Range[]) {
     if (!registry || !Highlight) return;
     for (const [name, ranges] of [
@@ -345,6 +366,10 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     if (had?.drawn == drawn) return had.el;
     const typed = new Map<string, string>();
     let focused: string | null = null;
+    // Its thread's place in its scroll: the same again, or the end when it was at the end (a new comment shows there).
+    const was = had?.el.querySelector<HTMLElement>(".msgs");
+    const end = !!was && was.scrollTop + was.clientHeight >= was.scrollHeight - 2,
+      scrolled = was?.scrollTop ?? 0;
     for (const a of had?.el.querySelectorAll("textarea") ?? []) {
       typed.set(a.dataset.box!, a.value);
       if (root.activeElement == a) focused = a.dataset.box!;
@@ -355,6 +380,8 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     el.innerHTML = `<div class="grab" aria-hidden="true"></div>${html()}`;
     if (!had) box.append(el);
     cards.set(id, { el, drawn });
+    const msgs = el.querySelector<HTMLElement>(".msgs");
+    if (msgs && was) msgs.scrollTop = end ? msgs.scrollHeight : scrolled;
     for (const a of el.querySelectorAll("textarea")) {
       const name = a.dataset.box!,
         isNew = !typed.has(name);
@@ -427,9 +454,11 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     return who(true) + `<p class="msg">${esc(c.text)}</p>`;
   }
   const threadHTML = (t: Thread, on: boolean) =>
-    t.comments.map((c, i) => commentHTML(c, i == 0, on)).join("") + pendingHTML(t.id, true) + (on ? replyHTML("Reply", t.id) : "");
+    `<div class="msgs">${t.comments.map((c, i) => commentHTML(c, i == 0, on)).join("") + pendingHTML(t.id, true)}</div><div class="more" hidden></div>` +
+    (on ? replyHTML("Reply", t.id) : "");
   const draftHTML = () =>
-    whoHTML(o.me, undefined, "" in state.sending ? "sending…" : null, false) + pendingHTML("", false) + replyHTML("Comment", "");
+    `<div class="msgs">${whoHTML(o.me, undefined, "" in state.sending ? "sending…" : null, false) + pendingHTML("", false)}</div><div class="more" hidden></div>` +
+    replyHTML("Comment", "");
 
   function grow(area: HTMLTextAreaElement) {
     area.style.height = "";
@@ -455,6 +484,14 @@ export function mountComments(win: Window, page: CommentsPage, o: CommentsOption
     if (id && id != state.active) send({ type: "activate", id });
     if (!(target instanceof HTMLTextAreaElement)) target.closest(".card")?.querySelector<HTMLElement>("[data-box=reply]")?.focus();
   });
+  root.addEventListener(
+    "scroll",
+    (e) => {
+      const card = (e.target as Element).closest?.(".card");
+      if (card) fade(card);
+    },
+    true
+  );
   box.addEventListener("input", (e) => {
     if (e.target instanceof HTMLTextAreaElement) grow(e.target);
   });

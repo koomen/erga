@@ -29,7 +29,8 @@ body[contenteditable] { outline: none; }
 /* Comments (comments.ts): drawn over the text, never written into it; the thread in use, stronger. */
 ::highlight(erga-comment) { background-color: rgba(250, 204, 21, 0.3); text-decoration: underline 2px #e0b100; }
 ::highlight(erga-comment-on) { background-color: rgba(250, 204, 21, 0.55); text-decoration: underline 2px #e0b100; }
-erga-peers { all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 2147483646; pointer-events: none; }
+/* Under the comments' cards and the editor's controls, as the person's own caret is (caret.ts). */
+erga-peers { all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 2147483644; pointer-events: none; }
 erga-peer-sel { all: initial; position: absolute; border-radius: 2px; }
 erga-peer { all: initial; position: absolute; width: 2px; margin-left: -1px; background: var(--erga-peer); border-radius: 1px; }
 erga-peer[data-agent] { background: repeating-linear-gradient(to bottom, var(--erga-peer) 0 3px, transparent 3px 5px); }
