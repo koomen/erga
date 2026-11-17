@@ -1,7 +1,9 @@
 // What the pipeline's steps do in the account: the Worker's upload (its bindings, buckets and assets), its database
-// (export and import), its health and its version, and a rollback.
+// (export and import), its health (the row that the server writes into its database each minute) and its version, and
+// a rollback. Nothing here asks the deployed server: Cloudflare's API answers.
 
 import { createHash } from "node:crypto";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import { Base64, Base64Url } from "effect/encoding";
 import * as Option from "effect/Option";
@@ -210,110 +212,123 @@ export async function liveDeployment(cf: Cloudflare, accountId: string, worker: 
 }
 
 /**
- * The release that one version of a Worker is, and where the pipeline deployed it: the version's own bindings
- * ERGA_VERSION and ERGA_DEPLOY (workerMetadata sets both), read from Cloudflare. `facts`: ERGA_DEPLOY as JSON, or null.
+ * The release that one version of a Worker is, and where the pipeline deployed it: the version's own bindings, read
+ * from Cloudflare. ERGA_VERSION and ERGA_DEPLOY (workerMetadata sets both; `facts`: ERGA_DEPLOY as JSON, or null), the
+ * database it binds as DB (its health row is there), and its plain settings.
  */
 export async function liveRelease(
   cf: Cloudflare,
   accountId: string,
   worker: string,
   versionId: string
-): Promise<{ version: string | null; facts: unknown }> {
-  const v = await cf.call<{ resources?: { bindings?: { name: string; type: string; text?: string }[] } }>(
-    "GET",
-    `/accounts/${accountId}/workers/scripts/${worker}/versions/${versionId}`,
-    `read ${worker}'s version ${versionId.slice(0, 8)}`
-  );
-  const text = (name: string) => v?.resources?.bindings?.find((b) => b.name == name && b.type == "plain_text")?.text ?? null;
+): Promise<{ version: string | null; facts: unknown; database: string | null; vars: Record<string, string> }> {
+  const v = await cf.call<{
+    resources?: { bindings?: { name: string; type: string; text?: string; id?: string; database_id?: string }[] };
+  }>("GET", `/accounts/${accountId}/workers/scripts/${worker}/versions/${versionId}`, `read ${worker}'s version ${versionId.slice(0, 8)}`);
+  const bindings = v?.resources?.bindings ?? [];
+  const vars = Object.fromEntries(bindings.flatMap((b) => (b.type == "plain_text" && b.text != null ? [[b.name, b.text]] : [])));
+  const db = bindings.find((b) => b.type == "d1" && b.name == "DB");
   return {
-    version: text("ERGA_VERSION"),
-    facts: Option.getOrNull(Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))(text("ERGA_DEPLOY") ?? "")),
+    version: vars.ERGA_VERSION ?? null,
+    facts: Option.getOrNull(Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))(vars.ERGA_DEPLOY ?? "")),
+    database: db?.database_id ?? db?.id ?? null,
+    vars,
   };
 }
 
-/** What the health check answers (GET /api/health: the app's own checks), as the pipeline reads it. */
-export const Health = Schema.Struct({
-  ok: Schema.Boolean,
-  version: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  checks: Schema.optionalKey(
+/** The Worker's Cron Trigger: each minute, the server's scheduled run (server/health.ts, tick). */
+export const EACH_MINUTE = "* * * * *";
+
+/** Gives the Worker its Cron Trigger, each minute: it replaces the Worker's schedules. */
+export const setSchedule = (cf: Cloudflare, acc: string, worker: string) =>
+  cf.call("PUT", `${acc}/workers/scripts/${worker}/schedules`, `set ${worker}'s Cron Trigger (each minute)`, [{ cron: EACH_MINUTE }]);
+
+/** A server's health as it wrote it into its own database (server/health.ts, tick: the one row of `health`). */
+export interface HealthRow {
+  at: number;
+  version: string | null;
+  ok: boolean;
+  checks: Record<string, { ok: boolean; ms?: number; error?: string }>;
+}
+const checksOf = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
     Schema.Record(
       Schema.String,
       Schema.Struct({ ok: Schema.Boolean, ms: Schema.optionalKey(Schema.Number), error: Schema.optionalKey(Schema.String) })
     )
-  ),
-});
-export type Health = typeof Health.Type;
-const healthOf = Schema.decodeUnknownOption(Schema.fromJsonString(Health));
+  )
+);
 
-/** A health check's result: `why` says what failed, in words; `summary` what passed. */
+/**
+ * The health row of the server on the database `db`, read through D1's API. Null: no row yet (its scheduled run did
+ * not run), or no table (a release from before the row).
+ */
+export async function healthRow(cf: Cloudflare, acc: string, db: string): Promise<HealthRow | null> {
+  const rows = await d1(cf, acc, db, "SELECT at, version, ok, checks FROM health WHERE id = 1", [], "read the server's health").catch(
+    (e) => {
+      if (e instanceof DeployError && /no such table/i.test(e.message)) return [];
+      throw e;
+    }
+  );
+  const r = rows?.[0];
+  if (!r) return null;
+  return {
+    at: Number(r.at),
+    version: r.version == null ? null : String(r.version),
+    ok: !!r.ok,
+    checks: Option.getOrElse(checksOf(String(r.checks ?? "")), () => ({})),
+  };
+}
+
+/** How old a health row may be: the server writes one each minute. An older one says nothing of the server now. */
+export const HEALTH_FRESH_MS = 3 * 60_000;
+
+/** A health row's reading: `healthy` null when the row says nothing of this release now; `why` in words; `summary` what passed. */
 export interface Checked {
-  ok: boolean;
+  healthy: boolean | null;
   why: string;
   summary: string;
 }
 
 /**
- * The app's health, at `host`: GET /api/health must answer 200 with ok true
- * and the release `want` (when given). It never fails: a check that can't be
- * made is a check that didn't pass.
+ * What a health row says of the release `want` (null: any) at `now`: healthy, not healthy (the checks that failed), or
+ * nothing: no row, a row older than three minutes, or the row of another release (the one before, in the first minute
+ * after a deploy).
  */
-export const checkHealth = (site: Fetch, host: string, want: string | null, o: { query?: string } = {}): Effect.Effect<Checked> =>
-  Effect.promise(async (): Promise<Checked> => {
-    const r = await site(`https://${host}/api/health${o.query ? `?${o.query}` : ""}`).catch(() => null);
-    const body = Option.getOrNull(healthOf(r ? await r.text().catch(() => "") : ""));
-    if (!r || !body) return { ok: false, why: `GET /api/health answered ${r?.status || "nothing"} and no JSON`, summary: "" };
-    const failed = Object.entries(body.checks ?? {}).filter(([, c]) => !c.ok).map(([n, c]) => `${n}: ${c.error ?? "failed"}`);
-    if (!r.ok || !body.ok) return { ok: false, why: failed.length ? failed.join("; ") : `GET /api/health answered ${r.status}`, summary: "" };
-    if (want && body.version && body.version != want) return { ok: false, why: `GET /api/health says release ${body.version}, not ${want}`, summary: "" };
-    return { ok: true, why: "", summary: Object.entries(body.checks ?? {}).map(([n, c]) => `${n} ok${c.ms != null ? ` ${c.ms} ms` : ""}`).join(", ") || "no checks" };
+export function readHealth(row: HealthRow | null, want: string | null, now: number): Checked {
+  const no = (why: string): Checked => ({ healthy: null, why, summary: "" });
+  if (!row) return no("the server wrote no health row yet");
+  const age = now - row.at;
+  if (age > HEALTH_FRESH_MS) return no(`the server's last health row is ${Math.round(age / 60_000)} minutes old`);
+  if (want && row.version != want) return no(`the health row is of release ${row.version ?? "?"}, not ${want}`);
+  const failed = Object.entries(row.checks)
+    .filter(([, c]) => !c.ok)
+    .map(([n, c]) => `${n}: ${c.error ?? "failed"}`);
+  if (!row.ok) return { healthy: false, why: failed.join("; ") || "the health row says not ok", summary: "" };
+  const summary = Object.entries(row.checks)
+    .map(([n, c]) => `${n} ok${c.ms != null ? ` ${c.ms} ms` : ""}`)
+    .join(", ");
+  return { healthy: true, why: "", summary: summary || "no checks" };
+}
+
+/**
+ * Waits for the release `want` to write a healthy row, for at most `ms`: the row is read each 5 seconds. The result is
+ * the last reading: healthy, or what the row said at the end. The server's scheduled run writes a row each minute, and
+ * Cloudflare gives a Durable Object the new code seconds to minutes after the Worker: a first row can say that a
+ * document does not open (2026-11-14: 42 seconds), and the next one that it does.
+ */
+export const settledHealth = (cf: Cloudflare, acc: string, db: string, want: string, ms: number): Effect.Effect<Checked, DeployError> => {
+  const read = Effect.gen(function* () {
+    const row = yield* Effect.tryPromise({
+      try: () => healthRow(cf, acc, db),
+      catch: (e) => (e instanceof DeployError ? e : new DeployError({ message: String(e) })),
+    });
+    return readHealth(row, want, yield* Clock.currentTimeMillis);
   });
-
-/**
- * A release that answers its version: healthy, or unhealthy for two minutes (25 checks, 5 seconds apart). Cloudflare
- * gives a Durable Object the new code seconds to minutes after the Worker: until then the new Worker calls the old
- * object, and a call that the old code does not have fails (2026-11-14: 42 seconds, on the first release with the
- * document's door; ten seconds of checks had rolled a good release back).
- */
-export const settledHealth = (site: Fetch, host: string, want: string, o: { query?: string } = {}): Effect.Effect<Checked> =>
-  checkHealth(site, host, want, o).pipe(Effect.repeat({ schedule: Schedule.spaced("5 seconds"), times: 24, until: (h) => h.ok }));
-
-/**
- * The deploy's ask for the default homepage, once the release answers (POST /api/deploys/home): the server makes it from
- * the release's assets/landing/ when it has none (server/documents/landing.ts). What the server said, for the step's
- * detail. No answer is no failure: / is then the page in the server's code.
- */
-export const askHomepage = (site: Fetch, host: string): Effect.Effect<string> =>
-  Effect.promise(async () => {
-    const r = await site(`https://${host}/api/deploys/home`, { method: "POST" }).catch(() => null);
-    const home = r?.ok ? ((await r.json().catch(() => null)) as { home?: string } | null)?.home : null;
-    if (home == "made") return "made the default homepage (/_home) and published it";
-    if (home == "there") return "the default homepage (/_home) is there";
-    return `no default homepage made (POST /api/deploys/home: ${r ? r.status : "no answer"})`;
-  });
-
-/**
- * The wait for a new release to answer, for at most `ms`: a second, then half
- * a second longer each time, at most five seconds apart (a new workers.dev
- * address or certificate can take a minute or two).
- */
-export const untilUp = (ms: number) =>
-  Schedule.spaced("1 second").pipe(
-    Schedule.modifyDelay(({ attempt }) => Effect.succeed(Math.min(5000, 500 + attempt * 500))),
-    Schedule.upTo({ duration: ms })
+  return read.pipe(
+    Effect.repeat({ schedule: Schedule.spaced("5 seconds").pipe(Schedule.upTo({ duration: ms })), until: (h) => h.healthy === true })
   );
-
-/**
- * The version a release says it is (GET /api/deploys/version, or the health check's), or "" when it doesn't answer.
- * `anyStatus`: an answer that isn't 200 counts too (an unhealthy release still says its version).
- */
-export const answeredVersion = (site: Fetch, url: string, o: { anyStatus?: boolean } = {}): Effect.Effect<string> =>
-  Effect.promise(async () => {
-    const r = await site(url).catch(() => null);
-    return r && (r.ok || o.anyStatus) ? (Option.getOrNull(versionOf(await r.text().catch(() => "")))?.version ?? "") : "";
-  });
-const versionOf = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ version: Schema.optionalKey(Schema.NullOr(Schema.String)) }))
-);
+};
 
 /**
  * Rolls a Worker back: a deployment of `versionId` at 100% (seconds; no
@@ -325,6 +340,24 @@ export async function rollbackTo(cf: Cloudflare, target: Pick<Target, "accountId
     // Only the message: Cloudflare refuses any other annotation ("workers/triggered_by" is its own; it refused it on 2026-10-12).
     strategy: "percentage", versions: [{ version_id: versionId, percentage: 100 }], annotations: { "workers/message": message.slice(0, 900) },
   });
+}
+
+/**
+ * The state of the certificate for `hostname` on its zone ("active", "pending_validation", ...), read from Cloudflare:
+ * the hostname's own certificate, else one that covers it by a wildcard. Null: none names it, or the credential may not
+ * read the zone's certificates. The deploy says it; nothing asks the address itself.
+ */
+export async function certificateOf(cf: Cloudflare, zoneId: string, hostname: string): Promise<string | null> {
+  const packs = await cf
+    .call<{ hosts?: string[]; status?: string }[]>(
+      "GET",
+      `/zones/${zoneId}/ssl/certificate_packs?status=all`,
+      `read ${hostname}'s certificate`
+    )
+    .catch(() => null);
+  const wild = `*.${hostname.split(".").slice(1).join(".")}`;
+  const pack = packs?.find((p) => p.hosts?.includes(hostname)) ?? packs?.find((p) => p.hosts?.includes(wild));
+  return pack?.status ?? null;
 }
 
 /** A D1 database's id by name, or null. */

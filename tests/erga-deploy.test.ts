@@ -199,40 +199,54 @@ describe("bun erga deploy", () => {
 });
 
 describe("what an instance runs comes from Cloudflare, never from the instance", () => {
-  /** An instance that answers nothing: every request to it is recorded, and fails. */
-  const silent = () => {
-    const asked: string[] = [];
-    const site = async (url: string) => (asked.push(new URL(url).pathname), Promise.reject(new TypeError("no app server")));
-    return { asked, site };
-  };
-
-  test("status with no app server: the commit of the version that serves, after a deploy and after a rollback", async () => {
+  test("status with no app server: the commit of the version that serves and its health row, after a deploy and after a rollback", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
     fresh(fleet, next);
-    const { asked, site } = silent();
-    const ask = instanceReader({ net: mock.fetch, site });
-    // The fleet's Worker, as its last deploy left it; the instance itself gives no answer (its health: unknown).
-    expect(await ask(fleet)).toEqual({ version: "prim00000000", healthy: null });
-    expect(await ask(next)).toEqual({ version: SHA1.slice(0, 12), healthy: null });
+    // Every request that is not to Cloudflare's API: there must be none.
+    const servers: string[] = [];
+    const net: typeof mock.fetch = (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.origin != "https://api.cloudflare.com") servers.push(url.href);
+      return mock.fetch(input, init);
+    };
+    const ask = instanceReader({ net });
+    // The fleet's Worker is from before the health row: its commit is known, its health is not. The second instance's server
+    // writes its row each minute (its Cron Trigger).
+    expect(await ask(fleet)).toEqual({ version: "prim00000000", healthy: null, health: "the server wrote no health row yet" });
+    expect(await ask(next)).toEqual({ version: SHA1.slice(0, 12), healthy: true });
     await deployInstance({ dir, host: "next.example.com", commit: "HEAD", net: mock.fetch, print: () => {} });
-    expect((await ask(next)).version).toBe(HEAD.slice(0, 12));
-    // An instance whose deployment did not change costs one call: its deployments. The version is read one time.
+    expect(await ask(next)).toEqual({ version: HEAD.slice(0, 12), healthy: true });
+    // An instance whose deployment did not change costs two calls: its deployments, and its health row.
     const calls = mock.state.calls.length;
     expect((await ask(next)).version).toBe(HEAD.slice(0, 12));
-    expect(mock.state.calls.slice(calls)).toEqual([`GET /accounts/${nextFacts.account}/workers/scripts/erga-next/deployments`]);
-    // A rollback is a new deployment of the version before: the reader sees that version's commit.
-    await rollbackInstance({ dir, host: "next.example.com", net: mock.fetch, print: () => {} });
-    expect((await ask(next)).version).toBe(SHA1.slice(0, 12));
-    // The reader asked the instance for its health only, and Cloudflare with reads only.
-    expect([...new Set(asked)]).toEqual(["/api/health"]);
+    const db = bindingsOf(mock.state, "erga-next").DB.database_id;
+    expect(mock.state.calls.slice(calls)).toEqual([
+      `GET /accounts/${nextFacts.account}/workers/scripts/erga-next/deployments`,
+      `POST /accounts/${nextFacts.account}/d1/database/${db}/query`,
+    ]);
+    // A rollback is a new deployment of the version before: it waits for that release's health row, and the reader
+    // sees that version's commit.
+    const lines: string[] = [];
+    expect(await rollbackInstance({ dir, host: "next.example.com", net, print: (l) => lines.push(l) })).toBe(SHA1.slice(0, 12));
+    expect(lines.at(-1)).toBe("next.example.com: health ok.");
+    expect(await ask(next)).toEqual({ version: SHA1.slice(0, 12), healthy: true });
+    // A release whose own report says that a check fails.
+    mock.state.unhealthy = [SHA1.slice(0, 12)];
+    expect(await ask(next)).toEqual({
+      version: SHA1.slice(0, 12),
+      healthy: false,
+      health: "documents: a document didn't open (the mock says this release is unhealthy)",
+    });
+    // Neither the reader nor the rollback asked a server anything.
+    expect(servers).toEqual([]);
     // A Worker that is not there, and a credential that Cloudflare refuses: the answer says so.
     expect(await ask({ ...next, host: "new.example.com", worker: "erga-new" } as Entry)).toEqual({
       version: null,
       error: "Cloudflare has no deployment of the Worker erga-new: bun erga deploy new.example.com",
       healthy: null,
     });
-    const refused = await instanceReader({ net: mock.fetch, token: "not-a-token", site })(fleet);
+    const refused = await instanceReader({ net: mock.fetch, token: "not-a-token" })(fleet);
     expect(refused.error).toContain("Cloudflare didn't accept the credential");
   }, 60_000);
 
@@ -392,19 +406,20 @@ describe("the branches", () => {
       expect(plain.err).toContain("erga: Don't push to main directly");
 
       // promote: main moves to staging's head when the instance that tracks staging runs it, healthy. It deploys nothing.
-      // What the instance runs comes from Cloudflare (the Worker's deployment); only its health is the instance's answer.
-      const ask = instanceReader({ net: mock.fetch, site: (url, init) => mock.fetch(url, init) });
+      // What the instance runs, and its health, come from Cloudflare: the Worker's deployment, and the server's row in D1.
+      const ask = instanceReader({ net: mock.fetch });
       await expect(promote({ dir, clone, ask, print })).rejects.toThrow(
         `next.example.com (runs ${c1.slice(0, 12)}) tracks staging, and does not run ${c2.slice(0, 12)}, healthy.`
       );
       expect(remote("main")).toBe(c1);
       expect(await deployInstance({ dir, host: "next.example.com", clone, net: mock.fetch, print })).toBe(c2);
-      const uploads = mock.state.calls.filter((c) => !c.startsWith("GET ")).length;
+      const changes = () => mock.state.calls.filter((c) => /^(PUT|POST|DELETE|PATCH) .*\/workers\//.test(c)).length;
+      const uploads = changes();
       expect(await promote({ dir, clone, ask, print })).toBe(c2);
       expect([remote("staging"), remote("main")]).toEqual([c2, c2]);
       expect(lines).toContain(`main is at ${c2.slice(0, 12)} on origin.`);
       expect(lines).toContain("NEXT  example.com tracks main. Deploy the commit to it: bun erga deploy example.com");
-      expect(mock.state.calls.filter((c) => !c.startsWith("GET ")).length).toBe(uploads);
+      expect(changes()).toBe(uploads);
       expect(versionOf("erga")).toBe(c1.slice(0, 12));
       expect(records().at(-1)?.[0]).toMatchObject({ command: "bun erga promote", host: "main" });
       // Again: main has it.

@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 // Local development only: the dev server (dev/start.ts) links files on disk
-// to documents, proving itself with ERGA_LINK_SECRET, and brings the local
-// D1 up to date.
+// to documents, proving itself with ERGA_LINK_SECRET, brings the local
+// D1 up to date, and runs the server's scheduled work (a deployed Worker's Cron Trigger does: Vite has none).
 //
 // The routes are ROUTES, below.
 
@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import { HttpServerRequest, type HttpServerResponse } from "effect/http";
 import { idShaped, OWNER } from "../server/directory/index.ts";
 import { slugify } from "../document/model/pages.ts";
+import { tick } from "../server/health.ts";
 import { call, ctx, fromWeb, plainJson, text, type Needs } from "../server/http.ts";
 import { DEV, routeFor, type RouteRow } from "../shared/routes.ts";
 import { directoryOf } from "./d1";
@@ -37,6 +38,19 @@ export const ROUTES: readonly RouteRow<Run>[] = [
     // As the dev server starts, with server/migrations/.
     run: (env) => call(() => migrate(env.DB)).pipe(Effect.map((applied) => plainJson({ applied }))),
     action: "The dev server brings the local database up to date",
+    domain: "none",
+    exempt: DEV,
+  },
+  {
+    method: "POST",
+    path: "/__erga/tick",
+    // The scheduled work, one time (server/health.ts): the health row, and the default homepage when there is none.
+    run: () =>
+      Effect.gen(function* () {
+        const { platform } = yield* ctx;
+        return plainJson(yield* call(() => tick(platform)));
+      }),
+    action: "The dev server runs the server's scheduled work (a deployed Worker's Cron Trigger)",
     domain: "none",
     exempt: DEV,
   },

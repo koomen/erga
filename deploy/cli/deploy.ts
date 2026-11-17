@@ -15,7 +15,7 @@
 // .build/release/ for the build: nothing real is touched, and no repository is asked: with no commit named, the
 // checkout's own deploys. In a clone that a test gives, the repository is asked as always.
 
-import { deployFacts, rollbackTo } from "../pipeline/account";
+import { deployFacts, liveRelease, rollbackTo, settledHealth } from "../pipeline/account";
 import { Cloudflare, DeployError, type Fetch, Unhealthy } from "../pipeline/cloudflare-api";
 import {
   STEPS,
@@ -23,6 +23,7 @@ import {
   type Carry,
   guardTarget,
   runPipeline,
+  runWith,
   type Target,
   targetHost,
   targetPagesShown,
@@ -44,7 +45,6 @@ import { previousVersion } from "./flow";
 import { testRun, type Suite, treeOf } from "./test-run";
 import { gateRefusal } from "./gate";
 import { type From, startJob, takeLock } from "./jobs";
-import { healthOf } from "./observe";
 import { parseDeployed } from "../../server/directory/index.ts";
 import { ROOT, sh } from "../root";
 
@@ -71,7 +71,6 @@ export const entryTarget = (entry: CloudflareEntry): Target => ({
   ...namesOf(entry),
   secrets: {},
   keepSecrets: true,
-  checkVersion: true,
   vars: { ...entry.vars },
 });
 
@@ -170,8 +169,14 @@ export const domainRefusal = (domain: string) =>
 
 export const mocked = () => process.env.ERGA_DEPLOY_MOCK == "1";
 
-/** The Cloudflare API and the servers, with this machine's credential; under ERGA_DEPLOY_MOCK, a new mock Cloudflare. */
-export async function netOf(o: { net?: Fetch; token?: string }) {
+/** How a wait goes by: the mock's at once, for two seconds at most. */
+interface Quick {
+  sleep?: (ms: number) => Promise<void>;
+  waitMs?: number;
+}
+
+/** The Cloudflare API, with this machine's credential; under ERGA_DEPLOY_MOCK, a new mock Cloudflare. */
+export async function netOf(o: { net?: Fetch; token?: string }): Promise<{ net: Fetch; token: string; quick: Quick }> {
   if (mocked()) {
     const { mockCloudflare } = await import("../../dev/mock-cloudflare");
     return {
@@ -215,7 +220,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
   const wrong = target && guardTarget(target);
   if (wrong) throw new Error(wrong);
   // On AWS: the servers only (the AWS CLI is this machine's own). On Cloudflare: its API too, with this machine's credential.
-  const { net, token, quick } = aws ? { net: o.net ?? globalThis.fetch.bind(globalThis), token: "", quick: {} } : await netOf(o);
+  const { net, token, quick } = aws ? { net: o.net ?? globalThis.fetch.bind(globalThis), token: "", quick: {} as Quick } : await netOf(o);
   const cf = new Cloudflare(token, net);
   const command = o.command ?? `bun erga deploy ${o.commit ? `${o.commit} ` : ""}${o.host}${domains.map((d) => ` --domain ${d}`).join("")}`;
   const free = takeLock(o.dir, o.host, command);
@@ -268,9 +273,8 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       const release = await keepLast(await built(sha), entryOrigin(aws), net, log);
       const { deployToAws } = await import("../aws/deploy");
       log("Deploy to the machine...");
+      // The machine's own script waits until the release answers its health check, healthy, on the loopback.
       await deployToAws(aws, release, log, o.first);
-      if (!(await healthOf(entryOrigin(aws), net)))
-        throw new Error(`${entryOrigin(aws)} runs ${sha.slice(0, 12)}, but its health check fails from here.`);
       log("Deploy to the machine: done");
       log(`Deployed ${sha.slice(0, 12)} to ${entryOrigin(aws)}: healthy.`);
     } else {
@@ -293,7 +297,6 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       const carry: Carry = {};
       try {
         await runPipeline(cf, release, t, {
-          site: net,
           carry,
           report: (id, status, detail) =>
             log(`${STEPS.find((s) => s.id == id)?.title}${status == "running" ? "..." : `: ${status}${detail ? `, ${detail}` : ""}`}`),
@@ -335,6 +338,7 @@ export interface RollbackOptions {
   net?: Fetch;
   token?: string;
   print?: (line: string) => void;
+  /** How the wait for the health row sleeps (a test's: at once). */
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -344,25 +348,17 @@ export async function rollbackInstance(o: RollbackOptions): Promise<string | nul
   const entry = entryOf(config, o.host);
   if (!entry) throw new Error(`${o.host} has no entry in .erga/config.json. Register it first: bun erga register ${o.host}`);
   const aws = isAws(entry) ? entry : null;
-  const { net, token } = aws ? { net: o.net ?? globalThis.fetch.bind(globalThis), token: "" } : await netOf(o);
-  const sleep = o.sleep ?? (mocked() ? async () => {} : Bun.sleep);
+  const { net, token, quick } = aws ? { net: o.net ?? globalThis.fetch.bind(globalThis), token: "", quick: {} as Quick } : await netOf(o);
   const command = `bun erga rollback ${o.host}`;
   const free = takeLock(o.dir, o.host, command);
   const job = startJob(o.dir, { command, host: o.host, print: o.print });
-  const versionOf = async (origin: string) => {
-    const r = await net(`${origin}/api/deploys/version`, {
-      signal: AbortSignal.timeout(8000),
-      headers: { "Cache-Control": "no-cache" },
-    }).catch(() => null);
-    return ((await r?.json().catch(() => null)) as { version?: string } | null)?.version ?? null;
-  };
   try {
     if (aws) {
       const { rollbackAws } = await import("../aws/deploy");
+      // The machine's own script waits until the release answers its health check, healthy, on the loopback.
       const now = await rollbackAws(aws, job.log, o.ask);
-      const healthy = await healthOf(entryOrigin(aws), net);
-      job.log(`${o.host} runs release ${now} now, health ${healthy ? "ok" : "FAIL"}.`);
-      job.end(healthy ? "ok" : "failed", healthy ? undefined : "the health check fails after the rollback");
+      job.log(`${o.host} runs release ${now} now, health ok.`);
+      job.end("ok");
       return now;
     }
     const e = entry as CloudflareEntry;
@@ -375,21 +371,33 @@ export async function rollbackInstance(o: RollbackOptions): Promise<string | nul
     const sorted = [...(list?.deployments ?? [])].sort((x, y) => Date.parse(y.created_on) - Date.parse(x.created_on));
     const p = previousVersion(sorted);
     if (!p) throw new Error(`${e.worker} has no deployment of another version to go back to.`);
-    const origin = e.app.kind == "domain" ? `https://${e.app.hostname}` : originOf(o.host);
-    const before = await versionOf(origin);
-    job.log(`${o.host} (Worker ${e.worker}) runs release ${before ?? "?"}, Worker version ${p.now}.`);
-    job.log(`Rollback goes to the Worker version before it: ${p.before}. The database stays as it is.`);
+    // The release of each version, from the version's own bindings: nothing asks the instance.
+    const [before, to] = await Promise.all([p.now, p.before].map((v) => liveRelease(cf, e.account, e.worker, v)));
+    job.log(`${o.host} (Worker ${e.worker}) runs release ${before.version ?? "?"}, Worker version ${p.now}.`);
+    job.log(
+      `Rollback goes to the Worker version before it: ${p.before}${to.version ? ` (release ${to.version})` : ""}. The database stays as it is.`
+    );
     if (o.ask && !o.ask("Roll back now? [y/N]")) throw new Error("Not rolled back.");
     await rollbackTo(cf, { accountId: e.account, workerName: e.worker }, p.before, command);
-    let after = await versionOf(origin);
-    for (let i = 0; i < 6 && after == before; i++) {
-      await sleep(5000);
-      after = await versionOf(origin);
-    }
-    const healthy = await healthOf(origin, net);
-    job.log(`${o.host} runs release ${after ?? "?"} now, health ${healthy ? "ok" : "FAIL"}.`);
-    job.end(healthy ? "ok" : "failed", healthy ? undefined : "the health check fails after the rollback");
-    return after;
+    job.log(`${o.host} runs release ${to.version ?? "?"} now. Its health row comes within a minute...`);
+    // Its health: the row that the release writes into its database within a minute (a release from before the row writes none).
+    const h =
+      to.version && to.database
+        ? await runWith(
+            o.sleep ?? quick.sleep,
+            settledHealth(cf, `/accounts/${e.account}`, to.database, to.version, quick.waitMs ?? 180_000)
+          )
+        : { healthy: null, why: "the version names no release" };
+    job.log(`${o.host}: health ${h.healthy ? "ok" : h.healthy === false ? `FAIL (${h.why})` : `unknown (${h.why})`}.`);
+    job.end(
+      h.healthy ? "ok" : "failed",
+      h.healthy
+        ? undefined
+        : h.healthy === false
+          ? "the health check fails after the rollback"
+          : `no health row after the rollback: ${h.why}`
+    );
+    return to.version;
   } catch (e) {
     job.end("failed", (e as Error).message);
     throw e;

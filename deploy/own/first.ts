@@ -5,7 +5,7 @@
 // 2. The first deploy, with the secrets that the Worker doesn't hold yet: its own SESSION_SECRET and FACTORY_KEY, and
 //    the GitHub App's secret. Each is made one time and kept in .erga/secrets.json under its host; a Worker that holds a secret keeps
 //    it, and no later deploy sends one.
-// 3. After the health check: the access rule that the answers name (plan.ts, firstRows), written into the new
+// 3. After the deploy, healthy: the access rule that the answers name (plan.ts, firstRows), written into the new
 //    database with the Cloudflare D1 API. A database that has an admin already gets nothing.
 // 4. The first admin: the user signs in from the one-time link that setup opens (server/identity/claim.ts). Setup
 //    sees the admin in the database (adminOn), with the Cloudflare D1 API: it asks the server nothing.

@@ -15,29 +15,30 @@
 // server/migrations/ to it (recorded in d1_migrations, as `cf d1 migrations apply`
 // does), upload the static assets (direct upload), upload the Worker with its
 // bindings, secrets and Durable Objects, give it its address (workers.dev,
-// or a custom domain), give documents' pages theirs, and wait for it to answer. Once the server answers, the deploy asks it
-// for the default homepage (askHomepage): a server with none makes it from the landing project built into it, and
-// publishes it.
+// or a custom domain) and its Cron Trigger, give documents' pages theirs, and wait for its health row. No step asks
+// the deployed server: the server's scheduled run (each minute: server/health.ts, tick) writes its health into its
+// database, where the live step reads it through D1's API, and makes the default homepage when the server has none.
 
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import { Cloudflare, DeployError, Unhealthy, type Fetch } from "./cloudflare-api";
+import { Cloudflare, DeployError, Unhealthy } from "./cloudflare-api";
 import type { Release } from "./release-format";
 import { bindingsProblem } from "./bindings";
 import {
   PAGES_PROXY,
   WORKER_TAG,
-  answeredVersion,
-  askHomepage,
+  certificateOf,
   d1,
   ensureBuckets,
   findDatabase,
   listScripts,
+  healthRow,
+  readHealth,
   restorePoint,
   servedAssets,
+  setSchedule,
   settledHealth,
-  untilUp,
   uploadAssets,
   workerMetadata,
   zoneIdOf,
@@ -52,7 +53,7 @@ export const STEPS = [
   { id: "worker", title: "Upload the Worker, with its settings and secrets" },
   { id: "address", title: "Give it its address" },
   { id: "pages", title: "Give documents' pages their own address" },
-  { id: "live", title: "Wait for it to answer" },
+  { id: "live", title: "Wait for its health" },
 ] as const;
 
 export type StepId = (typeof STEPS)[number]["id"];
@@ -102,8 +103,6 @@ export interface Target {
   keepSecrets?: boolean;
   /** Service bindings, by binding name: the Worker, and its entrypoint if not the default. */
   services?: Record<string, string | { service: string; entrypoint?: string }>;
-  /** Wait for this release's version to answer (GET /api/deploys/version), not only for the server to answer. */
-  checkVersion?: boolean;
 }
 
 /** What runs on from one step to the next: the database, the version, and whether the Worker was there. */
@@ -113,6 +112,8 @@ export interface Carry {
   existing?: boolean;
   /** What the target ran before this deploy changed anything (the migrations step records it): a rollback goes back to it. */
   restore?: RestorePoint;
+  /** The server wrote a health row in the minutes before the upload: its Cron Trigger runs (the live step's wait). */
+  ticking?: boolean;
 }
 
 /**
@@ -180,7 +181,7 @@ function clockOf(sleep: Sleep): Clock.Clock {
 }
 
 /** Runs `effect` as a promise; with `sleep`, on the Clock that sleeps with it. */
-const runWith = <A, E>(sleep: Sleep | undefined, effect: Effect.Effect<A, E>): Promise<A> =>
+export const runWith = <A, E>(sleep: Sleep | undefined, effect: Effect.Effect<A, E>): Promise<A> =>
   Effect.runPromise(sleep ? Effect.provideService(effect, Clock.Clock, clockOf(sleep)) : effect);
 
 /**
@@ -195,14 +196,12 @@ export async function runPipeline(
   target: Target,
   opts: {
     report: Report;
-    site?: Fetch;
     sleep?: Sleep;
     waitMs?: number;
     carry?: Carry;
   }
 ): Promise<Deployed> {
   const { report } = opts;
-  const site = opts.site ?? globalThis.fetch;
   const carry: Carry = opts.carry ?? {};
   const acc = `/accounts/${target.accountId}`;
   const host = targetHost(target);
@@ -322,9 +321,13 @@ export async function runPipeline(
       const rel = needRelease();
       const assetsJwt = (carry as Carry & { assetsJwt?: string }).assetsJwt;
       if (!assetsJwt) throw new DeployError({ message: "The editor's files weren't uploaded first: deploy again." });
+      // Whether the server's scheduled run runs already (a row of the last minutes): the live step waits by it.
+      carry.ticking = readHealth(await healthRow(cf, acc, carry.dbId!).catch(() => null), null, Date.now()).healthy != null;
       await uploadWorker(rel, assetsJwt);
       delete (carry as Carry & { assetsJwt?: string }).assetsJwt;
-      return `${target.workerName}, release ${rel.version}`;
+      // Its Cron Trigger, each minute: the server's own health into its database, and the default homepage.
+      await setSchedule(cf, acc, target.workerName);
+      return `${target.workerName}, release ${rel.version}; its Cron Trigger runs each minute`;
     },
 
     // Its address, and its custom domains.
@@ -356,8 +359,15 @@ export async function runPipeline(
         await cf.call("POST", `${acc}/workers/scripts/${target.workerName}/subdomain`, "turn on its workers.dev address", { enabled: true, previews_enabled: false });
       } else {
         const app = target.app;
-        if ((await put(app.hostname, app.zoneId ?? (await zoneIdOf(cf, target.accountId, app.zoneName)))) == "already its address")
-          said += " (already its address)";
+        const zoneId = app.zoneId ?? (await zoneIdOf(cf, target.accountId, app.zoneName));
+        if ((await put(app.hostname, zoneId)) == "already its address") said += " (already its address)";
+        // Nothing asks the address from outside: Cloudflare says whether its certificate is there.
+        const certificate = await certificateOf(cf, zoneId, app.hostname);
+        if (certificate)
+          said +=
+            certificate == "active"
+              ? "; its certificate is active"
+              : `; its certificate is ${certificate}: the address answers when it is active`;
       }
       const domains = (target.domains ?? []).map((d) => d.toLowerCase());
       const zones = domains.length
@@ -407,49 +417,33 @@ export async function runPipeline(
       return `https://${pagesHost} (shared by every document)`;
     },
 
-    // Up: a new workers.dev address or certificate can take a minute or two. With checkVersion, until this release is the
-    // one answering, and then its health check says it works (GET /api/health: the database, a document). Then the
-    // default homepage, if the server has none.
+    // Healthy: the release's own health row, which its scheduled run writes into its database each minute (the database,
+    // a document), read through D1's API. A server whose Cron Trigger ran before the deploy writes the new release's
+    // row in about a minute: three minutes without a healthy one is an unhealthy release, which the caller rolls back.
+    // A new Cron Trigger (the first deploy with one) can take up to 15 minutes to start, by Cloudflare's own words:
+    // the step waits that long, and then stops with no rollback.
     live: () =>
       runWith(
         opts.sleep,
         Effect.gen(function* () {
-          const want = carry.version;
-          const homepage = Effect.map(askHomepage(site, host), (said) => `; ${said}`);
-          if (!(target.checkVersion && want)) {
-            // Up when its logo answers.
-            const answers = Effect.promise(() =>
-              site(`https://${host}/logo.png`).then(
-                (r) => r.ok,
-                () => false
+          const want = carry.version!;
+          const ticking = !!carry.ticking;
+          const h = yield* settledHealth(cf, acc, carry.dbId!, want, opts.waitMs ?? (ticking ? 180_000 : 900_000));
+          if (h.healthy) return `release ${want}, healthy (${h.summary})`;
+          if (h.healthy === false)
+            return yield* Effect.fail(
+              new Unhealthy(`Release ${want} is deployed to ${target.workerName}, but its health check fails: ${h.why}`, h.why)
+            );
+          if (ticking)
+            return yield* Effect.fail(
+              new Unhealthy(
+                `Release ${want} is deployed to ${target.workerName}, but it wrote no health row in 3 minutes (${h.why}): its scheduled run fails.`,
+                h.why
               )
             );
-            if (!(yield* answers.pipe(Effect.repeat({ schedule: untilUp(opts.waitMs ?? 180_000), until: (ok) => ok }))))
-              return yield* new DeployError({
-                message: `The Worker is deployed, but https://${host} hasn't answered yet (a new address can take a few minutes). Open it in a little while; if it still doesn't answer, deploy again.`,
-              });
-            return `https://${host}${yield* homepage}`;
-          }
-          // Until this release is the one answering, and then its health check says it works.
-          let seen = "";
-          const v = yield* answeredVersion(site, `https://${host}/api/deploys/version`).pipe(
-            Effect.tap((v) =>
-              Effect.sync(() => {
-                if (v) seen = v;
-              })
-            ),
-            Effect.repeat({ schedule: untilUp(opts.waitMs ?? 180_000), until: (v) => v == want })
-          );
-          if (v != want)
-            return yield* new DeployError({
-              message: `The Worker is deployed, but https://${host} hasn't answered${seen ? ` with release ${want} yet (it still says ${seen})` : " yet"} (a new address can take a few minutes). Open it in a little while; if it still doesn't answer, deploy again.`,
-            });
-          const h = yield* settledHealth(site, host, want);
-          if (!h.ok)
-            return yield* Effect.fail(
-              new Unhealthy(`Release ${want} is up at https://${host}, but its health check fails: ${h.why}`, h.why)
-            );
-          return `https://${host}, release ${want}, healthy (${h.summary})${yield* homepage}`;
+          return yield* new DeployError({
+            message: `Release ${want} is deployed to ${target.workerName}, but its first health row has not come yet (${h.why}). Cloudflare can take up to 15 minutes to start a new Cron Trigger. Look again in a few minutes: bun erga status`,
+          });
         })
       ),
 

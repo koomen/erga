@@ -40,7 +40,6 @@ export const fleet = (): Target => ({
   vars: { GITHUB_CLIENT_ID: "Ov23fleet" },
   secrets: {},
   keepSecrets: true,
-  checkVersion: true,
 });
 /** The secrets of a second instance, as its first deploy from a machine gives them. */
 export const nextSecrets = {
@@ -58,13 +57,15 @@ export const next = (over: Partial<Target> = {}): Target => ({
   vars: { GITHUB_CLIENT_ID: "Ov23next" },
   secrets: {},
   keepSecrets: true,
-  checkVersion: true,
   ...over,
 });
 
 export async function deployTo(target: Target, mock: ReturnType<typeof mockCloudflare>, rel: Release = release) {
   const steps: string[] = [];
-  const result = await runPipeline(new Cloudflare("mock-deploy-token", mock.fetch), rel, target, { ...quick, site: mock.fetch, report: (id, status, detail) => steps.push(`${id}:${status}${detail ? ` ${detail}` : ""}`) });
+  const result = await runPipeline(new Cloudflare("mock-deploy-token", mock.fetch), rel, target, {
+    ...quick,
+    report: (id, status, detail) => steps.push(`${id}:${status}${detail ? ` ${detail}` : ""}`),
+  });
   return { result, steps };
 }
 
@@ -80,6 +81,6 @@ export async function bootstrap(mock: ReturnType<typeof mockCloudflare>) {
     new Cloudflare("mock-setup-token", mock.fetch),
     { ...release, version: SHA1.slice(0, 12) },
     next({ secrets: nextSecrets }),
-    { ...quick, site: mock.fetch, report: () => {} }
+    { ...quick, report: () => {} }
   );
 }

@@ -191,6 +191,20 @@ export class Directory {
   }
 
   /**
+   * Keeps the server's own health report (server/health.ts, tick) as the one row of `health`: the ops tool reads it
+   * there, through the platform's database API.
+   */
+  async keepHealth(report: { ok: boolean; version: string | null; checks: object }, at: number): Promise<void> {
+    await this.sql.run(
+      "INSERT INTO health (id, at, version, ok, checks) VALUES (1, ?1, ?2, ?3, ?4) ON CONFLICT (id) DO UPDATE SET at = excluded.at, version = excluded.version, ok = excluded.ok, checks = excluded.checks",
+      at,
+      report.version,
+      report.ok ? 1 : 0,
+      JSON.stringify(report.checks)
+    );
+  }
+
+  /**
    * The document a reference names: its id, its address (/<owner>/<slug>,
    * an old slug, /d/<id>) or a URL with one of those as its path.
    */

@@ -136,8 +136,10 @@ and `main`. There are no pull requests.
   commits on staging that are not on main. It only reads: no fetch. An
   instance's commit comes from its platform, with this machine's login: on
   Cloudflare, the Worker's deployment (its API); on AWS, a parameter that
-  each deploy and rollback writes. The instance itself is asked only for
-  its health. It asks
+  each deploy and rollback writes. Its health is the row that the server
+  writes into its database each minute (D1's API); on AWS, the machine's own
+  check of its server (Systems Manager). The instance itself is asked
+  nothing. It asks
   GitHub for its branches (`git ls-remote`) and leaves out a branch that a
   merge deleted; offline, it lists the clone's branches, with a note.
 - `bun erga`: the ops page on localhost. It lists the instances of `.erga/config.json`,
@@ -211,8 +213,8 @@ and `main`. There are no pull requests.
 - Report what you observed (a version, a health check, a run's result),
   never what you assumed.
 - When a deploy fails, read its output, or its job record in
-  `.erga/jobs/`. A health check that fails for two minutes rolls the
-  Worker back by itself.
+  `.erga/jobs/`. A release whose own health row says that it fails for three
+  minutes rolls the Worker back by itself.
 - AGENTS.md has the code's rules. A file's traps are in the comment at
   its top.
 
@@ -222,8 +224,14 @@ and `main`. There are no pull requests.
   `CLOUDFLARE_API_TOKEN`, else the cf CLI's login (`bunx cf auth login`).
   GitHub only keeps the repository: it runs no workflow and has no token.
 - A deploy builds the commit in a scratch worktree, then runs the pipeline:
-  the D1 migrations, the static files, the Worker, the addresses, the
-  health check. A deploy sends no secret: the Workers keep their own.
+  the D1 migrations, the static files, the Worker with its Cron Trigger, the
+  addresses, the health. No step asks the deployed server: the server
+  writes its health into its database each minute (its Cron Trigger), and
+  the deploy reads that row through D1's API, as `bun erga status` does. A
+  new release's row comes in about a minute; the first deploy of a server
+  can wait up to 15 minutes for its first row (a new Cron Trigger starts
+  slowly). The same run makes the default homepage when the server has
+  none. A deploy sends no secret: the Workers keep their own.
 - A rollback never changes the database: migrations only add.
 
 ## Run it locally

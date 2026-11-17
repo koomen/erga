@@ -650,7 +650,7 @@ function proxy(s: AwsShape, oidc: Oidc, vpc: unknown): Edge {
         Port: CELLD_PORT,
         TargetType: "instance",
         Targets: [{ Id: ref("Machine") }],
-        HealthCheckPath: "/api/deploys/version",
+        HealthCheckPath: "/api/health",
         HealthCheckIntervalSeconds: 15,
         HealthyThresholdCount: 2,
         Matcher: { HttpCode: "200" },

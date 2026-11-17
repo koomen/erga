@@ -1,8 +1,9 @@
-// The app's health check, GET /api/health: whether this server works, for
-// the deploy pipeline after each deploy (deploy/pipeline/pipeline.ts, the live step:
-// a release that answers its version but fails this is rolled back) and for
-// anyone who wants to know. It answers the release (as
-// /api/deploys/version does) and a few checks, each timed:
+// The app's health check: whether this server works. The server runs it itself each minute (tick: the Worker's Cron
+// Trigger) and writes the result into its database (the one row of `health`), where `bun erga` reads it through the
+// platform's database API: the deploy's live step (deploy/pipeline/pipeline.ts: a release whose row says it fails is
+// rolled back), `bun erga status` and the ops page. The ops tool never asks the server. GET /api/health answers the
+// same report to anyone who wants to know (on AWS: the load balancer, and the machine's own deploy script). It says
+// the release and a few checks, each timed:
 //
 //   db          one read of the server's settings (D1 answers)
 //   documents   the Erga domain's document, opened in its own object (a Durable Object answers), when there is one
@@ -10,6 +11,7 @@
 // {ok, version, checks: {<name>: {ok, ms, error?}}}: 200 when every
 // check passes, 503 when one fails. It holds no data and needs no sign-in.
 
+import { makeHome } from "./documents/index.ts";
 import type { Platform } from "./platform.ts";
 import { ERGA } from "./sites/index.ts";
 
@@ -51,4 +53,16 @@ async function timed(check: () => Promise<string | void>): Promise<HealthCheck> 
   } catch (e) {
     return { ok: false, ms: Date.now() - started, error: (e as Error)?.message ?? String(e) };
   }
+}
+
+/**
+ * The server's scheduled run, each minute: its health into the database, for the ops tool to read there; then the
+ * default homepage, when the server has none (documents/landing.ts: a server that has it does nothing). A new release
+ * runs it within a minute of its deploy: nothing asks the server for either.
+ */
+export async function tick(p: Platform, now = Date.now()): Promise<HealthReport> {
+  const report = await health(p);
+  await p.directory.keepHealth(report, now);
+  await makeHome(p);
+  return report;
 }

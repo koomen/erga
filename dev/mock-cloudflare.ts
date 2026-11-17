@@ -1,6 +1,6 @@
 // A pretend Cloudflare, for testing the deploy pipeline without a real account:
-// the API calls the deploy makes, Registrar, and the new server itself once it's "deployed"
-// (it answers, nothing more). It keeps what it was
+// the API calls the deploy makes, and Registrar. It is Cloudflare's API only: no deployed server answers here, as no
+// deploy and no ops command asks one. It keeps what it was
 // asked to do in `state`, which the tests read.
 //
 // Its requests and answers follow Cloudflare's OpenAPI schema
@@ -29,17 +29,21 @@
 // instance's Worker "erga" already there (on example.com
 // and *.example-pages.com) with its database "erga" (tables, rows and
 // migrations). Secrets are kept per Worker (keep_bindings, the
-// secrets API), and each Worker answers as the real one would where the
-// pipeline needs it: /logo.png, /api/deploys/version (its ERGA_VERSION) and /api/health. `failNext` makes the next call of a
+// secrets API). `failNext` makes the next call of a
 // step fail once (state.failNext = "worker"); `onUpload` hears of each
 // Worker uploaded.
+//
+// A Worker with a Cron Trigger (PUT .../schedules) runs its scheduled work as the real server does each minute
+// (server/health.ts, tick): the mock runs it when the database's health row is read (runScheduled), so a read sees the
+// row of the release that serves now: ok, unless a test says that release is unhealthy (state.unhealthy) or writes no
+// row at all (state.silent). The first run makes the default homepage (state.homes).
 
 import * as Base64 from "effect/encoding/Base64";
 import * as Result from "effect/Result";
 import { createHash } from "node:crypto";
 import type { Fetch } from "../deploy/pipeline/cloudflare-api";
 import { hex, randomBytes } from "../shared/bytes";
-import { accountZones, waitsForCertificate, zones } from "./mock-cloudflare-zones";
+import { accountZones, zones } from "./mock-cloudflare-zones";
 import { seedFleet } from "./mock-cloudflare-fleet";
 import { D1Error, d1Query } from "./mock-cloudflare-d1";
 import { sleep } from "../shared/time";
@@ -75,11 +79,17 @@ export interface MockState {
   deletedDatabases: string[];
   /** R2 buckets, by name (documents' files). */
   buckets?: string[];
-  /** Releases (ERGA_VERSION values) whose /api/health answers ok false: a test's broken deploy. */
+  /** Releases (ERGA_VERSION values) whose health row says ok false: a test's broken deploy. */
   unhealthy?: string[];
+  /** Releases whose scheduled run writes no health row: a test's release that fails as it starts. */
+  silent?: string[];
+  /** Each Worker's Cron Triggers (PUT .../schedules). */
+  schedules: Record<string, string[]>;
+  /** Each database's health row, as the server's scheduled run last wrote it (runScheduled). */
+  health: Record<string, { at: number; version: string | null; ok: number; checks: string }>;
   /** The next call of this step fails once (a 500), as mock-fail-<step> does for every call. */
   failNext: string | null;
-  /** The Workers whose deploy made their default homepage (POST /api/deploys/home), by name. */
+  /** The Workers whose scheduled run made their default homepage, by name. */
   homes?: string[];
 }
 
@@ -124,8 +134,6 @@ export function mockCloudflare(
     singleAssetUploads?: boolean;
     fleet?: boolean;
     onUpload?: (script: string, metadata: Record<string, any>) => void;
-    /** A Worker's own answer, before the mock's (the tests route /api/deploys/... to the servers they run). */
-    sites?: (req: Request, script: string) => Promise<Response | null> | Response | null;
     /** How long a new custom domain waits for its certificate before it answers (0: at once). */
     certMs?: number;
   } = {}
@@ -155,6 +163,8 @@ export function mockCloudflare(
     deployments: {},
     deletedDatabases: [],
     failNext: null,
+    schedules: {},
+    health: {},
   };
   // Secrets' values never go out with the state: only the tests read them, in this process.
   Object.defineProperty(state, "secrets", { value: {}, enumerable: false, writable: true });
@@ -243,6 +253,14 @@ export function mockCloudflare(
         const db = q && state.databases.find((d) => d.uuid == q[1]);
         if (m == "POST" && db) {
           const query = (await body()) as { sql: string; params?: unknown[] } | { batch: { sql: string; params?: unknown[] }[] };
+          // The server's health row: its scheduled run wrote it within the last minute.
+          if ("sql" in query && /^SELECT at, version, ok, checks FROM health\b/.test(query.sql)) {
+            if (!db.tables.includes("health")) return fail(400, 7500, "no such table: health: SQLITE_ERROR");
+            runScheduled(state, db.uuid);
+            return ok([
+              { success: true, results: state.health[db.uuid] ? [state.health[db.uuid]] : [], meta: { served_by_primary: true } },
+            ]);
+          }
           // A batch is all or nothing: a statement that fails puts the database back as it was.
           const was = { rows: db.rows && [...db.rows], tables: [...db.tables], migrations: [...db.migrations] };
           try {
@@ -357,6 +375,16 @@ export function mockCloudflare(
         state.domains = state.domains.filter((d) => d.service != r![1]);
         return ok(null);
       }
+      if ((r = /^\/workers\/scripts\/([^/]+)\/schedules$/.exec(rest))) {
+        if (!state.scripts[r[1]]) return fail(404, 10007, "This Worker does not exist on your account.");
+        if (m == "PUT") {
+          const list = await body();
+          if (!Array.isArray(list) || list.some((x) => typeof x?.cron != "string"))
+            return fail(400, 10021, "schedules must be a list of { cron }");
+          state.schedules[r[1]] = list.map((x) => x.cron);
+        }
+        if (m == "GET" || m == "PUT") return ok({ schedules: (state.schedules[r[1]] ?? []).map((cron) => ({ cron })) });
+      }
       if (m == "POST" && (r = /^\/workers\/scripts\/([^/]+)\/subdomain$/.exec(rest))) {
         if (!state.scripts[r[1]]) return fail(404, 10007, "script not found");
         state.scripts[r[1]].workersDev = !!(await body()).enabled;
@@ -388,52 +416,6 @@ export function mockCloudflare(
     return fail(404, 7003, `No route for that URI (${m} ${path})`);
   }
 
-  /** A deployed server: it answers, as the real one would where the pipeline needs it. */
-  async function site(req: Request, url: URL): Promise<Response | null> {
-    const host = url.hostname;
-    const script = Object.entries(state.scripts).find(([name, s]) =>
-      (s.workersDev && state.subdomain && host == `${name}.${state.subdomain}.workers.dev`) || state.domains.some((d) => d.hostname == host && d.service == name));
-    if (!script || script[0].endsWith("-pages")) return null;
-    // Before its certificate: no TLS, so no answer at all.
-    if (waitsForCertificate(state, host)) throw new TypeError(`fetch failed: ${host} has no certificate yet`);
-    const [name, s] = script;
-    const own = await opts.sites?.(req, name);
-    if (own) return own;
-    const text = (n: string) => (s.metadata.bindings ?? []).find((b: any) => b.name == n && b.type == "plain_text")?.text as string | undefined;
-    // Sign-in sends a person to GitHub with the Worker's app, as the real server does.
-    if (url.pathname == "/auth/github")
-      return Response.redirect(
-        `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(text("GITHUB_CLIENT_ID") ?? "")}&redirect_uri=${encodeURIComponent(`https://${host}/auth/github/callback`)}`,
-        302
-      );
-    if (url.pathname == "/logo.png") return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "Content-Type": "image/png" } });
-    if (url.pathname == "/api/deploys/version") return Response.json({ version: text("ERGA_VERSION") ?? null });
-    // The default homepage: made the first time a deploy asks, there from then on.
-    if (url.pathname == "/api/deploys/home" && req.method == "POST") {
-      const homes = (state.homes ??= []);
-      if (homes.includes(name)) return Response.json({ home: "there" });
-      homes.push(name);
-      return Response.json({ home: "made" });
-    }
-    // The app's health check: healthy, unless a test says this release isn't (state.unhealthy).
-    if (url.pathname == "/api/health") {
-      const version = text("ERGA_VERSION") ?? null;
-      const bad = !!version && (state.unhealthy ?? []).includes(version);
-      return Response.json(
-        {
-          ok: !bad,
-          version,
-          checks: {
-            db: { ok: true, ms: 1 },
-            documents: bad ? { ok: false, error: "a document didn't open (the mock says this release is unhealthy)" } : { ok: true, ms: 2 },
-          },
-        },
-        { status: bad ? 503 : 200 }
-      );
-    }
-    return new Response("Not found", { status: 404 });
-  }
-
   const fetch: Fetch = async (input, init) => {
     const req = new Request(input, init);
     const url = new URL(req.url);
@@ -446,7 +428,7 @@ export function mockCloudflare(
       if (!upload && !token.startsWith("mock-")) return fail(401, 1000, "Invalid API Token");
       return api(req, path, upload ? subFor ?? "" : token);
     }
-    return (await site(req, url)) ?? new Response("This mock doesn't know that address", { status: 502 });
+    return new Response(`This mock is Cloudflare's API only: nothing answers at ${url.host}`, { status: 502 });
   };
   return { fetch, state };
 }
@@ -458,6 +440,33 @@ export function deployVersion(state: MockState, name: string, script: MockState[
   (state.deployments[name] ??= []).unshift({ id: uuid(), created_on: new Date().toISOString(), strategy: "percentage", versions: [{ version_id: id, percentage: 100 }] });
   return id;
 }
+/**
+ * The scheduled work of the Worker that binds the database `db` as DB, when it has a Cron Trigger: as the real server
+ * each minute (server/health.ts, tick), the health row of the release that serves now, and the first time the default
+ * homepage.
+ */
+export function runScheduled(state: MockState, db: string) {
+  const bindings = (name: string) =>
+    (state.scripts[name].metadata.bindings ?? []) as { name: string; type: string; text?: string; database_id?: string }[];
+  const worker = Object.keys(state.scripts).find(
+    (name) => state.schedules[name]?.length && bindings(name).some((b) => b.type == "d1" && b.name == "DB" && b.database_id == db)
+  );
+  if (!worker) return;
+  const version = bindings(worker).find((b) => b.name == "ERGA_VERSION" && b.type == "plain_text")?.text ?? null;
+  if (version && state.silent?.includes(version)) return;
+  const bad = !!version && !!state.unhealthy?.includes(version);
+  state.health[db] = {
+    at: Date.now(),
+    version,
+    ok: bad ? 0 : 1,
+    checks: JSON.stringify({
+      db: { ok: true, ms: 1 },
+      documents: bad ? { ok: false, error: "a document didn't open (the mock says this release is unhealthy)" } : { ok: true, ms: 2 },
+    }),
+  };
+  if (!(state.homes ??= []).includes(worker)) state.homes.push(worker);
+}
+
 /** A made-up id in Cloudflare's shape. */
 function uuid(): string {
   const h = (n: number) => hex(randomBytes(n));

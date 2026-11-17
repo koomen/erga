@@ -1,13 +1,10 @@
-// What `bun erga` reads: git (the checkout's view of GitHub), and each registered instance's GET /api/health. What an
-// instance runs comes from its platform (running.ts). Each call says what it saw; nothing here decides (flow.ts).
+// What `bun erga` reads of git (the checkout's view of GitHub). What an instance runs, and its health, come from its
+// platform (running.ts). Each call says what it saw; nothing here decides (flow.ts).
 
 import { type Config, type Entry, remoteOf, repoName } from "./config";
 import { type Commit, type Instance, PROTECTED, type State, stateOf } from "./flow";
 import type { Ask } from "./running";
 import { git, ROOT, sh } from "../root";
-
-/** fetch, or a test's stand-in for an instance. */
-export type Site = (url: string, init?: RequestInit) => Promise<Response>;
 
 /** The GitHub repository of `origin` (owner/name), or null. */
 export const repoOf = (): string | null => {
@@ -195,13 +192,6 @@ export const tagsOf = () =>
       const [name, sha] = l.split("\x1f");
       return { name, sha };
     });
-
-/** Whether the instance at `origin` answers GET /api/health with ok, in 8 seconds. Null: no answer. */
-export const healthOf = (origin: string, site: Site): Promise<boolean | null> =>
-  site(`${origin}/api/health`, { signal: AbortSignal.timeout(8000), headers: { "Cache-Control": "no-cache" } }).then(
-    async (r) => r.status == 200 && ((await r.json().catch(() => null)) as { ok?: unknown } | null)?.ok === true,
-    () => null
-  );
 
 /**
  * How many commits of the branch that `e` tracks are after `version`, the commit it runs, as the clone last saw the

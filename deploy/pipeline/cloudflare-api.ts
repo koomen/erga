@@ -13,7 +13,7 @@ export class DeployError extends Schema.TaggedError<DeployError>()("DeployError"
   status: Schema.Number.pipe(Schema.withConstructorDefault(Effect.succeed(0))),
 }) {}
 /**
- * The release went up and answers its version, but its health check fails (the live step): what a rollback undoes by
+ * The release went up, but its own health row says that it fails, or it wrote none (the live step): what a rollback undoes by
  * itself. A DeployError still, so whatever shows a refusal shows this one too.
  */
 export class Unhealthy extends DeployError {

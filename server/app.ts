@@ -21,8 +21,6 @@
 //   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
 //   /auth/domain-pass          a custom domain's sign-in, through here (server/identity/domain-pass.ts)
-//   /api/deploys/home          the deploy makes the default homepage (/_home) and publishes it, when the server has
-//                              none (documents/landing.ts)
 //   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent; /llms.txt points agents to /mcp
 //   /.well-known/oauth-..., /oauth/...
 //                              MCP's sign-in: an agent's app gets a token through its person's browser (server/identity/mcp-oauth.ts)
@@ -58,7 +56,7 @@ import { adminGate, isAdminPath } from "./admin/index.ts";
 import { agentApi, isAgentPath } from "../agents/person/routes.ts";
 import { DOMAIN_LLM_PATH, domainLlmApi, isPageLlmPath, pageLlmApi } from "../agents/page-llm.ts";
 import { serverApi } from "./api.ts";
-import { documentRoutes, ergaAddress, isPagesSite, makeHomeRoute, workerHere } from "./documents/index.ts";
+import { documentRoutes, ergaAddress, isPagesSite, workerHere } from "./documents/index.ts";
 import { domainOf, ERGA, LIVE_FILES, liveDoc, nothing, serveDomain, serveLiveFile, serveRoot, serveSitePath } from "./sites/index.ts";
 import {
   chooseSignIn,
@@ -98,7 +96,7 @@ import { whoOf } from "./platform.ts";
 import { withSecurity } from "./security.ts";
 import { HttpServerResponse } from "effect/http";
 import { call, fromWeb, platform, redirect, text, toWeb, webRequest, type Needs, type Route } from "./http.ts";
-import { DEV, PIPELINE, routeAt, routeFor, SIGN_IN, type RouteRow } from "../shared/routes.ts";
+import { DEV, routeAt, routeFor, SIGN_IN, type RouteRow } from "../shared/routes.ts";
 
 /** The routes that live outside the app (on Cloudflare, or in the dev server): the answer, or null for a path that isn't theirs. */
 export type Outside = (url: URL) => Effect.Effect<HttpServerResponse.HttpServerResponse | null, never, Needs>;
@@ -197,15 +195,6 @@ export const ROUTES: readonly RouteRow<Route>[] = [
     ...SIGN,
   },
   { method: "GET", path: "/auth/domain-pass", run: domainPass, action: "Sign in on a custom domain, through this one", ...SIGN },
-  // Each deploy asks, once its release answers: {home: "made" | "there" | "none"}. Asked again, it does nothing.
-  {
-    method: "POST",
-    path: "/api/deploys/home",
-    run: makeHomeRoute,
-    action: "The deploy makes the default homepage from the release's files and publishes it, when the server has none",
-    domain: "none",
-    exempt: PIPELINE,
-  },
   // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
   {
     method: "GET",

@@ -74,7 +74,11 @@ export async function putPrograms(aws: Aws, bucket: string, log: (l: string) => 
   }
 }
 
-/** Runs a shell script on the machine (Systems Manager's Run Command), and waits: its output. Throws with its error output. */
+/**
+ * Runs a shell script on the machine (Systems Manager's Run Command), and waits: its output. Throws with its error
+ * output. It asks for the end after a quarter of a second, then less often (3 seconds at most): a short command, as a
+ * health check, ends in about a second.
+ */
 export async function onMachine(aws: Aws, machine: string, script: string, timeoutS = 900): Promise<string> {
   const { Command } = await aws<{ Command: { CommandId: string } }>(
     "ssm",
@@ -88,8 +92,8 @@ export async function onMachine(aws: Aws, machine: string, script: string, timeo
     "--parameters",
     JSON.stringify({ commands: [script], executionTimeout: [String(timeoutS)] })
   );
-  for (;;) {
-    await Bun.sleep(3000);
+  for (let wait = 250; ; wait = Math.min(3000, wait * 2)) {
+    await Bun.sleep(wait);
     const r = await aws<{ Status: string; StandardOutputContent: string; StandardErrorContent: string }>(
       "ssm",
       "get-command-invocation",
@@ -195,8 +199,11 @@ echo "celld $(/usr/local/bin/celld --version | head -1); $(curl -fsS http://${CH
  * first release goes the other way, the Worker and then the migrations. The secrets go into
  * the settings on the machine only, never into the bucket's release. The machine adds the version to its list of
  * releases (rollback reads it). Trap: the machine reads the release from the bucket on every deploy and keeps no copy:
- * a deploy again of the same version carries other settings (the entry's vars, in its wrangler.json). Once it answers, the script asks it for the default homepage (the server makes it when
- * it has none: server/documents/landing.ts). `first`: SQL to run after it answers (setup's first admin).
+ * a deploy again of the same version carries other settings (the entry's vars, in its wrangler.json). The script waits, for
+ * three minutes at most, until the release answers its own health check, healthy, on the loopback (GET /api/health: its
+ * version, the database, a document): a release that does not is an error, and the caller loads the release before.
+ * The release makes the default homepage itself, in its scheduled run (its Cron Trigger, in the project's
+ * wrangler.json: server/health.ts). `first`: SQL to run after it answers (setup's first admin).
  */
 export function deployScript(o: { bucket: string; region: string; stack: string; version: string; first?: string }): string {
   return `set -euo pipefail
@@ -218,15 +225,21 @@ else
   for i in $(seq 1 60); do aws s3 ls ${fleet(o.bucket)}/nodes/ 2>/dev/null | grep -q . && break; sleep 2; done
   migrate
 fi
-for i in $(seq 1 90); do curl -sS localhost:${CELLD_PORT}/api/deploys/version 2>/dev/null | grep -q '"version":"${o.version}"' && break; sleep 2; done
-curl -fsS localhost:${CELLD_PORT}/api/deploys/version | grep -q '"version":"${o.version}"' || { echo "release ${o.version} doesn't answer" >&2; exit 1; }
-curl -sS -X POST localhost:${CELLD_PORT}/api/deploys/home >/dev/null 2>&1 || true
+health() { curl -sS -m 10 localhost:${CELLD_PORT}/api/health 2>/dev/null; }
+healthy() { health | python3 -c 'import json, sys
+h = json.load(sys.stdin)
+sys.exit(0 if h.get("ok") is True and h.get("version") == "${o.version}" else 1)' 2>/dev/null; }
+for i in $(seq 1 90); do healthy && break; sleep 2; done
+healthy || { echo "release ${o.version} is not healthy: $(health | head -c 400)" >&2; exit 1; }
 ${o.first ? `celld d1 execute erga . --bucket ${fleet(o.bucket)} --command "${o.first.replace(/"/g, '\\"')}" 2>&1 | quiet | tail -1` : ""}
 mkdir -p /var/lib/erga && touch /var/lib/erga/deployed && sed -i '/^${o.version}$/d' /var/lib/erga/deployed
 echo '${o.version}' >> /var/lib/erga/deployed
 echo "runs ${o.version}"
 `;
 }
+
+/** The server's own health report, as it answers the machine on the loopback (GET /api/health), in 10 seconds: one line of JSON, or nothing. */
+export const healthScript = () => `curl -sS -m 10 localhost:${CELLD_PORT}/api/health 2>/dev/null || true`;
 
 /** One release's deploy facts (ERGA_DEPLOY in its settings, as the bucket has them), as one line of JSON. */
 export const factsScript = (o: { bucket: string; region: string; version: string }) =>

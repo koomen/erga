@@ -88,8 +88,11 @@ authority, and no Caddy.
 ## Deploy and rollback
 
 - `bun erga deploy <commit> <name>`: the tests, the build, the release as a celld project into the bucket
-  (`releases/<version>.tgz`), then on the machine: the migrations, `celld deploy`, and a wait until the new version
-  answers. A release that doesn't answer goes back to the one before it. Then the health check through CloudFront.
+  (`releases/<version>.tgz`), then on the machine: the migrations, `celld deploy`, and a wait (3 minutes at most) until
+  the new release answers its own health check on the loopback, healthy. A release that doesn't goes back to the one
+  before it. Nothing asks the server from outside: `bun erga status` reads its health through Systems Manager, as the
+  machine sees it on the loopback. The server makes its default homepage itself, in its scheduled run (a Cron Trigger
+  in the project's wrangler.json, each minute; celld's Cron Triggers are not tested on a real machine yet).
 - `bun erga rollback <name>`: the release before the one that runs, from the bucket. The database stays as it is.
 - The secrets go into the settings on the machine only, at each deploy: the bucket's release holds none.
 

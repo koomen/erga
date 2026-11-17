@@ -122,6 +122,19 @@ export async function zones(state: MockState, a: Answers, m: string, path: strin
       return ok(d);
     }
   }
+  // The zone's certificates: one for the zone and its first level, and one for each custom domain (pending until it is ready).
+  if (rest == "/ssl/certificate_packs" && m == "GET")
+    return ok([
+      { id: a.randomHex(16), type: "universal", hosts: [z.name, `*.${z.name}`], status: "active" },
+      ...state.domains
+        .filter((d) => d.zone_id == zone)
+        .map((d) => ({
+          id: domainId(d.hostname),
+          type: "advanced",
+          hosts: [d.hostname],
+          status: waitsForCertificate(state, d.hostname) ? "pending_validation" : "active",
+        })),
+    ]);
   if (rest == "/workers/routes") {
     const list = (state.routes[zone] ??= []);
     if (m == "GET") return ok(list);

@@ -18,6 +18,7 @@ import type { Answers } from "../own/plan";
 import { firstRows, pagesOf, sso, stackOf, varsOf } from "../own/plan";
 import { DIR, githubIdOf, loadSecrets } from "../own/store";
 import { type Aws, awsCli, whoAmI, type Where } from "./cli";
+import { factsOnAws, healthOnAws, liveOnAws } from "./deploy";
 import { provisionScript, putPrograms, onMachine, sqlScript, untilReachable } from "./machine";
 import {
   applyStack,
@@ -105,7 +106,7 @@ function profiles(): Seen["choices"] {
 }
 
 /** What the flow decides from, on AWS: the profiles, the login, the zones, the stack and the server. */
-export async function observeAws(dir: string, a: Answers, seen: Seen, net: Fetch): Promise<Seen> {
+export async function observeAws(dir: string, a: Answers, seen: Seen): Promise<Seen> {
   seen.choices = profiles();
   if (!a.profile) return seen;
   seen.region = configured("region", a.profile);
@@ -136,11 +137,23 @@ export async function observeAws(dir: string, a: Answers, seen: Seen, net: Fetch
   seen.app = sso(a)
     ? await secretThere(aws, oidcSecretName(name))
     : !!githubIdOf(a.host, dir) && (!!loadSecrets(dir)[a.host]?.GITHUB_CLIENT_SECRET || seen.held.includes("GITHUB_CLIENT_SECRET"));
-  if (st.outputs.Machine) seen.live = await (await import("../own/facts")).liveOf(net, a, githubIdOf(a.host, dir));
-  if (seen.live?.healthy)
-    seen.admin = !!(await adminOnAws(aws, { machine: st.outputs.Machine, bucket: st.outputs.Bucket, region: where.region }).catch(
-      () => null
-    ));
+  if (!st.outputs.Machine) return seen;
+  // The server as AWS shows it: the release on record, the machine's own health check, and the release's settings.
+  const machine = { machine: st.outputs.Machine, bucket: st.outputs.Bucket, region: where.region };
+  const version = await liveOnAws(aws, name).catch(() => null);
+  if (!version) return { ...seen, live: { version: null, healthy: false, signIn: null } };
+  const [h, facts] = await Promise.all([
+    healthOnAws(aws, machine.machine).catch(() => null),
+    factsOnAws(aws, name, machine).catch(() => null),
+  ]);
+  const vars = (facts?.facts as { vars?: Record<string, string> } | null)?.vars;
+  const { signInOf } = await import("../own/facts");
+  seen.live = {
+    version,
+    healthy: !!h?.ok && h.version == version,
+    signIn: vars ? signInOf(a, githubIdOf(a.host, dir) || undefined, vars, st.outputs.Proxy) : null,
+  };
+  if (seen.live.healthy) seen.admin = !!(await adminOnAws(aws, machine).catch(() => null));
   return seen;
 }
 

@@ -62,7 +62,7 @@ export interface Env {
    */
   PAGES_DOMAIN?: string;
   PAGES_HOST?: string;
-  /** The release this server runs (the commit, 12 characters; the pipeline sets it). GET /api/deploys/version answers it. */
+  /** The release this server runs (the commit, 12 characters; the pipeline sets it). Its health report says it (server/health.ts). */
   ERGA_VERSION?: string;
   /**
    * The facts a deploy from a machine needs to deploy this server again, as JSON (the pipeline sets it:

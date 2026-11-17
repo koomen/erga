@@ -33,7 +33,7 @@ export interface Seen {
   stack: { status: string | null; outputs: Record<string, string>; resources: string[] } | null;
   /** The app step's secret is there: the GitHub App's, or (single sign-on on AWS) the client's in Secrets Manager. */
   app: boolean;
-  /** The server as the world sees it: the commit it answers with, its health, and whether a browser gets to the sign-in. */
+  /** The server as its platform shows it: the release that serves, its health, and whether its settings are the answers' sign-in. */
   live: { version: string | null; healthy: boolean; signIn: "ok" | { bad: string } | null } | null;
   /** The secrets the server holds already (their names). */
   held: string[];

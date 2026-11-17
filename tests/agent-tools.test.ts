@@ -10,6 +10,7 @@ import { agentTools, allTools, documentTools, documentToolsHere, KINDS, opsOf, r
 import { type Caller, OPERATIONS, OperationError } from "../server/operations/index.ts";
 import { VIA } from "../shared/attribution";
 import type { Platform } from "../server/platform";
+import { makeHome } from "../server/documents/index.ts";
 import { newDocMenu, templateById } from "../server/pages/templates.ts";
 import { person, runTool as overHttp, server, signedOut } from "./helpers/app";
 import { memory } from "./helpers/memory-sql";
@@ -356,8 +357,8 @@ test("list_documents' all is an admin's: someone else is refused", async () => {
 
 test("an admin changes the page's model on the default homepage (/_home), which has no owner", async () => {
   const s = server();
-  // (The deploy makes the default homepage.)
-  await s.fetch("/api/deploys/home", { method: "POST" });
+  // (The server's scheduled run makes the default homepage.)
+  await makeHome(s.platform);
   const on = async () => ((await overHttp(s, "ls", { document: "/_home" })).result?.access as { pageLlm?: { on: boolean } })?.pageLlm?.on;
   const was = await on();
   expect(was).toBe(false);

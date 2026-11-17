@@ -2,6 +2,7 @@
 // of the site's own has it, the editor has its own, a document's files have none. The whole app, in memory.
 
 import { expect, test } from "bun:test";
+import { makeHome } from "../server/documents/index.ts";
 import { server, signedOut, type Server } from "./helpers/app";
 import { until } from "./helpers/until";
 
@@ -46,9 +47,9 @@ test("a document's own files have no corner; a published page has one, in its co
   const s = server();
   const { id } = await newDoc(s);
   expect(await (await s.fetch(`/d/${id}/doc/index.html`)).text()).not.toContain("data-erga-account");
-  // The default homepage, which the deploy makes and publishes (signed out: someone signed in goes to /documents): the
+  // The default homepage, which the server's scheduled run makes and publishes (signed out: someone signed in goes to /documents): the
   // page itself, served from its publish, whose one corner is in its controls.
-  await s.fetch("/api/deploys/home", { method: "POST" });
+  await makeHome(s.platform);
   await until(async () => (await s.platform.site("").status()).state == "published");
   const front = await (await s.fetch("/", { headers: signedOut() })).text();
   expect(front).toContain("<h1>Erga</h1>");
@@ -67,7 +68,7 @@ test("someone who isn't an admin has no Admin, and a local tab's ?user= stays on
 
 test("signed out, /documents asks you to sign in first, and the published page's corner offers it", async () => {
   const s = server();
-  await s.fetch("/api/deploys/home", { method: "POST" });
+  await makeHome(s.platform);
   await until(async () => (await s.platform.site("").status()).state == "published");
   const out = await s.fetch("/auth/logout", { method: "POST", headers: { Origin: s.root } });
   const cookie = out.headers

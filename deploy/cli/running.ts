@@ -1,20 +1,20 @@
-// What an instance runs now, read from its platform and never from the instance itself: on Cloudflare, the Worker's
-// deployment and that version's bindings (Cloudflare's API, with this machine's credential); on AWS, the parameter that
-// each deploy and rollback writes (the AWS CLI). `bun erga status`, the ops page, auto-deploy and `bun erga promote`
-// read through one reader (instanceReader); `bun erga register` finds an instance that has no entry yet the same way
-// (findInstance). The authority is the platform's login, which a deploy needs already: no sign-in to the instance, no
-// token. The health is still the instance's own answer (observe.ts, healthOf).
+// What an instance runs now, and its health, read from its platform and never from the instance itself. On Cloudflare:
+// the Worker's deployment and that version's bindings, and the health row that the server writes into its database
+// each minute (Cloudflare's API, with this machine's credential). On AWS: the parameter that each deploy and rollback
+// writes, and the machine's own check of its server on the loopback (the AWS CLI: Systems Manager). `bun erga status`,
+// the ops page, auto-deploy and `bun erga promote` read through one reader (instanceReader); `bun erga register` finds
+// an instance that has no entry yet the same way (findInstance). The authority is the platform's login, which a deploy
+// needs already: no sign-in to the instance, no token, and no request to it.
 
 import * as Schema from "effect/Schema";
 import type { Aws, Where } from "../aws/cli";
-import { liveDeployment, liveRelease } from "../pipeline/account";
+import { healthRow, liveDeployment, liveRelease, readHealth } from "../pipeline/account";
 import { Cloudflare, type Fetch } from "../pipeline/cloudflare-api";
-import { AwsFacts, CloudflareFacts, type Entry, entryOrigin, isAws } from "./config";
-import { mocked, netOf } from "./deploy";
+import { AwsFacts, CloudflareFacts, type Entry, isAws } from "./config";
+import { netOf } from "./deploy";
 import type { Answer } from "./flow";
-import { healthOf, type Site } from "./observe";
 
-/** Asks one registered instance's platform what the instance runs, and the instance for its health. */
+/** Asks one registered instance's platform what the instance runs, and for its health. */
 export type Ask = (e: Entry) => Promise<Answer>;
 
 export interface ReaderOptions {
@@ -23,8 +23,6 @@ export interface ReaderOptions {
   token?: string;
   /** The AWS CLI for a profile and a region (deploy/aws/cli.ts, awsCli), or a fake in a test. */
   aws?: (where: Where) => Aws;
-  /** The instances, for their health: fetch, or a test's stand-in. */
-  site?: Site;
 }
 
 /** How long a reader keeps one Cloudflare credential: the cf CLI's login lasts an hour, and reading it starts a process. */
@@ -33,46 +31,53 @@ const CREDENTIAL_MS = 5 * 60_000;
 /**
  * A reader of the registered instances. It keeps what a long run (the ops page) asks again and again: the Cloudflare
  * credential, for some minutes, and each Worker's release by its deployment, so that an instance whose deployment did
- * not change costs one call of Cloudflare's API.
+ * not change costs two calls of Cloudflare's API: its deployments, and its health row.
  */
 export function instanceReader(o: ReaderOptions = {}): Ask {
-  let client: { made: Promise<{ cf: Cloudflare; net: Fetch }>; at: number } | null = null;
-  const seen = new Map<string, { deployment: string; version: string | null }>();
+  let client: { made: Promise<Cloudflare>; at: number } | null = null;
+  const seen = new Map<string, { deployment: string; version: string | null; database: string | null }>();
   /** One credential for every instance that is asked at the same time. */
   const cloudflare = () => {
     if (!client || Date.now() - client.at > CREDENTIAL_MS)
-      client = { at: Date.now(), made: netOf(o).then(({ net, token }) => ({ cf: new Cloudflare(token, net), net })) };
+      client = { at: Date.now(), made: netOf(o).then(({ net, token }) => new Cloudflare(token, net)) };
     return client.made;
   };
-  // Under ERGA_DEPLOY_MOCK the instances are the mock's too: nothing real is asked.
-  const site: Site = o.site ?? (mocked() ? async (url, init) => (await cloudflare()).net(url, init) : fetch);
-  const running = async (e: Entry): Promise<Pick<Answer, "version" | "error">> => {
+  const ask = async (e: Entry): Promise<Answer> => {
     if (isAws(e)) {
       const { awsCli } = await import("../aws/cli");
-      const { liveOnAws } = await import("../aws/deploy");
-      const version = await liveOnAws((o.aws ?? awsCli)({ profile: e.profile, region: e.aws.region }), e.aws.stack);
-      return version ? { version } : { version: null, error: `no release on record yet: bun erga deploy ${e.host}` };
+      const { healthOnAws, liveOnAws } = await import("../aws/deploy");
+      const aws = (o.aws ?? awsCli)({ profile: e.profile, region: e.aws.region });
+      const [version, h] = await Promise.all([liveOnAws(aws, e.aws.stack), healthOnAws(aws, e.aws.machine)]);
+      const healthy = h ? h.ok && (!version || h.version == version) : null;
+      const health = !h ? "the machine's server gave no health report" : healthy ? undefined : h.why || `it runs ${h.version ?? "?"}`;
+      return {
+        version,
+        healthy,
+        ...(version ? {} : { error: `no release on record yet: bun erga deploy ${e.host}` }),
+        ...(health ? { health } : {}),
+      };
     }
-    const { cf } = await cloudflare();
+    const cf = await cloudflare();
     const live = await liveDeployment(cf, e.account, e.worker);
-    if (!live) return { version: null, error: `Cloudflare has no deployment of the Worker ${e.worker}: bun erga deploy ${e.host}` };
-    const had = seen.get(e.host);
-    if (had?.deployment == live.id) return { version: had.version };
-    const { version } = await liveRelease(cf, e.account, e.worker, live.versionId);
-    seen.set(e.host, { deployment: live.id, version });
-    return { version };
+    if (!live)
+      return { version: null, healthy: null, error: `Cloudflare has no deployment of the Worker ${e.worker}: bun erga deploy ${e.host}` };
+    let release = seen.get(e.host);
+    if (release?.deployment != live.id) {
+      const { version, database } = await liveRelease(cf, e.account, e.worker, live.versionId);
+      release = { deployment: live.id, version, database };
+      seen.set(e.host, release);
+    }
+    const h = release.database
+      ? readHealth(await healthRow(cf, `/accounts/${e.account}`, release.database), release.version, Date.now())
+      : { healthy: null, why: "the Worker binds no database" };
+    return { version: release.version, healthy: h.healthy, ...(h.healthy ? {} : { health: h.why }) };
   };
-  return async (e) => {
-    const [ran, healthy] = await Promise.all([
-      running(e).catch((err: Error) => {
-        // A credential that Cloudflare refused may be an old one: the next call reads the login again.
-        client = null;
-        return { version: null, error: err.message };
-      }),
-      healthOf(entryOrigin(e), site),
-    ]);
-    return { ...ran, healthy };
-  };
+  return (e) =>
+    ask(e).catch((err: Error) => {
+      // A credential that Cloudflare refused may be an old one: the next call reads the login again.
+      client = null;
+      return { version: null, healthy: null, error: err.message };
+    });
 }
 
 /** Where `bun erga register` looks for an instance: Cloudflare (the default), or AWS with the AWS CLI's profile and region. */

@@ -6,11 +6,13 @@
 // the deploy (PAGES_HOST or PAGES_DOMAIN, ERGA_DEPLOY, ...) are plain vars here. celld has no secrets: the machine adds
 // them as vars at its deploy, from Parameter Store (deploy/aws/machine.ts). Browser Rendering (BROWSER) has no celld
 // binding: the deploy sets ERGA_CHROME, a Chrome on the machine. celld's Cache API keeps nothing, so the project binds a
-// KV namespace, EDGE_CACHE, that the Worker's platform uses in its place (cloudflare/kv-cache.ts).
+// KV namespace, EDGE_CACHE, that the Worker's platform uses in its place (cloudflare/kv-cache.ts). The server's
+// scheduled run is a Cron Trigger of the project (celld runs it one time for each minute, across its machines).
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { EACH_MINUTE } from "../pipeline/account.ts";
 import type { Release } from "../pipeline/release-format.ts";
 
 const write = (path: string, bytes: Uint8Array | string) => {
@@ -85,6 +87,8 @@ export async function celldProject(release: Release, vars: Record<string, string
     r2_buckets: r2,
     worker_loaders: loaders,
     kv_namespaces: [{ binding: "EDGE_CACHE", id: "edge-cache" }],
+    // The server's scheduled run, each minute (server/health.ts, tick): on Cloudflare the pipeline sets the same trigger.
+    triggers: { crons: [EACH_MINUTE] },
     vars: { ...own, ...vars },
   };
   writeFileSync(join(project, "wrangler.json"), JSON.stringify(config, null, 2));

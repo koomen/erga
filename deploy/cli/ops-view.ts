@@ -133,7 +133,7 @@ const sha7 = (sha: string) => sha.slice(0, 7);
 function stateOf(a: Answer | undefined): { cls: string; what: string } {
   if (!a) return { cls: "", what: "asking…" };
   if (a.error) return { cls: "bad", what: a.error };
-  if (a.healthy === false) return { cls: "bad", what: `runs ${a.version ?? "?"}, not healthy` };
+  if (a.healthy === false) return { cls: "bad", what: `runs ${a.version ?? "?"}, not healthy${a.health ? `: ${a.health}` : ""}` };
   return { cls: "ok", what: `runs ${a.version ?? "no known commit"}` };
 }
 

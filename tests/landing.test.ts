@@ -1,4 +1,4 @@
-// The default homepage, which the deploy makes (server/documents/landing.ts, makeHome: POST /api/deploys/home): on a
+// The default homepage, which the server's scheduled run makes (server/documents/landing.ts, makeHome; server/health.ts, tick): on a
 // fresh database it is made from the repo's assets/landing/ once, however many ask at once, even from separate
 // isolates (two Directory objects over one database), and published to the Erga domain; asked again, nothing; a deleted
 // one is made again; a later deploy never changes what is published. No request for a page makes it: with nothing
@@ -147,10 +147,10 @@ test("a deleted default homepage is made again; a domain that another document h
   expect(none.size).toBe(0);
 });
 
-// The ones below run on the whole app in memory (tests/helpers/app.ts): over HTTP, as a deploy asks and as people see it.
+// The ones below run on the whole app in memory (tests/helpers/app.ts): the scheduled run's step, and the pages over HTTP, as people see them.
 
-/** The deploy's step, over HTTP: what the server says it did. */
-const deployHome = async (s: Server) => ((await (await s.fetch("/api/deploys/home", { method: "POST" })).json()) as { home: string }).home;
+/** The scheduled run's step: what it did. */
+const deployHome = (s: Server) => makeHome(s.platform);
 /** / as someone signed out gets it: its status and its text. */
 const front = async (s: Server) => {
   const r = await s.fetch("/", { headers: signedOut() });

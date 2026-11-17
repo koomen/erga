@@ -41,7 +41,6 @@ export const STREAM = "the page's live updates (server-sent events)";
 export const SIGN_IN = "signing in: the person in their own browser, before any agent acts for them";
 export const AGENT_SIGN_IN = "an outside agent's sign-in";
 export const DEV = "the dev server's";
-export const PIPELINE = "the deploy pipeline's, server to server";
 export const PAGE_SCRIPT = "the page's own script, as its visitor; an agent has a model of its own";
 
 /** The pattern of a row's path: `<name>` or `:name` is one part, and at the end the rest of the path. */

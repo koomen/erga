@@ -3,12 +3,13 @@
 // (machine.ts, deployScript: the migrations, the Worker, its answer). A release that doesn't answer is rolled back to the
 // one before it. A rollback loads the release before the one that runs; the bucket keeps every release. Each deploy
 // and each rollback writes the release that runs into one plain parameter (liveParam): `bun erga status` reads it
-// there (the AWS CLI), with no command on the machine and no request to the instance.
+// there (the AWS CLI), with no request to the instance. Its health is the machine's own check of its server on the
+// loopback (healthOnAws: Systems Manager).
 
 import type { AwsEntry, AwsFacts } from "../cli/config";
 import type { Release } from "../pipeline/release-format";
 import { type Aws, awsCli } from "./cli";
-import { CHROME_DEVTOOLS, deployedScript, deployScript, factsScript, onMachine, putRelease } from "./machine";
+import { CHROME_DEVTOOLS, deployedScript, deployScript, factsScript, healthScript, onMachine, putRelease } from "./machine";
 import { celldProject } from "./project";
 
 /** An entry's facts, as the release keeps them (ERGA_DEPLOY, in its settings in the bucket): its AWS names and its plain settings. */
@@ -43,6 +44,26 @@ export async function liveOnAws(aws: Aws, stack: string): Promise<string | null>
     throw e;
   });
   return r?.Parameter.Value ?? null;
+}
+
+/**
+ * The health of the instance's server now, as the machine itself sees it: the server's own report on the loopback, read
+ * through Systems Manager (no request from outside). `why`: the checks that failed. Null: the server gave no report.
+ */
+export async function healthOnAws(aws: Aws, machine: string): Promise<{ ok: boolean; version: string | null; why: string } | null> {
+  const out = (await onMachine(aws, machine, healthScript(), 60)).trim();
+  let h: { ok?: unknown; version?: unknown; checks?: Record<string, { ok?: boolean; error?: string }> } | null = null;
+  try {
+    h = JSON.parse(out);
+  } catch {
+    return null;
+  }
+  if (!h || typeof h != "object") return null;
+  const why = Object.entries(h.checks ?? {})
+    .filter(([, c]) => !c.ok)
+    .map(([n, c]) => `${n}: ${c.error ?? "failed"}`)
+    .join("; ");
+  return { ok: h.ok === true, version: typeof h.version == "string" ? h.version : null, why };
 }
 
 /**

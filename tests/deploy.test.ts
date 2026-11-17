@@ -67,7 +67,6 @@ const plan = (over: Partial<Target> = {}): Target => ({
 async function run(token: string, t: Target, mock = mockCloudflare()) {
   const steps: string[] = [];
   const result = await runPipeline(new Cloudflare(token, mock.fetch), release, t, {
-    site: mock.fetch,
     sleep: async () => {},
     waitMs: 1000,
     report: (id, status, detail) => steps.push(`${id}:${status}${detail ? ` ${detail}` : ""}`),

@@ -17,13 +17,15 @@ export interface Commit {
   author?: string;
 }
 
-/** What an instance runs now, as its platform says (running.ts, instanceReader), and its health. */
+/** What an instance runs now, and its health, as its platform says (running.ts, instanceReader). */
 export interface Answer {
   version: string | null;
-  /** Null: no answer. */
+  /** Its own health report, of the release that it runs. Null: none that says so now. */
   healthy: boolean | null;
   /** Why it gave no commit. */
   error?: string;
+  /** Why it is not healthy, or why its health is not known. */
+  health?: string;
 }
 
 /** A registered instance (.erga/config.json), with its answer. */
@@ -203,7 +205,7 @@ export function statusText(s: State, has: (sha: string) => boolean = () => true)
   if (!s.instances.length) out.push("- none: bun erga register <host>");
   for (const i of s.instances)
     out.push(
-      `- ${i.host}: tracks ${i.repo} ${i.branch}; ${i.version ? `runs ${i.version}, ${placeOf(i, has)}` : (i.error ?? "no answer")}; health ${i.healthy == null ? "unknown" : i.healthy ? "ok" : "FAIL"}`
+      `- ${i.host}: tracks ${i.repo} ${i.branch}; ${i.version ? `runs ${i.version}, ${placeOf(i, has)}` : (i.error ?? "no answer")}; health ${i.healthy == null ? "unknown" : i.healthy ? "ok" : "FAIL"}${i.health && !i.healthy ? ` (${i.health})` : ""}`
     );
   out.push("", "Feature branches:");
   if (!s.github) out.push("(GitHub did not answer git ls-remote: the list is as this clone last saw it, deleted branches too.)");

@@ -36,7 +36,7 @@ import { entryOf, isAws, originOf, readConfig } from "../cli/config";
 import { findDatabase } from "../pipeline/account";
 import { fail, pass, ROOT, say } from "../root";
 import { askSecret, githubApp, oidcSecret, openBrowser, openTerminal, tellUser } from "./browser";
-import { checkSignIn, cloudflare, type Connection, observe, site } from "./facts";
+import { cloudflare, type Connection, observe } from "./facts";
 import { adminOn, firstDeploy, secretsFor } from "./first";
 import { checksOf, missing, planText, type Seen, type State, step } from "./flow";
 import { type Answers, noAnswers, parseAnswer, type TextAnswer } from "./plan";
@@ -132,13 +132,12 @@ function login(a: Answers) {
   }
 }
 
-/** The build: the stack (AWS), the first deploy with its secrets, the first rows, and the sign-in's check. */
+/** The build: the stack (AWS), the first deploy with its secrets, and the first rows. The next look sees its health and its sign-in settings. */
 async function build(a: Answers, seen: Seen, o: Run) {
   const print = (line: string) => say(`  ${line.slice(0, 200)}`);
   const github = githubIdOf(a.host) || undefined;
   const started = Date.now();
   try {
-    let net = site as Connection["net"];
     if (a.where == "aws") {
       const { applyStacks, firstDeployAws, writePlan } = await import("../aws/setup");
       await writePlan(DIR, a);
@@ -150,18 +149,13 @@ async function build(a: Answers, seen: Seen, o: Run) {
         outputs,
         github,
         secrets: secretsFor(DIR, a, seen.held),
-        net,
         noTests: o.noTests,
         print,
       });
     } else {
       const c = await connect();
-      net = c.net;
-      await firstDeploy({ dir: DIR, answers: a, seen, github, net, token: c.token, noTests: o.noTests, print });
+      await firstDeploy({ dir: DIR, answers: a, seen, github, net: c.net, token: c.token, noTests: o.noTests, print });
     }
-    print("Check the sign-in...");
-    const check = await checkSignIn(net, a, github);
-    if (check != "ok") throw new Error(`Sign-in does not work yet: ${check ? check.bad : `https://${a.host} did not answer`}.`);
     pass(`Deployed ${a.host} in ${Math.round((Date.now() - started) / 1000)} s.`);
   } catch (e) {
     fail(
@@ -282,7 +276,11 @@ async function setUp(a: Answers, o: Run): Promise<"done" | "dry" | "wait"> {
         break;
       }
       case "build":
-        if (again) return fail(`${a.host} is deployed, but setup does not see it healthy yet.`, o.again);
+        if (again)
+          return fail(
+            `${a.host} is deployed, but setup does not see it healthy yet${seen.live?.signIn && seen.live.signIn != "ok" ? `: ${seen.live.signIn.bad}` : ""}.`,
+            o.again
+          );
         await build(a, seen, o);
         break;
       case "update":

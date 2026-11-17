@@ -6,12 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Aws } from "../deploy/aws/cli";
 import { liveOnAws, liveParam } from "../deploy/aws/deploy";
-import { deployScript, factsScript, provisionScript, putObject, sqlScript } from "../deploy/aws/machine";
+import { deployScript, factsScript, healthScript, provisionScript, putObject, sqlScript } from "../deploy/aws/machine";
 import { ADMIN_SQL, adminIn, awsEntry, discoverOidc, firstSql } from "../deploy/aws/setup";
 import { changeSetKind } from "../deploy/aws/stack";
 import { type AwsShape, certificatesTemplate, NAT_USER_DATA, paramPath, stackTemplate, TOKEN_PATHS } from "../deploy/aws/template";
 import { instanceReader } from "../deploy/cli/running";
-import { proxySignInCheck } from "../deploy/own/facts";
+import { signInOf } from "../deploy/own/facts";
 import { noAnswers, pagesProblem } from "../deploy/own/plan";
 
 const shape: AwsShape = {
@@ -163,7 +163,7 @@ test("a proxy in front: the sign-in on the app's address, and no CloudFront", ()
   // Its health check asks the machine itself, a path with no sign-in.
   expect(r.Targets.Properties).toMatchObject({
     Port: 8080,
-    HealthCheckPath: "/api/deploys/version",
+    HealthCheckPath: "/api/health",
     Targets: [{ Id: { Ref: "Machine" } }],
   });
   // One certificate, in this stack and region: the app's name and the pages' wildcard. The names point at the proxy.
@@ -204,14 +204,15 @@ test("what passes the proxy without the sign-in: the pages by their token, the t
   const by = Object.fromEntries(open.map((r) => [r.name, r.Conditions.map(valuesOf)]));
   // A document's own address: its files by their token and the offline worker, never the app's pages.
   expect(by.PagesRule).toEqual([["*.pages.erga.example.com"], ["/t/*", "/erga-sw.js", "/erga-clear"]]);
-  // The app's address: MCP and its OAuth for the client, the operations, an agent's token request, the deploy's checks.
+  // The app's address: MCP and its OAuth for the client, the operations, an agent's token request.
   const tokens = open.filter((r) => r.name.startsWith("TokenRule"));
   expect(tokens.every((r) => r.Conditions[0].HostHeaderConfig.Values[0] == "erga.example.com")).toBe(true);
   const paths = tokens.flatMap((r) => r.Conditions[1].PathPatternConfig.Values);
   expect(paths).toEqual(TOKEN_PATHS.flat());
-  for (const p of ["/mcp", "/oauth/token", "/oauth/register", "/api/tools/*", "/api/auth/poll", "/api/health"]) expect(paths).toContain(p);
-  // The CLI reads what an instance runs from AWS: no path of its own passes the proxy.
-  expect(paths).not.toContain("/api/ops");
+  for (const p of ["/mcp", "/oauth/token", "/oauth/register", "/api/tools/*", "/api/auth/poll"]) expect(paths).toContain(p);
+  // The CLI and the deploy read an instance from AWS (the load balancer's health check goes to the machine itself, past
+  // these rules): no path of theirs passes the proxy.
+  expect(paths.filter((p) => /^\/api\/(ops|health|deploys)\b/.test(p))).toEqual([]);
   // Where a user approves an agent, signs in or is an admin stays behind the sign-in.
   expect(paths.filter((p) => /^\/(oauth\/authorize|tokens|auth|admin)\b/.test(p) || p == "/*")).toEqual([]);
   expect(by.KeyRule).toEqual([["erga.example.com"], ["/d/*/api/*"], [{ Key: "key", Value: "*" }]]);
@@ -263,7 +264,7 @@ test("the organization's sign-in on AWS: the server learns its proxy from the st
   expect(sql).not.toContain("INSERT INTO people");
 });
 
-test("the sign-in's endpoints come from its issuer, and the check sees the proxy send a browser there", async () => {
+test("the sign-in's endpoints come from its issuer; setup's check of the sign-in reads the deployed settings, not the server", async () => {
   const document = {
     issuer: oidc.issuer,
     authorization_endpoint: oidc.authorize,
@@ -283,24 +284,20 @@ test("the sign-in's endpoints come from its issuer, and the check sees the proxy
   );
   await expect(discoverOidc("https://none.example.com", issuer(document))).rejects.toThrow("didn't answer");
 
-  const proxy = (location: string) => (async () => new Response("", { status: 302, headers: { location } })) as unknown as typeof fetch;
-  const to = (client: string, back: string) =>
-    `${oidc.authorize}?client_id=${client}&redirect_uri=${encodeURIComponent(back)}&response_type=code`;
-  const alb = { clientId: "client-1", callback: "https://erga.example.com/oauth2/idpresponse" };
-  const check = (location: string, expects: { to?: string; clientId?: string; callback?: string } = alb) =>
-    proxySignInCheck(proxy(location), "erga.example.com", expects);
-  expect(await check(to("client-1", "https://erga.example.com/oauth2/idpresponse"))).toBe("ok");
-  expect(await check(to("client-2", "https://erga.example.com/oauth2/idpresponse"))).toMatchObject({
-    bad: expect.stringContaining("client-2"),
+  // The settings that the release runs with must be the answers' sign-in: the proxy of the stack, for this client.
+  const signer = "arn:aws:elasticloadbalancing:us-west-2:1:loadbalancer/app/x/1";
+  const deployed = awsEntry(viaProxy, "1", { AppHost: "erga.example.com", Proxy: signer }, undefined).vars;
+  expect(signInOf(viaProxy, undefined, deployed, signer)).toBe("ok");
+  expect(signInOf({ ...viaProxy, client: "client-2" }, undefined, deployed, signer)).toMatchObject({
+    bad: expect.stringContaining("PROXY_SIGN_IN"),
   });
-  expect(await check("https://erga.example.com/auth/github")).toMatchObject({
-    bad: expect.stringContaining("not to the sign-in at the proxy"),
-  });
-  // Cloudflare Access sends a browser to the team's address: another team's is refused.
-  const access = { to: "example.cloudflareaccess.com" };
-  expect(await check("https://example.cloudflareaccess.com/cdn-cgi/access/login/erga.example.com?kid=1", access)).toBe("ok");
-  expect(await check("https://other.cloudflareaccess.com/cdn-cgi/access/login/erga.example.com", access)).toMatchObject({
-    bad: expect.stringContaining("not to example.cloudflareaccess.com"),
+  // A release from before the stack had its proxy runs with no proxy at all.
+  expect(signInOf(viaProxy, undefined, { PROXY_SIGN_IN: "{}" }, signer)).toMatchObject({ bad: expect.stringContaining("deploy again") });
+  // With a GitHub App: its client id.
+  const github = { ...aws, pages: "example-pages.com" };
+  expect(signInOf(github, "Iv1.ada", { GITHUB_CLIENT_ID: "Iv1.ada" })).toBe("ok");
+  expect(signInOf(github, "Iv1.ada", { GITHUB_CLIENT_ID: "Iv1.other" })).toEqual({
+    bad: "it signs in with the app Iv1.other, not yours (Iv1.ada): deploy again",
   });
 });
 
@@ -367,7 +364,8 @@ test("a deploy again of the same release runs this deploy's settings, not those 
 esac`
   );
   tool("celld", `[ "$1" = deploy ] && cp wrangler.json "$FAKE/loaded.json"; true`);
-  tool("curl", `echo '{"version":"v1"}'`);
+  // The release answers its own health check on the loopback: healthy, as release v1.
+  tool("curl", `echo '{"ok":true,"version":"v1","checks":{}}'`);
   // (macOS's sed needs a suffix after -i.)
   tool(
     "sed",
@@ -395,43 +393,55 @@ esac`
   }
 });
 
-test("what an instance on AWS runs: the parameter that each deploy and rollback writes, read with the AWS CLI", async () => {
+test("what an instance on AWS runs, and its health: the parameter that each deploy and rollback writes, and the machine's own check", async () => {
   // Not in the stack's folder: the machine loads every parameter of that folder into the Worker's settings.
   expect(liveParam("erga")).toBe("/erga-live/erga");
   expect(liveParam("erga").startsWith(paramPath("erga"))).toBe(false);
   const calls: string[] = [];
   let live: string | null = null;
+  // What the server answers the machine on the loopback (GET /api/health), or nothing.
+  let report = JSON.stringify({ ok: true, version: "abc123def456", checks: { db: { ok: true } } });
   const fake: Aws = async (...args) => {
-    calls.push(args.join(" "));
-    if (args[1] != "get-parameter") throw new Error(`aws ${args.slice(0, 2).join(" ")} failed: not faked`);
+    calls.push(args.slice(0, 2).join(" "));
+    const op = args[1];
+    if (op == "send-command") {
+      // The machine's command is the health check, and nothing else.
+      expect(JSON.parse(args[args.indexOf("--parameters") + 1]).commands).toEqual([healthScript()]);
+      return { Command: { CommandId: "c-1" } } as never;
+    }
+    if (op == "get-command-invocation") return { Status: "Success", StandardOutputContent: report, StandardErrorContent: "" } as never;
+    if (op != "get-parameter") throw new Error(`aws ${args.slice(0, 2).join(" ")} failed: not faked`);
+    expect(args.slice(2)).toEqual(["--name", "/erga-live/erga-example-com"]);
     if (!live)
       throw new Error("aws ssm get-parameter failed: An error occurred (ParameterNotFound) when calling the GetParameter operation: ");
     return { Parameter: { Value: live } } as never;
   };
-  expect(await liveOnAws(fake, "erga")).toBeNull();
+  expect(await liveOnAws(fake, "erga-example-com")).toBeNull();
   const entry = awsEntry(
     { ...aws, pages: "example-pages.com" },
     "123456789012",
     { AppHost: "erga.example.com", Bucket: "b", Machine: "i-1" },
     "Iv1.ada"
   );
-  const asked: string[] = [];
-  const ask = instanceReader({
-    aws: (where) => (calls.push(`as ${where.profile} in ${where.region}`), fake),
-    site: async (url) => (asked.push(new URL(url).pathname), Response.json({ ok: true })),
-  });
+  expect(entry.aws.stack).toBe("erga-example-com");
+  const places: string[] = [];
+  const ask = instanceReader({ aws: (where) => (places.push(`${where.profile} in ${where.region}`), fake) });
   // Before the first deploy with this code: no record, and the answer says what makes one.
   expect(await ask(entry)).toEqual({ version: null, error: "no release on record yet: bun erga deploy erga.example.com", healthy: true });
   live = "abc123def456";
   expect(await ask(entry)).toEqual({ version: "abc123def456", healthy: true });
-  expect(calls.at(-2)).toBe("as work in eu-west-1");
-  expect(calls.at(-1)).toBe(`ssm get-parameter --name /erga-live/${entry.aws.stack}`);
-  // The instance is asked for its health only; an AWS error is the answer's error.
-  expect([...new Set(asked)]).toEqual(["/api/health"]);
-  const broken = instanceReader({
-    aws: () => async () => Promise.reject(new Error("aws ssm get-parameter failed: ExpiredToken")),
-    site: async () => Response.json({ ok: true }),
-  });
+  expect(places.at(-1)).toBe("work in eu-west-1");
+  // Only AWS's API was asked: the parameter, and one command on the machine.
+  expect([...new Set(calls)].sort()).toEqual(["ssm get-command-invocation", "ssm get-parameter", "ssm send-command"]);
+  // The server's own report says a check fails; it runs another release; it gives no report.
+  report = JSON.stringify({ ok: false, version: "abc123def456", checks: { documents: { ok: false, error: "no host" } } });
+  expect(await ask(entry)).toEqual({ version: "abc123def456", healthy: false, health: "documents: no host" });
+  report = JSON.stringify({ ok: true, version: "000000000000", checks: {} });
+  expect(await ask(entry)).toEqual({ version: "abc123def456", healthy: false, health: "it runs 000000000000" });
+  report = "";
+  expect(await ask(entry)).toEqual({ version: "abc123def456", healthy: null, health: "the machine's server gave no health report" });
+  // An AWS error is the answer's error.
+  const broken = instanceReader({ aws: () => async () => Promise.reject(new Error("aws ssm get-parameter failed: ExpiredToken")) });
   expect((await broken(entry)).error).toBe("aws ssm get-parameter failed: ExpiredToken");
 });
 

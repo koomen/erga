@@ -184,13 +184,6 @@ export function proxySetting(a: Answers, signer?: string): string | null {
   return JSON.stringify({ kind: "cloudflare-access", team: a.team, aud: a.aud });
 }
 
-/**
- * Single sign-on: what a browser that isn't signed in must be sent to by the proxy in front, for the check after a
- * deploy (facts.ts). Cloudflare Access sends to the team's address; AWS's proxy names Erga's client and its own callback.
- */
-export const proxyExpects = (a: Answers): { to?: string; clientId?: string; callback?: string } =>
-  a.where == "aws" ? { clientId: a.client, callback: `https://${a.host}/oauth2/idpresponse` } : { to: `${a.team}.cloudflareaccess.com` };
-
 /** The names of the plain settings that varsOf gives: what the answers decide in an entry. */
 export const ANSWER_VARS = ["GITHUB_CLIENT_ID", "PROXY_SIGN_IN", "SERVER_DEFAULTS"];
 

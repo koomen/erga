@@ -13,6 +13,8 @@ import type { MockState } from "../dev/mock-cloudflare";
 import { writePass } from "./helpers/pass.ts";
 import { Cloudflare } from "../deploy/pipeline/cloudflare-api";
 import { adminOn, type First, firstDeploy, writeEntry } from "../deploy/own/first";
+import { instanceReader } from "../deploy/cli/running";
+import { liveOf } from "../deploy/own/facts";
 import { noAnswers } from "../deploy/own/plan";
 import { loadSecrets, namesAt, putSecret } from "../deploy/own/store";
 import { deployFacts } from "../deploy/pipeline/account";
@@ -90,7 +92,21 @@ test("from the answers to a healthy deploy: the entry, the secrets one time, the
     public_sharing: false,
     delete_docs_after_hours: null,
   });
-  expect(await (await mock.fetch(`https://${HOST}/api/health`)).json()).toMatchObject({ ok: true, version: HEAD.slice(0, 12) });
+  // Its commit and its health, as Cloudflare shows them: the deploy asked the server nothing, and set its Cron Trigger.
+  expect(await instanceReader({ net: mock.fetch })(readConfig(dir).instances[0])).toEqual({ version: HEAD.slice(0, 12), healthy: true });
+  expect(mock.state.schedules["erga-ada-example-com"]).toEqual(["* * * * *"]);
+  // What setup's next look sees of it: healthy, with the sign-in that the answers name; with another app's id, not.
+  const cf = new Cloudflare("mock-machine-token", mock.fetch);
+  const answers = first(mock, HOST).answers;
+  expect(await liveOf(cf, ACCOUNT_ID, "erga-ada-example-com", answers, "Iv1.ada")).toEqual({
+    version: HEAD.slice(0, 12),
+    healthy: true,
+    signIn: "ok",
+  });
+  expect((await liveOf(cf, ACCOUNT_ID, "erga-ada-example-com", answers, "Iv1.new"))?.signIn).toEqual({
+    bad: "it signs in with the app Iv1.ada, not yours (Iv1.new): deploy again",
+  });
+  expect(await liveOf(cf, ACCOUNT_ID, "erga-nowhere", answers, "Iv1.ada")).toEqual({ version: null, healthy: false, signIn: null });
   // The database: the organization's rule, and no user at all. The user who claims the server becomes its admin.
   const rows = rowsOf(mock.state, "erga-ada-example-com");
   expect(rows).toContainEqual(

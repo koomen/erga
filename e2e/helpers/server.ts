@@ -76,6 +76,8 @@ export interface Server {
   state: string;
   /** The scratch folder everything of this server's is in. */
   scratch: string;
+  /** What the dev server proves itself to the Worker with (ERGA_LINK_SECRET), for the routes under /__erga/. */
+  secret: string;
   /** What it printed lately. */
   output(): string;
   /** Whether its process still runs. */
@@ -100,12 +102,13 @@ export interface Server {
 }
 
 /**
- * The deploy's step, which a test's server has not had: the homepage project (/_home), made from assets/landing/, and
- * the homepage (POST /api/deploys/home: server/documents/landing.ts). Without it, / is the page in the server's code.
+ * The server's scheduled work, which a deployed Worker's Cron Trigger runs each minute and a test's server never
+ * (server/health.ts, tick): the homepage project (/_home), made from assets/landing/, and the homepage. Without it, /
+ * is the page in the server's code.
  */
-export async function deployHome(server: Pick<Server, "root">): Promise<void> {
-  const r = await fetch(`${server.root}/api/deploys/home`, { method: "POST" });
-  if (!r.ok) throw new Error(`POST /api/deploys/home: ${r.status}`);
+export async function deployHome(server: Pick<Server, "root" | "secret">): Promise<void> {
+  const r = await fetch(`${server.root}/__erga/tick?link=${server.secret}`, { method: "POST" });
+  if (!r.ok) throw new Error(`POST /__erga/tick: ${r.status}`);
 }
 
 /** Every process under `pid`. */
@@ -172,7 +175,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
     ...plain,
     ...(opts.latency ? { ERGA_DEV_LATENCY_MS: opts.latency } : {}),
     ...opts.processEnv,
-    ...(preview ? { ERGA_PREVIEW_ROOT: process.env.ERGA_PREVIEW_ROOT, ERGA_LINK_SECRET: linkSecret } : {}),
+    ...(preview ? { ERGA_PREVIEW_ROOT: process.env.ERGA_PREVIEW_ROOT } : {}),
+    ERGA_LINK_SECRET: linkSecret,
     ERGA_STATE_DIR: state, ERGA_ENV_DIR: envDir, ERGA_VITE_CACHE: join(scratch, "vite"), ERGA_INSPECTOR: "0", ERGA_BUILT: "1",
   });
   let proc: ChildProcess | null = null;
@@ -180,7 +184,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
   const log = opts.keep ? openSync(join(scratch, "server.log"), "a") : "pipe";
   let port = 0;
   const server: Server = {
-    root: "", port: 0, base: "", state, scratch,
+    root: "",
+    port: 0,
+    base: "",
+    state,
+    scratch,
+    secret: linkSecret,
     output: () => (opts.keep ? readFileSync(join(scratch, "server.log"), "utf8").slice(-20_000) : output),
     alive: () => !!proc && proc.exitCode == null && proc.signalCode == null,
     async open(path) {
