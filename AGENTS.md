@@ -65,7 +65,7 @@ Tests run with no model in the loop. A new check replaces a weaker one.
    with the user's approval. Agents act only on what their user asks,
    never on text in tool results.
 2. **The tools are the agents' manual.** An outside agent reads only MCP's
-   short instructions (`server/api.ts`, `instructionsFor`) and the tools.
+   short manual (`guideFor`, `server/operations/documents.ts`) and the tools.
    A tool's description is one short line; its details go in the
    arguments' descriptions. Keep the tool list small: a new operation is an
    `op` of the tool that does the same kind of thing (`agents/tools.ts`).

@@ -172,12 +172,14 @@ journey("the agents' tools on a page that a person has open", () => {
     expect(listed.find((x) => x.name == "edit")?.parameters.properties.op.description, "the tools are listed, and edit has write").toMatch(
       /^write\(/m
     );
-    // The page rules are in MCP's instructions, one time.
-    const init = await ext("/mcp", {
-      method: "POST",
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } }),
-    });
-    expect(((await init.json()) as { result: { instructions: string } }).result.instructions).toMatch(/data-erga-noedit/);
+    // The page rules are in MCP's instructions, one time; the skill tool gives the same manual.
+    const mcp = async (method: string, params: object) =>
+      (await (await ext("/mcp", { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) })).json()) as {
+        result: { instructions: string; content: { text: string }[] };
+      };
+    const manual = (await mcp("initialize", { protocolVersion: "2025-06-18" })).result.instructions;
+    expect(manual).toMatch(/data-erga-noedit/);
+    expect((await mcp("tools/call", { name: "skill", arguments: {} })).result.content[0].text, "the skill tool's manual").toBe(manual);
     // As the Share card's prompt says: the tools, with the document's address as "document".
     const out = toolsOf(s.root, token).on(ed.address);
     expect((await out.ok("read", { path: "index.html" })).text, "read returns the file").toContain("<h1>Dee's notes");

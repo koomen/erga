@@ -114,6 +114,11 @@ export const KINDS: readonly {
   readonly fields?: Readonly<Record<string, string | Schema.Top>>;
 }[] = [
   {
+    name: "skill",
+    description: "Erga's manual: how to name documents and files, edit pages and write HTML here. Read it first.",
+    ops: ["skill"],
+  },
+  {
     name: "documents",
     description: "Lists, makes, renames, shares, publishes, archives and deletes documents; sends feedback.",
     ops: [
@@ -263,7 +268,8 @@ function kindOf(k: (typeof KINDS)[number], members: Tool[], open: boolean): Kind
   }
   return {
     name: k.name,
-    description: k.description,
+    // The ops in the first line too: an MCP app that shows only that line (a search of its tools' catalog, say) shows them.
+    description: ops.length > 1 ? `${k.description} Ops: ${ops.join(", ")}.` : k.description,
     loose: true,
     admin: members.every((t) => t.admin),
     wide: members.every((t) => t.wide),
@@ -311,7 +317,8 @@ async function checked(tool: Tool, args: Record<string, unknown>, caller: Caller
       message: [
         missing.length ? `${tool.name} needs ${quoted(missing)}.` : "",
         unknown.length ? `${tool.name} takes no ${quoted(unknown)}.` : "",
-        `Usage: ${usage(tool, schema.required ?? [], known, kind)}`,
+        `Usage: ${usage(tool, schema.required ?? [], known, kind)}.`,
+        "The skill tool explains documents, paths and ops.",
       ]
         .filter(Boolean)
         .join(" "),

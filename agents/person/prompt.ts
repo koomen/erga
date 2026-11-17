@@ -84,7 +84,8 @@ have open.
 
 Your tools are few, each a kind of action: documents, read, edit and page${admin ? ", and settings and people" : ""}.
 Each takes "op", the operation it does (its first, when you leave op out): read with op
-ls, say. Below, "read op ls" means that.
+ls, say. Below, "read op ls" means that. skill gives the short manual for
+outside agents: this prompt has all of it, so you need not call it.
 
 Documents: name one with "document" (its address, URL, id, or the slug of one of
 ${owner}'s). The page note says which document and page are open, if any: "this" means it.

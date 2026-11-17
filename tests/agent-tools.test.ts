@@ -38,7 +38,7 @@ test("admin tools are offered to admins only, and refused to anyone else", async
   const ops = async (who: Who) => (await toolsFor({ dir, who, here: "aaaaaaaa" })).flatMap(opsOf);
   expect(await names({ login: "root", admin: true })).toEqual(KINDS.map((k) => k.name));
   expect(await ops({ login: "root", admin: true })).toContain("set_setting");
-  expect(await names({ login: "bo" })).toEqual(["documents", "read", "edit", "page"]);
+  expect(await names({ login: "bo" })).toEqual(["skill", "documents", "read", "edit", "page"]);
   expect((await ops({ login: "bo" })).sort()).toEqual(
     [...OPERATIONS.filter((o) => !o.admin).map((o) => o.name), ...documentTools().map((t) => t.name)].sort()
   );
@@ -354,8 +354,11 @@ test("an outside agent's wrong call: every missing and unknown argument named at
   const agent: Caller = { dir, who: { login: "ada", via: VIA.agent }, name: "Ada", platform };
   const read = (await toolsFor(agent)).find((t) => t.name == "read")!;
   expect((await failure(runTool(read, { op: "read", file: "index.html" }, agent))).message).toBe(
-    'read needs "document", "path". read takes no "file". Usage: read(op="read", document, path, [offset], [limit], [pages], [selector], [css_rule], [version])'
+    'read needs "document", "path". read takes no "file". Usage: read(op="read", document, path, [offset], [limit], [pages], [selector], [css_rule], [version]). The skill tool explains documents, paths and ops.'
   );
+  // The manual: the skill tool gives it.
+  const skill = (await toolsFor(agent)).find((t) => t.name == "skill")!;
+  expect(await runTool(skill, {}, agent)).toContain('Name a document with "document"');
   // An agent's usual second try: the page's address, with its file.
   await runTool(read, { op: "read", document: "https://erga.test/ada/plan/index.html" }, agent);
   expect(JSON.parse(await sent[0].text())).toEqual({ path: "index.html" });

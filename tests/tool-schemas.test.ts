@@ -54,9 +54,11 @@ test("GET /api/tools and MCP's tools/list: the few agents' tools, each loaded at
   const mcp = (await (
     await call("/mcp", { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) })
   ).json()) as {
-    result: { tools: { name: string; inputSchema: { type?: string }; _meta?: Record<string, unknown> }[] };
+    result: { tools: { name: string; description: string; inputSchema: { type?: string }; _meta?: Record<string, unknown> }[] };
   };
   expect(mcp.result.tools.map((t) => t.name)).toEqual(KINDS.map((k) => k.name));
+  // The read tool's first line names its ops, for an MCP app that shows only that line.
+  expect(mcp.result.tools.find((t) => t.name == "read")!.description).toMatch(/Ops: read, ls, grep, versions, document_api, comments\.$/);
   expect(notObjects(mcp.result.tools.map((t) => ({ name: t.name, schema: t.inputSchema })))).toEqual([]);
   // Claude Code loads the tools every agent uses at once, not behind its tool search; the admins' wait for a search.
   expect(mcp.result.tools.filter((t) => t._meta?.["anthropic/alwaysLoad"] === true).map((t) => t.name)).toEqual([

@@ -200,6 +200,8 @@ test("one API for every token: GET /api/tools and MCP's tools/list give the same
   const instructions = async (token: string) =>
     (await rpc(token, "initialize", { protocolVersion: "2025-06-18" })).result.instructions as string;
   for (const token of [one, docs, admin]) expect(await instructions(token)).not.toContain("llms.txt");
+  // An MCP app that drops the instructions gets the same manual from the skill tool, a document token's too.
+  for (const token of [one, docs, admin]) expect((await call(token, "skill")).content[0].text).toBe(await instructions(token));
   expect(await instructions(one)).toContain("one document only");
   expect(await instructions(docs)).toContain("no admin power");
   expect(await instructions(admin)).toContain("the server too");
