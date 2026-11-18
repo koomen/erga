@@ -182,6 +182,41 @@ export default function reader(C: ReaderConfig): void {
     // (First: before a deck's own wheel, which steps it.)
     { passive: false, capture: true }
   );
+  // A touch screen: two fingers on the page zoom the document, as a pinch on a trackpad does (the viewer, erga-zoom),
+  // and one finger moves around in a page that fits itself, drawn larger (erga-pan). The browser keeps only the page's
+  // scroll (touch-action, below), so the page never zooms the whole window; a pinch on the bars is still the browser's.
+  // A page that zooms itself (a canvas's camera) has its own touches.
+  let span = 0,
+    finger: { x: number; y: number } | null = null;
+  const apart = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  addEventListener(
+    "touchstart",
+    (e) => {
+      span = e.touches.length == 2 ? apart(e.touches) : 0;
+      finger = e.touches.length == 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+    },
+    { passive: true }
+  );
+  addEventListener(
+    "touchmove",
+    (e) => {
+      const z = zoomedSaid();
+      if (z?.off || zoomsSaid || e.defaultPrevented) return;
+      const t = e.touches;
+      if (t.length == 2 && span) {
+        e.preventDefault();
+        const d = apart(t);
+        if (d)
+          tell({ type: "erga-zoom", zoom: { by: d / span }, x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
+        span = d;
+      } else if (t.length == 1 && finger && z?.fit && z.zoom > 1) {
+        e.preventDefault();
+        tell({ type: "erga-pan", dx: (finger.x - t[0].clientX) * z.zoom, dy: (finger.y - t[0].clientY) * z.zoom });
+        finger = { x: t[0].clientX, y: t[0].clientY };
+      }
+    },
+    { passive: false }
+  );
   // The room for the bars at the page's top (below): the band's height on the screen, in this page's px at the level
   // it is laid out for.
   let bars = TOP_ROOM,
@@ -260,12 +295,12 @@ export default function reader(C: ReaderConfig): void {
   };
   if (document.readyState == "loading") document.addEventListener("DOMContentLoaded", watchHead, { once: true });
   else watchHead();
-  // The page stops dead at its top and bottom.
+  // The page stops dead at its top and bottom, and a pinch on it is the document's zoom, not the browser's (above).
   const still = document.createElement("style");
   still.setAttribute("data-erga", "");
   // (And the editor's own parts on the page never print.)
   still.textContent =
-    "html { overscroll-behavior: none; } @media print { erga-controls, erga-comments, erga-caret, erga-peers, erga-note, erga-drop-caret, erga-drop-image { display: none !important; } }";
+    "html { overscroll-behavior: none; touch-action: pan-x pan-y; } @media print { erga-controls, erga-comments, erga-caret, erga-peers, erga-note, erga-drop-caret, erga-drop-image { display: none !important; } }";
   (document.head || root).append(still);
   // The room for the bars at the top of a scrolling page (client/common/top-room.ts), measured again when the page's
   // styles may have changed (its head, its root's attributes), as it loads, the window's size, or the room the viewer asks for (its

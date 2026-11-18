@@ -218,6 +218,24 @@ journey("a reader opens a document with several pages", () => {
     await expect.poll(level).toBe(null);
   });
 
+  test("on a touch screen, two fingers spread on the page zoom the document, not the window; at rest it is laid out again", async () => {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+    const look = () =>
+      page.evaluate(() => ({ scale: Math.round((window as any).ergaFrames.scale() * 100) / 100, window: visualViewport!.scale }));
+    expect(await look()).toEqual({ scale: 1, window: 1 });
+    // Two fingers on the page, spread to 1.6 times as far apart.
+    await cdp.send("Input.synthesizePinchGesture", { x: 600, y: 450, scaleFactor: 1.6, relativeSpeed: 800, gestureSourceType: "touch" });
+    // (The synthetic pinch loses a part of its spread on the way.)
+    await expect.poll(async () => (await look()).scale).toBeGreaterThan(1.3);
+    expect((await look()).window).toBe(1);
+    await expect.poll(() => docFrame(page)!.evaluate<number>("innerWidth")).toBeLessThan(900);
+    await page.keyboard.press("ControlOrMeta+0");
+    await expect.poll(look).toEqual({ scale: 1, window: 1 });
+    await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false });
+    await cdp.detach();
+  });
+
   test("Share with an agent copies the one-line prompt, or a prompt with a token for the time and scope picked; the token works", async () => {
     const origin = s.root;
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
