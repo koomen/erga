@@ -8,6 +8,7 @@
 // "erga-zoomed": the levels, and the part of it in sight). Each
 // document keeps its level on this browser (from the first frame: viewer-layout-early.ts). A page that zooms itself
 // (window.ergaZoom: a canvas's camera) gets the gestures instead, and is drawn at 100%; so is the page in full screen.
+// A page that fits itself to its window (a deck) keeps its layout and is drawn larger, and the wheel moves around in it.
 // The editor (client/shell/main.ts) hears an "erga-zoom-level" event when a key changed the level: its toast says it.
 //
 // Trap: ⌘0 at 100% is the browser's. It puts back a tab that the browser's own menu zoomed, which nothing else can.
@@ -37,7 +38,7 @@ export default function viewerZoom(): void {
   try {
     saved = clampZoom(Number(localStorage.getItem(KEY) || 1));
   } catch {}
-  let zoom: Zoom = { phase: "still", level: saved },
+  let zoom: Zoom = { phase: "still", fit: false, level: saved, x: 0, y: 0 },
     rest = 0,
     // A change of the layout waits a screen frame after the page heard its aim (erga-zoom-aim), so that the page has
     // it before its window gets the new size.
@@ -67,8 +68,8 @@ export default function viewerZoom(): void {
     const shown = !zoomsItself && !full(),
       level = shown ? zoom.level : 1,
       lay = shown ? layOf(zoom) : 1,
-      x = shown && zoom.phase == "pinching" ? zoom.x : 0,
-      y = shown && zoom.phase == "pinching" ? zoom.y : 0,
+      x = shown ? zoom.x : 0,
+      y = shown ? zoom.y : 0,
       pct = `${Math.round(level * 100)}%`,
       p = place(),
       round = (n: number) => Math.round(n * 100) / 100,
@@ -84,14 +85,14 @@ export default function viewerZoom(): void {
     css("--erga-lay", level == 1 && lay == 1 ? null : String(lay));
     css("--erga-x", x ? `${round(x)}px` : null);
     css("--erga-y", y ? `${round(y)}px` : null);
-    // (During a pinch, the picture shows only in the place: px of the frame, before its scale.)
+    // (Larger than its place or moved, the picture shows only in the place: px of the frame, before its scale.)
     const fw = p.width / lay,
       fh = p.height / lay,
       left = Math.max(0, -x / level),
       right = Math.min(fw, (p.width - x) / level);
     css(
       "--erga-clip",
-      zoom.phase == "pinching" && shown
+      level != lay || x || y
         ? `inset(${round(Math.max(0, -y / level))}px ${round(Math.max(0, fw - right))}px ${round(Math.max(0, fh - (p.height - y) / level))}px ${round(left)}px)`
         : null
     );
@@ -112,6 +113,7 @@ export default function viewerZoom(): void {
       lay,
       pinched: windowZoomed(),
       off: full(),
+      fit: shown && zoom.fit,
       shows: { left: round(left), right: round(right) },
     };
     const said = JSON.stringify(m);
@@ -134,7 +136,10 @@ export default function viewerZoom(): void {
         }
       } else if (effect == "wait") {
         clearTimeout(rest);
-        rest = window.setTimeout(() => send({ type: "rest" }), REST_MS);
+        rest = window.setTimeout(() => {
+          const p = place();
+          send({ type: "rest", w: p.width, h: p.height });
+        }, REST_MS);
       } else if (effect == "save")
         try {
           if (zoom.level == 1) localStorage.removeItem(KEY);
@@ -149,6 +154,12 @@ export default function viewerZoom(): void {
     if (zoomsItself) return ergaFrames.send({ type: "erga-page-zoom", by: zoomFactor(by) });
     const p = place();
     send({ type: "zoom", by, at: at && { x: at.x - p.left, y: at.y - p.top }, w: p.width, h: p.height });
+  }
+
+  /** Whether the page fits itself: a deck (erga/steps says so as its steps show, client/common/zoom.ts). */
+  function fit(on: boolean) {
+    const p = place();
+    send({ type: "fit", fit: on, w: p.width, h: p.height });
   }
 
   /** A zoom key: whether this took it from the browser. */
@@ -192,7 +203,12 @@ export default function viewerZoom(): void {
       told = "";
       sizes.disconnect();
       sizes.observe(frame());
+      fit(false);
       draw();
+    } else if (m.type == "erga-steps") fit(m.on === true);
+    else if (m.type == "erga-pan" && num(m.dx) && num(m.dy) && Math.abs(m.dx) < 5000 && Math.abs(m.dy) < 5000) {
+      const p = place();
+      send({ type: "pan", dx: m.dx, dy: m.dy, w: p.width, h: p.height });
     } else if (m.type == "erga-zooms") {
       zoomsItself = m.on === true;
       draw();

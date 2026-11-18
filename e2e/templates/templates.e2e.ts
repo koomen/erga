@@ -238,6 +238,43 @@ journey("the Slides template: a deck of two slides", () => {
     await atStep(page, 0, 2);
   });
 
+  test("viewing, ⌘+ draws the slide larger, and its window keeps its size; the wheel goes to the picture's edges and no further; ⌘0 puts it back", async () => {
+    /** The slide's width on the screen, the page's window, and the picture's bottom and right edges against the window's. */
+    const look = async () => {
+      const slide = await inPage<number>(
+        page,
+        `[...document.querySelectorAll(".slide")].find((e) => !e.hidden).getBoundingClientRect().width`
+      );
+      const shell = await page.evaluate(() => {
+        const r = document.getElementById("frame")!.getBoundingClientRect();
+        return {
+          scale: (window as any).ergaFrames.scale() as number,
+          bottom: Math.round(r.bottom - innerHeight),
+          right: Math.round(r.right - innerWidth),
+        };
+      });
+      return {
+        slide: Math.round(slide * shell.scale),
+        vw: await inPage<number>(page, "innerWidth"),
+        bottom: shell.bottom,
+        right: shell.right,
+      };
+    };
+    const start = await look();
+    await page.keyboard.press("ControlOrMeta+Equal");
+    await page.keyboard.press("ControlOrMeta+Equal");
+    await expect.poll(async () => (await look()).slide).toBe(Math.round(start.slide * 1.25));
+    expect((await look()).vw).toBe(start.vw);
+    await page.mouse.move(600, 400);
+    await page.mouse.wheel(0, 3000);
+    await expect.poll(async () => (await look()).bottom).toBe(0);
+    for (let i = 0; i < 5; i++) await page.mouse.wheel(600, 0);
+    await expect.poll(async () => (await look()).right).toBe(0);
+    await page.keyboard.press("ControlOrMeta+0");
+    await expect.poll(look).toEqual(start);
+    await expect.poll(fits).toBe(true);
+  });
+
   test("editing: one slide fits; forward, back and → outside the text step; an edit to a title shows in the list with a new picture", async () => {
     await page.locator(".erga-edit-button").click();
     await editorReady(page);

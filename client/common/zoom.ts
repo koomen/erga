@@ -59,6 +59,8 @@ export type Zoomed = {
   pinched: boolean;
   /** No zoom now (full screen): the keys and gestures are the browser's. */
   off: boolean;
+  /** The page fits itself (Zoom's `fit`): drawn larger than its place, the wheel moves around in it (erga-pan). */
+  fit: boolean;
   /** The part of the page that shows on the screen: from `left` to `right`, px of the page's window, after the zoom. */
   shows: Shows;
 };
@@ -87,16 +89,26 @@ export type Point = { x: number; y: number };
  * its place at that level, and fills it. "pinching": a pinch goes on: the page keeps the layout it had (`lay`: the
  * level it is laid out for), and its picture is scaled to `level` and moved `x`, `y` px from the place's top left, so
  * that the page's point under the pinch's point `at` stays there.
+ *
+ * `fit`: a page that fits itself to its window (a deck's slide: erga/steps says so). It keeps the layout of its place
+ * (laid out again, it would only fit itself again): its picture is larger or smaller, moved `x`, `y`; larger than its
+ * place, it covers it and the wheel moves around in it; smaller, it sits in the middle.
  */
-export type Zoom = { phase: "still"; level: number } | { phase: "pinching"; level: number; lay: number; x: number; y: number; at: Point };
+export type Zoom =
+  | { phase: "still"; fit: boolean; level: number; x: number; y: number }
+  | { phase: "pinching"; fit: boolean; level: number; lay: number; x: number; y: number; at: Point };
 
 export type ZoomEvent =
   /** A zoom, around the point `at` of the page's place (null: its middle), which is `w` by `h` px. */
   | { type: "zoom"; by: ZoomBy; at: Point | null; w: number; h: number }
+  /** The wheel, on a page that fits itself: its picture moves `dx`, `dy` px the other way. */
+  | { type: "pan"; dx: number; dy: number; w: number; h: number }
+  /** Whether the page fits itself (a page came, or said so). */
+  | { type: "fit"; fit: boolean; w: number; h: number }
   /** Back to 100%. */
   | { type: "reset" }
   /** REST_MS after the pinch's last move. */
-  | { type: "rest" };
+  | { type: "rest"; w: number; h: number };
 
 /**
  * draw: the frame at the state (and first, where the page is laid out again, zoomAim: the point that stays). wait: "rest"
@@ -108,30 +120,44 @@ export type ZoomEffect = "draw" | "wait" | "save" | "say";
 export const REST_MS = 160;
 
 /** The level the page is laid out for. */
-export const layOf = (s: Zoom) => (s.phase == "pinching" ? s.lay : s.level);
+export const layOf = (s: Zoom) => (s.fit ? 1 : s.phase == "pinching" ? s.lay : s.level);
+
+/** A still state: a page that fits itself, its picture moved `x`, `y` within its place (`w` by `h`); any other at 0, 0. */
+function still(fit: boolean, level: number, x: number, y: number, w: number, h: number): Zoom {
+  const within = (v: number, size: number) => (level >= 1 ? Math.min(0, Math.max(size * (1 - level), v)) : (size * (1 - level)) / 2);
+  return fit ? { phase: "still", fit, level, x: within(x, w), y: within(y, h) } : { phase: "still", fit, level, x: 0, y: 0 };
+}
 
 export function zoomStep(s: Zoom, e: ZoomEvent): { state: Zoom; effects: ZoomEffect[] } {
   const none = { state: s, effects: [] };
   switch (e.type) {
     case "zoom": {
-      const level = applyZoom(s.level, e.by);
-      if ("step" in e.by)
-        return level == s.level && s.phase == "still" ? none : { state: { phase: "still", level }, effects: ["draw", "save", "say"] };
-      if (level == s.level) return none;
+      const level = applyZoom(s.level, e.by),
+        step = "step" in e.by;
+      if (level == s.level && (!step || s.phase == "still")) return none;
       // The page's point under `at` stays there: its distance from the picture's corner grows with the level.
-      const from = s.phase == "pinching" ? s : { lay: s.level, x: 0, y: 0 },
-        at = e.at ?? { x: e.w / 2, y: e.h / 2 },
-        k = level / s.level;
-      return {
-        state: { phase: "pinching", level, lay: from.lay, x: at.x - (at.x - from.x) * k, y: at.y - (at.y - from.y) * k, at },
-        effects: ["draw", "wait"],
-      };
+      const at = !step && e.at ? e.at : { x: e.w / 2, y: e.h / 2 },
+        k = level / s.level,
+        x = at.x - (at.x - s.x) * k,
+        y = at.y - (at.y - s.y) * k;
+      if (step) return { state: still(s.fit, level, x, y, e.w, e.h), effects: ["draw", "save", "say"] };
+      return { state: { phase: "pinching", fit: s.fit, level, lay: layOf(s), x, y, at }, effects: ["draw", "wait"] };
     }
+    case "pan": {
+      if (!s.fit || s.phase != "still") return none;
+      const next = still(true, s.level, s.x - e.dx, s.y - e.dy, e.w, e.h);
+      return next.x == s.x && next.y == s.y ? none : { state: next, effects: ["draw"] };
+    }
+    case "fit":
+      // (Around the middle.)
+      return e.fit == s.fit
+        ? none
+        : { state: still(e.fit, s.level, (e.w * (1 - s.level)) / 2, (e.h * (1 - s.level)) / 2, e.w, e.h), effects: ["draw"] };
     case "reset":
-      return s.phase == "still" && s.level == 1 ? none : { state: { phase: "still", level: 1 }, effects: ["draw", "save", "say"] };
+      return s.phase == "still" && s.level == 1 ? none : { state: still(s.fit, 1, 0, 0, 0, 0), effects: ["draw", "save", "say"] };
     case "rest":
       return s.phase == "pinching"
-        ? { state: { phase: "still", level: Math.abs(s.level - 1) < SNAP ? 1 : s.level }, effects: ["draw", "save"] }
+        ? { state: still(s.fit, Math.abs(s.level - 1) < SNAP ? 1 : s.level, s.x, s.y, e.w, e.h), effects: ["draw", "save"] }
         : none;
   }
 }
@@ -143,11 +169,9 @@ export function zoomStep(s: Zoom, e: ZoomEvent): { state: Zoom; effects: ZoomEff
  * layout stays.
  */
 export function zoomAim(s: Zoom, next: Zoom, w: number, h: number): Omit<ZoomAim, "type"> | null {
-  if (layOf(s) == layOf(next)) return null;
-  const at = s.phase == "pinching" ? s.at : { x: w / 2, y: h / 2 },
-    x0 = s.phase == "pinching" ? s.x : 0,
-    y0 = s.phase == "pinching" ? s.y : 0;
-  return { x: (at.x - x0) / s.level, y: (at.y - y0) / s.level, to: at.y / next.level, w: w / layOf(next), top: s.phase != "pinching" };
+  if (layOf(s) == layOf(next) || s.fit != next.fit) return null;
+  const at = s.phase == "pinching" ? s.at : { x: w / 2, y: h / 2 };
+  return { x: (at.x - s.x) / s.level, y: (at.y - s.y) / s.level, to: at.y / next.level, w: w / layOf(next), top: s.phase != "pinching" };
 }
 
 /**

@@ -132,9 +132,10 @@ export async function wordAndEnd(ed: Editor, selector: string, word: string) {
 
 /**
  * The document's zoom, in the page: how much larger than its own size it is drawn; 0 while the page is not laid out
- * for it yet (its window is about to get its new size, client/inline/viewer-zoom.ts).
+ * for it yet (its window is about to get its new size, client/inline/viewer-zoom.ts). A page that fits itself keeps
+ * its layout.
  */
-export const SETTLED_ZOOM = `(() => { const z = window.__ergaReader?.zoomed; if (!z) return 1; return z.zoom == z.lay && Math.abs(innerWidth - z.shows.right) <= 1 ? z.zoom : 0; })()`;
+export const SETTLED_ZOOM = `(() => { const z = window.__ergaReader?.zoomed; if (!z) return 1; return z.fit || (z.zoom == z.lay && Math.abs(innerWidth - z.shows.right) <= 1) ? z.zoom : 0; })()`;
 
 /** The document's zoom, once the page is laid out for it (SETTLED_ZOOM). */
 export const zoom = (ed: Editor) => ed.frame<number>(SETTLED_ZOOM);

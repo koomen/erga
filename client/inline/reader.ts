@@ -168,6 +168,20 @@ export default function reader(C: ReaderConfig): void {
   }
   new ResizeObserver(keepAim).observe(view);
   addEventListener("resize", keepAim);
+  // A page that fits itself (a deck), drawn larger than its place: the wheel moves around in its picture (the viewer
+  // moves it: erga-pan), not in the page, which has nowhere to scroll.
+  addEventListener(
+    "wheel",
+    (e) => {
+      const z = zoomedSaid();
+      if (e.ctrlKey || e.defaultPrevented || !z?.fit || z.zoom <= 1) return;
+      e.preventDefault();
+      const k = e.deltaMode == 1 ? 16 : 1;
+      tell({ type: "erga-pan", dx: (e.deltaX || (e.shiftKey ? e.deltaY : 0)) * k, dy: e.shiftKey ? 0 : e.deltaY * k });
+    },
+    // (First: before a deck's own wheel, which steps it.)
+    { passive: false, capture: true }
+  );
   // The room for the bars at the page's top (below): the band's height on the screen, in this page's px at the level
   // it is laid out for.
   let bars = TOP_ROOM,
