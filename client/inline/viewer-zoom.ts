@@ -3,7 +3,9 @@
 // keeps the zoom (client/common/zoom.ts: one state, one function) and does what it says: it hears the keys and the
 // gestures here and from the page (client/inline/reader.ts sends them), draws the page's frame at the level
 // (viewer-band.css, html.erga-zoomed: laid out for its place at the level, or during a pinch, the picture scaled),
-// shows the level in the bar (#btn-zoom, while it isn't 100%: a click goes back to 100%), and tells the page
+// shows the level in the bar (#btn-zoom, or on a phone #zoom-pill in the corner, while it isn't 100%), which opens the
+// zoom's menu (server/pages/viewer.ts, ZOOM_PARTS: − and +, the levels), says each level to a screen reader
+// (#zoom-said), and tells the page
 // ("erga-zoom-aim": the point that stays where it is as the page is laid out again, before its frame gets the new size;
 // "erga-zoomed": the levels, and the part of it in sight). Each
 // document keeps its level on this browser (from the first frame: viewer-layout-early.ts). A page that zooms itself
@@ -60,7 +62,12 @@ export default function viewerZoom(): void {
       top = r.top - v("--erga-y", 0);
     return { left, top, width: (r.width / level) * lay, height: (r.height / level) * lay };
   };
-  const tip = `Back to 100% (${isMac ? "⌘0" : "Ctrl+0"})`;
+  const mod = isMac ? "⌘" : "Ctrl+",
+    menu = document.getElementById("zoom-menu"),
+    pill = () => document.getElementById("zoom-pill"),
+    said = document.getElementById("zoom-said");
+  const keys = menu?.querySelector(".zm-keys");
+  if (keys) keys.textContent = `${mod}+ ${mod}− zoom · ${mod}0 100%`;
 
   function draw() {
     cancelAnimationFrame(due);
@@ -100,13 +107,20 @@ export default function viewerZoom(): void {
     root.classList.toggle("erga-zooming", shown && zoom.phase == "pinching");
     // (The page zooms itself: a test sees it here.)
     root.classList.toggle("erga-page-zooms", zoomsItself);
-    const b = button();
-    if (b) {
-      b.hidden = level == 1;
-      b.textContent = pct;
-      b.dataset.tip = tip;
-      b.setAttribute("aria-label", `Zoom ${pct}: back to 100%`);
+    for (const b of [button(), pill()])
+      if (b) {
+        b.hidden = level == 1;
+        b.textContent = pct;
+        b.setAttribute("aria-label", `Zoom ${pct}`);
+      }
+    button()?.setAttribute("data-tip", "Zoom");
+    if (menu) {
+      menu.querySelector(".zm-level")!.textContent = pct;
+      for (const it of menu.querySelectorAll<HTMLElement>("[data-level]"))
+        it.setAttribute("aria-checked", String(Math.abs(Number(it.dataset.level) - level) < 0.001));
     }
+    // (At 100% there is no level to open it from.)
+    if (level == 1 && opener) openMenu(null);
     const m: Zoomed = {
       type: "erga-zoomed",
       zoom: level,
@@ -140,12 +154,13 @@ export default function viewerZoom(): void {
           const p = place();
           send({ type: "rest", w: p.width, h: p.height });
         }, REST_MS);
-      } else if (effect == "save")
+      } else if (effect == "save") {
+        if (said) said.textContent = `Zoom ${Math.round(zoom.level * 100)}%`;
         try {
           if (zoom.level == 1) localStorage.removeItem(KEY);
           else localStorage.setItem(KEY, String(Math.round(zoom.level * 1000) / 1000));
         } catch {}
-      else dispatchEvent(new CustomEvent("erga-zoom-level", { detail: { level: zoom.level } }));
+      } else dispatchEvent(new CustomEvent("erga-zoom-level", { detail: { level: zoom.level } }));
   }
 
   /** `at`: where in the window (null: the middle of the page's place). */
@@ -221,10 +236,67 @@ export default function viewerZoom(): void {
       else if (num(z?.by) && z.by > 0.5 && z.by < 2) zoomBy({ by: z.by }, at);
     }
   });
-  button()?.addEventListener("click", () => {
-    send({ type: "reset" });
-    frame().focus();
+  // The zoom's menu, under the level in the bar or over the one in the corner. − and + step and leave it open; a level
+  // is set and closes it, and the keys are the page's again; Escape, a press elsewhere or the arrows, as a menu.
+  let opener: HTMLElement | null = null;
+  const items = () => [...(menu?.querySelectorAll<HTMLElement>("button") ?? [])];
+  function openMenu(by: HTMLElement | null) {
+    if (!menu) return;
+    opener?.setAttribute("aria-expanded", "false");
+    opener = by;
+    menu.hidden = !by;
+    if (!by) return;
+    by.setAttribute("aria-expanded", "true");
+    const r = by.getBoundingClientRect(),
+      w = menu.offsetWidth,
+      below = r.top < innerHeight / 2;
+    menu.style.left = Math.max(12, Math.min(innerWidth - w - 12, r.right - w)) + "px";
+    menu.style.top = below ? r.bottom + 8 + "px" : Math.max(12, r.top - 8 - menu.offsetHeight) + "px";
+    menu.querySelector<HTMLElement>('[aria-checked="true"]')?.focus({ preventScroll: true });
+  }
+  for (const b of [button(), pill()])
+    b?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openMenu(opener == b ? null : b);
+    });
+  menu?.addEventListener("click", (e) => {
+    const t = (e.target as Element).closest<HTMLElement>("button");
+    if (!t) return;
+    const p = place();
+    if (t.classList.contains("zm-out") || t.classList.contains("zm-in")) zoomBy({ step: t.classList.contains("zm-in") ? 1 : -1 }, null);
+    else if (t.dataset.level) {
+      openMenu(null);
+      send({ type: "to", level: Number(t.dataset.level), w: p.width, h: p.height });
+      frame().focus();
+    }
   });
+  document.addEventListener(
+    "pointerdown",
+    (e) => {
+      const path = e.composedPath();
+      if (opener && menu && !path.includes(menu) && !path.includes(opener)) openMenu(null);
+    },
+    true
+  );
+  // (Before the editor's own keys, client/shell/main.ts: its Escape would fade the bars.)
+  addEventListener(
+    "keydown",
+    (e) => {
+      if (!opener) return;
+      if (e.key == "Escape") {
+        const b = opener;
+        openMenu(null);
+        b.focus();
+      } else if (e.key == "ArrowDown" || e.key == "ArrowUp") {
+        const all = items(),
+          at = all.indexOf(document.activeElement as HTMLElement);
+        all[(at + (e.key == "ArrowDown" ? 1 : all.length - 1)) % all.length]?.focus();
+      } else return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    },
+    true
+  );
   // The page's place got another size (the window, the agent's panel): the page hears what of it shows. (Not while a
   // new layout waits for its frame: it draws then.)
   // (A load of the page again makes a new frame: viewer-frames.ts. It is watched as its page says hello.)

@@ -101,6 +101,8 @@ export type Zoom =
 export type ZoomEvent =
   /** A zoom, around the point `at` of the page's place (null: its middle), which is `w` by `h` px. */
   | { type: "zoom"; by: ZoomBy; at: Point | null; w: number; h: number }
+  /** A level picked (the zoom's menu), around the middle of the page's place, which is `w` by `h` px. */
+  | { type: "to"; level: number; w: number; h: number }
   /** The wheel, on a page that fits itself: its picture moves `dx`, `dy` px the other way. */
   | { type: "pan"; dx: number; dy: number; w: number; h: number }
   /** Whether the page fits itself (a page came, or said so). */
@@ -142,6 +144,15 @@ export function zoomStep(s: Zoom, e: ZoomEvent): { state: Zoom; effects: ZoomEff
         y = at.y - (at.y - s.y) * k;
       if (step) return { state: still(s.fit, level, x, y, e.w, e.h), effects: ["draw", "save", "say"] };
       return { state: { phase: "pinching", fit: s.fit, level, lay: layOf(s), x, y, at }, effects: ["draw", "wait"] };
+    }
+    case "to": {
+      const level = clampZoom(e.level),
+        k = level / s.level;
+      if (level == s.level && s.phase == "still") return none;
+      return {
+        state: still(s.fit, level, e.w / 2 - (e.w / 2 - s.x) * k, e.h / 2 - (e.h / 2 - s.y) * k, e.w, e.h),
+        effects: ["draw", "save"],
+      };
     }
     case "pan": {
       if (!s.fit || s.phase != "still") return none;

@@ -104,5 +104,26 @@ html.page-dark .erga-tree-card { --fg: #cacad2; --fg-strong: #ececf1; --soft: #8
 @media (max-width: 720px) { #erga-writer { top: 58px; } }
 @media print { #erga-writer { display: none !important; } }
 
-/* The page's zoom, while it isn't 100% (viewer-zoom.ts): its level, in the bar's own type; a click goes back to 100%. */
+/* The page's zoom, while it isn't 100% (viewer-zoom.ts): its level, in the bar's own type; a click opens the zoom's menu. */
 .icon-btn.zoom-btn { width: auto; min-width: 34px; padding: 0 7px; font-size: 12.5px; font-weight: 550; font-variant-numeric: tabular-nums; color: var(--fg); }
+/* The zoom's menu (server/pages/viewer.ts, ZOOM_PARTS), in the New menu's look: − level +, the levels, the keys. */
+.erga-new-menu.zoom-menu { width: 196px; }
+.zoom-menu .zm-row { display: grid; grid-template-columns: 34px 1fr 34px; align-items: center; gap: 4px; }
+.zoom-menu button { border: 0; background: transparent; color: var(--nm-fg); border-radius: 7px; cursor: pointer; }
+.zoom-menu .zm-step { height: 32px; font-size: 18px; line-height: 1; }
+.zoom-menu output { text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; }
+.zoom-menu .zm-list { display: grid; gap: 1px; }
+.zoom-menu .zm-list button { display: flex; justify-content: space-between; padding: 6px 10px; text-align: left; font-variant-numeric: tabular-nums; }
+.zoom-menu .zm-list button[aria-checked="true"]::after { content: "✓"; color: var(--nm-soft); }
+.zoom-menu button:hover, .zoom-menu button:focus-visible { background: var(--nm-hover); outline: none; }
+.zoom-menu .zm-keys { padding: 4px 10px; color: var(--nm-soft); font-size: 12px; }
+/* (A finger: no keys, and larger rows.) */
+@media (pointer: coarse) { .zoom-menu .zm-keys, .zoom-menu .zm-list + hr { display: none; } .zoom-menu .zm-list button { padding: 10px 12px; } }
+.zm-said { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); margin: 0; }
+/* A phone: no room in the bar. Zoomed, the level shows in the corner across from the agent's circle, and opens the menu. */
+.zoom-pill { position: fixed; z-index: 30; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); height: 42px; padding: 0 12px;
+  border: 1px solid rgba(0, 0, 0, .08); border-radius: 21px; background: rgba(255, 255, 255, .88); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .08); color: #1c1c1f; font: 600 13px/1 "Inter", ui-sans-serif, system-ui, sans-serif; font-variant-numeric: tabular-nums; cursor: pointer; }
+.zoom-pill[hidden], html.erga-full .zoom-pill { display: none; }
+@media (min-width: 641px) and (min-height: 481px) { .zoom-pill { display: none; } }
+@media (max-width: 640px), (max-height: 480px) { #btn-zoom { display: none !important; } }

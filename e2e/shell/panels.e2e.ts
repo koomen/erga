@@ -173,7 +173,7 @@ journey("the panels and the bars over a page", () => {
     await soon(cardOpen).toBe(false);
   });
 
-  test("zoomed, the bar shows the level; ⌘0 or a click on it goes back to 100%; a zoom never reloads the page", async () => {
+  test("zoomed, the bar shows the level; ⌘0, or 100% in the menu it opens, goes back to 100%; a zoom never reloads the page", async () => {
     before = await zoomed();
     expect(before.scale).toBe(1);
     // A mark in the page's window: a reload of the frame loses it.
@@ -189,10 +189,11 @@ journey("the panels and the bars over a page", () => {
     await ed.press("ControlOrMeta+Digit0");
     await soon(scale).toBe(1);
     await soon(zoomAction).toBe(null);
-    // A step in, and a click on the action.
+    // A step in, and 100% in the action's menu.
     await ed.press("ControlOrMeta+Equal");
     await soon(zoomAction).toBe("110%");
     await page.click("#btn-zoom");
+    await page.click('#zoom-menu [data-level="1"]');
     await soon(scale).toBe(1);
     await soon(zoomAction).toBe(null);
     expect(await ed.frame("window.__kept === true"), "the page did not load again").toBe(true);

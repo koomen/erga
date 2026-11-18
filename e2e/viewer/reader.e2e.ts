@@ -178,6 +178,46 @@ journey("a reader opens a document with several pages", () => {
     await expect.poll(() => page.evaluate(() => (window as any).__kept)).toBe(false);
   });
 
+  test("zoomed, the level in the bar opens the zoom menu: − and + step, a level sets it and closes it, Escape closes it; a screen reader hears the level; on a phone the level shows in the corner and opens the menu", async () => {
+    const level = () =>
+      page.evaluate(() => {
+        const b = document.getElementById("btn-zoom");
+        return b?.checkVisibility() ? b.textContent : null;
+      });
+    const pill = () =>
+      page.evaluate(() => {
+        const b = document.getElementById("zoom-pill");
+        return b?.checkVisibility() ? b.textContent : null;
+      });
+    const menu = () => page.evaluate(() => document.getElementById("zoom-menu")?.checkVisibility() ?? false);
+    const said = () => page.evaluate(() => document.getElementById("zoom-said")?.textContent);
+    await page.locator(".erga-crumbs").click({ position: { x: 4, y: 4 } });
+    await page.keyboard.press("ControlOrMeta+Equal");
+    await expect.poll(level).toBe("110%");
+    await expect.poll(said).toBe("Zoom 110%");
+    await clickOn(page, "#btn-zoom");
+    await expect.poll(menu).toBe(true);
+    await clickOn(page, "#zoom-menu .zm-in");
+    await expect.poll(level).toBe("125%");
+    expect(await menu()).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect.poll(menu).toBe(false);
+    await clickOn(page, "#btn-zoom");
+    await clickOn(page, '#zoom-menu [data-level="0.75"]');
+    await expect.poll(level).toBe("75%");
+    await expect.poll(menu).toBe(false);
+    // A phone: no room in the bar; the level shows in the corner, and opens the same menu.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(pill).toBe("75%");
+    expect(await level()).toBe(null);
+    await clickOn(page, "#zoom-pill");
+    await expect.poll(menu).toBe(true);
+    await clickOn(page, '#zoom-menu [data-level="1"]');
+    await expect.poll(pill).toBe(null);
+    await page.setViewportSize({ width: 1200, height: 800 });
+    await expect.poll(level).toBe(null);
+  });
+
   test("Share with an agent copies the one-line prompt, or a prompt with a token for the time and scope picked; the token works", async () => {
     const origin = s.root;
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });

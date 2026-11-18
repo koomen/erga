@@ -88,6 +88,15 @@ export const FULL_BOOT = inlineCall("viewer-full");
 /** The document's zoom, viewing and editing (client/inline/viewer-zoom.ts). */
 export const ZOOM_BOOT = inlineCall("viewer-zoom");
 
+/** The levels the zoom menu offers. */
+const ZOOM_LEVELS = [0.5, 0.75, 0.9, 1, 1.25, 1.5, 2];
+
+/**
+ * The zoom's menu (client/inline/viewer-zoom.ts), which the level opens: in the bar (#btn-zoom), or on a phone in the
+ * corner (#zoom-pill), while the document is zoomed. And what a screen reader hears of each level.
+ */
+const ZOOM_PARTS = `<div class="erga-new-menu zoom-menu" id="zoom-menu" role="menu" aria-label="Zoom" hidden><div class="zm-row"><button type="button" class="zm-step zm-out" role="menuitem" aria-label="Zoom out">−</button><output class="zm-level"></output><button type="button" class="zm-step zm-in" role="menuitem" aria-label="Zoom in">+</button></div><hr class="erga-new-sep"><div class="zm-list">${ZOOM_LEVELS.map((l) => `<button type="button" role="menuitemradio" aria-checked="false" data-level="${l}">${Math.round(l * 100)}%</button>`).join("")}</div><hr class="erga-new-sep"><p class="zm-keys"></p></div><button type="button" class="zoom-pill" id="zoom-pill" aria-haspopup="menu" aria-controls="zoom-menu" aria-expanded="false" hidden></button><p class="zm-said" id="zoom-said" aria-live="polite"></p>`;
+
 /** Reloaded in the editor: the bars' parts as they were (client/inline/viewer-editing-body.ts), before their scripts run. */
 const RESTORE_BARS = `<script>window.ergaRestoreParts?.()</script>`;
 
@@ -185,7 +194,7 @@ ${o.meta}<script>${framesScript(o.pages)}</script><script>${REFUSED_SCRIPT}</scr
     editor: o.editable,
   });
   const after = `
-${editing ? "" : opening + editingBody}${bars}${o.editable ? RESTORE_BARS : ""}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script><script>${ZOOM_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}"><script>${inlineCall("viewer-live", `/d/${o.docId}`)}</script>` : ""}${o.commenter ? `<script>${inlineCall("viewer-comment", `/d/${o.docId}`, o.commenter)}</script>` : ""}${o.tree && session ? `<meta name="erga-title" content="${esc(o.title)}"><script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.tree.address, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
+${editing ? "" : opening + editingBody}${bars}${o.editable ? RESTORE_BARS : ""}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script>${ZOOM_PARTS}<script>${FULL_BOOT}</script><script>${ZOOM_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}"><script>${inlineCall("viewer-live", `/d/${o.docId}`)}</script>` : ""}${o.commenter ? `<script>${inlineCall("viewer-comment", `/d/${o.docId}`, o.commenter)}</script>` : ""}${o.tree && session ? `<meta name="erga-title" content="${esc(o.title)}"><script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.tree.address, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
 `;
   return { before, after };
 }

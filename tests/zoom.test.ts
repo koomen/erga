@@ -64,6 +64,11 @@ test("the keys step through the browser's levels to 50% and 200%, around the mid
   expect(zoomStep(pinched, key(1)).state.level).toBe(2);
   expect(zoomStep(pinched, { type: "reset" })).toEqual({ state: still, effects: ["draw", "save", "say"] });
   expect(zoomStep(still, { type: "reset" }).effects).toEqual([]);
+  // A level picked in the menu: at once, around the middle, saved; the same one again does nothing.
+  const picked = zoomStep(still, { type: "to", level: 1.5, w: W, h: H });
+  expect(picked).toEqual({ state: { ...still, level: 1.5 }, effects: ["draw", "save"] });
+  expect(zoomAim(still, picked.state, W, H)).toMatchObject({ x: W / 2, y: H / 2, top: true });
+  expect(zoomStep(picked.state, { type: "to", level: 1.5, w: W, h: H }).effects).toEqual([]);
 });
 
 test("a page that fits itself keeps its layout: its picture grows around the middle, the wheel moves it to its edges; smaller, it sits in the middle", () => {
