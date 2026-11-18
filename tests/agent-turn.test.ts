@@ -130,7 +130,7 @@ test("Stop with no live agent (the object restarted) ends the run kept: the alar
     },
   });
   const agents = new PersonAgents({ sql, platform: { agentSettings: async () => ({ missing: "off" }) } as unknown as Platform });
-  await agents.agentControl("ada", "abort");
+  await agents.agentControl("ada", null, "abort");
   expect(t.running()).toEqual([]);
   // The queued message stays in the conversation, unanswered.
   expect(t.load("you:ada")!.messages.map((m) => m.content)).toEqual(["Hi", "And this."]);

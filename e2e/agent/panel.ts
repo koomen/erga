@@ -192,7 +192,8 @@ export async function person(server: Server, login: string) {
       ...init,
       headers: { Cookie: cookie, Origin: root, ...(init.headers as Record<string, string>) },
     });
-  const log = async () => ((await (await get("/api/agent/conversation")).json()) as { log: Log }).log;
+  /** Their thread for the document `doc` (its id), as the server keeps it. */
+  const log = async (doc: string) => ((await (await get(`/api/agent/conversation?doc=${doc}`)).json()) as { log: Log }).log;
   return {
     login: login.toLowerCase(),
     cookie,
@@ -208,17 +209,17 @@ export async function person(server: Server, login: string) {
     },
     /** A scripted turn of their agent, from the page of the document `doc` (its id); the turn's items, once it has ended. */
     async turn(doc: string, steps: object[], text = "Test") {
-      const before = (await log()).items.length;
-      const sent = await get("/api/agent", {
+      const before = (await log(doc)).items.length;
+      const sent = await get(`/api/agent?doc=${doc}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: script(text, steps), doc }),
+        body: JSON.stringify({ text: script(text, steps) }),
       });
       expect(sent.ok, `the agent takes the message (${sent.status})`).toBe(true);
-      let now = await log();
+      let now = await log(doc);
       await until(
         async () => {
-          now = await log();
+          now = await log(doc);
           return !now.busy && now.items.length > before + 1;
         },
         10_000,

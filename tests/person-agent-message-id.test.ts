@@ -18,7 +18,7 @@ function agents() {
 }
 
 const users = async (a: PersonAgents) =>
-  (await a.conversation("ada")).items.flatMap((i) => (i.kind == "user" ? [{ length: i.text.length, id: i.id }] : []));
+  (await a.conversation("ada", null)).items.flatMap((i) => (i.kind == "user" ? [{ length: i.text.length, id: i.id }] : []));
 
 test("a message longer than the server keeps: its copy in the transcript has the tab's id", async () => {
   const a = agents();

@@ -79,10 +79,10 @@ export const front = async (server: Server) =>
 
 /** Sends DEV_LOGIN's agent a scripted turn (the script model: `@script [steps]`) from the document's page. */
 export const scripted = (server: Server, id: string, steps: unknown[]) =>
-  fetch(`${server.root}/api/agent`, {
+  fetch(`${server.root}/api/agent?doc=${id}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: server.root },
-    body: JSON.stringify({ text: `@script ${JSON.stringify(steps)}`, doc: id }),
+    body: JSON.stringify({ text: `@script ${JSON.stringify(steps)}` }),
   });
 
 /** The editor on a document, at its ?edit address, as someone who keeps the agent pane closed; once the gear shows. */

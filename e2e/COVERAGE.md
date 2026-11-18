@@ -42,7 +42,7 @@ The rules:
 | Y1 | `e2e/sync/two-people.e2e.ts` | Two people lose or double text; they end with different documents; undo takes the other person's text. | 10 |
 | Y2 | `e2e/sync/restart.e2e.ts` | A deploy or a crash loses edits, doubles the document, or loses pages. | 10 |
 | Y3 | `e2e/sync/bad-input.e2e.ts` | Bad bytes, a storm of sockets or a huge paste stops the server or reaches other files. | 4 |
-| G1 | `e2e/agent/turn.e2e.ts` | The agent's turn is not shown, cannot be undone, or acts without the person's Approve. | 15 |
+| G1 | `e2e/agent/turn.e2e.ts` | The agent's turn is not shown, cannot be undone, or acts without the person's Approve. A document's panel shows another page's thread. | 15 |
 | G2 | `e2e/agent/tools.e2e.ts` | An agent tool edits the wrong file, shows a wrong picture, or works on a document it may not open. | 21 |
 | V1 | `e2e/viewer/reader.e2e.ts` | A reader gets a blank or wrong page, links leave the viewer, or the bars hide the text. | 9 |
 | V2 | `e2e/viewer/live.e2e.ts` | A reader sees an old page; the page's scripts run twice; a page that loads again shows its start, or loses its view. | 11 |

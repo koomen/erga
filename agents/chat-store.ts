@@ -1,8 +1,8 @@
 // Agent conversations in a Durable Object's SQLite (agents/checkpoint.ts
 // says what a conversation holds). Each conversation has a scope: the
 // person's object (cloudflare/objects/person-agent.ts) keeps one for each
-// document ("doc:<id>"), the admin agents' object one for each admin
-// ("admin:<login>"). A checkpoint writes only what changed: the new
+// thread of their agent (agents/person/sessions.ts: "thread:<doc>:<login>"
+// for a document, "you:<login>" for the rest of Erga). A checkpoint writes only what changed: the new
 // messages, the transcript items from the first that changed, and the
 // state. A SQLite value is at most 2 MB, so long ones (a screenshot) go in
 // parts.

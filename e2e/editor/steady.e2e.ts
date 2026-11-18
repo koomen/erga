@@ -21,7 +21,6 @@ import {
   clickBadge,
   DRAWN_PAGE,
   fixButton,
-  newConversation,
   drag,
   drop,
   dropSign,
@@ -786,8 +785,6 @@ journey("a broken page says what is wrong, all of it in one card", () => {
   });
 
   test("a problem's Fix with agent asks the agent, takes only its own alert off, and the card shows beside the agent's panel", async () => {
-    // (A person has one conversation with their agent, in every document: a new one, so that this journey counts its own messages.)
-    await newConversation(s);
     // Was a bug: news drew the card again (a new alert, or the agent's state, which its panel reads as its socket
     // opens), with new buttons. A click whose press was on the old button and whose release was on the new one did
     // nothing. Here the agent's state comes during the press: the card waits for the release (client/common/pressed.ts).

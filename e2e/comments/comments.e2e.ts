@@ -362,7 +362,7 @@ journey("comments in the editor", () => {
   }) => {
     const page = tab.page;
     await page.setViewportSize(wide);
-    const before = (await conversation(s.root)).items.length;
+    const before = (await conversation(s.root, id)).items.length;
     // The scripted model's steps ride in the comment, as a person's words would. (Its first waits: "working" shows.)
     const steps = [
       { tool: "edit", args: { op: "comment", action: "reply", thread, text: "Yes: May has fewer people." }, delay: 500 },
@@ -399,8 +399,8 @@ journey("comments in the editor", () => {
       { by: "tester", text: asked },
       { by: "tester", via: "their agent", text: "Yes: May has fewer people." },
     ]);
-    // It ran in the person's own conversation, as their message.
-    const said = (await conversation(s.root)).items.slice(before).filter((i) => i.kind == "user");
+    // It ran in the person's own thread for the document, as their message.
+    const said = (await conversation(s.root, id)).items.slice(before).filter((i) => i.kind == "user");
     expect(said.map((i) => i.text)).toEqual([expect.stringMatching(/^In a comment on ".*": @erga what does May mean here\?/)]);
 
     // A turn that ends with no reply in the thread: "working" goes, and the thread says why.
@@ -531,7 +531,7 @@ journey("comments in the viewer", () => {
     );
     const comments = (await threadsOf(s.root, id)).find((t) => t.id == mine)!.comments;
     expect(comments.at(-1)).toMatchObject({ by: ada, via: "their agent", text: "I can't edit it, only comment." });
-    const log = await conversation(s.root, cookie);
+    const log = await conversation(s.root, id, cookie);
     expect(log.items.filter((i) => i.kind == "tool").map((i) => i.status)).toEqual(["error", "done"]);
     expect(await (await fetch(`${s.root}/d/${id}/doc/index.html`)).text()).toContain(`<p>${TEXT}</p>`);
     expect(await ed.textOf("h1")).toBe("Trip");

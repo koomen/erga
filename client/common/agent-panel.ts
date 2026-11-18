@@ -1,12 +1,16 @@
 // The person's agent panel as the browser keeps it, in one place: open or closed (this browser's, in erga:settings:v1,
-// as the editor keeps its settings), and the panel as this tab's last page drew it (this tab's, so the next page shows
-// the same conversation from its first paint). client/inline/agent-toggle.ts restores it before the page paints;
+// as the editor keeps its settings), and the panel as this tab's last page drew it (this tab's, so the next page of
+// the same thread shows the same conversation from its first paint). client/inline/agent-toggle.ts restores it before the page paints;
 // client/agent/person-agent.ts keeps the drawn panel as a page goes; sign-out forgets it. The server keeps the
 // conversation itself (agents/person/sessions.ts).
 
-/** The panel as a page drew it: the conversation's markup, the model, and the scroll place. Only `person`'s. */
+/**
+ * The panel as a page drew it: the conversation's markup, the model, and the scroll place. Only `person`'s, and only
+ * for a page of the same thread (`doc`: the document's id; null: a page outside a document).
+ */
 export interface Drawn {
   person: string;
+  doc: string | null;
   log: string;
   model: string;
   choice?: string;

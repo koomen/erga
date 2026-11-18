@@ -4,8 +4,8 @@
 //
 // Its circle and panel are outside `#erga-editor`, and stay as they are when the editor opens or closes: the editor
 // only places it (client/agent/layout.ts). Its conversation is the person's (`/api/agent`, which takes only the app's
-// own origin), not the document's: a test reads it at `${root}/api/agent/conversation`, never at the document's
-// `/d/<id>/api/agent`. In the viewer, everyone signed in who may open the document has it. A published site never
+// own origin), not the document's: on a document's page it is the person's thread for that document, and a test
+// reads it at `${root}/api/agent/conversation?doc=<id>`, never at the document's `/d/<id>/api/agent`. In the viewer, everyone signed in who may open the document has it. A published site never
 // has it.
 
 import type { Session } from "../platform.ts";

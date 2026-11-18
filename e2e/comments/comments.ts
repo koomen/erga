@@ -36,9 +36,9 @@ export async function threadsOf(root: string, document: string): Promise<Thread[
   return r.result!.threads;
 }
 
-/** A person's agent's conversation (DEV_LOGIN's, or the person's whose session `cookie` is): its items, in order. */
-export async function conversation(root: string, cookie?: string) {
-  const r = await fetch(`${root}/api/agent/conversation`, cookie ? { headers: { Cookie: cookie } } : {});
+/** A person's agent's thread for the document `doc` (DEV_LOGIN's, or the person's whose session `cookie` is): its items, in order. */
+export async function conversation(root: string, doc: string, cookie?: string) {
+  const r = await fetch(`${root}/api/agent/conversation?doc=${doc}`, cookie ? { headers: { Cookie: cookie } } : {});
   return ((await r.json()) as { log: { busy: boolean; items: { kind: string; status?: string; text?: string }[] } }).log;
 }
 

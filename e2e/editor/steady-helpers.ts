@@ -17,12 +17,6 @@ export const fixButton = (ed: Editor, title: RegExp) =>
     `(() => { const a = [...document.querySelectorAll("#alerts .alert")].find((a) => ${title}.test(a.querySelector(".alert-title").textContent)); return '#alerts .alert[data-key="' + CSS.escape(a.dataset.key) + '"] [data-action="fix"]'; })()`
   );
 
-/** A new conversation with the person's agent, as the panel's "New conversation" button starts one. */
-export async function newConversation(server: Server) {
-  const r = await fetch(`${server.root}/api/agent/conversation`, { method: "DELETE", headers: { Origin: server.root } });
-  expect(r.ok, `a new conversation: ${r.status}`).toBe(true);
-}
-
 /**
  * The page's frame has stopped moving in the tab: it slides over as the agent's panel opens or closes, and a click
  * aimed while it moves lands on the panel.

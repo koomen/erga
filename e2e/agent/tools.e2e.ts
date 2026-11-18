@@ -110,8 +110,8 @@ journey("the agents' tools on a page that a person has open", () => {
     expect(channel.text()).not.toContain("secret reply");
     channel.close();
     const bos = await person(s, BO);
-    expect((await bos.log()).items, "Bo's conversation is empty").toEqual([]);
-    expect((await ada.log()).items.some((i) => i.kind == "user" && i.text?.startsWith("a private question @script"))).toBe(true);
+    expect((await bos.log(id)).items, "Bo's conversation is empty").toEqual([]);
+    expect((await ada.log(id)).items.some((i) => i.kind == "user" && i.text?.startsWith("a private question @script"))).toBe(true);
   });
 
   test("an agent whose person can only view can't edit; made an editor, it edits", async () => {

@@ -84,5 +84,5 @@ test("the server refuses what the panel would: a PDF sent straight to the agent'
   expect(r.status).toBe(409);
   expect(((await r.json()) as { reason?: string }).reason).toContain("neither an image nor a text file");
   // Nothing of it reached the conversation.
-  expect((await agents.conversation("ada")).items).toEqual([]);
+  expect((await agents.conversation("ada", null)).items).toEqual([]);
 });

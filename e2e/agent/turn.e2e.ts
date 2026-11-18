@@ -1,6 +1,7 @@
 // The person's agent in its panel. In the editor: a turn's edits show, to the other people too; the turn's line, See
 // changes, Undo and Redo; files attached; a message that fails or waits; the pane across a reload. On the
-// documents' list: the agent's delete waits for Approve; the day's token limit; the panel from page to page.
+// documents' list: the agent's delete waits for Approve; the day's token limit; a document's own thread; the panel
+// from page to page.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { agentClosed, expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
@@ -244,8 +245,9 @@ journey("a turn of the agent in the editor", () => {
     await turnEnded(page, before);
     expect(JSON.parse((await answers(page)).at(-1)!)).toEqual({ images: ["image/png", "image/png"], files: ["data.csv"] });
     expect(await sentFiles("What do these show?")).toEqual(SENT);
-    // The transcript keeps small thumbnails. (The conversation is the person's, kept by their agent: agents/person/sessions.ts.)
-    const kept = (await (await fetch(`${s.root}/api/agent/conversation?user=${ADA}`)).json()) as {
+    // The transcript keeps small thumbnails. (The thread is the person's, kept by their agent: agents/person/sessions.ts.)
+    const doc = await ada.eval<string>(`document.querySelector('meta[name="erga-doc"]').content`);
+    const kept = (await (await fetch(`${s.root}/api/agent/conversation?doc=${doc}&user=${ADA}`)).json()) as {
       log: { items: { kind: string; files?: { thumb?: string }[] }[] };
     };
     const item = kept.log.items.find((i) => i.kind == "user" && i.files);
@@ -507,10 +509,57 @@ journey("the agent on the documents' list", () => {
     }
   });
 
+  // Was: one conversation on every page ("when i'm in one document and talking to the assistant, and then I open
+  // another document, ... I get a new agent thread, not a continuation of the previous one").
+  test("each document has a thread of its own, and the list has one: a turn that runs as the person leaves answers in its own thread", async () => {
+    const [a, b] = [await s.fixture("empty"), await s.fixture("empty")];
+    const listed = await page.locator("#agent-log > *").count();
+    const shown = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll("#agent-log .msg-user, #agent-log .msg-assistant")].map((e) => e.textContent ?? "")
+      );
+    /** The page is open, and its panel has read its thread. */
+    const open = async (address: string) => {
+      await page.goto(address);
+      await agentOn(page);
+    };
+    const [inA, slow] = [script("In A", [{ text: "Answer in A." }]), script("Slow, in A", [{ text: "Late answer in A.", delay: 700 }])];
+
+    // Document A: nothing of the list's conversation.
+    await open(`${a.address}?user=${LISA}`);
+    expect(await shown()).toEqual([]);
+    await say(page, inA);
+    await answered(page, "Answer in A.");
+    // A turn that is slow; the server has its message, and the person opens document B.
+    await say(page, slow);
+    await until(
+      () => page.evaluate(() => document.querySelectorAll("#agent-log .msg-user:not(.pending)").length == 2),
+      5000,
+      "the server has the message"
+    );
+    const kept = `${s.root}/api/agent/conversation?doc=${await page.evaluate(() => document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')!.content)}&user=${LISA}`;
+    await open(`${b.address}?user=${LISA}`);
+    expect(await shown()).toEqual([]);
+    // The turn ends in A's thread. B's panel shows nothing of it, and does not say that the agent works.
+    await until(
+      async () => ((await (await fetch(kept)).json()) as { log: { busy: boolean } }).log.busy == false,
+      10_000,
+      "the turn in A's thread ends"
+    );
+    await settle(page);
+    expect(await shown()).toEqual([]);
+    expect(await page.locator("#agent-fab.busy").count()).toBe(0);
+
+    // Back in A: its thread, with the answer that came while the person was away. The list: its own.
+    await open(`${a.address}?user=${LISA}`);
+    expect(await shown()).toEqual([inA, "Answer in A.", slow, "Late answer in A."]);
+    await open(docs());
+    expect(await page.locator("#agent-log > *").count()).toBe(listed);
+  });
+
   // The bug: the panel loaded its conversation again, in view, at each page ("the agent shouldn't refresh its contents
   // visible every time i navigate from one page to the next").
-  test("the panel shows the same conversation and scroll place from the next page's first paint; another person's panel starts empty", async () => {
-    const a = await s.fixture("empty");
+  test("the panel shows the same conversation and scroll place from the next page of its thread's first paint; another person's panel starts empty", async () => {
     const log = () =>
       page.evaluate(() => {
         const l = document.getElementById("agent-log")!;
@@ -540,7 +589,7 @@ journey("the agent on the documents' list", () => {
     expect(before.n).toBeGreaterThan(6);
 
     // Each page reads the conversation as it starts, and again once its socket opens.
-    for (const to of [`${a.address}?user=${LISA}`, docs()]) {
+    for (const to of [`${s.root}/documents/archived?user=${LISA}`, docs()]) {
       reads = 0;
       await page.goto(to);
       await until(() => page.evaluate(() => !!(window as any).__firstPaint), 5000, "the next page paints");

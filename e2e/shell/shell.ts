@@ -166,13 +166,13 @@ type LogItem = { kind: string; name?: string; status?: string };
 /** A scripted turn of the person's agent on a document (servers.main: "@script [...]"): the tool calls it made, once it is done. */
 export async function agentTurn(server: Server, doc: string, text: string, steps: unknown[]) {
   const log = async () =>
-    ((await (await fetch(`${server.root}/api/agent/conversation`)).json()) as { log: { busy: boolean; items: LogItem[] } }).log;
+    ((await (await fetch(`${server.root}/api/agent/conversation?doc=${doc}`)).json()) as { log: { busy: boolean; items: LogItem[] } }).log;
   const before = (await log()).items.length;
   const tools = steps.filter((x) => (x as { tool?: string }).tool).length;
-  const sent = await fetch(`${server.root}/api/agent`, {
+  const sent = await fetch(`${server.root}/api/agent?doc=${doc}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: server.root },
-    body: JSON.stringify({ text: `${text} @script ${JSON.stringify(steps)}`, doc }),
+    body: JSON.stringify({ text: `${text} @script ${JSON.stringify(steps)}` }),
   });
   if (!sent.ok) throw new Error(`the agent didn't take the prompt: ${sent.status}`);
   const done = await until(

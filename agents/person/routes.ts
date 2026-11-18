@@ -1,5 +1,6 @@
 // The routes of a person's agent panel (/api/agent...): ROUTES, below. Each asks the person's own agent object
-// (PersonAgents, sessions.ts) and answers its page.
+// (PersonAgents, sessions.ts) and answers its page. A page of a document names it on each request (?doc=<its id>):
+// the request is about that document's thread. Without it, the thread for the rest of Erga.
 //
 // The panel is the person's, in a browser: no token reaches it. An outside agent with a token
 // ("Authorization: Bearer erga_...", server/identity) calls the same tools itself (MCP, POST /api/tools/<name>,
@@ -10,6 +11,7 @@ import * as Schema from "effect/Schema";
 import { call, ctx, fromWeb, json, type Route } from "../../server/http.ts";
 import type { Platform } from "../../server/platform.ts";
 import { PANEL, routeFor, SECRET, STREAM, type RouteRow } from "../../shared/routes.ts";
+import { docOf } from "./sessions.ts";
 
 /** Someone signed in, in person (in a browser: for their own agent panel, which no token reaches). */
 const personOf = (platform: Platform, request: Request) =>
@@ -26,7 +28,6 @@ const Prompt = Schema.Struct({
   text: Schema.optionalKey(Schema.Unknown),
   context: Schema.optionalKey(Schema.Unknown),
   files: Schema.optionalKey(Schema.Unknown),
-  doc: Schema.optionalKey(Schema.Unknown),
   id: Schema.optionalKey(Schema.Unknown),
 });
 const ModelBody = Schema.Struct({ model: Schema.optionalKey(Schema.String) });
@@ -86,7 +87,7 @@ const control = (what: "abort" | "reset" | "model" | "approve" | "deny") => (a: 
   Effect.gen(function* () {
     const b = what == "model" ? yield* body(a.request, ModelBody, {}) : {};
     const answered = what == "approve" || what == "deny" ? yield* body(a.request, AnswerBody, {}) : {};
-    const r = yield* call(() => a.h.agentControl(a.me.login, what, b.model ?? answered.id));
+    const r = yield* call(() => a.h.agentControl(a.me.login, docOf(a.url), what, b.model ?? answered.id));
     return json(r, r.ok ? 200 : 409);
   });
 
@@ -99,7 +100,7 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
     path: "/api/agent",
     // { enabled, reason?, model, models, choice, log }
     run: (a) =>
-      call(() => a.h.agentState(a.me.login, a.url.origin, a.me.name, a.url.searchParams.has("fresh"))).pipe(
+      call(() => a.h.agentState(a.me.login, docOf(a.url), a.url.origin, a.me.name, a.url.searchParams.has("fresh"))).pipe(
         Effect.map((state) => json(state))
       ),
     action: "Your agent's panel",
@@ -108,8 +109,8 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
   {
     method: "POST",
     path: "/api/agent",
-    // { text, context, files?, doc?, id? }: a message (it steers a turn that is running). context is the page note (the
-    // page open, what is selected there), doc the id of the document open, for the document tools that name none, id
+    // { text, context, files?, id? }: a message (it steers a turn that is running). context is the page note (the
+    // page open, what is selected there), id
     // the tab's own id for the message: its copy in the transcript carries it, and a second message with the same id
     // (Try again, after the first got there) is not sent again.
     run: (a) =>
@@ -122,7 +123,7 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
             String(b.text ?? ""),
             typeof b.context == "string" ? b.context : null,
             b.files,
-            typeof b.doc == "string" ? b.doc : null,
+            docOf(a.url),
             a.me.name,
             typeof b.id == "string" && /^[\w-]{1,64}$/.test(b.id) ? b.id : undefined
           )
@@ -140,7 +141,7 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
   {
     method: "GET",
     path: "/api/agent/events",
-    // A WebSocket (Upgrade: websocket, as the panel asks) or server-sent events, to that person's pages only: { type: "agent", ev }
+    // A WebSocket (Upgrade: websocket, as the panel asks) or server-sent events, to that person's pages on this thread only: { type: "agent", ev }
     run: (a) => {
       const headers = new Headers(a.request.headers);
       headers.set("x-erga-login", a.me.login);
@@ -157,14 +158,14 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
     method: "GET",
     path: "/api/agent/conversation",
     // { log: { items, busy, undoable } }
-    run: (a) => call(() => a.h.conversation(a.me.login)).pipe(Effect.map((log) => json({ log }))),
+    run: (a) => call(() => a.h.conversation(a.me.login, docOf(a.url))).pipe(Effect.map((log) => json({ log }))),
     action: "Your agent's conversation, kept",
     ...PANEL_ROW,
   },
   {
     method: "DELETE",
     path: "/api/agent/conversation",
-    run: (a) => call(() => a.h.clearConversation(a.me.login)).pipe(Effect.map((log) => json({ ok: true, log }))),
+    run: (a) => call(() => a.h.clearConversation(a.me.login, docOf(a.url))).pipe(Effect.map((log) => json({ ok: true, log }))),
     action: "A new conversation with your agent",
     ...PANEL_ROW,
   },

@@ -46,6 +46,9 @@ Steps, one argument each, in order:
   ask:<text>           sends the text to the agent, and does not wait: the screenshot shows the turn as it runs
                        (a script's last step with "delay": 20000 holds it). The look stops the turn at its end.
   wait:<text>          waits until the page shows the text: an edit of the agent's, for example
+  open:<fixture>       opens another document in the same tab, in the editor: a copy of that folder of e2e/fixtures.
+                       The same name opens the same copy again (the name of --doc: the first document). The agent's
+                       panel is open there if it was open.
   shot:<file.png>      a screenshot at this step, too
 
 Example:
@@ -287,11 +290,16 @@ else {
     writeFileSync(KEPT, JSON.stringify({ pid: s.pid()!, root, scratch } satisfies Kept));
   } else stop = () => s.dispose();
 }
-/** What openEditor needs of a server: a copy of the document, opened. */
+/** The documents open so far, by name: the first one (--doc), and each fixture of an open: step. */
+const opened = new Map<string, { dir: string; address: string }>();
+/** What openEditor needs of a server: a copy of the document, opened; the same copy for the same name. */
 const server = {
-  async fixture() {
+  async fixture(name: string) {
+    const was = opened.get(name);
+    if (was) return was;
     const dir = join(scratch, "docs", `look-${Date.now()}`);
-    if (path == fixtureDir) copyFixture(isDir ? docArg : dirname(docArg), dir);
+    if (name != docArg) copyFixture(name, dir);
+    else if (path == fixtureDir) copyFixture(isDir ? docArg : dirname(docArg), dir);
     else cpSync(isDir ? path : dirname(path), dir, { recursive: true });
     const r = await fetch(`${root}/__erga/open`, {
       method: "POST",
@@ -300,7 +308,9 @@ const server = {
       redirect: "manual",
     });
     if (r.status != 303) throw new Error(`opening ${dir}: ${r.status} ${await r.text()}`);
-    return { dir, address: root + r.headers.get("location")!.replace(/[?&]edit$/, "") };
+    const doc = { dir, address: root + r.headers.get("location")!.replace(/[?&]edit$/, "") };
+    opened.set(name, doc);
+    return doc;
   },
 } as unknown as Server;
 
@@ -333,12 +343,20 @@ try {
     throw null;
   }
   const tab = { page, errors, strict: false, own: () => Promise.reject(new Error("no server of its own")) };
-  const ed = await openEditor(tab, server, docArg, { file: isDir ? undefined : basename(path) });
+  let ed = await openEditor(tab, server, docArg, { file: isDir ? undefined : basename(path) });
   await ed.clickEnd("[data-erga-text]:not(.erga-locked)");
   await ed.idle();
   for (const step of args) {
-    const [, verb, rest] = /^(type|click|tap|shot|say|ask|wait):([\s\S]*)$/.exec(step) ?? [];
+    const [, verb, rest] = /^(type|click|tap|shot|say|ask|wait|open):([\s\S]*)$/.exec(step) ?? [];
     if (verb == "type") await ed.type(rest);
+    else if (verb == "open") {
+      const agentOpen = () => page.evaluate(() => document.body.classList.contains("agent-open"));
+      const was = await agentOpen();
+      ed = await openEditor(tab, server, rest, rest == docArg && !isDir ? { file: basename(path) } : {});
+      // The agent's panel as it was (a phone's closes on each page), once it has read its thread.
+      if (was && !(await agentOpen())) await page.click("#agent-fab");
+      if (was) await page.waitForFunction(() => document.getElementById("agent-model")!.textContent, null, { timeout: 10_000 });
+    }
     else if (verb == "wait") await page.frameLocator("#frame").getByText(rest).first().waitFor({ timeout: 15_000 });
     else if (verb == "say" || verb == "ask") {
       // The turn's end: one more answer or error in the panel, and the agent no longer at work.

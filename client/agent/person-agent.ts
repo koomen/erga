@@ -6,12 +6,15 @@
 //   GET  /api/agent              the state: on or off (and why), the model, the conversation so far (?fresh: the
 //                                settings read now, after a key changed; else they may be up to 5 s old)
 //   POST /api/agent              { text, context }: a message; context is the page note (the page open, what is selected)
+//   (each of them with ?doc=<the document's id> on a page of a document: that document's thread)
 //   POST /api/agent/abort|reset|model|approve|deny
 //   /api/agent/events            { type: "agent", ev } for this person's agent (a WebSocket)
 //   GET|DELETE /api/agent/conversation   the conversation, kept on the server (read on mount); a new one
 //
-// The conversation follows the person from page to page, browser to browser and sign-in to sign-in: the server keeps
-// it. Built by client/build.ts to agent.js.
+// The panel shows one thread: the document's own, on a page of a document (DOC), and one for the rest of Erga on
+// every other page. Each request names the document (?doc=), so a page hears and changes only its thread; a turn that
+// runs in another thread goes on there, and this panel shows nothing of it. A thread follows the person from browser
+// to browser and sign-in to sign-in: the server keeps it. Built by client/build.ts to agent.js.
 
 import { chat } from "./agent-chat";
 import { classify, fileRefs, type Attachment } from "../../shared/attach";
@@ -38,8 +41,12 @@ interface AgentState {
 }
 
 const $ = (id: string) => document.getElementById(id)!;
-/** A request to the agent's API, as whoever this tab is. */
-const call = (path: string, init?: RequestInit) => fetch(asUser(path), { ...init, credentials: "same-origin" });
+/** The document the page has open, if any: its thread is the panel's, and its document tools' own when the agent names none. */
+const DOC = document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')?.content ?? null;
+/** A path of the agent's API, for this page's thread. */
+const inThread = (path: string) => (DOC ? `${path}${path.includes("?") ? "&" : "?"}doc=${encodeURIComponent(DOC)}` : path);
+/** A request to the agent's API about this page's thread, as whoever this tab is. */
+const call = (path: string, init?: RequestInit) => fetch(asUser(inThread(path)), { ...init, credentials: "same-origin" });
 const store = {
   get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k: string, v: string | null) => { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch { /* private window */ } },
@@ -70,8 +77,6 @@ const VERBS: Record<string, [string, string]> = {
   publish_document: ["Publishing the document", "Published the document"],
 };
 
-/** The document the page has open, if any: the document tools' own when the agent names none. */
-const DOC = document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')?.content ?? null;
 /** Its host, for someone who may edit it (meta erga-base): the agent's edits there, which Undo takes back. */
 const BASE = document.querySelector<HTMLMetaElement>('meta[name="erga-base"]')?.content ?? null;
 const input = $("agent-input") as HTMLTextAreaElement,
@@ -267,7 +272,7 @@ function context(): string | null {
 /** Sends a message, with the tab's own id for it (sends.ts): Try again sends it again with the same id. */
 function ask(text: string, ctx: string | null, files: Attachment[] = []) {
   const id = crypto.randomUUID();
-  const post = () => void postMessage(id, { text, context: ctx, files, doc: DOC, id }, files.length > 0);
+  const post = () => void postMessage(id, { text, context: ctx, files, id }, files.length > 0);
   talk.pending(id, text, fileRefs(files), post);
   begin();
   post();
@@ -433,7 +438,7 @@ async function load(tries = 0, fresh = false): Promise<void> {
 // restarts) is made again, a little later each time.
 const events = liveSocket({
   name: "agent",
-  path: "/api/agent/events",
+  path: inThread("/api/agent/events"),
   up: () => void load(),
   message(e) {
     let m: { type?: string; ev?: LogEvent } & Partial<AgentState>;
@@ -501,6 +506,7 @@ window.addEventListener("pagehide", () => {
     t: "leave",
     drawn: {
       person: $("agent").dataset.person ?? "",
+      doc: DOC,
       log: talk.drawn(),
       model: model.innerHTML,
       choice: model.querySelector("select")?.value,

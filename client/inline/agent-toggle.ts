@@ -14,11 +14,13 @@ declare global {
 
 /**
  * The panel as the tab's last page left it, drawn before this page paints: its conversation, its model and its scroll
- * place, if it was this person's. The agent's script then loads the conversation, and draws only what changed.
+ * place, if it was this person's and this page's thread (the same document, or no document on both). The agent's
+ * script then loads the conversation, and draws only what changed.
  */
 function drawAsLeft(kept: Drawn | null) {
   try {
-    if (!kept || kept.person != document.getElementById("agent")!.dataset.person) return;
+    const doc = document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')?.content ?? null;
+    if (!kept || kept.person != document.getElementById("agent")!.dataset.person || kept.doc != doc) return;
     const log = document.getElementById("agent-log")!,
       model = document.getElementById("agent-model")!;
     log.innerHTML = kept.log;

@@ -149,7 +149,13 @@ journey("a hostile page, opened in the editor by the person it attacks", () => {
     // (A person of the journey's own: their agent's conversation is theirs alone.)
     user = unique("victim-");
     const conversation = () =>
-      page.evaluate((u) => fetch(`/api/agent/conversation?user=${u}`).then((r) => r.json()), user) as Promise<{
+      page.evaluate(
+        (u) =>
+          fetch(`/api/agent/conversation?doc=${document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')!.content}&user=${u}`).then(
+            (r) => r.json()
+          ),
+        user
+      ) as Promise<{
         log: { items: { kind: string; text?: string }[] };
       }>;
     await agentClosed(page);

@@ -48,7 +48,7 @@ test("the gate says why: the agent off first; nothing to send", () => {
   expect(canSend("box", facts({ text: "", files: 1 }))).toBeNull();
 });
 
-const drawn: Drawn = { person: "ada", log: "<div>hi</div>", model: "script", top: 0, bottom: true };
+const drawn: Drawn = { person: "ada", doc: null, log: "<div>hi</div>", model: "script", top: 0, bottom: true };
 
 test("a page that goes before it loaded the conversation leaves the tab's copy as it is; once loaded, it keeps its own", () => {
   expect(panelStep("as-left", { t: "leave", drawn: { ...drawn, log: "" } })).toEqual({ state: "as-left", save: null });

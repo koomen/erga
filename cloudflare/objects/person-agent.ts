@@ -1,6 +1,7 @@
 // Each person's agent, as a Durable Object (one per person, named by their login): the Cloudflare side of
 // agents/person/sessions.ts. It gives the agent its SQLite and the Platform, forwards the calls the Worker makes
-// (RPC), and wakes a run a restart cut off (its alarm). Its conversation, scope "you:<login>", is kept step by step
+// (RPC), and wakes a run a restart cut off (its alarm). Each thread's conversation (one for each document, scope
+// "thread:<doc>:<login>", and one for the rest of Erga, scope "you:<login>") is kept step by step
 // (agents/checkpoint.ts, in agents/chat-store.ts's tables).
 //
 // (Before the one agent, it kept each person's conversations with a document's own agent, scope "doc:<id>": rows that
@@ -25,8 +26,8 @@ export class PersonAgent extends DurableObject<Env> implements PersonAgentObject
     watch: () => void this.watch(),
   });
 
-  agentState(login: string, origin: string, name?: string, fresh?: boolean) {
-    return this.agents.agentState(login, origin, name, fresh);
+  agentState(login: string, doc: string | null, origin: string, name?: string, fresh?: boolean) {
+    return this.agents.agentState(login, doc, origin, name, fresh);
   }
   agentPrompt(
     login: string,
@@ -40,14 +41,14 @@ export class PersonAgent extends DurableObject<Env> implements PersonAgentObject
   ) {
     return this.agents.agentPrompt(login, origin, text, context, attached, doc, name, id);
   }
-  agentControl(login: string, op: "abort" | "reset" | "model" | "approve" | "deny", model?: string) {
-    return this.agents.agentControl(login, op, model);
+  agentControl(login: string, doc: string | null, op: "abort" | "reset" | "model" | "approve" | "deny", model?: string) {
+    return this.agents.agentControl(login, doc, op, model);
   }
-  conversation(login: string) {
-    return this.agents.conversation(login);
+  conversation(login: string, doc: string | null) {
+    return this.agents.conversation(login, doc);
   }
-  clearConversation(login: string) {
-    return this.agents.clearConversation(login);
+  clearConversation(login: string, doc: string | null) {
+    return this.agents.clearConversation(login, doc);
   }
   /** The panel's events: a WebSocket (Upgrade: websocket), else server-sent events. */
   async fetch(request: Request): Promise<Response> {
