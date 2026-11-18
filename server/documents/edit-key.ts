@@ -7,8 +7,8 @@
 // person may do (read or edit) as it does for any request: a share taken away holds for the next socket.
 //
 // Trap: a page's own scripts can read its edit key and call the keyed operations as the person. So a call with the key
-// (Caller.fromPage) never starts the person's agent: for a comment with "@erga", their agent panel asks them first
-// (server/operations/comments.ts). Give the key no new power that the page's author must not have.
+// (Caller.fromPage) writes no comment, and so never starts the person's agent (server/operations/comments.ts). Give
+// the key no new power that the page's author must not have.
 
 import * as Schema from "effect/Schema";
 import type { Who } from "../directory/index.ts";

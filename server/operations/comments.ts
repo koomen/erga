@@ -12,15 +12,14 @@
 //
 // A person types a comment in the box that the window around the page draws (client/common/comment-box.ts), and it
 // comes with their session: their @erga runs at once, and the answer says so (`agent`: working, or why not).
-// A comment that comes with the page's edit key (Caller.fromPage) never starts the agent: a script in the page can
-// read that key and write as the person. The person's agent panel, which the page can't reach, shows the comment and
-// asks them; their click there (POST /api/agent/comment, runComment) is the request.
+// The page's edit key (Caller.fromPage) writes no comment (add, reply, edit): a script in the page can read that key
+// and would write as the person. It reads, resolves, reopens and deletes, as the page's thread does.
 
 import * as Schema from "effect/Schema";
 import type { DocRow } from "../directory/index.ts";
 import type { Anchor, Comment, CommentAnswer, CommentCall, Thread } from "../../document/api/comments.ts";
 import { addressOf } from "../../document/model/names.ts";
-import type { AgentNote, CommentAsk } from "../../shared/attribution.ts";
+import type { AgentNote } from "../../shared/attribution.ts";
 import { fromBase64 } from "../../shared/bytes.ts";
 import { type Caller, DOCUMENT, findDocument, type Operation, OperationError, platformOf, str } from "./operation.ts";
 
@@ -76,48 +75,12 @@ async function askAgent(caller: Caller, doc: DocRow, thread: Thread, asked: Comm
   return platformOf(caller).personAgent(login).agentPrompt(login, caller.origin, task.text, task.context, undefined, doc.id, caller.name);
 }
 
-/**
- * The person's click on the panel's question (POST /api/agent/comment): the comment, as the panel showed it, becomes
- * their request. Never with a page's edit key, and only their own comment, with the text they saw.
- */
-export async function runComment(
-  caller: Caller,
-  ask: Partial<Record<keyof CommentAsk, unknown>>
-): Promise<{ ok: boolean; reason?: string }> {
-  if (caller.fromPage || caller.who.via) return { ok: false, reason: "only you ask your agent, in your agent panel" };
-  const by = caller.who.login.toLowerCase();
-  try {
-    const doc = await findDocument(caller, String(ask.doc), "comment");
-    const r = await platformOf(caller).docs.comments(doc, { op: "list", all: true });
-    const thread = r.ok && "threads" in r ? r.threads.find((t) => t.id == ask.thread) : undefined;
-    const asked = thread?.comments.find((c) => c.id == ask.comment && c.by == by && !c.via);
-    if (!thread || !asked || asked.text !== ask.text || !asksAgent(asked.text))
-      return { ok: false, reason: "the comment changed since, or it's gone" };
-    return await askAgent(caller, doc, thread, asked);
-  } catch (e) {
-    if (e instanceof OperationError) return { ok: false, reason: e.message };
-    throw e;
-  }
-}
-
-/** What a comment's answer says of the agent: it took the thread, or why not (a page's edit key: the panel asks first). */
+/** What a comment's answer says of the agent: it took the thread, or why not. */
 async function agentFor(caller: Caller, doc: DocRow, thread: Thread): Promise<AgentNote> {
   const asked = lastOwn(thread, caller.who.login.toLowerCase());
   if (!asked) return { reason: "the comment is gone" };
-  if (!caller.fromPage) {
-    const r = await askAgent(caller, doc, thread, asked);
-    return r.ok ? { working: true } : { reason: r.reason ?? "it didn't start" };
-  }
-  const login = caller.who.login.toLowerCase();
-  const ask: CommentAsk = { doc: doc.id, title: doc.title, thread: thread.id, comment: asked.id, text: asked.text };
-  // (An object from before this method's deploy has none: the comment is saved all the same.)
-  return platformOf(caller)
-    .personAgent(login)
-    .askComment(login, ask)
-    .then(
-      () => ({ reason: "your agent panel asks you first: run the comment there" }),
-      () => ({ reason: "its panel didn't answer" })
-    );
+  const r = await askAgent(caller, doc, thread, asked);
+  return r.ok ? { working: true } : { reason: r.reason ?? "it didn't start" };
 }
 
 const need = (args: Record<string, unknown>, key: string, action: string): string => {
@@ -193,6 +156,8 @@ export const COMMENT_OPERATIONS: Operation[] = [
     run: async (args, caller) => {
       const doc = await findDocument(caller, args.document, "comment");
       const action = args.action as (typeof ACTIONS)[number];
+      if (caller.fromPage && (action == "add" || action == "reply" || action == "edit"))
+        throw new OperationError({ message: "The page can't write a comment: only the comment box writes one.", status: 403 });
       const by = caller.who.login.toLowerCase(),
         via = caller.who.via ?? null;
       let call: CommentCall;

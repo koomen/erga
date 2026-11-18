@@ -8,7 +8,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { call, ctx, fromWeb, json, type Route } from "../../server/http.ts";
-import { type Caller, runComment } from "../../server/operations/index.ts";
 import type { Platform } from "../../server/platform.ts";
 import { PANEL, routeFor, SECRET, STREAM, type RouteRow } from "../../shared/routes.ts";
 
@@ -32,12 +31,6 @@ const Prompt = Schema.Struct({
 });
 const ModelBody = Schema.Struct({ model: Schema.optionalKey(Schema.String) });
 const AnswerBody = Schema.Struct({ id: Schema.optionalKey(Schema.String) });
-const CommentBody = Schema.Struct({
-  doc: Schema.optionalKey(Schema.Unknown),
-  thread: Schema.optionalKey(Schema.Unknown),
-  comment: Schema.optionalKey(Schema.Unknown),
-  text: Schema.optionalKey(Schema.Unknown),
-});
 const KeyBody = Schema.Struct({ name: Schema.optionalKey(Schema.String), value: Schema.optionalKey(Schema.String) });
 
 /** The body as JSON, as `schema` has it; else `fallback` (a body that isn't JSON counts as none, as before). */
@@ -173,29 +166,6 @@ export const ROUTES: readonly RouteRow<(a: Asked) => Route>[] = [
     path: "/api/agent/conversation",
     run: (a) => call(() => a.h.clearConversation(a.me.login)).pipe(Effect.map((log) => json({ ok: true, log }))),
     action: "A new conversation with your agent",
-    ...PANEL_ROW,
-  },
-  {
-    method: "POST",
-    path: "/api/agent/comment",
-    // { doc, thread, comment, text }: the person's click on "Run this comment as a request?", which the panel shows
-    // for a comment with @erga sent with the page's edit key (the event { type: "comment-ask", ask }): their agent
-    // takes the thread.
-    run: (a) =>
-      Effect.gen(function* () {
-        const b = yield* body(a.request, CommentBody, {});
-        const admin = yield* call(() => a.platform.directory.users.isAdmin(a.me.login));
-        const caller: Caller = {
-          dir: a.platform.directory,
-          who: { login: a.me.login, ...(admin ? { admin: true } : {}) },
-          name: a.me.name,
-          origin: a.url.origin,
-          platform: a.platform,
-        };
-        const r = yield* call(() => runComment(caller, b));
-        return json(r, r.ok ? 200 : 409);
-      }),
-    action: "Run your comment with @erga as a request (the panel's question)",
     ...PANEL_ROW,
   },
   {

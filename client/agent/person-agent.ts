@@ -8,8 +8,6 @@
 //   POST /api/agent              { text, context }: a message; context is the page note (the page open, what is selected)
 //   POST /api/agent/abort|reset|model|approve|deny
 //   /api/agent/events            { type: "agent", ev } for this person's agent (a WebSocket)
-//                                { type: "comment-ask", ask }: a comment of theirs with @erga, written in a page
-//   POST /api/agent/comment      the comment the panel asked about, as their request (their click on Run)
 //   GET|DELETE /api/agent/conversation   the conversation, kept on the server (read on mount); a new one
 //
 // The conversation follows the person from page to page, browser to browser and sign-in to sign-in: the server keeps
@@ -20,7 +18,6 @@ import { classify, fileRefs, type Attachment } from "../../shared/attach";
 import { attachments } from "./attach-ui";
 import { canSend, type SendPath } from "./send-gate";
 import { turnEnded, type Log, type LogEvent } from "../../shared/agent-log";
-import type { CommentAsk } from "../../shared/attribution";
 import { backoff, live, transient } from "../live/client";
 import { liveSocket } from "../live/socket";
 import { restoredFor } from "../live/restore";
@@ -184,32 +181,6 @@ function hideHint() {
   hint.hidden = true;
   hint.classList.remove("sticky");
 }
-// A comment with @erga that the person wrote in a page starts no agent by itself: the page's own scripts can write one
-// as them (server/operations/comments.ts). The panel, which the page can't reach, shows the comment, and their click
-// on Run makes it their request.
-let asking: CommentAsk | null = null;
-function showAsk(ask: CommentAsk | null) {
-  asking = ask;
-  $("agent-ask").hidden = !ask;
-  if (!ask) return;
-  $("agent-ask-q").textContent = `Run this comment on "${ask.title}" as a request?`;
-  $("agent-ask-text").textContent = ask.text;
-  if (!window.ergaAgent?.open()) window.ergaAgent?.show(true);
-}
-$("agent-ask-no").addEventListener("click", () => showAsk(null));
-$("agent-ask-run").addEventListener("click", async () => {
-  const ask = asking;
-  if (!ask) return;
-  showAsk(null);
-  const r = await call("/api/agent/comment", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(ask),
-  }).catch(() => null);
-  if (r?.ok) return;
-  const a = (await r?.json().catch(() => null)) as { reason?: string; error?: string } | null;
-  showHint(`Your agent wasn't asked: ${a?.reason ?? a?.error?.replace(/\.$/, "") ?? "the server didn't answer"}.`, true);
-});
 /** Why a message can't go by this path now (send-gate.ts), or null if it can. */
 const gate = (path: SendPath, text: string) => canSend(path, { off, reading: att.reading, text, files: att.files.length });
 /** Why Send can't send right now, or null if it can. */
@@ -465,7 +436,7 @@ const events = liveSocket({
   path: "/api/agent/events",
   up: () => void load(),
   message(e) {
-    let m: { type?: string; ev?: LogEvent; ask?: CommentAsk } & Partial<AgentState>;
+    let m: { type?: string; ev?: LogEvent } & Partial<AgentState>;
     try { m = JSON.parse(String(e.data)); } catch { return; }
     // The model switched, from another tab of the person's. (Heard, as the agent's events are: load() asks again, so
     // an answer from before the switch never puts the old model back.)
@@ -473,7 +444,6 @@ const events = liveSocket({
       heard++;
       renderModel({ ...m, enabled: true });
     }
-    if (m.type == "comment-ask" && m.ask) showAsk(m.ask);
     if (m.type == "agent" && m.ev) {
       heard++;
       talk.apply(m.ev);

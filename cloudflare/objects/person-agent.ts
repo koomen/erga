@@ -9,7 +9,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { STALE_MS } from "../../agents/chat-store";
 import { PersonAgents, type PersonAgentObject } from "../../agents/person/sessions.ts";
-import type { CommentAsk } from "../../shared/attribution";
 import { platform } from "../platform";
 import { blobsOf } from "../blobs";
 import type { Env } from "../env";
@@ -40,9 +39,6 @@ export class PersonAgent extends DurableObject<Env> implements PersonAgentObject
     id?: string
   ) {
     return this.agents.agentPrompt(login, origin, text, context, attached, doc, name, id);
-  }
-  askComment(login: string, ask: CommentAsk) {
-    return this.agents.askComment(login, ask);
   }
   agentControl(login: string, op: "abort" | "reset" | "model" | "approve" | "deny", model?: string) {
     return this.agents.agentControl(login, op, model);

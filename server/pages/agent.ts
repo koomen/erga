@@ -30,11 +30,6 @@ const PANEL = `<div class="agent-glass">
 <button type="button" class="agent-jump" id="agent-jump" hidden>↓ Jump to latest</button>
 <p class="agent-turn" id="agent-turn" role="status" hidden></p>
 <p class="agent-hint" id="agent-hint" role="status" hidden></p>
-<div class="agent-ask" id="agent-ask" role="group" aria-labelledby="agent-ask-q" hidden>
-<p class="agent-ask-q" id="agent-ask-q"></p>
-<p class="agent-ask-text" id="agent-ask-text"></p>
-<div class="agent-ask-acts"><button type="button" id="agent-ask-no">Dismiss</button><button type="button" class="run" id="agent-ask-run">Run</button></div>
-</div>
 <form class="agent-compose" id="agent-form">
 <div class="agent-field" id="agent-field"><textarea id="agent-input" rows="1" placeholder="Ask the agent…" aria-label="Message the agent"></textarea></div>
 <button type="submit" class="agent-send" id="agent-send">Send</button>

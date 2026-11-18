@@ -59,7 +59,7 @@ export interface Caller {
   readonly token?: AgentToken;
   /**
    * The call came with a page's edit key (server/api.ts, fromPage). The page's own scripts can send one as the person,
-   * so it never asks the person's agent by itself (comments.ts).
+   * so it writes no comment (comments.ts).
    */
   readonly fromPage?: true;
   /** A person's own agent hears each document its tools ran in (callDocument), to say when its turn is done there. */

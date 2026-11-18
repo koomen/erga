@@ -389,8 +389,6 @@ journey("comments in the editor", () => {
       "the agent's reply shows",
       card
     );
-    // No question: the agent's panel never asked.
-    expect(await page.evaluate(() => document.getElementById("agent-ask")?.hidden ?? true)).toBe(true);
     // Its picture is Erga's mark on black, never the person's letter or colour.
     expect(
       await ed.comments<string[]>(

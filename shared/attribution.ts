@@ -46,18 +46,6 @@ export function changeLogEntry(at: number, by: string, via: string | null | unde
 export interface Act { login: string; via?: string | null }
 
 /**
- * What a person's agent panel asks them: whether to run this comment of theirs, with @erga, as a request. For a
- * comment sent with a page's edit key (server/operations/comments.ts), which starts no agent by itself.
- */
-export interface CommentAsk {
-  doc: string;
-  title: string;
-  thread: string;
-  comment: string;
-  text: string;
-}
-
-/**
  * What a person's comment with @erga did (server/operations/comments.ts, the answer's `agent`): their agent took the
  * thread and works on it, or the reason it didn't start. Their thread shows it until the agent's reply comes.
  */

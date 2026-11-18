@@ -147,7 +147,7 @@ test("every route a page's script calls is in the audit", () => {
       if (!covered(p)) calls.push(`${file}: ${p}`);
     }
   }
-  expect(seen).toBeGreaterThan(10);
+  expect(seen).toBeGreaterThan(5);
   if (calls.length) console.log(`Called by a page, but a row of no list (shared/routes.ts):\n${calls.join("\n")}`);
   expect(calls).toEqual([]);
 });
