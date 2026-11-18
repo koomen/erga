@@ -27,6 +27,19 @@ export async function say(page: Page, text: string) {
 export const answers = (page: Page) =>
   page.evaluate(() => [...document.querySelectorAll("#agent-log .msg-assistant")].map((e) => e.textContent ?? ""));
 
+/** The lines of the agent's tool calls that show in the panel: each one's text, and whether it has a picture. */
+const CALLS = `[...document.querySelectorAll("#agent-log .msg-tool:not([hidden])")].map((e) => e.textContent + (e.querySelector("img.shot")?.naturalWidth > 0 ? " [picture]" : ""))`;
+export const calls = (page: Page) => page.evaluate<string[]>(CALLS);
+
+/** Records the tool calls' lines (calls) each time the panel's log changes, from now on: the answer reads the records. */
+export async function watchCalls(page: Page) {
+  await page.evaluate(`(() => {
+    const seen = (window.__calls = []);
+    new MutationObserver(() => seen.push(${CALLS})).observe(document.getElementById("agent-log"), { childList: true, subtree: true });
+  })()`);
+  return () => page.evaluate<string[][]>("window.__calls");
+}
+
 /**
  * The agent's answers, and whether a turn is under way: the agent works, or a message is still on its way.
  * Trap: between the moment the server has a message and the moment it says that the agent works, the panel shows

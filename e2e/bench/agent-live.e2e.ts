@@ -49,7 +49,6 @@ test("two edits reach the open page without a reload and the disk; the agent's b
   expect(await ed.textOf("h1")).toBe("Notes from the field");
   expect(await ed.textOf("ul")).toContain("Buy seeds");
   expect(await ed.frame<boolean>(`${W}.__marker == 1`), "without a reload").toBe(true);
-  expect(await ed.eval<boolean>(`[...document.querySelectorAll(".msg-tool")].some((e) => /Edited/.test(e.textContent))`), "the panel shows the edit").toBe(true);
   expect(await ed.eval<boolean>(`!!document.querySelector(".msg-assistant")?.textContent.trim()`), "and a reply").toBe(true);
   expect(await ed.eval<boolean>(`[...document.querySelectorAll(":is(#people, #me) .agent-badge")].some((e) => /agent/.test(e.dataset.tip))`), "its badge on its owner's avatar").toBe(true);
   // (No caret of its own on the page: e2e/agent/turn.e2e.ts.)

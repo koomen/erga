@@ -397,7 +397,7 @@ export function cutShort(parts: readonly Response.AnyPart[]): string | null {
  * The scripted model, for tests. A message containing `@script` followed by
  * a JSON array of steps plays them in order, one per model call:
  *
- *   { "tool": "edit", "args": { ... } }   call a tool
+ *   { "tool": "edit", "args": { ... } }   call a tool (with "text": say that first)
  *   { "text": "Done." }                   reply and end the turn
  *   { "error": "overloaded" }             fail the request
  *   { "inputs": true }                    reply with what the scripted message carried: {"images":["image/png"],"files":["a.csv"]}
@@ -449,6 +449,7 @@ const scriptStep = Effect.fnUntraced(function* (prompt: Prompt.Prompt, model: st
     return yield* AiError.make({ module: "script", method: "streamText", reason: new AiError.UnknownError({ description: step.error }) });
   if (step.tool)
     return [
+      ...(step.text ? said(step.text).slice(0, 3) : []),
       { type: "tool-call", id: `call-${crypto.randomUUID()}`, name: step.tool, params: step.args ?? {} },
       { type: "finish", reason: "tool-calls", usage: { inputTokens: {}, outputTokens: {} } },
     ] satisfies Part[];

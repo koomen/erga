@@ -65,6 +65,21 @@ export function turnEnded(log: Log): string {
   return "Its turn ended with no reply here.";
 }
 
+/**
+ * Whether item `i` has a line in the panel. A tool call that the person must see or answer has one: a call that waits
+ * for them, a picture that a tool returned, an error that nothing got past (a later call on the same file that worked
+ * makes it history). Of the other calls, one line only: the turn's last call, while the turn runs. The next call takes
+ * its place, and the turn's end removes it.
+ */
+export function callShown(log: Log, i: number): boolean {
+  const item = log.items[i];
+  if (item.kind != "tool" || item.status == "asking" || item.image) return true;
+  const after = log.items.slice(i + 1);
+  if (item.status == "error")
+    return !after.some((x) => x.kind == "tool" && x.status == "done" && x.path == item.path && (x.name == item.name || x.name == "write"));
+  return log.busy && !after.some((x) => x.kind == "tool") && (item.status == "running" || !after.some((x) => x.kind == "user"));
+}
+
 /** Applies one event in place; returns the index of the item it touched, or -1. */
 export function reduce(log: Log, ev: LogEvent): number {
   const items = log.items;

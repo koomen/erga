@@ -6,7 +6,7 @@
 // "Not sent" and a way to try again): sends.ts has each message's states. The
 // styles are style.css's (.agent-log, .msg-*), so both panels look the same.
 
-import { emptyLog, reduce, type Log, type LogEvent, type LogItem } from "../../shared/agent-log";
+import { callShown, emptyLog, reduce, type Log, type LogEvent, type LogItem } from "../../shared/agent-log";
 import type { FileRef } from "../../shared/attach";
 import { fileChip } from "./attach-ui";
 import { sendStep, type SendEvent, type SendState } from "./sends";
@@ -65,12 +65,6 @@ export function chat(opts: ChatOptions): Chat {
   /** The answers with more text since they were drawn (drawLater). */
   const later = new Set<number>();
 
-  /** A failed tool call that a later call on the same file got past is history, not an error. */
-  const retried = (i: number) => {
-    const item = log.items[i];
-    if (item.kind != "tool" || item.status != "error") return false;
-    return log.items.slice(i + 1).some((x) => x.kind == "tool" && x.status == "done" && x.path == item.path && (x.name == item.name || x.name == "write"));
-  };
   /** A message of yours: its text, and what was attached, as chips (thumbnails for images). */
   function userMessage(el: HTMLElement, text: string, files?: FileRef[]) {
     if (text) el.append(text);
@@ -86,6 +80,7 @@ export function chat(opts: ChatOptions): Chat {
     if (item.kind == "user") userMessage(el, item.text, item.files);
     else if (item.kind == "thinking" || item.kind == "error") el.textContent = item.text;
     else if (item.kind == "assistant") el.innerHTML = inline(item.text);
+    else if (!callShown(log, i)) el.hidden = true;
     else {
       const [doing, done] = verbs[item.name] ?? [item.name, item.name];
       const what = item.path ? ` <code>${esc(item.path)}</code>` : "";
@@ -98,10 +93,6 @@ export function chat(opts: ChatOptions): Chat {
         // The agent's call waits for the person: what it would do, in the server's words, and their answer.
         el.classList.add("asking");
         el.innerHTML = `<span>Your agent asks to:<span class="detail">${esc(item.detail ?? item.name)}</span></span><span class="ask-acts"><button type="button" data-answer="deny" data-call="${esc(item.id)}">Deny</button><button type="button" class="run" data-answer="approve" data-call="${esc(item.id)}">Approve</button></span>`;
-      } else if (retried(i)) {
-        el.classList.add("retried");
-        el.title = item.detail ?? "";
-        el.innerHTML = `<span>${via}${doing}${what} didn't apply; retried</span>`;
       } else {
         el.classList.add(item.status);
         el.innerHTML = `<span>${via}${item.status == "running" ? doing : item.status == "error" ? `${doing} failed:` : done}${what}${item.detail ? `<span class="detail">${esc(item.detail)}</span>` : ""}${item.image ? `<img class="shot" alt="${esc(opts.imageAlt ?? "What the agent saw")}" src="${item.image}">` : ""}</span>`;
@@ -228,9 +219,9 @@ export function chat(opts: ChatOptions): Chat {
       later.delete(i);
       draw(i, i >= before);
     }
-    // A success may turn earlier failures on the same file into retries.
-    if (ev.t == "tool" && ev.status == "done") {
-      for (let j = 0; j < i; j++) if (retried(j) && !els[j].classList.contains("retried")) { const el = renderItem(log.items[j], j); els[j].replaceWith(el); els[j] = el; }
+    // A call, a message or the turn's end may remove the line of an earlier call (callShown).
+    if (ev.t == "tool" || ev.t == "busy" || ev.t == "user") {
+      for (let j = 0; j < els.length; j++) if (j != i && els[j].hidden == callShown(log, j)) draw(j);
     }
     pin();
   }

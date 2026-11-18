@@ -1,7 +1,8 @@
-// Why an agent's turn ended with no reply (shared/agent-log.ts, turnEnded): a comment's thread says it.
+// Why an agent's turn ended with no reply (shared/agent-log.ts, turnEnded): a comment's thread says it. Which tool
+// calls have a line in the panel (callShown).
 
 import { expect, test } from "bun:test";
-import { turnEnded, type Log } from "../shared/agent-log.ts";
+import { callShown, emptyLog, reduce, turnEnded, type Log, type LogEvent } from "../shared/agent-log.ts";
 
 const log = (...items: Log["items"]): Log => ({ items, busy: false, undoable: 0 });
 
@@ -14,4 +15,48 @@ test("a turn's end says why there's no reply: an error, a call that waits for th
   expect(turnEnded(log(user, { kind: "tool", id: "1", name: "edit", path: null, status: "asking" }))).toBe(
     "It waits for your answer in your agent panel."
   );
+});
+
+test("the panel has one line for a turn's tool calls: the last call while the turn runs; what the person must see stays", () => {
+  const l = emptyLog();
+  /** Applies the events; then the items that have a line, each as its text or "name status". */
+  const lines = (...evs: LogEvent[]) => {
+    for (const ev of evs) reduce(l, ev);
+    return l.items.flatMap((it, i) => (!callShown(l, i) ? [] : it.kind == "tool" ? `${it.name} ${it.status}` : it.text));
+  };
+  const call = (id: string, name: string, status: "running" | "asking" | "done" | "error", more: object = {}): LogEvent => ({
+    t: "tool",
+    id,
+    name,
+    path: "index.html",
+    status,
+    ...more,
+  });
+  expect(lines({ t: "user", text: "Go" }, { t: "busy", busy: true }, { t: "text", delta: "First." }, call("1", "read", "running"))).toEqual(
+    ["Go", "First.", "read running"]
+  );
+  // A call that ended keeps the line until the next call starts.
+  expect(lines(call("1", "read", "done"), { t: "text", delta: "Then." })).toEqual(["Go", "First.", "read done", "Then."]);
+  expect(lines(call("2", "edit", "running"))).toEqual(["Go", "First.", "Then.", "edit running"]);
+  // A failed call stays until a later call on its file works; a picture stays.
+  expect(lines(call("2", "edit", "error"), call("3", "ls", "running"))).toEqual(["Go", "First.", "Then.", "edit error", "ls running"]);
+  expect(lines(call("3", "ls", "done"), call("4", "edit", "done"), call("5", "view_page", "done", { image: "data:," }))).toEqual([
+    "Go",
+    "First.",
+    "Then.",
+    "view_page done",
+  ]);
+  // A message during the turn hides the last call that ended, never one that runs. The turn's end removes the line.
+  expect(lines(call("6", "grep", "running"), { t: "user", text: "And" }).at(-2)).toBe("grep running");
+  expect(lines(call("6", "grep", "done"))).toEqual(["Go", "First.", "Then.", "view_page done", "And"]);
+  expect(lines(call("7", "write", "done"), { t: "text", delta: "Done." }, { t: "busy", busy: false })).toEqual([
+    "Go",
+    "First.",
+    "Then.",
+    "view_page done",
+    "And",
+    "Done.",
+  ]);
+  // A call that waits for the person shows after the run stopped.
+  expect(lines(call("8", "delete_document", "asking")).at(-1)).toBe("delete_document asking");
 });

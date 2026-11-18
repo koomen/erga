@@ -40,6 +40,9 @@ Steps, one argument each, in order:
   say:<text>           sends the text to the agent in its panel, and waits for the turn's end. The agent is the
                        scripted test model (agents/models.ts): "@script [steps]" in the text plays the steps.
                        (A server that --keep left running before a look with say: has no agent.)
+  ask:<text>           sends the text to the agent, and does not wait: the screenshot shows the turn as it runs
+                       (a script's last step with "delay": 20000 holds it). The look stops the turn at its end.
+  wait:<text>          waits until the page shows the text: an edit of the agent's, for example
   shot:<file.png>      a screenshot at this step, too
 
 Example:
@@ -271,7 +274,7 @@ else {
     keep,
     latency,
     env: {
-      ...(args.some((a) => a.startsWith("say:") || a.includes("@script")) ? { ERGA_AGENT_MODEL: "script" } : {}),
+      ...(args.some((a) => /^(say|ask):/.test(a) || a.includes("@script")) ? { ERGA_AGENT_MODEL: "script" } : {}),
       ...(proxy ? { ERGA_PROXY_SIGN_IN: proxy } : {}),
     },
   });
@@ -322,9 +325,10 @@ try {
   await ed.clickEnd("[data-erga-text]:not(.erga-locked)");
   await ed.idle();
   for (const step of args) {
-    const [, verb, rest] = /^(type|click|tap|shot|say):([\s\S]*)$/.exec(step) ?? [];
+    const [, verb, rest] = /^(type|click|tap|shot|say|ask|wait):([\s\S]*)$/.exec(step) ?? [];
     if (verb == "type") await ed.type(rest);
-    else if (verb == "say") {
+    else if (verb == "wait") await page.frameLocator("#frame").getByText(rest).first().waitFor({ timeout: 15_000 });
+    else if (verb == "say" || verb == "ask") {
       // The turn's end: one more answer or error in the panel, and the agent no longer at work.
       const ended = () =>
         page.evaluate(() =>
@@ -337,7 +341,8 @@ try {
       await page.focus("#agent-input");
       await page.keyboard.insertText(rest);
       await page.keyboard.press("Enter");
-      await page.waitForFunction(
+      if (verb == "say")
+        await page.waitForFunction(
         (n) =>
           !document.getElementById("agent-fab")!.classList.contains("busy") &&
           !document.querySelector("#agent-log .msg-user.pending") &&
@@ -363,6 +368,11 @@ try {
   }
   await ed.idle().catch(() => ed.settle());
   await page.screenshot({ path: out });
+  // A turn that still runs (ask:) stops here: the next look on a kept server finds the agent at rest.
+  if (await page.locator("#agent-send.stop").count()) {
+    await page.click("#agent-send.stop");
+    await page.waitForFunction(() => !document.getElementById("agent-fab")!.classList.contains("busy"));
+  }
   console.log(await ed.visible());
   if (source) console.log(`\n${(await ed.source()).replace(/[\s\S]*<body[^>]*>\n?|<\/body>[\s\S]*/g, "")}`);
   console.log(`\nscreenshot: ${out}`);

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { agentClosed, expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
 import { editor, F, openEditor, type Editor } from "../helpers/editor";
 import { runTool } from "../helpers/tools";
-import { agentOn, answered, answers, button, edit, paneOpen, say, script, turnEnded, turnLine } from "./panel";
+import { agentOn, answered, answers, button, calls, edit, paneOpen, say, script, turnEnded, turnLine, watchCalls } from "./panel";
 
 const s = await servers.main();
 /**
@@ -49,22 +49,23 @@ journey("a turn of the agent in the editor", () => {
     await page.bringToFront();
 
     // One turn: an edit, and a look at the page (the server's browser renders it).
+    const seen = await watchCalls(page);
     await say(
       page,
       script("Check it", [
         edit("Typing never waits.", "Typing never waits, by agent."),
-        { tool: "page", args: { op: "view_page", selector: "h1" } },
+        { text: "Now a look.", tool: "page", args: { op: "view_page", selector: "h1" } },
         { text: "Looked." },
       ])
     );
     await answered(page, "Looked.", 13_000);
-    const looked = await ada.eval<string[]>(
-      `[...document.querySelectorAll("#agent-log .msg-tool")].map((e) => e.textContent + (e.querySelector("img.shot")?.naturalWidth > 0 ? " [picture]" : ""))`
-    );
-    expect(
-      looked.some((t) => /Looked at the page.*\[picture\]/.test(t)),
-      `view_page answers a picture of the page: ${looked.join(" | ")}`
-    ).toBe(true);
+    expect((await answers(page)).at(-2), "what the agent says between its calls stays").toBe("Now a look.");
+    // The turn's calls have one line: the look takes the edit's place. After the turn, only the picture stays.
+    const lines = await seen();
+    expect(Math.max(...lines.map((l) => l.length)), JSON.stringify(lines)).toBe(1);
+    const order = lines.flat().filter((l, i, all) => l != all[i - 1]);
+    expect(order.slice(0, 3)).toEqual(["Editing", "Edited", "Looking at the page"]);
+    expect(await calls(page), "view_page answers a picture of the page").toEqual(["Looked at the page [picture]"]);
     await expect.poll(() => turnLine(page)).toBe("Done. 1 change in index.html. [See changes] [Undo the turn]");
 
     await expect.poll(() => bo.textOf("blockquote p")).toBe("Typing never waits, by agent.");
@@ -379,6 +380,8 @@ journey("a turn of the agent in the editor", () => {
     expect(await input()).toBe("half a thought");
     // The messages sent before show their files as they did.
     await expect.poll(() => sentFiles("What do these show?")).toEqual(SENT);
+    // Of the calls of the turns before, the conversation read again shows only the picture.
+    expect(await calls(page)).toEqual(["Looked at the page [picture]"]);
 
     // Collapsed, and the box cleared: both stay so after the next reload.
     await ada.press("ControlOrMeta+j");
