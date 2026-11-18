@@ -3,19 +3,12 @@
 // socket and its files are), the edit key that opens them (server/documents/edit-key.ts; the viewer gives a new one
 // before the last ends, for the next socket), who this tab is (`me`: the room attributes the edits to the key's person;
 // this is how the editor shows them), which of the document's pages this is (`path`), this tab's own mark (`tab`: its
-// presence in the room carries it, so the viewer knows its own page's caret), the zoom the viewer draws the page at and the part
-// of the page that shows (`shows`: zoomed in, the frame is cut at its sides), how
+// presence in the room carries it, so the viewer knows its own page's caret), how
 // much of the window's bottom the viewer's alerts take (`notes`, in px: the editor's own notes sit over them; when it
 // changes, the viewer says "erga-notes" with the new height), and what the tests set (`timescale`, `check`). `comment`: for a person who may comment and not edit (a commenter:
 // client/inline/viewer-comment.ts sends it): the comments alone, on a page that nothing here changes.
 
 import type { Author } from "../../../document/model/content";
-
-/** A part of the page's window, across: px of the page, from its left edge. */
-export interface Shows {
-  left: number;
-  right: number;
-}
 
 export type EditMode =
   | {
@@ -26,13 +19,6 @@ export type EditMode =
       me: Author;
       path: string;
       tab: string;
-      zoom: number;
-      /** The height of the frame's place on the screen, px: at `zoom`, the page's window is `tall / zoom` high. */
-      tall: number;
-      /** The browser has the whole window zoomed (its own pinch): a pinch on the page stays the browser's. */
-      pinched: boolean;
-      /** The part of the page that shows on the screen: from `left` to `right`, px of the page's window, after the zoom. */
-      shows: Shows;
       notes: number;
       timescale?: number;
       check?: boolean;

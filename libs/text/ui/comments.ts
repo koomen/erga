@@ -34,7 +34,7 @@ import {
   type Thread,
 } from "./comments-state";
 import { KEPT, LOOK } from "./controls";
-import type { Shows } from "./mode";
+import type { Shows } from "../../../client/common/zoom";
 import { ms } from "./timescale";
 
 /** What the comments ask of the editor on the page. */

@@ -25,3 +25,18 @@ body { background: transparent; }
 body:not(.erga-editing) :is(#frame, .erga-canvas) { left: var(--frame-l, 0px); width: calc(100% - var(--frame-l, 0px) - var(--frame-r, 0px));
   transition: left 560ms cubic-bezier(0.45, 0, 0.15, 1), width 560ms cubic-bezier(0.45, 0, 0.15, 1); }
 html.erga-whole body :is(#frame, .erga-canvas) { left: 0; width: 100%; transition: none; }
+
+/* The document's zoom, viewing and editing (client/common/zoom.ts): a magnifier. The page's frame keeps its width (the page stays laid out for
+   the window), and is drawn --erga-zoom times larger and that much shorter: it fills its place's height, and the page
+   scrolls itself. Sideways it sits in the middle of its place, moved by --erga-x (viewer-zoom.ts: the point under the pointer
+   stays there), and shows only in its place, not under the agent's panel. From the first frame
+   (client/inline/viewer-layout-early.ts). The page's canvas goes with it. */
+html.erga-zoomed { --erga-tx: calc((1 - var(--erga-zoom)) * 50% + var(--erga-x, 0px)); }
+html.erga-zoomed #frame {
+  height: calc((100% - var(--frame-t) - var(--kb, 0px)) / var(--erga-zoom));
+  transform: translateX(var(--erga-tx)) scale(var(--erga-zoom)); transform-origin: 0 0;
+  clip-path: inset(0 calc(100% - (100% - var(--erga-tx)) / var(--erga-zoom)) 0 calc(var(--erga-tx) / var(--erga-zoom) * -1));
+}
+html.erga-zoomed .erga-canvas > div { left: var(--erga-tx); }
+/* A pinch is going on: the frame keeps its picture and only scales it, until the pinch rests. */
+html.erga-zooming #frame { will-change: transform; }

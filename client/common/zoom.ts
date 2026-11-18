@@ -40,6 +40,24 @@ export function zoomKey(e: { key: string; metaKey: boolean; ctrlKey: boolean; al
   return null;
 }
 
+/** A part of the page's window, across: px of the page, from its left edge. */
+export type Shows = { left: number; right: number };
+
+/** The viewer's word to the page on the zoom (client/inline/viewer-zoom.ts), viewing and editing alike. */
+export type Zoomed = {
+  type: "erga-zoomed";
+  /** The level the page's frame is drawn at. */
+  zoom: number;
+  /** The height of the frame's place on the screen, px: at `zoom`, the page's window is `tall / zoom` high. */
+  tall: number;
+  /** The browser has the whole window zoomed (its own pinch): a pinch on the page stays the browser's. */
+  pinched: boolean;
+  /** No zoom now (full screen): the keys and gestures are the browser's. */
+  off: boolean;
+  /** The part of the page that shows on the screen: from `left` to `right`, px of the page's window, after the zoom. */
+  shows: Shows;
+};
+
 /** A zoom asked for: a step (the keys, a mouse wheel's notch), or a factor (a pinch, as it goes). */
 export type ZoomBy = { step: 1 | -1 } | { by: number };
 

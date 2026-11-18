@@ -590,7 +590,7 @@ test("the caret is a thin bar as tall as its line at every zoom: the canvas's ca
   await expect
     .poll(async () => {
       await ed.frame(`${F}.dispatchEvent(new Event("scroll"))`);
-      return ed.eval("window.ergaPage.page.zoomsItself");
+      return ed.eval(`document.documentElement.classList.contains("erga-page-zooms")`);
     })
     .toBe(false);
   // The caret in the current frame's paragraph, after its third word.

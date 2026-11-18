@@ -10,10 +10,6 @@ const mode = (key = "k1"): Editing => ({
   me: { kind: "person", name: "Pete", color: "#000" } as Editing["me"],
   path: "index.html",
   tab: "t",
-  zoom: 1,
-  tall: 800,
-  pinched: false,
-  shows: { left: 0, right: 1000 },
   notes: 0,
 });
 

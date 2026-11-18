@@ -17,17 +17,6 @@ import type { Attachment } from "../../shared/attach";
 import { isPage, pageUrl } from "../../document/model/pages";
 import { live } from "../live/client";
 import { restoredFor } from "../live/restore";
-import {
-  catchZoomGestures,
-  clampZoom,
-  REST_MS,
-  zoomFactor,
-  zoomKey,
-  zoomStep,
-  type Zoom,
-  type ZoomBy,
-  type ZoomEvent,
-} from "../common/zoom";
 import { fastClick } from "../common/fast-click";
 import { asUser } from "../common/tools";
 import { mountLayout } from "../agent/layout";
@@ -393,9 +382,6 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
       }
     },
     onOpen: (path) => openPage(path),
-    onZoom: (by, x) => zoomPage(by, x),
-    onPan: (dx) => editing() && zoomSend({ type: "pan", dx, width: shell.frame.offsetWidth }),
-    onZooms: () => syncZoom(),
   }));
   // The comment box, over the page, while it is in the editor: the page's comments ask for it.
   mountCommentBox(
@@ -424,72 +410,11 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
 
   // ---------------------------------------------------------------- zoom
 
-  // Zooming in the editor zooms the page, never the controls or the agent (zoom.ts, which has the state and its one
-  // function; this keeps the state and does what it says): the keys, a pinch and ctrl with the wheel, here in the shell
-  // or on the page (the frame sends them: onKey, onZoom, onPan). Each document keeps its level on this browser. Viewing,
-  // the browser zooms the window as it always does; a window still zoomed so in the editor keeps its pinch, and ⌘0, so
-  // there is always a way back out to the bars. A page that zooms itself (window.ergaZoom: a canvas's camera, with no
-  // limits of ours) gets the gestures instead, and is drawn at 100%.
-  // Zoomed, the bar shows the level (#btn-zoom); a click on it goes back to 100%, as ⌘0 (Ctrl+0) does.
-  const ZOOM_KEY = `erga:zoom:v1:${shell.docId}`;
-  let zoom: Zoom = { phase: "still", level: clampZoom(Number(store.get(ZOOM_KEY) ?? 1)), x: 0 };
-  let zoomRest = 0;
-  const zoomBtn = $("btn-zoom");
-  zoomBtn.dataset.tip = `Back to 100% (${isMac ? "⌘0" : "Ctrl+0"})`;
-  const windowZoomed = () => (window.visualViewport?.scale ?? 1) > 1.01;
-  function syncZoom(on = editing()) {
-    const shown = on && !page.zoomsItself,
-      level = shown ? zoom.level : 1,
-      pct = `${Math.round(level * 100)}%`;
-    page.setZoom(level, shown ? zoom.x : 0, shown && zoom.phase == "pinching", windowZoomed());
-    zoomBtn.hidden = level == 1;
-    zoomBtn.textContent = pct;
-    zoomBtn.setAttribute("aria-label", `Zoom ${pct}: back to 100%`);
-  }
-  function zoomSend(e: ZoomEvent) {
-    const next = zoomStep(zoom, e);
-    zoom = next.state;
-    for (const effect of next.effects)
-      if (effect == "draw") syncZoom();
-      else if (effect == "wait") {
-        clearTimeout(zoomRest);
-        zoomRest = window.setTimeout(() => zoomSend({ type: "rest" }), REST_MS);
-      } else if (effect == "save") {
-        if (zoom.level == 1) {
-          try {
-            localStorage.removeItem(ZOOM_KEY);
-          } catch {}
-        } else store.set(ZOOM_KEY, String(Math.round(zoom.level * 1000) / 1000));
-      } else shell.toast.flash(`Zoom ${Math.round(zoom.level * 100)}%`);
-  }
-  syncZoom();
-  zoomBtn.addEventListener("click", () => {
-    zoomSend({ type: "reset" });
-    page.focus();
-  });
-  /** `x`: where in the window (null: the middle of the page's place). */
-  function zoomPage(by: ZoomBy, x: number | null = null) {
-    if (!editing()) return;
-    if (page.zoomsItself) page.zoomItself(zoomFactor(by));
-    else zoomSend({ type: "zoom", by, at: x == null ? null : x - shell.frame.offsetLeft, width: shell.frame.offsetWidth });
-  }
-  // (A pinch over the controls zooms around the middle; one on a window the browser has zoomed is the browser's. One on
-  // the page comes here, not to the page, when the browser can't say yet that the page is under the pointer, as its
-  // frame gets another size: around the pointer, as the page's own.)
-  catchZoomGestures(
-    window,
-    (by, at) => zoomPage(by, document.elementFromPoint(at.clientX, at.clientY) == shell.frame ? at.clientX : null),
-    (by) => editing() && !(windowZoomed() && (!by || "by" in by))
+  // The document's zoom is the viewer's (client/inline/viewer-zoom.ts), viewing and editing alike: a key's change of the
+  // level shows in the toast.
+  addEventListener("erga-zoom-level", (e) =>
+    shell.toast.flash(`Zoom ${Math.round((e as CustomEvent<{ level: number }>).detail.level * 100)}%`)
   );
-  // The page's place got another width (the window, the agent's panel as it rests): the page stays within it.
-  const zoomFit = () => {
-    zoomSend({ type: "fit", width: shell.frame.offsetWidth });
-    // (The page hears of its place's new height.)
-    syncZoom();
-  };
-  addEventListener("resize", zoomFit);
-  document.addEventListener("transitionend", (e) => (e.target as Element).id == "frame" && zoomFit());
-  window.visualViewport?.addEventListener("resize", () => syncZoom());
 
   shell.views = mountViews(shell);
   shell.requests = mountPageRequests(shell);
@@ -519,17 +444,6 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     }
     if (mod && !e.shiftKey && (key == "/" || key == "?")) {
       shell.chrome.toggleHelp();
-      return true;
-    }
-    const zoomed = zoomKey(e, isMac);
-    if (zoomed == "reset") {
-      if (page.zoomsItself) page.zoomItself(0);
-      else zoomSend({ type: "reset" });
-      // (A window the browser has zoomed itself: the key is the browser's too, for its own way back.)
-      return !windowZoomed();
-    }
-    if (zoomed) {
-      zoomPage({ step: zoomed });
       return true;
     }
     if (mod && !e.shiftKey && key == "s") {
@@ -596,7 +510,6 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
   // controls go out of sight, with anything open among them, and come back as they were. Your agent stays as it is:
   // it's the page's, viewing and editing alike (server/pages/agent.ts).
   function setEditing(on: boolean) {
-    syncZoom(on);
     // The editor in the page starts or stops (on the way out the page stays as it was).
     shell.editor.send({ type: "editing", on });
     if (on) {

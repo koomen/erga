@@ -20,7 +20,7 @@ import { pageAlerts } from "./alerts";
 import { drawCaret } from "./caret";
 import { watchMoves } from "./moves";
 import { listenAsEditor } from "./text-guard";
-import { clampZoom } from "../../../client/common/zoom";
+import { clampZoom, type Shows, type Zoomed } from "../../../client/common/zoom";
 import { Collab } from "./collab";
 import { mountControls, noteOnPage, type Controls } from "./controls";
 import { mountComments, type Comments } from "./comments";
@@ -29,7 +29,7 @@ import { watchUnsaved } from "./unsaved";
 import { imageSize, pathFor } from "./uploads";
 import { mountPending } from "./pending";
 import { apiCode, runPageEdit, warm } from "./page-edits";
-import type { EditMode, Shows } from "./mode";
+import type { EditMode } from "./mode";
 import { step, type Editing, type FrameEvent, type State } from "./frame-state";
 import { changesBetween } from "../../../document/model/merge";
 import { baseName, encodePath } from "../../../document/model/pages";
@@ -122,6 +122,7 @@ function setNotes(px: unknown) {
 window.addEventListener("message", (e: MessageEvent) => {
   if (e.source != window.parent || e.origin != SHELL) return;
   if (e.data?.type == "erga-mode") setMode(e.data as EditMode);
+  else if (e.data?.type == "erga-zoomed") setZoom(e.data as Zoomed);
   else if (e.data?.type == "erga-leave") leave();
   else if (e.data?.type == "erga-out") {
     signedOut = true;
@@ -147,12 +148,10 @@ window.addEventListener("message", (e: MessageEvent) => {
   else if (typeof e.data?.type == "string" && e.data.type.startsWith("erga-comment-")) comments?.fromShell(e.data);
 });
 
-/** The viewer says edit or view. Edit again: a new key (for the next socket), or another zoom. */
+/** The viewer says edit or view. Edit again: a new key (for the next socket). */
 function setMode(m: EditMode) {
   if (m.mode == "edit") {
     if (m.timescale) window.__ergaTimescale = m.timescale;
-    if (typeof m.zoom == "number") setZoom(m.zoom);
-    if (m.shows) shows = m.shows;
     setNotes(m.notes);
     comments?.queue();
   }
@@ -174,17 +173,22 @@ function send(e: FrameEvent) {
     else stop();
 }
 
-function setZoom(level: number) {
-  const next = clampZoom(level);
-  if (next == zoom) return;
+/** The viewer's word on the zoom (client/inline/viewer-zoom.ts): the level, and the part of the page in sight. */
+function setZoom(m: Zoomed) {
+  const next = clampZoom(m.zoom);
+  if (next == zoom && m.shows.left == shows.left && m.shows.right == shows.right) return;
   // (The page keeps its place itself, as its frame gets its new height: client/inline/reader.ts.)
   zoom = next;
+  shows = m.shows;
   controls?.queue();
+  comments?.queue();
 }
 
 // The word that loaded this script (the page's first script kept it).
 const first = window.__ergaReader?.mode as EditMode | undefined;
 if (first?.type == "erga-mode") queueMicrotask(() => setMode(first));
+const zoomedFirst = window.__ergaReader?.zoomed as Zoomed | undefined;
+if (zoomedFirst?.type == "erga-zoomed") queueMicrotask(() => setZoom(zoomedFirst));
 
 const stateFrom = (json: unknown) => EditorState.fromJSON(json, { extensions: docExtensions }, { history: historyField });
 /** A state as it's kept: text, selection and undo history. */

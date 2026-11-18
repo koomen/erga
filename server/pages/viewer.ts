@@ -85,6 +85,9 @@ export const editBoot = () =>
 /** Full screen: the page's frame, from the button in the viewer and the editor (client/inline/viewer-full.ts). */
 export const FULL_BOOT = inlineCall("viewer-full");
 
+/** The document's zoom, viewing and editing (client/inline/viewer-zoom.ts). */
+export const ZOOM_BOOT = inlineCall("viewer-zoom");
+
 /** Reloaded in the editor: the bars' parts as they were (client/inline/viewer-editing-body.ts), before their scripts run. */
 const RESTORE_BARS = `<script>window.ergaRestoreParts?.()</script>`;
 
@@ -182,7 +185,7 @@ ${o.meta}<script>${framesScript(o.pages)}</script><script>${REFUSED_SCRIPT}</scr
     editor: o.editable,
   });
   const after = `
-${editing ? "" : opening + editingBody}${bars}${o.editable ? RESTORE_BARS : ""}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}"><script>${inlineCall("viewer-live", `/d/${o.docId}`)}</script>` : ""}${o.commenter ? `<script>${inlineCall("viewer-comment", `/d/${o.docId}`, o.commenter)}</script>` : ""}${o.tree && session ? `<meta name="erga-title" content="${esc(o.title)}"><script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.tree.address, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
+${editing ? "" : opening + editingBody}${bars}${o.editable ? RESTORE_BARS : ""}${o.agent ? agentPanel(session) : ""}${o.scratch ? scratchSave(o.docId, o.scratch.hours) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script><script>${ZOOM_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<meta name="erga-ver" content="${esc(o.live)}"><script>${inlineCall("viewer-live", `/d/${o.docId}`)}</script>` : ""}${o.commenter ? `<script>${inlineCall("viewer-comment", `/d/${o.docId}`, o.commenter)}</script>` : ""}${o.tree && session ? `<meta name="erga-title" content="${esc(o.title)}"><script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.tree.address, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
 `;
   return { before, after };
 }

@@ -8,7 +8,7 @@ import { newToken } from "../helpers/new-token";
 import { runTool, textOf } from "../helpers/tools";
 import { diff, layout, layoutOk, type Layout } from "./band";
 import { bars, docFrame, docShows, editorUp, GLASS, inDoc, openViewer, site, styled, viewing, where, type Box } from "./viewer";
-import { clickOn, pointerOnPage } from "../helpers/press";
+import { clickInPage, clickOn, pointerOnPage } from "../helpers/press";
 
 const s = await servers.main();
 
@@ -139,6 +139,43 @@ journey("a reader opens a document with several pages", () => {
     expect(
       await frame.evaluate<boolean>(`[...document.querySelectorAll("style[data-erga]")].some((s) => /@media print/.test(s.textContent))`)
     ).toBe(true);
+  });
+
+  test("viewing, ⌘+, ⌘− and a pinch zoom the page only, with the focus in the page or in the bars; the bar shows the level; ⌘0 goes back to 100%, and at 100% leaves the key to the browser", async () => {
+    const look = () =>
+      page.evaluate(() => {
+        const b = document.getElementById("btn-zoom");
+        return {
+          scale: Math.round((window as any).ergaFrames.scale() * 100) / 100,
+          level: b?.checkVisibility() ? b.textContent : null,
+          bar: Math.round(document.querySelector(".erga-view-buttons")!.getBoundingClientRect().height),
+          window: visualViewport!.scale,
+        };
+      });
+    const start = await look();
+    expect(start).toMatchObject({ scale: 1, level: null, window: 1 });
+    // The focus in the page.
+    await clickInPage(page, page.frameLocator("#frame").locator("h1"));
+    await page.keyboard.press("ControlOrMeta+Equal");
+    await page.keyboard.press("ControlOrMeta+Equal");
+    await expect.poll(look).toEqual({ ...start, scale: 1.25, level: "125%" });
+    // The focus in the bars.
+    await page.locator(".erga-crumbs").click({ position: { x: 4, y: 4 } });
+    await page.keyboard.press("ControlOrMeta+Minus");
+    await expect.poll(look).toEqual({ ...start, scale: 1.1, level: "110%" });
+    // A pinch on the trackpad over the page: ctrl with the wheel, in small steps.
+    await page.mouse.move(600, 600);
+    await page.keyboard.down("Control");
+    for (let i = 0; i < 5; i++) await page.mouse.wheel(0, -10);
+    await page.keyboard.up("Control");
+    await expect.poll(async () => (await look()).scale).toBeGreaterThan(1.5);
+    expect(await look()).toMatchObject({ bar: start.bar, window: 1 });
+    await page.keyboard.press("ControlOrMeta+0");
+    await expect.poll(look).toEqual(start);
+    // At 100%, ⌘0 is the browser's: it puts back a tab that the browser's own menu zoomed.
+    await page.evaluate(() => addEventListener("keydown", (e) => ((window as any).__kept = e.defaultPrevented), { once: true }));
+    await page.keyboard.press("ControlOrMeta+0");
+    await expect.poll(() => page.evaluate(() => (window as any).__kept)).toBe(false);
   });
 
   test("Share with an agent copies the one-line prompt, or a prompt with a token for the time and scope picked; the token works", async () => {

@@ -27,7 +27,7 @@ import { linkTarget, placeOf } from "../common/link-target";
 import { TOP_ROOM, topRoom, type Seat } from "../common/top-room";
 import { readView, showView, viewOf, type View } from "../common/page-view";
 import { isAppShortcut, isMac } from "../common/app-keys";
-import { catchZoomGestures, drawnLevel, REST_MS, zoomKey } from "../common/zoom";
+import { catchZoomGestures, drawnLevel, REST_MS, zoomKey, type Zoomed } from "../common/zoom";
 import { makeErgaLLM, type LlmAnswer, type LlmOp } from "../common/page-llm";
 
 /** The page's canvas, as it goes to the viewer (client/inline/viewer-band.ts draws it). */
@@ -110,14 +110,21 @@ export default function reader(C: ReaderConfig): void {
         tell({ type: "erga-edit-key" });
         return;
       }
+      // A zoom key, viewing and editing: the viewer zooms the document (client/inline/viewer-zoom.ts), and the page keeps
+      // its middle (keepZoomPlace, below). ⌘0 at 100% is the browser's (it puts back a tab that its own menu zoomed), and
+      // so is ⌘0 on a window the browser has zoomed itself, for its own way back.
+      const zoomed = zoomKey(e, isMac);
+      if (zoomed && !e.defaultPrevented && !zoomedSaid()?.off) {
+        if (zoomed == "reset" && (zoomedSaid()?.zoom ?? 1) == 1 && !zoomsSaid) return;
+        aimAt(innerWidth / 2, innerHeight / 2);
+        if (!(zoomed == "reset" && pinched())) e.preventDefault();
+        tell({ type: "erga-zoom-key", dir: zoomed });
+        return;
+      }
       if (editing()) {
         tell({ type: "erga-activity", kind: "key" });
         if (!isAppShortcut(e, isMac)) return;
-        // A zoom key: the page keeps its middle (keepZoomPlace, below). ⌘0 on a window the browser has zoomed itself is the
-        // browser's too, for its own way back.
-        const zoomed = zoomKey(e, isMac);
-        if (zoomed) aimAt(innerWidth / 2, innerHeight / 2);
-        if (e.key != "Escape" && !(zoomed == "reset" && pinched())) e.preventDefault();
+        if (e.key != "Escape") e.preventDefault();
         tell({ type: "erga-key", keys: { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey } });
         return;
       }
@@ -128,22 +135,23 @@ export default function reader(C: ReaderConfig): void {
     },
     true
   );
-  // Editing: the page's focus, and a zoom gesture on it (a pinch, ctrl with the wheel), for the viewer, which sets the
-  // zoom (libs/text/ui/zoom.ts); whether the page zooms itself (window.ergaZoom: a canvas's camera), as the viewer's
-  // zoom goes to it then.
+  // Editing: the page's focus, for the viewer. Viewing and editing: a zoom gesture on the page (a pinch, ctrl with the
+  // wheel), for the viewer, which sets the zoom (client/inline/viewer-zoom.ts); whether the page zooms itself
+  // (window.ergaZoom: a canvas's camera), as the viewer's zoom goes to it then.
   addEventListener("focus", () => editing() && tell({ type: "erga-activity", kind: "focus" }), true);
-  const said = () => window.__ergaReader?.mode as { mode?: string; zoom?: number; tall?: number; pinched?: boolean } | undefined;
+  /** The viewer's last word on the zoom (erga-zoomed), null before the first. */
+  const zoomedSaid = () => (window.__ergaReader?.zoomed ?? null) as Zoomed | null;
   /** The browser has the whole window zoomed (its own pinch): a pinch stays the browser's (client/common/zoom.ts, the trap). */
-  const pinched = () => said()?.pinched === true;
+  const pinched = () => zoomedSaid()?.pinched === true;
   catchZoomGestures(
     window,
     (by, e) => {
       aimAt(e.clientX, e.clientY);
       tell({ type: "erga-zoom", zoom: by, x: e.clientX, y: e.clientY });
     },
-    (by) => editing() && !(pinched() && (!by || "by" in by))
+    (by) => !zoomedSaid()?.off && !(pinched() && (!by || "by" in by))
   );
-  // The editor's zoom (client/common/zoom.ts): the viewer draws this page's frame larger, and shorter by as much. The
+  // The document's zoom (client/common/zoom.ts): the viewer draws this page's frame larger, and shorter by as much. The
   // page's point under the pointer (`aim`: of the pinch or the key that zooms, `y` px below the frame's top on the screen,
   // `part` of the way down its element `el`; else the middle) stays where it is on the screen, whatever the page lays
   // out again for its window's new height (the room at its top, a size in vh): the page scrolls as its window gets its
@@ -177,9 +185,9 @@ export default function reader(C: ReaderConfig): void {
   view.style.cssText = "all: initial; position: fixed; inset: 0; visibility: hidden; pointer-events: none";
   function keepZoomPlace() {
     const h = innerHeight,
-      m = said(),
-      level = m?.mode == "edit" && m.zoom ? m.zoom : 1;
-    if (m?.mode == "edit" && m.tall) tall = m.tall;
+      m = zoomedSaid(),
+      level = m?.zoom ?? 1;
+    if (m?.tall) tall = m.tall;
     if (drawn == null) {
       // (The first word: the frame is at its level from the start.)
       if (m) zoomRoom((drawn = level), true);
@@ -219,7 +227,7 @@ export default function reader(C: ReaderConfig): void {
       // (A scroll: the zoom's point is where it was no more.)
       if (!e.ctrlKey) aim = null;
       const dx = (e.deltaX || (e.shiftKey ? e.deltaY : 0)) * (e.deltaMode == 1 ? 16 : 1);
-      if (!dx || e.ctrlKey || e.defaultPrevented || !editing() || (drawn ?? 1) == 1) return;
+      if (!dx || e.ctrlKey || e.defaultPrevented || (drawn ?? 1) == 1) return;
       for (let el = e.target instanceof Element ? e.target : null; el; el = el.parentElement) {
         const more = el.scrollWidth - el.clientWidth;
         if (
@@ -530,7 +538,7 @@ export default function reader(C: ReaderConfig): void {
     // (Out of sight, on its way to its view: the viewer hears where it is once it is there.)
     if (keeping) return;
     // (A page's camera moves as a scroll does: whether it zooms itself may have changed with it.)
-    if (editing()) zooms();
+    zooms();
     const at = scrollX + "," + scrollY;
     if (at !== scrolled) {
       scrolled = at;
@@ -538,7 +546,7 @@ export default function reader(C: ReaderConfig): void {
     }
   }
   addEventListener("scroll", report, { passive: true });
-  document.addEventListener("scroll", () => editing() && zooms(), { passive: true });
+  document.addEventListener("scroll", () => zooms(), { passive: true });
   document.addEventListener(
     "pointermove",
     (e) => {
@@ -847,12 +855,16 @@ export default function reader(C: ReaderConfig): void {
     // The viewer's word on editing (libs/text/ui/bridge.ts, EditMode): kept for the editor, which loads on the first edit.
     else if (type == "erga-mode") {
       window.__ergaReader!.mode = e.data;
-      if (!view.isConnected) root.append(view);
-      keepZoomPlace();
       if (e.data.mode == "edit") {
         load();
         zooms(true);
       }
+    }
+    // The viewer's word on the zoom (client/inline/viewer-zoom.ts): kept for the editor, which hears it after too.
+    else if (type == "erga-zoomed") {
+      window.__ergaReader!.zoomed = e.data;
+      if (!view.isConnected) root.append(view);
+      keepZoomPlace();
     }
     // The viewer's word on comments (libs/text/ui/frame.ts hears it too, once it's loaded): kept for the editor.
     else if (type == "erga-comments") window.__ergaReader!.comments = e.data;
