@@ -1,11 +1,12 @@
-/* A scratch document's Save (client/inline/scratch.ts): orange, at the start of the quick actions, in the viewer's bar and the
-   editor's. Its tip is a small card under it, on hover or focus; an error stays in sight. + Scratch on the documents page
+/* A scratch document's Save (client/inline/scratch.ts): gray, at the start of the quick actions, in the viewer's bar and the
+   editor's: the bar's own tones (client/inline/bars.css), its buttons' hover as its fill at rest. Its tip is a small card under it, on hover or focus; an error stays in sight. + Scratch on the documents page
    (server/pages/documents.ts, .erga-scratch-tip) has the same card. */
 .erga-scratch-save { position: relative; flex: none; align-self: center; height: 28px; margin: 0 6px 0 2px; padding: 0 12px; border: 0;
-  border-radius: 8px; font: 500 13px/1 Inter, system-ui, sans-serif; color: #fff; background: #ea580c; cursor: pointer; }
-.erga-scratch-save:hover:not(:disabled) { background: #c2410c; }
+  border-radius: 8px; font: 500 13px/1 Inter, system-ui, sans-serif; color: var(--fg);
+  background: color-mix(in srgb, var(--chrome) 18%, transparent); cursor: pointer; transition: color 150ms ease, background-color 150ms ease; }
+.erga-scratch-save:hover:not(:disabled) { color: var(--fg-strong); background: color-mix(in srgb, var(--chrome) 30%, transparent); }
 .erga-scratch-save:disabled { opacity: 0.7; cursor: default; }
-.erga-scratch-save:focus-visible { outline: 2px solid #fb923c; outline-offset: 2px; }
+.erga-scratch-save:focus-visible { outline: 2px solid var(--caret, #3b7cf0); outline-offset: 1px; }
 :is(.erga-scratch-tip, .erga-scratch-save)::after { content: attr(data-tip); position: absolute; z-index: 40; left: 0; top: calc(100% + 8px); width: max-content; max-width: 280px;
   padding: 7px 10px; border-radius: 9px; font: 400 12.5px/1.4 Inter, system-ui, sans-serif; text-align: left; white-space: normal; color: #3f3f46;
   background: rgba(255, 255, 255, 0.94); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 6px 20px rgba(0, 0, 0, 0.12);

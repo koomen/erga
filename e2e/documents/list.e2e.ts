@@ -389,7 +389,7 @@ journey("a person's documents", () => {
     ).toEqual(["back_forward", 0]);
   });
 
-  test("+ Scratch, whose tip says when a scratch document goes, makes one, off the list, with an orange Save first in its quick actions, whose tip says the same; Save keeps it, at the address of its heading", async () => {
+  test("+ Scratch, whose tip says when a scratch document goes, makes one, off the list, with a gray Save first in its quick actions, whose tip says the same; Save keeps it, at the address of its heading", async () => {
     /** Puts the mouse on an element, once it has stopped moving (the editor's bar grows as the editor comes up). */
     const over = async (selector: string) => {
       let last = "";
@@ -430,13 +430,16 @@ journey("a person's documents", () => {
     const doc = new URL(page.url()).pathname.split("/")[2];
     ed = editor(page, { address: `${s.root}/${p.login}/${doc}`, dir: "", file: "" });
     await ed.loaded();
-    // No note over the page: Save is the first of the editor's quick actions, orange, and its tip shows on hover.
+    // No note over the page: Save is the first of the editor's quick actions, gray in the bar's own tones (its text --fg, its fill
+    // --chrome, thin), and its tip shows on hover.
     expect(await page.locator("#erga-scratch").count()).toBe(0);
     const save = page.locator("#quick .erga-scratch-save");
     await expect.poll(() => save.isVisible()).toBe(true);
     expect(await save.innerText()).toBe("Save");
     expect(await page.locator("#quick .quick-inner > *:visible").first().getAttribute("class")).toBe("erga-scratch-save");
-    expect(await save.evaluate((b) => getComputedStyle(b).backgroundColor)).toBe("rgb(234, 88, 12)");
+    await expect
+      .poll(() => save.evaluate((b) => [getComputedStyle(b).color, getComputedStyle(b).backgroundColor]))
+      .toEqual(["rgb(28, 28, 31)", "color(srgb 0.603922 0.603922 0.635294 / 0.18)"]);
     expect((await tipOf("#quick .erga-scratch-save")).shown).toBe("0");
     await over("#quick .erga-scratch-save");
     await expect

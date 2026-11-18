@@ -12,8 +12,10 @@ import { ROOT } from "./helpers/env";
 import { copyFixture, descendants, startServer, type Server } from "./helpers/server";
 
 const HELP = `bun run look [--doc <fixture | file.html | folder>] [--out <file.png>] [--source] [--latency <ms>] [--keep | --stop] [step ...]
-bun run look --view [--doc ...] [--out <file.png>]     the document as a reader sees it, with no editor and no steps
-bun run look --path /documents [--out <file.png>]           a page of the server by its path, signed in
+bun run look --view [--doc ...] [--out <file.png>] [tap:<selector>]...
+                                                            the document as a reader sees it, with no editor
+bun run look --path /documents [--out <file.png>] [tap:<selector>]...
+                                                            a page of the server by its path, signed in
 bun run look --ops <host>[/<tab>] [--out <file.png>] [hover:<selector> | tap:<selector>]...
                                                             the ops page (bun erga) of an instance, with made-up facts
 
@@ -23,6 +25,7 @@ then saves a screenshot and prints the page as a person sees it: "|" is the care
   --doc     a folder of e2e/fixtures (default: empty, one empty paragraph), or an HTML file or folder
   --out     where the screenshot goes (default: a new folder in .e2e/shots/ of this checkout)
   --width   the window's width in px (default 1100; a phone: 390), and --height (default 800)
+  --dark    the browser asks for dark pages (prefers-color-scheme: dark)
   --source  print the page's body as HTML too
   --latency a network's delay between the tab and the room, each way: 120, or a range 60-180 (ms);
             a server left running with --keep has the delay it started with
@@ -108,6 +111,7 @@ const out = resolve(option("--out") ?? join(mkdtempSync(join(shots, "look-")), "
 const latency = option("--latency");
 const keep = flag("--keep"),
   source = flag("--source"),
+  dark = flag("--dark"),
   view = flag("--view");
 const pathArg = option("--path");
 const proxy = option("--proxy");
@@ -303,7 +307,7 @@ const server = {
 const browser = await chromium.launch();
 let code = 0;
 try {
-  const page = await browser.newPage({ viewport });
+  const page = await browser.newPage({ viewport, colorScheme: dark ? "dark" : "light" });
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   // And the page editor's check: where the page does not show its HTML (libs/text/ui/check.ts).
@@ -311,10 +315,18 @@ try {
     if (m.type() == "error" && m.text().includes("does not show its HTML")) errors.push(m.text());
   });
   if (view || pathArg) {
-    // No editor: the page as it loads, once its requests and its fonts are done.
+    // No editor: the page as it loads, once its requests and its fonts are done. Then the steps: a click on each control.
     await page.goto(pathArg ? root + pathArg : (await server.fixture(docArg)).address);
     await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
     for (const f of page.frames()) await f.evaluate(() => document.fonts.ready.then(() => null)).catch(() => {});
+    for (const step of args) {
+      if (!step.startsWith("tap:")) throw new Error(`--view and --path have no step ${step}: tap:<selector>`);
+      await page.click(step.slice(4));
+      // (What the click opened has come to rest: no animation runs.)
+      await page
+        .waitForFunction(() => !document.getAnimations().some((a) => a.playState == "running"), null, { timeout: 5_000 })
+        .catch(() => {});
+    }
     await page.screenshot({ path: out });
     console.log(`screenshot: ${out}`);
     if (errors.length) console.log(`page errors:\n${errors.join("\n")}`);

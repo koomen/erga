@@ -1,4 +1,4 @@
-// A scratch document's Save (server/pages/scratch.ts), for its owner: an orange button at the start of the quick actions, in
+// A scratch document's Save (server/pages/scratch.ts), for its owner: a gray button at the start of the quick actions, in
 // the viewer's bar and the editor's (its controls' template, and the controls if they are made already). Its tip says what
 // it does (`tip`). A click keeps the document (save_document); saved, both buttons go, and the address bar takes the
 // document's new address (the editor follows a rename by itself; the viewer doesn't). An error shows in the tip.
