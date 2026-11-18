@@ -59,24 +59,44 @@ test("three errors from different sources: one card, the newest first; the same 
 
 test("progress never opens the card: nothing in its first second, then the line; what ends sooner shows nothing", () => {
   const begun = run(initial, upload("u"));
-  expect(begun.effects).toEqual([[{ t: "timer", key: "u", what: "quiet", ms: QUIET_MS }]]);
+  expect(begun.effects).toEqual([[{ t: "timer", key: "u", what: "quiet", ms: QUIET_MS, n: 1 }]]);
   expect(view(begun.state)).toBe("none");
   // It ends in its quiet time: gone, and nothing was drawn.
-  const fast = run(begun.state, { t: "end", key: "u", title: "1 file uploaded" }, { t: "timeout", key: "u", what: "quiet" });
+  const fast = run(begun.state, { t: "end", key: "u", title: "1 file uploaded" }, { t: "timeout", key: "u", what: "quiet", n: 1 });
   expect(fast.state.alerts).toEqual([]);
   expect(fast.effects).toEqual([[], []]);
   // It runs on: the line. Its end says so for DONE_MS, then it goes.
-  const slow = run(begun.state, { t: "timeout", key: "u", what: "quiet" });
+  const slow = run(begun.state, { t: "timeout", key: "u", what: "quiet", n: 1 });
   expect(view(slow.state)).toBe("line");
   expect(slow.effects).toEqual([[DRAW]]);
   const ended = run(slow.state, { t: "end", key: "u", title: "3 files uploaded" });
   expect(ended.state.alerts[0]).toMatchObject({ done: true, title: "3 files uploaded" });
-  expect(ended.effects).toEqual([[{ t: "timer", key: "u", what: "done", ms: DONE_MS }, DRAW]]);
-  expect(view(run(ended.state, { t: "timeout", key: "u", what: "done" }).state)).toBe("none");
+  expect(ended.effects).toEqual([[{ t: "timer", key: "u", what: "done", ms: DONE_MS, n: 2 }, DRAW]]);
+  expect(view(run(ended.state, { t: "timeout", key: "u", what: "done", n: 2 }).state)).toBe("none");
+});
+
+test("a timer's end counts only for its own alert: the same key raised again has its whole quiet second, and its whole end", () => {
+  // Raised, ended in its quiet time, raised again: the first one's timer ends, and the second one stays quiet.
+  const again = run(initial, upload("u"), { t: "end", key: "u" }, upload("u"));
+  expect(again.effects[2]).toEqual([{ t: "timer", key: "u", what: "quiet", ms: QUIET_MS, n: 2 }]);
+  const old = run(again.state, { t: "timeout", key: "u", what: "quiet", n: 1 });
+  expect([view(old.state), old.effects]).toEqual(["none", [[]]]);
+  const own = run(old.state, { t: "timeout", key: "u", what: "quiet", n: 2 });
+  expect([view(own.state), own.effects]).toEqual(["line", [[DRAW]]]);
+  // It says its end, runs again and says its end again: the first end's timer takes nothing off.
+  const twice = run(own.state, { t: "end", key: "u", title: "1 file uploaded" }, upload("u"), {
+    t: "end",
+    key: "u",
+    title: "2 files uploaded",
+  });
+  expect(twice.effects[2]).toEqual([{ t: "timer", key: "u", what: "done", ms: DONE_MS, n: 4 }, DRAW]);
+  const early = run(twice.state, { t: "timeout", key: "u", what: "done", n: 3 });
+  expect([running(early.state), early.effects]).toEqual(["2 files uploaded", [[]]]);
+  expect(view(run(early.state, { t: "timeout", key: "u", what: "done", n: 4 }).state)).toBe("none");
 });
 
 test("Close dismisses every error and tells its source; an upload that runs stays, as the line; the line opens the card", () => {
-  const s = run(initial, upload("u"), { t: "timeout", key: "u", what: "quiet" }, error("a"), error("b")).state;
+  const s = run(initial, upload("u"), { t: "timeout", key: "u", what: "quiet", n: 1 }, error("a"), error("b")).state;
   expect(view(s)).toBe("card");
   expect(headline(s)).toBe("Uploading · 2 problems");
   const closed = run(s, { t: "close" });
@@ -95,7 +115,7 @@ test("Close dismisses every error and tells its source; an upload that runs stay
   // (When it ends, the line says its end.)
   expect(running(run(timed, { t: "end", key: "u", title: "1 file uploaded" }).state)).toBe("1 file uploaded");
   // The card closes itself with its last alert, and the next progress starts as a line.
-  const over = run(opened, { t: "end", key: "u" }, upload("v"), { t: "timeout", key: "v", what: "quiet" }).state;
+  const over = run(opened, { t: "end", key: "u" }, upload("v"), { t: "timeout", key: "v", what: "quiet", n: 4 }).state;
   expect(view(over)).toBe("line");
 });
 
@@ -145,6 +165,7 @@ test("a batch: a row's numbers paint that row alone; a row that fails opens the 
     t: "timeout",
     key: "u",
     what: "quiet",
+    n: 1,
   }).state;
   const moved = run(s, { t: "row", key: "u", row: row("0", "running", 0.6) }, { t: "row", key: "u", row: row("0", "done") });
   expect(moved.effects).toEqual([[{ t: "paint", key: "u", row: "0" }], [DRAW]]);

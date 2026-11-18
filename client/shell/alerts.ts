@@ -51,7 +51,7 @@ export function mountAlerts(shell: Shell) {
     for (const f of effects) {
       if (f.t == "draw") afterPress(box, draw);
       else if (f.t == "paint") paint(f.key, f.row);
-      else if (f.t == "timer") window.setTimeout(() => send({ t: "timeout", key: f.key, what: f.what }), ms(f.ms));
+      else if (f.t == "timer") window.setTimeout(() => send({ t: "timeout", key: f.key, what: f.what, n: f.n }), ms(f.ms));
       else if (f.t == "fix") askAgent(f.alerts);
       else if (!shell.page.act(f.key, f.action, f.row)) hears.get(f.key)?.(f.action, f.row);
     }

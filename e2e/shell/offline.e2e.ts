@@ -7,11 +7,14 @@ import type { Page } from "playwright-core";
 import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
 import { expect, goto, journey, servers, test, until, type Tab } from "../helpers/fixtures";
 import { idOf, runTool } from "../helpers/tools";
+import { GRACE_MS } from "../../libs/text/ui/unsaved";
 import { soon } from "./shell";
 
 const s = await servers.main();
 
 const NOTE = "Edits not saved yet";
+/** Between a person's keys, in steady typing. */
+const KEY_MS = 50;
 
 /** What an origin keeps for offline, as a frame of it sees it: the worker's copy, the replicas, Erga's worker. */
 const KEPT = `(async () => ({
@@ -80,19 +83,38 @@ const note = (ed: Editor) =>
     .then((a) => (a.view == "line" ? a.head : null))
     .catch(() => null);
 
+/**
+ * From now on, in `window.__noted`: how many times the page's editor raised the note (in its quiet time it shows
+ * nothing), and how many times the alerts showed it, also for a moment.
+ */
+const countNotes = (ed: Editor) =>
+  ed.eval(`(() => {
+    const box = document.getElementById("alerts"), n = (window.__noted = { raised: 0, shown: 0 });
+    addEventListener("message", (e) => {
+      if (e.data?.type == "erga-alert" && e.data.op == "raise" && e.data.alert?.key == "unsaved") n.raised++;
+    });
+    new MutationObserver(() => {
+      if (box.textContent.includes(${JSON.stringify(NOTE)})) n.shown++;
+    }).observe(box, { childList: true, subtree: true });
+  })()`);
+
 journey("offline, and back; then sign-out", () => {
   let ed: Editor, other: Editor;
   /** The first document's pages origin. */
   let origin: string;
 
-  test("online, an edit saves at once, with no note", async ({ tab }) => {
+  test("online, steady typing saves as it goes, with no note, not for a moment", async ({ tab }) => {
     await watchSockets(tab.page);
     ed = await openEditor(tab, s, "multi");
     await workersIn(ed);
     await ed.clickEnd("main p");
-    await ed.type(" Milk.");
-    await until(() => ed.disk().includes(" Milk.</p>"), DISK_MS, "the first edit on disk");
-    expect(await note(ed)).toBeNull();
+    await countNotes(ed);
+    // A person's keys, for longer than GRACE_MS: the first edit's wait ends while a later edit is on its way.
+    const text = " Two loaves, oats and tea. Milk.";
+    expect(text.length * KEY_MS).toBeGreaterThan(GRACE_MS + 500);
+    await ed.page.keyboard.type(text, { delay: KEY_MS });
+    await until(() => ed.disk().includes(`${text}</p>`), DISK_MS, "the first edit on disk");
+    expect(await ed.eval<object>(`window.__noted`)).toEqual({ raised: 0, shown: 0 });
   });
 
   test("the pages origin has Erga's worker only, never a document's file of its name or any other worker", async ({ tab }) => {

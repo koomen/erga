@@ -76,6 +76,8 @@ export interface Alert extends Raise {
   quiet: boolean;
   /** Progress that ended: it says so for DONE_MS. */
   done: boolean;
+  /** The number of its timer that runs (quiet or done): the end of an older timer of its key counts for nothing. */
+  n: number;
 }
 
 export interface State {
@@ -85,6 +87,8 @@ export interface State {
   open: boolean;
   /** The keys of the `once` alerts this view of the page has shown. */
   seen: string[];
+  /** The newest number given (Alert.n). */
+  timers: number;
 }
 
 export type Event =
@@ -101,7 +105,8 @@ export type Event =
   | { t: "open" }
   /** × or Escape. */
   | { t: "close" }
-  | { t: "timeout"; key: string; what: "quiet" | "done" }
+  /** A timer's end, with the timer's number. */
+  | { t: "timeout"; key: string; what: "quiet" | "done"; n: number }
   /** The page in the frame loaded again: its editor is new. */
   | { t: "load" }
   /** Another page in the frame. */
@@ -116,7 +121,7 @@ export type Effect =
   | { t: "tell"; key: string; row?: string; action: string }
   /** Ask the agent to fix these. */
   | { t: "fix"; alerts: Alert[] }
-  | { t: "timer"; key: string; what: "quiet" | "done"; ms: number };
+  | { t: "timer"; key: string; what: "quiet" | "done"; ms: number; n: number };
 
 export const QUIET_MS = 1000,
   DONE_MS = 2000;
@@ -124,7 +129,7 @@ export const QUIET_MS = 1000,
 export const FIX = "fix",
   DISMISS = "dismiss";
 
-export const initial: State = { alerts: [], open: false, seen: [] };
+export const initial: State = { alerts: [], open: false, seen: [], timers: 0 };
 
 const failed = (a: Alert) => a.rows.filter((r) => r.state == "error").length;
 /** Whether an alert shows: an error, or progress past its quiet time, or with a row that failed. */
@@ -183,6 +188,7 @@ export function step(s: State, e: Event): [State, Effect[]] {
         count: was && r.kind == "error" && was.kind == "error" ? was.count + 1 : 1,
         quiet: r.kind == "progress" && (was ? was.quiet : true),
         done: false,
+        n: was ? was.n : s.timers + 1,
       };
       // (An error in the card that runs again, after "Try again": the card stays up for it.)
       if (was)
@@ -190,10 +196,12 @@ export function step(s: State, e: Event): [State, Effect[]] {
           { ...s, seen, open: s.open || (view(s) == "card" && shows(was)), alerts: s.alerts.map((a) => (a == was ? made : a)) },
           [draw],
         ];
-      const next = { ...s, seen, alerts: [made, ...s.alerts] };
+      const next = { ...s, seen, alerts: [made, ...s.alerts], timers: made.n };
       return [
         next,
-        made.kind == "progress" ? [{ t: "timer", key: r.key, what: "quiet", ms: QUIET_MS }, ...(shows(made) ? [draw] : [])] : [draw],
+        made.kind == "progress"
+          ? [{ t: "timer", key: r.key, what: "quiet", ms: QUIET_MS, n: made.n }, ...(shows(made) ? [draw] : [])]
+          : [draw],
       ];
     }
     case "row": {
@@ -214,11 +222,22 @@ export function step(s: State, e: Event): [State, Effect[]] {
           put({ ...old, kind: "error", quiet: false, title: e.title ?? old.title, rows: old.rows.filter((r) => r.state == "error") }),
           [draw],
         ];
-      if (old.kind == "progress" && shows(old) && e.title)
-        return [
-          put({ ...old, done: true, title: e.title, line: undefined, head: undefined, detail: undefined, actions: [], rows: [], p: 1 }),
-          [{ t: "timer", key: e.key, what: "done", ms: DONE_MS }, draw],
-        ];
+      if (old.kind == "progress" && shows(old) && e.title) {
+        const n = s.timers + 1,
+          said = {
+            ...old,
+            done: true,
+            n,
+            title: e.title,
+            line: undefined,
+            head: undefined,
+            detail: undefined,
+            actions: [],
+            rows: [],
+            p: 1,
+          };
+        return [{ ...put(said), timers: n }, [{ t: "timer", key: e.key, what: "done", ms: DONE_MS, n }, draw]];
+      }
       return settle(drop([e.key]), shows(old) ? [draw] : []);
     }
     case "act": {
@@ -245,7 +264,8 @@ export function step(s: State, e: Event): [State, Effect[]] {
       return [{ ...s, alerts, open: false }, [...gone.map((a): Effect => ({ t: "tell", key: a.key, action: DISMISS })), draw]];
     }
     case "timeout": {
-      if (!old) return [s, []];
+      // (The timer of an alert that ended: the alert of its key now is another one, with a timer of its own.)
+      if (!old || old.n != e.n) return [s, []];
       if (e.what == "quiet") return old.quiet ? [put({ ...old, quiet: false }), shows(old) ? [] : [draw]] : [s, []];
       return old.done ? settle(drop([e.key]), [draw]) : [s, []];
     }
