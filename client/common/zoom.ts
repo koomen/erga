@@ -1,17 +1,13 @@
-// Zooming the page, not Erga: ⌘+ and ⌘− (Ctrl on other systems), ⌘0, a
-// pinch on the trackpad (a wheel with ctrlKey; Safari's gesture events) and
-// Ctrl with the mouse wheel would zoom the whole window, the controls and the
-// agent too. The editor takes them instead, wherever they happen (the shell,
-// the frame, the page), and the shell keeps the zoom (zoomStep: one state, one
-// function) and draws the page's frame at it (client/styles/editor.css,
-// html.erga-zoomed): a magnifier. The page stays laid out for the window's
-// width, and its frame is drawn `level` times larger and that much shorter, so
-// the page scrolls itself up and down. Sideways it moves (`x`): zoomed in, it is
-// wider than its place and covers it; zoomed out, it stays inside. The point under
-// the pointer stays under it: sideways here, up and down in the page, which
-// scrolls as its frame gets its new height, in the same frame of the screen
-// (client/inline/reader.ts, keepZoomPlace). A page that zooms itself
-// (window.ergaZoom: a canvas's camera) gets the gestures instead (main.ts).
+// Zooming the document, not Erga: ⌘+ and ⌘− (Ctrl on other systems), ⌘0, a pinch on the trackpad (a wheel with
+// ctrlKey; Safari's gesture events) and Ctrl with the mouse wheel would zoom the whole window, the bars and the agent
+// too. The viewer takes them instead, wherever they happen (the shell, the frame, the page), keeps the zoom (zoomStep:
+// one state, one function) and draws the page's frame at it (client/inline/viewer-zoom.ts; viewer-band.css,
+// html.erga-zoomed). At rest the page is laid out again for its place at the level, as the browser's own zoom does:
+// its frame is `level` times smaller than its place, and drawn that much larger, so it fills the place and nothing is
+// cut off. During a pinch the page keeps its layout and only its picture scales, around the pinch's point, so the
+// text stays under the fingers; when the pinch rests, the page is laid out again, and that point stays where it is on
+// the screen (zoomAim; client/inline/reader.ts scrolls it there). A page that zooms itself (window.ergaZoom: a
+// canvas's camera) gets the gestures instead.
 //
 // Trap: the browser's own pinch (the whole window larger: visualViewport.scale)
 // has no way back from a script. While the window is zoomed so, a pinch stays
@@ -19,9 +15,12 @@
 // the bars; and a wheel that can't be cancelled is a pinch the browser has
 // already: zooming the page with it too would zoom twice.
 
-export const MIN_ZOOM = 0.5, MAX_ZOOM = 3;
+export const MIN_ZOOM = 0.5,
+  MAX_ZOOM = 2;
 /** The browser's own steps, for the keys and the mouse wheel. */
-const STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+const STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+/** A pinch that rests this close to 100% is 100%. */
+const SNAP = 0.04;
 
 export const clampZoom = (z: number) => (Number.isFinite(z) ? Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z)) : 1);
 
@@ -40,6 +39,12 @@ export function zoomKey(e: { key: string; metaKey: boolean; ctrlKey: boolean; al
   return null;
 }
 
+/**
+ * The page's point that stays where it is on the screen as the viewer lays it out again (zoomAim): the page scrolls it
+ * there once its window is `w` px wide.
+ */
+export type ZoomAim = { type: "erga-zoom-aim"; x: number; y: number; to: number; w: number; top: boolean };
+
 /** A part of the page's window, across: px of the page, from its left edge. */
 export type Shows = { left: number; right: number };
 
@@ -48,8 +53,8 @@ export type Zoomed = {
   type: "erga-zoomed";
   /** The level the page's frame is drawn at. */
   zoom: number;
-  /** The height of the frame's place on the screen, px: at `zoom`, the page's window is `tall / zoom` high. */
-  tall: number;
+  /** The level the page is laid out for (the same, but during a pinch). */
+  lay: number;
   /** The browser has the whole window zoomed (its own pinch): a pinch on the page stays the browser's. */
   pinched: boolean;
   /** No zoom now (full screen): the keys and gestures are the browser's. */
@@ -74,71 +79,75 @@ export const applyZoom = (z: number, zoom: ZoomBy) => clampZoom("step" in zoom ?
 /** A zoom as a factor, for a page that zooms itself (window.ergaZoom): a step is a quarter closer, or back. */
 export const zoomFactor = (zoom: ZoomBy) => ("step" in zoom ? (zoom.step > 0 ? 1.25 : 0.8) : zoom.by);
 
+/** A point in the page's place on the screen: px from its top left. */
+export type Point = { x: number; y: number };
+
 /**
- * The page's zoom in the editor. `level`: how much larger than its own size the page is drawn. `x`: how far the page
- * is moved sideways from the middle of its place, in the screen's px.
- * "pinching": a pinch is going on (the frame keeps its picture and only scales it, until the pinch rests).
+ * The document's zoom. `level`: how much larger than its own size the page is drawn. Still, the page is laid out for
+ * its place at that level, and fills it. "pinching": a pinch goes on: the page keeps the layout it had (`lay`: the
+ * level it is laid out for), and its picture is scaled to `level` and moved `x`, `y` px from the place's top left, so
+ * that the page's point under the pinch's point `at` stays there.
  */
-export type Zoom = { phase: "still" | "pinching"; level: number; x: number };
+export type Zoom = { phase: "still"; level: number } | { phase: "pinching"; level: number; lay: number; x: number; y: number; at: Point };
 
 export type ZoomEvent =
-  /** A zoom, around the point `at` px from the left of the page's place (null: its middle), which is `width` px wide. */
-  | { type: "zoom"; by: ZoomBy; at: number | null; width: number }
-  /** The wheel, sideways: the page moves `dx` px to the left. */
-  | { type: "pan"; dx: number; width: number }
+  /** A zoom, around the point `at` of the page's place (null: its middle), which is `w` by `h` px. */
+  | { type: "zoom"; by: ZoomBy; at: Point | null; w: number; h: number }
   /** Back to 100%. */
   | { type: "reset" }
-  /** The page's place is `width` px wide now (the window, the agent's panel). */
-  | { type: "fit"; width: number }
   /** REST_MS after the pinch's last move. */
   | { type: "rest" };
 
-/** draw: the frame at the state. wait: "rest" after REST_MS. save: the level, for this document. say: the level, in a toast. */
+/**
+ * draw: the frame at the state (and first, where the page is laid out again, zoomAim: the point that stays). wait: "rest"
+ * after REST_MS. save: the level, for this document. say: the level, in a toast.
+ */
 export type ZoomEffect = "draw" | "wait" | "save" | "say";
 
 /** A pinch is over this long after its last move. */
 export const REST_MS = 160;
 
-/** How far from the middle the page may move: wider than its place, it covers the place; narrower, it stays inside. */
-const reach = (level: number, width: number) => Math.abs((width * (level - 1)) / 2);
-const within = (x: number, level: number, width: number) => Math.min(reach(level, width), Math.max(-reach(level, width), x));
+/** The level the page is laid out for. */
+export const layOf = (s: Zoom) => (s.phase == "pinching" ? s.lay : s.level);
 
 export function zoomStep(s: Zoom, e: ZoomEvent): { state: Zoom; effects: ZoomEffect[] } {
   const none = { state: s, effects: [] };
   switch (e.type) {
     case "zoom": {
       const level = applyZoom(s.level, e.by);
+      if ("step" in e.by)
+        return level == s.level && s.phase == "still" ? none : { state: { phase: "still", level }, effects: ["draw", "save", "say"] };
       if (level == s.level) return none;
-      // The page's point under `at` stays there: its distance from the page's middle grows with the level.
-      const at = (e.at ?? e.width / 2) - e.width / 2,
-        x = within(at - ((at - s.x) * level) / s.level, level, e.width);
-      return "by" in e.by
-        ? { state: { phase: "pinching", level, x }, effects: ["draw", "wait"] }
-        : { state: { phase: "still", level, x }, effects: ["draw", "save", "say"] };
-    }
-    case "pan":
-    case "fit": {
-      const x = within(s.x - (e.type == "pan" ? e.dx : 0), s.level, e.width);
-      return x == s.x ? none : { state: { ...s, x }, effects: ["draw"] };
+      // The page's point under `at` stays there: its distance from the picture's corner grows with the level.
+      const from = s.phase == "pinching" ? s : { lay: s.level, x: 0, y: 0 },
+        at = e.at ?? { x: e.w / 2, y: e.h / 2 },
+        k = level / s.level;
+      return {
+        state: { phase: "pinching", level, lay: from.lay, x: at.x - (at.x - from.x) * k, y: at.y - (at.y - from.y) * k, at },
+        effects: ["draw", "wait"],
+      };
     }
     case "reset":
-      return { state: { phase: "still", level: 1, x: 0 }, effects: ["draw", "save", "say"] };
+      return s.phase == "still" && s.level == 1 ? none : { state: { phase: "still", level: 1 }, effects: ["draw", "save", "say"] };
     case "rest":
-      return s.phase == "pinching" ? { state: { ...s, phase: "still" }, effects: ["draw", "save"] } : none;
+      return s.phase == "pinching"
+        ? { state: { phase: "still", level: Math.abs(s.level - 1) < SNAP ? 1 : s.level }, effects: ["draw", "save"] }
+        : none;
   }
 }
 
 /**
- * The level the page in the frame is drawn at, for the page itself (client/inline/reader.ts), which hears of a zoom
- * twice, in either order: the viewer's word (`said`: the level, with `tall`, the height of the frame's place on the
- * screen) and its window's new `height`. It is at the word's level when its window is that high. Else, during a pinch
- * of its own (`pinch`: and the height changed, not the width), at the level the height shows. Else where it was
- * (`drawn`): the window's own size changed, or the word is still on its way.
+ * Where the page is laid out again (from `s` to `next`, in a place `w` by `h` px): the page's point that stays where it
+ * is on the screen (`x`, `y`: px of its window now), the place in its new window it goes to (`to`, px from the top), and
+ * the new window's width. The pinch's point, or the middle for a key (`top`: a page at its top stays there). Null: the
+ * layout stays.
  */
-export function drawnLevel(o: { height: number; said: number; tall: number; drawn: number; pinch: boolean }): number {
-  if (!(o.tall > 0)) return o.drawn;
-  if (Math.abs(o.height - o.tall / o.said) <= 1) return o.said;
-  return o.pinch ? clampZoom(o.tall / o.height) : o.drawn;
+export function zoomAim(s: Zoom, next: Zoom, w: number, h: number): Omit<ZoomAim, "type"> | null {
+  if (layOf(s) == layOf(next)) return null;
+  const at = s.phase == "pinching" ? s.at : { x: w / 2, y: h / 2 },
+    x0 = s.phase == "pinching" ? s.x : 0,
+    y0 = s.phase == "pinching" ? s.y : 0;
+  return { x: (at.x - x0) / s.level, y: (at.y - y0) / s.level, to: at.y / next.level, w: w / layOf(next), top: s.phase != "pinching" };
 }
 
 /**

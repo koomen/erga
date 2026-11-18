@@ -1,8 +1,8 @@
 // The editor's layout as this browser keeps it, put on the page as its body starts (opened with ?edit,
 // viewer-editing-body.ts), so the first frame already has the document where it stays: the agent open or not
 // (client/shell/main.ts, settings.agent), its side and width (client/agent/layout.ts: KEY, geometry, and mountLayout's variables;
-// tests/layout.test.ts checks the two agree), and the document's zoom (client/shell/main.ts, ZOOM_KEY), which the frame takes
-// (client/styles/editor.css, html.erga-zoomed).
+// tests/layout.test.ts checks the two agree), and the document's zoom (client/inline/viewer-zoom.ts), which the frame takes
+// (client/inline/viewer-band.css, html.erga-zoomed).
 
 import { clampZoom } from "../common/zoom";
 
@@ -67,6 +67,7 @@ export default function viewerLayoutEarly(): void {
     );
     if (z != 1) {
       document.documentElement.style.setProperty("--erga-zoom", String(z));
+      document.documentElement.style.setProperty("--erga-lay", String(z));
       document.documentElement.classList.add("erga-zoomed");
     }
   } catch {}

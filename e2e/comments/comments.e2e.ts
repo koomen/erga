@@ -228,16 +228,23 @@ journey("comments in the editor", () => {
     await ed.click(elsewhere.x, elsewhere.y);
     await expect.poll(async () => (await cards(ed))?.length).toBe(1);
 
-    // 67%: too little room on the screen for the rail. Only the highlight shows; a click on it opens the card under
-    // its text, at the same size on the screen.
+    // 67%: the page is laid out for a wider window, and the rail has room still: its card, at its own size.
     for (let i = 0; i < 4; i++) await ed.press("ControlOrMeta+Minus");
     await expect.poll(zoomLabel).toBe("67%");
+    await expect.poll(async () => (await cards(ed))?.length).toBe(1);
+    await expect.poll(async () => (await onScreen(ed, thread)).card?.width).toBe(272);
+
+    // 150%: too little room on the screen for the rail. Only the highlight shows; a click on it opens the card under
+    // its text, at the same size on the screen, in the page's place.
+    await ed.press("ControlOrMeta+0");
+    for (let i = 0; i < 3; i++) await ed.press("ControlOrMeta+Equal");
+    await expect.poll(zoomLabel).toBe("150%");
     await expect.poll(() => cards(ed)).toEqual([]);
     const word = async () => {
       const t = (await onScreen(ed, thread)).text;
       return { x: t.left + 4, y: (t.top + t.bottom) / 2 };
     };
-    let w = await word();
+    const w = await word();
     await ed.click(w.x, w.y);
     await expect.poll(async () => (await cards(ed))?.length).toBe(1);
     const under = async () => {
@@ -247,13 +254,6 @@ journey("comments in the editor", () => {
       expect(at.card!.left).toBeGreaterThanOrEqual(at.place.left);
       expect(at.card!.right).toBeLessThanOrEqual(at.place.right);
     };
-    await under();
-
-    // 150%: the page is larger and cut at its sides; the card is the same, in the part of the page that shows.
-    await ed.press("ControlOrMeta+0");
-    for (let i = 0; i < 3; i++) await ed.press("ControlOrMeta+Equal");
-    await expect.poll(zoomLabel).toBe("150%");
-    await expect.poll(async () => (await onScreen(ed, thread)).card?.width).toBe(320);
     await under();
 
     // 100% with the agent's panel open: the page's place is narrower, and the card stays under its text.
