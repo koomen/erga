@@ -84,6 +84,8 @@ export interface Operation {
   readonly wide?: boolean;
   /** Checks its own arguments (files take more than their schema says): only the required ones are checked first. */
   readonly loose?: boolean;
+  /** Why nobody may use it now (a setting turned it off), or null: then no agent has it, and it refuses with these words. */
+  readonly off?: (caller: Caller) => Promise<string | null>;
   /**
    * What the person's own agent must have approved before it runs this call, in words for their panel ("Delete
    * /ada/notes for good"); null for a call that needs no approval. The agent's run stops at such a call until the
@@ -96,9 +98,13 @@ export interface Operation {
   run(args: Record<string, unknown>, caller: Caller): Promise<string | object | ToolContent[]>;
 }
 
-/** Whether `caller` may use `op` at all: admin power for an admin one, and a reach beyond one document for a wide one. */
-export async function offered(op: Pick<Operation, "admin" | "wide">, caller: Caller): Promise<boolean> {
+/**
+ * Whether `caller` may use `op` at all: admin power for an admin one, a reach beyond one document for a wide one, and
+ * never one that a setting turned off.
+ */
+export async function offered(op: Pick<Operation, "admin" | "wide" | "off">, caller: Caller): Promise<boolean> {
   if (op.wide && caller.who.onlyDoc != null) return false;
+  if (await op.off?.(caller)) return false;
   return !op.admin || (await caller.dir.users.actsAsAdmin(caller.who));
 }
 
@@ -120,6 +126,8 @@ export async function runOperation(op: Operation, args: Record<string, unknown>,
       message: `${op.name} isn't for a document token: it reaches one document only. Make a token with the documents scope in Settings.`,
       status: 403,
     });
+  const off = await op.off?.(caller);
+  if (off) throw new OperationError({ message: off, status: 403 });
   try {
     return await op.run(args, caller);
   } catch (e) {

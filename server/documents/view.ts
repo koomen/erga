@@ -298,12 +298,12 @@ async function publicView(
 }
 
 /** What the editor's menu on your avatar needs to know that the document doesn't: the links it offers. */
-const accountMeta = (session: Session, admin: boolean) => {
+const accountMeta = (session: Session, admin: boolean, feedback: boolean) => {
   const links = {
     docs: link("/documents", session),
     settings: "#settings",
     ...(admin ? { admin: link("/admin", session) } : {}),
-    feedback: "#feedback",
+    ...(feedback ? { feedback: "#feedback" } : {}),
     signOut: "/auth/logout",
   };
   return `<meta name="erga-account" content="${esc(JSON.stringify(links))}">`;
@@ -331,7 +331,8 @@ async function render(
   const editing = canEdit && url.searchParams.has("edit");
   // Someone who may comment and not edit: the comments alone, on the page (client/inline/viewer-comment.ts).
   const canComment = !canEdit && !!session && !session.agent && roleMay(d.role, "comment");
-  const admin = session ? await dir.users.isAdmin(whoOf(session)) : false;
+  // Send feedback, in the menu on the avatar: while the setting is on.
+  const [admin, feedback] = session ? await Promise.all([dir.users.isAdmin(whoOf(session)), dir.config.get("feedback")]) : [false, false];
   const token = await pagesToken(platform.secret, d.owner, d.id, url.origin, undefined, {
     ...(canEdit || canComment ? { edit: true } : {}),
     shares: d.shares,
@@ -354,7 +355,7 @@ async function render(
     `<meta name="erga-address" content="${esc(address)}"><meta name="erga-page" content="${esc(d.file)}"><meta name="erga-pages" content="${esc(files)}">` +
     (llmToken ? `<meta name="erga-llm-token" content="${esc(llmToken)}">` : "") +
     (canEdit && session
-      ? `<meta name="erga-base" content="/d/${d.id}">${canShare ? `<meta name="erga-share" content="owner">` : ""}${accountMeta(session, admin && !session.agent)}`
+      ? `<meta name="erga-base" content="/d/${d.id}">${canShare ? `<meta name="erga-share" content="owner">` : ""}${accountMeta(session, admin && !session.agent, feedback)}`
     : "");
   const shell = viewerPage({
     title: d.title,
@@ -370,7 +371,7 @@ async function render(
     editing,
     clone,
     edit,
-    corner: accountHtml(accountOf(session, admin), url.pathname + url.search),
+    corner: accountHtml(accountOf(session, admin, feedback), url.pathname + url.search),
     // The page follows each change while it's open: for someone signed in in their browser, who may open its room. Not
     // the server's browser (view_page: Session.view): its page stays as it loaded, while the picture is taken.
     ...(session && !session.agent && !session.view ? { live: d.ver } : {}),

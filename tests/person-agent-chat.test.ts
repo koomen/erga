@@ -26,12 +26,12 @@ const tables = () => new ChatTables(objectSql());
 
 test("a conversation stored and restored goes on where it was: the transcript and what the model remembers", async () => {
   const t = tables(), store = tableStore(t, "admin:root");
-  const a = startAgent({ cfg: script, owner: "root", admin: true, tools: [], store });
+  const a = startAgent({ cfg: script, owner: "root", admin: true, feedback: true, tools: [], store });
   await turn(a, `@script [{"text":"Hello, root."}]`);
   // The store has the run's end: a little after the agent says it.
   await until(() => t.load("admin:root")?.state.running === false);
 
-  const b = startAgent({ cfg: script, owner: "root", admin: true, tools: [], store, stored: t.load("admin:root") });
+  const b = startAgent({ cfg: script, owner: "root", admin: true, feedback: true, tools: [], store, stored: t.load("admin:root") });
   expect(b.log().items).toEqual([{ kind: "user", text: `@script [{"text":"Hello, root."}]` }, { kind: "assistant", text: "Hello, root." }]);
   expect(b.messages().map((m) => (m as { role: string }).role)).toEqual(["user", "assistant"]);
   expect(await b.resume()).toBe(false);
@@ -63,7 +63,7 @@ test("the admin agent, killed while a tool call ran, goes on after the restart w
     save: async (c) => { if (dead) return new Promise<void>(() => {}); t.save("admin:root", c); if (Object.values(c.state.calls).some((x) => !x.result)) dead = true; },
     clear: async () => t.clear("admin:root"),
   };
-  const a = startAgent({ cfg: script, owner: "root", admin: true, tools: [count], store: dying });
+  const a = startAgent({ cfg: script, owner: "root", admin: true, feedback: true, tools: [count], store: dying });
   a.prompt(`@script [{"tool":"count","args":{}},{"text":"Done."}]`, null);
   for (let i = 0; i < 200 && !(dead && runs.n == 1); i++) await new Promise((r) => setTimeout(r, 10));
   expect(runs.n).toBe(1);
@@ -72,6 +72,7 @@ test("the admin agent, killed while a tool call ran, goes on after the restart w
     cfg: script,
     owner: "root",
     admin: true,
+    feedback: true,
     tools: [count],
     store: tableStore(t, "admin:root"),
     stored: t.load("admin:root"),

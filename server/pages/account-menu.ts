@@ -1,8 +1,8 @@
 // Who you are, in the upper right of every page the app serves: your
 // avatar (your picture, shared/avatars.ts, or your initial on your colour if
 // you have none or it doesn't load), which opens a small menu (your name, Go to… with its key ⌘K, Documents, Settings,
-// Admin settings for admins, Send feedback, Sign out); or, signed out, a person in a circle whose
-// menu has only Sign in (to the sign-in page, coming back to the same page).
+// Admin settings for admins, Send feedback while the setting feedback is on, Sign out); or, signed out, a person in a
+// circle whose menu has only Sign in (to the sign-in page, coming back to the same page).
 //
 // The Worker adds it to each of the site's HTML pages (`withAccount`,
 // server/app.ts), so every page has it without each building it. The
@@ -27,19 +27,22 @@ export interface Account {
   login: string;
   name: string;
   admin: boolean;
+  /** The menu has Send feedback: the setting feedback is on. */
+  feedback: boolean;
   /** Their picture (shared/avatars.ts); absent: none, so their initial shows. */
   avatar?: string;
   /** The ?user= a local tab carries, kept on the menu's links. */
   session: Session;
 }
 
-export const accountOf = (session: Session | null, admin: boolean): Account | null =>
+export const accountOf = (session: Session | null, admin: boolean, feedback: boolean): Account | null =>
   !session || session.agent
     ? null
     : {
         login: session.login,
         name: session.name,
         admin,
+        feedback,
         session,
         ...(session.avatar ? { avatar: session.avatar } : {}),
   };
@@ -77,7 +80,7 @@ export function accountMarkup(account: Account | null, here: string): string {
 <a href="${esc(link("/documents", s))}">Documents</a>
 <a href="#settings">Settings</a>
 ${account.admin ? `<a href="${esc(link("/admin", s))}">Admin settings</a>` : ""}
-<a href="#feedback">Send feedback</a>
+${account.feedback ? `<a href="#feedback">Send feedback</a>` : ""}
 <a href="/auth/logout">Sign out</a>
 </div>
 </div>`;

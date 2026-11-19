@@ -12,7 +12,7 @@ import { until } from "./helpers/until";
 const script = { own: {}, server: {}, mode: "server" as const, off: [], model: "script" as const, effort: "medium" as const };
 const platform = {
   agentSettings: async () => script,
-  directory: { users: { isAdmin: async () => false, actsAsAdmin: async () => false } },
+  directory: { users: { isAdmin: async () => false, actsAsAdmin: async () => false }, config: { get: async () => true } },
 } as unknown as Platform;
 
 /** What a thread shows: each item's kind and text. */

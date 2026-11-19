@@ -1,6 +1,6 @@
-// Feedback: a person sends it from any page (the account menu's Send feedback) or asks their agent to (send_feedback);
-// the admins read it (feedback, and /admin/feedback). The server keeps it, then opens a GitHub issue for it with no name
-// (server/feedback.ts).
+// Feedback: a person sends it from any page (the account menu's Send feedback) or asks their agent to (send_feedback),
+// while the setting feedback is on; the admins read it (feedback, and /admin/feedback), also when it is off. The server
+// keeps it, then opens a GitHub issue for it with no name (server/feedback.ts).
 
 import * as Schema from "effect/Schema";
 import { FEEDBACK_MAX } from "../directory/index.ts";
@@ -32,6 +32,7 @@ export const FEEDBACK_OPERATIONS: Operation[] = [
     label: "Send feedback",
     activity: "sending feedback",
     wide: true,
+    off: async (caller) => ((await caller.dir.config.get("feedback")) ? null : "Feedback is off on this server."),
     description: "Sends feedback about Erga to its makers: an issue on GitHub, without your name.",
     parameters: Schema.Struct({
       text: str(`The feedback, in the user's words (at most ${FEEDBACK_MAX} characters).`),

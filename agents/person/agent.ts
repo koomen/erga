@@ -75,7 +75,8 @@ function about(name: string, args: unknown): string | null {
 }
 
 /**
- * One person's agent session (`admin`: theirs has the admin's prompt). `store`: where it keeps its conversation, step
+ * One person's agent session (`admin`: theirs has the admin's prompt; `feedback`: its tools have send_feedback, so the
+ * prompt names it). `store`: where it keeps its conversation, step
  * by step (agents/checkpoint.ts); `stored`: the conversation as the store
  * had it, to go on with.
  */
@@ -83,6 +84,7 @@ export function startAgent(opts: {
   cfg: AgentConfig;
   owner: string;
   admin: boolean;
+  feedback: boolean;
   tools: AgentTool[];
   store?: ChatStore;
   stored?: StoredChat | null;
@@ -103,7 +105,7 @@ export function startAgent(opts: {
     tag: "page",
     hooks: { about, modelChanged: () => opts.modelChanged?.(), used: opts.used, limit: opts.limit },
   });
-  loop.start(opts.cfg, systemPrompt(owner, opts.admin), opts.tools);
+  loop.start(opts.cfg, systemPrompt(owner, opts.admin, opts.feedback), opts.tools);
   return {
     get model() {
       return loop.model;

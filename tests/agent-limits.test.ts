@@ -41,7 +41,7 @@ const loop = (n: number) => `@script ${JSON.stringify(Array.from({ length: n }, 
 
 test("on the server's keys, a run ends after MAX_STEPS model turns, and says why; the next message starts a new run", async () => {
   const tick = counter();
-  const a = startAgent({ cfg: onServer, owner: "ada", admin: false, tools: [tick] });
+  const a = startAgent({ cfg: onServer, owner: "ada", admin: false, feedback: true, tools: [tick] });
   const errors = await run(a, loop(MAX_STEPS + 20));
   expect(tick.calls).toBe(MAX_STEPS);
   expect(errors).toEqual([
@@ -55,7 +55,7 @@ test("on the server's keys, a run ends after MAX_STEPS model turns, and says why
 
 test("on the person's own key, a run has no step limit", async () => {
   const tick = counter();
-  const a = startAgent({ cfg: onOwn, owner: "ada", admin: false, tools: [tick], limit: async () => "never asked" });
+  const a = startAgent({ cfg: onOwn, owner: "ada", admin: false, feedback: true, tools: [tick], limit: async () => "never asked" });
   expect(await run(a, loop(MAX_STEPS + 5))).toEqual([]);
   expect(tick.calls).toBe(MAX_STEPS + 5);
 });
@@ -63,13 +63,20 @@ test("on the person's own key, a run has no step limit", async () => {
 test("on the server's keys, the day's limit stops the run before the model's next turn, and says why", async () => {
   const tick = counter();
   let over: string | null = null;
-  const a = startAgent({ cfg: onServer, owner: "ada", admin: false, tools: [tick], limit: async () => over });
+  const a = startAgent({ cfg: onServer, owner: "ada", admin: false, feedback: true, tools: [tick], limit: async () => over });
   expect(await run(a, `@script [{"tool":"tick"},{"text":"Done."}]`)).toEqual([]);
   over = "The day's limit.";
   expect(await run(a, `@script [{"tool":"tick"},{"text":"Done."}]`)).toEqual(["The day's limit."]);
   expect(tick.calls).toBe(1);
   // A limit that can't be read stops nothing.
-  const b = startAgent({ cfg: onServer, owner: "ada", admin: false, tools: [], limit: () => Promise.reject(new Error("no database")) });
+  const b = startAgent({
+    cfg: onServer,
+    owner: "ada",
+    admin: false,
+    feedback: true,
+    tools: [],
+    limit: () => Promise.reject(new Error("no database")),
+  });
   expect(await run(b, `@script [{"text":"Hi."}]`)).toEqual([]);
 });
 

@@ -120,7 +120,7 @@ export const KINDS: readonly {
   },
   {
     name: "documents",
-    description: "Lists, makes, renames, shares, publishes, archives and deletes documents; sends feedback.",
+    description: "Lists, makes, renames, shares, publishes, archives and deletes documents.",
     ops: [
       "list_documents",
       "create_document",

@@ -134,6 +134,13 @@ export const SETTINGS = {
     default: true,
     parse: boolean,
   }),
+  feedback: setting<boolean>({
+    label: "Send feedback",
+    description: "Everyone who is signed in can send feedback about Erga, from the account menu or through their agent.",
+    values: "false: nobody sees Send feedback, and the server takes no new feedback. The admins still read what was sent.",
+    default: true,
+    parse: boolean,
+  }),
   feedback_repository: setting<string>({
     label: "Feedback's repository",
     description: 'The GitHub repository where "Send feedback" opens issues.',

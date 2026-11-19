@@ -618,10 +618,15 @@ window.ergaAgentPanel = {
 // (client/common/shortcuts-dialog.ts): dialogs on any page, each loaded the first time it's asked for. The account
 // menu's Settings and Send feedback, and any link to "#settings", "#feedback" or "#shortcuts" (the quick search's),
 // open them; so does an address that ends with one. A key saved or removed in Settings
-// gives the agent other models: the panel reads them again.
+// gives the agent other models: the panel reads them again. Send feedback opens only where the server offers it (the
+// setting feedback): its link is in the account menu (server/pages/account-menu.ts), or among the editor's (meta
+// erga-account, server/documents/view.ts).
+const feedbackOn = () =>
+  !!document.querySelector('.erga-account-menu a[href="#feedback"]') ||
+  "feedback" in JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "{}");
 const DIALOGS: Record<string, () => void> = {
   "#settings": () => void import("./settings-dialog").then((m) => m.openSettings()),
-  "#feedback": () => void import("./feedback-dialog").then((m) => m.openFeedback()),
+  "#feedback": () => void (feedbackOn() && import("./feedback-dialog").then((m) => m.openFeedback())),
   "#shortcuts": () => void import("../common/shortcuts-dialog").then((m) => m.toggleShortcuts()),
 };
 const openDialog = (hash: string) => {

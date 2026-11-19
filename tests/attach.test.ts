@@ -65,7 +65,7 @@ test("the server refuses what the panel would: a PDF sent straight to the agent'
   const script = { own: {}, server: {}, mode: "server" as const, off: [], model: "script" as const, effort: "medium" as const };
   const platform = {
     agentSettings: async () => script,
-    directory: { users: { isAdmin: async () => false, actsAsAdmin: async () => false } },
+    directory: { users: { isAdmin: async () => false, actsAsAdmin: async () => false }, config: { get: async () => true } },
     sessionOf: async () => ({ login: "ada", name: "Ada" }),
     personAgent: () => agents,
   } as unknown as Platform;

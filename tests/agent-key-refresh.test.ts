@@ -70,6 +70,7 @@ test("the admin agent: a key replaced after its session started reaches its next
     cfg: { own: {}, server: { anthropic: Redacted.make(KEY1) }, mode: "server", off: [], model: "sonnet", effort: "medium" },
     owner: "ada",
     admin: true,
+    feedback: true,
     tools: [],
   });
   agent.prompt("hello", null);

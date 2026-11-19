@@ -1,5 +1,6 @@
-// /admin/feedback, the Feedback page: everything that governs "Send feedback". Where the messages go (the repository's
-// setting row, ./settings.ts, and the deploy's token that opens the issues), then the feedback people sent, newest
+// /admin/feedback, the Feedback page: everything that governs "Send feedback". Its switch (off: nobody can send it, and
+// the messages kept stay here) and where the messages go (the setting rows, ./settings.ts, and the deploy's token that
+// opens the issues), then the feedback people sent, newest
 // first, each with when, the page it came from, and its GitHub issue (or that it waits for one). Opening the page
 // tries the waiting ones again (server/feedback.ts).
 
@@ -35,7 +36,7 @@ export async function feedbackPage(platform: Platform, session: Session) {
     platform.directory.credentials.deployed(whoOf(session)),
   ]);
   const issues = platform.issues;
-  const repo = await issuesRepo(platform.directory, issues);
+  const [on, repo] = await Promise.all([platform.directory.config.get("feedback"), issuesRepo(platform.directory, issues)]);
   const waiting = rows.filter((f) => f.issue == null).length;
   if (repo && waiting) platform.edge.background(fileFeedback(platform.directory, issues));
   const where = repo
@@ -47,7 +48,7 @@ export async function feedbackPage(platform: Platform, session: Session) {
     session,
     title: "Feedback",
     here: "feedback",
-    lede: `${where}${rows.length ? ` ${plural(rows.length, "message")}${waiting ? `, ${waiting} with no issue yet` : ""}.` : ""}`,
+    lede: `${on ? where : "Send feedback is off: nobody can send a message."}${rows.length ? ` ${plural(rows.length, "message")}${waiting ? `, ${waiting} with no issue yet` : ""}.` : ""}`,
     body: `
   <section aria-label="Where feedback goes">
     ${settings}

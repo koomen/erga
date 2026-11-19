@@ -6,7 +6,10 @@ import { expect, test } from "bun:test";
 import { ISSUE_FAILS, ISSUES_TOKEN, mockGithub } from "../dev/github-mock.ts";
 import { Directory, NotAllowed } from "../server/directory/index.ts";
 import { fileFeedback, githubIssues, issueOf, issuesRepo } from "../server/feedback.ts";
+import { opsOf, toolsFor } from "../agents/tools.ts";
+import { systemPrompt } from "../agents/person/prompt.ts";
 import { OPERATIONS, runOperation } from "../server/operations/index.ts";
+import { accountMarkup, accountOf } from "../server/pages/index.ts";
 import type { Platform } from "../server/platform.ts";
 import { memory } from "./helpers/memory-sql";
 import { quietConsole } from "./helpers/quiet.ts";
@@ -155,4 +158,37 @@ test("send_feedback keeps the text, the page and how it was sent, answers thanks
   expect(rows.feedback[0].url).toBe(`https://gh.test/__github/${REPO}/issues/1`);
   await expect(runOperation(list, {}, { dir, who: bob, platform })).rejects.toThrow(/admins only/);
   await expect(dir.feedback.list(bob)).rejects.toThrow(NotAllowed);
+});
+
+test("the setting feedback, off: no menu link, no tool and no word of it in the prompt, a message is refused; the admin still reads the kept ones", async () => {
+  const { dir, issues } = await setup();
+  const platform = { edge: { background: () => {} }, issues } as unknown as Platform;
+  const send = OPERATIONS.find((o) => o.name == "send_feedback")!;
+  const list = OPERATIONS.find((o) => o.name == "feedback")!;
+  const caller = { dir, who: bob, platform };
+  const ops = async () => (await toolsFor(caller)).flatMap(opsOf);
+  const menu = async () => accountMarkup(accountOf({ login: "bob", name: "Bob" }, false, await dir.config.get("feedback")), "/documents");
+  // On, the default.
+  expect(await dir.config.entry("feedback")).toMatchObject({ value: true, source: "default" });
+  expect(await ops()).toContain("send_feedback");
+  expect(await menu()).toContain('<a href="#feedback">Send feedback</a>');
+  expect(systemPrompt("bob", false, true)).toContain("send_feedback");
+  await runOperation(send, { text: "Kept" }, caller);
+  // Off.
+  await dir.config.set(ada, "feedback", false);
+  expect(await ops()).not.toContain("send_feedback");
+  expect((await toolsFor(caller)).map((t) => t.description).join(" ")).not.toMatch(/feedback/i);
+  expect(await menu()).not.toMatch(/feedback/i);
+  expect(systemPrompt("bob", false, false)).not.toMatch(/feedback/i);
+  await expect(runOperation(send, { text: "Refused" }, caller)).rejects.toMatchObject({
+    message: "Feedback is off on this server.",
+    status: 403,
+  });
+  const kept = (await runOperation(list, {}, { dir, who: ada, platform })) as { feedback: { text: string }[] };
+  expect(kept.feedback.map((f) => f.text)).toEqual(["Kept"]);
+  // On again.
+  await dir.config.set(ada, "feedback", true);
+  expect(await ops()).toContain("send_feedback");
+  await runOperation(send, { text: "Again" }, caller);
+  expect((await dir.feedback.list(ada)).map((f) => f.text).sort()).toEqual(["Again", "Kept"]);
 });

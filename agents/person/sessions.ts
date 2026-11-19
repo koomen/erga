@@ -9,7 +9,7 @@
 import { startAgent, type AgentSession } from "./agent.ts";
 import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
 import { restoredLog } from "../checkpoint.ts";
-import { agentTools, toolsFor } from "../tools.ts";
+import { agentTools, opsOf, toolsFor } from "../tools.ts";
 import { callDocument, type Caller } from "../../server/operations/index.ts";
 import type { Directory, Route as DocRoute } from "../../server/directory/index.ts";
 import { isModelChoice, type AgentSettings } from "../models.ts";
@@ -166,11 +166,13 @@ export class PersonAgents {
     const store = tableStore(this.chats, scope, (running) => {
       if (running) this.deps.watch?.();
     });
+    const tools = await toolsFor(as(), true);
     const agent = startAgent({
       cfg,
       owner: login,
       admin,
-      tools: agentTools(await toolsFor(as(), true), as),
+      feedback: tools.some((t) => opsOf(t).includes("send_feedback")),
+      tools: agentTools(tools, as),
       store,
       stored: this.chats.load(scope),
       meta: { origin, name: state.name },

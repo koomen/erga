@@ -61,6 +61,7 @@ test("a reader's view asks for the document one time, and a second view a moment
   const { seen, dir, doc, view } = await server("viewone1");
   // bo's account and the settings are remembered from another page.
   await dir.users.signedIn("bo");
+  await dir.config.get("feedback");
   seen.reads = 0;
   const first = await view(`/ada/${doc.slug}?user=bo`);
   expect([first.status, seen.reads]).toEqual([200, 1]);

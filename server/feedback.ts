@@ -1,5 +1,6 @@
 // Feedback becomes an issue in a repository on GitHub: the setting feedback_repository (owner/name), which is Erga's
-// own (koomen/erga) until an admin sets it on the Feedback page (empty: no issues). The server keeps the feedback first (dir.feedback,
+// own (koomen/erga) until an admin sets it on the Feedback page (empty: no issues). Nobody can send feedback while the
+// setting feedback is off (server/operations/feedback.ts). The server keeps the feedback first (dir.feedback,
 // server/directory/feedback.ts), then opens an issue for it: its title the start of the text, its body the text and
 // "Feedback <id>", the label "feedback". Never a name, a login, an email or the page: a
 // page's address names its owner.

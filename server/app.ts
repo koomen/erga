@@ -143,8 +143,9 @@ export const app = (outside: Outside): Route =>
         response,
         async () => {
         const session = await p.sessionOf(request);
+        if (!session) return null;
         const dir = p.directory;
-        return accountOf(session, !!session && (await dir.users.isAdmin(whoOf(session))));
+        return accountOf(session, ...(await Promise.all([dir.users.isAdmin(whoOf(session)), dir.config.get("feedback")])));
         },
         url.pathname + url.search
       )

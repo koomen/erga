@@ -23,7 +23,7 @@ export const PAGE_SETTINGS = {
   /** Agents and models: the agents on the server's keys, then pages' models. */
   agents: ["agent_daily_tokens"],
   pages: ["page_llm_daily_usd", "page_llm_guests"],
-  feedback: ["feedback_repository"],
+  feedback: ["feedback", "feedback_repository"],
 } as const;
 /** Settings with a control of their own: the Access page's switch, and the Agents and models page's choice and models' boxes. */
 export const OWN = ["public_sharing", "agent_keys", "agent_models_off"] as const;

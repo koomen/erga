@@ -2,7 +2,7 @@
 // the list of users, the settings and the access rules of the whole server, and reads the whole server's counts.
 // The path: the admin pages as one page. A link shows the next page in place, styled. Users, Settings, Access and the
 // Change log follow changes that an agent makes with an admin token, with no reload. Feedback sent from the account
-// menu comes to the Feedback page, with its issue on the pretend GitHub. Analytics shows the day's counts. Then the
+// menu comes to the Feedback page, with its issue on the pretend GitHub; the page's switch turns Send feedback off and on. Analytics shows the day's counts. Then the
 // editor (the admin pages' bars look as its bars, and Send feedback works from a document), and the pages in dark mode.
 import { openEditor } from "../helpers/editor";
 import { agentClosed, expect, journey, servers, settle, test, until, type Page } from "../helpers/fixtures";
@@ -368,6 +368,31 @@ journey("an admin on the admin pages", () => {
       issue: `#${issue!.number}`,
       href: expect.stringMatching(new RegExp(`/__github/erga/pretend/issues/${issue!.number}$`)),
     });
+    expect(await stayed()).toBe(true);
+  });
+
+  test("the Feedback page's switch: off, a signed-in person has no Send feedback and the server takes no message; on again, it is back", async () => {
+    // (The Feedback page is open, from the step before.) A click on the switch saves it, with no Save button.
+    const flip = async () => {
+      const saved = page.waitForResponse((r) => r.url().includes("/api/tools/set_setting"));
+      await clickOn(page, "li[data-key=feedback] .switch .track");
+      await saved;
+    };
+    expect(await page.isChecked("#set-feedback")).toBe(true);
+    await flip();
+    // The page of someone signed in who is no admin, as the server gives it: their account menu has no Send feedback.
+    const list = async () => (await fetch(`${root}/documents?user=reader01`)).text();
+    const off = await list();
+    expect(off).toContain('<a href="#settings">Settings</a>');
+    expect(off).not.toContain("#feedback");
+    const refused = await runTool(root, "send_feedback", { text: "Not now" }, { user: "reader01" });
+    expect([refused.status, refused.error]).toEqual([403, "Feedback is off on this server."]);
+    // The admin's page: the switch is off, and the message kept before stays.
+    expect(await page.isChecked("#set-feedback")).toBe(false);
+    expect(await page.locator(".feedback li").count()).toBe(1);
+    // On again: the link is back in that person's page (the editor's menu sends feedback, two steps on).
+    await flip();
+    expect(await list()).toContain('<a href="#feedback">Send feedback</a>');
     expect(await stayed()).toBe(true);
   });
 

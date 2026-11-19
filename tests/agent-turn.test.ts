@@ -27,7 +27,7 @@ function busyOf(agent: ReturnType<typeof startAgent>) {
 test("Stop clears the queue: a message sent during the run is never answered, after a restart too", async () => {
   const t = new ChatTables(objectSql()),
     store = tableStore(t, "you:ada");
-  const a = startAgent({ cfg: script, owner: "ada", admin: false, tools: [], store });
+  const a = startAgent({ cfg: script, owner: "ada", admin: false, feedback: true, tools: [], store });
   const busy = busyOf(a);
   a.prompt(`@script [{"text":"Slow.","delay":300}]`, null);
   await until(() => busy.length == 1);
@@ -43,7 +43,7 @@ test("Stop clears the queue: a message sent during the run is never answered, af
   expect(t.running()).toEqual([]);
 
   // The object restarts: the new agent has no run to go on with.
-  const b = startAgent({ cfg: script, owner: "ada", admin: false, tools: [], store, stored: t.load("you:ada") });
+  const b = startAgent({ cfg: script, owner: "ada", admin: false, feedback: true, tools: [], store, stored: t.load("you:ada") });
   expect(await b.resume()).toBe(false);
   expect(b.log().busy).toBe(false);
 });
@@ -62,7 +62,7 @@ test("Stop waits for the tool call that runs: its edit lands before the run says
       return { content: [{ type: "text", text: "edited" }] };
     },
   };
-  const a = startAgent({ cfg: script, owner: "ada", admin: false, tools: [edit] });
+  const a = startAgent({ cfg: script, owner: "ada", admin: false, feedback: true, tools: [edit] });
   let started = false;
   a.subscribe((ev) => {
     if (ev.t == "tool" && ev.status == "running") started = true;
@@ -97,7 +97,7 @@ test("a message sent while the agent resumes runs, and the resume never says the
     ],
     state: { running: true, queued: [], calls: {}, model: null, stable: 2, meta: {}, at: 1 },
   };
-  const a = startAgent({ cfg: script, owner: "ada", admin: false, tools: [], store: tableStore(t, "you:ada"), stored });
+  const a = startAgent({ cfg: script, owner: "ada", admin: false, feedback: true, tools: [], store: tableStore(t, "you:ada"), stored });
   const busy = busyOf(a);
   const resumed = a.resume();
   a.prompt(`@script [{"text":"Again.","delay":50}]`, null);
@@ -264,7 +264,7 @@ const results = (a: ReturnType<typeof startAgent>) =>
 
 test("a call that asks does not run until the person approves; then the run goes on", async () => {
   const ran: string[] = [];
-  const a = startAgent({ cfg: script, owner: "ada", admin: false, tools: [asker(ran)] });
+  const a = startAgent({ cfg: script, owner: "ada", admin: false, feedback: true, tools: [asker(ran)] });
   const busy = busyOf(a);
   a.prompt(`@script [{"tool":"delete","args":{"what":"notes"}},{"text":"Done."}]`, null);
   // The run ended at the question: nothing of it is left that could run the call.
@@ -284,7 +284,7 @@ test("a call that asks does not run until the person approves; then the run goes
 test("Deny, a new message and Stop each close the call unrun, and the model hears it", async () => {
   for (const how of ["deny", "message", "stop"] as const) {
     const ran: string[] = [];
-    const a = startAgent({ cfg: script, owner: "ada", admin: false, tools: [asker(ran)] });
+    const a = startAgent({ cfg: script, owner: "ada", admin: false, feedback: true, tools: [asker(ran)] });
     const busy = busyOf(a);
     a.prompt(`@script [{"tool":"delete","args":{"what":"notes"}},{"text":"Not deleted."}]`, null);
     await until(() => !!asking(a) && busy.at(-1) == false);
@@ -303,7 +303,7 @@ test("a call that needs no approval runs at once; a restart closes a question th
   const ran: string[] = [];
   const t = new ChatTables(objectSql()),
     store = tableStore(t, "you:ada");
-  const a = startAgent({ cfg: script, owner: "ada", admin: false, tools: [asker(ran)], store });
+  const a = startAgent({ cfg: script, owner: "ada", admin: false, feedback: true, tools: [asker(ran)], store });
   const busy = busyOf(a);
   a.prompt(`@script [{"tool":"delete","args":{"what":"draft"}},{"tool":"delete","args":{"what":"notes"}},{"text":"Done."}]`, null);
   await until(() => !!asking(a) && busy.at(-1) == false);
@@ -311,7 +311,7 @@ test("a call that needs no approval runs at once; a restart closes a question th
   await until(() => t.load("you:ada")!.log.some((i) => i.kind == "tool" && i.status == "asking"));
 
   // The object restarts: nothing is approved by default, and nothing waits for an answer that can't come.
-  const b = startAgent({ cfg: script, owner: "ada", admin: false, tools: [asker(ran)], store, stored: t.load("you:ada") });
+  const b = startAgent({ cfg: script, owner: "ada", admin: false, feedback: true, tools: [asker(ran)], store, stored: t.load("you:ada") });
   expect(asking(b)).toBeUndefined();
   expect(await b.resume()).toBe(false);
   expect(ran).toEqual(["draft"]);

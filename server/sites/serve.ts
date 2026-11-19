@@ -138,14 +138,16 @@ async function controlsOf(
   const dir = platform.directory;
   const inPerson = !!session && !session.agent;
   // Someone signed out asks the database nothing.
-  const [admin, doc] = inPerson ? await Promise.all([actingAdmin(dir.users, session), dir.route(page.docId)]) : [false, null];
+  const [admin, doc, feedback] = inPerson
+    ? await Promise.all([actingAdmin(dir.users, session), dir.route(page.docId), dir.config.get("feedback")])
+    : [false, null, false];
   const role = inPerson && doc ? await dir.access(whoOf(session), doc) : null;
   const rest = file ? pageAddress(file) : "";
   const here = rest ? `${page.address}/${rest.split("/").map(encodeURIComponent).join("/")}` : page.address;
   return siteHeader({
     clone: link(`/new?from=${page.docId}`, session),
     edit: roleMay(role, "edit") ? withEdit(link(here, session)) : null,
-    account: accountOf(session, admin),
+    account: accountOf(session, admin, feedback),
     here: url.pathname + url.search,
     doc: page.docId,
     font: !pageInter(html),

@@ -190,7 +190,7 @@ test("the known gaps are closed: publishing, keys and tokens", () => {
 });
 
 test("the admin agent's system prompt names every tool it has", () => {
-  const prompt = systemPrompt("root", true);
+  const prompt = systemPrompt("root", true, true);
   // Each tool, and each op but the document tools': the prompt says they work in any document, named with "document".
   const docTools = new Set(documentTools().map((t) => t.name));
   for (const t of [...KINDS.map((k) => k.name), ...ADMIN.filter((t) => !docTools.has(t))]) expect(prompt).toContain(t);

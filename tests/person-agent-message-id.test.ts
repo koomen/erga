@@ -12,7 +12,7 @@ const script = { own: {}, server: {}, mode: "server" as const, off: [], model: "
 function agents() {
   const platform = {
     agentSettings: async () => script,
-    directory: { users: { isAdmin: async () => false, actsAsAdmin: async () => false } },
+    directory: { users: { isAdmin: async () => false, actsAsAdmin: async () => false }, config: { get: async () => true } },
   };
   return new PersonAgents({ sql: objectSql(), platform: platform as unknown as Platform });
 }
