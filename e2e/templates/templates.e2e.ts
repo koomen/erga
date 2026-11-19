@@ -7,7 +7,7 @@ import { dragTo, onDisk, SIGN } from "../helpers/drops";
 import { F, openEditor, type Editor } from "../helpers/editor";
 import { ROOT } from "../helpers/env";
 import { expect, journey, servers, settle, test, until, type Page, type Tab } from "../helpers/fixtures";
-import { pointerOnPage } from "../helpers/press";
+import { pointerOnPage, pressOn } from "../helpers/press";
 import { idOf } from "../helpers/tools";
 import {
   atStep,
@@ -61,17 +61,14 @@ journey("a new document from the picker", () => {
         rows: [...(menu?.querySelectorAll("a") ?? [])].filter((a) => a.getClientRects().length).map((a) => a.querySelector("b").textContent.trim()),
         icons: [...(menu?.querySelectorAll("a") ?? [])].some((a) => a.querySelector("svg")) };
     })()`) as Promise<{ open: boolean; rows: string[]; expanded: string | null; icons: boolean }>;
-  /** Clicks the middle of the first visible element that matches `selector` (in the picker's root). */
+  /**
+   * Presses the first element that matches `selector` (in the picker's root). Was a failure on GitHub's machine, 2 runs
+   * of 3: signed out, the tab ended on /documents, signed in again, and the picker never opened. A click at a place
+   * read a call before lands beside the homepage's + while its bar is on its way (the button there goes to
+   * /documents). pressOn counts a press only on the element.
+   */
   async function clickIn(selector: string) {
-    const r = await until(
-      () =>
-        page.evaluate(
-          `(() => { const e = [...${ROOT_OF}.querySelectorAll(${JSON.stringify(selector)})].find((e) => e.getClientRects().length && getComputedStyle(e).visibility != "hidden"); const r = e?.getBoundingClientRect(); return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null; })()`
-        ) as Promise<{ x: number; y: number } | null>,
-      5000,
-      `${selector} on the page`
-    );
-    await page.mouse.click(r!.x, r!.y);
+    await pressOn(page, selector);
     // A click that leaves the page has nothing to settle.
     await settle(page).catch(() => {});
   }

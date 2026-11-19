@@ -17,10 +17,11 @@ GitHub runs the same suite for each commit of staging and main (.github/workflow
 There the suite must pass, and that is all: the 60 seconds and the budgets are the Mac Studio's. A machine with fewer
 than 16 cores has no time limit (e2e/run.ts), and a journey over its budget is named, never failed. A journey holds on
 Linux too: it presses the system's own keys (Control where a Mac has ⌘ or Option), and it waits for the state its
-next step needs. Measured there with two journeys at a time (2026-11-19, 4 runs): one run took 167 s, with no failure
-on time; three took 234 to 253 s, and each of those failed 2 or 3 journeys on time, never the same ones (an upload
+next step needs. Measured there with two journeys at a time (2026-11-19, 5 runs): one run took 167 s, with no failure
+on time; four took 233 to 253 s, and three of those failed 2 or 3 journeys on time, never the same ones (an upload
 that took over a second, a frame without the page, a typed letter that did not arrive). So there one journey runs at a
-time (TEST_JOBS=1 in the workflow).
+time (TEST_JOBS=1 in the workflow): its first run took 271 s, with 2 journeys over their budget, not 15 to 23, and one
+failed journey. A failed run keeps what each failed journey showed (the run's artifact failed-journeys).
 
 The browser has a process for each site, as a person's browser has (e2e/helpers/engine.ts). Measured beside the same
 suite without it (2026-11-13, 4 runs of each in turn, on a busy machine): 216 s of test time with it and 208 s

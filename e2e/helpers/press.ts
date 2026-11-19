@@ -35,7 +35,9 @@ const EVENTS = ["pointerdown", "mousedown", "pointerup", "mouseup", "click", "db
 const aim = ([selector, events]: [string, string[]]) => {
   const w = window as unknown as { __press?: Press };
   w.__press?.stop();
-  const el = document.querySelector(selector),
+  // (A site served as it is has its controls in a shadow root: client/inline/site-controls.ts.)
+  const root = document.querySelector(selector) ? document : (document.querySelector("erga-controls")?.shadowRoot ?? document);
+  const el = root.querySelector(selector),
     r = el?.getBoundingClientRect();
   const say = (e: EventTarget | null | undefined) =>
     e instanceof Element ? `<${e.tagName.toLowerCase()} id="${e.id}" class="${e.className}">` : String(e);
@@ -68,7 +70,7 @@ const aim = ([selector, events]: [string, string[]]) => {
   }
   const x = r.x + r.width / 2,
     y = r.y + r.height / 2,
-    top = document.elementFromPoint(x, y);
+    top = root.elementFromPoint(x, y);
   if (!top || !(el == top || el.contains(top))) {
     // Out of sight in what scrolls: into sight, as a person scrolls to it. Else something is over it.
     el.scrollIntoView({ block: "nearest", inline: "nearest" });

@@ -66,7 +66,7 @@ const PRESSES: Record<string, number> = {
   "e2e/page-model/page-model.e2e.ts": 1,
   "e2e/shell/open.e2e.ts": 1,
   "e2e/shell/panels.e2e.ts": 1,
-  "e2e/templates/templates.e2e.ts": 4,
+  "e2e/templates/templates.e2e.ts": 3,
   "e2e/templates/templates.ts": 2,
   "e2e/versions/versions.e2e.ts": 1,
   "e2e/viewer/reader.e2e.ts": 3,
