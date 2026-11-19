@@ -3,8 +3,9 @@
 // (the pages Erga ships, assets/**/*.html, and its agents' prompts, agents/**/*.md, are sources), with its comments
 // taken out (a comment may name erga.dev as an example). A name in a pattern (erga\.dev) is a name. The HMAC label
 // `erga-pages:` and the meta name `erga-pages` are not addresses (server/documents/pages-origin.ts,
-// server/documents/view.ts). One name is in the code: the repository that an instance tracks when its setup names none
-// (deploy/cli/config.ts, DEFAULT_REPO).
+// server/documents/view.ts). One name is in the code, Erga's own repository, in two places: the repository that an
+// instance tracks when its setup names none (deploy/cli/config.ts, DEFAULT_REPO), and the one where feedback opens
+// issues until an admin sets another (server/directory/settings.ts, feedback_repository).
 //
 // And no kind of instance but the two the code has (one on Cloudflare, one on AWS): no flag or value says that an
 // instance is "production" or "staging", and no instance names another one. Every instance takes one path, so no code
@@ -59,7 +60,10 @@ test("the names find what they are for, and skip comments and the HMAC label", (
 
 test("no instance's name in the code", () => {
   expect(sources().length).toBeGreaterThan(100);
-  expect(hitsOf(NAMES)).toEqual(['deploy/cli/config.ts: export const DEFAULT_REPO = "github.com/koomen/erga";']);
+  expect(hitsOf(NAMES)).toEqual([
+    'deploy/cli/config.ts: export const DEFAULT_REPO = "github.com/koomen/erga";',
+    'server/directory/settings.ts: default: "koomen/erga",',
+  ]);
 });
 
 /**

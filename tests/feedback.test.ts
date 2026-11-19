@@ -5,7 +5,7 @@
 import { expect, test } from "bun:test";
 import { ISSUE_FAILS, ISSUES_TOKEN, mockGithub } from "../dev/github-mock.ts";
 import { Directory, NotAllowed } from "../server/directory/index.ts";
-import { fileFeedback, githubIssues, issueOf } from "../server/feedback.ts";
+import { fileFeedback, githubIssues, issueOf, issuesRepo } from "../server/feedback.ts";
 import { OPERATIONS, runOperation } from "../server/operations/index.ts";
 import type { Platform } from "../server/platform.ts";
 import { memory } from "./helpers/memory-sql";
@@ -21,7 +21,7 @@ const REPO = "owner/feedback-repo";
 async function setup(token = ISSUES_TOKEN, repo: string | null = REPO) {
   const sql = memory();
   const dir = new Directory(sql, { admins: ["ada"] });
-  if (repo) await dir.config.set(ada, "feedback_repository", repo);
+  if (repo != null) await dir.config.set(ada, "feedback_repository", repo);
   const gh = mockGithub({
     app: { slug: "erga", clientId: "Iv1.x", clientSecret: "s" },
     origin: "https://gh.test",
@@ -83,8 +83,28 @@ test("a 5xx from GitHub is tried again, then left for later", async () => {
   expect((await dir.feedback.list(ada))[0].issue).toBeNull();
 }, 15_000);
 
-test("with no feedback_repository, the feedback stays with no issue; the setting takes only owner/name", async () => {
-  const { dir, issues, opened } = await setup(ISSUES_TOKEN, null);
+test("feedback_repository is Erga's own until an admin sets it: an issue opens there; a set value stays; with no token, no issue", async () => {
+  const { dir, gh, issues, opened } = await setup(ISSUES_TOKEN, null);
+  expect(await dir.config.entry("feedback_repository")).toMatchObject({ value: "koomen/erga", default: "koomen/erga", source: "default" });
+  expect(await issuesRepo(dir, issues)).toBe("koomen/erga");
+  // A server with no GITHUB_ISSUES_TOKEN opens no issue: the feedback stays.
+  expect(await issuesRepo(dir, undefined)).toBeNull();
+  await dir.feedback.add(bob, { text: "To Erga" });
+  await fileFeedback(dir, undefined);
+  expect((await dir.feedback.list(ada))[0].issue).toBeNull();
+  await fileFeedback(dir, issues);
+  expect(gh.state.issues["koomen/erga"].map((i) => i.title)).toEqual(["To Erga"]);
+  // A value that an admin saved wins over the default, the empty one too.
+  expect(await dir.config.set(ada, "feedback_repository", REPO)).toMatchObject({ value: REPO, source: "set" });
+  expect(await issuesRepo(dir, issues)).toBe(REPO);
+  expect(await dir.config.set(ada, "feedback_repository", "")).toMatchObject({ value: "", source: "set" });
+  expect(await issuesRepo(dir, issues)).toBeNull();
+  expect(opened()).toEqual([]);
+  expect((await dir.config.reset(ada, "feedback_repository")).value).toBe("koomen/erga");
+});
+
+test("with an empty feedback_repository, the feedback stays with no issue; the setting takes only owner/name", async () => {
+  const { dir, issues, opened } = await setup(ISSUES_TOKEN, "");
   await dir.feedback.add(bob, { text: "Kept" });
   await fileFeedback(dir, issues);
   expect(opened()).toEqual([]);
