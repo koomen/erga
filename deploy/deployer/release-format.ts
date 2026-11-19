@@ -1,6 +1,8 @@
 // A release as the pipeline reads it: the Worker the build made (cf build), the static assets, and the index that
 // names them.
 
+import * as Result from "effect/Result";
+import { Base64 } from "effect/encoding";
 import { DeployError } from "./cloudflare-api";
 
 /** One binding or Durable Object as `cf build` writes them (worker.config.json). */
@@ -83,4 +85,34 @@ export async function loadRelease(get: (path: string) => Promise<Uint8Array | nu
     ...(celld ? { celld } : {}),
     ...(toc.gate ? { gate: toc.gate } : {}),
   };
+}
+
+interface Bundle {
+  index: ReleaseIndex;
+  files: Record<string, string>;
+}
+
+/**
+ * A bundle's bytes as a release, stamped with `version` (the commit) if given. The bundle is a release as one file: JSON,
+ * {index: release.json, files: {"bundle/index.js": base64, ...}} (deploy/pipeline/build.ts packs it).
+ */
+export async function unpackRelease(bytes: Uint8Array | string, version?: string): Promise<Release> {
+  let bundle: Bundle;
+  try {
+    bundle = JSON.parse(typeof bytes == "string" ? bytes : new TextDecoder().decode(bytes)) as Bundle;
+    bytes = "";
+  } catch {
+    throw new DeployError({ message: "The build's release isn't readable (not a release bundle)." });
+  }
+  if (!bundle?.index || !bundle.files) throw new DeployError({ message: "The build's release isn't readable (no release.json in it)." });
+  const release = await loadRelease(async (p) => {
+    if (p == "release.json") return new TextEncoder().encode(JSON.stringify(bundle.index));
+    const f = bundle.files[p];
+    if (f == null) return null;
+    // Each file's base64 let go as soon as it's decoded.
+    delete bundle.files[p];
+    return Result.getOrThrow(Base64.decode(f));
+  });
+  if (!release) throw new DeployError({ message: "The build's release is empty." });
+  return version ? { ...release, version } : release;
 }
