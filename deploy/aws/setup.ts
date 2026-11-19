@@ -20,7 +20,7 @@ import { firstRows, pagesOf, sso, stackOf, varsOf } from "../own/plan";
 import { DIR, githubIdOf, loadSecrets } from "../own/store";
 import { type Aws, awsCli, whoAmI, type Where } from "./cli";
 import { factsOnAws, healthOnAws, liveOnAws } from "./deploy";
-import { gateCode, putEdgeKey } from "./gate";
+import { gateCode, putEdgeKey, putGateHash } from "./gate";
 import { provisionScript, putPrograms, onMachine, sqlScript, untilReachable } from "./machine";
 import {
   applyStack,
@@ -279,7 +279,10 @@ export async function applyStacks(dir: string, a: Answers, log: (l: string) => v
         ? "The gate's edge key is in its store: a new one."
         : "The gate's edge key is in its store already."
     );
-  return (await apply(where, stack, templatePath(dir, stack), "The stack: network, machine, bucket and addresses")).outputs;
+  const outputs = (await apply(where, stack, templatePath(dir, stack), "The stack: network, machine, bucket and addresses")).outputs;
+  // Which gate the stacks have now: the deployer in the cloud deploys only a release with this gate (deploy/aws/gate.ts).
+  if (sso(a)) await putGateHash(awsCli(where), stack);
+  return outputs;
 }
 
 // ------------------------------------------------------------------ the first deploy

@@ -32,6 +32,14 @@ export interface Release {
   migrations: Record<string, string>;
   /** The metadata of each binding the pipeline does not make, as the release's own code writes it (bindings.ts). A release from before 2026-11-03 has none. */
   bindings?: Record<string, Record<string, unknown>>;
+  /** The Worker as one module (celld/index.js), which the machine on AWS runs (celld.ts). A release from before 2026-11-20 has none. */
+  celld?: Uint8Array;
+  /**
+   * The SHA-256 of the gate's source in this commit (gate/): the code of the gate in front of an instance on AWS, its
+   * four CloudFront Functions and its sign-in function (Lambda@Edge). Only setup installs that code, so the deployer
+   * in the cloud deploys no release whose gate is not the installed one.
+   */
+  gate?: string;
 }
 
 /** The release's table of contents. */
@@ -44,6 +52,7 @@ export interface ReleaseIndex {
   assets: string[];
   migrations: string[];
   bindings?: Record<string, Record<string, unknown>>;
+  gate?: string;
 }
 
 /** A release, read file by file (`get` answers a path under release/, or null). */
@@ -60,15 +69,18 @@ export async function loadRelease(get: (path: string) => Promise<Uint8Array | nu
     }));
     return out;
   };
-  const [modules, assets, migrations] = await Promise.all([
+  const [modules, assets, migrations, celld] = await Promise.all([
     read("bundle", toc.modules),
     read("assets", toc.assets),
     read("migrations", toc.migrations),
+    get("celld/index.js"),
   ]);
   return {
     version: toc.version, built: toc.built, worker: toc.worker, mainModule: toc.mainModule, modules,
     assets: Object.fromEntries(Object.entries(assets).map(([p, b]) => [`/${p}`, b])),
     migrations: Object.fromEntries(Object.entries(migrations).map(([n, b]) => [n, new TextDecoder().decode(b)])),
     ...(toc.bindings ? { bindings: toc.bindings } : {}),
+    ...(celld ? { celld } : {}),
+    ...(toc.gate ? { gate: toc.gate } : {}),
   };
 }

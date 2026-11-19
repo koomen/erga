@@ -57,7 +57,7 @@ function driverOf(spec: Read, release: Release, ports: Ports): Driver | string {
   }
   const aws = ports.aws;
   if (!aws) return "The instance is on AWS, and this deploy has no AWS API.";
-  const run: AwsRun = { aws, target, release };
+  const run: AwsRun = { aws, target, settings: spec.settings, release };
   return {
     steps: AWS_STEPS.map((s) => ({ id: s.id, title: s.title, run: s.run(run) })),
     restore: () => run.before ?? null,

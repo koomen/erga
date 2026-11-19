@@ -1,35 +1,21 @@
 // `bun erga deploy` and `bun erga rollback` of an instance on AWS (deploy/cli/deploy.ts calls these for an entry with
 // AWS facts). A deploy runs the deployer's steps (deploy/deployer/aws.ts) with the AWS CLI: the release as a celld
-// project (project.ts) into the bucket, then the machine loads it (machine.ts, deployScript: the migrations, the
+// project (deploy/deployer/celld.ts) into the bucket, then the machine loads it (machine.ts, deployScript: the migrations, the
 // Worker, its answer). A release that doesn't answer is rolled back to the one before it. A rollback loads the release before the one that runs; the bucket keeps every release. Each deploy
 // and each rollback writes the release that runs into one plain parameter (liveParam): `bun erga status` reads it
 // there (the AWS CLI), with no request to the instance. Its health is the machine's own check of its server on the
 // loopback (healthOnAws: Systems Manager).
 
 import * as Effect from "effect/Effect";
-import type { AwsEntry, AwsFacts } from "../cli/config";
+import type { AwsEntry } from "../cli/config";
 import type { AwsApi } from "../deployer/aws";
+import { celldTgz } from "../deployer/celld";
 import { DeployError, tried } from "../deployer/cloudflare-api";
 import { deploy } from "../deployer/deploy";
 import { NoTable, type Sql } from "../deployer/instance";
 import type { Release } from "../deployer/release-format";
 import { type Aws, awsCli } from "./cli";
-import { CHROME_DEVTOOLS, deployedScript, deployScript, factsScript, healthScript, onMachine, putRelease, recordScript } from "./machine";
-import { celldProject } from "./project";
-
-/** An entry's facts, as the release keeps them (ERGA_DEPLOY, in its settings in the bucket): its AWS names and its plain settings. */
-export const awsFacts = (e: AwsEntry): AwsFacts => ({ aws: e.aws, vars: e.vars });
-
-/** The Worker's plain settings on AWS: the entry's, which release it is, its facts, where its pages and its Chrome are. */
-export function awsVars(e: AwsEntry, version: string): Record<string, string> {
-  return {
-    ...e.vars,
-    ERGA_VERSION: version,
-    ERGA_DEPLOY: JSON.stringify(awsFacts(e)),
-    ...(e.aws.pages.kind == "domain" ? { PAGES_DOMAIN: e.aws.pages.domain } : { PAGES_HOST: e.aws.pages.host }),
-    ERGA_CHROME: `http://${CHROME_DEVTOOLS}`,
-  };
-}
+import { deployedScript, deployScript, factsScript, healthScript, onMachine, putRelease, recordScript } from "./machine";
 
 const awsOf = (e: AwsEntry) => awsCli({ profile: e.profile, region: e.aws.region });
 
@@ -112,7 +98,7 @@ export async function deployToAws(
   const aws = awsOf(e);
   const where = { bucket: e.aws.bucket, region: e.aws.region, stack: e.aws.stack, gateKey: e.aws.gate };
   const api: AwsApi = {
-    putRelease: (r) => tried(async () => putRelease(aws, e.aws.bucket, await celldProject(r, awsVars(e, r.version)), r.version)),
+    putRelease: (r, vars) => Effect.flatMap(celldTgz(r, vars), (tgz) => tried(() => putRelease(aws, e.aws.bucket, tgz, r.version))),
     deployed: tried(() => deployedReleases(e)),
     // Setup's first SQL goes with the new release only, never with the release that a rollback loads.
     load: (version) =>

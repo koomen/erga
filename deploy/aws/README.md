@@ -4,7 +4,8 @@
 (`provider=aws`). After that, `bun erga deploy`, `rollback`, `status` and the ops page work on both hosts.
 
 On AWS, [celld](https://github.com/denoland/celld) (Deno, Apache-2.0) runs Erga's own Cloudflare release, with no
-change to Erga's code: `project.ts` only turns the release into a celld project. The code fixes no account, region,
+change to Erga's code: `deploy/deployer/celld.ts` only turns the release into a celld project. celld takes one
+module: the release carries the Worker as one (`deploy/release.ts`), so no deploy bundles. The code fixes no account, region,
 name or domain: each instance takes its names from its name in setup, and the AWS CLI's profile names the account.
 
 ## The files
@@ -15,7 +16,6 @@ name or domain: each instance takes its names from its name in setup, and the AW
 | `gate.ts` | The gate in front (SSO): its code for the instance, and its edge key |
 | `stack.ts` | The templates in `.erga/aws/`, AWS's change sets, the stacks |
 | `machine.ts` | celld and Chrome in the bucket and on the machine; the commands the CLI runs there (Systems Manager) |
-| `project.ts` | A release as a celld project |
 | `deploy.ts` | `bun erga deploy` and `rollback` of an instance on AWS |
 | `setup.ts` | `bun erga setup` on AWS: what it observes, the plan, the stacks, the first deploy |
 | `cli.ts` | The AWS CLI with the instance's profile and region |

@@ -8,13 +8,15 @@
 // (deploy/pipeline/build.ts).
 //
 // release/ holds release.json (what's in it: the build's worker.config.json,
-// the module and file names), bundle/ (the Worker's modules), assets/ (the
-// editor's files, as .build has them) and migrations/ (server/migrations/).
+// the module and file names), bundle/ (the Worker's modules), celld/ (the
+// Worker as one module, for AWS), assets/ (the editor's files, as .build has
+// them) and migrations/ (server/migrations/).
 // (The landing project is built into the Worker itself.)
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { ReleaseIndex } from "./deployer/release-format.ts";
+import { gateHash } from "./aws/gate.ts";
 import { releaseBindings } from "./deployer/bindings.ts";
 import { ROOT } from "./root.ts";
 
@@ -55,6 +57,27 @@ export async function makeRelease(): Promise<ReleaseIndex> {
   mkdirSync(staging, { recursive: true });
   const modules = files(join(built, "bundle"));
   cpSync(join(built, "bundle"), join(staging, "bundle"), { recursive: true, filter: (p) => !p.includes("/.vite") });
+  // The Worker as one module, which celld runs on AWS (deploy/deployer/celld.ts): celld takes one, and a deploy has no
+  // bundler (the deployer in the cloud is a Lambda).
+  const one = await Bun.build({
+    entrypoints: [join(built, "bundle", worker.manifest?.mainModule ?? "index.js")],
+    outdir: join(staging, "celld"),
+    target: "browser",
+    format: "esm",
+    naming: "index.js",
+    external: ["cloudflare:*", "node:*"],
+    // celld 0.6.3 has no node:os (it stops the Worker's load). Only the model SDKs' Node code imports it, never run there.
+    plugins: [
+      {
+        name: "no-node-os",
+        setup: (b) => {
+          b.onResolve({ filter: /^node:os$/ }, () => ({ path: "node:os", namespace: "no-node-os" }));
+          b.onLoad({ filter: /.*/, namespace: "no-node-os" }, () => ({ contents: "export default {};", loader: "js" }));
+        },
+      },
+    ],
+  });
+  if (!one.success) throw new AggregateError(one.logs, "bundling the Worker as one module (for celld) failed");
   // Not the inline code (client/build.ts): the Worker's bundle has it.
   const assets = files(SITE).filter((p) => !p.startsWith("release/") && !p.startsWith("release.") && p != "inline-code.ts");
   for (const p of assets) { mkdirSync(join(staging, "assets", p, ".."), { recursive: true }); cpSync(join(SITE, p), join(staging, "assets", p)); }
@@ -74,6 +97,7 @@ export async function makeRelease(): Promise<ReleaseIndex> {
     assets,
     migrations,
     bindings: releaseBindings(worker.env),
+    gate: gateHash(),
   };
   writeFileSync(join(staging, "release.json"), JSON.stringify(index, null, 2));
   rmSync(OUT, { recursive: true, force: true });

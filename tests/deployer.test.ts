@@ -191,8 +191,9 @@ describe("on AWS", () => {
   /** AWS's four calls, as a machine that ran `ran` answers them; `sick`: the releases that do not get healthy. */
   function fake(ran: string[], sick: string[] = []) {
     const calls: string[] = [];
+    const put: { vars?: Record<string, string> } = {};
     const aws: AwsApi = {
-      putRelease: (r) => Effect.sync(() => (calls.push(`put ${r.version}`), 9_400_000)),
+      putRelease: (r, vars) => Effect.sync(() => (calls.push(`put ${r.version}`), (put.vars = vars), 9_400_000)),
       deployed: Effect.sync(() => (calls.push("deployed"), ran)),
       load: (v) =>
         Effect.suspend(() => {
@@ -203,15 +204,24 @@ describe("on AWS", () => {
         }),
       setLive: (v) => Effect.sync(() => void calls.push(`live ${v}`)),
     };
-    return { aws, calls };
+    return { aws, calls, put };
   }
 
   test("the release goes into the bucket, the machine loads it, and the parameter says that it runs", async () => {
     expect(Effect.runSync(decodeSpec(spec))).toEqual(spec);
-    const { aws, calls } = fake(["aaaaaaaaaaaa"]);
-    const { log, failed } = await run(spec, rel, { aws });
+    const { aws, calls, put } = fake(["aaaaaaaaaaaa"]);
+    const { log, failed } = await run({ ...spec, settings: { GITHUB_CLIENT_ID: "Ov23aws" } }, rel, { aws });
     expect(failed).toBeNull();
     expect(calls).toEqual(["put bbbbbbbbbbbb", "deployed", "load bbbbbbbbbbbb", "live bbbbbbbbbbbb"]);
+    // The release goes in with the Worker's plain settings: the spec's, and the deploy's own. The facts are the target's.
+    const { kind: _, ...facts } = spec.target;
+    expect(put.vars).toEqual({
+      GITHUB_CLIENT_ID: "Ov23aws",
+      ERGA_VERSION: "bbbbbbbbbbbb",
+      ERGA_DEPLOY: JSON.stringify({ aws: facts, vars: { GITHUB_CLIENT_ID: "Ov23aws" } }),
+      PAGES_DOMAIN: "pages.example.com",
+      ERGA_CHROME: "http://127.0.0.1:9222",
+    });
     expect(log).toEqual([
       "Put the release in the bucket...",
       "Put the release in the bucket: done, release bbbbbbbbbbbb is in the bucket erga-example-bucket (9.4 MB)",

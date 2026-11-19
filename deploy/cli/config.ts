@@ -49,7 +49,7 @@ export const CloudflareFacts = Schema.Struct({
 });
 
 /**
- * Where a deploy finds an instance on AWS: its stack and what the stack made (deploy/aws/deploy.ts, awsFacts), and the
+ * Where a deploy finds an instance on AWS: its stack and what the stack made (deploy/deployer/aws.ts, awsVars), and the
  * Worker's plain settings.
  */
 export const AwsFacts = Schema.Struct({

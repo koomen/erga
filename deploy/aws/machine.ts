@@ -8,9 +8,11 @@
 //   rollback   loads the release before the one that runs (the machine keeps the list of the releases it ran)
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FRONT } from "../../gate/mounts/web.ts";
+import { CHROME_DEVTOOLS } from "../deployer/aws";
 import type { Aws } from "./cli";
 import { CELLD_PORT, paramFolder } from "./template";
 
@@ -26,8 +28,6 @@ export const CHROME = {
   sha256: "3a2bc2c354fb66615ee329c2ab13cd1312b40294798bea04c5dc0053caa6b881",
   url: (r: string) => `https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/${r}/chromium-headless-shell-linux-arm64.zip`,
 };
-/** Where the Worker finds the machine's Chrome (ERGA_CHROME, cloudflare/browser.ts): on the loopback only. */
-export const CHROME_DEVTOOLS = "127.0.0.1:9222";
 
 /**
  * celld's listener for its own commands (deploy, d1): on the loopback only, since it asks nobody who they are. Trap:
@@ -318,12 +318,15 @@ celld d1 execute erga . --bucket ${fleet(o.bucket)} --json --command "${o.sql}"
 /** The releases the machine ran, oldest first (the last one runs now). */
 export const deployedScript = () => "cat /var/lib/erga/deployed 2>/dev/null || true";
 
-/** Puts a release's celld project in the bucket (deploy/aws/project.ts made it in `dir`). */
-export async function putRelease(aws: Aws, bucket: string, dir: string, version: string): Promise<number> {
-  const tgz = `${dir}.tgz`;
-  // (No macOS extended attributes: GNU tar on the machine warns of each.)
-  const tar = Bun.spawnSync(["tar", "--no-xattrs", "--no-mac-metadata", "-czf", tgz, "-C", dir, "."]);
-  if (tar.exitCode != 0) throw new Error(`tar failed: ${tar.stderr.toString()}`);
-  await putObject(aws, bucket, `releases/${version}.tgz`, tgz);
-  return Bun.file(tgz).size;
+/** Puts a release's packed celld project (deploy/deployer/celld.ts) in the bucket: its size, in bytes. */
+export async function putRelease(aws: Aws, bucket: string, tgz: Uint8Array, version: string): Promise<number> {
+  const dir = mkdtempSync(join(tmpdir(), `erga-celld-${version}-`));
+  try {
+    const file = join(dir, "release.tgz");
+    writeFileSync(file, tgz);
+    await putObject(aws, bucket, `releases/${version}.tgz`, file);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return tgz.length;
 }

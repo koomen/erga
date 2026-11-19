@@ -31,7 +31,7 @@ export interface Env {
   DB: D1Database;
   /** Documents' blobs, their files that aren't text (cloudflare/blobs.ts): the target's own bucket (FILES on erga is erga-files). */
   FILES?: R2Bucket;
-  /** The edge's cache where the host's Cache API keeps nothing (celld: deploy/aws/project.ts); unbound on Cloudflare. */
+  /** The edge's cache where the host's Cache API keeps nothing (celld: deploy/deployer/celld.ts); unbound on Cloudflare. */
   EDGE_CACHE?: KVNamespace;
   /** The editor's own files (client/editor.html as editor.html, page.js, client/style.css, fonts). */
   ASSETS: Fetcher;
