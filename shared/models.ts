@@ -35,6 +35,8 @@ export const MODELS = {
   "gpt-6-astra": { provider: "openai", id: "gpt-6-astra", label: "GPT-6 Astra" },
   "gpt-6.1-terra": { provider: "openai", id: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
   "gpt-6-luna": { provider: "openai", id: "gpt-6-luna", label: "GPT-6 Luna" },
+  "gemini-4-carbon": { provider: "google", id: "gemini-4-carbon", label: "Gemini 4 Carbon" },
+  "gemini-4-neon": { provider: "google", id: "gemini-4-neon", label: "Gemini 4 Neon" },
   "gemini-4-argon": { provider: "google", id: "gemini-4-argon", label: "Gemini 4 Argon" },
   "gemini-3.8-flash": { provider: "google", id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
   grok: { provider: "openrouter", id: "~x-ai/grok-latest", label: "Grok" },

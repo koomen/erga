@@ -14,6 +14,7 @@ import { agentClosed, expect, journey, servers, test, until, type Page } from ".
 import { agentPrompt } from "../../client/common/agent-prompt";
 import { getter, mint, signIn, soon, tool, unique, upload } from "./access";
 import { markOf } from "../helpers/save-mark";
+import { watchCalls } from "../agent/panel";
 
 const [s, own] = await Promise.all([servers.main(), servers.of("tokens")]);
 
@@ -240,35 +241,40 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
     await page.fill("#erga-settings li[data-name=openai] input", OPENROUTER);
     await page.press("#erga-settings li[data-name=openai] input", "Enter");
     await soon(() => page.textContent("#erga-settings li[data-name=openai] .hint")).toContain("That is an OpenRouter API key");
-    await page.fill("#erga-settings li[data-name=openrouter] input", OPENROUTER);
-    await page.press("#erga-settings li[data-name=openrouter] input", "Enter");
-    await soon(() => page.textContent("#erga-settings li[data-name=openrouter] .state")).toBe("Set · ends in …E2e9");
-    expect(await page.content()).not.toContain(OPENROUTER);
+    // Their Google key: Gemini's models, in Google's order.
+    const GOOGLE = "AIza" + "g".repeat(31) + "G4e0";
+    await page.fill("#erga-settings li[data-name=google] input", GOOGLE);
+    await page.press("#erga-settings li[data-name=google] input", "Enter");
+    await soon(() => page.textContent("#erga-settings li[data-name=google] .state")).toBe("Set · ends in …G4e0");
+    expect(await page.content()).not.toContain(GOOGLE);
     await page.keyboard.press("Escape");
     await soon(async () => (await menu(page))?.options).toEqual(
-      expect.arrayContaining(["Grok (your key)", "Kimi K3 (your key)", "DeepSeek V4 Pro (your key)"])
+      ["Gemini 4 Carbon", "Gemini 4 Neon", "Gemini 4 Argon", "Gemini 3.8 Flash"].map((m) => `${m} (your key)`)
     );
   });
 
   test("a switch of the model keeps the conversation; Remove takes the key's models out of the menu", async () => {
     const replies = () => page.evaluate(() => document.getElementById("agent-log")!.innerText);
-    const ask = async (model: string) => {
+    const ask = async (model: string, steps = '[{"model": true}]') => {
       await page.selectOption("#agent-model-select", model);
-      await page.fill("#agent-input", '@script [{"model": true}]');
+      await page.fill("#agent-input", `@script ${steps}`);
       await page.press("#agent-input", "Enter");
     };
     await page.click("#agent-fab");
-    // Kimi K3, then Grok: each answers (the scripted model says which model answered), and the first answer stays.
-    await ask("kimi-k3");
-    await soon(replies).toContain("Kimi K3");
-    await ask("grok");
-    await soon(replies).toContain("Grok");
-    expect(await replies()).toContain("Kimi K3");
+    // Gemini 4 Argon, then Gemini 4 Neon: each answers (the scripted model says which model answered), and the first
+    // answer stays. Neon's tool call shows as one line, and then it answers.
+    await ask("gemini-4-argon");
+    await soon(replies).toContain("Gemini 4 Argon");
+    const lines = await watchCalls(page);
+    await ask("gemini-4-neon", '[{"tool": "documents", "args": {"op": "list_documents"}}, {"model": true}]');
+    await soon(replies).toContain("Gemini 4 Neon");
+    expect(await replies()).toContain("Gemini 4 Argon");
+    expect([...new Set((await lines()).flat())]).toEqual(["list_documents"]);
     await openSettings(page);
-    await page.click("#erga-settings li[data-name=openrouter] .remove");
-    await soon(() => page.textContent("#erga-settings li[data-name=openrouter] .state")).toBe("Not set");
+    await page.click("#erga-settings li[data-name=google] .remove");
+    await soon(() => page.textContent("#erga-settings li[data-name=google] .state")).toBe("Not set");
     await page.keyboard.press("Escape");
-    await soon(async () => JSON.stringify((await menu(page))?.options ?? [])).not.toContain("Grok");
+    await soon(async () => JSON.stringify((await menu(page))?.options ?? [])).not.toContain("Gemini");
   });
 
   test("tokens: the newest 5, then a count; Show 10 more loads the next ones by key or click; a revoke keeps the count", async () => {

@@ -9,11 +9,13 @@
 // model, so Pi knows which messages are its own.
 //
 // The key is given with each request, and `env` is empty: Pi never reads the Worker's environment. The fetch is the
-// one of the moment, so a test's stub answers.
+// one of the moment, so a test's stub answers (Google's SDK calls the global one itself).
 
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { AiError, LanguageModel, Tool, type Prompt, type Response } from "effect/ai";
 import { createModels } from "@earendil-works/pi-ai/models";
@@ -30,8 +32,22 @@ import type {
   ThinkingLevel,
 } from "@earendil-works/pi-ai";
 
+// Trap: Pi 1.5.2's catalog has Gemini 4 Argon, but not Carbon and Neon. Each is Argon's record with its own id, name
+// and price: Google's documentation gives the three the same API, context (1,048,576 tokens), inputs and thinking
+// levels (https://ai.google.dev/gemini-api/docs/models and /pricing, read on 2026-11-19). Neon has a fourth level,
+// xhigh, that Pi's Google adapter doesn't send: its highest is high. Delete a record when Pi's catalog has the model
+// (tests/model-keys.test.ts says when).
+const google = googleProvider();
+const argon = google.getModels().find((m) => m.id == "gemini-4-argon")!;
+const geminiModels = () => [
+  ...google.getModels(),
+  { ...argon, id: "gemini-4-carbon", name: "Gemini 4 Carbon" },
+  { ...argon, id: "gemini-4-neon", name: "Gemini 4 Neon", cost: { ...argon.cost, input: 3, output: 15, cacheRead: 0.15 } },
+];
+
 const pi = createModels();
-for (const p of [openaiProvider(), googleProvider(), openrouterProvider()]) pi.setProvider(p);
+for (const p of [openaiProvider(), { ...google, getModels: geminiModels, getAllModels: geminiModels }, openrouterProvider()])
+  pi.setProvider(p);
 
 /** A model in Pi's catalog: its name, and whether it takes images. Undefined: Pi doesn't know it. */
 export const piModel = (provider: string, id: string) => pi.getModel(provider, id);
@@ -175,8 +191,13 @@ export function partsOf(ev: AssistantMessageEvent, meta: Omit<PiMeta, "sig">): P
 /** Erga's effort, as Pi's thinking level (Pi maps it onto each model's own, or leaves thinking off). */
 const LEVELS: Record<string, ThinkingLevel> = { low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "xhigh" };
 
+/** Google's SDK gives an error as JSON, with the API's own JSON in its message: the words are the innermost message. */
+const GoogleError = Schema.fromJsonString(Schema.Struct({ error: Schema.Struct({ message: Schema.String }) }));
+const wordsOf = (message: string): string =>
+  Option.match(Schema.decodeOption(GoogleError)(message), { onNone: () => message, onSome: (e) => wordsOf(e.error.message) });
+
 const failed = (method: string, description: string) =>
-  AiError.make({ module: "pi", method, reason: new AiError.UnknownError({ description }) });
+  AiError.make({ module: "pi", method, reason: new AiError.UnknownError({ description: wordsOf(description) }) });
 
 /** The model `id` of Pi's `provider`, called with `apiKey`, as Effect AI's LanguageModel; effort null: no reasoning. */
 export function piLanguageModel(o: {
@@ -197,7 +218,8 @@ export function piLanguageModel(o: {
           apiKey: Redacted.value(o.apiKey),
           env: {},
           signal: ctl.signal,
-          fetch: ((input, init) => globalThis.fetch(input, init)) as typeof fetch,
+          // Trap: Pi's Google adapter refuses a fetch that isn't the global one (Google's SDK calls the global itself).
+          ...(model.api == "google-generative-ai" ? {} : { fetch: ((input, init) => globalThis.fetch(input, init)) as typeof fetch }),
           ...(model.reasoning && o.effort ? { reasoning: LEVELS[o.effort] ?? "medium" } : {}),
           ...(o.maxTokens ? { maxTokens: o.maxTokens } : {}),
         });

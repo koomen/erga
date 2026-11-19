@@ -1,12 +1,14 @@
 // The models a person can use for each key setup (shared/models.ts), the key that runs each (agents/models.ts), and
 // a conversation that goes from a model on the Pi router (OpenRouter's Kimi K3) to Claude, with fetch answering in
-// both APIs' place: the request each sends, the key each carries, and the tool call's id that Anthropic takes.
+// both APIs' place: the request each sends, the key each carries, and the tool call's id that Anthropic takes. Then
+// a turn on each Gemini 4 model, with fetch in the place of Google's API.
 
 import { afterAll, expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { fitModel, MODELS, usableModels, type KeySetup, type ModelChoice } from "../shared/models";
 import { keyFor, type AgentConfig } from "../agents/models";
+import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import { piModel } from "../agents/pi-model";
 import { startLoop, type AgentTool } from "../agents/run";
 import type { LogEvent } from "../shared/agent-log";
@@ -37,6 +39,8 @@ test("the models a person can use, for each key setup", () => {
     "gpt-6-astra:own",
     "gpt-6.1-terra:own",
     "gpt-6-luna:own",
+    "gemini-4-carbon:server",
+    "gemini-4-neon:server",
     "gemini-4-argon:server",
     "gemini-3.8-flash:server",
   ]);
@@ -45,7 +49,7 @@ test("the models a person can use, for each key setup", () => {
 test("the model to be on: the one asked for if it can be used, else the default, else the first", () => {
   expect(fitModel(setup({ server: ["anthropic"] }), "sonnet")).toBe("sonnet");
   expect(fitModel(setup({ server: ["anthropic"] }), "gpt-6.1-sol")).toBe("opus-fast");
-  expect(fitModel(setup({ server: ["google"] }), "sonnet")).toBe("gemini-4-argon");
+  expect(fitModel(setup({ server: ["google"] }), "sonnet")).toBe("gemini-4-carbon");
   expect(fitModel(setup({ server: ["anthropic"], mode: "own" }), "sonnet")).toBeNull();
 });
 
@@ -72,6 +76,14 @@ test("the key that runs a model: the person's own wins; a server key only as the
 test("every model of the short list that Pi runs is in Pi's catalog", () => {
   for (const [choice, m] of Object.entries(MODELS) as [ModelChoice, (typeof MODELS)[ModelChoice]][])
     if (m.provider != "anthropic") expect(piModel(m.provider, m.id)?.id, choice).toBe(m.id);
+});
+
+test("Pi's own catalog has Gemini 4 Argon only: when it has Carbon or Neon, delete Erga's record of it (agents/pi-model.ts)", () => {
+  const theirs = googleProvider()
+    .getModels()
+    .map((m) => m.id)
+    .filter((id) => id.startsWith("gemini-4-"));
+  expect(theirs).toEqual(["gemini-4-argon"]);
 });
 
 // -- a conversation from OpenRouter (through Pi) to Anthropic, with fetch answering for both
@@ -186,6 +198,73 @@ test("a turn on Kimi K3 through Pi, with a tool call; then Sonnet goes on with t
   loop.configure(cfg({ server: { anthropic: Redacted.make("sk-ant-server-key") }, model: "kimi-k3" }));
   expect(loop.setModel("kimi-k3")).toBe(false);
   expect(loop.messages.length).toBeGreaterThan(4);
+});
+
+/** A streamed answer of Google's Gemini API: one part (text, or a function call), then the stop. */
+function gemini(part: object) {
+  const chunk = {
+    candidates: [{ index: 0, content: { role: "model", parts: [part] }, finishReason: "STOP" }],
+    usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 3, totalTokenCount: 13 },
+  };
+  return new Response(`data: ${JSON.stringify(chunk)}\r\n\r\n`, { headers: { "content-type": "text/event-stream" } });
+}
+
+test("a turn on each Gemini 4 model through Pi, with a tool call: Google gets the key, the model, the tool and its result", async () => {
+  const read: AgentTool = {
+    name: "read",
+    description: "Reads a file.",
+    parameters: Schema.Struct({ path: Schema.String }),
+    execute: async (_id, p) => ({ content: [{ type: "text", text: `${p.path}: hello` }] }),
+  };
+  for (const choice of ["gemini-4-carbon", "gemini-4-neon", "gemini-4-argon"] as const) {
+    // The highest effort: Pi sends each model's highest level that it knows.
+    const keys = cfg({ own: { google: Redacted.make("AIza-own-key") }, model: choice, effort: "max" });
+    const events: LogEvent[] = [];
+    const loop = startLoop({ cfg: keys, stored: null, store: null, meta: {}, tag: "page", hooks: { about: () => null } });
+    loop.start(keys, "You are a test.", [read]);
+    loop.subscribe((e) => events.push(e));
+    expect(loop.modelChoice).toBe(choice);
+    requests.length = 0;
+    answers.push(
+      gemini({ functionCall: { name: "read", args: { path: "a.txt" } }, thoughtSignature: "c2lnbmF0dXJl" }),
+      gemini({ text: "It says hello." })
+    );
+    loop.prompt("What's in a.txt?", null, []);
+    await until(() => events.some((e) => e.t == "busy" && !e.busy));
+    expect(events.filter((e) => e.t == "error")).toEqual([]);
+    expect(requests.map((r) => r.url)).toEqual(
+      Array(2).fill(`https://generativelanguage.googleapis.com/v1beta/models/${choice}:streamGenerateContent?alt=sse`)
+    );
+    expect(requests[0].headers.get("x-goog-api-key")).toBe("AIza-own-key");
+    expect(JSON.stringify(requests[0].body.tools)).toContain('"read"');
+    expect(requests[0].body.generationConfig).toMatchObject({ thinkingConfig: { thinkingLevel: "HIGH" } });
+    // The second request has the call with the signature Google gave it, and the tool's result.
+    const sent = JSON.stringify(requests[1].body.contents);
+    expect(sent).toContain('"thoughtSignature":"c2lnbmF0dXJl"');
+    expect(sent).toContain("a.txt: hello");
+    expect(
+      events
+        .filter((e) => e.t == "text")
+        .map((e) => (e as { delta: string }).delta)
+        .join("")
+    ).toBe("It says hello.");
+  }
+});
+
+test("a key that Google refuses: the panel has Google's words, not its JSON", async () => {
+  const keys = cfg({ own: { google: Redacted.make("AIza-wrong-key") }, model: "gemini-4-neon" });
+  const events: LogEvent[] = [];
+  const loop = startLoop({ cfg: keys, stored: null, store: null, meta: {}, tag: "page", hooks: { about: () => null } });
+  loop.start(keys, "You are a test.", []);
+  loop.subscribe((e) => events.push(e));
+  // As Google answers (2026-11-19).
+  const refusal = { error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT" } };
+  answers.push(new Response(JSON.stringify(refusal, null, 2), { status: 400, headers: { "content-type": "application/json" } }));
+  loop.prompt("Hello", null, []);
+  await until(() => events.some((e) => e.t == "busy" && !e.busy));
+  expect(events.filter((e) => e.t == "error").map((e) => (e as { text: string }).text)).toEqual([
+    'API key not valid. Please pass a valid API key. Say "go on" to try again.',
+  ]);
 });
 
 test("on a model whose key went: the next turn never runs it, says so, and goes on with one that can be used", async () => {
