@@ -1,6 +1,6 @@
 // The agent loop on the real model's path (agents/run.ts, agents/models.ts: Effect AI's Anthropic provider), with
 // fetch answering in the API's place: what the request carries (fast mode's beta and speed, adaptive thinking, the
-// effort, the tools' JSON Schema, a PDF in a tool's result as a document, the prompt cache's marks), and the
+// effort, the tools' JSON Schema, a picture in a tool's result, the prompt cache's marks), and the
 // streamed answer in the transcript and the messages.
 
 import { afterAll, expect, test } from "bun:test";
@@ -71,17 +71,20 @@ function sse(
   return new Response(body, { headers: { "content-type": "text/event-stream" } });
 }
 
-test("a turn on Opus in fast mode: the request, the streamed text and thinking, a tool call with a PDF, and the reply", async () => {
+/** A picture of one pixel (PNG), in base64. */
+const DOT = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+test("a turn on Opus in fast mode: the request, the streamed text and thinking, a tool call with a picture, and the reply", async () => {
   requests.length = 0;
   const answers = [
     sse(
       [
         { type: "thinking", thinking: "Read it.", signature: "sig-1" },
-        { type: "tool_use", id: "toolu_1", name: "read", input: { path: "a.pdf" } },
+        { type: "tool_use", id: "toolu_1", name: "read", input: { path: "a.png" } },
       ],
       "tool_use"
     ),
-    sse([{ type: "text", text: "It says hello." }], "end_turn"),
+    sse([{ type: "text", text: "It shows a dot." }], "end_turn"),
   ];
   answer = () => answers.shift()!;
 
@@ -91,8 +94,8 @@ test("a turn on Opus in fast mode: the request, the streamed text and thinking, 
     parameters: Schema.Struct({ path: Schema.String.annotate({ description: "The file" }) }),
     execute: async (_id, p) => ({
       content: [
-        { type: "text", text: `${p.path}: 1 page` },
-        { type: "image", data: "JVBERi0=", mimeType: "application/pdf" },
+        { type: "text", text: `${p.path}: 1 pixel` },
+        { type: "image", data: DOT, mimeType: "image/png" },
       ],
     }),
   };
@@ -118,7 +121,7 @@ test("a turn on Opus in fast mode: the request, the streamed text and thinking, 
       if (ev.t == "busy" && !ev.busy) resolve();
     })
   );
-  loop.prompt("What does a.pdf say?", null, []);
+  loop.prompt("What does a.png show?", null, []);
   await done;
 
   expect(requests.length).toBe(2);
@@ -142,27 +145,27 @@ test("a turn on Opus in fast mode: the request, the streamed text and thinking, 
   });
   // A tool with no arguments: an object with none (the API refuses any other schema).
   expect(tools[1]).toMatchObject({ name: "whoami", input_schema: { type: "object", properties: {} } });
-  // The second turn: the thinking with its signature, the call, and its result with the PDF as a document.
+  // The second turn: the thinking with its signature, the call, and its result with the picture.
   const msgs = second.body.messages as { role: string; content: Record<string, unknown>[] }[];
   expect(msgs.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
   expect(msgs[1].content).toEqual([
     { type: "thinking", thinking: "Read it.", signature: "sig-1" },
-    { type: "tool_use", id: "toolu_1", name: "read", input: { path: "a.pdf" } },
+    { type: "tool_use", id: "toolu_1", name: "read", input: { path: "a.png" } },
   ]);
   expect(msgs[2].content[0]).toMatchObject({
     type: "tool_result",
     tool_use_id: "toolu_1",
     is_error: false,
     content: [
-      { type: "text", text: "a.pdf: 1 page" },
-      { type: "document", source: { type: "base64", media_type: "application/pdf", data: "JVBERi0=" } },
+      { type: "text", text: "a.png: 1 pixel" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: DOT } },
     ],
     cache_control: { type: "ephemeral" },
   });
   // What the panel saw, as it streamed.
   expect(events.filter((e) => e.t != "busy").map((e) => e.t)).toEqual(["user", "thinking", "tool", "tool", "text"]);
-  expect(events.find((e) => e.t == "tool" && e.status == "done")).toMatchObject({ name: "read", path: "a.pdf" });
-  expect(loop.log.items.at(-1)).toEqual({ kind: "assistant", text: "It says hello." });
+  expect(events.find((e) => e.t == "tool" && e.status == "done")).toMatchObject({ name: "read", path: "a.png" });
+  expect(loop.log.items.at(-1)).toEqual({ kind: "assistant", text: "It shows a dot." });
   expect(loop.messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
   expect(loop.model).toBe("Opus 5.5 fast");
 });

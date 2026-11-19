@@ -316,17 +316,11 @@ const mcp = Effect.fnUntraced(function* (ctx: ToolContext | null, origin: string
   return json(batch ? answers : answers[0]);
 });
 
-/**
- * A tool's result as MCP's content items: a document tool's items as they are (a PDF, read's, as an embedded
- * resource); an operation's answer as its JSON, in one text item.
- */
-const contentOf = (name: string, out: unknown) => {
-  if (!(Array.isArray(out) && out.every((c) => c && typeof c == "object" && "type" in c)))
-    return [{ type: "text", text: typeof out == "string" ? out : JSON.stringify(out, null, 2) }];
-  return (out as ToolContent[]).map((c) =>
-    c.type == "document" ? { type: "resource", resource: { uri: `erga:${name}/document.pdf`, mimeType: c.mimeType, blob: c.data } } : c
-  );
-};
+/** A tool's result as MCP's content items: a document tool's items as they are; an operation's answer as its JSON, in one text item. */
+const contentOf = (out: unknown) =>
+  Array.isArray(out) && out.every((c) => c && typeof c == "object" && "type" in c)
+    ? (out as ToolContent[])
+    : [{ type: "text", text: typeof out == "string" ? out : JSON.stringify(out, null, 2) }];
 
 const rpc = Effect.fnUntraced(function* (raw: unknown, ctx: ToolContext) {
   const decoded = decodeRpc(raw);
@@ -369,7 +363,7 @@ const rpc = Effect.fnUntraced(function* (raw: unknown, ctx: ToolContext) {
       const logged = (outcome: "ok" | "error") =>
         Effect.sync(() => console.log(`mcp ${name.replace(/[^\w-]/g, "?").slice(0, 64)} ${Date.now() - started} ms ${outcome}`));
       return yield* runNamed(name, m.params?.arguments ?? {}, ctx).pipe(
-        Effect.map((result) => ok({ content: contentOf(name, result) })),
+        Effect.map((result) => ok({ content: contentOf(result) })),
         Effect.tap(() => logged("ok")),
         Effect.catchTag("OperationError", (e) =>
           logged("error").pipe(Effect.as(ok({ content: [{ type: "text", text: e.message }], isError: true })))

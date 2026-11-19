@@ -27,8 +27,6 @@
     "@earendil-works/pi-ai": "1.5.0",
     "@effect/ai-anthropic": "4.1.0",
     "effect": "4.1.0",
-    "pdf-lib": "1.17.1",
-    "unpdf": "1.4.0",
     "yjs": "13.6.33"
   },
   "devDependencies": {

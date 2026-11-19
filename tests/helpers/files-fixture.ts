@@ -54,24 +54,3 @@ export async function setup(o: { blobs?: boolean; test?: boolean } = {}) {
 
 export const bytesOf = (n: number, seed = 7) => Uint8Array.from({ length: n }, (_, i) => (i * seed + (i >> 8)) & 0xff);
 
-
-/** A small PDF: one page for each line given. */
-export function pdf(...pages: string[]): Uint8Array {
-  const objs: string[] = ["<< /Type /Catalog /Pages 2 0 R >>", ""];
-  const kids: string[] = [];
-  for (const line of pages) {
-    const content = `BT /F1 18 Tf 72 720 Td (${line}) Tj ET`;
-    const page = objs.length + 1;
-    kids.push(`${page} 0 R`);
-    objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${page + 1} 0 R /Resources << /Font << /F1 FONT 0 R >> >> >>`, `<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
-  }
-  objs.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
-  const font = objs.length;
-  objs[1] = `<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${pages.length} >>`;
-  let out = "%PDF-1.4\n";
-  const offs: number[] = [];
-  objs.forEach((o, i) => { offs.push(out.length); out += `${i + 1} 0 obj\n${o.replace("FONT", String(font))}\nendobj\n`; });
-  const x = out.length;
-  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offs.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${x}\n%%EOF\n`;
-  return new TextEncoder().encode(out);
-}

@@ -149,16 +149,6 @@ export function toolsOf(root: string, token: string) {
         },
       };
     },
-    /** A tool's answer over MCP (POST /mcp, tools/call), with the same token. */
-    async mcp(name: string, args: Args) {
-      const r = await fetch(`${root}/mcp`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-      });
-      type Result = { content: { type: string; text?: string; resource?: { mimeType: string; blob: string } }[]; isError?: boolean };
-      return ((await r.json()) as { result: Result }).result;
-    },
     /** A new document of the token's person (create_document): its id and address. */
     async create(args: Args) {
       const a = await call("create_document", args);

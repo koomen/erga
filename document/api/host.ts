@@ -200,7 +200,6 @@ export class DocumentHost<S extends TabSocket = TabSocket> extends Document<Serv
       },
       // A new page in its file tree starts as a new document does.
       newPage: deps.pageTemplate,
-      blobs: info.disk ? undefined : deps.blobs,
       // An operation's write of bytes: as an upload is.
       putFile: (path, bytes, by) => this.uploads.putFile(path, bytes, by),
       // Its number of pages, as it opens and at each change: the documents list and the viewer read it.

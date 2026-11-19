@@ -68,10 +68,6 @@ export function blobsOf(
       return o ? new Uint8Array(await o.arrayBuffer()) : null;
     },
     put,
-    kept: {
-      get: async (k) => (await bucket.get(`kept/${k}`))?.text() ?? null,
-      put: async (k, value) => { await bucket.put(`kept/${k}`, value); },
-    },
   };
   return store;
 }

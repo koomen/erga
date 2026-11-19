@@ -265,7 +265,7 @@ export function messagesFor<M extends { role: string; content: unknown }>(
 type AnthropicConfig = NonNullable<Parameters<typeof AnthropicLanguageModel.layer>[0]["config"]>;
 const FAST_BETA = "fast-mode-2026-02-01";
 
-/** Requests with `beta` added to the betas the provider asks for (a PDF's, say). */
+/** Requests with `beta` added to the betas the provider asks for. */
 const withBeta = (beta: string) =>
   HttpClient.mapRequest((req) => {
     const had = req.headers["anthropic-beta"];

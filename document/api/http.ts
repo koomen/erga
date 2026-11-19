@@ -71,9 +71,7 @@ import { liveWait, type LiveAnswer, type LiveRequest } from "../../shared/live-p
 import { aimEdits, applySpans } from "../../shared/text-edits";
 import type { RenderJob } from "../life/document";
 import { encodeStart } from "../../shared/room-socket";
-import { blobPointer, byteRange, type BlobStore } from "../store/blobs";
-import { sha256Hex } from "../../shared/bytes";
-import { pdfText } from "./pdf";
+import { blobPointer, byteRange } from "../store/blobs";
 import * as Y from "yjs";
 
 export interface HostOptions {
@@ -114,8 +112,6 @@ export interface HostOptions {
   readonly versions: VersionsAccess;
   /** A new page's text; a plain one if not given. */
   readonly newPage?: string;
-  /** Where files kept whole are (their bytes, and what's worked out from them once: a PDF's text). */
-  readonly blobs?: BlobStore;
   /** Adds or replaces a file from its bytes, as `by`, within the limits an upload has (uploads.ts); throws why not. */
   readonly putFile: (path: string, bytes: Uint8Array, by: Participant) => Promise<{ kind: "text" | "file"; replaced: boolean }>;
 }
@@ -272,19 +268,9 @@ export function makeHttp(opts: HostOptions) {
     }
     return out;
   };
-  /** A PDF's text, kept by its hash: its blob's, or (a file in storage: no blob store) its bytes'. */
-  const pdfTextOf = (path: string) =>
-    Effect.gen(function* () {
-      const ref = files.ref ? yield* Effect.orElseSucceed(files.ref(path), () => null) : null;
-      const read = Effect.orElseSucceed(files.read(path), () => null);
-      const bytes = ref ? null : yield* read;
-      const hash = ref?.hash ?? (bytes ? yield* Effect.promise(() => sha256Hex(bytes)) : null);
-      return hash ? yield* pdfText(hash, bytes ? Effect.succeed(bytes) : read, opts.blobs) : null;
-    });
   /** What the file operations reach beyond the shared text, as a participant. */
   const filesAccess = (p: Participant): FilesAccess => ({
     stats: fileStats,
-    pdfText: (path) => Effect.runPromise(pdfTextOf(path)),
     writeBytes: (path, bytes) => opts.putFile(path, bytes, p),
   });
   /** What an operation reaches of the document, as the participant that a request names (its user, and how they act). */

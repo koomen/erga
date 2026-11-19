@@ -354,7 +354,7 @@ test("an outside agent's wrong call: every missing and unknown argument named at
   const agent: Caller = { dir, who: { login: "ada", via: VIA.agent }, name: "Ada", platform };
   const read = (await toolsFor(agent)).find((t) => t.name == "read")!;
   expect((await failure(runTool(read, { op: "read", file: "index.html" }, agent))).message).toBe(
-    'read needs "document", "path". read takes no "file". Usage: read(op="read", document, path, [offset], [limit], [pages], [selector], [css_rule], [version]). The skill tool explains documents, paths and ops.'
+    'read needs "document", "path". read takes no "file". Usage: read(op="read", document, path, [offset], [limit], [selector], [css_rule], [version]). The skill tool explains documents, paths and ops.'
   );
   // The manual: the skill tool gives it.
   const skill = (await toolsFor(agent)).find((t) => t.name == "skill")!;

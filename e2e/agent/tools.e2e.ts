@@ -9,7 +9,7 @@ import { fromBase64 } from "../../shared/bytes";
 import { pictureSize } from "../../shared/picture";
 import { apisOf, edit, person, pixel, toolsOf, valueOf, type DocTools, type Person, type Tools } from "./panel";
 import { eventsOf, joinRoom, type Joined } from "./room";
-import { CODE, pdf, PLAYER, PNG, probe, SITE, slideBar, tone, viewButton, type LiveFacts } from "./samples";
+import { CODE, PLAYER, PNG, probe, SITE, slideBar, tone, viewButton, type LiveFacts } from "./samples";
 
 const s = await servers.main();
 /**
@@ -576,7 +576,7 @@ test("the document tools work on any of your documents, named by address, URL, s
   expect(r.text).toMatch(/owner/);
 });
 
-test("the file tools on a document of many pages: ls, new, read, mv, grep and rm, by a token and by the person's agent; PDFs by kind, words and page", async () => {
+test("the file tools on a document of many pages: ls, new, read, mv, grep and rm, by a token and by the person's agent", async () => {
   const p = await person(s, someone("f"));
   const t = await p.tools();
   const doc = await t.create({
@@ -618,29 +618,6 @@ test("the file tools on a document of many pages: ls, new, read, mv, grep and rm
   expect(calls.filter((c) => c.kind == "tool").map((c) => c.status)).toEqual(["done", "done", "done", "done", "done"]);
   expect(JSON.stringify((await ls()).entries)).not.toContain("drafts");
 
-  // PDFs: ls says each file's kind, grep finds words by page, read gives the PDF as a document, over the API and over MCP.
-  const put = (path: string, body: Uint8Array<ArrayBuffer>) => p.get(`/d/${doc.id}/api/files/${path}`, { method: "PUT", body });
-  expect((await put("receipts/2026-03-goodwill.pdf", pdf("Goodwill Industries", "Charitable contribution receipt"))).status).toBe(200);
-  expect((await put("receipts/2026-11-redcross.pdf", pdf("Thank you for your charitable gift"))).status).toBe(200);
-  expect((await ls({ path: "receipts" })).entries.find((f) => f.path == "receipts/2026-03-goodwill.pdf")).toMatchObject({
-    kind: "file",
-    mime: "application/pdf",
-  });
-  const grep = await d.ok("grep", { pattern: "charitable", ignoreCase: true, glob: "receipts/*.pdf" });
-  expect(grep.text.split("\n")).toEqual([
-    "receipts/2026-03-goodwill.pdf:2: Charitable contribution receipt",
-    "receipts/2026-11-redcross.pdf:1: Thank you for your charitable gift",
-  ]);
-  const read = await d.ok("read", { path: "receipts/2026-03-goodwill.pdf" });
-  expect(read.text).toContain("2 pages (PDF");
-  const part = read.content.find((c) => c.type == "document")!;
-  expect(part.mimeType).toBe("application/pdf");
-  expect(atob(part.data!).startsWith("%PDF-")).toBe(true);
-  const over = await t.mcp("read", { document: doc.id, path: "receipts/2026-03-goodwill.pdf" });
-  expect(over.isError).toBeFalsy();
-  const resource = over.content.find((c) => c.type == "resource")!.resource!;
-  expect(resource.mimeType).toBe("application/pdf");
-  expect(atob(resource.blob).startsWith("%PDF-")).toBe(true);
 });
 
 // The bug: the render's token named the caller, not the document's owner, so the page's own files gave 404.

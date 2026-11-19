@@ -23,7 +23,6 @@ import { pictureSize, tooLarge } from "../../shared/picture";
 import { unifiedDiff, type Version, type VersionsState } from "../history/versions";
 import { EDITORS_READ_VERSIONS } from "../model/content";
 import { EDITS, WorkspaceError, modelPath, type Workspace } from "../room/workspace";
-import { isPdf, pageCount, pageRange, PAGES_PER_READ, PDF_READ_MAX, pdfPages } from "./pdf";
 import { PAGE_OPERATIONS } from "./page-operations";
 import { readLines, type TextEdit } from "../../shared/text-edits";
 import { findInSource } from "../../shared/source-select";
@@ -43,18 +42,13 @@ const IMAGE_READ_MAX = 3_750_000;
 /** The most bytes a write of bytes takes in one call (base64 in the tool's arguments). */
 const WRITE_BYTES_MAX = 25_000_000;
 
-/** What an operation answers: text, and for read on an image or view_page, a picture; for read on a PDF, the PDF (a range of its pages). */
-export type ToolContent =
-  | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string }
-  | { type: "document"; data: string; mimeType: "application/pdf" };
+/** What an operation answers: text, and for read on an image or view_page, a picture. */
+export type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
-/** What the file operations reach beyond the shared text: every file's size, time and kind, a PDF's text, and a write of bytes. */
+/** What the file operations reach beyond the shared text: every file's size, time and kind, and a write of bytes. */
 export interface FilesAccess {
   /** Each file's size (bytes), time (ms, when known) and kind: text, or a file kept whole (a blob), with its type. */
   stats(): Promise<Map<string, { size: number | null; at: number | null; kind: "text" | "file"; type: string }>>;
-  /** A PDF's text, page by page, extracted once and kept by the PDF's hash; null if it can't be had. */
-  pdfText(path: string): Promise<string[] | null>;
   /** Writes a file's bytes as the participant: text if it is text, else a file kept whole. Refused past the limits. */
   writeBytes(path: string, bytes: Uint8Array): Promise<{ kind: "text" | "file"; replaced: boolean }>;
 }
@@ -154,8 +148,8 @@ async function changedSince(c: Reach, message: string, path: string): Promise<st
   const what = restores.length ? ` It was restored since: ${restores.map((v) => `${v.id}, "${v.description}", by ${v.authors.join(", ") || "(unknown)"}`).join("; ")}.` : "";
   return message.replace(/ Read \S+ again and retry\.$/, "") + `${what} The current version is ${s.current.id}${s.pending ? " (with edits since, not yet a version)" : ""}. Read ${path} again and retry.`;
 }
-/** read, for a file kept whole: an image as a picture, a PDF (a range of its pages) as a document, anything else described. */
-async function readFile(c: Reach, path: string, bytes: Uint8Array, pages?: string): Promise<ToolContent[]> {
+/** read, for a file kept whole: an image as a picture, anything else described. */
+async function readFile(c: Reach, path: string, bytes: Uint8Array): Promise<ToolContent[]> {
   if (IMAGE.test(path)) {
     if (bytes.length > IMAGE_READ_MAX)
       throw new Error(
@@ -168,23 +162,10 @@ async function readFile(c: Reach, path: string, bytes: Uint8Array, pages?: strin
       );
     return [{ type: "image", data: Base64.encode(bytes), mimeType: IMAGE_TYPES[path.split(".").pop()!.toLowerCase()] }];
   }
-  if (isPdf(path)) {
-    const counted = await Effect.runPromise(Effect.result(pageCount(bytes)));
-    if (Result.isFailure(counted))
-      throw new Error(`${path} isn't a PDF that can be read (${counted.failure.message}). Its size: ${readableSize(bytes.length)}.`);
-    const total = counted.success;
-    const range = pageRange(pages, total);
-    if (typeof range == "string") throw new Error(range);
-    const part = await Effect.runPromise(pdfPages(bytes, range.from, range.to));
-    if (part.bytes.length > PDF_READ_MAX) throw new Error(`Pages ${range.from}-${range.to} of ${path} are ${readableSize(part.bytes.length)}: too big to see at once. Read fewer pages (pages: "${range.from}-${Math.max(range.from, range.from + Math.floor((range.to - range.from) / 2))}").`);
-    const shown = range.from == 1 && range.to == total ? `${path}: ${total} page${total == 1 ? "" : "s"} (PDF, ${readableSize(bytes.length)}), all of them below.` : `${path}: pages ${range.from}-${range.to} of ${total} (PDF, ${readableSize(bytes.length)}) below.${range.to < total ? ` Read pages "${range.to + 1}-${Math.min(total, range.to + PAGES_PER_READ)}" for more.` : ""}`;
-    return [
-      { type: "text", text: shown },
-      { type: "document", data: Base64.encode(part.bytes), mimeType: "application/pdf" },
-    ];
-  }
   const kind = (await c.files.stats().catch(() => null))?.get(path)?.type ?? "a file that isn't text";
-  return text(`${path} is a file kept whole (${kind}, ${readableSize(bytes.length)}): it isn't text, a PDF or an image, so it can't be shown here. It can be moved, renamed, deleted, or replaced with write's content_base64.`);
+  return text(
+    `${path} is a file kept whole (${kind}, ${readableSize(bytes.length)}): it isn't text or an image, so it can't be shown here. It can be moved, renamed, deleted, or replaced with write's content_base64.`
+  );
 }
 /** read with `version`: the file's bytes in that version. */
 async function oldFile(c: Reach, version: string, path: string): Promise<Uint8Array> {
@@ -245,14 +226,13 @@ const FILE_OPERATIONS: DocumentOperation[] = [
   {
     name: "read",
     activity: "reading",
-    description: "Reads a file: text, an image or a PDF.",
+    description: "Reads a file: text or an image.",
     parameters: Schema.Struct({
       path: Schema.String.annotate({
         description: `The file (text: ${MAX_LINES} lines at most); or a glob ("*.html"): each text file it matches, one after another.`,
       }),
       offset: Schema.optionalKey(Schema.Finite),
       limit: Schema.optionalKey(Schema.Finite),
-      pages: Schema.optionalKey(Schema.String.annotate({ description: `A PDF's pages, e.g. "21-40".` })),
       selector: Schema.optionalKey(
         Schema.String.annotate({
           description: 'Only this element, e.g. "svg g#logo".',
@@ -261,16 +241,13 @@ const FILE_OPERATIONS: DocumentOperation[] = [
       css_rule: Schema.optionalKey(Schema.String.annotate({ description: 'Only this CSS rule, e.g. ".legible h2".' })),
       version: Schema.optionalKey(Schema.String.annotate({ description: "As in this version." })),
     }),
-    run: async (
-      c,
-      p: { path: string; offset?: number; limit?: number; pages?: string; selector?: string; css_rule?: string; version?: string }
-    ) => {
+    run: async (c, p: { path: string; offset?: number; limit?: number; selector?: string; css_rule?: string; version?: string }) => {
       if (/[*?{]/.test(p.path) && p.version == null) return text(readMany(c, p.path));
       const path = run(modelPath(p.path));
       let all: string;
       if (p.version != null) {
         const bytes = await oldFile(c, String(p.version), path);
-        if (IMAGE.test(path) || isPdf(path)) return readFile(c, path, bytes, p.pages);
+        if (IMAGE.test(path)) return readFile(c, path, bytes);
         try {
           all = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
         } catch {
@@ -279,7 +256,7 @@ const FILE_OPERATIONS: DocumentOperation[] = [
       } else if (!c.ws.isText(path) && c.ws.paths().includes(path)) {
         const bytes = await c.readAsset(path);
         if (!bytes) throw new Error(`${path} doesn't exist`);
-        return readFile(c, path, bytes, p.pages);
+        return readFile(c, path, bytes);
       } else all = run(c.ws.read(path));
       if (p.selector != null || p.css_rule != null) {
         const found = findInSource(all, path, { selector: p.selector, cssRule: p.css_rule });
@@ -394,7 +371,7 @@ const FILE_OPERATIONS: DocumentOperation[] = [
   {
     name: "grep",
     activity: "searching",
-    description: "Searches the text files and PDFs for a regex.",
+    description: "Searches the text files for a regex.",
     parameters: Schema.Struct({
       pattern: Schema.String.annotate({
         description: "A regex, or text with literal.",
@@ -413,25 +390,15 @@ const FILE_OPERATIONS: DocumentOperation[] = [
       const only = p.glob ? globToRegExp(p.glob) : null;
       const out: string[] = [];
       const cut = (line: string) => (line.length > 300 ? line.slice(0, 300) + "…" : line);
-      let unread = 0;
       for (const f of c.ws.paths()) {
         if (out.length >= 100) break;
-        if (only && !only.test(f)) continue;
-        if (c.ws.isText(f)) {
-          run(c.ws.read(f))
-            .split("\n")
-            .forEach((line, i) => {
-              if (out.length < 100 && re.test(line)) out.push(`${f}:${i + 1}:${cut(line)}`);
-            });
-          continue;
-        }
-        // A PDF through its text (extracted once, kept by the PDF's hash): page by page.
-        if (!isPdf(f)) continue;
-        const pages = await c.files.pdfText(f).catch(() => null);
-        if (!pages) { unread++; continue; }
-        pages.forEach((page, i) => { for (const line of page.split("\n")) if (out.length < 100 && re.test(line)) out.push(`${f}:${i + 1}: ${cut(line.trim())}`); });
+        if ((only && !only.test(f)) || !c.ws.isText(f)) continue;
+        run(c.ws.read(f))
+          .split("\n")
+          .forEach((line, i) => {
+            if (out.length < 100 && re.test(line)) out.push(`${f}:${i + 1}:${cut(line)}`);
+          });
       }
-      if (unread) out.push(`[${unread} PDF${unread == 1 ? "" : "s"} couldn't be searched: no text could be read from ${unread == 1 ? "it" : "them"} here (read shows a PDF as it is).]`);
       return text(out.length ? out.join("\n") + (out.length == 100 ? "\n[First 100 matches.]" : "") : "No matches.");
     },
   },

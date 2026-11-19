@@ -23,7 +23,6 @@ The direct dependencies (`package.json`), and their licenses:
 | `effect`, `@effect/ai-anthropic` | MIT | yes |
 | `@earendil-works/pi-ai` (with `openai` and `@google/genai`, Apache 2.0, which it bundles) | MIT | yes |
 | `yjs` | MIT | yes |
-| `pdf-lib`, `unpdf` | MIT | yes |
 | `@cloudflare/vite-plugin`, `vite`, `@types/bun`, `@types/node` | MIT | no (development) |
 | `cf` | MIT or Apache 2.0 | no (development) |
 | `@e2e-dev/web`, `e2e`, `playwright-core`, `typescript` | Apache 2.0 | no (development) |
@@ -34,12 +33,11 @@ most that the build can bundle:
 
 | License | Production | Development only |
 | --- | --- | --- |
-| MIT | 83 | 65 |
+| MIT | 79 | 65 |
 | Apache 2.0 | 36 | 13 |
 | BSD-3-Clause | 13 | 1 |
 | BSD-2-Clause | 4 | 0 |
 | ISC | 2 | 2 |
-| MIT and Zlib (`pako`) | 1 | 0 |
 | 0BSD (`tslib`) | 1 | 0 |
 | MIT or Apache 2.0 | 0 | 3 |
 | MPL 2.0 (`lightningcss`) | 0 | 2 |

@@ -1,4 +1,4 @@
-// Samples for the agents' tools journey (tools.e2e.ts): pages, a picture, a PDF, a sound; and clicks on two fixtures'
+// Samples for the agents' tools journey (tools.e2e.ts): pages, a picture, a sound; and clicks on two fixtures'
 // own controls (the deck's slide bar, the views' buttons).
 import { F, type Editor } from "../helpers/editor";
 import { expect } from "../helpers/fixtures";
@@ -21,31 +21,6 @@ export const SITE = {
   "blog/post.html": PAGE("A post", `<h1>A post</h1>\n<p>A page two folders down.</p>`, "../"),
   "blog/blog.css": "h1 { color: rgb(180, 40, 30); }\n",
 };
-
-/** A small PDF: one page for each line given. */
-export function pdf(...pages: string[]): Uint8Array<ArrayBuffer> {
-  const objs: string[] = ["<< /Type /Catalog /Pages 2 0 R >>", ""];
-  const kids: string[] = [];
-  for (const line of pages) {
-    const content = `BT /F1 18 Tf 72 720 Td (${line}) Tj ET`;
-    kids.push(`${objs.length + 1} 0 R`);
-    objs.push(
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${objs.length + 2} 0 R /Resources << /Font << /F1 FONT 0 R >> >> >>`,
-      `<< /Length ${content.length} >>\nstream\n${content}\nendstream`
-    );
-  }
-  objs.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
-  objs[1] = `<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${pages.length} >>`;
-  let out = "%PDF-1.4\n";
-  const offs: number[] = [];
-  objs.forEach((o, i) => {
-    offs.push(out.length);
-    out += `${i + 1} 0 obj\n${o.replace("FONT", String(objs.length))}\nendobj\n`;
-  });
-  const x = out.length;
-  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offs.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${x}\n%%EOF\n`;
-  return new TextEncoder().encode(out);
-}
 
 /** One second of a quiet 440 Hz tone, as a WAV file (PCM, 8 kHz, 16-bit mono), in base 64. */
 export function tone(): string {

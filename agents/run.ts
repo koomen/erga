@@ -152,7 +152,7 @@ export interface AgentLoop {
   resume(): Promise<boolean>;
 }
 
-/** A tool's result as the model has it: the text as the result, and every part (a picture, a PDF) for the model. */
+/** A tool's result as the model has it: the text as the result, and every part (a picture) for the model. */
 export function toolMessage(id: string, name: string, out: ToolOutput, isFailure: boolean): ToolResultMessage {
   const text = out.content.flatMap((c) => (c.type == "text" ? [c.text] : [])).join("\n");
   const modelOutput = out.content.map((c) =>
