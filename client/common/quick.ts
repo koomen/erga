@@ -51,11 +51,13 @@ export function mountQuick(o: {
 }
 
 /**
- * Where the buttons' bar starts, with the others' stack left of it at its width at rest (people.ts, data-w): 10px from
- * the bar, and 10px from the breadcrumbs (2, and the 8 each caller leaves). The stack spread by a hover goes over the
- * breadcrumbs for a moment, and they don't move for it.
+ * Where the buttons' bar starts, with what is left of it: the save mark, where it shows (client/inline/bars.css: 24px
+ * wide, and it touches the bar), and then the others' stack at its width at rest (people.ts, data-w), 8px on, and 10px from the
+ * breadcrumbs (2, and the 8 each caller leaves). The stack spread by a hover goes over the breadcrumbs for a moment,
+ * and they don't move for it.
  */
 export function barEdge(bar: HTMLElement, stack?: HTMLElement | null): number {
-  const w = Number(stack?.dataset.w) || 0;
-  return bar.getBoundingClientRect().left - (w ? w + 12 : 0);
+  const w = Number(stack?.dataset.w) || 0,
+    mark = bar.querySelector<HTMLElement>(".save-state")?.offsetWidth ? 24 : 0;
+  return bar.getBoundingClientRect().left - mark - (w ? w + (mark ? 10 : 12) : 0);
 }

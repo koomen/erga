@@ -31,6 +31,7 @@ import { mountChrome } from "./chrome";
 import { mountSharing } from "./sharing";
 import { mountToast } from "./toast";
 import { mountAlerts } from "./alerts";
+import { mountSaveMark, type At } from "../common/save-mark";
 import { mountUploads } from "./uploads";
 import { ms } from "../../libs/text/ui/timescale";
 import { mountPageRequests } from "./page-requests";
@@ -70,6 +71,18 @@ interface ShellKept { width: number; height: number; html: string[]; body: strin
 const SHELL_HTML = ["page-dark", "page-light", "page-white"],
   SHELL_BODY = ["agent-open", "agent-right", "layout-narrow"];
 const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me"];
+/** What the save mark's card says of edits that the server does not have (libs/text/ui/unsaved.ts). */
+const NOT_SAVED = {
+  title: "Edits not saved yet",
+  detail:
+    "Erga can't reach the server. Your edits are safe in this browser: Erga tries again by itself, and saves them when the connection is back.",
+};
+/** And of a new title (the shell's own edit of the room: naming.ts). */
+const TITLE_NOT_SAVED = {
+  title: "Title not saved yet",
+  detail:
+    "Erga can't reach the server. The new title is safe in this browser: Erga tries again by itself, and saves it when the connection is back.",
+};
 
 
 (async () => {
@@ -318,23 +331,16 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
   shell.sharing = mountSharing(shell);
   shell.toast = mountToast();
   shell.alerts = mountAlerts(shell);
+  // The save mark: each copy of the room says how far its edits are (libs/text/ui/unsaved.ts), under a key of its own.
+  // The mark is the gray check only when the server has them all.
+  shell.save = mountSaveMark($("save-state"));
+  const edits =
+    (key: string, why = NOT_SAVED) =>
+    (at: At) =>
+      shell.save.set(key, at, why);
   // The shell's own edit of the room (the title: naming.ts) is in its replica: while the server doesn't have it, the
-  // alerts say so, as the page's editor does for its edits (libs/text/ui/frame.ts), in words of its own: the two can
-  // show together.
-  shell.unsaved = watchUnsaved(window, {
-    flushed: () => collab.flushed(),
-    key: BASE,
-    note: (on) =>
-      on
-        ? shell.alerts.raise({
-            key: "unsaved",
-            kind: "progress",
-            source: "connection",
-            title: "Title not saved yet",
-            detail: "Erga saves it when the connection is back.",
-          })
-        : shell.alerts.end("unsaved"),
-  });
+  // mark says so, as for the page editor's edits (libs/text/ui/frame.ts), in words of its own: the card can say both.
+  shell.unsaved = watchUnsaved(window, { flushed: () => collab.flushed(), key: BASE, mark: edits("shell", TITLE_NOT_SAVED) });
   shell.uploads = mountUploads(shell);
   // Focusing or using this tab makes it the one you're shown by. Focus
   // lands on the frame's window when the caret is in the page.
@@ -380,16 +386,22 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
       if (comes == "no") say();
       else if (comes == "maybe") window.setTimeout(() => shell.uploads.awaits(path) == "maybe" && say(), ms(3000));
     },
+    onSave: edits("page"),
     onAlert: (event) => shell.alerts.fromPage(event),
     onUpload: (files, point) => shell.uploads.add(files, point),
     onUploadAct: (path, action) => shell.uploads.act(path, action),
     onUploadsAsk: () => shell.uploads.asked(),
     onLoad: () => {
       shell.alerts.loaded();
+      // (The page's editor is new: it says its edits' state again.)
+      shell.save.set("page", "saved");
       document.body.classList.remove("has-steps");
     },
     onSteps: (on) => document.body.classList.toggle("has-steps", on),
-    onPointer: (x, y) => shell.chrome.pointerMoved(new MouseEvent("mousemove", { clientX: x, clientY: y })),
+    onPointer: (x, y) => {
+      shell.chrome.pointerMoved(new MouseEvent("mousemove", { clientX: x, clientY: y }));
+      shell.save.left();
+    },
     // A press on the page: as one anywhere else in the shell would.
     onPress: () => {
       activate();
@@ -397,6 +409,7 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
       shell.chrome.closeCards();
       shell.people.stackPeople();
       shell.chrome.toggleQuick(false);
+      shell.save.close();
     },
     onActivity: (kind) => {
       activate();
@@ -469,7 +482,7 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
       shell.toast.flash(shell.room.connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200);
       return true;
     }
-    if (e.key == "Escape" && shell.alerts.close()) return true;
+    if (e.key == "Escape" && (shell.save.close() || shell.alerts.close())) return true;
     if (e.key == "Escape") {
       // Naming something in the pages tree, a question in it or one of its menus, or the comment box: Escape is theirs to cancel.
       if (document.activeElement?.closest(".et-input, .et-row.confirm, .et-menu, erga-comment-box")) return false;

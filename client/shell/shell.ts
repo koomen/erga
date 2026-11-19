@@ -17,6 +17,7 @@ import type { Chrome } from "./chrome";
 import type { Sharing } from "./sharing";
 import type { Toast } from "./toast";
 import type { Alerts } from "./alerts";
+import type { SaveMark } from "../common/save-mark";
 import type { Uploads } from "./uploads";
 import type { PageRequests } from "./page-requests";
 
@@ -82,6 +83,8 @@ export interface Shell {
   alerts: Alerts;
   /** The shell's own edits of the room (the title), watched until the server has them (libs/text/ui/unsaved.ts). */
   unsaved: { edit(): void };
+  /** The save mark, left of the buttons' bar: each copy of the room tells it how far its edits are (client/common/save-mark.ts). */
+  save: SaveMark;
   uploads: Uploads;
   requests: PageRequests;
 }

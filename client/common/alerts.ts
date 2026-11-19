@@ -1,5 +1,6 @@
 // Alerts: what the person must know while they edit, in one card. An error (a problem of the page, text that can't be
-// edited, a file that wasn't added, an agent that stopped) or progress (an upload, edits on their way to the server). One
+// edited, a file that wasn't added, an agent that stopped) or progress (an upload). Edits on their way to the server are
+// not an alert: the save mark says so (client/common/save-mark.ts). One
 // state, and `step`, the one function that says what the card shows. No IO here: client/shell/alerts.ts draws it, keeps the
 // timers and tells each alert's source of its buttons.
 //
@@ -15,7 +16,7 @@
 // own script can forge one, so `readMessage` takes only what it knows, cut to size, and the card shows it as text.
 
 export type Kind = "error" | "progress";
-export type Source = "page" | "editor" | "upload" | "agent" | "connection";
+export type Source = "page" | "editor" | "upload" | "agent";
 export interface Action {
   id: string;
   label: string;
@@ -284,7 +285,7 @@ export function step(s: State, e: Event): [State, Effect[]] {
 
 /** The page's editor to the viewer ("erga-alert"). Its alerts live as long as it does (life "load"). */
 export type AlertMessage = { type: "erga-alert" } & (
-  | { op: "raise"; alert: Omit<Raise, "life" | "once" | "source"> & { source: "editor" | "upload" | "connection" } }
+  | { op: "raise"; alert: Omit<Raise, "life" | "once" | "source"> & { source: "editor" | "upload" } }
   | { op: "row"; key: string; row: Row }
   | { op: "end"; key: string; title?: string }
 );
@@ -333,7 +334,7 @@ export function readMessage(m: unknown, prefix: string): Extract<Event, { t: "ra
     return r && { t: "row", key: prefix + key, row: r };
   }
   const kind = (["error", "progress"] as const).find((x) => x == a?.kind),
-    source = (["editor", "upload", "connection"] as const).find((x) => x == a?.source),
+    source = (["editor", "upload"] as const).find((x) => x == a?.source),
     title = s(a?.title, 200);
   if (d.op != "raise" || !a || !kind || !source || !title) return null;
   const fix = s(a.fix, 2000);

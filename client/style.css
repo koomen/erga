@@ -135,6 +135,8 @@ body.chrome-hidden .chrome-bottom > * { pointer-events: none; }
 body.chrome-hidden .chrome:focus-within { opacity: 1; }
 /* A save failure is never hidden. */
 body.chrome-hidden .chrome-bottom:has(.status.error) { opacity: 1; }
+/* (And the buttons' bar, while the save mark left of it is the red x: client/inline/bars.css.) */
+body.chrome-hidden .chrome-top:has(.save-state[data-at="error"]) { opacity: 1; }
 
 .icon-btn {
   position: relative;

@@ -13,9 +13,11 @@ import { soon } from "./shell";
 
 const s = await servers.main();
 
-const NOTE = "Edits not saved yet";
-/** The alerts' line with two notes: the edits' and the title's (client/shell/main.ts), the one raised last first. */
-const BOTH = / not saved yet · 1 more$/;
+/** What the save mark's card says of edits that the server does not have, and of a new title (client/shell/main.ts). */
+const NOT_SAVED =
+  "Edits not saved yet\n\nErga can't reach the server. Your edits are safe in this browser: Erga tries again by itself, and saves them when the connection is back.";
+const TITLE_NOT_SAVED =
+  "Title not saved yet\n\nErga can't reach the server. The new title is safe in this browser: Erga tries again by itself, and saves it when the connection is back.";
 /** Between a person's keys, in steady typing. */
 const KEY_MS = 50;
 
@@ -28,7 +30,7 @@ const KEPT = `(async () => ({
 const ALL = { copy: true, replicas: true, worker: true };
 const NONE = { copy: false, replicas: false, worker: false };
 
-/** Every socket a page of the tab opens, in each frame: to close them as a lost connection does. */
+/** Every socket a page of the tab opens, in each frame: to close them as a lost connection does. (e2e/look.ts has the same, for its step offline.) */
 const watchSockets = (page: Page) =>
   page.addInitScript(() => {
     const sockets: WebSocket[] = ((window as any).__sockets = []);
@@ -79,26 +81,23 @@ function withoutOffline(tab: Tab) {
   tab.errors.splice(0, tab.errors.length, ...left);
 }
 
-/** The note for edits that are not on the server yet: the alerts' one line (libs/text/ui/unsaved.ts raises it); null: none. */
-const note = (ed: Editor) =>
-  ed
-    .alerts()
-    .then((a) => (a.view == "line" ? a.head : null))
-    .catch(() => null);
-
 /**
- * From now on, in `window.__noted`: how many times the page's editor raised the note (in its quiet time it shows
- * nothing), and how many times the alerts showed it, also for a moment.
+ * The save mark, left of the buttons' bar (client/common/save-mark.ts): "saved" (the gray check), "saving" (the gray
+ * circle) or "error" (the red x: edits that are not on the server yet, libs/text/ui/unsaved.ts); null: none.
  */
-const countNotes = (ed: Editor) =>
+const mark = (ed: Editor) => ed.eval<string | null>(`document.getElementById("save-state")?.dataset.at ?? null`).catch(() => null);
+/** The mark's card, as a person sees it: its words while it shows, else null. */
+const card = (ed: Editor) =>
+  ed.eval<string | null>(`(() => {
+    const c = document.getElementById("save-card");
+    return getComputedStyle(c).visibility == "visible" ? c.innerText : null;
+  })()`);
+
+/** From now on, in `window.__marks`: each state the mark showed, in turn, also for a moment. */
+const watchMark = (ed: Editor) =>
   ed.eval(`(() => {
-    const box = document.getElementById("alerts"), n = (window.__noted = { raised: 0, shown: 0 });
-    addEventListener("message", (e) => {
-      if (e.data?.type == "erga-alert" && e.data.op == "raise" && e.data.alert?.key == "unsaved") n.raised++;
-    });
-    new MutationObserver(() => {
-      if (box.textContent.includes(${JSON.stringify(NOTE)})) n.shown++;
-    }).observe(box, { childList: true, subtree: true });
+    const save = document.getElementById("save-state"), seen = (window.__marks = []);
+    new MutationObserver(() => seen.push(save.dataset.at)).observe(save, { attributes: true, attributeFilter: ["data-at"] });
   })()`);
 
 journey("offline, and back; then sign-out", () => {
@@ -107,18 +106,31 @@ journey("offline, and back; then sign-out", () => {
   /** The first document's pages origin. */
   let origin: string;
 
-  test("online, steady typing saves as it goes, with no note, not for a moment", async ({ tab }) => {
+  test("online, steady typing saves as it goes: the mark is the circle, then the check, and never the red x, not for a moment", async ({
+    tab,
+  }) => {
     await watchSockets(tab.page);
     ed = await openEditor(tab, s, "multi");
     await workersIn(ed);
+    // Before any edit: the gray check, left of the buttons' bar: it touches the bar's left side, outside it.
+    expect(await mark(ed)).toBe("saved");
+    expect(
+      await ed.eval<boolean>(`(() => {
+        const m = document.querySelector("#save-state .save-mark").getBoundingClientRect(), bar = document.querySelector(".erga-view-buttons").getBoundingClientRect();
+        return m.width > 0 && Math.abs(bar.left - m.right) <= 1 && m.top > bar.top && m.bottom < bar.bottom;
+      })()`)
+    ).toBe(true);
     await ed.clickEnd("main p");
-    await countNotes(ed);
+    await watchMark(ed);
     // A person's keys, for longer than GRACE_MS: the first edit's wait ends while a later edit is on its way.
-    const text = " Two loaves, oats and tea. Milk.";
-    expect(text.length * KEY_MS).toBeGreaterThan(GRACE_MS + 500);
+    const text = " Two loaves of bread, oats, honey and tea. Milk.";
+    expect(text.length * KEY_MS).toBeGreaterThan(GRACE_MS + 200);
     await ed.page.keyboard.type(text, { delay: KEY_MS });
     await until(() => ed.disk().includes(`${text}</p>`), DISK_MS, "the first edit on disk");
-    expect(await ed.eval<object>(`window.__noted`)).toEqual({ raised: 0, shown: 0 });
+    await soon(() => mark(ed)).toBe("saved");
+    const seen = await ed.eval<string[]>(`window.__marks`);
+    expect(seen[0]).toBe("saving");
+    expect(seen).not.toContain("error");
   });
 
   test("the pages origin has Erga's worker only, never a document's file of its name or any other worker", async ({ tab }) => {
@@ -148,29 +160,39 @@ journey("offline, and back; then sign-out", () => {
     tab.errors.splice(0, tab.errors.length, ...tab.errors.filter((e) => !/\b403\b/.test(e)));
   });
 
-  test("offline: type on, see the note, reload, type more; nothing reaches the server", async ({ tab }) => {
+  test("offline: type on, see the red x, reload, type more; nothing reaches the server", async ({ tab }) => {
     await goOffline(ed);
-    // Offline with no edit: still no note.
+    // Offline with no edit: still the check.
     await ed.settle();
-    expect(await note(ed)).toBeNull();
-    // The document's title, set offline, is an edit too: it shows at once.
+    expect(await mark(ed)).toBe("saved");
+    // The document's title, set offline, is an edit too: it shows at once, and the mark is the circle.
     await openCard(ed.page);
     await act(ed.page, "index.html", "rename");
     await until(() => ed.eval<boolean>(`document.activeElement?.id == "naming-title"`), 5_000, "the title's card");
     await ed.page.keyboard.type("Field notes");
     await ed.page.keyboard.press("Enter");
     await soon(docTitle).toBe("Field notes");
+    // (The circle turns while it saves: a person sees that something happens.)
+    expect(await mark(ed)).toBe("saving");
+    expect(await ed.eval<string>(`document.querySelector("#save-state .save-ring").getAnimations()[0].playState`)).toBe("running");
     await ed.clickEnd("main p");
     await ed.type(" Eggs.");
-    await soon(() => note(ed), 10_000).toMatch(BOTH);
-    // A click on the line opens the card, which says more; Escape gives the line back: it stops nothing.
-    await ed.page.click("#alerts .alerts-pill");
-    expect((await ed.alerts()).alerts.sort((a, b) => a.title.localeCompare(b.title))).toEqual([
-      { title: NOTE, count: "", detail: "Connection · Erga saves them when the connection is back.", rows: [], buttons: [] },
-      { title: "Title not saved yet", count: "", detail: "Connection · Erga saves it when the connection is back.", rows: [], buttons: [] },
-    ]);
+    await soon(() => mark(ed), 10_000).toBe("error");
+    // The red x alone raises no alert, and shows no card. A click on it opens its card, which says what failed (the
+    // title, then the edits) and that Erga tries again; a press on the page closes it, and so does Escape, with the
+    // caret in the page: the red x stays.
+    expect((await ed.alerts()).view).toBe("none");
+    expect(await card(ed)).toBeNull();
+    await ed.page.click("#save-state .save-mark");
+    await ed.page.mouse.move(10, 400);
+    await soon(() => card(ed), 10_000).toBe(`${TITLE_NOT_SAVED}\n\n${NOT_SAVED}`);
+    await ed.clickEnd("main p");
+    await soon(() => card(ed)).toBeNull();
+    await ed.page.click("#save-state .save-mark");
+    await ed.page.mouse.move(10, 400);
     await ed.press("Escape");
-    await soon(() => note(ed)).toMatch(BOTH);
+    await soon(() => card(ed)).toBeNull();
+    expect(await mark(ed)).toBe("error");
     // Meanwhile someone else changes the title (on disk: the room takes it in).
     ed.write(ed.disk().replace("<h1>Field guide</h1>", "<h1>Field guide, second edition</h1>"));
 
@@ -185,7 +207,7 @@ journey("offline, and back; then sign-out", () => {
     await soon(() => ed.textOf("main p"), 10_000).toContain("Milk. Eggs.");
     // The page's own stylesheet came from the copy too.
     expect(await ed.frame<string>(`getComputedStyle(${F}.body).maxWidth`)).not.toBe("none");
-    await soon(() => note(ed), 10_000).toMatch(BOTH);
+    await soon(() => mark(ed), 10_000).toBe("error");
     expect(await docTitle()).toBe("Field notes");
     await ed.clickEnd("main p");
     await ed.type(" Bread.");
@@ -197,7 +219,9 @@ journey("offline, and back; then sign-out", () => {
     tab.strict = false;
   });
 
-  test("back online: every edit reaches the server, with the change made there, each once; the note goes", async ({ tab }) => {
+  test("back online: every edit reaches the server, with the change made there, each once; the mark is the check again", async ({
+    tab,
+  }) => {
     await ed.page.context().setOffline(false);
     await until(
       () => {
@@ -209,7 +233,7 @@ journey("offline, and back; then sign-out", () => {
       () => ed.disk()
     );
     await soon(() => ed.textOf("h1"), 10_000).toBe("Field guide, second edition");
-    await soon(() => note(ed), 10_000).toBeNull();
+    await soon(() => mark(ed), 10_000).toBe("saved");
     await soon(async () => (await runTool(s.root, "ls", { document: await idOf(ed.address) })).result?.title).toBe("Field notes");
     for (const once of ["Milk.", "Eggs.", "Bread.", "second edition"])
       expect(ed.disk().split(once).length, `${once} is not doubled`).toBe(2);

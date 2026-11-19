@@ -20,7 +20,7 @@ declare global {
   }
 }
 
-const SOURCE: Record<A.Source, string> = { page: "Page", editor: "Editor", upload: "Upload", agent: "Agent", connection: "Connection" };
+const SOURCE: Record<A.Source, string> = { page: "Page", editor: "Editor", upload: "Upload", agent: "Agent" };
 const CHECK = `<svg viewBox="0 0 14 14"><path d="m2.5 7.5 3 3 6-7"/></svg>`;
 const CHEVRON = `<svg class="chev" viewBox="0 0 12 12"><path d="m3 7.5 3-3 3 3"/></svg>`;
 /** The alert that says why the agent can't be asked. */

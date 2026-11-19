@@ -50,6 +50,9 @@ Steps, one argument each, in order:
   open:<fixture>       opens another document in the same tab, in the editor: a copy of that folder of e2e/fixtures.
                        The same name opens the same copy again (the name of --doc: the first document). The agent's
                        panel is open there if it was open.
+  shows:<selector>     waits until Erga's window around the page has an element that matches: shows:#save-state[data-at=error].
+                       After 5 s with none, it says so and goes on.
+  offline              the connection goes: the browser is offline, and each open socket closes. online: it is back.
   shot:<file.png>      a screenshot at this step, too
 
 Example:
@@ -344,6 +347,18 @@ try {
     throw null;
   }
   const tab = { page, errors, strict: false, own: () => Promise.reject(new Error("no server of its own")) };
+  // For the step offline: every socket that a page of the tab opens, in each frame, to close them as a lost connection
+  // does. (In this file: a proof runs it in the folder of "before" too, with that folder's helpers.)
+  await page.addInitScript(() => {
+    const sockets: WebSocket[] = ((window as any).__sockets = []);
+    const Native = window.WebSocket;
+    window.WebSocket = class extends Native {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        sockets.push(this);
+      }
+    } as typeof WebSocket;
+  });
   let ed = await openEditor(tab, server, docArg, { file: isDir ? undefined : basename(path) });
   await ed.clickEnd("[data-erga-text]:not(.erga-locked)");
   await ed.idle();
@@ -355,8 +370,16 @@ try {
       )
       .catch(() => {});
   for (const step of args) {
-    const [, verb, rest] = /^(type|click|tap|bar|shot|say|ask|wait|open):([\s\S]*)$/.exec(step) ?? [];
+    const [, verb, rest] = /^(type|click|tap|bar|shot|say|ask|wait|shows|open):([\s\S]*)$/.exec(step) ?? [];
     if (verb == "type") await ed.type(rest);
+    else if (step == "offline") {
+      await page.context().setOffline(true);
+      for (const f of page.frames()) await f.evaluate(`(window.__sockets ?? []).forEach((s) => s.close())`).catch(() => {});
+    } else if (step == "online") await page.context().setOffline(false);
+    else if (verb == "shows")
+      await page
+        .waitForSelector(rest, { state: "attached", timeout: 5000 })
+        .catch(() => console.log(`shows: nothing matched ${rest} in 5 s`));
     else if (verb == "open") {
       const agentOpen = () => page.evaluate(() => document.body.classList.contains("agent-open"));
       const was = await agentOpen();

@@ -24,6 +24,8 @@ The browser has a process for each site, as a person's browser has (e2e/helpers/
 suite without it (2026-11-13, 4 runs of each in turn, on a busy machine): 216 s of test time with it and 208 s
 without; the whole run took 37 s and 36 s. V2's budget is 11 since its step for a second change in a row: the viewer
 loads a page again 2 s after the last time at the earliest, and the step waits for that (8.4 s at most in 13 runs).
+S3's budget is 9 since the save mark: its first step types for longer than the 2 s that an edit has to reach the server
+(libs/text/ui/unsaved.ts, GRACE_MS), 1 s more than before (7.8 s alone in 3 runs).
 
 The rules:
 
@@ -45,7 +47,7 @@ The rules:
 | E6 | `e2e/editor/steady.e2e.ts` | Keys are lost while the page renders again; a browser extension, broken HTML or an edit on disk corrupts the document; a dropped file shows late, moves the text, or fails with no fix. | 13 |
 | S1 | `e2e/shell/open.e2e.ts` | The editor does not open, opens twice, flashes, loads again by itself, or loses its place after a reload, a page switch, the pencil or a slow start. The pencil waits for the room again; a person who views shows in the room. | 11 |
 | S2 | `e2e/shell/panels.e2e.ts` | A panel or a bar covers the text, or a control is out of reach on a phone or at a zoom. A pinch moves the page from under the pointer; a zoomed page has an edge out of reach; the browser's own zoom of the window has no way back. | 10 |
-| S3 | `e2e/shell/offline.e2e.ts` | Edits made offline (a new title too) are lost or doubled; a signed-out tab keeps writing, or asks the server on with no word; a kept page with a refused pass stays blank. | 7 |
+| S3 | `e2e/shell/offline.e2e.ts` | Edits made offline (a new title too) are lost or doubled, or the save mark does not say that they are not saved; a signed-out tab keeps writing, or asks the server on with no word; a kept page with a refused pass stays blank. | 9 |
 | Y1 | `e2e/sync/two-people.e2e.ts` | Two people lose or double text; they end with different documents; undo takes the other person's text. | 10 |
 | Y2 | `e2e/sync/restart.e2e.ts` | A deploy or a crash loses edits, doubles the document, or loses pages. | 10 |
 | Y3 | `e2e/sync/bad-input.e2e.ts` | Bad bytes, a storm of sockets or a huge paste stops the server or reaches other files. | 4 |

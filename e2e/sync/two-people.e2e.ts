@@ -310,9 +310,15 @@ journey("two people on one page", () => {
   test("the others stack left of the buttons' bar, not in it; a hover spreads them, and a hover on one shows its name", async () => {
     const rest = await atRest(a, 2);
     expect(rest.inBar, "no face is in the buttons' bar").toBe(false);
-    // Just left of the bar, in its band: the stack's right edge 4 to 14px from the bar, centred on it.
-    expect(rest.stack!.r).toBeLessThanOrEqual(rest.bar.l - 4);
-    expect(rest.stack!.r).toBeGreaterThanOrEqual(rest.bar.l - 14);
+    // Left of the bar, in its band, centred on it: the save mark touches the bar's left side, and the stack's right edge
+    // is 4 to 14px from the mark.
+    const mark = await a.page.evaluate(() => {
+      const r = document.querySelector("#save-state .save-mark")!.getBoundingClientRect();
+      return { l: r.left, r: r.right };
+    });
+    expect(Math.abs(rest.bar.l - mark.r)).toBeLessThanOrEqual(1);
+    expect(rest.stack!.r).toBeLessThanOrEqual(mark.l - 4);
+    expect(rest.stack!.r).toBeGreaterThanOrEqual(mark.l - 14);
     expect(Math.abs((rest.stack!.t + rest.stack!.b) / 2 - (rest.bar.t + rest.bar.b) / 2)).toBeLessThanOrEqual(1);
     // They overlap.
     const [f1, f2] = rest.faces;
@@ -365,7 +371,7 @@ journey("two people on one page", () => {
   });
 
   // Was a bug: on a phone at 320px, the faces of the others lay over the breadcrumbs.
-  test('phone at 320px, five others: two faces and "+3", 10px from the bar; the breadcrumbs end before them, the logo whole', async () => {
+  test('phone at 320px, five others: two faces and "+3", left of the save mark; the breadcrumbs end before them, the logo whole', async () => {
     for (const name of THREE) three.push(await people.join(room, name));
     await until(
       () => THREE.every((n) => cy.others().includes(n)),
@@ -383,8 +389,8 @@ journey("two people on one page", () => {
     expect(rest.faces.filter((f) => f.shown).length).toBe(2);
     expect(rest.more).toBe("+3");
     expect(rest.inBar).toBe(false);
-    // (Boxes are in whole pixels: 10px is 9 to 11.)
-    expect(Math.abs(rest.bar.l - rest.stack!.r - 10)).toBeLessThanOrEqual(1);
+    // The save mark is between them and the bar: the stack ends 32px from the bar. (Boxes are in whole pixels: 31 to 33.)
+    expect(Math.abs(rest.bar.l - rest.stack!.r - 32)).toBeLessThanOrEqual(1);
     expect(rest.stack!.l - Math.round(crumbs.nav.right)).toBeGreaterThanOrEqual(9);
     // Erga's logo whole, in the breadcrumbs' bar, and the title in sight.
     expect(crumbs.brand.left).toBeGreaterThanOrEqual(crumbs.nav.left);

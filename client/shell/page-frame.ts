@@ -2,7 +2,8 @@
 // standby, with the edit key, or view: libs/text/ui/mode.ts), and what the page's first script (client/inline/reader.ts, Erga's)
 // tells the viewer while editing: the viewer's shortcuts pressed in the page, a press on it, a link to another of the document's pages, the page's
 // problems. The editor itself asks for one thing: the page loaded again (erga-reload), which the viewer does with the
-// page's view kept (viewer-frames.ts). And it raises its alerts (client/common/alerts.ts), and hears their buttons; it
+// page's view kept (viewer-frames.ts). It says how far its edits are saved (erga-save: client/common/save-mark.ts). And it
+// raises its alerts (client/common/alerts.ts), and hears their buttons; it
 // hands over the files a person dropped on the page (erga-upload), and hears each one's state (erga-uploads).
 // Everything that comes from the page is checked: the page itself could have sent it.
 
@@ -11,6 +12,7 @@ import type { Word } from "./editor-state";
 import type { Keys } from "../common/app-keys";
 import type { RawProblem } from "./problems";
 import { readMessage, type AlertAct, type Event as AlertEvent } from "../common/alerts";
+import type { At } from "../common/save-mark";
 import type { PageFile } from "../common/uploads";
 import type { Pending } from "../../shared/room-socket";
 import type { NewFile } from "./uploads";
@@ -44,6 +46,8 @@ export interface PageFrameConfig {
   onOpen: (path: string) => void;
   /** A problem the page reported (`base`: the page's folder on its origin, for the names of its files). */
   onProblem: (problem: RawProblem, base: string) => void;
+  /** The editor in the page says how far its edits are: on the server, on their way, or not saved (libs/text/ui/unsaved.ts). */
+  onSave: (at: At) => void;
   /** The editor in the page raised an alert, changed it or ended it. */
   onAlert: (event: Extract<AlertEvent, { t: "raise" | "row" | "end" }>) => void;
   /** The editor in the page has files for the document, each at a path it chose; `point`: where in the page's window they were dropped. */
@@ -134,6 +138,8 @@ export function mountPageFrame(c: PageFrameConfig) {
     // Out of the editor, the page that came says which it is (after its hello; the viewer has heard it): its editor
     // joins the room again, ahead.
     if (m.type == "erga-nav" && c.told().mode == "standby") say();
+    // (Also from an editor that stops, out of the editor: its edits no longer count for the mark.)
+    if (m.type == "erga-save" && (m.at == "saved" || m.at == "saving" || m.at == "error")) c.onSave(m.at as At);
     if (!active()) return;
     switch (m.type) {
       // The page's editor asks for the page made again from its files (libs/text/ui/frame.ts, reloadNow): with its view kept.

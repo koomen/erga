@@ -15,7 +15,7 @@ export function mountRoom(shell: Shell) {
   // The room writes files to disk as edits land; there's nothing to save here. Without a connection, edits stay in this
   // tab and in this browser (collab.ts, `keep`), and sync on return. A short break (the server restarting, a redeploy)
   // passes unseen: the room reconnects by itself, and nothing says so. Only edits that are not on the server yet show,
-  // as one line of the alerts, until they are (libs/text/ui/unsaved.ts). A deleted document's room never comes
+  // as the save mark's red x, until they are (libs/text/ui/unsaved.ts). A deleted document's room never comes
   // back: live.ts's note says so, at once.
   let status: RoomStatus = "up";
   function connectionChanged(now: RoomStatus) {
@@ -23,7 +23,7 @@ export function mountRoom(shell: Shell) {
     if (now != "up") document.body.classList.remove("erga-listening");
     if (now == status) return;
     status = now;
-    // (Down, it says nothing: a note shows only for edits that are not on the server yet. libs/text/ui/unsaved.ts)
+    // (Down, it says nothing: the save mark shows only edits that are not on the server yet. libs/text/ui/unsaved.ts)
     live((l) => l.connection("room", now, now == "gone" ? DELETED_NOTE : null));
   }
 

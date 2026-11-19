@@ -1,5 +1,4 @@
-// The page editor's alerts (a file that wasn't added, an upload that runs, edits not saved
-// yet): it raises each in the viewer's card (client/common/alerts.ts) by postMessage, and hears the card's buttons from
+// The page editor's alerts (a file that wasn't added, an upload that runs): it raises each in the viewer's card (client/common/alerts.ts) by postMessage, and hears the card's buttons from
 // the viewer. An alert lives as long as this page does: when the page loads again, the viewer takes them off.
 
 import { DISMISS, type AlertAct, type AlertMessage, type Row } from "../../../client/common/alerts";

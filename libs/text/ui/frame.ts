@@ -83,7 +83,7 @@ let collab: Collab | null = null;
 let page: PageEditor | null = null;
 let controls: Controls | null = null;
 let comments: Comments | null = null;
-/** The note for edits that are not on the server yet (unsaved.ts). */
+/** Tells the viewer's save mark of the edits that are not on the server yet (unsaved.ts). */
 let unsaved: ReturnType<typeof watchUnsaved> | null = null;
 /** The "/" menu of blocks (slash.ts). */
 let slash: Slash | null = null;
@@ -420,16 +420,7 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
     unsaved = watchUnsaved(window, {
       flushed: () => (collab == c ? c.flushed() : Promise.resolve(false)),
       key: m.path,
-      note: (on) =>
-        on
-          ? alerts.raise({
-              key: "unsaved",
-              kind: "progress",
-              source: "connection",
-              title: "Edits not saved yet",
-              detail: "Erga saves them when the connection is back.",
-            })
-          : alerts.end("unsaved"),
+      mark: (at) => window.parent?.postMessage({ type: "erga-save", at }, SHELL),
     });
   // The state this page's editor had (with its undo history), brought to the room's text: before the page loaded again,
   // or before the editor stopped (out of the editor and back). Else the room's text, afresh.
