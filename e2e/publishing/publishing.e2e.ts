@@ -765,6 +765,13 @@ journey("the Erga domain", () => {
     const indexRow = `#pages .et-row[data-path="index.html"]`;
     await page.setViewportSize({ width: 1200, height: 800 });
     await agentClosed(page);
+    // (For the reload below: while `__mute`, the tab's sockets send nothing.)
+    await page.addInitScript(() => {
+      const send = WebSocket.prototype.send;
+      WebSocket.prototype.send = function (this: WebSocket, data) {
+        if (!(window as { __mute?: boolean }).__mute) send.call(this, data);
+      };
+    });
     await page.goto(`${main.root}/_home?edit`);
     await editorUp();
     // One page: the title opens its name.
@@ -778,17 +785,17 @@ journey("the Erga domain", () => {
     expect(await js<string>(`document.getElementById("naming-prefix").textContent`)).toBe("/_home");
     expect(await js<number>(`document.getElementById("naming-slug").getBoundingClientRect().width`)).toBe(0);
     await page.keyboard.type("Our homepage");
-    const renamed = page.waitForResponse((r) => new URL(r.url()).pathname.endsWith("/api/tools/rename_document"));
+    // The reload comes before the server hears of the rename: the tab sends nothing more, and the title is kept.
+    for (const f of page.frames()) await f.evaluate(`window.__mute = true`);
     await page.keyboard.press("Enter");
     await until(() => js(`document.getElementById("naming").hidden`), 5_000, "the title's card closes");
     expect(await js<string>(`document.getElementById("naming-status").textContent`)).not.toMatch(/can't/);
     await until(async () => (await title()) == "Our homepage", 5_000, "the breadcrumb has the new title", title);
     expect(new URL(page.url()).pathname).toBe("/_home");
-    // (The server has the new title: it shows at once, before the server's answer, and a reload before that answer
-    // brings the old one back. On a busy machine, the step failed so.)
-    expect((await renamed).ok()).toBe(true);
     await page.reload();
     await until(async () => (await title().catch(() => "")) == "Our homepage", 10_000, "the title stays after a reload", title);
+    const named = async () => (await runTool(main.root, "ls", { document: "/_home" })).result?.title as string;
+    await until(async () => (await named()) == "Our homepage", 5_000, "the server has the new title", named);
     await editorUp();
     // index.html, in the tree, is the page at /_home, named by the title.
     const name = () => js<string | undefined>(`document.querySelector(${JSON.stringify(`${indexRow} .et-name`)})?.textContent`);

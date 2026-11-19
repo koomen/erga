@@ -479,6 +479,27 @@ export class Room {
     if (right.size) this.note(() => right.forEach((tag, key) => (tag ? tags.set(key, tag) : tags.delete(key))));
   }
 
+  /**
+   * The title that someone set for the document. It is in the room, so a tab's own rename comes as its edits do: its
+   * replica keeps it until the room has it (libs/text/ui/collab.ts). "": the title follows the page's first heading.
+   * Undefined: nobody set one here.
+   */
+  get title(): string | undefined {
+    return roomInfo(this.doc).get("title");
+  }
+
+  /** The room's own write of the title (an operation's rename), so every replica has it. */
+  setTitle(title: string): void {
+    if (this.title !== title) this.note(() => roomInfo(this.doc).set("title", title));
+  }
+
+  /** `hear`: each time a tab sets the title (the room's own write is not one). */
+  onTitle(hear: () => void): void {
+    roomInfo(this.doc).observe((e, tr) => {
+      if (e.keysChanged.has("title") && tr.origin !== this) hear();
+    });
+  }
+
   /** Takes the lock for source edits for `p`, as `by` (its name, for the others): null when it has it, else whose it is. */
   lock(p: Participant, by: string): string | null {
     if (this.locked && this.locked.holder !== p) return this.locked.by;

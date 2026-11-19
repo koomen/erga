@@ -1,5 +1,5 @@
-// Offline editing, on one page. The connection goes while you edit: you type on, reload, type more; back online, every
-// edit reaches the server, merged with what changed there. Then sign-out: it deletes what this browser kept, in the
+// Offline editing, on one page. The connection goes while you edit: you set a new title, type on, reload, type more;
+// back online, every edit reaches the server, merged with what changed there. Then sign-out: it deletes what this browser kept, in the
 // app's origin and in each document's pages origin, and a tab that is still open keeps nothing more.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,11 +8,14 @@ import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
 import { expect, goto, journey, servers, test, until, type Tab } from "../helpers/fixtures";
 import { idOf, runTool } from "../helpers/tools";
 import { GRACE_MS } from "../../libs/text/ui/unsaved";
+import { act, openCard } from "../documents/tree-rows";
 import { soon } from "./shell";
 
 const s = await servers.main();
 
 const NOTE = "Edits not saved yet";
+/** The alerts' line with two notes: the edits' and the title's (client/shell/main.ts), the one raised last first. */
+const BOTH = / not saved yet · 1 more$/;
 /** Between a person's keys, in steady typing. */
 const KEY_MS = 50;
 
@@ -99,6 +102,7 @@ const countNotes = (ed: Editor) =>
   })()`);
 
 journey("offline, and back; then sign-out", () => {
+  const docTitle = () => ed.eval<string>(`document.getElementById("doc-title-text").textContent`);
   let ed: Editor, other: Editor;
   /** The first document's pages origin. */
   let origin: string;
@@ -149,15 +153,24 @@ journey("offline, and back; then sign-out", () => {
     // Offline with no edit: still no note.
     await ed.settle();
     expect(await note(ed)).toBeNull();
+    // The document's title, set offline, is an edit too: it shows at once.
+    await openCard(ed.page);
+    await act(ed.page, "index.html", "rename");
+    await until(() => ed.eval<boolean>(`document.activeElement?.id == "naming-title"`), 5_000, "the title's card");
+    await ed.page.keyboard.type("Field notes");
+    await ed.page.keyboard.press("Enter");
+    await soon(docTitle).toBe("Field notes");
+    await ed.clickEnd("main p");
     await ed.type(" Eggs.");
-    await soon(() => note(ed), 10_000).toBe(NOTE);
+    await soon(() => note(ed), 10_000).toMatch(BOTH);
     // A click on the line opens the card, which says more; Escape gives the line back: it stops nothing.
     await ed.page.click("#alerts .alerts-pill");
-    expect((await ed.alerts()).alerts).toEqual([
+    expect((await ed.alerts()).alerts.sort((a, b) => a.title.localeCompare(b.title))).toEqual([
       { title: NOTE, count: "", detail: "Connection · Erga saves them when the connection is back.", rows: [], buttons: [] },
+      { title: "Title not saved yet", count: "", detail: "Connection · Erga saves it when the connection is back.", rows: [], buttons: [] },
     ]);
     await ed.press("Escape");
-    await soon(() => note(ed)).toBe(NOTE);
+    await soon(() => note(ed)).toMatch(BOTH);
     // Meanwhile someone else changes the title (on disk: the room takes it in).
     ed.write(ed.disk().replace("<h1>Field guide</h1>", "<h1>Field guide, second edition</h1>"));
 
@@ -172,7 +185,8 @@ journey("offline, and back; then sign-out", () => {
     await soon(() => ed.textOf("main p"), 10_000).toContain("Milk. Eggs.");
     // The page's own stylesheet came from the copy too.
     expect(await ed.frame<string>(`getComputedStyle(${F}.body).maxWidth`)).not.toBe("none");
-    await soon(() => note(ed), 10_000).toBe(NOTE);
+    await soon(() => note(ed), 10_000).toMatch(BOTH);
+    expect(await docTitle()).toBe("Field notes");
     await ed.clickEnd("main p");
     await ed.type(" Bread.");
     await soon(() => ed.textOf("main p")).toContain("Milk. Eggs. Bread.");
@@ -196,6 +210,7 @@ journey("offline, and back; then sign-out", () => {
     );
     await soon(() => ed.textOf("h1"), 10_000).toBe("Field guide, second edition");
     await soon(() => note(ed), 10_000).toBeNull();
+    await soon(async () => (await runTool(s.root, "ls", { document: await idOf(ed.address) })).result?.title).toBe("Field notes");
     for (const once of ["Milk.", "Eggs.", "Bread.", "second edition"])
       expect(ed.disk().split(once).length, `${once} is not doubled`).toBe(2);
     withoutOffline(tab);

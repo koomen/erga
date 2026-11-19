@@ -2,7 +2,7 @@
 
 import { treeFiles } from "./tree-files";
 import type { DocName } from "../../document/model/names";
-import { files } from "../../document/model/content";
+import { files, roomInfo } from "../../document/model/content";
 import { pageUrl, slugify, titleOf } from "../../document/model/pages";
 import { live } from "../live/client";
 import { runTool } from "../common/tools";
@@ -20,13 +20,21 @@ export function mountNaming(shell: Shell) {
   // and follows: the title changes, and the address becomes the new one
   // (replaceState: the old one still leads here). The editor itself talks to
   // the host at /d/<id> (BASE), which a rename never changes.
+  //
+  // A title that is set is in the room (roomInfo's "title": document/room/room.ts), and the card writes it in this
+  // tab's replica, as an edit: it shows at once, the browser keeps it until the room has it (a reload, no connection:
+  // libs/text/ui/collab.ts, `keep`), and the server names the document by it. So the title that the replica has is the
+  // one to show, before the server's name says the same.
   const titleBtn = $("doc-title"), naming = $("naming");
   // The pages card (below: togglePages) and its tree, once opened.
   const pagesCard = $("pages");
   let tree: TreeHandle | null = null;
   const namingForm = $("naming-form") as HTMLFormElement, namingStatus = $("naming-status");
   const titleIn = $("naming-title") as HTMLInputElement, slugIn = $("naming-slug") as HTMLInputElement;
+  const room = roomInfo(shell.collab.doc);
   function showName(n: DocName) {
+    const set = room.get("title");
+    if (set) n = { ...n, title: set, titleSet: true };
     shell.docName = n;
     $("doc-title-text").textContent = n.title;
     titleBtn.hidden = false;
@@ -50,6 +58,9 @@ export function mountNaming(shell: Shell) {
     return at;
   }
   if (shell.info.docName) showName(shell.info.docName);
+  room.observe((e) => {
+    if (e.keysChanged.has("title") && shell.docName) showName(shell.docName);
+  });
   let slugTouched = false;
   const sayNaming = (text: string, error = false) => { namingStatus.textContent = text; namingStatus.classList.toggle("error", error); };
   const namingHint = () => sayNaming(!titleIn.value.trim() ? "Empty, the title follows the page's first heading."
@@ -113,19 +124,22 @@ export function mountNaming(shell: Shell) {
     if (titleIn.value.trim() != shell.docName.title) patch.title = titleIn.value.trim();
     if (slugTouched && slugIn.value.trim() != shell.docName.slug) patch.slug = slugIn.value.trim();
     if (!("title" in patch) && !("slug" in patch)) return toggleNaming(false);
-    // The new title shows at once, and the card closes; the address follows with the server's answer. (An empty title
-    // follows the page's heading: the server says which.)
+    // The new title goes in the room, as an edit: it shows at once (an empty one follows the page's heading: the server
+    // says which), and the card closes. The address is the server's to give: it follows with its answer.
     const was = shell.docName,
       typed = { title: titleIn.value, slug: slugIn.value, slugTouched };
-    if (patch.title) showName({ ...was, title: patch.title });
+    if ("title" in patch) {
+      room.set("title", patch.title!);
+      shell.unsaved.edit();
+    }
     toggleNaming(false);
-    const r = await runTool<DocName>("rename_document", { document: was.id, ...patch }).then(
+    if (!("slug" in patch)) return;
+    const r = await runTool<DocName>("rename_document", { document: was.id, slug: patch.slug }).then(
       (name) => ({ name }),
       (err: Error) => ({ error: err.message })
     );
     if ("name" in r) return showName(r.name);
-    // Refused: the old name is back, and the card says why, with what was typed.
-    showName(was);
+    // Refused: the card says why, with what was typed.
     toggleNaming(true);
     titleIn.value = typed.title;
     slugIn.value = typed.slug;

@@ -5,6 +5,8 @@
 import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";
 import { agentTools, allTools, runTool, toolsFor, toolOf } from "../agents/tools";
+import { roomInfo } from "../document/model/content";
+import type { Room } from "../document/room/room";
 import type { Caller } from "../server/operations/index.ts";
 import type { Platform } from "../server/platform";
 import { VIA, type Act } from "../shared/attribution";
@@ -94,6 +96,39 @@ test("a person's agent renames the document open on their page, lists, makes, mo
   const r = JSON.parse(await ask(tools, "restore_version", { version: "v1", path: "index.html" }));
   expect(r.files).toEqual(["index.html"]);
   expect(r.current.authors).toEqual(["ada, via their agent"]);
+});
+
+test("a title that a tab sets in the room names the document; rename_document writes its title in the room; an empty one follows the heading", async () => {
+  const { platform, dir, doc } = await world();
+  const { room } = await (doc as unknown as { room(): Promise<{ room: Room }> }).room();
+  const row = async () => {
+    const d = (await dir.get("doc12345"))!;
+    return [d.title, d.titleSet, d.slug];
+  };
+  /** As a tab's replica writes it: any origin but the room's own. */
+  const tabSets = (title: string) => room.doc.transact(() => roomInfo(room.doc).set("title", title), "a tab");
+  tabSets("Field   notes ");
+  await until(async () => (await row())[0] == "Field notes");
+  expect(await row()).toEqual(["Field notes", true, "field-notes"]);
+  // (The room has it as the directory took it.)
+  expect(room.title).toBe("Field notes");
+  // An operation's rename: the tabs' replicas have its title.
+  const agent: Caller = {
+    dir,
+    who: { login: "ada", via: VIA.agent },
+    name: "Ada",
+    here: "doc12345",
+    platform,
+    origin: "https://erga.test",
+  };
+  const tools = agentTools(await toolsFor(agent, true), agent);
+  await ask(tools, "rename_document", { title: "Minutes" });
+  expect(room.title).toBe("Minutes");
+  expect(await row()).toEqual(["Minutes", true, "minutes"]);
+  // Empty: the title follows the page's first heading again.
+  tabSets("");
+  await until(async () => (await row())[0] == "Files");
+  expect(await row()).toEqual(["Files", false, "files"]);
 });
 
 test("someone who may only view lists the pages, and is refused the versions and a change, in the operation's words", async () => {

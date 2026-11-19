@@ -428,35 +428,37 @@ journey("a project's tree in the editor", () => {
     onlyRefusals(tab.errors, 409);
   });
 
-  test("a new title shows at once; refused, the old one is back, and the card says why with what was typed; saved again, it stays", async ({
+  test("a new title shows at once, and goes to the server as an edit does: the card asks for the address only; refused, the card says why with what was typed, and the title stays", async ({
     tab,
   }) => {
     const title = () => js(page, `document.getElementById("doc-title-text").textContent`);
     const naming = () =>
       js(
         page,
-        `document.getElementById("naming").hidden ? null : [document.getElementById("naming-title").value, document.getElementById("naming-status").textContent]`
+        `document.getElementById("naming").hidden ? null : [document.getElementById("naming-title").value, document.getElementById("naming-slug").value, document.getElementById("naming-status").textContent]`
       );
-    const was = await title();
-    const rename = await hold(page, "rename_document");
+    const asked: unknown[] = [];
+    const ask = (r: { url(): string; postDataJSON(): unknown }) =>
+      void (/\/api\/tools\/rename_document/.test(r.url()) && asked.push(r.postDataJSON()));
+    page.on("request", ask);
     await openCard(page);
     await act(page, "index.html", "rename");
     await expect.poll(async () => (await naming()) != null).toBe(true);
     await page.keyboard.type("Field notes");
-    await page.keyboard.press("Enter");
-    // Before any answer: the title, and the card closed.
-    await expect.poll(title).toBe("Field notes");
-    expect(await naming()).toBeNull();
-    await rename.refuse("That title is taken.");
-    await expect.poll(title).toBe(was);
-    await expect.poll(naming).toEqual(["Field notes", "That title is taken."]);
-    // Saved again, and the server agrees: it stays.
+    // An address that the server refuses, with it.
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("settings");
     await page.keyboard.press("Enter");
     await expect.poll(title).toBe("Field notes");
-    await rename.pass();
+    // The title is in the room, with the tab's edits: the server names the document by it. The address is the server's
+    // to give: the card asked for it alone.
     await expect.poll(async () => (await doc.name()).title).toBe("Field notes");
+    await expect.poll(naming).toEqual(["Field notes", "settings", `"settings" is reserved: pick another address.`]);
     expect(await title()).toBe("Field notes");
-    await rename.end();
+    expect(asked).toEqual([{ document: doc.id, slug: "settings" }]);
+    page.off("request", ask);
+    await clickOn(page, "#naming-cancel");
+    await expect.poll(naming).toBeNull();
     onlyRefusals(tab.errors, 409);
   });
 

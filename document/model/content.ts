@@ -44,7 +44,7 @@ export const files = (doc: Y.Doc) => doc.getMap<Y.Text>("files");
 export const assets = (doc: Y.Doc) => doc.getMap<string>("assets");
 export const authors = (doc: Y.Doc) => doc.getMap<Author>("authors");
 export const folders = (doc: Y.Doc) => doc.getMap<boolean>("folders");
-/** The room's own facts: its `epoch` (which history this is. */
+/** The room's own facts: its `epoch` (which history this is), the `lock` for source edits, the `title` that someone set (room.ts). */
 export const roomInfo = (doc: Y.Doc) => doc.getMap<string>("room");
 
 /** Files the room holds as text; anything else is an asset. */

@@ -7,6 +7,7 @@
 // This file loads the document and wires the shell's parts (client/shell/), which share one object (shell.ts).
 
 import { Collab, type EarlySocket, type SocketEvent } from "../../libs/text/ui/collab";
+import { watchUnsaved } from "../../libs/text/ui/unsaved";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { mountPageFrame } from "./page-frame";
 import { mountCommentBox } from "../common/comment-box";
@@ -252,6 +253,25 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
   try {
     await collab.ready();
     performance.mark("erga:synced");
+    // As the tab goes, what this replica holds of the room goes with it, for the page that loads in its place: as the
+    // page's editor's does (libs/text/ui/frame.ts, Carry). An edit of the shell's (the title: naming.ts) that the room
+    // did not have comes back with it. The browser's copy (`keep`) is written a moment after an edit, and a reload at
+    // once is sooner. (From here on only: a page that goes before this keeps what the one before it held.)
+    const HELD = `erga:held:${BASE}${as}`;
+    try {
+      collab.merge(JSON.parse(sessionStorage.getItem(HELD) ?? "null") ?? undefined);
+    } catch {
+      /* no storage: the browser's copy has it, if it was written in time */
+    }
+    addEventListener("pagehide", () => {
+      try {
+        const held = collab.held();
+        if (held) sessionStorage.setItem(HELD, JSON.stringify(held));
+        else sessionStorage.removeItem(HELD);
+      } catch {
+        /* no storage, or no room in it */
+      }
+    });
   } catch (e) {
     $("welcome").hidden = false;
     $("welcome").innerHTML = `<div><p>Couldn't join the document: ${(e as Error).message}.</p><p>Is the server still running?</p></div>`;
@@ -298,6 +318,23 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
   shell.sharing = mountSharing(shell);
   shell.toast = mountToast();
   shell.alerts = mountAlerts(shell);
+  // The shell's own edit of the room (the title: naming.ts) is in its replica: while the server doesn't have it, the
+  // alerts say so, as the page's editor does for its edits (libs/text/ui/frame.ts), in words of its own: the two can
+  // show together.
+  shell.unsaved = watchUnsaved(window, {
+    flushed: () => collab.flushed(),
+    key: BASE,
+    note: (on) =>
+      on
+        ? shell.alerts.raise({
+            key: "unsaved",
+            kind: "progress",
+            source: "connection",
+            title: "Title not saved yet",
+            detail: "Erga saves it when the connection is back.",
+          })
+        : shell.alerts.end("unsaved"),
+  });
   shell.uploads = mountUploads(shell);
   // Focusing or using this tab makes it the one you're shown by. Focus
   // lands on the frame's window when the caret is in the page.

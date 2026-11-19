@@ -80,6 +80,8 @@ export interface Shell {
   sharing: Sharing;
   toast: Toast;
   alerts: Alerts;
+  /** The shell's own edits of the room (the title), watched until the server has them (libs/text/ui/unsaved.ts). */
+  unsaved: { edit(): void };
   uploads: Uploads;
   requests: PageRequests;
 }

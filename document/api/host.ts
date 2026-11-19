@@ -155,7 +155,13 @@ export class DocumentHost<S extends TabSocket = TabSocket> extends Document<Serv
           Effect.promise(() => this.readInfo()),
           (i) => (i?.name ? Effect.succeed(i.name) : Effect.flatMap(named.get(), remember))
         ),
-      set: (patch) => Effect.flatMap(named.set(patch), remember),
+      // (A title goes in the room too: each tab's replica has the title that is set.)
+      set: (patch) =>
+        Effect.tap(Effect.flatMap(named.set(patch), remember), (name) =>
+          Effect.sync(() => {
+            if (patch.title !== undefined) room.setTitle(name.titleSet ? name.title : "");
+          })
+        ),
     };
     const http = makeHttp({
       room,
@@ -205,6 +211,26 @@ export class DocumentHost<S extends TabSocket = TabSocket> extends Document<Serv
       // Its number of pages, as it opens and at each change: the documents list and the viewer read it.
       pagesChanged: (pages) => deps.background(deps.directory.setPages(info.id, pages)),
     });
+    // A title that a tab set in the room (the title's card: client/shell/naming.ts) goes to the directory, and every tab
+    // hears the new name. One at a time. As the room opens too: for a title that the directory did not take.
+    let titling = Promise.resolve();
+    const takeTitle = () =>
+      (titling = titling.then(async () => {
+        const want = room.title;
+        if (want === undefined) return;
+        const r = await Effect.runPromise(
+          Effect.result(
+            Effect.gen(function* () {
+              const now = yield* naming.get();
+              if (want ? now.titleSet && now.title == want : !now.titleSet) return;
+              http.renamed(yield* naming.set({ title: want }));
+            })
+          )
+        );
+        if (r._tag == "Failure") deps.log(`couldn't rename ${info.id}: ${r.failure.message}`);
+      }));
+    room.onTitle(takeTitle);
+    void takeTitle();
     return {
       ...opened,
       broadcast: (msg) => this.participants.tellAll(msg),
