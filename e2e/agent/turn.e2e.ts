@@ -626,9 +626,16 @@ journey("the agent on the documents' list", () => {
     expect(await page.evaluate(() => (window as any).__firstPaint.n), "the other person's panel at the first paint").toBe(0);
 
     // Sign-out deletes the tab's copy (the other person's now, kept as that page went).
-    await page.evaluate(() => location.assign("/auth/logout"));
+    // (The mark goes with the page that the tab leaves: until then, that page is the one that answers.)
+    await page.evaluate(() => {
+      (window as any).__signedIn = true;
+      location.assign("/auth/logout");
+    });
     await until(
-      () => page.evaluate(() => !document.title.startsWith("Signing out") && document.readyState == "complete").catch(() => false),
+      () =>
+        page
+          .evaluate(() => !(window as any).__signedIn && !document.title.startsWith("Signing out") && document.readyState == "complete")
+          .catch(() => false),
       10_000,
       "signed out"
     );

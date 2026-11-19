@@ -15,10 +15,12 @@ whole run with the 1,100 unit tests beside them. Before: 861 browser tests in 28
 
 GitHub runs the same suite for each commit of staging and main (.github/workflows/release.yml), on Linux with 4 cores.
 There the suite must pass, and that is all: the 60 seconds and the budgets are the Mac Studio's. A machine with fewer
-than 16 cores has no time limit (e2e/run.ts), and a journey over its budget is named, never failed. Measured there
-(2026-11-19, 2 runs): 167 and 244 s for the suite, with 15 and 23 journeys over their budget. So a journey holds on
+than 16 cores has no time limit (e2e/run.ts), and a journey over its budget is named, never failed. A journey holds on
 Linux too: it presses the system's own keys (Control where a Mac has ⌘ or Option), and it waits for the state its
-next step needs, since a step there takes 2 to 3 times as long.
+next step needs. Measured there with two journeys at a time (2026-11-19, 4 runs): one run took 167 s, with no failure
+on time; three took 234 to 253 s, and each of those failed 2 or 3 journeys on time, never the same ones (an upload
+that took over a second, a frame without the page, a typed letter that did not arrive). So there one journey runs at a
+time (TEST_JOBS=1 in the workflow).
 
 The browser has a process for each site, as a person's browser has (e2e/helpers/engine.ts). Measured beside the same
 suite without it (2026-11-13, 4 runs of each in turn, on a busy machine): 216 s of test time with it and 208 s

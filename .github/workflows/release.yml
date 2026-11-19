@@ -57,7 +57,11 @@ jobs:
           package-manager-cache: false
       - run: bun install --frozen-lockfile
       - run: bun run test:browsers --with-deps
+      # One journey at a time, so that each step has the machine: with two at once, its slow runs failed journeys on
+      # time (e2e/COVERAGE.md).
       - run: bun run test
+        env:
+          TEST_JOBS: "1"
 
   build:
     runs-on: ubuntu-24.04

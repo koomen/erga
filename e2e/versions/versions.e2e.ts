@@ -117,8 +117,17 @@ journey("versions in the editor's settings", () => {
 
   test("errors show in the settings, in plain words: a restore and the older versions that the server does not give", async ({ tab }) => {
     await down(tab, /\/api\/tools\/restore_version/);
-    const row = (await st.steadyRect(`#ds-list li[data-n="8"]`))!;
-    await tab.page.mouse.move(row.left + 60, row.y);
+    // Restore shows on the row under the pointer, and takes a press only then. On a slow machine the list still moves
+    // after it looked steady: the pointer goes to the row where it is now, until its Restore takes a press.
+    await until(
+      async () => {
+        const row = await st.rect(`#ds-list li[data-n="8"]`);
+        if (row) await tab.page.mouse.move(row.left + 60, row.y);
+        return st.eval<boolean>(`getComputedStyle(document.querySelector(${JSON.stringify(restoreOf(8))})).pointerEvents == "auto"`);
+      },
+      5_000,
+      "the pointer on version 8's row shows its Restore"
+    );
     await st.clickOn(restoreOf(8));
     await until(
       async () => /^Couldn't restore version 8: Couldn't reach the server/.test(await histError()),

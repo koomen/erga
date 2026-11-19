@@ -296,9 +296,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
         }
         await new Promise((r) => setTimeout(r, 50));
       }
-      // Another server took the port between freePort and dev/start.ts: once more, on another. (A restart keeps its port: the
-      // killed one's socket may linger a moment, so it tries that port again.)
-      if (exited != null && /port \d+ is taken/.test(server.output()) && !(fixed && !again) && attempt < (again ? 40 : 3)) {
+      // Another server took the port between freePort and dev/start.ts ("port n is taken"), or after dev/start.ts looked
+      // and before Vite listened ("Port n is already in use": seconds, on a slow machine): once more, on another. (A
+      // restart keeps its port: the killed one's socket may linger a moment, so it tries that port again.)
+      if (
+        exited != null &&
+        /port \d+ is (taken|already in use)/i.test(server.output()) &&
+        !(fixed && !again) &&
+        attempt < (again ? 40 : 3)
+      ) {
         if (again) await new Promise((r) => setTimeout(r, 250));
         continue;
       }
