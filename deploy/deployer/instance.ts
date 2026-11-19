@@ -38,7 +38,7 @@ const MAX_LOG = 400_000;
 
 const MARK = "erga:";
 /** A row's one column: the mark, and the hex of `json` (a JSON text). */
-const row = (json: string) => `'${MARK}' || hex(${json})`;
+export const row = (json: string) => `'${MARK}' || hex(${json})`;
 
 /** A row's bytes. */
 const bytesOf = (r: string): Effect.Effect<Uint8Array, DeployError> =>
@@ -48,7 +48,7 @@ const bytesOf = (r: string): Effect.Effect<Uint8Array, DeployError> =>
   );
 
 /** Each row as `schema` reads it. A row that it can't read is an error: this code can't act on what it doesn't understand. */
-const rowsAs = <A>(schema: Schema.Codec<A>, rows: readonly string[]): Effect.Effect<A[], DeployError> =>
+export const rowsAs = <A>(schema: Schema.Codec<A>, rows: readonly string[]): Effect.Effect<A[], DeployError> =>
   Effect.forEach(rows, (r) =>
     bytesOf(r).pipe(
       Effect.flatMap((bytes) =>

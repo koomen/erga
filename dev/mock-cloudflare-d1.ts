@@ -14,7 +14,8 @@ function recordOf(db: object): Database {
   let record = records.get(db);
   if (!record) {
     record = new Database(":memory:");
-    record.exec(readFileSync(new URL("../server/migrations/0470_deploys.sql", import.meta.url), "utf8"));
+    for (const name of ["0470_deploys.sql", "0480_deploy_control.sql"])
+      record.exec(readFileSync(new URL(`../server/migrations/${name}`, import.meta.url), "utf8"));
     records.set(db, record);
   }
   return record;
@@ -29,7 +30,7 @@ export function d1Query(
   { sql, params }: { sql: string; params?: unknown[] }
 ): Record<string, unknown>[] {
   db.statements.push(sql.slice(0, 200));
-  if (/\bdeploy_(spec|jobs)\b/.test(sql) && !/CREATE TABLE/i.test(sql)) {
+  if (/\bdeploy_(spec|jobs|control)\b/.test(sql) && !/CREATE TABLE/i.test(sql)) {
     if (!db.tables.includes("deploy_jobs")) throw new D1Error("no such table: deploy_jobs: SQLITE_ERROR");
     return recordOf(db)
       .query(sql)
