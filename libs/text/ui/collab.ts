@@ -354,15 +354,32 @@ export class Collab {
     if (presence) this.present(presence);
   }
 
-  /** Its presence goes to the room from now on: who it is, its caret (none yet), and `extra`. */
+  /**
+   * Its presence goes to the room from now on: who it is, its caret (none yet), and `extra`. Its name tag goes into the
+   * document with it (now, or once it is in the room): a replica that is never present writes nothing there.
+   */
   present(extra: Record<string, unknown> = {}): void {
     this.awareness.setLocalState({ user: this.me, cursor: null, active: document.hasFocus() ? Date.now() : 0, ...extra });
+    if (this.live) this.tag();
+  }
+
+  /** Its name tag, into the document, one time. */
+  private tagged = false;
+  private tag(): void {
+    if (this.tagged) return;
+    this.tagged = true;
+    introduce(this.doc, this.me!);
+  }
+
+  /** Its presence leaves the room; the replica stays in it. */
+  absent(): void {
+    this.awareness.setLocalState(null);
   }
 
   /** Resolves with the document's text once the first sync with the room is done (after `join`). */
   async ready(timeoutMs = 8000): Promise<string> {
     await Promise.race([this.synced, new Promise((_, reject) => setTimeout(() => reject(new Error("the room didn't answer")), timeoutMs))]);
-    introduce(this.doc, this.me!);
+    if (this.awareness.getLocalState()) this.tag();
     // From now on this tab holds the room's history: say which, on every reconnect.
     this.epoch = roomInfo(this.doc).get("epoch") ?? "";
     this.live = true;

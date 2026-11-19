@@ -18,14 +18,24 @@ function run(s: EditorState, ...events: EditorEvent[]) {
   return { state: s, effects };
 }
 
-test("into the editor with a key: the page is told edit; the eye: view", () => {
+test("into the editor with a key: the page is told edit; the eye: standby, with the key", () => {
   const { effects } = run(initial(false, false, HOUR), { type: "editing", on: true }, { type: "editing", on: false });
-  expect(effects).toEqual([{ say: { mode: "edit", key: "k1" } }, { say: { mode: "view" } }]);
+  expect(effects).toEqual([{ say: { mode: "edit", key: "k1" } }, { say: { mode: "standby", key: "k1" } }]);
 });
 
-test("into the editor while full screen is on: it starts only when full screen ends, once", () => {
+test("viewing, the shell starts: it asks for a key, and the page is told standby with it; the pencil: edit", () => {
+  const { effects } = run(initial(false, false, null), { type: "tick" }, { type: "key", held: HOUR }, { type: "editing", on: true });
+  expect(effects).toEqual([{ ask: true }, { say: { mode: "standby", key: "k1" } }, { say: { mode: "edit", key: "k1" } }]);
+});
+
+test("viewing, the host refuses the key: no note, the page stays in view, and the next look asks again", () => {
+  const { effects } = run(initial(false, false, null), { type: "tick" }, { type: "refused" }, { type: "retry" }, { type: "tick" });
+  expect(effects).toEqual([{ ask: true }, { retry: RETRY_MS }, {}, { ask: true }]);
+});
+
+test("into the editor while full screen is on: it stands by, and starts only when full screen ends, once", () => {
   const { effects } = run(initial(false, true, HOUR), { type: "editing", on: true }, { type: "full", on: false }, { type: "tick" });
-  expect(effects).toEqual([{}, { say: { mode: "edit", key: "k1" } }, {}]);
+  expect(effects).toEqual([{ say: { mode: "standby", key: "k1" } }, { say: { mode: "edit", key: "k1" } }, {}]);
 });
 
 test("no key: it asks; the key comes: edit with it", () => {
@@ -78,9 +88,13 @@ test("no answer: the editor starts from its copy with no key; the room back: it 
   ]);
 });
 
-test("a key near its end is renewed while the editor runs, never while viewing; one request at a time", () => {
+test("a key near its end is renewed while the editor runs, and while it stands by; one request at a time", () => {
   const soon = { key: "k0", expires: NOW + RENEW_MS - 1 };
-  expect(run(initial(false, false, soon), { type: "tick" }).effects).toEqual([{}]);
+  expect(run(initial(false, false, soon), { type: "tick" }, { type: "tick" }, { type: "key", held: HOUR }).effects).toEqual([
+    { ask: true, say: { mode: "standby", key: "k0" } },
+    {},
+    { say: { mode: "standby", key: "k1" } },
+  ]);
   const { effects } = run(initial(true, false, soon), { type: "tick" }, { type: "tick" }, { type: "key", held: HOUR });
   expect(effects).toEqual([{ ask: true, say: { mode: "edit", key: "k0" } }, {}, { say: { mode: "edit", key: "k1" } }]);
 });

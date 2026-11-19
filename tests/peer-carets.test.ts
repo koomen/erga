@@ -68,3 +68,22 @@ test("your other tabs' carets aren't drawn, and someone with several tabs shows 
   a1.activate();
   expect(a1.awareness.getLocalState()?.active).toBe(active);
 });
+
+// The page's editor stays in the room while its person views (libs/text/ui/frame.ts, standby).
+test("a tab that stands by shows nobody; present, the others see its person; absent again, they don't, and it still sees them", () => {
+  const { open } = room();
+  const ada = open(person("Ada"), "h1"),
+    bo = open(person("Bo"), "li");
+  bo.absent();
+  expect(ada.shown()).toEqual([]);
+  expect(shown(bo)).toEqual(["Ada in h1"]);
+  // (No page here: present reads whether the tab has the focus.)
+  const g = globalThis as { document?: unknown };
+  g.document = { hasFocus: () => false };
+  bo.present({ tab: "t1" });
+  delete g.document;
+  expect(ada.shown().map((p) => `${p.user.name} ${(p as { tab?: string }).tab}`)).toEqual(["Bo t1"]);
+  bo.absent();
+  expect(ada.shown()).toEqual([]);
+  expect(shown(bo)).toEqual(["Ada in h1"]);
+});

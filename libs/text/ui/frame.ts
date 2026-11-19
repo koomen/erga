@@ -7,7 +7,9 @@
 // its own controls (controls.ts: the style bar, the link bar), the comments (comments.ts), files dropped on the page
 // (uploads.ts: the viewer sends their bytes, and each shows as on its way meanwhile, pending.ts), on the page as it is, which the pages origin served from the text (shared/page-html.ts). It asks the
 // viewer for one thing: the page loaded again (erga-reload), for a change it can't show in place; and it tells the
-// viewer its alerts (alerts.ts). When the viewer says "view", it stops, and the page carries on as it is.
+// viewer its alerts (alerts.ts). When the viewer says "standby", it stops, and the page carries on as it is: its
+// replica stays in the room, with no presence there, so the next "edit" waits for nothing (the first "standby" brings
+// it into the room ahead). When the viewer says "view", it leaves the room too.
 //
 // Trap: in the frame, a `setTimeout` can wait for seconds in a tab that isn't in front. Code that must run soon after
 // an edit here (the replica kept in IndexedDB, the page in the copy) runs at once, and joins what comes meanwhile.
@@ -73,9 +75,9 @@ const HERE = location.pathname.slice(0, location.pathname.lastIndexOf("/") + 1);
 /** The digest of the text the page shows now: the one the pages origin made it from, then (out of the editor) the last the editor showed. */
 let shown = reader.src;
 
-/** The editor's one state (frame-state.ts): the viewer's last word, edit with its key and where the document is, in it. */
+/** The editor's one state (frame-state.ts): the viewer's last word, edit or standby with its key and where the document is, in it. */
 let state: State = { phase: "idle", run: 0 };
-/** The viewer's last word, if it is edit. */
+/** The viewer's last word, if it is edit or standby. */
 const editing = (): Editing | null => ("mode" in state ? state.mode : null);
 let collab: Collab | null = null;
 let page: PageEditor | null = null;
@@ -148,14 +150,13 @@ window.addEventListener("message", (e: MessageEvent) => {
   else if (typeof e.data?.type == "string" && e.data.type.startsWith("erga-comment-")) comments?.fromShell(e.data);
 });
 
-/** The viewer says edit or view. Edit again: a new key (for the next socket). */
+/** The viewer says edit, standby or view. The same again: a new key (for the next socket). */
 function setMode(m: EditMode) {
-  if (m.mode == "edit") {
-    if (m.timescale) window.__ergaTimescale = m.timescale;
-    setNotes(m.notes);
-    comments?.queue();
-  }
-  send(m.mode == "view" ? { type: "view" } : { type: "edit", mode: m });
+  if (m.mode == "view") return send({ type: "view" });
+  if (m.timescale) window.__ergaTimescale = m.timescale;
+  setNotes(m.notes);
+  comments?.queue();
+  send({ type: "told", mode: m });
 }
 
 /** The state takes the event, and this does what the step says (frame-state.ts), in the run the step leaves it in. */
@@ -168,9 +169,15 @@ function send(e: FrameEvent) {
     else if (effect == "join") join(run);
     else if (effect == "retry") retry(run);
     else if (effect == "edit") enter();
+    else if (effect == "rest") rest();
     else if (effect == "flush") flush(run);
     else if (effect == "reload") reloadNow();
     else stop();
+  // (The note that the room didn't answer is for someone who waits for the editor.)
+  if (editing()?.mode != "edit") {
+    roomNote?.();
+    roomNote = null;
+  }
 }
 
 /** The viewer's word on the zoom (client/inline/viewer-zoom.ts): the level, and the part of the page in sight. */
@@ -275,9 +282,20 @@ let own = false;
 /** The viewer says that this browser is signed out: the room's socket tries no more (collab.ts, signedOut). */
 let signedOut = false;
 
+/**
+ * The room's text in one answer, asked for as the editor starts, before its other waits: the editor is up when it
+ * comes, and the socket brings what changed since. (A key the host refuses: the socket's own sync.)
+ */
+let roomStart: Promise<ArrayBuffer | null> = Promise.resolve(null);
+
 /** Into the editor: once the page has loaded (its scripts have built what they build on load). */
 async function start(run: number) {
   performance.mark("erga:init");
+  const m = editing()!;
+  roomStart = fetch(`${m.doc}/api/start?${new URLSearchParams({ key: m.key })}`).then(
+    (r) => (r.ok ? r.arrayBuffer() : null),
+    () => null
+  );
   // Erga's worker on this origin, for a reload offline (only an origin of this document's own has it: never a shared host).
   const offline = keepOffline(null);
   if (document.readyState != "complete") await new Promise((r) => addEventListener("load", r, { once: true }));
@@ -291,18 +309,14 @@ function join(run: number) {
   if (own) pageCopy ??= keepPage(SHELL, () => collab?.current() ?? "");
   const room = `${m.doc.replace(/^http/, "ws")}/api/room`;
   const c = (collab = new Collab({
-    // The room's text in one answer, asked for as the socket starts to connect: the editor is up when it comes, and the
-    // socket brings what changed since. (A key the host refuses: the socket's own sync, as before.)
-    start: fetch(`${m.doc}/api/start?${new URLSearchParams({ key: m.key })}`).then(
-      (r) => (r.ok ? r.arrayBuffer() : null),
-      () => null
-    ),
+    start: roomStart,
     // (Only the room: the person's events, the agent's asks among them, are the viewer's to hear.)
     // (comments=1: it hears that the document's comments changed, and reads them again: comments.ts.)
     url: (q) => `${room}?${new URLSearchParams({ key: editing()?.key ?? m.key, comments: "1", ...Object.fromEntries(q) })}`,
     onEvent: (msg) => {
       if (msg.type == "comments") void comments?.refresh();
     },
+    // (Standing by, the page is the viewer's to show: it loads each change itself, client/inline/viewer-live.ts.)
     onRemote: (changes, author) => {
       if (!page) return;
       page.applyExternal(changes, typingAgent(author));
@@ -314,6 +328,7 @@ function join(run: number) {
     // Not another page's text, which this page doesn't show. A file that was on its way (a drop, an agent's file) is
     // loaded in place by the elements that show it (pending.ts).
     onFiles: (paths) => {
+      if (!page) return;
       for (const p of paths) if (awaited.has(p)) pending.arrived(p);
       const changed = paths.filter((p) => !/\.(html?|md)$/i.test(p) && !awaited.has(p));
       if (!changed.length) return;
@@ -324,11 +339,13 @@ function join(run: number) {
     },
     onPresence: () => queuePeers(),
     onStatus: () => {},
-    onStale: () => location.reload(),
+    // (Standing by, the page stays: it leaves the room, and the viewer's next word joins it afresh.)
+    onStale: () => (editing()?.mode == "edit" ? location.reload() : send({ type: "view" })),
     ...(own ? { keep: m.doc } : {}),
   }));
   if (signedOut) c.signedOut();
-  c.join(m.me, m.path, { tab: m.tab });
+  // (No presence yet: the editor brings it as it goes on the page.)
+  c.join(m.me, m.path, null);
   void ready(c, run);
 }
 
@@ -345,7 +362,9 @@ async function ready(c: Collab, run: number) {
 /** What says the room didn't answer yet, while the editor waits for it again. */
 let roomNote: (() => void) | null = null;
 function retry(run: number) {
-  roomNote ??= noteOnPage(window, "The document's server didn't answer. Erga keeps trying: the editor opens once it does.");
+  // (Standing by, nobody waits for it.)
+  if (editing()?.mode == "edit")
+    roomNote ??= noteOnPage(window, "The document's server didn't answer. Erga keeps trying: the editor opens once it does.");
   // (A second after: a page that isn't in the room yet fails at once.)
   const c = collab;
   setTimeout(() => {
@@ -360,6 +379,8 @@ function enter() {
   const c = collab!;
   const back = carried();
   if (back?.room) c.merge(back.room);
+  // In the room for the others from now on, with this tab's mark (the viewer knows its own page's caret by it).
+  c.present({ tab: editing()!.tab });
   edit(c, editing()!, back);
   // The lock for source edits (document/room/room.ts): while someone holds it, the page is read-only, and says so; their
   // edits show as they land, and the page edits again once it's let go (no reload).
@@ -376,6 +397,7 @@ function enter() {
         : null;
   };
   roomInfo(c.doc).observe(follow);
+  unwatch.push(() => roomInfo(c.doc).unobserve(follow));
   follow();
 }
 
@@ -813,17 +835,21 @@ function reloadNow() {
 }
 
 /**
- * Out of the editor: the editor stops (its state kept for the way back in), and leaves the room; the page stays as it
- * is. Keys held for an editor that never came up go back to the page.
+ * Out of the editor: the editor stops (its state kept for the way back in); the page stays as it is. Its replica stays
+ * in the room, where nobody sees it. Keys held for an editor that never came up go back to the page.
  */
-function stop() {
+function rest() {
   stopEditor();
   letGo();
   early.length = 0;
   lockNote?.();
   lockNote = null;
-  roomNote?.();
-  roomNote = null;
+  collab?.absent();
+}
+
+/** Out of the editor and out of the room. */
+function stop() {
+  rest();
   collab?.close();
   collab = null;
 }

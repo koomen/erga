@@ -5,7 +5,8 @@
 // its code loads (`scripts`: it and its first chunks), which takes the socket over; it loads the editor's half into the
 // page in the frame, which stays as it is (client/shell/page-frame.ts). The editor's controls fade in over the viewer's
 // once it's ready (client/shell/main.ts calls ergaShell.ready), and out again on the way back; the editor keeps running
-// meanwhile (its half in the page stops), so going back in is immediate and connects nothing more.
+// meanwhile (its half in the page stops, and stays in the room: libs/text/ui/mode.ts, standby), so going back in is
+// immediate and connects nothing more.
 // Viewing, it fetches the editor's files while the browser is idle, and starts the editor, out of sight, as the pointer or
 // the focus comes to the pencil: the click finds it running, or nearly. `built`: the
 // editor's files this page uses that its elements don't name (client/live/live.ts compares them with the server's).
@@ -33,6 +34,8 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
   const load = () => {
     window.ergaBuilt = built;
     ergaConnect();
+    // (The page loads its half of the editor meanwhile: client/inline/reader.ts.)
+    ergaFrames.send({ type: "erga-warm" });
     for (const href of scripts.slice(1))
       document.head.append(Object.assign(document.createElement("link"), { rel: "modulepreload", href }));
     ergaShellStyle();

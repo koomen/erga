@@ -1,5 +1,5 @@
-// The document's page, in the viewer's one frame on its own origin: the viewer's one word to the editor in it (edit,
-// with the edit key, or view: libs/text/ui/mode.ts), and what the page's first script (client/inline/reader.ts, Erga's)
+// The document's page, in the viewer's one frame on its own origin: the viewer's one word to the editor in it (edit or
+// standby, with the edit key, or view: libs/text/ui/mode.ts), and what the page's first script (client/inline/reader.ts, Erga's)
 // tells the viewer while editing: the viewer's shortcuts pressed in the page, a press on it, a link to another of the document's pages, the page's
 // problems. The editor itself asks for one thing: the page loaded again (erga-reload), which the viewer does with the
 // page's view kept (viewer-frames.ts). And it raises its alerts (client/common/alerts.ts), and hears their buttons; it
@@ -19,7 +19,7 @@ import type { NewFile } from "./uploads";
 const PAGE_KEY = "page/";
 
 /** What "edit" says, but the notes and the tests' settings, which this adds. */
-export type EditWord = Omit<Extract<EditMode, { mode: "edit" }>, "type" | "mode" | "notes" | "timescale" | "check">;
+export type EditWord = Omit<Exclude<EditMode, { mode: "view" }>, "type" | "mode" | "notes" | "timescale" | "check">;
 
 export interface PageFrameConfig {
   /** The frame now: a load of the page again puts a new one in its place (client/inline/viewer-frames.ts). */
@@ -32,6 +32,8 @@ export interface PageFrameConfig {
   told: () => Word;
   /** What "edit" says now, with `key`: where the document is, who this tab is, the page and this tab's mark. */
   edit: (key: string) => EditWord;
+  /** The viewer shows the page that the editor is on (viewing, a link goes to another: client/inline/viewer-nav.ts). */
+  here: () => boolean;
   onKey: (keys: Keys) => void;
   /** A press on the page. */
   onPress: () => void;
@@ -76,24 +78,26 @@ export function mountPageFrame(c: PageFrameConfig) {
     frame.contentWindow?.postMessage(m, c.origin);
   };
 
-  /** Tells the page what it was told last: edit (with what it needs) or view. */
+  /** Tells the page what it was told last: edit or standby (with what it needs), or view. */
   function say(): void {
     const told = c.told();
     if (told.mode == "view") {
       post({ type: "erga-mode", mode: "view" } satisfies EditMode);
       return;
     }
+    // (Standby is for the editor's page: another page that the viewer shows has no editor to wait.)
+    if (told.mode == "standby" && !c.here()) return;
     const { __ergaTimescale: timescale, __ergaCheck: check } = globalThis as { __ergaTimescale?: number; __ergaCheck?: boolean };
     post({
       type: "erga-mode",
-      mode: "edit",
+      mode: told.mode,
       ...c.edit(told.key),
       notes,
       ...(timescale ? { timescale } : {}),
       ...(check ? { check } : {}),
     } satisfies EditMode);
     // (An editor that started before the viewer was ready asked in vain: frame.ts.)
-    c.onUploadsAsk();
+    if (active()) c.onUploadsAsk();
   }
 
   const num = (n: unknown): n is number => typeof n == "number" && Number.isFinite(n);
@@ -127,6 +131,9 @@ export function mountPageFrame(c: PageFrameConfig) {
         );
     }
     if (m.type == "erga-steps") c.onSteps(m.on === true);
+    // Out of the editor, the page that came says which it is (after its hello; the viewer has heard it): its editor
+    // joins the room again, ahead.
+    if (m.type == "erga-nav" && c.told().mode == "standby") say();
     if (!active()) return;
     switch (m.type) {
       // The page's editor asks for the page made again from its files (libs/text/ui/frame.ts, reloadNow): with its view kept.
@@ -192,7 +199,8 @@ export function mountPageFrame(c: PageFrameConfig) {
     /**
      * Tells the page what it was told last, as it changed. Edit: the page in the frame loads the editor
      * (client/inline/reader.ts), which opens its own socket; again, a new key for its next socket (it's checked as a socket
-     * opens). View: the editor in the page stops (the page stays as it is, and the editor keeps its state).
+     * opens). Standby: the editor in the page stops (the page stays as it is, and the editor keeps its state and its
+     * socket), or loads and joins the room ahead. View: it leaves the room too.
      */
     say,
     /**

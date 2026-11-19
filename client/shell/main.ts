@@ -323,6 +323,7 @@ const SHELL_PARTS = ["nav-documents", "people", "btn-documents", "btn-edit", "me
     files: pagesUrl,
     told: () => shell.editor.state.told,
     edit: (key) => ({ doc: `${location.origin}${BASE}`, key, me, path: shell.pagePath, tab }),
+    here: () => (document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || shell.info.path) == shell.pagePath,
     onKey: (keys) => {
       appShortcut(keys, true);
     },

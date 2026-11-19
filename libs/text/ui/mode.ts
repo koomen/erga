@@ -1,4 +1,6 @@
-// The viewer's one word to the page's editor (frame.ts), by postMessage from the viewer's origin: edit or view. Edit
+// The viewer's one word to the page's editor (frame.ts), by postMessage from the viewer's origin: edit, standby or
+// view. Standby says all that edit says: the editor joins the room and waits there, off the page, so the next edit
+// finds it in the room (it shows nobody there: a person who views has no presence). Edit
 // says where the document is (`doc`: its address on the viewer's origin, https://<host>/d/<id>, under which its
 // socket and its files are), the edit key that opens them (server/documents/edit-key.ts; the viewer gives a new one
 // before the last ends, for the next socket), who this tab is (`me`: the room attributes the edits to the key's person;
@@ -13,7 +15,7 @@ import type { Author } from "../../../document/model/content";
 export type EditMode =
   | {
       type: "erga-mode";
-      mode: "edit";
+      mode: "edit" | "standby";
       doc: string;
       key: string;
       me: Author;

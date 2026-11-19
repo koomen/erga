@@ -843,13 +843,12 @@ export default function reader(C: ReaderConfig): void {
       llmWaits.delete(e.data.id);
       done(e.data.answer);
     }
-    // The viewer's word on editing (libs/text/ui/bridge.ts, EditMode): kept for the editor, which loads on the first edit.
+    // The viewer's word on editing (libs/text/ui/mode.ts, EditMode): kept for the editor, which loads on the first edit
+    // or standby.
     else if (type == "erga-mode") {
       window.__ergaReader!.mode = e.data;
-      if (e.data.mode == "edit") {
-        load();
-        zooms(true);
-      }
+      if (e.data.mode != "view") load();
+      if (e.data.mode == "edit") zooms(true);
     }
     // The viewer's word on the zoom (client/inline/viewer-zoom.ts): kept for the editor, which hears it after too.
     else if (type == "erga-zoomed") {
@@ -910,6 +909,8 @@ export default function reader(C: ReaderConfig): void {
     // The document's public address, for the links in a copy: on the viewer's origin, as the token names it.
     else if (type == "erga-address" && typeof e.data.address == "string" && e.data.address.indexOf(C.shell + "/") == 0)
       C.address = e.data.address;
+    // The viewer starts its editor (the pointer came to the pencil, or a press): the editor's half loads now, beside it.
+    else if (type == "erga-warm") load();
     else if (type == "erga-prefetch" && editor && !loading) {
       [editor.src].concat(editor.preload).forEach((href) => {
         const l = document.createElement("link");

@@ -1,6 +1,7 @@
 // The editor in the page, as the shell decides it: one state, and `step`, the one function that says what the page is
-// told (edit, with a key, or view) and when to ask the host for an edit key. The page's editor runs only while editing,
-// out of full screen (there the page's own keys work: a deck's arrows). It opens its
+// told (edit or standby, with a key, or view) and when to ask the host for an edit key. The page's editor runs only
+// while editing, out of full screen (there the page's own keys work: a deck's arrows). Else, with a key, it stands by:
+// in the room, off the page, so the pencil finds it there (libs/text/ui/mode.ts). It opens its
 // socket with an edit key (server/documents/edit-key.ts), which the shell asks for, and again before it ends.
 // No IO here: client/shell/editor.ts does what `step` returns.
 //
@@ -27,8 +28,8 @@ export interface Key {
   noted: boolean;
 }
 
-/** What the page is told: view, or edit with a key ("" for none: the editor opens from its copy, offline). */
-export type Word = { mode: "view" } | { mode: "edit"; key: string };
+/** What the page is told: view, or edit or standby with a key ("" for none: the editor opens from its copy, offline). */
+export type Word = { mode: "view" } | { mode: "edit" | "standby"; key: string };
 
 export interface EditorState {
   /** The editor's controls are up (the pencil; the eye ends it). */
@@ -87,9 +88,9 @@ const usable = (held: Held | null, now: number) => !!held && held.expires > now;
 
 /** What the page should be told now; null while its editor should run and waits for a key. */
 function word(s: EditorState, now: number): Word | null {
-  if (!runs(s)) return { mode: "view" };
   const held = s.key.held;
-  if (held && usable(held, now)) return { mode: "edit", key: held.key };
+  if (held && usable(held, now)) return { mode: runs(s) ? "edit" : "standby", key: held.key };
+  if (!runs(s)) return { mode: "view" };
   if (s.key.status == "offline") return { mode: "edit", key: held?.key ?? "" };
   return null;
 }
@@ -132,14 +133,14 @@ export function step(s: EditorState, e: EditorEvent, now: number): { state: Edit
     case "tick":
       break;
   }
-  // Running, with no key that holds RENEW_MS more: a new one.
-  if (runs(s) && key.status == "idle" && !(key.held && key.held.expires - now > RENEW_MS)) {
+  // Running, with no key that holds RENEW_MS more: a new one. Standing by, the same, at each look only.
+  if ((runs(s) || e.type == "tick") && key.status == "idle" && !(key.held && key.held.expires - now > RENEW_MS)) {
     key = { ...key, status: "asking" };
     effects.ask = true;
   }
   s = { ...s, key };
   const w = word(s, now);
-  if (w && (w.mode != s.told.mode || (w.mode == "edit" && s.told.mode == "edit" && w.key != s.told.key))) {
+  if (w && (w.mode != s.told.mode || (w.mode != "view" && s.told.mode != "view" && w.key != s.told.key))) {
     effects.say = w;
     s = { ...s, told: w };
   }

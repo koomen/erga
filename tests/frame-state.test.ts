@@ -2,9 +2,9 @@
 import { expect, test } from "bun:test";
 import { step, type Editing, type FrameEvent, type State } from "../libs/text/ui/frame-state.ts";
 
-const mode = (key = "k1"): Editing => ({
+const mode = (key = "k1", mode: Editing["mode"] = "edit"): Editing => ({
   type: "erga-mode",
-  mode: "edit",
+  mode,
   doc: "https://erga.dev/d/1",
   key,
   me: { kind: "person", name: "Pete", color: "#000" } as Editing["me"],
@@ -26,30 +26,66 @@ function run(...events: FrameEvent[]) {
 }
 
 test("edit: the page loads, the editor joins the room, then edits", () => {
-  expect(run({ type: "edit", mode: mode() }, { type: "loaded", run: 1 }, { type: "joined", run: 1 })).toEqual({
+  expect(run({ type: "told", mode: mode() }, { type: "loaded", run: 1 }, { type: "joined", run: 1 })).toEqual({
     phase: "editing",
     run: 1,
     effects: ["start", "join", "edit"],
   });
 });
 
+test("standby: the editor joins the room ahead and waits there; edit finds it in the room, and standby keeps it there", () => {
+  const standby = { type: "told", mode: mode("k1", "standby") } as const;
+  expect(run(standby, { type: "loaded", run: 1 }, { type: "joined", run: 1 })).toEqual({
+    phase: "standby",
+    run: 1,
+    effects: ["start", "join"],
+  });
+  const r = run(standby, { type: "loaded", run: 1 }, { type: "joined", run: 1 }, { type: "told", mode: mode() }, standby, {
+    type: "told",
+    mode: mode(),
+  });
+  expect(r).toEqual({ phase: "editing", run: 1, effects: ["start", "join", "edit", "rest", "edit"] });
+});
+
+test("edit while the editor joins the room ahead: it edits as soon as it is in; standby while it joins: it waits there", () => {
+  const standby = { type: "told", mode: mode("k1", "standby") } as const;
+  expect(run(standby, { type: "loaded", run: 1 }, { type: "told", mode: mode() }, { type: "joined", run: 1 })).toEqual({
+    phase: "editing",
+    run: 1,
+    effects: ["start", "join", "edit"],
+  });
+  expect(run({ type: "told", mode: mode() }, standby, { type: "loaded", run: 1 }, { type: "joined", run: 1 }).phase).toBe("standby");
+});
+
+test("standby while the page waits to load again: it doesn't load again, and stays in the room", () => {
+  const r = run(
+    { type: "told", mode: mode() },
+    { type: "loaded", run: 1 },
+    { type: "joined", run: 1 },
+    { type: "reload" },
+    { type: "told", mode: mode("k1", "standby") },
+    { type: "flushed", run: 1 }
+  );
+  expect(r).toEqual({ phase: "standby", run: 1, effects: ["start", "join", "edit", "flush", "rest"] });
+});
+
 test("edit again (a new key) changes the key, and starts nothing", () => {
   let s: State = { phase: "idle", run: 0 };
-  s = step(s, { type: "edit", mode: mode("k1") }).state;
-  const n = step(s, { type: "edit", mode: mode("k2") });
+  s = step(s, { type: "told", mode: mode("k1") }).state;
+  const n = step(s, { type: "told", mode: mode("k2") });
   expect(n.effects).toEqual([]);
   expect("mode" in n.state && n.state.mode.key).toBe("k2");
 });
 
 test("view during a wait: its end does nothing", () => {
   // Before the page loaded.
-  expect(run({ type: "edit", mode: mode() }, { type: "view" }, { type: "loaded", run: 1 })).toEqual({
+  expect(run({ type: "told", mode: mode() }, { type: "view" }, { type: "loaded", run: 1 })).toEqual({
     phase: "stopped",
     run: 1,
     effects: ["start", "stop"],
   });
   // Before the room answered.
-  expect(run({ type: "edit", mode: mode() }, { type: "loaded", run: 1 }, { type: "view" }, { type: "joined", run: 1 }).effects).toEqual([
+  expect(run({ type: "told", mode: mode() }, { type: "loaded", run: 1 }, { type: "view" }, { type: "joined", run: 1 }).effects).toEqual([
     "start",
     "join",
     "stop",
@@ -58,7 +94,7 @@ test("view during a wait: its end does nothing", () => {
 
 test("view while the page waits to load again: it doesn't load again", () => {
   const r = run(
-    { type: "edit", mode: mode() },
+    { type: "told", mode: mode() },
     { type: "loaded", run: 1 },
     { type: "joined", run: 1 },
     { type: "reload" },
@@ -70,7 +106,7 @@ test("view while the page waits to load again: it doesn't load again", () => {
 
 test("a reload loads the page again once the room has the edits; a second asks for nothing more", () => {
   const r = run(
-    { type: "edit", mode: mode() },
+    { type: "told", mode: mode() },
     { type: "loaded", run: 1 },
     { type: "joined", run: 1 },
     { type: "reload" },
@@ -82,9 +118,9 @@ test("a reload loads the page again once the room has the edits; a second asks f
 
 test("a wait of an earlier run doesn't count in a later one", () => {
   const r = run(
-    { type: "edit", mode: mode() },
+    { type: "told", mode: mode() },
     { type: "view" },
-    { type: "edit", mode: mode() },
+    { type: "told", mode: mode() },
     { type: "loaded", run: 1 },
     { type: "loaded", run: 2 }
   );
@@ -93,7 +129,7 @@ test("a wait of an earlier run doesn't count in a later one", () => {
 
 test("the room doesn't answer: the editor waits for it again, then edits", () => {
   const r = run(
-    { type: "edit", mode: mode() },
+    { type: "told", mode: mode() },
     { type: "loaded", run: 1 },
     { type: "failed", run: 1 },
     { type: "failed", run: 1 },
@@ -108,5 +144,5 @@ test("view before the editor ever started still stops (the keys held for it go b
 
 test("a reload asked for outside the editor does nothing", () => {
   expect(run({ type: "reload" })).toEqual({ phase: "idle", run: 0, effects: [] });
-  expect(run({ type: "edit", mode: mode() }, { type: "reload" }).effects).toEqual(["start"]);
+  expect(run({ type: "told", mode: mode() }, { type: "reload" }).effects).toEqual(["start"]);
 });

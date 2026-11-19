@@ -51,7 +51,8 @@ journey("a document that is slow to open", () => {
     await page.setViewportSize({ width: 1100, height: 760 });
     page.on("console", (m) => said.push(m.text()));
     held = await hold(page);
-    await page.routeWebSocket(/\/api\/room\?key=/, (ws) => void own.push(() => ws.connectToServer()));
+    // (Only its first one waits: the page that loads again opens another.)
+    await page.routeWebSocket(/\/api\/room\?key=/, (ws) => void (own.length ? ws.connectToServer() : own.push(() => ws.connectToServer())));
     // The editor's timers run 100 times faster while it opens: its minute is 600 ms.
     await asTester(page, 0.01);
     const { dir, address } = await s.fixture("tall-block");
@@ -132,12 +133,15 @@ journey("a document that is slow to open", () => {
 
   test("the eye, down the page: every frame the tab paints shows the page where it was", async () => {
     at = await more();
+    await soon(() => page.evaluate<number>("ergaPage.collab.others().length")).toBe(1);
     const out = await views(page, async () => {
       await page.locator("#btn-edit").click();
       await soon(() => viewing(page)).toBe(true);
     });
     expect(out, "no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
     expect(await more(), "the eye does not move the page").toBeCloseTo(at, 0);
+    // The page's editor stays in the room, for the pencil; nobody there sees a person who views.
+    await soon(() => page.evaluate<number>("ergaPage.collab.others().length")).toBe(0);
   });
 
   // Before, the page asked for its build after the connection came back, the build was another after any edit, and
@@ -161,11 +165,19 @@ journey("a document that is slow to open", () => {
     expect(await h1More()).toBe("X");
   });
 
-  test("the pencil, down the page: every frame the tab paints shows the page where it was", async () => {
+  // Before, the page's editor left the room at the eye, and the pencil waited for the room again (250 ms on a real network).
+  test("the pencil, down the page: the page's editor is in the room already, and every frame the tab paints shows the page where it was", async () => {
+    const starts: string[] = [];
+    const asked = (r: { url(): string }) => void (/\/api\/start\b/.test(r.url()) && starts.push(r.url()));
+    page.on("request", asked);
     const back = await views(page, async () => {
       await page.locator(".erga-edit-button").click();
       await soon(() => editorUp(page)).toBe(true);
     });
+    page.off("request", asked);
+    expect(starts, "it asks the room for nothing").toEqual([]);
+    // (And the room sees the person edit again.)
+    await soon(() => page.evaluate<number>("ergaPage.collab.others().length")).toBe(1);
     expect(back, "no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
     expect(await more(), "the pencil does not move the page").toBeCloseTo(at, 0);
     expect(await page.evaluate<boolean>(`window.__before === true`)).toBe(true);
@@ -519,13 +531,13 @@ journey("a deck in the editor", () => {
     await watch();
     await ed.page.locator("#btn-full").click();
     await soon(() => ed.eval<boolean>(`document.documentElement.classList.contains("erga-full")`)).toBe(true);
-    expect(await said()).toEqual(["view"]);
+    expect(await said()).toEqual(["standby"]);
     await soon(runs).toBe(false);
     await ed.press("ArrowRight");
     await soon(() => ed.eval<string>(`location.hash`)).toBe("#2");
     await ed.page.evaluate(() => document.exitFullscreen());
     await soon(runs).toBe(true);
-    expect(await said()).toEqual(["view", "edit"]);
+    expect(await said()).toEqual(["standby", "edit"]);
   });
 
   test("at slide 3, a reload of the tab opens the editor at slide 3; the tab's address says #3", async ({ tab }) => {
