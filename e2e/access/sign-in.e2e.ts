@@ -471,10 +471,10 @@ journey("a new person signs in, uses the account corner, signs out and signs in"
     );
     await soon(async () => (await people()).length).toBe(1);
     // The controls, left to right up to her avatar: new document (+), full screen, then the editor's own (share,
-    // document settings, shortcuts), edit, share with an agent, Documents.
+    // document settings), edit, share with an agent, Documents.
     expect(
       await page.evaluate(() => [...document.querySelectorAll(".chrome-top .icon-btn:not([hidden])")].map((e) => e.id).join(" "))
-    ).toBe("btn-new btn-full btn-share btn-settings btn-help btn-edit btn-agent-share btn-documents");
+    ).toBe("btn-new btn-full btn-share btn-settings btn-edit btn-agent-share btn-documents");
     await page.keyboard.press("Escape");
   });
 

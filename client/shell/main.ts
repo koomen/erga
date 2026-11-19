@@ -56,7 +56,6 @@ interface EditorKept {
   path: string;
   pages: boolean;
   settings: boolean;
-  help: boolean;
   /** Files attached to the agent's next message. */
   files: Attachment[];
 }
@@ -475,13 +474,15 @@ const TITLE_NOT_SAVED = {
       return true;
     }
     if (mod && !e.shiftKey && (key == "/" || key == "?")) {
-      shell.chrome.toggleHelp();
+      void import("../common/shortcuts-dialog").then((m) => m.toggleShortcuts());
       return true;
     }
     if (mod && !e.shiftKey && key == "s") {
       shell.toast.flash(shell.room.connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200);
       return true;
     }
+    // A dialog over the page (Settings, Send feedback, Keyboard shortcuts) is the browser's own: Escape closes it.
+    if (e.key == "Escape" && document.querySelector("dialog:modal")) return false;
     if (e.key == "Escape" && (shell.save.close() || shell.alerts.close())) return true;
     if (e.key == "Escape") {
       // Naming something in the pages tree, a question in it or one of its menus, or the comment box: Escape is theirs to cancel.
@@ -492,8 +493,7 @@ const TITLE_NOT_SAVED = {
         shell.people.toggleAccount(false);
         shell.chrome.toggleQuick(false);
         shell.people.accountBtn?.focus();
-      } else if (!$("help").hidden) shell.chrome.toggleHelp(false);
-      else if (!$("naming").hidden) shell.naming.toggleNaming(false);
+      } else if (!$("naming").hidden) shell.naming.toggleNaming(false);
       else if (!$("pages").hidden) { shell.naming.togglePages(false); $("doc-title").focus(); }
       // (Its box had the focus: the caret goes back to the text.)
       else if (!$("sharing").hidden) {
@@ -529,7 +529,6 @@ const TITLE_NOT_SAVED = {
   fastClick(document, `.chrome-top button:not(.erga-account-btn), #doc-title, #agent-fab, #agent-close`);
   document.addEventListener("mousedown", (e) => {
     const at = e.target as Node;
-    if (!$("help").hidden && !$("help").contains(at) && !$("btn-help").contains(at)) shell.chrome.toggleHelp(false);
     if (!$("sharing").hidden && !$("sharing").contains(at) && !$("btn-share").contains(at)) shell.sharing.toggleSharing(false);
     if (!$("account").hidden && !$("account").contains(at) && !shell.people.accountBtn?.contains(at)) shell.people.toggleAccount(false);
   });
@@ -567,7 +566,6 @@ const TITLE_NOT_SAVED = {
         path: shell.pagePath,
         pages: !$("pages").hidden,
         settings: !!shell.docSettings?.isOpen(),
-        help: !$("help").hidden,
         files: agentPanel()?.files.files ?? [],
       }),
       { everyReload: true }
@@ -588,7 +586,6 @@ const TITLE_NOT_SAVED = {
   if (back && back.path == shell.pagePath) {
     if (back.pages) requestAnimationFrame(() => shell.naming.togglePages(true));
     if (back.settings) void shell.chrome.loadSettings().then((s) => s?.toggle(true));
-    if (back.help) shell.chrome.toggleHelp(true);
     if (back.files?.length) agentPanel()?.files.restore(back.files);
   }
   // ---------------------------------------------------------------- another page

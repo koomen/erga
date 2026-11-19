@@ -76,8 +76,10 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
   let reading: Promise<void> | null = null;
   let shown: Found[] = [];
   let at = 0;
-  // The pages it opens keep local development's ?user=. "#settings" opens the Settings dialog on this page
-  // (client/agent/settings-dialog.ts): it keeps the page's address.
+  // What had the focus as the pane opened (the document's frame, a button): it gets the focus back as the pane closes.
+  let before: Element | null = null;
+  // The pages it opens keep local development's ?user=. "#settings" and "#shortcuts" open a dialog on this page
+  // (client/agent/person-agent.ts, DIALOGS): it keeps the page's address.
   const href = (path: string) => (path.startsWith("#") ? path : asUser(path));
 
   // On a document's page: the document (its project's pages come first).
@@ -179,13 +181,16 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
   }
 
   function close() {
-    if (root) root.hidden = true;
+    if (!root || root.hidden) return;
+    root.hidden = true;
+    (before as HTMLElement | null)?.focus();
   }
 
   function open() {
     root ??= build();
     const input = root.querySelector("input")!;
     if (root.hidden) {
+      before = document.activeElement;
       root.hidden = false;
       input.value = "";
       void render("");

@@ -646,7 +646,9 @@ journey("the admin: / opens the documents, ⌘K finds Erga's pages, the Home pag
   test("⌘K opens the quick search with Erga's pages and the admin ones; typing narrows it, ↓ and Enter open one, Escape closes it", async () => {
     await page.keyboard.press("ControlOrMeta+k");
     await expect.poll(async () => (await pane(page))?.groups).toEqual(expect.arrayContaining(["Pages", "Admin"]));
-    expect((await pane(page))!.rows).toEqual(expect.arrayContaining(["Settings#settings", "Access/admin/access"]));
+    expect((await pane(page))!.rows).toEqual(
+      expect.arrayContaining(["Settings#settings", "Keyboard shortcuts#shortcuts", "Access/admin/access"])
+    );
     await page.keyboard.type("admin");
     await expect.poll(async () => (await pane(page))?.groups).toEqual(["Admin"]);
     await page.keyboard.type(" au");

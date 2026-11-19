@@ -210,12 +210,6 @@ body.chrome-hidden .chrome-top:has(.save-state[data-at="error"]) { opacity: 1; }
   color: var(--fg);
   animation: pop 160ms var(--ease);
 }
-/* The shortcut card is long: it scrolls in a low window. */
-#help { max-height: calc(100vh - 74px); overflow-y: auto; overscroll-behavior: contain; }
-#help dl { gap: 5px 12px; }
-.help dl { display: grid; grid-template-columns: 1fr auto; gap: 7px 12px; margin: 0; }
-.help dt { color: var(--soft); }
-.help dd { margin: 0; display: flex; gap: 3px; align-items: center; color: var(--soft); }
 .help p { margin: 14px 0 0; color: var(--soft); font-size: 12.5px; }
 /* The editor's Share with people card. */
 .help.share { width: min(400px, calc(100vw - 32px)); }

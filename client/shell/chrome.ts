@@ -1,5 +1,5 @@
 // The quiet chrome: the controls go out of sight while you type and come back as the pointer moves; the on-screen
-// keyboard; the quick actions on a phone; the help card; and the document's settings, behind the gear.
+// keyboard; the quick actions on a phone; and the document's settings, behind the gear.
 
 import type { Settings } from "../pages/settings";
 import { live } from "../live/client";
@@ -14,7 +14,7 @@ export function mountChrome(shell: Shell) {
   let anchor: { x: number; y: number; t: number } | null = null;
   let lastKeyAt = 0;
   function hideChrome() {
-    if (chromeHidden || shell.docSettings?.isOpen() || !$("help").hidden || !$("sharing").hidden || !$("naming").hidden || !$("account").hidden) return;
+    if (chromeHidden || shell.docSettings?.isOpen() || !$("sharing").hidden || !$("naming").hidden || !$("account").hidden) return;
     chromeHidden = true;
     anchor = null;
     document.body.classList.add("chrome-hidden");
@@ -61,18 +61,8 @@ export function mountChrome(shell: Shell) {
     keep: ".erga-bar-r, .help, .ds-menu, .erga-new-menu, .erga-agent-menu",
   });
 
-  const help = $("help");
-  const helpBtn = $("btn-help");
-  function toggleHelp(force?: boolean) {
-    const open = typeof force == "boolean" ? force : help.hidden;
-    help.hidden = !open;
-    helpBtn.setAttribute("aria-expanded", String(open));
-    if (open) cardOpened("help");
-  }
-  helpBtn.addEventListener("click", () => toggleHelp());
   /** Closes every card but `keep`. */
   function closeCards(keep?: Card) {
-    if (keep != "help") toggleHelp(false);
     if (keep != "sharing") shell.sharing.toggleSharing(false);
     if (keep != "agent") shell.sharing.toggleAgentMenu(false);
     if (keep != "naming") shell.naming.toggleNaming(false);
@@ -126,21 +116,14 @@ export function mountChrome(shell: Shell) {
         detail: "Check your connection and try again.",
       });
   });
-  if (!isMac) {
-    for (const k of help.querySelectorAll("kbd")) {
-      if (k.textContent == "⌘") k.textContent = "Ctrl";
-      else if (k.textContent == "⌥") k.textContent = "Alt";
-      else if (k.textContent == "⇧") k.textContent = "Shift";
-    }
+  if (!isMac)
     for (const b of document.querySelectorAll<HTMLElement>("[data-tip]")) b.dataset.tip = b.dataset.tip!.replace("⌘⇧", "Ctrl+Shift+").replace("⌘", "Ctrl+");
-  }
   return {
     closeCards,
     cardOpened,
     hideChrome,
     showChrome,
     pointerMoved,
-    toggleHelp,
     toggleQuick,
     loadSettings,
     keyPressed() {
@@ -151,4 +134,4 @@ export function mountChrome(shell: Shell) {
 
 export type Chrome = ReturnType<typeof mountChrome>;
 /** The shell's cards, of which one is open at a time. */
-type Card = "help" | "sharing" | "agent" | "naming" | "pages" | "account" | "settings";
+type Card = "sharing" | "agent" | "naming" | "pages" | "account" | "settings";

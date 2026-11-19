@@ -614,13 +614,15 @@ window.ergaAgentPanel = {
   files: att,
 };
 
-// Settings (client/agent/settings-dialog.ts) and Send feedback (client/agent/feedback-dialog.ts): dialogs on any page,
-// each loaded the first time it's asked for. The account menu's Settings and Send feedback, and any link to
-// "#settings" or "#feedback", open them; so does an address that ends with one. A key saved or removed in Settings
+// Settings (client/agent/settings-dialog.ts), Send feedback (client/agent/feedback-dialog.ts) and Keyboard shortcuts
+// (client/common/shortcuts-dialog.ts): dialogs on any page, each loaded the first time it's asked for. The account
+// menu's Settings and Send feedback, and any link to "#settings", "#feedback" or "#shortcuts" (the quick search's),
+// open them; so does an address that ends with one. A key saved or removed in Settings
 // gives the agent other models: the panel reads them again.
 const DIALOGS: Record<string, () => void> = {
   "#settings": () => void import("./settings-dialog").then((m) => m.openSettings()),
   "#feedback": () => void import("./feedback-dialog").then((m) => m.openFeedback()),
+  "#shortcuts": () => void import("../common/shortcuts-dialog").then((m) => m.toggleShortcuts()),
 };
 const openDialog = (hash: string) => {
   if (location.hash == hash) history.replaceState(history.state, "", location.pathname + location.search);

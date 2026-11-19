@@ -1,10 +1,10 @@
 // The format bar, the link bar, Markdown shortcuts and the slash menu: each changes the text it is for, and no other.
 // One page, typed from empty: a bold word, Markdown in a line, the bar's type menu, a link (its bar, its ends, its text), a link made with
-// the bar, the clear key, Markdown blocks, the slash menu, the shortcut card. Then the same page as a reader has it:
+// the bar, the clear key, Markdown blocks, the slash menu, the shortcuts' dialog. Then the same page as a reader has it:
 // where its links open.
 import { expect, journey, servers, test } from "../helpers/fixtures";
 import { F, openEmpty, type Editor } from "../helpers/editor";
-import { pointerOnPage } from "../helpers/press";
+import { clickOn, pointerOnPage } from "../helpers/press";
 
 const s = await servers.main();
 
@@ -342,16 +342,27 @@ journey("the format bar, the link bar, Markdown and the slash menu", () => {
     expect(await bar<string>(ed, `C.querySelector("#fmt [data-link=tab] .label").textContent`)).toBe("Opens in this tab");
   });
 
-  test("the ? button opens the shortcut card; it lists the Markdown, the comment and the editor's key; ⌘/ opens it too", async () => {
+  test('⌘K, "short" and Enter open the shortcuts in a dialog, with the Markdown, the comment and the editor\'s key; Esc closes it, the caret back in the text; ⌘/ opens it too; no bar has a button for it', async () => {
     const page = ed.page;
-    const open = () => ed.eval<boolean>(`!document.getElementById("help").hidden`);
+    const open = () => ed.eval<boolean>(`!!document.querySelector("#erga-shortcuts:modal")`);
     expect(await open()).toBe(false);
-    await page.click("#btn-help");
+    expect(await ed.eval<number>(`document.querySelectorAll("#btn-help, .chrome-top [aria-label*=hortcuts]").length`)).toBe(0);
+    await page.keyboard.press("ControlOrMeta+k");
+    const picked = () =>
+      ed.eval<string | null>(
+        `document.activeElement?.matches(".erga-qs-input") ? document.querySelector(".erga-qs-item[aria-selected=true] b")?.textContent ?? null : null`
+      );
+    await expect.poll(picked).not.toBeNull();
+    await page.keyboard.type("short");
+    await expect.poll(picked).toBe("Keyboard shortcuts");
+    await page.keyboard.press("Enter");
     await expect.poll(open).toBe(true);
+    // The focus is in it, and the page behind it takes no key.
+    expect(await ed.eval<boolean>(`document.getElementById("erga-shortcuts").contains(document.activeElement)`)).toBe(true);
     const rows = await ed.eval<string[]>(
-      `[...document.querySelectorAll("#help dt")].map((d) => d.textContent + ": " + d.nextElementSibling.textContent.replace(/\\s+/g, " ").trim())`
+      `[...document.querySelectorAll("#erga-shortcuts dt")].map((d) => d.textContent + ": " + d.nextElementSibling.textContent.replace(/\\s+/g, " ").trim())`
     );
-    // A Mac's keys; another system shows its own names for them (client/shell/chrome.ts).
+    // A Mac's keys; another system shows its own names for them (client/common/shortcuts-dialog.ts).
     const keys = (row: string) =>
       process.platform == "darwin" ? row : row.replace(/⌘/g, "Ctrl").replace(/⌥/g, "Alt").replace(/⇧/g, "Shift");
     const mac = [
@@ -381,13 +392,19 @@ journey("the format bar, the link bar, Markdown and the slash menu", () => {
       "This list: ⌘/",
     ];
     expect(rows).toEqual(mac.map(keys));
-    // The button closes it too; ⌘/ still opens it, and Esc closes it.
-    await page.click("#btn-help");
+    // Esc closes it, and the caret is in the text again; ⌘/ opens it and closes it; its ✕ closes it too.
+    await page.keyboard.press("Escape");
+    await expect.poll(open).toBe(false);
+    await expect.poll(() => ed.caretIn("h2 a")).toBe(true);
+    await page.keyboard.press("ControlOrMeta+/");
+    await expect.poll(open).toBe(true);
+    await page.keyboard.press("ControlOrMeta+/");
     await expect.poll(open).toBe(false);
     await page.keyboard.press("ControlOrMeta+/");
     await expect.poll(open).toBe(true);
-    await page.keyboard.press("Escape");
+    await clickOn(page, "#erga-shortcuts .close");
     await expect.poll(open).toBe(false);
+    await expect.poll(() => ed.caretIn("h2 a")).toBe(true);
   });
 
   test("for readers, a link that leaves the document opens a new tab; the one set to open in this tab takes the tab", async () => {
