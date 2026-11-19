@@ -3,6 +3,8 @@
 // goes at the end, and an old one is taken over.
 
 import { expect, test } from "bun:test";
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { LOCK, LOCK_MS, lockStep, type Run, tryBranch } from "../deploy/cli/try";
 import { commit, gitWorld, sh } from "./helpers/git-world.ts";
 
@@ -75,7 +77,7 @@ test("a try puts the branch's merge with staging on verify as one commit, holds 
   // GitHub was asked until its run ended, and each time the lock was there, with the try's name, and verify at the commit.
   expect(seen.length).toBe(3);
   expect(new Set(seen.map((s) => s.verify))).toEqual(new Set(["the try's commit"]));
-  expect(seen[0].lock).toMatch(/^bun erga try task, by \S+ on \S+$/);
+  expect(seen[0].lock).toBe("bun erga try task");
   expect(w.at("refs/heads/verify")).toBe(r.sha);
   expect(w.of("%P", "refs/heads/verify")).toBe(staging);
   expect(w.of("%s", "refs/heads/verify")).toBe("the task's change");
@@ -136,7 +138,7 @@ test("a second try waits for the first one's lock, and goes when the first ends"
     },
   });
   expect(waits).toBe(1);
-  expect(second.said).toMatch(/verify is in use: bun erga try task, by \S+ on \S+\. It is free at \S+ at the latest\. This try waits\./);
+  expect(second.said).toMatch(/verify is in use: bun erga try task, by t\. It is free at \S+ at the latest\. This try waits\./);
   expect([(await first).error, second.error]).toEqual(["", ""]);
   expect(w.at("refs/heads/verify")).toBe(second.sha);
   expect(w.at(LOCK)).toBe("");
@@ -157,14 +159,14 @@ test("a lock older than 30 minutes is taken over; a try whose own lock was taken
     sh(w.origin, "git", "update-ref", LOCK, made);
     return made;
   };
-  const old = lockAt(Date.now() - LOCK_MS - 5000, "bun erga try gone, by x on y");
+  const old = lockAt(Date.now() - LOCK_MS - 5000, "bun erga try gone");
   let other = "";
   const r = await attempt(w.clone, "task", {
     runOf: async () => {
       // The try has its own lock in the old one's place. Then it is slow, and another machine's try takes it over.
       expect(w.at(LOCK)).not.toBe(old);
       expect(w.of("%s", LOCK)).toMatch(/^bun erga try task/);
-      other = lockAt(Date.now(), "bun erga try other, by x on y");
+      other = lockAt(Date.now(), "bun erga try other");
       return DONE;
     },
   });
@@ -184,6 +186,15 @@ test("what a try refuses: no name, a branch that only bun erga moves, one that G
   expect(await refused(undefined)).toBe("Name the branch: bun erga try <branch>.");
   expect(await refused("staging")).toContain("staging is not a feature branch");
   expect(await refused("nowhere")).toContain("There is no branch nowhere on GitHub");
+  // A fetch that fails is not "no branch": it says git's own words. (GitHub has a newer commit of the branch, and
+  // another fetch holds the branch's ref in this clone.)
+  const tree = sh(w.origin, "git", "rev-parse", "refs/heads/task^{tree}");
+  const more = sh(w.origin, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit-tree", tree, "-p", w.task, "-m", "more");
+  sh(w.origin, "git", "update-ref", "refs/heads/task", more);
+  const held = join(w.clone, ".git/refs/remotes/origin/task.lock");
+  writeFileSync(held, "");
+  expect(await refused("task")).toMatch(/^git fetch origin task failed: .*task/s);
+  rmSync(held);
   sh(w.clone, "git", "push", "--quiet", "origin", "origin/staging:refs/heads/same");
   expect(await refused("same")).toContain("has no commits that staging does not have");
   // staging and the branch change the same line.

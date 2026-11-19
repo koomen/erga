@@ -4,7 +4,7 @@
 // deploys nothing.
 //
 // One try at a time, on every machine: the lock is the ref refs/erga/verify-lock on GitHub, a commit with no file whose
-// message names the holder. git makes the ref only when it is not there (a push with a lease on "no ref"), and GitHub
+// message names the try (not the machine: the repository may be public). git makes the ref only when it is not there (a push with a lease on "no ref"), and GitHub
 // decides that for all machines at once. A lock older than 30 minutes is free: the next try puts its own in its place,
 // again with a lease, on that commit. A try frees its own lock at its end; one that was killed leaves it to expire.
 //
@@ -12,7 +12,7 @@
 // commit would both see their push as done.
 
 import { randomUUID } from "node:crypto";
-import { hostname, userInfo } from "node:os";
+import { remoteHead } from "./deploy";
 import { mergeRefusal, squashMessage } from "./flow";
 import { commitsIn, mergeTree, repoOf } from "./observe";
 import { ROOT, sh } from "../root";
@@ -23,7 +23,7 @@ export const LOCK_MS = 30 * 60_000;
 /** The time between two looks at the lock, or at GitHub's run. */
 const LOOK_MS = 15_000;
 
-/** The lock as GitHub has it: its commit, that commit's time, and who holds it (the message's first line). */
+/** The lock as GitHub has it: its commit, that commit's time, and who holds it (the message's first line, and git's name of who made it). */
 export interface Held {
   sha: string;
   at: number;
@@ -86,7 +86,10 @@ export async function tryBranch(o: {
   // The commit that `bun erga merge` would make: the branch as GitHub has it, as one commit on staging's head.
   const f = git("fetch", "--quiet", "origin", "staging");
   if (!f.ok) throw new Error(`git fetch origin staging failed: ${f.err}`);
-  const exists = git("fetch", "--quiet", "origin", name).ok;
+  // (GitHub says whether it has the branch: a fetch fails for other reasons too, as when another fetch holds the ref.)
+  const exists = !!remoteHead(clone, "origin", name);
+  const b = exists ? git("fetch", "--quiet", "origin", name) : null;
+  if (b && !b.ok) throw new Error(`git fetch origin ${name} failed: ${b.err}`);
   const base = git("rev-parse", "origin/staging").out;
   const ahead = exists ? Number(git("rev-list", "--count", `origin/staging..origin/${name}`).out) : 0;
   const no = mergeRefusal({ branch: name, exists, ahead, conflicts: [] });
@@ -108,14 +111,13 @@ export async function tryBranch(o: {
     const lock = at.out.split(/\s/)[0];
     // (Gone between the two reads: free.)
     if (!lock || !git("fetch", "--quiet", "origin", `+${LOCK}:${LOCK}`).ok) return null;
-    const [time, by] = git("log", "-1", "--format=%ct%n%s", lock).out.split("\n");
+    const [time, by] = git("log", "-1", "--format=%ct%n%s, by %cn", lock).out.split("\n");
     return { sha: lock, at: Number(time) * 1000, by: by ?? "" };
   };
   /** Makes the lock in the place of `over`; null: another try was first. */
   const take = (over: string): string | null => {
-    const who = `bun erga try ${name}, by ${userInfo().username} on ${hostname()}`;
     const tree = sh(["git", "mktree"], { cwd: clone, input: "" }).out;
-    const lock = sh(["git", "commit-tree", tree, "-F", "-"], { cwd: clone, input: `${who}\n\n${randomUUID()}\n` });
+    const lock = sh(["git", "commit-tree", tree, "-F", "-"], { cwd: clone, input: `bun erga try ${name}\n\n${randomUUID()}\n` });
     if (!lock.ok) throw new Error(`git commit-tree failed: ${lock.err}`);
     const p = push(`--force-with-lease=${LOCK}:${over}`, "origin", `${lock.out}:${LOCK}`);
     if (p.ok) return lock.out;
