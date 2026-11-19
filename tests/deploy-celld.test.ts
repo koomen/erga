@@ -103,7 +103,8 @@ test("the pack is a .tgz that tar reads: each file whole, a long path too, under
   };
   const dir = mkdtempSync(join(tmpdir(), "erga-tgz-"));
   try {
-    const bytes = tar(files, 1_800_000_000);
+    // (A time in the past: GNU tar warns of a file from the future.)
+    const bytes = tar(files, 1_700_000_000);
     expect(bytes.length % 512).toBe(0);
     writeFileSync(join(dir, "plain.tar"), bytes);
     const names = Bun.spawnSync(["tar", "-tf", join(dir, "plain.tar")]);

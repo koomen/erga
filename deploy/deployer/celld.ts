@@ -130,7 +130,8 @@ export const celldTgz = (release: Release, vars: Record<string, string>): Effect
     const files = yield* celldProject(release, vars);
     const now = yield* Clock.currentTimeMillis;
     return yield* tried(async () => {
-      const packed = new Blob([tar(files, Math.floor(now / 1000))]).stream().pipeThrough(new CompressionStream("gzip"));
+      // The files' time is a minute ago: the machine's tar warns of a file from the future, and two clocks differ.
+      const packed = new Blob([tar(files, Math.floor(now / 1000) - 60)]).stream().pipeThrough(new CompressionStream("gzip"));
       return new Uint8Array(await new Response(packed).arrayBuffer());
     });
   });
