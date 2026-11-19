@@ -501,6 +501,8 @@ journey("a page with steps: its controls, viewing and editing, and full screen",
   test("editing: in full screen the controls show over the page; the arrows step, not the caret; the way out leaves at the same step", async () => {
     await page.locator("#btn-full").click();
     await expect.poll(() => full(page)).toBe("page");
+    // The focus is off the heading's text, in the page: the editor in the page hears of full screen after the viewer.
+    await expect.poll(() => inPage<boolean>(page, `!document.activeElement?.closest("[contenteditable]")`)).toBe(true);
     await page.keyboard.press("ArrowLeft");
     await atStep(page, 2, 4);
     await movePointer();

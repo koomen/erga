@@ -13,6 +13,13 @@ row fails, and the budgets sum to 280 seconds at most.
 Measured (2026-11-10, 10 runs with no failure): 436 browser tests in 28 files, 186 s of test time, 35 to 36 s for the
 whole run with the 1,100 unit tests beside them. Before: 861 browser tests in 282 files, 5 to 11 minutes.
 
+GitHub runs the same suite for each commit of staging and main (.github/workflows/release.yml), on Linux with 4 cores.
+There the suite must pass, and that is all: the 60 seconds and the budgets are the Mac Studio's. A machine with fewer
+than 16 cores has no time limit (e2e/run.ts), and a journey over its budget is named, never failed. Measured there
+(2026-11-19, 2 runs): 167 and 244 s for the suite, with 15 and 23 journeys over their budget. So a journey holds on
+Linux too: it presses the system's own keys (Control where a Mac has ⌘ or Option), and it waits for the state its
+next step needs, since a step there takes 2 to 3 times as long.
+
 The browser has a process for each site, as a person's browser has (e2e/helpers/engine.ts). Measured beside the same
 suite without it (2026-11-13, 4 runs of each in turn, on a busy machine): 216 s of test time with it and 208 s
 without; the whole run took 37 s and 36 s. V2's budget is 11 since its step for a second change in a row: the viewer

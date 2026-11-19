@@ -351,7 +351,10 @@ journey("the format bar, the link bar, Markdown and the slash menu", () => {
     const rows = await ed.eval<string[]>(
       `[...document.querySelectorAll("#help dt")].map((d) => d.textContent + ": " + d.nextElementSibling.textContent.replace(/\\s+/g, " ").trim())`
     );
-    expect(rows).toEqual([
+    // A Mac's keys; another system shows its own names for them (client/shell/chrome.ts).
+    const keys = (row: string) =>
+      process.platform == "darwin" ? row : row.replace(/⌘/g, "Ctrl").replace(/⌥/g, "Alt").replace(/⇧/g, "Shift");
+    const mac = [
       "Bold: ⌘B",
       "Italic: ⌘I",
       "Code: ⌘E",
@@ -376,7 +379,8 @@ journey("the format bar, the link bar, Markdown and the slash menu", () => {
       "Zoom: ⌘+ ⌘− ⌘0",
       "Print: ⌘P",
       "This list: ⌘/",
-    ]);
+    ];
+    expect(rows).toEqual(mac.map(keys));
     // The button closes it too; ⌘/ still opens it, and Esc closes it.
     await page.click("#btn-help");
     await expect.poll(open).toBe(false);

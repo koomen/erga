@@ -38,6 +38,13 @@ const narrow = ({
   last = "Last paragraph.",
 } = {}) => `# ${title}\n\n${first}\n\n## ${section}\n\n${apple}${banana}\n\nA quote line.\n\ncode line one code line two\n\n${last}`;
 
+// The keys that go a word on, to the line's end and to the page's end: a Mac's, and those of the other systems (Linux,
+// Windows), where Meta and Alt with an arrow do not move the caret.
+const MAC = process.platform == "darwin";
+const WORD_RIGHT = MAC ? "Alt+ArrowRight" : "Control+ArrowRight",
+  LINE_END = MAC ? "Meta+ArrowRight" : "End",
+  PAGE_END = MAC ? "Meta+ArrowDown" : "Control+End";
+
 journey("the caret and the arrows on a narrow page", () => {
   let ed: Editor;
   /** The caret at the end of a block's text. */
@@ -94,11 +101,11 @@ journey("the caret and the arrows on a narrow page", () => {
   });
 
   // Was a bug: Cmd+ArrowRight (and End) on a wrapped line draws the caret at the start of the next line, not at the end of this one.
-  test("Cmd+ArrowRight on a wrapped line draws the caret at the end of that line", async () => {
+  test("Cmd+ArrowRight (End off a Mac) on a wrapped line draws the caret at the end of that line", async () => {
     await endOf("h2");
     await ed.press("ArrowUp");
     await ed.press("ArrowUp");
-    await ed.page.keyboard.press("Meta+ArrowRight");
+    await ed.page.keyboard.press(LINE_END);
     // The caret's top, and the top of "this", the last word of the second line.
     const at = () =>
       ed.frame<{ caret: number; line: number }>(`(() => {
@@ -126,16 +133,16 @@ journey("the caret and the arrows on a narrow page", () => {
   });
 
   // Was a bug: Option+ArrowRight at the end of a block stays there: it never goes on to the next block's first word.
-  test("Option+ArrowRight at the end of a heading goes to the end of the next block's first word", async () => {
+  test("Option+ArrowRight (Control off a Mac) at the end of a heading goes to the end of the next block's first word", async () => {
     await endOf("h2");
-    await ed.page.keyboard.press("Alt+ArrowRight");
+    await ed.page.keyboard.press(WORD_RIGHT);
     await ed.shows(narrow({ apple: "• Apple|" }));
   });
 
   // Was a bug: Cmd+ArrowDown goes only to the end of the block the caret is in, not to the end of the page (Cmd+Shift+ArrowDown does).
-  test("Cmd+ArrowDown goes to the end of the page", async () => {
+  test("Cmd+ArrowDown (Control+End off a Mac) goes to the end of the page", async () => {
     await endOf("h2");
-    await ed.page.keyboard.press("Meta+ArrowDown");
+    await ed.page.keyboard.press(PAGE_END);
     await ed.shows(narrow({ last: "Last paragraph.|" }));
   });
 
