@@ -34,9 +34,12 @@ export const pageStill = async (ed: Editor) => {
   );
 };
 
-/** Has the person's agent play `steps` (the scripted model, agents/models.ts): a message typed in its box, sent with Enter. */
+/**
+ * Has the person's agent play `steps` (the scripted model, agents/models.ts): a message typed in its box, sent with
+ * Enter. The person presses in the box first, when the keys are elsewhere (ed.openAgent).
+ */
 export async function agentPlays(ed: Editor, steps: object[]) {
-  await ed.page.focus("#agent-input");
+  if (!(await ed.agentHasKeys())) await ed.openAgent();
   await ed.page.keyboard.insertText(`Edit @script ${JSON.stringify(steps)}`);
   await ed.page.keyboard.press("Enter");
 }

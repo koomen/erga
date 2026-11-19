@@ -333,7 +333,31 @@ journey("a page that keeps its view in its address, in the viewer and in the edi
       await soon(() => page.evaluate(() => document.querySelectorAll("iframe.erga-view").length)).toBe(1);
     });
     expect(edited, "the agent's change: no frame with another view, none without the page").toMatchObject({ moved: [], empty: 0 });
-    // The person loads the tab again (⌘R): the page is out of sight until its camera is where it was.
+    // The person loads the tab again (⌘R): the page is out of sight until its camera is where it was. The viewer's
+    // word on what its bars cover comes late, after the page has loaded (a slow shell). Was a bug: the canvas got
+    // "nothing covered" first, and its camera, and the address with it, moved up by half the bars' height at each ⌘R.
+    await page.addInitScript(() => {
+      if (window.top == window) return;
+      const held: MessageEvent[] = [];
+      let late = true;
+      addEventListener(
+        "message",
+        (e) => {
+          if (!late || e.data?.type != "erga-room") return;
+          e.stopImmediatePropagation();
+          held.push(e);
+        },
+        true
+      );
+      addEventListener("load", () =>
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            late = false;
+            for (const e of held) dispatchEvent(new MessageEvent("message", { data: e.data, origin: e.origin, source: e.source }));
+          })
+        )
+      );
+    });
     const again = await views(page, async () => {
       await page.reload();
       await ed.loaded();

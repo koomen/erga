@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, journey, servers, test, until, type Tab } from "../helpers/fixtures";
-import { DISK_MS, F, openEditor, type Editor } from "../helpers/editor";
+import { DISK_MS, F, openEditor, TIMESCALE, type Editor } from "../helpers/editor";
 import { dragAt, dragTo, folderOnDisk, onDisk, SIGN } from "../helpers/drops";
 import { clickOn, pointerOnPage, pressOn } from "../helpers/press";
 import { runTool } from "../helpers/tools";
@@ -159,10 +159,20 @@ journey("a page with parts of its own: keys go where the caret is", () => {
 
   test("the agent stops on an error while its panel is closed: an alert says so, and its Show opens the panel", async () => {
     await ed.openAgent();
-    await agentPlays(ed, [{ error: "overloaded", delay: 1000 }]);
-    // (pressOn, not Playwright's click, which waits first until the button has stopped: the panel closes before the
-    // agent's error comes, 1 s after the message. With 300 ms, a busy machine closed it too late, and no alert came.)
-    await pressOn(ed.page, "#agent-close");
+    // The message is slow on its way to the server: it gets there when the panel is closed, and the agent's error
+    // comes then. (Before, the error came 1 s after the message, and the step waited for that second.)
+    let go = () => {};
+    const closed = new Promise<void>((r) => (go = r));
+    const toAgent = (url: URL) => url.pathname.endsWith("/api/agent");
+    await ed.page.route(toAgent, async (route) => {
+      if (route.request().method() == "POST") await closed;
+      await route.continue();
+    });
+    await agentPlays(ed, [{ error: "overloaded" }]);
+    // (The panel's key, as it still slides in: a press on its close button waits until the panel has stopped.)
+    await ed.page.keyboard.press("ControlOrMeta+j");
+    await expect.poll(() => ed.eval<boolean>(`document.body.classList.contains("agent-open")`)).toBe(false);
+    go();
     const stopped = {
       title: "Your agent stopped",
       count: "",
@@ -171,7 +181,9 @@ journey("a page with parts of its own: keys go where the caret is", () => {
       buttons: ["Show"],
     };
     await expect.poll(async () => (await ed.alerts()).alerts).toEqual([stopped]);
-    await ed.page.click('#alerts .alert [data-action="show"]');
+    await ed.page.unroute(toAgent);
+    // (pressOn: Playwright's click waits first until the card, which comes in, has stopped.)
+    await pressOn(ed.page, '#alerts .alert [data-action="show"]');
     await expect.poll(() => ed.eval<boolean>(`document.body.classList.contains("agent-open")`)).toBe(true);
     expect((await ed.alerts()).view).toBe("none");
     expect(await ed.eval<string>(`document.querySelector("#agent-log .msg-error").textContent`)).toBe(
@@ -617,7 +629,10 @@ journey("files dropped and pasted on a page in a folder", () => {
     tab,
   }) => {
     // (On the drawn page, where the step before left the tab: its problem is closed first.)
-    await ed.page.click("#alerts .alerts-close");
+    await pressOn(ed.page, "#alerts .alerts-close");
+    // (The alerts' times, ten times as fast, from here to the journey's end: the quiet second, and how long a line
+    // that is done stays.)
+    await ed.eval(`window.__ergaTimescale = ${TIMESCALE}`);
     const token = (
       (await (
         await fetch(`${s.root}${address}/api/share`, {

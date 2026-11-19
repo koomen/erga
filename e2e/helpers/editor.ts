@@ -20,7 +20,7 @@ import { join } from "node:path";
 import type { Frame, Page } from "playwright-core";
 import { ROOT } from "./env";
 import { agentClosed, expect, goto, servers, settle, until, type Server, type Tab } from "./fixtures";
-import { pointerOnPage } from "./press";
+import { pointerOnPage, pressOn } from "./press";
 import { VISIBLE } from "./visible";
 
 /** A template literal's text without its first newline and its common indent. */
@@ -405,12 +405,28 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
         throw e;
       }
     },
-    /** The agent pane open, its input focused (it may open by itself first). */
+    /** Whether the agent's box has the keys: the pane is open, its box has the focus in the tab, and no frame in the tab has it. */
+    async agentHasKeys() {
+      if (!(await page.evaluate(`document.body.classList.contains("agent-open") && document.activeElement?.id == "agent-input"`)))
+        return false;
+      const inFrames = await Promise.all(
+        page.frames().map((f) => (f == page.mainFrame() ? false : f.evaluate<boolean>("document.hasFocus()").catch(() => false)))
+      );
+      return !inFrames.some(Boolean);
+    },
+    /**
+     * The agent pane open, its box with the keys (it may open by itself first). As a person does it: a press on the
+     * round button, or in the box of an open pane. (Not a click or a focus() by script: about one run in ten on a busy
+     * machine, the browser left the keys in the page's frame, which has its own process, and what the test typed for
+     * the agent went into the page's text.)
+     */
     async openAgent() {
       // Someone who keeps it closed finds it closed; anyone else, opening by itself as the editor comes up.
       const kept = await page.evaluate(`(() => { try { return JSON.parse(localStorage.getItem("erga:settings:v1") || "{}").agent === false; } catch { return false; } })()`);
       if (!kept) await until(() => page.evaluate(`document.body.classList.contains("agent-open")`), 2000).catch(() => {});
-      await page.evaluate(`document.body.classList.contains("agent-open") ? document.getElementById("agent-input").focus() : document.getElementById("agent-fab").click()`);
+      if (!(await ed.agentHasKeys()))
+        await pressOn(page, (await page.evaluate(`document.body.classList.contains("agent-open")`)) ? "#agent-input" : "#agent-fab");
+      await until(() => ed.agentHasKeys(), 5000, "the agent's box has the keys");
       await settle(page);
     },
   };

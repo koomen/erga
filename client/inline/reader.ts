@@ -361,8 +361,9 @@ export default function reader(C: ReaderConfig): void {
       seatSaid = seat;
       tell({ type: "erga-seat", seat, early: !parsed });
     }
+    // (Not before the viewer's word: a canvas told "nothing covered" first would move its camera at the true one.)
     const given = JSON.stringify(room.inset);
-    if (seat != "whole" || typeof inset != "function" || given == insetGiven) return;
+    if (seat != "whole" || typeof inset != "function" || !roomGiven || given == insetGiven) return;
     insetGiven = given;
     try {
       inset({ ...room.inset });
