@@ -1,4 +1,4 @@
-// The server's own settings and people, on the admin pages (/admin/settings): the settings, the API keys and the change log
+// The server's own settings and people, on the admin pages (/admin: each setting is on the page of what it governs): the settings, the API keys and the change log
 // (read; a key is cleared here, and set only on the page), how people sign in (read, switch, clear: an app's values are
 // set only on the page), the users, and the access rules. Each needs admin power (`admin`), and the directory checks
 // who's asking itself (Users.mustAdmin). Reads stay apart from changes: an app may allow the reads with no prompt.
@@ -46,7 +46,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
   // ------------------------------------------------------------ the server's settings and API keys (admins)
   {
     name: "settings",
-    ui: "Settings (/admin/settings), Agents (/admin/agents) and Change log (/admin/changes)",
+    ui: "The settings on Sign-in (/admin/auth), Access (/admin/access), Documents (/admin/documents), Agents and models (/admin/agents) and Feedback (/admin/feedback), and Change log (/admin/changes)",
     label: "Read the server's settings",
     activity: "reading the server's settings",
     admin: true,
@@ -115,7 +115,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
   },
   {
     name: "set_setting",
-    ui: "Settings (/admin/settings) and Agents (/admin/agents): change a setting, or Reset to the default",
+    ui: "Sign-in (/admin/auth), Access (/admin/access), Documents (/admin/documents), Agents and models (/admin/agents) and Feedback (/admin/feedback): change a setting, or Reset to the default",
     label: "Change a server setting",
     activity: "changing a server setting",
     admin: true,
@@ -237,7 +237,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
   // ------------------------------------------------------------ the server's people (admins)
   {
     name: "people",
-    ui: "Users (/admin/users) and Access (/admin/access): the users, the group rules, and public sharing",
+    ui: "Access (/admin/access): the group rules, the users, and public sharing",
     label: "Read the users and access rules",
     activity: "reading the users and access rules",
     admin: true,
@@ -301,7 +301,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
   },
   {
     name: "set_user",
-    ui: "Users (/admin/users): Add user, a user's role, and Remove",
+    ui: "Access (/admin/access), Users: Add user, a user's role, and Remove",
     label: "Change a user",
     activity: "changing a user",
     admin: true,

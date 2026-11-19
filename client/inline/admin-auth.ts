@@ -1,5 +1,5 @@
-// The Authentication page's script (/admin/auth, server/admin/auth.ts): each provider's switch, and each app's values,
-// Discard and Clear. The switch and the values save by themselves, with no Save button (client/common/autosave.ts): the
+// The Sign-in page's script (/admin/auth, server/admin/auth.ts): each provider's switch, and each app's values
+// (Replace opens their form), Discard and Remove. The switch and the values save by themselves, with no Save button (client/common/autosave.ts): the
 // switch at once; an app's Client ID and secret together, once both are there, when the typing pauses or the focus
 // leaves the form. The save mark left of the buttons' bar says how far it is; refused, the value stays, with the
 // server's reason under it.
@@ -80,6 +80,20 @@ export default function adminAuth(): void {
         } catch {}
       });
     const form = card.querySelector<HTMLFormElement>("form.configure");
+    // Replace: the form to set other values, in the place of the buttons; Escape in it, with nothing typed, closes it.
+    const row = card.querySelector<HTMLElement>(".secret-row");
+    card.querySelector(".replace")?.addEventListener("click", () => {
+      row!.hidden = true;
+      form!.hidden = false;
+      (form!.elements.namedItem("clientId") as HTMLInputElement).focus();
+    });
+    form?.addEventListener("keydown", (e) => {
+      if (e.key != "Escape" || !row) return;
+      if ([...form.querySelectorAll<HTMLInputElement>("input.input")].some((i) => i.value.trim())) return;
+      form.hidden = true;
+      row.hidden = false;
+      row.querySelector<HTMLElement>(".replace")?.focus();
+    });
     const appKey = `auth:${provider}:app`;
     mark.set(appKey, "saved");
     if (form) {
@@ -130,7 +144,7 @@ export default function adminAuth(): void {
       }
     });
     card.querySelector("button.clear")?.addEventListener("click", async () => {
-      if (!confirm("Clear the values set on this page? Sign-in goes back to the deploy's values.")) return;
+      if (!confirm("Remove the values set on this page? Sign-in goes back to the deploy's values.")) return;
       say(hint, "Clearing…");
       try {
         const result = await runTool("set_sign_in", { provider, action: "clear" });

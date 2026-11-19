@@ -1,5 +1,5 @@
 // The OAuth mode's apps (mode.ts): a server's OAuth app at each provider
-// (providers.ts), as the Authentication page shows it (/admin/auth,
+// (providers.ts), as the Sign-in page shows it (/admin/auth,
 // server/admin/auth.ts) and the admin agent reads it.
 //
 // The deploy gives each server its app: the public client ID as a text
@@ -262,7 +262,7 @@ export async function clearApp(c: AppContext, by: Act, force = false): Promise<{
 
 // ------------------------------------------------------------ the status, as the page and the agent see it
 
-/** One server's sign-in, as the Authentication page shows it. Never a secret. */
+/** One server's sign-in, as the Sign-in page shows it. Never a secret. */
 export interface AuthStatus {
   provider: Provider;
   origin: string;
@@ -271,8 +271,8 @@ export interface AuthStatus {
   callbackUrl: string;
   /** Local development: everyone signs in as DEV_LOGIN, without a provider. */
   dev: boolean;
-  /** What sign-in uses now. */
-  inUse: { clientId: string | null; secretSet: boolean; source: "page" | "deploy" };
+  /** What sign-in uses now. `secretLast4`: the last 4 characters of a secret set on the page (never the secret; the deploy's: null). */
+  inUse: { clientId: string | null; secretSet: boolean; secretLast4: string | null; source: "page" | "deploy" };
   deploy: { clientId: string | null; secretSet: boolean; idEnv: string; secretEnv: string };
   /** Values set on the page: in use, and waiting for a test sign-in. */
   page: KeptView | null;
@@ -304,7 +304,12 @@ export async function statusOf(c: AppContext, o: { origin: string; dev: boolean;
     homepageUrl: o.origin,
     callbackUrl: `${o.origin}${PROVIDERS[c.provider].callbackPath}`,
     dev: o.dev,
-    inUse: { clientId: now.clientId || null, secretSet: !!now.secret, source: now.source },
+    inUse: {
+      clientId: now.clientId || null,
+      secretSet: !!now.secret,
+      secretLast4: now.source == "page" && now.secret ? now.secret.slice(-4) : null,
+      source: now.source,
+    },
     deploy: { clientId: c.deploy.clientId || null, secretSet: !!c.deploy.secret, idEnv: PROVIDERS[c.provider].idEnv, secretEnv: PROVIDERS[c.provider].secretEnv },
     page: kept.active,
     pending: kept.pending,
@@ -319,7 +324,7 @@ export async function statusOf(c: AppContext, o: { origin: string; dev: boolean;
 export type By = Act & { admin?: boolean };
 
 /**
- * How people sign in on a server, as the Authentication page and the admin agent see it: its mode (mode.ts), and that
+ * How people sign in on a server, as the Sign-in page and the admin agent see it: its mode (mode.ts), and that
  * mode's own status. Never a secret.
  */
 export type SignInStatus =
@@ -327,7 +332,7 @@ export type SignInStatus =
   | { mode: "proxy"; proxy: ProxyStatus };
 
 /**
- * What the Authentication page and the admin agent do, on this server only. Admins only. No call answers a secret.
+ * What the Sign-in page and the admin agent do, on this server only. Admins only. No call answers a secret.
  * All but `status` are the OAuth mode's: in the proxy mode they refuse (the deploy sets the proxy: nothing to change here).
  */
 export interface AuthOps {

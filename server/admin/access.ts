@@ -1,5 +1,7 @@
-// /admin/access, the Access page: the group rules, and whether users can share content publicly
-// (client/inline/admin-access.ts changes them).
+// /admin/access, the Access page: everything that governs who may use this server, and what they may do. The group
+// rules (who may sign in, and their access), the users, each with one role (./users.ts), and whether users can share
+// content with people who are not signed in (client/inline/admin-access.ts and admin-users.ts change them). A person's
+// access is the highest of their role and every group rule that matches them.
 
 import {
   type Access,
@@ -12,10 +14,11 @@ import {
   SETTINGS,
 } from "../directory/index.ts";
 import { SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
-import { ICON, inlineCall } from "../pages/index.ts";
+import { ICON, inlineCall, TIMES_SCRIPT } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
 import { adminPage } from "./layout.ts";
+import { usersSection } from "./users.ts";
 
 /** A rule's place: the list's order (everybody's first, then by kind and value: AccessRules.all). */
 const ruleSort = (r: AccessRule) => `${RULE_KINDS.indexOf(r.kind)}:${r.value}`;
@@ -86,10 +89,11 @@ ${rules.map(ruleRow).join("\n")}
 /** /admin/access: the access rules, one list, and whether users can share content publicly. */
 export async function accessPage(platform: Platform, session: Session) {
   const who = whoOf(session);
-  const [rules, suggestions, publicSharing] = await Promise.all([
+  const [rules, suggestions, publicSharing, users] = await Promise.all([
     platform.directory.rules.list(who),
     platform.directory.rules.suggestions(who),
     platform.directory.config.get("public_sharing"),
+    usersSection(platform, session),
   ]);
   return adminPage({
     session,
@@ -97,14 +101,15 @@ export async function accessPage(platform: Platform, session: Session) {
     here: "access",
     body: `
   ${rulesSection(rules, suggestions, platform.directory.providers)}
+  ${users}
   <section class="public-sharing" aria-labelledby="public-head">
-    <h3 class="sub-head" id="public-head">Sharing</h3>
+    <h3 class="sub-head" id="public-head">People who are not signed in</h3>
     <ol class="rows settings" data-live-kind="setting" data-live-view="access" data-live-at="${Date.now()}">
     ${publicRow(publicSharing)}
     </ol>
     <p class="hint" id="public-hint" role="status"></p>
   </section>
-<script>${inlineCall("admin-access")}</script>`,
+<script>${TIMES_SCRIPT}${inlineCall("admin-access")}${inlineCall("admin-users", { me: session.login.toLowerCase() })}</script>`,
   });
 }
 

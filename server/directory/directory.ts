@@ -119,7 +119,7 @@ export class Directory {
   readonly identities: Identities;
   /** Who may use the server, by group: the access rules (the Access page). */
   readonly rules: AccessRules;
-  /** The people an admin added before their first sign-in (the Users page). */
+  /** The people an admin added before their first sign-in (the Access page). */
   readonly people: People;
   /** A person's lists of documents (/documents, /documents/archived), and an admin's search of everyone's. */
   readonly lists: Lists;
@@ -576,7 +576,7 @@ export class Directory {
   }
 
   /**
-   * Adds a user by their provider account, with a role (the Users page's Add user): a login (the provider's id for it
+   * Adds a user by their provider account, with a role (the Access page's Add user): a login (the provider's id for it
    * found now; refused when the provider has no such account) or an email. An account that signs in with it already
    * gets the role; anyone else waits for their first sign-in (people.ts). A bootstrap admin is an admin already:
    * `note` says so, and nothing changes.
@@ -639,7 +639,7 @@ export class Directory {
     if (user && (await this.accessOf(user)) != "none") return null;
     if (!user && (rules.some((r) => r.access != "none") || (await this.people.any())))
       return `There's no user ${login} on this server yet: a username comes at the first sign-in. If they may sign in, they sign in once first; then share it with them.`;
-    return `${login} isn't allowed to sign in to this server, so they couldn't open it. An admin can give them a role on the Users page (/admin/users).`;
+    return `${login} isn't allowed to sign in to this server, so they couldn't open it. An admin can give them a role on the Access page (/admin/access).`;
   }
 
   /** Whether the group rules are as a server starts: everybody no access, and no other group. */

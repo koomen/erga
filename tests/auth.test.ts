@@ -184,7 +184,7 @@ test("the status: what's in use and where from, never a secret, the URLs GitHub 
   await saveApp(c, GOOD, { login: "koomen" });
   const set = await statusOf(c, { origin: "https://staging.erga.dev", dev: false, pagePlace: "here" });
   expect(set.check.state).toBe("working");
-  expect(set.inUse).toEqual({ clientId: GOOD.clientId, secretSet: true, source: "page" });
+  expect(set.inUse).toEqual({ clientId: GOOD.clientId, secretSet: true, secretLast4: GOOD.secret.slice(-4), source: "page" });
   expect(set.setup).toBeNull();
   expect(JSON.stringify(set)).not.toContain(GOOD.secret);
 });

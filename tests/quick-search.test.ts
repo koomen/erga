@@ -20,9 +20,9 @@ test("for someone who isn't an admin, it has no admin pages", async () => {
   expect(groups).toContain("Pages");
   expect(groups).not.toContain("Admin");
   expect(rows.some((r) => r.path.includes("/admin"))).toBe(false);
-  expect(match(rows, "users")).toEqual([]);
-  // An admin (the dev login) has them: the same word finds the Users page.
+  expect(match(rows, "access")).toEqual([]);
+  // An admin (the dev login) has them: "access" finds the Access page, where the users are.
   const admin = await rowsOf(s);
   expect([...new Set(admin.map((r) => r.group))]).toEqual(["Pages", "Admin"]);
-  expect(match(admin, "users").map((r) => `${r.label}${r.path}`)).toEqual(["Users/admin/users"]);
+  expect(match(admin, "access").map((r) => `${r.label}${r.path}`)).toEqual(["Access/admin/access"]);
 });

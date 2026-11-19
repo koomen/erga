@@ -323,7 +323,7 @@ test("the proxy mode: sign-in goes straight to the proxy, a person added by thei
     handle: "cy@example.com",
     role: "admin",
   });
-  // The Authentication page's status is the proxy's, with no secret and no provider; what changes an OAuth app refuses.
+  // The Sign-in page's status is the proxy's, with no secret and no provider; what changes an OAuth app refuses.
   const status = await authOps(platform, ORIGIN).status(admin);
   expect(status).toMatchObject({
     mode: "proxy",

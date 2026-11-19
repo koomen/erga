@@ -4,7 +4,18 @@
 
 import * as Effect from "effect/Effect";
 import { NotAllowed } from "../directory/index.ts";
-import { accessRows, agentsRows, authRows, changesRows, settingsRows, usersRows } from "../admin/index.ts";
+import {
+  accessRows,
+  adminDocumentsRows,
+  adminSitesRows,
+  agentsPagesRows,
+  agentsRows,
+  authRows,
+  authSettingsRows,
+  changesRows,
+  feedbackRows,
+  usersRows,
+} from "../admin/index.ts";
 import { documentsRows } from "../pages/index.ts";
 import { type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
 import { call, ctx, fromWeb, json, text, type Route } from "../http.ts";
@@ -16,9 +27,13 @@ const VIEWS: Record<string, LiveRows> = {
   "documents-archived": documentsRows("archived"),
   "documents-scratch": documentsRows("scratch"),
   users: usersRows,
-  settings: settingsRows,
   access: accessRows,
   agents: agentsRows,
+  "agents-pages": agentsPagesRows,
+  "admin-documents": adminDocumentsRows,
+  "admin-sites": adminSitesRows,
+  "auth-settings": authSettingsRows,
+  feedback: feedbackRows,
   changes: changesRows,
   auth: authRows,
 };

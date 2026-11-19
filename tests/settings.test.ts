@@ -5,8 +5,9 @@
 
 import { afterAll, expect, test } from "bun:test";
 import { adminRoutes } from "../server/admin/index.ts";
-import { ConfigError, logins, type ConfigEntry } from "../server/directory/index.ts";
-import type { Platform } from "../server/platform.ts";
+import { deploySection, OWN, PAGE_SETTINGS, settingsSection } from "../server/admin/settings.ts";
+import { ConfigError, logins, SETTINGS, type ConfigEntry } from "../server/directory/index.ts";
+import type { Platform, Session } from "../server/platform.ts";
 import { respond } from "../server/http.ts";
 
 test("logins: a list of GitHub logins, tidied; a bad one is refused, saying which", () => {
@@ -42,7 +43,7 @@ const entries: ConfigEntry[] = [
     updated: null,
     updatedBy: null,
   },
-  // An agent setting: on the Agents page, never here.
+  // An agent setting: on the Agents and models page, never here.
   { key: "agent_daily_tokens", value: 30_000_000, default: 30_000_000, source: "default", locked: false, updated: null, updatedBy: null },
 ];
 const users = ["alice", "bob", "carol"].map((login) => ({ login, name: login, role: login == "bob" ? "admin" : "user", created: 1, addedBy: null, lastSeen: null, bootstrap: false }));
@@ -63,6 +64,7 @@ const platform = {
       list: async () => [],
       deployed: async () => [
         { env: "SESSION_SECRET", service: "Erga", description: "Signs sessions.", why: "", set: true, standIn: false },
+        { env: "GITHUB_ISSUES_TOKEN", service: "GitHub", description: "Opens issues.", why: "", set: false, standIn: false },
       ],
     },
     get: async () => null,
@@ -85,12 +87,26 @@ const server = Bun.serve({
 afterAll(() => server.stop(true));
 
 test("a users setting is a picker: chips for its users, no typed list; the line says when and who set it", async () => {
-  const html = await (await fetch(`http://localhost:${server.port}/admin/settings`)).text();
+  // (A page's list of settings, as each admin page makes it: server/admin/settings.ts.)
+  const html = await settingsSection(platform, { login: "bob", name: "bob" } as Session, ["notice_users", "beta"], "a-view");
   expect(html).toContain(`<li class="chip" data-login="alice">alice<button type="button" class="unpick"`);
   expect(html).toContain(`<datalist id="user-logins"><option value="alice"><option value="bob"><option value="carol"></datalist>`);
   expect(html).toContain(`Set 2026-10-05 14:03 UTC by bob`);
   expect(html).toMatch(/data-key="beta" data-control="switch"/);
-  // The agents' settings are on the Agents page; the deploy's secrets are here.
+  // Only the settings that the page names: the agents' are on the Agents and models page.
   expect(html).not.toContain(`data-key="agent_daily_tokens"`);
-  expect(html).toContain(`<li class="deploy-secret" data-env="SESSION_SECRET">`);
+  // No Save button: a setting saves as it changes (client/common/autosave.ts).
+  expect(html).not.toMatch(/<button[^>]*>Save</);
 });
+
+test("each setting has one place: a page's list, or a control of its own; each page shows the deploy's secrets for what it governs", async () => {
+  const placed: string[] = [...Object.values(PAGE_SETTINGS).flat(), ...OWN];
+  expect([...placed].sort()).toEqual(Object.keys(SETTINGS).sort());
+  expect(new Set(placed).size).toBe(placed.length);
+  const feedback = deploySection(await platform.directory.credentials.deployed({ login: "bob" }), ["GITHUB_ISSUES_TOKEN"]);
+  expect(feedback).toContain(`<li class="deploy-secret" data-env="GITHUB_ISSUES_TOKEN">`);
+  expect(feedback).not.toContain(`data-env="SESSION_SECRET"`);
+  // The pages that are gone: their settings are on the page of what they govern.
+  for (const gone of ["/admin/settings", "/admin/users"]) expect((await fetch(`http://localhost:${server.port}${gone}`)).status).toBe(404);
+});
+

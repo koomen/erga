@@ -203,7 +203,7 @@ async function setProvider(platform: SignInPlatform, by: Act, provider: Provider
 
 /** This server's own status. `origin`: where it's reached (the callback URL is under it). */
 async function localStatus(platform: SignInPlatform, origin: string, provider: Provider): Promise<AuthStatus> {
-  const pagePlace = `on this server's Authentication page (${origin}/admin/auth)`;
+  const pagePlace = `on this server's Sign-in page (${origin}/admin/auth)`;
   return statusOf(contextOf(platform, provider), {
     origin,
     dev: platform.dev(new URL(origin)),

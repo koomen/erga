@@ -1,4 +1,4 @@
-// The API keys an admin enters on the Agents page (/admin/agents): one for each provider of
+// The API keys an admin enters on the Agents and models page (/admin/agents): one for each provider of
 // models (Anthropic, OpenAI, Google, OpenRouter), for each person's agent
 // (agents/models.ts), and Anthropic's for version descriptions. They are kept so:
 //
@@ -65,8 +65,8 @@ export const CREDENTIALS = {
 } as const satisfies Record<string, { env: string; label: string; service: string; prefixes: readonly string[]; description: string }>;
 
 /**
- * The secrets only the deploy sets (Worker secrets). The Settings page lists
- * them but can't change them: each is a root key, guards the sign-in, or is
+ * The secrets only the deploy sets (Worker secrets). Each admin page lists those for what it governs (server/admin/),
+ * but can't change them: each is a root key, guards the sign-in, or is
  * shared with the other server, so a wrong value there could lock the admins
  * out or break both servers. A key here may be wrong at no greater cost than
  * the one feature it serves.
@@ -81,14 +81,14 @@ export const DEPLOY_SECRETS = [
   {
     env: "FACTORY_KEY",
     service: "Erga",
-    description: "Encrypts the API keys on the Agents page and the sign-in secrets.",
-    why: "The API keys on the Agents page are encrypted with it.",
+    description: "Encrypts the API keys on the Agents and models page and the sign-in secrets.",
+    why: "The API keys on the Agents and models page are encrypted with it.",
   },
   {
     env: "GITHUB_CLIENT_SECRET",
     service: "GitHub",
     description: "The secret of the GitHub OAuth app that signs people in.",
-    why: "A wrong value stops every sign-in, the admin's too: the Authentication page checks values with GitHub before it uses them.",
+    why: "A wrong value stops every sign-in, the admin's too: the Sign-in page checks values with GitHub before it uses them.",
   },
   {
     env: "GITHUB_ISSUES_TOKEN",

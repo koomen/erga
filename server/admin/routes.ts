@@ -1,23 +1,24 @@
-// The admin page: the server's settings and its users and
+// The admin pages: the server's settings and its users and
 // admins, for admins only. Everyone else gets "not found": they
-// can't see the page, nor that there is one.
+// can't see the pages, nor that there are any. Each page is one thing an admin governs, with every setting of it
+// (./layout.ts, SECTIONS; ./settings.ts, PAGE_SETTINGS).
 //
 // The routes are ROUTES, below: each page, and the two POSTs that set a secret.
 //
-// The Agents page shows whether each API key is set, its last four characters,
+// The Agents and models page shows whether each API key is set, its last four characters,
 // and who set it when. The page never gets a saved key back, nor does any answer
-// here. The Settings page shows, read-only, the secrets only the deploy sets.
+// here. Each page shows, read-only, the secrets only the deploy sets for what it governs.
 //
-// The Authentication page shows this server's GitHub OAuth app and Google
-// OAuth client: the client ID (public), whether the secret is set (never the
-// secret), the URLs the provider needs, a live check, and how to make one.
+// The Sign-in page shows this server's GitHub OAuth app and Google
+// OAuth client: the client ID (public), whether the secret is set and, for one set on the page, its last four
+// characters (never the secret), the URLs the provider needs, a live check, and how to make one.
 // A client ID and secret pasted there win over the deploy's, after the
 // provider accepts them, with the lockout rules server/identity/apps.ts gives.
-// Each server's page sets its own sign-in only. A save, a discard or a clear
+// Each server's page sets its own sign-in only. New values, a discard or a remove
 // shows the page again in place, with its message under the provider's card.
 //
 // Every page has the layout every admin page shares: the
-// breadcrumb, Share with agent, and the sidebar to Settings, Agents, Authentication, Change log, Users and Ops.
+// breadcrumb, Share with agent, and the sidebar to each page.
 //
 // Every other change on these pages (a setting, a user, a rule, a key cleared, a
 // provider switched) is an operation (server/operations/admin.ts): the pages'
@@ -37,11 +38,10 @@ import { type Platform, type Session, whoOf } from "../platform.ts";
 import { authOps, AuthError, providerOf, ScopeError } from "../identity/index.ts";
 import type { Who } from "../directory/index.ts";
 import { call, ctx, Field, form, json, plainJson, redirect } from "../http.ts";
-import { settingsPage } from "./settings.ts";
+import { documentsPage } from "./documents.ts";
 import { analyticsPage, isSpan } from "./analytics.ts";
 import { agentsPage } from "./agents.ts";
 import { authPage } from "./auth.ts";
-import { usersPage } from "./users.ts";
 import { accessPage } from "./access.ts";
 import { changesPage } from "./changes.ts";
 import { feedbackPage } from "./feedback.ts";
@@ -56,7 +56,7 @@ interface Asked {
 type Answer = HttpServerResponse.HttpServerResponse;
 type Run = (a: Asked, f: AdminFields) => Promise<Answer> | Answer;
 
-/** The Authentication page's facts, with live checks. */
+/** The Sign-in page's facts, with live checks. */
 const authStatus = (a: Asked) => authOps(a.platform, a.url.origin).status(a.who);
 
 /** Every /admin route: a page (GET), or a POST that sets a secret, which is set only here. */
@@ -75,9 +75,9 @@ export const ROUTES: readonly RouteRow<Run>[] = [
   },
   {
     method: "GET",
-    path: "/admin/settings",
-    run: (a) => settingsPage(a.platform, a.session, a.url.origin),
-    action: "Read the settings and pages' model use today (Settings)",
+    path: "/admin/documents",
+    run: (a) => documentsPage(a.platform, a.session, a.url.origin),
+    action: "Read the documents' settings, and the document published to each domain (Documents)",
     domain: "admin",
     tool: "settings",
   },
@@ -95,17 +95,9 @@ export const ROUTES: readonly RouteRow<Run>[] = [
   },
   {
     method: "GET",
-    path: "/admin/users",
-    run: (a) => usersPage(a.platform, a.session),
-    action: "Read the users (Users)",
-    domain: "admin",
-    tool: "people",
-  },
-  {
-    method: "GET",
     path: "/admin/access",
     run: (a) => accessPage(a.platform, a.session),
-    action: "Read the group rules, and whether users can share content publicly (Access)",
+    action: "Read the group rules, the users, and whether users can share content publicly (Access)",
     domain: "admin",
     tool: "people",
   },
@@ -113,7 +105,8 @@ export const ROUTES: readonly RouteRow<Run>[] = [
     method: "GET",
     path: "/admin/agents",
     run: (a) => agentsPage(a.platform, a.session),
-    action: "Read the agents' settings: whose keys, the API keys' status, the models, the daily token limit (Agents)",
+    action:
+      "Read the agents' settings (whose keys, the API keys' status, the models, the daily token limit) and pages' models (their limits, their use today) (Agents and models)",
     domain: "admin",
     tool: "settings",
   },
@@ -121,15 +114,15 @@ export const ROUTES: readonly RouteRow<Run>[] = [
     method: "GET",
     path: "/admin/feedback",
     run: (a) => feedbackPage(a.platform, a.session),
-    action: "Read the feedback people sent, with each one's issue (Feedback)",
+    action: "Read where feedback goes, and the feedback people sent, with each one's issue (Feedback)",
     domain: "admin",
     tool: "feedback",
   },
   {
     method: "GET",
     path: "/admin/auth",
-    run: async (a) => authPage(a.session, await authStatus(a)),
-    action: "Read how people sign in on this server (Authentication)",
+    run: async (a) => authPage(a.platform, a.session, await authStatus(a)),
+    action: "Read how people sign in on this server (Sign-in)",
     domain: "admin",
     tool: "sign_in",
   },
@@ -138,7 +131,7 @@ export const ROUTES: readonly RouteRow<Run>[] = [
     path: "/admin/auth/status",
     // {here, google, providers} (server/identity/apps.ts, AuthStatus: never a secret)
     run: async (a) => json(await authStatus(a)),
-    action: "Read the same, as JSON, with live checks (Authentication)",
+    action: "Read the same, as JSON, with live checks (Sign-in)",
     domain: "admin",
     tool: "sign_in",
   },
@@ -147,7 +140,7 @@ export const ROUTES: readonly RouteRow<Run>[] = [
     path: "/admin/credentials",
     // name (anthropic), and value. The answer says what the page shows: never the key.
     run: async (a, f) => plainJson({ credential: await a.platform.directory.credentials.set(a.who, f.name, f.value) }),
-    action: "Set or replace an API key (Agents)",
+    action: "Set or replace an API key (Agents and models)",
     domain: "admin",
     exempt: SECRET,
   },
@@ -162,7 +155,7 @@ export const ROUTES: readonly RouteRow<Run>[] = [
         result: await authOps(a.platform, a.url.origin).save(a.who, { clientId: f.clientId, secret: f.secret }, provider),
       });
     },
-    action: "Set an OAuth provider's app: its client ID and secret (Authentication)",
+    action: "Set an OAuth provider's app: its client ID and secret (Sign-in)",
     domain: "admin",
     exempt: SECRET,
   },

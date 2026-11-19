@@ -1,9 +1,10 @@
-// The layout every admin page shares (/admin, /admin/settings, /admin/changes, /admin/users, /admin/access,
-// /admin/agents, /admin/auth): the bars of every page (server/pages/bars.ts: Erga › Admin › the page upper
+// The layout every admin page shares (/admin, /admin/auth, /admin/access, /admin/documents, /admin/agents,
+// /admin/feedback, /admin/changes): the bars of every page (server/pages/bars.ts: Erga › Admin › the page upper
 // left; upper right the quick actions, with Share with an agent, whose menu is admin-share.js, built from
 // client/admin/admin-share.ts, and left of them the save mark: every setting saves by itself, and the mark says how far
 // it is, client/common/admin-save.ts), the person's agent in the lower left (server/pages/agent.ts, as on every page),
-// and, on the left, a sidebar that links to Analytics, Settings, Agents, Authentication, Access, Change log, Users and Feedback.
+// and, on the left, a sidebar that links to Analytics, Sign-in, Access, Documents, Agents and models, Feedback and the
+// Change log.
 //
 // The sidebar collapses to a rail of icons and expands again, with an animation, and this browser remembers which
 // (localStorage "erga:admin-sidebar"), set before the sidebar paints, so it doesn't jump. On a phone it is a row of
@@ -26,8 +27,13 @@ import { esc } from "../../shared/html.ts";
 import type { Platform, Session } from "../platform.ts";
 import { actingAdmin } from "../identity/index.ts";
 
-export type AdminSection = "analytics" | "settings" | "agents" | "auth" | "access" | "changes" | "users" | "feedback";
+export type AdminSection = "analytics" | "auth" | "access" | "documents" | "agents" | "feedback" | "changes";
 
+/**
+ * The admin pages, in the sidebar's order. But for Analytics and the Change log, each is one thing an admin governs,
+ * with every setting of it: how people sign in; who may use the server; the documents; the agents and the models;
+ * feedback.
+ */
 const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }[] = [
   {
     key: "analytics",
@@ -36,20 +42,8 @@ const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }
     icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16"/><path d="M7 16v-4M12 16V7M17 16v-6"/></svg>`,
   },
   {
-    key: "settings",
-    label: "Settings",
-    path: "/admin/settings",
-    icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>`,
-  },
-  {
-    key: "agents",
-    label: "Agents",
-    path: "/admin/agents",
-    icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16 7l2.5 2.5M14 9l2 2"/></svg>`,
-  },
-  {
     key: "auth",
-    label: "Authentication",
+    label: "Sign-in",
     path: "/admin/auth",
     icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/><path d="M12 14.5v2"/></svg>`,
   },
@@ -57,25 +51,31 @@ const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }
     key: "access",
     label: "Access",
     path: "/admin/access",
-    icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l7 3v5c0 4.3-3 7.7-7 9-4-1.3-7-4.7-7-9v-5l7-3Z"/><path d="M9 12l2 2 4-4"/></svg>`,
-  },
-  {
-    key: "changes",
-    label: "Change log",
-    path: "/admin/changes",
-    icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5v3.5h3.5"/><path d="M12 8v4.2l2.8 1.8"/></svg>`,
-  },
-  {
-    key: "users",
-    label: "Users",
-    path: "/admin/users",
     icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="8.5" r="3.5"/><path d="M3.5 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M16 5.2a3.5 3.5 0 0 1 0 6.6M18 14.4c1.4.8 2.3 2.4 2.5 4.6"/></svg>`,
+  },
+  {
+    key: "documents",
+    label: "Documents",
+    path: "/admin/documents",
+    icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h7l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-9.5A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5Z"/><path d="M14 3.5v4h4"/><path d="M9 12.5h6M9 16h4"/></svg>`,
+  },
+  {
+    key: "agents",
+    label: "Agents and models",
+    path: "/admin/agents",
+    icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16 7l2.5 2.5M14 9l2 2"/></svg>`,
   },
   {
     key: "feedback",
     label: "Feedback",
     path: "/admin/feedback",
     icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-7l-4.5 3.5V16.5H5A1.5 1.5 0 0 1 3.5 15V7A1.5 1.5 0 0 1 5 5.5Z"/><path d="M8 10h8M8 13h5"/></svg>`,
+  },
+  {
+    key: "changes",
+    label: "Change log",
+    path: "/admin/changes",
+    icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5v3.5h3.5"/><path d="M12 8v4.2l2.8 1.8"/></svg>`,
   },
 ];
 

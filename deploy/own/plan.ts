@@ -161,7 +161,7 @@ export function pagesProblem(a: Answers, zones: string[]): string | null {
     : null;
 }
 
-/** The settings' defaults that the answer sets (SERVER_DEFAULTS): an admin can change each on /admin/settings. */
+/** The settings' defaults that the answer sets (SERVER_DEFAULTS): an admin can change each on its admin page (/admin). */
 export const defaultsOf = (a: Pick<Answers, "signIn">) => ({ public_sharing: a.signIn == "invite", delete_docs_after_hours: null });
 
 /** --email-claim's parts: the claim with the address, and the text before the address; null: not answered. */

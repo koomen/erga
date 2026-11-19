@@ -171,7 +171,7 @@ const cloudflareAccess: Kind<typeof CloudflareAccess.Type> = {
 const KINDS: { [K in Proxy["kind"]]: Kind<Extract<Proxy, { kind: K }>> } = { "aws-alb": awsAlb, "cloudflare-access": cloudflareAccess };
 const kindOf = (proxy: Proxy) => KINDS[proxy.kind] as Kind<Proxy>;
 
-/** The proxy mode, as the Authentication page and the admin agent see it: null `kind`: the deploy's value isn't one this reads. */
+/** The proxy mode, as the Sign-in page and the admin agent see it: null `kind`: the deploy's value isn't one this reads. */
 export interface ProxyStatus {
   kind: string | null;
   label: string;

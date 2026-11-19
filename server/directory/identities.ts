@@ -119,7 +119,7 @@ export class Identities {
     return (await this.sql.all<Row>("SELECT * FROM identities WHERE login = ?1 ORDER BY provider", login.toLowerCase())).map(fromRow);
   }
 
-  /** Every account's identities, by login (the Users page). */
+  /** Every account's identities, by login (the Access page). */
   async byLogin(): Promise<Map<string, Identity[]>> {
     const map = new Map<string, Identity[]>();
     for (const r of await this.sql.all<Row>("SELECT * FROM identities ORDER BY provider"))

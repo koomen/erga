@@ -1,19 +1,32 @@
-// /admin/settings, the Settings page: each of the server's settings, with the control it's set with
-// (client/inline/admin-settings.ts saves it as it changes: there is no Save button, and the save mark left of the
-// buttons' bar says how far it is), the Sites row (the document published to each domain), under them pages'
-// models today (./page-llm.ts), and last the secrets only the deploy sets. The agents' settings are on the Agents page
-// (./agents.ts), which draws its setting rows with settingRow too.
+// The admin pages' setting rows: each setting with the control it's set with (client/inline/admin-settings.ts saves it
+// as it changes: there is no Save button, and the save mark left of the buttons' bar says how far it is). Each setting
+// is on the page of what it governs (PAGE_SETTINGS): sign-in, documents, agents and models, feedback; public sharing is
+// the Access page's own switch. A page lists its settings with settingsSection, follows them with settingLiveRows, and
+// shows the secrets that only the deploy sets for it with deploySection.
 
-import { ACCESS_SETTINGS, AGENT_SETTINGS, type ConfigEntry, type DeploySecretEntry, type Settings } from "../directory/index.ts";
-import { ICON, inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
+import type { ConfigEntry, DeploySecretEntry, Settings } from "../directory/index.ts";
+import { ICON } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
-import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
+import { type LiveRow, type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine } from "../../shared/attribution.ts";
-import { adminPage } from "./layout.ts";
-import { pageLlmSection, pageLlmUsage } from "./page-llm.ts";
 import { setAt, shown } from "./parts.ts";
-import { addressOf } from "../../document/model/names.ts";
-import { domainName, ERGA, ergaName, sitesOf } from "../sites/index.ts";
+
+/**
+ * Where each setting is set: the page of what it governs, and the list on it. Every setting is in one list, or has a
+ * control of its own on its page (OWN): tests/settings.test.ts holds this, so a new setting gets a place.
+ */
+export const PAGE_SETTINGS = {
+  /** Sign-in: what a new account gets. */
+  auth: ["auto_usernames"],
+  /** Documents: new documents, and the files' limits. */
+  documents: ["delete_docs_after_hours", "max_file_mb", "max_project_gb"],
+  /** Agents and models: the agents on the server's keys, then pages' models. */
+  agents: ["agent_daily_tokens"],
+  pages: ["page_llm_daily_usd", "page_llm_guests"],
+  feedback: ["feedback_repository"],
+} as const;
+/** Settings with a control of their own: the Access page's switch, and the Agents and models page's choice and models' boxes. */
+export const OWN = ["public_sharing", "agent_keys", "agent_models_off"] as const;
 
 /**
  * The control a setting's value is set with: by its kind, its choices, else
@@ -113,43 +126,20 @@ function deploySecretRow(d: DeploySecretEntry): string {
   return `  <li class="deploy-secret" data-env="${esc(d.env)}"><div class="about"><code class="key">${esc(d.env)}</code><p class="desc">${esc(d.description)}</p></div>${state}</li>`;
 }
 
-/** The Sites row's key among the page's live rows. */
-const SITES = "setting:sites";
-
 /**
- * The Sites row: one line for each domain, with the document that has it (server/sites/). It only shows the links: a
- * person changes them in the document's settings ("Publish to"), which read the same state.
+ * "Set by the deploy", on a page: the secrets of `envs` that only the deploy sets, each with whether this server has
+ * it. The page never has a value.
  */
-async function sitesRow(platform: Platform, session: Session, origin: string, place: number): Promise<string> {
-  const erga = ergaName(platform, origin);
-  const sites = await sitesOf(platform);
-  const lines = await Promise.all(
-    sites.map(async ({ domain, status }) => {
-      const doc = status.doc ? await platform.directory.get(status.doc) : null;
-      const own = status.live && status.live.doc == status.doc ? status.live : null;
-      const linked = doc
-        ? `<a href="${esc(link(addressOf(doc), session))}">${esc(doc.title)}</a>`
-        : `<span class="free">${status.doc ? "missing" : "Free"}</span>`;
-      const state = !status.doc
-        ? ""
-        : own
-          ? `<span class="dot on" aria-hidden="true"></span>Published${own.version != null ? ` v${own.version}` : ""}`
-          : `<span class="dot" aria-hidden="true"></span>Not published`;
-      return `<tr data-domain="${esc(domain == ERGA ? "erga" : domain)}"><td class="domain">${esc(domainName(domain, erga))}</td><td>${linked}</td><td class="state">${state}</td></tr>`;
-    })
-  );
-  // The link made last: when, and by whom.
-  const last = sites.filter((s) => s.status.linked).sort((a, b) => b.status.linked!.at - a.status.linked!.at)[0];
-  const set = last
-    ? `<p class="set">${esc(domainName(last.domain, erga))} set ${esc(setAt(last.status.linked!.at))}${last.status.linked!.by ? ` by ${esc(last.status.linked!.by)}` : ""}</p>`
-    : "";
-  return `  <li class="sites" data-live="${SITES}" data-sort="${place}">
-    <p class="key">Sites</p>
-    <p class="desc">The document published to each domain. To publish a document, use the document settings in the editor.</p>
-    <table class="site-list"><tbody>${lines.join("")}</tbody></table>
-    ${set}
-  </li>`;
-}
+export const deploySection = (deployed: DeploySecretEntry[], envs: readonly string[]) => `
+  <section class="deploy-secrets" aria-label="Set by the deploy">
+    <h3 class="sub-head">Set by the deploy</h3>
+    <ol class="rows">
+${deployed
+  .filter((d) => envs.includes(d.env))
+  .map(deploySecretRow)
+  .join("\n")}
+    </ol>
+  </section>`;
 
 /** Whether a setting takes null (never, or no limit) as well as its kind of value. */
 function takesNever(platform: Platform, key: string): boolean {
@@ -160,60 +150,45 @@ function takesNever(platform: Platform, key: string): boolean {
   }
 }
 
-/** The rows of the settings that `pick` takes, in their order, each in the control its kind needs. */
-export async function settingRows(platform: Platform, session: Session, pick: (key: string) => boolean, fresh = false) {
+/** The rows of the settings `keys` name, in that order, each in the control its kind needs. */
+export async function settingRows(platform: Platform, session: Session, keys: readonly string[], fresh = false) {
   if (fresh) platform.directory.config.forget();
-  const settings = (await platform.directory.config.list(whoOf(session))).filter((e) => pick(e.key));
-  return settings.map((e, i) => ({ key: `setting:${e.key}`, html: settingRow(e, takesNever(platform, e.key), i * 2), place: i * 2 }));
-}
-
-/** The rows /admin/settings shows, in its order: each setting, and the Sites row after delete_docs_after_hours. */
-async function shownSettings(platform: Platform, session: Session, origin: string, fresh = false) {
-  // The Access page's settings are set there, and the agents' on the Agents page.
-  const rows = await settingRows(platform, session, (key) => !ACCESS_SETTINGS.includes(key) && !AGENT_SETTINGS.includes(key), fresh);
-  const place =
-    Math.max(
-      0,
-      rows.findIndex((r) => r.key == "setting:delete_docs_after_hours")
-    ) *
-      2 +
-    1;
-  return [...rows, { key: SITES, html: await sitesRow(platform, session, origin, place), place }].sort((a, b) => a.place - b.place);
-}
-
-/** /admin: the server's settings. */
-export async function settingsPage(platform: Platform, session: Session, origin: string) {
-  const [rows, users, use, deployed] = await Promise.all([
-    shownSettings(platform, session, origin),
-    platform.directory.users.list(whoOf(session)),
-    pageLlmUsage(platform.directory),
-    platform.directory.credentials.deployed(whoOf(session)),
-  ]);
-  return adminPage({
-    session,
-    title: "Settings",
-    here: "settings",
-    body: `
-  <section aria-labelledby="page-head">
-    <ol class="rows settings" data-live-kind="setting" data-live-view="settings" data-live-order="asc" data-live-at="${Date.now()}">
-${rows.map((r) => r.html).join("\n")}
-    </ol>
-    <datalist id="user-logins">${users.map((u) => `<option value="${esc(u.login)}">`).join("")}</datalist>
-  </section>${pageLlmSection(use, session)}
-  <section class="deploy-secrets" aria-labelledby="deploy-head">
-    <h3 class="sub-head" id="deploy-head">Set by the deploy</h3>
-    <ol class="rows">
-${deployed.map(deploySecretRow).join("\n")}
-    </ol>
-  </section>
-<script>${TIMES_SCRIPT}${inlineCall("admin-settings", { chip: chip("LOGIN", false) })}</script>`,
+  const all = await platform.directory.config.list(whoOf(session));
+  return keys.flatMap((key, i) => {
+    const e = all.find((x) => x.key == key);
+    return e ? [{ key: `setting:${e.key}`, html: settingRow(e, takesNever(platform, e.key), i), place: i }] : [];
   });
 }
 
-/** The rows of /admin/settings that `keys` name ("setting:<key>"), as they are now, for an open page (server/news/). */
-export const settingsRows: LiveRows = async (platform, session, keys, origin) => {
-  const out: Record<string, LiveRow> = Object.fromEntries(keys.map((k) => [k, null]));
-  for (const r of await shownSettings(platform, session, origin, true)) if (r.key in out) out[r.key] = { html: r.html, sort: r.place };
-  return out;
-};
+/**
+ * A list of setting rows on a page, which follows the server: `view` names the page's rows (server/news/routes.ts), and
+ * client/inline/admin-settings.ts saves each row as it changes (data-settings).
+ */
+const settingsList = (rows: { html: string }[], view: string, o: { more?: string; hidden?: boolean } = {}) =>
+  `<ol class="rows settings${o.more ? ` ${o.more}` : ""}" data-settings data-live-kind="setting" data-live-view="${view}" data-live-order="asc" data-live-at="${Date.now()}"${o.hidden ? " hidden" : ""}>
+${rows.map((r) => r.html).join("\n")}
+    </ol>`;
 
+/**
+ * A page's list of the settings `keys`, as settingsList makes it; with the server's users for the box of a users
+ * setting's picker, where the list has one.
+ */
+export async function settingsSection(
+  platform: Platform,
+  session: Session,
+  keys: readonly string[],
+  view: string,
+  o: { more?: string; hidden?: boolean } = {}
+): Promise<string> {
+  const rows = await settingRows(platform, session, keys);
+  const users = rows.some((r) => r.html.includes('class="picker"')) ? await platform.directory.users.list(whoOf(session)) : [];
+  return `${settingsList(rows, view, o)}${users.length ? `\n    <datalist id="user-logins">${users.map((u) => `<option value="${esc(u.login)}">`).join("")}</datalist>` : ""}`;
+}
+
+/** The rows of `keys` ("setting:<key>") among the settings `of` a page, as they are now, for an open page (server/news/). */
+export async function settingLiveRows(platform: Platform, session: Session, keys: string[], of: readonly string[]) {
+  const out: Record<string, LiveRow> = {};
+  if (!keys.some((k) => of.includes(k.slice("setting:".length)))) return out;
+  for (const r of await settingRows(platform, session, of, true)) if (keys.includes(r.key)) out[r.key] = { html: r.html, sort: r.place };
+  return out;
+}

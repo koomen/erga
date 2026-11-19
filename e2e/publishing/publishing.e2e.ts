@@ -413,8 +413,8 @@ journey("custom domains, from a new server on", () => {
       "the version is tagged",
       () => section(p)
     );
-    // The Sites row of /admin/settings shows the same links, each to its document, and no control.
-    const row = /<li class="sites"[^]*?<\/li>/.exec(await (await get(own, "/admin/settings")).text())![0];
+    // The Sites row of /admin/documents shows the same links, each to its document, and no control.
+    const row = /<li class="sites"[^]*?<\/li>/.exec(await (await get(own, "/admin/documents")).text())![0];
     const lines = [...row.matchAll(/<tr data-domain="[^"]*">([^]*?)<\/tr>/g)].map((m) =>
       m[1]
         .replace(/<[^>]+>/g, " ")

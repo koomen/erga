@@ -131,6 +131,13 @@ ol.rows > li.sites .set { margin: 6px 0 0; font-size: 12px; color: var(--chrome)
 .provider .state .on { color: var(--fg-strong); font-weight: 500; }
 .provider .state .bad { color: var(--bad); }
 .provider .value .input.secret { width: 17em; }
+/* A key or a secret that is set: its last 4 characters only ("•••• abcd": the page never has it), with Replace, which
+   opens the box or the form to set another in their place, and Remove. */
+.masked { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg); letter-spacing: 0.02em; white-space: nowrap; }
+.secret-now { display: inline-flex; align-items: center; gap: 8px; }
+.secret-now .masked { margin-right: 4px; }
+.secret-now[hidden], .secret-row[hidden], .server form.configure[hidden], .provider .value .input[hidden] { display: none; }
+.server .secret-row { margin: 16px 0 0; }
 .provider .models { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 6px; font-size: 13px; color: var(--fg); }
 .provider .models .label { font-size: 12px; color: var(--soft); }
 .provider .models label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
@@ -253,7 +260,7 @@ ol.users .avatar.waiting { background: transparent; border: 1.5px dashed var(--r
 .feedback .issue { font-weight: 600; color: var(--link); }
 .changes-more { margin: 12px 4px 0; font-size: 13px; color: var(--soft); }
 
-/* Pages' models today (/admin/settings): the part of the daily spend limit used, the totals, and the costliest documents. */
+/* Pages' models today (/admin/agents): the part of the daily spend limit used, the totals, and the costliest documents. */
 .llm-use .spend { height: 8px; margin: 12px 0 0; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--chrome) 16%, transparent); }
 .llm-use .spend .bar { display: block; height: 100%; border-radius: inherit; background: var(--caret); }
 .llm-use .spend .bar.full { background: var(--bad); }

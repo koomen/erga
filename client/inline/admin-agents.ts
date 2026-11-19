@@ -1,7 +1,8 @@
-// The Agents page's script (/admin/agents, server/admin/agents.ts): whose keys the agents use (the list at the top,
-// the agent_keys setting: the providers show only when the server provides keys); for each provider, a key pasted in its
-// box, which sets or replaces the key (the answer never holds the key, and the row is drawn again), Clear, which removes
-// it, and its models' boxes (agent_models_off: every model not ticked, on every row). Each saves by itself, with no Save
+// The Agents and models page's script (/admin/agents, server/admin/agents.ts): whose keys the agents use (the list at
+// the top, the agent_keys setting: the providers show only when the server provides keys); for each provider, its key:
+// a key that is set shows as its last 4 characters, with Replace, which opens the box to paste another, and Remove; a
+// key pasted in the box sets or replaces the key (the answer never holds the key, and the row is drawn again); and its
+// models' boxes (agent_models_off: every model not ticked, on every row). Each saves by itself, with no Save
 // button (client/common/autosave.ts), and the save mark left of the buttons' bar says how far it is: refused, the value
 // stays, with the server's reason under it. The daily token limit's row is a setting row: admin-settings.ts saves it,
 // and it shows only when the server provides keys.
@@ -25,11 +26,13 @@ export default function adminAgents(): void {
    */
   const now = (li: HTMLElement) => list.querySelector<HTMLElement>(`:scope > [data-live="${CSS.escape(li.dataset.live!)}"]`) ?? li;
   const hintOf = (li: HTMLElement) => now(li).querySelector(".hint")!;
-  /** A key's row: its box, which saves a pasted key, and Clear. */
+  /** A key's row: Replace, its box, which saves a pasted key, and Remove. */
   function wire(li: HTMLElement) {
     const form = li.querySelector("form")!,
       input = form.elements.namedItem("value") as HTMLInputElement,
       clear = li.querySelector(".clear"),
+      shown = li.querySelector<HTMLElement>(".secret-now"),
+      replace = li.querySelector<HTMLElement>(".replace"),
       live = li.dataset.live!,
       label = li.dataset.label!;
     // (The row as the server has it now: what an older row of this key was saving counts no more.)
@@ -61,7 +64,29 @@ export default function adminAgents(): void {
     let auto = arm();
     input.addEventListener("input", () => auto.changed(false));
     input.addEventListener("change", () => auto.changed(true));
-    input.addEventListener("blur", () => auto.changed(true));
+    // Replace: the box in the place of the key's last characters. Left empty (the focus leaves it, or Escape), they
+    // are back.
+    const closed = () => {
+      if (!shown || input.value.trim()) return;
+      input.hidden = true;
+      shown.hidden = false;
+    };
+    replace?.addEventListener("click", () => {
+      shown!.hidden = true;
+      input.hidden = false;
+      input.focus();
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key != "Escape" || !shown) return;
+      input.value = "";
+      auto.changed(true);
+      closed();
+      replace?.focus();
+    });
+    input.addEventListener("blur", () => {
+      auto.changed(true);
+      closed();
+    });
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       auto.changed(true);
@@ -76,13 +101,13 @@ export default function adminAgents(): void {
       } catch (err) {
         const why = (err as Error).message;
         say(hintOf(li), why, true);
-        mark.set(live, "error", { title: `${label} not cleared`, detail: why }, remove);
+        mark.set(live, "error", { title: `${label} not removed`, detail: why }, remove);
       }
     };
     clear?.addEventListener("click", () => {
       if (
         confirm(
-          "Clear the " +
+          "Remove the " +
             label +
             "? " +
             (li.dataset.fallback

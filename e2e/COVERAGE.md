@@ -63,7 +63,7 @@ The rules:
 | A1 | `e2e/access/sign-in.e2e.ts` | A person cannot sign in, or a person who may not, can. | 10 |
 | A2 | `e2e/access/share.e2e.ts` | A person without access reads or edits; access taken away stays; a share does not arrive. | 9 |
 | A3 | `e2e/access/tokens.e2e.ts` | A token gives more than its scope; an agent cannot sign in; a key shows in a page. | 8 |
-| A4 | `e2e/access/admin.e2e.ts` | An admin page does not save a setting, or shows old values. | 6 |
+| A4 | `e2e/access/admin.e2e.ts` | An admin page does not save a setting, or shows old values; a setting is not on the page of what it governs. | 6 |
 | C1 | `e2e/comments/comments.e2e.ts` | A comment is lost, lands on the wrong text, or a commenter changes the text. A card covers its text, or leaves the screen at a zoom or on a phone. | 9 |
 | R1 | `e2e/versions/versions.e2e.ts` | A version is not cut; Restore gives the wrong text; a document publishes by itself. | 13 |
 | H1 | `e2e/publishing/publishing.e2e.ts` | A domain shows the wrong document, or a site that was unpublished; a publish breaks the site; a new server has no homepage; someone who is not an admin publishes. | 7 |

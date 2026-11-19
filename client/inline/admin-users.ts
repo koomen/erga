@@ -1,4 +1,4 @@
-// The Users page's script (/admin/users, server/admin/users.ts): add a user, change a role, remove one.
+// The script of the Access page's users (/admin/access, server/admin/users.ts): add a user, change a role, remove one.
 // Each change goes to the server, which checks it (admins only, and never the last admin), and the row shows it as it
 // is now. A role saves as it changes, with no Save button (client/common/autosave.ts): the save mark left of the
 // buttons' bar says how far it is; refused, the role stays as chosen, with the server's reason over the list.

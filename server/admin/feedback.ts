@@ -1,13 +1,16 @@
-// /admin/feedback, the Feedback page: the feedback people sent, newest first, each with when, the page it came from,
-// and its GitHub issue (or that it waits for one). Opening the page tries the waiting ones again (server/feedback.ts).
+// /admin/feedback, the Feedback page: everything that governs "Send feedback". Where the messages go (the repository's
+// setting row, ./settings.ts, and the deploy's token that opens the issues), then the feedback people sent, newest
+// first, each with when, the page it came from, and its GitHub issue (or that it waits for one). Opening the page
+// tries the waiting ones again (server/feedback.ts).
 
 import { esc } from "../../shared/html.ts";
 import { fileFeedback, issuesRepo } from "../feedback.ts";
-import { TIMES_SCRIPT } from "../pages/index.ts";
-import { type Platform, type Session, whoOf } from "../platform.ts";
+import { inlineCall, TIMES_SCRIPT } from "../pages/index.ts";
+import { type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
 import type { FeedbackRow } from "../directory/index.ts";
 import { plural } from "../../shared/time.ts";
 import { adminPage } from "./layout.ts";
+import { chip, deploySection, PAGE_SETTINGS, settingLiveRows, settingsSection } from "./settings.ts";
 
 /** One feedback's row. `link`: an issue's page, where the server opens issues. */
 function feedbackRow(f: FeedbackRow, link: ((n: number) => string) | null): string {
@@ -26,7 +29,11 @@ function feedbackRow(f: FeedbackRow, link: ((n: number) => string) | null): stri
 
 /** /admin/feedback. */
 export async function feedbackPage(platform: Platform, session: Session) {
-  const rows = await platform.directory.feedback.list(whoOf(session));
+  const [rows, settings, deployed] = await Promise.all([
+    platform.directory.feedback.list(whoOf(session)),
+    settingsSection(platform, session, PAGE_SETTINGS.feedback, "feedback"),
+    platform.directory.credentials.deployed(whoOf(session)),
+  ]);
   const issues = platform.issues;
   const repo = await issuesRepo(platform.directory, issues);
   const waiting = rows.filter((f) => f.issue == null).length;
@@ -42,10 +49,20 @@ export async function feedbackPage(platform: Platform, session: Session) {
     here: "feedback",
     lede: `${where}${rows.length ? ` ${plural(rows.length, "message")}${waiting ? `, ${waiting} with no issue yet` : ""}.` : ""}`,
     body: `
+  <section aria-label="Where feedback goes">
+    ${settings}
+  </section>${deploySection(deployed, ["GITHUB_ISSUES_TOKEN"])}
+  <h3 class="sub-head">Messages</h3>
   <ol class="feedback"${rows.length ? "" : " hidden"}>
 ${rows.map((f) => feedbackRow(f, issues && repo ? (n) => issues.link(repo, n) : null)).join("\n")}
   </ol>
   <p class="changes-empty"${rows.length ? " hidden" : ""}>No feedback yet.</p>
-<script>${TIMES_SCRIPT}</script>`,
+<script>${TIMES_SCRIPT}${inlineCall("admin-settings", { chip: chip("LOGIN", false) })}</script>`,
   });
 }
+
+/** The page's setting rows ("setting:<key>"), as they are now, for an open page (server/news/). */
+export const feedbackRows: LiveRows = async (platform, session, keys) => ({
+  ...Object.fromEntries(keys.map((k) => [k, null])),
+  ...(await settingLiveRows(platform, session, keys, PAGE_SETTINGS.feedback)),
+});

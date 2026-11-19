@@ -2,7 +2,7 @@
 // behind the directory's `Sql`, so the tests run it on
 // bun:sqlite as D1 runs it on a deployed server.
 //
-// Each account has a row in users, and one role (the Users page): "Admin",
+// Each account has a row in users, and one role (the Access page): "Admin",
 // who may see and change the server's settings and its users, and may write;
 // or, besides that, its own access: "Can create and edit content" (write),
 // "Can authenticate" (read), or none of its own, where only the group rules
@@ -25,7 +25,7 @@ import type { Sql, Statement } from "./model.ts";
 import { safeAvatar } from "../../shared/avatars.ts";
 
 export type ServerRole = "user" | "admin";
-/** A user's one role, as the Users page and the admin agent name it. */
+/** A user's one role, as the Access page and the admin agent name it. */
 export type UserRole = "admin" | "write" | "read";
 export const USER_ROLES: readonly UserRole[] = ["admin", "write", "read"];
 export const ROLE_LABEL: Record<UserRole | "none", string> = {

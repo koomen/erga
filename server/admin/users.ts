@@ -1,12 +1,11 @@
-// /admin/users, the Users page (client/inline/admin-users.ts makes its changes).
+// The users, a section of the Access page (/admin/access; client/inline/admin-users.ts makes its changes).
 
 import { type Identity, type Person, ROLE_LABEL, type User, USER_ROLES, type UserRole } from "../directory/index.ts";
-import { ICON, inlineCall, TIMES_SCRIPT } from "../pages/index.ts";
+import { ICON } from "../pages/index.ts";
 import { dateTag, esc } from "../../shared/html.ts";
 import { providerName, SIGN_IN_PROVIDERS } from "../../shared/sign-in.ts";
 import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine } from "../../shared/attribution.ts";
-import { adminPage } from "./layout.ts";
 import { avatarHtml } from "./parts.ts";
 
 /** A role's select: the three roles, and for an account "No role" (only the groups decide). */
@@ -71,18 +70,17 @@ function personRow(p: Person): string {
   </li>`;
 }
 
-/** /admin/users: every user and everyone waiting for their first sign-in, each with one role; add one, remove one. */
-export async function usersPage(platform: Platform, session: Session) {
+/**
+ * The users, on the Access page (/admin/access): every user and everyone waiting for their first sign-in, each with one
+ * role; add one, remove one (client/inline/admin-users.ts).
+ */
+export async function usersSection(platform: Platform, session: Session): Promise<string> {
   const who = whoOf(session),
     dir = platform.directory;
   const [users, people, ids] = await Promise.all([dir.users.list(who), dir.people.list(who), dir.identities.byLogin()]);
   const admins = users.filter((u) => u.role == "admin");
-  return adminPage({
-    session,
-    title: "Users",
-    here: "users",
-    body: `
-  <section aria-labelledby="page-head">
+  return `<section class="users-section" aria-labelledby="users-head">
+    <h3 class="sub-head" id="users-head">Users</h3>
     <form class="add-user">
       <select name="provider" aria-label="Provider">${dir.providers.map((p) => `<option value="${esc(p)}" data-placeholder="${esc(handlePlaceholder(p))}">${esc(providerName(p))}</option>`).join("")}</select>
       <input class="input" name="handle" placeholder="${esc(handlePlaceholder(dir.providers[0] ?? ""))}" aria-label="The account's login or email" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" required>
@@ -95,12 +93,10 @@ export async function usersPage(platform: Platform, session: Session) {
 ${users.map((u) => userRow(u, ids.get(u.login) ?? [], session, u.role == "admin" && admins.length == 1, dir.providers)).join("\n")}
 ${people.map(personRow).join("\n")}
     </ol>
-  </section>
-<script>${TIMES_SCRIPT}${inlineCall("admin-users", { me: session.login.toLowerCase() })}</script>`,
-  });
+  </section>`;
 }
 
-/** The rows of /admin/users that `keys` name ("user:<login>", "person:<id>"), as they are now, for an open page (server/news/). */
+/** The users' rows on /admin/access that `keys` name ("user:<login>", "person:<id>"), as they are now, for an open page (server/news/). */
 export const usersRows: LiveRows = async (platform, session, keys) => {
   const who = whoOf(session),
     dir = platform.directory;

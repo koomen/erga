@@ -126,7 +126,7 @@ test("users: add by provider account with a role, make admin, demote, remove; bo
   ).toEqual(["bo", "root*"]);
   let e = await failure(run(root, "set_user", { action: "role", login: "root", role: "write" }));
   expect([e.status, /DEV_LOGIN/.test(e.message)]).toEqual([403, true]);
-  // Yourself, as on the Users page: the directory decides (a bootstrap admin stays).
+  // Yourself, as on the Access page: the directory decides (a bootstrap admin stays).
   e = await failure(run(root, "set_user", { action: "remove", login: "root" }));
   expect([e.status, /DEV_LOGIN/.test(e.message)]).toEqual([403, true]);
   e = await failure(run({ dir, who: { login: "bo", admin: true } }, "set_user", { action: "remove", login: "root" }));

@@ -1,10 +1,12 @@
-// /admin/auth, the Authentication page: how people sign in on this server (client/inline/admin-auth.ts changes it).
-// It shows what the sign-in reports (server/identity/settings.ts, authOps.status): the mode, and that mode's own
-// parts: each OAuth provider's card, or the proxy in front.
+// /admin/auth, the Sign-in page: everything that governs how people sign in on this server (client/inline/admin-auth.ts
+// changes it). It shows what the sign-in reports (server/identity/settings.ts, authOps.status): the mode, and that
+// mode's own parts: each OAuth provider's card, or the proxy in front. A secret that is set shows as its last 4
+// characters, with Replace and Remove: the page never has the secret. Then what a new account gets (its username: a
+// setting row, ./settings.ts), and the deploy's secrets that sign-in needs.
 
-import { inlineCall, link } from "../pages/index.ts";
+import { inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
-import { type LiveRows, type Session, whoOf } from "../platform.ts";
+import { type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
 import {
@@ -18,6 +20,7 @@ import {
   type SignInStatus,
 } from "../identity/index.ts";
 import { setAt } from "./parts.ts";
+import { chip, deploySection, PAGE_SETTINGS, settingLiveRows, settingsSection } from "./settings.ts";
 
 const STATE_LABEL: Record<CheckState, string> = {
   working: "Working",
@@ -39,7 +42,7 @@ function serverCard(s: AuthStatus, o: { editable: boolean; session: Session; on:
   const none = `<span class="src">Not set</span>`;
   const rows = `<dl>
       <dt>Client ID</dt><dd>${s.inUse.clientId ? `<code class="client-id">${esc(s.inUse.clientId)}</code><span class="src">${src(s.inUse.source)}${s.inUse.source == "page" ? setBy : ""}</span>` : none}</dd>
-      <dt>Client secret</dt><dd>${s.inUse.secretSet ? `<code>••••••••</code><span class="src">${src(s.inUse.source)}</span>` : none}</dd>
+      <dt>Client secret</dt><dd>${s.inUse.secretSet ? `${s.inUse.secretLast4 ? `<code class="masked" aria-label="The secret ends in ${esc(s.inUse.secretLast4)}">•••• ${esc(s.inUse.secretLast4)}</code>` : ""}<span class="src">${src(s.inUse.source)}</span>` : none}</dd>
       <dt>Homepage URL</dt><dd><code>${esc(s.homepageUrl)}</code>${copy(s.homepageUrl)}</dd>
       <dt>Callback URL</dt><dd><code class="callback">${esc(s.callbackUrl)}</code>${copy(s.callbackUrl)}</dd>
     </dl>`;
@@ -47,7 +50,7 @@ function serverCard(s: AuthStatus, o: { editable: boolean; session: Session; on:
   const deployNote = s.dev
     ? ""
     : s.inUse.source == "page"
-      ? `<p class="note deploy-note">Clear goes back to the deploy's values: ${s.deploy.clientId ? `client ID <code>${esc(s.deploy.clientId)}</code>${s.deploy.secretSet ? "" : ", with no secret"}` : "no client ID"}.</p>`
+      ? `<p class="note deploy-note">Remove goes back to the deploy's values: ${s.deploy.clientId ? `client ID <code>${esc(s.deploy.clientId)}</code>${s.deploy.secretSet ? "" : ", with no secret"}` : "no client ID"}.</p>`
       : "";
   const devNote = s.dev ? `<p class="note">Local development does not use these values.</p>` : "";
   // A real sign-in is what checks the callback URL.
@@ -77,13 +80,15 @@ function serverCard(s: AuthStatus, o: { editable: boolean; session: Session; on:
     : "";
   const cannot =
     !o.editable && !s.canStore ? `<p class="note">This server has no FACTORY_KEY, so only the deploy sets these values.</p>` : "";
+  // With values in use, the form to set others is closed until Replace; Remove takes the page's values off.
+  const closed = !!s.inUse.clientId;
   const form = o.editable
-    ? `<form class="configure" method="post" action="${esc(link("/admin/auth", o.session))}">
-      ${s.check.state == "working" ? `<p class="lede">Replace with another ${PROVIDERS[provider].appWord}'s values.</p>` : ""}
+    ? `${closed ? `<div class="row secret-row"><button type="button" class="pill replace">Replace</button>${s.page ? `<button type="button" class="pill clear">Remove</button>` : ""}</div>` : ""}
+    <form class="configure" method="post" action="${esc(link("/admin/auth", o.session))}"${closed ? " hidden" : ""}>
+      ${closed ? `<p class="lede">Another ${PROVIDERS[provider].appWord}'s values, in the place of these. They save when both are here.</p>` : ""}
       <input type="hidden" name="provider" value="${provider}">
       <label>Client ID<input class="input" name="clientId" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" placeholder="${esc(PROVIDERS[provider].clientIdLike)}" required></label>
       <label>Client secret<input class="input" type="password" name="secret" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore autocapitalize="off" spellcheck="false" placeholder="Paste the secret" required></label>
-      ${s.page ? `<div class="row"><button type="button" class="pill clear">Clear</button></div>` : ""}
     </form>`
     : "";
   return `<section class="server" data-provider="${provider}" data-state="${s.check.state}">
@@ -151,20 +156,34 @@ function proxySection(p: ProxyStatus): string {
 }
 
 /** /admin/auth: how people sign in on this server. */
-export function authPage(session: Session, status: SignInStatus) {
+export async function authPage(platform: Platform, session: Session, status: SignInStatus) {
   const s = sections(session, status);
+  const [accounts, deployed] = await Promise.all([
+    settingsSection(platform, session, PAGE_SETTINGS.auth, "auth-settings"),
+    platform.directory.credentials.deployed(whoOf(session)),
+  ]);
   return adminPage({
     session,
-    title: "Authentication",
+    title: "Sign-in",
     here: "auth",
     body: `
   <section aria-labelledby="page-head" class="auth" data-live-kind="auth" data-live-view="auth" data-live-order="asc" data-live-at="${Date.now()}">
     ${modeSection(status.mode)}
     ${status.mode == "proxy" ? proxySection(status.proxy) : IDS.map((id) => s[id]).join("\n    ")}
   </section>
-<script>${inlineCall("admin-auth")}</script>`,
+  <section class="new-accounts" aria-labelledby="accounts-head">
+    <h3 class="sub-head" id="accounts-head">New accounts</h3>
+    ${accounts}
+  </section>${deploySection(deployed, ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET"])}
+<script>${TIMES_SCRIPT}${inlineCall("admin-auth")}${inlineCall("admin-settings", { chip: chip("LOGIN", false) })}</script>`,
   });
 }
+
+/** The page's setting rows ("setting:<key>"), as they are now, for an open page (server/news/). */
+export const authSettingsRows: LiveRows = async (platform, session, keys) => ({
+  ...Object.fromEntries(keys.map((k) => [k, null])),
+  ...(await settingLiveRows(platform, session, keys, PAGE_SETTINGS.auth)),
+});
 
 /** The sections of /admin/auth that `keys` name ("auth:<provider>"), as they are now, for an open page (server/news/). */
 export const authRows: LiveRows = async (platform, session, keys, origin) => {

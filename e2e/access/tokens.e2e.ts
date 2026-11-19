@@ -356,6 +356,7 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
   const KEY = (end: string) => "sk-proj-" + "y".repeat(60) + end;
   const row = "li[data-name=openai]",
     state = () => page.textContent(`${row} .state`),
+    masked = () => page.textContent(`${row} .masked`).catch(() => null),
     hint = () => page.textContent(`${row} .hint`);
   const box = (model: string) => `${row} input[value="${model}"]`;
 
@@ -452,8 +453,18 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
     await page.keyboard.insertText(KEY("Zz90"));
     expect(await markOf(page)).toBe("saving");
     await page.waitForSelector(`${row} .models`);
-    expect(await state()).toContain("Key saved · …Zz90");
+    // The page shows the key's last 4 characters only, with Replace and Remove; its box is closed, and empty.
+    expect(await masked()).toBe("•••• Zz90");
+    expect(await page.locator(`${row} .secret-now button`).allInnerTexts()).toEqual(["Replace", "Remove"]);
+    expect(await state()).toMatch(/^Set .* by tester$/);
+    expect(await page.isHidden("#key-openai")).toBe(true);
     expect(await page.inputValue("#key-openai")).toBe("");
+    // Replace opens the box; Escape, with nothing pasted, gives the key's last characters back.
+    await page.click(`${row} .replace`);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("key-openai");
+    await page.keyboard.press("Escape");
+    expect(await page.isVisible(`${row} .masked`)).toBe(true);
+    expect(await page.isHidden("#key-openai")).toBe(true);
     await soon(() => markOf(page)).toBe("saved");
     const unticked = page.waitForResponse((r) => r.url().includes("/api/tools/set_setting"));
     await page.uncheck(box("gpt-6-astra"));
@@ -488,9 +499,10 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
         "**/api/tools/set_setting*",
         (route) =>
           (handled = (async () => {
+            await other.click(`${row} .replace`);
             await other.fill("#key-openai", KEY(end));
             await other.press("#key-openai", "Enter");
-            await soon(state).toContain(`…${end}`);
+            await soon(masked).toBe(`•••• ${end}`);
             if (answer == "real") await route.continue();
             else await route.fulfill({ status: 503, json: { ok: false, error: "The server is busy: try again." } });
           })()),

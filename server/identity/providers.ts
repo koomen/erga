@@ -129,7 +129,7 @@ const github: OAuthProvider = {
     `Open ${github.newApp}, signed in as the GitHub account that should own the app.`,
     `Enter the application name "${o.name}", the homepage URL ${o.origin}, and the authorization callback URL ${o.origin}${github.callbackPath}. Leave Enable Device Flow off. Click Register application.`,
     `Copy the Client ID. Click Generate a new client secret, and copy the secret.`,
-    `Paste both ${o.pagePlace} and click Save. Erga checks them with GitHub before it uses them.`,
+    `Paste both ${o.pagePlace}. They save by themselves: Erga checks them with GitHub before it uses them.`,
   ],
   // GitHub answers 404 for a client ID it doesn't know, incorrect_client_credentials for a wrong (or no) secret, and
   // bad_verification_code when the client ID and secret are right. The callback URL is checked only during a real sign-in.
@@ -270,7 +270,7 @@ const google: OAuthProvider = {
     `Click Create credentials, then OAuth client ID. Choose the application type Web application, and the name "${o.name}".`,
     `Under Authorized redirect URIs, add ${o.origin}${google.callbackPath}. Click Create.`,
     `Copy the Client ID and the Client secret.`,
-    `Paste both ${o.pagePlace} and click Save. Erga checks them with Google before it uses them.`,
+    `Paste both ${o.pagePlace}. They save by themselves: Erga checks them with Google before it uses them.`,
   ],
   // Google answers invalid_client for a client ID it doesn't know ("The OAuth client was not found.") or a wrong secret
   // ("Unauthorized"), and invalid_grant when the client ID and secret are right. The redirect URI is checked only

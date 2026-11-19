@@ -1,4 +1,5 @@
-// The Settings page's script (/admin, server/admin/settings.ts): each setting saves by itself, with no Save button
+// The script of the admin pages' setting rows (server/admin/settings.ts: each page has those of what it governs): each
+// setting saves by itself, with no Save button
 // (client/common/autosave.ts): a switch or a choice as soon as it changes, a typed value when the typing pauses or the
 // focus leaves its field. The save mark left of the buttons' bar says how far it is. The server checks each value: a
 // refused one stays in its field, with the server's reason under it and the mark's red x, until it changes.
@@ -155,9 +156,10 @@ export default function adminSettings(c: SettingsConfig): void {
     };
     reset?.addEventListener("click", toDefault);
   }
-  const list = document.querySelector<HTMLElement>("ol[data-live-kind=setting]")!;
-  for (const li of list.querySelectorAll<HTMLElement>(":scope > li.setting")) wire(li);
-  // Changes made elsewhere (another admin, an agent) show here as they're made; a setting being typed in waits (client/common/live-rows.ts).
-  // (The Sites row has no control: nothing to wire.)
-  liveList(list, { wire: (row) => (row.matches(".setting") && wire(row), times()) }, window.ergaView?.signal);
+  // Each list of setting rows on the page (server/admin/settings.ts, settingsList). Changes made elsewhere (another
+  // admin, an agent) show here as they're made; a setting being typed in waits (client/common/live-rows.ts).
+  for (const list of document.querySelectorAll<HTMLElement>("ol[data-settings]")) {
+    for (const li of list.querySelectorAll<HTMLElement>(":scope > li.setting")) wire(li);
+    liveList(list, { wire: (row) => (row.matches(".setting") && wire(row), times()) }, window.ergaView?.signal);
+  }
 }

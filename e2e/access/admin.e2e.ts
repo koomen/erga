@@ -136,6 +136,16 @@ journey("an admin on the admin pages", () => {
     await page.goto(`${root}/admin/changes`);
     await settle(page);
     admin = await looks(page, APP);
+    // The sidebar: each page is one thing an admin governs, with every setting of it. No Settings page, no Users page.
+    expect(await page.locator("#admin-side a .label").allInnerTexts()).toEqual([
+      "Analytics",
+      "Sign-in",
+      "Access",
+      "Documents",
+      "Agents and models",
+      "Feedback",
+      "Change log",
+    ]);
     // A mark on this window, for the steps after: still here after the links, so the pages came in place.
     await page.evaluate(() => {
       (window as unknown as { stayed: boolean }).stayed = true;
@@ -169,7 +179,7 @@ journey("an admin on the admin pages", () => {
       return { width: getComputedStyle(track).width, on, off };
     });
     expect(colours).toEqual({ width: "34px", on: await tokenColour("--caret"), off: await tokenColour("--rule") });
-    await go("/admin/users", "ol.users > li");
+    await go("/admin/access", "ol.users > li");
     expect(await page.evaluate(() => getComputedStyle(document.querySelector("ol.users > li")!).display)).toBe("grid");
     // The bars and the agent stay as they were, on the page that came in place.
     expect(await looks(page, APP)).toEqual(admin);
@@ -205,15 +215,16 @@ journey("an admin on the admin pages", () => {
     expect(await page.evaluate(() => document.querySelector<HTMLElement>("ol.users")!.dataset.mark)).toBe("same");
   });
 
-  test("Settings, Agents and Access follow an agent's changes: a setting's value, No limit, a rule added and removed, the public switch", async () => {
-    await go("/admin/settings", 'li[data-live="setting:delete_docs_after_hours"]');
-    // Feedback's repository is a setting on this page, with the value that the first step set.
+  test("Feedback, Documents, Agents and models and Access follow an agent's changes: a setting's value, No limit, a rule added and removed, the public switch", async () => {
+    // Feedback's repository is a setting on the Feedback page, with the value that the first step set.
+    await go("/admin/feedback", "[data-key=feedback_repository]");
     const repository = await page.evaluate(() => {
       const row = document.querySelector<HTMLElement>("[data-key=feedback_repository]");
       return row ? { text: row.innerText, value: row.querySelector<HTMLInputElement>("#set-feedback_repository")?.value } : null;
     });
     expect(repository?.text).toContain("Feedback's repository");
     expect(repository?.value).toBe("erga/pretend");
+    await go("/admin/documents", 'li[data-live="setting:delete_docs_after_hours"]');
     const hours = () =>
       page.evaluate(
         () => document.querySelector<HTMLInputElement>('li[data-live="setting:delete_docs_after_hours"] input[name=value]')!.value
@@ -254,7 +265,7 @@ journey("an admin on the admin pages", () => {
   test("a setting saves by itself, with no Save button: the mark is the circle, then the check; a refused value stays in its field, with the red x and Try again", async () => {
     const row = 'li[data-live="setting:max_file_mb"]',
       field = `${row} input[name=value]`;
-    await go("/admin/settings", row);
+    await go("/admin/documents", row);
     const onServer = async () =>
       (await agent<{ settings: { key: string; value: unknown }[] }>("settings")).settings.find((e) => e.key == "max_file_mb")!.value;
     expect(await page.locator('main button:text-is("Save")').count()).toBe(0);

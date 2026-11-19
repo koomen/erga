@@ -76,7 +76,7 @@ export const signInState = (page: Page) =>
   });
 export const signInOpen = async (page: Page) => (await signInState(page)).open;
 
-// The admin's limits on pages' models, on the Settings page (/admin/settings) and as the admin's agent reads them.
+// The admin's limits on pages' models, on the Agents and models page (/admin/agents) and as the admin's agent reads them.
 
 /** Today's use of pages' models, as the admin's agent reads it (the operation `settings`). */
 export interface Use {
@@ -100,9 +100,9 @@ export const usd = (n: number) => (n > 0 && n < 1 ? `$${n.toFixed(3)}` : `$${n.t
 /** What Haiku 5.5's tokens cost, in US dollars (PAGE_LLM_PRICES.haiku: $0.10 and $0.50 for a million). */
 export const haikuCost = (input: number, output: number) => (input * 0.1 + output * 0.5) / 1_000_000;
 
-/** A setting's row on the Settings page. */
+/** A setting's row on its admin page. */
 export const row = (admin: Page, key: string) => admin.locator(`li.setting[data-key="${key}"]`);
-/** The view of today's use on the Settings page, as the page shows it. */
+/** The view of today's use on the Agents and models page, as the page shows it. */
 export const usage = (admin: Page) => admin.locator("section.llm-use").innerText();
 
 // The Erga domain's published site (server/sites/): / as served to someone signed out, and a project uploaded with an

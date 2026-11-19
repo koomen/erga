@@ -81,11 +81,6 @@ export const boolean = (v: unknown): boolean => {
 
 const setting = <T>(s: Setting<T>) => s;
 
-/** The settings the Access page sets (/admin/access), not the Settings page. */
-export const ACCESS_SETTINGS: readonly string[] = ["public_sharing"];
-/** The settings the Agents page sets (/admin/agents), not the Settings page. */
-export const AGENT_SETTINGS: readonly string[] = ["agent_keys", "agent_models_off", "agent_daily_tokens"];
-
 /** Every setting the server has. */
 export const SETTINGS = {
   delete_docs_after_hours: setting<number | null>({
@@ -162,7 +157,7 @@ export const SETTINGS = {
   agent_keys: setting<"server" | "own">({
     label: "Whose keys the agents use",
     description:
-      '"server": the keys on the Agents page, for everyone (a user\'s own key wins). "own": each user adds their own keys in Settings, and the agents never use a server key.',
+      '"server": the keys on the Agents and models page, for everyone (a user\'s own key wins). "own": each user adds their own keys in Settings, and the agents never use a server key.',
     default: "server",
     parse: (v) => {
       const s = typeof v == "string" ? v.trim().toLowerCase() : v;

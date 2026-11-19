@@ -60,9 +60,9 @@ export interface Who {
   /** How they act, when not in person: through one of their agents. Recorded beside their login. */
   via?: string;
 }
-/** What making a document answers someone the write rule (/admin/users) leaves out. */
+/** What making a document answers someone the write rule (/admin/access) leaves out. */
 export const NO_WRITE =
-  "Your access on this server is Can authenticate: you may open what is shared with you or public, but not make or edit documents. An admin can give you Can create and edit content on the Users page.";
+  "Your access on this server is Can authenticate: you may open what is shared with you or public, but not make or edit documents. An admin can give you Can create and edit content on the Access page.";
 
 /** The login a permission for anyone with the link is under: anyone signed in, and, while the server lets users share content publicly, people who aren't signed in too (as viewers). */
 export const ANYONE = "*";

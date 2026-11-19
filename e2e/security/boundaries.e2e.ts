@@ -251,7 +251,7 @@ const PAGES = [
   "/settings",
   "/tokens",
   "/admin",
-  "/admin/users",
+  "/admin/access",
   "/admin/auth",
   "/admin/changes",
   "/no/such-page",

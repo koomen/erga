@@ -1,4 +1,4 @@
-// The API keys admins enter on the Agents page (/admin/agents), on an
+// The API keys admins enter on the Agents and models page (/admin/agents), on an
 // in-memory SQLite database with the same migrations D1 gets: stored
 // encrypted, never answered back (only set, the last four characters, and who
 // set it when), in the change log without the value, and admins only.
@@ -124,7 +124,9 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   expect((await post({ name: "gemini", value: OPENAI })).status).toBe(400);
   const html = await (await fetch(`${origin}/admin/agents`)).text();
   expect(html).not.toContain(ANTHROPIC.slice(0, 20));
-  expect(html).toContain(`Key saved</span> · <code>…Ab12</code>`);
+  // The page shows only the key's last 4 characters, with Replace and Remove; its box is closed until Replace.
+  expect(html).toContain(`<code class="masked" aria-label="The key ends in Ab12">•••• Ab12</code>`);
+  expect(html).toMatch(/class="pill replace"[^>]*>Replace<\/button><button type="button" class="pill clear">Remove<\/button>/);
   const log = await (await fetch(`${origin}/admin/changes`)).text();
   expect(log).toContain(`<span class="key">API key</span> <code>ANTHROPIC_API_KEY</code> set`);
   expect(log).not.toContain(ANTHROPIC.slice(0, 20));

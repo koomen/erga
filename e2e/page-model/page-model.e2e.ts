@@ -36,7 +36,7 @@ import { clickInPage, clickOn } from "../helpers/press";
 const s = await servers.main();
 
 journey("a document's page calls the model: its owner, the admin's limits, then someone signed out", () => {
-  /** The document's tab, and the admin's tab on the Settings page (the same browser). */
+  /** The document's tab, and the admin's tab on the Agents and models page (the same browser). */
   let page: Page, admin: Page;
   let doc: Awaited<ReturnType<typeof newDoc>>;
   test.afterAll(async () => {
@@ -79,7 +79,7 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
     expect(before.costUsd, "today's calls were all Haiku's").toBe(Math.round(cost * 1000) / 1000);
     // The admin page: the limit, $5 at first.
     admin = await page.context().newPage();
-    await admin.goto(`${s.root}/admin/settings`); // page load 2: the Settings page, in a tab of its own
+    await admin.goto(`${s.root}/admin/agents`); // page load 2: the Agents and models page, in a tab of its own
     const limit = row(admin, "page_llm_daily_usd");
     expect(await limit.locator(".key").innerText()).toBe("Pages' models: daily spend limit");
     expect(await limit.locator("input[name=value]").inputValue()).toBe("5");
@@ -148,7 +148,7 @@ journey("a document's page calls the model: its owner, the admin's limits, then 
   });
 
   test("the admin's switch for guests, off: someone signed out gets sign_in, where the owner lets all viewers call the model", async () => {
-    // The admin turns the switch off on the Settings page. (Signed in: with no cookie, a browser is the server's own person.)
+    // The admin turns the switch off on the Agents and models page. (Signed in: with no cookie, a browser is the server's own person.)
     await page.context().clearCookies();
     const guests = admin.locator("#set-page_llm_guests");
     expect(await row(admin, "page_llm_guests").locator(".key").innerText()).toBe("Guests can call pages' models");

@@ -124,8 +124,8 @@ journey("who may sign in, on a server of its own", () => {
     };
     const ann = `ol.users > li[data-login="ann${id}"] select.role`;
     const annSignsIn = () => signIn(`provider=google&subject=a${id}&handle=ann.${id}@example.net&email=ann.${id}@example.net`);
-    await page.goto(`${root}/admin/users?user=tester`);
-    // A Google account by its email, with Can authenticate: it waits on the Users page.
+    await page.goto(`${root}/admin/access?user=tester`);
+    // A Google account by its email, with Can authenticate: it waits on the Access page.
     await add("google", `ann.${id}@example.net`, "read");
     const waiting = `ol.users > li.waiting:has(.handle:text-is("ann.${id}@example.net"))`;
     await page.locator(waiting).waitFor();
@@ -140,7 +140,7 @@ journey("who may sign in, on a server of its own", () => {
     await annSignsIn();
     await join(`ann${id}`);
     expect(await makes()).toBe("403");
-    await page.goto(`${root}/admin/users?user=tester`);
+    await page.goto(`${root}/admin/access?user=tester`);
     expect(await page.$(waiting)).toBeNull();
     expect(await page.inputValue(ann)).toBe("read");
     // Her role changed on the page: she may write now.
@@ -221,7 +221,7 @@ journey("who may sign in, on a server of its own", () => {
   });
 
   // (Cut list, brought back.) The values are the pretend GitHub's app (dev/vite-plugin.ts), which its live check accepts.
-  test("an app's values typed on the Authentication page save by themselves, and Clear: the GitHub card shows its new state in place, with the message", async () => {
+  test("an app's values typed on the Sign-in page save by themselves; the secret shows as its last 4 characters, with Replace and Remove; the GitHub card shows its new state in place, with the message", async () => {
     const CARD = 'section.server[data-provider="github"]';
     await page.goto(`${root}/admin/auth?user=tester`);
     await page.waitForSelector(CARD);
@@ -260,7 +260,17 @@ journey("who may sign in, on a server of its own", () => {
       clear: true,
       stayed: true,
     });
-    // Clear asks first: yes.
+    // The secret shows as its last 4 characters only, with Replace and Remove; the form to set other values is closed
+    // until Replace, and Escape in it, with nothing typed, closes it again. The page never has the secret.
+    expect(await page.textContent(`${CARD} .masked`)).toBe("•••• cret");
+    expect(await page.locator(`${CARD} .secret-row button`).allInnerTexts()).toEqual(["Replace", "Remove"]);
+    expect(await page.isHidden(`${CARD} form.configure`)).toBe(true);
+    expect(await page.content()).not.toContain("mock-github-client-secret");
+    await page.click(`${CARD} .replace`);
+    expect(await page.evaluate(() => (document.activeElement as HTMLInputElement | null)?.name)).toBe("clientId");
+    await page.keyboard.press("Escape");
+    expect(await page.isHidden(`${CARD} form.configure`)).toBe(true);
+    // Remove asks first: yes.
     await page.evaluate(() => {
       window.confirm = () => true;
     });

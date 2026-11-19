@@ -21,7 +21,7 @@ import type { Sql } from "./model.ts";
 import { type Actor, NotAllowed, type Users } from "./users.ts";
 
 export type Access = "none" | "read" | "write";
-/** How each access shows, wherever it shows (the Users page, the change log, the admin agent). */
+/** How each access shows, wherever it shows (the Access page, the change log, the admin agent). */
 export const ACCESS_LABEL: Record<Access, string> = { none: "No access", read: "Can authenticate", write: "Can create and edit content" };
 export type RuleKind = "everybody" | "workspace" | "github_org";
 export const RULE_KINDS: readonly RuleKind[] = ["everybody", "workspace", "github_org"];
@@ -29,7 +29,7 @@ const RANK: Record<Access, number> = { none: 0, read: 1, write: 2 };
 /** The higher of two accesses. */
 export const higher = (a: Access, b: Access): Access => (RANK[a] >= RANK[b] ? a : b);
 
-/** A rule, as the Users page and the admin agent see it. */
+/** A rule, as the Access page and the admin agent see it. */
 export interface AccessRule {
   id: number;
   kind: RuleKind;

@@ -1,5 +1,5 @@
 // The people an admin added before their first sign-in (the people table,
-// server/migrations/0250; the Users page): one provider account each, and the
+// server/migrations/0250; the Access page): one provider account each, and the
 // role their account gets. An Erga username comes only at the first sign-in,
 // so until then a person is their provider account, by what the provider's
 // row in shared/sign-in.ts says an admin gives (`handle`):

@@ -1,7 +1,7 @@
 // Publishing: a document's domain and its header bar there (set_publishing), and its current version live on that
 // domain (publish_document). Admins only, for now. ls answers the state (publishingOf), which Document settings show to
 // everyone who may edit the document. The link is the domain's own state (server/sites/state.ts): the Sites row of
-// /admin/settings reads the same.
+// /admin/documents reads the same.
 
 import * as Schema from "effect/Schema";
 import type { DocRow } from "../directory/index.ts";
