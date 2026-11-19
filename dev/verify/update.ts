@@ -15,7 +15,7 @@
 import { resolve } from "node:path";
 import type { Change } from "../../deploy/aws/stack.ts";
 import { buildHere } from "../../deploy/pipeline/build.ts";
-import type { Release } from "../../deploy/pipeline/release-format.ts";
+import type { Release } from "../../deploy/deployer/release-format.ts";
 import { sh } from "./run.ts";
 
 const ROOT = resolve(import.meta.dir, "../..");

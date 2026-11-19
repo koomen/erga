@@ -13,7 +13,7 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type AwsEntry, type Config, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
 import { type DeployOptions, deployInstance } from "../cli/deploy";
-import type { Fetch } from "../pipeline/cloudflare-api";
+import type { Fetch } from "../deployer/cloudflare-api";
 import type { Seen } from "../own/flow";
 import type { Answers } from "../own/plan";
 import { firstRows, pagesOf, sso, stackOf, varsOf } from "../own/plan";

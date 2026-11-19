@@ -7,9 +7,9 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { boundDatabaseName, guardTarget, STEPS } from "../deploy/pipeline/pipeline";
-import { bucketName } from "../deploy/pipeline/account";
-import { Cloudflare } from "../deploy/pipeline/cloudflare-api";
-import type { Release } from "../deploy/pipeline/release-format";
+import { bucketName } from "../deploy/deployer/cloudflare";
+import { Cloudflare } from "../deploy/deployer/cloudflare-api";
+import type { Release } from "../deploy/deployer/release-format";
 import { FLEET_ACCOUNT, FLEET_DB, mockCloudflare } from "../dev/mock-cloudflare";
 import { bindingsOf, databaseOf, deployTo, fleet, next, nextSecrets, prepareRelease, release } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
@@ -108,6 +108,6 @@ describe("documents' files: an R2 bucket of each target's own", () => {
     const before = made();
     await deployTo(next({ secrets: nextSecrets }), mock, rel);
     expect(made()).toBe(before);
-    expect(bucketName({ workerName: "erga" }, "FILES")).toBe("erga-files");
+    expect(bucketName("erga", "FILES")).toBe("erga-files");
   });
 });

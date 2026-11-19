@@ -1,10 +1,10 @@
 // The app's health check (server/health.ts): what it checks, and how it says what's wrong. And the server's scheduled
 // run (tick): the report goes into the one row of `health`, where the ops tool reads it with the same statement
-// through the platform's database API (deploy/pipeline/account.ts), and the default homepage is made.
+// through the platform's database API (deploy/deployer/cloudflare.ts), and the default homepage is made.
 
 import { expect, test } from "bun:test";
 import { Directory } from "../server/directory";
-import { readHealth } from "../deploy/pipeline/account";
+import { readHealth } from "../deploy/deployer/cloudflare";
 import { health, tick } from "../server/health";
 import type { Platform } from "../server/platform";
 import { server, signedOut } from "./helpers/app";
@@ -87,7 +87,7 @@ test("unhealthy: a document that doesn't open, or a database that throws, fails 
 
 test("the scheduled run: the report goes into the one health row, which the ops tool's own statement reads; the first run makes the homepage", async () => {
   const s = server();
-  // The statement that the ops tool sends to the database's API (deploy/pipeline/account.ts, healthRow).
+  // The statement that the ops tool sends to the database's API (deploy/deployer/cloudflare.ts, healthRow).
   const row = async () => {
     const [r] = await s.sql.all<{ at: number; version: string | null; ok: number; checks: string }>(
       "SELECT at, version, ok, checks FROM health WHERE id = 1"

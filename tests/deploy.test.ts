@@ -7,10 +7,10 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { assetHash, HEADERS_FILE } from "../deploy/pipeline/account";
-import { Cloudflare, DeployError } from "../deploy/pipeline/cloudflare-api";
+import { assetHash, HEADERS_FILE } from "../deploy/deployer/cloudflare";
+import { Cloudflare, DeployError } from "../deploy/deployer/cloudflare-api";
 import { runPipeline, STEPS, type Target } from "../deploy/pipeline/pipeline";
-import { loadRelease, type Release } from "../deploy/pipeline/release-format";
+import { loadRelease, type Release } from "../deploy/deployer/release-format";
 import { mockCloudflare } from "../dev/mock-cloudflare";
 import { HEADERS } from "../client/build.ts";
 import type { AssetManifest } from "../shared/assets.ts";

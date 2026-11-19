@@ -15,16 +15,17 @@
 // .build/release/ for the build: nothing real is touched, and no repository is asked: with no commit named, the
 // checkout's own deploys. In a clone that a test gives, the repository is asked as always.
 
-import { deployFacts, liveDeployment, liveRelease, rollbackTo, settledHealth } from "../pipeline/account";
-import { Cloudflare, DeployError, type Fetch, Unhealthy } from "../pipeline/cloudflare-api";
+import { type Carry, liveDeployment, liveRelease, rollbackTo, settledHealth } from "../deployer/cloudflare";
+import { Cloudflare, DeployError, type Fetch, Unhealthy } from "../deployer/cloudflare-api";
 import {
   STEPS,
   boundDatabaseName,
-  type Carry,
   guardTarget,
   runPipeline,
   runWith,
+  specTarget,
   type Target,
+  targetFacts,
   targetHost,
   targetPagesShown,
 } from "../pipeline/pipeline";
@@ -310,7 +311,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       } catch (e) {
         const restore = carry.restore?.versionId;
         if (e instanceof Unhealthy && restore) {
-          await rollbackTo(cf, t, restore, `bun erga deploy: ${sha.slice(0, 12)} was unhealthy`);
+          await rollbackTo(cf, specTarget(t), restore, `bun erga deploy: ${sha.slice(0, 12)} was unhealthy`);
           throw new Error(`${e.message} It is rolled back to the version before (${restore}).`);
         }
         throw e instanceof DeployError ? new Error(e.message) : e;
@@ -320,7 +321,7 @@ export async function deployInstance(o: DeployOptions): Promise<string> {
       const now = entryOf(readConfig(o.dir), o.host);
       if (now && !isAws(now)) {
         const { domains: _, ...was } = now;
-        writeConfig(o.dir, withEntry(readConfig(o.dir), { ...was, ...deployFacts(t) }));
+        writeConfig(o.dir, withEntry(readConfig(o.dir), { ...was, ...targetFacts(t) }));
       }
     }
     job.end("ok");
@@ -383,7 +384,7 @@ export async function rollbackInstance(o: RollbackOptions): Promise<string | nul
       `Rollback goes to the Worker version before it: ${p.before}${to.version ? ` (release ${to.version})` : ""}. The database stays as it is.`
     );
     if (o.ask && !o.ask("Roll back now? [y/N]")) throw new Error("Not rolled back.");
-    await rollbackTo(cf, { accountId: e.account, workerName: e.worker }, p.before, command);
+    await rollbackTo(cf, e, p.before, command);
     job.log(`${o.host} runs release ${to.version ?? "?"} now. Its health row comes within a minute...`);
     // Its health: the row that the release writes into its database within a minute (a release from before the row writes none).
     const h =

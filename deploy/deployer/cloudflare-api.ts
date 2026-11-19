@@ -24,6 +24,13 @@ export class Unhealthy extends DeployError {
   }
 }
 
+/** Calls as an Effect: what they throw is a DeployError, in its own words. */
+export const tried = <A>(body: () => Promise<A>): Effect.Effect<A, DeployError> =>
+  Effect.tryPromise({
+    try: body,
+    catch: (e) => (e instanceof DeployError ? e : new DeployError({ message: e instanceof Error ? e.message : String(e) })),
+  });
+
 /** One of Cloudflare's refusals in its answer's `errors`; one of another shape is left out, never the answer. */
 const Refusal = Schema.Struct({ code: Schema.optionalKey(Schema.Number), message: Schema.optionalKey(Schema.String) });
 const refusalOf = Schema.decodeUnknownOption(Refusal);

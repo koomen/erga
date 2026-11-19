@@ -3,6 +3,10 @@
 // plain API calls, so a page can show them one at a time, and the tests run
 // every one against a mock Cloudflare.
 //
+// Two sorts of steps. The shape steps are here: the account, the database, the addresses. A person's own login does
+// them. The code steps (migrations, assets, worker, live) are the deployer's (deploy/deployer/cloudflare.ts): the
+// pipeline runs the same ones, between its own.
+//
 // Its input is a target (Target: an account, a Worker, a database, its
 // addresses, settings and secrets) and a
 // release (deploy/release.ts: the Worker exactly as `cf build` builds it from
@@ -22,38 +26,34 @@
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import { Cloudflare, DeployError, Unhealthy } from "./cloudflare-api";
-import type { Release } from "./release-format";
-import { bindingsProblem } from "./bindings";
+import { bindingsProblem } from "../deployer/bindings";
 import {
-  PAGES_PROXY,
+  CLOUDFLARE_STEPS,
+  type Carry,
+  type CloudflareRun,
   WORKER_TAG,
-  certificateOf,
+  boundDatabase,
   d1,
-  ensureBuckets,
-  findDatabase,
-  listScripts,
-  healthRow,
-  readHealth,
-  restorePoint,
-  servedAssets,
-  setSchedule,
-  settledHealth,
-  uploadAssets,
-  workerMetadata,
-  zoneIdOf,
-} from "./account";
+  deployFacts,
+  sharedPagesHost,
+} from "../deployer/cloudflare";
+import { Cloudflare, DeployError } from "../deployer/cloudflare-api";
+import type { Release } from "../deployer/release-format";
+import type { CloudflareTarget } from "../deployer/spec";
+import { PAGES_PROXY, certificateOf, ensureBuckets, findDatabase, listScripts, zoneIdOf } from "./account";
 
-/** The steps of a deploy, in order. */
+const [MIGRATIONS, ASSETS, WORKER, LIVE] = CLOUDFLARE_STEPS;
+
+/** The steps of a deploy, in order: the shape steps, and the deployer's code steps between them. */
 export const STEPS = [
   { id: "account", title: "Check your Cloudflare account" },
   { id: "database", title: "Make the database (D1)" },
-  { id: "migrations", title: "Set up the database's tables" },
-  { id: "assets", title: "Upload the editor's files" },
-  { id: "worker", title: "Upload the Worker, with its settings and secrets" },
+  { id: MIGRATIONS.id, title: MIGRATIONS.title },
+  { id: ASSETS.id, title: ASSETS.title },
+  { id: WORKER.id, title: WORKER.title },
   { id: "address", title: "Give it its address" },
   { id: "pages", title: "Give documents' pages their own address" },
-  { id: "live", title: "Wait for its health" },
+  { id: LIVE.id, title: LIVE.title },
 ] as const;
 
 export type StepId = (typeof STEPS)[number]["id"];
@@ -110,34 +110,6 @@ export interface Target {
   secrets: Record<string, string>;
 }
 
-/** What runs on from one step to the next: the database, the version, and whether the Worker was there. */
-export interface Carry {
-  dbId?: string;
-  version?: string;
-  existing?: boolean;
-  /** What the target ran before this deploy changed anything (the migrations step records it): a rollback goes back to it. */
-  restore?: RestorePoint;
-  /** The server wrote a health row in the minutes before the upload: its Cron Trigger runs (the live step's wait). */
-  ticking?: boolean;
-}
-
-/**
- * Where a target was before a deploy: the Worker version that served (a
- * deployment of it again is a rollback, in seconds, with no build), the release it
- * ran, and the database's D1 Time Travel bookmark from before the deploy's
- * migrations (a restore to it loses everything written since: for a person
- * to decide, never automatic). Null where there was none to record (a new
- * Worker, a token that may not read it).
- */
-export interface RestorePoint { versionId: string | null; version: string | null; bookmark: string | null; at: number }
-
-/** The database a Worker's DB binding names now, or null (no Worker, no binding). */
-export async function boundDatabase(cf: Cloudflare, acc: string, worker: string): Promise<string | null> {
-  const settings = await cf.call<{ bindings?: { name: string; type: string; id?: string; database_id?: string }[] }>("GET", `${acc}/workers/scripts/${worker}/settings`, `read ${worker}'s settings`, undefined, { allow404: true });
-  const b = settings?.bindings?.find((x) => x.type == "d1" && x.name == "DB");
-  return b?.database_id ?? b?.id ?? null;
-}
-
 /**
  * The name of the database that a Worker is bound to now, or null (no Worker, no binding, or a database that the
  * account no longer has). A Worker that runs keeps its database: a deploy takes its entry's database from here.
@@ -149,8 +121,25 @@ export async function boundDatabaseName(cf: Cloudflare, acc: string, worker: str
   return all.find((d) => d.uuid == bound)?.name ?? null;
 }
 
-export const targetHost = (t: Pick<Target, "app" | "workerName" | "subdomain">) => (t.app.kind == "domain" ? t.app.hostname : `${t.workerName}.${t.subdomain}.workers.dev`);
-export const targetSharedPagesHost = (t: Pick<Target, "workerName" | "subdomain">) => `${t.workerName}-pages.${t.subdomain}.workers.dev`;
+export const targetHost = (t: Pick<Target, "app" | "workerName" | "subdomain">) =>
+  t.app.kind == "domain" ? t.app.hostname : `${t.workerName}.${t.subdomain}.workers.dev`;
+export const targetSharedPagesHost = (t: Pick<Target, "workerName" | "subdomain">) =>
+  sharedPagesHost({ worker: t.workerName, subdomain: t.subdomain });
+
+/** A target's deploy facts (deploy/deployer/cloudflare.ts, deployFacts): its names and its plain settings. */
+export const targetFacts = (t: Target) => deployFacts(specTarget(t), t.vars);
+
+/** A target as the deployer's steps name it: the target of the instance's spec (deploy/deployer/). */
+export const specTarget = (t: Target): CloudflareTarget => ({
+  kind: "cloudflare",
+  account: t.accountId,
+  worker: t.workerName,
+  database: t.databaseName,
+  ...(t.subdomain ? { subdomain: t.subdomain } : {}),
+  app: t.app,
+  pages: t.pages,
+  ...(t.domains?.length ? { domains: t.domains } : {}),
+});
 export const targetPagesShown = (t: Pick<Target, "pages" | "workerName" | "subdomain">) =>
   t.pages.kind == "zone" ? `*.${t.pages.domain ?? t.pages.zoneName}` : targetSharedPagesHost(t);
 
@@ -211,6 +200,15 @@ export async function runPipeline(
   const acc = `/accounts/${target.accountId}`;
   const host = targetHost(target);
   const pagesHost = target.pages.kind == "shared" ? targetSharedPagesHost(target) : null;
+  // The deployer's code steps, on this target: the first deploy's secrets go with the Worker's upload.
+  const code: CloudflareRun = {
+    cf,
+    spec: { target: specTarget(target), settings: target.vars },
+    release,
+    carry,
+    secrets: target.secrets,
+    waitMs: opts.waitMs,
+  };
   const wrong = guardTarget(target);
   if (wrong) throw new DeployError({ message: wrong });
   // A binding this pipeline can't make stops the deploy here, before any step changes the target.
@@ -218,19 +216,6 @@ export async function runPipeline(
   if (unknown) throw new DeployError({ message: unknown });
   // Behind a gate's Worker, the hosts are the gate's: neither step that gives an address runs.
   const steps = STEPS.map((s) => s.id).filter((id) => !(target.gate && (id == "address" || id == "pages")));
-  carry.version = release.version;
-
-  /** The Worker's upload: its modules, and its metadata. */
-  const uploadWorker = async (assetsJwt: string) => {
-    // Whether the Worker was there: the account step's answer, kept in the carry.
-    await ensureBuckets(cf, acc, release, target);
-    const metadata = workerMetadata(release, target, { dbId: carry.dbId!, assetsJwt, pagesHost });
-    const form = new FormData();
-    form.set("metadata", JSON.stringify(metadata));
-    for (const [name, bytes] of Object.entries(release.modules))
-      form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
-    await cf.call("PUT", `${acc}/workers/scripts/${target.workerName}`, "upload the Worker", form);
-  };
 
   const run: Record<StepId, () => Promise<string | undefined>> = {
     // The account, its workers.dev subdomain (made if it has none and the target names one), and whether the Worker is Erga's.
@@ -295,62 +280,23 @@ export async function runPipeline(
       return `"${target.databaseName}" (${carry.dbId})`;
     },
 
-    // server/migrations/, each once, recorded in d1_migrations as the cf CLI does.
-    // First, the restore point: the last thing before the deploy changes what the target runs on.
-    async migrations() {
-      const db = carry.dbId!;
-      const restore = await restorePoint(cf, target, { dbId: db, existing: !!carry.existing });
-      carry.restore = restore.point;
-      const noted =
-        restore.point.versionId || restore.point.bookmark
-          ? `restore point: ${restore.point.versionId ? `version ${restore.point.versionId.slice(0, 8)}${restore.point.version ? ` (release ${restore.point.version})` : ""}` : "no version"}, ${restore.point.bookmark ? `database bookmark ${restore.point.bookmark}` : "no database bookmark"}`
-          : `no restore point (${restore.why})`;
-      await d1(
-        cf,
-        acc,
-        db,
-        "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)",
-        [],
-        "set up the database"
-      );
-      const done = new Set(
-        ((await d1(cf, acc, db, "SELECT name FROM d1_migrations", [], "read the database's migrations")) ?? []).map((r) => String(r.name))
-      );
-      const pending = Object.keys(release.migrations)
-        .sort()
-        .filter((n) => !done.has(n));
-      for (const name of pending) {
-        // The file and its record in d1_migrations, in one /query call (statements run as one batch, so all or nothing), as wrangler's `d1 migrations apply --remote` sends it.
-        const sql = release.migrations[name].trim();
-        await d1(cf, acc, db, `${sql}${sql.endsWith(";") ? "" : ";"}\nINSERT INTO d1_migrations (name) VALUES ('${name.replace(/'/g, "''")}');`, [], `apply the database migration ${name}`);
-      }
-      return `${pending.length ? `applied ${pending.join(", ")}` : "already up to date"}; ${noted}`;
-    },
+    // The deployer's: the database's migrations, after the restore point (a rollback goes back to it).
+    migrations: () => runWith(opts.sleep, MIGRATIONS.run(code)),
 
-    // The static assets: the manifest, then each bucket Cloudflare asks for.
-    async assets() {
-      const files = servedAssets(release);
-      (carry as Carry & { assetsJwt?: string }).assetsJwt = await runWith(opts.sleep, uploadAssets(cf, acc, target.workerName, files));
-      return `${Object.keys(files).length} files`;
-    },
+    // The deployer's: the static assets.
+    assets: () => runWith(opts.sleep, ASSETS.run(code)),
 
-    // The Worker: modules, bindings (from the build's config, made the target's own), secrets, its Durable Objects.
+    // The buckets that the release binds (shape: made here if they aren't there), then the deployer's upload of the Worker.
     async worker() {
-      const assetsJwt = (carry as Carry & { assetsJwt?: string }).assetsJwt;
-      if (!assetsJwt) throw new DeployError({ message: "The editor's files weren't uploaded first: deploy again." });
-      // Whether the server's scheduled run runs already (a row of the last minutes): the live step waits by it.
-      carry.ticking = readHealth(await healthRow(cf, acc, carry.dbId!).catch(() => null), null, Date.now()).healthy != null;
-      await uploadWorker(assetsJwt);
-      delete (carry as Carry & { assetsJwt?: string }).assetsJwt;
-      // Its Cron Trigger, each minute: the server's own health into its database, and the default homepage.
-      await setSchedule(cf, acc, target.workerName);
+      await ensureBuckets(cf, acc, release, target);
+      const detail = await runWith(opts.sleep, WORKER.run(code));
       // Behind a gate, nothing but the gate reaches it: a request to an address of its own would go around the gate.
       if (target.gate)
         await cf.call("POST", `${acc}/workers/scripts/${target.workerName}/subdomain`, "turn off its workers.dev address", {
           enabled: false,
           previews_enabled: false,
         });
-      return `${target.workerName}, release ${release.version}; its Cron Trigger runs each minute${target.gate ? "; no address of its own (a gate has its hosts)" : ""}`;
+      return `${detail}${target.gate ? "; no address of its own (a gate has its hosts)" : ""}`;
     },
 
     // Its address, and its custom domains.
@@ -443,36 +389,8 @@ export async function runPipeline(
       return `https://${pagesHost} (shared by every document)`;
     },
 
-    // Healthy: the release's own health row, which its scheduled run writes into its database each minute (the database,
-    // a document), read through D1's API. A server whose Cron Trigger ran before the deploy writes the new release's
-    // row in about a minute: three minutes without a healthy one is an unhealthy release, which the caller rolls back.
-    // A new Cron Trigger (the first deploy with one) can take up to 15 minutes to start, by Cloudflare's own words:
-    // the step waits that long, and then stops with no rollback.
-    live: () =>
-      runWith(
-        opts.sleep,
-        Effect.gen(function* () {
-          const want = carry.version!;
-          const ticking = !!carry.ticking;
-          const h = yield* settledHealth(cf, acc, carry.dbId!, want, opts.waitMs ?? (ticking ? 180_000 : 900_000));
-          if (h.healthy) return `release ${want}, healthy (${h.summary})`;
-          if (h.healthy === false)
-            return yield* Effect.fail(
-              new Unhealthy(`Release ${want} is deployed to ${target.workerName}, but its health check fails: ${h.why}`, h.why)
-            );
-          if (ticking)
-            return yield* Effect.fail(
-              new Unhealthy(
-                `Release ${want} is deployed to ${target.workerName}, but it wrote no health row in 3 minutes (${h.why}): its scheduled run fails.`,
-                h.why
-              )
-            );
-          return yield* new DeployError({
-            message: `Release ${want} is deployed to ${target.workerName}, but its first health row has not come yet (${h.why}). Cloudflare can take up to 15 minutes to start a new Cron Trigger. Look again in a few minutes: bun erga status`,
-          });
-        })
-      ),
-
+    // The deployer's: the wait for the release's own health row.
+    live: () => runWith(opts.sleep, LIVE.run(code)),
   };
 
   for (const id of steps) {

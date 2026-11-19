@@ -13,7 +13,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ASSET_PREFIX } from "../../shared/assets";
-import type { Release } from "./release-format";
+import type { Release } from "../deployer/release-format";
 
 /** A hashed file's address: under ASSET_PREFIX, plain names only. */
 const HASHED = /^\/_erga\/[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)*$/;

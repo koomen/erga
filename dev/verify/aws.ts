@@ -52,7 +52,7 @@ import { applyStacks, awsEntry, firstSql, prepareMachine, putOidcSecret, whereOf
 import { CERT_REGION, changeLines, type Planned, stackState, templatePath } from "../../deploy/aws/stack.ts";
 import { GATE_PARTS, idpSecretParam, paramPath } from "../../deploy/aws/template.ts";
 import { type Answers, callbackOf, defaultsOf, noAnswers, stackOf } from "../../deploy/own/plan.ts";
-import type { Release } from "../../deploy/pipeline/release-format.ts";
+import type { Release } from "../../deploy/deployer/release-format.ts";
 import { issuerPart, removeWorker, worker } from "./cloudflare.ts";
 import { assertDedicated, REGION } from "./dedicated.ts";
 import { onlyHere, onlyHereStack, restrict } from "./only-here.ts";

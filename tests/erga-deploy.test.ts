@@ -14,7 +14,7 @@ import { commitOf, deployInstance, entryTarget, rollbackInstance, trackedHead } 
 import { promote, promoteRefusal } from "../deploy/cli/promote";
 import { findInstance, instanceReader } from "../deploy/cli/running";
 import { lockPath, takeLock } from "../deploy/cli/jobs";
-import { deployFacts } from "../deploy/pipeline/account";
+import { targetFacts } from "../deploy/pipeline/pipeline";
 import { mockCloudflare } from "../dev/mock-cloudflare";
 import {
   bindingsOf,
@@ -34,8 +34,8 @@ quietConsole();
 
 const HEAD = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: ROOT }).stdout.toString().trim();
 const REPO = "github.com/koomen/erga";
-const fleet: Entry = { host: "example.com", repo: REPO, branch: "main", ...deployFacts(fleetTarget()) };
-const nextFacts = deployFacts(nextTarget());
+const fleet: Entry = { host: "example.com", repo: REPO, branch: "main", ...targetFacts(fleetTarget()) };
+const nextFacts = targetFacts(nextTarget());
 const next: Entry = {
   host: "next.example.com",
   repo: REPO,

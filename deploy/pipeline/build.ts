@@ -19,9 +19,9 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import * as Result from "effect/Result";
 import { Base64 } from "effect/encoding";
+import { DeployError } from "../deployer/cloudflare-api";
+import { loadRelease, type Release, type ReleaseIndex } from "../deployer/release-format";
 import { git, ROOT } from "../root";
-import { DeployError } from "./cloudflare-api";
-import { loadRelease, type Release, type ReleaseIndex } from "./release-format";
 
 
 /** Builds `commit` of this clone in a scratch worktree: the release. Under the mock, the checkout's own .build/release/, stamped. */

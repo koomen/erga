@@ -4,8 +4,7 @@
 // flow (what the command does next) is deploy/own/flow.ts.
 
 import { type CloudflareEntry, DEFAULT_BRANCH, DEFAULT_REPO, repoName } from "../cli/config";
-import { deployFacts } from "../pipeline/account";
-import type { Target } from "../pipeline/pipeline";
+import { type Target, targetFacts } from "../pipeline/pipeline";
 import { SIGN_IN_DAYS_MAX } from "../../gate/core.ts";
 
 export type Where = "cloudflare" | "aws";
@@ -237,7 +236,7 @@ export function firstRows(a: Answers, now = Date.now()): FirstRow[] {
 /**
  * An instance's names. With an entry (.erga/config.json), the entry's. Without one, a new instance's, from its
  * address: erga.example.com gives the Worker and the database erga-example-com (on AWS, the stack). The bucket and the
- * shared pages Worker have the Worker's name (deploy/pipeline/account.ts, bucketName).
+ * shared pages Worker have the Worker's name (deploy/deployer/cloudflare.ts, bucketName).
  */
 export function namesOf(
   host: string,
@@ -280,7 +279,7 @@ export function setupEntry(a: Answers, o: { zones: string[]; subdomain: string |
     host: a.host,
     repo: a.repo,
     branch: a.branch,
-    ...deployFacts(target),
+    ...targetFacts(target),
   };
 }
 

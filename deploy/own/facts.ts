@@ -5,8 +5,8 @@
 
 import { entryOf, readConfig } from "../cli/config";
 import { mocked, netOf } from "../cli/deploy";
-import { Cloudflare, type Fetch } from "../pipeline/cloudflare-api";
-import { healthRow, liveDeployment, liveRelease, readHealth, WORKER_TAG } from "../pipeline/account";
+import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
+import { healthRow, liveDeployment, liveRelease, readHealth, WORKER_TAG } from "../deployer/cloudflare";
 import { machineCredential } from "../local-credential";
 import { nothingSeen, type Seen } from "./flow";
 import { type Answers, varsOf, zoneOf } from "./plan";

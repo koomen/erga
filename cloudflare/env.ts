@@ -69,7 +69,7 @@ export interface Env {
   ERGA_VERSION?: string;
   /**
    * The facts a deploy from a machine needs to deploy this server again, as JSON (the pipeline sets it:
-   * deploy/pipeline/account.ts `deployFacts`): the Cloudflare account, the Worker, the database, the app's address and
+   * deploy/deployer/cloudflare.ts `deployFacts`): the Cloudflare account, the Worker, the database, the app's address and
    * the pages'. The server reads its custom domains and its app's host from it; `bun erga register` reads it from
    * Cloudflare, in the bindings of the Worker's version (deploy/cli/running.ts).
    */

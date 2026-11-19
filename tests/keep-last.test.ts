@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { keepLast, releasesDir, withKept } from "../deploy/pipeline/keep-last";
-import type { Release } from "../deploy/pipeline/release-format";
+import type { Release } from "../deploy/deployer/release-format";
 
 const bytes = (s: string) => new TextEncoder().encode(s);
 const text = (b: Uint8Array) => new TextDecoder().decode(b);

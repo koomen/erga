@@ -41,7 +41,7 @@
 import * as Base64 from "effect/encoding/Base64";
 import * as Result from "effect/Result";
 import { createHash } from "node:crypto";
-import type { Fetch } from "../deploy/pipeline/cloudflare-api";
+import type { Fetch } from "../deploy/deployer/cloudflare-api";
 import { hex, randomBytes } from "../shared/bytes";
 import { accountZones, zones } from "./mock-cloudflare-zones";
 import { seedFleet } from "./mock-cloudflare-fleet";
@@ -91,6 +91,8 @@ export interface MockState {
   failNext: string | null;
   /** The Workers whose scheduled run made their default homepage, by name. */
   homes?: string[];
+  /** The time of the server's scheduled runs: a test's own clock. Default: the real time. */
+  now?: () => number;
 }
 
 /** A Worker's tag (its id in GET /workers/scripts): fixed by its name, here. */
@@ -456,7 +458,7 @@ export function runScheduled(state: MockState, db: string) {
   if (version && state.silent?.includes(version)) return;
   const bad = !!version && !!state.unhealthy?.includes(version);
   state.health[db] = {
-    at: Date.now(),
+    at: (state.now ?? Date.now)(),
     version,
     ok: bad ? 0 : 1,
     checks: JSON.stringify({

@@ -1,11 +1,12 @@
 // A release's bindings: the kinds the pipeline makes for each target, and every other kind, whose metadata the
-// release carries and the pipeline sends as it is (deploy/pipeline/bindings.ts). A release with a new kind deploys
+// release carries and the pipeline sends as it is (deploy/deployer/bindings.ts). A release with a new kind deploys
 // as it is; one that needs a newer pipeline stops before it changes anything.
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { workerMetadata } from "../deploy/pipeline/account";
-import { bindingsProblem, releaseBindings } from "../deploy/pipeline/bindings";
-import type { Release } from "../deploy/pipeline/release-format";
+import { workerMetadata } from "../deploy/deployer/cloudflare";
+import { specTarget } from "../deploy/pipeline/pipeline";
+import { bindingsProblem, releaseBindings } from "../deploy/deployer/bindings";
+import type { Release } from "../deploy/deployer/release-format";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
 import { prepareRelease, release, nextSecrets, next, deployTo, bindingsOf } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
@@ -14,11 +15,7 @@ quietConsole();
 beforeAll(prepareRelease, 120_000);
 
 const nextMeta = (rel: Release) =>
-  workerMetadata(rel, next(), {
-    dbId: "db",
-    assetsJwt: "jwt",
-    pagesHost: null,
-  }).bindings as any[];
+  workerMetadata(rel, { target: specTarget(next()), settings: next().vars }, { dbId: "db", assetsJwt: "jwt" }).bindings as any[];
 
 describe("the app Worker's bindings", () => {
   test("the release carries the metadata of each kind the pipeline doesn't make, and none of the target's own", () => {

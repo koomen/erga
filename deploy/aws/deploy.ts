@@ -1,13 +1,17 @@
 // `bun erga deploy` and `bun erga rollback` of an instance on AWS (deploy/cli/deploy.ts calls these for an entry with
-// AWS facts). A deploy: the release as a celld project (project.ts) into the bucket, then the machine loads it
-// (machine.ts, deployScript: the migrations, the Worker, its answer). A release that doesn't answer is rolled back to the
-// one before it. A rollback loads the release before the one that runs; the bucket keeps every release. Each deploy
+// AWS facts). A deploy runs the deployer's steps (deploy/deployer/aws.ts) with the AWS CLI: the release as a celld
+// project (project.ts) into the bucket, then the machine loads it (machine.ts, deployScript: the migrations, the
+// Worker, its answer). A release that doesn't answer is rolled back to the one before it. A rollback loads the release before the one that runs; the bucket keeps every release. Each deploy
 // and each rollback writes the release that runs into one plain parameter (liveParam): `bun erga status` reads it
 // there (the AWS CLI), with no request to the instance. Its health is the machine's own check of its server on the
 // loopback (healthOnAws: Systems Manager).
 
+import * as Effect from "effect/Effect";
 import type { AwsEntry, AwsFacts } from "../cli/config";
-import type { Release } from "../pipeline/release-format";
+import type { AwsApi } from "../deployer/aws";
+import { tried } from "../deployer/cloudflare-api";
+import { deploy } from "../deployer/deploy";
+import type { Release } from "../deployer/release-format";
 import { type Aws, awsCli } from "./cli";
 import { CHROME_DEVTOOLS, deployedScript, deployScript, factsScript, healthScript, onMachine, putRelease } from "./machine";
 import { celldProject } from "./project";
@@ -92,26 +96,24 @@ export async function deployedReleases(e: AwsEntry): Promise<string[]> {
 }
 
 /**
- * Deploys `release` to the instance: into its bucket, then onto its machine. `first`: SQL the machine runs once the
- * release answers (setup's first admin). If the release doesn't answer, the release before it goes back on.
+ * Deploys `release` to the instance: the deployer's steps (into its bucket, then onto its machine), with the AWS CLI
+ * as their AWS. `first`: SQL the machine runs once the release answers (setup's first admin). If the release doesn't
+ * answer, the release before it goes back on.
  */
 export async function deployToAws(e: AwsEntry, release: Release, log: (line: string) => void, first?: string): Promise<void> {
   const aws = awsOf(e);
   const where = { bucket: e.aws.bucket, region: e.aws.region, stack: e.aws.stack, gateKey: e.aws.gate };
-  const project = await celldProject(release, awsVars(e, release.version));
-  const size = await putRelease(aws, e.aws.bucket, project, release.version);
-  log(`Release ${release.version} is in the bucket ${e.aws.bucket} (${(size / 1e6).toFixed(1)} MB).`);
-  const before = (await deployedReleases(e)).at(-1) ?? null;
-  log(`The machine ${e.aws.machine} loads it: the migrations, then the Worker${before ? ` (it runs ${before} now)` : ""}...`);
-  try {
-    log((await onMachine(aws, e.aws.machine, deployScript({ ...where, version: release.version, first }))).trim().split("\n").at(-1) ?? "");
-    await putLive(aws, e.aws.stack, release.version);
-  } catch (err) {
-    if (!before || before == release.version) throw err;
-    log(`Release ${release.version} didn't answer: the machine goes back to ${before}.`);
-    await onMachine(aws, e.aws.machine, deployScript({ ...where, version: before }));
-    throw new Error(`${(err as Error).message} It is rolled back to ${before}.`);
-  }
+  const api: AwsApi = {
+    putRelease: (r) => tried(async () => putRelease(aws, e.aws.bucket, await celldProject(r, awsVars(e, r.version)), r.version)),
+    deployed: tried(() => deployedReleases(e)),
+    // Setup's first SQL goes with the new release only, never with the release that a rollback loads.
+    load: (version) =>
+      tried(() => onMachine(aws, e.aws.machine, deployScript({ ...where, version, ...(version == release.version ? { first } : {}) }))),
+    setLive: (version) => tried(() => putLive(aws, e.aws.stack, version)),
+  };
+  await Effect.runPromise(deploy({ target: { kind: "aws", ...e.aws }, settings: e.vars }, release, { aws: api, log })).catch((err) => {
+    throw new Error((err as Error).message);
+  });
 }
 
 /** Loads the release the machine ran before the one that runs: the database as it is. The result: the release it runs then. */

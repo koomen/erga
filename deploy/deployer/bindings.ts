@@ -1,7 +1,7 @@
 // The app Worker's bindings in Cloudflare's upload form. Two sorts:
 //
 //   - the kinds the pipeline makes for each target (TARGET_KINDS): a database, a bucket, the target's settings and
-//     secrets. Their metadata differs from target to target: account.ts (workerMetadata) makes it.
+//     secrets. Their metadata differs from target to target: cloudflare.ts (workerMetadata) makes it.
 //   - every other kind: the same metadata on every target. The release carries it, written by the release's own
 //     code (deploy/release.ts: `bindings` in release.json), and the pipeline sends it as it is.
 //
@@ -56,5 +56,5 @@ export function bindingsProblem(release: Release): string | null {
   const missing = Object.entries(release.worker.env).filter(([n, b]) => !TARGET_KINDS.includes(b.type) && !passedBinding(release, n, b));
   if (!missing.length) return null;
   const list = missing.map(([n, b]) => `${n} (${b.type})`).join(", ");
-  return `Release ${release.version} has a binding that the deploy pipeline must make for each target, and it can't: ${list}. Nothing changed. Teach the pipeline (deploy/pipeline/account.ts, workerMetadata) to make it.`;
+  return `Release ${release.version} has a binding that the deploy pipeline must make for each target, and it can't: ${list}. Nothing changed. Teach the pipeline (deploy/deployer/cloudflare.ts, workerMetadata) to make it.`;
 }

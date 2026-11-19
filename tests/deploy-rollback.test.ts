@@ -5,9 +5,9 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
-import { EACH_MINUTE, HEALTH_FRESH_MS, readHealth, rollbackTo } from "../deploy/pipeline/account";
-import { Cloudflare, DeployError, Unhealthy } from "../deploy/pipeline/cloudflare-api";
-import { runPipeline, type Carry } from "../deploy/pipeline/pipeline";
+import { type Carry, EACH_MINUTE, HEALTH_FRESH_MS, readHealth, rollbackTo } from "../deploy/deployer/cloudflare";
+import { Cloudflare, DeployError, Unhealthy } from "../deploy/deployer/cloudflare-api";
+import { runPipeline, specTarget } from "../deploy/pipeline/pipeline";
 import { prepareRelease, release, SHA1, SHA2, SHA3, next, nextSecrets, bindingsOf, bootstrap, quick } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 
@@ -83,7 +83,7 @@ describe("rollbacks", () => {
     expect(carry.restore!.version).toBe(SHA2.slice(0, 12));
 
     const calls = mock.state.calls.length;
-    await rollbackTo(cf, next(), before, "unhealthy");
+    await rollbackTo(cf, specTarget(next()), before, "unhealthy");
     expect(mock.state.calls.slice(calls)).toEqual([`POST /accounts/${FLEET_ACCOUNT}/workers/scripts/erga-next/deployments?force=true`]);
     expect(bindingsOf(mock.state, "erga-next").ERGA_VERSION.text).toBe(SHA2.slice(0, 12));
 

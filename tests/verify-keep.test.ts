@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Change } from "../deploy/aws/stack";
 import { type VerifyFacts, verifyHtml, verifySide } from "../deploy/cli/verify-view";
-import type { Release } from "../deploy/pipeline/release-format";
+import type { Release } from "../deploy/deployer/release-format";
 import { readKept, writeKept } from "../dev/verify/cli";
 import { issuerPart, workerParts } from "../dev/verify/cloudflare";
 import type { Id, Prereq } from "../dev/verify/prereqs";

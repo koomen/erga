@@ -11,13 +11,13 @@ import { join } from "node:path";
 import { type CloudflareEntry, type Entry, readConfig, withEntry, writeConfig } from "../deploy/cli/config";
 import type { MockState } from "../dev/mock-cloudflare";
 import { writePass } from "./helpers/pass.ts";
-import { Cloudflare } from "../deploy/pipeline/cloudflare-api";
+import { Cloudflare } from "../deploy/deployer/cloudflare-api";
 import { adminOn, type First, firstDeploy, writeEntry } from "../deploy/own/first";
 import { instanceReader } from "../deploy/cli/running";
 import { liveOf } from "../deploy/own/facts";
 import { noAnswers } from "../deploy/own/plan";
 import { loadSecrets, namesAt, putSecret } from "../deploy/own/store";
-import { deployFacts } from "../deploy/pipeline/account";
+import { targetFacts } from "../deploy/pipeline/pipeline";
 import { ACCOUNT_ID, FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
 import { bindingsOf, bootstrap, fleet, prepareRelease, ROOT } from "./helpers/deploys.ts";
 import { quietConsole } from "./helpers/quiet.ts";
@@ -178,7 +178,7 @@ test("an instance that runs already, with names of its own: setup stops, and its
   try {
     writePass(own, HEAD);
     // An entry as `bun erga register` writes it: the Worker "erga", which no address gives.
-    const entries: Entry[] = [{ host: "example.com", repo: "example.com/team/erga", branch: "main", ...deployFacts(fleet()) }];
+    const entries: Entry[] = [{ host: "example.com", repo: "example.com/team/erga", branch: "main", ...targetFacts(fleet()) }];
     writeConfig(own, { instances: entries });
     const calls = mock.state.calls.length;
     // The answers would give other names (erga-example-com): setup makes no second Worker beside the one that runs.

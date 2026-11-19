@@ -14,8 +14,8 @@
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import type { ReleaseIndex } from "./pipeline/release-format.ts";
-import { releaseBindings } from "./pipeline/bindings.ts";
+import type { ReleaseIndex } from "./deployer/release-format.ts";
+import { releaseBindings } from "./deployer/bindings.ts";
 import { ROOT } from "./root.ts";
 
 const SITE = join(ROOT, ".build"), OUT = join(SITE, "release");

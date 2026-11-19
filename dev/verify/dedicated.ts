@@ -15,7 +15,7 @@
 //                        alone (bun dev/verify.ts <n> deploy), with no prerequisites checked
 
 import { ergaDir, readConfig } from "../../deploy/cli/config.ts";
-import { API, Cloudflare, type Fetch } from "../../deploy/pipeline/cloudflare-api.ts";
+import { API, Cloudflare, type Fetch } from "../../deploy/deployer/cloudflare-api.ts";
 import { sh } from "../../deploy/root.ts";
 import { guardAws, guarded as awsInFront } from "./aws-guard.ts";
 import { dedicatedEnv, hostsOf, type Local, readLocal, tokenOf } from "./config.ts";

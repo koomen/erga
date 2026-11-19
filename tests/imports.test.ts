@@ -24,6 +24,8 @@
 //                     A library's UI (libs/<name>/ui/) is in this layer too. A library's API never imports its UI.
 //                     (tests/browser-imports.test.ts follows what the bundles reach)
 //   8. deploy/, dev/, tests/, e2e/, client/build.ts and the scripts at the top: anything. Nothing imports them.
+//      But deploy/deployer/ (the code that deploys with a credential in someone's cloud account) imports only its own
+//      files and Effect: what it can do is what one small folder says.
 //
 // And:
 //   - An area of server/ is imported from outside only through its index.ts. Tools may look inside.
@@ -93,6 +95,10 @@ function layer(path: string): number {
 
 /** What is wrong with `from` importing `to` (repo paths without .ts), or null. */
 function wrong(from: string, to: string, type: boolean): string | null {
+  if (from.startsWith("deploy/deployer/"))
+    return to.startsWith("deploy/deployer/") || to == "effect" || to.startsWith("effect/")
+      ? null
+      : "deploy/deployer/ imports only its own files and Effect";
   if (to.startsWith("cloudflare:")) return from.startsWith("cloudflare/") ? null : "only cloudflare/ imports cloudflare:workers";
   if (!REPO.includes(to.split("/")[0])) return null;
   const mine = layer(from),
@@ -183,6 +189,11 @@ test("the rules catch what they are for", () => {
     ["client/shell/main", "deploy/cli/config"],
     ["cloudflare/objects/document", "dev/disk-storage"],
     ["server/health", "deploy/pipeline/pipeline"],
+    ["deploy/deployer/deploy", "deploy/pipeline/pipeline"],
+    ["deploy/deployer/cloudflare", "shared/bytes"],
+    ["deploy/deployer/aws", "deploy/aws/machine"],
+    ["deploy/deployer/deploy", "node:fs"],
+    ["deploy/deployer/deploy", "bun"],
     ["server/app", "cloudflare:workers"],
     ["client/shell/main", "document/api/host"],
     ["libs/text/api/rules", "libs/text/ui/core"],
@@ -202,6 +213,9 @@ test("the rules catch what they are for", () => {
     ["client/shell/main", "libs/text/ui/editor", false],
     ["cloudflare/platform", "server/health", true],
     ["tests/room.test", "cloudflare/objects/document", false],
+    ["deploy/deployer/deploy", "deploy/deployer/job", false],
+    ["deploy/deployer/cloudflare", "effect/Schedule", false],
+    ["deploy/pipeline/pipeline", "deploy/deployer/cloudflare", false],
   ] as const;
   for (const [from, to, type] of yes) expect([from, to, wrong(from, to, type)]).toEqual([from, to, null]);
 });

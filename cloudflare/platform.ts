@@ -45,7 +45,7 @@ const SETTINGS = Config.all({
   devLogin: text("DEV_LOGIN"),
   pagesDomain: text("PAGES_DOMAIN"),
   version: text("ERGA_VERSION"),
-  /** Where the pipeline deployed this server (ERGA_DEPLOY, JSON: deploy/pipeline/account.ts deployFacts), or null. */
+  /** Where the pipeline deployed this server (ERGA_DEPLOY, JSON: deploy/deployer/cloudflare.ts deployFacts), or null. */
   deployFacts: text("ERGA_DEPLOY").pipe(Config.map((v): unknown => Result.getOrNull(Result.try(() => (v ? JSON.parse(v) : null))))),
   pagesHost: text("PAGES_HOST"),
   /** The OAuth mode's app at each provider (the names are its entry's: server/identity/providers.ts), and the tests' stand-in for it. */
@@ -86,7 +86,7 @@ const domainsOf = (facts: unknown): string[] => {
 /** A domain's site object (objects/site.ts: the Erga domain's is named "home"). */
 export const siteOf = (env: Pick<Env, "HOME">, domain: string) => env.HOME.getByName(domain == ERGA ? "home" : domain);
 
-/** The app's host in the deploy facts (deploy/pipeline/account.ts, deployFacts: its domain, or its workers.dev address), or null. */
+/** The app's host in the deploy facts (deploy/deployer/cloudflare.ts, deployFacts: its domain, or its workers.dev address), or null. */
 const appOf = (facts: unknown): string | null => {
   const f = (facts && typeof facts == "object" ? facts : {}) as {
     app?: { kind?: string; hostname?: unknown };

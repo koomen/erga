@@ -6,8 +6,8 @@ import { expect } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { runPipeline, type Target } from "../../deploy/pipeline/pipeline";
-import { Cloudflare } from "../../deploy/pipeline/cloudflare-api";
-import { loadRelease, type Release } from "../../deploy/pipeline/release-format";
+import { Cloudflare } from "../../deploy/deployer/cloudflare-api";
+import { loadRelease, type Release } from "../../deploy/deployer/release-format";
 import { FLEET_ACCOUNT, mockCloudflare, type MockState } from "../../dev/mock-cloudflare";
 
 export const ROOT = new URL("../..", import.meta.url).pathname;

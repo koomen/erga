@@ -1,4 +1,4 @@
-// Erga's release (deploy/pipeline/release-format.ts: the build of one commit) as a celld project: celld
+// Erga's release (deploy/deployer/release-format.ts: the build of one commit) as a celld project: celld
 // (github.com/denoland/celld) runs the same Worker and Durable Objects on a machine of the instance's own, with their
 // state in its bucket (deploy/aws/README.md). The project: wrangler.json, index.js, assets/, migrations/.
 //
@@ -12,8 +12,8 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { EACH_MINUTE } from "../pipeline/account.ts";
-import type { Release } from "../pipeline/release-format.ts";
+import { EACH_MINUTE } from "../deployer/cloudflare.ts";
+import type { Release } from "../deployer/release-format.ts";
 
 const write = (path: string, bytes: Uint8Array | string) => {
   mkdirSync(dirname(path), { recursive: true });

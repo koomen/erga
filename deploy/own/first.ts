@@ -13,8 +13,8 @@
 import { randomBytes } from "node:crypto";
 import { type CloudflareEntry, type Config, entryOf, readConfig, withEntry, writeConfig } from "../cli/config";
 import { type DeployOptions, deployInstance } from "../cli/deploy";
-import { d1 } from "../pipeline/account";
-import { Cloudflare, type Fetch } from "../pipeline/cloudflare-api";
+import { d1 } from "../deployer/cloudflare";
+import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import type { Seen } from "./flow";
 import { type Answers, firstRows, setupEntry } from "./plan";
 import { loadSecrets, saveSecrets } from "./store";

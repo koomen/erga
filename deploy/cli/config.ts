@@ -33,7 +33,7 @@ const Pages = Schema.Union([
 
 /**
  * Where a deploy finds an instance on Cloudflare: the pipeline's own names for it, and the Worker's plain settings as
- * the pipeline sent them (deploy/pipeline/account.ts, deployFacts). The Worker holds them too, in its binding
+ * the pipeline sent them (deploy/deployer/cloudflare.ts, deployFacts). The Worker holds them too, in its binding
  * ERGA_DEPLOY: `bun erga register` reads them there, through Cloudflare's API.
  */
 export const CloudflareFacts = Schema.Struct({

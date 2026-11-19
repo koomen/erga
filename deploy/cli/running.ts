@@ -8,8 +8,8 @@
 
 import * as Schema from "effect/Schema";
 import type { Aws, Where } from "../aws/cli";
-import { healthRow, liveDeployment, liveRelease, readHealth } from "../pipeline/account";
-import { Cloudflare, type Fetch } from "../pipeline/cloudflare-api";
+import { healthRow, liveDeployment, liveRelease, readHealth } from "../deployer/cloudflare";
+import { Cloudflare, type Fetch } from "../deployer/cloudflare-api";
 import { AwsFacts, CloudflareFacts, type Entry, isAws } from "./config";
 import { netOf } from "./deploy";
 import type { Answer } from "./flow";
