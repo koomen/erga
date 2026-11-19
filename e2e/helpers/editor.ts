@@ -129,12 +129,17 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
         const r = el.getBoundingClientRect();
         return { x: r.left, y: r.top };
       };
-      // A transition that moves the page: one on the frame, on what holds it, or on the agent's pane beside it. (Two
-      // equal readings a frame apart do not prove rest on a busy machine: a frame can come late.)
+      // A transition that moves the page: one on the frame, on what holds it, or on the agent's open pane beside it
+      // (a closed pane changes its width with the window's, out of sight, and moves nothing). (Two equal readings a
+      // frame apart do not prove rest on a busy machine: a frame can come late.)
       const moving = () =>
         document.getAnimations().some((a) => {
           const target = (a.effect as KeyframeEffect | null)?.target;
-          return a.playState == "running" && !!target && (target.contains(el) || target.id == "agent");
+          return (
+            a.playState == "running" &&
+            !!target &&
+            (target.contains(el) || (target.id == "agent" && document.body.classList.contains("agent-open")))
+          );
         });
       const frame = () =>
         new Promise((r) => {

@@ -55,11 +55,12 @@ const aim = ([selector, events]: [string, string[]]) => {
   if (!el || !r?.width) return null;
   // The document's frame is on its way to another place or size (the agent's pane slides it aside): until it rests,
   // the browser's picture of what is under a point is old, and a press beside the frame goes to the page in it, or
-  // its start to one and its end to the other (the trap at pointerOnPage).
+  // its start to one and its end to the other (the trap at pointerOnPage). (The pane counts only while it is open: a
+  // closed one changes its width with the window's, out of sight, for half a second, and moves nothing.)
   const frame = document.getElementById("frame");
   const sliding = (a: Animation) => {
     const on = (a.effect as KeyframeEffect | null)?.target;
-    return a.playState == "running" && !!on && (on.contains(frame) || on.id == "agent");
+    return a.playState == "running" && !!on && (on.contains(frame) || (on.id == "agent" && document.body.classList.contains("agent-open")));
   };
   if (frame && document.getAnimations().some(sliding)) {
     press.said = `${selector}: the document's frame is on its way`;

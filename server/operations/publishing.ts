@@ -143,8 +143,13 @@ export const PUBLISHING_OPERATIONS: Operation[] = [
       if (!at) throw new OperationError({ message: "This document has no domain: choose one first (set_publishing).", status: 409 });
       const site = platform.site(at.domain);
       let status: SiteStatus = (await site.publish(doc.id, byLine(caller.who.login, caller.who.via))).status;
-      for (const end = Date.now() + PUBLISH_WAIT_MS; status.state == "publishing" && Date.now() < end; ) {
-        await new Promise((done) => setTimeout(done, 100));
+      // (It asks soon at first, then every 100 ms: a small site is live in some ten ms.)
+      for (
+        let end = Date.now() + PUBLISH_WAIT_MS, pause = 10;
+        status.state == "publishing" && Date.now() < end;
+        pause = Math.min(100, pause * 2)
+      ) {
+        await new Promise((done) => setTimeout(done, pause));
         status = await site.status();
       }
       await changed(caller, [at.domain]);
