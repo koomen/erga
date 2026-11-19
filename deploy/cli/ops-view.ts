@@ -5,7 +5,8 @@
 // where it is live and orange where it is not yet, with a Deploy button on a row, and one line of its own sources'
 // checks; the live row has Roll back. An instance that names an upstream shows the upstream's commits that its branch
 // lacks as orange rows on top, and a tag at each of the two heads. Logs: a job's output. History: its deploys and rollbacks. The page shows no feature branch and merges
-// nothing: `bun erga status` lists the branches, and `bun erga merge` merges.
+// nothing: `bun erga status` lists the branches, and `bun erga merge` merges. Under the instances, the list has the
+// verify suite's entry (#verify): the runs on real platforms, with their prerequisites (verify-view.ts).
 
 import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo";
 import { esc } from "../../shared/html";
@@ -16,6 +17,7 @@ import type { Answer, Commit as StatusCommit } from "./flow";
 import type { TestRun } from "./gate";
 import { type Alive, activeJobs, deploysTo, type JobState, jobState, type Line, type Run } from "./job-state";
 import { isStale, type Polls } from "./poll-state";
+import { type VerifyFacts, verifyHtml, verifySide } from "./verify-view";
 
 /** A job's record in .erga/jobs/ (deploy/cli/jobs.ts, startJob), as the page reads it: its state, and what it says. */
 export interface JobRecord extends JobState {
@@ -57,6 +59,8 @@ export interface Facts {
    * that the upstream lacks. None: the instance names no upstream, or the clone does not have both branches yet.
    */
   upstreams: Record<string, { head: string; behind: Commit[]; ahead: number }>;
+  /** The verify suite (`bun erga verify`): its prerequisites, its runs, and the page's own command for it (verify-view.ts). */
+  verify: VerifyFacts;
 }
 
 /** The name of a repository's source in the checks (poll-state.ts). */
@@ -134,9 +138,9 @@ function wordOf(e: Entry, f: Facts): { cls: string; text: string; tip: string } 
   return n > 0 ? { cls: "behind", text: `${n} behind`, tip: `${plural(n, "commit")} of ${e.branch} not deployed` } : null;
 }
 
-/** The list: each instance, and under it whether auto-deploy is on, a fact of the whole page. */
-function side(config: Config, chosen: Entry | null, f: Facts, now: number): string {
-  if (!config.instances.length) return `<p class="none">No instances.</p>`;
+/** The list: each instance, and under it whether auto-deploy is on, a fact of the whole page. Then the verify suite's entry. */
+function side(config: Config, chosen: Entry | null, f: Facts, now: number, verify: boolean): string {
+  if (!config.instances.length) return `<p class="none">No instances.</p>${verifySide(f.verify, verify)}`;
   const item = (e: Entry) => {
     const source = f.polls.sources[e.host];
     const st =
@@ -153,7 +157,7 @@ function side(config: Config, chosen: Entry | null, f: Facts, now: number): stri
       (e) =>
         `<li><a class="group${e == chosen ? " sel" : ""}" href="#${esc(e.host)}"${e == chosen ? ' aria-current="true"' : ""}>${item(e)}</a></li>`
     )
-    .join("")}</ul>${auto}`;
+    .join("")}</ul>${auto}${verifySide(f.verify, verify)}`;
 }
 
 /** An instance's own jobs, its deploys and its rollbacks, newest first: no merge, no promote, no job of another instance. */
@@ -384,8 +388,11 @@ export function viewHtml(f: Facts, name: string, now = Date.now()): string {
   if ("error" in f.config)
     return `<aside class="side"></aside><section class="main"><p class="note bad">${esc(f.config.error)}</p></section>`;
   const [host = "", wanted = "", id = ""] = name.split("/");
-  const g = chosenOf(f.config, host);
-  const sidebar = `<aside class="side" aria-label="Instances"><h2 class="side-head">Instances</h2>${side(f.config, g, f, now)}</aside>`;
+  // #verify[/<setting>]: the verify suite's page, which is about no instance.
+  const verify = host == "verify";
+  const g = verify ? null : chosenOf(f.config, host);
+  const sidebar = `<aside class="side" aria-label="Instances"><h2 class="side-head">Instances</h2>${side(f.config, g, f, now, verify)}</aside>`;
+  if (verify) return `${sidebar}${verifyHtml(f.verify, wanted, now)}`;
   if (!g)
     return `${sidebar}<section class="main"><p class="note">No instance is registered in this clone's .erga/config.json. Add one: <code>bun erga register &lt;host&gt;</code></p></section>`;
   const tab = TABS[wanted] ? wanted : "deploys";

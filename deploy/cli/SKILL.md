@@ -159,6 +159,31 @@ and `main`. There are no pull requests.
   repository at most once a minute (`git ls-remote`), and each instance every 15 seconds. It shows no feature
   branch and merges nothing: `bun erga status` lists the branches with their tests' state, and `bun erga merge`
   merges. The page's server works the tests' queue all the same.
+  Under the instances, the list has the verify suite's entry: its prerequisites, each with its state and what
+  to do; each setting with its state, its last run and a Run button; and what a run left in the accounts.
+- `bun erga verify`: the verify suite, which is no part of `bun run test`. It deploys a fresh Erga behind the gate
+  to real accounts (Cloudflare, AWS), checks it in real browsers, and removes it. A run takes minutes and can cost
+  money: only when Pete asks. With no setting, it deploys nothing: it checks each prerequisite (the logins, the test
+  accounts and zones of its own, the browsers) and says what to do, lists each setting as ready or blocked (by which prerequisite),
+  and lists what a run left in the accounts. `bun erga verify <setting>... | all [--browsers a,b] [--yes]` runs
+  deploy, check and remove for each setting (remove also after a failure), and writes the run's record and log in
+  `.erga/verify/runs/`. It says the cost and asks first. `bun erga verify remove <setting>|all` removes what a run
+  left. The fast way, while you work on the gate or the deploy: `bun erga verify <setting> --keep` runs deploy and
+  check with no remove, so the setting stays in the accounts, kept (an AWS setting costs about $0.045 for each hour
+  then; one AWS setting at a time). `bun erga verify update <setting>|all` deploys this checkout's code again on a
+  kept setting, only the parts whose built code or settings changed, and checks it: it makes no infrastructure, and
+  works from any work folder. `bun erga verify` and the ops page list each kept setting, with its hosts and its
+  cost; `remove` ends it. The suite runs only on infrastructure of its own: a Cloudflare account (two test zones, a Zero Trust team)
+  and an AWS account (two Route 53 zones), which `.erga/verify.json` of the main clone names (`dev/verify/config.ts`;
+  the Cloudflare token is beside it, in `.erga/verify-cloudflare.token`, or it is the cf CLI's login). No code names
+  them. It refuses a zone that holds anything the suite did not make, and an account that does
+  (`dev/verify/dedicated.ts`), unless the file says that the account is `shared`: then only the two test zones are
+  the suite's, and the account's other work stays as it is. Never point it at a zone that an instance or a person
+  uses, and name a shared account or team only when its owner allows it. A run makes, changes and removes only
+  resources named `erga-verify-...`, on hosts under the test zones: each call of Cloudflare's API and each `aws`
+  command is asked of that rule before it runs, a read too (`dev/verify/safe.ts`). Each deploy runs the code of a
+  real instance's deploy (`deploy/pipeline/`, `deploy/aws/`): a run changes no machine or setting, and one thing in
+  a template: on AWS only the run's own machine reaches the deploy (`dev/verify/only-here.ts`).
 - `bun erga --auto-deploy`: the ops page with auto-deploy on. Pete starts it. It asks each repository that an instance
   tracks for its branches' heads once a minute (`git ls-remote`). When an instance does not run its branch's head, it
   starts `bun erga deploy <head> <host>`: one job at a time, with the same gate (the tests) as every deploy. The

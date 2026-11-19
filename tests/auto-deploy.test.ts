@@ -93,10 +93,10 @@ test("auto-deploy: each instance behind its branch's head deploys it, one job at
     for (let i = 0; i < 200 && !ok(await view()); i++) await Bun.sleep(20);
     return view();
   };
-  /** Each instance's word in the list, by the first part of its host: "" when it has none. */
+  /** Each instance's word in the list, by the first part of its host: "" when it has none. (The verify suite's entry is after the list.) */
   const words = (html: string) =>
     Object.fromEntries(
-      [...html.slice(0, html.indexOf('<section class="main"')).matchAll(/href="#([^".]+)[^"]*".*?<\/a>/g)].map((m) => [
+      [...html.slice(0, html.indexOf('<p class="side-auto"')).matchAll(/href="#([^".]+)[^"]*".*?<\/a>/g)].map((m) => [
         m[1],
         /class="g-state \w+"[^>]*>([^<]*)</.exec(m[0])?.[1] ?? "",
       ])

@@ -64,6 +64,24 @@ describe("an instance that runs already", () => {
     expect(await boundDatabaseName(cf, `/accounts/${FLEET_ACCOUNT}`, "no-such-worker")).toBeNull();
   });
 
+  test("behind a gate's Worker: no address of its own (no custom domain, no route, no DNS record, workers.dev off)", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    const before = JSON.stringify([mock.state.domains, mock.state.routes]);
+    const { steps } = await deployTo(next({ secrets: nextSecrets, gate: true }), mock);
+    expect(steps.filter((s) => s.endsWith(":running")).map((s) => s.split(":")[0])).toEqual(
+      STEPS.map((s) => s.id).filter((id) => id != "address" && id != "pages")
+    );
+    expect(JSON.stringify([mock.state.domains, mock.state.routes])).toBe(before);
+    expect(mock.state.calls.filter((c) => /dns_records/.test(c))).toEqual([]);
+    // (A new Worker's workers.dev address is not a thing to trust: the deploy turns it off itself.)
+    expect(mock.state.calls.filter((c) => /\/subdomain$/.test(c))).toEqual([
+      `POST /accounts/${FLEET_ACCOUNT}/workers/scripts/erga-next/subdomain`,
+    ]);
+    expect(mock.state.scripts["erga-next"].workersDev).toBe(false);
+    // Its settings still say where its documents' pages are.
+    expect(bindingsOf(mock.state, "erga-next").PAGES_DOMAIN.text).toBe("example-pages-next.com");
+  });
+
   test("the guard: a custom domain is not the app's address, and not under its documents' pages", () => {
     expect(guardTarget(fleet())).toBeNull();
     expect(guardTarget({ ...fleet(), domains: ["example.org", "blog.example.org"] })).toBeNull();

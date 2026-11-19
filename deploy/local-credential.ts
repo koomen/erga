@@ -25,13 +25,13 @@ function cfLoginFile(): string {
   return candidates.find((p) => existsSync(p)) ?? candidates[0];
 }
 
-/** The cf CLI's login, refreshed: its token and scopes, or null if there's none. */
-export function cfLogin(): { token: string; scopes: string[] } | null {
-  // `cf auth whoami` refreshes an expired token with the stored refresh token.
+/** The cf CLI's login, refreshed: its token, its scopes and the time of its end (ms; a login lasts an hour), or null if there's none. */
+export function cfLogin(): { token: string; scopes: string[]; expires: number } | null {
+  // `cf auth whoami` refreshes an expired token with the stored refresh token. (Only an expired one: never before its end.)
   Bun.spawnSync(["bunx", "cf", "auth", "whoami"], { cwd: ROOT, stdout: "ignore", stderr: "ignore" });
   try {
-    const d = JSON.parse(readFileSync(cfLoginFile(), "utf8")) as { oauth_token?: string; scopes?: string[] };
-    return d.oauth_token ? { token: d.oauth_token, scopes: d.scopes ?? [] } : null;
+    const d = JSON.parse(readFileSync(cfLoginFile(), "utf8")) as { oauth_token?: string; scopes?: string[]; expiration_time?: string };
+    return d.oauth_token ? { token: d.oauth_token, scopes: d.scopes ?? [], expires: Date.parse(d.expiration_time ?? "") || 0 } : null;
   } catch { return null; }
 }
 

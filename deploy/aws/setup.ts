@@ -27,6 +27,7 @@ import {
   CERT_REGION,
   changeLines,
   cloudFrontPrefixList,
+  type Planned,
   planStack,
   stackState,
   templatePath,
@@ -243,9 +244,9 @@ export const writePlan = async (dir: string, a: Answers) => writeTemplates(dir, 
  * The stacks, after the user's yes: each change set, shown in the log and applied. The us-east-1 stack comes first
  * (the main one takes its certificates' ARNs, and with the gate in front its functions' and its Lambda's). With the
  * gate, its edge key goes into its store between the two: before a distribution runs a function that reads it. The
- * result: the main stack's outputs.
+ * result: the main stack's outputs. `vet` sees each change set before AWS applies it, and throws to stop there.
  */
-export async function applyStacks(dir: string, a: Answers, log: (l: string) => void) {
+export async function applyStacks(dir: string, a: Answers, log: (l: string) => void, vet: (plan: Planned) => void = () => {}) {
   const stack = stackOf(a);
   const where = whereOf(a);
   const params: Record<string, string> = {};
@@ -257,6 +258,7 @@ export async function applyStacks(dir: string, a: Answers, log: (l: string) => v
     log(`${title}...`);
     const plan = await planStack(w, name, file, params);
     for (const l of changeLines(plan)) log(`  ${l}`);
+    vet(plan);
     const st = await applyStack(plan, log);
     log(`${title}: done`);
     return st;

@@ -51,6 +51,15 @@
 //   bun erga setup <host> --host ... --sign-in ... [--repo <repo>] [--branch <branch>] [--dry-run]
 //                                       a new instance, on Cloudflare or AWS, from the user's answers: the checks and
 //                                       the plan (--dry-run), then the build and the first admin (bun erga setup --help)
+//   bun erga verify [<setting>...|all] [--keep] [--browsers a,b] [--origin stub|erga] [--yes]
+//                                       the verify suite, which is no part of bun run test: with no setting, it checks
+//                                       the suite's prerequisites and each setting's state, and deploys nothing; with
+//                                       one, it deploys a fresh Erga behind the gate to real accounts, checks it in
+//                                       real browsers, removes it, and records the result (dev/verify/cli.ts); it
+//                                       says the cost and asks first; with --keep it removes nothing: the setting
+//                                       stays, kept; bun erga verify update <setting>|all deploys only the code
+//                                       again on a kept setting, and checks it; bun erga verify remove <setting>|all
+//                                       removes a kept setting, and what a run left; the ops page shows all of it
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -452,6 +461,10 @@ export async function main(argv: string[]) {
       }).catch((e: Error) => fail(e.message));
     case "track":
       return track(plain[0], { repo: opt("--repo"), branch: opt("--branch"), ...upstream }).catch((e: Error) => fail(e.message));
+    case "verify": {
+      const { verifyMain } = await import("../../dev/verify/cli");
+      return verifyMain(rest);
+    }
     case "setup": {
       const { setupMain } = await import("../own/cli");
       return setupMain(rest);

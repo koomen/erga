@@ -73,6 +73,7 @@ const facts = (more: Partial<Facts> = {}): Facts => ({
   polls: startPolls(),
   runs: [],
   auto: null,
+  verify: { state: null, runs: [], kept: {}, busy: "", error: "" },
   ...more,
 });
 /** A job's record: a deploy of commit n...n to `host` (or another command), done unless `more` says otherwise. */
@@ -114,7 +115,11 @@ const names = (html: string, host: string) => new RegExp(`(^|[^\\w.-])${host.rep
 /** Each instance's word in the list, by its host; "": none. */
 const words = (html: string) =>
   Object.fromEntries(
-    [...left(html).matchAll(/href="#([^"]+)".*?<\/a>/g)].map((m) => [m[1], /class="g-state \w+"[^>]*>([^<]*)</.exec(m[0])?.[1] ?? ""])
+    [
+      ...left(html)
+        .split('<p class="side-auto"')[0]
+        .matchAll(/href="#([^"]+)".*?<\/a>/g),
+    ].map((m) => [m[1], /class="g-state \w+"[^>]*>([^<]*)</.exec(m[0])?.[1] ?? ""])
   );
 
 test("the right side is about the chosen instance only: it names no other instance, in text or in a tooltip", () => {

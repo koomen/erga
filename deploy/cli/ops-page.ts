@@ -12,6 +12,10 @@
 // It works the tests' queue (gate.ts, stepQueue): for each pushed branch whose merge has no test record, `bun erga test
 // <branch>` (about a minute), one at a time, the oldest first. A branch or a staging head that moves makes a new tree: it waits again.
 // The page shows nothing of the queue: `bun erga status` does.
+// The verify suite (#verify, verify-view.ts): the page reads its state and its runs' records in .erga/verify/, and its
+// buttons run `bun erga verify check`, `bun erga verify <setting> --yes`, `bun erga verify update <setting>` (a kept
+// setting) and `bun erga verify remove <setting>` (POST /api/verify), one at a time, apart from the instances' jobs. /verify/log/<id> and /verify/run/<id> give a run's
+// output and its record.
 
 import { existsSync, type FSWatcher, mkdirSync, readdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -28,6 +32,8 @@ import { type JobState, stepRun } from "./job-state";
 import { GITHUB, type PollEvent, startPolls, stepPolls } from "./poll-state";
 import { instanceReader } from "./running";
 import { ROOT, sh } from "../root";
+import { readKept, readRuns as readVerifyRuns, readState as readVerifyState, verifyDir } from "../../dev/verify/cli";
+import { readiness, resultOf, units } from "../../dev/verify/suite";
 
 const git = (cwd: string, ...args: string[]) => sh(["git", ...args], { cwd });
 
@@ -125,6 +131,13 @@ export function serveOpsPage(o: OpsPageOptions) {
     runs: [],
     auto: o.autoDeploy ? {} : null,
     heads: {},
+    verify: { state: null, runs: [], kept: {}, busy: "", error: "" },
+  };
+  /** The verify suite's state and records, as the files say them now; a record's result needs its process (pid.ts). */
+  const readVerify = () => {
+    facts.verify.state = readVerifyState(o.dir);
+    facts.verify.runs = readVerifyRuns(o.dir).map((r) => ({ ...r, result: resultOf(r, alive) }));
+    facts.verify.kept = readKept(o.dir);
   };
   /** The clone's feature branches, for the tests' queue: none before the first fetch ends. */
   let clone: ReturnType<typeof readGit> | null = null;
@@ -184,6 +197,7 @@ export function serveOpsPage(o: OpsPageOptions) {
     const repos = [...new Set(entries().flatMap((e) => [e.repo, ...(e.upstream ? [e.upstream.repo] : [])].map(repoSource)))];
     facts.jobs = readJobs(o.dir);
     facts.runs = readRuns(o.dir);
+    readVerify();
     poll({ type: "sources", names: [GITHUB, ...repos, ...hosts], now: Date.now() });
   };
   /**
@@ -356,6 +370,7 @@ export function serveOpsPage(o: OpsPageOptions) {
     }
     facts.jobs = readJobs(o.dir);
     facts.runs = readRuns(o.dir);
+    readVerify();
     changed();
     send(": still here\n\n");
   }, 5_000);
@@ -406,6 +421,59 @@ export function serveOpsPage(o: OpsPageOptions) {
     return start(["deploy", c.sha.slice(0, 12), e.host], { kind: "deploy", host: e.host, commit: c.sha, branch: null, phase: "starting" });
   };
 
+  /**
+   * POST /api/verify {action, unit}: the verify suite's buttons. check: the prerequisites and the accounts again. run:
+   * one setting, from deploy to remove (the page asked first, and said the cost). update: a kept setting's code again,
+   * and its checks. remove: what a setting's runs left, or a kept setting.
+   * One at a time; what the button shows is checked again here, and the command checks the prerequisites itself.
+   */
+  const verify = async (req: Request) => {
+    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    const no = (error: string, status = 409) => Response.json({ error }, { status });
+    const unit = units().find((u) => u.id == body.unit);
+    const args =
+      body.action == "check"
+        ? ["verify", "check"]
+        : body.action == "run" && unit
+          ? ["verify", unit.id, "--yes"]
+          : body.action == "update" && unit
+            ? ["verify", "update", unit.id]
+            : body.action == "remove" && unit
+              ? ["verify", "remove", unit.id]
+              : null;
+    if (!args) return no("No such action, or no such setting.", 400);
+    const busy = facts.verify.busy || facts.verify.runs.find((r) => r.result == "running")?.command;
+    if (busy) return no(`Another command runs: ${busy}. Wait for it to end.`);
+    if (body.action == "update" && !facts.verify.kept[unit!.id]) return no(`Setting ${unit!.id} is not kept.`);
+    if (body.action == "run" && facts.verify.kept[unit!.id]) return no(`Setting ${unit!.id} is kept: Update it, or Remove it first.`);
+    if (body.action == "run" || body.action == "update") {
+      const r = facts.verify.state ? readiness(unit!, facts.verify.state.prereqs) : null;
+      if (!r) return no("The prerequisites are not checked yet: Check again first.");
+      if (r.at != "ready") return no(`Blocked by: ${r.by.map((p) => p.title).join("; ")}`);
+    }
+    const command = `bun erga ${args.filter((a) => a != "--yes").join(" ")}`;
+    let r: Run;
+    try {
+      r = run(args, "page");
+    } catch (e) {
+      return no(`${command} did not start: ${(e as Error).message}`, 500);
+    }
+    facts.verify.busy = command;
+    facts.verify.error = "";
+    changed();
+    void r.done.then(({ code, out }) => {
+      if (stopped) return;
+      facts.verify.busy = "";
+      // A run's record says how it ended. A command with no record (a check, a remove, a run that stopped early): its own words, here.
+      const recorded = (body.action == "run" || body.action == "update") && readVerifyRuns(o.dir).some((x) => x.pid == r.pid);
+      facts.verify.error =
+        code == 0 || recorded ? "" : `${command} stopped: ${out.trim().split("\n").slice(-3).join(" ") || `exit ${code}`}`;
+      readFiles();
+      changed();
+    });
+    return Response.json({ ok: true, command }, { status: 202 });
+  };
+
   const html = (body: string, more = {}) =>
     new Response(body, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...more } });
   /** The page's own code (its script and styles): a tab that loaded other code reloads (ops-page.js, draw). */
@@ -430,6 +498,20 @@ export function serveOpsPage(o: OpsPageOptions) {
         return new Response("Wrong origin.", { status: 403 });
       if (req.method == "POST" && (url.pathname == "/api/deploy" || url.pathname == "/api/rollback"))
         return act(req, url.pathname.slice(5));
+      if (req.method == "POST" && url.pathname == "/api/verify") return verify(req);
+      // A run of the verify suite: its output, and its record.
+      const ran = /^\/verify\/(log|run)\/([\w.-]+)$/.exec(url.pathname);
+      if (ran) {
+        const file = Bun.file(join(verifyDir(o.dir), "runs", `${ran[2]}.${ran[1] == "log" ? "log" : "json"}`));
+        const type = ran[1] == "log" ? "text/plain; charset=utf-8" : "application/json";
+        return file
+          .exists()
+          .then((is) =>
+            is
+              ? new Response(file, { headers: { "Content-Type": type, "Cache-Control": "no-store" } })
+              : new Response("No such run.", { status: 404 })
+          );
+      }
       if (url.pathname == "/") return html(pageHtml(viewHtml(facts, ""), script, code()));
       if (url.pathname == "/view") return html(viewHtml(facts, url.searchParams.get("hash") ?? ""), { "X-Ops-Code": code() });
       if (url.pathname == "/api/events") {

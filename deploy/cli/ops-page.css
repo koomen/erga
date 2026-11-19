@@ -189,3 +189,68 @@ a.h-row:hover > * { background: color-mix(in srgb, var(--chrome) 8%, transparent
 @media (prefers-reduced-motion: reduce) { .spin { animation: none; border-right-color: currentColor; opacity: .5; } }
 .btn[aria-busy="true"]:disabled { cursor: progress; color: var(--soft); }
 .deps.here.busy .tip { opacity: 1; }
+
+/* The verify suite (#verify, verify-view.ts): its entry under the instances; one line that says how much is set up and
+   what passed; the prerequisites, the settings and the leftovers as lists; and a setting's last run, each check in
+   each browser. */
+.side-more { margin-top: 22px; }
+.v-checked { justify-content: space-between; }
+.v-checked > span { margin-left: 0; }
+.v-head { margin: 0 0 18px; padding: 10px 14px; border-radius: 10px; background: var(--code-bg); font-size: 14.5px; font-weight: 600; color: var(--fg-strong); }
+.verify .c-head { margin-top: 22px; }
+.v-list { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto; align-items: start; }
+.v-list.units { grid-template-columns: auto minmax(0, 1.1fr) minmax(0, 1fr) auto; }
+.v-row, .u-row { display: contents; }
+.v-row > *, .u-row > * { padding: 9px 8px 9px 0; border-bottom: 1px solid var(--rule); min-height: 100%; }
+.v-row > .light { margin: 15px 0 0 6px; padding: 0; min-height: 0; border: 0; }
+.v-row > .light.stale { background: var(--off); }
+.v-what, .u-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; color: var(--soft); overflow-wrap: anywhere; }
+.v-what b, .u-what b { font-size: 13.5px; font-weight: 600; color: var(--fg-strong); }
+.v-row.ok .v-what b { font-weight: 500; color: var(--fg); }
+/* A prerequisite that is done takes one line. */
+.v-row.ok .v-what { flex-direction: row; flex-wrap: wrap; gap: 0 10px; }
+.v-row.ok > :not(.light) { padding-top: 6px; padding-bottom: 6px; }
+.v-row.ok > .light { margin-top: 12px; }
+.v-do { color: var(--fg); }
+.v-do b { font-size: 12.5px; color: var(--off); }
+.v-row.opt .v-do b { color: var(--soft); }
+.v-what a, .v-run a, .v-earlier a, .job a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.v-for, .v-state { font-size: 12px; color: var(--soft); white-space: nowrap; padding-left: 12px !important; }
+.v-row.ok .v-state { color: var(--ok); font-weight: 600; }
+.v-row.todo .v-state { color: var(--off); font-weight: 600; }
+.u-id { font: 600 13.5px var(--font-mono); color: var(--fg-strong); text-decoration: none; padding: 9px 14px 9px 6px !important; }
+.u-what a { text-decoration: none; }
+.u-what a:hover b { text-decoration: underline; }
+.u-row.sel > * { background: var(--sel); }
+.u-state.ready { color: var(--ok); }
+.u-state.blocked { color: var(--off); }
+.u-state.kept { color: var(--off); font-weight: 600; }
+.u-last { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--soft); }
+.u-res.passed { color: var(--ok); font-weight: 600; }
+.u-res.failed, .u-res.stopped { color: var(--bad); font-weight: 600; }
+.u-res.running { color: var(--live); font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { padding: 1px 7px; border-radius: 6px; font: 11.5px var(--font-mono); white-space: nowrap; box-shadow: inset 0 0 0 1px var(--rule); color: var(--soft); }
+.chip.ok { color: var(--ok); }
+.chip.bad { color: var(--bad); box-shadow: inset 0 0 0 1px currentColor; }
+.u-act { display: flex; justify-content: flex-end; align-items: flex-start; padding-right: 6px !important; }
+.u-act .btn { padding: 3px 14px; }
+.v-run { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 4px; font-size: 13px; color: var(--soft); }
+.v-run code { font-size: 12px; }
+.matrix { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.matrix th { padding: 6px 8px; text-align: left; font-size: 11.5px; font-weight: 600; color: var(--soft); border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.matrix td { padding: 6px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; white-space: nowrap; color: var(--soft); }
+.matrix td.m-check { white-space: normal; color: var(--fg); overflow-wrap: anywhere; }
+.matrix td.ok { color: var(--ok); }
+.matrix td.bad { color: var(--bad); font-weight: 700; }
+.m-note { display: block; margin-top: 3px; font-size: 12px; color: var(--bad); }
+.v-earlier { list-style: none; margin: 0; padding: 0; }
+.v-earlier li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 7px 6px; border-bottom: 1px solid var(--rule); font-size: 12.5px; color: var(--soft); }
+@container (max-width: 680px) {
+  /* (dense: a row's button goes back up beside its name, over its last run's line.) */
+  .v-list.units { grid-template-columns: auto minmax(0, 1fr) auto; grid-auto-flow: dense; }
+  .v-list.units .u-last { grid-column: 1 / -1; border-bottom: 1px solid var(--rule); }
+  .v-list.units .u-what, .v-list.units .u-id, .v-list.units .u-act { border-bottom: 0; }
+  .v-for { display: none; }
+  .v-list { grid-template-columns: 22px minmax(0, 1fr) auto; }
+}

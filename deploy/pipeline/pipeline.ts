@@ -91,6 +91,12 @@ export interface Target {
    */
   pages: { kind: "shared" } | { kind: "zone"; zoneId?: string; zoneName: string; domain?: string };
   /**
+   * A gate's own Worker has this server's hosts (gate/mounts/worker.ts), and reaches it by a service binding. So the
+   * server gets no address of its own: no custom domain, no route, no DNS record, and its workers.dev address is off.
+   * `app` and `pages` still say the hosts, for its settings (PAGES_DOMAIN).
+   */
+  gate?: boolean;
+  /**
    * The custom domains for publishing (server/sites/domains.ts), each a hostname on one of the account's zones: the same
    * Worker serves the document published to each there, and nothing else.
    */
@@ -210,7 +216,8 @@ export async function runPipeline(
   // A binding this pipeline can't make stops the deploy here, before any step changes the target.
   const unknown = bindingsProblem(release);
   if (unknown) throw new DeployError({ message: unknown });
-  const steps = STEPS.map((s) => s.id);
+  // Behind a gate's Worker, the hosts are the gate's: neither step that gives an address runs.
+  const steps = STEPS.map((s) => s.id).filter((id) => !(target.gate && (id == "address" || id == "pages")));
   carry.version = release.version;
 
   /** The Worker's upload: its modules, and its metadata. */
@@ -337,7 +344,13 @@ export async function runPipeline(
       delete (carry as Carry & { assetsJwt?: string }).assetsJwt;
       // Its Cron Trigger, each minute: the server's own health into its database, and the default homepage.
       await setSchedule(cf, acc, target.workerName);
-      return `${target.workerName}, release ${release.version}; its Cron Trigger runs each minute`;
+      // Behind a gate, nothing but the gate reaches it: a request to an address of its own would go around the gate.
+      if (target.gate)
+        await cf.call("POST", `${acc}/workers/scripts/${target.workerName}/subdomain`, "turn off its workers.dev address", {
+          enabled: false,
+          previews_enabled: false,
+        });
+      return `${target.workerName}, release ${release.version}; its Cron Trigger runs each minute${target.gate ? "; no address of its own (a gate has its hosts)" : ""}`;
     },
 
     // Its address, and its custom domains.
