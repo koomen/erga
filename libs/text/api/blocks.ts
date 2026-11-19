@@ -37,7 +37,7 @@ function quoteOf(u: M.Unit): { p: M.ElementNode; quote: M.ElementNode } | null {
 }
 
 /** An element's tag renamed in place: the open tag keeps its attributes, and the close tag follows. */
-function retag(src: string, e: M.ElementNode, tag: string): Change[] {
+export function retag(src: string, e: M.ElementNode, tag: string): Change[] {
   const name = /^<([a-z0-9]+)/i.exec(src.slice(e.from))![1];
   return [
     { from: e.from + 1, to: e.from + 1 + name.length, insert: tag },

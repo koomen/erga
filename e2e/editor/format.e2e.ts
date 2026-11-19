@@ -1,5 +1,5 @@
 // The format bar, the link bar, Markdown shortcuts and the slash menu: each changes the text it is for, and no other.
-// One page, typed from empty: a bold word, Markdown in a line, a link (its bar, its ends, its text), a link made with
+// One page, typed from empty: a bold word, Markdown in a line, the bar's type menu, a link (its bar, its ends, its text), a link made with
 // the bar, the clear key, Markdown blocks, the slash menu, the shortcut card. Then the same page as a reader has it:
 // where its links open.
 import { expect, journey, servers, test } from "../helpers/fixtures";
@@ -88,6 +88,36 @@ journey("the format bar, the link bar, Markdown and the slash menu", () => {
         ed.frame(`[...${F}.querySelectorAll("p + p :is(strong, em, code)")].map((e) => e.tagName + ":" + e.textContent).join(" ")`)
       )
       .toBe("STRONG:b EM:i CODE:c");
+  });
+
+  test("the bar's type menu: Heading 2 by the mouse, a numbered list by the keys, Escape; each undo gives a type back", async () => {
+    const LINE = "a <strong>b</strong> <em>i</em> <code>c</code> snake_case_name";
+    const type = () => bar<string>(ed, `C.getElementById("type").getAttribute("aria-label")`);
+    const open = () => bar<boolean>(ed, `!C.getElementById("types").hidden`);
+    await ed.selectChars("p:nth-of-type(2)", 1);
+    await expect.poll(type).toBe("Text type: Text");
+    await ed.clickIn("erga-controls", "#type");
+    await ed.clickIn("erga-controls", "#types [data-type=h2]");
+    await expect.poll(() => ed.source()).toContain(`<h2>${LINE}</h2>`);
+    expect(await ed.textOf("h2")).toBe("a b i c snake_case_name");
+    await expect.poll(type).toBe("Text type: Heading 2");
+    // The menu opens with the focus on the type that is on: three steps down, the numbered list.
+    await ed.clickIn("erga-controls", "#type");
+    await expect.poll(() => bar<string>(ed, `C.activeElement?.dataset.type`)).toBe("h2");
+    for (const key of ["ArrowDown", "ArrowDown", "ArrowDown", "Enter"]) await ed.press(key);
+    await expect.poll(() => ed.source()).toMatch(new RegExp(`<ol>\\s*<li>${LINE}</li>\\s*</ol>`));
+    await expect.poll(type).toBe("Text type: Numbered list");
+    // Escape closes the menu and changes nothing: the keys are the text's again.
+    await ed.clickIn("erga-controls", "#type");
+    await expect.poll(open).toBe(true);
+    await ed.press("Escape");
+    await expect.poll(open).toBe(false);
+    await ed.press("ControlOrMeta+z");
+    await expect.poll(() => ed.source()).toContain(`<h2>${LINE}</h2>`);
+    await ed.press("ControlOrMeta+z");
+    await expect.poll(() => ed.source()).toContain(`<p>${LINE}</p>`);
+    expect(await ed.count("h2, ol")).toBe(0);
+    await ed.press("End");
   });
 
   // The link bar is taller than the style bar. Near the page's top it opened above its link, over the top bar and the

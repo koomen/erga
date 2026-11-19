@@ -40,6 +40,7 @@ Steps, one argument each, in order:
   <key>*<n>            presses it n times: Backspace*3
   click:<selector>     clicks at the end of the element's text (a CSS selector in the page)
   tap:<selector>       clicks a control of Erga's window around the page: tap:#btn-settings opens the settings
+  bar:<selector>       clicks a control of the editor's own bar on the page (over a selection): bar:#type opens the type menu
   say:<text>           sends the text to the agent in its panel, and waits for the turn's end. The agent is the
                        scripted test model (agents/models.ts): "@script [steps]" in the text plays the steps.
                        (A server that --keep left running before a look with say: has no agent.)
@@ -346,8 +347,15 @@ try {
   let ed = await openEditor(tab, server, docArg, { file: isDir ? undefined : basename(path) });
   await ed.clickEnd("[data-erga-text]:not(.erga-locked)");
   await ed.idle();
+  /** The editor's own bar on the page is at rest: drawn (in the frame after a change), and its fade done. */
+  const barRests = () =>
+    ed
+      .frame(
+        `new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => Promise.all((document.querySelector("erga-controls")?.shadowRoot.getAnimations() ?? []).map((a) => a.finished.catch(() => null))).then(() => done(null)))))`
+      )
+      .catch(() => {});
   for (const step of args) {
-    const [, verb, rest] = /^(type|click|tap|shot|say|ask|wait|open):([\s\S]*)$/.exec(step) ?? [];
+    const [, verb, rest] = /^(type|click|tap|bar|shot|say|ask|wait|open):([\s\S]*)$/.exec(step) ?? [];
     if (verb == "type") await ed.type(rest);
     else if (verb == "open") {
       const agentOpen = () => page.evaluate(() => document.body.classList.contains("agent-open"));
@@ -384,11 +392,16 @@ try {
       await ed.clickEnd(rest);
       // (A click where the caret can't go: a widget, a part not editable by hand.)
       await ed.idle().catch(() => ed.settle());
+    } else if (verb == "bar") {
+      await barRests();
+      await ed.clickIn("erga-controls", rest);
+      await ed.settle();
     } else if (verb == "tap") {
       await page.click(rest);
       await ed.settle();
     } else if (verb == "shot") {
       await ed.settle();
+      await barRests();
       await page.screenshot({ path: resolve(rest) });
       console.log(`screenshot: ${resolve(rest)}`);
     } else {
@@ -397,6 +410,7 @@ try {
     }
   }
   await ed.idle().catch(() => ed.settle());
+  await barRests();
   await page.screenshot({ path: out });
   // A turn that still runs (ask:) stops here: the next look on a kept server finds the agent at rest.
   if (await page.locator("#agent-send.stop").count()) {

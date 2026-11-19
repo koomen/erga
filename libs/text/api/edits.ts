@@ -14,8 +14,9 @@ import * as M from "../../../shared/manuscript";
 import { findInSource } from "../../../shared/source-select";
 import { rules, type Page } from "./rules";
 import { applyLink, clearStyles, hasStyle, toggleStyle } from "./format";
+import { BLOCK_TYPES, setBlockType } from "./block-type";
 import { fromText, toSource } from "./clipboard";
-import { HEADING, type InlineStyle } from "./source";
+import type { InlineStyle } from "./source";
 import type { Change } from "./lists";
 
 /** A JSON Schema, as an edit's input is described. */
@@ -128,7 +129,6 @@ const object = (properties: Record<string, JsonSchema>, required: string[]): Jso
   required,
   additionalProperties: false,
 });
-const BLOCKS = ["p", "h1", "h2", "h3", "h4", "h5", "h6"];
 
 const EDITS: Edit[] = [
   {
@@ -192,26 +192,27 @@ const EDITS: Edit[] = [
   },
   {
     name: "set_block",
-    description: "Make a block of text a paragraph or a heading (h1 to h6), keeping its text and its attributes.",
-    input: object({ selector: SELECTOR, to: { type: "string", enum: BLOCKS, description: "What it becomes." } }, ["selector", "to"]),
+    description: "Make blocks of text paragraphs, headings, list items, to-do items, a quote or a code block, keeping their text.",
+    input: object(
+      {
+        selector: SELECTOR,
+        to: {
+          type: "string",
+          enum: [...BLOCK_TYPES],
+          description:
+            "What they become: p, h1 to h6, ul (a bulleted list), ol (a numbered list), todo (to-do items), quote, or code (a code block).",
+        },
+      },
+      ["selector", "to"]
+    ),
     run(page, path, input) {
-      if (typeof input.to != "string" || !BLOCKS.includes(input.to)) return { refused: `to is one of ${BLOCKS.join(", ")}.` };
+      const to = BLOCK_TYPES.find((t) => t == input.to);
+      if (!to) return { refused: `to is one of ${BLOCK_TYPES.join(", ")}.` };
       const s = scope(page, path, input.selector);
       if (typeof s == "string") return { refused: s };
-      const changes: Change[] = [];
-      for (const u of s.units) {
-        if (u.tag != "p" && !HEADING.test(u.tag))
-          return { refused: `A <${u.tag}> can't become a <${input.to}> here: only paragraphs and headings.` };
-        if (u.tag == input.to) continue;
-        const close = page.src.slice(u.contentTo, u.to);
-        if (!new RegExp(`^</${u.tag}\\s*>$`, "i").test(close))
-          return { refused: `The <${u.tag}> has no end tag of its own: edit its source instead.` };
-        changes.push(
-          { from: u.openFrom + 1, to: u.openFrom + 1 + u.tag.length, insert: input.to },
-          { from: u.contentTo + 2, to: u.contentTo + 2 + u.tag.length, insert: input.to }
-        );
-      }
-      return out(changes, changes.length ? `Made it a <${input.to}>.` : "No change.");
+      const r = setBlockType(page, s.units, to);
+      if ("why" in r) return { refused: r.why };
+      return out(r.changes, r.changes.length ? `Made it ${to}.` : "No change.");
     },
   },
   {

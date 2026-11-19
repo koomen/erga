@@ -9,6 +9,7 @@ import type { LinkEdit, LinkInfo } from "./types";
 import type { InlineStyle } from "../api/source";
 import { attrOf, dropped, linkEnding, STYLE_TAGS, textIn } from "../api/source";
 import * as F from "../api/format";
+import { blocksIn, setBlockType, typeOf, type BlockType } from "../api/block-type";
 import type { Change } from "../api/lists";
 import { EditorEdit } from "./edit";
 import { editableAt, inlineAt, placeholderDrops } from "../api/rules";
@@ -121,6 +122,18 @@ export abstract class EditorFormat extends EditorEdit {
   clearStyles(): string | null {
     const sel = this.state.selection.main;
     return this.format(F.clearStyles(this.page(), sel.from, sel.to));
+  }
+
+  /** The type of the selection's blocks (api/block-type.ts), for the bar's type menu: "mixed" if they differ, null if none has one. */
+  blockType(): BlockType | "mixed" | null {
+    const sel = this.currentSelection();
+    return typeOf(this.page(), blocksIn(this.units, sel.from, sel.to));
+  }
+
+  /** The selection's blocks made paragraphs, headings, a list, a quote or a code block (api/block-type.ts). Returns null when done, or why not. */
+  setBlockType(to: BlockType): string | null {
+    const sel = this.state.selection.main;
+    return this.format(setBlockType(this.page(), blocksIn(this.units, sel.from, sel.to), to));
   }
 
   /** A style's changes, made, the selection still over the same text; or why there are none. */

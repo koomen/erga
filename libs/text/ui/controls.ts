@@ -1,10 +1,14 @@
-// The editor's own controls on the page: the style bar over a selection (bold, italic, code, link, clear formatting,
-// comment), the link bar, and a note that says why something can't be done. They
+// The editor's own controls on the page: the style bar over a selection (the text's type, bold, italic, code, link,
+// clear formatting, comment), the link bar, and a note that says why something can't be done. The type button, the
+// bar's first, shows the type of the selection's blocks and opens a menu of the types (Text, three headings, the
+// lists, a quote, a code block): the focus goes into it, so the arrow keys and Tab move in it, Enter chooses, and
+// Escape closes it. They
 // draw inside the page, in a shadow root of their own on its <html> (an erga- element: the editor's, which its walks
 // and its check pass by), with the editor's own look whatever the page's styles are; on a dark page, its dark look.
 // Their events stay theirs: the page's own handlers and the editor's below them never see them.
 
 import type { InlineStyle } from "../api/source";
+import type { BlockType } from "../api/block-type";
 import type { LinkEdit, LinkInfo } from "./types";
 import { linkTarget, type Place } from "../../../client/common/link-target";
 import { TOP_ROOM } from "../../../client/common/top-room";
@@ -15,6 +19,8 @@ export interface ControlsPage {
   linkAt(): LinkInfo | null;
   styleBlocker(): string | null;
   hasStyle(style: InlineStyle): boolean;
+  blockType(): BlockType | "mixed" | null;
+  setBlockType(to: BlockType): string | null;
   selectedText(): string;
   toggleStyle(style: InlineStyle): string | null;
   clearStyles(): string | null;
@@ -48,6 +54,16 @@ button:focus-visible { outline: 2px solid var(--caret); outline-offset: -2px; }
 button b { font-weight: 700; font-size: 14px; }
 button i { font-family: Georgia, serif; font-size: 15px; }
 svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+button.type { width: 44px; display: flex; align-items: center; justify-content: center; gap: 1px; padding-left: 3px; }
+button.type[aria-expanded="true"] { background: color-mix(in srgb, var(--chrome) 14%, transparent); }
+.t { font: 600 12.5px var(--font); letter-spacing: -0.02em; }
+svg.chev { width: 11px; height: 11px; color: var(--chrome); }
+.menu { position: absolute; left: -1px; top: calc(100% + 5px); width: 176px; box-sizing: border-box; padding: 4px; border-radius: 10px; overflow-y: auto;
+  background: var(--bg); border: 1px solid var(--panel-border); box-shadow: var(--shadow); animation: appear 100ms ease both; }
+.menu.up { top: auto; bottom: calc(100% + 5px); }
+.fmt .menu button { width: 100%; height: 28px; display: flex; align-items: center; justify-content: flex-start; gap: 2px; padding: 0 8px 0 0; }
+.menu .lead { color: inherit; }
+.menu button[aria-checked="true"] { background: color-mix(in srgb, var(--caret) 16%, transparent); color: var(--caret); }
 .sep { width: 1px; height: 16px; background: var(--rule); margin: 0 2px; flex: none; }
 .panes { position: relative; }
 .pane { display: flex; align-items: center; gap: 2px; }
@@ -82,6 +98,8 @@ button.tab { width: 100%; height: 28px; display: flex; align-items: center; just
   border-radius: 10px; font: 13px/1.45 var(--font); animation: appear 140ms ease both; }
 @media (pointer: coarse) {
   .fmt button { width: 38px; height: 36px; }
+  .fmt button.type { width: 50px; }
+  .fmt .menu button { height: 36px; }
   .row { height: 40px; }
   button.tab { height: 36px; }
   .link { width: min(340px, calc(100vw - 48px)); }
@@ -100,17 +118,58 @@ const ICON = {
   comment:
     '<path d="M5.5 5h13A1.5 1.5 0 0 1 20 6.5v8.5a1.5 1.5 0 0 1-1.5 1.5H10l-4.25 3.25V16.5H5.5A1.5 1.5 0 0 1 4 15V6.5A1.5 1.5 0 0 1 5.5 5Z"/><path d="M12 8.25v5M9.5 10.75h5"/>',
   close: '<path d="M7 7l10 10M17 7 7 17"/>',
+  down: '<path d="m6 9.5 6 6 6-6" stroke-width="2.4"/>',
   open: '<path d="M14 5h5v5M19 5l-8 8"/><path d="M17 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h4"/>',
   unlink:
     '<path d="M9.5 14.5 8 16a3 3 0 0 1-4.24-4.24L5.5 10"/><path d="M14.5 9.5 16 8a3 3 0 0 1 4.24 4.24L18.5 14"/><path d="M4 4l16 16"/>',
   tab: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 9h16"/>',
 };
-const svg = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
+const svg = (d: string, cls = "") => `<svg viewBox="0 0 24 24" aria-hidden="true"${cls && ` class="${cls}"`}>${d}</svg>`;
+const letters = (t: string) => `<span class="t">${t}</span>`;
+
+/** The types of the type menu, in its order, each with its name and its sign; then the other headings, which a page may have. */
+const TYPES: { type: BlockType; label: string; sign: string; menu?: false }[] = [
+  { type: "p", label: "Text", sign: letters("T") },
+  { type: "h1", label: "Heading 1", sign: letters("H1") },
+  { type: "h2", label: "Heading 2", sign: letters("H2") },
+  { type: "h3", label: "Heading 3", sign: letters("H3") },
+  {
+    type: "ul",
+    label: "Bulleted list",
+    sign: svg('<path d="M9.5 6.5h10.5M9.5 12h10.5M9.5 17.5h10.5"/><path d="M4.75 6.5h.5M4.75 12h.5M4.75 17.5h.5" stroke-width="2.4"/>'),
+  },
+  {
+    type: "ol",
+    label: "Numbered list",
+    sign: svg(
+      '<path d="M10.5 6.5H20M10.5 12H20M10.5 17.5H20"/><path d="M4 5.25 5.5 4.5v4.75M3.75 15.4c.3-.9 2.7-1.1 2.7.4 0 1.2-2.6 1.9-2.8 3.7h3" stroke-width="1.4"/>'
+    ),
+  },
+  {
+    type: "todo",
+    label: "Checklist",
+    sign: svg('<rect x="4.5" y="4.5" width="15" height="15" rx="3.5"/><path d="m8.5 12.25 2.5 2.5 4.5-5.25"/>'),
+  },
+  { type: "quote", label: "Quote", sign: svg('<path d="M5.5 5v14"/><path d="M10 7.5h9.5M10 12h9.5M10 16.5h6"/>') },
+  {
+    type: "code",
+    label: "Code block",
+    sign: svg('<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="m9.75 9.5-2.5 2.5 2.5 2.5M14.25 9.5l2.5 2.5-2.5 2.5"/>'),
+  },
+  ...(["h4", "h5", "h6"] as const).map((type) => ({
+    type,
+    label: `Heading ${type[1]}`,
+    sign: letters(type.toUpperCase()),
+    menu: false as const,
+  })),
+];
 
 const HTML = `
 <div class="card fmt" id="fmt" hidden role="toolbar" aria-label="Text style">
   <div class="panes" id="panes">
     <div class="pane" id="style">
+      <button type="button" class="type" id="type" data-act="type" aria-haspopup="menu" aria-expanded="false"><span id="type-sign"></span>${svg(ICON.down, "chev")}</button>
+      <span class="sep" aria-hidden="true"></span>
       <button type="button" data-style="strong" aria-label="Bold (⌘B)" title="Bold  ⌘B"><b>B</b></button>
       <button type="button" data-style="em" aria-label="Italic (⌘I)" title="Italic  ⌘I"><i>I</i></button>
       <button type="button" data-style="code" aria-label="Code (⌘E)" title="Code  ⌘E">${svg(ICON.code)}</button>
@@ -139,6 +198,14 @@ const HTML = `
         </button>
       </div>
     </div>
+  </div>
+  <div class="menu" id="types" role="menu" aria-label="Text type" hidden>
+    ${TYPES.filter((t) => t.menu != false)
+      .map(
+        (t) =>
+          `<button type="button" role="menuitemradio" data-type="${t.type}" aria-checked="false"><span class="lead" aria-hidden="true">${t.sign}</span>${t.label}</button>`
+      )
+      .join("")}
   </div>
 </div>
 <div class="card note" id="note" role="status" hidden></div>
@@ -188,6 +255,8 @@ export function mountControls(
     linkPane = $("link");
   const linkText = $("link-text") as HTMLInputElement,
     linkUrl = $("link-url") as HTMLInputElement;
+  const typeButton = $("type"),
+    types = $("types");
   const linkTab = fmt.querySelector<HTMLButtonElement>("[data-link=tab]")!,
     linkRemove = fmt.querySelector<HTMLButtonElement>("[data-link=remove]")!;
   const coarse = win.matchMedia("(pointer: coarse)"),
@@ -234,6 +303,7 @@ export function mountControls(
     });
   }
   function hide() {
+    closeTypes(false);
     fmt.hidden = true;
     linking = null;
     stylePane.hidden = false;
@@ -246,7 +316,7 @@ export function mountControls(
     // page's top: under them, a click on Bold is the shell's.
     const top = rect.top * z;
     const below = top < TOP_ROOM + (linking ? 114 : 46) || coarse.matches;
-    const half = (linking ? 300 : coarse.matches ? 290 : 240) / 2 + 10;
+    const half = (linking ? 300 : coarse.matches ? 346 : 290) / 2 + 10;
     const width = win.innerWidth * z;
     fmt.style.left = Math.max(half, Math.min(width - half, (rect.left + rect.width / 2) * z)) + "px";
     fmt.style.top = (below ? rect.bottom : rect.top) * z + "px";
@@ -308,7 +378,7 @@ export function mountControls(
   }
   function render() {
     unzoom();
-    if (linking == "selection" || morphing || linkPane.contains(root.activeElement)) return;
+    if (linking == "selection" || morphing || linkPane.contains(root.activeElement) || !types.hidden) return;
     // (While a comment's box has the keys, as while the pointer is down: no bar.)
     if (pointerDown || o.writing()) {
       hide();
@@ -323,13 +393,23 @@ export function mountControls(
       const why = page.styleBlocker();
       for (const b of stylePane.querySelectorAll<HTMLButtonElement>("button")) {
         // (A comment writes nothing into the text: it works where styles can't.)
-        if (b.dataset.act == "comment") continue;
+        if (b.dataset.act == "comment" || b == typeButton) continue;
         b.setAttribute("aria-disabled", String(!!why));
         b.dataset.why = why ?? "";
         if (b.dataset.style) b.setAttribute("aria-pressed", String(!why && page.hasStyle(b.dataset.style as InlineStyle)));
         if (b.dataset.act == "link") b.setAttribute("aria-pressed", String(!why && link != null));
         b.title = why ?? b.getAttribute("aria-label")!.replace(/ \((.+)\)$/, "  $1");
       }
+      const type = page.blockType(),
+        shown = TYPES.find((t) => t.type == type);
+      const name = `Text type: ${shown?.label ?? (type ? "mixed" : "none")}`;
+      const none = type ? "" : "Only paragraphs, headings, list items, quotes and code blocks change their type.";
+      $("type-sign").innerHTML = shown?.sign ?? letters(type ? "···" : "T");
+      typeButton.setAttribute("aria-label", name);
+      typeButton.setAttribute("aria-disabled", String(!type));
+      typeButton.dataset.why = none;
+      typeButton.title = none || name;
+      for (const b of types.querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.type == type));
       showPane(stylePane);
     } else if (link?.rect && link.inside && !linkDismissed) {
       linking = "caret";
@@ -338,6 +418,30 @@ export function mountControls(
       place(link.rect);
       showPane(linkPane);
     } else hide();
+  }
+  /** The type menu, under the bar, or over it where it has more room there; the focus goes to the type that is on. */
+  function openTypes() {
+    const z = o.zoom(),
+      y = parseFloat(fmt.style.top),
+      below = fmt.classList.contains("below");
+    const top = below ? y + 8 : y - 8 - fmt.offsetHeight;
+    const under = win.innerHeight * z - (top + fmt.offsetHeight) - 14,
+      over = top - TOP_ROOM - 14;
+    types.hidden = false;
+    typeButton.setAttribute("aria-expanded", "true");
+    const up = under < types.scrollHeight + 2 && over > under;
+    types.classList.toggle("up", up);
+    types.style.maxHeight = `${Math.max(100, up ? over : under)}px`;
+    (types.querySelector<HTMLElement>('[aria-checked="true"]') ?? types.querySelector("button")!).focus();
+  }
+  /** Closes the type menu; `back`: the focus it had goes back to the text. */
+  function closeTypes(back: boolean) {
+    if (types.hidden) return;
+    const had = types.contains(root.activeElement);
+    types.hidden = true;
+    typeButton.setAttribute("aria-expanded", "false");
+    if (back && had) page.focus();
+    queue();
   }
   function setLinkTab(newTab: boolean) {
     linkTab.setAttribute("aria-checked", String(newTab));
@@ -426,7 +530,12 @@ export function mountControls(
       if (why) explain(why);
       queue();
     };
-    if (b.dataset.style) done(page.toggleStyle(b.dataset.style as InlineStyle));
+    const wasOpen = !types.hidden;
+    closeTypes(true);
+    if (b.dataset.type) done(page.setBlockType(b.dataset.type as BlockType));
+    else if (b == typeButton) {
+      if (!wasOpen) openTypes();
+    } else if (b.dataset.style) done(page.toggleStyle(b.dataset.style as InlineStyle));
     else if (b.dataset.act == "link") openLink();
     else if (b.dataset.act == "clear") done(page.clearStyles());
     else if (b.dataset.act == "comment") {
@@ -449,6 +558,22 @@ export function mountControls(
         explain(why ?? (newTab ? "The link opens in a new tab" : "The link opens in this tab"));
       }
     }
+  });
+  // The type menu's keys: the arrows, Home and End move in it (Tab too, as in any row of buttons), Escape closes it.
+  types.addEventListener("keydown", (e) => {
+    const items = [...types.querySelectorAll("button")],
+      at = items.indexOf(root.activeElement as HTMLButtonElement);
+    const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[e.key];
+    if (to == null && e.key != "Escape") return;
+    e.preventDefault();
+    if (to == null) closeTypes(true);
+    else items[(to + items.length) % items.length].focus();
+  });
+  types.addEventListener("focusout", (e) => {
+    if (!types.contains(e.relatedTarget as Node | null)) closeTypes(false);
+  });
+  typeButton.addEventListener("keydown", (e) => {
+    if (e.key == "ArrowDown" && !typeButton.dataset.why) openTypes();
   });
   for (const input of [linkText, linkUrl])
     input.addEventListener("keydown", (e) => {
