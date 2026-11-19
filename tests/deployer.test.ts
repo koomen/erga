@@ -6,7 +6,6 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import * as Clock from "effect/Clock";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type { AwsApi } from "../deploy/deployer/aws";
 import { Cloudflare, DeployError, type Fetch } from "../deploy/deployer/cloudflare-api";
@@ -15,28 +14,12 @@ import { onBranchAtGitHub, TryLater } from "../deploy/deployer/github";
 import type { Release } from "../deploy/deployer/release-format";
 import { decodeSpec, type Spec } from "../deploy/deployer/spec";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
-import { bindingsOf, bootstrap, databaseOf, nextSecrets, prepareRelease, release, SHA1, SHA2, SHA3 } from "./helpers/deploys.ts";
+import { bindingsOf, bootstrap, databaseOf, nextSecrets, prepareRelease, release, SHA1, SHA2, SHA3, testClock } from "./helpers/deploys.ts";
 
 beforeAll(prepareRelease, 120_000);
 
 /** The parts of a spec that a deploy does not read. */
 const OF = { repo: "github.com/example/erga", branch: "main", secrets: [] };
-
-/** A clock of the test's own: a sleep ends at once, and moves its time on. */
-function testClock() {
-  let now = Date.now();
-  const nanos = () => BigInt(now) * 1_000_000n;
-  const clock: Clock.Clock = {
-    currentTimeMillisUnsafe: () => now,
-    currentTimeMillis: Effect.sync(() => now),
-    currentTimeNanosUnsafe: nanos,
-    currentTimeNanos: Effect.sync(nanos),
-    monotonicTimeNanosUnsafe: nanos,
-    monotonicTimeNanos: Effect.sync(nanos),
-    sleep: (d) => Effect.sync(() => void (now += Duration.toMillis(d))),
-  };
-  return { clock, now: () => now };
-}
 
 /** Runs a deploy on the test's clock: its log, and its failure (null: it deployed). With no `onBranch`, the branch has the commit. */
 async function run(spec: Spec, rel: Release, ports: Partial<Omit<Ports, "log">>, clock = testClock()) {

@@ -3,6 +3,9 @@
 // state.
 
 import { expect } from "bun:test";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { runPipeline, type Target } from "../../deploy/pipeline/pipeline";
@@ -81,4 +84,20 @@ export async function bootstrap(mock: ReturnType<typeof mockCloudflare>) {
     next({ secrets: nextSecrets }),
     { ...quick, report: () => {} }
   );
+}
+
+/** A clock of the test's own: a sleep ends at once, and moves its time on. */
+export function testClock() {
+  let now = Date.now();
+  const nanos = () => BigInt(now) * 1_000_000n;
+  const clock: Clock.Clock = {
+    currentTimeMillisUnsafe: () => now,
+    currentTimeMillis: Effect.sync(() => now),
+    currentTimeNanosUnsafe: nanos,
+    currentTimeNanos: Effect.sync(nanos),
+    monotonicTimeNanosUnsafe: nanos,
+    monotonicTimeNanos: Effect.sync(nanos),
+    sleep: (d) => Effect.sync(() => void (now += Duration.toMillis(d))),
+  };
+  return { clock, now: () => now };
 }
