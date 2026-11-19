@@ -23,7 +23,8 @@ test("the agent's tools ask for a delete, a share with anyone and a revoke, in w
   const root = { dir, who: { login: "root", admin: true } };
   const tools = agentTools(await toolsFor(root, true), root);
   const asks = (tool: string, args: Record<string, unknown>) => tools.find((t) => t.name == tool)!.asks!(args);
-  expect(asks("documents", { op: "delete_document", document: "/root/notes" })).toBe("Delete the document /root/notes for good");
+  expect(asks("documents", { op: "delete_document", document: "/root/notes" })).toBe("Delete /root/notes for good");
+  expect(asks("documents", { op: "delete_document" })).toBe("Delete the document open on the page for good");
   expect(asks("documents", { op: "share_document", document: "/root/notes", login: "*", role: "viewer" })).toBe(
     "Share /root/notes with anyone who has the link (viewer)"
   );

@@ -8,8 +8,14 @@
 
 import type { FileRef } from "./attach";
 
-/** A tool call's state; "asking": it waits for the person's Approve (`detail` says what it would do). */
+/** A tool call's state; "asking": it waits for the person's Approve (`detail` says what it would do, `call` is the call). */
 export type ToolStatus = "running" | "asking" | "done" | "error";
+
+/** A tool call as the model made it: the tool's name, and its arguments (its `op` among them). */
+export interface ToolCall {
+  tool: string;
+  args: Record<string, unknown>;
+}
 
 export type LogItem =
   /** `files`: what was attached, as the log shows it; `id`: the sending tab's own id for it (client/agent/sends.ts). */
@@ -23,6 +29,7 @@ export type LogItem =
       path: string | null;
       status: ToolStatus;
       detail?: string;
+      call?: ToolCall;
       image?: string;
       via?: "external";
     }
@@ -39,6 +46,7 @@ export type LogEvent =
       path: string | null;
       status: ToolStatus;
       detail?: string;
+      call?: ToolCall;
       image?: string;
       via?: "external";
     }
@@ -80,6 +88,45 @@ export function callShown(log: Log, i: number): boolean {
   return log.busy && !after.some((x) => x.kind == "tool") && (item.status == "running" || !after.some((x) => x.kind == "user"));
 }
 
+/** An argument's text on the card may be this long, on this many lines: the rest shows on a click. */
+const CUT = { chars: 160, lines: 4 };
+/** Characters that draw nothing, or that change the order of the text around them: the card writes each as its code. */
+const UNSEEN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g;
+
+/** What the card of a call that waits shows: all text, from the model, for the page to escape. */
+export interface Asked {
+  /** The tool's sentence for the call; null when it has none, or only the tool's own name. */
+  says: string | null;
+  /** The tool, and the operation of it that the call names. */
+  head: string;
+  /** Each other argument, in the call's order; `cut`: the start of a long text, which shows before a click. */
+  args: { key: string; text: string; cut: string | null }[];
+}
+
+/**
+ * The card of a call that waits for the person's Approve: the tool's sentence, and the call itself, whole. The
+ * sentence is the server's words about the arguments; the arguments are what runs. A string shows as it is, any other
+ * value as JSON.
+ */
+export function asked(item: { name: string; detail?: string; call?: ToolCall }): Asked {
+  const { tool, args } = item.call ?? { tool: item.name, args: {} };
+  const op = typeof args.op == "string" && args.op ? args.op : null;
+  const seen = (s: string) => s.replace(UNSEEN, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  const says = seen(item.detail?.trim() ?? "");
+  const own = [tool, op, item.name].some((n) => n?.toLowerCase() == says.toLowerCase());
+  return {
+    says: says && !own ? says : null,
+    head: seen(op ? `${tool} ${op}` : tool),
+    args: Object.entries(args)
+      .filter(([key]) => !(op && key == "op"))
+      .map(([key, value]) => {
+        const text = seen(typeof value == "string" && value ? value : (JSON.stringify(value) ?? "undefined"));
+        const start = text.split("\n").slice(0, CUT.lines).join("\n").slice(0, CUT.chars);
+        return { key: seen(key), text, cut: start.length < text.length ? start : null };
+      }),
+  };
+}
+
 /** Applies one event in place; returns the index of the item it touched, or -1. */
 export function reduce(log: Log, ev: LogEvent): number {
   const items = log.items;
@@ -105,6 +152,7 @@ export function reduce(log: Log, ev: LogEvent): number {
         path: ev.path,
         status: ev.status,
         detail: ev.detail,
+        call: ev.call,
         image: ev.image,
         via: ev.via,
       };

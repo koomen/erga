@@ -71,7 +71,8 @@ export interface AgentTool {
   readonly parameters: Schema.Top;
   /**
    * What the person must approve before this call runs, in words for the panel ("Delete /ada/notes for good"); null
-   * for a call that runs at once. The run stops at such a call until the person answers (agents/turn.ts, asking).
+   * for a call that runs at once. The run stops at such a call until the person answers (agents/turn.ts, asking). The
+   * panel's card shows these words and, under them, the call itself (shared/agent-log.ts, asked).
    */
   asks?(params: Record<string, unknown>): string | null;
   /** Runs with its arguments decoded; throws (an Error whose message the model reads) when it fails. */
@@ -305,10 +306,11 @@ export function startLoop(opts: LoopOptions): AgentLoop {
     emit({ t: "tool", id, name, path, status: "running" });
   };
   /** What the person must approve before `call` runs, or null: its tool's `asks`, unless they approved it. */
+  const argsOf = (call: { params: unknown }) =>
+    call.params && typeof call.params == "object" ? (call.params as Record<string, unknown>) : {};
   const question = (call: { id: string; name: string; params: unknown }): string | null => {
     if (now.at == "running" && now.approved == call.id) return null;
-    const params = call.params && typeof call.params == "object" ? (call.params as Record<string, unknown>) : {};
-    return side?.tools.find((t) => t.name == call.name)?.asks?.(params) ?? null;
+    return side?.tools.find((t) => t.name == call.name)?.asks?.(argsOf(call)) ?? null;
   };
   const toolEnded = (id: string, name: string, out: ToolOutput, isError: boolean) => {
     hooks.toolEnded?.();
@@ -440,7 +442,14 @@ export function startLoop(opts: LoopOptions): AgentLoop {
         const q = question(call);
         if (q != null) {
           // The run ends here, and the turn waits for the person's answer.
-          emit({ t: "tool", id: call.id, ...shown(call.name, call.params), status: "asking", detail: q });
+          emit({
+            t: "tool",
+            id: call.id,
+            ...shown(call.name, call.params),
+            status: "asking",
+            detail: q,
+            call: { tool: call.name, args: argsOf(call) },
+          });
           return call.id;
         }
         yield* runCall(call);

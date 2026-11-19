@@ -6,7 +6,7 @@
 // "Not sent" and a way to try again): sends.ts has each message's states. The
 // styles are style.css's (.agent-log, .msg-*), so both panels look the same.
 
-import { callShown, emptyLog, reduce, type Log, type LogEvent, type LogItem } from "../../shared/agent-log";
+import { asked, callShown, emptyLog, reduce, type Log, type LogEvent, type LogItem } from "../../shared/agent-log";
 import type { FileRef } from "../../shared/attach";
 import { fileChip } from "./attach-ui";
 import { sendStep, type SendEvent, type SendState } from "./sends";
@@ -90,9 +90,19 @@ export function chat(opts: ChatOptions): Chat {
           ? `<span class="via" title="${esc(opts.externalTip ?? "An outside agent, working as your agent")}">External agent:</span> `
           : "";
       if (item.status == "asking") {
-        // The agent's call waits for the person: what it would do, in the server's words, and their answer.
+        // The agent's call waits for the person: what it would do, in the server's words, the call itself, whole, and
+        // their answer. The call is the model's text: all of it goes in escaped, and a long argument opens on a click.
         el.classList.add("asking");
-        el.innerHTML = `<span>Your agent asks to:<span class="detail">${esc(item.detail ?? item.name)}</span></span><span class="ask-acts"><button type="button" data-answer="deny" data-call="${esc(item.id)}">Deny</button><button type="button" class="run" data-answer="approve" data-call="${esc(item.id)}">Approve</button></span>`;
+        const { says, head, args } = asked(item);
+        const lines = args.map(
+          (a) =>
+            `<div class="arg"><span class="key">${esc(a.key)}:</span> ${
+              a.cut == null
+                ? esc(a.text)
+                : `<details><summary><span class="cut">${esc(a.cut)}… </span><span class="all">Show all ${a.text.length.toLocaleString("en-US")} characters</span><span class="less">Show less</span></summary><div>${esc(a.text)}</div></details>`
+            }</div>`
+        );
+        el.innerHTML = `<span>${says ? `Your agent asks to:<span class="detail">${esc(says)}</span>` : "Your agent asks to run:"}<div class="call"><div class="head">${esc(head)}</div>${lines.join("")}</div></span><span class="ask-acts"><button type="button" data-answer="deny" data-call="${esc(item.id)}">Deny</button><button type="button" class="run" data-answer="approve" data-call="${esc(item.id)}">Approve</button></span>`;
       } else {
         el.classList.add(item.status);
         el.innerHTML = `<span>${via}${item.status == "running" ? doing : item.status == "error" ? `${doing} failed:` : done}${what}${item.detail ? `<span class="detail">${esc(item.detail)}</span>` : ""}${item.image ? `<img class="shot" alt="${esc(opts.imageAlt ?? "What the agent saw")}" src="${item.image}">` : ""}</span>`;

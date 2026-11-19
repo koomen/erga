@@ -419,8 +419,10 @@ journey("the agent on the documents' list", () => {
   /** Whether Lisa still has the document. */
   const has = async () => (await runTool(s.root, "ls", { document: address }, { user: LISA })).ok;
   const question = () => page.locator("#agent-log .msg-tool.asking");
-  const erase = (after: string) =>
-    script("Delete it", [{ tool: "documents", args: { op: "delete_document", document: address } }, { text: after }]);
+  const erase = (after: string, more: object = {}) =>
+    script("Delete it", [{ tool: "documents", args: { op: "delete_document", document: address, ...more } }, { text: after }]);
+  /** The call on the card: its lines, as the person reads them. */
+  const call = () => question().locator(".call").innerText();
   let reads = 0;
 
   test("with the panel closed, the page reads the conversation one time", async ({ tab }) => {
@@ -452,9 +454,15 @@ journey("the agent on the documents' list", () => {
     await page.click("#agent-fab");
     await agentOn(page);
 
-    await say(page, erase("Left alone."));
+    // The card shows the sentence and the call itself, whole: a long argument is cut, and opens on a click. It is the
+    // model's text: none of it is markup.
+    const why = `<b>${"x".repeat(200)}</b> end`;
+    await say(page, erase("Left alone.", { why }));
     await expect.poll(() => question().count(), { timeout: 10_000 }).toBe(1);
-    expect(await question().locator(".detail").textContent()).toBe(`Delete the document ${address} for good`);
+    expect(await question().locator(".detail").textContent()).toBe(`Delete ${address} for good`);
+    expect(await call()).toBe(`documents delete_document\ndocument: ${address}\nwhy: ${why.slice(0, 160)}… Show all 211 characters`);
+    await question().getByText("Show all 211 characters").click();
+    expect(await call()).toBe(`documents delete_document\ndocument: ${address}\nwhy: Show less\n${why}`);
     // The run stopped at the call: nothing ran, and the panel does not say that the agent works.
     await expect.poll(() => page.locator("#agent-fab.busy").count()).toBe(0);
     expect(await has()).toBe(true);

@@ -319,7 +319,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     ui: "Documents (/documents): Delete",
     description: "Deletes a document for good (owner only).",
     parameters: Schema.Struct({ document: ANY_DOCUMENT }),
-    asks: (args) => `Delete the document ${named(args.document)} for good`,
+    asks: (args) => `Delete ${named(args.document)} for good`,
     run: async (args, caller) => {
       const doc = await findDocument({ ...caller, here: undefined }, args.document, "delete");
       if (doc.id == caller.here)

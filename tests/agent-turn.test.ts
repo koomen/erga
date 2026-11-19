@@ -270,7 +270,7 @@ test("a call that asks does not run until the person approves; then the run goes
   // The run ended at the question: nothing of it is left that could run the call.
   await until(() => !!asking(a) && busy.at(-1) == false);
   expect(ran).toEqual([]);
-  expect(asking(a)).toMatchObject({ name: "delete", detail: "Delete notes for good" });
+  expect(asking(a)).toMatchObject({ name: "delete", detail: "Delete notes for good", call: { tool: "delete", args: { what: "notes" } } });
   expect(a.answer("another", true)).toBe(false);
   expect(a.answer(asking(a).id, true)).toBe(true);
   await until(() => a.log().items.at(-1)?.kind == "assistant" && busy.at(-1) == false);

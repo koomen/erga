@@ -84,7 +84,7 @@ export function restoredLog(stored: StoredChat): Log {
     .filter((item, i) => !(state.running && i >= state.stable && (item.kind == "assistant" || item.kind == "thinking")))
     .map((item): LogItem => {
       // A call that waited for the person's Approve is closed: a restart never leaves a question that nothing answers.
-      if (item.kind == "tool" && item.status == "asking") return { ...item, status: "error", detail: ASK_LOST };
+      if (item.kind == "tool" && item.status == "asking") return { ...item, call: undefined, status: "error", detail: ASK_LOST };
       if (item.kind != "tool" || item.status != "running") return item;
       const result = state.calls[item.id]?.result;
       if (result) return { ...item, status: result.content.some((p) => p.type == "tool-result" && p.isFailure) ? "error" : "done" };
