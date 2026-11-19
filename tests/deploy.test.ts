@@ -86,6 +86,10 @@ describe("deploying", () => {
     expect(Object.keys(release.assets).some((p) => p.startsWith("/release"))).toBe(false);
     expect(Object.keys(release.assets)).not.toContain("/inline-code.ts");
     expect(Object.keys(release.migrations)[0]).toBe("0001_erga.sql");
+    // GitHub publishes it for every instance (.github/workflows/release.yml): no instance's setting, ID, domain or route.
+    for (const [name, b] of Object.entries(release.worker.env))
+      expect({ name, value: b.value ?? "", id: (b as { id?: string }).id }).toEqual({ name, value: "", id: undefined });
+    expect(Object.keys(release.worker).filter((k) => /route|domain|account|zone/i.test(k))).toEqual([]);
   });
 
   test("to workers.dev, with the shared pages host: every step, and what Cloudflare was asked for", async () => {

@@ -10,13 +10,16 @@
 // The bundle is a release (deploy/release.ts's .build/release/) as one file, the way a build hands a built commit back
 // to the pipeline: JSON, {index: release.json, files: {"bundle/index.js": base64, ...}}. packRelease writes it and
 // unpackRelease reads it, with loadRelease.
+//
+//   bun deploy/pipeline/build.ts <file>    this checkout's HEAD, steps 1 to 4, the bundle into <file>: the release
+//                                          workflow's build (.github/workflows/release.yml)
 
 import { readdirSync, readFileSync, existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import * as Result from "effect/Result";
 import { Base64 } from "effect/encoding";
-import { ROOT } from "../root";
+import { git, ROOT } from "../root";
 import { DeployError } from "./cloudflare-api";
 import { loadRelease, type Release, type ReleaseIndex } from "./release-format";
 
@@ -138,3 +141,9 @@ export const spawnRunner: Runner = async (cmd, o) => {
   o.signal?.throwIfAborted();
   if (code != 0) throw new Error(`${hide(cmd.join(" "))} failed (exit ${code})${tail.length ? `:\n${tail.slice(-8).join("\n")}` : ""}`);
 };
+
+if (import.meta.main) {
+  const file = process.argv[2];
+  if (!file) throw new Error("usage: bun deploy/pipeline/build.ts <file>");
+  await Bun.write(file, await buildIn({ dir: ROOT, commit: git("rev-parse", "HEAD").out, log: console.log }));
+}

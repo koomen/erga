@@ -1,9 +1,9 @@
 // `bun erga`'s decisions (deploy/cli/flow.ts): what merge and release refuse, the squashed commit's message,
 // the next version and the notes, a rollback's version, the pre-push hook, and `bun erga status`'s text from the instances' answers.
-// And GitHub's workflow, which deploys nothing.
+// And GitHub's one workflow (.github/workflows/release.yml), which publishes the release and deploys nothing.
 
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import {
   latestTag,
   mergeArgs,
@@ -142,6 +142,32 @@ test("bun erga status: each instance with what it tracks and where its commit is
   expect(text).toContain("- 4444444 [v0.1.0] On main");
 });
 
-test("GitHub runs nothing: the repository has no workflow", () => {
-  expect(existsSync(new URL("../.github", import.meta.url))).toBe(false);
+test("GitHub runs one workflow, the release: staging and main only, no secret but its own token, each action at a commit", () => {
+  const dir = new URL("../.github/workflows/", import.meta.url);
+  // (Not the Finder's .DS_Store.)
+  const names = (folder: URL) => readdirSync(folder).filter((name) => !name.startsWith("."));
+  expect(names(new URL("..", dir))).toEqual(["workflows"]);
+  expect(names(dir)).toEqual(["release.yml"]);
+  const text = readFileSync(new URL("release.yml", dir), "utf8");
+  type Job = { permissions: unknown; needs?: string[]; steps: { uses?: string; with?: Record<string, unknown> }[] };
+  const flow = Bun.YAML.parse(text) as { on: unknown; permissions: unknown; jobs: Record<string, Job> };
+  expect(flow.on).toEqual({ push: { branches: ["staging", "main"] } });
+  // Only publish may write, and only packages: it waits for the tests, and runs nothing of the repository's.
+  expect(flow.permissions).toEqual({});
+  expect(Object.fromEntries(Object.entries(flow.jobs).map(([name, job]) => [name, job.permissions]))).toEqual({
+    test: { contents: "read" },
+    build: { contents: "read" },
+    publish: { packages: "write" },
+  });
+  expect(flow.jobs.publish.needs).toEqual(["test", "build"]);
+  const steps = Object.values(flow.jobs).flatMap((job) => job.steps);
+  const uses = steps.flatMap((step) => (step.uses ? [step.uses] : []));
+  expect(flow.jobs.publish.steps.filter((step) => step.uses).map((step) => step.uses!.split("@")[0])).toEqual([
+    "actions/download-artifact",
+  ]);
+  // A tag can move: a full commit SHA can't. And no checkout leaves the token on the disk.
+  expect(uses.filter((use) => !/^[\w-]+\/[\w-]+@[0-9a-f]{40}$/.test(use))).toEqual([]);
+  for (const step of steps) if (step.uses?.startsWith("actions/checkout@")) expect(step.with).toEqual({ "persist-credentials": false });
+  // Every expression: no secret but GitHub's own token, and no input of a person's in a script.
+  expect([...new Set([...text.matchAll(/\$\{\{\s*(.*?)\s*\}\}/g)].map((m) => m[1]))]).toEqual(["github.sha", "secrets.GITHUB_TOKEN"]);
 });

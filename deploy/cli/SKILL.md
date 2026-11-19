@@ -237,7 +237,11 @@ and `main`. There are no pull requests.
 
 - Every deploy runs on a machine, with its Cloudflare credential:
   `CLOUDFLARE_API_TOKEN`, else the cf CLI's login (`bunx cf auth login`).
-  GitHub only keeps the repository: it runs no workflow and has no token.
+  GitHub has no cloud credential and deploys nothing. It runs one workflow
+  (`.github/workflows/release.yml`): on a push to `staging` or `main`, it
+  tests and builds the commit, and publishes its release on GitHub's
+  registry (`ghcr.io/<owner>/<repository>:<commit>`). No deploy fetches
+  that release yet.
 - A deploy builds the commit in a scratch worktree, then runs the pipeline:
   the D1 migrations, the static files, the Worker with its Cron Trigger, the
   addresses, the health. No step asks the deployed server: the server

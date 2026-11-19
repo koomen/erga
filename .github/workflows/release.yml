@@ -1,0 +1,120 @@
+# The release: each commit of staging and main, tested and built one time on GitHub, then published on GitHub's
+# registry as one file, which every instance's deploy fetches.
+#
+#   ghcr.io/<owner>/<repository>:<the commit's full SHA>
+#
+# It is an OCI image manifest with one layer: the bundle that deploy/pipeline/build.ts packs ({index, files}), as it
+# is. The layer's digest is the SHA-256 of the bundle. A deploy fetches the manifest by its tag, then the layer, and
+# checks the layer's bytes against that digest. The release holds no instance's name, setting or secret
+# (tests/deploy.test.ts). No pass of the tests, no release.
+#
+# A commit's release is made one time: publish leaves a tag that exists as it is (main gets staging's commits).
+#
+# The only secret is GITHUB_TOKEN. The test and build jobs may only read the repository. Only the publish job may
+# write packages: it runs on a machine of its own, with the bundle and oras, and with no code or package of the
+# repository.
+#
+# Trap: a tag can move. Each action is pinned to a full commit SHA, and oras to the SHA-256 of its file. No job
+# keeps a cache: a cache is a way in for a run of another branch.
+
+name: release
+
+on:
+  push:
+    branches: [staging, main]
+
+permissions: {}
+
+# One run for each commit: main's run of a commit waits for staging's.
+concurrency: release-${{ github.sha }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # The bundle's media type, and the manifest's artifact type.
+  RELEASE_TYPE: application/vnd.erga.release.v1+json
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+          no-cache: true
+      # Vite, the typecheck and cf build run under Node: the machines' version, not the runner's own.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.10.0
+          package-manager-cache: false
+      - run: bun install --frozen-lockfile
+      - run: bun run test:browsers --with-deps
+      - run: bun run test
+
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+          no-cache: true
+      # Vite, the typecheck and cf build run under Node: the machines' version, not the runner's own.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.10.0
+          package-manager-cache: false
+      - run: bun install --frozen-lockfile
+      - run: bun deploy/pipeline/build.ts bundle.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle
+          path: bundle.json
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [test, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bundle
+      - name: oras
+        run: |
+          curl --fail --silent --show-error --location --remote-name https://github.com/oras-project/oras/releases/download/v1.3.6/oras_1.3.6_linux_amd64.tar.gz
+          echo "66fb0ad7206f3f6fa77ed5b552049d364ccf4b50b1684554f731f76302b52ca0  oras_1.3.6_linux_amd64.tar.gz" | sha256sum --check
+          tar -xzf oras_1.3.6_linux_amd64.tar.gz oras
+      - name: publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          release="ghcr.io/${GITHUB_REPOSITORY,,}:$GITHUB_SHA"
+          ./oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<<"$GITHUB_TOKEN"
+          if ./oras manifest fetch --descriptor "$release"; then
+            echo "\`$release\` exists already: not published again." >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          ./oras push "$release" --artifact-type "$RELEASE_TYPE" \
+            --annotation "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            "bundle.json:$RELEASE_TYPE"
+          # What the registry has now is the bundle that the build made.
+          digest=$(./oras manifest fetch "$release" | jq --raw-output '.layers[0].digest')
+          [ "$digest" = "sha256:$(sha256sum bundle.json | cut -d ' ' -f 1)" ]
+          echo "\`$release\`: $(stat --format %s bundle.json) bytes, digest \`$digest\`" >>"$GITHUB_STEP_SUMMARY"
