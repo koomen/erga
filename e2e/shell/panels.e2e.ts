@@ -251,7 +251,7 @@ journey("the panels and the bars over a page", () => {
     expect((await zoomed()).height).toBeCloseTo(start.height, 0);
   });
 
-  test("a pinch zooms around the pointer and lays the page out again as it rests, the point still under the pointer; zoomed, the page fills its place with its sides in sight; the keys reach 50% and 200%, under the bars", async () => {
+  test("editing, a pinch zooms around the pointer and the page keeps its width, the point still under the pointer as it rests; the wheel moves it across to its edge and down to its bottom; the keys reach 50% and 200%, under the bars", async () => {
     /** The page as drawn against its place (the window beside the agent's pane): 0 where it ends at the place's edge. */
     const edges = () =>
       ed.eval<{ left: number; right: number }>(`(() => {
@@ -266,6 +266,9 @@ journey("the panels and the bars over a page", () => {
       );
     /** The page's own window: its width, in its px. */
     const inner = () => ed.frame<number>("innerWidth");
+    /** The page's window, as drawn: as tall as its place (under the bars), at any level. */
+    const tall = () => ed.eval<number>(`Math.round(document.getElementById("frame").getBoundingClientRect().height)`);
+    const height = await tall();
     /** The bars are in sight, at their own size, and the window itself is not zoomed. */
     const bars = async () => ({
       ...(await chrome()),
@@ -275,15 +278,17 @@ journey("the panels and the bars over a page", () => {
     })()`),
     });
     const width = await place();
-    // At 150%, where this short page has room to scroll: the page is laid out for its place, 1.5 times narrower, and fills it.
+    // At 150%, where this short page has room to scroll: the page keeps its width (the readers' layout), magnified
+    // around the middle, as tall as its place.
     for (let i = 0; i < 3; i++) await ed.press("ControlOrMeta+Equal");
     await soon(scale).toBe(1.5);
-    await soon(async () => Math.abs((await inner()) * 1.5 - width)).toBeLessThan(2);
-    expect(await edges()).toEqual({ left: 0, right: 0 });
-    // From here on, each time the page's window gets another size: its width.
+    await soon(tall).toBe(height);
+    expect(await inner()).toBe(width);
+    expect(await edges()).toEqual({ left: -width / 4, right: width / 4 });
+    // From here on, each time the page's window gets another size: its height.
     await ed.frame(`(() => {
       const seen = (window.__laid = []);
-      new ResizeObserver(() => seen.push(innerWidth)).observe(document.querySelector("erga-view") ?? document.documentElement);
+      new ResizeObserver(() => seen.push(innerHeight)).observe(document.querySelector("erga-view") ?? document.documentElement);
       return true;
     })()`);
     // A trackpad's pinch on the lede's top edge: ctrl with the wheel, in many small moves. That point stays under the
@@ -299,28 +304,30 @@ journey("the panels and the bars over a page", () => {
     // (The level as the page is drawn now, during the pinch.)
     await soon(() => ed.frame<number>("window.ergaFrame?.zoom ?? 1")).toBeCloseTo(1.5 * Math.exp(0.21), 2);
     expect(Math.abs((await lede()) - y), "the lede, during the pinch").toBeLessThan(3);
-    // It rests: the page is laid out again for its place, once, with the lede where it was on the screen.
-    await soon(async () => Math.abs((await inner()) * (await scale()) - width)).toBeLessThan(2);
+    // It rests: the page's window gets its new height, once, with the lede where it was on the screen; its width stays.
+    await soon(tall).toBe(height);
     await soon(async () => Math.abs((await lede()) - y)).toBeLessThan(3);
-    expect(await edges()).toEqual({ left: 0, right: 0 });
-    // (The observer says the first width too.)
-    expect(await ed.frame<number>(`new Set(window.__laid).size`), "the page's widths: before the pinch, and after it").toBe(2);
+    expect(await inner()).toBe(width);
+    // (The observer says the first height too.)
+    expect(await ed.frame<number>(`new Set(window.__laid).size`), "the page's heights: before the pinch, and after it").toBe(2);
     // And on, to the least: the pinch stops at 50%.
     for (let i = 0; i < 3; i++) await page.mouse.wheel(0, 49.5);
     await page.keyboard.up("Control");
     await soon(zoomAction).toBe("50%");
-    await soon(async () => Math.abs((await inner()) * 0.5 - width)).toBeLessThan(2);
+    await soon(tall).toBe(height);
+    expect(await inner()).toBe(width);
     expect(await bars()).toEqual({ ...shell, top: true });
 
-    // At the most, 200%: the page fills its place with its sides in sight, and the wheel takes it down to its bottom.
+    // At the most, 200%: the wheel takes the page down to its bottom, and across to its right edge.
     await ed.press("ControlOrMeta+Digit0");
     for (let i = 0; i < 6; i++) await ed.press("ControlOrMeta+Equal");
     await soon(zoomAction).toBe("200%");
-    await soon(async () => Math.abs((await inner()) * 2 - width)).toBeLessThan(2);
-    expect(await edges()).toEqual({ left: 0, right: 0 });
+    await soon(tall).toBe(height);
     await pointerOnPage(page, p.x, y);
     await page.mouse.wheel(0, 20000);
     await soon(() => ed.frame<boolean>(`scrollY > 0 && scrollY + innerHeight >= document.documentElement.scrollHeight - 1`)).toBe(true);
+    await page.mouse.wheel(4000, 0);
+    await soon(edges).toEqual({ left: -width, right: 0 });
 
     // The keys, down to the least and back to 100%: the bars stay where they are, at their size.
     for (let i = 0; i < 10; i++) await ed.press("ControlOrMeta+Minus");

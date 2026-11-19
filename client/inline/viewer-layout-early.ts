@@ -67,7 +67,11 @@ export default function viewerLayoutEarly(): void {
     );
     if (z != 1) {
       document.documentElement.style.setProperty("--erga-zoom", String(z));
-      document.documentElement.style.setProperty("--erga-lay", String(z));
+      // (Editing, the page keeps its width, in the middle: client/common/zoom.ts, Keep.)
+      const editing = document.body.classList.contains("erga-editing");
+      document.documentElement.style.setProperty("--erga-lay-w", editing ? "1" : String(z));
+      if (editing) document.documentElement.style.setProperty("--erga-x", `${((1 - z) / 2) * 100}%`);
+      document.documentElement.style.setProperty("--erga-lay-h", String(z));
       document.documentElement.classList.add("erga-zoomed");
     }
   } catch {}

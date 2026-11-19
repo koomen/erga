@@ -397,9 +397,9 @@ journey("a document's page loads one time, for a reader and in the editor", () =
     // (A page of text alone: the music page draws its widget after its first frame.)
     const light = (await s.fixture("top/light")).address;
     await page.evaluate((doc) => localStorage.setItem(`erga:zoom:v1:${doc}`, "1.5"), await idOf(light));
-    const want = { l: 0, r: WIDTH };
+    const want = { l: -WIDTH / 4, r: (WIDTH * 5) / 4 };
     const r = await open("load", want, up, light);
-    // (Zoomed, the page is laid out for the window at its level, and fills it.)
+    // (Zoomed in the editor, the page keeps its width and is magnified, in the middle.)
     still(r, want, "zoomed, load");
     expect(r.scales.length, "the frame showed").toBeGreaterThan(0);
     expect([...new Set(r.scales)], "the frame's scale").toEqual([1.5]);

@@ -184,6 +184,28 @@ function setZoom(m: Zoomed) {
   comments?.queue();
 }
 
+/**
+ * Editing, the page zoomed in keeps its width (client/common/zoom.ts, Keep), and only part of it shows across: a caret
+ * that a key moved out of sight there brings the page across to it (erga-pan, px on the screen), as it scrolls down to it.
+ */
+let keyed = false;
+function caretAcross() {
+  const sel = getSelection();
+  if (zoom <= 1 || !sel?.focusNode) return;
+  const at = document.createRange();
+  try {
+    at.setStart(sel.focusNode, sel.focusOffset);
+  } catch {
+    return;
+  }
+  const r =
+    at.getClientRects()[0] ?? (sel.focusNode instanceof Element ? sel.focusNode : sel.focusNode.parentElement)?.getBoundingClientRect();
+  if (!r) return;
+  const room = 24,
+    dx = r.left < shows.left + room ? r.left - room - shows.left : r.left > shows.right - room ? r.left + room - shows.right : 0;
+  if (dx) window.parent.postMessage({ type: "erga-pan", dx: dx * zoom, dy: 0 }, SHELL);
+}
+
 // The word that loaded this script (the page's first script kept it).
 const first = window.__ergaReader?.mode as EditMode | undefined;
 if (first?.type == "erga-mode") queueMicrotask(() => setMode(first));
@@ -879,7 +901,9 @@ function watchPage() {
   watchMoves(d, win, () => {
     if (page && d.getSelection()?.isCollapsed === false) controls?.queue();
   });
-  on(d, "selectionchange", () => (controls?.queue(), comments?.queue()));
+  on(d, "selectionchange", () => (controls?.queue(), comments?.queue(), keyed && caretAcross()));
+  // (A key moved it: the caret the editor puts as it starts, or a click's, moves nothing.)
+  on(d, "keydown", () => ((keyed = true), win.setTimeout(() => (keyed = false), 300)), { capture: true });
   on(win, "resize", () => (controls?.queue(), comments?.queue()));
 }
 

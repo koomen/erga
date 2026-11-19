@@ -228,9 +228,9 @@ journey("comments in the editor", () => {
     await ed.click(elsewhere.x, elsewhere.y);
     await expect.poll(async () => (await cards(ed))?.length).toBe(1);
 
-    // 67%: the page is laid out for a wider window, and the rail has room still: its card, at its own size.
-    for (let i = 0; i < 4; i++) await ed.press("ControlOrMeta+Minus");
-    await expect.poll(zoomLabel).toBe("67%");
+    // 90%: the page keeps its layout, smaller, and the rail has room still: its card, at its own size.
+    await ed.press("ControlOrMeta+Minus");
+    await expect.poll(zoomLabel).toBe("90%");
     await expect.poll(async () => (await cards(ed))?.length).toBe(1);
     await expect.poll(async () => (await onScreen(ed, thread)).card?.width).toBe(272);
 

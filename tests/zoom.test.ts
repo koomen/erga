@@ -2,9 +2,9 @@
 // the page is laid out again, and what a wheel with ctrl asks for.
 
 import { expect, test } from "bun:test";
-import { MAX_ZOOM, MIN_ZOOM, wheelZoom, zoomAim, zoomStep, type Point, type Zoom, type ZoomEvent } from "../client/common/zoom";
+import { layOf, MAX_ZOOM, MIN_ZOOM, wheelZoom, zoomAim, zoomStep, type Point, type Zoom, type ZoomEvent } from "../client/common/zoom";
 
-const still: Zoom = { phase: "still", fit: false, level: 1, x: 0, y: 0 };
+const still: Zoom = { phase: "still", keep: "none", level: 1, x: 0, y: 0 };
 const W = 1000,
   H = 800;
 /** The state after the events, and the effects of the last one. */
@@ -72,10 +72,10 @@ test("the keys step through the browser's levels to 50% and 200%, around the mid
 });
 
 test("a page that fits itself keeps its layout: its picture grows around the middle, the wheel moves it to its edges; smaller, it sits in the middle", () => {
-  const fit = zoomStep(still, { type: "fit", fit: true, w: W, h: H });
-  expect(fit).toEqual({ state: { ...still, fit: true }, effects: ["draw"] });
+  const fit = zoomStep(still, { type: "keep", keep: "all", w: W, h: H });
+  expect(fit).toEqual({ state: { ...still, keep: "all" }, effects: ["draw"] });
   const big = after(fit.state, key(1), key(1)).state;
-  expect(big).toMatchObject({ phase: "still", fit: true, level: 1.25 });
+  expect(big).toMatchObject({ phase: "still", keep: "all", level: 1.25 });
   expect([big.x, big.y].map(Math.round)).toEqual([-125, -100]);
   // Its layout stays: no aim, the same window.
   expect(zoomAim(fit.state, big, W, H)).toBe(null);
@@ -85,15 +85,35 @@ test("a page that fits itself keeps its layout: its picture grows around the mid
   expect(zoomStep(moved.state, { type: "pan", dx: 10, dy: 10, w: W, h: H }).effects).toEqual([]);
   // A pinch at the place's top left keeps the page's point there (200, 160), and rests within the place.
   const pinched = after(moved.state, ...pinch({ x: 0, y: 0 }, 1.05, 3), { type: "rest", w: W, h: H }).state;
-  expect(pinched).toMatchObject({ phase: "still", fit: true });
+  expect(pinched).toMatchObject({ phase: "still", keep: "all" });
   const corner = drawnAt(pinched, { x: 200, y: 160 });
   expect([corner.x, corner.y].map((v) => Math.round(v * 1000) / 1000)).toEqual([0, 0]);
   // Smaller: in the middle, and the wheel does nothing.
-  const small = after(still, { type: "fit", fit: true, w: W, h: H }, key(-1), key(-1)).state;
-  expect(small).toMatchObject({ phase: "still", fit: true, level: 0.8 });
+  const small = after(still, { type: "keep", keep: "all", w: W, h: H }, key(-1), key(-1)).state;
+  expect(small).toMatchObject({ phase: "still", keep: "all", level: 0.8 });
   expect([small.x, small.y].map(Math.round)).toEqual([100, 80]);
   // A page that doesn't fit itself has no pan.
   expect(zoomStep(after(still, key(1)).state, { type: "pan", dx: 10, dy: 0, w: W, h: H }).effects).toEqual([]);
+});
+
+test("editing, the page keeps its width: only its height is laid out again, it moves across, and the level stays", () => {
+  const zoomed = after(still, key(1), key(1)).state;
+  const edit = zoomStep(zoomed, { type: "keep", keep: "width", w: W, h: H });
+  // Its width stays (the readers' layout); its window is shorter by the level, so it fills the place's height.
+  expect(edit.state).toMatchObject({ phase: "still", keep: "width", level: 1.25, x: -125, y: 0 });
+  expect(layOf(edit.state)).toEqual({ w: 1, h: 1.25 });
+  // A key: the window's new height, and the middle stays (the page scrolls it there); across, around the middle.
+  const more = zoomStep(edit.state, key(1)).state;
+  expect(more).toMatchObject({ level: 1.5, x: -250, y: 0 });
+  expect(zoomAim(edit.state, more, W, H)).toMatchObject({ y: H / 2 / 1.25, to: H / 2 / 1.5, w: W });
+  // The wheel moves it across, to its edges, never down: the page scrolls down itself.
+  expect(zoomStep(more, { type: "pan", dx: 5000, dy: 300, w: W, h: H }).state).toMatchObject({ x: -500, y: 0 });
+  // A pinch keeps its point's place across; down, the page scrolls it there.
+  const pinched = after(more, ...pinch({ x: 100, y: 200 }, 1.05, 3), { type: "rest", w: W, h: H }).state;
+  expect(drawnAt(pinched, { x: (100 + 250) / 1.5, y: 0 }).x).toBeCloseTo(100, 6);
+  expect(pinched.y).toBe(0);
+  // Back to viewing: laid out again at the same level.
+  expect(layOf(zoomStep(more, { type: "keep", keep: "none", w: W, h: H }).state)).toEqual({ w: 1.5, h: 1.5 });
 });
 
 test("a wheel with ctrl: a mouse's notch is a step, a trackpad's pinch a small factor, and a huge delta is held", () => {

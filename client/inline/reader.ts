@@ -169,15 +169,19 @@ export default function reader(C: ReaderConfig): void {
   new ResizeObserver(keepAim).observe(view);
   addEventListener("resize", keepAim);
   // A page that fits itself (a deck), drawn larger than its place: the wheel moves around in its picture (the viewer
-  // moves it: erga-pan), not in the page, which has nowhere to scroll.
+  // moves it: erga-pan), not in the page, which has nowhere to scroll. One that keeps its width (editing), wider than
+  // its place: the wheel across moves it across; down, the page scrolls as always.
   addEventListener(
     "wheel",
     (e) => {
       const z = zoomedSaid();
-      if (e.ctrlKey || e.defaultPrevented || !z?.fit || z.zoom <= 1) return;
+      if (e.ctrlKey || e.defaultPrevented || !z || z.keep == "none" || z.zoom <= 1) return;
+      const k = e.deltaMode == 1 ? 16 : 1,
+        dx = (e.deltaX || (e.shiftKey ? e.deltaY : 0)) * k,
+        dy = e.shiftKey ? 0 : e.deltaY * k;
+      if (z.keep == "width" && (!dx || Math.abs(dy) > Math.abs(dx))) return;
       e.preventDefault();
-      const k = e.deltaMode == 1 ? 16 : 1;
-      tell({ type: "erga-pan", dx: (e.deltaX || (e.shiftKey ? e.deltaY : 0)) * k, dy: e.shiftKey ? 0 : e.deltaY * k });
+      tell({ type: "erga-pan", dx, dy: z.keep == "all" ? dy : 0 });
     },
     // (First: before a deck's own wheel, which steps it.)
     { passive: false, capture: true }
@@ -209,9 +213,10 @@ export default function reader(C: ReaderConfig): void {
         if (d)
           tell({ type: "erga-zoom", zoom: { by: d / span }, x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
         span = d;
-      } else if (t.length == 1 && finger && z?.fit && z.zoom > 1) {
-        e.preventDefault();
-        tell({ type: "erga-pan", dx: (finger.x - t[0].clientX) * z.zoom, dy: (finger.y - t[0].clientY) * z.zoom });
+      } else if (t.length == 1 && finger && z && z.keep != "none" && z.zoom > 1) {
+        // (Keeping its width, the page scrolls down itself.)
+        if (z.keep == "all") e.preventDefault();
+        tell({ type: "erga-pan", dx: (finger.x - t[0].clientX) * z.zoom, dy: z.keep == "all" ? (finger.y - t[0].clientY) * z.zoom : 0 });
         finger = { x: t[0].clientX, y: t[0].clientY };
       }
     },
@@ -849,8 +854,8 @@ export default function reader(C: ReaderConfig): void {
     else if (type == "erga-zoomed") {
       window.__ergaReader!.zoomed = e.data;
       if (!view.isConnected) root.append(view);
-      if (typeof e.data.lay == "number" && e.data.lay != lay) {
-        lay = e.data.lay;
+      if (typeof e.data.lay?.h == "number" && e.data.lay.h != lay) {
+        lay = e.data.lay.h;
         zoomRoom();
       }
     } else if (type == "erga-zoom-aim" && [e.data.x, e.data.y, e.data.to, e.data.w].every(Number.isFinite)) {

@@ -27,16 +27,17 @@ body:not(.erga-editing) :is(#frame, .erga-canvas) { left: var(--frame-l, 0px); w
 html.erga-whole body :is(#frame, .erga-canvas) { left: 0; width: 100%; transition: none; }
 
 /* The document's zoom, viewing and editing (client/common/zoom.ts, client/inline/viewer-zoom.ts). The page's frame is
-   laid out --erga-lay times smaller than its place (the page lays its text out again, as the browser's own zoom
-   does), and drawn --erga-zoom times larger: still, the two are the same, and it fills its place. During a pinch the
+   laid out --erga-lay-w times narrower and --erga-lay-h times shorter than its place (viewing, both the level: the page
+   lays its text out again, as the browser's own zoom does; editing, its width stays), and drawn --erga-zoom times
+   larger: viewing and still, it fills its place. During a pinch the
    picture only scales, moved by --erga-x and --erga-y, and shows only in its place (--erga-clip). From the first frame
    (client/inline/viewer-layout-early.ts). */
 html.erga-zoomed body #frame {
-  width: calc((100% - var(--frame-l, 0px) - var(--frame-r, 0px)) / var(--erga-lay));
-  height: calc((100% - var(--frame-t) - var(--kb, 0px)) / var(--erga-lay));
+  width: calc((100% - var(--frame-l, 0px) - var(--frame-r, 0px)) / var(--erga-lay-w));
+  height: calc((100% - var(--frame-t) - var(--kb, 0px)) / var(--erga-lay-h));
   transform: translate(var(--erga-x, 0px), var(--erga-y, 0px)) scale(var(--erga-zoom)); transform-origin: 0 0;
   clip-path: var(--erga-clip, none);
 }
-html.erga-zoomed.erga-whole body #frame { width: calc(100% / var(--erga-lay)); }
+html.erga-zoomed.erga-whole body #frame { width: calc(100% / var(--erga-lay-w)); }
 /* A pinch is going on: the frame keeps its picture and only scales it, until the pinch rests. */
 html.erga-zooming #frame { will-change: transform; }
