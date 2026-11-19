@@ -6,9 +6,12 @@
 import { afterAll, expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { fitModel, MODELS, usableModels, type KeySetup, type ModelChoice } from "../shared/models";
+import { fitModel, isModelChoice, isPageLlmModel, MODELS, usableModels, type KeySetup, type ModelChoice } from "../shared/models";
+import { Directory } from "../server/directory/index.ts";
+import { memory } from "./helpers/memory-sql";
 import { keyFor, type AgentConfig } from "../agents/models";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
+import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { piModel } from "../agents/pi-model";
 import { startLoop, type AgentTool } from "../agents/run";
 import type { LogEvent } from "../shared/agent-log";
@@ -20,37 +23,54 @@ const names = (k: Partial<KeySetup>) => usableModels(setup(k)).map((u) => `${u.c
 test("the models a person can use, for each key setup", () => {
   expect(names({})).toEqual([]);
   // A server key opens its provider's models, for everyone.
-  expect(names({ server: ["anthropic"] })).toEqual(["opus-fast:server", "opus:server", "sonnet:server", "haiku:server"]);
+  expect(names({ server: ["anthropic"] })).toEqual(["haiku:server", "sonnet:server", "opus:server", "opus-fast:server", "fable:server"]);
   // The admin turned one off: a server key doesn't run it.
-  expect(names({ server: ["anthropic"], off: ["opus-fast"] })).toEqual(["opus:server", "sonnet:server", "haiku:server"]);
+  expect(names({ server: ["anthropic"], off: ["opus-fast"] })).toEqual(["haiku:server", "sonnet:server", "opus:server", "fable:server"]);
   // The person's own key wins, and runs every model of its provider, the ones turned off too.
   expect(names({ server: ["anthropic"], own: ["anthropic"], off: ["opus-fast"] })).toEqual([
-    "opus-fast:own",
-    "opus:own",
-    "sonnet:own",
     "haiku:own",
+    "sonnet:own",
+    "opus:own",
+    "opus-fast:own",
+    "fable:own",
   ]);
   // Own keys only: the server's keys run nothing.
   expect(names({ server: ["anthropic", "openai"], mode: "own" })).toEqual([]);
-  expect(names({ server: ["anthropic"], own: ["openrouter"], mode: "own" })).toEqual(["grok:own", "kimi-k3:own", "deepseek-v4-pro:own"]);
-  // Both, side by side, in the short list's order.
+  expect(names({ server: ["anthropic"], own: ["openrouter"], mode: "own" })).toEqual(["kimi-k3:own", "deepseek-v4-pro:own", "grok:own"]);
+  // Both, side by side, in the short list's order: each provider's models from the smallest to the largest.
   expect(names({ server: ["google"], own: ["openai"] })).toEqual([
-    "gpt-6.1-sol:own",
-    "gpt-6-astra:own",
-    "gpt-6.1-terra:own",
     "gpt-6-luna:own",
-    "gemini-4-carbon:server",
-    "gemini-4-neon:server",
-    "gemini-4-argon:server",
+    "gpt-6.1-terra:own",
+    "gpt-6.2-sol:own",
+    "gpt-6.2-astra:own",
     "gemini-3.8-flash:server",
+    "gemini-4-argon:server",
+    "gemini-4-hydrogen:server",
+    "gemini-4-neon:server",
+    "gemini-4-carbon:server",
   ]);
 });
 
 test("the model to be on: the one asked for if it can be used, else the default, else the first", () => {
   expect(fitModel(setup({ server: ["anthropic"] }), "sonnet")).toBe("sonnet");
-  expect(fitModel(setup({ server: ["anthropic"] }), "gpt-6.1-sol")).toBe("opus-fast");
-  expect(fitModel(setup({ server: ["google"] }), "sonnet")).toBe("gemini-4-carbon");
+  expect(fitModel(setup({ server: ["anthropic"] }), "gpt-6.2-sol")).toBe("opus-fast");
+  expect(fitModel(setup({ server: ["google"] }), "sonnet")).toBe("gemini-3.8-flash");
   expect(fitModel(setup({ server: ["anthropic"], mode: "own" }), "sonnet")).toBeNull();
+});
+
+test("a model that left the short list (GPT-6 Astra): the setting takes its name no more, and what was stored gives way to the default", async () => {
+  const sql = memory();
+  const dir = new Directory(sql, { admins: ["ada"] });
+  const ada = { login: "ada", admin: true };
+  await expect(dir.config.set(ada, "agent_models_off", ["gpt-6-astra"])).rejects.toThrow(/isn't one of the models/);
+  // A list stored before, with its name: the default stands (every model is on), until an admin sets the list again.
+  await dir.config.set(ada, "agent_models_off", ["gpt-6.2-astra"]);
+  expect(await dir.config.get("agent_models_off")).toEqual(["gpt-6.2-astra"]);
+  sql.db.run(`UPDATE server_config SET value = '["gpt-6-astra","gpt-6.2-astra"]' WHERE key = 'agent_models_off'`);
+  expect(await new Directory(sql, { admins: ["ada"] }).config.get("agent_models_off")).toEqual([]);
+  // A conversation's stored choice of it, and a page's: not a model, so the default.
+  expect([isModelChoice("gpt-6-astra"), isPageLlmModel("gpt-6.1-sol")]).toEqual([false, false]);
+  expect(fitModel(setup({ server: ["anthropic", "openai"] }), null)).toBe("opus-fast");
 });
 
 const cfg = (o: Partial<AgentConfig>): AgentConfig => ({
@@ -78,12 +98,10 @@ test("every model of the short list that Pi runs is in Pi's catalog", () => {
     if (m.provider != "anthropic") expect(piModel(m.provider, m.id)?.id, choice).toBe(m.id);
 });
 
-test("Pi's own catalog has Gemini 4 Argon only: when it has Carbon or Neon, delete Erga's record of it (agents/pi-model.ts)", () => {
-  const theirs = googleProvider()
-    .getModels()
-    .map((m) => m.id)
-    .filter((id) => id.startsWith("gemini-4-"));
-  expect(theirs).toEqual(["gemini-4-argon"]);
+test("Pi's own catalog lacks five models of the short list: when it has one, delete Erga's record of it (agents/pi-model.ts)", () => {
+  const theirs = [...googleProvider().getModels(), ...openaiProvider().getModels()].map((m) => m.id);
+  expect(theirs.filter((id) => id.startsWith("gemini-4-"))).toEqual(["gemini-4-argon"]);
+  expect(theirs.filter((id) => id.startsWith("gpt-6.2-"))).toEqual([]);
 });
 
 // -- a conversation from OpenRouter (through Pi) to Anthropic, with fetch answering for both
@@ -180,7 +198,7 @@ test("a turn on Kimi K3 through Pi, with a tool call; then Sonnet goes on with t
 
   // The switch: Sonnet, on the server's key, has the whole conversation, and the call's id as Anthropic takes it.
   expect(loop.setModel("sonnet")).toBe(true);
-  expect(loop.setModel("gpt-6.1-sol")).toBe(false);
+  expect(loop.setModel("gpt-6.2-sol")).toBe(false);
   events.length = 0;
   answers.push(messages("Yes, hello."));
   loop.prompt("Sure?", null, []);
@@ -216,7 +234,7 @@ test("a turn on each Gemini 4 model through Pi, with a tool call: Google gets th
     parameters: Schema.Struct({ path: Schema.String }),
     execute: async (_id, p) => ({ content: [{ type: "text", text: `${p.path}: hello` }] }),
   };
-  for (const choice of ["gemini-4-carbon", "gemini-4-neon", "gemini-4-argon"] as const) {
+  for (const choice of ["gemini-4-argon", "gemini-4-hydrogen", "gemini-4-neon", "gemini-4-carbon"] as const) {
     // The highest effort: Pi sends each model's highest level that it knows.
     const keys = cfg({ own: { google: Redacted.make("AIza-own-key") }, model: choice, effort: "max" });
     const events: LogEvent[] = [];
@@ -249,6 +267,36 @@ test("a turn on each Gemini 4 model through Pi, with a tool call: Google gets th
         .join("")
     ).toBe("It says hello.");
   }
+});
+
+test("a turn on Fable 5.2: Anthropic gets its id, adaptive thinking and the effort, and nothing that Fable refuses", async () => {
+  const read: AgentTool = {
+    name: "read",
+    description: "Reads a file.",
+    parameters: Schema.Struct({ path: Schema.String }),
+    execute: async () => ({ content: [{ type: "text", text: "hello" }] }),
+  };
+  const keys = cfg({ server: { anthropic: Redacted.make("sk-ant-server-key") }, model: "fable" });
+  const events: LogEvent[] = [];
+  const loop = startLoop({ cfg: keys, stored: null, store: null, meta: {}, tag: "page", hooks: { about: () => null } });
+  loop.start(keys, "You are a test.", [read]);
+  loop.subscribe((e) => events.push(e));
+  expect(loop.modelChoice).toBe("fable");
+  requests.length = 0;
+  answers.push(messages("Hi."));
+  loop.prompt("Hello", null, []);
+  await until(() => events.some((e) => e.t == "busy" && !e.busy));
+  expect(events.filter((e) => e.t == "error")).toEqual([]);
+  // Fable refuses a forced tool call, and a temperature, top_p or top_k (its page of Anthropic's documentation).
+  const { system: _s, messages: _m, tools: _t, ...sent } = requests[0].body;
+  expect(sent).toEqual({
+    model: "claude-fable-5-2",
+    max_tokens: 64000,
+    thinking: { type: "adaptive", display: "summarized" },
+    tool_choice: { type: "auto" },
+    output_config: { effort: "medium" },
+    stream: true,
+  });
 });
 
 test("a key that Google refuses: the panel has Google's words, not its JSON", async () => {

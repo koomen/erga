@@ -243,7 +243,7 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
     await soon(() => page.textContent("#erga-settings li[data-name=openai] .hint")).toContain(
       "OpenAI refuses this key, so it isn't saved. OpenAI says: Incorrect API key provided"
     );
-    // Their Google key, with a start of no known kind (Google says that it is one): Gemini's models, in Google's order.
+    // Their Google key, with a start of no known kind (Google says that it is one): Gemini's models, the smallest first.
     const GOOGLE = "Ab." + "g".repeat(32) + "G4e0";
     await page.fill("#erga-settings li[data-name=google] input", GOOGLE);
     await page.press("#erga-settings li[data-name=google] input", "Enter");
@@ -251,7 +251,7 @@ journey("a person approves an agent, and keeps their keys and tokens in Settings
     expect(await page.content()).not.toContain(GOOGLE);
     await page.keyboard.press("Escape");
     await soon(async () => (await menu(page))?.options).toEqual(
-      ["Gemini 4 Carbon", "Gemini 4 Neon", "Gemini 4 Argon", "Gemini 3.8 Flash"].map((m) => `${m} (your key)`)
+      ["Gemini 3.8 Flash", "Gemini 4 Argon", "Gemini 4 Hydrogen", "Gemini 4 Neon", "Gemini 4 Carbon"].map((m) => `${m} (your key)`)
     );
   });
 
@@ -477,7 +477,7 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
     expect(await page.isHidden("#key-openai")).toBe(true);
     await soon(() => markOf(page)).toBe("saved");
     const unticked = page.waitForResponse((r) => r.url().includes("/api/tools/set_setting"));
-    await page.uncheck(box("gpt-6-astra"));
+    await page.uncheck(box("gpt-6.2-astra"));
     await unticked;
     await soon(() => markOf(page)).toBe("saved");
     expect(await hint()).toBe("");
@@ -496,7 +496,7 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
 
   // The answer of a save once went to the old row, and the new row said "Saving…" for good.
   test("a model's box saves, or says the error and keeps the person's choice, though its row is drawn again as it saves", async () => {
-    const model = "gpt-6-astra";
+    const model = "gpt-6.2-astra";
     // Another admin, in a second tab, saves a new key for the provider while this tab's save is on its way: the row
     // is drawn again before the save's answer comes. `answer`: the server's answer as it is, or an error in its place.
     const other = await page.context().newPage();
@@ -538,7 +538,7 @@ journey("on a server with no agent key: a token's reach, the agent's panel, and 
     await page.reload();
     expect(await markOf(page)).toBe("saved");
     expect(await page.inputValue("#agent-keys")).toBe("server");
-    expect([await page.isChecked(box(model)), await page.isChecked(box("gpt-6.1-sol"))]).toEqual([true, true]);
+    expect([await page.isChecked(box(model)), await page.isChecked(box("gpt-6.2-sol"))]).toEqual([true, true]);
     // A plain click, with nothing else on the way: saved.
     const plain = page.waitForResponse((r) => r.url().includes("/api/tools/set_setting"));
     await page.click(box(model));

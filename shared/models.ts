@@ -25,23 +25,30 @@ export interface ModelInfo {
   readonly fast?: boolean;
 }
 
-/** Our short list, by key: the current models of each provider. The keys are kept in conversations: don't rename one. */
+/**
+ * Our short list, by key: the current models of each provider. Each provider's models go from the smallest to the
+ * largest, and every list a person sees has this order (the picker, the Agents and models page, a page's models): the
+ * reverse of the order on the provider's own models page (read on 2026-11-19), a model's fast mode after it;
+ * OpenRouter's, of three makers, by price. The keys are kept in conversations: don't rename one.
+ */
 export const MODELS = {
-  "opus-fast": { provider: "anthropic", id: "claude-opus-5-5", label: "Opus 5.5 fast", fast: true },
-  opus: { provider: "anthropic", id: "claude-opus-5-5", label: "Opus 5.5" },
-  sonnet: { provider: "anthropic", id: "claude-sonnet-5-5", label: "Sonnet 5.5" },
   haiku: { provider: "anthropic", id: "claude-haiku-5-5", label: "Haiku 5.5" },
-  "gpt-6.1-sol": { provider: "openai", id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
-  "gpt-6-astra": { provider: "openai", id: "gpt-6-astra", label: "GPT-6 Astra" },
-  "gpt-6.1-terra": { provider: "openai", id: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
+  sonnet: { provider: "anthropic", id: "claude-sonnet-5-5", label: "Sonnet 5.5" },
+  opus: { provider: "anthropic", id: "claude-opus-5-5", label: "Opus 5.5" },
+  "opus-fast": { provider: "anthropic", id: "claude-opus-5-5", label: "Opus 5.5 fast", fast: true },
+  fable: { provider: "anthropic", id: "claude-fable-5-2", label: "Fable 5.2" },
   "gpt-6-luna": { provider: "openai", id: "gpt-6-luna", label: "GPT-6 Luna" },
-  "gemini-4-carbon": { provider: "google", id: "gemini-4-carbon", label: "Gemini 4 Carbon" },
-  "gemini-4-neon": { provider: "google", id: "gemini-4-neon", label: "Gemini 4 Neon" },
-  "gemini-4-argon": { provider: "google", id: "gemini-4-argon", label: "Gemini 4 Argon" },
+  "gpt-6.1-terra": { provider: "openai", id: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
+  "gpt-6.2-sol": { provider: "openai", id: "gpt-6.2-sol", label: "GPT-6.2 Sol" },
+  "gpt-6.2-astra": { provider: "openai", id: "gpt-6.2-astra", label: "GPT-6.2 Astra" },
   "gemini-3.8-flash": { provider: "google", id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
-  grok: { provider: "openrouter", id: "~x-ai/grok-latest", label: "Grok" },
+  "gemini-4-argon": { provider: "google", id: "gemini-4-argon", label: "Gemini 4 Argon" },
+  "gemini-4-hydrogen": { provider: "google", id: "gemini-4-hydrogen", label: "Gemini 4 Hydrogen" },
+  "gemini-4-neon": { provider: "google", id: "gemini-4-neon", label: "Gemini 4 Neon" },
+  "gemini-4-carbon": { provider: "google", id: "gemini-4-carbon", label: "Gemini 4 Carbon" },
   "kimi-k3": { provider: "openrouter", id: "moonshotai/kimi-k3", label: "Kimi K3" },
   "deepseek-v4-pro": { provider: "openrouter", id: "deepseek/deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+  grok: { provider: "openrouter", id: "~x-ai/grok-latest", label: "Grok" },
 } as const satisfies Record<string, ModelInfo>;
 export type ModelChoice = keyof typeof MODELS;
 export const DEFAULT_MODEL: ModelChoice = "opus-fast";

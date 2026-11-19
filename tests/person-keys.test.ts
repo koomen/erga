@@ -77,23 +77,24 @@ test("the agent's settings: only that person's own keys, and the admin's choices
   const bobs = (await agentSettingsFrom(env, dir, "bob")) as AgentConfig;
   const adas = (await agentSettingsFrom(env, dir, "ada")) as AgentConfig;
   expect(usable(bobs).map((u) => `${u.choice}:${u.key}`)).toEqual([
-    "opus-fast:server",
-    "opus:server",
-    "sonnet:server",
     "haiku:server",
-    "grok:own",
+    "sonnet:server",
+    "opus:server",
+    "opus-fast:server",
+    "fable:server",
     "kimi-k3:own",
     "deepseek-v4-pro:own",
+    "grok:own",
   ]);
   expect(Redacted.value(keyFor(bobs, "kimi-k3")!)).toBe(OPENROUTER);
-  expect(usable(adas).map((u) => u.choice)).toEqual(["opus-fast", "opus", "sonnet", "haiku"]);
+  expect(usable(adas).map((u) => u.choice)).toEqual(["haiku", "sonnet", "opus", "opus-fast", "fable"]);
   expect(keyFor(adas, "kimi-k3")).toBeNull();
   // Own keys only: the server's key runs nothing; a person with none has their agent off, and is told what to do.
   await dir.config.set(ada, "agent_keys", "own");
   expect(usable((await agentSettingsFrom(env, dir, "bob")) as AgentConfig).map((u) => u.choice)).toEqual([
-    "grok",
     "kimi-k3",
     "deepseek-v4-pro",
+    "grok",
   ]);
   expect(await agentSettingsFrom(env, dir, "ada")).toMatchObject({ missing: expect.stringContaining("bring their own API key") });
 });
@@ -112,7 +113,7 @@ test("the agent's settings: the database reads start together, so their stalls d
   await new Promise((r) => setTimeout(r, 0));
   expect(started.sort()).toEqual(["agent_keys", "agent_models_off", "anthropic", "google", "openai", "openrouter", "own"]);
   go();
-  expect(usable((await settings) as AgentConfig).map((u) => u.choice)).toEqual(["opus-fast", "opus", "sonnet", "haiku"]);
+  expect(usable((await settings) as AgentConfig).map((u) => u.choice)).toEqual(["haiku", "sonnet", "opus", "opus-fast", "fable"]);
 });
 
 test("the operations: the person's own list and remove; an agent never sees a key", async () => {

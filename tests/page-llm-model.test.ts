@@ -12,19 +12,19 @@ import { pageModel, type AgentConfig } from "../agents/models";
 
 const setup = (k: Partial<KeySetup>): KeySetup => ({ own: [], server: [], mode: "server", off: [], ...k });
 const choices = (k: Partial<KeySetup>): string[] => pageLlmChoices(setup(k));
-const claude: string[] = ["opus-fast", "opus", "sonnet", "haiku"];
+const claude: string[] = ["haiku", "sonnet", "opus", "opus-fast", "fable"];
 
 test("the page models an owner may choose: Claude's, and OpenAI's where the server's keys run them", () => {
   expect(choices({ server: ["anthropic"] })).toEqual(claude);
   expect(choices({ server: ["anthropic", "openai", "google"] })).toEqual([
     ...claude,
-    "gpt-6.1-sol",
-    "gpt-6-astra",
-    "gpt-6.1-terra",
     "gpt-6-luna",
+    "gpt-6.1-terra",
+    "gpt-6.2-sol",
+    "gpt-6.2-astra",
   ]);
   // The admin turned one off, or each person brings their own keys: the server's key doesn't run it for pages.
-  expect(choices({ server: ["openai"], off: ["gpt-6-astra"] })).toEqual([...claude, "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"]);
+  expect(choices({ server: ["openai"], off: ["gpt-6.2-astra"] })).toEqual([...claude, "gpt-6-luna", "gpt-6.1-terra", "gpt-6.2-sol"]);
   expect(choices({ server: ["openai"], mode: "own" })).toEqual(claude);
   // A person's own key never pays for a page.
   expect(choices({ own: ["openai"] })).toEqual(claude);
@@ -104,4 +104,16 @@ test("an OpenAI model for a page: the server's key, the cap on tokens, no reason
   expect(r.url).toBe("https://api.openai.com/v1/responses");
   expect(r.headers.get("authorization")).toBe("Bearer sk-proj-server");
   expect(r.body).toMatchObject({ model: "gpt-6-luna", max_output_tokens: 300, stream: true, reasoning: { effort: "none" } });
+});
+
+test("GPT-6.2 Sol and Astra for a page: the request names no reasoning effort, as OpenAI refuses the effort none for them", async () => {
+  for (const choice of ["gpt-6.2-sol", "gpt-6.2-astra"] as const) {
+    requests.length = 0;
+    const layer = pageModel(cfg({ server: { openai: Redacted.make("sk-proj-server") } }), choice, 300);
+    const prompt = Prompt.make([{ role: "user", content: [{ type: "text", text: "Hi" }] }]);
+    await Effect.runPromise(LanguageModel.streamText({ prompt }).pipe(Stream.runCollect, Effect.provide(layer!)));
+    expect(requests[0].url).toBe("https://api.openai.com/v1/responses");
+    expect(requests[0].body).toMatchObject({ model: choice, max_output_tokens: 300, stream: true });
+    expect(requests[0].body.reasoning).toBeUndefined();
+  }
 });

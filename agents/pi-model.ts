@@ -32,22 +32,41 @@ import type {
   ThinkingLevel,
 } from "@earendil-works/pi-ai";
 
-// Trap: Pi 1.5.2's catalog has Gemini 4 Argon, but not Carbon and Neon. Each is Argon's record with its own id, name
-// and price: Google's documentation gives the three the same API, context (1,048,576 tokens), inputs and thinking
-// levels (https://ai.google.dev/gemini-api/docs/models and /pricing, read on 2026-11-19). Neon has a fourth level,
-// xhigh, that Pi's Google adapter doesn't send: its highest is high. Delete a record when Pi's catalog has the model
-// (tests/model-keys.test.ts says when).
-const google = googleProvider();
-const argon = google.getModels().find((m) => m.id == "gemini-4-argon")!;
-const geminiModels = () => [
-  ...google.getModels(),
-  { ...argon, id: "gemini-4-carbon", name: "Gemini 4 Carbon" },
-  { ...argon, id: "gemini-4-neon", name: "Gemini 4 Neon", cost: { ...argon.cost, input: 3, output: 15, cacheRead: 0.15 } },
-];
+// Trap: Pi 1.5.2's catalog lacks five models of the short list (shared/models.ts). Each is the record of the nearest
+// model that Pi has, with its own id, name and price: the providers' documentation gives each pair the same API,
+// context, inputs and tool calls (ai.google.dev/gemini-api/docs/models and /pricing, developers.openai.com/api/docs/models
+// and /pricing, read on 2026-11-19). Neon and Hydrogen have a fourth thinking level, xhigh, that Pi's Google adapter
+// doesn't send: their highest is high. Delete a record when Pi's catalog has the model (tests/model-keys.test.ts says when).
+const ADDED: Record<
+  string,
+  readonly { like: string; id: string; name: string; cost?: { input: number; output: number; cacheRead?: number } }[]
+> = {
+  google: [
+    { like: "gemini-4-argon", id: "gemini-4-hydrogen", name: "Gemini 4 Hydrogen", cost: { input: 1.5, output: 7.5, cacheRead: 0.075 } },
+    { like: "gemini-4-argon", id: "gemini-4-neon", name: "Gemini 4 Neon", cost: { input: 3, output: 15, cacheRead: 0.15 } },
+    { like: "gemini-4-argon", id: "gemini-4-carbon", name: "Gemini 4 Carbon" },
+  ],
+  openai: [
+    { like: "gpt-6.1-sol", id: "gpt-6.2-sol", name: "GPT-6.2 Sol" },
+    { like: "gpt-6-astra", id: "gpt-6.2-astra", name: "GPT-6.2 Astra", cost: { input: 8, output: 40 } },
+  ],
+};
+
+/** A provider of Pi's, with the models that its catalog lacks (ADDED). */
+function withAdded<P extends ReturnType<typeof openaiProvider> | ReturnType<typeof googleProvider>>(provider: P): P {
+  const added = ADDED[provider.id].map(({ like, cost, ...own }) => {
+    const m = provider.getModels().find((x) => x.id == like)!;
+    return { ...m, ...own, cost: { ...m.cost, ...cost } };
+  });
+  return {
+    ...provider,
+    getModels: () => [...provider.getModels(), ...added],
+    getAllModels: () => [...(provider.getAllModels?.() ?? provider.getModels()), ...added],
+  };
+}
 
 const pi = createModels();
-for (const p of [openaiProvider(), { ...google, getModels: geminiModels, getAllModels: geminiModels }, openrouterProvider()])
-  pi.setProvider(p);
+for (const p of [withAdded(openaiProvider()), withAdded(googleProvider()), openrouterProvider()]) pi.setProvider(p);
 
 /** A model in Pi's catalog: its name, and whether it takes images. Undefined: Pi doesn't know it. */
 export const piModel = (provider: string, id: string) => pi.getModel(provider, id);

@@ -189,7 +189,7 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   expect(before).toContain("Using the deploy's</span> <code>ANTHROPIC_API_KEY</code>");
   // A provider's models show once the server has a key for it: Anthropic's (the deploy's), not OpenAI's.
   expect(before).toContain(`value="sonnet" checked`);
-  expect(before).not.toContain(`value="gpt-6.1-sol"`);
+  expect(before).not.toContain(`value="gpt-6.2-sol"`);
   expect((await post({ name: "anthropic", value: ANTHROPIC }, "https://evil.example")).status).toBe(403);
   const r = await post({ name: "anthropic", value: ANTHROPIC });
   expect(r.status).toBe(200);

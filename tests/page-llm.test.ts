@@ -58,8 +58,8 @@ test("the cost estimate: each page model has its price; a model with no known pr
   for (const m of PAGE_LLM_MODELS) expect(PAGE_LLM_PRICES[m]).toBeDefined();
   expect(costOf("haiku", 1_000_000, 1_000_000)).toBeCloseTo(0.6);
   expect(costOf("opus", 10_000, 2_000)).toBeCloseTo(0.08);
-  expect(costOf("no-such-model", 1_000_000, 0)).toBe(10);
-  expect(costOf("no-such-model", 0, 1_000_000)).toBe(50);
+  expect(costOf("no-such-model", 1_000_000, 0)).toBe(8);
+  expect(costOf("no-such-model", 0, 1_000_000)).toBe(40);
 });
 
 test("today's use: calls, tokens and cost since midnight UTC, in total and by document, the costliest first", async () => {
