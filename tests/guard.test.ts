@@ -13,6 +13,14 @@ test("the known mistakes are refused, each with what to do", () => {
     ["git push", "bun erga push"],
     ["git add -A && git commit -m x && git push origin HEAD:task", "bun erga push"],
     ["cd /x; git -C /x push --force origin task", "bun erga push"],
+    // verify and its lock are bun erga try's: no push by hand, with any flag, and no removal.
+    ["git push --force origin HEAD:verify", "bun erga try"],
+    ["ERGA_CLI_PUSH=1 git push --force origin HEAD:refs/heads/verify", "bun erga try"],
+    ["git push origin :refs/erga/verify-lock", "bun erga try"],
+    ["git push origin --delete refs/erga/verify-lock", "bun erga try"],
+    ["git push origin --delete verify", "bun erga try"],
+    ["git push origin --delete staging", "bun erga push"],
+    ["git push -d origin main", "bun erga push"],
     ["gh pr create --fill", "no pull requests"],
     ["pkill -f dev/start.ts", "by its PID"],
     ["sleep 1; killall node", "by its PID"],
@@ -32,6 +40,8 @@ test("the right forms run", () => {
   for (const command of [
     "bun erga push",
     "git push origin --delete old-task",
+    "git push origin --delete verify-branch main-menu",
+    "bun erga try my-task",
     'git commit -m "bun erga push replaces git push"',
     "kill $(lsof -ti tcp:4712 -sTCP:LISTEN)",
     'rm -rf "${DIR:?}/build" /tmp/literal',

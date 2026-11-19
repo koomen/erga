@@ -124,6 +124,15 @@ and `main`. There are no pull requests.
   record is `.erga/tests/<tree>.json`, under the git tree it tested: code
   that ran before runs no more. One run at a time on this machine: a
   second run waits.
+- `bun erga try <branch>`: GitHub's own check of a pushed branch, before
+  the merge. It puts the branch's merge with staging, as one commit, on
+  the branch `verify` on GitHub, and waits for GitHub's workflow there:
+  the tests, the build and the release, in the package
+  `<repository>-verify`. It says the run's result and address. One try at
+  a time on every machine: its lock is the ref `refs/erga/verify-lock`
+  on GitHub, and a second try waits. A try frees its lock at its end; a
+  lock is free after 30 minutes in any case. It merges and deploys
+  nothing. Only `bun erga try` pushes `verify` and that ref.
 - `bun erga clean [--yes]`: lists the work folders and the local branches
   whose task is merged (the merge records in `.erga/jobs/`) and on
   production, and removes them after a yes. One with a later commit, or
@@ -263,9 +272,10 @@ and `main`. There are no pull requests.
 - Every deploy runs on a machine, with its Cloudflare credential:
   `CLOUDFLARE_API_TOKEN`, else the cf CLI's login (`bunx cf auth login`).
   GitHub has no cloud credential and deploys nothing. It runs one workflow
-  (`.github/workflows/release.yml`): on a push to `staging` or `main`, it
-  tests and builds the commit, and publishes its release on GitHub's
-  registry (`ghcr.io/<owner>/<repository>:<commit>`). No deploy fetches
+  (`.github/workflows/release.yml`): on a push to `staging`, `main` or
+  `verify`, it tests and builds the commit, and publishes its release on
+  GitHub's registry (`ghcr.io/<owner>/<repository>:<commit>`; `verify`'s
+  in `<repository>-verify`, which keeps 7 days of them). No deploy fetches
   that release yet.
 - A deploy builds the commit in a scratch worktree, then runs the pipeline:
   the D1 migrations, the static files, the Worker with its Cron Trigger, the

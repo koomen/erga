@@ -2,8 +2,8 @@
 // release's version and notes, a rollback's version, and `bun erga status`'s text. Pure: no network, no git, no files
 // (deploy/cli/observe.ts reads git and the instances; deploy/cli/main.ts acts).
 
-/** The branches that `bun erga` moves: staging (merge) and main (promote). */
-export const PROTECTED = ["staging", "main"] as const;
+/** The branches that `bun erga` moves: staging (merge), main (promote) and verify (try). */
+export const PROTECTED = ["staging", "main", "verify"] as const;
 
 // A commit, a branch and an instance's answer, for `bun erga status` and for the ops page (ops-view.ts). git gives every
 // field (observe.ts); the ones that status does not read are optional here, and the page asks for them (ops-view.ts).
@@ -240,18 +240,23 @@ export function statusText(s: State, has: (sha: string) => boolean = () => true)
 
 /** Why a push to `ref` must stop (the pre-push hook), or null. `cli`: `bun erga` makes it. */
 export function pushRefusal(ref: string, cli: boolean): string | null {
+  if (cli) return null;
+  // verify's lock (try.ts): a push there by hand takes it from the try that holds it.
+  if (ref.startsWith("refs/erga/")) return "Don't push to refs/erga/ directly: bun erga try keeps verify's lock there.";
   const name = ref.replace(/^refs\/heads\//, "");
-  if (cli || !(PROTECTED as readonly string[]).includes(name)) return null;
-  return name == "staging"
-    ? "Don't push to staging directly. Push your branch (bun erga push), then: bun erga merge <branch>. bun erga skill tells the rest."
-    : "Don't push to main directly. bun erga promote moves main to staging's head. bun erga skill tells the rest.";
+  if (!(PROTECTED as readonly string[]).includes(name)) return null;
+  if (name == "staging")
+    return "Don't push to staging directly. Push your branch (bun erga push), then: bun erga merge <branch>. bun erga skill tells the rest.";
+  if (name == "verify")
+    return "Don't push to verify directly. bun erga try <branch> puts a branch's merge with staging there. bun erga skill tells the rest.";
+  return "Don't push to main directly. bun erga promote moves main to staging's head. bun erga skill tells the rest.";
 }
 
 /** Why `bun erga push` must stop before its first step, or null. `branch`: the checkout's branch, null when it has none. */
 export function branchRefusal(branch: string | null): string | null {
   if (!branch) return "This checkout is on no branch. Start one: bun erga start <branch>.";
   if ((PROTECTED as readonly string[]).includes(branch))
-    return `${branch} is not a feature branch: only bun erga merge and bun erga promote move it. Start one: bun erga start <branch>.`;
+    return `${branch} is not a feature branch: only bun erga moves it (merge, promote, try). Start one: bun erga start <branch>.`;
   return null;
 }
 

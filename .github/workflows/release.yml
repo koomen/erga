@@ -3,6 +3,12 @@
 #
 #   ghcr.io/<owner>/<repository>:<the commit's full SHA>
 #
+# And each commit of verify, where `bun erga try <branch>` puts a branch's merge with staging before the merge
+# (deploy/cli/try.ts). Its release goes to a package of its own, which no instance of staging or main reads, and
+# which keeps 7 days of releases:
+#
+#   ghcr.io/<owner>/<repository>-verify:<the commit's full SHA>
+#
 # It is an OCI image manifest with one layer: the bundle that deploy/pipeline/build.ts packs ({index, files}), as it
 # is. The layer's digest is the SHA-256 of the bundle. A deploy fetches the manifest by its tag, then the layer, and
 # checks the layer's bytes against that digest. The release holds no instance's name, setting or secret
@@ -21,7 +27,7 @@ name: release
 
 on:
   push:
-    branches: [staging, main]
+    branches: [staging, main, verify]
 
 permissions: {}
 
@@ -119,7 +125,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          release="ghcr.io/${GITHUB_REPOSITORY,,}:$GITHUB_SHA"
+          package="${GITHUB_REPOSITORY,,}"
+          if [ "$GITHUB_REF_NAME" = verify ]; then package="$package-verify"; fi
+          release="ghcr.io/$package:$GITHUB_SHA"
           ./oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<<"$GITHUB_TOKEN"
           if ./oras manifest fetch --descriptor "$release"; then
             echo "\`$release\` exists already: not published again." >>"$GITHUB_STEP_SUMMARY"
@@ -132,3 +140,14 @@ jobs:
           digest=$(./oras manifest fetch "$release" | jq --raw-output '.layers[0].digest')
           [ "$digest" = "sha256:$(sha256sum bundle.json | cut -d ' ' -f 1)" ]
           echo "\`$release\`: $(stat --format %s bundle.json) bytes, digest \`$digest\`" >>"$GITHUB_STEP_SUMMARY"
+      # verify's package keeps 7 days of releases: each older version goes.
+      - name: old verify releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [ "$GITHUB_REF_NAME" = verify ] || exit 0
+          owner=$(gh api "users/$GITHUB_REPOSITORY_OWNER" --jq 'if .type == "Organization" then "orgs" else "users" end')
+          name=$(tr '[:upper:]' '[:lower:]' <<<"${GITHUB_REPOSITORY#*/}")
+          versions="$owner/$GITHUB_REPOSITORY_OWNER/packages/container/$name-verify/versions"
+          gh api --paginate "$versions" --jq '.[] | select((.created_at | fromdate) < now - 7 * 86400) | .id' |
+            while read -r id; do gh api --method DELETE "$versions/$id"; done

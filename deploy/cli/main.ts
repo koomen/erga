@@ -27,6 +27,10 @@
 //                                       staging; it deploys nothing; -m is for the branch before it
 //   bun erga promote                    moves main forward to staging's head, when the tests passed on it and each
 //                                       instance that tracks staging runs it, healthy; it deploys nothing
+//   bun erga try <branch>               the branch's merge with staging onto the branch verify on GitHub, one try at a
+//                                       time (a lock on GitHub, free after 30 minutes): GitHub's workflow tests it,
+//                                       builds it and publishes its release to the package <repository>-verify; it
+//                                       waits for that run and says its result; it merges and deploys nothing
 //   bun erga test [<branch>|<commit>]   the gate's run: bun run test on a branch's merge onto staging, or on a commit
 //                                       (default: staging's head), in a scratch folder; a tree that ran before runs
 //                                       no more; the ops page runs it for each pushed branch
@@ -437,6 +441,10 @@ export async function main(argv: string[]) {
       return merge(rest);
     case "promote":
       return promote();
+    case "try": {
+      const { tryBranch } = await import("./try");
+      return void (await tryBranch({ branch: plain[0], log: say }).catch((e: Error) => fail(e.message)));
+    }
     case "test":
       return test(plain[0]);
     case "release":

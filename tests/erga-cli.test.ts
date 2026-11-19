@@ -3,7 +3,9 @@
 // And GitHub's one workflow (.github/workflows/release.yml), which publishes the release and deploys nothing.
 
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   latestTag,
   mergeArgs,
@@ -17,6 +19,14 @@ import {
   stateOf,
   statusText,
 } from "../deploy/cli/flow";
+
+/** The workflow's file, as far as these tests read it. */
+type Job = {
+  permissions: unknown;
+  needs?: string[];
+  steps: { name?: string; run?: string; uses?: string; with?: Record<string, unknown> }[];
+};
+type Flow = { on: unknown; permissions: unknown; jobs: Record<string, Job> };
 
 const S = "5".repeat(40),
   M = "4".repeat(40);
@@ -142,16 +152,15 @@ test("bun erga status: each instance with what it tracks and where its commit is
   expect(text).toContain("- 4444444 [v0.1.0] On main");
 });
 
-test("GitHub runs one workflow, the release: staging and main only, no secret but its own token, each action at a commit", () => {
+test("GitHub runs one workflow, the release: staging, main and verify only, no secret but its own token, each action at a commit", () => {
   const dir = new URL("../.github/workflows/", import.meta.url);
   // (Not the Finder's .DS_Store.)
   const names = (folder: URL) => readdirSync(folder).filter((name) => !name.startsWith("."));
   expect(names(new URL("..", dir))).toEqual(["workflows"]);
   expect(names(dir)).toEqual(["release.yml"]);
   const text = readFileSync(new URL("release.yml", dir), "utf8");
-  type Job = { permissions: unknown; needs?: string[]; steps: { uses?: string; with?: Record<string, unknown> }[] };
-  const flow = Bun.YAML.parse(text) as { on: unknown; permissions: unknown; jobs: Record<string, Job> };
-  expect(flow.on).toEqual({ push: { branches: ["staging", "main"] } });
+  const flow = Bun.YAML.parse(text) as Flow;
+  expect(flow.on).toEqual({ push: { branches: ["staging", "main", "verify"] } });
   // Only publish may write, and only packages: it waits for the tests, and runs nothing of the repository's.
   expect(flow.permissions).toEqual({});
   expect(Object.fromEntries(Object.entries(flow.jobs).map(([name, job]) => [name, job.permissions]))).toEqual({
@@ -170,4 +179,48 @@ test("GitHub runs one workflow, the release: staging and main only, no secret bu
   for (const step of steps) if (step.uses?.startsWith("actions/checkout@")) expect(step.with).toEqual({ "persist-credentials": false });
   // Every expression: no secret but GitHub's own token, and no input of a person's in a script.
   expect([...new Set([...text.matchAll(/\$\{\{\s*(.*?)\s*\}\}/g)].map((m) => m[1]))]).toEqual(["github.sha", "secrets.GITHUB_TOKEN"]);
+  // verify's commits (bun erga try) go to a package of their own: no instance of staging or main reads it.
+  expect(flow.jobs.publish.steps.find((step) => step.name == "publish")!.run).toContain(
+    'package="${GITHUB_REPOSITORY,,}"\nif [ "$GITHUB_REF_NAME" = verify ]; then package="$package-verify"; fi\nrelease="ghcr.io/$package:$GITHUB_SHA"\n'
+  );
+});
+
+test("the workflow deletes the versions older than 7 days of verify's package, and nothing of another branch's", () => {
+  const flow = Bun.YAML.parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8")) as Flow;
+  const script = flow.jobs.publish.steps.find((step) => step.name == "old verify releases")!.run!;
+  // GitHub's CLI, faked: it writes each call, and answers the owner's kind and the old versions' ids.
+  const bin = mkdtempSync(join(tmpdir(), "erga-gh-"));
+  writeFileSync(
+    join(bin, "gh"),
+    `#!/bin/sh\necho "$*" >>"${bin}/calls"\ncase "$*" in\n  "api users/Example "*) echo "$KIND";;\n  "api --paginate "*) printf '11\\n12\\n';;\nesac\n`
+  );
+  chmodSync(join(bin, "gh"), 0o755);
+  /** The step as GitHub runs it (bash -eo pipefail), on a branch: gh's calls. */
+  const calls = (branch: string, kind = "users") => {
+    rmSync(join(bin, "calls"), { force: true });
+    const r = Bun.spawnSync(["bash", "-eo", "pipefail", "-c", script], {
+      env: {
+        PATH: `${bin}:${process.env.PATH}`,
+        GITHUB_REF_NAME: branch,
+        GITHUB_REPOSITORY: "Example/Erga",
+        GITHUB_REPOSITORY_OWNER: "Example",
+        KIND: kind,
+      },
+      stderr: "pipe",
+    });
+    expect([branch, r.exitCode, r.stderr.toString()]).toEqual([branch, 0, ""]);
+    return existsSync(join(bin, "calls")) ? readFileSync(join(bin, "calls"), "utf8").trim().split("\n") : [];
+  };
+  expect(calls("staging")).toEqual([]);
+  expect(calls("main")).toEqual([]);
+  const AGE = "--jq .[] | select((.created_at | fromdate) < now - 7 * 86400) | .id";
+  for (const kind of ["users", "orgs"]) {
+    const versions = `${kind}/Example/packages/container/erga-verify/versions`;
+    expect(calls("verify", kind)).toEqual([
+      'api users/Example --jq if .type == "Organization" then "orgs" else "users" end',
+      `api --paginate ${versions} ${AGE}`,
+      `api --method DELETE ${versions}/11`,
+      `api --method DELETE ${versions}/12`,
+    ]);
+  }
 });
